@@ -290,6 +290,25 @@
 /* An active schedule is a state, marked the way every other on-state is. */
 /* .recipe-sched-btn.on: 70-selection.css. */
 
+/* A word space between the words and the count, and between the icon and the count. */
+.recipe-sched-btn {
+  column-gap: var(--sp-1);
+}
+
+/* On a phone (recipes.ts `syncCompact`) the words give their width to the row's state line. */
+.recipe-sched-icon,
+.recipe-sched-btn.is-compact > .recipe-sched-label {
+  display: none;
+}
+
+.recipe-sched-btn.is-compact > .recipe-sched-icon {
+  display: block;
+}
+
+.recipe-sched-count:empty {
+  display: none;
+}
+
 /* The Run when… and agent Run panels; anchored-popover.ts sets --popover-room. */
 .sched-popup {
   z-index: 100;

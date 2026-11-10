@@ -618,7 +618,7 @@ const CENSUS: readonly Family[] = [
   {
     name: "text button",
     selector:
-      ":is(.btn, .btn-small, .btn-save, .action-pill, .tool-output-reveal, .uip-ask-ok, .uip-ask-cancel):not(.add-form > .btn, .list-row .btn-small, .conflict-hunk-row > .btn-small, .mcp-install-btn, .git-pr-row-actions .btn-small, .git-repo-section-header-row > .btn-small)",
+      ":is(.btn, .btn-small, .btn-save, .action-pill, .tool-output-reveal, .uip-ask-ok, .uip-ask-cancel):not(.add-form > .btn, .list-row .btn-small, .entry-actions > .btn-small, .conflict-hunk-row > .btn-small, .mcp-install-btn, .git-pr-row-actions .btn-small, .git-repo-section-header-row > .btn-small)",
     kind: "toolbar",
   },
   {

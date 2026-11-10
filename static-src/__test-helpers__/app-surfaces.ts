@@ -43,7 +43,8 @@ const { buildToolCard } = await import("../tool-card.js");
 const { buildToolGroupShell, groupBody, refreshGroupHeader } = await import("../tool-group.js");
 const { stampHookCard } = await import("../hook-fold.js");
 const { iconEl } = await import("../icon-el.js");
-const { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP, ICON_SEND } = await import("../icons.js");
+const { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP, ICON_RUN_WHEN_UI, ICON_SEND } =
+  await import("../icons.js");
 const { openModal } = await import("../modals.js");
 const { createSearchShell, searchIconButton } = await import("../search-shell.js");
 const { createSearchPopup } = await import("../search-popup.js");
@@ -503,6 +504,37 @@ function plantRepoRows(): void {
   }
   const block = box("forge-account-repos", [box("forge-account-repos-body", [list])]);
   q("#git-sources-mount").appendChild(block);
+}
+
+/** Two recipe rows in `recipes.ts`'s shape: Run when… (an icon and its count on a phone) and Run. */
+function plantRecipeRows(): void {
+  show("docs-view");
+  showPanel("data-docs-panel", "workflows");
+  const compact = window.matchMedia("(width <= 48rem)").matches;
+  const list = entryList();
+  for (const [key, count] of [
+    ["goal", "3"],
+    ["ralph", ""],
+  ] as const) {
+    const sched = make("button", `btn-small recipe-sched-btn on${compact ? " is-compact" : ""}`, {
+      type: "button",
+      "aria-label": `Run when… ${count} for ${key}`,
+    });
+    const icon = iconEl(ICON_RUN_WHEN_UI);
+    icon.classList.add("recipe-sched-icon");
+    sched.append(icon, text("span", "recipe-sched-label", "Run when…"));
+    sched.append(text("span", "recipe-sched-count", count));
+    list.appendChild(
+      entryRow({
+        key,
+        title: key,
+        badges: [text("span", "docs-badge", "bundled")],
+        sub: { kind: "lines", lines: [{ text: `${key} desc` }, { text: "watching" }] },
+        actions: [sched, button("btn-small recipe-run-btn", "Run")],
+      }),
+    );
+  }
+  q('[data-docs-panel="workflows"]').appendChild(list);
 }
 
 /** A recipe's run form in `recipes.ts`'s shape, with the run picker it carries. */
@@ -1723,6 +1755,13 @@ export const SURFACES: readonly Surface[] = [
     setup: plantRepoRows,
     controls: [".forge-account-repo-row .btn-small"],
     rows: [".forge-account-repo-row"],
+  },
+  {
+    name: "the workflow list",
+    sizes: ALL,
+    setup: plantRecipeRows,
+    controls: [".recipe-sched-btn", ".recipe-run-btn"],
+    rows: [],
   },
   {
     name: "a workflow's run form",

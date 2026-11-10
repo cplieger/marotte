@@ -140,6 +140,15 @@ function buttonFor(panel: HTMLElement, source: string): HTMLButtonElement | null
   return panel.querySelector<HTMLButtonElement>(`[data-recipe="${source}"] .recipe-run-btn`);
 }
 
+/** A button's painted text, part by part: its parts are flex items, which `innerText` puts on lines. */
+function shownText(btn: HTMLElement): string {
+  return [...btn.childNodes]
+    .filter((c) => !(c instanceof Element) || c.getBoundingClientRect().width > 0)
+    .map((c) => (c.textContent ?? "").trim())
+    .filter((t) => t !== "")
+    .join(" ");
+}
+
 beforeEach(() => {
   document.body.replaceChildren();
   dispatched.length = 0;
@@ -848,7 +857,7 @@ describe("the Run when… popup", () => {
       rules: [clockRule("c1"), eventRule("e1"), eventRule("e2", { enabled: false })],
     };
     const btn = await openPopup();
-    expect(btn.textContent).toBe("Run when… 2");
+    expect(shownText(btn)).toBe("Run when… 2");
     expect(btn.classList.contains("on")).toBe(true);
     expect(
       [...document.querySelectorAll(".rw-rule")].map((r) => r.getAttribute("data-rule-id")),
@@ -857,13 +866,13 @@ describe("the Run when… popup", () => {
     document.body.replaceChildren();
     rulesReply = { rules: [clockRule("c1"), eventRule("e2", { enabled: false })] };
     const one = await openPopup();
-    expect(one.textContent).toBe("Run when…");
+    expect(shownText(one)).toBe("Run when…");
     expect(one.classList.contains("on")).toBe(true);
 
     document.body.replaceChildren();
     rulesReply = { rules: [clockRule("c1", { enabled: false })] };
     const none = await openPopup();
-    expect(none.textContent).toBe("Run when…");
+    expect(shownText(none)).toBe("Run when…");
     expect(none.classList.contains("on")).toBe(false);
   });
 
@@ -1455,6 +1464,88 @@ describe("the Run when… popup's placement", () => {
       expect(panel.scrollHeight, "the tall form scrolls inside the panel").toBeGreaterThan(
         panel.clientHeight,
       );
+    });
+  });
+
+  describe("a bundled recipe row with three rules watching", () => {
+    async function renderWatched(width: number, height: number): Promise<HTMLElement> {
+      await resizeViewport(width, height);
+      const checked = new Date();
+      checked.setHours(13, 55, 0, 0);
+      recipesReply = { recipes: [{ ...recipe("watched"), built_in: true }] };
+      const watched = (id: string): LaunchRuleView => ({
+        id,
+        source: "bundled://watched",
+        enabled: true,
+        when: {
+          event: {
+            connection: "github:github.com",
+            repo: "cplieger/animap-source",
+            kind: "run_concluded",
+            filter: { result: ["success"] },
+          },
+        },
+        cursor: { baselined: true },
+        status: { checked_at: checked.toISOString() },
+        held: 0,
+      });
+      rulesReply = { rules: [watched("e1"), watched("e2"), watched("e3")] };
+      const panel = await render();
+      const row = await vi.waitFor(() => {
+        const r = panel.querySelector<HTMLElement>('[data-recipe="bundled://watched"]');
+        expect(r?.querySelector(".recipe-sched-btn.on")).not.toBeNull();
+        return r!;
+      });
+      return row;
+    }
+
+    function shown(e: Element): boolean {
+      return e.getBoundingClientRect().width > 0;
+    }
+
+    it("gives the state its whole width on a phone", async () => {
+      const row = await renderWatched(390, 844);
+      const body = row.querySelector<HTMLElement>(".entry-body")!;
+      expect(body.getBoundingClientRect().width, "the text column").toBeGreaterThanOrEqual(210);
+      const line = row.querySelector<HTMLElement>(".entry-lines > .entry-sub:nth-child(2)")!;
+      const state = /^watching, checked \S+/.exec(line.textContent)?.[0];
+      expect(state, "the line leads with the state").toBeDefined();
+      const range = document.createRange();
+      range.setStart(line.firstChild!, 0);
+      range.setEnd(line.firstChild!, state!.length);
+      expect(range.getBoundingClientRect().right, "the state is not cut").toBeLessThanOrEqual(
+        line.getBoundingClientRect().right,
+      );
+      const title = row.querySelector<HTMLElement>(".entry-title")!.getBoundingClientRect();
+      const badge = row.querySelector<HTMLElement>(".docs-badge")!.getBoundingClientRect();
+      expect(
+        [badge.left >= title.right, badge.top < title.bottom && badge.bottom > title.top],
+        "the badge beside the title",
+      ).toEqual([true, true]);
+    });
+
+    it("shows Run when… as an icon with its count on a phone, at the row's control size", async () => {
+      const row = await renderWatched(390, 844);
+      const sched = row.querySelector<HTMLButtonElement>(".recipe-sched-btn")!;
+      const run = row.querySelector<HTMLButtonElement>(".recipe-run-btn")!;
+      expect(shownText(sched), "the count is the only text").toBe("3");
+      expect(sched.querySelector("svg") !== null && shown(sched.querySelector("svg")!)).toBe(true);
+      expect(sched.getAttribute("aria-label")).toMatch(/^Run when… /);
+      expect(sched.getAttribute("data-tooltip")).toBe("Run when…");
+      const b = sched.getBoundingClientRect();
+      expect(b.height, "the row's control height").toBe(run.getBoundingClientRect().height);
+      expect(b.width, "at least square").toBeGreaterThanOrEqual(b.height);
+    });
+
+    it("keeps the words and the badge's own place on a desktop", async () => {
+      const row = await renderWatched(1440, 900);
+      const sched = row.querySelector<HTMLButtonElement>(".recipe-sched-btn")!;
+      expect(shownText(sched)).toBe("Run when… 3");
+      expect(sched.querySelector("svg") === null || !shown(sched.querySelector("svg")!)).toBe(true);
+      expect(sched.hasAttribute("data-tooltip")).toBe(false);
+      const body = row.querySelector<HTMLElement>(".entry-body")!.getBoundingClientRect();
+      const badge = row.querySelector<HTMLElement>(".docs-badge")!.getBoundingClientRect();
+      expect(badge.left, "the badge after the text column").toBeGreaterThanOrEqual(body.right);
     });
   });
 

@@ -32,6 +32,8 @@ import { loadSettings, refreshSettings } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
 import { openGitView, openSettingsView } from "./tabs.js";
 import { forceReflow } from "./dom.js";
+import { iconEl } from "./icon-el.js";
+import { ICON_RUN_WHEN_UI } from "./icons.js";
 import type { Recipe, WorkflowRun } from "./types.js";
 import { entryDetail, entryList, entryRow } from "./entry-row.js";
 import { classifyRunStatus, runStatusTerminal } from "./run-status.js";
@@ -143,6 +145,7 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
     });
     // An open Run or rule form holds the catalog it opened with, which can be empty when it
     // opened before the boot fetch landed.
+    window.matchMedia(COMPACT_QUERY).addEventListener("change", paint);
     onBus(BUS_CATALOG_MODELS, () => {
       const models = getCachedModels();
       const detail = container?.querySelector<HTMLElement>(".entry-detail") ?? null;
@@ -210,6 +213,8 @@ async function refreshAutoApprove(read: () => Promise<EffectiveSettings | null>)
     paint();
   }
 }
+
+const RUN_WHEN = "Run when…";
 
 /** Launch rules by recipe source, in the server's order. */
 let rules = new Map<string, LaunchRuleView[]>();
@@ -368,9 +373,40 @@ function syncRules(row: HTMLElement, r: Recipe): void {
   line.classList.toggle("is-scheduled", enabled > 0 && !failing);
   line.classList.toggle("entry-sub-error", failing);
   const btn = row.querySelector<HTMLButtonElement>(".recipe-sched-btn");
-  if (btn !== null) {
+  const count = btn?.querySelector(".recipe-sched-count");
+  if (btn != null && count != null) {
     btn.classList.toggle("on", enabled > 0);
-    btn.textContent = enabled > 1 ? `Run when… ${String(enabled)}` : "Run when…";
+    count.textContent = enabled > 1 ? String(enabled) : "";
+    // The visible text leads the name: https://www.w3.org/WAI/WCAG22/Understanding/label-in-name
+    btn.setAttribute(
+      "aria-label",
+      `${RUN_WHEN}${enabled > 1 ? ` ${String(enabled)}` : ""} for ${r.name}`,
+    );
+  }
+}
+
+/** Where the row's narrow trailing column applies; `.is-compact` (28-docs.css) draws it. */
+const COMPACT_QUERY = "(width <= 48rem)";
+
+function compact(): boolean {
+  return window.matchMedia(COMPACT_QUERY).matches;
+}
+
+/** On a phone the badges leave the trailing column for the title's line, so the state has room. */
+function syncCompact(row: HTMLElement): void {
+  const on = compact();
+  row.querySelector(".recipe-sched-btn")?.classList.toggle("is-compact", on);
+  const badges = row.querySelector<HTMLElement>(".entry-badges");
+  const name = row.querySelector(".entry-name");
+  if (badges === null || name === null) {
+    return;
+  }
+  if (on) {
+    if (badges.parentElement !== name) {
+      name.append(badges);
+    }
+  } else if (badges.parentElement !== row) {
+    row.insertBefore(badges, row.querySelector(":scope > .entry-actions"));
   }
 }
 
@@ -674,6 +710,7 @@ function paint(): void {
     update: (node: HTMLElement, e: RecipeEntry) => {
       switch (e.kind) {
         case "row":
+          syncCompact(node);
           syncButton(node, e.recipe);
           syncRules(node, e.recipe);
           syncStanding(node, e.recipe);
@@ -717,12 +754,18 @@ function recipeRow(r: Recipe): HTMLElement {
     }
   });
 
-  const schedBtn = el("button", {
-    type: "button",
-    className: "btn-small recipe-sched-btn",
-    "aria-label": `Launch rules of ${r.name}`,
-  }) as HTMLButtonElement;
-  schedBtn.textContent = "Run when…";
+  const icon = iconEl(ICON_RUN_WHEN_UI);
+  icon.classList.add("recipe-sched-icon");
+  const schedBtn = el(
+    "button",
+    {
+      type: "button",
+      className: "btn-small recipe-sched-btn",
+    },
+    icon,
+    el("span", { className: "recipe-sched-label" }, RUN_WHEN),
+    el("span", { className: "recipe-sched-count" }),
+  ) as HTMLButtonElement;
   wireRulesPopup(schedBtn, r.source);
 
   // A slot, so a standing change updates a kept row; only a file-backed recipe has a file to join.
@@ -744,6 +787,7 @@ function recipeRow(r: Recipe): HTMLElement {
     actions: [schedBtn, btn],
     data: { "data-recipe": r.source },
   });
+  syncCompact(row);
   syncButton(row, r);
   syncRules(row, r);
   syncStanding(row, r);
@@ -818,7 +862,7 @@ function syncValidity(row: HTMLElement, r: Recipe): void {
   const sched = row.querySelector<HTMLButtonElement>(".recipe-sched-btn");
   if (sched !== null) {
     sched.disabled = reason !== "";
-    toggleTooltip(sched, reason);
+    toggleTooltip(sched, reason !== "" ? reason : compact() ? RUN_WHEN : "");
   }
 }
 

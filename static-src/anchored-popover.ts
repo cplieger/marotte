@@ -19,14 +19,11 @@ function roomBeside(anchor: HTMLElement): number {
 export type AnchoredPopover = Omit<PopoverController, "setOptions">;
 
 /**
- * `createPopover` under `anchor`, end-aligned, with the panel's `--popover-room` set to the room
- * the flip can give it; the panel's stylesheet caps its block size by it and scrolls. The caller
- * calls `reposition()` after swapping the panel's content.
- *
- * A closed popover holds nothing outside its anchor's closures: it is in its `group` only while
- * open, and a panel it hosted (one not in the page at the first show) leaves the page once its
- * close has played, so a row rebuilt under a closed popover takes it with it. An open one closes
- * when its anchor leaves the page.
+ * `createPopover` under `anchor`, end-aligned, its `--popover-room` the room the flip can give it
+ * (the panel's stylesheet caps its block size by it); call `reposition()` after a content swap.
+ * A closed one holds nothing outside its anchor's closures: it joins `group` only while open, and
+ * a panel it hosted leaves the page once the close has played. An open one closes when its anchor
+ * leaves the page.
  */
 export function anchoredPopover(
   anchor: HTMLElement,
