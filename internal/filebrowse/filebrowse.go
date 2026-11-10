@@ -52,11 +52,12 @@ type Handler struct {
 type Option func(*Handler)
 
 // Owner is the one writer of a file the browser serves. Replace writes content as the whole file
-// under the owner's lock when check accepts the bytes then on disk (nil when absent, non-nil and
-// possibly empty when present; a nil check always accepts), and answers the bytes it wrote. It
-// returns once they are on disk: the save's answer ends only when Replace returns, so a slow
-// after-write effect goes to the owner's own worker. A SaveRefusalError answers 400 with its text;
-// check's own error answers the stale 409.
+// under the owner's lock when check accepts the bytes then on disk (nil when absent or not a
+// regular file, non-nil and possibly empty for a regular file; a nil check always accepts), and
+// answers the bytes it wrote once they are on disk: the save's answer ends only when Replace
+// returns, so a slow after-write effect goes to the owner's own worker. A file there whose bytes
+// the owner cannot read refuses a checked save with the read's error, unseen by check. A
+// SaveRefusalError answers 400 with its text; check's own error answers the stale 409.
 type Owner interface {
 	Replace(ctx context.Context, content []byte, check func(current []byte) error) (written []byte, err error)
 }

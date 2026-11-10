@@ -151,7 +151,10 @@ func (s *toolsSlot) Replace(_ context.Context, content []byte, check func([]byte
 		return content, nil
 	}
 	if check != nil {
-		_, current, _ := readManifest(s.manifest)
+		r, current, problem := readManifest(s.manifest)
+		if err := ownedfile.Unseen(r, current, problem); err != nil {
+			return nil, err
+		}
 		if err := check(current); err != nil {
 			return nil, err
 		}
@@ -290,11 +293,14 @@ func refuseManifest(path string, problem error) error {
 	return fmt.Errorf("%w. Saving a valid tools.json starts the tools engine", problem)
 }
 
+// classifyManifest is a var so a test can fail a read of tools.json as a broken mount does.
+var classifyManifest = ownedfile.Classify
+
 // readManifest classifies tools.json as the engine reads it (following a final symlink, never
 // blocking on a FIFO). problem is nil unless the read is Unreadable, and then says why for the
 // person reading the Tools tab. data holds a regular file's bytes and is nil for any other read.
 func readManifest(path string) (r ownedfile.Read, data []byte, problem error) {
-	r, data, _, err := ownedfile.Classify(path, ownedfile.Options{FollowFinalSymlink: true}, func(b []byte) error {
+	r, data, _, err := classifyManifest(path, ownedfile.Options{FollowFinalSymlink: true}, func(b []byte) error {
 		_, err := toolbelt.ParseManifest(b)
 		return err
 	})

@@ -121,22 +121,25 @@ func validateCompactionPatch(patch map[string]json.RawMessage) error {
 	return nil
 }
 
-// storedRead is one uncached read of config.json for a writer: the bytes found on disk (nil
-// unless a regular file), the read the document was built from, and the document, which its
-// caller owns.
+// storedRead is one uncached read of config.json for a writer: the disk read itself (its kind,
+// its bytes, nil unless a regular file was read, and its error), the read the document was built
+// from, and the document, which its caller owns.
 type storedRead struct {
-	doc  map[string]json.RawMessage
-	disk []byte
-	base ownedfile.Read
+	doc     map[string]json.RawMessage
+	diskErr error
+	disk    []byte
+	read    ownedfile.Read
+	base    ownedfile.Read
 }
 
 // storedBytes reads config.json once and answers by rule (ownedfile.Reading for a reader,
 // Merging for a merge write), with the read cache's answers: the applied document while a read
-// is held, an empty map for an absence, and an error for refused bytes. disk is set on error too.
+// is held, an empty map for an absence, and an error for refused bytes. The disk read is set in
+// every answer.
 func (c *cache) storedBytes(path string, rule func(r, applied ownedfile.Read, have bool) ownedfile.Source) (storedRead, error) {
 	r, data, _, readErr := classify(path)
 	a := c.appliedRecord()
-	s := storedRead{disk: data, base: r}
+	s := storedRead{read: r, disk: data, diskErr: readErr, base: r}
 	switch rule(r, a.read, a.set) {
 	case ownedfile.Disk:
 		doc, err := parseObject(data)

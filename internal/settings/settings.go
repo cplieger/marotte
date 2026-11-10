@@ -59,7 +59,8 @@ func acceptObject(data []byte) error {
 	return err
 }
 
-func classify(path string) (r ownedfile.Read, data []byte, info os.FileInfo, err error) {
+// classify is every read of config.json; a var so a test can fail a read as a broken mount does.
+var classify = func(path string) (r ownedfile.Read, data []byte, info os.FileInfo, err error) {
 	return ownedfile.Classify(path, ownedfile.Options{Limit: maxBytes}, acceptObject)
 }
 

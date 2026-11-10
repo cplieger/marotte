@@ -77,6 +77,16 @@ func Classify(path string, o Options, accept func([]byte) error) (r Read, data [
 	return Read{Kind: Valid, Key: key}, data, info, nil
 }
 
+// Unseen answers err, Classify's answer for r and data, when a file is at the path but its bytes
+// could not be read, and nil otherwise. A stale check sees nil bytes only for an absent or
+// non-regular file, so a write it guards refuses with Unseen's error rather than check nil bytes.
+func Unseen(r Read, data []byte, err error) error {
+	if r.Kind != Unreadable || data != nil || errors.Is(err, filesafe.ErrNotRegular) || errors.Is(err, filesafe.ErrSymlinkTarget) {
+		return nil
+	}
+	return err
+}
+
 func open(path string, follow bool) (*os.File, fs.FileInfo, error) {
 	if !follow {
 		return filesafe.OpenRegularNoFollow(path)

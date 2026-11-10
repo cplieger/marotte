@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,12 +15,14 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/ownedfile"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/toolbelt/v3"
 )
@@ -375,6 +378,34 @@ func TestToolsJSONSaveWhileDownStartsTheEngine(t *testing.T) {
 		t.Errorf("Inventory() on the engine the save started: %v", err)
 	} else if len(inv.Tools) != 0 {
 		t.Errorf("Inventory().Tools on the engine the save started = %v, want the saved empty manifest", inv.Tools)
+	}
+}
+
+func TestToolsJSONSaveWhileDown_AFileItCannotReadRefusesACheckedSave(t *testing.T) {
+	const stored = `{"version":1,"tools":{}}`
+	fx := newOwnedFilesFixtureWith(t, toolsSetup{manifest: stored})
+	if engine, _ := fx.tools.Engine(); engine != nil {
+		t.Fatal("Setup: the engine is up over a version-1 manifest, want it down")
+	}
+	id := fx.fileID(t, fx.manifest)
+	real := classifyManifest
+	classifyManifest = func(path string, o ownedfile.Options, accept func([]byte) error) (ownedfile.Read, []byte, fs.FileInfo, error) {
+		if path != fx.manifest {
+			return real(path, o, accept)
+		}
+		err := &fs.PathError{Op: "read", Path: path, Err: syscall.EIO}
+		return ownedfile.Read{Kind: ownedfile.Unreadable, Key: "error " + err.Error()}, nil, nil, err
+	}
+	t.Cleanup(func() { classifyManifest = real })
+
+	if code, msg := fx.save(t, fx.manifest, `{"version":2,"tools":{}}`, id); code < 300 {
+		t.Errorf("save under a file_id over a tools.json that cannot be read = %d %q, want a refusal", code, msg)
+	}
+	if got, err := os.ReadFile(fx.manifest); err != nil || string(got) != stored {
+		t.Errorf("tools.json = %q, %v after the refusal, want it unchanged %q", got, err, stored)
+	}
+	if code, msg := fx.save(t, fx.manifest, `{"version":2,"tools":{}}`, ""); code != http.StatusOK {
+		t.Errorf("save with no file_id = %d %q, want 200", code, msg)
 	}
 }
 

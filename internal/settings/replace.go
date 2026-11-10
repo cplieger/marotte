@@ -57,13 +57,13 @@ func validateAgentIgnorePatch(patch map[string]json.RawMessage) error {
 }
 
 // Replace writes content as the whole config.json under Update's lock. check, when not nil, sees
-// the whole file on disk first, past the read cap (nil unless a regular file), and its error is
-// returned as is. Every non-stamp key whose value content changes runs CheckPatch against the
-// stored document, or an empty one when that is refused, so a broken file can be repaired. The
-// stamp keys are the server's: the next version is stamped whatever content holds. publish gets
-// the write's event before the lock is released. Answers the bytes written and the keys whose
-// value changed or went, nil when the stored document was refused, since readers kept their last
-// readable values over it and any key may have moved.
+// the whole file on disk first (nil when absent or not a regular file) and its error is returned
+// as is; a file there whose bytes cannot be read refuses the write with ErrUnreadable. Every
+// non-stamp key whose value content changes runs CheckPatch against the stored document, or an
+// empty one when that is refused, so a broken file can be repaired. The stamp keys are the
+// server's: the next version is stamped whatever content holds. publish gets the write's event
+// before the lock is released. Answers the bytes written and the keys whose value changed or
+// went, nil when the stored document was refused, so any key may have moved.
 func Replace(ctx context.Context, dirs AgentDirs, content []byte, check func(current []byte) error,
 	publish func(context.Context, marotte.ServerEvent),
 ) (written []byte, changed []string, err error) {
@@ -85,7 +85,7 @@ func Replace(ctx context.Context, dirs AgentDirs, content []byte, check func(cur
 	defer c.writeMu.Unlock()
 
 	s, readErr := c.storedBytes(path, ownedfile.Reading)
-	if checkErr := checkWhole(path, s.disk, check); checkErr != nil {
+	if checkErr := checkWhole(path, &s, check); checkErr != nil {
 		return nil, nil, checkErr
 	}
 	stored := s.doc
@@ -121,12 +121,16 @@ func Replace(ctx context.Context, dirs AgentDirs, content []byte, check func(cur
 	return written, changed, nil
 }
 
-// checkWhole runs check, when not nil, on the whole file at path, re-read when disk, a capped
-// read of it, stopped at the cap.
-func checkWhole(path string, disk []byte, check func([]byte) error) error {
+// checkWhole runs check, when not nil, on the whole file at path, re-read when s's capped read
+// stopped at the cap, and refuses with ErrUnreadable when that read could not see the bytes.
+func checkWhole(path string, s *storedRead, check func([]byte) error) error {
 	if check == nil {
 		return nil
 	}
+	if err := ownedfile.Unseen(s.read, s.disk, s.diskErr); err != nil {
+		return fmt.Errorf("%w: %w", ErrUnreadable, err)
+	}
+	disk := s.disk
 	if len(disk) > maxBytes {
 		_, whole, _, err := ownedfile.Classify(path, ownedfile.Options{}, func([]byte) error { return nil })
 		if err != nil {

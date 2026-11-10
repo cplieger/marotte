@@ -4,13 +4,17 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/ownedfile"
 )
 
 func replaceFixture(t *testing.T, stored string) (AgentDirs, string) {
@@ -113,7 +117,7 @@ func TestReplace_RepairsAnUnparseableFile(t *testing.T) {
 	}
 }
 
-// A reader keeps its last readable values over a refused file, so the repair may move any key.
+// Over a refused stored file the keys that moved are unknown, so the repair answers nil.
 func TestReplace_AnswersNilKeysOverARefusedStoredFile(t *testing.T) {
 	dirs, _ := replaceFixture(t, `{not json`)
 	_, changed, err := Replace(t.Context(), dirs, []byte(`{"theme":"dark"}`), nil, nil)
@@ -198,5 +202,89 @@ func TestReplace_WaitsForAnUpdateInFlight(t *testing.T) {
 	}
 	if doc := readConfig(t, dirs.Config); string(doc[KeyDebugLogs]) != `true` || string(doc[KeyTheme]) != `"dark"` {
 		t.Errorf("config.json = %v, want the Update's write", doc)
+	}
+}
+
+// failReads makes every config.json read fail as an I/O error on the mount does, regular file and all.
+func failReads(t *testing.T) {
+	t.Helper()
+	real := classify
+	classify = func(path string) (ownedfile.Read, []byte, os.FileInfo, error) {
+		err := &fs.PathError{Op: "read", Path: path, Err: syscall.EIO}
+		return ownedfile.Read{Kind: ownedfile.Unreadable, Key: "error " + err.Error()}, nil, nil, err
+	}
+	t.Cleanup(func() { classify = real })
+}
+
+func TestReplace_AFileItCannotReadRefusesACheckedSave(t *testing.T) {
+	cases := []struct {
+		prepare func(t *testing.T, dirs AgentDirs)
+		name    string
+	}{
+		{name: "nothing applied", prepare: func(*testing.T, AgentDirs) {}},
+		{name: "held over an applied document", prepare: func(t *testing.T, dirs AgentDirs) {
+			if _, _, err := Replace(t.Context(), dirs, []byte(`{"theme":"dark"}`), nil, nil); err != nil {
+				t.Fatalf("Setup: Replace: %v", err)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dirs, path := replaceFixture(t, `{"theme":"dark"}`)
+			tc.prepare(t, dirs)
+			before := fileBytes(t, path)
+			failReads(t)
+			checked := false
+			_, _, err := Replace(t.Context(), dirs, []byte(`{"theme":"lite"}`), func([]byte) error {
+				checked = true
+				return nil
+			}, nil)
+			if !errors.Is(err, ErrUnreadable) || !errors.Is(err, syscall.EIO) {
+				t.Errorf("Replace = %v, want ErrUnreadable wrapping the read's EIO", err)
+			}
+			if checked {
+				t.Error("check ran over a file that could not be read")
+			}
+			if got := fileBytes(t, path); !bytes.Equal(got, before) {
+				t.Errorf("config.json = %s after the refusal, want it unchanged %s", got, before)
+			}
+			if _, _, err := Replace(t.Context(), dirs, []byte(`{"theme":"lite"}`), nil, nil); err != nil {
+				t.Errorf("Replace with no check = %v, want the write", err)
+			}
+		})
+	}
+}
+
+func TestReplace_ACheckSeesNilForAnAbsentOrNonRegularFile(t *testing.T) {
+	cases := []struct {
+		plant func(t *testing.T, path string)
+		name  string
+	}{
+		{name: "absent", plant: func(*testing.T, string) {}},
+		{name: "directory", plant: func(t *testing.T, path string) {
+			if err := os.Mkdir(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dirs, path := replaceFixture(t, "")
+			tc.plant(t, path)
+			checked := false
+			_, _, err := Replace(t.Context(), dirs, []byte(`{"theme":"lite"}`), func(current []byte) error {
+				checked = true
+				if current != nil {
+					t.Errorf("check saw %q, want nil", current)
+				}
+				return nil
+			}, nil)
+			if !checked {
+				t.Errorf("check did not run (Replace = %v)", err)
+			}
+			if tc.name == "absent" && err != nil {
+				t.Errorf("Replace over an absent file = %v, want the write", err)
+			}
+		})
 	}
 }

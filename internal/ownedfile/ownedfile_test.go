@@ -145,6 +145,38 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+func TestUnseen(t *testing.T) {
+	dir := t.TempDir()
+	plant := map[string]func(path string) error{
+		"absent":         func(string) error { return nil },
+		"valid":          func(path string) error { return os.WriteFile(path, []byte(`{}`), 0o600) },
+		"refused bytes":  func(path string) error { return os.WriteFile(path, []byte(`{`), 0o600) },
+		"directory":      func(path string) error { return os.Mkdir(path, 0o700) },
+		"FIFO":           func(path string) error { return syscall.Mkfifo(path, 0o600) },
+		"final symlink":  func(path string) error { return os.Symlink(dir, path) },
+		"dangling link":  func(path string) error { return os.Symlink(filepath.Join(dir, "gone"), path) },
+		"socket by node": func(path string) error { return syscall.Mknod(path, syscall.S_IFSOCK|0o600, 0) },
+	}
+	for name, plant := range plant {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "f")
+			if err := plant(path); err != nil {
+				t.Fatalf("Setup: %v", err)
+			}
+			r, data, _, err := classifyWithin(t, path, Options{})
+			if got := Unseen(r, data, err); got != nil {
+				t.Errorf("Unseen(%v, %q, %v) = %v, want nil: check may see this read", r, data, err, got)
+			}
+		})
+	}
+	t.Run("a regular file whose read failed", func(t *testing.T) {
+		err := &fs.PathError{Op: "read", Path: "f", Err: syscall.EIO}
+		if got := Unseen(Read{Kind: Unreadable, Key: errorKey(err)}, nil, err); !errors.Is(got, syscall.EIO) {
+			t.Errorf("Unseen = %v, want the read's EIO", got)
+		}
+	})
+}
+
 func TestClassify(t *testing.T) {
 	modes := []struct {
 		name string
