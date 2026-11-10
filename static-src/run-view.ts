@@ -420,8 +420,11 @@ function stepRefused(workflowID: string, message: string): void {
 /** The step transcript, LAZILY loaded — ONE stream now, because there is one source. */
 let stepStream: RunStepStream | undefined;
 let stepStreamLoading = false;
-/** The newest paint's nodes, which the stream's first apply projects once its chunk loads. */
-let streamNodes: readonly ExecNode[] = [];
+/** The step whose host the stream paints into, "" for none. */
+let projectedPath = "";
+/** Set across `paint`'s render, which projects after it: a selection the render publishes leaves
+ *  the projection to the paint, and one from a click projects at once. */
+let painting = false;
 
 /** The cached "Open the conversation" anchor, per (run, chat). Cached because `detail.ts` guards
  *  its slot on element IDENTITY: `render` runs on every store invalidation, and re-seating a
@@ -448,7 +451,12 @@ function mountPage(
     dock: dockHost,
     controls: () => verbs.current(),
     notes: () => verbs.refusals(),
-    onShowNode: armStepRead,
+    onShowNode: (node) => {
+      armStepRead(node);
+      if (!painting && pageRun === shownRun) {
+        projectStepTranscripts(shownRun, runTurns(shownRun));
+      }
+    },
     // Never another run's page: `showRun` repaints at once, and that paint drops this page.
     onSelect: (node) => {
       pushStepTarget(workflowID, node);
@@ -460,6 +468,7 @@ function mountPage(
   stepStream?.dispose();
   stepStream = undefined;
   stepStreamLoading = false;
+  projectedPath = "";
   // The on-demand reads go with the page, which is this cache's whole bound: a run tab retargeting
   // or closing is the one moment a step's answer stops being wanted, and there is no other moment
   // it becomes wrong.
@@ -956,7 +965,12 @@ function paint(
   runFlags = { live: run.live, paused: state.status === "paused" };
   // Before the render too, whose `onShowNode` arms reads from what is still owed.
   settleCatchUps(workflowID, workNodes(run.nodes));
-  view.render(run);
+  painting = true;
+  try {
+    view.render(run);
+  } finally {
+    painting = false;
+  }
   if (!mounted) {
     // After the first render, or a parked position lands on an empty page and clamps. The replace
     // also took the follower's edge marker; attaching seats a new one.
@@ -967,7 +981,7 @@ function paint(
   if (focus !== "" && flatten(run.nodes).some((n) => n.path === focus)) {
     focusRequest = undefined;
   }
-  projectStepTranscripts(workflowID, run.nodes, turns);
+  projectStepTranscripts(workflowID, turns);
   // After the projection, so the repair is asked over the entries this frame rendered.
   armShownStepHole(workflowID, turns);
   armShownStepRetry(workflowID);
@@ -975,21 +989,18 @@ function paint(
   catchUpDockSteps(workflowID, workNodes(run.nodes), turns);
 }
 
-function projectStepTranscripts(
-  workflowID: string,
-  nodes: readonly ExecNode[],
-  turns: readonly [string, TurnState][],
-): void {
-  streamNodes = nodes;
-  const paints = leafPaints(nodes, turns, runStepEnds(workflowID));
-  if (paints.size === 0) {
-    return;
-  }
+/** Project the shown step's turns, and only its: a step stops costing anything once another is
+ *  shown, and showing it again rebuilds its body from the log. */
+function projectStepTranscripts(workflowID: string, turns: readonly [string, TurnState][]): void {
+  const path = shownNode?.path ?? "";
+  const paints = leafPaints(path, turns, runStepEnds(workflowID));
   if (stepStream !== undefined) {
     stepStream.apply(paints);
+    releaseProjectedBody(path);
     return;
   }
-  if (stepStreamLoading) {
+  releaseProjectedBody(path);
+  if (paints.size === 0 || stepStreamLoading) {
     return;
   }
   stepStreamLoading = true;
@@ -1005,10 +1016,12 @@ function projectStepTranscripts(
       const host = page;
       const stream = createRunStepStream((nodePath) => host.bodyFor(nodePath));
       stepStream = stream;
-      // RE-PROJECTED from the newest paint rather than replayed: the load is async, so the plan and
-      // the log may both have grown past what was captured, and a paint during the load projects
-      // nothing. Outside the view effect, so `runTurns`' own touch registers nothing.
-      stream.apply(leafPaints(streamNodes, runTurns(workflowID), runStepEnds(workflowID)));
+      // RE-PROJECTED rather than replayed: the load is async, so the selection and the log may both
+      // have moved past what was captured, and a paint during the load projects nothing. Outside
+      // the view effect, so `runTurns`' own touch registers nothing.
+      const shown = shownNode?.path ?? "";
+      stream.apply(leafPaints(shown, runTurns(workflowID), runStepEnds(workflowID)));
+      projectedPath = shown;
     })
     .catch(() => {
       // The step transcript is an enhancement over a page already rendering the plan,
@@ -1019,26 +1032,36 @@ function projectStepTranscripts(
     });
 }
 
+/** Hand the page back the host of a step no longer projected. Its renders went with the apply. */
+function releaseProjectedBody(path: string): void {
+  if (projectedPath !== "" && projectedPath !== path) {
+    page?.releaseBody(projectedPath);
+  }
+  projectedPath = path;
+}
+
+/** The shown step's turns as the stream paints them; empty for no shown step. */
 function leafPaints(
-  nodes: readonly ExecNode[],
+  path: string,
   logged: readonly [string, TurnState][],
   ends: StepEnds,
 ): Map<string, RunStepPaint[]> {
+  const out = new Map<string, RunStepPaint[]>();
+  if (path === "") {
+    return out;
+  }
   const turns = gradedTurns(logged, ends);
   const src = runSource(turns);
-  const out = new Map<string, RunStepPaint[]>();
-  for (const node of workNodes(nodes)) {
-    const painted: RunStepPaint[] = [];
-    for (const [id, state] of turnsForStep(turns, node.path)) {
-      const turn = projectTurn(src, id);
-      if (turn === undefined) {
-        continue;
-      }
-      painted.push({ turn, live: turnIsLive(state) });
+  const painted: RunStepPaint[] = [];
+  for (const [id, state] of turnsForStep(turns, path)) {
+    const turn = projectTurn(src, id);
+    if (turn === undefined) {
+      continue;
     }
-    if (painted.length > 0) {
-      out.set(node.path, painted);
-    }
+    painted.push({ turn, live: turnIsLive(state) });
+  }
+  if (painted.length > 0) {
+    out.set(path, painted);
   }
   return out;
 }

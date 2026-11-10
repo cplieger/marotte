@@ -2238,7 +2238,7 @@ describe("run view step transcripts", () => {
         { nodeId: "handoff", type: "step", status: "completed", children: [] },
       ],
     };
-    await paint(openRunView, "running", {
+    const { body } = await paint(openRunView, "running", {
       root,
       stepEnds: {
         "wf_1:limited": {
@@ -2248,7 +2248,9 @@ describe("run view step transcripts", () => {
         },
       },
     });
+    selectRow(body, "wf_1:limited");
     await painted("wf_1:limited");
+    selectRow(body, "wf_1:handoff");
     await painted("wf_1:handoff");
 
     expect(m.paint.get("wf_1:limited")?.closes).toEqual([
@@ -2376,6 +2378,7 @@ describe("a step's recorded grade", () => {
       close: { outcome: "completed", stop_reason_raw: "tool_use" },
     });
     const { body } = await paint(openRunView, "running", { root: root("completed"), stepEnds: {} });
+    selectRow(body, "wf_1:limited");
     await until(() => m.paint.has("wf_1:limited"));
     expect(m.paint.get("wf_1:limited")?.closes).toEqual(["completed/"]);
     expect(rowState(body, "wf_1:limited")).toBe("ok");
@@ -2393,6 +2396,7 @@ describe("a step's recorded grade", () => {
       close: { outcome: "completed", stop_reason_raw: "tool_use" },
     });
     const { body } = await paint(openRunView, "running", { root: root("completed"), stepEnds: {} });
+    selectRow(body, "wf_1:limited");
     await until(() => m.paint.has("wf_1:limited"));
 
     await rereadWith({});

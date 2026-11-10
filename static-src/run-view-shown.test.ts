@@ -1,5 +1,6 @@
-// The run view paints only while its tab is the visible view: a hidden run tab does no work for the
-// run's frames or its clock, and showing it again catches the shown step up before one paint.
+// The run view paints only while its tab is the visible view, and mounts only the step it shows: a
+// hidden run tab does no work for the run's frames or its clock, and showing it again catches the
+// shown step up before one paint.
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import type * as ExecPage from "./exec-view/page.js";
@@ -31,11 +32,15 @@ vi.mock("./decision-dock.js", () => ({
 // a paint's DOM work visible to the observer below.
 vi.mock("./run-chat-steps.js", () => ({
   createRunStepStream: vi.fn((hostFor: (path: string) => HTMLElement) => ({
-    apply: (paints: ReadonlyMap<string, readonly { turn: { body: Entry[] } }[]>) => {
+    apply: (
+      paints: ReadonlyMap<string, readonly { turn: { body: Entry[] } }[]>,
+    ) => {
       m.applied.push([...paints.keys()]);
       for (const [path, list] of paints) {
         const p = document.createElement("p");
-        p.textContent = String(list.reduce((n, x) => n + x.turn.body.length, 0));
+        p.textContent = String(
+          list.reduce((n, x) => n + x.turn.body.length, 0),
+        );
         hostFor(path).replaceChildren(p);
       }
     },
@@ -103,7 +108,15 @@ function runRead(): unknown {
 }
 
 function entry(seq: number, kind: Entry["kind"], payload: unknown): Entry {
-  return { id: `${TURN}-${String(seq)}`, turn: TURN, lane: "", kind, payload, seq, ts: 0 };
+  return {
+    id: `${TURN}-${String(seq)}`,
+    turn: TURN,
+    lane: "",
+    kind,
+    payload,
+    seq,
+    ts: 0,
+  };
 }
 
 async function flush(): Promise<void> {
@@ -145,17 +158,34 @@ async function activateRunTab(): Promise<void> {
 }
 
 beforeEach(() => {
-  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
+  vi.useFakeTimers({
+    toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"],
+  });
   m.renders = 0;
   m.applied.length = 0;
   forgetRun(WF);
   document.body.replaceChildren();
   mountViews();
-  vi.mocked(apiGetOrError).mockResolvedValue({ ok: true, status: 200, data: runRead(), error: "" });
+  vi.mocked(apiGetOrError).mockResolvedValue({
+    ok: true,
+    status: 200,
+    data: runRead(),
+    error: "",
+  });
   vi.mocked(apiGetTyped).mockResolvedValue(null);
-  openRunTurn(WF, entry(0, "turn_open", { source: "workflow_step", node_path: STEP, n: 1 }));
+  openRunTurn(
+    WF,
+    entry(0, "turn_open", { source: "workflow_step", node_path: STEP, n: 1 }),
+  );
   appendRunEntry(WF, entry(1, "text", { text: "hello" }));
-  openRunEntry(WF, { turn: TURN, id: `${TURN}-2`, kind: "text", text: "", n: 0, lane: "" });
+  openRunEntry(WF, {
+    turn: TURN,
+    id: `${TURN}-2`,
+    kind: "text",
+    text: "",
+    n: 0,
+    lane: "",
+  });
 });
 
 afterEach(() => {
@@ -222,10 +252,123 @@ describe("a hidden run tab", () => {
     answer({
       entries: [],
       open_entries: [
-        { turn: TURN, id: `${TURN}-2`, kind: "text", text: "x".repeat(20), n: 20, lane: "" },
+        {
+          turn: TURN,
+          id: `${TURN}-2`,
+          kind: "text",
+          text: "x".repeat(20),
+          n: 20,
+          lane: "",
+        },
       ],
     });
     await flush();
     expect(m.renders - before).toBe(1);
+  });
+});
+
+describe("the shown step's transcript", () => {
+  const STEPS = ["a", "b", "c"];
+
+  function threeSteps(): unknown {
+    return {
+      workflowId: WF,
+      state: {
+        workflowId: WF,
+        status: "running",
+        root: {
+          nodeId: WF,
+          type: "sequence",
+          status: "running",
+          children: STEPS.map((id, i) => ({
+            nodeId: id,
+            type: "step",
+            status: "running",
+            startedAt: `2026-11-10T10:0${String(i)}:00Z`,
+            children: [],
+          })),
+        },
+      },
+    };
+  }
+
+  function holdTurn(step: string): void {
+    const turn = `t-${step}`;
+    const at = (seq: number, kind: Entry["kind"], payload: unknown): Entry => ({
+      id: `${turn}-${String(seq)}`,
+      turn,
+      lane: "",
+      kind,
+      payload,
+      seq,
+      ts: 0,
+    });
+    openRunTurn(
+      WF,
+      at(0, "turn_open", {
+        source: "workflow_step",
+        node_path: `${WF}:${step}`,
+        n: 1,
+      }),
+    );
+    appendRunEntry(WF, at(1, "text", { text: `${step} says` }));
+  }
+
+  function dockRow(step: string): HTMLButtonElement {
+    const row = [
+      ...runView.querySelectorAll<HTMLButtonElement>(".ev-dock-row"),
+    ].find((b) => (b.getAttribute("aria-label") ?? "").startsWith(`${step},`));
+    if (row === undefined) {
+      throw new Error(`no dock row for ${step}`);
+    }
+    return row;
+  }
+
+  const hosts = (): string[] =>
+    [...runView.querySelectorAll<HTMLElement>(".ev-d-body")].map(
+      (h) => h.dataset["path"] ?? "",
+    );
+
+  beforeEach(() => {
+    vi.mocked(apiGetOrError).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: threeSteps(),
+      error: "",
+    });
+    for (const step of STEPS) {
+      holdTurn(step);
+    }
+  });
+
+  it("mounts and projects only the step the pane shows", async () => {
+    await activateRunTab();
+    dockRow("a").click();
+    await flush();
+    m.applied.length = 0;
+
+    appendRunEntry(WF, {
+      id: "t-b-2",
+      turn: "t-b",
+      lane: "",
+      kind: "text",
+      payload: { text: "more" },
+      seq: 2,
+      ts: 0,
+    });
+    await flush();
+
+    expect(hosts()).toEqual([`${WF}:a`]);
+    expect(m.applied.flat().filter((p) => p !== `${WF}:a`)).toEqual([]);
+  });
+
+  it("releases a step's host when another step is shown", async () => {
+    await activateRunTab();
+    dockRow("a").click();
+    await flush();
+    dockRow("b").click();
+    await flush();
+
+    expect(hosts()).toEqual([`${WF}:b`]);
   });
 });

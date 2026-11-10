@@ -66,6 +66,8 @@ export interface ExecPageView {
   render(run: ExecRun | undefined): void;
   /** The host a node's live transcript renders into. */
   bodyFor(path: string): HTMLElement;
+  /** Remove a node's host, once its transcript is disposed. */
+  releaseBody(path: string): void;
   /** Show a node as a click on its row does, repainting before it returns. */
   select(path: string): void;
   /** Stop the clock while the page is not on screen; the next `render` restarts it. */
@@ -348,6 +350,9 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     },
     bodyFor(path) {
       return detail.bodyFor(path);
+    },
+    releaseBody(path) {
+      detail.releaseBody(path);
     },
     select,
     pause() {

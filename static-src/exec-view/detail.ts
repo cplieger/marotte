@@ -11,9 +11,11 @@ export interface ExecDetailView {
   readonly root: HTMLElement;
   /** Show one node. `undefined` renders the empty state. */
   render(node: ExecNode | undefined): void;
-  /** The element this node's live transcript renders into, created on demand and kept per PATH for
-   *  the pane's life: frames are live-only and cannot be replayed. */
+  /** The element this node's live transcript renders into, created on demand and kept per PATH
+   *  until `releaseBody`. */
   bodyFor(path: string): HTMLElement;
+  /** Remove a node's host; its consumer has disposed what it rendered there. */
+  releaseBody(path: string): void;
   /** Advance the duration of a node still running. */
   tick(): void;
 }
@@ -117,8 +119,7 @@ export function buildExecDetail(
     interruption.textContent = node.interruption ?? "";
     byHand.hidden = node.endedByHand !== true;
 
-    // Only ONE node's transcript is on screen; the rest stay in the DOM since
-    // their live content cannot be replayed.
+    // Only ONE node's transcript is on screen; a host the consumer has not released stays hidden.
     let anyShown = false;
     for (const [path, host] of hosts) {
       const isShown = path === node.path;
@@ -160,6 +161,10 @@ export function buildExecDetail(
         emptyAct.hidden = true;
       }
       return host;
+    },
+    releaseBody(path) {
+      hosts.get(path)?.remove();
+      hosts.delete(path);
     },
     tick() {
       if (shown === undefined || shown.end !== undefined) {
