@@ -29,7 +29,7 @@ import { releaseClampsIn } from "./clamp-text.js";
 import { releaseScrollableTablesIn } from "./table-scroll.js";
 import { effect, el, touch } from "@cplieger/ui";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
-import { coverHeld, releaseCover } from "./transcript-cover.js";
+import { coverHeld, registerParkReads, releaseCover } from "./transcript-cover.js";
 import { $ } from "./dom.js";
 import {
   followTargetChanged,
@@ -50,6 +50,7 @@ import {
   jumpTo,
   attach as attachScroll,
   detach as detachScroll,
+  snapshot as snapshotScroll,
   readerAt,
   heldMutation,
   onContentResize,
@@ -252,6 +253,20 @@ function mountedBodies(view: ChatView): [string, HTMLElement][] {
   return out;
 }
 
+/** What `parkView` reads, taken at a switch's clean layout (transcript-cover.ts `takeParkReads`). */
+let parkReads: { view: ChatView; parkedAt: ReaderPosition; scroll: ViewScrollState } | null = null;
+
+function takeParkReads(): void {
+  parkReads =
+    activeView === null
+      ? null
+      : {
+          view: activeView,
+          parkedAt: readerPosition(lastTurns, openableOf(activeView.chatID, lastTurns)),
+          scroll: snapshotScroll(),
+        };
+}
+
 /** Park the active view: pause every writer, save the handle, hide. */
 function parkView(view: ChatView): void {
   // Focus first: an inert subtree drops focus to <body>, and the composer is the app's focus home.
@@ -259,9 +274,11 @@ function parkView(view: ChatView): void {
   if (focused !== null && view.el.contains(focused)) {
     $.promptInput.focus();
   }
-  // Both before the first write, at the layout the task started from.
-  view.parkedAt = readerPosition(lastTurns, openableOf(view.chatID, lastTurns));
-  view.scroll = detachScroll();
+  const taken = parkReads?.view === view ? parkReads : null;
+  parkReads = null;
+  // Both before the first write, at the layout the task started from, unless the switch took them.
+  view.parkedAt = taken?.parkedAt ?? readerPosition(lastTurns, openableOf(view.chatID, lastTurns));
+  view.scroll = detachScroll(taken?.scroll);
   view.followBaseline = followBaseline;
   view.reachableEntries = reachableEntries;
   view.lastNewestTurnID = lastNewestTurnID;
@@ -601,6 +618,12 @@ export function mountChatView(): void {
   }
   mounted = true;
   initFollowModel();
+  registerParkReads({
+    take: takeParkReads,
+    drop: () => {
+      parkReads = null;
+    },
+  });
   // In the positioned outer wrapper, not the scroller, so it does not scroll away with the content.
   mountTurnRail($.messagesWrapOuter);
   // Both stub-landing surfaces call this module's on-demand build; injected because a static import back would cycle.
@@ -1624,6 +1647,7 @@ export function teardownAll(): void {
   resetTurnRail();
   lastPaintedId = undefined;
   lastNewestTurnID = undefined;
+  parkReads = null;
 }
 
 // Two keyed levels: turns by id, then each card's `.turn-body` over its entries. Safe because reconcile considers

@@ -68,6 +68,7 @@ import {
   releaseCover,
   releaseCoverExceptFor,
   showTranscript,
+  takeParkReads,
   transcriptHidden,
 } from "./transcript-cover.js";
 import { afterNextPaint } from "./next-paint.js";
@@ -698,23 +699,27 @@ interface ActivationOpts {
   readonly now?: boolean;
 }
 
-/** The GESTURE half, run inside the click: only writes that read no layout. The strip, the device
- *  view, the active chat and the cover move now; `runActivation` shows the view after this frame
- *  paints, or in this task for `now` and an empty chat, which gets no cover. Answers the record
- *  installed, or undefined when nothing changed. */
+/** The GESTURE half, run inside the click: the outgoing chat's park reads at the clean layout the
+ *  click starts from, then only writes that read no layout. The strip, the device view, the active
+ *  chat and the cover move now; `runActivation` shows the view after this frame paints, or in this
+ *  task for `now` and an empty chat, which gets no cover. Answers the record installed, or
+ *  undefined when nothing changed. */
 function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | undefined {
   const row = rowOfID(id);
   if (row === undefined || (id === state.active && opts.again !== true)) {
     return undefined;
   }
-  // First, at the clean style the click starts from, so its focusability check forces nothing.
+  const ref = row.subject.kind === "chat" ? row.subject.ref : "";
+  if (ref !== "" && ref !== getPaintedId()) {
+    takeParkReads();
+  }
+  // At the clean style the click starts from, so its focusability check forces nothing.
   moveFocusOffTranscript();
   state.active = id;
   setActiveView(id);
   switchGen += 1;
   let now = opts.now === true;
-  if (row.subject.kind === "chat") {
-    const ref = row.subject.ref;
+  if (ref !== "") {
     if (ref !== getActiveId()) {
       row.spec.onSelect?.();
     }
@@ -728,9 +733,10 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
       (opts.again === true && !hasResidentTurns(ref)) ||
       !viewLaidOut(row)
     ) {
-      // A painted chat coming back from another view kind is covered too: its transcript stays out
-      // of layout until the activation, and the cover is what this frame shows in its place.
+      // The cover is what this frame shows, its transcript out of layout until the activation: the
+      // target's composer area (a steer row, the queue) can resize the scroller under it.
       holdCover(ref);
+      hideTranscript();
     } else {
       releaseCoverExceptFor(ref);
     }

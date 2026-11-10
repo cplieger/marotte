@@ -4050,6 +4050,25 @@ describe("the owner's own flight", () => {
     expect({ during, after: load.mock.calls.length }).toEqual({ during: 0, after: 1 });
   });
 
+  it("ends the flight unlanded when its view is parked, asking no older page for it", async () => {
+    const load = vi.fn();
+    const { landed } = await flightFromTheEnd();
+    scroll.setLoadMore(load, true);
+    scroll.noteHistoryEdge(true);
+
+    scroll.detach();
+    const result = await landed;
+    const skeleton = document.getElementById("load-more-skeleton");
+    scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
+
+    expect({ result, asks: load.mock.calls.length, skeleton }).toEqual({
+      result: false,
+      asks: 0,
+      skeleton: null,
+    });
+  });
+
   it("lands a flight a shift aborts in the shift's own task", async () => {
     // An instant write aborts a smooth scroll, and the aborted scroll fires no scrollend of its own.
     const { landed } = await flightFromTheEnd();

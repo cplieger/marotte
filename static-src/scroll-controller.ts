@@ -928,6 +928,19 @@ export class ScrollController {
     }
   }
 
+  /** End a flight unlanded without touching the view. */
+  private leaveFlight(): void {
+    const f = this.flight;
+    if (f === null) {
+      return;
+    }
+    this.flight = null;
+    clearTimeout(f.timer);
+    for (const done of f.done) {
+      done(false);
+    }
+  }
+
   jumpInFlight(): boolean {
     return this.flight !== null;
   }
@@ -1177,18 +1190,42 @@ export class ScrollController {
     }
   }
 
-  /** Take the scroller from the current view: snapshot its state, abandon the older-page pass, drop the deferred
-   *  folds, and disconnect the observers so the parked view produces no callback. */
-  detach(): ViewScrollState {
-    // Read before the abandoned pass takes its skeleton out from above the reader.
+  /** The state `detach` parks the current view with, from layout reads alone, so a caller can take it at a clean
+   *  layout ahead of the writes before its detach. It stays true while the view neither scrolls nor changes above the
+   *  reader. */
+  snapshot(): ViewScrollState {
     const anchor = this.state === "reading" ? readingAnchor(this.scope) : null;
-    this.abandonLoadPass();
-    const drift = anchor === null ? null : lineDrift(this.scope, anchor);
-    const snapshot: ViewScrollState = {
-      scrollTop: Math.max(0, Math.min(this.scrollEl.scrollTop + (drift ?? 0), this.max())),
+    // The detach takes the older-page skeleton out from above the reader, moving their text up by its slot. The end
+    // is read with the skeleton in: the held floor keeps it across the removal.
+    const shift = anchor === null ? 0 : this.loadSkeletonSlot();
+    return {
+      scrollTop: Math.max(0, Math.min(this.scrollEl.scrollTop - shift, this.max())),
       readingState: this.state,
       ...(anchor === null ? {} : { anchor }),
     };
+  }
+
+  /** How far the content after the older-page skeleton moves up when it is removed; 0 with none in the view. */
+  private loadSkeletonSlot(): number {
+    const skel = this.viewEl.querySelector(`[id="${SKELETON_ID}"]`);
+    if (skel === null) {
+      return 0;
+    }
+    let next = skel.nextElementSibling;
+    while (next !== null && next.getClientRects().length === 0) {
+      next = next.nextElementSibling;
+    }
+    return next === null ? 0 : next.getBoundingClientRect().top - skel.getBoundingClientRect().top;
+  }
+
+  /** Take the scroller from the current view and park it with `taken`, by default its `snapshot` now: abandon the
+   *  older-page pass, drop the deferred folds, and disconnect the observers so the parked view produces no callback. */
+  detach(taken: ViewScrollState = this.snapshot()): ViewScrollState {
+    this.abandonLoadPass();
+    // Both ahead of `dropMotion`, which would read the scroller for `lastT` and land a flight with its corrections and
+    // its older-page request, for a view that is leaving.
+    this.lastT = -1;
+    this.leaveFlight();
     this.pendingRestore = null;
     this.deferred = [];
     this.dropMotion();
@@ -1196,13 +1233,12 @@ export class ScrollController {
     this.cancelFollowFrame();
     this.clearFloor();
     this.attached = false;
-    this.lastT = -1;
     this.rest = -1;
     this.onLoadMore = null;
     this.hasMoreMessages = false;
     this.disconnectView();
     this.setState("following");
-    return snapshot;
+    return taken;
   }
 
   resetScrollState(): void {

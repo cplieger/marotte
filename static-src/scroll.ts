@@ -43,9 +43,13 @@ export function attach(handle: ViewAttachHandle): void {
 export function applyPendingRestore(): void {
   getInstance().applyPendingRestore();
 }
-/** Snapshot and release the current view's scroll state (park). */
-export function detach(): ViewScrollState {
-  return getInstance().detach();
+/** The current view's park state from layout reads alone; `detach` takes it to park with. */
+export function snapshot(): ViewScrollState {
+  return getInstance().snapshot();
+}
+/** Release the current view's scroll state (park) with `taken`, by default a snapshot now. */
+export function detach(taken?: ViewScrollState): ViewScrollState {
+  return getInstance().detach(taken);
 }
 export function jumpTo(target: HTMLElement, opts?: ScrollIntoViewOptions): void {
   getInstance().jumpTo(target, opts);

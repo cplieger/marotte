@@ -166,7 +166,7 @@ describe("the parked re-show", () => {
  *  `steerRow` stands for the target's composer area: a queued prompt's row takes 50 px from the
  *  scroller. */
 function click(id: string, steerRow: boolean): void {
-  (cover as unknown as { takeParkReads?: () => void }).takeParkReads?.();
+  cover.takeParkReads();
   select(id);
   cover.holdCover(id);
   cover.hideTranscript();

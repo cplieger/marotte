@@ -120,7 +120,8 @@ export function coverHeld(forChat?: string): boolean {
 }
 
 /** Take the transcript scroller out of layout (display: none), so a frame that paints the cover
- *  over a chat view coming back from another view kind lays out none of the turns under it.
+ *  lays out none of the turns under it, whatever the switch changed around the scroller (the view
+ *  kind, the composer area's height).
  *  Chromium, Firefox and WebKit keep a scroller's offset across display: none and fire no scroll
  *  event; `content-visibility: hidden` on the scroller loses the offset in Chromium and WebKit. */
 export function hideTranscript(): void {
@@ -131,6 +132,30 @@ export function hideTranscript(): void {
 
 export function transcriptHidden(): boolean {
   return $.messagesWrap.classList.contains("hidden");
+}
+
+interface ParkReaders {
+  /** Capture what parking the shown transcript view reads, at the current layout. */
+  readonly take: () => void;
+  /** Discard a capture. */
+  readonly drop: () => void;
+}
+
+let parkReaders: ParkReaders | null = null;
+
+/** Install the transcript owner's park readers (messages.ts). */
+export function registerParkReads(readers: ParkReaders): void {
+  parkReaders = readers;
+}
+
+/** Capture the shown transcript's park reads before a switch's first write, so the park that
+ *  follows reads no layout. A no-op while the transcript is out of layout, whose boxes say nothing.
+ *  The capture holds until the park takes it or a held cover drops: only the cover, or the click's
+ *  own task, keeps the reader from moving the transcript. */
+export function takeParkReads(): void {
+  if ($.messagesWrap.closest(".hidden") === null) {
+    parkReaders?.take();
+  }
 }
 
 export function showTranscript(): void {
@@ -147,7 +172,11 @@ export function dropCover(): void {
   pendingLift = null;
   $.messagesWrap.removeAttribute("aria-hidden");
   setBusy($.messagesWrap, false);
-  if (cover === null || !wasHeld) {
+  if (!wasHeld) {
+    return;
+  }
+  parkReaders?.drop();
+  if (cover === null) {
     return;
   }
   // Under a hidden view no animation runs, so no `animationend` would come before the view shows
