@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -109,6 +110,51 @@ func TestReplace_RepairsAnUnparseableFile(t *testing.T) {
 	}
 	if doc := readConfig(t, filepath.Dir(path)); string(doc[KeyTheme]) != `"dark"` {
 		t.Errorf("config.json = %v, want the repaired document", doc)
+	}
+}
+
+// A reader keeps its last readable values over a refused file, so the repair may move any key.
+func TestReplace_AnswersNilKeysOverARefusedStoredFile(t *testing.T) {
+	dirs, _ := replaceFixture(t, `{not json`)
+	_, changed, err := Replace(t.Context(), dirs, []byte(`{"theme":"dark"}`), nil, nil)
+	if err != nil {
+		t.Fatalf("Replace = %v, want the repair written", err)
+	}
+	if changed != nil {
+		t.Errorf("changed = %q over a refused stored file, want nil", changed)
+	}
+}
+
+func TestReplace_ChecksTheWholeFileOverTheReadCap(t *testing.T) {
+	big := `{"pad":"` + strings.Repeat("a", maxBytes) + `"}`
+	cases := []struct {
+		prepare func(t *testing.T, dirs AgentDirs, path string)
+		name    string
+	}{
+		{name: "a refused read", prepare: func(t *testing.T, _ AgentDirs, path string) { writeFile(t, path, big) }},
+		{name: "a read held over an applied document", prepare: func(t *testing.T, dirs AgentDirs, path string) {
+			if _, _, err := Replace(t.Context(), dirs, []byte(`{"theme":"dark"}`), nil, nil); err != nil {
+				t.Fatalf("Setup: Replace: %v", err)
+			}
+			writeFile(t, path, big)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dirs, path := replaceFixture(t, "")
+			tc.prepare(t, dirs, path)
+			var saw []byte
+			_, _, err := Replace(t.Context(), dirs, []byte(`{"theme":"lite"}`), func(current []byte) error {
+				saw = current
+				return nil
+			}, nil)
+			if err != nil {
+				t.Fatalf("Replace = %v, want the write", err)
+			}
+			if string(saw) != big {
+				t.Errorf("check saw %d bytes, want the whole %d-byte file", len(saw), len(big))
+			}
+		})
 	}
 }
 

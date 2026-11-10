@@ -191,8 +191,8 @@ func (fx *ownedFilesFixture) fileID(t *testing.T, path string) string {
 	return fx.editorRead(t, path).FileID
 }
 
-// save PUTs content to path through the editor's write, with fileID unless it is empty.
-func (fx *ownedFilesFixture) save(t *testing.T, path, content, fileID string) (code int, msg string) {
+// saveReply PUTs content to path through the editor's write, with fileID unless it is empty.
+func (fx *ownedFilesFixture) saveReply(t *testing.T, path, content, fileID string) *httptest.ResponseRecorder {
 	t.Helper()
 	body := map[string]any{"content": content}
 	if fileID != "" {
@@ -204,6 +204,13 @@ func (fx *ownedFilesFixture) save(t *testing.T, path, content, fileID string) (c
 	}
 	rec := httptest.NewRecorder()
 	fx.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/file?path="+url.QueryEscape(path), strings.NewReader(string(raw))))
+	return rec
+}
+
+// save is saveReply answering the status and the error text.
+func (fx *ownedFilesFixture) save(t *testing.T, path, content, fileID string) (code int, msg string) {
+	t.Helper()
+	rec := fx.saveReply(t, path, content, fileID)
 	var reply struct {
 		Error string `json:"error"`
 	}
@@ -626,6 +633,64 @@ func TestEditorSaveOfConfigJSON_UnchangedContentRunsNoEffect(t *testing.T) {
 	}
 	if got := fx.reactor.writtenKeys(); len(got) != 0 {
 		t.Errorf("SettingsWritten calls after a save that changed no value = %q, want none", got)
+	}
+}
+
+// The runtime kept its last readable values over the refusal, so the repair may move any key:
+// the save runs every effect, as the watch does for the same transition.
+func TestEditorRepairOfARefusedConfigJSON_RunsEveryEffect(t *testing.T) {
+	fx := newOwnedFilesFixture(t)
+	seedConfig(t, fx.configDir, map[string]string{settings.KeyTheme: `"dark"`, settings.KeySecurityProfile: `"strict"`})
+	writeConfig(t, fx.configPath(), `{not json`)
+	fx.watch.pass(t.Context())
+	fx.watch.pass(t.Context())
+	if got := fx.reactor.writtenKeys(); len(got) != 1 || got[0] != nil {
+		t.Fatalf("Setup: SettingsWritten calls after the refusal settled = %q, want one with nil keys", got)
+	}
+
+	code, msg := fx.save(t, fx.configPath(), `{"theme":"dark"}`, fx.fileID(t, fx.configPath()))
+	fx.watch.drain(t.Context())
+
+	if code != http.StatusOK {
+		t.Fatalf("repair save = %d %q, want 200", code, msg)
+	}
+	if got := fx.reactor.writtenKeys(); len(got) != 2 || got[1] != nil {
+		t.Errorf("SettingsWritten calls after the repair = %q, want a second with nil keys", got)
+	}
+}
+
+// The editor serves a config.json up to filebrowse.WholeFileMax, above settings' read cap, so
+// a repair save over a file between the two is checked against the whole file.
+func TestEditorSaveOfAnOverCapConfigJSON_ChecksTheWholeFile(t *testing.T) {
+	fx := newOwnedFilesFixture(t)
+	bigConfig := func(fill string) string { return `{"pad":"` + strings.Repeat(fill, 1<<20) + `"}` }
+	writeConfig(t, fx.configPath(), bigConfig("a"))
+
+	code, msg := fx.save(t, fx.configPath(), `{"theme":"dark"}`, fx.fileID(t, fx.configPath()))
+	if code != http.StatusOK {
+		t.Fatalf("save under the over-cap file's own id = %d %q, want 200", code, msg)
+	}
+
+	writeConfig(t, fx.configPath(), bigConfig("a"))
+	stale := fx.fileID(t, fx.configPath())
+	onDisk := bigConfig("b")
+	writeConfig(t, fx.configPath(), onDisk)
+	current := fx.editorRead(t, fx.configPath())
+	rec := fx.saveReply(t, fx.configPath(), `{"theme":"lite"}`, stale)
+
+	var refusal filebrowse.FileRefusal
+	if rec.Code != http.StatusConflict || json.Unmarshal(rec.Body.Bytes(), &refusal) != nil {
+		t.Fatalf("stale save = %d %.200s, want a 409 refusal", rec.Code, rec.Body.String())
+	}
+	if refusal.FileID != current.FileID {
+		t.Errorf("refusal file_id = %q, want the whole file's %q", refusal.FileID, current.FileID)
+	}
+	if refusal.Content == nil || *refusal.Content != onDisk {
+		n := -1
+		if refusal.Content != nil {
+			n = len(*refusal.Content)
+		}
+		t.Errorf("refusal content = %d bytes, want the whole %d-byte file", n, len(onDisk))
 	}
 }
 

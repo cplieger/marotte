@@ -67,7 +67,9 @@ func (o configOwner) Replace(ctx context.Context, content []byte, check func([]b
 	if err != nil {
 		return nil, err
 	}
-	if len(changed) > 0 {
+	if changed == nil {
+		o.watch.effects.queueAll()
+	} else {
 		o.watch.effects.queue(changed)
 	}
 	return written, nil

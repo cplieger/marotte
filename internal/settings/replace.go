@@ -57,11 +57,13 @@ func validateAgentIgnorePatch(patch map[string]json.RawMessage) error {
 }
 
 // Replace writes content as the whole config.json under Update's lock. check, when not nil, sees
-// the bytes on disk first (nil unless a regular file) and its error is returned as is. Every
-// non-stamp key whose value content changes runs CheckPatch against the stored document, or an
-// empty one when that is refused, so a broken file can be repaired. The stamp keys are the
-// server's: the next version is stamped whatever content holds. publish gets the write's event
-// before the lock is released. Answers the bytes written and the keys whose value changed or went.
+// the whole file on disk first, past the read cap (nil unless a regular file), and its error is
+// returned as is. Every non-stamp key whose value content changes runs CheckPatch against the
+// stored document, or an empty one when that is refused, so a broken file can be repaired. The
+// stamp keys are the server's: the next version is stamped whatever content holds. publish gets
+// the write's event before the lock is released. Answers the bytes written and the keys whose
+// value changed or went, nil when the stored document was refused, since readers kept their last
+// readable values over it and any key may have moved.
 func Replace(ctx context.Context, dirs AgentDirs, content []byte, check func(current []byte) error,
 	publish func(context.Context, marotte.ServerEvent),
 ) (written []byte, changed []string, err error) {
@@ -83,18 +85,19 @@ func Replace(ctx context.Context, dirs AgentDirs, content []byte, check func(cur
 	defer c.writeMu.Unlock()
 
 	s, readErr := c.storedBytes(path, ownedfile.Reading)
-	if check != nil {
-		if checkErr := check(s.disk); checkErr != nil {
-			return nil, nil, checkErr
-		}
+	if checkErr := checkWhole(path, s.disk, check); checkErr != nil {
+		return nil, nil, checkErr
 	}
 	stored := s.doc
 	if readErr != nil {
 		stored = map[string]json.RawMessage{}
 	}
-	changed = changedKeys(stored, want)
+	keys := changedKeys(stored, want)
+	if readErr == nil {
+		changed = keys
+	}
 	patch := map[string]json.RawMessage{}
-	for _, k := range changed {
+	for _, k := range keys {
 		if v, ok := want[k]; ok {
 			patch[k] = v
 		}
@@ -116,4 +119,20 @@ func Replace(ctx context.Context, dirs AgentDirs, content []byte, check func(cur
 		publish(ctx, next.event())
 	}
 	return written, changed, nil
+}
+
+// checkWhole runs check, when not nil, on the whole file at path, re-read when disk, a capped
+// read of it, stopped at the cap.
+func checkWhole(path string, disk []byte, check func([]byte) error) error {
+	if check == nil {
+		return nil
+	}
+	if len(disk) > maxBytes {
+		_, whole, _, err := ownedfile.Classify(path, ownedfile.Options{}, func([]byte) error { return nil })
+		if err != nil {
+			return err
+		}
+		disk = whole
+	}
+	return check(disk)
 }

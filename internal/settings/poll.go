@@ -19,7 +19,7 @@ import (
 // Poll checks config.json for an outside write, under Update's lock. A read ownedfile.Gate holds
 // records, writes and publishes nothing. An acting valid read reports the keys that differ from
 // the applied document; a settled absence writes the seed (the stamp keys alone) and reports every
-// key the applied document held; a settled unreadable read reports nil keys. ok means there is
+// key but the stamp keys the applied document held; a settled unreadable read reports nil keys. ok means there is
 // something to apply, and publish has had the change's settings_updated event by then. A document
 // stamped below the highest stamp this process wrote, published or applied is first rewritten
 // above it. err is a context end or a path that does not resolve.
@@ -119,7 +119,7 @@ func (c *cache) pollValid(ctx context.Context, path string, r ownedfile.Read, da
 }
 
 // pollAbsent adopts a settled absence: the seed, the stamp keys alone, is written and applied.
-// It answers every key the applied document held, nil when that was refused.
+// It answers every key but the stamp keys the applied document held, nil when that was refused.
 func (c *cache) pollAbsent(ctx context.Context, path string, a applied, publish func(context.Context, marotte.ServerEvent)) []string {
 	before := c.appliedDoc(a)
 	var keys []string
