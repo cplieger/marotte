@@ -174,9 +174,7 @@ function click(id: string, steerRow: boolean): void {
   cover.takeParkReads();
   select(id);
   cover.holdCover(id);
-  const skip =
-    (cover as { skipShownTranscript?: () => void }).skipShownTranscript ?? cover.hideTranscript;
-  skip();
+  cover.skipShownTranscript();
   outer.style.height = steerRow ? "350px" : "400px";
 }
 

@@ -47,6 +47,13 @@ export function applyPendingRestore(): void {
 export function snapshot(): ViewScrollState {
   return getInstance().snapshot();
 }
+/** Stand still while the attached view's contents are skipped; `unskip` once they are laid out. */
+export function skip(): void {
+  getInstance().skip();
+}
+export function unskip(): void {
+  getInstance().unskip();
+}
 /** Release the current view's scroll state (park) with `taken`, by default a snapshot now. */
 export function detach(taken?: ViewScrollState): ViewScrollState {
   return getInstance().detach(taken);

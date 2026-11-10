@@ -190,6 +190,16 @@
   padding-block: 0;
 }
 
+/* A switch's click skips the shown view's turns under the cover (transcript-cover.ts
+ * `skipShownTranscript`), the box kept at the height read at the click, so the scroller's
+ * height and offset stay put. Not `contain-intrinsic-block-size: auto`: Chromium answers it
+ * through the ResizeObserver loop, which then reports undelivered notifications. */
+[id="messages-wrap"][data-switching] .transcript-view.is-active {
+  content-visibility: hidden;
+  padding-block: 0;
+  contain-intrinsic-block-size: var(--switch-view-size, 0);
+}
+
 /* Model picker */
 [id="model-picker"] {
   position: absolute;
