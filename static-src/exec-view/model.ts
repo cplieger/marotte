@@ -39,8 +39,6 @@ export interface ExecNode {
   startGen?: number;
   /** The one-line summary under the label, pre-joined by the adapter. */
   subtitle?: string;
-  /** The newest line the node printed, for a one-line glance; absent where the source has none. */
-  tail?: string;
   /** The identity facts, for the detail pane. */
   facts?: ExecFact[];
   /** Why this node ended badly, never blank: the source's reason trimmed, or its outcome's default sentence. */

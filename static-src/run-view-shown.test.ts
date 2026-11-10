@@ -32,15 +32,11 @@ vi.mock("./decision-dock.js", () => ({
 // a paint's DOM work visible to the observer below.
 vi.mock("./run-chat-steps.js", () => ({
   createRunStepStream: vi.fn((hostFor: (path: string) => HTMLElement) => ({
-    apply: (
-      paints: ReadonlyMap<string, readonly { turn: { body: Entry[] } }[]>,
-    ) => {
+    apply: (paints: ReadonlyMap<string, readonly { turn: { body: Entry[] } }[]>) => {
       m.applied.push([...paints.keys()]);
       for (const [path, list] of paints) {
         const p = document.createElement("p");
-        p.textContent = String(
-          list.reduce((n, x) => n + x.turn.body.length, 0),
-        );
+        p.textContent = String(list.reduce((n, x) => n + x.turn.body.length, 0));
         hostFor(path).replaceChildren(p);
       }
     },
@@ -108,15 +104,7 @@ function runRead(): unknown {
 }
 
 function entry(seq: number, kind: Entry["kind"], payload: unknown): Entry {
-  return {
-    id: `${TURN}-${String(seq)}`,
-    turn: TURN,
-    lane: "",
-    kind,
-    payload,
-    seq,
-    ts: 0,
-  };
+  return { id: `${TURN}-${String(seq)}`, turn: TURN, lane: "", kind, payload, seq, ts: 0 };
 }
 
 async function flush(): Promise<void> {
@@ -158,34 +146,17 @@ async function activateRunTab(): Promise<void> {
 }
 
 beforeEach(() => {
-  vi.useFakeTimers({
-    toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"],
-  });
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
   m.renders = 0;
   m.applied.length = 0;
   forgetRun(WF);
   document.body.replaceChildren();
   mountViews();
-  vi.mocked(apiGetOrError).mockResolvedValue({
-    ok: true,
-    status: 200,
-    data: runRead(),
-    error: "",
-  });
+  vi.mocked(apiGetOrError).mockResolvedValue({ ok: true, status: 200, data: runRead(), error: "" });
   vi.mocked(apiGetTyped).mockResolvedValue(null);
-  openRunTurn(
-    WF,
-    entry(0, "turn_open", { source: "workflow_step", node_path: STEP, n: 1 }),
-  );
+  openRunTurn(WF, entry(0, "turn_open", { source: "workflow_step", node_path: STEP, n: 1 }));
   appendRunEntry(WF, entry(1, "text", { text: "hello" }));
-  openRunEntry(WF, {
-    turn: TURN,
-    id: `${TURN}-2`,
-    kind: "text",
-    text: "",
-    n: 0,
-    lane: "",
-  });
+  openRunEntry(WF, { turn: TURN, id: `${TURN}-2`, kind: "text", text: "", n: 0, lane: "" });
 });
 
 afterEach(() => {
@@ -249,21 +220,17 @@ describe("a hidden run tab", () => {
     expect(ranges).toEqual([`/api/runs/${WF}/turns/${TURN}?after=1`]);
 
     const before = m.renders;
+    const applied = m.applied.length;
     answer({
       entries: [],
       open_entries: [
-        {
-          turn: TURN,
-          id: `${TURN}-2`,
-          kind: "text",
-          text: "x".repeat(20),
-          n: 20,
-          lane: "",
-        },
+        { turn: TURN, id: `${TURN}-2`, kind: "text", text: "x".repeat(20), n: 20, lane: "" },
       ],
     });
     await flush();
-    expect(m.renders - before).toBe(1);
+    // The catch-up is the step's own output: its pane paints once and the run's page not at all.
+    expect(m.applied.slice(applied)).toEqual([[STEP]]);
+    expect(m.renders - before).toBe(0);
   });
 });
 
@@ -305,19 +272,15 @@ describe("the shown step's transcript", () => {
     });
     openRunTurn(
       WF,
-      at(0, "turn_open", {
-        source: "workflow_step",
-        node_path: `${WF}:${step}`,
-        n: 1,
-      }),
+      at(0, "turn_open", { source: "workflow_step", node_path: `${WF}:${step}`, n: 1 }),
     );
     appendRunEntry(WF, at(1, "text", { text: `${step} says` }));
   }
 
   function dockRow(step: string): HTMLButtonElement {
-    const row = [
-      ...runView.querySelectorAll<HTMLButtonElement>(".ev-dock-row"),
-    ].find((b) => (b.getAttribute("aria-label") ?? "").startsWith(`${step},`));
+    const row = [...runView.querySelectorAll<HTMLButtonElement>(".ev-dock-row")].find((b) =>
+      (b.getAttribute("aria-label") ?? "").startsWith(`${step},`),
+    );
     if (row === undefined) {
       throw new Error(`no dock row for ${step}`);
     }
@@ -325,9 +288,7 @@ describe("the shown step's transcript", () => {
   }
 
   const hosts = (): string[] =>
-    [...runView.querySelectorAll<HTMLElement>(".ev-d-body")].map(
-      (h) => h.dataset["path"] ?? "",
-    );
+    [...runView.querySelectorAll<HTMLElement>(".ev-d-body")].map((h) => h.dataset["path"] ?? "");
 
   beforeEach(() => {
     vi.mocked(apiGetOrError).mockResolvedValue({

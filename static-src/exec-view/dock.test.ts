@@ -189,11 +189,12 @@ describe("the live rows", () => {
     page.render(
       run([
         step("plan", "ok", 0),
-        step("seat-a", "running", 1, { tail: "Reading the diff" }),
+        step("seat-a", "running", 1),
         step("seat-b", "input", 2),
         step("ship", "pending"),
       ]),
     );
+    page.paintTails(new Map([["root/seat-a", "Reading the diff"]]));
     expect(rowLabels()).toEqual(["seat-a", "seat-b"]);
     const [a, b] = [...host.querySelectorAll<HTMLButtonElement>(".ev-dock-row")];
     expect(a?.querySelector(".ev-dock-tail")?.textContent).toBe("Reading the diff");
@@ -508,12 +509,13 @@ describe("the head and rows, as surfaces", () => {
   it("lines the rows' columns up across rows", () => {
     const style = mountAppCSS();
     try {
-      page.render(
-        run([
-          step("a", "running", 0, { tail: "short" }),
-          step("a-much-longer-step-name", "running", 1, { tail: "tail" }),
+      page.paintTails(
+        new Map([
+          ["root/a", "short"],
+          ["root/a-much-longer-step-name", "tail"],
         ]),
       );
+      page.render(run([step("a", "running", 0), step("a-much-longer-step-name", "running", 1)]));
       const tails = [...host.querySelectorAll<HTMLElement>(".ev-dock-tail")];
       const [x0, x1] = tails.map((t) => t.getBoundingClientRect().left);
       expect(x0).toBe(x1);
@@ -815,8 +817,11 @@ describe("the Steps tree on open", () => {
 });
 
 describe("the phone budget", () => {
-  const fan = (): ExecNode[] =>
-    ["a", "b", "c", "d"].map((id, i) => step(`review/${id}`, "running", i, { tail: "Reading" }));
+  const fan = (): ExecNode[] => {
+    const steps = ["a", "b", "c", "d"].map((id, i) => step(`review/${id}`, "running", i));
+    page.paintTails(new Map(steps.map((n) => [n.path, "Reading"])));
+    return steps;
+  };
 
   async function phone(): Promise<HTMLStyleElement> {
     await browser.viewport(390, 844);

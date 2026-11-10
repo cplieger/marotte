@@ -28,6 +28,7 @@ import {
   type ExecRun,
 } from "./model.js";
 import { paintLabel } from "./label.js";
+import { setAttr, setText } from "../dom.js";
 import { STATE_WORD, inFlight, paintStateMark, type ExecState } from "./status.js";
 
 /** The kind glyph: a step gets the agent hexagon; a container gets a glyph
@@ -161,13 +162,9 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
   function applyCollapse(row: Row): void {
     const collapsed = row.collapsible && row.collapsed;
     row.root.classList.toggle("ev-collapsed", collapsed);
-    if (row.collapsible) {
-      row.root.setAttribute("aria-expanded", String(!collapsed));
-    } else {
-      row.root.removeAttribute("aria-expanded");
-    }
+    setAttr(row.root, "aria-expanded", row.collapsible ? String(!collapsed) : null);
     if (row.kids !== null) {
-      row.kids.hidden = collapsed;
+      setAttr(row.kids, "hidden", collapsed ? "" : null);
     }
   }
 
@@ -198,14 +195,14 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
 
   function paint(row: Row, node: ExecNode, depth: number, selected: string): void {
     paintLabel(row.label, node);
-    row.sub.textContent = node.subtitle ?? "";
-    row.sub.hidden = (node.subtitle ?? "") === "";
-    row.root.dataset["state"] = node.state;
+    setText(row.sub, node.subtitle ?? "");
+    setAttr(row.sub, "hidden", (node.subtitle ?? "") === "" ? "" : null);
+    setAttr(row.root, "data-state", node.state);
     // Rows are keyed by PATH, and a replanned run can put a different kind at one path.
     if (row.root.dataset["kind"] !== node.kind) {
       row.kindSlot.replaceChildren(kindGlyph(node.kind));
+      row.root.dataset["kind"] = node.kind;
     }
-    row.root.dataset["kind"] = node.kind;
     // The GROUP BOX. Toggled rather than added, because `paint` re-runs for the same
     // reconciled row and a node gains children as the run progresses.
     row.root.classList.toggle("ev-group", depth === 0 && node.children.length > 0);
@@ -223,11 +220,12 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
       row.end = node.end;
     }
     const ms = elapsed(node.start, node.end);
-    row.dur.textContent = ms > 0 ? formatElapsed(ms) : "";
+    setText(row.dur, ms > 0 ? formatElapsed(ms) : "");
     row.root.classList.toggle("ev-selected", node.path === selected);
-    row.root.setAttribute("aria-selected", String(node.path === selected));
+    setAttr(row.root, "aria-selected", String(node.path === selected));
     // Read back off the rendered text, so it cannot disagree with the screen.
-    row.root.setAttribute(
+    setAttr(
+      row.root,
       "aria-label",
       `${node.label}, ${STATE_WORD[node.state]}${node.subtitle === undefined ? "" : `, ${node.subtitle}`}`,
     );
@@ -237,11 +235,11 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
       row.kids = null;
       // THIS is what keeps a STEP non-collapsible: a childless row has no
       // disclosure at all, so there is nothing to fold. Nothing here may change it.
-      row.chevron.hidden = true;
-      row.root.removeAttribute("aria-expanded");
+      setAttr(row.chevron, "hidden", "");
+      setAttr(row.root, "aria-expanded", null);
       return;
     }
-    row.chevron.hidden = !row.collapsible;
+    setAttr(row.chevron, "hidden", row.collapsible ? null : "");
     row.kids ??= el("div", { className: "ev-kids", role: "group" });
     // Only when detached: `.ev-row-main` is the row's one other child, so the append seats it
     // second; re-appending an attached box restarts every animation in it and drops focus.
@@ -265,7 +263,7 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
         }
         const ms = elapsed(row.start, undefined);
         if (ms > 0) {
-          row.dur.textContent = formatElapsed(ms);
+          setText(row.dur, formatElapsed(ms));
         }
       }
     },

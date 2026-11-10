@@ -311,13 +311,17 @@ export function projectTurns(src: TurnSource): Turn[] {
 }
 
 /** ONE turn of the source, or undefined when absent or not drawn. For a keyed pass that knows which
- *  turn moved, so a per-frame tool update builds no whole projection; `rewindTo` is resolved too. */
-export function projectTurn(src: TurnSource, turnID: string): Turn | undefined {
+ *  turn moved, so a per-frame tool update builds no whole projection; `rewindTo` is resolved too.
+ *  `state` stands in for the source's own copy of that turn (a graded close), leaving the rest. */
+export function projectTurn(
+  src: TurnSource,
+  turnID: string,
+  state: TurnState | undefined = src.turns.get(turnID),
+): Turn | undefined {
   const at = src.turn_order.indexOf(turnID);
   if (at < 0) {
     return undefined;
   }
-  const state = src.turns.get(turnID);
   if (state === undefined) {
     return undefined;
   }

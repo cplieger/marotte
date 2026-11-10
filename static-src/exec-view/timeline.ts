@@ -17,6 +17,7 @@ import {
 } from "./model.js";
 import { STATE_WORD } from "./status.js";
 import { paintLabel } from "./label.js";
+import { setAttr, setText } from "../dom.js";
 
 export interface ExecTimelineView {
   readonly root: HTMLElement;
@@ -62,6 +63,9 @@ export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelin
     readonly name: HTMLElement;
     readonly bar: HTMLElement;
     readonly dur: HTMLElement;
+    /** The bar's last written offset and width: the style serializes them, so it cannot be read
+     *  back to compare. */
+    geom: string;
   }
   /** Each mounted lane's parts, by its root; a removed lane is collected with it. */
   const laneParts = new WeakMap<HTMLElement, Lane>();
@@ -91,7 +95,7 @@ export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelin
         onSelect(path);
       }
     });
-    return { root, name, bar, dur };
+    return { root, name, bar, dur, geom: "" };
   }
 
   /** A loop pass's header: its number and its span, read off its steps because a resume restamps
@@ -107,15 +111,9 @@ export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelin
 
   function paintPassHead(head: HTMLElement, n: ExecNode, pass: number): void {
     const [name, dur] = [head.firstElementChild, head.lastElementChild];
-    const text = passText(pass);
-    if (name !== null && name.textContent !== text) {
-      name.textContent = text;
-    }
+    setText(name, passText(pass));
     const ms = execWindow([n], false)?.span ?? 0;
-    const durText = ms > 0 ? formatElapsed(ms) : "";
-    if (dur !== null && dur.textContent !== durText) {
-      dur.textContent = durText;
-    }
+    setText(dur, ms > 0 ? formatElapsed(ms) : "");
   }
 
   /** RECONCILED by path, not rebuilt: each lane is a focusable `role="button"`, and replacing it on
@@ -128,7 +126,7 @@ export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelin
 
     const paintLane = (lane: Lane, n: ExecNode): void => {
       const from = Date.parse(n.start ?? "");
-      lane.bar.hidden = win === undefined || Number.isNaN(from);
+      setAttr(lane.bar, "hidden", win === undefined || Number.isNaN(from) ? "" : null);
       if (win === undefined || Number.isNaN(from)) {
         paintText(lane, n);
         return;
@@ -138,27 +136,33 @@ export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelin
       // Floor of 0.75%: a sub-second step in an hour-long run rounds to zero
       // width otherwise, reporting the step as absent rather than fast.
       const width = Math.max(0.75, ((Math.max(to, from) - from) / win.span) * 100);
-      lane.bar.style.insetInlineStart = `${left.toFixed(3)}%`;
       // Clamped so clock skew between the server's stamps and this browser
       // cannot widen the row past the track.
-      lane.bar.style.inlineSize = `${Math.min(100 - left, width).toFixed(3)}%`;
+      const start = `${left.toFixed(3)}%`;
+      const size = `${Math.min(100 - left, width).toFixed(3)}%`;
+      if (lane.geom !== `${start} ${size}`) {
+        lane.geom = `${start} ${size}`;
+        lane.bar.style.insetInlineStart = start;
+        lane.bar.style.inlineSize = size;
+      }
       paintText(lane, n);
     };
 
     const paintText = (lane: Lane, n: ExecNode): void => {
       const ms = elapsed(n.start, n.end);
       const durText = ms > 0 ? formatElapsed(ms) : "";
-      lane.root.className = n.path === selected ? "ev-tl-lane ev-selected" : "ev-tl-lane";
-      lane.root.dataset["state"] = n.state;
+      lane.root.classList.toggle("ev-selected", n.path === selected);
+      setAttr(lane.root, "data-state", n.state);
       const pass = lanePass.get(n.path);
-      lane.root.setAttribute(
+      setAttr(
+        lane.root,
         "aria-label",
         [n.label, pass === undefined ? "" : passText(pass), STATE_WORD[n.state], durText]
           .filter((s) => s !== "")
           .join(", "),
       );
       paintLabel(lane.name, n);
-      lane.dur.textContent = durText;
+      setText(lane.dur, durText);
     };
 
     reconcile(lanes, ls, {

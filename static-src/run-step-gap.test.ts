@@ -29,8 +29,8 @@ import {
   invalidateRun,
   peekRunState,
   registerRunTurnRepair,
-  runTurnHoles,
-  runTurns,
+  runStepHoles,
+  runTurnSource,
 } from "./run-store.js";
 import { requestRunTurnRange } from "./run-turn-range.js";
 import {
@@ -127,7 +127,7 @@ function stepAnswer(): ReturnType<typeof decodeRunStepTranscript> {
 /** What the two folds are compared on: the entries at the positions their `seq` claims, the open
  *  tails per lane, and where the closer landed. */
 function heldFold(): unknown {
-  const state = runTurns(runID).find(([id]) => id === TURN)?.[1];
+  const state = runTurnSource(runID).turns.get(TURN);
   return {
     entries: state?.entries,
     open: [...(state?.openEntries.values() ?? [])],
@@ -248,7 +248,7 @@ describe("a step that opened and closed entirely inside the gap", () => {
   it("seats the whole closed turn from the step GET, the only door to it", async () => {
     // The gap's shape: no frame of this turn arrived, so the store holds nothing for it and the
     // pane's own read is what fills it.
-    expect(runTurns(runID)).toEqual([]);
+    expect(runTurnSource(runID).turn_order).toEqual([]);
 
     requestStepTranscript(runID, PATH);
 
@@ -259,7 +259,7 @@ describe("a step that opened and closed entirely inside the gap", () => {
     // Equality against the server's own log is the claim, so an entry seated at the wrong position
     // fails here: the closer included, and the turn reads settled.
     expect(heldFold()).toEqual(serverFold());
-    expect(runTurnHoles(runID)).toEqual([]);
+    expect(runStepHoles(runID, PATH)).toEqual([]);
   });
 
   it("holds no run_turn stamp for it, which is what the answer's empty subject says", async () => {
@@ -343,7 +343,7 @@ describe("a pane opened by reload while a step streams", () => {
     // Asserted AFTER the answer landed as well, because a seat that refused the answer's first
     // entry re-asks and the count is the one place that second read shows.
     expect(rangeReads()).toHaveLength(1);
-    expect(runTurnHoles(runID)).toEqual([]);
+    expect(runStepHoles(runID, PATH)).toEqual([]);
   });
 
   it("drops the tail its own entry sealed when the pane re-reads the step", async () => {

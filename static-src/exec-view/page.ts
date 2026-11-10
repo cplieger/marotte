@@ -64,6 +64,10 @@ export interface ExecPageView {
   readonly root: HTMLElement;
   /** Draw an execution. Idempotent and safe on every invalidation. */
   render(run: ExecRun | undefined): void;
+  /** The dock rows' newest printed lines, by path (`ExecDockView.paintTails`). */
+  paintTails(tails: ReadonlyMap<string, string>): void;
+  /** The paths of the dock's step rows as the last render drew them. */
+  dockRowPaths(): readonly string[];
   /** The host a node's live transcript renders into. */
   bodyFor(path: string): HTMLElement;
   /** Remove a node's host, once its transcript is disposed. */
@@ -347,6 +351,12 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
       }
       repaint();
       setClock(run.live);
+    },
+    paintTails(tails) {
+      dock.paintTails(tails);
+    },
+    dockRowPaths() {
+      return dock.rowPaths();
     },
     bodyFor(path) {
       return detail.bodyFor(path);

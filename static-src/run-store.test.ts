@@ -1626,7 +1626,7 @@ describe("a run's log orders its turns by the run's own ordinal", () => {
     store.openRunTurn("r-order", opened("t-second", 2));
     store.openRunTurn("r-order", opened("t-first", 1));
     store.openRunTurn("r-order", opened("t-third", 3));
-    expect(store.runTurns("r-order").map(([id]) => id)).toEqual(["t-first", "t-second", "t-third"]);
+    expect(store.runTurnSource("r-order").turn_order).toEqual(["t-first", "t-second", "t-third"]);
   });
 });
 

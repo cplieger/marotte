@@ -5,7 +5,7 @@ import { signal, touch, type Signal } from "@cplieger/reactive";
 import { apiGetOrError, apiGetTyped } from "./api-client.js";
 import { nodePathKey, nodePathSegment } from "./run-node-key.js";
 import { forgetSubject, observeStamp } from "./subject-versions.js";
-import { turnOpenOf } from "./turns.js";
+import { turnOpenOf, type TurnSource } from "./turns.js";
 import { settleWorkflowMessages, turnsInOrder } from "./workflow-delivery.js";
 import type { Entry, OpenEntry, TurnState } from "./types.js";
 import {
@@ -1010,7 +1010,6 @@ export function forgetRun(workflowID: string): void {
   frameLabels.delete(workflowID);
   resumedBy.delete(workflowID);
   runLogs.delete(workflowID);
-  logVersions.delete(workflowID);
   logObserver?.forget(workflowID);
 }
 
@@ -1254,57 +1253,78 @@ interface RunLog {
   turns: Map<string, TurnState>;
   order: string[];
   holes: Set<string>;
+  /** Each step path's turn ids in `order`'s order, so a step's reader never scans the run. */
+  byPath: Map<string, string[]>;
+  /** One version per step path, beside the state cells rather than inside them: a step's entries
+   *  and the run's tree move on different clocks, and a frame repaints only its own step's readers. */
+  pathVersions: Map<string, Signal<number>>;
 }
 
 const runLogs = new Map<string, RunLog>();
 
-/** Per-run log versions, beside the state cells rather than inside them: a step's entries and
- *  the run's tree move on different clocks, so a reader of one must not repaint for the other. */
-const logVersions = new Map<string, Signal<number>>();
-
-function logCell(workflowID: string): Signal<number> {
-  let c = logVersions.get(workflowID);
-  if (c === undefined) {
-    c = signal(0);
-    logVersions.set(workflowID, c);
-  }
-  return c;
-}
-
 function log(workflowID: string): RunLog {
   let l = runLogs.get(workflowID);
   if (l === undefined) {
-    l = { turns: new Map(), order: [], holes: new Set() };
+    l = {
+      turns: new Map(),
+      order: [],
+      holes: new Set(),
+      byPath: new Map(),
+      pathVersions: new Map(),
+    };
     runLogs.set(workflowID, l);
   }
   return l;
 }
 
-function bumpLog(workflowID: string): void {
-  const c = logCell(workflowID);
-  c.value = c.peek() + 1;
+function pathCell(l: RunLog, nodePath: string): Signal<number> {
+  let c = l.pathVersions.get(nodePath);
+  if (c === undefined) {
+    c = signal(0);
+    l.pathVersions.set(nodePath, c);
+  }
+  return c;
 }
 
-/** Subscribe to a run's log: the turns it holds in the order they opened. The pane reads the
- *  turn whose `turn_open.node_path` is the step it renders. */
-export function runTurns(workflowID: string): readonly [string, TurnState][] {
-  touch(logCell(workflowID));
+/** Tell the readers of a held turn's step; a turn the log does not hold has none yet. */
+function bumpLog(workflowID: string, turnID: string): void {
   const l = runLogs.get(workflowID);
-  if (l === undefined) {
-    return [];
+  const state = l?.turns.get(turnID);
+  const path = state === undefined ? undefined : turnOpenOf(state)?.node_path;
+  if (l !== undefined && path !== undefined) {
+    const c = pathCell(l, path);
+    c.value = c.peek() + 1;
   }
-  return l.order.flatMap((id) => {
+}
+
+/** Subscribe to one step's turns, in the order they opened: a frame of another step does not
+ *  re-run the caller. */
+export function runStepTurns(workflowID: string, nodePath: string): readonly [string, TurnState][] {
+  const l = log(workflowID);
+  touch(pathCell(l, nodePath));
+  return (l.byPath.get(nodePath) ?? []).flatMap((id) => {
     const t = l.turns.get(id);
     return t === undefined ? [] : [[id, t] as [string, TurnState]];
   });
 }
 
-/** The turns this run's log is missing entries for. The pane re-reads such a turn through the
- *  step GET, which serves the whole turn; the digest's own repair is the range read
- *  (`run-turn-range.ts`), and both clear the marker through `clearRunHole`. */
-export function runTurnHoles(workflowID: string): readonly string[] {
-  touch(logCell(workflowID));
-  return [...(runLogs.get(workflowID)?.holes ?? [])];
+/** The run's whole log as a `TurnSource`, UNTRACKED and uncopied: the projection context for a
+ *  step's turns, which its caller subscribes to through `runStepTurns`. */
+export function runTurnSource(workflowID: string): TurnSource {
+  const l = runLogs.get(workflowID);
+  return l === undefined
+    ? { turns: new Map(), turn_order: [] }
+    : { turns: l.turns, turn_order: l.order };
+}
+
+/** The turns of one step this run's log is missing entries for, subscribing to that step only.
+ *  The pane re-reads such a turn through the step GET, which serves the whole turn; the digest's
+ *  own repair is the range read (`run-turn-range.ts`), and both clear the marker through
+ *  `clearRunHole`. */
+export function runStepHoles(workflowID: string, nodePath: string): readonly string[] {
+  const l = log(workflowID);
+  touch(pathCell(l, nodePath));
+  return (l.byPath.get(nodePath) ?? []).filter((id) => l.holes.has(id));
 }
 
 /** The newest `seq` this client holds for one step turn, which is what a `run_turn` repair asks
@@ -1323,7 +1343,7 @@ export function clearRunHole(workflowID: string, turnID: string): void {
   if (!l?.holes.delete(turnID)) {
     return;
   }
-  bumpLog(workflowID);
+  bumpLog(workflowID, turnID);
 }
 
 /** The `run_turn` digest ref for one open step turn. The server spells it `<workflowID>/<turn>`
@@ -1397,8 +1417,18 @@ export function openRunTurn(workflowID: string, entry: Entry): void {
   } else {
     l.order.splice(at, 0, entry.turn);
   }
+  const path = turnOpenOf(state)?.node_path;
+  if (path !== undefined) {
+    const ids = l.byPath.get(path) ?? [];
+    const near = ids.findIndex((id) => {
+      const other = l.turns.get(id);
+      return other !== undefined && runTurnOrdinal(other) > n;
+    });
+    ids.splice(near < 0 ? ids.length : near, 0, entry.turn);
+    l.byPath.set(path, ids);
+  }
   stampRunTurn(workflowID, entry.turn, state);
-  bumpLog(workflowID);
+  bumpLog(workflowID, entry.turn);
 }
 
 /** A turn without a readable ordinal sorts last, where a newer turn belongs. */
@@ -1414,7 +1444,6 @@ export function appendRunEntry(workflowID: string, entry: Entry): void {
   const state = l.turns.get(entry.turn);
   if (state === undefined) {
     markRunHole(workflowID, entry.turn);
-    bumpLog(workflowID);
     return;
   }
   if (entry.seq !== state.entries.length) {
@@ -1422,7 +1451,7 @@ export function appendRunEntry(workflowID: string, entry: Entry): void {
       return;
     }
     markRunHole(workflowID, entry.turn);
-    bumpLog(workflowID);
+    bumpLog(workflowID, entry.turn);
     return;
   }
   state.entries.push(entry);
@@ -1444,7 +1473,7 @@ export function appendRunEntry(workflowID: string, entry: Entry): void {
   } else {
     stampRunTurn(workflowID, entry.turn, state);
   }
-  bumpLog(workflowID);
+  bumpLog(workflowID, entry.turn);
 }
 
 /** Seat a lane's open entry of a run's turn. */
@@ -1452,12 +1481,11 @@ export function openRunEntry(workflowID: string, open: OpenEntry): void {
   const state = runLogs.get(workflowID)?.turns.get(open.turn);
   if (state === undefined) {
     markRunHole(workflowID, open.turn);
-    bumpLog(workflowID);
     return;
   }
   const lane = open.lane ?? "";
   state.openEntries.set(lane, { ...open, lane });
-  bumpLog(workflowID);
+  bumpLog(workflowID, open.turn);
 }
 
 /** Replace one turn's open tails with the ones a WHOLE-TURN read answered, which is
@@ -1481,7 +1509,7 @@ export function adoptRunOpenEntries(
     const lane = o.lane ?? "";
     state.openEntries.set(lane, { ...o, lane });
   }
-  bumpLog(workflowID);
+  bumpLog(workflowID, turnID);
 }
 
 /** Extend a lane's open entry by one delta. `n` is the running count AFTER the delta, so `open.n
@@ -1497,17 +1525,16 @@ export function applyRunDelta(
   const state = runLogs.get(workflowID)?.turns.get(turnID);
   if (state === undefined) {
     markRunHole(workflowID, turnID);
-    bumpLog(workflowID);
     return;
   }
   const open = state.openEntries.get(lane);
   if (open?.id !== entryID || n !== open.n + 1) {
     markRunHole(workflowID, turnID);
-    bumpLog(workflowID);
+    bumpLog(workflowID, turnID);
     return;
   }
   state.openEntries.set(lane, { ...open, text: open.text + delta, n });
-  bumpLog(workflowID);
+  bumpLog(workflowID, turnID);
 }
 
 /** Seal a lane's open entry: build the `Entry` from the open state and hand it to
@@ -1524,13 +1551,12 @@ export function sealRunEntry(
   const state = runLogs.get(workflowID)?.turns.get(turnID);
   if (state === undefined) {
     markRunHole(workflowID, turnID);
-    bumpLog(workflowID);
     return;
   }
   const open = state.openEntries.get(lane);
   if (open?.id !== entryID || n !== open.n) {
     markRunHole(workflowID, turnID);
-    bumpLog(workflowID);
+    bumpLog(workflowID, turnID);
     return;
   }
   state.openEntries.delete(lane);

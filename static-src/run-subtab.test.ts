@@ -90,8 +90,9 @@ vi.mock("./run-store.js", async (importOriginal) => ({
   clearRunHole: vi.fn(),
   // The log's two READERS, which the run view asks for the selected step's rows. Empty answers,
   // which is what a run nobody has painted holds.
-  runTurns: vi.fn(() => []),
-  runTurnHoles: vi.fn(() => []),
+  runStepTurns: vi.fn(() => []),
+  runStepHoles: vi.fn(() => []),
+  runTurnSource: vi.fn(() => ({ turns: new Map(), turn_order: [] })),
 }));
 
 vi.mock("./run-dots.js", () => ({ refreshRunDots: vi.fn(), trackRun: vi.fn() }));

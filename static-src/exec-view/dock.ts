@@ -38,6 +38,11 @@ export interface ExecDockView {
   /** Seat the run's verbs in the head; the same element again moves nothing, so focus inside it
    *  survives a repaint. */
   setControls(row: HTMLElement | null): void;
+  /** The newest line each step printed, by path, written into the rows on screen and kept for the
+   *  rows a later paint mounts: a step's output moves on its own clock, not the run's. */
+  paintTails(tails: ReadonlyMap<string, string>): void;
+  /** The paths of the step rows the last paint showed, in order. */
+  rowPaths(): readonly string[];
   /** Release the panel, the clamps and the host. */
   dispose(): void;
 }
@@ -74,6 +79,7 @@ const TAKEOVER = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
 
 /** One step row: a button that shows its step. */
 interface LiveRow {
+  readonly path: string;
   readonly root: HTMLElement;
   readonly btn: HTMLButtonElement;
   readonly mark: HTMLElement;
@@ -244,6 +250,8 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
   opts.host.replaceChildren(root);
 
   const rowParts = new WeakMap<HTMLElement, LiveRow>();
+  let tails: ReadonlyMap<string, string> = new Map();
+  let shownPaths: readonly string[] = [];
   const buildRow = (path: string): LiveRow => {
     const mark = el("span", { className: "ev-state", "aria-hidden": "true" });
     const kind = el("span", { className: "ev-kind", "aria-hidden": "true" });
@@ -263,6 +271,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
       opts.select(path);
     });
     const row = {
+      path,
       root: el("li", { className: "ev-dock-li" }, btn),
       btn,
       mark,
@@ -286,7 +295,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
       row.btn.dataset["kind"] = n.kind;
     }
     paintLabel(row.label, n);
-    setText(row.tail, n.tail ?? "");
+    setText(row.tail, tails.get(n.path) ?? "");
     const ms = elapsed(n.start, n.end);
     const time = ms > 0 ? formatElapsed(ms) : "";
     setText(row.dur, time);
@@ -295,11 +304,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
       "aria-label",
       [n.label, STATE_WORD[n.state], time].filter((s) => s !== "").join(", "),
     );
-    if (shown) {
-      row.btn.setAttribute("aria-current", "true");
-    } else {
-      row.btn.removeAttribute("aria-current");
-    }
+    setAttr(row.btn, "aria-current", shown ? "true" : null);
   };
 
   /** The steps in flight, else the newest started one, plus the shown step wherever it stands. A
@@ -334,7 +339,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
       askCount,
       questions.length > 1 ? `${String(at)} of ${String(questions.length)} questions` : "",
     );
-    askCount.hidden = questions.length < 2;
+    setAttr(askCount, "hidden", questions.length < 2 ? "" : null);
     const label = q.step === undefined ? "A step asks" : `${q.step} asks`;
     setAttr(ask, "aria-label", label);
     if (askText.textContent !== q.text) {
@@ -384,12 +389,13 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
 
   return {
     paint(run, selected, extra) {
-      root.dataset["state"] = run.state;
+      setAttr(root, "data-state", run.state);
       summary.paint(run);
       paintAsk(run, selected);
       setText(pauseSaid, run.alert?.kind === "paused" ? run.alert.text : "");
       paintNotes(run, extra);
       const steps = liveSteps(run, selected);
+      shownPaths = steps.map((n) => n.path);
       const lead = (steps.find((n) => n.path === selected) ?? steps[0])?.path;
       reconcile(rows, steps, {
         key: (n) => n.path,
@@ -407,7 +413,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
           rowRoot.toggleAttribute("data-lead", n.path === lead);
         },
       });
-      more.hidden = steps.length <= 1;
+      setAttr(more, "hidden", steps.length <= 1 ? "" : null);
       setText(more, `+${String(steps.length - 1)}`);
       const hidden = steps.length - 1;
       setAttr(more, "aria-label", `Show ${String(hidden)} more ${hidden === 1 ? "step" : "steps"}`);
@@ -415,6 +421,18 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
     },
     setControls(row) {
       seat(act, row);
+    },
+    paintTails(next) {
+      tails = next;
+      for (const rowRoot of rows.children) {
+        const row = rowParts.get(rowRoot as HTMLElement);
+        if (row !== undefined) {
+          setText(row.tail, tails.get(row.path) ?? "");
+        }
+      }
+    },
+    rowPaths() {
+      return shownPaths;
     },
     dispose() {
       ctl.dispose();

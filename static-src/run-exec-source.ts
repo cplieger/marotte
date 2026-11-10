@@ -453,6 +453,96 @@ interface FoldContext {
   ends: StepEnds;
   /** How many paused steps of the whole tree carry each node id. */
   pausedIDs: ReadonlyMap<string, number>;
+  /** Each state node's last fold, valid while every input above but `ends` is unchanged. */
+  held: WeakMap<RunNode, HeldFold>;
+  /** Whether a `step_ends` row differs from the last fold's, which a held subtree cannot see
+   *  without a walk, so every node is checked rather than taken whole. */
+  endsMoved: boolean;
+}
+
+interface HeldFold {
+  address: string;
+  pass: number | undefined;
+  include: string;
+  end: RunStepEnd | undefined;
+  kids: readonly RunNode[];
+  exec: ExecNode;
+}
+
+/** A surface's memory of its last fold of one run, so a fold after a frame rebuilds only the
+ *  nodes the frame changed and every other node keeps its object. */
+export interface ExecFoldMemo {
+  last?: {
+    plan: unknown;
+    plans: Map<string, PlanEntry>;
+    run: ClassifiedRunStatus;
+    asked: AskedSteps;
+    pausedIDs: ReadonlyMap<string, number>;
+    ends: StepEnds;
+    held: WeakMap<RunNode, HeldFold>;
+  };
+}
+
+function sameEnd(a: RunStepEnd | undefined, b: RunStepEnd | undefined): boolean {
+  return a === b || (a !== undefined && b !== undefined && JSON.stringify(a) === JSON.stringify(b));
+}
+
+function sameEnds(a: StepEnds, b: StepEnds): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (a.size !== b.size) {
+    return false;
+  }
+  for (const [path, end] of a) {
+    if (!sameEnd(end, b.get(path))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function sameCounts(a: ReadonlyMap<string, number>, b: ReadonlyMap<string, number>): boolean {
+  return a.size === b.size && [...a].every(([k, v]) => b.get(k) === v);
+}
+
+function sameAsked(a: AskedSteps, b: AskedSteps): boolean {
+  return (
+    a.waiting.size === b.waiting.size &&
+    [...a.waiting].every((n) => b.waiting.has(n)) &&
+    a.answerable.size === b.answerable.size &&
+    [...a.answerable].every(([n, id]) => b.answerable.get(n) === id)
+  );
+}
+
+/** The held folds `memo` may lend this fold: its own when every whole-run input matches, else a
+ *  fresh table, since a status, plan, ask or pause count reaches nodes no frame touched. */
+function heldFolds(
+  memo: ExecFoldMemo | undefined,
+  ctx: Omit<FoldContext, "held" | "endsMoved">,
+  plan: unknown,
+): { held: WeakMap<RunNode, HeldFold>; endsMoved: boolean } {
+  const last = memo?.last;
+  const reuse =
+    last !== undefined &&
+    last.plan === plan &&
+    last.run === ctx.run &&
+    sameAsked(last.asked, ctx.asked) &&
+    sameCounts(last.pausedIDs, ctx.pausedIDs);
+  const held = reuse ? last.held : new WeakMap<RunNode, HeldFold>();
+  const endsMoved = reuse && !sameEnds(last.ends, ctx.ends);
+  if (memo !== undefined) {
+    memo.last = {
+      plan,
+      plans: ctx.plans,
+      run: ctx.run,
+      asked: ctx.asked,
+      pausedIDs: ctx.pausedIDs,
+      ends: ctx.ends,
+      held,
+    };
+  }
+  return { held, endsMoved };
 }
 
 /** The server's `stepMessageVerb` (internal/agent/run_message.go), read off the raw statuses. */
@@ -552,26 +642,60 @@ function toNode(
 ): ExecNode {
   const path = [...trail, nodePathSegment(node, parent)];
   const address = nodePathKey(path);
-  const plan = ctx.plans.get(node.nodeId);
-  const kind = kindOf(node.type);
-  const actual = node.children ?? [];
-  const kids = actual.length > 0 ? actual : plannedChildren(node, plan);
-  // KAS refuses an include inside an included recipe, so one enclosing include is all there is.
-  const inner =
-    kind === "sequence" && plan?.includedFrom !== undefined
-      ? { id: node.nodeId, name: plan.includedFrom.name }
-      : include;
-  const children = kids.map((k) => toNode(k, path, ctx, node, inner));
-  const own = withAsk(stateOf(node.status), ctx.asked.waiting.has(node));
-  const work = isWork({ kind });
-  const view = work ? stepEndView(own, ctx.ends.get(address)) : undefined;
-  const state = view?.state ?? rollUp(own, currentMembers({ kind, children }));
   // A repeat's child is a PASS; KAS names a pass container `<repeatId>#<n>`, which is its id
   // and not something a reader can read.
   const pass =
     parent?.type === "repeat"
       ? (node.iteration ?? (parent.children ?? []).indexOf(node)) + 1
       : undefined;
+  const end = ctx.ends.get(address);
+  const held = ctx.held.get(node);
+  const placed =
+    held?.address === address && held.pass === pass && held.include === (include?.id ?? "");
+  if (placed && !ctx.endsMoved) {
+    return held.exec;
+  }
+  const plan = ctx.plans.get(node.nodeId);
+  const kind = kindOf(node.type);
+  const actual = node.children ?? [];
+  // The planned stand-ins are built per fold, so a held node keeps the ones it was folded from.
+  const kids = actual.length > 0 ? actual : placed ? held.kids : plannedChildren(node, plan);
+  // KAS refuses an include inside an included recipe, so one enclosing include is all there is.
+  const inner =
+    kind === "sequence" && plan?.includedFrom !== undefined
+      ? { id: node.nodeId, name: plan.includedFrom.name }
+      : include;
+  const children = kids.map((k) => toNode(k, path, ctx, node, inner));
+  if (
+    placed &&
+    sameEnd(held.end, end) &&
+    children.length === held.exec.children.length &&
+    children.every((k, i) => k === held.exec.children[i])
+  ) {
+    return held.exec;
+  }
+  const out = foldNode(node, ctx, { address, pass, end, plan, kind, children, include });
+  ctx.held.set(node, { address, pass, include: include?.id ?? "", end, kids, exec: out });
+  return out;
+}
+
+/** What `toNode` resolved for one node before folding it. */
+interface Placed {
+  address: string;
+  pass: number | undefined;
+  end: RunStepEnd | undefined;
+  plan: PlanEntry | undefined;
+  kind: ExecKind;
+  children: ExecNode[];
+  include: Include | undefined;
+}
+
+function foldNode(node: RunNode, ctx: FoldContext, at: Placed): ExecNode {
+  const { address, pass, plan, kind, children, include } = at;
+  const own = withAsk(stateOf(node.status), ctx.asked.waiting.has(node));
+  const work = isWork({ kind });
+  const view = work ? stepEndView(own, at.end) : undefined;
+  const state = view?.state ?? rollUp(own, currentMembers({ kind, children }));
   const label = pass !== undefined && !work ? passText(pass) : node.nodeId;
   const out: ExecNode = { path: address, label, kind, state, children };
   // KAS prefixes every id inside an include with `<include id>/`; a hand-written id holding a `/`
@@ -779,25 +903,29 @@ function planNotice(u: RunPlanUpdate): { text: string; failed: boolean } {
   };
 }
 
-/** Fold KAS's `inspect` reply into the exec view's model. */
+/** Fold KAS's `inspect` reply into the exec view's model. With a `memo`, every node whose inputs
+ *  did not move since that memo's last fold is the same object it was then. */
 export function runToExec(
   state: RunState,
   plan: unknown,
   asks: RunAsks,
   focus = "",
   ends: StepEnds = new Map(),
+  memo?: ExecFoldMemo,
 ): ExecRun {
   // A sequence root is a container KAS names after the workflow itself, so its children are the
   // run's real top level (one group around everything is an indent for no information). The plan's
   // top level is the root's body, which no plan entry names.
   const root = state.root;
-  const ctx: FoldContext = {
-    plans: indexPlan(plan),
+  const last = memo?.last;
+  const whole = {
+    plans: last !== undefined && last.plan === plan ? last.plans : indexPlan(plan),
     asked: askedSteps(root, asks),
     run: state.status ?? "unknown",
     ends,
     pausedIDs: countPausedSteps(root),
   };
+  const ctx: FoldContext = { ...whole, ...heldFolds(memo, whole, plan) };
   let nodes: ExecNode[] = [];
   if (root?.type === "sequence") {
     const planned = Array.isArray(plan) ? (plan as unknown[]).flatMap(plannedNode) : [];

@@ -21,7 +21,7 @@ vi.mock("./api-client.js", () => ({
 
 const { clearStepTranscripts, requestStepTranscript } = await import("./run-step-transcript.js");
 const { requestRunTurnRange } = await import("./run-turn-range.js");
-const { registerRunLogObserver, runTurns } = await import("./run-store.js");
+const { registerRunLogObserver, runStepTurns } = await import("./run-store.js");
 const { beginStepMessage, forgetRunStepSteers, retireStepSteers, stepSteers } =
   await import("./run-step-steers.js");
 
@@ -68,11 +68,11 @@ async function settle(): Promise<void> {
   }
 }
 
-/** How many times a reader of the run's log has been told it moved since `watch` began. */
+/** How many times a reader of the step's log has been told it moved since `watch` began. */
 function watch(workflowID: string): { readonly passes: () => number; readonly stop: () => void } {
   let runs = 0;
   const stop = effect(() => {
-    runTurns(workflowID);
+    runStepTurns(workflowID, PATH);
     runs++;
   });
   return { passes: () => runs - 1, stop };
@@ -102,7 +102,7 @@ describe("adopting a step read's answer", () => {
     requestStepTranscript(wf, PATH);
     await settle();
 
-    expect(runTurns(wf)[0]?.[1].entries).toHaveLength(2000);
+    expect(runStepTurns(wf, PATH)[0]?.[1].entries).toHaveLength(2000);
     expect(reader.passes()).toBeLessThanOrEqual(1);
   });
 
@@ -136,7 +136,7 @@ describe("adopting a step read's answer", () => {
     await settle();
 
     expect(stepSteers(wf, PATH)).toEqual([]);
-    const held = runTurns(wf)[0]?.[1].entries.find((e) => e.id === "steer-m1");
+    const held = runStepTurns(wf, PATH)[0]?.[1].entries.find((e) => e.id === "steer-m1");
     expect(held?.payload).toMatchObject({ state: "read", read_ts: 5 });
     expect(reader.passes()).toBeLessThanOrEqual(1);
   });
@@ -152,7 +152,7 @@ describe("adopting a range read's answer", () => {
     requestRunTurnRange(wf, "t1");
     await settle();
 
-    expect(runTurns(wf)[0]?.[1].entries).toHaveLength(500);
+    expect(runStepTurns(wf, PATH)[0]?.[1].entries).toHaveLength(500);
     expect(reader.passes()).toBeLessThanOrEqual(1);
   });
 });
