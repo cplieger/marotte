@@ -29,7 +29,7 @@ import { releaseClampsIn } from "./clamp-text.js";
 import { releaseScrollableTablesIn } from "./table-scroll.js";
 import { effect, el, touch } from "@cplieger/ui";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
-import { coverHeld, registerTranscriptOwner, releaseCover } from "./transcript-cover.js";
+import { coverHeld, registerParkReads, releaseCover } from "./transcript-cover.js";
 import { $ } from "./dom.js";
 import {
   followTargetChanged,
@@ -50,8 +50,6 @@ import {
   jumpTo,
   attach as attachScroll,
   detach as detachScroll,
-  skip as skipScroll,
-  unskip as unskipScroll,
   snapshot as snapshotScroll,
   readerAt,
   heldMutation,
@@ -620,13 +618,11 @@ export function mountChatView(): void {
   }
   mounted = true;
   initFollowModel();
-  registerTranscriptOwner({
+  registerParkReads({
     take: takeParkReads,
     drop: () => {
       parkReads = null;
     },
-    skip: skipScroll,
-    unskip: unskipScroll,
   });
   // In the positioned outer wrapper, not the scroller, so it does not scroll away with the content.
   mountTurnRail($.messagesWrapOuter);

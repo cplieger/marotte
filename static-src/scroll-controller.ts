@@ -102,8 +102,6 @@ export class ScrollController {
   private viewEl: HTMLElement;
   /** Whether `viewEl` came from `attach`: only an attached view holds the clamp floor. */
   private attached = false;
-  /** Between `skip` and `unskip`, `detach` or `attach`. */
-  private skipped = false;
   /** What `attach` recorded and `applyPendingRestore` has not landed yet (null = none). */
   private pendingRestore: ViewAttachHandle | null = null;
 
@@ -446,9 +444,6 @@ export class ScrollController {
    *  window is open. Resize-loop invariant: a correction inside a resize delivery moves no farther than the size
    *  change it answers, so it reveals only boxes the near lead has laid out (`ro-loop-gate.ts` fails a loop). */
   private correct(): void {
-    if (this.skipped) {
-      return;
-    }
     this.attributePending();
     if (this.flight !== null) {
       return;
@@ -1152,7 +1147,6 @@ export class ScrollController {
    *  lands in `applyPendingRestore`, which the caller runs after its last DOM write of the task. A fresh view attaches
    *  with `{scrollTop: 0, readingState: "following"}`. */
   attach(handle: ViewAttachHandle): void {
-    this.endSkip();
     this.dropMotion();
     this.clearFloor();
     this.observeView(handle.el);
@@ -1224,42 +1218,6 @@ export class ScrollController {
     return next === null ? 0 : next.getBoundingClientRect().top - skel.getBoundingClientRect().top;
   }
 
-  /** Stand still while the attached view's contents are skipped (out of layout): no observer, frame or correction
-   *  reads the view, since a geometry read inside a skipped subtree lays it out. Keeps the state, the anchor and the
-   *  floor; `unskip`, `detach` or `attach` ends it. Reads no layout. */
-  skip(): void {
-    if (!this.attached || this.skipped) {
-      return;
-    }
-    this.skipped = true;
-    // Both ahead of `dropMotion`, which would read the scroller for `lastT`.
-    this.lastT = -1;
-    this.leaveFlight();
-    this.dropMotion();
-    this.cancelFollowFrame();
-    this.cancelLower();
-    this.endSettle();
-    this.disconnectView();
-    this.gutterObserver?.unobserve(this.scrollEl);
-  }
-
-  /** The view is laid out again: observe it and the scroller anew, whose first deliveries hold the reader's anchor
-   *  against whatever moved meanwhile, in the next frame. Reads no layout. */
-  unskip(): void {
-    if (!this.skipped) {
-      return;
-    }
-    this.endSkip();
-    this.observeView(this.viewEl);
-  }
-
-  private endSkip(): void {
-    if (this.skipped) {
-      this.skipped = false;
-      this.gutterObserver?.observe(this.scrollEl);
-    }
-  }
-
   /** Take the scroller from the current view and park it with `taken`, by default its `snapshot` now: abandon the
    *  older-page pass, drop the deferred folds, and disconnect the observers so the parked view produces no callback. */
   detach(taken: ViewScrollState = this.snapshot()): ViewScrollState {
@@ -1279,7 +1237,6 @@ export class ScrollController {
     this.onLoadMore = null;
     this.hasMoreMessages = false;
     this.disconnectView();
-    this.endSkip();
     this.setState("following");
     return taken;
   }

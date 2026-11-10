@@ -119,8 +119,8 @@ export function coverHeld(forChat?: string): boolean {
   return holder !== "" && (forChat === undefined || holder === forChat);
 }
 
-/** Take the transcript scroller out of layout (display: none), for a chat view coming back from
- *  another view kind: hidden, it has no rendering state left to keep.
+/** Take the transcript scroller out of layout (display: none), so a frame that paints the cover
+ *  over a chat view coming back from another view kind lays out none of the turns under it.
  *  Chromium, Firefox and WebKit keep a scroller's offset across display: none and fire no scroll
  *  event; `content-visibility: hidden` on the scroller loses the offset in Chromium and WebKit. */
 export function hideTranscript(): void {
@@ -129,40 +129,22 @@ export function hideTranscript(): void {
   }
 }
 
-/** Skip the shown transcript view's turns (13-messages.css), so a frame that paints the cover lays
- *  out none of them whatever the switch changed around the scroller (the composer area's height).
- *  Unlike `hideTranscript`, every view keeps its rendering state, so nothing replays its entry
- *  when shown again, and the view keeps the height `takeParkReads` read, so the scroller keeps
- *  its offset. */
-export function skipShownTranscript(): void {
-  if (!$.messagesWrap.hasAttribute("data-switching")) {
-    $.messagesWrap.setAttribute("data-switching", "");
-    owner?.skip();
-  }
-}
-
-/** Whether the transcript is out of layout, hidden or skipped. */
 export function transcriptHidden(): boolean {
-  return (
-    $.messagesWrap.classList.contains("hidden") || $.messagesWrap.hasAttribute("data-switching")
-  );
+  return $.messagesWrap.classList.contains("hidden");
 }
 
-interface TranscriptOwner {
+interface ParkReaders {
   /** Capture what parking the shown transcript view reads, at the current layout. */
   readonly take: () => void;
   /** Discard a capture. */
   readonly drop: () => void;
-  /** The shown view's turns are skipped: read none of them until `unskip`. */
-  readonly skip: () => void;
-  readonly unskip: () => void;
 }
 
-let owner: TranscriptOwner | null = null;
+let parkReaders: ParkReaders | null = null;
 
-/** Install the transcript owner's hooks (messages.ts). */
-export function registerTranscriptOwner(hooks: TranscriptOwner): void {
-  owner = hooks;
+/** Install the transcript owner's park readers (messages.ts). */
+export function registerParkReads(readers: ParkReaders): void {
+  parkReaders = readers;
 }
 
 /** Capture the shown transcript's park reads before a switch's first write, so the park that
@@ -170,24 +152,14 @@ export function registerTranscriptOwner(hooks: TranscriptOwner): void {
  *  The capture holds until the park takes it or a held cover drops: only the cover, or the click's
  *  own task, keeps the reader from moving the transcript. */
 export function takeParkReads(): void {
-  if ($.messagesWrap.closest(".hidden") !== null || $.messagesWrap.hasAttribute("data-switching")) {
-    return;
+  if ($.messagesWrap.closest(".hidden") === null) {
+    parkReaders?.take();
   }
-  owner?.take();
-  // The height `skipShownTranscript` keeps the skipped view at (13-messages.css).
-  const shown = $.messagesWrap.querySelector(".transcript-view.is-active");
-  const height = shown?.getBoundingClientRect().height ?? 0;
-  $.messagesWrap.style.setProperty("--switch-view-size", `${String(height)}px`);
 }
 
 export function showTranscript(): void {
   if ($.messagesWrap.classList.contains("hidden")) {
     $.messagesWrap.classList.remove("hidden");
-  }
-  if ($.messagesWrap.hasAttribute("data-switching")) {
-    $.messagesWrap.removeAttribute("data-switching");
-    $.messagesWrap.style.removeProperty("--switch-view-size");
-    owner?.unskip();
   }
 }
 
@@ -202,7 +174,7 @@ export function dropCover(): void {
   if (!wasHeld) {
     return;
   }
-  owner?.drop();
+  parkReaders?.drop();
   if (cover === null) {
     return;
   }

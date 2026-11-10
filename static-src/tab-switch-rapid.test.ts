@@ -107,20 +107,17 @@ describe("A to B to C to D paints only D", () => {
     expect(fx.notices).toEqual([]);
   });
 
-  it("keeps the cover over the painted A when the reader comes back before B showed, and lifts it once A is laid out", async () => {
+  it("lifts B's cover when the reader comes back to the painted A before B showed", async () => {
     const ids = await strip("a", "b");
 
     clickRow(ids["b"] ?? "");
     expect(coverUp()).toBe(true);
     clickRow(ids["a"] ?? "");
-    expect(coverUp(), "B's click took A's transcript out of layout, so the cover stands in").toBe(
-      true,
-    );
+    expect(coverUp(), "A's transcript is still mounted, so nothing stands in for it").toBe(false);
     await activationRan();
 
     expect(callsFor(fx.chat.show, "b")).toBe(0);
-    expect(callsFor(fx.chat.show, "a"), "the mounted A was shown again").toBe(0);
-    expect(coverUp(), "the cover stayed up over the re-laid-out A").toBe(false);
+    expect(coverUp()).toBe(false);
     expect(getActiveTabId()).toBe(ids["a"]);
     expect(fx.notices).toEqual([]);
   });

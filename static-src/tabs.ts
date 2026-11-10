@@ -68,7 +68,6 @@ import {
   releaseCover,
   releaseCoverExceptFor,
   showTranscript,
-  skipShownTranscript,
   takeParkReads,
   transcriptHidden,
 } from "./transcript-cover.js";
@@ -734,10 +733,9 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
       (opts.again === true && !hasResidentTurns(ref)) ||
       !viewLaidOut(row)
     ) {
-      // The cover is what this frame shows, its transcript out of layout until the activation: the
-      // target's composer area (a steer row, the queue) can resize the scroller under it.
+      // A painted chat coming back from another view kind is covered too: its transcript stays out
+      // of layout until the activation, and the cover is what this frame shows in its place.
       holdCover(ref);
-      skipShownTranscript();
     } else {
       releaseCoverExceptFor(ref);
     }
@@ -2327,23 +2325,22 @@ function revealView(row: TabRow): void {
   showOnlyView(queryEl<HTMLElement>(row.spec.view));
 }
 
-/** The row's view is not hidden and its transcript is laid out. Reads no layout. */
+/** The row's view is not hidden and its transcript is laid out. Reads classes only. */
 function viewLaidOut(row: TabRow): boolean {
   const target = queryEl<HTMLElement>(row.spec.view);
   return target?.classList.contains("hidden") !== true && !transcriptHidden();
 }
 
 /** The gesture form of `revealView`, which never leaves the view area empty. A non-chat view shows
- *  now, its entry fade starting with the click. A hidden chat view shows under the cover
- *  (`beginActivation` holds it) with its scroller out of layout, which the activation lays out;
- *  a shown chat view is already the one shown. */
+ *  now, its entry fade starting with the click. A chat view not laid out shows under the cover
+ *  (`beginActivation` holds it) with its transcript out of layout, which the activation lays out;
+ *  a laid-out chat view is already the one shown. */
 function holdView(row: TabRow): void {
-  const target = queryEl<HTMLElement>(row.spec.view);
   if (row.subject.kind !== "chat") {
-    showOnlyView(target);
-  } else if (coverHeld() && target?.classList.contains("hidden") === true) {
+    showOnlyView(queryEl<HTMLElement>(row.spec.view));
+  } else if (coverHeld() && !viewLaidOut(row)) {
     hideTranscript();
-    showOnlyView(target);
+    showOnlyView(queryEl<HTMLElement>(row.spec.view));
   }
 }
 

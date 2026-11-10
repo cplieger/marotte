@@ -1,8 +1,9 @@
 // Re-showing a parked chat forces at most one layout: the gesture forces none, the outgoing view's
 // park reads before any write, and the restore's scroll write is the one forced access, with every
 // later read (anchor, edge distance, rail) after it. That holds when the switch changes the
-// composer area's height too, which re-lays out a transcript left in layout. Real store, renderer
-// and scroll controller; layouts counted by `layout-spy.ts`.
+// composer area's height too: the park reads from the click, before the outgoing transcript is laid
+// out at the new size. Real store, renderer and scroll controller; layouts counted by
+// `layout-spy.ts`.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { makeSession } from "./__test-helpers__/model.js";
 import type { Entry } from "./wire/types.gen.js";
@@ -167,14 +168,12 @@ describe("the parked re-show", () => {
 });
 
 /** The gesture half as `tabs.ts` `beginActivation` runs it toward a covered chat: the park reads
- *  at the click's clean layout, then the active chat, the cover and the transcript out of layout.
- *  `steerRow` stands for the target's composer area: a queued prompt's row takes 50 px from the
- *  scroller. */
+ *  at the click's clean layout, then the active chat and the cover. `steerRow` stands for the
+ *  target's composer area: a queued prompt's row takes 50 px from the scroller. */
 function click(id: string, steerRow: boolean): void {
   cover.takeParkReads();
   select(id);
   cover.holdCover(id);
-  cover.skipShownTranscript();
   outer.style.height = steerRow ? "350px" : "400px";
 }
 
@@ -245,27 +244,17 @@ async function awayToY(): Promise<void> {
 }
 
 describe("a chat-to-chat switch whose composer area changes height", () => {
-  it("lays out the outgoing transcript in neither half, and lands the parked chat exactly on return", async () => {
+  it("forces no layout in the click, only the restore in the activation, and lands the parked chat exactly on return", async () => {
     await readingX();
     const parkedAt = readerAnchor();
     await awayToY();
 
-    const yView = messages.transcriptViewFor("pl-y");
     spy = installLayoutSpy();
     spy.begin();
     click("pl-x", false);
     const gesture = spy.end();
     expect(gesture.forced, "layouts forced by the click").toBe(0);
-    spy.begin();
     await frames();
-    const frame = spy.end();
-    // A geometry read inside a skipped view lays it out, dirty or not.
-    expect(
-      frame.log
-        .filter((a) => a.target instanceof Node && yView?.contains(a.target) === true)
-        .map((a) => `${a.what}@${(a.target as Element).className}`),
-      "the gesture's frame read the skipped outgoing transcript",
-    ).toEqual([]);
 
     spy.begin();
     await activate("pl-x");
@@ -313,14 +302,11 @@ describe("a chat-to-chat switch whose composer area changes height", () => {
     click("pl-y", true);
     await frames();
     expect(scroller.scrollTop, "the covered scroller moved under the cover").toBe(top);
-    // Back to x before y's activation: x is still the painted chat, so the activation only lays
-    // its transcript out again (`tabs.ts` `runActivation` for the painted chat).
+    // Back to x before y's activation: x is still the painted, laid-out chat, so the click lifts
+    // y's cover over it (`tabs.ts` `beginActivation`).
     select("pl-x");
-    cover.holdCover("pl-x");
+    cover.releaseCoverExceptFor("pl-x");
     outer.style.height = "400px";
-    await frames();
-    cover.showTranscript();
-    cover.dropCover();
     await frames();
     expect(readerAnchor(), "the painted chat moved under the cover").toEqual(at);
   });
