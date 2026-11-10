@@ -7,7 +7,7 @@
 // say so; unopened chats fill in later.
 
 import { join } from "@cplieger/keyenc";
-import { el, effect, signal, touch } from "@cplieger/reactive";
+import { batch, el, effect, signal, touch } from "@cplieger/reactive";
 import { hasTab, openSubagentRefs, openSubagentTab } from "./tabs.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
 import { inFlight } from "./exec-view/status.js";
@@ -30,6 +30,7 @@ import { parseSubagentRef, subagentRef } from "./tab-materialize.js";
 import type { TurnState } from "./types.js";
 import { SharedScroll } from "./view-scroll.js";
 import { maybeEl, queryEl } from "./dom.js";
+import { onViewHidden } from "./view-swap.js";
 
 /** A detached render is addressed `(turn, lane)`, `messages-blocks.ts`'s render key; the
  *  transcript holds the same turn under the EMPTY lane, so the two cannot clobber each other. */
@@ -43,6 +44,13 @@ function pageID(chatID: string, subtaskID: string): string {
  *  `#subagent-view` serves every subagent tab. Also the page's LIFETIME input: the demand effect
  *  empties it and the paint effect's empty-subject guard drops the page. */
 const shown = signal<{ chatID: string; subtaskID: string }>({ chatID: "", subtaskID: "" });
+
+/** Whether `#subagent-view` is the visible view: `showSubagent` sets it and the view swap clears
+ *  it, so a hidden subagent tab projects nothing for its chat's entries. */
+const pageShown = signal(false);
+onViewHidden("subagent-view", () => {
+  pageShown.value = false;
+});
 
 /** The mounted delegate's render lifecycle: the repaint gate is a UNION over registered renders,
  *  so it must be disposed (as `run-chat-steps.ts`'s `StepRender`). */
@@ -92,7 +100,10 @@ let inPaint = false;
 /** Point the shared subagent view at one delegate (a tab's `onShow`). Writing the subject is the
  *  whole call; the paint effect releases another delegate's page. */
 export function showSubagent(chatID: string, subtaskID: string): void {
-  shown.value = { chatID, subtaskID };
+  batch(() => {
+    shown.value = { chatID, subtaskID };
+    pageShown.value = true;
+  });
   installEffects();
   // A re-show of the page already mounted mounts nothing, so the paint restores nothing.
   if (mounted !== undefined) {
@@ -165,6 +176,10 @@ function installEffects(): void {
       // TOTAL over its input: an empty subject means no page. This branch is what
       // makes the demand effect's `shown` write the drop.
       unmount();
+      return;
+    }
+    if (!pageShown.value) {
+      mounted?.view.pause();
       return;
     }
     // Per-chat structural growth gives live background updates. Below the guard, or the empty subject

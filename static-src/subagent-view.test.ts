@@ -657,3 +657,49 @@ describe("the page's scroll position", () => {
     expect(scroller().scrollTop).toBe(700);
   });
 });
+
+// The page paints only while its tab is the visible view: a hidden subagent tab does no work for its
+// launching chat's entries, and showing it again draws what arrived meanwhile.
+describe("a hidden subagent tab", () => {
+  it("projects nothing for the chat's entries until its tab is shown again", async () => {
+    const { showOnlyView } = await import("./view-swap.js");
+    const chat = "c-hidden";
+    const turn = "t-hidden";
+    seedChats({ chat, turn });
+    delegate(chat, turn, "st-h");
+    const host = body();
+    const dock = document.getElementById("subagent-exec-dock") as HTMLElement;
+    const view = document.createElement("div");
+    view.id = "subagent-view";
+    view.dataset["tabView"] = "";
+    view.append(host, dock);
+    const other = document.createElement("div");
+    other.dataset["tabView"] = "";
+    document.body.append(view, other);
+    try {
+      showOnlyView(view);
+      show(chat, "st-h");
+      await vi.waitFor(() => {
+        expect(host.textContent).toContain("delegate work");
+      });
+
+      showOnlyView(other);
+      vi.mocked(sliceSubagent).mockClear();
+      for (let n = 0; n < 20; n++) {
+        laneText(chat, turn, "st-h", `hidden ${String(n)}`);
+      }
+      expect(vi.mocked(sliceSubagent)).not.toHaveBeenCalled();
+
+      showOnlyView(view);
+      show(chat, "st-h");
+      await vi.waitFor(() => {
+        expect(host.textContent).toContain("hidden 19");
+      });
+    } finally {
+      showOnlyView(null);
+      document.body.append(host, dock);
+      view.remove();
+      other.remove();
+    }
+  });
+});

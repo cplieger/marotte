@@ -68,6 +68,8 @@ export interface ExecPageView {
   bodyFor(path: string): HTMLElement;
   /** Show a node as a click on its row does, repainting before it returns. */
   select(path: string): void;
+  /** Stop the clock while the page is not on screen; the next `render` restarts it. */
+  pause(): void;
   /** Release the clock and the dock. Called when the page stops being shown. */
   dispose(): void;
 }
@@ -348,6 +350,9 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
       return detail.bodyFor(path);
     },
     select,
+    pause() {
+      setClock(false);
+    },
     dispose() {
       setClock(false);
       dock.dispose();

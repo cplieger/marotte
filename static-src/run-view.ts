@@ -3,7 +3,7 @@
 // workflow knows — the status's verbs, what an empty step body means, and which of the run's own
 // log turns each step renders.
 
-import { batch, el, effect, signal, touch } from "@cplieger/reactive";
+import { batch, el, effect, signal, touch, untracked } from "@cplieger/reactive";
 import { announce } from "./legacy-ui/announce.js";
 import { join } from "@cplieger/keyenc";
 import { openRunTab, openTab, parentChatRef, tabIdFor } from "./tabs.js";
@@ -51,10 +51,13 @@ import {
   runChatID,
   runPlan,
   runStepEnds,
+  runTurnHeldSeq,
   runTurnHoles,
   runTurns,
   type RunState,
 } from "./run-store.js";
+import { requestRunTurnRange } from "./run-turn-range.js";
+import { onViewHidden } from "./view-swap.js";
 import { payloadOf, projectTurn, turnOpenOf, type TurnSource } from "./turns.js";
 import type { TurnState } from "./types.js";
 import type { EntryTurnClose, RunStepEnd } from "./wire/types.gen.js";
@@ -70,6 +73,17 @@ let shownRun = "";
 /** Bumped by every `showRun` and TOUCHED first in the view effect, before `paint`'s early
  *  returns: the only read that re-points the effect whatever its last pass read. */
 const shownVersion = signal(0);
+
+/** Whether `#run-view` is the visible view: `showRun` sets it and the view swap clears it, so a
+ *  hidden run tab paints nothing for its run's frames or its clock. */
+const runViewShown = signal(false);
+onViewHidden("run-view", () => {
+  runViewShown.value = false;
+});
+
+/** The run whose page was mounted when the view was hidden, so its first pass on screen again
+ *  catches the shown step up. "" when nothing is owed. */
+let hiddenPageRun = "";
 
 /** Whether the shown run was launched by an AGENT, from the run's own state (`paint` sets it
  *  from `inspect`'s `parentSessionId`). It decides what the empty-step note says and whether the
@@ -106,6 +120,7 @@ export function showRun(workflowID: string): void {
   // One batch, so the view effect repaints once for the two bumps it may read.
   batch(() => {
     shownVersion.value = shownVersion.peek() + 1;
+    runViewShown.value = true;
     rerenderDocks();
   });
   mountBottomBar();
@@ -141,6 +156,14 @@ function installViewEffect(): void {
   viewEffectInstalled = true;
   effect(() => {
     touch(shownVersion);
+    if (!runViewShown.value) {
+      // Nothing else is read, so no frame of the run re-runs this pass until the tab is shown.
+      page?.pause();
+      if (page !== undefined) {
+        hiddenPageRun = pageRun;
+      }
+      return;
+    }
     const id = shownRun;
     // Every entry of this run's log bumps its own log version, which is how a step's content
     // arrives. Read BEFORE the early returns so the effect stays subscribed on the passes that
@@ -154,7 +177,34 @@ function installViewEffect(): void {
       return;
     }
     paint(id, runState(id), turns);
+    if (hiddenPageRun !== "") {
+      const owed = hiddenPageRun === id;
+      hiddenPageRun = "";
+      if (owed) {
+        untracked(() => {
+          catchUpShownStep(id);
+        });
+      }
+    }
   });
+}
+
+/** Bring the shown step current after its tab was hidden: each live turn from its held seq, else
+ *  the read `armStepRead` owes. The tree needs none, since the run's lifecycle frames reach every
+ *  page. */
+function catchUpShownStep(workflowID: string): void {
+  const node = shownNode;
+  if (node === undefined) {
+    return;
+  }
+  const live = turnsForStep(runTurns(workflowID), node.path).filter(([, t]) => turnIsLive(t));
+  if (live.length === 0) {
+    armStepRead(node);
+    return;
+  }
+  for (const [turnID] of live) {
+    requestRunTurnRange(workflowID, turnID, runTurnHeldSeq(workflowID, turnID));
+  }
 }
 
 /** The one door a run's tab opens through: the Workflows tab's Run button, a History row, the run
