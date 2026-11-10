@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/cplieger/go/httpcache v1.0.0 // indirect
-	github.com/cplieger/go/httpclient v1.0.0 // indirect
+	github.com/cplieger/go/httpclient v1.1.0-dev.1 // indirect
 	github.com/cplieger/go/jsonx v1.0.0 // indirect
 	github.com/cplieger/go/scheduler v1.0.0 // indirect
 	github.com/cplieger/go/urlform v1.0.0 // indirect
