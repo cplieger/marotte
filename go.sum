@@ -42,8 +42,8 @@ github.com/cplieger/go/wiregen v1.1.0-dev.2 h1:W4UOrswuWtLzNhflZ4qldQMhw6EHBhbyh
 github.com/cplieger/go/wiregen v1.1.0-dev.2/go.mod h1:nQMd9q6pc/4h07R8R2PrdvMVlteTRD2LAfxyYC+Ym7w=
 github.com/cplieger/go/yamlenv v1.1.0-dev.1 h1:ulzBFFArgKo8hKHX2GqQktjOM/Xb0/2t9IBpDK3RBSo=
 github.com/cplieger/go/yamlenv v1.1.0-dev.1/go.mod h1:2kEi6iiRSxaaAusNrPoC6l0BUqvVVskkR1Cdpt15nUg=
-github.com/cplieger/toolbelt/v3 v3.15.0-dev.29 h1:GL0MkZFAicmAmdskpoGh02R1tnUk7PUAIx9eAdkuEVQ=
-github.com/cplieger/toolbelt/v3 v3.15.0-dev.29/go.mod h1:6I8C9vu6Nxw1gUeK8k8KbztZkyWMozoMfTAZ9Eg00fI=
+github.com/cplieger/toolbelt/v3 v3.15.0-dev.32 h1:o4L3sAWkDt6JJkYgPhr3OEf1z8oTGFmN5hb/ZF1ao8M=
+github.com/cplieger/toolbelt/v3 v3.15.0-dev.32/go.mod h1:e4LC0AOzGBEWcMhkdnMxwKoY1lt5OptvH6aSJ1PV8q0=
 github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.12 h1:PaWCBNkGimAseIb+1xtcC6uS5BQUjqKFPM2luLJwc7U=
 github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.12/go.mod h1:mgTrT+/M0KaEBxK/Zj0i/6gsWII4L2cOexiJWSCkTRU=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
