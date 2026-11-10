@@ -7,6 +7,7 @@ import type { Session } from "./types.js";
 import { makeSession } from "./__test-helpers__/model.js";
 import type { Entry } from "./wire/types.gen.js";
 import { loadCSS } from "./__test-helpers__/css-rules.js";
+import { emulateA11yMedia, resetA11yMedia } from "./__test-helpers__/a11y-media.js";
 
 for (const id of [
   "chat-view",
@@ -359,6 +360,70 @@ describe("the cover's skeleton pulses only while the cover is held", () => {
     } finally {
       coverModule.dropCover();
       pulse.remove();
+    }
+  });
+});
+
+describe("the cover's release fade shows the content under it from its first frames", () => {
+  /** The released cover's fade-out, paused at its start. */
+  function releasedFade(): CSSAnimation {
+    const cover = document.getElementById("transcript-cover");
+    if (cover === null) {
+      throw new Error("no cover");
+    }
+    const fade = cover
+      .getAnimations()
+      .find(
+        (a): a is CSSAnimation => a instanceof CSSAnimation && a.animationName === "vk-fade-out",
+      );
+    if (fade === undefined) {
+      throw new Error("the released cover runs no fade-out");
+    }
+    fade.pause();
+    return fade;
+  }
+
+  function withMotionCSS(fn: () => void): void {
+    const motion = document.createElement("style");
+    motion.textContent = ["01-tokens.css", "03-base.css", "40-a11y.css"].map(loadCSS).join("\n");
+    document.head.appendChild(motion);
+    try {
+      coverModule.holdCover("cv-a");
+      coverModule.dropCover();
+      fn();
+    } finally {
+      motion.remove();
+    }
+  }
+
+  it("is under half opacity a third of the way through a fade that lasts --dur-exit", () => {
+    withMotionCSS(() => {
+      const fade = releasedFade();
+      const total = Number(fade.effect?.getComputedTiming().duration);
+      const exit = getComputedStyle(document.documentElement).getPropertyValue("--dur-exit").trim();
+      expect(exit, "the token is read in seconds").toMatch(/^[\d.]+s$/);
+      expect(total, "the fade keeps the exit duration").toBeCloseTo(Number.parseFloat(exit) * 1000);
+
+      fade.currentTime = total / 3;
+      const cover = document.getElementById("transcript-cover") as HTMLElement;
+      expect(
+        Number(getComputedStyle(cover).opacity),
+        "the skeleton still mostly hides the painted chat",
+      ).toBeLessThanOrEqual(0.5);
+      fade.finish();
+    });
+  });
+
+  it("runs no fade under reduced motion", async () => {
+    await emulateA11yMedia({ reducedMotion: "reduce" });
+    try {
+      withMotionCSS(() => {
+        const fade = releasedFade();
+        expect(Number(fade.effect?.getComputedTiming().duration)).toBeLessThanOrEqual(0.01);
+        fade.finish();
+      });
+    } finally {
+      await resetA11yMedia();
     }
   });
 });
