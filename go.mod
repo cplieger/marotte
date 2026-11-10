@@ -18,7 +18,7 @@ require (
 )
 
 require (
-	github.com/cplieger/forgeapi/v2 v2.0.0-dev.8
+	github.com/cplieger/forgeapi/v2 v2.0.0-dev.9
 	github.com/cplieger/go/envx v1.0.0
 	github.com/cplieger/go/filesafe v1.0.0
 	github.com/cplieger/go/health v1.0.0
@@ -28,7 +28,7 @@ require (
 	github.com/cplieger/go/measure v1.0.0
 	github.com/cplieger/go/pathinside v1.0.0
 	github.com/cplieger/go/slogx v1.0.0
-	github.com/cplieger/go/sse/v2 v2.0.0
+	github.com/cplieger/go/sse/v2 v2.1.0-dev.1
 	github.com/cplieger/go/ssrf v1.0.0
 	github.com/cplieger/go/textsafe v1.0.0
 	github.com/cplieger/go/wiregen v1.1.0-dev.2
