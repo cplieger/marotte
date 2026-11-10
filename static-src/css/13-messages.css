@@ -119,7 +119,8 @@
  * turn map (z-index 4), whose markers name the outgoing chat, and below the banners and the
  * resume control. Only the skeleton fades in, so a switch that settles in a frame or two
  * flashes nothing. The release fades the whole cover out, taking no input from its first
- * frame, and its `animationend` hides it. */
+ * frame, on a decelerating curve so the content shows from the fade's first frames; its
+ * `animationend` hides it. */
 .transcript-cover {
   position: absolute;
   inset: 0;
@@ -131,7 +132,7 @@
 
   &[data-state="released"] {
     pointer-events: none;
-    animation: vk-fade-out var(--dur-exit) var(--ease-exit) forwards;
+    animation: vk-fade-out var(--dur-exit) var(--ease-enter) forwards;
 
     /* Paused where it stands, so the fade shows no jump: in WebKit a pulse still running over
      * the content the release uncovers held that content's first frame back by about 45 ms. */
