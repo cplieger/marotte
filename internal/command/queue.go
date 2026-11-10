@@ -165,8 +165,7 @@ type CloseFacts struct {
 	Unattended bool
 }
 
-// Clean reports a close after which the rows a stop or a broken close paused are sent again: a clean or unattended
-// one.
+// Clean reports a clean or unattended close.
 func (cl CloseFacts) Clean() bool {
 	return marotte.SeverityOf(cl.Outcome) == marotte.TurnSeverityClean || cl.Unattended
 }

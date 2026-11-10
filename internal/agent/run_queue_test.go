@@ -127,6 +127,8 @@ func listLive(h *Runtime, chatID marotte.ChatID) bool {
 func idleAfterFirstTurn(t *testing.T, workDir string) (h *Runtime, cs *testChatStore, br *fakeBridge, tails *atomic.Int32) {
 	t.Helper()
 	h, cs, br = newTestHubIn(workDir)
+	// A hub left running carries its prompt goroutines into the next test, which races its package-var seams.
+	t.Cleanup(func() { shutdownHub(t, h) })
 	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
 	tails = &atomic.Int32{}
 	tailHooks(h, func(_ marotte.ChatID, ended bool) {

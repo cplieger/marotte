@@ -141,7 +141,7 @@ func TestRunViewOf(t *testing.T) {
 			},
 		},
 		{
-			name:    "S1 reads as if the compaction stood behind kiro-cli's turn",
+			name:    "kiro-cli's turn under a compaction reads as if the compaction stood behind it",
 			entries: []RunEntry{compaction(RunRunning), wire("w", RunRunning), row("m-q1", RunPending)},
 			want: want{
 				send: SendQueue, cancel: "w", next: turns(2), unread: waitOf(WaitCompaction),
@@ -150,7 +150,7 @@ func TestRunViewOf(t *testing.T) {
 			},
 		},
 		{
-			name: "S2 counts two turns", entries: []RunEntry{
+			name: "a wire turn beside a taken turn counts two turns", entries: []RunEntry{
 				wire("w", RunRunning), row("m-1", RunStarting),
 				row("m-q1", RunPending),
 			},

@@ -467,7 +467,6 @@ func (l *runList) take(e *runEntry, at int) {
 	l.fx.launch = append(l.fx.launch, e)
 }
 
-// submitAnswer is submit's answer: taken (the submitter waits on e.launch), queued, or refused.
 // submitAnswer is submit's outcome: taken, refused, or neither (the entry waits on the list).
 type submitAnswer struct {
 	entry   *runEntry

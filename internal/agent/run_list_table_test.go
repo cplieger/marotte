@@ -191,7 +191,7 @@ func TestRunList_Table(t *testing.T) {
 			wantVerb: "queue", wantOrder: "m-q:starting",
 		},
 		{
-			name: "a cancel with no target during a compaction stops nothing (G2, G6)",
+			name: "a cancel with no target during a compaction stops nothing",
 			run: func(_ *testing.T, w *tableWorld) string {
 				c, _ := w.l.requestCompaction(marotte.RunFromRequest, "")
 				w.compacting(c.id)
@@ -218,7 +218,7 @@ func TestRunList_Table(t *testing.T) {
 			wantOrder: "compact-1:starting m-q1:pending",
 		},
 		{
-			name: "a context-limit turn end pauses the rows it left; a send during its compaction goes first (F1)",
+			name: "a context-limit turn end pauses the rows it left; a send during its compaction goes first",
 			run: func(_ *testing.T, w *tableWorld) string {
 				w.send("m-a", marotte.SendPlain, "")
 				w.running("m-a")
@@ -243,7 +243,7 @@ func TestRunList_Table(t *testing.T) {
 			wantVerb: "queue", wantOrder: "m-a:stopping m-new:pending m-q0:paused",
 		},
 		{
-			name: "send-now during a stopped turn's compaction stops nothing and the row goes first after it (G1)",
+			name: "send-now during a stopped turn's compaction stops nothing and the row goes first after it",
 			run: func(_ *testing.T, w *tableWorld) string {
 				w.send("m-a", marotte.SendPlain, "")
 				w.running("m-a")
@@ -271,13 +271,13 @@ func TestRunList_Table(t *testing.T) {
 			wantVerb: "refused", wantOrder: "m-held:held",
 		},
 		{
-			name: "a wire turn opening under a running compaction goes beside it, and a refusal requeues the compaction behind it (S1)",
+			name: "a wire turn opening under a running compaction goes beside it, and a refusal requeues the compaction behind it",
 			run: func(_ *testing.T, w *tableWorld) string {
 				c, _ := w.l.requestCompaction(marotte.RunFromRequest, "")
 				w.compacting(c.id)
 				w.wireOpen("t-w", true)
 				if w.order() != c.id+":running t-w:running" {
-					return "S1: " + w.order()
+					return "a wire turn under a compaction: " + w.order()
 				}
 				w.l.compactionEnded(c.id, false, nil)
 				return string(marotte.VerbFor(w.l.project(), "", marotte.SendPlain))
@@ -295,7 +295,7 @@ func TestRunList_Table(t *testing.T) {
 			wantOrder: "t-w:running compact-1:pending",
 		},
 		{
-			name: "a lone fold-opened wire turn admits a prompt taken beside it (S2a)",
+			name: "a lone fold-opened wire turn admits a prompt taken beside it",
 			run: func(_ *testing.T, w *tableWorld) string {
 				w.wireOpen("t-f", false)
 				w.advance()
@@ -328,7 +328,7 @@ func TestRunList_Table(t *testing.T) {
 			wantOrder: "",
 		},
 		{
-			name: "a row queued as a turn end's compaction returns waits behind the row queued during the turn (G7)",
+			name: "a row queued as a turn end's compaction returns waits behind the row queued during the turn",
 			run: func(_ *testing.T, w *tableWorld) string {
 				w.send("m-a", marotte.SendPlain, "")
 				w.running("m-a")
@@ -345,7 +345,7 @@ func TestRunList_Table(t *testing.T) {
 			wantVerb: "queue", wantOrder: "m-q1:starting m-q2:pending",
 		},
 		{
-			name: "a row queued under a stopped close's hold, then its compaction, reads behind the compaction ahead of the paused row (G5)",
+			name: "a row queued under a stopped close's hold, then its compaction, reads behind the compaction ahead of the paused row",
 			run: func(_ *testing.T, w *tableWorld) string {
 				w.send("m-a", marotte.SendPlain, "")
 				w.running("m-a")
