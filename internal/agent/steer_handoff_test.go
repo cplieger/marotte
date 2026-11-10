@@ -43,19 +43,32 @@ func (s *pausingStore) WriteCounters(ctx context.Context, chatID marotte.ChatID)
 	return err
 }
 
-func handoffHub(t *testing.T) (*Runtime, *testChatStore) {
+// handoffHub is a chat whose two steers were left unsent by a turn's end, so the run list resends them as the next
+// turn. Its store parks that resend between its open and its retire; drained closes once the resend's launch ends.
+func handoffHub(t *testing.T) (h *Runtime, cs *testChatStore, ps *pausingStore, drained <-chan struct{}) {
 	t.Helper()
 	h, cs, br := newTestHub()
 	seedChat(t, cs, "c1")
 	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
 	h.insertBridgeNow("c1", testBridge(br, bridgeReady))
+	// Installed before the unsends, whose fact pass lists and launches the resend on its own goroutine.
+	ps = newPausingStore(h.coord.chatStore)
+	ps.onOpen = true
+	h.coord.chatStore = ps
+	done := make(chan struct{})
+	launch := h.coord.launchEntry
+	var once sync.Once
+	h.coord.launchEntry = func(ctx context.Context, id marotte.ChatID, l *command.EntryLaunch) (string, error) {
+		defer once.Do(func() { close(done) })
+		return launch(ctx, id, l)
+	}
 	for _, k := range []string{"steer-a", "steer-b"} {
 		h.steerQueue.RouteSteer("c1", k, k, nil, command.SteerHolder{Held: true, PromptClass: true})
 		if _, refuse := h.steerQueue.RouteSteer("c1", k, k, nil, command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
 			t.Fatalf("unsending %s = %q, want no_turn", k, refuse)
 		}
 	}
-	return h, cs
+	return h, cs, ps, done
 }
 
 func steerEntries(t *testing.T, cs *testChatStore, chatID marotte.ChatID) map[string][]marotte.EntrySteer {
@@ -128,12 +141,7 @@ func TestShutdown_AResendOpenedBeforeTheTakeHasOneDestination(t *testing.T) {
 				if expired {
 					shortenSteerLockWait(t)
 				}
-				h, cs := handoffHub(t)
-				ps := newPausingStore(h.coord.chatStore)
-				ps.onOpen = true
-				h.coord.chatStore = ps
-
-				drained := listUnread(t, h, "c1")
+				h, cs, ps, drained := handoffHub(t)
 				<-ps.paused
 				stopped := shutdownWithin(h, time.Second)
 				if expired {
@@ -167,12 +175,7 @@ func TestShutdown_AResendOpenedBeforeTheTakeHasOneDestination(t *testing.T) {
 // steers that resend already carries.
 func TestBeginChatTeardown_AResendOpenedBeforeTheCloseKeepsItsSteers(t *testing.T) {
 	shortenSteerLockWait(t)
-	h, cs := handoffHub(t)
-	ps := newPausingStore(h.coord.chatStore)
-	ps.onOpen = true
-	h.coord.chatStore = ps
-
-	drained := listUnread(t, h, "c1")
+	h, cs, ps, drained := handoffHub(t)
 	<-ps.paused
 	h.BeginChatTeardown("c1", true)
 	close(ps.release)
@@ -283,25 +286,4 @@ func TestTeardown_ARowPickedBeforeTheOpenNeverOpens(t *testing.T) {
 			assertNotOpened(t, cs)
 		})
 	}
-}
-
-// listUnread lists the chat's unread steers as the next entry, as a close whose steer ends left them unsent does, and
-// answers a channel closed once that entry's launch ended.
-func listUnread(t *testing.T, h *Runtime, chatID marotte.ChatID) <-chan struct{} {
-	t.Helper()
-	done := make(chan struct{})
-	launch := h.coord.launchEntry
-	var once sync.Once
-	h.coord.launchEntry = func(ctx context.Context, id marotte.ChatID, l *command.EntryLaunch) (string, error) {
-		defer once.Do(func() { close(done) })
-		return launch(ctx, id, l)
-	}
-	lc := h.coord.turns.testLifecycle(chatID)
-	lc.mu.Lock()
-	lc.run.insert(0, &runEntry{
-		id: "m-unread", kind: marotte.RunKindUnread, origin: marotte.RunFromUnread, state: marotte.RunPending,
-	})
-	lc.wakeLocked()
-	lc.mu.Unlock()
-	return done
 }
