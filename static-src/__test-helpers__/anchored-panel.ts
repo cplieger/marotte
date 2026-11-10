@@ -16,14 +16,17 @@ export async function resizeViewport(width: number, height: number): Promise<voi
 /** The popover's viewport margin, which its clamp pins a too-wide panel to. */
 const EDGE_MARGIN = 8;
 
-/** Fixed, on an opaque overlay surface, against its trigger's top or bottom edge and over its
- *  inline span, wholly inside the viewport, its end edge on the trigger's unless clamped, and
- *  every visible control inside its inline span. */
+/** Fixed on the popover rung of the z-index ladder, on an opaque overlay surface, against its
+ *  trigger's top or bottom edge and over its inline span, wholly inside the viewport, its end
+ *  edge on the trigger's unless clamped, and every visible control inside its inline span. */
 export function expectAnchored(panel: HTMLElement, trigger: HTMLElement): void {
   const p = panel.getBoundingClientRect();
   const t = trigger.getBoundingClientRect();
   const cs = getComputedStyle(panel);
   expect(cs.position, "a floating panel").toBe("fixed");
+  const rung = getComputedStyle(document.documentElement).getPropertyValue("--uip-z-popover");
+  expect(rung.trim(), "the app's ladder is mounted").not.toBe("");
+  expect(cs.zIndex, "on the popover rung, over the fullscreen shell").toBe(rung.trim());
   expect(cs.backgroundColor, "an opaque surface").not.toBe("rgba(0, 0, 0, 0)");
   expect(cs.boxShadow, "the overlay's shadow").not.toBe("none");
   expect(p.left, "inside the viewport's inline start").toBeGreaterThanOrEqual(0);

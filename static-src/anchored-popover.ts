@@ -16,7 +16,10 @@ function roomBeside(anchor: HTMLElement): number {
 }
 
 /** No `setOptions`: the group is joined only while open, which a patch would bypass. */
-export type AnchoredPopover = Omit<PopoverController, "setOptions">;
+export type AnchoredPopover = Pick<
+  PopoverController,
+  "show" | "hide" | "toggle" | "reposition" | "isOpen"
+>;
 
 /**
  * `createPopover` under `anchor`, end-aligned, its `--popover-room` the room the flip can give it
@@ -117,9 +120,6 @@ export function anchoredPopover(
     get isOpen(): boolean {
       return ctl.isOpen;
     },
-    get el(): HTMLElement {
-      return ctl.el;
-    },
     show: open,
     hide: () => {
       ctl.hide();
@@ -134,14 +134,6 @@ export function anchoredPopover(
     reposition: () => {
       fit();
       ctl.reposition();
-    },
-    dispose: () => {
-      track(false);
-      leaveWatch.disconnect();
-      ctl.dispose();
-      if (hosted) {
-        panel.remove();
-      }
     },
   };
 }

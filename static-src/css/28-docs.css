@@ -290,7 +290,6 @@
 /* An active schedule is a state, marked the way every other on-state is. */
 /* .recipe-sched-btn.on: 70-selection.css. */
 
-/* A word space between the words and the count, and between the icon and the count. */
 .recipe-sched-btn {
   column-gap: var(--sp-1);
 }
@@ -311,7 +310,6 @@
 
 /* The Run when… and agent Run panels; anchored-popover.ts sets --popover-room. */
 .sched-popup {
-  z-index: 100;
   min-width: min(17rem, 100vw - 4 * var(--sp-4));
   max-inline-size: min(32rem, 100vw - 4 * var(--sp-4));
   max-block-size: min(var(--popover-room, 80dvh), 80dvh);
@@ -557,7 +555,6 @@
   flex-basis: 100%;
 }
 
-/* A unit after a field reads as its label does. */
 .rw-unit {
   font-size: var(--fs-sm);
   color: var(--c-text-secondary);
@@ -750,7 +747,6 @@
 }
 
 .docs-new-popover {
-  z-index: 100;
   inline-size: min(24rem, 100vw - 2rem);
   max-block-size: 80dvh;
   overflow-y: auto;

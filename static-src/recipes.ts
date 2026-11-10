@@ -451,10 +451,6 @@ function rulesPopup(btn: HTMLButtonElement, source: string): () => void {
     popup.hide();
   };
   const view = (node: HTMLElement): void => {
-    if (!btn.isConnected) {
-      popup.hide();
-      return;
-    }
     body.replaceChildren(node);
     popup.reposition();
   };
