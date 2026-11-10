@@ -38,6 +38,7 @@ export function tabsMock(): Record<string, unknown> {
     // Held: no user move since the claim, so a late open takes the view.
     navigationHeld: vi.fn(() => true),
     activateRestoredTab: vi.fn(),
+    showUnshownTab: vi.fn(),
     refreshActiveView: vi.fn(),
     paintProvisionalTabs: vi.fn(),
     renameTab: vi.fn(),

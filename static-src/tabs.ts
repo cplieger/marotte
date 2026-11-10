@@ -7,6 +7,7 @@
 // pinned-first PARTITION, and the DOM.
 
 import { pushRoute } from "./router.js";
+import { parseRoute } from "./route-path.js";
 import type { Route, SettingsTab, GitTab, DocsTab, HistoryTab } from "./route-path.js";
 // The kinds' one definition is the Go const block (internal/marotte/domain_tabs.go), emitted as a
 // registered enum, so per-kind handling is TOTAL.
@@ -196,6 +197,9 @@ interface Internal {
   stripRestore: StripScroll | null;
   /** Bumped by every reader gesture that can scroll the strip. */
   stripGestures: number;
+  /** The active tab boot pointed the strip at whose `onShow` has not run, or "". Its view is not
+   *  swapped in and an activation of it is not swallowed by the already-active guard. */
+  unshown: string;
 }
 
 interface StripScroll {
@@ -217,6 +221,7 @@ const internal: Internal = {
   everOpened: false,
   stripRestore: null,
   stripGestures: 0,
+  unshown: "",
 };
 
 /** Caller-supplied names keyed by `(kind, ref)`: a name arrives before the server mints an id, so
@@ -491,6 +496,7 @@ function reset(subjects: readonly TabSubject[]): void {
       // The one place a real id reaches `state.active` without an activation, so it heads the MRU
       // by hand until boot's activation settles it.
       noteActivation(state.active);
+      internal.unshown = state.active;
     }
     emit();
     return;
@@ -706,9 +712,13 @@ interface ActivationOpts {
  *  undefined when nothing changed. */
 function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | undefined {
   const row = rowOfID(id);
-  if (row === undefined || (id === state.active && opts.again !== true)) {
+  if (
+    row === undefined ||
+    (id === state.active && opts.again !== true && internal.unshown !== id)
+  ) {
     return undefined;
   }
+  internal.unshown = "";
   const ref = row.subject.kind === "chat" ? row.subject.ref : "";
   if (ref !== "" && ref !== getPaintedId()) {
     takeParkReads();
@@ -906,7 +916,7 @@ export function activateTab(id: string): Promise<void> {
     navigationSeq++;
   }
   revealActiveView();
-  if (id === state.active) {
+  if (id === state.active && internal.unshown !== id) {
     return currentActivation?.id === id ? currentActivation.done : Promise.resolve();
   }
   const row = rowOfID(id);
@@ -952,18 +962,30 @@ function activateSuccessor(local: boolean): void {
   }
 }
 
-/** Point the strip at the tab this SCREEN was last on and run both activation halves at once: boot's
- *  one activation, after `listTabs()`, where nothing has painted that could be shown first. Separate
- *  from `reset`, which also runs on every re-list where a re-fetch would be a round trip for
- *  nothing. */
+/** Boot's one activation, after `listTabs()`: runs both activation halves at once for the tab this
+ *  SCREEN was last on when the URL is the root or names that tab. A URL naming another tab leaves it
+ *  unshown for the URL's own route to replace, so a hidden view never fetches or paints at boot.
+ *  Separate from `reset`, which also runs on every re-list where a re-fetch would be a round trip
+ *  for nothing. */
 export function activateRestoredTab(): void {
   const id = state.active;
   if (id === "") {
     return;
   }
-  // Cleared so the already-active guard does not swallow the activation that is the whole point.
-  state.active = "";
-  beginActivation(id, { quiet: true, now: true });
+  internal.unshown = id;
+  const route = parseRoute(location.pathname, location.hash);
+  const root = route.kind === "chat" && route.id === "";
+  if (root || tabIdForRoute(route) === id) {
+    beginActivation(id, { quiet: true, now: true });
+  }
+}
+
+/** Show the tab boot left unshown, when it is still the active one: the fallback for a URL whose
+ *  route could not open its own view. A no-op once any activation has run. */
+export function showUnshownTab(): void {
+  if (internal.unshown !== "" && internal.unshown === state.active) {
+    beginActivation(internal.unshown, { quiet: true });
+  }
 }
 
 /** Run the pending activation half now, as its scheduled task would. */
@@ -986,7 +1008,7 @@ const genOfArgs = new WeakMap<SwitchArgs, number>();
 function beginSwitch(args: SwitchArgs): SwitchOp {
   const from = settledActive;
   let record: ActivationRecord | undefined;
-  if (args.to !== state.active) {
+  if (args.to !== state.active || internal.unshown === args.to) {
     record = beginActivation(args.to, { quiet: false });
   } else if (currentActivation?.id === args.to && !currentActivation.failed) {
     // A toast's Retry pressed after the reader came back to that tab: join its activation.
@@ -2236,10 +2258,10 @@ function registerModuleSubscribers(): void {
       return;
     }
     const active = rowOfID(s.active);
-    if (active !== undefined) {
-      showView(active);
-    } else {
+    if (active === undefined) {
       syncSidebarButtons(null);
+    } else if (internal.unshown !== s.active) {
+      showView(active);
     }
     // Announce a REAL switch only: this effect re-runs on every projection mutation. Emitted here, not
     // in showView, whose DOM swap runs inside a view transition.
@@ -3107,6 +3129,7 @@ export function _resetForTest(): void {
   internal.emptyDeferred = false;
   internal.renderQueued = false;
   internal.everOpened = false;
+  internal.unshown = "";
   internal.stripRestore = null;
   nameOverrides.clear();
   activationHistory.length = 0;

@@ -3,6 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { admitLocation, settleDeepLinkedChat } from "./deep-link.js";
+import { pushRoute } from "./router.js";
 
 const {
   mockResolve,
@@ -11,6 +12,7 @@ const {
   mockToastError,
   mockActiveTabRoute,
   mockTabIdForRoute,
+  mockShowUnshown,
 } = vi.hoisted(() => ({
   mockResolve: vi.fn(),
   mockListLoaded: vi.fn(() => true),
@@ -18,6 +20,7 @@ const {
   mockToastError: vi.fn(),
   mockActiveTabRoute: vi.fn(() => null as unknown),
   mockTabIdForRoute: vi.fn(() => ""),
+  mockShowUnshown: vi.fn(),
 }));
 
 vi.mock("./chat.js", () => ({ resolveUnknownChat: mockResolve }));
@@ -30,6 +33,7 @@ vi.mock("./tabs.js", async () => ({
   ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
   getActiveTabRoute: mockActiveTabRoute,
   tabIdForRoute: mockTabIdForRoute,
+  showUnshownTab: mockShowUnshown,
 }));
 vi.mock("./toast.js", () => ({ error: mockToastError }));
 
@@ -52,6 +56,7 @@ beforeEach(() => {
   mockActiveTabRoute.mockReturnValue(null);
   // The empty answer is `tabs.ts`'s own for a route no open tab carries.
   mockTabIdForRoute.mockReturnValue("");
+  mockShowUnshown.mockReset();
 });
 
 afterEach(() => {
@@ -218,6 +223,65 @@ describe("settleDeepLinkedChat", () => {
 
     expect(await settleDeepLinkedChat("c-asked")).toBe("opened");
     expect(location.pathname).toBe("/files/src");
+  });
+});
+
+// A location that cannot open its own view leaves the tab boot pointed the strip at on screen, as the URL then
+// describes it; one that opened, or was abandoned, leaves the screen to whatever moved it.
+describe("the remembered tab as the fallback view", () => {
+  it.each([
+    { verdict: "gone", mayAnswer: true, listLoaded: true, outcome: "gone", shown: true },
+    {
+      verdict: "unresolved",
+      mayAnswer: true,
+      listLoaded: true,
+      outcome: "unresolved",
+      shown: true,
+    },
+    { verdict: "unresolved", mayAnswer: true, listLoaded: false, outcome: "held", shown: true },
+    { verdict: "unresolved", mayAnswer: false, listLoaded: true, outcome: "held", shown: true },
+    { verdict: "opened", mayAnswer: true, listLoaded: true, outcome: "opened", shown: false },
+  ])(
+    "$outcome from $verdict shows it: $shown",
+    async ({ verdict, mayAnswer, listLoaded, outcome, shown }) => {
+      at("/chat/c-asked");
+      mockMayAnswer.mockReturnValue(mayAnswer);
+      mockListLoaded.mockReturnValue(listLoaded);
+      mockResolve.mockResolvedValue(verdict);
+
+      expect(await settleDeepLinkedChat("c-asked")).toBe(outcome);
+      expect(mockShowUnshown).toHaveBeenCalledTimes(shown ? 1 : 0);
+    },
+  );
+
+  it("is not shown for a verdict about a location the reader has left", async () => {
+    at("/chat/c-asked");
+    mockResolve.mockImplementation(() => {
+      at("/chat/c-moved-on");
+      return Promise.resolve("gone");
+    });
+
+    expect(await settleDeepLinkedChat("c-asked")).toBe("stale");
+    expect(mockShowUnshown).not.toHaveBeenCalled();
+  });
+
+  it("is shown for a restored location naming a closed tab", () => {
+    at("/chat/c-closed");
+    expect(admitLocation({ kind: "chat", id: "c-closed" }, "restore")).toBe("canonicalized");
+    expect(mockShowUnshown).toHaveBeenCalledTimes(1);
+  });
+
+  it("pushes no history entry while it is shown", async () => {
+    at("/chat/c-real");
+    const before = history.length;
+    mockShowUnshown.mockImplementation(() => {
+      pushRoute({ kind: "run", id: "wf-r" });
+    });
+    mockResolve.mockResolvedValue("unresolved");
+
+    await settleDeepLinkedChat("c-real");
+    expect(history.length).toBe(before);
+    expect(location.pathname).toBe("/chat/c-real");
   });
 });
 
