@@ -901,6 +901,7 @@ describe("a size change above in the frame a restored view settles", () => {
     const at = screenTop(wrap, held);
     const parked = scroll.detach();
     scroll.attach({ el: messagesEl, ...parked });
+    scroll.applyPendingRestore();
     above.style.height = "1189px";
     const moved: number[] = [];
     // Created after the owner's observer, so each callback reads what that delivery's frame paints.

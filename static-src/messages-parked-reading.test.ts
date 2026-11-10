@@ -89,6 +89,7 @@ beforeEach(() => {
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
+  store.setPainted("");
 });
 
 describe("a park and unpark while Reading inside the open turn", () => {
@@ -99,6 +100,7 @@ describe("a park and unpark while Reading inside the open turn", () => {
       const b = freshID("c-park");
       store.setSessions([liveChat(a, 400), liveChat(b, 3)]);
       store.setActive(a);
+      store.setPainted(a);
       store.bumpMessages(a, "load");
       await frames(20);
       const wrap = scroll.getScrollEl();
@@ -134,6 +136,7 @@ describe("a park and unpark while Reading inside the open turn", () => {
       });
 
       store.setActive(b);
+      store.setPainted(b);
       await Promise.resolve();
       await frames(4);
       const t = `${a}-t1`;
@@ -142,6 +145,7 @@ describe("a park and unpark while Reading inside the open turn", () => {
       }
       await Promise.resolve();
       store.setActive(a);
+      store.setPainted(a);
       await Promise.resolve();
       await frames(20);
 
