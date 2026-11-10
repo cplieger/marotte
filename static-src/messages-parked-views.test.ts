@@ -447,9 +447,11 @@ describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => 
     const scroller = scroll.getScrollEl();
     expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight + 150);
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    expect(scroller.scrollTop, "the premise: Following at the end").toBe(
-      scroller.scrollHeight - scroller.clientHeight,
-    );
+    // scrollHeight rounds a fractional content height up, so the live edge reads up to 1px past the scrollTop it clamps to.
+    expect(
+      scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop,
+      "the premise: Following at the end",
+    ).toBeLessThanOrEqual(1);
     scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
     scroller.scrollTo({ top: 5, behavior: "instant" });
     scroller.dispatchEvent(new Event("scroll"));
