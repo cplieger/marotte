@@ -2,8 +2,8 @@ github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNUA=
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
-github.com/cplieger/forgeapi/v2 v2.0.0-dev.11 h1:t4EG8HxRah5wTh1v657wyJToMvVgg8/SrlQK2F6dyIw=
-github.com/cplieger/forgeapi/v2 v2.0.0-dev.11/go.mod h1:/PzgeMRgPDluK3wFUET5qRRHXCdUXf3wpU5dv3q83Kg=
+github.com/cplieger/forgeapi/v2 v2.0.0-dev.13 h1:UceEpx5gpjD331ZQ7zO3RIqJfyt18aL6OHZS3p/UoZQ=
+github.com/cplieger/forgeapi/v2 v2.0.0-dev.13/go.mod h1:wz6AM7T/JDg9zuub/khqW33RKlGnQlLrQlKRL5MwOXM=
 github.com/cplieger/go/envx v1.0.0 h1:L9JL05FV8MkK6Bo4o9fnWCkhRfgKhOoycglAtY34hb0=
 github.com/cplieger/go/envx v1.0.0/go.mod h1:O0Nxq8Qfg/b1xqduFZYqi7Qm/FczL9fSYpjWq0/nvik=
 github.com/cplieger/go/filesafe v1.0.0 h1:V63mC2Kc1PlbAKhiCXMA5WiellXJtWPtNJwTG2Q37us=

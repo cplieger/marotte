@@ -111,7 +111,7 @@ func TestOpenConn_TheSourceCarriesTheConnectionsPostures(t *testing.T) {
 			token, err, refreshes)
 	}
 
-	_, err = creds.NewSource(store, slotKey(spec.ID, 0), connectionFor(&spec))
+	_, err = creds.NewStoredSource(store, slotKey(spec.ID, 0), connectionFor(&spec))
 	var ferr *forgeapi.Error
 	if !errors.As(err, &ferr) || ferr.Code != forgeapi.CodePrivateAddressRefused {
 		t.Errorf("a source built without the record's postures = %v, want %q", err, forgeapi.CodePrivateAddressRefused)
