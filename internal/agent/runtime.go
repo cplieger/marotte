@@ -19,6 +19,7 @@ import (
 	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/go/sse/v2"
 	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/coalesce"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
@@ -27,7 +28,6 @@ import (
 	"github.com/cplieger/marotte/internal/liveness"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
-	"github.com/cplieger/marotte/internal/spec"
 	"github.com/cplieger/marotte/internal/specapproval"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/tabs"
@@ -285,7 +285,7 @@ type Runtime struct {
 	runRoutes *runRoutes
 	inbound   *inbound
 	// specs coalesces spec-directory marks into spec_changed broadcasts.
-	specs         *spec.Notifier
+	specs         *coalesce.Notifier[string]
 	replay        *replay
 	sessionReaper *kirosession.Reaper
 	lines         *buffer.LineTracker
@@ -564,7 +564,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	sseP.askSettled = h.coord.autoCompact.askSettled
 	// Built here because coord and the ignore matcher do not exist at the literal. Workspace-global: the
 	// orchestrator and its subagents write one spec from several sessions.
-	h.specs = spec.NewNotifier(specChangedWindow, func(dir string) {
+	h.specs = coalesce.New(specChangedWindow, func(dir string) {
 		sseP.Broadcast(context.Background(), marotte.NewEvent(marotte.EventSpecChanged, "", marotte.SpecChangedPayload{Dir: dir}))
 	})
 	h.inbound = &inbound{

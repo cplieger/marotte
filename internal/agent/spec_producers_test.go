@@ -6,14 +6,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/coalesce"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/spec"
 )
 
 // specRecorder swaps the Notifier for a zero-window one that hands each directory to a channel, so tests wait on the mark.
 func specRecorder(h *Runtime) <-chan string {
 	dirs := make(chan string, 8)
-	n := spec.NewNotifier(0, func(dir string) { dirs <- dir })
+	n := coalesce.New(0, func(dir string) { dirs <- dir })
 	h.specs = n
 	h.inbound.specs = n
 	return dirs

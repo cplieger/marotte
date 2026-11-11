@@ -1,4 +1,4 @@
-package spec
+package coalesce
 
 import (
 	"reflect"
@@ -13,25 +13,25 @@ const testWindow = 500 * time.Millisecond
 // The mutex is for the emit goroutine the timer runs.
 type recorder struct {
 	mu   sync.Mutex
-	dirs []string
+	keys []string
 }
 
-func (r *recorder) emit(dir string) {
+func (r *recorder) emit(key string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.dirs = append(r.dirs, dir)
+	r.keys = append(r.keys, key)
 }
 
 func (r *recorder) seen() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]string(nil), r.dirs...)
+	return append([]string(nil), r.keys...)
 }
 
 func TestNotifier_EmitsOncePerWindow(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		rec := &recorder{}
-		n := NewNotifier(testWindow, rec.emit)
+		n := New(testWindow, rec.emit)
 		n.Mark("a")
 		n.Mark("a")
 		synctest.Sleep(testWindow - time.Millisecond)
@@ -53,7 +53,7 @@ func TestNotifier_EmitsOncePerWindow(t *testing.T) {
 func TestNotifier_AMarkAfterTheCloseOpensTheNextWindow(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		rec := &recorder{}
-		n := NewNotifier(testWindow, rec.emit)
+		n := New(testWindow, rec.emit)
 		n.Mark("a")
 		synctest.Sleep(testWindow)
 		n.Mark("a")
@@ -68,10 +68,10 @@ func TestNotifier_AMarkAfterTheCloseOpensTheNextWindow(t *testing.T) {
 	})
 }
 
-func TestNotifier_DirectoriesAreIndependent(t *testing.T) {
+func TestNotifier_KeysAreIndependent(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		rec := &recorder{}
-		n := NewNotifier(testWindow, rec.emit)
+		n := New(testWindow, rec.emit)
 		n.Mark("a")
 		synctest.Sleep(testWindow / 2)
 		n.Mark("b")
@@ -89,12 +89,12 @@ func TestNotifier_DirectoriesAreIndependent(t *testing.T) {
 func TestNotifier_EmitRunsOutsideTheLock(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		rec := &recorder{}
-		var n *Notifier
+		var n *Notifier[string]
 		// A re-entrant Mark from emit deadlocks if emit ran under the mutex.
-		n = NewNotifier(testWindow, func(dir string) {
-			rec.emit(dir)
+		n = New(testWindow, func(key string) {
+			rec.emit(key)
 			if len(rec.seen()) == 1 {
-				n.Mark(dir)
+				n.Mark(key)
 			}
 		})
 		n.Mark("a")
