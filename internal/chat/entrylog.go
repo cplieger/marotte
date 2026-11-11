@@ -932,12 +932,42 @@ const firstLineMax = 120
 // firstLineOf is a prompt's first line, whitespace-collapsed and capped on a rune boundary, for
 // the turn-map preview. static-src/rail-merge.ts firstLine is its twin for a resident turn.
 func firstLineOf(text string) string {
-	line, _, _ := strings.Cut(text, "\n")
-	line = strings.Join(strings.Fields(line), " ")
+	line := collapseLine(previewLine(text))
 	if utf8.RuneCountInString(line) <= firstLineMax {
 		return line
 	}
 	return string([]rune(line)[:firstLineMax]) + "\u2026"
+}
+
+// previewLine is the line a prompt previews as: its first, or for one opening on a quote block, the first line of
+// the reader's words holding any, else the opening quote as `source: passage`, so the preview is never `>` marks.
+func previewLine(text string) string {
+	parts := splitQuotes(text)
+	if len(parts) == 0 || !parts[0].quote {
+		line, _, _ := strings.Cut(text, "\n")
+		return line
+	}
+	for _, p := range parts {
+		if p.quote {
+			continue
+		}
+		for line := range strings.SplitSeq(p.text, "\n") {
+			if collapseLine(line) != "" {
+				return line
+			}
+		}
+	}
+	q := parts[0]
+	if q.source != nil {
+		q.text = *q.source + ": " + q.text
+	}
+	line, _, _ := strings.Cut(q.text, "\n")
+	return line
+}
+
+// collapseLine splits on Unicode White_Space (strings.Fields) and rejoins with one space.
+func collapseLine(line string) string {
+	return strings.Join(strings.Fields(line), " ")
 }
 
 // rescanLocked rebuilds the index in one pass, truncating a torn tail, then applies what the pass cannot

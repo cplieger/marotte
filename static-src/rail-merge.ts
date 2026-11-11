@@ -3,6 +3,7 @@
 // window cannot see the turns paged out. Pure and DOM-free, like `turns.ts` beside it.
 
 import { bodyMemo } from "./body-memo.js";
+import { splitQuotes } from "./message-quote.js";
 import { OUTCOME_LABEL } from "./turn-severity.js";
 import { wakeLine } from "./turn-wake.js";
 import { turnLedger } from "./turns.js";
@@ -191,15 +192,38 @@ function wakeRailText(t: Turn): string {
  *  `firstLineOf`, because the index cannot answer for the turn that is running and the two spellings
  *  must agree for every turn it can; `internal/chat/testdata/first_line.json` pins both. */
 function firstLine(s: string): string {
-  // `strings.Fields` splits on Unicode White_Space. Not `\s` or `trim()`: both take U+FEFF and
-  // leave U+0085.
-  const collapsed = (s.split("\n", 1)[0] ?? "")
-    .split(/\p{White_Space}+/u)
-    .filter((w) => w !== "")
-    .join(" ");
+  const collapsed = collapseLine(previewLine(s));
   // Code points, not graphemes: the Go twin counts runes and the cap must match.
   const runes = Array.from(collapsed);
   return runes.length > FIRST_LINE_MAX
     ? runes.slice(0, FIRST_LINE_MAX).join("") + "\u2026"
     : collapsed;
+}
+
+/** The line a request previews as: its first, or for one opening on a quote block, the first line of the reader's
+ *  words holding any, else the opening quote as `source: passage`, so the preview is never `>` marks. */
+function previewLine(s: string): string {
+  const parts = splitQuotes(s);
+  const lead = parts[0];
+  if (lead?.kind !== "quote") {
+    return s.split("\n", 1)[0] ?? "";
+  }
+  for (const p of parts) {
+    const line =
+      p.kind === "text" ? p.text.split("\n").find((l) => collapseLine(l) !== "") : undefined;
+    if (line !== undefined) {
+      return line;
+    }
+  }
+  const read = lead.source === null ? lead.quote : `${lead.source}: ${lead.quote}`;
+  return read.split("\n", 1)[0] ?? "";
+}
+
+/** `line` split on Unicode White_Space, as Go's `strings.Fields` splits, and rejoined with one space. Not `\s` or
+ *  `trim()`: both take U+FEFF and leave U+0085. */
+function collapseLine(line: string): string {
+  return line
+    .split(/\p{White_Space}+/u)
+    .filter((w) => w !== "")
+    .join(" ");
 }

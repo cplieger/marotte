@@ -2,7 +2,10 @@
   "_comment": [
     "A turn's first_line: its prompt's first line, cut at the first newline, split on Unicode",
     "White_Space (Go's strings.Fields), rejoined with one space and capped at 120 runes plus an",
-    "ellipsis. Hand-written: this file is the rule, not a recording of either side.",
+    "ellipsis. A prompt opening on a Quote in reply block previews the first line of the",
+    "reader's words after it that holds any, else its opening quote as 'source: passage'",
+    "(entrylog.go previewLine; prompt_quote.go splitQuotes ports message-quote.ts splitQuotes).",
+    "Hand-written: this file is the rule, not a recording of either side.",
     "",
     "The server writes it into the session index (entrylog.go firstLineOf) and the client",
     "derives it for a turn still in the store's window (rail-merge.ts firstLine). They must",
@@ -50,6 +53,66 @@
       "name": "caps a long line at 120 runes plus an ellipsis",
       "prompt": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
       "first_line": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé…"
+    },
+    {
+      "name": "a prompt opening on a quote previews the words after it",
+      "prompt": "> From Kiro's reply:\n>\n> the passage\n>\n> Quoting your earlier reply.\n\nwhat does   this mean?\nmore",
+      "first_line": "what does this mean?"
+    },
+    {
+      "name": "two opening quotes are both skipped, and a line of white space after them",
+      "prompt": "> From Kiro's reply:\n>\n> one\n>\n> Quoting your earlier reply.\n\n> From Kiro's thinking:\n>\n> two\n>\n> Quoting your earlier reply.\n\n\u0085\n  remind   me\nmore",
+      "first_line": "remind me"
+    },
+    {
+      "name": "a byte order mark line after a quote is trimmed as the client trims it",
+      "prompt": "> From Kiro's reply:\n>\n> one\n>\n> Quoting your earlier reply.\n\ufeff\nwords",
+      "first_line": "words"
+    },
+    {
+      "name": "a prompt that is only a quote previews it as source: passage",
+      "prompt": "> From Kiro's reply:\n>\n> the passage\n> line two\n>\n> Quoting your earlier reply.",
+      "first_line": "From Kiro's reply: the passage"
+    },
+    {
+      "name": "a quote-only preview reads its context tokens unescaped",
+      "prompt": "> From run a#\\[[x]]:\n>\n> see #\\[[file:a]]\n>\n> Quoting your earlier reply.",
+      "first_line": "From run a#[[x]]: see #[[file:a]]"
+    },
+    {
+      "name": "a quote naming no source previews its passage",
+      "prompt": "> old words\n>\n> Quoting your earlier reply.",
+      "first_line": "old words"
+    },
+    {
+      "name": "a passage quoting the attribution sentence stays one quote",
+      "prompt": "> From Kiro's reply:\n>\n> line a\n> Quoting your earlier reply.\n> line b\n>\n> Quoting your earlier reply.\n\nwhy",
+      "first_line": "why"
+    },
+    {
+      "name": "a quote whose words after it are white space alone previews the quote",
+      "prompt": "> From Kiro's reply:\n>\n> q\n>\n> Quoting your earlier reply.\n\n\u0085",
+      "first_line": "From Kiro's reply: q"
+    },
+    {
+      "name": "words before a quote keep the first line",
+      "prompt": "intro  line\n\n> From Kiro's reply:\n>\n> x\n>\n> Quoting your earlier reply.\n\nwhy",
+      "first_line": "intro line"
+    },
+    {
+      "name": "a hand-typed blockquote is the reader's own first line",
+      "prompt": "> my note\n> From Kiro's reply:\n>\n> x\n>\n> Quoting your earlier reply.\n\nwhy",
+      "first_line": "> my note"
+    },
+    {
+      "name": "a passage whose attribution sentence comes before a source-like last line stays one quote",
+      "prompt": "> From Kiro's reply:\n>\n> line a\n> Quoting your earlier reply.\n> From the docs:\n>\n> Quoting your earlier reply.\n\nwhy",
+      "first_line": "why"
+    },
+    {
+      "name": "a quote-only prompt whose passage opens on the attribution sentence previews it",
+      "prompt": "> From Kiro's reply:\n>\n> Quoting your earlier reply.\n> From the docs:\n>\n> line b\n>\n> Quoting your earlier reply.",
+      "first_line": "From Kiro's reply: Quoting your earlier reply."
     }
   ]
 }
