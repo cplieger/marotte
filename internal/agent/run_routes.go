@@ -20,6 +20,7 @@ func (rr *runRoutes) register(mux *http.ServeMux) {
 	// {path} is one percent-encoded workflow.PathKey: ServeMux splits the ESCAPED path, so a node id's "/"
 	// travels as %2F inside the segment.
 	mux.HandleFunc("GET /api/runs/{id}/steps/{path}", rr.handleStepTranscript)
+	mux.HandleFunc("GET /api/runs/{id}/steps/{path}/capture", rr.handleStepCapture)
 	mux.HandleFunc("GET /api/runs/{id}/turns/{turn}", rr.handleTurnRange)
 	write("POST /api/runs", rr.handleLaunch)
 	write("POST /api/runs/{id}/cancel", rr.handleCancel)

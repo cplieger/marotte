@@ -39,6 +39,8 @@ interface ExecPageOpts {
   controls?: (run: ExecRun) => HTMLElement | null;
   /** The consumer's own statements about the execution (a control refusal), as dock notes. */
   notes?: (run: ExecRun) => readonly string[];
+  /** The output of a node marked `deferredOutput`, once the consumer holds it. */
+  output?: (node: ExecNode) => string | undefined;
   /** Fired when the node the DETAIL PANE is showing changes, or when that node's
    *  state moves — the seam a consumer arms an on-demand fetch on (`emptyNote`/`emptyAction`
    *  run on every render and must stay pure). The STATE half is required because `select()`
@@ -223,8 +225,10 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
   function renderResults(node: ExecNode | undefined): void {
     const merged = new Map<string, string>();
     if (node !== undefined && settled(node.state)) {
-      if (node.output !== undefined) {
-        merged.set("", node.output);
+      const output =
+        node.output ?? (node.deferredOutput === true ? opts.output?.(node) : undefined);
+      if (output !== undefined) {
+        merged.set("", output);
       }
       // Artifacts win a key collision, being the value a step CHOSE to publish.
       for (const [k, v] of Object.entries(node.artifacts ?? {})) {

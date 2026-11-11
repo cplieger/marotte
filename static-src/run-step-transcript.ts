@@ -1,8 +1,8 @@
 import { batch, signal } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import { apiGetTypedOrError } from "./api-client.js";
-import { decodeRunStepTranscript } from "./wire/decoders.gen.js";
-import { runStepURL } from "./actions/runs.js";
+import { decodeRunStepCapture, decodeRunStepTranscript } from "./wire/decoders.gen.js";
+import { runStepCaptureURL, runStepURL } from "./actions/runs.js";
 import {
   adoptRunOpenEntries,
   appendRunEntry,
@@ -49,6 +49,41 @@ export function stepRead(workflowID: string, nodePath: string): StepRead | undef
 export function clearStepTranscripts(): void {
   reads.clear();
   inFlight.clear();
+  captures.clear();
+}
+
+/** Steps' whole captured outputs by read key: null for a step that captured nothing or whose read
+ *  is in flight, absent for one not read. A failed read leaves it absent, so the next showing of
+ *  the step asks again. */
+const captures = new Map<string, string | null>();
+
+/** A step's whole captured output once its capture read answered, else undefined. */
+export function stepCapture(workflowID: string, nodePath: string): string | undefined {
+  return captures.get(readKey(workflowID, nodePath)) ?? undefined;
+}
+
+/** Ask once for a step's whole captured output. The answer bumps `stepTranscriptVersion`. */
+export function requestStepCapture(workflowID: string, nodePath: string): void {
+  const key = readKey(workflowID, nodePath);
+  if (workflowID === "" || nodePath === "" || captures.has(key)) {
+    return;
+  }
+  captures.set(key, null);
+  void apiGetTypedOrError(runStepCaptureURL(workflowID, nodePath), decodeRunStepCapture)
+    .then((r) => {
+      if (!captures.has(key)) {
+        return;
+      }
+      if (!r.ok || r.data === null) {
+        captures.delete(key);
+        return;
+      }
+      captures.set(key, r.data.captured_output ?? null);
+      stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
+    })
+    .catch(() => {
+      captures.delete(key);
+    });
 }
 
 /** Whether an answer is settled — never worth asking again. */

@@ -50,8 +50,11 @@ export interface ExecNode {
   endedByHand?: true;
   /** What the node produced, as markdown. */
   output?: string;
-  /** The card's result text: the capture verbatim, or a decoded watch's last output line (its
-   *  subtitle says how it ended). */
+  /** Set when the node produced an output the source did not carry: the page asks its consumer for
+   *  it (`ExecPageOpts.output`). */
+  deferredOutput?: true;
+  /** The card's result text: the capture verbatim or its summary, or a decoded watch's last output
+   *  line (its subtitle says how it ended). */
   capture?: string;
   /** Named artifacts the node published. */
   artifacts?: Record<string, string>;

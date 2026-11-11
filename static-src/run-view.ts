@@ -39,8 +39,10 @@ import { lastPrintedLine } from "./run-step-tail.js";
 import type { RunStepPaint, RunStepStream } from "./run-chat-steps.js";
 import {
   clearStepTranscripts,
+  requestStepCapture,
   requestStepTranscript,
   rereadStepTranscript,
+  stepCapture,
   stepRead,
   stepTranscriptVersion,
 } from "./run-step-transcript.js";
@@ -498,6 +500,7 @@ function mountPage(
     notes: () => verbs.refusals(),
     // The pane's effect projects the step this names.
     onShowNode: armStepRead,
+    output: (node) => stepCapture(workflowID, node.path),
     // Never another run's page: `showRun` repaints at once, and that paint drops this page.
     onSelect: (node) => {
       pushStepTarget(workflowID, node);
@@ -625,6 +628,9 @@ let holesAnswered = "";
 function armStepRead(node: ExecNode | undefined): void {
   shownNode = node?.transcript === true ? node : undefined;
   shownStep.value = shownNode?.path ?? "";
+  if (node?.deferredOutput === true && settled(node.state) && shownRun !== "") {
+    requestStepCapture(shownRun, node.path);
+  }
   if (node?.transcript !== true || shownRun === "") {
     return;
   }

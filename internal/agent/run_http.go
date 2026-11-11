@@ -1,7 +1,7 @@
 package agent
 
 // The run surface: two reads, and routes that forward to KAS's own control verbs. The run read
-// passes `state` and `nodePlan` through verbatim.
+// passes `state` and `nodePlan` through, each step's capture as its summary (summarizedRead).
 
 // The step read loads a step's own KAS session and projects the replay: `inspect` carries only what a step declared.
 
@@ -47,7 +47,7 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 		writeInspectErr(w, id, err)
 		return
 	}
-	raw := read.raw
+	raw := summarizedOrWhole(id, read.raw)
 	position, err := read.position()
 	if err != nil {
 		slog.Warn("workflow inspect: the run's read position could not be computed",
@@ -91,6 +91,18 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpreply.WriteRawJSON(w, out)
+}
+
+// summarizedOrWhole is raw as the run read serves it (summarizedRead), or raw whole when it cannot be
+// summarized: the client still reads a whole capture.
+func summarizedOrWhole(id string, raw json.RawMessage) json.RawMessage {
+	served, err := summarizedRead(raw)
+	if err != nil {
+		slog.Warn("workflow inspect: the reply's captures could not be summarized; it goes out whole",
+			"workflow_id", logsafe.Field(id), "error", err)
+		return raw
+	}
+	return served
 }
 
 // writeInspectErr grades a failed `inspect` two ways, since a client treats 404 as final: the engine

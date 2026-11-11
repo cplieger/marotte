@@ -182,6 +182,15 @@ type RunStepTranscript struct {
 	Subject []SubjectStamp `json:"subject"`
 }
 
+// RunStepCapture is GET /api/runs/{id}/steps/{path}/capture's reply: the whole captured output of
+// one node, which the run read carries only as its summary.
+type RunStepCapture struct {
+	// CapturedOutput is absent when the node captured nothing; "" is a capture of no text.
+	CapturedOutput *string `json:"captured_output,omitempty"`
+	WorkflowID     string  `json:"workflow_id"`
+	NodePath       string  `json:"node_path"`
+}
+
 // RunAsksPayload is the payload for type="run_asks": every step of one run waiting on a person, as
 // marotte last read it, replacing the client's previous snapshot of that run whole. A newer
 // (epoch, seq) wins and an older or equal one is dropped. Reachable false means the asks are the

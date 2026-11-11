@@ -780,6 +780,9 @@ function foldNode(node: RunNode, ctx: FoldContext, at: Placed): ExecNode {
         : watch.kind === "process"
           ? lastTailLine(watch.tail)
           : "";
+  } else if (node.hasCapture === true) {
+    out.capture = node.captureSummary ?? "";
+    out.deferredOutput = true;
   }
   if (node.artifacts !== undefined && Object.keys(node.artifacts).length > 0) {
     out.artifacts = node.artifacts;

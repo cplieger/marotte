@@ -52,7 +52,11 @@ export interface RunNode {
   branchId?: string;
   children?: RunNode[];
   artifacts?: Record<string, string>;
+  /** A watch's whole capture. A step's comes only from its capture read (`requestStepCapture`): the
+   *  run read carries its first lines as `captureSummary`, and `hasCapture` says it captured. */
   capturedOutput?: string;
+  captureSummary?: string;
+  hasCapture?: boolean;
   watchTerminal?: boolean;
   failureReason?: string;
   /** This store's, from the live frames KAS persists nothing for: why the step paused, and why a

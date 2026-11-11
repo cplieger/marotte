@@ -227,6 +227,8 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.RunStepStart](),
 	// GET /api/runs/{id}/steps/{path}. No omitempty, so `state` is REQUIRED in TypeScript.
 	wiregen.TypeRef[marotte.RunStepTranscript](),
+	// GET /api/runs/{id}/steps/{path}/capture.
+	wiregen.TypeRef[marotte.RunStepCapture](),
 	wiregen.TypeRef[marotte.ToolJobChangedPayload](),
 	wiregen.TypeRef[marotte.ToolJobOutputPayload](),
 	wiregen.TypeRef[marotte.TerminalCreatedPayload](),

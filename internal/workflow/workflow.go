@@ -137,10 +137,19 @@ func Steps(s *State) []StepSession {
 // `iteration`; with none it falls back to the node id. Siblings holding the same
 // translation: translate.runNodePath and run-node-key.ts.
 func pathSegment(n, parent *node) string {
-	if parent != nil && parent.Type == "repeat" && n.Iteration != nil {
-		return "iter-" + strconv.Itoa(*n.Iteration)
+	parentType := ""
+	if parent != nil {
+		parentType = parent.Type
 	}
-	return n.NodeID
+	return segmentOf(n.NodeID, n.Iteration, parentType)
+}
+
+// segmentOf is pathSegment over a node's own fields and its parent's type ("" for the root).
+func segmentOf(nodeID string, iteration *int, parentType string) string {
+	if parentType == "repeat" && iteration != nil {
+		return "iter-" + strconv.Itoa(*iteration)
+	}
+	return nodeID
 }
 
 // The refusal KAS's run-claim gate throws as a plain Error: a -32603 whose `error.data.details` is the sentence

@@ -3320,6 +3320,17 @@ export interface RunStartedPayload {
 }
 
 /**
+ * RunStepCapture is GET /api/runs/{id}/steps/{path}/capture's reply: the whole captured output of
+ * one node, which the run read carries only as its summary.
+ */
+export interface RunStepCapture {
+  /** CapturedOutput is absent when the node captured nothing; "" is a capture of no text. */
+  captured_output?: string;
+  workflow_id: string;
+  node_path: string;
+}
+
+/**
  * RunStepEnd is how a step's newest turn in the run's own log ended, under `step_ends` in GET /api/runs/{id}
  * keyed by node path: its recorded grade under KAS's record (step_graded) when it has one, else its close when that
  * is broken. KAS grades a refused step, and one its model-call limit stopped, completed, so its node status cannot

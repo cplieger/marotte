@@ -64,7 +64,7 @@ vi.mock("./exec-view/page.js", async (importOriginal) => {
   };
 });
 
-import { apiGetOrError, apiGetTyped } from "./api-client.js";
+import { apiGetOrError, apiGetTyped, apiGetTypedOrError } from "./api-client.js";
 import { refreshRun, showRun } from "./run-view.js";
 import {
   applyRunDelta,
@@ -331,5 +331,125 @@ describe("the shown step's transcript", () => {
     await flush();
 
     expect(hosts()).toEqual([`${WF}:b`]);
+  });
+});
+
+describe("the shown step's result", () => {
+  it("draws the Output box from the step's capture read", async () => {
+    vi.mocked(apiGetOrError).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        workflowId: WF,
+        state: {
+          workflowId: WF,
+          status: "completed",
+          root: {
+            nodeId: WF,
+            type: "sequence",
+            status: "completed",
+            children: [
+              {
+                nodeId: "report",
+                type: "step",
+                status: "completed",
+                startedAt: "2026-11-10T10:00:00Z",
+                endedAt: "2026-11-10T10:05:00Z",
+                hasCapture: true,
+                captureSummary: "Summary line",
+                children: [],
+              },
+            ],
+          },
+        },
+      },
+      error: "",
+    });
+    vi.mocked(apiGetTypedOrError).mockImplementation(
+      (url: string) =>
+        Promise.resolve(
+          url.endsWith("/capture")
+            ? {
+                ok: true,
+                status: 200,
+                data: {
+                  workflow_id: WF,
+                  node_path: `${WF}:report`,
+                  captured_output: "Summary line\n\nThe whole report.",
+                },
+                error: "",
+              }
+            : {
+                ok: true,
+                status: 200,
+                data: {
+                  workflow_id: WF,
+                  node_path: `${WF}:report`,
+                  state: "ready",
+                  source: "log",
+                  entries: [],
+                  open_entries: [],
+                  subject: [],
+                },
+                error: "",
+              },
+        ) as never,
+    );
+
+    await activateRunTab();
+    await flush();
+
+    const keys = [...runView.querySelectorAll(".ev-r-item-key")].map((k) => k.textContent);
+    expect(keys).toEqual(["Output"]);
+    expect(runView.querySelector(".ev-r-text")?.textContent).toContain("The whole report.");
+  });
+
+  it("asks a step that settles while shown for its capture once", async () => {
+    await activateRunTab();
+    const settledRead = runRead() as {
+      state: { status: string; root: { status: string; children: Record<string, unknown>[] } };
+    };
+    settledRead.state.status = "completed";
+    settledRead.state.root.status = "completed";
+    Object.assign(settledRead.state.root.children[0] ?? {}, {
+      status: "completed",
+      endedAt: "2026-11-10T10:05:00Z",
+      hasCapture: true,
+      captureSummary: "First line",
+    });
+    vi.mocked(apiGetOrError).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: settledRead,
+      error: "",
+    });
+    vi.mocked(apiGetTypedOrError).mockImplementation(
+      (url: string) =>
+        Promise.resolve(
+          url.endsWith("/capture")
+            ? {
+                ok: true,
+                status: 200,
+                data: {
+                  workflow_id: WF,
+                  node_path: STEP,
+                  captured_output: "First line\nThe rest.",
+                },
+                error: "",
+              }
+            : { ok: false, status: 503, data: null, error: "" },
+        ) as never,
+    );
+
+    refreshRun(WF);
+    await flush();
+    refreshRun(WF);
+    await flush();
+
+    const captureReads = vi
+      .mocked(apiGetTypedOrError)
+      .mock.calls.filter(([url]) => url.endsWith("/capture"));
+    expect(captureReads).toHaveLength(1);
+    expect(runView.querySelector(".ev-r-text")?.textContent).toContain("The rest.");
   });
 });
