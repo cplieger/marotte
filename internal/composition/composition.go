@@ -350,6 +350,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithKiroReady(kiro.ready),
 		server.WithKiroRescan(kiro.rescan),
 		server.WithAuthUnavailable(authReadiness.Unavailable),
+		server.WithListenAddr(cfg.ListenAddr),
 		server.WithConfigDir(cfg.ConfigDir),
 		server.WithSensitive(sensitive),
 		server.WithKASNode(func() string { return cfg.KASLookup.Find(kiro.version()).Node }),
@@ -800,7 +801,9 @@ func buildToolsEngine(cfg *Config, h *agent.Runtime,
 
 func newSteering(cfg *Config) *steering.Generator {
 	toolsDir, _ := cfg.Tools.use()
-	return steering.New(cfg.WorkDir, cfg.ConfigDir, toolsDir)
+	return steering.New(steering.Config{
+		WorkDir: cfg.WorkDir, ConfigDir: cfg.ConfigDir, ToolsDir: toolsDir, ServerAddr: cfg.LocalAddr,
+	})
 }
 
 // regenerateSteering runs generate and logs its failure at ERROR, except the ctx's own error, which

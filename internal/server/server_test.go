@@ -491,3 +491,10 @@ func TestCaptureLogs_LeavesTheLogPackageWhereItFoundIt(t *testing.T) {
 		t.Errorf("after captureLogs cleaned up, log.Flags() = %d, want %d", got, log.LstdFlags)
 	}
 }
+
+// An empty address would have net.Listen pick a random port, which nothing could find.
+func TestListenAndServe_RefusesNoListenAddress(t *testing.T) {
+	if err := New().ListenAndServe(); err == nil {
+		t.Error("ListenAndServe() with no WithListenAddr = nil, want an error")
+	}
+}

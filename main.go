@@ -43,7 +43,13 @@ func runMain() int {
 	if len(os.Args) > 1 && os.Args[1] == composition.PathsCommand {
 		return composition.RunPaths(os.Stdout, os.Stderr)
 	}
+	if len(os.Args) > 1 && os.Args[1] == composition.HealthCommand {
+		return composition.RunHealth(os.Stderr)
+	}
 	cfg := composition.ConfigFromEnv()
+	if err := composition.DropListenerEnv(); err != nil {
+		slog.Warn("config: children may inherit the listener settings", "error", err)
+	}
 	cfg.ToolCatalogRequire = toolbelt.ParseRequireList(requiredToolsList)
 
 	workspace.SetKiroHomeResolver(func() string {

@@ -58,7 +58,7 @@ func TestRegenerateSteering_ACancelBeforeTheRenderLogsNothing(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	regenerateSteering(ctx, steering.New(t.TempDir(), t.TempDir(), "").Generate)
+	regenerateSteering(ctx, steering.New(steering.Config{WorkDir: t.TempDir(), ConfigDir: t.TempDir()}).Generate)
 
 	if out := logs.String(); out != "" {
 		t.Errorf("a regeneration cancelled before its render logged:\n%s", out)

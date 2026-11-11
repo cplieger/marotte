@@ -336,7 +336,7 @@ func TestWireToolsSteering_ListsTheEnginesInstalledTools(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wireToolsSteering(context.WithoutCancel(t.Context()), tools, steering.New(t.TempDir(), configDir, toolsDir))
+	wireToolsSteering(context.WithoutCancel(t.Context()), tools, steering.New(steering.Config{WorkDir: t.TempDir(), ConfigDir: configDir, ToolsDir: toolsDir}))
 
 	path := workspace.KiroSteeringPath("environment.md")
 	want := "## Installed tools\n\nCommands: hello 1.0, hello-cli 1.0\n\n"

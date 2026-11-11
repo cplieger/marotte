@@ -120,7 +120,7 @@ func TestForgeSteering_BootSyncWritesASavedConnectionToTheSteeringFile(t *testin
 	m.Load(t.Context())
 	poller := forges.NewPRStatusPoller(forges.NewManagerPRSource(m, func(context.Context) []forges.RepoOrigin { return nil }),
 		quietNotifier{}, func() forges.Gate { return forges.Gate{} })
-	steer := steering.New(t.TempDir(), t.TempDir(), t.TempDir())
+	steer := steering.New(steering.Config{WorkDir: t.TempDir(), ConfigDir: t.TempDir(), ToolsDir: t.TempDir()})
 
 	s := notifier.wire(context.WithoutCancel(t.Context()), poller, m, steer)
 	t.Cleanup(s.close)

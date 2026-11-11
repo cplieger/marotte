@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/measure"
+	"github.com/cplieger/marotte/internal/version"
 )
 
 var registry = measure.NewRegistry("marotte")
@@ -84,6 +85,8 @@ const (
 	labelRuleID = "rule_id"
 )
 
+var buildInfo = measure.NewLabeledGauge("build_info", "Build information, always 1.", []string{"version"})
+
 var (
 	engineExits = measure.NewLabeledCounter("engine_exits_total",
 		"Agent engine exits, by the cause the exit line names.", []string{"cause"})
@@ -124,9 +127,10 @@ var (
 )
 
 func init() {
-	registry.MustRegister(engineExits, promptFailures, signInSaveFailures, engineUp, engineResident, engineHeapLimit,
-		unattendedRunFailures, unattendedApprovals, slotsNotStarted, scheduleFailedSlots, scheduleNextDue,
-		triggerBlocked, triggerQueueFull, triggerPollFailures, triggerGaps)
+	registry.MustRegister(buildInfo, engineExits, promptFailures, signInSaveFailures, engineUp, engineResident,
+		engineHeapLimit, unattendedRunFailures, unattendedApprovals, slotsNotStarted, scheduleFailedSlots,
+		scheduleNextDue, triggerBlocked, triggerQueueFull, triggerPollFailures, triggerGaps)
+	buildInfo.Set(1, version.Build)
 	for _, c := range engineExitCauses {
 		engineExits.Add(0, c)
 	}

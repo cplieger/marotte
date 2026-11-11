@@ -135,7 +135,7 @@ func TestGenerate_DefusesEveryUntrustedChannel(t *testing.T) {
 			workDir, configDir := t.TempDir(), t.TempDir()
 			mcp, forge := tc.plant(t, workDir, configDir)
 
-			g := New(workDir, configDir, filepath.Join(configDir, "tools"))
+			g := New(Config{WorkDir: workDir, ConfigDir: configDir, ToolsDir: filepath.Join(configDir, "tools")})
 			if mcp != nil {
 				g.SetMCPSnapshot(mcp)
 			}
@@ -175,7 +175,7 @@ func TestGenerate_WritesTheConfiguredDirectoriesVerbatim(t *testing.T) {
 			mustWriteFile(t, filepath.Join(repo, ".kiro", "steering", "s.md"), "# S\n")
 			mustWriteFile(t, filepath.Join(configDir, "config.json"), `{"memory_mode":"read_only"}`)
 
-			g := New(workDir, configDir, toolsDir)
+			g := New(Config{WorkDir: workDir, ConfigDir: configDir, ToolsDir: toolsDir})
 			g.Generate(t.Context())
 			data, err := os.ReadFile(steeringFile)
 			if err != nil {

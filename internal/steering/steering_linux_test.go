@@ -38,7 +38,7 @@ func TestGenerate_CancelledDuringItsSnapshotsRendersNothing(t *testing.T) {
 	t.Setenv("HOME", home)
 	workDir := t.TempDir()
 	opened := workDirOpens(t, workDir)
-	g := New(workDir, t.TempDir(), "")
+	g := New(Config{WorkDir: workDir, ConfigDir: t.TempDir()})
 	ctx, cancel := context.WithCancel(t.Context())
 	g.SetToolsSnapshot(func() (ToolsSnapshot, bool) { cancel(); return ToolsSnapshot{}, true })
 

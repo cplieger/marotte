@@ -37,7 +37,7 @@ func TestGenerate_NamesTheAdditionalDirectoriesAsWritable(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "gone")
 	writeAdditionalDirsSetting(t, configDir, []string{extra, missing, configDir})
 
-	New(workDir, configDir, filepath.Join(configDir, "tools")).Generate(t.Context())
+	New(Config{WorkDir: workDir, ConfigDir: configDir, ToolsDir: filepath.Join(configDir, "tools")}).Generate(t.Context())
 
 	out, err := os.ReadFile(steeringPath)
 	if err != nil {
@@ -74,7 +74,7 @@ func TestGenerate_NoAdditionalDirectoriesOmitsTheSection(t *testing.T) {
 			if dirs != nil {
 				writeAdditionalDirsSetting(t, configDir, dirs)
 			}
-			New(workDir, configDir, filepath.Join(configDir, "tools")).Generate(t.Context())
+			New(Config{WorkDir: workDir, ConfigDir: configDir, ToolsDir: filepath.Join(configDir, "tools")}).Generate(t.Context())
 			out, err := os.ReadFile(steeringPath)
 			if err != nil {
 				t.Fatal(err)
@@ -90,7 +90,7 @@ func TestGenerate_RemovingAnAdditionalDirectoryDropsItFromTheNextRender(t *testi
 	steeringPath := setupKiroHome(t)
 	workDir, configDir := t.TempDir(), t.TempDir()
 	extra := grantableDir(t)
-	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
+	g := New(Config{WorkDir: workDir, ConfigDir: configDir, ToolsDir: filepath.Join(configDir, "tools")})
 	writeAdditionalDirsSetting(t, configDir, []string{extra})
 	g.Generate(t.Context())
 	out, err := os.ReadFile(steeringPath)

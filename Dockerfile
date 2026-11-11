@@ -270,9 +270,10 @@ WORKDIR /workspace
 EXPOSE 9847
 
 # start-period=300s: a first boot downloads and verifies kiro-cli (~528 MB), and
-# /healthz answers 503 until the pinned version is installed.
+# /healthz answers 503 until the pinned version is installed. An absolute path,
+# because PATH starts with the user-writable /config/tools/bin.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=300s \
-    CMD ["curl", "-sf", "http://127.0.0.1:9847/healthz"]
+    CMD ["/app/marotte", "health"]
 # tini is PID 1 so orphans are reaped: marotte waits only the children it
 # started, and its git and kiro-cli grandchildren otherwise piled up as zombies
 # (1,172 of 1,246 processes measured). entrypoint.sh keeps its `exec`, so the

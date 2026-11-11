@@ -3,6 +3,7 @@ package server
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -13,7 +14,7 @@ import (
 	"sync/atomic"
 	"syscall"
 
-	"github.com/cplieger/go/health"
+	"github.com/cplieger/go/health/v2"
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/httpreply"
@@ -23,11 +24,6 @@ import (
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/toolbelt/v3/pin"
 )
-
-const port = "9847"
-
-// A -tags marotte_test binary may move it (testhooks_marottetest.go).
-var listenPort = port
 
 // Server holds shared state and registers all HTTP handlers.
 type Server struct {
@@ -75,9 +71,10 @@ type Server struct {
 	notifyDeliverer notify.Deliverer
 	// onListen fires once per successful bind, before serving: the evidence that this process
 	// serves its config dir.
-	onListen  func()
-	configDir string
-	workDir   string
+	onListen   func()
+	listenAddr string
+	configDir  string
+	workDir    string
 	// kasNode resolves the node binary KAS runs on; nil or "" means it cannot be located.
 	kasNode func() string
 	// sensitive is the file browser's deny list; the zero value is the one rooted at /config.
@@ -200,6 +197,9 @@ func WithAuthUnavailable(unavailable func() bool) Option {
 func WithKiroRescan(rescan func(context.Context) (bool, error)) Option {
 	return func(s *Server) { s.kiroRescan = rescan }
 }
+
+// WithListenAddr sets the net.Listen address ListenAndServe binds. ListenAndServe refuses an empty one.
+func WithListenAddr(addr string) Option { return func(s *Server) { s.listenAddr = addr } }
 
 // WithConfigDir sets the configuration directory path used for chat files and settings.
 func WithConfigDir(d string) Option { return func(s *Server) { s.configDir = d } }
@@ -348,6 +348,9 @@ func (s *Server) routes() *http.ServeMux {
 
 // ListenAndServe registers all routes and starts the HTTP server, blocking until SIGTERM/SIGINT.
 func (s *Server) ListenAndServe() error {
+	if s.listenAddr == "" {
+		return errors.New("no listen address")
+	}
 	mux := s.routes()
 	cspPolicy, err := buildCSPPolicy(s.staticFS)
 	if err != nil {
@@ -363,7 +366,7 @@ func (s *Server) ListenAndServe() error {
 	// with no access-log line, request id or client_ip.
 	handler := httpserver.Chain(mux, s.middlewareStack(cspPolicy, idem)...)
 	srv := httpserver.New(handler)
-	srv.Addr = ":" + listenPort
+	srv.Addr = s.listenAddr
 
 	// Bound up front so port-in-use surfaces synchronously.
 	lc := listenConfig()
@@ -380,7 +383,7 @@ func (s *Server) ListenAndServe() error {
 	if s.onListen != nil {
 		s.onListen()
 	}
-	// The bound ADDRESS, not the port constant: a misdirected boot's own output then says
+	// The bound ADDRESS, not the configured one: a misdirected boot's own output then says
 	// which listener it got.
 	slog.Info("Kiro Web UI listening", "addr", ln.Addr().String())
 	// DNS rebinding rides the victim's BROWSER, so it reaches even a loopback bind.
@@ -484,11 +487,6 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 // healthzPath is the health route: no login, method gated to GET and HEAD.
 const healthzPath = "/healthz"
 
-// verdict is a health.Signal fixed for one request.
-type verdict bool
-
-func (v verdict) Healthy() bool { return bool(v) }
-
 // handleHealth answers 200 {"status":"ok"}, or 503 {"status":"unhealthy","reasons":[...]}
 // listing every standing fault: not serving (startup or drain), the kiro-cli install verdict,
 // then sign-in. runtime-health.ts reads reasons[0], so that order is a client contract.
@@ -505,11 +503,12 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	authOK := s.authUnavailable == nil || !s.authUnavailable()
-	checks := []health.Check{{Signal: verdict(s.ready.Load()), Reason: "starting up or shutting down"}}
+	serving := s.ready.Load()
+	checks := []health.Check{{Signal: health.SignalFunc(func() bool { return serving }), Reason: "starting up or shutting down"}}
 	for _, reason := range []string{reasonInstalling, reasonRetrying, reasonUnavailable, reasonSettings} {
-		checks = append(checks, health.Check{Signal: verdict(kiroFault != reason), Reason: reason})
+		checks = append(checks, health.Check{Signal: health.SignalFunc(func() bool { return kiroFault != reason }), Reason: reason})
 	}
-	checks = append(checks, health.Check{Signal: verdict(authOK), Reason: reasonSignIn})
+	checks = append(checks, health.Check{Signal: health.SignalFunc(func() bool { return authOK }), Reason: reasonSignIn})
 	health.CheckHandler(checks...).ServeHTTP(w, r)
 }
 

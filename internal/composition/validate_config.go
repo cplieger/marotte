@@ -21,6 +21,9 @@ func validateConfig(ctx context.Context, cfg *Config) error {
 	if cfg.notifyErr != nil {
 		errs = append(errs, cfg.notifyErr)
 	}
+	if cfg.listenErr != nil {
+		errs = append(errs, cfg.listenErr)
+	}
 
 	// Both folders are written into the generated steering documents verbatim.
 	for _, d := range []struct{ env, dir string }{{"KIRO_CONFIG_DIR", cfg.ConfigDir}, {"KIRO_WORK_DIR", cfg.WorkDir}} {
