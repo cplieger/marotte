@@ -446,10 +446,10 @@ describe("what releases the jump", { timeout: testTimeoutFor(FRAME_BUDGET_MS) },
     });
     const ownerWrites: string[] = [];
     for (const name of ["scrollTo", "scrollBy"] as const) {
-      const platform = wrap[name].bind(wrap);
-      wrap[name] = ((...args: Parameters<typeof platform>) => {
+      const platform = wrap[name];
+      wrap[name] = ((...args: unknown[]) => {
         ownerWrites.push(name);
-        platform(...args);
+        Reflect.apply(platform, wrap, args);
       }) as typeof platform;
     }
 
