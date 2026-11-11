@@ -2,6 +2,8 @@
 
 export type AlwaysAllowBlock = "unparseable";
 
+export type BotState = "draft" | "active" | "paused" | "closed";
+
 export type CatalogReason = "rpc" | "decode";
 
 export type CatalogState = "ready" | "empty" | "unavailable";
@@ -272,6 +274,11 @@ export interface Attachment {
   name: string;
 }
 
+/** BotSummary is the Bot's part of ChatHeader: its facts a reader needs without loading the record. */
+export interface BotSummary {
+  state: BotState;
+}
+
 /**
  * Caller marks a message a program sent through marotte's API rather than one the user typed in its page; a message
  * with no Caller is the user's own. Label is the name the program gave itself, "" when it gave none.
@@ -377,6 +384,8 @@ export interface ChatHeader {
   interrupt_mode?: InterruptMode;
   /** Run is Chat.Run as the dock and the composer draw it. */
   run: RunView;
+  /** Bot is the Bot's summary; absent on a regular chat. */
+  bot?: BotSummary;
   usage: Usage;
   created_at: number;
   updated_at: number;
@@ -3019,6 +3028,8 @@ export interface ResumableSession {
   updated_at: number;
   created_at?: number;
   turn_count?: number;
+  /** Bot labels a Bot's row, from its owning chat's header. */
+  bot?: boolean;
 }
 
 /** RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step. Empty Text is a 400. */
@@ -4057,6 +4068,8 @@ export interface TabSubject {
  * LaunchChats, which the keep-state reconcile resolves.
  */
   launch_resolved?: boolean;
+  /** Bot marks a Bot's chat tab. Set once at open, never changed. */
+  bot?: boolean;
 }
 
 /**

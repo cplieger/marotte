@@ -103,6 +103,7 @@ func withChatFacts(rows []marotte.ResumableSession, headers []marotte.ChatHeader
 		rows[i].CurrentModeID = h.CurrentModeID
 		rows[i].TurnCount = h.TurnCount
 		rows[i].Credits = h.Usage.Credits
+		rows[i].Bot = h.Bot != nil
 	}
 }
 

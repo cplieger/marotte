@@ -200,7 +200,7 @@ func sanitize(in []marotte.TabSubject) []marotte.TabSubject {
 		}
 		seenIDs[t.ID] = struct{}{}
 		subjects[key] = struct{}{}
-		sanitizeLaunch(&t)
+		sanitizeKindFields(&t)
 		out = append(out, t)
 		if len(out) == MaxTabs {
 			break
@@ -212,9 +212,12 @@ func sanitize(in []marotte.TabSubject) []marotte.TabSubject {
 	return out
 }
 
-// sanitizeLaunch keeps a run tab's valid holder ids and clears the launch fields on every other kind. A dropped holder
-// keeps its run-tab fact, since no close can name it.
-func sanitizeLaunch(t *marotte.TabSubject) {
+// sanitizeKindFields clears the Bot fact off every tab but a chat tab and the launch fields off every tab but a run
+// tab, whose valid holder ids it keeps. A dropped holder keeps its run-tab fact, since no close can name it.
+func sanitizeKindFields(t *marotte.TabSubject) {
+	if t.Kind != marotte.TabKindChat {
+		t.Bot = false
+	}
 	if t.Kind != marotte.TabKindRun {
 		t.LaunchChats, t.LaunchResolved = nil, false
 		return
