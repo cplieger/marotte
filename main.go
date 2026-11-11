@@ -43,6 +43,9 @@ func runMain() int {
 	if len(os.Args) > 1 && os.Args[1] == composition.PathsCommand {
 		return composition.RunPaths(os.Stdout, os.Stderr)
 	}
+	if len(os.Args) > 1 && os.Args[1] == composition.HealthCommand {
+		return composition.RunHealth(os.Stderr)
+	}
 	cfg := composition.ConfigFromEnv()
 	cfg.ToolCatalogRequire = toolbelt.ParseRequireList(requiredToolsList)
 

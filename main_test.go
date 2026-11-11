@@ -3,22 +3,27 @@ package main
 import (
 	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/cplieger/forgeapi/v2"
 	"github.com/cplieger/forgeapi/v2/creds"
 	"github.com/cplieger/go/keyenc"
+	"github.com/cplieger/marotte/internal/composition"
 	"github.com/cplieger/marotte/internal/forges"
 )
 
-// TestMain runs runMain when invoked the way git invokes the helper, so the test drives the real argv dispatch.
+// TestMain runs runMain when invoked the way git invokes the helper or Docker the healthcheck, so the
+// test drives the real argv dispatch.
 func TestMain(m *testing.M) {
-	if len(os.Args) > 1 && os.Args[1] == forges.HelperCommand {
+	if len(os.Args) > 1 && (os.Args[1] == forges.HelperCommand || os.Args[1] == composition.HealthCommand) {
 		os.Exit(runMain())
 	}
 	os.Exit(m.Run())
@@ -83,4 +88,54 @@ func TestRunMain_HelperBranchWritesNoBootWarning(t *testing.T) {
 			t.Errorf("marotte %s get stdout = %q, want %q", forges.HelperCommand, stdout, want)
 		}
 	})
+}
+
+// A running server holds the instance lock on its folders, so a healthcheck that took it, or did
+// any other boot work, would be refused or would write into them.
+func TestRunMain_HealthBranchProbesWhileTheServerHoldsItsFolders(t *testing.T) {
+	cfgDir, home := t.TempDir(), t.TempDir()
+	held, err := os.Open(cfgDir)
+	if err != nil {
+		t.Fatalf("Setup: open config dir: %v", err)
+	}
+	t.Cleanup(func() { _ = held.Close() })
+	if err := syscall.Flock(int(held.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatalf("Setup: lock config dir as a running server does: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, self, composition.HealthCommand)
+	cmd.Env = append(os.Environ(),
+		"LISTEN_ADDR="+srv.Listener.Addr().String(),
+		"KIRO_CONFIG_DIR="+cfgDir,
+		"MAROTTE_TOOLS_DIR="+filepath.Join(home, "tools"),
+		"HOME="+home,
+		"KIRO_HOME="+filepath.Join(home, ".kiro"),
+		"MAROTTE_BUNDLED_TOOLS="+filepath.Join(home, "absent.json"))
+	var diag bytes.Buffer
+	cmd.Stderr = &diag
+	if err := cmd.Run(); err != nil {
+		t.Errorf("marotte %s against a healthy server exited with %v; stderr %q", composition.HealthCommand, err, diag.String())
+	}
+	for _, dir := range []string{cfgDir, home} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("read %s: %v", dir, err)
+		}
+		if len(entries) != 0 {
+			t.Errorf("marotte %s wrote into %s: %v, want nothing", composition.HealthCommand, dir, entries)
+		}
+	}
 }

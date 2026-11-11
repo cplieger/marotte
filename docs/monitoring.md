@@ -104,7 +104,7 @@ A requested engine restart is back within seconds, and a first start can spend u
 
 **What healthy means.** The server is up and not shutting down, the pinned kiro-cli is installed at its exact version with its self-update off, and marotte is signed in to Kiro. [Health and repair](how-it-works.md#health-and-repair) lists each reason. The agent engine's state is not part of it, so `MarotteEngineDown` covers an engine that stays down.
 
-**Docker health.** The image checks itself every 30 seconds with `curl -sf http://127.0.0.1:9847/healthz`. Docker marks the container unhealthy after 3 failures, and allows 5 minutes after a start for the kiro-cli download. Docker's health status notifies nobody on its own, and Docker does not restart an unhealthy container. The example `compose.yaml` restarts a container that exits.
+**Docker health.** The image checks itself every 30 seconds with `marotte health`, which asks `/healthz` on the port `LISTEN_ADDR` names and prints why when the answer is not 200. Docker marks the container unhealthy after 3 failures, and allows 5 minutes after a start for the kiro-cli download. Docker's health status notifies nobody on its own, and Docker does not restart an unhealthy container. The example `compose.yaml` restarts a container that exits.
 
 **Who is told.**
 
