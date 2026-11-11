@@ -523,27 +523,27 @@ func TestRender_ToolsSnapshotNotOKListsNothingAsPresent(t *testing.T) {
 }
 
 // Every line that tells an agent where marotte's server answers names the configured address, so
-// a LISTEN_ADDR on another host or port leaves no line pointing at the default.
+// a LISTEN_ADDR on another loopback host or port leaves no line pointing at the default.
 func TestRender_EveryServerLineNamesTheServerAddress(t *testing.T) {
 	workDir, configDir := t.TempDir(), t.TempDir()
 	g := New(Config{
-		WorkDir: workDir, ConfigDir: configDir, ToolsDir: filepath.Join(configDir, "tools"), ServerAddr: "192.0.2.10:9000",
+		WorkDir: workDir, ConfigDir: configDir, ToolsDir: filepath.Join(configDir, "tools"), ServerAddr: "127.0.0.2:9000",
 	})
 	tools := append(engineRows(maxCommands+1, "tool"), InstalledTool{Version: "2.0", Apt: true})
 	out := string(g.render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, ToolsSnapshot{Tools: tools}, true))
 	for _, want := range []string{
-		"marotte's own HTTP server answers on `192.0.2.10:9000` inside the container",
-		"`curl -s '192.0.2.10:9000/api/tools/search?q=<name>'`",
-		"`curl -s -X POST 192.0.2.10:9000/api/tools ",
-		"`GET 192.0.2.10:9000/api/tools/jobs` lists jobs",
-		"`dpkg -l` or `curl -s 192.0.2.10:9000/api/tools` lists them",
-		"`curl -s 192.0.2.10:9000/api/tools` lists every row's commands",
+		"marotte's own HTTP server answers on `127.0.0.2:9000` inside the container",
+		"`curl -s '127.0.0.2:9000/api/tools/search?q=<name>'`",
+		"`curl -s -X POST 127.0.0.2:9000/api/tools ",
+		"`GET 127.0.0.2:9000/api/tools/jobs` lists jobs",
+		"`dpkg -l` or `curl -s 127.0.0.2:9000/api/tools` lists them",
+		"`curl -s 127.0.0.2:9000/api/tools` lists every row's commands",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("environment.md does not say %q", want)
 		}
 	}
 	if strings.Contains(out, ":9847") {
-		t.Errorf("environment.md still names the default port with ServerAddr 192.0.2.10:9000:\n%s", out)
+		t.Errorf("environment.md still names the default port with ServerAddr 127.0.0.2:9000:\n%s", out)
 	}
 }

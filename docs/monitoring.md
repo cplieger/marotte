@@ -100,8 +100,8 @@ A requested engine restart is back within seconds, and a first start can spend u
 
 | Route | Method | Port | Login | Answers |
 | --- | --- | --- | --- | --- |
-| `/healthz` | `GET` or `HEAD` | 9847 | none. `ALLOWED_HOSTS` applies, and requests from inside the container are always allowed | `200 {"status":"ok"}`, or `503 {"status":"unhealthy","reasons":["..."]}`. Any other method gets `405` |
-| `/metrics` | `GET` | 9847 | none. Keep the port on your network | Prometheus text format |
+| `/healthz` | `GET` or `HEAD` | 9847, or the port `LISTEN_ADDR` names | none. `ALLOWED_HOSTS` applies, and requests from inside the container are always allowed | `200 {"status":"ok"}`, or `503 {"status":"unhealthy","reasons":["..."]}`. Any other method gets `405` |
+| `/metrics` | `GET` | 9847, or the port `LISTEN_ADDR` names | none. Keep the port on your network | Prometheus text format |
 
 **What healthy means.** The server is up and not shutting down, the pinned kiro-cli is installed at its exact version with its self-update off, and marotte is signed in to Kiro. [Health and repair](how-it-works.md#health-and-repair) lists each reason. The agent engine's state is not part of it, so `MarotteEngineDown` covers an engine that stays down.
 
@@ -115,4 +115,4 @@ A requested engine restart is back within seconds, and a first start can spend u
 | Loki only | an uptime prober on `/healthz` | the same prober, which sees a broken kiro-cli install but not a wedged engine |
 | Docker or Unraid only | an uptime prober on `/healthz`, or something that watches Docker health | the same |
 
-**Probing from outside.** Check `GET http://<host>:9847/healthz` and pass on status 200 only. Do not match the body. Use a 5-second timeout, check every 60 seconds, alert after 3 failures, and wait 5 minutes after a first start. When `ALLOWED_HOSTS` is set, address marotte by a name in the list, or it answers `403`. A Kubernetes liveness probe that must ignore readiness uses a `tcpSocket` probe on port 9847.
+**Probing from outside.** Check `GET http://<host>:9847/healthz` (or the port `LISTEN_ADDR` names) and pass on status 200 only. Do not match the body. Use a 5-second timeout, check every 60 seconds, alert after 3 failures, and wait 5 minutes after a first start. When `ALLOWED_HOSTS` is set, address marotte by a name in the list, or it answers `403`. A Kubernetes liveness probe that must ignore readiness uses a `tcpSocket` probe on port 9847 (or the port `LISTEN_ADDR` names).

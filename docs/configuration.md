@@ -8,7 +8,7 @@ Variables go in the `environment:` block of `compose.yaml` and are read at start
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `LISTEN_ADDR` | Address the server listens on, as `host:port`. An empty host listens on every address. Change it when another service holds port 9847, as on a host-network install, and map the new port in `compose.yaml`'s `ports:`. A value without a port number from 1 to 65535 stops startup. | `:9847` |
+| `LISTEN_ADDR` | Address the server listens on, as `host:port`. The host may be empty, `0.0.0.0` or `::`, which listen on every address, or `localhost` or a loopback address; any other host stops startup, because the healthcheck and the in-container API reach the server on loopback. Change it on a host-network install (`network_mode: host`) when another service on the host holds port 9847; `ports:` does not apply there. On the default network, change the host side of `ports:` instead. A value without a port number from 1 to 65535 stops startup. | `:9847` |
 | `ALLOWED_HOSTS` | Hostnames and IPs you open marotte at, comma-separated. Any other address gets `403`. | _(unset)_ |
 | `TRUSTED_PROXIES` | Address ranges of your reverse proxy, so the logs record the real client address. | _(unset)_ |
 | `TRUSTED_INSTALL_UIDS` | User IDs that may write to the tools folder (`MAROTTE_TOOLS_DIR`, by default `/config/tools`) without marotte refusing to install kiro-cli or start the tools engine. Only for shared or network volumes. | _(unset)_ |
