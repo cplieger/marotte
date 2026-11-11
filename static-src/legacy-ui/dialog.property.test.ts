@@ -391,7 +391,7 @@ interface Outcome {
 /** A generated injection that ran a native showModal() from a beforetoggle of the dialog, read
  *  from the real run's `kinds` (it places each injection on the dry run's `traceLength`). The
  *  engine mishandles it (the seed-1573708530 case below); no marotte caller does it, which
- *  `dialog-native-open.node.test.ts` keeps true. */
+ *  `dialog-premises.node.test.ts` keeps true. */
 function opensNativelyInToggle(c: Case, traceLength: number, kinds: readonly string[]): boolean {
   return c.injections.some(
     (inj) =>
@@ -400,6 +400,22 @@ function opensNativelyInToggle(c: Case, traceLength: number, kinds: readonly str
       inj.actions.some(
         (a) => a.k === "platformOpen" || (a.k === "platformOther" && a.kind === "reopenModal"),
       ),
+  );
+}
+
+/** A generated injection that created a controller from the opening beforetoggle of the dialog
+ *  in a world that cancels every open, read as `opensNativelyInToggle` reads its hit. The engine
+ *  mishandles it (the seed-419639567 case below); marotte has no beforetoggle listener, which
+ *  `dialog-premises.node.test.ts` keeps true. */
+function controlsCancelledOpen(c: Case, traceLength: number, kinds: readonly string[]): boolean {
+  return (
+    c.cancelWorld &&
+    c.injections.some(
+      (inj) =>
+        inj.hit === undefined &&
+        kinds[traceLength === 0 ? 0 : inj.at % traceLength] === "beforetoggle:open@dialog" &&
+        inj.actions.some((a) => a.k === "second"),
+    )
   );
 }
 
@@ -907,7 +923,10 @@ describe("dialog: re-entry property", () => {
       fc.asyncProperty(caseArb, async (c) => {
         const dry = await runCase(c, null);
         const out = await runCase(c, dry.trace);
-        fc.pre(!opensNativelyInToggle(c, dry.trace, out.kinds));
+        fc.pre(
+          !opensNativelyInToggle(c, dry.trace, out.kinds) &&
+            !controlsCancelledOpen(c, dry.trace, out.kinds),
+        );
         expect(out.failure).toBeNull();
       }),
       {
@@ -1649,5 +1668,24 @@ describe("dialog: re-entry property", () => {
     const dry = await runCase(c, null);
     const out = await runCase(c, dry.trace);
     expect(out.failure).toMatch(/after the injection at beforetoggle:open@dialog, dialog open=/);
+  });
+
+  // Seed 419639567 pins a defect of the copied engine: a controller created from the opening
+  // beforetoggle of an open the page cancels takes the dialog as shown, so the cancelled open
+  // calls its onClose. A fixed engine turns this red: then delete it and `controlsCancelledOpen`.
+  it("calls onClose for a cancelled open when the controller was created in its beforetoggle", async () => {
+    const c: Case = {
+      guard: "none",
+      cancelWorld: true,
+      onCloseDisposes: false,
+      onCloseThrows: false,
+      closeOnBackdrop: false,
+      script: [{ k: "dispose" }, { k: "helperOpen" }],
+      injections: [{ at: 83, actions: [{ k: "second" }] }],
+    };
+    const dry = await runCase(c, null);
+    const out = await runCase(c, dry.trace);
+    expect(out.kinds[83 % dry.trace]).toBe("beforetoggle:open@dialog");
+    expect(out.failure).toBe("onClose with no open since the last one");
   });
 });
