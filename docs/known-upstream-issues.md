@@ -22,6 +22,12 @@ When kiro-cli's own automatic compaction fails, the reply can stay open with not
 
 Reported in the Kiro Crew tracker as [kirodotdev/KiroCrew#3583](https://github.com/kirodotdev/KiroCrew/issues/3583), closed after Kiro Crew added a time limit in its own client. kiro-cli itself still leaves the reply open. After a failed compaction, marotte ends a reply that shows no new activity for 60 seconds and marks it interrupted.
 
+### Context use reads the figure from before a compaction
+
+After a compaction, kiro-cli keeps reporting the context use from before it until the model's next reply measures it again. A chat at 96% before `/compact` can still read 96% at about 30% real use. A client that compacts or warns at a context limit then acts on a figure that is no longer true.
+
+Reported as [kirodotdev/Kiro#12392](https://github.com/kirodotdev/Kiro/issues/12392), open. After a compaction, marotte clears the chat's context use and ignores the figure kiro-cli repeats until the model's next reply measures it. The **Compact at** point and the 95% stop act only on a figure a model reply measured. marotte therefore does not stop a turn on the old figure.
+
 ### Replies slow down when many chats and workflow steps run at once
 
 kiro-cli's agent engine runs every chat, workflow step and subagent on one JavaScript thread. On Node.js 22, which kiro-cli ships, garbage collection and the tracking of asynchronous code fill that thread when many of them run at once. Replies and workflow steps then slow down, starting a chat or a step can time out, and the engine can fall far behind. The engine's own log, `kiro.log`, falls behind under the same load.
