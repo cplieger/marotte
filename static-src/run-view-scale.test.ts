@@ -2,11 +2,13 @@
 // tree row or timeline lane is written for text that only the shown step's pane draws.
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
+import type * as ApiClientModule from "./api-client.js";
+import type * as TabsModule from "./tabs.js";
+import type * as DecisionDockModule from "./decision-dock.js";
 import type { Entry } from "./types.js";
 
-const m = vi.hoisted(() => ({ applied: [] as string[][] }));
-
-vi.mock("./api-client.js", () => ({
+vi.mock("./api-client.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ApiClientModule>()),
   apiBlobOrError: vi.fn(),
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
@@ -15,31 +17,25 @@ vi.mock("./api-client.js", () => ({
   apiPost: vi.fn(),
 }));
 
-vi.mock("./tabs.js", async () => ({
+vi.mock("./tabs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof TabsModule>()),
   ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
 }));
 
-vi.mock("./decision-dock.js", () => ({
+vi.mock("./decision-dock.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof DecisionDockModule>()),
   mountRunDecisionDock: vi.fn(),
   rerenderDocks: vi.fn(),
   hasPendingDecision: vi.fn(() => false),
   runPendingAsks: vi.fn(() => ({ count: 0, asked: [], label: "" })),
 }));
 
-vi.mock("./run-chat-steps.js", () => ({
-  createRunStepStream: vi.fn((hostFor: (path: string) => HTMLElement) => ({
-    apply: (paints: ReadonlyMap<string, readonly { turn: { body: Entry[] } }[]>) => {
-      m.applied.push([...paints.keys()]);
-      for (const path of paints.keys()) {
-        hostFor(path);
-      }
-    },
-    dispose: vi.fn(),
-  })),
-}));
+// The step stream stands in through `__mocks__/run-chat-steps.ts`.
+vi.mock("./run-chat-steps.js");
 
 vi.mock("./run-exec-source.js", { spy: true });
 
+import { clearStepPaints, stepPaints } from "./__test-helpers__/step-stream-paints.js";
 import { apiGetOrError, apiGetTyped } from "./api-client.js";
 import { runToExec } from "./run-exec-source.js";
 import { refreshRun, showRun } from "./run-view.js";
@@ -113,7 +109,7 @@ async function flush(): Promise<void> {
 let runView: HTMLElement;
 
 beforeEach(() => {
-  m.applied.length = 0;
+  clearStepPaints();
   forgetRun(WF);
   document.body.replaceChildren();
   runView = document.createElement("div");
@@ -153,7 +149,7 @@ describe("a streamed frame on a 10,000-step run", () => {
       openDockPanel(runView);
       await settledOpen(runView);
       vi.mocked(runToExec).mockClear();
-      m.applied.length = 0;
+      clearStepPaints();
       const records: MutationRecord[] = [];
       const observer = new MutationObserver((r) => records.push(...r));
       for (const root of runView.querySelectorAll(".ev-tree, .ev-tl")) {
@@ -174,7 +170,7 @@ describe("a streamed frame on a 10,000-step run", () => {
 
       expect(vi.mocked(runToExec)).not.toHaveBeenCalled();
       expect(records).toHaveLength(0);
-      expect(new Set(m.applied.flat())).toEqual(new Set([LIVE]));
+      expect(new Set(stepPaints().flat())).toEqual(new Set([LIVE]));
     },
   );
 });

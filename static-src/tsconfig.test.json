@@ -14,6 +14,7 @@
     "legacy-ui/**/*.ts",
     "scripts/*.ts",
     "**/__test-helpers__/**/*.ts",
+    "__mocks__/*.ts",
     "**/*.test.ts"
   ],
   "exclude": ["vitest.config.ts"]

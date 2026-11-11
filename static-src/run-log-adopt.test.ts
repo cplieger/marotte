@@ -2,6 +2,7 @@
 // log is told once, and every per-entry effect of the log still runs.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type * as ApiClientModule from "./api-client.js";
 import { effect } from "@cplieger/ui";
 import type { Entry } from "./types.js";
 import type { RunStepTranscript } from "./wire/types.gen.js";
@@ -10,7 +11,8 @@ const apiGetTypedOrError = vi.fn<(url: string, decode: unknown) => Promise<unkno
 const apiGetTyped =
   vi.fn<(url: string, decode: unknown, signal?: AbortSignal) => Promise<unknown>>();
 
-vi.mock("./api-client.js", () => ({
+vi.mock("./api-client.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ApiClientModule>()),
   apiGetTypedOrError: (url: string, decode: unknown) => apiGetTypedOrError(url, decode),
   apiGetTyped: (url: string, decode: unknown, signal?: AbortSignal) =>
     apiGetTyped(url, decode, signal),
