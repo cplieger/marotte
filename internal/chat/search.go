@@ -309,7 +309,7 @@ func entrySegments(e *marotte.Entry, t *searchTurn, names map[string]string) []s
 		return toolResultPayloadSegments(e.Payload)
 	case marotte.EntryKindSteer:
 		var p marotte.EntrySteer
-		return sentBy(oneSegment(segmentSteer, decodeText(e.Payload, &p, func() string { return p.Text })), p.Caller)
+		return sentBy(drawnSegments(segmentSteer, decodeText(e.Payload, &p, func() string { return p.Text })), p.Caller)
 	case marotte.EntryKindPlan:
 		return planSegments(e.Payload)
 	case marotte.EntryKindCompactionFailed:
@@ -391,6 +391,17 @@ func oneSegment(kind SegmentKind, text string) []segment {
 	return []segment{{kind: kind, text: text}}
 }
 
+// drawnSegments is a message's text as its note or header draws it (drawnWords), so a quote block's `>` marks and
+// attribution are no hit and each band and stretch between is a run of its own.
+func drawnSegments(kind SegmentKind, text string) []segment {
+	all := drawnWords(text)
+	segs := make([]segment, 0, len(all))
+	for _, words := range all {
+		segs = append(segs, oneSegment(kind, words)...)
+	}
+	return segs
+}
+
 func turnWakeSegments(payload json.RawMessage, names map[string]string) []segment {
 	var w marotte.EntryTurnWake
 	if json.Unmarshal(payload, &w) != nil {
@@ -411,7 +422,7 @@ func turnOpenSegments(payload json.RawMessage) []segment {
 	if json.Unmarshal(payload, &p) != nil || p.Prompt == nil {
 		return nil
 	}
-	segs := oneSegment(segmentPrompt, p.Prompt.Text)
+	segs := drawnSegments(segmentPrompt, p.Prompt.Text)
 	for i := range p.Prompt.Attachments {
 		segs = append(segs, oneSegment(segmentAttachment, p.Prompt.Attachments[i].Name)...)
 	}

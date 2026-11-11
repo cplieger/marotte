@@ -13,8 +13,8 @@ import { absoluteTime } from "../relative-time.js";
 import { sentBy } from "../sent-by.js";
 import type { Caller, SteerOrigin, SteerReason } from "../types.js";
 import { formatClock } from "../locale-time.js";
-import { readQuoted, splitLeadingQuote } from "../message-quote.js";
-import { buildQuoteBand } from "../quote-band.js";
+import { leadQuote, readQuoted } from "../message-quote.js";
+import { buildQuoteBand, drawParts } from "../quote-band.js";
 
 export interface SteerNoteData {
   text: string;
@@ -178,16 +178,22 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
   }
 
   const body = el("div", { className: "steer-note-body" });
-  const quoted = splitLeadingQuote(d.text.trim());
-  if (quoted !== null) {
-    body.appendChild(buildQuoteBand(quoted));
+  const { lead, rest } = leadQuote(d.text);
+  if (lead !== null) {
+    body.appendChild(buildQuoteBand(lead));
   }
   root.appendChild(body);
-  if (quoted?.rest === "") {
+  if (lead !== null && rest.length === 0) {
     return root;
   }
   // NOT collapsed to one line: the message keeps the shape it was typed in (`white-space: pre-wrap`).
-  const text = el("div", { className: "steer-note-text" }, quoted?.rest ?? d.text);
+  const text = el(
+    "div",
+    { className: "steer-note-text" },
+    ...(lead === null && rest.every((p) => p.kind === "text")
+      ? [d.text]
+      : drawParts(rest, (words) => el("span", {}, words))),
+  );
   body.appendChild(text);
   // A workflow's message is the news itself and shows in full; only the reader's own words clamp.
   if (d.origin !== "user") {

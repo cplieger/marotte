@@ -1051,6 +1051,31 @@ describe("the steer stack", () => {
     expect(row.dataset["tooltip"]).toBe("From Kiro's reply: quoted\n\nreply");
   });
 
+  it("draws every quote in a follow-up as a band, and names each without the marks", () => {
+    const quote = (words: string): string => quoteSelection(words, "From Kiro's reply");
+    withRun(
+      behindTurn([
+        {
+          id: "m-q2",
+          text: `${appendQuote(`${appendQuote("", quote("one"))}reply`, quote("two"))}more`,
+        },
+      ]),
+    );
+    const row = firstRow();
+    const bands = [...row.querySelectorAll(".steer-text > blockquote.turn-req-quote")];
+    expect(bands.map((b) => b.textContent)).toEqual([
+      "From Kiro's reply: one",
+      "From Kiro's reply: two",
+    ]);
+    expect(textOf(row)).toBe("From Kiro's reply: onereplyFrom Kiro's reply: twomore");
+    expect(row.getAttribute("aria-label")).toBe(
+      "After this turn: From Kiro's reply: one reply From Kiro's reply: two more",
+    );
+    expect(row.dataset["tooltip"]).toBe(
+      "From Kiro's reply: one\n\nreply\n\nFrom Kiro's reply: two\n\nmore",
+    );
+  });
+
   // CASE A: a /compact on an idle chat runs at once; the dock shows it running with no control.
   it("draws a running compaction as the running row, with no control", () => {
     withRun([compactionEntry("compact-1", { after: "running" })], { send: "queue" }, false);
@@ -1797,12 +1822,53 @@ describe("the row's clamp", () => {
     const textLine = parseFloat(getComputedStyle(textEl(row)).lineHeight);
     expect(textEl(row).clientHeight).toBeCloseTo(bandLine + 3 * textLine, 0);
     expect(textEl(row).scrollHeight).toBeGreaterThan(textEl(row).clientHeight);
+    // Firefox draws no ellipsis on a band that clips itself inside the clamp, which Chromium cannot show: the band
+    // clips nothing, and its line clips and ellipsizes.
+    const line = band!.querySelector<HTMLElement>(":scope > .turn-req-quote-line")!;
+    expect(getComputedStyle(band!).overflow).toBe("visible");
+    expect(getComputedStyle(line).textOverflow).toBe("ellipsis");
+    expect(line.scrollWidth).toBeGreaterThan(line.clientWidth);
     const read = `From Kiro's reply: ${"word ".repeat(60)}end\n\n${LONG.trim()}`;
     expect(row.dataset["tooltip"]).toBe(read);
     expect(row.getAttribute("aria-label")).toBe(
       `Sent, waiting for the agent: ${read.replace(/\s+/g, " ")}`,
     );
     expect(actions(row)).toContain('Delete "From Kiro\'s reply: word word word word …"');
+  });
+
+  // Each band is one of the four lines, wherever it sits.
+  it.each([
+    {
+      name: "a quote, a line, a quote, then a long rest",
+      quotes: 2,
+      between: "remind me",
+      bands: 2,
+    },
+    { name: "six quotes back to back, then a long rest", quotes: 6, between: "", bands: 4 },
+  ])("holds $name to four lines, each band one line", ({ quotes, between, bands: shownBands }) => {
+    const quote = quoteSelection(`${"word ".repeat(60)}end`, "From Kiro's reply");
+    let text = "";
+    for (let i = 0; i < quotes; i++) {
+      text = appendQuote(i === 0 ? "" : `${text}${between}`, quote);
+    }
+    text += LONG;
+    recordSteerQueued("chat-1", { id: "steer-1", text, origin: "user" });
+    const row = firstRow();
+    const bands = [
+      ...textEl(row).querySelectorAll<HTMLElement>(":scope > blockquote.turn-req-quote"),
+    ];
+    expect(bands).toHaveLength(quotes);
+    expect(textEl(row).textContent).not.toContain(">");
+    const bandLine = parseFloat(getComputedStyle(bands[0]!).lineHeight);
+    for (const band of bands.slice(0, shownBands)) {
+      expect(band.getBoundingClientRect().height).toBeCloseTo(bandLine, 0);
+    }
+    const textLine = parseFloat(getComputedStyle(textEl(row)).lineHeight);
+    expect(textEl(row).clientHeight).toBeCloseTo(
+      shownBands * bandLine + (4 - shownBands) * textLine,
+      0,
+    );
+    expect(textEl(row).scrollHeight).toBeGreaterThan(textEl(row).clientHeight);
   });
 
   // The aside ink resolves to the band's own secondary ink in both themes, so it is set apart here

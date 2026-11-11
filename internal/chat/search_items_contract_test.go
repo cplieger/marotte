@@ -183,6 +183,13 @@ func searchItemsCases() []searchItemsCase {
 			itemsEntry("cf1", marotte.EntryKindCompactionFailed, "", marotte.EntryCompactionFailed{Reason: "too\nlarge"}),
 			itemsCall("c1", "go vet", marotte.ToolKindExecute), itemsResult("c1", "the security\nfailure"),
 		}},
+		{Name: "a steer's quotes are searched as their bands draw them", Body: []searchItemsEntry{
+			itemsEntry("st1", marotte.EntryKindSteer, "", marotte.EntrySteer{
+				Text: "> From the output of `go test`:\n>\n> the security\n> failure\n>\n> Quoting your earlier reply.\n\n" +
+					"why that?\n\n> From Kiro's reply:\n>\n> \\Quoting your earlier reply.\n>\n> Quoting your earlier reply.",
+				Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead,
+			}),
+		}},
 		{Name: "a turn's header and failure are items", Body: []searchItemsEntry{
 			itemsText("say-a", "partial"),
 			itemsEntry(searchItemsTurn+":close", marotte.EntryKindTurnClose, "", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeFailed, FailureReason: "budget ran out"}),
