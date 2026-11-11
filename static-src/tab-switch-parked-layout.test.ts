@@ -2,8 +2,9 @@
 // park reads before any write, and the restore's scroll write is the one forced access, with every
 // later read (anchor, edge distance, rail) after it. That holds when the switch changes the
 // composer area's height too: the park reads from the click, before the outgoing transcript is laid
-// out at the new size. Real store, renderer and scroll controller; layouts counted by
-// `layout-spy.ts`.
+// out at the new size. A chat parked while an older page loads parks without the page's skeleton
+// slot, so the restore lands on the reader's turn in its own task. Real store, renderer and scroll
+// controller; layouts counted by `layout-spy.ts`.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { makeSession } from "./__test-helpers__/model.js";
 import type { Entry } from "./wire/types.gen.js";
@@ -309,5 +310,59 @@ describe("a chat-to-chat switch whose composer area changes height", () => {
     outer.style.height = "400px";
     await frames();
     expect(readerAnchor(), "the painted chat moved under the cover").toEqual(at);
+  });
+});
+
+/** Asks for the older page from the reader's position, so its skeleton stands above the turns
+ *  while the page is out. */
+async function olderPageLoading(): Promise<HTMLElement | null> {
+  scroll.setLoadMore(() => undefined, true);
+  scroll.noteHistoryEdge(true);
+  await frames();
+  return document.getElementById("load-more-skeleton");
+}
+
+describe("a chat parked while an older page loads", () => {
+  it("parks at the reader's position less the skeleton's slot the park removes", async () => {
+    const scroller = await readingX();
+    expect(await olderPageLoading(), "no older-page skeleton, so the case proves nothing").not.toBe(
+      null,
+    );
+    expect(scroll.readingState()).toBe("reading");
+    const turn = (): number => {
+      const view = scroller.querySelector(".transcript-view.is-active");
+      const first = [...(view?.children ?? [])].find((t) => t.hasAttribute(KEY_ATTR));
+      return first?.getBoundingClientRect().top ?? 0;
+    };
+    const top = scroller.scrollTop;
+    const before = turn();
+    const parked = scroll.detach();
+    const shift = before - turn();
+    expect(shift, "the park removed no skeleton slot").toBeGreaterThan(0);
+    expect(Math.abs(parked.scrollTop - (top - shift))).toBeLessThanOrEqual(1);
+  });
+
+  it("lands the reader's turn and offset in the return's own activation task", async () => {
+    await readingX();
+    expect(await olderPageLoading(), "no older-page skeleton, so the case proves nothing").not.toBe(
+      null,
+    );
+    const parkedAt = readerAnchor();
+    click("pl-y", false);
+    await frames();
+    await activate("pl-y");
+    store.bumpMessages("pl-y", "load");
+    await Promise.resolve();
+    await frames();
+    await new Promise((r) => setTimeout(r, 400));
+
+    click("pl-x", false);
+    await frames();
+    await activate("pl-x");
+    expect(readerAnchor(), "the restore wrote a position the reader was never at").toEqual(
+      parkedAt,
+    );
+    await frames();
+    expect(readerAnchor(), "the parked chat moved").toEqual(parkedAt);
   });
 });
