@@ -206,7 +206,7 @@ describe("the per-view difference, measured at a narrow viewport", () => {
 
   it("narrows the cap below the desktop value on a small phone", async () => {
     // 320px is the narrowest viewport in the current iPhone range, and the size at
-    // which a flat 22rem tooltip overflows: the library clamps a tooltip's
+    // which a flat 22rem tooltip overflows: legacy-ui clamps a tooltip's
     // POSITION and not its width, so the cap is the only thing that can.
     await page.viewport(320, 640);
     const cap = capPx();

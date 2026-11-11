@@ -3,7 +3,7 @@
 // dots, the notifications) reads it, and nothing else says a step is waiting.
 
 import { join } from "@cplieger/keyenc";
-import { signal, touch } from "@cplieger/ui";
+import { signal, touch } from "@cplieger/reactive";
 import { nodePathKey, nodePathSegment } from "./run-node-key.js";
 import type { RunNode } from "./run-store.js";
 import type { RunAsk, RunAsksPayload } from "./wire/types.gen.js";

@@ -1,4 +1,4 @@
-import { announce } from "@cplieger/ui/announce";
+import { announce } from "./legacy-ui/announce.js";
 
 /** Options for installing a drop zone on a container element. */
 interface DropZoneOptions {

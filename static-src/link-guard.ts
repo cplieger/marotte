@@ -1,4 +1,4 @@
-import { effect, el, signal, touch } from "@cplieger/ui";
+import { effect, el, signal, touch } from "@cplieger/reactive";
 import { pageRoots } from "./dom.js";
 import { cutAt } from "./strings.js";
 import { exfilShaped, isHttpMailtoOrRelativeURL } from "./utils-url.js";

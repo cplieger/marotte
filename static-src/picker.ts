@@ -4,10 +4,10 @@ import type { ModelInfo, Session } from "./types.js";
 import { humanName, rateLabel } from "./strings.js";
 import { $, setBusy } from "./dom.js";
 import { getActive, activeSession, isEmptyChat } from "./store.js";
-import { rovingFocus, type RovingFocusController } from "@cplieger/ui/roving-focus";
+import { rovingFocus, type RovingFocusController } from "./legacy-ui/roving-focus.js";
 import { reconcile } from "./reconcile.js";
-import { el, computed, effect } from "@cplieger/ui";
-import { announce } from "@cplieger/ui/announce";
+import { el, computed, effect } from "@cplieger/reactive";
+import { announce } from "./legacy-ui/announce.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_MODEL_UI } from "./icons.js";
 

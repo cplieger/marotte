@@ -1,7 +1,7 @@
 // The one agent engine's status (GET /api/engine and the engine_status event), its banner, the confirmed restart,
 // and the restart hints on the engine-wide Settings rows.
 
-import { signal } from "@cplieger/ui";
+import { signal } from "@cplieger/reactive";
 import { apiGetTyped } from "./api-client.js";
 import { GLOBAL_BANNER, clearBannerCodes, showBanner } from "./banner-stack.js";
 import { confirm } from "./confirm.js";

@@ -1,4 +1,4 @@
-/* marotte's skin for @cplieger/ui's headless base (css/ui-primitives.css), which
+/* marotte's skin for legacy-ui's headless base (legacy-ui/ui-primitives.css), which
    css/MANIFEST concatenates immediately BEFORE this file: it maps the --uip-*
    motion and z-index properties onto marotte's --dur-* / --ease-* vocabulary and
    z-index ladder, and colours the .uip-* classes. INVARIANT: both files stay
@@ -36,7 +36,7 @@
   --uip-tooltip-fade-duration: 80ms;
   --uip-tooltip-fade-easing: var(--ease-exit);
 
-  /* --- dialog / confirm: marotte's confirm closed instantly; the library's
+  /* --- dialog / confirm: marotte's confirm closed instantly; legacy-ui's
      lifecycle fades out on `is-leaving`, mapped here to marotte's standard exit
      motion so the vocabulary stays consistent. Backdrop dim matches the old
      .vk-confirm-dialog::backdrop. */
@@ -45,7 +45,7 @@
   --uip-backdrop: oklch(0% 0 none / 50%);
 
   /* --- popover (context menu): the old .tab-context-menu appeared instantly;
-     the library's optional enter fade is mapped to marotte's micro motion. */
+     legacy-ui's optional enter fade is mapped to marotte's micro motion. */
   --uip-popover-enter-duration: var(--dur-micro);
   --uip-popover-enter-easing: var(--ease-enter);
 
@@ -157,13 +157,13 @@
    rule: `info` is the neutral base, because accent ink is this app's
    text-control idiom and most `toast.info` calls are statements of fact. */
 
-/* stylelint-disable-next-line selector-class-pattern -- BEM level modifier defined by @cplieger/ui */
+/* stylelint-disable-next-line selector-class-pattern -- BEM level modifier defined by legacy-ui/toast */
 .uip-toast--error {
   background: color-mix(in srgb, var(--c-red) 8%, var(--c-bg-primary));
   color: var(--c-red);
 }
 
-/* stylelint-disable-next-line selector-class-pattern -- BEM level modifier defined by @cplieger/ui */
+/* stylelint-disable-next-line selector-class-pattern -- BEM level modifier defined by legacy-ui/toast */
 .uip-toast--success {
   background: color-mix(in srgb, var(--c-green) 8%, var(--c-bg-primary));
   color: var(--c-green);
@@ -171,15 +171,15 @@
 
 /* A server NOTICE (`toast.ts` `notice`) carries its own level, so it is tinted where
    an ordinary info toast is the neutral base: info blue, warning amber, the
-   `.banner-warning` wash. The library has no warning level; marotte adds the class. */
+   `.banner-warning` wash. legacy-ui has no warning level; marotte adds the class. */
 
-/* stylelint-disable-next-line selector-class-pattern -- marotte modifier in the library's BEM vocabulary */
+/* stylelint-disable-next-line selector-class-pattern -- marotte modifier in legacy-ui's BEM vocabulary */
 .uip-toast--notice-info {
   background: color-mix(in srgb, var(--c-blue) 8%, var(--c-bg-primary));
   color: var(--c-blue);
 }
 
-/* stylelint-disable-next-line selector-class-pattern -- marotte modifier in the library's BEM vocabulary */
+/* stylelint-disable-next-line selector-class-pattern -- marotte modifier in legacy-ui's BEM vocabulary */
 .uip-toast--notice-warning {
   background: color-mix(in srgb, var(--c-yellow) 8%, var(--c-bg-primary));
   color: var(--c-yellow);
@@ -275,7 +275,7 @@
      padding box, so block-end padding would show the cap-tops of the first
      clamped line (WebKit's `-webkit-box` hides this; Chromium and Firefox do
      not). A margin would sit outside the background and shadow, and the element
-     is @cplieger/ui's, so no inner wrapper. The border is outside the clip and
+     is legacy-ui's, so no inner wrapper. The border is outside the clip and
      painted by `background-clip: border-box`, and the border box `placeAnchored`
      measures keeps its size. */
   padding-block: 4px 0;
@@ -358,7 +358,7 @@
 }
 
 /* NO SKIN HERE: OK and Cancel JOIN `.btn-small`'s rule lists in 14-tools.css, and a
-   non-destructive OK joins `.btn-primary`'s: the library builds them, so they cannot carry
+   non-destructive OK joins `.btn-primary`'s: legacy-ui builds them, so they cannot carry
    the classes in markup. Only the destructive fill, which no other button has, lives here.
    Darker on hover in both themes, as `--c-accent-hover` is. The hover arm restates the ink:
    the ghost `.uip-ask-ok:hover` in 14-tools.css ties this rule's specificity and comes later. */
@@ -426,7 +426,7 @@
 
 /* Entry animation. createModal opens instantly (no JS enter), so reproduce the
    old .modal-card @starting-style entrance purely in CSS: the panel scales +
-   rises + fades in, the backdrop fades in. The exit rides the library base's
+   rises + fades in, the backdrop fades in. The exit rides legacy-ui's
    .is-leaving opacity fade (mapped to --dur-exit/--ease-exit above), so no exit
    rule is needed here. Reduced motion is neutralised globally by 40-a11y.css. */
 .uip-modal[open] {

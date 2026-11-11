@@ -11,6 +11,7 @@ served by the Go backend.
 | `handlers/` | SSE message handlers (turn, pending, system) |
 | `wire/` | Generated protocol decoders and types |
 | `css/` | Stylesheets (numbered for load order) |
+| `legacy-ui/` | The popup, popover, dialog, toast, tooltip and other widgets, with their tests and base stylesheet |
 | `*.ts` | UI modules (DOM, state, rendering) |
 | `*.test.ts` | Co-located unit tests |
 

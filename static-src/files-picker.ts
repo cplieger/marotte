@@ -26,8 +26,8 @@ import * as toast from "./toast.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { KEY_ATTR, reconcile } from "./reconcile.js";
 import { fileRowsSkeleton, paintPlaceholder } from "./skeleton.js";
-import { el } from "@cplieger/ui";
-import { skeletonTiming } from "@cplieger/ui/skeleton";
+import { el } from "@cplieger/reactive";
+import { skeletonTiming } from "./legacy-ui/skeleton.js";
 
 type DirEntry = { kind: "up" } | { kind: "file"; name: string; isDir: boolean };
 

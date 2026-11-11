@@ -26,7 +26,7 @@ import {
   confirmChatExists,
   type PageLoad,
 } from "./store-load.js";
-import { effect, el, touch } from "@cplieger/ui";
+import { effect, el, touch } from "@cplieger/reactive";
 import type { ChatHeader } from "./types.js";
 import { ensureBound } from "./banner-stack.js";
 import {

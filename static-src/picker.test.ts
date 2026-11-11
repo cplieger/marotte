@@ -1,12 +1,14 @@
 // The picker's visibility is an EFFECT over store state, so these tests drive the store and read
 // the `hidden` class the way a person reads the screen.
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import type * as Announce from "./legacy-ui/announce.js";
 
 // The shared live region, captured rather than driven: `announce()` clears and then sets its region
 // behind a 100ms timer, so reading the DOM would be asserting on that timer instead of on what the
 // picker decided to say.
 const { announced } = vi.hoisted(() => ({ announced: { said: [] as string[] } }));
-vi.mock("@cplieger/ui/announce", () => ({
+vi.mock("./legacy-ui/announce.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Announce>()),
   announce: (message: string) => {
     announced.said.push(message);
   },

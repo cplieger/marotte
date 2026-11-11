@@ -1,7 +1,7 @@
 // The search box every surface shares: the field's attributes, the debounce, the supersession
 // guard, the `Aa` toggle, the status note and the Escape/Enter contract.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
 import { ICON_CLOSE_UI } from "./icons.js";
 

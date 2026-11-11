@@ -2,7 +2,7 @@
 // tab-close gesture for a launcher-owned run tab.
 
 import { ActionError, apiAction, defineAction, retryNetwork, RETRY_STANDARD } from "./index.js";
-import type { RequestSpec } from "@cplieger/ui/actions";
+import type { RequestSpec } from "@cplieger/reactive/actions";
 import { retryOutcomeNotice } from "../run-controls.js";
 import { invalidateRun } from "../run-store.js";
 import { errorAbout, noticeAbout } from "./subject.js";

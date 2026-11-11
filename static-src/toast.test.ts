@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mountLiveRegions } from "@cplieger/ui/announce";
+import { mountLiveRegions } from "./legacy-ui/announce.js";
 
 import { info, success, error, jumpToast, notice, showToast, _resetForTest } from "./toast.js";
 
-// The marotte wrapper against @cplieger/ui/toast's DOM contract (.uip-toast--<level>, announce())
+// The marotte wrapper against legacy-ui/toast's DOM contract (.uip-toast--<level>, announce())
 // and behaviour. State is reset with _resetForTest(), not resetModules(), which would strand the
 // module-level Escape listener.
 beforeEach(() => {
@@ -405,7 +405,7 @@ describe("toast — a server notice carries its own level", () => {
     expect(document.querySelector(".uip-toast")?.classList.contains("uip-toast--error")).toBe(true);
   });
 
-  // The library mounts a queued toast only when a slot frees, so the class cannot be
+  // legacy-ui mounts a queued toast only when a slot frees, so the class cannot be
   // set at show time.
   it("tags a notice that mounts later from the queue", async () => {
     const dismissFirst = info("one");

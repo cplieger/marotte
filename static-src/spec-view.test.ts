@@ -1,7 +1,7 @@
 // Tests for spec-view.ts: the spec tab's page.
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
-import { signal } from "@cplieger/ui";
+import { signal } from "@cplieger/reactive";
 import type { Spec, SpecDoc, SpecTaskNode } from "./wire/types.gen.js";
 import type * as StoreModule from "./store.js";
 import type * as ApiModule from "./api-client.js";

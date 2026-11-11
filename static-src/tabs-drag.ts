@@ -2,7 +2,7 @@
 // behaviour or its constants, check the other app. Both judge a live drag's viewport
 // against the PRESS-time frame, so a move a hold lifted across still ends the drag.
 
-import { announce } from "@cplieger/ui/announce";
+import { announce } from "./legacy-ui/announce.js";
 
 import type { ViewportBox } from "./viewport-frame.js";
 import { onViewportChange, viewportBox, viewportMoved } from "./viewport-frame.js";

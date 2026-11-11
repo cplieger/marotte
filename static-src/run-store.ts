@@ -1,7 +1,7 @@
 // The one owner of a workflow run's state: refetched on invalidation, cached as read but for each
 // node's start (`attemptStart`), never accumulated from an SSE payload.
 
-import { signal, touch, type Signal } from "@cplieger/ui";
+import { signal, touch, type Signal } from "@cplieger/reactive";
 import { apiGetOrError, apiGetTyped } from "./api-client.js";
 import { nodePathKey, nodePathSegment } from "./run-node-key.js";
 import { forgetSubject, observeStamp } from "./subject-versions.js";

@@ -1,7 +1,7 @@
 // The list row both page lists build (History, the configuration browser), and its container: height, inset,
 // truncation and hit target are decided once; pages vary only in which slots they fill.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { relativeTime, absoluteTime } from "./relative-time.js";
 
 /** The subtitle: one ellipsised line, a two-line description, or a pair of single-line facts. */

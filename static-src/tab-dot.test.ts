@@ -2100,7 +2100,7 @@ describe("the dock's own signal repaints the launching chat's row", () => {
 
   /** The dot half of chat.ts's row effect: the dock read IS the subscription. */
   async function installRowEffect(chatID: string, tabID: string): Promise<() => void> {
-    const { effect } = await import("@cplieger/ui");
+    const { effect } = await import("@cplieger/reactive");
     const { hasPendingDecision } = await import("./decision-dock.js");
     const { setTabStatus } = await import("./tabs.js");
     return effect(() => {

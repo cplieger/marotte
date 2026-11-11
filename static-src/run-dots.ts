@@ -1,7 +1,7 @@
 // The activity dot and the NAME of a workflow run's tab row: one effect writes both, because a
 // `tabs_changed` frame carries no label. The dot is the harder half.
 
-import { effect, signal, touch } from "@cplieger/ui";
+import { effect, signal, touch } from "@cplieger/reactive";
 import { openRunRefs, renameTab, setTabStatus, tabIdFor, tabSetVersion } from "./tabs.js";
 import { runStatusFor } from "./store.js";
 import { runPendingAsks } from "./decision-dock.js";

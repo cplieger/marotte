@@ -2,7 +2,7 @@
 // no `input` event, and the per-chat draft layer (composer-state.ts) learns of text only through it. The event
 // bubbles, as a keystroke's does. A leaf module so the writers and the senders stay peers without an import cycle.
 
-import { signal, type ReadonlySignal } from "@cplieger/ui";
+import { signal, type ReadonlySignal } from "@cplieger/reactive";
 import { $ } from "./dom.js";
 
 const text = signal("");

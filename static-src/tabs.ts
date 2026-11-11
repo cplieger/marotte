@@ -23,7 +23,7 @@ import { materializeTab, subagentRef, subjectForRoute } from "./tab-materialize.
 import { viewStale } from "./view-freshness.js";
 // A PATH-SPACE normaliser rather than a feature behaviour. router.ts refuses the same
 // import because a route table sits UNDER the feature line and this file does not.
-// Acyclic: files-shared.ts imports only @cplieger/ui and locale-time.ts.
+// Acyclic: files-shared.ts imports only @cplieger/reactive and locale-time.ts.
 import { normalizeDirPath } from "./files-shared.js";
 import {
   registerTabsTarget,
@@ -81,7 +81,7 @@ import { iconEl } from "./icon-el.js";
 import { activeView, setActiveView } from "./device-view.js";
 import { $, queryEl, setAttr, setText } from "./dom.js";
 import { showOnlyView } from "./view-swap.js";
-import { signal, effect, el } from "@cplieger/ui";
+import { signal, effect, el } from "@cplieger/reactive";
 import {
   attachDrag,
   dragOwnsStrip,
@@ -91,7 +91,7 @@ import {
   setReorderCallback,
   setReprojectCallback,
 } from "./tabs-drag.js";
-import { announce } from "@cplieger/ui/announce";
+import { announce } from "./legacy-ui/announce.js";
 import type { ViewportBox } from "./viewport-frame.js";
 import { viewportBox, viewportMoved } from "./viewport-frame.js";
 import { showContextMenu } from "./context-menu.js";

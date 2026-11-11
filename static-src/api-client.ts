@@ -7,7 +7,7 @@ import {
   type ApiErr,
   type ApiResult as FetchResult,
   type RequestOptions,
-} from "@cplieger/ui/fetch";
+} from "@cplieger/reactive/fetch";
 
 export type { Decoder } from "./wire/validators.gen.js";
 import type { Decoder } from "./wire/validators.gen.js";

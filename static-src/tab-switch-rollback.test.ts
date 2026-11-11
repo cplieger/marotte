@@ -63,7 +63,7 @@ vi.mock("./api-client.js", async (importOriginal) => ({
   }))),
 }));
 
-import { ActionError, configure } from "@cplieger/ui/actions";
+import { ActionError, configure } from "@cplieger/reactive/actions";
 import { getActiveTabId, hasTab, activateTab } from "./tabs.js";
 import { removeChat } from "./store.js";
 import { releaseCover } from "./transcript-cover.js";

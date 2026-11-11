@@ -1,6 +1,6 @@
 import type { PlanEntry } from "./types.js";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { CHROME_ATTR } from "./chrome-attr.js";
 
 /** Build the plan card shell and reconcile entries into it. */

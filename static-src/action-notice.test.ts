@@ -35,7 +35,7 @@ vi.mock("./run-store.js", async (importOriginal) => ({
   runLabelOf: (id: string) => (id === "wf-7" ? "Nightly build" : ""),
 }));
 
-import { configureApi } from "@cplieger/ui/actions";
+import { configureApi } from "@cplieger/reactive/actions";
 import { initActions } from "./actions/boot.js";
 import { renameChat } from "./actions/chat.js";
 import { cancelRun } from "./actions/runs.js";

@@ -1,7 +1,7 @@
 // The exec view's detail pane: one node's facts, failure, interruption, hand end, and the transcript host it
 // hands OUT (`bodyFor`). No capture: the page's per-step results region renders that.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { formatElapsed } from "../strings.js";
 import { elapsed, type ExecNode } from "./model.js";
 import { ENDED_BY_HAND, STATE_WORD } from "./status.js";

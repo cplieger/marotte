@@ -8,8 +8,8 @@
 // `inspect` (`run-store.ts` fetches).
 
 import { join as joinKey } from "@cplieger/keyenc";
-import { el } from "@cplieger/ui";
-import { createDisclosure } from "@cplieger/ui/disclosure";
+import { el } from "@cplieger/reactive";
+import { createDisclosure } from "../legacy-ui/disclosure.js";
 import { hasSelectionIn, selectableButton } from "../disclosure-row.js";
 import { STATE_WORD, paintStateMark, stateOf } from "../exec-view/status.js";
 import {

@@ -44,7 +44,7 @@ import type { FileMatch, FileSearchResult, SlashCommand } from "./wire/types.gen
 import { dispatch } from "./bus.js";
 import { setActive } from "./store.js";
 import { _setReposForTest } from "./git-status-store.js";
-import { _resetForTest as resetAsk } from "@cplieger/ui/ask";
+import { _resetForTest as resetAsk } from "./legacy-ui/ask.js";
 import { _resetForTest as resetWorkspace, setWorkspaceRoot } from "./workspace.js";
 
 const CATALOG: SlashCommand[] = [
@@ -283,7 +283,7 @@ describe("the # context menu", () => {
     input.dispatchEvent(new Event("blur"));
     resetWorkspace();
     _setReposForTest([]);
-    // The shared ask dialog is cached by the library, so a bare remove() would leave the next
+    // The shared ask dialog is cached by legacy-ui, so a bare remove() would leave the next
     // test's ask writing into a detached element.
     resetAsk();
   });

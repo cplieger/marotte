@@ -3,7 +3,7 @@
 // alert it shows takes the progress's place; the dock gives every alert it does not show here a
 // region of its own.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { reconcile } from "../reconcile.js";
 import { creditFigure, formatElapsed } from "../strings.js";
 import {

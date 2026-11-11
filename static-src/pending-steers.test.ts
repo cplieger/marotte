@@ -54,7 +54,7 @@ type RemoveOutcome =
   | { status: "success"; value?: boolean }
   | { status: "error"; error: { status?: number; message: string } };
 
-vi.mock("@cplieger/ui/announce", () => ({ announce: mocks.announceMock }));
+vi.mock("./legacy-ui/announce.js", () => ({ announce: mocks.announceMock }));
 vi.mock("./actions/chat.js", () => ({
   clearSteers: { dispatch: mocks.clearDispatch },
   cancelTurn: { dispatch: mocks.cancelDispatch },
@@ -126,7 +126,7 @@ const {
 
 import { setSessions, setActive, recordSteerQueued, openTurn, appendEntry, get } from "./store.js";
 import { initPendingSteers, mountSteerStack, type SteerStackSource } from "./pending-steers.js";
-import { signal } from "@cplieger/ui";
+import { signal } from "@cplieger/reactive";
 import type { Entry, PendingSteer, QueuedPrompt, RunEntryView, RunView, Session } from "./types.js";
 import {
   compactionEntry,

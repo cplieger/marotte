@@ -50,7 +50,7 @@ vi.mock("./actions/git-prs.js", () => {
 vi.mock("./search-popup.js", () => ({
   createSearchPopup: vi.fn(() => ({ open: vi.fn(), close: vi.fn(), toggle: vi.fn() })),
 }));
-vi.mock("@cplieger/ui/dialog", () => ({
+vi.mock("./legacy-ui/dialog.js", () => ({
   createDialog: vi.fn(() => ({ open: vi.fn(), close: vi.fn() })),
 }));
 vi.mock("./git-scroll.js", () => ({

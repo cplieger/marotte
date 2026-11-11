@@ -9,7 +9,7 @@ vi.mock("../bus.js", () => createBusMock());
 
 // The notice handler's whole output is a toast at a level derived from the severity, so the
 // message and the level ARE the assertion. Mocked rather than rendered: the real module is a
-// leaf over @cplieger/ui/toast and its DOM tells us nothing about the mapping under test.
+// leaf over legacy-ui/toast and its DOM tells us nothing about the mapping under test.
 const { toastNotice } = vi.hoisted(() => ({ toastNotice: vi.fn() }));
 vi.mock("../toast.js", async () => ({
   ...(await import("../__test-helpers__/toast-mock.js")).toastMock(),

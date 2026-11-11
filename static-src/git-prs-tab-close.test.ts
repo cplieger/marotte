@@ -56,7 +56,7 @@ vi.mock("./search-popup.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   ...(await import("./__test-helpers__/git-prs-tab-harness.js")).mocks.searchPopup(),
 }));
-vi.mock("@cplieger/ui/dialog", async (importOriginal) => ({
+vi.mock("./legacy-ui/dialog.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   ...(await import("./__test-helpers__/git-prs-tab-harness.js")).mocks.dialog(),
 }));

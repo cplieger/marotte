@@ -5,7 +5,7 @@
 // to a bare container. A signal write flushes before it returns, so no drain is needed.
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { signal } from "@cplieger/ui";
+import { signal } from "@cplieger/reactive";
 import { LS_DISMISSED_BANNERS_KEY } from "./ls-keys.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type * as BannerStack from "./banner-stack.js";

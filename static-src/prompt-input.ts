@@ -18,7 +18,7 @@ import { touchComposer, wireTouchComposer } from "./composer-touch.js";
 import { flushComposerDraft, restoreRefusedEdit } from "./composer-state.js";
 import { continueList } from "./list-continue.js";
 import { applyEdit } from "./text-edit.js";
-import { computed, effect, el, signal, touch, type ReadonlySignal } from "@cplieger/ui";
+import { computed, effect, el, signal, touch, type ReadonlySignal } from "@cplieger/reactive";
 import type { SendVerb } from "./wire/types.gen.js";
 
 /** What Send does with the text now, from the server's run order (`RunView.send`). */
@@ -549,7 +549,7 @@ function menuOpen(el: HTMLTextAreaElement): boolean {
 
 /** Whether a surface that closes on Escape is open. Each closes from its own document listener
  *  without stopping the key, so it runs after the composer and must be asked. `is-open` is
- *  ui-primitives' open-state class (docs/popup.md, docs/popover.md). */
+ *  the open-state class of legacy-ui's popup and popover. */
 function escapeOwnerOpen(): boolean {
   return queryEl(".uip-popup.is-open, .uip-popover.is-open, .turn-actions-more[open]") !== null;
 }

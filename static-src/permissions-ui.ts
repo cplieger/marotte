@@ -43,7 +43,7 @@ function policyEntryKey(e: PolicyEntry): string {
 }
 import { ICON_CLOSE } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 
 // Agent ignore files: the floor, and the entry rule KAS enforces.
 

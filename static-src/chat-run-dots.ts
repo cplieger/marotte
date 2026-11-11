@@ -2,7 +2,7 @@
 // from `run-store.ts`'s GLOBAL live-run inventory. N runs fold onto ONE mark (input >
 // waiting > working); a settled run withdraws it.
 
-import { effect } from "@cplieger/ui";
+import { effect } from "@cplieger/reactive";
 import { hasTab, openChatRefs, setTabRunStatus, tabIdFor } from "./tabs.js";
 import type { TabRunDotStatus, TabRunTally } from "./tabs.js";
 import { runStatusFor } from "./store.js";

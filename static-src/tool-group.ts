@@ -7,7 +7,7 @@
 // superseded (the only silent route) and by `autoCollapseGroup` live. A user click takes over.
 // A failed member folds like any other; the header's mark and count carry the failure.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { iconEl } from "./icon-el.js";
@@ -23,7 +23,7 @@ import { syncHookBadge } from "./hook-badge.js";
 import { pressHold } from "./scroll.js";
 import { kindNoun } from "./tool-kind-noun.js";
 import type { ToolKind } from "./tool-schema.js";
-import { createDisclosure, type DisclosureController } from "@cplieger/ui/disclosure";
+import { createDisclosure, type DisclosureController } from "./legacy-ui/disclosure.js";
 import { queryAll } from "./dom.js";
 
 /** The body is closed, whoever closed it: the header click toggles it, and find-in-chat's reveal reads

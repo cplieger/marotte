@@ -3,7 +3,7 @@
 import type { PlanEntry, Session } from "./types.js";
 import { getActive, watchActiveId, messagesVersionOf } from "./store.js";
 import { payloadOf } from "./turns.js";
-import { effect, el } from "@cplieger/ui";
+import { effect, el } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
 import { paintStatus } from "./fundamentals/work-status.js";
 import { makeExpandable } from "./pill-expand.js";

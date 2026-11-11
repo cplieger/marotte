@@ -37,7 +37,7 @@ vi.mock("./run-view.js", () => ({
 }));
 
 const announce = vi.hoisted(() => vi.fn());
-vi.mock("@cplieger/ui/announce", () => ({ announce }));
+vi.mock("./legacy-ui/announce.js", () => ({ announce }));
 
 /** Per-run inspect answers, consulted by the stubbed run read. A run absent from this map
  *  answers a failed read, which is the honest "nothing fetched yet" case. */
@@ -74,7 +74,7 @@ vi.mock("./toast.js", { spy: true });
 
 const { initRunBar, _resetRunBarForTest } = await import("./run-bar.js");
 const { initActions } = await import("./actions/boot.js");
-const { configureApi } = await import("@cplieger/ui/actions");
+const { configureApi } = await import("@cplieger/reactive/actions");
 const toast = await import("./toast.js");
 const { noteRunLive, noteRunSettled, invalidateRun } = await import("./run-store.js");
 const { setSessions, setActive } = await import("./store.js");

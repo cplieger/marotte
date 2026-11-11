@@ -3,10 +3,10 @@
 // / Bug Fix / Plan / Autonomous) or a custom agent kiro-cli loads for this workspace.
 
 import { $, byId } from "./dom.js";
-import { el, effect, untracked } from "@cplieger/ui";
+import { el, effect, untracked } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
 import { makeExpandable, collapseAll, type Expandable } from "./pill-expand.js";
-import { rovingFocus, type RovingFocusController } from "@cplieger/ui/roving-focus";
+import { rovingFocus, type RovingFocusController } from "./legacy-ui/roving-focus.js";
 import { activeSession, getActive } from "./store.js";
 import { createSession } from "./chat.js";
 import { setMode } from "./actions/chat.js";

@@ -15,7 +15,7 @@ import {
   ICON_SUBAGENT_TASK,
   ICON_SUBAGENT_CREATOR,
 } from "./icons.js";
-import { signal } from "@cplieger/ui";
+import { signal } from "@cplieger/reactive";
 import type { SessionMode, ToolCall } from "./types.js";
 import { humanName } from "./strings.js";
 

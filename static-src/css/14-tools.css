@@ -1123,7 +1123,7 @@ a.subagent-header {
 }
 
 /* THE NEUTRAL GHOST BUTTON, and the ONE place its box is declared. `.uip-ask-ok` and
- * `.uip-ask-cancel` are listed because @cplieger/ui builds them without our classes;
+ * `.uip-ask-cancel` are listed because legacy-ui builds them without our classes;
  * this wins over 04-uip-skin.css by MANIFEST order. `.uip-toast-retry` is NOT listed: it
  * sits on a saturated fill and derives its ink from `currentcolor`. */
 .action-pill,

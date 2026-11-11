@@ -101,7 +101,7 @@ vi.mock("./run-chat-steps.js", async (importOriginal) => ({
 }));
 
 vi.mock("./run-step-transcript.js", async (importOriginal) => {
-  const { signal } = await import("@cplieger/ui");
+  const { signal } = await import("@cplieger/reactive");
   return {
     ...(await importOriginal<typeof RunStepTranscript>()),
     stepTranscriptVersion: signal(0),

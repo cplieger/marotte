@@ -1,8 +1,8 @@
 // A bottom-bar region rather than a modal, so the transcript a decision is about stays readable; focus is not
 // trapped. The queue is per-chat, so a second ask never overwrites the first.
 
-import { el, signal, effect, touch } from "@cplieger/ui";
-import { announce } from "@cplieger/ui/announce";
+import { el, signal, effect, touch } from "@cplieger/reactive";
+import { announce } from "./legacy-ui/announce.js";
 import { activeSession, messagesVersionOf } from "./store.js";
 import { BUS_USER_INPUT_ANSWERED, emitBus } from "./bus.js";
 import { releaseClampsIn } from "./clamp-text.js";

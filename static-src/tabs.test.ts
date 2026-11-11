@@ -7,8 +7,8 @@ import type * as Dom from "./dom.js";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { CloseImpact } from "./wire/types.gen.js";
 import type { Mock } from "vitest";
-import { effect } from "@cplieger/ui";
-import { mountLiveRegions } from "@cplieger/ui/announce";
+import { effect } from "@cplieger/reactive";
+import { mountLiveRegions } from "./legacy-ui/announce.js";
 
 // Mock dependencies that tabs.ts imports at module level.
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));

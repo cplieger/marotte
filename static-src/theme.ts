@@ -1,12 +1,12 @@
-// Theme toggle (light / dark / system) over @cplieger/ui/theme's createTheme, which applies the choice to
+// Theme toggle (light / dark / system) over legacy-ui/theme's createTheme, which applies the choice to
 // <html data-theme>. The storage adapter is a PARAMETER: the preference lives in config.json with a
 // paint cache, both owned by settings.ts, which imports this module. THREE states, or "follow the
 // OS" is unreachable after one click. The button shows the CHOICE, not the resolved theme.
 
 import { $, forceReflow } from "./dom.js";
 import { LS_UI_STATE_KEY, THEME_ATTRIBUTE } from "./ls-keys.js";
-import { createTheme } from "@cplieger/ui/theme";
-import type { ThemeController, ThemeStorage } from "@cplieger/ui/theme";
+import { createTheme } from "./legacy-ui/theme.js";
+import type { ThemeController, ThemeStorage } from "./legacy-ui/theme.js";
 // The vocabulary is declared where the paint cache stores it, so the two
 // cannot drift; a type import couples nothing at runtime.
 import type { ThemeChoice } from "./device-view.js";
@@ -18,7 +18,7 @@ let controller: ThemeController | null = null;
 let current: ThemeChoice = "dark";
 let shown: ThemeChoice | null = null;
 
-/** Next state in the cycle, matching the library's own order. */
+/** Next state in the cycle, matching legacy-ui's own order. */
 const NEXT: Record<ThemeChoice, ThemeChoice> = {
   light: "dark",
   dark: "system",
@@ -115,13 +115,13 @@ function updateIcon(): void {
 }
 
 /** Create the theme controller (applies the persisted / OS theme now) and wire the toggle. Call once
- *  during UI init. `storageKey` is still passed for the library's cross-tab `storage` filter. */
+ *  during UI init. `storageKey` is still passed for legacy-ui's cross-tab `storage` filter. */
 export function initThemeToggle(storage: ThemeStorage): void {
   controller = createTheme({
     storageKey: LS_UI_STATE_KEY,
     storage,
     attribute: THEME_ATTRIBUTE,
-    // The resolved theme drives the <html> attribute (the library's job); the
+    // The resolved theme drives the <html> attribute (legacy-ui's job); the
     // icon follows the CHOICE, read back from the controller.
     onChange: () => {
       current = controller?.get() ?? "system";

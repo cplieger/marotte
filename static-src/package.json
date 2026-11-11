@@ -47,8 +47,8 @@
   },
   "dependencies": {
     "@cplieger/keyenc": "1.2.0",
+    "@cplieger/reactive": "2.4.0-dev.1",
     "@cplieger/sse": "2.0.0",
-    "@cplieger/ui": "1.2.0-dev.7",
     "@cplieger/web-terminal-engine": "6.5.0-dev.9",
     "@cplieger/web-terminal-ui": "9.0.0-dev.3",
     "pele": "1.13.0"

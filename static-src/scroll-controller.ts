@@ -1,7 +1,7 @@
 // The one owner of a transcript scroller's position. No import-time state: a second follower imports this module,
 // never scroll.ts, which binds the chat's controller at load.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import {
   ENTRY_STAMP,
   layoutDrift,

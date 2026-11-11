@@ -14,7 +14,7 @@ import {
 import { $, setBusy } from "./dom.js";
 import { humanName, rateLabel } from "./strings.js";
 import { switchModel } from "./actions/chat.js";
-import { rovingFocus, type RovingFocusController } from "@cplieger/ui/roving-focus";
+import { rovingFocus, type RovingFocusController } from "./legacy-ui/roving-focus.js";
 import { setLastModel, getLastEffortFor } from "./session-context.js";
 import {
   refreshPickerIfVisible,
@@ -26,7 +26,7 @@ import {
 import { makeExpandable, collapseAll, type Expandable } from "./pill-expand.js";
 import { bindLoadingState, transportAction, RETRY_STANDARD } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
-import { el, effect } from "@cplieger/ui";
+import { el, effect } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
 import { errorAbout } from "./actions/subject.js";
 import { retryUnlessStill, stillOr } from "./actions/still-applying.js";

@@ -2,7 +2,7 @@
 // announces the switch before `onShow`, and pages register in `onShow`.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { effect, signal } from "@cplieger/ui";
+import { effect, signal } from "@cplieger/reactive";
 import type { TabKind } from "./tabs.js";
 import type { PageFind } from "./find-registry.js";
 

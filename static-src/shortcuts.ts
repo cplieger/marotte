@@ -1,6 +1,6 @@
 // The keyboard shortcut reference sheet.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { byId } from "./dom.js";
 import { openModal } from "./modals.js";
 import { registeredShortcuts, type ShortcutBinding } from "./keys.js";

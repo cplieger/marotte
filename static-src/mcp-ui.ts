@@ -1,7 +1,7 @@
 // One bindList over `servers` (keyed by id), so a row element persists across changes and keeps toggle focus. Each
 // row's one effect reads its server, status and prewarm signals and patches the row surgically.
 
-import { el, bindList, effect, signal } from "@cplieger/ui";
+import { el, bindList, effect, signal } from "@cplieger/reactive";
 
 import { $, maybeEl, setControlBusy } from "./dom.js";
 import { reconcile } from "./reconcile.js";

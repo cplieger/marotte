@@ -3,7 +3,7 @@
 // It holds the reader's words alone and no control: the agent's `steer_ack` renders at its own
 // position, marked here by an attribute plus a label clause.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { CHROME_ATTR } from "../chrome-attr.js";
 import { attachClamp } from "../clamp-text.js";
 import { selectableButton } from "../disclosure-row.js";

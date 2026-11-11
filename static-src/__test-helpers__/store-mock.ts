@@ -4,7 +4,7 @@
 //     ...(await import("../__test-helpers__/store-mock.js")).storeMock, get: mockGet }));
 // `store-mock.test.ts` is the drift guard.
 import { vi } from "vitest";
-import { computed, SignalMap, type Signal } from "@cplieger/ui";
+import { computed, SignalMap, type Signal } from "@cplieger/reactive";
 
 import type { Session } from "../types.js";
 import type { ToolStatus } from "../wire/types.gen.js";

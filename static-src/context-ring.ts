@@ -1,7 +1,7 @@
 // How the 16px context indicator is drawn, DOM-free. The band and the colour ramp share one compaction point T (a
 // percentage of the window); `compactionPoint` is its owner.
 
-import { signal } from "@cplieger/ui";
+import { signal } from "@cplieger/reactive";
 
 /** The slider's default, KAS's own threshold; it seeds the policy until the first settings payload. */
 const DEFAULT_AUTO_COMPACT_PCT = 80;

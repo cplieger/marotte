@@ -257,7 +257,7 @@ vi.mock("./run-chat-steps.js", () => ({
 // `run-step-transcript.test.ts` owns the module's own rules (the URL, the no-refetch gate, the
 // failure grading, the projection).
 vi.mock("./run-step-transcript.js", async () => {
-  const { signal } = await import("@cplieger/ui");
+  const { signal } = await import("@cplieger/reactive");
   return {
     stepTranscriptVersion: signal(0),
     stepRead: vi.fn((_workflowID: string, nodePath: string) => m.reads.get(nodePath)),

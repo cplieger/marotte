@@ -70,7 +70,7 @@ vi.mock("./confirm.js", () => ({ confirm: vi.fn(async () => true) }));
 
 const standing = vi.hoisted(() => ({ files: new Map<string, ConfigStanding>() }));
 vi.mock("./config-standing.js", async (importOriginal) => {
-  const { signal } = await import("@cplieger/ui");
+  const { signal } = await import("@cplieger/reactive");
   const view = signal({ files: standing.files, servers: new Map(), loadErrors: new Map() });
   return {
     ...(await importOriginal<typeof ConfigStandingModule>()),

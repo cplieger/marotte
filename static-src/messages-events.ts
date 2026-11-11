@@ -8,7 +8,7 @@ import type {
   ModelSwitchReason,
   TurnRevertCause,
 } from "./types.js";
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { chevronEl } from "./chevron.js";
 import { iconEl } from "./icon-el.js";

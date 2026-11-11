@@ -10,9 +10,9 @@ const sheets = import.meta.glob<string>("../css/*.css", {
   eager: true,
 });
 
-// The manifest also pulls the @cplieger/ui base in from node_modules, and
+// The manifest also pulls the legacy-ui base in from outside css/, and
 // `import.meta.glob` needs a static pattern per directory.
-const vendor = import.meta.glob<string>("../node_modules/@cplieger/ui/css/*.css", {
+const legacy = import.meta.glob<string>("../legacy-ui/*.css", {
   query: "?raw",
   import: "default",
   eager: true,
@@ -34,9 +34,9 @@ export function manifestSheets(): { name: string; css: string }[] {
     .map((l) => l.trim())
     .filter((l) => l !== "" && !l.startsWith("#"));
   // An entry is relative to `css/`, so one that climbs out of it (the
-  // @cplieger/ui base) resolves against the package.
+  // legacy-ui base) resolves against static-src/.
   const text = (entry: string): string | undefined =>
-    entry.startsWith("../") ? vendor[`../${entry.slice(3)}`] : sheets[`../css/${entry}`];
+    entry.startsWith("../") ? legacy[`../${entry.slice(3)}`] : sheets[`../css/${entry}`];
 
   const missing = names.filter((n) => text(n) === undefined);
   expect(missing, "every MANIFEST entry resolves to a stylesheet").toEqual([]);

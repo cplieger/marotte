@@ -1,6 +1,6 @@
 // The band a message draws in place of each `quoteSelection` block's `>` lines.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { linkifyPaths } from "./linkify.js";
 import type { PromptPart, Quote } from "./message-quote.js";
 
