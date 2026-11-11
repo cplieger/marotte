@@ -24,7 +24,7 @@ type sharedBridge struct {
 	effortHealed bool
 	// roleLeft is a Bot's session reported off its role, owed a re-assert at the turn's end (healBotRole).
 	roleLeft bool
-	// roleMissing is KAS reporting a Bot's role absent from its session (noteBotRoleMissing).
+	// roleMissing is KAS reporting a Bot's role absent from its session since setBotRole's last send (noteBotRoleMissing).
 	roleMissing bool
 }
 

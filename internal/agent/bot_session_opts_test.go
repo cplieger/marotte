@@ -116,3 +116,31 @@ func TestChatSessionOpts_ADraftAndARegularChatCarryNeither(t *testing.T) {
 		}
 	}
 }
+
+// TestChatSessionOpts_ARoleRecordThatIsNoStartedBotAsksForTheDefaultMode pins that only a started Bot's door asks for
+// the role: a record naming it with no bot block, or a draft (whose record AdoptMode holds on the role), is sent no
+// role, so its door asks for the default mode instead of one KAS never registered.
+func TestChatSessionOpts_ARoleRecordThatIsNoStartedBotAsksForTheDefaultMode(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		bot  *marotte.Bot
+	}{
+		{"a record with no bot block", nil},
+		{"a draft", &marotte.Bot{Goal: "Not started yet."}},
+	} {
+		for _, door := range doors {
+			t.Run(tc.name+" on "+door.name, func(t *testing.T) {
+				opts, _ := botDoorOpts(t, door.resumed, func(c *marotte.Chat) {
+					c.CurrentModeID = marotte.BotRoleID
+					c.Bot = tc.bot
+				})
+				if len(opts.CustomAgents) != 0 {
+					t.Errorf("CustomAgents = %+v, want none", opts.CustomAgents)
+				}
+				if opts.Mode != marotte.DefaultModeID {
+					t.Errorf("Mode = %q, want %q", opts.Mode, marotte.DefaultModeID)
+				}
+			})
+		}
+	}
+}

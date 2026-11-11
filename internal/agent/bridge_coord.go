@@ -595,7 +595,7 @@ func (bc *bridgeCoordinator) openGeneration(
 		bc.failGeneration(chatID, sb, err)
 		return
 	}
-	if err := bc.holdBotDoor(ctx, rec, so, session, false); err != nil {
+	if err := bc.holdBotDoor(ctx, rec, session, false); err != nil {
 		sessionID := string(session.SessionID())
 		bc.restoreUnservedModel(ctx, chatID, held)
 		bc.failGeneration(chatID, sb, err)
@@ -899,7 +899,7 @@ func (bc *bridgeCoordinator) tryLoadSession(
 	case !session.Open():
 		return false, fmt.Errorf("%w: the session ended during its replay", marotte.ErrBridgeExited)
 	}
-	if err := bc.holdBotDoor(ctx, rec, so, session, true); err != nil {
+	if err := bc.holdBotDoor(ctx, rec, session, true); err != nil {
 		return false, err
 	}
 	title := session.SessionTitle()
@@ -1132,7 +1132,7 @@ func (bc *bridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 		if !ex {
 			return false
 		}
-		requestedMode = c.CurrentModeID
+		requestedMode = doorMode(c)
 		bot = c.Bot != nil
 		c.RecordSession(string(newSessionID))
 		prevModel := c.Model

@@ -37,7 +37,8 @@ func memoryFile(p Paths) string {
 	return filepath.Join(p.KiroHome, "bots", testChatID, "memory.md")
 }
 
-// sections are the role prompt's headings in the order design §7.6 lists them; Memory is present only with memory on.
+// sections are the role prompt's headings in design §7.6's order, item 2 as triggers/design.md §16.1 rewrites it;
+// Memory is present only with memory on.
 var sections = []string{"## Your goal", "## Automatic prompts", "## Memory", "## Workers", "## Other chats", "## The user", "## Unattended turns"}
 
 // section returns the prompt text under heading, up to the next heading.
@@ -208,7 +209,7 @@ func TestSteeringDoc(t *testing.T) {
 	})
 }
 
-// TestMemoryFile_IsTheBotsOwnFileUnderKiroHome pins design §7.1 "The memory file": the door's context path is
+// TestMemoryFile_IsTheBotsOwnFileUnderKiroHome pins design §7.2: the door's context path is
 // <KiroHome>/bots/<chat id>/memory.md, built from the server-minted id alone, and nothing is built from an id that is
 // not one folder name or a KiroHome KAS would resolve against the workspace.
 func TestMemoryFile_IsTheBotsOwnFileUnderKiroHome(t *testing.T) {

@@ -185,7 +185,7 @@ func (rt *Runtime) chatSessionOpts(ctx context.Context, rec *marotte.Chat, ask *
 		Role:                  marotte.SessionRoleChat,
 		Model:                 ask.model,
 		Effort:                ask.effort,
-		Mode:                  rec.CurrentModeID,
+		Mode:                  doorMode(rec),
 		Thinking:              ask.thinking,
 		Presets:               s.Presets,
 		AdditionalDirectories: s.AdditionalDirectories,
@@ -198,11 +198,22 @@ func (rt *Runtime) chatSessionOpts(ctx context.Context, rec *marotte.Chat, ask *
 	}
 	if rec.IsStartedBot() {
 		opts.CustomAgents = []marotte.ClientCustomAgent{bot.Role(rec, botPaths())}
-		// The role is the mode a Bot's record holds; the door asks for it whatever the record was left on.
-		opts.Mode = marotte.BotRoleID
 		if doc, ok := bot.SteeringDoc(rec); ok {
 			opts.Steering = append(slices.Clone(steering), doc)
 		}
 	}
 	return opts
+}
+
+// doorMode is the mode a chat's door asks for. Only a started Bot's door registers the role, so it asks for the role
+// whatever its record was left on, and any other record naming the role (a draft's, which marotte.Chat.AdoptMode holds
+// there) asks for the default mode.
+func doorMode(rec *marotte.Chat) string {
+	switch {
+	case rec.IsStartedBot():
+		return marotte.BotRoleID
+	case rec.CurrentModeID == marotte.BotRoleID:
+		return marotte.DefaultModeID
+	}
+	return rec.CurrentModeID
 }

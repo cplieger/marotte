@@ -6,13 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// botMemoryMessage is the warning a Bot whose memory file did not load shows (design §7.1, "The memory file").
+// botMemoryMessage is the warning a Bot whose memory file did not load shows (design §7.2).
 const botMemoryMessage = "This Bot's memory did not load, so it is working without its notes."
 
 func contextCalls(b *fakeBridge) (n int, last map[string]any) {
@@ -56,7 +57,7 @@ func botSessionID(t *testing.T, cs *testChatStore, chatID marotte.ChatID) string
 	return c.ACPSessionID
 }
 
-// TestBotDoor_LoadsTheMemoryFileAsAContextFile pins design §7.1 "The memory file": with memory on, each door adds the
+// TestBotDoor_LoadsTheMemoryFileAsAContextFile pins design §7.2: with memory on, each door adds the
 // Bot's own file under KIRO_HOME to the session's context files, by force so a file not written yet loads once it is.
 func TestBotDoor_LoadsTheMemoryFileAsAContextFile(t *testing.T) {
 	for _, door := range doors {
@@ -230,7 +231,7 @@ func TestBotDoor_AFailedRemoveOpensWithNoWarning(t *testing.T) {
 	}
 }
 
-// TestBotDoor_AMemoryFileOutsideItsFolderIsNeverSent pins design §7.1's path rule: a KIRO_HOME that is not absolute
+// TestBotDoor_AMemoryFileOutsideItsFolderIsNeverSent pins design §7.2's path rule: a KIRO_HOME that is not absolute
 // would let KAS resolve the file inside the workspace, so the door sends no path and warns.
 func TestBotDoor_AMemoryFileOutsideItsFolderIsNeverSent(t *testing.T) {
 	br := reporting(marotte.BotRoleID, marotte.DefaultModeID, marotte.BotRoleID)
@@ -248,6 +249,37 @@ func TestBotDoor_AMemoryFileOutsideItsFolderIsNeverSent(t *testing.T) {
 	}
 	if got := memoryErrorsSince(t, h, since); !slices.Equal(got, []string{botMemoryMessage}) {
 		t.Errorf("memory_not_loaded messages = %q, want %q", got, botMemoryMessage)
+	}
+}
+
+// TestBotDoor_MemoryOffWithNoPathToRemoveLogsTheKeptFile pins the load with memory off whose file cannot be named:
+// no remove is sent, the chat is told nothing (its Bot has no memory), and the log records the entry KAS keeps.
+func TestBotDoor_MemoryOffWithNoPathToRemoveLogsTheKeptFile(t *testing.T) {
+	logs := captureLogs(t)
+	br := reporting(marotte.BotRoleID, marotte.DefaultModeID, marotte.BotRoleID)
+	h, cs := botRuntime(t, br)
+	seedModeChat(t, cs, "c1", true, true)
+	setBotMemory(t, cs, "c1", false)
+	t.Setenv("HOME", "relative-home")
+	since := h.bus.fanout.Position().Head
+
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
+		t.Fatalf("the Bot did not open: %v", err)
+	}
+
+	if n, p := contextCalls(br); n != 0 {
+		t.Errorf("%d %s calls (last %v), want none", n, marotte.MethodSessionContext, p)
+	}
+	if got := memoryErrorsSince(t, h, since); len(got) != 0 {
+		t.Errorf("memory_not_loaded %q with memory off", got)
+	}
+	var kept bool
+	for line := range strings.Lines(logs.String()) {
+		kept = kept || strings.Contains(line, `"level":"WARN"`) && strings.Contains(line, "kept its memory file") &&
+			strings.Contains(line, `"chat_id":"c1"`)
+	}
+	if !kept {
+		t.Errorf("no warning that the session kept its memory file; logs:\n%s", logs.String())
 	}
 }
 
