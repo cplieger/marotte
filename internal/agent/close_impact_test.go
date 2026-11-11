@@ -63,6 +63,8 @@ func TestCloseImpact_NamesEachTurnByItsIds(t *testing.T) {
 		command.AdmissionWait = 50 * time.Millisecond
 		t.Cleanup(func() { command.AdmissionWait = wait })
 		rt, cs, _ := newTestHub()
+		// Registered after the restore, so it runs first: the close tail reads AdmissionWait until shutdown joins it.
+		t.Cleanup(func() { _ = rt.Shutdown(context.Background()) })
 		seedChat(t, cs, "c1")
 		release := holdOpens(rt)
 		defer release()
