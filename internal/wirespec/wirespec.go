@@ -215,6 +215,7 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.RunStartedPayload](),
 	wiregen.TypeRef[marotte.RunProgressPayload](),
 	wiregen.TypeRef[marotte.RunFinishedPayload](),
+	wiregen.TypeRef[marotte.RunRevPayload](),
 	wiregen.TypeRef[marotte.NotificationPayload](),
 	// One step waiting on a person: run_asks's element and GET /api/runs/{id}'s `open_asks`. No
 	// `Payload` suffix, so the SSE-binding test exempts it.
@@ -490,6 +491,7 @@ var wireEvents = []wiregen.Event{
 	{Name: "run_progress", Data: wiregen.TypeRef[marotte.RunProgressPayload]()},
 	{Name: "run_finished", Data: wiregen.TypeRef[marotte.RunFinishedPayload]()},
 	{Name: "run_asks", Data: wiregen.TypeRef[marotte.RunAsksPayload]()},
+	{Name: "run_rev", Data: wiregen.TypeRef[marotte.RunRevPayload]()},
 	{Name: "safety_properties", Data: wiregen.TypeRef[marotte.SafetyPropertiesPayload]()},
 	{Name: "safety_status", Data: wiregen.TypeRef[marotte.SafetyStatusPayload]()},
 	{Name: "knowledge_indexing", Data: wiregen.TypeRef[marotte.KnowledgeIndexingPayload]()},

@@ -84,6 +84,15 @@ type RunProgressPayload struct {
 	Credits float64 `json:"credits,omitempty"`
 }
 
+// RunRevPayload is the payload for type="run_rev": the run read moved to Rev, which a client
+// holding an earlier revision reads as GET /api/runs/{id}?since=<its rev>. Status is the run's
+// status at Rev.
+type RunRevPayload struct {
+	WorkflowID string `json:"workflow_id"`
+	Status     string `json:"status,omitempty"`
+	Rev        uint64 `json:"rev"`
+}
+
 // RunPlanOutcome is where a queued plan revision stands, in KAS's `steps_queued` words. Open on
 // the wire: an outcome KAS adds later reaches the run tab as its own word.
 type RunPlanOutcome string

@@ -271,6 +271,30 @@ interface RawRunInspect extends Omit<RunInspect, "state"> {
   display_name?: unknown;
   /** marotte's own key beside KAS's reply: what may be done to the run, decided from this read's state. */
   controls?: unknown;
+  /** marotte's own key beside KAS's reply: the read's revision, which `?since` reads from. */
+  rev?: unknown;
+}
+
+/** One changed node of a `?since` answer: its own members (no `children`), its parent's path ("" for
+ *  the root) and its index among the parent's children. Every ancestor of a changed node comes too. */
+interface SinceRecord {
+  path: string;
+  parent: string;
+  index: number;
+  node: RawRunNode;
+}
+
+/** `GET /api/runs/{id}?since=<rev>`: the run read's extras, the head members and nodes that changed
+ *  since `rev`, and what is gone. `nodePlan` is present only when it changed (null: removed). */
+interface RawRunSince extends Omit<RawRunInspect, "state" | "nodePlan"> {
+  head?: Record<string, unknown>;
+  head_removed?: string[];
+  /** Each a `SinceRecord`, read through `sinceRecordOf`. */
+  nodes: unknown[];
+  removed?: string[];
+  nodePlan?: unknown;
+  step_ends_removed?: string[];
+  step_starts_removed?: string[];
 }
 
 /** The reply's read position, 0 for none or a value that is not a non-negative safe integer. */
@@ -429,6 +453,11 @@ const cells = new Map<string, Signal<RunState | undefined>>();
 const inFlight = new Set<string>();
 const stale = new Set<string>();
 
+/** Per run, the revision of the held read; absent until a read carries one. A held revision makes
+ *  the next read a `?since` one, unless a caller owes the run a whole read (`wholeOwed`). */
+const revs = new Map<string, number>();
+const wholeOwed = new Set<string>();
+
 /** Runs forgotten while their read was out; the read drops its answer and its retry, so a late
  *  response cannot rebuild the state `forgetRun` just released. */
 const forgotten = new Set<string>();
@@ -491,15 +520,27 @@ function otherSession(known: string | undefined, seen: string | undefined): bool
   return known !== undefined && seen !== undefined && known !== seen;
 }
 
-/** Stamp a freshly read tree's executions. A path showing another session, or a live start after
- *  an end, holds a new execution. KAS's persisted time is read only to rank several new
- *  executions this one read found. */
+/** Stamp a freshly read tree's executions. */
 function stampStarts(workflowID: string, root: RunNode): void {
-  const run = executionsOf(workflowID);
-  const fresh: { node: RunNode; path: string; at: string; session: string | undefined }[] = [];
+  const read: [RunNode, string][] = [];
   const walk = (n: RunNode, parent: RunNode | undefined, trail: readonly string[]): void => {
     const path = [...trail, nodePathSegment(n, parent)];
-    const key = nodePathKey(path);
+    read.push([n, nodePathKey(path)]);
+    for (const k of n.children ?? []) {
+      walk(k, n, path);
+    }
+  };
+  walk(root, undefined, []);
+  stampNodes(workflowID, read);
+}
+
+/** Stamp the executions of freshly read nodes, each with its path key. A path showing another
+ *  session, or a live start after an end, holds a new execution. KAS's persisted time is read only
+ *  to rank several new executions this one read found. */
+function stampNodes(workflowID: string, read: readonly [RunNode, string][]): void {
+  const run = executionsOf(workflowID);
+  const fresh: { node: RunNode; path: string; at: string; session: string | undefined }[] = [];
+  for (const [n, key] of read) {
     const at = nonEmpty(n.startedAt);
     const ex = run.paths.get(key);
     if (at === undefined) {
@@ -520,11 +561,7 @@ function stampStarts(workflowID: string, root: RunNode): void {
         n.startGen = ex.gen;
       }
     }
-    for (const k of n.children ?? []) {
-      walk(k, n, path);
-    }
-  };
-  walk(root, undefined, []);
+  }
   // Stable, so equal times keep plan order.
   fresh.sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || 0);
   for (const f of fresh) {
@@ -808,6 +845,27 @@ export function invalidateRun(workflowID: string): void {
   if (workflowID === "") {
     return;
   }
+  wholeOwed.add(workflowID);
+  if (inFlight.has(workflowID)) {
+    stale.add(workflowID);
+    return;
+  }
+  void fetchRun(workflowID);
+}
+
+/** Whether this client holds a revision of the run's read, so the server's `run_rev` announces
+ *  its every change and no frame needs a read of its own. */
+export function runRevHeld(workflowID: string): boolean {
+  return revs.has(workflowID) && cells.get(workflowID)?.peek() !== undefined;
+}
+
+/** Read what changed in a held run since its held revision, which `rev` (a `run_rev`) passed; a
+ *  run held at no revision is left to its frames. Coalesced with any read out, as `invalidateRun`. */
+export function reviseRun(workflowID: string, rev?: number): void {
+  const held = revs.get(workflowID);
+  if (!runRevHeld(workflowID) || held === undefined || (rev !== undefined && rev <= held)) {
+    return;
+  }
   if (inFlight.has(workflowID)) {
     stale.add(workflowID);
     return;
@@ -828,7 +886,13 @@ export function readRunUnlessOut(workflowID: string): void {
  *  may predate the gap. */
 export function rereadHeldRuns(): void {
   for (const id of cells.keys()) {
-    if (runStateDemanded(id)) {
+    if (!runStateDemanded(id)) {
+      continue;
+    }
+    // A revision the server no longer holds answers whole.
+    if (runRevHeld(id)) {
+      reviseRun(id);
+    } else {
       invalidateRun(id);
     }
   }
@@ -844,16 +908,27 @@ async function fetchRun(workflowID: string): Promise<void> {
   // re-asking.
   let failed = 0;
   const issued = executionsOf(workflowID).frames;
+  const since =
+    wholeOwed.delete(workflowID) || !runRevHeld(workflowID) ? undefined : revs.get(workflowID);
+  const url = `/api/runs/${encodeURIComponent(workflowID)}`;
   try {
-    const r = await apiGetOrError<RawRunInspect>(`/api/runs/${encodeURIComponent(workflowID)}`);
-    const d = r.data;
+    const r = await apiGetOrError<RawRunInspect | RawRunSince>(
+      since === undefined ? url : `${url}?since=${String(since)}`,
+    );
+    const changes = r.data !== null && isSinceAnswer(r.data) ? r.data : undefined;
+    const d = r.data === null || isSinceAnswer(r.data) ? undefined : r.data;
     if (forgotten.has(workflowID)) {
       // The last reader left while this read was out: writing the answer would recreate a cell nobody holds.
-    } else if (d?.state !== undefined && executionsOf(workflowID).frames !== issued) {
+    } else if (
+      (changes !== undefined || d?.state !== undefined) &&
+      executionsOf(workflowID).frames !== issued
+    ) {
       // A frame changed the tree while this read was out, so the answer may predate it. Only a
       // read issued after the frame can say which side of it KAS is on.
       stale.add(workflowID);
       answered = true;
+    } else if (changes !== undefined) {
+      answered = applySince(workflowID, changes);
     } else if (d?.state !== undefined) {
       // The plan, the step ends and the verbs BEFORE the state, because the state assignment is what
       // wakes every reader: a subscriber that re-rendered between them would draw a repeat's bound
@@ -865,28 +940,14 @@ async function fetchRun(workflowID: string): Promise<void> {
       }
       const starts = new Map(Object.entries(d.step_starts ?? {}));
       const state = classifyRunState(d.state, starts);
-      const planUpdate = planUpdateOf(d.plan_update);
-      if (planUpdate !== undefined) {
-        state.planUpdate = planUpdate;
-      }
-      state.readPosition = readPositionOf(d.read_position);
-      if (typeof d.auto_resume_stopped_at === "string" && d.auto_resume_stopped_at !== "") {
-        state.autoResumeStoppedAt = d.auto_resume_stopped_at;
-      }
-      if (typeof d.display_name === "string" && d.display_name !== "") {
-        state.displayName = d.display_name;
-      }
+      withReadExtras(state, d);
       if (state.root !== undefined) {
         stampStarts(workflowID, state.root);
       }
       stepEnds.set(workflowID, new Map(Object.entries(d.step_ends ?? {})));
       stepStarts.set(workflowID, starts);
-      controlCell(workflowID).value = controlsOf(d.controls);
-      const gone = goneCells.get(workflowID);
-      if (gone !== undefined) {
-        gone.value = false;
-      }
-      cell(workflowID).value = state;
+      holdRev(workflowID, d.rev);
+      landRead(workflowID, state, d);
       answered = true;
     } else {
       failed = r.status;
@@ -917,6 +978,188 @@ async function fetchRun(workflowID: string): Promise<void> {
   if (stale.delete(workflowID)) {
     await fetchRun(workflowID);
   }
+}
+
+/** The state keys a read writes whole (the tree and `withReadExtras`'s), which a `?since` head
+ *  never carries. */
+const READ_KEYS = ["root", "planUpdate", "readPosition", "autoResumeStoppedAt", "displayName"];
+
+function isSinceAnswer(d: RawRunInspect | RawRunSince): d is RawRunSince {
+  return "nodes" in d && Array.isArray(d.nodes);
+}
+
+/** A `?since` record, or undefined for an element of another shape. */
+function sinceRecordOf(v: unknown): SinceRecord | undefined {
+  if (typeof v !== "object" || v === null) {
+    return undefined;
+  }
+  const { path, parent, index, node } = v as Record<string, unknown>;
+  if (typeof path !== "string" || typeof node !== "object" || node === null) {
+    return undefined;
+  }
+  return {
+    path,
+    parent: typeof parent === "string" ? parent : "",
+    index:
+      typeof index === "number" && Number.isSafeInteger(index) ? index : Number.MAX_SAFE_INTEGER,
+    node: node as RawRunNode,
+  };
+}
+
+/** marotte's keys of a read, written onto its state. */
+function withReadExtras(state: RunState, d: RawRunInspect | RawRunSince): void {
+  const planUpdate = planUpdateOf(d.plan_update);
+  if (planUpdate !== undefined) {
+    state.planUpdate = planUpdate;
+  }
+  state.readPosition = readPositionOf(d.read_position);
+  if (typeof d.auto_resume_stopped_at === "string" && d.auto_resume_stopped_at !== "") {
+    state.autoResumeStoppedAt = d.auto_resume_stopped_at;
+  }
+  if (typeof d.display_name === "string" && d.display_name !== "") {
+    state.displayName = d.display_name;
+  }
+}
+
+function holdRev(workflowID: string, rev: unknown): void {
+  if (typeof rev === "number" && Number.isSafeInteger(rev) && rev > 0) {
+    revs.set(workflowID, rev);
+  } else {
+    revs.delete(workflowID);
+  }
+}
+
+/** Write an answered read: the verbs and the gone flag BEFORE the state, whose assignment wakes
+ *  every reader. */
+function landRead(workflowID: string, state: RunState, d: RawRunInspect | RawRunSince): void {
+  controlCell(workflowID).value = controlsOf(d.controls);
+  const gone = goneCells.get(workflowID);
+  if (gone !== undefined) {
+    gone.value = false;
+  }
+  cell(workflowID).value = state;
+}
+
+/** Apply a `?since` answer onto the held state in one write; false when no state is held to apply
+ *  it to, which owes the run a whole read. */
+function applySince(workflowID: string, d: RawRunSince): boolean {
+  const held = cells.get(workflowID)?.peek();
+  if (held === undefined) {
+    wholeOwed.add(workflowID);
+    stale.add(workflowID);
+    return true;
+  }
+  if ("nodePlan" in d) {
+    if (d.nodePlan === null || d.nodePlan === undefined) {
+      plans.delete(workflowID);
+    } else {
+      plans.set(workflowID, d.nodePlan);
+    }
+  }
+  const starts = mergedRows(stepStarts.get(workflowID), d.step_starts, d.step_starts_removed);
+  const ends = mergedRows(stepEnds.get(workflowID), d.step_ends, d.step_ends_removed);
+  const drop = new Set<string>([...READ_KEYS, ...(d.head_removed ?? [])]);
+  const head = {
+    ...Object.fromEntries(Object.entries(held).filter(([k]) => !drop.has(k))),
+    ...d.head,
+  };
+  const state = classifyRunState(head as RawRunState, starts);
+  withReadExtras(state, d);
+  if (held.root !== undefined) {
+    const rebuilt: [RunNode, string][] = [];
+    state.root = applyRecords(held.root, d.nodes, new Set(d.removed ?? []), starts, rebuilt);
+    stampNodes(workflowID, rebuilt);
+  }
+  stepEnds.set(workflowID, ends);
+  stepStarts.set(workflowID, starts);
+  holdRev(workflowID, d.rev);
+  landRead(workflowID, state, d);
+  return true;
+}
+
+function mergedRows<T>(
+  held: ReadonlyMap<string, T> | undefined,
+  changed: Record<string, T> | undefined,
+  removed: readonly string[] | undefined,
+): Map<string, T> {
+  const out = new Map(held);
+  for (const k of removed ?? []) {
+    out.delete(k);
+  }
+  for (const [k, v] of Object.entries(changed ?? {})) {
+    out.set(k, v);
+  }
+  return out;
+}
+
+/** The held tree with each record's node rebuilt in place, its kids kept by identity unless a record
+ *  or `removed` names them, and new kids seated at their index. Only the records' nodes are walked:
+ *  the server sends every ancestor of a changed node. `rebuilt` collects each rebuilt node with its
+ *  path key, for `stampNodes`. */
+function applyRecords(
+  root: RunNode,
+  records: readonly unknown[],
+  removed: ReadonlySet<string>,
+  starts: StepStarts,
+  rebuilt: [RunNode, string][],
+): RunNode {
+  const byPath = new Map<string, SinceRecord>();
+  const byParent = new Map<string, SinceRecord[]>();
+  for (const v of records) {
+    const r = sinceRecordOf(v);
+    if (r === undefined) {
+      continue;
+    }
+    byPath.set(r.path, r);
+    const siblings = byParent.get(r.parent) ?? [];
+    siblings.push(r);
+    byParent.set(r.parent, siblings);
+  }
+  const rebuild = (
+    rec: SinceRecord,
+    held: RunNode | undefined,
+    parent: RunNode | undefined,
+    trail: readonly string[],
+  ): RunNode => {
+    const ownRaw = { ...rec.node };
+    delete ownRaw.children;
+    const own = classifyRunNode(ownRaw);
+    const path = [...trail, nodePathSegment(own, parent)];
+    const kids: RunNode[] = [];
+    const seen = new Set<string>();
+    for (const k of held?.children ?? []) {
+      const key = nodePathKey([...path, nodePathSegment(k, own)]);
+      const r = byPath.get(key);
+      if (removed.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      kids.push(r === undefined ? k : rebuild(r, k, own, path));
+    }
+    const added = (byParent.get(rec.path) ?? []).filter((r) => !seen.has(r.path));
+    for (const r of added.sort((a, b) => a.index - b.index)) {
+      kids.splice(Math.min(Math.max(r.index, 0), kids.length), 0, rebuild(r, undefined, own, path));
+    }
+    if (held?.children !== undefined || kids.length > 0) {
+      own.children = kids;
+    }
+    const log = starts.get(rec.path);
+    let startedAt = attemptStart(own.startedAt, own.status, log);
+    if (log === undefined && startedAt !== undefined) {
+      for (const k of kids) {
+        startedAt = earlier(startedAt, k.startedAt);
+      }
+    }
+    if (startedAt === undefined) {
+      delete own.startedAt;
+    } else {
+      own.startedAt = startedAt;
+    }
+    rebuilt.push([own, rec.path]);
+    return own;
+  };
+  const top = byPath.get(nodePathKey([nodePathSegment(root, undefined)]));
+  return top === undefined ? root : rebuild(top, root, undefined, []);
 }
 
 function scheduleRunRetry(workflowID: string, status: number): void {
@@ -1003,6 +1246,8 @@ export function forgetRun(workflowID: string): void {
   }
   cells.delete(workflowID);
   stale.delete(workflowID);
+  revs.delete(workflowID);
+  wholeOwed.delete(workflowID);
   cancelRunRetry(workflowID);
   plans.delete(workflowID);
   executions.delete(workflowID);

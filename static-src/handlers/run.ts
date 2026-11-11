@@ -19,7 +19,9 @@ import {
   openRunEntry,
   runChatID,
   openRunTurn,
+  reviseRun,
   runLabelOf,
+  runRevHeld,
   runStepEnds,
   sealRunEntry,
 } from "../run-store.js";
@@ -158,7 +160,7 @@ onSSE("turn_opened", (_chatID, p) => {
     const path = payloadOf(p.entry, "turn_open")?.node_path ?? "";
     const end = path === "" ? undefined : runStepEnds(runID).get(path);
     if (end?.outcome === "interrupted" && end.resumed !== true) {
-      invalidateRun(runID);
+      readUnlessRevised(runID);
     }
   }
 });
@@ -190,7 +192,7 @@ onSSE("entry_appended", (_chatID, p) => {
     appendRunEntry(runID, p.entry);
     if (p.entry.kind === "step_graded") {
       // Both views read a step's grade from the run read's `step_ends`, which projects this entry.
-      invalidateRun(runID);
+      readUnlessRevised(runID);
     }
   }
 });
@@ -205,7 +207,7 @@ onSSE("turn_closed", (_chatID, p) => {
     // grade under KAS's record arrives as its own `step_graded` entry.
     const close = payloadOf(p.entry, "turn_close");
     if (isBroken(close?.outcome)) {
-      invalidateRun(runID);
+      readUnlessRevised(runID);
     }
   }
 });
@@ -213,6 +215,19 @@ onSSE("turn_closed", (_chatID, p) => {
 function forRun(p: { workflow_id?: string }): string {
   return p.workflow_id ?? "";
 }
+
+/** Read the run for what a frame moved in its read, unless a held revision means the server's
+ *  `run_rev` carries the move. */
+function readUnlessRevised(workflowID: string): void {
+  if (!runRevHeld(workflowID)) {
+    invalidateRun(workflowID);
+  }
+}
+
+// The run read moved: a held run reads what changed since its held revision.
+onSSE("run_rev", (_chatID, p) => {
+  reviseRun(p.workflow_id, p.rev);
+});
 
 // Which steps of one run wait on a person, replacing the store's snapshot of that run whole. A
 // reachable snapshot is the whole truth about the run's waits, so a banner for a wait it does not
@@ -235,9 +250,10 @@ onSSE("run_asks", (chatID, p) => {
   }
 });
 
-// The one lifecycle frame carrying CONTENT: applied to the cached tree, refetching only when it
-// cannot be (`loop_iteration` and `steps_queued` reshape the tree, `paused` is run-level, or no
-// state is held). A refetch per node event is a KAS round trip for the whole tree.
+// The one lifecycle frame carrying CONTENT: applied to the cached tree. A frame it cannot apply
+// (`loop_iteration` and `steps_queued` reshape the tree, `paused` is run-level, a new iteration's
+// path, or no state held) waits for the `run_rev` the server's re-read publishes, or reads the run
+// when no revision is held.
 onSSE("run_progress", (chatID, p) => {
   trackRun(p.workflow_id);
   noteRunChat(p.workflow_id, chatID);
@@ -245,6 +261,6 @@ onSSE("run_progress", (chatID, p) => {
   // waiting inside a running run, so it reads as executing.
   noteRunLive(p.workflow_id, chatID, p.kind !== "paused");
   if (!applyRunProgress(p)) {
-    invalidateRun(p.workflow_id);
+    readUnlessRevised(p.workflow_id);
   }
 });

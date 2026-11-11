@@ -39,6 +39,12 @@ func inspectWithCaptures(t *testing.T, workflowID string, steps, size int) json.
 	return raw
 }
 
+func runViewReq(id, view string) *http.Request {
+	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+id+"?view="+view, nil)
+	req.SetPathValue("id", id)
+	return req
+}
+
 // The run read serves each step's capture summary, not its whole captured output, which only the
 // step read carries.
 func TestHandleRun_ServesACaptureSummaryPerNode(t *testing.T) {
@@ -186,5 +192,45 @@ func TestHandleRun_KeepsAWatchsCapture(t *testing.T) {
 	}
 	if state.Root.Children[0].CapturedOutput != capture {
 		t.Errorf("the watch's capturedOutput = %q, want %q", state.Root.Children[0].CapturedOutput, capture)
+	}
+}
+
+// The header view is what a tab dot, a chat tab's mark and a steer note's label read: the run's
+// status and name with no node tree, so its size is the same for any run.
+func TestHandleRun_TheHeaderViewCarriesNoTree(t *testing.T) {
+	header := func(steps int) string {
+		h, br := seedChatParentedRun(t, true)
+		br.setCallResult(methodKiroWorkflowInspect, inspectWithCaptures(t, "wf_1", steps, 200))
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleRun(rec, runViewReq("wf_1", "header"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET ?view=header = %d: %s", rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+
+	small, large := header(10), header(10_000)
+
+	var reply map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(large), &reply); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"nodePlan", "step_starts", "step_ends"} {
+		if _, ok := reply[key]; ok {
+			t.Errorf("the header view carries %s", key)
+		}
+	}
+	var state map[string]json.RawMessage
+	if err := json.Unmarshal(reply["state"], &state); err != nil {
+		t.Fatalf("decoding state: %v (%s)", err, large)
+	}
+	if _, ok := state["root"]; ok {
+		t.Error("the header view carries the node tree")
+	}
+	if string(state["status"]) != `"running"` {
+		t.Errorf("state.status = %s, want running", state["status"])
+	}
+	if len(small) != len(large) {
+		t.Errorf("the header is %d bytes for 10 nodes and %d for 10,000; want the same", len(small), len(large))
 	}
 }

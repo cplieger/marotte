@@ -981,6 +981,17 @@ func sealedClose(sealed []turnlog.Sealed, turn string, c *marotte.TurnConclusion
 // close that kas, KAS's record of the run's steps by PathKey (nil when it was not read), makes due; graded is what it
 // recorded. It scans the log on the first read of the process; nil with no log.
 func (r *runLog) stepEnds(ctx context.Context, workflowID string, kas map[string]workflow.StepRecord) (ends map[string]marotte.RunStepEnd, graded []*stepGrade, err error) {
+	return r.stepEndsGrading(ctx, workflowID, kas, true)
+}
+
+// recordedStepEnds is stepEnds recording no grade: kas only says whether an interruption resumed, so a read of
+// KAS's record older than the run log's newest close spends none of a close's grade reads.
+func (r *runLog) recordedStepEnds(ctx context.Context, workflowID string, kas map[string]workflow.StepRecord) (map[string]marotte.RunStepEnd, error) {
+	ends, _, err := r.stepEndsGrading(ctx, workflowID, kas, false)
+	return ends, err
+}
+
+func (r *runLog) stepEndsGrading(ctx context.Context, workflowID string, kas map[string]workflow.StepRecord, grade bool) (ends map[string]marotte.RunStepEnd, graded []*stepGrade, err error) {
 	l, err := r.log(ctx, workflowID)
 	if err != nil || l == nil {
 		return nil, nil, err
@@ -994,7 +1005,7 @@ func (r *runLog) stepEnds(ctx context.Context, workflowID string, kas map[string
 	if scanErr := scanStepFactsLocked(rec, l); scanErr != nil {
 		return nil, nil, scanErr
 	}
-	if kas != nil {
+	if kas != nil && grade {
 		graded, err = r.gradeDueLocked(ctx, rec, slices.Sorted(maps.Keys(rec.closes)), kasRead{steps: kas, ok: true})
 	}
 	return stepEndsLocked(rec, kas), graded, err

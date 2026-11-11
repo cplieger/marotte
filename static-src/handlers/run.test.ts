@@ -26,6 +26,9 @@ vi.mock("../run-store.js", () => ({
   sealRunEntry: vi.fn(),
   appendRunEntry: vi.fn(),
   runStepEnds: vi.fn(() => new Map()),
+  // No revision held by default: a frame the store cannot apply reads the run.
+  runRevHeld: vi.fn(() => false),
+  reviseRun: vi.fn(),
 }));
 // The launching chat's own liveness, for the orphan sweep's two gates. Mocked
 // because what this suite pins is WHEN the sweep fires, not how a chat comes to
@@ -63,6 +66,8 @@ import {
   openRunEntry,
   openRunTurn,
   runLabelOf,
+  reviseRun,
+  runRevHeld,
   sealRunEntry,
 } from "../run-store.js";
 import { isBusy } from "../store.js";
@@ -140,7 +145,8 @@ type RunEvent =
   | "entry_delta"
   | "entry_sealed"
   | "entry_appended"
-  | "turn_closed";
+  | "turn_closed"
+  | "run_rev";
 
 function send(type: RunEvent, payload: Record<string, unknown>, chatID = "c1"): void {
   dispatch({ type, chat_id: chatID, payload });
@@ -152,6 +158,7 @@ const _keys: readonly (keyof SSEPayloads)[] = [
   "run_started",
   "run_progress",
   "run_finished",
+  "run_rev",
   "run_asks",
   "turn_opened",
   "entry_opened",
@@ -232,6 +239,21 @@ describe("run SSE handlers", () => {
     send("run_progress", { workflow_id: "wf_1", kind: "loop_iteration" });
     expect(applyProgress).toHaveBeenCalledTimes(1);
     expect(invalidate).toHaveBeenCalledWith("wf_1");
+  });
+
+  // A held revision means the server re-reads the run and publishes `run_rev` for this frame, so
+  // the client reads only what changed, on that frame.
+  it("leaves a frame it could not apply to the run's next revision when one is held", () => {
+    applyProgress.mockReturnValue(false);
+    vi.mocked(runRevHeld).mockReturnValue(true);
+    try {
+      send("run_progress", { workflow_id: "wf_1", kind: "loop_iteration" });
+      expect(invalidate).not.toHaveBeenCalled();
+      send("run_rev", { workflow_id: "wf_1", rev: 12 });
+      expect(reviseRun).toHaveBeenCalledWith("wf_1", 12);
+    } finally {
+      vi.mocked(runRevHeld).mockReturnValue(false);
+    }
   });
 
   // Every run's tab carries a dot, agent-launched included, so every event tracks the run:

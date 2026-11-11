@@ -3293,6 +3293,17 @@ export interface RunRetriedResponse {
 }
 
 /**
+ * RunRevPayload is the payload for type="run_rev": the run read moved to Rev, which a client
+ * holding an earlier revision reads as GET /api/runs/{id}?since=<its rev>. Status is the run's
+ * status at Rev.
+ */
+export interface RunRevPayload {
+  workflow_id: string;
+  status?: string;
+  rev: number;
+}
+
+/**
  * RunStanding is where a running or paused run stands, from KAS's list row. Node is a bare
  * node id; for pass_limit it is the repeat at its cap.
  */

@@ -5,6 +5,7 @@ package agent
 
 import (
 	"bytes"
+	"encoding/json"
 	"encoding/json/jsontext"
 	"errors"
 	"log/slog"
@@ -225,12 +226,17 @@ func (rr *runRoutes) handleStepCapture(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "missing workflow id or step path")
 		return
 	}
-	raw, err := rr.runs.rawInspect(r.Context(), id)
-	if err != nil {
-		writeInspectErr(w, id, err)
-		return
+	capture, found, err := workflow.CaptureAt(rr.runs.heldRaw(id), nodePath)
+	if err != nil || capture == nil {
+		// The held read may predate the capture, or the step's start.
+		var raw json.RawMessage
+		raw, err = rr.runs.rawInspect(r.Context(), id)
+		if err != nil {
+			writeInspectErr(w, id, err)
+			return
+		}
+		capture, found, err = workflow.CaptureAt(raw, nodePath)
 	}
-	capture, found, err := workflow.CaptureAt(raw, nodePath)
 	if err != nil {
 		slog.Warn("step capture: run state undecodable", "workflow_id", logsafe.Field(id),
 			"node_path", logsafe.Field(nodePath), "error", err, "detail", rpcerr.Details(err))

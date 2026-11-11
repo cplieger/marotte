@@ -103,7 +103,9 @@ type Runs struct {
 	// cancelRetryBase is the refused-cancel ladder's first wait (retryTermination), a field because untracked
 	// timers can outlive whoever set a package var. Zero means defaultCancelRetryBase.
 	cancelRetryBase time.Duration
-	mu              sync.Mutex
+	// revs mints every run read's revision (run_rev.go).
+	revs revMint
+	mu   sync.Mutex
 }
 
 // runChatReader is the chat store as the run surface uses it: session chains, the chat owning a run's parent session,

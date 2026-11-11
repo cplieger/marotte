@@ -30,8 +30,8 @@ import (
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
-// handleRun serves GET /api/runs/{workflowId}: the run's full state. It grades a failed read two ways,
-// since the client treats 404 as final.
+// handleRun serves GET /api/runs/{workflowId}: the run's full state, or its ?since and ?view=header forms
+// (serveRunView). It grades a failed read two ways, since the client treats 404 as final.
 func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -42,31 +42,24 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "missing workflow id")
 		return
 	}
+	if rr.serveRunView(w, r, id) {
+		return
+	}
 	read, err := rr.runs.positionedRead(r.Context(), id)
 	if err != nil {
 		writeInspectErr(w, id, err)
 		return
 	}
-	raw := summarizedOrWhole(id, read.raw)
+	raw := read.rev.served
+	if raw == nil {
+		raw = summarizedOrWhole(id, read.raw)
+	}
 	position, err := read.position()
 	if err != nil {
 		slog.Warn("workflow inspect: the run's read position could not be computed",
 			"workflow_id", logsafe.Field(id), "error", err)
 	}
-	var ends map[string]marotte.RunStepEnd
-	var starts map[string]marotte.RunStepStart
-	if rr.runs.log != nil {
-		ends, err = rr.runs.stepEnds(r.Context(), id, kasSteps(read.in))
-		if err != nil {
-			slog.Warn("workflow inspect: the run log's step ends could not be read",
-				"workflow_id", logsafe.Field(id), "error", err)
-		}
-		starts, err = rr.runs.log.stepStarts(r.Context(), id)
-		if err != nil {
-			slog.Warn("workflow inspect: the run log's step starts could not be read",
-				"workflow_id", logsafe.Field(id), "error", err)
-		}
-	}
+	ends, starts := rr.runs.readStepExtras(r.Context(), id, &read.runRead)
 	pending := -1
 	if read.in.OK {
 		pending = read.in.Pending
@@ -74,7 +67,7 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	plan := rr.runs.servedPlan(id, pending)
 	extras := &runExtras{
 		asks: read.asks, asksReachable: read.reachable, ends: ends, starts: starts, plan: plan, readPosition: position,
-		displayName: rr.runs.runName(id),
+		displayName: rr.runs.runName(id), rev: read.rev.rev,
 	}
 	if l, held := rr.runs.lease(id); held {
 		extras.autoResumeStoppedAt = l.AutoResumeStoppedAt
@@ -91,6 +84,30 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpreply.WriteRawJSON(w, out)
+}
+
+// readStepExtras is the run log's step ends and starts for read: its revision's, else read afresh
+// (recording the grades due under read's state).
+func (rs *Runs) readStepExtras(ctx context.Context, id string, read *runRead) (
+	ends map[string]marotte.RunStepEnd, starts map[string]marotte.RunStepStart,
+) {
+	if read.rev.ok {
+		return read.rev.ends, read.rev.starts
+	}
+	if rs.log == nil {
+		return nil, nil
+	}
+	ends, err := rs.stepEnds(ctx, id, kasSteps(read.in))
+	if err != nil {
+		slog.Warn("workflow inspect: the run log's step ends could not be read",
+			"workflow_id", logsafe.Field(id), "error", err)
+	}
+	starts, err = rs.log.stepStarts(ctx, id)
+	if err != nil {
+		slog.Warn("workflow inspect: the run log's step starts could not be read",
+			"workflow_id", logsafe.Field(id), "error", err)
+	}
+	return ends, starts
 }
 
 // summarizedOrWhole is raw as the run read serves it (summarizedRead), or raw whole when it cannot be
@@ -129,6 +146,7 @@ type runRead struct {
 	raw       json.RawMessage
 	asks      []marotte.RunAsk
 	in        workflow.Inspect
+	rev       revSnapshot
 	reachable bool
 }
 
@@ -150,7 +168,7 @@ func (rs *Runs) openRun(ctx context.Context, workflowID string) (runRead, error)
 	r, err := rs.readAsks(ctx, c)
 	switch {
 	case err == nil:
-		return runRead{raw: r.raw, in: r.in, asks: wireAsks(r.asks), reachable: true}, nil
+		return runRead{raw: r.raw, in: r.in, asks: wireAsks(r.asks), rev: r.rev, reachable: true}, nil
 	case r.raw != nil:
 		// The engine answered something this build cannot read: the state goes out as KAS gave it.
 		return runRead{raw: r.raw, inErr: err, asks: rs.lastAsks(c), reachable: false}, nil
@@ -174,7 +192,11 @@ type runExtras struct {
 	displayName         string
 	asks                []marotte.RunAsk
 	readPosition        uint64
-	asksReachable       bool
+	// rev is the run read's revision (run_rev.go), written when not 0.
+	rev           uint64
+	asksReachable bool
+	// noLog leaves out step_ends and step_starts: the header view carries no per-step facts.
+	noLog bool
 }
 
 // runReadPosition is a run's read position: the turns its own log holds plus one once KAS reports
@@ -229,9 +251,9 @@ func (rs *Runs) RunReadBound(ctx context.Context, workflowID string) (uint64, er
 // null because an agent could not tell "none" from "unsupported", `asks_reachable`, false when
 // `open_asks` is not a statement that nothing waits, `read_position` (runReadPosition), `display_name`
 // (Runs.runName, "" when nothing names the run), `plan_update` when servedPlan answers one, `controls`
-// (Runs.controls) when the reply's state carries a status, and `auto_resume_stopped_at` when marotte stopped
-// resuming the run on its own (runlease.Lease.AutoResumeStoppedAt). A reply that is not one JSON object (null aside)
-// is an error.
+// (Runs.controls) when the reply's state carries a status, `auto_resume_stopped_at` when marotte stopped
+// resuming the run on its own (runlease.Lease.AutoResumeStoppedAt), and `rev` when a revision describes the read
+// (run_rev.go). A reply that is not one JSON object (null aside) is an error.
 func withRunExtras(raw json.RawMessage, x *runExtras) (json.RawMessage, error) {
 	body := bytes.TrimSpace(raw)
 	if len(body) == 0 || bytes.Equal(body, []byte("null")) {
@@ -240,33 +262,7 @@ func withRunExtras(raw json.RawMessage, x *runExtras) (json.RawMessage, error) {
 	if body[0] != '{' || !json.Valid(body) {
 		return nil, errReplyNotObject
 	}
-	asks, ends, starts := x.asks, x.ends, x.starts
-	if asks == nil {
-		asks = []marotte.RunAsk{}
-	}
-	if ends == nil {
-		ends = map[string]marotte.RunStepEnd{}
-	}
-	if starts == nil {
-		starts = map[string]marotte.RunStepStart{}
-	}
-	keys := []extraKey{
-		{name: "open_asks", v: asks},
-		{name: "asks_reachable", v: x.asksReachable},
-		{name: "step_ends", v: ends},
-		{name: "step_starts", v: starts},
-		{name: "read_position", v: x.readPosition},
-		{name: "display_name", v: x.displayName},
-	}
-	if x.plan != nil {
-		keys = append(keys, extraKey{name: "plan_update", v: x.plan})
-	}
-	if x.controls != nil {
-		keys = append(keys, extraKey{name: "controls", v: x.controls})
-	}
-	if !x.autoResumeStoppedAt.IsZero() {
-		keys = append(keys, extraKey{name: "auto_resume_stopped_at", v: x.autoResumeStoppedAt.UTC()})
-	}
+	keys := x.keys()
 	head := bytes.TrimRightFunc(body[:len(body)-1], unicode.IsSpace)
 	out := bytes.NewBuffer(make([]byte, 0, len(body)+512))
 	out.Write(head)
@@ -285,6 +281,44 @@ func withRunExtras(raw json.RawMessage, x *runExtras) (json.RawMessage, error) {
 	}
 	out.WriteByte('}')
 	return out.Bytes(), nil
+}
+
+// keys is what withRunExtras writes of x, in order.
+func (x *runExtras) keys() []extraKey {
+	asks, ends, starts := x.asks, x.ends, x.starts
+	if asks == nil {
+		asks = []marotte.RunAsk{}
+	}
+	if ends == nil {
+		ends = map[string]marotte.RunStepEnd{}
+	}
+	if starts == nil {
+		starts = map[string]marotte.RunStepStart{}
+	}
+	keys := []extraKey{
+		{name: "open_asks", v: asks},
+		{name: "asks_reachable", v: x.asksReachable},
+	}
+	if !x.noLog {
+		keys = append(keys, extraKey{name: "step_ends", v: ends}, extraKey{name: "step_starts", v: starts})
+	}
+	keys = append(keys,
+		extraKey{name: "read_position", v: x.readPosition},
+		extraKey{name: "display_name", v: x.displayName},
+	)
+	if x.rev != 0 {
+		keys = append(keys, extraKey{name: "rev", v: x.rev})
+	}
+	if x.plan != nil {
+		keys = append(keys, extraKey{name: "plan_update", v: x.plan})
+	}
+	if x.controls != nil {
+		keys = append(keys, extraKey{name: "controls", v: x.controls})
+	}
+	if !x.autoResumeStoppedAt.IsZero() {
+		keys = append(keys, extraKey{name: "auto_resume_stopped_at", v: x.autoResumeStoppedAt.UTC()})
+	}
+	return keys
 }
 
 // extraKey is one key withRunExtras writes, its name already a JSON string's contents.

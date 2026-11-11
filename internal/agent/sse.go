@@ -26,6 +26,9 @@ func (b *bus) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 // It touches evt.Subject only for chat_status, taking the stamp MergeStamped minted with the
 // payload.
 func (b *bus) emit(evt marotte.ServerEvent) {
+	if b.observe != nil {
+		b.observe(&evt)
+	}
 	switch evt.Type {
 	case marotte.EventChatStatus:
 		// A producer of this event must not hold chatLifecycle.mu: stageStatusDesc takes it (non-reentrant).
