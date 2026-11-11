@@ -95,6 +95,26 @@ export interface RunAskAddress {
   text?: string;
 }
 
+/** Whether two readings of a run's asks say the same: every reader builds a fresh object. */
+export function sameRunAsks(a: RunAsks, b: RunAsks): boolean {
+  return (
+    a.count === b.count &&
+    a.label === b.label &&
+    a.asked.length === b.asked.length &&
+    a.asked.every((x, i) => {
+      const y = b.asked[i];
+      return (
+        x.nodeID === y?.nodeID &&
+        x.sessionID === y.sessionID &&
+        x.answer === y.answer &&
+        x.path === y.path &&
+        x.askID === y.askID &&
+        x.text === y.text
+      );
+    })
+  );
+}
+
 export interface AskedSteps {
   /** The executions waiting on a person. */
   waiting: ReadonlySet<RunNode>;

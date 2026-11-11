@@ -489,8 +489,24 @@ interface ExecWindow {
 }
 
 export function window(nodes: readonly ExecNode[], live: boolean): ExecWindow | undefined {
+  const bounds = windowBounds(nodes, live);
+  return bounds === undefined ? undefined : windowAt(bounds, Date.now());
+}
+
+/** The part of a window that only a new model moves, so a clock reads the window at any instant
+ *  from it without walking the nodes again. */
+export interface WindowBounds {
+  readonly from: number;
+  /** The latest end a settled node or an unparsable end gave. */
+  readonly closedTo: number;
+  /** Whether the window runs to now: a live run, or a started node with no end. */
+  readonly open: boolean;
+}
+
+export function windowBounds(nodes: readonly ExecNode[], live: boolean): WindowBounds | undefined {
   let from = Number.POSITIVE_INFINITY;
-  let to = 0;
+  let closedTo = 0;
+  let open = live;
   for (const n of workNodes(nodes)) {
     if (n.start === undefined) {
       continue;
@@ -500,15 +516,18 @@ export function window(nodes: readonly ExecNode[], live: boolean): ExecWindow | 
       continue;
     }
     from = Math.min(from, s);
-    const e = n.end === undefined ? Date.now() : Date.parse(n.end);
-    to = Math.max(to, Number.isNaN(e) ? s : e);
+    if (n.end === undefined) {
+      open = true;
+      continue;
+    }
+    const e = Date.parse(n.end);
+    closedTo = Math.max(closedTo, Number.isNaN(e) ? s : e);
   }
-  if (!Number.isFinite(from)) {
-    return undefined;
-  }
-  if (live) {
-    to = Math.max(to, Date.now());
-  }
+  return Number.isFinite(from) ? { from, closedTo, open } : undefined;
+}
+
+export function windowAt(bounds: WindowBounds, now: number): ExecWindow {
+  const to = bounds.open ? Math.max(bounds.closedTo, now) : bounds.closedTo;
   // A 1ms floor so a one-tick run still divides and its bars have a width.
-  return { from, to, span: Math.max(1, to - from) };
+  return { from: bounds.from, to, span: Math.max(1, to - bounds.from) };
 }

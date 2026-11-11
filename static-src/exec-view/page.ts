@@ -133,7 +133,6 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
   );
 
   let current: ExecRun | undefined;
-  let notes: readonly string[] = [];
   let timer: ReturnType<typeof setInterval> | undefined;
   const follow = opts.follow ?? "attention";
   let seenGen = 0;
@@ -200,8 +199,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     }
     tree.render(run.nodes, selected);
     timeline.render(run.nodes, selected, run.live);
-    notes = opts.notes?.(run) ?? [];
-    dock.paint(run, selected, notes);
+    dock.paint(run, selected, opts.notes?.(run) ?? []);
     dock.setControls(opts.controls?.(run) ?? null);
     const node = nodeAt(run.nodes, selected);
     detail.render(node);
@@ -297,7 +295,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
         tree.tick();
         detail.tick();
         timeline.tick(run.nodes, selected, run.live);
-        dock.paint(run, selected, notes);
+        dock.tick();
       }, 1000);
       return;
     }

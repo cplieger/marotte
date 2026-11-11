@@ -33,8 +33,10 @@ import { buildExecSummary } from "./summary.js";
 import { setAttr, setText } from "../dom.js";
 
 export interface ExecDockView {
-  /** Paint the run, its shown step and the consumer's own notes. Safe on every tick. */
+  /** Paint the run, its shown step and the consumer's own notes. */
   paint(run: ExecRun, selected: string, notes: readonly string[]): void;
+  /** Move the head's and the rows' clocks alone, from the last `paint`'s run. */
+  tick(): void;
   /** Seat the run's verbs in the head; the same element again moves nothing, so focus inside it
    *  survives a repaint. */
   setControls(row: HTMLElement | null): void;
@@ -93,6 +95,8 @@ interface LiveRow {
   readonly label: HTMLElement;
   readonly tail: HTMLElement;
   readonly dur: HTMLElement;
+  /** The step the last paint drew here, which the tick reads its clock from. */
+  node?: ExecNode;
 }
 
 interface DockNote {
@@ -331,6 +335,11 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
     }
     paintLabel(row.label, n);
     setText(row.tail, tails.get(n.path) ?? "");
+    row.node = n;
+    paintTime(row, n);
+    setAttr(row.btn, "aria-current", shown ? "true" : null);
+  };
+  const paintTime = (row: LiveRow, n: ExecNode): void => {
     const ms = elapsed(n.start, n.end);
     const time = ms > 0 ? formatElapsed(ms) : "";
     setText(row.dur, time);
@@ -339,7 +348,6 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
       "aria-label",
       [n.label, STATE_WORD[n.state], time].filter((s) => s !== "").join(", "),
     );
-    setAttr(row.btn, "aria-current", shown ? "true" : null);
   };
 
   /** The steps in flight, else the newest started one, plus the shown step wherever it stands. A
@@ -453,6 +461,15 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
       const hidden = steps.length - 1;
       setAttr(more, "aria-label", `Show ${String(hidden)} more ${hidden === 1 ? "step" : "steps"}`);
       paintInputs(run);
+    },
+    tick() {
+      summary.tick();
+      for (const rowRoot of rows.children) {
+        const row = rowParts.get(rowRoot as HTMLElement);
+        if (row?.node !== undefined) {
+          paintTime(row, row.node);
+        }
+      }
     },
     setControls(row) {
       seat(act, row);

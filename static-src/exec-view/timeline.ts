@@ -13,7 +13,10 @@ import {
   isWork,
   passText,
   window as execWindow,
+  windowAt,
+  windowBounds,
   type ExecNode,
+  type WindowBounds,
 } from "./model.js";
 import { STATE_WORD } from "./status.js";
 import { paintLabel } from "./label.js";
@@ -150,18 +153,44 @@ export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelin
   let measured = false;
   let range: ItemRange = { from: 0, to: 0 };
 
+  /** What a model gives the timeline before any clock reads it, kept per model so a tick or a
+   *  scroll walks only the window's lanes. */
+  interface Layout {
+    readonly nodes: readonly ExecNode[];
+    readonly live: boolean;
+    readonly lanePx: number;
+    readonly passPx: number;
+    readonly items: { node: ExecNode; pass: number | undefined }[];
+    readonly offsets: Float64Array;
+    readonly bounds: WindowBounds | undefined;
+    readonly lanePass: ReadonlyMap<string, number>;
+  }
+  let layout: Layout | undefined;
+
   /** Every lane and pass header the run has, in order, with the tops a window places them at. */
-  function itemsOf(nodes: readonly ExecNode[]): {
-    items: { node: ExecNode; pass: number | undefined }[];
-    offsets: Float64Array;
-  } {
+  function layoutOf(nodes: readonly ExecNode[], live: boolean): Layout {
+    if (
+      layout?.nodes === nodes &&
+      layout.live === live &&
+      layout.lanePx === lanePx &&
+      layout.passPx === passPx
+    ) {
+      return layout;
+    }
     const items = flatten(nodes)
       .map((node) => ({ node, pass: passOf(node) }))
       .filter((it) => isWork(it.node) || it.pass !== undefined);
-    return {
+    layout = {
+      nodes,
+      live,
+      lanePx,
+      passPx,
       items,
       offsets: offsetsOf(items.map((it) => (it.pass === undefined ? lanePx : passPx))),
+      bounds: windowBounds(nodes, live),
+      lanePass: passesOf(nodes),
     };
+    return layout;
   }
 
   /** RECONCILED by path, not rebuilt: each lane is a focusable `role="button"`, and replacing it on
@@ -172,11 +201,10 @@ export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelin
       return;
     }
     const { nodes, selected, live } = shown;
-    const { items, offsets } = itemsOf(nodes);
+    const { items, offsets, bounds, lanePass } = layoutOf(nodes, live);
     const band = bandOf(lanes, box);
     range = rangeOf(offsets, band.top, band.bottom);
-    const win = execWindow(nodes, live);
-    const lanePass = passesOf(nodes);
+    const win = bounds === undefined ? undefined : windowAt(bounds, Date.now());
 
     const paintLane = (lane: Lane, n: ExecNode): void => {
       const from = Date.parse(n.start ?? "");
@@ -280,7 +308,7 @@ export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelin
     }
     const was = range;
     const band = bandOf(lanes, box);
-    const next = rangeOf(itemsOf(shown.nodes).offsets, band.top, band.bottom);
+    const next = rangeOf(layoutOf(shown.nodes, shown.live).offsets, band.top, band.bottom);
     if (measure() || !measured || next.from !== was.from || next.to !== was.to) {
       paint();
     }

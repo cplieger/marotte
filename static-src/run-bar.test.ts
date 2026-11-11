@@ -71,6 +71,8 @@ vi.mock("./api-client.js", async () => ({
 
 // Called through, so the one toast a batch raises is countable.
 vi.mock("./toast.js", { spy: true });
+// Called through, so a tick that re-projects the run is countable.
+vi.mock("./run-exec-source.js", { spy: true });
 
 const { initRunBar, _resetRunBarForTest } = await import("./run-bar.js");
 const { initActions } = await import("./actions/boot.js");
@@ -81,6 +83,7 @@ const { setSessions, setActive } = await import("./store.js");
 const { dropDecisions } = await import("./decision-dock.js");
 const { applyRunAsks, _resetRunAsksForTest } = await import("./run-asks.js");
 const { apiGetOrError } = await import("./api-client.js");
+const { runToExec } = await import("./run-exec-source.js");
 
 const bar = document.getElementById("run-bar") as HTMLUListElement;
 const fold = document.getElementById("run-bar-fold")!;
@@ -1850,5 +1853,47 @@ describe("Pause all and Resume all", () => {
       expect(btn?.getAttribute("aria-label")).toBe("Resume all");
       expectOnHeader(btn);
     });
+  });
+});
+
+describe("the run bar's clock on a large run", () => {
+  it("moves the clock without re-projecting the run", async () => {
+    const c = chatID();
+    chats.push(c);
+    const id = runID("big");
+    const start = new Date(Date.now() - 5000).toISOString();
+    inspect.set(
+      id,
+      state({
+        root: {
+          nodeId: "root",
+          type: "sequence",
+          status: "running",
+          startedAt: start,
+          children: [
+            ...Array.from({ length: 999 }, (_, i) => ({
+              nodeId: `s${String(i)}`,
+              type: "step",
+              status: "completed",
+              startedAt: start,
+              endedAt: start,
+            })),
+            { nodeId: "live", type: "step", status: "running", startedAt: start },
+          ],
+        },
+      }),
+    );
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    live(id, c);
+    await activate(c);
+    expect(rowText(".ev-sum-label")).toEqual(["nightly sweep"]);
+    const before = rowText(".ev-sum-clock");
+    vi.mocked(runToExec).mockClear();
+
+    vi.advanceTimersByTime(10_000);
+    vi.useRealTimers();
+
+    expect(rowText(".ev-sum-clock")).not.toEqual(before);
+    expect(vi.mocked(runToExec)).not.toHaveBeenCalled();
   });
 });

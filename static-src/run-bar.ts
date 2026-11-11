@@ -20,10 +20,12 @@ import {
   runState,
   runStepEnds,
   invalidateRun,
+  type RunState,
 } from "./run-store.js";
 import { runPendingAsks } from "./decision-dock.js";
-import { runToExec } from "./run-exec-source.js";
-import { compactText, counters, progressPhrase, type ExecRun } from "./exec-view/model.js";
+import { sameRunAsks, type RunAsks } from "./run-asks.js";
+import { runToExec, type ExecFoldMemo } from "./run-exec-source.js";
+import type { ExecRun } from "./exec-view/model.js";
 import { buildExecSummary, type ExecSummaryView } from "./exec-view/summary.js";
 import { wantsReader } from "./exec-view/alert.js";
 import { chevronEl } from "./chevron.js";
@@ -100,27 +102,15 @@ export function initRunBar(): void {
   });
 }
 
-/** Everything the bar's CONTENT depends on, as one string so the computed dedupes by value. */
+/** Everything the bar's CONTENT depends on, as one string so the computed dedupes by value. A
+ *  run's part is its model's generation, so every new model repaints its row and the 1s tick
+ *  moves only the clocks. */
 function key(): string {
   const chatID = watchActiveId();
   const parts: string[] = [chatID];
   for (const id of liveRunIDsForChat(chatID)) {
-    const run = execOf(id);
-    const c = counters(run?.nodes ?? []);
-    parts.push(
-      [
-        id,
-        run?.state ?? "",
-        run?.label ?? "",
-        run?.alert?.kind ?? "",
-        run?.alert?.text ?? "",
-        String(c.total),
-        String(c.done),
-        String(c.current),
-        // A new pass can open on the same step counts.
-        run === undefined ? "" : compactText(progressPhrase(run)),
-      ].join("\u0002"),
-    );
+    execOf(id);
+    parts.push(join(id, String(execs.get(id)?.gen ?? 0)));
   }
   const batch = batchOf(rows(chatID));
   parts.push(batch === null ? "" : join(batch.verb, ...batch.targets));
@@ -280,6 +270,7 @@ function needsYou(id: string): boolean {
 
 function render(bar: HTMLUListElement): void {
   const chatID = watchActiveId();
+  pruneExecs(chatID);
   // Runs that need the reader first, each group in inventory order.
   const live = rows(chatID);
   const waiting = live.filter(needsYou);
@@ -424,8 +415,8 @@ function buildRow(id: string, chatID: string): HTMLElement {
   const row = el("li", { className: "run-bar-row" }, btn);
   const view = { btn, glyph, summary };
   rowViews.set(row, view);
-  // Point this run's hold at the row ONCE, so the shared tick keeps painting the row on screen for
-  // as long as the bar shows that run.
+  // Point this run's hold at the row ONCE, so the shared tick keeps the row's clock moving for as
+  // long as the bar shows that run.
   const hold = holds.get(id);
   if (hold !== undefined) {
     hold.row = view;
@@ -482,12 +473,44 @@ function runMarkStatus(state: ExecState | "unknown"): TabRunDotStatus | "" {
   }
 }
 
-/** The run tab's model of a run, which the card and the page read as well. */
+/** A run's last model and what it was folded from. The plan and the step ends are not inputs:
+ *  the store replaces them only together with the state (`run-store.ts` `fetchRun`). */
+interface HeldExec {
+  readonly state: RunState;
+  readonly asks: RunAsks;
+  readonly exec: ExecRun;
+  readonly memo: ExecFoldMemo;
+  readonly gen: number;
+}
+
+const execs = new Map<string, HeldExec>();
+
+/** The run tab's model of a run, which the card and the page read as well, folded again only when
+ *  the run's state or asks moved. */
 function execOf(id: string): ExecRun | undefined {
   const st = runState(id);
-  return st === undefined
-    ? undefined
-    : runToExec(st, runPlan(id), runPendingAsks(id), "", runStepEnds(id));
+  if (st === undefined) {
+    return undefined;
+  }
+  const asks = runPendingAsks(id);
+  const held = execs.get(id);
+  if (held?.state === st && sameRunAsks(held.asks, asks)) {
+    return held.exec;
+  }
+  const memo = held?.memo ?? {};
+  const exec = runToExec(st, runPlan(id), asks, "", runStepEnds(id), memo);
+  execs.set(id, { state: st, asks, exec, memo, gen: (held?.gen ?? 0) + 1 });
+  return exec;
+}
+
+/** Forget the models of the runs `chatID` no longer lists. */
+function pruneExecs(chatID: string): void {
+  const listed = new Set(liveRunIDsForChat(chatID));
+  for (const id of execs.keys()) {
+    if (!listed.has(id)) {
+      execs.delete(id);
+    }
+  }
 }
 
 /** Join the shared 1s clock for every run on screen and leave it for every run that left. ONE
@@ -507,11 +530,7 @@ function reconcileHolds(ids: readonly string[]): void {
       const hold: Hold = {
         row: null,
         tick(): void {
-          // A tracked read is inert here: a setInterval callback runs outside any effect's eval
-          // context, so nothing subscribes.
-          if (hold.row !== null) {
-            paintView(hold.row, id);
-          }
+          hold.row?.summary.tick();
         },
       };
       holds.set(id, hold);
@@ -537,6 +556,7 @@ export function _resetRunBarForTest(): void {
     releaseRunClock(id, hold);
   }
   holds.clear();
+  execs.clear();
   batchBtn?.remove();
   batchBtn = null;
   batchRun = null;
