@@ -4,14 +4,6 @@
  * arrow keys move focus. Items are queried live each keystroke; call
  * `refresh()` after a bulk re-render to restore the single-Tab-stop invariant.
  *
- * Pairs with popover for the WAI-ARIA menu pattern:
- *
- * ```ts
- * const pop = createPopover(button, panel, { haspopup: "menu" });
- * const nav = rovingFocus(panel, "[role=menuitem]");
- * // on open: nav.focusFirst();
- * ```
- *
  * @module
  */
 

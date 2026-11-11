@@ -15,14 +15,14 @@ import {
   type Scenario,
 } from "./__test-helpers__/reentry.js";
 
-// The re-entry property for a grouped popup with a trigger, beside a peer in
-// the same group. The model is written from the popup contract: show and hide
-// commit at once, a show closes the open peers, light dismissal arms at once
-// under the current flags, a hide fades and then hides the panel, a
-// same-value option patch changes nothing, and dispose hides at once with no
-// onClose. An Escape or outside click dispatched inside a popup's own show() may
-// come before or after its listeners arm, so either outcome is accepted. A closed popup whose fade the model cannot place (a show undone
-// inside its own realization never revealed the panel) may be fading or hidden.
+// The re-entry property for a grouped popup with a trigger, beside a peer in the same group.
+// The model is written from the popup contract: show and hide commit at once, a show closes the
+// open peers, light dismissal arms within show() under the current flags, a hide fades and then
+// hides the panel, a same-value option patch changes nothing, and dispose hides at once with no
+// onClose. An Escape or outside click closes an open popup whose listener it reaches, unless it
+// is the event in dispatch when that listener armed. A closed popup whose fade the model cannot
+// place (a show undone inside its own realization never revealed the panel) may be fading or
+// hidden.
 
 type Flag = "closeOnOutside" | "closeOnEscape";
 type Step =
@@ -35,8 +35,6 @@ interface Pop {
   /** open; closing (fading or hidden, not placeable); fading; hidden (after a settle). */
   phase: "open" | "closing" | "hidden" | "untouched";
   readonly flags: Record<Flag, boolean>;
-  /** How many of this popup's show() calls are running. */
-  showing: number;
   ended: boolean;
   annotated: "yes" | "maybe" | "no";
   opens: number;
@@ -48,7 +46,6 @@ function newPop(): Pop {
     open: false,
     phase: "untouched",
     flags: { closeOnOutside: true, closeOnEscape: true },
-    showing: 0,
     ended: false,
     annotated: "no",
     opens: 0,
@@ -180,35 +177,54 @@ function scenario(w: World): Scenario<Step> {
     pop.annotated = pop.annotated === "yes" ? "yes" : "maybe";
   };
 
-  const showCall = (pop: Pop, call: () => void): void => {
-    pop.showing++;
-    try {
-      call();
-    } finally {
-      pop.showing--;
+  // Each document dismissal listener the popups add: whose it is (the one popup open as
+  // it is added, since a show closes its peer first) and the event in dispatch then.
+  const armedBy = new Map<unknown, { readonly pop: Pop; readonly opening: Event | null }>();
+  const onLedgerAdd = w.ledger.onAdd;
+  w.ledger.onAdd = (entry) => {
+    onLedgerAdd?.(entry);
+    if (entry.target !== document || (entry.type !== "click" && entry.type !== "keydown")) {
+      return;
     }
+    const open = [
+      ...(ctl?.isOpen === true ? [me] : []),
+      ...(peerCtl?.isOpen === true ? [peer] : []),
+    ];
+    const pop = open[0];
+    if (pop === undefined || open.length > 1) {
+      fail(`a document ${entry.type} listener added with ${open.length.toString()} popups open`);
+      return;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- the one API naming the event in dispatch
+    armedBy.set(entry.listener, { pop, opening: window.event ?? null });
   };
-  /** Dispatch a dismissal event: an armed popup it applies to closes; one still
-   *  inside its show() takes whichever outcome the controller reports. */
-  const dismiss = (flag: Flag, event: Event): void => {
-    const unsure: [Pop, PopupController | undefined][] = [];
-    for (const [pop, controller] of [
-      [me, ctl],
-      [peer, peerCtl],
-    ] as const) {
-      if (pop.open && pop.flags[flag]) {
-        if (pop.showing > 0) {
-          unsure.push([pop, controller]);
-        } else {
-          hideModel(pop);
+  let dismissing: Event | null = null;
+  // On the root element: the document listeners the event reaches next are the ones held now.
+  for (const type of ["click", "keydown"]) {
+    w.ownListen(document.documentElement, type, (e) => {
+      if (e !== dismissing) {
+        return;
+      }
+      for (const entry of w.ledger.entries) {
+        const by = armedBy.get(entry.listener);
+        if (
+          entry.target === document &&
+          entry.type === type &&
+          !entry.capture &&
+          by !== undefined &&
+          by.opening !== e
+        ) {
+          hideModel(by.pop);
         }
       }
-    }
-    outside.dispatchEvent(event);
-    for (const [pop, controller] of unsure) {
-      if (controller?.isOpen === false) {
-        hideModel(pop);
-      }
+    });
+  }
+  const dismiss = (event: Event): void => {
+    dismissing = event;
+    try {
+      outside.dispatchEvent(event);
+    } finally {
+      dismissing = null;
     }
   };
 
@@ -269,7 +285,7 @@ function scenario(w: World): Scenario<Step> {
         case "show":
           w.entry(null, () => {
             showModel(me, peer);
-            showCall(me, () => c?.show());
+            c?.show();
           });
           return;
         case "hide":
@@ -282,33 +298,31 @@ function scenario(w: World): Scenario<Step> {
           return;
         case "toggle":
           w.entry(null, () => {
-            if (!me.ended && me.open) {
-              hideModel(me);
-              c?.toggle();
-              return;
+            if (!me.ended) {
+              if (me.open) {
+                hideModel(me);
+              } else {
+                showModel(me, peer);
+              }
             }
-            showModel(me, peer);
-            showCall(me, () => c?.toggle());
+            c?.toggle();
           });
           return;
         case "outside":
           w.entry(null, () => {
-            dismiss("closeOnOutside", new MouseEvent("click", { bubbles: true }));
+            dismiss(new MouseEvent("click", { bubbles: true }));
           });
           return;
         case "escape":
           w.entry(null, () => {
             // stopPropagation cannot stop another listener on the same document.
-            dismiss(
-              "closeOnEscape",
-              new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
-            );
+            dismiss(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
           });
           return;
         case "peerShow":
           w.entry(null, () => {
             showModel(peer, me.ended ? newPop() : me);
-            showCall(peer, () => peerCtl?.show());
+            peerCtl?.show();
           });
           return;
         case "closeGroup":
@@ -452,6 +466,19 @@ describe("popup: re-entry property", () => {
         numRuns: 150,
         // Counterexamples found earlier, kept as regressions.
         examples: [
+          // An Escape or outside click at the show's own onOpen closes it: show() armed it.
+          [
+            {
+              script: [{ k: "show" }],
+              injections: [{ at: 0, hit: "me:onOpen", actions: [{ k: "escape" }] }],
+            },
+          ],
+          [
+            {
+              script: [{ k: "show" }],
+              injections: [{ at: 0, hit: "me:onOpen", actions: [{ k: "outside" }] }],
+            },
+          ],
           // A restart at the leave's is-open removal, and at its is-leaving write, still hides the panel at the settle.
           [
             {

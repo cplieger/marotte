@@ -383,21 +383,20 @@ function hasClass(el: Element, token: string): boolean {
 
 interface Outcome {
   readonly trace: number;
-  /** The hit kinds in trace order, so a generated injection's hit is known after the dry run. */
+  /** The hit kinds in trace order, so a generated injection's hit is known after the run. */
   readonly kinds: readonly string[];
   readonly failure: string | null;
 }
 
-/** A generated injection that calls the native showModal() from a beforetoggle of the dialog.
- *  The engine mishandles it (the `it.fails` case below); no marotte caller does it, which
+/** A generated injection that ran a native showModal() from a beforetoggle of the dialog, read
+ *  from the real run's `kinds` (it places each injection on the dry run's `traceLength`). The
+ *  engine mishandles it (the seed-1573708530 case below); no marotte caller does it, which
  *  `dialog-native-open.node.test.ts` keeps true. */
-function opensNativelyInToggle(c: Case, kinds: readonly string[]): boolean {
+function opensNativelyInToggle(c: Case, traceLength: number, kinds: readonly string[]): boolean {
   return c.injections.some(
     (inj) =>
       inj.hit === undefined &&
-      /^beforetoggle:\w+@dialog$/.test(
-        kinds[kinds.length === 0 ? 0 : inj.at % kinds.length] ?? "",
-      ) &&
+      /^beforetoggle:\w+@dialog$/.test(kinds[traceLength === 0 ? 0 : inj.at % traceLength] ?? "") &&
       inj.actions.some(
         (a) => a.k === "platformOpen" || (a.k === "platformOther" && a.kind === "reopenModal"),
       ),
@@ -907,8 +906,8 @@ describe("dialog: re-entry property", () => {
     await fc.assert(
       fc.asyncProperty(caseArb, async (c) => {
         const dry = await runCase(c, null);
-        fc.pre(!opensNativelyInToggle(c, dry.kinds));
         const out = await runCase(c, dry.trace);
+        fc.pre(!opensNativelyInToggle(c, dry.trace, out.kinds));
         expect(out.failure).toBeNull();
       }),
       {
@@ -1630,28 +1629,25 @@ describe("dialog: re-entry property", () => {
     );
   }, 60000);
 
-  // Seed 1573708530: a native showModal() and then closeDialog() from the beforetoggle of the
-  // engine's own showModal(). The dialog ends closed, but the browser's showModal writes `open`
-  // after the close and the engine closes it again. A fixed engine passes it, which `it.fails`
-  // reports: then drop `opensNativelyInToggle`.
-  it.fails(
-    "leaves a native showModal() then closeDialog() in its own opening beforetoggle closed with no extra open write",
-    async () => {
-      const c: Case = {
-        guard: "none",
-        cancelWorld: false,
-        onCloseDisposes: false,
-        onCloseThrows: false,
-        closeOnBackdrop: false,
-        script: [{ k: "open" }, { k: "platformOther", kind: "show" }],
-        injections: [
-          { at: 92, actions: [{ k: "platformOpen" }, { k: "helperClose", cb: "log" }] },
-          { at: 17, actions: [{ k: "platformOther", kind: "removeOpen" }] },
-        ],
-      };
-      const dry = await runCase(c, null);
-      const out = await runCase(c, dry.trace);
-      expect(out.failure).toBeNull();
-    },
-  );
+  // Seed 1573708530 pins a defect of the copied engine: a native showModal() and then
+  // closeDialog() from the beforetoggle of the engine's own showModal(). The dialog ends closed,
+  // but the browser's showModal writes `open` after the close and the engine closes it again.
+  // A fixed engine turns this red: then delete it and `opensNativelyInToggle`.
+  it("writes open again after a native showModal() then closeDialog() in its own opening beforetoggle", async () => {
+    const c: Case = {
+      guard: "none",
+      cancelWorld: false,
+      onCloseDisposes: false,
+      onCloseThrows: false,
+      closeOnBackdrop: false,
+      script: [{ k: "open" }, { k: "platformOther", kind: "show" }],
+      injections: [
+        { at: 92, actions: [{ k: "platformOpen" }, { k: "helperClose", cb: "log" }] },
+        { at: 17, actions: [{ k: "platformOther", kind: "removeOpen" }] },
+      ],
+    };
+    const dry = await runCase(c, null);
+    const out = await runCase(c, dry.trace);
+    expect(out.failure).toMatch(/after the injection at beforetoggle:open@dialog, dialog open=/);
+  });
 });

@@ -3,24 +3,6 @@
  * with content" load. Pure timing, no DOM: the caller paints the skeleton and
  * the content; this owns WHEN.
  *
- * Two consumption styles, unified:
- *
- * ```ts
- * // commit-style: the content render replaces the skeleton in place
- * const t = skeletonTiming(() => paint(out, skeleton), { minVisibleMs: 300, signal });
- * const data = await load(signal);
- * t.commit(() => paint(out, content(data)));
- *
- * // teardown-style: the skeleton is its own element, removed on settle
- * const t = skeletonTiming(() => {
- *   const node = makeSkeleton();
- *   list.append(node);
- *   return () => node.remove();
- * });
- * await load();
- * t.cancel(); // removes the skeleton if it was painted
- * ```
- *
  * @module
  */
 

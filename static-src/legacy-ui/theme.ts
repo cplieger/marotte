@@ -1,8 +1,7 @@
 /**
  * theme.ts — The stored theme choice, light, dark or system, written to an
  * attribute on `<html>` as the concrete theme and following the OS while it
- * is system. The module imports nothing, so marotte's pre-paint bundle
- * (`prepaint-steps.ts`) loads it alone.
+ * is system. The module imports nothing, so a pre-paint bundle loads it alone.
  * @module
  */
 

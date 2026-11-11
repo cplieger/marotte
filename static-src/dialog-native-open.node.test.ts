@@ -1,7 +1,7 @@
-// marotte opens a widget-owned <dialog> only through legacy-ui (createDialog, createModal, ask), never
-// with the native showModal(): legacy-ui's dialog engine mishandles a native showModal() made inside
-// its own beforetoggle, and its property test leaves that case out on this premise
-// (`opensNativelyInToggle` in legacy-ui/dialog.property.test.ts).
+// No marotte source outside legacy-ui calls the native showModal(); a dialog opens through
+// legacy-ui (createDialog, createModal, ask). legacy-ui's dialog engine mishandles a native
+// showModal() made inside its own beforetoggle, and its property test leaves that case out on
+// this premise (`opensNativelyInToggle` in legacy-ui/dialog.property.test.ts).
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";

@@ -5,15 +5,11 @@ import { createRoot, runWithOwner, setEffectErrorHandler, type Owner } from "@cp
 import type { Fx } from "./fx.js";
 import { createDriver, ownedBinding, type Driver } from "./owner.js";
 
-// The driver and binding model, with no DOM. A driver realizes a two-field
-// state into registers through checked external calls; generated actions run
-// inside those calls and commit, set a dependent, kick, change the platform
-// register the driver observes, release the binding or throw. The oracles are
-// the driver's contract: no external call starts in a pass whose state moved,
-// the registers and the dependent equal the newest state once an entry
-// returns, kicks never move the state and restart only a pass that measured
-// before them, the terminal pass runs once and calls every step, and every
-// thrown error leaves exactly once.
+// The driver and binding model, with no DOM: generated actions run inside the driver's checked
+// external calls. The oracles are the driver's contract: no external call starts in a pass whose
+// state moved, the registers and the dependent equal the newest state once an entry returns,
+// kicks never move the state and restart only a pass that measured before them, the terminal
+// pass runs once and calls every step, and every thrown error leaves exactly once.
 
 interface S {
   readonly a: number;

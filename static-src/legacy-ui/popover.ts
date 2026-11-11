@@ -5,7 +5,7 @@
  * adds anchored placement, scroll/resize tracking, and the stretch mode.
  *
  * No native `popover`: the top layer re-roots a panel's containing block to the
- * viewport, moving the in-flow panels `/popup` exists for, and is unconditional —
+ * viewport, moving the in-flow panels popup.ts exists for, and is unconditional —
  * no z-index can lower a promoted panel back under the `--uip-z-*` ladder.
  *
  * @module

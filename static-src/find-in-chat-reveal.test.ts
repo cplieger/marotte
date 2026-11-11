@@ -470,7 +470,7 @@ describe("find-in-chat's reveal under reduced motion", () => {
     }
   });
 
-  it("makes the next hit current once the reader folds the turn holding the current hit", async () => {
+  it("makes the next hit current when the turn holding the current hit folds while find stays open", async () => {
     const chat = "c-fold-reduced";
     const turns = new Map<string, TurnState>(
       [
