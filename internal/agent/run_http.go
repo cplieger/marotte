@@ -6,6 +6,7 @@ package agent
 // The step read loads a step's own KAS session and projects the replay: `inspect` carries only what a step declared.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"time"
+	"unicode"
 
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/apicaller"
@@ -210,17 +212,21 @@ func (rs *Runs) RunReadBound(ctx context.Context, workflowID string) (uint64, er
 	return read.position()
 }
 
-// withRunExtras splices marotte's top-level keys into KAS's reply, decoding to raw values so future
-// keys survive and nested values stay byte-identical: `open_asks`, `step_ends` and `step_starts`, never
+// withRunExtras splices marotte's top-level keys before the closing brace of KAS's reply, so KAS's keys and
+// nested values stay byte-identical and the reply is never decoded: `open_asks`, `step_ends` and `step_starts`, never
 // null because an agent could not tell "none" from "unsupported", `asks_reachable`, false when
 // `open_asks` is not a statement that nothing waits, `read_position` (runReadPosition), `display_name`
 // (Runs.runName, "" when nothing names the run), `plan_update` when servedPlan answers one, `controls`
 // (Runs.controls) when the reply's state carries a status, and `auto_resume_stopped_at` when marotte stopped
-// resuming the run on its own (runlease.Lease.AutoResumeStoppedAt).
+// resuming the run on its own (runlease.Lease.AutoResumeStoppedAt). A reply that is not one JSON object (null aside)
+// is an error.
 func withRunExtras(raw json.RawMessage, x *runExtras) (json.RawMessage, error) {
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &obj); err != nil {
-		return nil, err
+	body := bytes.TrimSpace(raw)
+	if len(body) == 0 || bytes.Equal(body, []byte("null")) {
+		body = []byte("{}")
+	}
+	if body[0] != '{' || !json.Valid(body) {
+		return nil, errReplyNotObject
 	}
 	asks, ends, starts := x.asks, x.ends, x.starts
 	if asks == nil {
@@ -232,58 +238,51 @@ func withRunExtras(raw json.RawMessage, x *runExtras) (json.RawMessage, error) {
 	if starts == nil {
 		starts = map[string]marotte.RunStepStart{}
 	}
-	encodedAsks, err := json.Marshal(asks)
-	if err != nil {
-		return nil, err
+	keys := []extraKey{
+		{name: "open_asks", v: asks},
+		{name: "asks_reachable", v: x.asksReachable},
+		{name: "step_ends", v: ends},
+		{name: "step_starts", v: starts},
+		{name: "read_position", v: x.readPosition},
+		{name: "display_name", v: x.displayName},
 	}
-	encodedEnds, err := json.Marshal(ends)
-	if err != nil {
-		return nil, err
-	}
-	encodedStarts, err := json.Marshal(starts)
-	if err != nil {
-		return nil, err
-	}
-	if obj == nil {
-		obj = make(map[string]json.RawMessage, 4)
-	}
-	obj["open_asks"] = encodedAsks
-	if obj["asks_reachable"], err = json.Marshal(x.asksReachable); err != nil {
-		return nil, err
-	}
-	obj["step_ends"] = encodedEnds
-	obj["step_starts"] = encodedStarts
-	if obj["read_position"], err = json.Marshal(x.readPosition); err != nil {
-		return nil, err
-	}
-	if obj["display_name"], err = json.Marshal(x.displayName); err != nil {
-		return nil, err
-	}
-	if err := withOptionalExtras(obj, x); err != nil {
-		return nil, err
-	}
-	return json.Marshal(obj)
-}
-
-// withOptionalExtras sets withRunExtras's keys that only a present value writes.
-func withOptionalExtras(obj map[string]json.RawMessage, x *runExtras) (err error) {
 	if x.plan != nil {
-		if obj["plan_update"], err = json.Marshal(x.plan); err != nil {
-			return err
-		}
+		keys = append(keys, extraKey{name: "plan_update", v: x.plan})
 	}
 	if x.controls != nil {
-		if obj["controls"], err = json.Marshal(x.controls); err != nil {
-			return err
-		}
+		keys = append(keys, extraKey{name: "controls", v: x.controls})
 	}
 	if !x.autoResumeStoppedAt.IsZero() {
-		if obj["auto_resume_stopped_at"], err = json.Marshal(x.autoResumeStoppedAt.UTC()); err != nil {
-			return err
-		}
+		keys = append(keys, extraKey{name: "auto_resume_stopped_at", v: x.autoResumeStoppedAt.UTC()})
 	}
-	return nil
+	head := bytes.TrimRightFunc(body[:len(body)-1], unicode.IsSpace)
+	out := bytes.NewBuffer(make([]byte, 0, len(body)+512))
+	out.Write(head)
+	sep := len(head) > 1
+	for _, k := range keys {
+		v, err := json.Marshal(k.v)
+		if err != nil {
+			return nil, err
+		}
+		if sep {
+			out.WriteByte(',')
+		}
+		sep = true
+		out.WriteString(`"` + k.name + `":`)
+		out.Write(v)
+	}
+	out.WriteByte('}')
+	return out.Bytes(), nil
 }
+
+// extraKey is one key withRunExtras writes, its name already a JSON string's contents.
+type extraKey struct {
+	v    any
+	name string
+}
+
+// errReplyNotObject refuses a KAS reply withRunExtras cannot splice into.
+var errReplyNotObject = errors.New("workflow inspect: the reply is not a JSON object")
 
 // handleStepTranscript serves GET /api/runs/{id}/steps/{path}: one step's transcript, {path} one
 // percent-encoded workflow.PathKey. A step outside run {id} is a 404 (StepTranscript). Every 4xx is

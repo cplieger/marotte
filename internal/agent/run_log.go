@@ -101,6 +101,8 @@ type runRecord struct {
 	closes map[string]stepClose
 	// starts is each path's current attempt, nil until a read scans the log; every open and close then keeps it current.
 	starts map[string]stepAttempt
+	// turns is each path's turn ids in file order, nil until a read scans the log; every open then keeps it current.
+	turns map[string][]string
 	// noteLeases is, per path, the lease node_complete read for the close it sealed, until a trigger records that
 	// close's grade: closeNode is the only writer, gradeLocked the only reader.
 	noteLeases map[string]noteLease
@@ -232,93 +234,127 @@ func (r *runLog) turnHighWater(ctx context.Context, workflowID string) (uint64, 
 	return l.TurnHighWater(), nil
 }
 
+// stepReadHook runs between a turn read's snapshot and its decode; nil outside tests.
+var stepReadHook func()
+
+// openTail is a step turn's open tails and id as a read snapshots them; id is "" when the turn is not open.
+type openTail struct {
+	id      string
+	entries []marotte.OpenEntry
+}
+
+// stamps is the tail's run_turn stamp at seq newest, which comes from the served entries, never the record's counter:
+// that advances outside the lock. None when the turn is not open.
+func (o openTail) stamps(workflowID string, newest uint64) []marotte.SubjectStamp {
+	if o.id == "" {
+		return nil
+	}
+	return []marotte.SubjectStamp{{Kind: string(subject.KindRunTurn), Ref: workflowID + "/" + o.id, Version: turnVersion(o.id, newest)}}
+}
+
+// newestSeqOf is turn's newest seq among entries, 0 when none is its.
+func newestSeqOf(entries []marotte.Entry, turn string) uint64 {
+	for _, e := range slices.Backward(entries) {
+		if e.Turn == turn {
+			return e.Seq
+		}
+	}
+	return 0
+}
+
+// decodeTurns decodes a snapshot taken under the locks, holding neither.
+func decodeTurns(read *chat.TurnRead) ([]marotte.Entry, error) {
+	if stepReadHook != nil {
+		stepReadHook()
+	}
+	return read.Entries()
+}
+
 // stepTurns is one step path's transcript: its turns in file order, open tails, and one run_turn stamp per
-// open turn. The stamp's seq comes from the served entries, never the record's counter, which advances
-// outside the lock. found is false with no such turn.
+// open turn. found is false with no such turn.
 func (r *runLog) stepTurns(ctx context.Context, workflowID, nodePath string) (entries []marotte.Entry, open []marotte.OpenEntry, stamps []marotte.SubjectStamp, found bool, err error) {
+	read, tail, err := r.stepSnapshot(ctx, workflowID, nodePath, false)
+	if err != nil || read == nil {
+		return nil, nil, nil, false, err
+	}
+	if entries, err = decodeTurns(read); err != nil {
+		return nil, nil, nil, false, err
+	}
+	return entries, tail.entries, tail.stamps(workflowID, newestSeqOf(entries, tail.id)), true, nil
+}
+
+// stepSnapshot takes the read of a step path's turns (its newest only when newest) and its open tails, nil with no
+// such turn. The path's turn ids come from the record, so no other step's lines are read.
+func (r *runLog) stepSnapshot(ctx context.Context, workflowID, nodePath string, newest bool) (*chat.TurnRead, openTail, error) {
 	l, err := r.log(ctx, workflowID)
 	if err != nil || l == nil {
-		return nil, nil, nil, false, err
+		return nil, openTail{}, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	all, err := l.All()
-	if err != nil {
-		return nil, nil, nil, false, err
+	rec, ok := r.runs[workflowID]
+	if !ok || rec.removed {
+		return nil, openTail{}, nil
 	}
-	entries, newest := stepEntries(all, nodePath)
-	if len(newest) == 0 {
-		return nil, nil, nil, false, nil
+	if scanErr := scanStepFactsLocked(rec, l); scanErr != nil {
+		return nil, openTail{}, scanErr
 	}
-	if rec, ok := r.runs[workflowID]; ok {
-		if t := rec.open[nodePath]; t != nil {
-			open = t.turn.OpenEntries()
-			id := t.turn.ID()
-			stamps = append(stamps, marotte.SubjectStamp{Kind: string(subject.KindRunTurn), Ref: workflowID + "/" + id, Version: turnVersion(id, newest[id])})
-		}
+	turns := rec.turns[nodePath]
+	if newest && len(turns) > 0 {
+		turns = turns[len(turns)-1:]
 	}
-	return entries, open, stamps, true, nil
+	var tail openTail
+	if t := rec.open[nodePath]; t != nil {
+		tail = openTail{id: t.turn.ID(), entries: t.turn.OpenEntries()}
+	}
+	read, err := l.SnapshotTurns(turns, 0)
+	return read, tail, err
 }
 
 // turnRange is one step turn's tail from seq `from` inclusive (0 the whole turn), its open tails and its
-// stamp, over EntryLog.TurnPage like the chat's. found is false for no log or no such turn; err is an unreadable log (500).
+// stamp. found is false for no log or no such turn; err is an unreadable log (500).
 func (r *runLog) turnRange(ctx context.Context, workflowID, turn string, from uint64) (entries []marotte.Entry, open []marotte.OpenEntry, stamps []marotte.SubjectStamp, found bool, err error) {
 	l, err := r.log(ctx, workflowID)
 	if err != nil || l == nil {
 		return nil, nil, nil, false, err
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	entries, newestSeq, err := l.TurnPage(turn, from)
-	if err != nil {
-		// Only a missing turn is the caller's answer; an unreadable log is a 500.
-		if errors.Is(err, chat.ErrTurnNotInLog) {
-			return nil, nil, nil, false, nil
+	var tail openTail
+	if rec, ok := r.runs[workflowID]; ok {
+		for _, t := range rec.open {
+			if t.turn.ID() == turn {
+				tail = openTail{id: turn, entries: t.turn.OpenEntries()}
+			}
 		}
+	}
+	read, err := l.SnapshotTurns([]string{turn}, from)
+	r.mu.Unlock()
+	if err != nil || read == nil {
 		return nil, nil, nil, false, err
 	}
-	rec, ok := r.runs[workflowID]
-	if !ok {
-		return entries, nil, nil, true, nil
+	if entries, err = decodeTurns(read); err != nil {
+		return nil, nil, nil, false, err
 	}
-	for _, t := range rec.open {
-		if t.turn.ID() != turn {
-			continue
-		}
-		open = t.turn.OpenEntries()
-		stamps = append(stamps, marotte.SubjectStamp{
-			Kind: string(subject.KindRunTurn), Ref: workflowID + "/" + turn, Version: turnVersion(turn, newestSeq),
-		})
+	// The page speaks for its newest entry, or for the seq before from when empty.
+	newest := from - 1
+	if n := len(entries); n > 0 {
+		newest = entries[n-1].Seq
 	}
-	return entries, open, stamps, true, nil
+	return entries, tail.entries, tail.stamps(workflowID, newest), true, nil
 }
 
 // lastStepMessage is a step path's last words (lastWords) in its newest turn of the run's own record, "" when the
 // record holds none or cannot be read.
 func (r *runLog) lastStepMessage(ctx context.Context, workflowID, nodePath string) string {
-	l, err := r.log(ctx, workflowID)
-	if err != nil || l == nil {
+	read, _, err := r.stepSnapshot(ctx, workflowID, nodePath, true)
+	if err != nil || read == nil {
 		return ""
 	}
-	r.mu.Lock()
-	all, err := l.All()
-	r.mu.Unlock()
+	entries, err := decodeTurns(read)
 	if err != nil {
 		return ""
 	}
-	entries, _ := stepEntries(all, nodePath)
-	return lastWords(newestTurn(entries))
-}
-
-// newestTurn is the entries of the newest turn among a path's entries, which follow its turn_open:
-// a later turn of the path opens after it.
-func newestTurn(entries []marotte.Entry) []marotte.Entry {
-	for i, e := range slices.Backward(entries) {
-		if e.Kind == marotte.EntryKindTurnOpen {
-			return entries[i:]
-		}
-	}
-	return nil
+	return lastWords(entries)
 }
 
 // lastWords is a step turn's newest send_message message, else its trailing prose run: the step's own text
@@ -385,24 +421,6 @@ func sentMessage(e *marotte.Entry) string {
 		return ""
 	}
 	return strings.TrimSpace(in.Message)
-}
-
-func stepEntries(all []marotte.Entry, nodePath string) (entries []marotte.Entry, newest map[string]uint64) {
-	newest = make(map[string]uint64)
-	for i := range all {
-		e := &all[i]
-		if e.Kind == marotte.EntryKindTurnOpen {
-			var to marotte.EntryTurnOpen
-			if json.Unmarshal(e.Payload, &to) == nil && to.NodePath == nodePath {
-				newest[e.Turn] = e.Seq
-			}
-		}
-		if _, ok := newest[e.Turn]; ok {
-			entries = append(entries, *e)
-			newest[e.Turn] = e.Seq
-		}
-	}
-	return entries, newest
 }
 
 // steerSeverityWarning is the send_message severity that parks a run, on a steer row.
@@ -556,6 +574,7 @@ func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marot
 	rec.open[nodePath] = t
 	if rec.starts != nil {
 		noteAttemptOpen(rec.starts, nodePath, e.Ts)
+		rec.turns[nodePath] = append(rec.turns[nodePath], e.ID)
 	}
 	return t.turn, e, nil
 }
@@ -1136,8 +1155,8 @@ type noteLease struct {
 	lease runlease.Lease
 }
 
-// scanStepFactsLocked fills the record's step closes and attempt starts from its log once per process, both in one
-// scan; every open and close keeps them current after. Caller holds runLog.mu.
+// scanStepFactsLocked fills the record's step closes, attempt starts and turn ids from its log once per process, in
+// one scan; every open and close keeps them current after. Caller holds runLog.mu.
 func scanStepFactsLocked(rec *runRecord, l *chat.EntryLog) error {
 	if rec.closes != nil {
 		return nil
@@ -1146,15 +1165,16 @@ func scanStepFactsLocked(rec *runRecord, l *chat.EntryLog) error {
 	if err != nil {
 		return err
 	}
-	rec.closes, rec.starts = scanStepFacts(all)
+	rec.closes, rec.starts, rec.turns = scanStepFacts(all)
 	return nil
 }
 
 // scanStepFacts folds a log's turn_open paths, turn_close and step_graded entries in file order into each path's
-// newest close, under its grade, and its current attempt.
-func scanStepFacts(all []marotte.Entry) (closes map[string]stepClose, starts map[string]stepAttempt) {
+// newest close, under its grade, its current attempt and its turn ids.
+func scanStepFacts(all []marotte.Entry) (closes map[string]stepClose, starts map[string]stepAttempt, turns map[string][]string) {
 	closes = make(map[string]stepClose)
 	starts = make(map[string]stepAttempt)
+	turns = make(map[string][]string)
 	paths := make(map[string]string)
 	for i := range all {
 		e := &all[i]
@@ -1163,6 +1183,7 @@ func scanStepFacts(all []marotte.Entry) (closes map[string]stepClose, starts map
 			var to marotte.EntryTurnOpen
 			if json.Unmarshal(e.Payload, &to) == nil && to.NodePath != "" {
 				paths[e.Turn] = to.NodePath
+				turns[to.NodePath] = append(turns[to.NodePath], e.Turn)
 				noteAttemptOpen(starts, to.NodePath, e.Ts)
 			}
 		case marotte.EntryKindTurnClose:
@@ -1179,7 +1200,7 @@ func scanStepFacts(all []marotte.Entry) (closes map[string]stepClose, starts map
 			}
 		}
 	}
-	return closes, starts
+	return closes, starts, turns
 }
 
 // stepAttempt is one path's current attempt: when its first turn opened, whether its newest turn is open, and
