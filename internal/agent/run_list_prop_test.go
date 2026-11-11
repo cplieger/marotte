@@ -40,6 +40,10 @@ type listWorld struct {
 	failsafeOf map[string]string   // a resume's id -> the compaction it follows
 	accepted   map[string]bool     // compactions whose call was accepted with no cancel
 	cancelled  map[string]bool     // compactions the reader cancelled while running
+	// readerStopped names the resumes that waited when the reader stopped something or pressed send-now.
+	readerStopped map[string]bool
+	// limited names the turns a failsafe stop at the resume limit holds, whose close owes the reader the notice.
+	limited map[string]bool
 }
 
 type worldTurn struct {
@@ -63,6 +67,7 @@ func newListWorld(t *testing.T, seed uint64) *listWorld {
 		calls: map[string]*worldCall{}, composerBy: map[string]int{},
 		reached: map[string]int{}, retryAhead: map[string][]string{},
 		failsafeOf: map[string]string{}, accepted: map[string]bool{}, cancelled: map[string]bool{},
+		readerStopped: map[string]bool{}, limited: map[string]bool{},
 	}
 }
 
@@ -121,6 +126,9 @@ func (w *listWorld) settle() {
 		}
 		if e.kind == marotte.RunKindResume && !w.accepted[w.failsafeOf[e.id]] {
 			w.fail("resume %s taken though its compaction %s was not accepted", e.id, w.failsafeOf[e.id])
+		}
+		if e.kind == marotte.RunKindResume && w.readerStopped[e.id] {
+			w.fail("resume %s taken after a stop of the reader's", e.id)
 		}
 		for _, id := range w.retryAhead[e.id] {
 			if _, a := w.l.find(id); a != nil && a.state == marotte.RunPending {
@@ -333,13 +341,18 @@ func (w *listWorld) fireIn(turn string) {
 		waitedOn, w.failsafeOf[waiting.id] = w.failsafeOf[waiting.id], c.id
 	case listed != nil:
 		w.failsafeOf[resumeID] = c.id
-	case len(w.l.fx.notices) > notices:
+	case c.fsToken == token:
 		w.reached["failsafe at the resume limit"]++
+		w.limited[turn] = true
+	}
+	if len(w.l.fx.notices) > notices {
+		w.fail("the failsafe told the reader of its stop before the stop held")
 	}
 	w.stops[token] = true
 	w.stopSeq = w.nextSeq
 	if w.r.IntN(4) == 0 {
 		w.reached["failsafe undone"]++
+		delete(w.limited, turn)
 		w.l.stopUndone(token, func(id string) bool { return w.turns[id] != nil })
 		if _, r := w.l.find(resumeID); r != nil {
 			w.fail("an undone failsafe left its resume %s", resumeID)
@@ -532,10 +545,19 @@ func (w *listWorld) closeTurn(turnID string, handoff bool) {
 		}
 	}
 	w.ids++
+	notices := len(w.l.fx.notices)
 	w.l.turnClosed(listClose{
 		turnID: turnID, retryID: "r-" + strconv.Itoa(w.ids), compact: compact, seq: tr.seq, clean: clean, completed: clean,
 		handoff: handoff, emptyRetry: clean && w.r.IntN(2) == 0,
 	}, w.facts())
+	told := len(w.l.fx.notices) > notices
+	if want := w.limited[turnID] && !clean; told != want {
+		w.fail("the close of %s told the reader of a stop at the resume limit: %v, want %v", turnID, told, want)
+	}
+	if told {
+		w.reached["resume limit notice at the close"]++
+	}
+	delete(w.limited, turnID)
 	for i, r := range w.l.entries {
 		if r.kind != marotte.RunKindRetry || r.replaces != turnID {
 			continue
@@ -615,6 +637,10 @@ func (w *listWorld) endCall() {
 }
 
 func (w *listWorld) stop() {
+	// A reader stop withdraws a waiting resume; most runs leave it, so the generator reaches the resume's take.
+	if w.l.resume() != nil && w.r.IntN(4) > 0 {
+		return
+	}
 	w.tok++
 	token := w.tok
 	var target string
@@ -633,14 +659,12 @@ func (w *listWorld) stop() {
 		beforeState = before.state
 	}
 	snap := w.snapshot()
-	// A stop naming a turn the failsafe stops withdraws that stop's resume and changes nothing else.
-	if i, e := w.l.find(target); e != nil && i < w.l.liveLen() && e.state == marotte.RunStopping && e.fsStopped {
-		if r := w.l.resume(); r != nil && r.fsToken == e.stopBy {
-			w.reached["reader stop withdraws a resume"]++
-			snap = slices.DeleteFunc(snap, func(x marotte.RunEntry) bool { return x.ID == r.id })
-		}
+	// Any stop of the reader's withdraws the waiting resume, whatever runs then, and changes nothing else.
+	if r := w.readerStopping(); r != nil {
+		snap = slices.DeleteFunc(snap, func(x marotte.RunEntry) bool { return x.ID == r.id })
 	}
-	plan := w.l.stopHead(target, token)
+	plan := w.l.readerStop(target, token)
+	clear(w.limited)
 	if c := w.l.compaction(); before != nil && (c != before || c.state != beforeState) {
 		w.fail("a stop changed the compaction")
 	}
@@ -686,6 +710,17 @@ func (w *listWorld) stop() {
 	}
 }
 
+// readerStopping records a stop of the reader's against the resume waiting then, which must never start, and
+// returns that resume, or nil. TestFailsafe_NoResumeStartsAfterAReaderStop walks every window such a stop lands in.
+func (w *listWorld) readerStopping() *runEntry {
+	r := w.l.resume()
+	if r != nil {
+		w.readerStopped[r.id] = true
+		w.reached["reader stop ahead of a resume"]++
+	}
+	return r
+}
+
 func runEntryEqual(a, b marotte.RunEntry) bool {
 	return a.ID == b.ID && a.State == b.State && a.Kind == b.Kind && a.Turn == b.Turn && a.Next == b.Next
 }
@@ -708,9 +743,13 @@ func (w *listWorld) sendNow() {
 			stop = "gone-" + strconv.Itoa(w.step)
 		}
 	}
+	waiting := w.l.resume()
 	h, err := w.l.sendNow(e.id, stop, has)
 	if err != nil {
 		return
+	}
+	if waiting != nil {
+		w.readerStopped[waiting.id] = true
 	}
 	if h != nil {
 		if has && h.id != stop {
@@ -720,7 +759,8 @@ func (w *listWorld) sendNow() {
 			w.fail("send-now stops beside another live entry")
 		}
 		w.tok++
-		plan := w.l.stopHead(h.id, w.tok)
+		plan := w.l.readerStop(h.id, w.tok)
+		clear(w.limited)
 		w.stops[w.tok] = true
 		w.stopSeq = w.nextSeq
 		switch plan.arm {
@@ -916,7 +956,8 @@ func TestRunList_Invariants(t *testing.T) {
 		"fold turn ahead of its compaction", "run entry", "take row", "take compaction", "take unread", "take retry",
 		"compaction requeued", "withdraw", "stop unsent", "stop running", "stop undone", "idle revert", "idle turn",
 		"failsafe fired", "failsafe undone", "take resume", "failsafe ahead of a waiting resume",
-		"failsafe at the resume limit", "reader stop withdraws a resume",
+		"failsafe at the resume limit", "resume limit notice at the close",
+		"reader stop ahead of a resume",
 	} {
 		if reached[want] == 0 {
 			t.Errorf("the generator never reached %q", want)

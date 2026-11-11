@@ -383,6 +383,26 @@ func TestContextUsage_APublishedFigureFeedsNoCompactor(t *testing.T) {
 	}
 }
 
+// KAS sends a response's reading twice, the plain frame then a twin with its breakdown, and the twin can land after
+// the next response's frames: only the plain frame reaches the compactor, while the twin's figure is still shown.
+func TestContextUsage_ABreakdownTwinFeedsNoCompactor(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", contextUsageInfo(t, "contextUsage", 20), FrameAttribution{})
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": map[string]any{
+		"kind": "context_usage", "usagePercentage": 40.0, "contextUsage": map[string]any{"usagePercentage": 40.0},
+		"breakdown": map[string]any{"tools": map[string]any{"tokens": 7131, "percent": 0.7}},
+	}}}), FrameAttribution{})
+
+	if want := []float64{20}; !slices.Equal(deps.usageReadings, want) {
+		t.Errorf("observed readings = %v, want only the plain frame's %v", deps.usageReadings, want)
+	}
+	if c, _ := store.Get(t.Context(), "c1"); c.Usage.ContextPct != 40 {
+		t.Errorf("usage = %+v, want the twin's figure (40) shown", c.Usage)
+	}
+}
+
 // After a summary lands, KAS republishes its pre-summary figure until its next live reading: that figure is not
 // shown, a live reading is and ends the wait, and a figure published after it is shown again.
 func TestContextUsage_ACompactionWaitsForALiveReading(t *testing.T) {

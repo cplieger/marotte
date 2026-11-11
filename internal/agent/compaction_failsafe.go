@@ -50,17 +50,17 @@ func (l *runList) failsafe(f failsafeFacts) stopPlan {
 		return stopPlan{}
 	}
 	l.failsafeFor, l.crossed = f.turnID, f.turnID
-	l.takeOverCompaction(f)
+	limited := l.takeOverCompaction(f)
 	plan := l.stopHead(h.id, f.token)
-	h.fsStopped = true
+	h.fsStopped, h.fsNoResume = true, limited
 	return plan
 }
 
 // takeOverCompaction makes the chat's compaction the failsafe's and lists the resume behind it. A compaction an
 // earlier fire already took over keeps its resume, or the reader's removal of it. A resume already waiting (a turn
 // ran ahead of it) moves behind the compaction and keeps its stop's token, so undoing this stop leaves it; at
-// compactionFailsafeResumes none is listed and the reader is told.
-func (l *runList) takeOverCompaction(f failsafeFacts) {
+// compactionFailsafeResumes none is listed (limited), and the stopped turn's close tells the reader.
+func (l *runList) takeOverCompaction(f failsafeFacts) (limited bool) {
 	c, joined := l.requestCompaction(marotte.RunFromFailsafe, f.turnID)
 	if !joined || c.origin != marotte.RunFromFailsafe {
 		c.fsPrior, c.fsPriorFor = marotte.RunFromThreshold, f.turnID
@@ -78,7 +78,7 @@ func (l *runList) takeOverCompaction(f failsafeFacts) {
 				row: &marotte.QueuedPrompt{ID: f.resumeID, Text: resumeText}, fsToken: f.token,
 			}
 		default:
-			l.fx.notices = append(l.fx.notices, resumeLimitNotice)
+			limited = true
 		}
 		if r != nil {
 			at, _ := l.find(c.id)
@@ -87,6 +87,7 @@ func (l *runList) takeOverCompaction(f failsafeFacts) {
 	}
 	c.forTurn = f.turnID
 	l.touch()
+	return limited
 }
 
 // resume is the failsafe's resume waiting on the list, or nil.

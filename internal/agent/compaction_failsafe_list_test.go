@@ -453,49 +453,40 @@ func TestFailsafe_AnUndeliveredCancelWithdrawsTheResume(t *testing.T) {
 	}
 }
 
-// The reader's Cancel during the sequence: drawn against the turn the failsafe is stopping, it stops nothing more
-// but the task is not continued (the compaction still runs); naming nothing while the turn stops, it changes
-// nothing; during the resume it stops the resume, whose rows then wait for the next clean end.
+// The reader's Cancel during the sequence: drawn against the turn the failsafe is stopping, it stops nothing more,
+// the compaction still runs and the task is not continued, and the rows stay paused even when the reply finished
+// before the cancel landed, as after any stop of the reader's; during the resume it stops the resume, whose rows
+// then wait for the next clean end.
 func TestFailsafe_AReaderCancelDuringTheSequence(t *testing.T) {
-	t.Run("drawn against the turn the failsafe stops", func(t *testing.T) {
-		w := firedOn(t)
-		if plan := w.l.stopHead("m-a", 2); plan.arm != stopNothing {
-			t.Errorf("Cancel = %+v, want nothing more stopped", plan)
-		}
-		if got, want := w.order(), "m-a:stopping compact-1:pending m-q1:paused"; got != want {
-			t.Errorf("list = %q, want %q", got, want)
-		}
-		w.closed("m-a", listClose{})
-		w.l.compactionStart("compact-1", w.facts())
-		w.l.compactionEnded("compact-1", true, nil)
-		w.advance()
-		if got := w.order(); got != "m-q1:paused" {
-			t.Errorf("list after the compaction = %q, want only m-q1 paused", got)
-		}
-	})
-	t.Run("naming no entry while the turn stops", func(t *testing.T) {
-		w := firedOn(t)
-		before := w.order()
-		if plan := w.l.stopHead("", 2); plan.arm != stopNothing {
-			t.Errorf("Cancel = %+v, want nothing stopped", plan)
-		}
-		if w.order() != before {
-			t.Errorf("list = %q, want it unchanged %q", w.order(), before)
-		}
-	})
-	t.Run("during the compaction", func(t *testing.T) {
-		w := firedOn(t)
-		w.closed("m-a", listClose{})
-		w.l.compactionStart("compact-1", w.facts())
-		if plan := w.l.stopHead("", 2); plan.arm != stopNothing {
-			t.Errorf("Cancel = %+v, want nothing stopped", plan)
-		}
-	})
+	for _, tc := range []struct {
+		name  string
+		close listClose
+	}{
+		{name: "drawn against the turn the failsafe stops"},
+		{name: "drawn against the turn the failsafe stops, whose reply then finishes", close: listClose{clean: true, completed: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := firedOn(t)
+			if plan := w.l.readerStop("m-a", 2); plan.arm != stopNothing {
+				t.Errorf("Cancel = %+v, want nothing more stopped", plan)
+			}
+			if got, want := w.order(), "m-a:stopping compact-1:pending m-q1:paused"; got != want {
+				t.Errorf("list = %q, want %q", got, want)
+			}
+			w.closed("m-a", tc.close)
+			w.l.compactionStart("compact-1", w.facts())
+			w.l.compactionEnded("compact-1", true, nil)
+			w.advance()
+			if got := w.order(); got != "m-q1:paused" {
+				t.Errorf("list after the compaction = %q, want only m-q1 paused", got)
+			}
+		})
+	}
 	t.Run("during the resume", func(t *testing.T) {
 		w := firedOn(t)
 		w.compacted(t)
 		w.running("m-resume")
-		if plan := w.l.stopHead("", 2); plan.arm != stopRunning || plan.entry.id != "m-resume" {
+		if plan := w.l.readerStop("", 2); plan.arm != stopRunning || plan.entry.id != "m-resume" {
 			t.Fatalf("Cancel = %+v, want the resume stopped", plan)
 		}
 		w.closed("m-resume", listClose{})
@@ -503,6 +494,177 @@ func TestFailsafe_AReaderCancelDuringTheSequence(t *testing.T) {
 			t.Errorf("list = %q, want m-q1 paused", got)
 		}
 	})
+}
+
+// toRest runs the list until nothing is live: a taken turn opens, a live turn closes cancelled, a compaction is
+// written and accepted, a close tail ends and its reservation is given back. It returns the kinds taken on the way.
+func (w *tableWorld) toRest(t *testing.T) (taken []string) {
+	t.Helper()
+	w.held = false
+	note := func() {
+		for _, e := range w.l.takeEffects().launch {
+			taken = append(taken, string(e.kind))
+		}
+	}
+	for range 30 {
+		note()
+		w.advance()
+		note()
+		if w.l.liveLen() == 0 {
+			return taken
+		}
+		e := w.l.entries[0]
+		switch {
+		case e.kind == marotte.RunKindCompaction && e.state == marotte.RunStarting:
+			w.l.compactionStart(e.id, w.facts())
+		case e.kind == marotte.RunKindCompaction:
+			w.l.compactionEnded(e.id, true, nil)
+		case e.state == marotte.RunStarting && e.turnID == "":
+			w.running(e.id)
+		case e.state == marotte.RunClosing:
+			w.l.tailEnded(e.id, false)
+			w.held = false
+			w.l.reservationReleased(e.res.Token)
+		default:
+			w.l.turnClosed(listClose{turnID: e.turnID, seq: w.nextSeq}, w.facts())
+		}
+	}
+	t.Fatalf("the list never came to rest: %s", w.order())
+	return nil
+}
+
+// Any stop the reader makes after the failsafe's stop and before the resume starts asks for the work to stop,
+// whatever runs then: the resume is withdrawn and never starts, the compaction still runs, and the rows wait for the
+// reader. Each window is a turn that can run there (the stopped turn, kiro-cli's re-prompt after the cancel, the
+// stopped turn's unread steers, kiro-cli's turn under the compaction) or none; each stop is one the reader can make.
+func TestFailsafe_AReaderStopBeforeTheResumeStartsWithdrawsIt(t *testing.T) {
+	windows := []struct {
+		setup func(t *testing.T, w *tableWorld)
+		name  string
+		// drawn is the entry a Cancel the page drew in that window names.
+		drawn string
+	}{
+		{name: "the stopped turn stopping", drawn: "m-a", setup: func(*testing.T, *tableWorld) {}},
+		{name: "the stopped turn closing", drawn: "m-a", setup: func(_ *testing.T, w *tableWorld) {
+			_, e := w.l.find("m-a")
+			w.l.turnClosed(listClose{turnID: e.turnID, seq: w.nextSeq}, w.facts())
+		}},
+		{name: "kiro-cli's re-prompt ahead of the compaction", drawn: "t-w", setup: func(_ *testing.T, w *tableWorld) {
+			_, e := w.l.find("m-a")
+			w.l.turnClosed(listClose{turnID: e.turnID, seq: w.nextSeq}, w.facts())
+			w.wireOpen("t-w", true)
+		}},
+		{name: "the compaction running", drawn: "m-a", setup: func(_ *testing.T, w *tableWorld) {
+			w.closed("m-a", listClose{})
+			w.l.compactionStart("compact-1", w.facts())
+		}},
+		{name: "kiro-cli's turn under the compaction", drawn: "t-w", setup: func(_ *testing.T, w *tableWorld) {
+			w.closed("m-a", listClose{})
+			w.l.compactionStart("compact-1", w.facts())
+			w.wireOpen("t-w", true)
+		}},
+		{name: "the stopped turn's unread steers", drawn: "m-unread", setup: func(t *testing.T, w *tableWorld) {
+			_, e := w.l.find("m-a")
+			token := e.res.Token
+			w.l.turnClosed(listClose{turnID: e.turnID, seq: w.nextSeq}, w.facts())
+			w.l.endsChanged(1, 0, []string{"s-1"}, false, true, w.facts())
+			w.l.closeEndsResolved("m-a", false, true, w.facts())
+			w.l.tailEnded("m-a", false)
+			w.held = false
+			w.l.reservationReleased(token)
+			w.advance()
+			w.l.compactionStart("compact-1", w.facts())
+			w.l.compactionEnded("compact-1", true, nil)
+			w.advance()
+			w.running("m-unread")
+			if got, want := w.order(), "m-unread:running m-resume:pending m-q1:paused"; got != want {
+				t.Fatalf("Setup: list = %q, want %q", got, want)
+			}
+		}},
+		{name: "nothing live, the slot held", drawn: "m-a", setup: func(t *testing.T, w *tableWorld) {
+			w.closed("m-a", listClose{})
+			w.l.compactionStart("compact-1", w.facts())
+			w.held = true
+			w.l.compactionEnded("compact-1", true, nil)
+			w.advance()
+			if got, want := w.order(), "m-resume:pending m-q1:paused"; got != want {
+				t.Fatalf("Setup: list = %q, want %q", got, want)
+			}
+		}},
+	}
+	stops := []struct {
+		stop func(w *tableWorld, drawn string)
+		name string
+		// rest is the list once nothing runs: the reader's rows paused, or gone after the row a press sent.
+		rest string
+	}{
+		{name: "Cancel drawn against the page", rest: "m-q1:paused", stop: func(w *tableWorld, drawn string) {
+			w.l.readerStop(drawn, 2)
+		}},
+		{name: "Cancel of what the dock names", rest: "m-q1:paused", stop: func(w *tableWorld, _ string) {
+			w.l.readerStop("", 2)
+		}},
+		{name: "Cancel drawn against an earlier turn", rest: "m-q1:paused", stop: func(w *tableWorld, _ string) {
+			w.l.readerStop("m-gone", 2)
+		}},
+		{name: "a send-now press", rest: "", stop: func(w *tableWorld, _ string) {
+			if h, err := w.l.sendNow("m-q1", "", false); err == nil && h != nil {
+				w.l.readerStop(h.id, 2)
+			}
+		}},
+	}
+	for _, win := range windows {
+		for _, s := range stops {
+			t.Run(win.name+", "+s.name, func(t *testing.T) {
+				w := firedOn(t)
+				win.setup(t, w)
+				if w.l.resume() == nil {
+					t.Fatalf("Setup: no resume waiting; list %s", w.order())
+				}
+				s.stop(w, win.drawn)
+				if r := w.l.resume(); r != nil {
+					t.Errorf("resume %s still waits after the reader's stop; list %s", r.id, w.order())
+				}
+				taken := w.toRest(t)
+				if slices.Contains(taken, string(marotte.RunKindResume)) {
+					t.Errorf("taken = %v, want no resume after the reader's stop", taken)
+				}
+				if got := w.order(); got != s.rest {
+					t.Errorf("list at rest = %q, want %q", got, s.rest)
+				}
+			})
+		}
+	}
+}
+
+// Closing the chat ends its list's life: an ended list takes nothing, so a waiting resume never starts, and the list
+// the next life starts from keeps only the reader's rows.
+func TestFailsafe_ClosingTheChatDropsAWaitingResume(t *testing.T) {
+	w := firedOn(t)
+	w.closed("m-a", listClose{})
+	w.l.compactionStart("compact-1", w.facts())
+	w.held = true
+	w.l.compactionEnded("compact-1", true, nil)
+	w.advance()
+	if got, want := w.order(), "m-resume:pending m-q1:paused"; got != want {
+		t.Fatalf("Setup: list = %q, want %q", got, want)
+	}
+
+	next := w.l.endLife()
+	w.held = false
+	w.l.takeEffects()
+	w.advance()
+
+	if fx := w.l.takeEffects(); len(fx.launch) != 0 {
+		t.Errorf("an ended list took %v", fx.launch)
+	}
+	ids := make([]string, 0, len(next))
+	for _, e := range next {
+		ids = append(ids, e.ID)
+	}
+	if !slices.Equal(ids, []string{"m-q1"}) {
+		t.Errorf("next life's list = %v, want only m-q1", ids)
+	}
 }
 
 // A wire turn kiro-cli opens after the cancel (its re-prompt of what the cancel cleared) runs first; a reading at
@@ -617,19 +779,55 @@ func TestFailsafe_AResumeThatFillsTheContextAgainIsStoppedAndCompactedButNotResu
 	if plan := w.l.failsafe(failsafeFacts{turnID: "t-m-resume", resumeID: "m-resume-2", token: 2}); plan.arm != stopRunning {
 		t.Fatalf("fire in the resume = %+v, want it stopped", plan)
 	}
-	fx := w.l.takeEffects()
 	if got, want := w.order(), "m-resume:stopping compact-2:pending m-q1:paused"; got != want {
 		t.Errorf("list = %q, want %q", got, want)
 	}
-	if !slices.Equal(fx.notices, []string{resumeLimitNotice}) {
-		t.Errorf("notices = %q, want %q", fx.notices, resumeLimitNotice)
+	if fx := w.l.takeEffects(); len(fx.notices) != 0 {
+		t.Errorf("notices at the fire = %q, want none before the stop holds", fx.notices)
 	}
 	w.closed("m-resume", listClose{})
+	if fx := w.l.takeEffects(); !slices.Equal(fx.notices, []string{resumeLimitNotice}) {
+		t.Errorf("notices at the stopped close = %q, want %q", fx.notices, resumeLimitNotice)
+	}
 	w.l.compactionStart("compact-2", w.facts())
 	w.l.compactionEnded("compact-2", true, nil)
 	w.advance()
 	if got := w.order(); got != "m-q1:paused" {
 		t.Errorf("list after the compaction = %q, want only m-q1 paused", got)
+	}
+}
+
+// The limit's notice says marotte stopped the turn, so a stop that did not hold says nothing: a reply that finished
+// before the cancel landed lets the rows run, a cancel not delivered leaves the turn running, and a stop of the
+// reader's own makes the stop theirs.
+func TestFailsafe_TheResumeLimitsNoticeWaitsForTheStopToHold(t *testing.T) {
+	for _, tc := range []struct {
+		after func(w *tableWorld)
+		name  string
+	}{
+		{name: "the reply finished first", after: func(w *tableWorld) {
+			w.closed("m-resume", listClose{clean: true, completed: true})
+		}},
+		{name: "the cancel was not delivered", after: func(w *tableWorld) {
+			w.l.stopUndone(2, func(string) bool { return true })
+			w.closed("m-resume", listClose{})
+		}},
+		{name: "the reader stopped it too", after: func(w *tableWorld) {
+			w.l.readerStop("m-resume", 3)
+			w.closed("m-resume", listClose{})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := resumeRunning(t)
+			if plan := w.l.failsafe(failsafeFacts{turnID: "t-m-resume", resumeID: "m-resume-2", token: 2}); plan.arm != stopRunning {
+				t.Fatalf("Setup: fire in the resume = %+v, want it stopped", plan)
+			}
+			w.l.takeEffects()
+			tc.after(w)
+			if fx := w.l.takeEffects(); len(fx.notices) != 0 {
+				t.Errorf("notices = %q, want none", fx.notices)
+			}
+		})
 	}
 }
 
@@ -678,11 +876,12 @@ func TestFailsafe_ATurnTheReaderSentAllowsTheNextResume(t *testing.T) {
 			if plan := w.l.failsafe(failsafeFacts{turnID: e.turnID, resumeID: "m-resume-2", token: 2}); plan.arm != stopRunning {
 				t.Fatalf("fire in %s = %+v, want it stopped", id, plan)
 			}
-			fx := w.l.takeEffects()
 			_, r := w.l.find("m-resume-2")
 			if got := r != nil; got != tc.resumes {
 				t.Errorf("resume listed = %v, want %v; list %q", got, tc.resumes, w.order())
 			}
+			w.l.turnClosed(listClose{turnID: e.turnID, seq: w.nextSeq}, w.facts())
+			fx := w.l.takeEffects()
 			if got := len(fx.notices) == 1; got == tc.resumes {
 				t.Errorf("notices = %q with resume %v, want the limit notice only when no resume is listed", fx.notices, tc.resumes)
 			}

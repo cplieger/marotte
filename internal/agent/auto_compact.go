@@ -108,7 +108,8 @@ func (a *autoCompactor) noteToolCall(chatID marotte.ChatID) {
 // noteUsage lists the running turn's compaction the first time a reading inside it reaches the point, once per turn
 // and never after the reader cancelled that turn's (runList.crossing). A reading at compactionFailsafePct stops the
 // turn to compact and resume it (runList.failsafe) when the response it measures called a tool, so the turn goes on;
-// while an ask is open the stop is owed until the asks settle (askSettled) or a later response's reading replaces it.
+// while an ask is open the stop is owed until the asks settle (askSettled) or a later reading replaces it. Each
+// reading is one model response's own (translate passes no published figure, replay or breakdown twin as live).
 // One under the point re-arms the failsafe.
 func (a *autoCompactor) noteUsage(ctx context.Context, chatID marotte.ChatID, pct float64) {
 	if a == nil {
@@ -122,11 +123,7 @@ func (a *autoCompactor) noteUsage(ctx context.Context, chatID marotte.ChatID, pc
 	lc.mu.Lock()
 	goesOn := lc.toolCallTurn
 	lc.toolCallTurn = ""
-	// Only a new response replaces an owed stop: KAS sends each response's reading twice (the plain frame, then its
-	// breakdown twin), and no model call runs while an ask is open, so a tool-free reading then is the twin.
-	if goesOn != "" {
-		lc.run.failsafeOwed = ""
-	}
+	lc.run.failsafeOwed = ""
 	if !compactsLocked(lc, enabled) {
 		lc.mu.Unlock()
 		return

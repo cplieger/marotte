@@ -226,10 +226,10 @@ func TestKASCorpus_EveryKiroMemberIsReadOrDeclined(t *testing.T) {
 	}
 }
 
-// On KAS's live wire a response's own tool_call frames come before that response's reading, and KAS's published
-// figure (the threshold-carrying frame at a prompt's start) is no reading: in the elicitation capture the compactor
-// hears each tool call before the reading pair of the response that made it, and the final reply's pair with no
-// call before it.
+// On KAS's live wire a response's own tool_call frames come before that response's reading, and neither KAS's
+// published figure (the threshold-carrying frame at a prompt's start) nor a reading's breakdown twin is a reading: in
+// the elicitation capture the compactor hears each tool call before the one reading of the response that made it,
+// and the final reply's reading with no call before it.
 func TestKASCorpus_AResponsesToolCallComesBeforeItsReading(t *testing.T) {
 	c := loadKASCapture(t, "elicit")
 	deps := newBaseDeps()
@@ -242,7 +242,7 @@ func TestKASCorpus_AResponsesToolCallComesBeforeItsReading(t *testing.T) {
 			tr.HandleSessionInfoUpdate(t.Context(), testChat, u.Update, FrameAttribution{})
 		}
 	}
-	want := []string{"tool", "reading", "reading", "tool", "reading", "reading", "reading", "reading"}
+	want := []string{"tool", "reading", "tool", "reading", "reading"}
 	if !slices.Equal(deps.compactorHeard, want) {
 		t.Errorf("compactor heard %v, want %v", deps.compactorHeard, want)
 	}

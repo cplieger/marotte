@@ -101,8 +101,9 @@ func (fc *failsafeChat) hold(t *testing.T, text string) (release func()) {
 	return release
 }
 
-// compactsWith makes kiro-cli's compaction send frames before it answers, as KAS 3.1.0's handleCompact does: its
-// stored figure republished at pct, then the summary.
+// compactsWith makes kiro-cli's compaction send frames before it answers: KAS publishing its stored figure at pct
+// around the compaction (pushContextUsage at the stopped prompt's end, a context refresh or a session load;
+// handleCompact leaves lastContextUsagePct alone), then the summary.
 func (fc *failsafeChat) compactsWith(pct float64) {
 	fc.br.mu.Lock()
 	defer fc.br.mu.Unlock()
@@ -389,6 +390,23 @@ func TestFailsafe_TheReadingsBreakdownTwinKeepsAnOwedStop(t *testing.T) {
 	}
 }
 
+// KAS sends a reading's breakdown twin from an unawaited step (handleContextUsageUpdate awaits the steering read), so
+// the twin can land after the next response's tool call. It is not that response's reading: the response's own
+// reading at 96% still stops the turn.
+func TestFailsafe_ALateBreakdownTwinIsNotTheNextResponsesReading(t *testing.T) {
+	fc := newFailsafeChat(t, true)
+	fc.br.deliver(toolCallMsg())
+	fc.br.deliver(liveReadingMsg(60))
+	fc.br.deliver(toolCallMsg())
+	fc.br.deliver(breakdownReadingMsg(60))
+	fc.br.deliver(liveReadingMsg(96))
+
+	if !eventually(func() bool { return fc.cancels() == 1 }) {
+		t.Errorf("session/cancel writes = %d after the next response's reading at 96%%, want 1; list %v",
+			fc.cancels(), failsafeWords(t, fc.cs))
+	}
+}
+
 // A later response's reading decides on its own: a response that called a tool at 92% after the owed reading
 // replaces the owed stop, so the ask's answer stops nothing.
 func TestFailsafe_ALaterResponsesReadingReplacesAnOwedStop(t *testing.T) {
@@ -443,6 +461,33 @@ func TestFailsafe_AReaderCancelWhileAStopIsOwedStopsOnce(t *testing.T) {
 	if got := failsafeWords(t, fc.cs); slices.Contains(got, "resume pending") {
 		t.Errorf("list after the reader's Cancel = %v, want no resume", got)
 	}
+}
+
+// The reader's Cancel while marotte is stopping the turn asks for the work to stop: the compaction still runs, but no
+// resume is sent and the rows wait for the reader.
+func TestFailsafe_AReaderCancelBeforeTheResumeStartsSendsNoResume(t *testing.T) {
+	fc := newFailsafeChat(t, true)
+	fc.compactsWith(40)
+	fc.respond(96)
+	if !eventually(func() bool { return fc.cancels() == 1 }) {
+		t.Fatalf("Setup: session/cancel writes = %d, want 1", fc.cancels())
+	}
+
+	if code := postStop(t, fc.h); code != http.StatusOK {
+		t.Fatalf("Cancel = %d", code)
+	}
+	fc.release()
+
+	if !eventually(func() bool { return countCalls(fc.br, marotte.MethodSessionCompact) == 1 }) {
+		t.Errorf("compactions = %d, want the failsafe's one", countCalls(fc.br, marotte.MethodSessionCompact))
+	}
+	if !eventually(func() bool {
+		return slices.Equal(failsafeWords(t, fc.cs), []string{"m-q1 paused", "m-q2 paused"})
+	}) {
+		t.Errorf("list = %v, want the rows paused and no resume", failsafeWords(t, fc.cs))
+	}
+	staysFalse(t, 150*time.Millisecond, func() bool { return len(openedPrompts(t, fc.cs)) > 2 },
+		"a prompt opened after the reader's Cancel")
 }
 
 // With Auto-compaction off nothing compacts a chat until the reader asks, so the failsafe stops nothing either.

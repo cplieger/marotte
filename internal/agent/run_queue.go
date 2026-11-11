@@ -663,7 +663,7 @@ func (bc *bridgeCoordinator) SendNow(ctx context.Context, chatID marotte.ChatID,
 		err = nil
 	case h != nil:
 		token := bc.turns.stopTokens.Add(1)
-		rs, post = bc.turns.carryStopLocked(lc, lc.run.stopHead(h.id, token), token, marotte.TurnStopReader)
+		rs, post = bc.turns.carryStopLocked(lc, lc.run.readerStop(h.id, token), token, marotte.TurnStopReader)
 	}
 	lc.wakeLocked()
 	lc.mu.Unlock()
@@ -709,7 +709,7 @@ func (bc *bridgeCoordinator) Stop(_ context.Context, chatID marotte.ChatID, targ
 	}
 	lc.mu.Lock()
 	token := bc.turns.stopTokens.Add(1)
-	rs, post := bc.turns.carryStopLocked(lc, lc.run.stopHead(target, token), token, marotte.TurnStopReader)
+	rs, post := bc.turns.carryStopLocked(lc, lc.run.readerStop(target, token), token, marotte.TurnStopReader)
 	lc.wakeLocked()
 	lc.mu.Unlock()
 	if post != nil {

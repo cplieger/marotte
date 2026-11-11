@@ -47,6 +47,10 @@ type sessionInfoKiroBlock struct {
 		// a prompt's end, a context refresh, a session load), never a model response's own reading.
 		SummarizationThreshold *float64 `json:"summarizationThreshold"`
 	} `json:"contextUsage"`
+	// Breakdown marks a context_usage reading's twin, which KAS sends after the plain frame from an unawaited step
+	// (handleContextUsageUpdate awaits the steering read), so it can land after the next response's frames. Only its
+	// presence is read: its token estimate is coarser than turn_completion's contextBreakdown.
+	Breakdown json.RawMessage `json:"breakdown"`
 	// Focus is the kind=="focus_update" block (see focus.go).
 	Focus *focusUpdate `json:"focus"`
 	// Activity rides the engine's own focus_update, FLAT beside Kind (see focus.go).
@@ -121,13 +125,12 @@ func (b *sessionInfoKiroBlock) UnmarshalJSON(data []byte) error {
 	// truncated, an interaction's consentRound (read on the permission request). A plan approval's
 	// flat `_meta` (its workflowPlan) is declined unread; a live bracket's timestamp and
 	// boundarySource add nothing, the boundary being observed at the frame's own time. A
-	// context_usage's flat summarizationThreshold repeats the nested one, and its breakdown is a
-	// token estimate coarser than turn_completion's contextBreakdown.
+	// context_usage's flat summarizationThreshold repeats the nested one.
 	censusMeta("session_info_update._meta.kiro", data, reflect.TypeFor[sessionInfoKiroShadow](),
 		"errorType", "retryErrorType", "toolCallId", "outcome", "selectedOption",
 		"interactionType", "question", "options", "agentSubtaskId", "status", "_meta",
 		"stopReason", "stopDetails", "timestamp", "boundarySource",
-		"title", "conversationSummary", "truncated", "summarizationThreshold", "breakdown",
+		"title", "conversationSummary", "truncated", "summarizationThreshold",
 		"consentRound")
 	return nil
 }
@@ -371,7 +374,7 @@ func (t *Translator) handleContextUsage(ctx context.Context, chatID marotte.Chat
 		logUnconsumedInfoKind(chatID, k.Kind)
 		return
 	}
-	live := k.ContextUsage.SummarizationThreshold == nil && !k.Replay
+	live := k.ContextUsage.SummarizationThreshold == nil && !k.Replay && len(k.Breakdown) == 0
 	t.persistUsage(ctx, chatID, *pct, 0, live) // no size on this channel
 }
 

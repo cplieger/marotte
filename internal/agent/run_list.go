@@ -104,6 +104,9 @@ type runEntry struct {
 	// fsStopped marks a turn the failsafe stopped: a close whose own outcome is clean (listClose.completed) has nothing
 	// to resume.
 	fsStopped bool
+	// fsNoResume marks a failsafe stop at compactionFailsafeResumes, which listed no resume: its close tells the reader
+	// while fsStopped holds.
+	fsNoResume bool
 }
 
 func (e *runEntry) live() bool { return e.state.Live() }
@@ -891,8 +894,11 @@ func (l *runList) turnClosed(c listClose, f *orderFacts) {
 	e.state, e.steerable, e.clean = marotte.RunClosing, false, c.clean
 	l.touch()
 	finished := stopped && e.fsStopped && c.completed
-	if finished {
+	switch {
+	case finished:
 		l.withdrawFailsafe(e.stopBy)
+	case stopped && e.fsStopped && e.fsNoResume:
+		l.fx.notices = append(l.fx.notices, resumeLimitNotice)
 	}
 	if n == 2 && l.closedBeside(i, e, c, stopped) {
 		return
@@ -1173,23 +1179,26 @@ func (l *runList) stopHead(target string, token uint64) stopPlan {
 	return stopPlan{entry: e, arm: stopRunning}
 }
 
-// stopTarget is the live starting or running turn stopHead's target names, with its index, or nil. A target naming
-// a turn the failsafe is stopping (a Cancel drawn before the failsafe's stop reached the page) gives nil but
-// withdraws that stop's resume: the reader asked for the task to stop.
+// readerStop is every stop the reader makes (Cancel, the composer's stop, a send-now press's stop): stopHead, and
+// whatever it stops, the waiting resume is withdrawn and a turn the failsafe is stopping becomes the reader's stop,
+// whose close leaves the rows paused (pauseRule). The reader asked for the work to stop, so marotte does not
+// continue it; the withdrawal holds when the cancel is not delivered, as a later stop drops a retry (overtaken).
+func (l *runList) readerStop(target string, token uint64) stopPlan {
+	l.dropResume()
+	for _, e := range l.entries[:l.liveLen()] {
+		e.fsStopped = false
+	}
+	return l.stopHead(target, token)
+}
+
+// stopTarget is the live starting or running turn stopHead's target names, with its index, or nil.
 func (l *runList) stopTarget(target string) (int, *runEntry) {
 	n := l.liveLen()
 	if target == "" {
 		target = marotte.CancelTarget(l.project())
 	}
 	i, e := l.find(target)
-	if e == nil || i >= n {
-		return i, nil
-	}
-	if e.state == marotte.RunStopping && e.fsStopped {
-		l.dropResumeOf(e.stopBy)
-		return i, nil
-	}
-	if !e.kind.TurnKind() || (e.state != marotte.RunStarting && e.state != marotte.RunRunning) {
+	if e == nil || i >= n || !e.kind.TurnKind() || (e.state != marotte.RunStarting && e.state != marotte.RunRunning) {
 		return i, nil
 	}
 	return i, e
