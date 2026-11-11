@@ -499,6 +499,18 @@ var table = []decl{
 		send:     false,
 	},
 	{
+		key:      "KIRO_FEATURE_MEMORY_IMPORT_FEATURE_EXTERNAL_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+	},
+	{
+		key:      "KIRO_FEATURE_MEMORY_IMPORT_FEATURE_INTERNAL_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+	},
+	{
 		key:      "KIRO_FEATURE_MEMORY_QUALITY_ENABLED",
 		door:     doorEnvironment,
 		resolver: resolverEnv,
