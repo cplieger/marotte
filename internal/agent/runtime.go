@@ -217,6 +217,8 @@ type bus struct {
 	retractPush func(subj marotte.PushSubject, ask string)
 	// ownStopped reports a stop requested during the chat's current turn (turnRegistry.ownStopped).
 	ownStopped func(marotte.ChatID) bool
+	// askSettled hears that one of a chat session's asks settled (autoCompactor.askSettled).
+	askSettled func(marotte.ChatID)
 	// searches is the running grep_search and file_search calls, ended by a turn cancel, a run's end or their session's.
 	searches searchCancels
 	// legacyConnects and v3Connects count connects by wire generation; a legacy one (no SSE-Wire header) is an
@@ -559,6 +561,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	sseP.stageStatusDesc = h.coord.turns.stageStatusDescription
 	sseP.retractPush = h.coord.retractPush
 	sseP.ownStopped = h.coord.turns.ownStopped
+	sseP.askSettled = h.coord.autoCompact.askSettled
 	// Built here because coord and the ignore matcher do not exist at the literal. Workspace-global: the
 	// orchestrator and its subagents write one spec from several sessions.
 	h.specs = spec.NewNotifier(specChangedWindow, func(dir string) {

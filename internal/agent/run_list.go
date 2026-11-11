@@ -101,7 +101,8 @@ type runEntry struct {
 	cancelled bool
 	sawTurn   bool
 	waiter    bool
-	// fsStopped marks a turn the failsafe stopped: a clean close of it has nothing to resume.
+	// fsStopped marks a turn the failsafe stopped: a close whose own outcome is clean (listClose.completed) has nothing
+	// to resume.
 	fsStopped bool
 }
 
@@ -170,10 +171,13 @@ type runList struct {
 	declined string
 	// failsafeFor is the last turn the failsafe fired in: once per turn, even when its stop was undone.
 	failsafeFor string
-	endsLast    []string
-	entries     []*runEntry
-	stored      []marotte.RunEntry
-	fx          runEffects
+	// failsafeOwed is the turn a fire was skipped in because an ask was open, fired once the asks settle
+	// (autoCompactor.fireOwed); it lapses with the turn, since failsafe fires only in the running turn it names.
+	failsafeOwed string
+	endsLast     []string
+	entries      []*runEntry
+	stored       []marotte.RunEntry
+	fx           runEffects
 	// wireSeq is the open sequence of the newest wire turn: a retry overtaken by kiro-cli's own turn is dropped.
 	wireSeq       uint64
 	intentStamp   uint64

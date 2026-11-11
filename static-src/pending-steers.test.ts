@@ -1228,7 +1228,7 @@ describe("the steer stack", () => {
   // THE COMPACTION FAILSAFE. At 95% context use marotte stops the turn, compacts, then sends its own resume ahead of
   // the rows the stop paused.
   const RESUME =
-    "The context window was nearly full, so your last turn was stopped. Continue the task.";
+    "The context window was nearly full, so marotte stopped your task mid-turn. Continue the task.";
 
   function failsafeRun(): RunEntryView[] {
     return [

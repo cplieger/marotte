@@ -107,8 +107,8 @@ func (a *autoCompactor) noteToolCall(chatID marotte.ChatID) {
 
 // noteUsage lists the running turn's compaction the first time a reading inside it reaches the point, once per turn
 // and never after the reader cancelled that turn's (runList.crossing). A reading at compactionFailsafePct stops the
-// turn to compact and resume it (runList.failsafe) when the response it measures called a tool, so the turn goes on,
-// and the turn is not parked on an ask; one under the point re-arms the failsafe.
+// turn to compact and resume it (runList.failsafe) when the response it measures called a tool, so the turn goes on;
+// while an ask is open the stop is owed until the asks settle (askSettled). One under the point re-arms the failsafe.
 func (a *autoCompactor) noteUsage(ctx context.Context, chatID marotte.ChatID, pct float64) {
 	if a == nil {
 		return
@@ -118,11 +118,10 @@ func (a *autoCompactor) noteUsage(ctx context.Context, chatID marotte.ChatID, pc
 		return
 	}
 	enabled, point := a.policy(ctx)
-	parked := enabled && pct >= compactionFailsafePct && a.asksOpen(chatID)
 	lc.mu.Lock()
 	goesOn := lc.toolCallTurn
-	lc.toolCallTurn = ""
-	if !enabled || lc.ended || !lc.liveLockedState() {
+	lc.toolCallTurn, lc.run.failsafeOwed = "", ""
+	if !compactsLocked(lc, enabled) {
 		lc.mu.Unlock()
 		return
 	}
@@ -134,15 +133,62 @@ func (a *autoCompactor) noteUsage(ctx context.Context, chatID marotte.ChatID, pc
 	turn := lc.compactTurnLocked()
 	listCrossingLocked(lc, turn, pct)
 	var rs command.RunStop
-	if pct >= compactionFailsafePct && !parked && goesOn == turn {
+	if pct >= compactionFailsafePct && goesOn == turn {
+		// Read under lc.mu, as fireOwed reads it: an ask settling between this reading and the owed mark would
+		// otherwise find nothing owed, and the turn would run on to the limit.
+		if a.asksOpen(chatID) {
+			lc.run.failsafeOwed = turn
+		} else {
+			rs = a.failsafeLocked(lc, turn)
+		}
+	}
+	lc.wakeOnChangeLocked()
+	lc.mu.Unlock()
+	a.carryOutFailsafe(lc, rs, "turn", turn, "context_pct", pct)
+}
+
+// askSettled fires the stop a reading owed while the chat's turn waited on an ask, once the chat session's last
+// open ask has settled (answered, denied, withdrawn or ended): the response's next model call is the one that would
+// overflow, so the stop cannot wait for another reading. KAS can open a tool's ask before its response's reading
+// (processChunkStream dispatches a finished tool block inside the stream loop and reports usage after it).
+func (a *autoCompactor) askSettled(chatID marotte.ChatID) {
+	if a == nil {
+		return
+	}
+	a.spawn(func() { a.fireOwed(chatID) })
+}
+
+func (a *autoCompactor) fireOwed(chatID marotte.ChatID) {
+	lc, ok := a.turns.lookup(chatID)
+	if !ok {
+		return
+	}
+	enabled, _ := a.policy(lc.ctx)
+	lc.mu.Lock()
+	turn := lc.run.failsafeOwed
+	var rs command.RunStop
+	if turn != "" && compactsLocked(lc, enabled) && !a.asksOpen(chatID) {
+		lc.run.failsafeOwed = ""
 		rs = a.failsafeLocked(lc, turn)
 	}
 	lc.wakeOnChangeLocked()
 	lc.mu.Unlock()
-	if rs.Arm == command.StopCancel {
-		slog.Warn("compaction failsafe: stopping the turn to compact it", "chat_id", chatID, "turn", turn, "context_pct", pct)
-		a.spawn(func() { a.stopForCompaction(lc, rs) })
+	a.carryOutFailsafe(lc, rs, "turn", turn, "owed", true)
+}
+
+// carryOutFailsafe carries out a fired failsafe's stop off the caller's goroutine.
+func (a *autoCompactor) carryOutFailsafe(lc *chatLifecycle, rs command.RunStop, attrs ...any) {
+	if rs.Arm != command.StopCancel {
+		return
 	}
+	slog.Warn("compaction failsafe: stopping the turn to compact it", append([]any{"chat_id", lc.chatID}, attrs...)...)
+	a.spawn(func() { a.stopForCompaction(lc, rs) })
+}
+
+// compactsLocked reports whether a reading may compact lc's chat now: the policy is on and a turn is live.
+// Caller holds lc.mu.
+func compactsLocked(lc *chatLifecycle, enabled bool) bool {
+	return enabled && !lc.ended && lc.liveLockedState()
 }
 
 // listCrossingLocked lists turn's compaction when a reading inside it reaches the point for the first time.

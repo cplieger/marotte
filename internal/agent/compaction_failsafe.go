@@ -7,8 +7,8 @@ import "github.com/cplieger/marotte/internal/marotte"
 const compactionFailsafePct = 95
 
 // resumeText is the prompt marotte sends after a failsafe compaction, so the stopped work continues.
-const resumeText = "The context window was nearly full, so your last turn was stopped and the conversation was " +
-	"compacted. Continue the task from where you stopped. A command or file edit that was running when the turn " +
+const resumeText = "The context window was nearly full, so marotte stopped your task mid-turn and compacted the " +
+	"conversation. Continue the task from where it stopped. A command or file edit that was running when the turn " +
 	"stopped may not have finished, so check its result before you rely on it."
 
 // failsafeStopNotice is the stopped turn's close reason, the transcript's account of the stop.

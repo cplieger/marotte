@@ -505,13 +505,13 @@ func TestRenderChatMarkdown_MarksADelegatesLane(t *testing.T) {
 
 // The resume marotte sends after a failsafe compaction is exported as marotte's, never as the user's.
 func TestRenderChatMarkdown_NamesMarotteAsTheResumesSender(t *testing.T) {
-	resume := prompt("m-r", "Continue the task from where you stopped.")
+	resume := prompt("m-r", "Continue the task from where it stopped.")
 	resume.Automatic = true
 	entries, _ := chatOf(openTurn("t-1", 1, prompt("m-1", "build it")), openTurn("t-2", 2, resume))
 
 	md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Build"}, entries)
 
-	if want := "**Sent by marotte**\n\nContinue the task from where you stopped."; !strings.Contains(md, want) {
+	if want := "**Sent by marotte**\n\nContinue the task from where it stopped."; !strings.Contains(md, want) {
 		t.Errorf("markdown missing %q\n---\n%s", want, md)
 	}
 	if want := "**User**\n\nbuild it"; !strings.Contains(md, want) {

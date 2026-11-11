@@ -47,7 +47,7 @@ messages.mountChatView();
 const NOTICE =
   "The context was nearly full, so marotte stopped this turn to compact the context before it ran out.";
 const RESUME =
-  "The context window was nearly full, so your last turn was stopped. Continue the task.";
+  "The context window was nearly full, so marotte stopped your task mid-turn. Continue the task.";
 
 function sealed(
   turn: string,

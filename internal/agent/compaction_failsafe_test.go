@@ -278,21 +278,127 @@ func TestFailsafe_FiresAtNinetyFiveNotBelow(t *testing.T) {
 	}
 }
 
-// A turn parked on an ask is not growing its context: a reading then fires nothing, and the first reading after the
-// ask is answered does.
-func TestFailsafe_ATurnParkedOnAnAskDoesNotFireUntilItIsAnswered(t *testing.T) {
+// answerAsk answers the chat's permission ask id as the reader's card does.
+func (fc *failsafeChat) answerAsk(t *testing.T, id int64) {
+	t.Helper()
+	reply, ok := fc.h.bus.TakePendingPerm("c1", id, decisionKindOf(marotte.EventPermissionNeeded), marotte.SettledByUser)
+	if !ok {
+		t.Fatalf("Setup: ask %d was not pending", id)
+	}
+	if outcome, err := reply.Respond(t.Context(), marotte.PermissionOutcomeSelected("allow_once")); err != nil {
+		t.Fatalf("Setup: answering ask %d = %v, %v", id, outcome, err)
+	}
+}
+
+// KAS can open a tool's ask before the reading of the response that called it arrives, and the turn's next reading
+// comes only after the next model call, the one that would overflow. So a reading at 95% while an ask is open stops
+// nothing then, and the turn is stopped as soon as the ask settles, with no further frame.
+func TestFailsafe_AReadingWhileAnAskIsOpenStopsTheTurnOnceTheAskSettles(t *testing.T) {
+	settle := []struct {
+		name string
+		fn   func(t *testing.T, fc *failsafeChat, id int64)
+	}{
+		{"answered", func(t *testing.T, fc *failsafeChat, id int64) { fc.answerAsk(t, id) }},
+		{"withdrawn by kiro-cli", func(t *testing.T, fc *failsafeChat, _ int64) {
+			if !fc.h.bus.PendingPermsWithdraw("c1", "tool-7") {
+				t.Fatal("Setup: the ask was not open")
+			}
+		}},
+	}
+	for _, s := range settle {
+		t.Run(s.name, func(t *testing.T) {
+			fc := newFailsafeChat(t, true)
+			id := addPermission(t, fc.h, fc.br, 7, "")
+
+			fc.respond(96)
+			fc.settled(t)
+			staysFalse(t, 150*time.Millisecond, func() bool { return fc.cancels() > 0 },
+				"a reading while an ask was open stopped the turn")
+
+			s.fn(t, fc, id)
+
+			if !eventually(func() bool { return fc.cancels() == 1 }) {
+				t.Fatalf("session/cancel writes = %d after the ask settled, want 1", fc.cancels())
+			}
+			want := []string{"m-a stopping", "compaction failsafe pending", "resume pending", "m-q1 paused", "m-q2 paused"}
+			if got := failsafeWords(t, fc.cs); !slices.Equal(got, want) {
+				t.Errorf("list after the owed stop = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// The owed stop waits for the chat session's last open ask: answering one of two stops nothing.
+func TestFailsafe_AnOwedStopWaitsForTheLastOpenAsk(t *testing.T) {
+	fc := newFailsafeChat(t, true)
+	first := addPermission(t, fc.h, fc.br, 7, "")
+	second := addPermission(t, fc.h, fc.br, 8, "")
+	fc.respond(96)
+	fc.settled(t)
+
+	fc.answerAsk(t, first)
+	staysFalse(t, 150*time.Millisecond, func() bool { return fc.cancels() > 0 },
+		"answering one of two open asks stopped the turn")
+
+	fc.answerAsk(t, second)
+	if !eventually(func() bool { return fc.cancels() == 1 }) {
+		t.Errorf("session/cancel writes = %d after the last ask settled, want 1", fc.cancels())
+	}
+}
+
+// A later reading decides on its own: a tool-free response's reading after the owed one ends the turn, so the ask's
+// answer stops nothing.
+func TestFailsafe_ALaterReadingReplacesAnOwedStop(t *testing.T) {
 	fc := newFailsafeChat(t, true)
 	id := addPermission(t, fc.h, fc.br, 7, "")
-
 	fc.respond(96)
-	staysFalse(t, 150*time.Millisecond, func() bool { return fc.cancels() > 0 }, "a reading while parked on an ask stopped the turn")
+	fc.br.deliver(liveReadingMsg(96))
+	fc.settled(t)
 
-	if _, ok := fc.h.bus.pendingPerms.takeIfPresent("c1", id, decisionKindOf(marotte.EventPermissionNeeded)); !ok {
-		t.Fatal("Setup: the ask was not pending")
+	fc.answerAsk(t, id)
+
+	staysFalse(t, 150*time.Millisecond, func() bool { return fc.cancels() > 0 },
+		"an owed stop fired after a later reading had decided")
+}
+
+// An owed stop belongs to its turn: once that turn has closed, the ask's answer stops nothing, not even the next
+// turn running alone.
+func TestFailsafe_AnOwedStopLapsesWhenItsTurnClosesFirst(t *testing.T) {
+	fc := newFailsafeChat(t, true)
+	fc.mu.Lock()
+	fc.mAStop = "end_turn"
+	fc.mu.Unlock()
+	fc.hold(t, "first follow-up")
+	id := addPermission(t, fc.h, fc.br, 7, "")
+	fc.respond(96)
+	fc.settled(t)
+
+	fc.release()
+	waitFor(t, func() bool { return slices.Contains(failsafeWords(t, fc.cs), "m-q1 running") })
+	fc.answerAsk(t, id)
+
+	staysFalse(t, 150*time.Millisecond, func() bool { return fc.cancels() > 0 },
+		"an owed stop of a closed turn stopped the next one")
+}
+
+// A reader's Cancel while a stop is owed answers the open ask and stops the turn once; the owed stop the answer
+// releases finds the turn already stopping and adds nothing.
+func TestFailsafe_AReaderCancelWhileAStopIsOwedStopsOnce(t *testing.T) {
+	fc := newFailsafeChat(t, true)
+	addPermission(t, fc.h, fc.br, 7, "")
+	fc.respond(96)
+	fc.settled(t)
+
+	if code := postStop(t, fc.h); code != http.StatusOK {
+		t.Fatalf("Cancel = %d", code)
 	}
-	fc.respond(96)
+
 	if !eventually(func() bool { return fc.cancels() == 1 }) {
-		t.Errorf("session/cancel writes = %d after the ask was answered, want 1", fc.cancels())
+		t.Fatalf("session/cancel writes = %d after the reader's Cancel, want 1", fc.cancels())
+	}
+	staysFalse(t, 150*time.Millisecond, func() bool { return fc.cancels() > 1 }, "the owed stop sent a second cancel")
+	if got := failsafeWords(t, fc.cs); slices.Contains(got, "resume pending") {
+		t.Errorf("list after the reader's Cancel = %v, want no resume", got)
 	}
 }
 
@@ -359,7 +465,7 @@ func TestFailsafe_OnlyAResponseThatCalledAToolStopsTheTurn(t *testing.T) {
 func TestFailsafe_KASRepublishingItsPreSummaryFigureStopsNothing(t *testing.T) {
 	fc := newFailsafeChat(t, true)
 	fc.compactsWith(96)
-	releaseResume := fc.hold(t, "your last turn was stopped")
+	releaseResume := fc.hold(t, "stopped your task mid-turn")
 	defer releaseResume()
 
 	fc.respond(96)
