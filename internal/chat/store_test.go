@@ -128,22 +128,25 @@ func TestMutate_CreatesChatAndBroadcasts(t *testing.T) {
 }
 
 func TestMutate_UpdatesChatAndBroadcasts(t *testing.T) {
-	s, b := newTestStore(t)
-	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, exists bool) bool {
-		if !exists {
-			t.Error("exists = false on existing chat")
+	synctest.Test(t, func(t *testing.T) {
+		s, b := newTestStore(t)
+		_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
+		_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, exists bool) bool {
+			if !exists {
+				t.Error("exists = false on existing chat")
+			}
+			c.Name = "B"
+			return true
+		})
+		got, _ := s.Get(t.Context(), "c1")
+		if got.Name != "B" {
+			t.Errorf("name = %q", got.Name)
 		}
-		c.Name = "B"
-		return true
+		synctest.Sleep(headerPublishWindow)
+		if evs := b.snapshot(); len(evs) != 2 || evs[1].Type != "chat_updated" {
+			t.Errorf("second event should be chat_updated: %+v", evs)
+		}
 	})
-	got, _ := s.Get(t.Context(), "c1")
-	if got.Name != "B" {
-		t.Errorf("name = %q", got.Name)
-	}
-	if len(b.events) != 2 || b.events[1].Type != "chat_updated" {
-		t.Errorf("second event should be chat_updated: %+v", b.events)
-	}
 }
 
 func TestMutate_AbortDoesNotBroadcast(t *testing.T) {
