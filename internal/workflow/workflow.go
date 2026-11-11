@@ -144,9 +144,12 @@ func pathSegment(n, parent *node) string {
 	return segmentOf(n.NodeID, n.Iteration, parentType)
 }
 
+// nodeTypeRepeat is KAS's node type of a loop, whose children are its passes.
+const nodeTypeRepeat = "repeat"
+
 // segmentOf is pathSegment over a node's own fields and its parent's type ("" for the root).
 func segmentOf(nodeID string, iteration *int, parentType string) string {
-	if parentType == "repeat" && iteration != nil {
+	if parentType == nodeTypeRepeat && iteration != nil {
 		return "iter-" + strconv.Itoa(*iteration)
 	}
 	return nodeID

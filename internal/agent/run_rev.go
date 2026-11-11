@@ -3,7 +3,8 @@ package agent
 // A run read's revision: the ask cell's newest read, as the run read serves it, and the run log's
 // step ends and starts, taken apart into slots and diffed on every read. A changed revision is
 // published as run_rev; GET /api/runs/{id}?since=<rev> answers the slots that changed since, and
-// ?view=header the run's head with no node tree, both from the held read.
+// ?view=header the run's head with no node tree, both from the held read; ?view=glance is
+// run_glance.go's.
 
 import (
 	"bytes"
@@ -70,6 +71,7 @@ type runRevision struct {
 	served json.RawMessage
 	head   []workflow.Member
 	ring   []revChange
+	glance glanceCache
 	rev    uint64
 	mu     sync.Mutex
 }
@@ -198,7 +200,7 @@ func (rv *runRevision) readSlotsLocked(workflowID string, fresh *freshRead) (
 // resetLocked drops every revision: an answer from the held read then reads whole.
 func (rv *runRevision) resetLocked() {
 	rv.values, rv.nodes, rv.ends, rv.starts, rv.served, rv.head, rv.ring = nil, nil, nil, nil, nil, nil, nil
-	rv.turns, rv.rev = turnsRead{}, 0
+	rv.turns, rv.rev, rv.glance = turnsRead{}, 0, glanceCache{}
 }
 
 func (c *askCell) heldInspect() workflow.Inspect {
@@ -597,8 +599,12 @@ func (rs *Runs) heldRaw(workflowID string) json.RawMessage {
 // whole read.
 func (rr *runRoutes) serveRunView(w http.ResponseWriter, r *http.Request, id string) bool {
 	q := r.URL.Query()
-	if q.Get("view") == "header" {
-		out, err := rr.runs.headerRead(r.Context(), id)
+	if view := q.Get("view"); view == "header" || view == "glance" {
+		read := rr.runs.headerRead
+		if view == "glance" {
+			read = rr.runs.glanceRead
+		}
+		out, err := read(r.Context(), id)
 		if err != nil {
 			writeInspectErr(w, id, err)
 			return true

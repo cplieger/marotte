@@ -111,11 +111,11 @@ type askCell struct {
 	reply      workflow.Inspect
 	// raw is reply as KAS sent it, which the reads served from the held read take apart.
 	raw json.RawMessage
+	// basis is the turn record reply is paired with, taken before reply's inspect was sent.
+	basis askBasis
+	last  marotte.RunAsksPayload
 	// revision is the run read's revision over reply and the run log's extras (run_rev.go).
 	revision runRevision
-	// basis is the turn record reply is paired with, taken before reply's inspect was sent.
-	basis    askBasis
-	last     marotte.RunAsksPayload
 	turns    uint64
 	mu       sync.Mutex
 	dirty    bool

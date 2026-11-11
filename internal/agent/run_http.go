@@ -30,8 +30,8 @@ import (
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
-// handleRun serves GET /api/runs/{workflowId}: the run's full state, or its ?since and ?view=header forms
-// (serveRunView). It grades a failed read two ways, since the client treats 404 as final.
+// handleRun serves GET /api/runs/{workflowId}: the run's full state, or its ?since, ?view=header and
+// ?view=glance forms (serveRunView). It grades a failed read two ways, since the client treats 404 as final.
 func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -45,36 +45,10 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	if rr.serveRunView(w, r, id) {
 		return
 	}
-	read, err := rr.runs.positionedRead(r.Context(), id)
+	raw, extras, err := rr.runs.wholeRead(r.Context(), id)
 	if err != nil {
 		writeInspectErr(w, id, err)
 		return
-	}
-	raw := read.rev.served
-	if raw == nil {
-		raw = summarizedOrWhole(id, read.raw)
-	}
-	position, err := read.position()
-	if err != nil {
-		slog.Warn("workflow inspect: the run's read position could not be computed",
-			"workflow_id", logsafe.Field(id), "error", err)
-	}
-	ends, starts := rr.runs.readStepExtras(r.Context(), id, &read.runRead)
-	pending := -1
-	if read.in.OK {
-		pending = read.in.Pending
-	}
-	plan := rr.runs.servedPlan(id, pending)
-	extras := &runExtras{
-		asks: read.asks, asksReachable: read.reachable, ends: ends, starts: starts, plan: plan, readPosition: position,
-		displayName: rr.runs.runName(id), rev: read.rev.rev,
-	}
-	if l, held := rr.runs.lease(id); held {
-		extras.autoResumeStoppedAt = l.AutoResumeStoppedAt
-	}
-	if head, hErr := headOf(raw); hErr == nil && head.Status != "" {
-		c := rr.runs.controls(id, &head)
-		extras.controls = &c
 	}
 	out, err := withRunExtras(raw, extras)
 	if err != nil {
@@ -84,6 +58,41 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpreply.WriteRawJSON(w, out)
+}
+
+// wholeRead is the run read handleRun serves and the extras it splices in.
+func (rs *Runs) wholeRead(ctx context.Context, id string) (raw json.RawMessage, extras *runExtras, err error) {
+	read, err := rs.positionedRead(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	raw = read.rev.served
+	if raw == nil {
+		raw = summarizedOrWhole(id, read.raw)
+	}
+	position, err := read.position()
+	if err != nil {
+		slog.Warn("workflow inspect: the run's read position could not be computed",
+			"workflow_id", logsafe.Field(id), "error", err)
+	}
+	ends, starts := rs.readStepExtras(ctx, id, &read.runRead)
+	pending := -1
+	if read.in.OK {
+		pending = read.in.Pending
+	}
+	plan := rs.servedPlan(id, pending)
+	extras = &runExtras{
+		asks: read.asks, asksReachable: read.reachable, ends: ends, starts: starts, plan: plan, readPosition: position,
+		displayName: rs.runName(id), rev: read.rev.rev,
+	}
+	if l, held := rs.lease(id); held {
+		extras.autoResumeStoppedAt = l.AutoResumeStoppedAt
+	}
+	if head, hErr := headOf(raw); hErr == nil && head.Status != "" {
+		ctl := rs.controls(id, &head)
+		extras.controls = &ctl
+	}
+	return raw, extras, nil
 }
 
 // readStepExtras is the run log's step ends and starts for read: its revision's, else read afresh

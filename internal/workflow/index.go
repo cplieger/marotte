@@ -78,6 +78,8 @@ type indexNode struct {
 	kind      string
 	own       []byte
 	children  []*indexNode
+	// listed is whether the node has a `children` array, an empty one included.
+	listed bool
 }
 
 func (n *indexNode) index(ix *ReadIndex, trail []string, parentKey, parentType string, at int) {
@@ -140,6 +142,7 @@ func (n *indexNode) readChildren(dec *jsontext.Decoder) error {
 	if _, err := dec.ReadToken(); err != nil {
 		return err
 	}
+	n.listed = true
 	for dec.PeekKind() != ']' {
 		if dec.PeekKind() != '{' {
 			if err := dec.SkipValue(); err != nil {
