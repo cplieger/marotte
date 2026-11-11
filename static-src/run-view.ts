@@ -1024,7 +1024,7 @@ function projectStepTranscripts(
         return;
       }
       const host = page;
-      const stream = createRunStepStream((nodePath) => host.bodyFor(nodePath));
+      const stream = createRunStepStream((nodePath) => host.bodyFor(nodePath), follower);
       stepStream = stream;
       // RE-PROJECTED rather than replayed: the load is async, so the selection and the log may both
       // have moved past what was captured, and a paint during the load projects nothing. Outside
