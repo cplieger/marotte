@@ -211,7 +211,7 @@ func forkCreate(p marotte.ForkChatCommand, chatID marotte.ChatID, parent *marott
 				c.NameSetByUser = true
 			}
 			c.Model = parent.Model
-			c.CurrentModeID = parent.CurrentModeID
+			c.CurrentModeID = tangentMode(parent)
 			// The level in force: KAS's fork drops it, so the tangent's load must assert it.
 			c.Effort = cmp.Or(parent.Effort, parent.EffortActive)
 			// Inherited like the model, mode and effort: dropping the review gate would let a
@@ -227,6 +227,15 @@ func forkCreate(p marotte.ForkChatCommand, chatID marotte.ChatID, parent *marott
 			}
 		},
 	}
+}
+
+// tangentMode is the mode a tangent of parent starts on: the parent's, except a Bot's role, which rides only the
+// Bot's own session doors.
+func tangentMode(parent *marotte.Chat) string {
+	if parent.Bot != nil {
+		return marotte.DefaultModeID
+	}
+	return parent.CurrentModeID
 }
 
 // branchPoint is the KAS id a branch forks after, "" for a head fork. A target with no bind on the
@@ -272,13 +281,7 @@ func forkSession(ctx context.Context, bridges bridgeAccess, ws Workspace, p maro
 		return "", StatusError(http.StatusConflict, errBranchSessionNotResumed)
 	}
 
-	meta := map[string]any{"createdReason": marotte.CreatedReasonTangent}
-	if p.Title != "" {
-		meta["title"] = p.Title
-	}
-	if branch {
-		meta["messageId"] = atMessage
-	}
+	meta := forkMeta(p, parent, atMessage)
 	cctx, cancel := bridges.CallBudget(ctx, engineChangeBudget)
 	defer cancel()
 	resp, err := bridge.Call(cctx, marotte.MethodSessionFork, sessionParams(bridge, map[string]any{
@@ -308,6 +311,23 @@ func forkSession(ctx context.Context, bridges bridgeAccess, ws Workspace, p maro
 		return "", nil
 	}
 	return out.SessionID, nil
+}
+
+// forkMeta is session/fork's _meta.kiro for a tangent of parent, branching after atMessage when it is set.
+func forkMeta(p marotte.ForkChatCommand, parent *marotte.Chat, atMessage string) map[string]any {
+	meta := map[string]any{"createdReason": marotte.CreatedReasonTangent}
+	if p.Title != "" {
+		meta["title"] = p.Title
+	}
+	if atMessage != "" {
+		meta["messageId"] = atMessage
+	}
+	// Without it KAS forks onto the live parent's mode, a Bot's session-scoped role, which the tangent's first load
+	// cannot resolve.
+	if parent.Bot != nil {
+		meta["modeId"] = tangentMode(parent)
+	}
+	return meta
 }
 
 // parentBridge is the parent chat's bridge with a session, opened when it is cold, or nil. A

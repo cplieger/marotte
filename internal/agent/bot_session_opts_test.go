@@ -1,0 +1,118 @@
+package agent
+
+import (
+	"context"
+	"path/filepath"
+	"slices"
+	"testing"
+
+	"github.com/cplieger/marotte/internal/marotte"
+)
+
+// botDoorOpts opens chat c1, written by write, through the chat door on a fresh or a resumed session, and returns
+// what the door sent. HOME is a test directory, so workspace.KiroHome() is under it.
+func botDoorOpts(t *testing.T, resumed bool, write func(c *marotte.Chat)) (*marotte.SessionOpts, string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cs := newTestChatStore()
+	h := newRuntimeOn(context.Background(), "/tmp/work", fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs)
+	cs.wire(h)
+	t.Cleanup(func() { shutdownHub(t, h) })
+	h.SetChatSteering(func(context.Context) []marotte.ClientSteeringDoc { return []marotte.ClientSteeringDoc{chatDoc} })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Name = "Weekly answers"
+		if resumed {
+			c.ACPSessionID = "sess_bot_resume"
+		}
+		write(c)
+		return true
+	})
+	sb, err := h.coord.openReleased(t.Context(), "c1", "")
+	if err != nil {
+		t.Fatalf("open the chat: %v", err)
+	}
+	br, ok := unguarded(sb.session()).(*fakeBridge)
+	if !ok {
+		t.Fatalf("the chat's bridge is %T, want the fake", sb.session())
+	}
+	opts := br.lastSessionOpts()
+	if opts == nil {
+		t.Fatal("the session was never opened")
+	}
+	return opts, filepath.Join(home, ".kiro")
+}
+
+var chatDoc = marotte.ClientSteeringDoc{Name: "marotte", Inclusion: "always", Content: "chat steering"}
+
+var doors = []struct {
+	name    string
+	resumed bool
+}{{"a new session", false}, {"a loaded session", true}}
+
+func TestChatSessionOpts_AStartedBotCarriesItsRoleSteeringAndMode(t *testing.T) {
+	for _, door := range doors {
+		t.Run(door.name, func(t *testing.T) {
+			opts, kiroHome := botDoorOpts(t, door.resumed, func(c *marotte.Chat) {
+				c.CurrentModeID = "kiro_spec"
+				c.Bot = &marotte.Bot{Goal: "Answer the weekly questions.", Steering: "Answer in French.", StartedAt: 1, Memory: true}
+			})
+			if len(opts.CustomAgents) != 1 || opts.CustomAgents[0].ID != marotte.BotRoleID {
+				t.Fatalf("CustomAgents = %+v, want the one Bot role", opts.CustomAgents)
+			}
+			memory := filepath.Join(kiroHome, "bots", "c1", "memory.md")
+			rules := opts.CustomAgents[0].Permissions.Rules
+			if last := rules[len(rules)-1]; last.Capability != "fs_write" || !slices.Equal(last.Match, []string{memory}) {
+				t.Errorf("the role's last rule = %+v, want the write of %s under workspace.KiroHome()", last, memory)
+			}
+			want := []marotte.ClientSteeringDoc{chatDoc, {Name: "bot-steering", Inclusion: "always", Content: "Answer in French."}}
+			if !slices.Equal(opts.Steering, want) {
+				t.Errorf("Steering = %+v, want the chat steering then the Bot's %+v", opts.Steering, want)
+			}
+			if opts.Mode != marotte.BotRoleID {
+				t.Errorf("Mode = %q, want %q whatever the record says", opts.Mode, marotte.BotRoleID)
+			}
+		})
+	}
+}
+
+func TestChatSessionOpts_ABotWithNoSteeringSendsOnlyTheChatSteering(t *testing.T) {
+	opts, _ := botDoorOpts(t, false, func(c *marotte.Chat) {
+		c.CurrentModeID = marotte.BotRoleID
+		c.Bot = &marotte.Bot{Goal: "Answer the weekly questions.", StartedAt: 1}
+	})
+	if !slices.Equal(opts.Steering, []marotte.ClientSteeringDoc{chatDoc}) {
+		t.Errorf("Steering = %+v, want only the chat steering", opts.Steering)
+	}
+	if len(opts.CustomAgents) != 1 {
+		t.Errorf("CustomAgents = %+v, want the role", opts.CustomAgents)
+	}
+}
+
+func TestChatSessionOpts_ADraftAndARegularChatCarryNeither(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		bot  *marotte.Bot
+	}{
+		{"a draft", &marotte.Bot{Goal: "Not started yet.", Steering: "Answer in French."}},
+		{"a regular chat", nil},
+	} {
+		for _, door := range doors {
+			t.Run(tc.name+" on "+door.name, func(t *testing.T) {
+				opts, _ := botDoorOpts(t, door.resumed, func(c *marotte.Chat) {
+					c.CurrentModeID = "kiro_spec"
+					c.Bot = tc.bot
+				})
+				if len(opts.CustomAgents) != 0 {
+					t.Errorf("CustomAgents = %+v, want none", opts.CustomAgents)
+				}
+				if !slices.Equal(opts.Steering, []marotte.ClientSteeringDoc{chatDoc}) {
+					t.Errorf("Steering = %+v, want only the chat steering", opts.Steering)
+				}
+				if opts.Mode != "kiro_spec" {
+					t.Errorf("Mode = %q, want the record's", opts.Mode)
+				}
+			})
+		}
+	}
+}

@@ -29,8 +29,10 @@ func (c *catalog) registry() *subject.Versions {
 }
 
 // setModes replaces the mode vocabulary, reporting whether it changed. An empty list is
-// ignored: session/load routinely omits it, and modes have no repair channel.
+// ignored: session/load routinely omits it, and modes have no repair channel. A Bot's role is dropped first, by id:
+// it is one session's agent, not a workspace fact, and KAS reports its source as "bundled".
 func (c *catalog) setModes(modes []marotte.SessionMode) bool {
+	modes = slices.DeleteFunc(slices.Clone(modes), func(m marotte.SessionMode) bool { return m.ID == marotte.BotRoleID })
 	if len(modes) == 0 {
 		return false
 	}
@@ -39,7 +41,7 @@ func (c *catalog) setModes(modes []marotte.SessionMode) bool {
 	if slices.Equal(c.modes, modes) {
 		return false
 	}
-	c.modes = slices.Clone(modes)
+	c.modes = modes
 	c.registry().BumpCounter(subject.KindCatalog, "")
 	return true
 }

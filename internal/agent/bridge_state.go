@@ -22,6 +22,10 @@ type sharedBridge struct {
 	mu      sync.Mutex
 	// effortHealed latches the one reactive effort repair (bridgeCoordinator.healEffort).
 	effortHealed bool
+	// roleLeft is a Bot's session reported off its role, owed a re-assert at the turn's end (healBotRole).
+	roleLeft bool
+	// roleMissing is KAS reporting a Bot's role absent from its session (noteBotRoleMissing).
+	roleMissing bool
 }
 
 // The manager registers the record before the door, so map presence is not liveness.
@@ -47,4 +51,34 @@ func (sb *sharedBridge) claimEffortHeal() bool {
 	}
 	sb.effortHealed = true
 	return true
+}
+
+func (sb *sharedBridge) markRoleLeft() {
+	sb.mu.Lock()
+	sb.roleLeft = true
+	sb.mu.Unlock()
+}
+
+// takeRoleLeft reports whether a re-assert is owed, clearing it.
+func (sb *sharedBridge) takeRoleLeft() bool {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	left := sb.roleLeft
+	sb.roleLeft = false
+	return left
+}
+
+func (sb *sharedBridge) markRoleMissing() {
+	sb.mu.Lock()
+	sb.roleMissing = true
+	sb.mu.Unlock()
+}
+
+// takeRoleMissing reports whether KAS reported the role absent since the last take, clearing it.
+func (sb *sharedBridge) takeRoleMissing() bool {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	missing := sb.roleMissing
+	sb.roleMissing = false
+	return missing
 }

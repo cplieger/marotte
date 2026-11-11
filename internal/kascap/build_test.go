@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // Golden fixtures for the two projections. No agent-server bundle is required, so
@@ -18,7 +20,8 @@ const (
 	sessionGoldenPath     = "testdata/session.golden"
 	environmentGoldenPath = "testdata/environment.golden"
 	promptGoldenPath      = "testdata/prompt.golden"
-	updateGoldenCmd       = "UPDATE_GOLDEN=1 go test ./internal/kascap/ -run 'TestInitializeDeclaresExactly|TestSessionDoorDeclaresExactly|TestEnvironmentDoorDeclaresExactly|TestPromptDoorDeclaresExactly'"
+	botRoleGoldenPath     = "testdata/bot_role.golden"
+	updateGoldenCmd       = "UPDATE_GOLDEN=1 go test ./internal/kascap/ -run 'TestInitializeDeclaresExactly|TestSessionDoorDeclaresExactly|TestEnvironmentDoorDeclaresExactly|TestPromptDoorDeclaresExactly|TestBotRoleDeclaresExactly'"
 )
 
 // Exhaustive is what makes the golden a contract rather than a sample. One matrix per spawn type: a door reads only
@@ -68,14 +71,20 @@ var sessionMatrix = []struct {
 	{"work validation off", SessionSpawn{WorkValidation: "off"}},
 	{"workflows on", SessionSpawn{Workflows: true}},
 	{"a chat session", SessionSpawn{ProfileAgentTurns: true}},
+	{"a Bot's chat session", SessionSpawn{ProfileAgentTurns: true, CustomAgents: []marotte.ClientCustomAgent{probeAgent}}},
 	{"every gate on", SessionSpawn{
 		OverrideSessionID: "sess_00000000-0000-4000-8000-000000000000",
 		Presets:           []string{"read-workspace"},
 		MemoryMode:        "read_write", MemoryReflection: true,
 		DisableAutoCompaction: true, SpecPlan: "full", SpecAskClarification: true,
 		WorkValidation: "on", Workflows: true, ProfileAgentTurns: true,
+		CustomAgents: []marotte.ClientCustomAgent{probeAgent},
 	}},
 }
+
+// probeAgent is a minimal client custom agent: the session door's bytes for it, not the Bot role's, which
+// TestBotRoleDeclaresExactly pins.
+var probeAgent = marotte.ClientCustomAgent{ID: "probe-agent", Prompt: "probe", Tools: "*"}
 
 func engineNames() []string {
 	names := make([]string, len(engineMatrix))

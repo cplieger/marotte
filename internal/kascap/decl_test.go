@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // rowID is a row's identity: a key alone is not unique, because "knowledge" is
@@ -282,6 +284,12 @@ func valueShapeFault(r resolver, v any) string {
 		if !ok || len(ids) == 0 || slices.Contains(ids, "") {
 			return fmt.Sprintf("is %#v; an enum-list key is a non-empty array of non-empty ids", v)
 		}
+	case resolverObjectList:
+		raw, err := json.Marshal(v)
+		var objs []map[string]any
+		if err != nil || json.Unmarshal(raw, &objs) != nil || len(objs) == 0 || slices.ContainsFunc(objs, func(o map[string]any) bool { return len(o) == 0 }) {
+			return fmt.Sprintf("is %#v; an object-list key is a non-empty array of non-empty objects", v)
+		}
 	default:
 		return fmt.Sprintf("has no shape rule for resolver %q", r)
 	}
@@ -327,6 +335,9 @@ func TestRowValuesMatchTheirResolver(t *testing.T) {
 			{resolverText, ""},
 			{resolverEnumList, "read-all"},
 			{resolverEnumList, []string{}},
+			{resolverObjectList, []string{"marotte-bot"}},
+			{resolverObjectList, []marotte.ClientCustomAgent{}},
+			{resolverObjectList, map[string]any{"id": "marotte-bot"}},
 			{"", true},
 		} {
 			if valueShapeFault(tc.r, tc.v) == "" {
@@ -371,6 +382,7 @@ var (
 			SpecPlan:          "full", SpecAskClarification: true, WorkValidation: "on",
 			MemoryMode: "read_write", MemoryReflection: true,
 			Workflows: true, DisableAutoCompaction: true, ProfileAgentTurns: true,
+			CustomAgents: []marotte.ClientCustomAgent{probeAgent},
 		}},
 		{"with every choice off", SessionSpawn{WorkValidation: "off"}},
 	}

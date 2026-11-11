@@ -291,6 +291,9 @@ const (
 	// runs unsupervised. Unlike mode_not_applied, the record keeps the REQUEST, so the next spawn
 	// re-asserts; this event is the only thing naming the refusal.
 	ErrCodeSupervisedNotApplied ErrorCode = "supervised_not_applied"
+	// ErrCodeMemoryNotLoaded means a Bot's session opened without its memory file loaded; the Bot runs without its
+	// notes until its next session opens.
+	ErrCodeMemoryNotLoaded ErrorCode = "memory_not_loaded"
 	// ErrCodeModelNotServed means an explicitly-picked model is absent from the set this
 	// account's session advertises, so it was refused before the wire rather than rejected
 	// mid-prompt on every later turn.

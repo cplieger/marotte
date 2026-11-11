@@ -293,13 +293,18 @@ func TestRunOrder_AfterAStoppedTurnTheMessageSentDuringItsCompactionGoesFirst(t 
 	waitFor(t, func() bool { return opensInOrder(t, cs, "m-c1", "m-new", "m-q0") })
 }
 
-// withCompactionStartHook runs fn once, the first time a taken compaction is about to start.
-func withCompactionStartHook(t *testing.T, fn func(marotte.ChatID)) {
+// withCompactionStartHook runs fn once, the first time h's taken compaction is about to start. Its cleanup shuts h
+// down before restoring the seam: cleanups run last-first, so h's own shutdown would otherwise come after the restore,
+// racing a compaction h starts as the test ends.
+func withCompactionStartHook(t *testing.T, h *Runtime, fn func(marotte.ChatID)) {
 	t.Helper()
 	var once sync.Once
 	prev := testHookBeforeCompactionStart
 	testHookBeforeCompactionStart = func(chatID marotte.ChatID) { once.Do(func() { fn(chatID) }) }
-	t.Cleanup(func() { testHookBeforeCompactionStart = prev })
+	t.Cleanup(func() {
+		shutdownHub(t, h)
+		testHookBeforeCompactionStart = prev
+	})
 }
 
 // answerWithin is the answer on ch, or nil (a test error) when none came within 3s.
@@ -321,7 +326,7 @@ func TestRunOrder_APromptOrSendNowAsACompactionStartsOpensNoTurnUnderIt(t *testi
 	seedQueue(t, cs, "c1", marotte.QueuedPrompt{ID: "m-q1", Text: "queued"})
 	release := holdCall(t, br, marotte.MethodSessionCompact)
 	var prompted, marked *httptest.ResponseRecorder
-	withCompactionStartHook(t, func(marotte.ChatID) {
+	withCompactionStartHook(t, h, func(marotte.ChatID) {
 		prompted = answerWithin(t, postAsync(h, promptCmd("m-p", "racing the compaction")), "the prompt")
 		marked = answerWithin(t, postAsync(h, marotte.ClientCommand{
 			Type: marotte.CmdSendQueuedNow, ChatID: "c1", Payload: json.RawMessage(`{"message_id":"m-q1"}`),
@@ -1261,7 +1266,7 @@ func TestRunOrder_AWireTurnBeforeACompactionIsWrittenRequeuesIt(t *testing.T) {
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	atThePoint(t, h, cs)
 	entered, releaseStart := make(chan struct{}), make(chan struct{})
-	withCompactionStartHook(t, func(marotte.ChatID) {
+	withCompactionStartHook(t, h, func(marotte.ChatID) {
 		close(entered)
 		<-releaseStart
 	})

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"strconv"
 
+	"github.com/cplieger/marotte/internal/bot"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 )
@@ -179,7 +181,7 @@ func (rt *Runtime) sessionFingerprint(ctx context.Context) (string, bool) {
 // chatSessionOpts is what a chat's session door sends.
 func (rt *Runtime) chatSessionOpts(ctx context.Context, rec *marotte.Chat, ask *sessionAsk, steering []marotte.ClientSteeringDoc) *marotte.SessionOpts {
 	s := rt.readSessionSettings(ctx)
-	return &marotte.SessionOpts{
+	opts := &marotte.SessionOpts{
 		Role:                  marotte.SessionRoleChat,
 		Model:                 ask.model,
 		Effort:                ask.effort,
@@ -194,4 +196,13 @@ func (rt *Runtime) chatSessionOpts(ctx context.Context, rec *marotte.Chat, ask *
 		// marotte's autoCompactor is a chat's one compactor, at a turn's end.
 		DisableAutoCompaction: true,
 	}
+	if rec.IsStartedBot() {
+		opts.CustomAgents = []marotte.ClientCustomAgent{bot.Role(rec, botPaths())}
+		// The role is the mode a Bot's record holds; the door asks for it whatever the record was left on.
+		opts.Mode = marotte.BotRoleID
+		if doc, ok := bot.SteeringDoc(rec); ok {
+			opts.Steering = append(slices.Clone(steering), doc)
+		}
+	}
+	return opts
 }

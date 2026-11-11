@@ -253,6 +253,9 @@ func (bc *bridgeCoordinator) afterTurnClose(ctx context.Context, lc *chatLifecyc
 		if cf.exit == nil {
 			bc.resolveCloseEnds(ctx, lc, cf)
 		}
+		if !lc.endedNow() {
+			bc.reassertBotRole(ctx, chatID)
+		}
 		if bc.settleNotices != nil && !bc.draining() && !lc.endedNow() {
 			bc.settleNotices(ctx, chatID)
 		}

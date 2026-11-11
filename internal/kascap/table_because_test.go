@@ -459,6 +459,15 @@ a checkpoint card the dock already draws.
 Both spec capabilities are sent together for the reason they were
 withheld together: they are two thirds of one spec-mode prompt arm, and
 neither is a security decision.`,
+	"object-list.customAgents": `customAgents registers client custom agents in the one session that sends them
+(validateAndConvertClientCustomAgents, then the session registry's client scope): a Bot's chat
+carries its role, marotte-bot, built by internal/bot from the chat record, and every other session
+sends no key. Both doors: session/load rebuilds the session's registry from that call's list, so a
+load without it cannot resolve the restored marotte-bot mode, falls back to vibe and queues
+_kiro/customAgent/not_found, and an edited role reaches KAS only on the next door. A session agent
+rather than a file under agents/: a file agent would be listed in every chat's mode pill and in
+kiro-cli's TUI, and would be a second copy of the record. KAS drops an invalid entry with only a log
+line, so a malformed role shows as that same not_found fallback.`,
 	"enum-list.policyPreset": `policyPreset restores the fs_read floor that KAS grants a bundled mode
 and denies a custom one, which kiro-cli 2.19.1 turned from a latent asymmetry
 into a silent capability loss.
