@@ -703,3 +703,147 @@ describe("a hidden subagent tab", () => {
     }
   });
 });
+
+// A long delegate's page mounts a window from the lane's head, as a run step mounts one from its live edge, and grows
+// it a slice at a time as the reader nears its mounted end.
+describe("a long delegate's page", () => {
+  /** The step budget's newest window plus the overscan floor, and its tool-card share. */
+  const WINDOW_ENTRIES = 96 + 24;
+  const WINDOW_TOOL_CALLS = 32;
+
+  let view: HTMLElement;
+  let content: HTMLElement;
+  beforeEach(() => {
+    view = document.createElement("div");
+    view.id = "subagent-view";
+    view.style.cssText = "display:flex;flex-direction:column;height:600px;width:800px";
+    content = document.createElement("div");
+    content.className = "page-content";
+    content.style.cssText = "flex:1 1 0;min-height:0;overflow-y:auto";
+    content.appendChild(body());
+    view.appendChild(content);
+    document.body.appendChild(view);
+  });
+  afterEach(() => {
+    closeSubagentTabs();
+    document.body.appendChild(body());
+    view.remove();
+  });
+
+  const mountedEntries = (): number => body().querySelectorAll("[data-entry-seq]").length;
+  const mountedCalls = (): number => body().querySelectorAll(".tool-call").length;
+
+  /** 2,000 entries in `lane`: runs of prose and groups of tool calls, 300 calls in all. */
+  function longLane(chat: string, turn: string, lane: string): void {
+    push(chat, turn, "tool_call", invocation(`tc-${lane}`, lane, "in_progress"), {
+      id: `tc-${lane}`,
+    });
+    let n = 0;
+    while (n < 2000) {
+      for (let i = 0; i < 17 && n < 2000; i++, n++) {
+        laneText(chat, turn, lane, `line ${String(n)}`);
+      }
+      for (let i = 0; i < 3 && n < 2000; i++, n++) {
+        push(
+          chat,
+          turn,
+          "tool_call",
+          makeToolCall({
+            id: `call-${lane}-${String(n)}`,
+            title: `Run ${String(n)}`,
+            kind: "execute",
+          }),
+          { lane, id: `call-${lane}-${String(n)}` },
+        );
+      }
+    }
+  }
+
+  it("mounts the head of the lane, not the whole lane", async () => {
+    const chat = "c-long";
+    const turn = "t-long";
+    seedChats({ chat, turn });
+    longLane(chat, turn, "lg-1");
+
+    show(chat, "lg-1");
+    await vi.waitFor(() => {
+      expect(body().textContent).toContain("line 0");
+    });
+
+    expect(mountedEntries()).toBeLessThanOrEqual(WINDOW_ENTRIES);
+    expect(mountedCalls()).toBeLessThanOrEqual(WINDOW_TOOL_CALLS);
+    expect(body().textContent).not.toContain("line 1999");
+  });
+
+  it("seats the next slice, within the same budget, when the reader nears the mounted end", async () => {
+    const chat = "c-long-door";
+    const turn = "t-long-door";
+    seedChats({ chat, turn });
+    longLane(chat, turn, "lg-2");
+
+    show(chat, "lg-2");
+    await vi.waitFor(() => {
+      expect(body().textContent).toContain("line 0");
+    });
+    const first = mountedEntries();
+    expect(first).toBeLessThanOrEqual(WINDOW_ENTRIES);
+
+    content.scrollTop = content.scrollHeight;
+    await expect.poll(() => mountedEntries()).toBeGreaterThan(first);
+    expect(mountedEntries() - first).toBeLessThanOrEqual(WINDOW_ENTRIES);
+  });
+
+  it("mounts what a live delegate appends past an unmounted tail only when the reader reaches it", async () => {
+    const chat = "c-long-live";
+    const turn = "t-long-live";
+    seedChats({ chat, turn });
+    longLane(chat, turn, "lg-3");
+
+    show(chat, "lg-3");
+    await vi.waitFor(() => {
+      expect(body().textContent).toContain("line 0");
+    });
+    const first = mountedEntries();
+    laneText(chat, turn, "lg-3", "arrived late");
+    await new Promise((r) => requestAnimationFrame(r));
+
+    expect(mountedEntries()).toBe(first);
+    expect(body().textContent).not.toContain("arrived late");
+  });
+
+  it("lands a returning reader where they left it, past the first slice", async () => {
+    const chat = "c-long-back";
+    const turn = "t-long-back";
+    seedChats({ chat, turn });
+    longLane(chat, turn, "lg-4");
+    push(chat, turn, "tool_call", invocation("tc-lg-5", "lg-5"), { id: "tc-lg-5" });
+    laneText(chat, turn, "lg-5", "other delegate");
+    setSubagentTabs([subagentRef(chat, "lg-4"), subagentRef(chat, "lg-5")]);
+
+    showSubagent(chat, "lg-4");
+    await vi.waitFor(() => {
+      expect(body().textContent).toContain("line 0");
+    });
+    // Two slices down, then park it.
+    for (let i = 0; i < 2; i++) {
+      const before = mountedEntries();
+      content.scrollTop = content.scrollHeight;
+      await expect.poll(() => mountedEntries()).toBeGreaterThan(before);
+    }
+    content.scrollTop = content.scrollHeight - content.clientHeight - 50;
+    const parked = content.scrollTop;
+    await new Promise((r) => requestAnimationFrame(r));
+    await new Promise((r) => requestAnimationFrame(r));
+
+    showSubagent(chat, "lg-5");
+    await vi.waitFor(() => {
+      expect(body().textContent).toContain("other delegate");
+    });
+    showSubagent(chat, "lg-4");
+    await vi.waitFor(() => {
+      expect(body().textContent).toContain("line 0");
+    });
+
+    expect(content.scrollTop).toBe(parked);
+  });
+});

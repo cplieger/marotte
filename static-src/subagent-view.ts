@@ -3,7 +3,8 @@
 // no layout or status vocabulary lives here. View-only: a run dock with no verbs, no composer. The
 // close stops nothing but RELEASES: the demand effect drops the page once no open subagent tab
 // names its delegate. Nothing is fetched: blocks persist with `agent_subtask_id`. The page projects
-// one delegate (`sliceSubagent`); its body mounts on first `onShowNode` and is kept. Paged-out turns
+// one delegate (`sliceSubagent`); its body mounts on first `onShowNode` and is kept, as a window from
+// the lane's head that grows a slice at a time as the reader nears its end. Paged-out turns
 // say so; unopened chats fill in later.
 
 import { join } from "@cplieger/keyenc";
@@ -30,6 +31,15 @@ import { parseSubagentRef, subagentRef } from "./tab-materialize.js";
 import type { TurnState } from "./types.js";
 import { SharedScroll } from "./view-scroll.js";
 import { maybeEl, queryEl } from "./dom.js";
+import {
+  entryAt,
+  entryRenders,
+  sliceTurn,
+  STEP_BUDGET,
+  turnFolds,
+  turnSpan,
+} from "./block-window.js";
+import type { Turn } from "./turns.js";
 import { onViewHidden } from "./view-swap.js";
 
 /** A detached render is addressed `(turn, lane)`, `messages-blocks.ts`'s render key; the
@@ -64,6 +74,10 @@ interface BodyRender {
   shape: readonly string[];
   /** Guarded because every later repaint of a finished delegate lands here too. */
   sealed: boolean;
+  /** The window's end: the body mounts the turn's ordinals before it, from the lane's head. */
+  to: number;
+  /** The turn's span at the last render, which says whether the window held its tail. */
+  span: number;
 }
 
 /** ONE PAGE, ONE LIFETIME: dropping the record IS the disposal, so a half-disposed page cannot be
@@ -93,6 +107,101 @@ function shownRef(): string {
   return subagentRef(chatID, subtaskID);
 }
 
+/** Whether the mounted end was within a viewport of the scrollport at the last check; a window holding the lane's
+ *  tail follows what a live delegate appends only while it is. */
+let tailNear = true;
+let tailCheck = 0;
+let doorWired: HTMLElement | null = null;
+
+function pageScroller(): HTMLElement | null {
+  return queryEl<HTMLElement>("[id='subagent-view'] > .page-content");
+}
+
+/** Where the slice from `from` ends: the step pane's budget spent tailward, snapped to a whole prose run. */
+function sliceEnd(turn: Turn, lane: string, from: number): number {
+  const span = turnSpan(turn);
+  const folds = turnFolds(turn, lane);
+  let entries = 0;
+  let calls = 0;
+  let to = from;
+  for (; to < span; to++) {
+    const e = entryAt(turn, to);
+    if (e === undefined || !entryRenders(e, lane, folds)) {
+      continue;
+    }
+    const call = e.kind === "tool_call" ? 1 : 0;
+    if (entries + 1 > STEP_BUDGET.entries || calls + call > STEP_BUDGET.toolCalls) {
+      break;
+    }
+    entries++;
+    calls += call;
+  }
+  return Math.max(sliceTurn(turn, { from, to }, lane, folds).to, Math.min(span, from + 1));
+}
+
+/** Wire the door once per scroller element: a scroll asks whether the reader nears the mounted end. */
+function wireDoor(): void {
+  const box = pageScroller();
+  if (box === null || box === doorWired) {
+    return;
+  }
+  doorWired = box;
+  box.addEventListener("scroll", scheduleTailCheck, { passive: true });
+}
+
+function scheduleTailCheck(): void {
+  if (tailCheck !== 0) {
+    return;
+  }
+  tailCheck = requestAnimationFrame(() => {
+    tailCheck = 0;
+    checkTail();
+  });
+}
+
+/** Seat the next slice while the mounted end is within a viewport of the scrollport, one per frame. */
+function checkTail(): void {
+  const m = mounted;
+  const box = pageScroller();
+  const rec = m?.bodies.get(m.subtaskID);
+  const turn = m?.slice.turn;
+  if (m === undefined || box === null || rec === undefined || turn === undefined) {
+    return;
+  }
+  if (!pageShown.peek() || box.getClientRects().length === 0) {
+    return;
+  }
+  tailNear = nearEnd(rec, box);
+  if (tailNear && rec.to < turnSpan(turn)) {
+    rec.to = sliceEnd(turn, m.subtaskID, rec.to);
+    renderBody(rec, m.chatID, m.subtaskID, m.slice);
+    scheduleTailCheck();
+  }
+}
+
+function nearEnd(rec: BodyRender, box: HTMLElement): boolean {
+  return (
+    rec.host.getBoundingClientRect().bottom <= box.getBoundingClientRect().bottom + box.clientHeight
+  );
+}
+
+/** Restore the shown delegate's offset, first seating the slices it reaches past. */
+function restoreScroll(m: MountedPage): void {
+  const ref = subagentRef(m.chatID, m.subtaskID);
+  const box = pageScroller();
+  const rec = m.bodies.get(m.subtaskID);
+  const turn = m.slice.turn;
+  const offset = pageScroll.saved(ref) ?? 0;
+  if (box !== null && rec !== undefined && turn !== undefined) {
+    while (rec.to < turnSpan(turn) && box.scrollHeight < offset + 2 * box.clientHeight) {
+      rec.to = sliceEnd(turn, m.subtaskID, rec.to);
+      renderBody(rec, m.chatID, m.subtaskID, m.slice);
+    }
+  }
+  pageScroll.restore(ref);
+  scheduleTailCheck();
+}
+
 /** A re-entrancy flag for one synchronous `view.render()`: only a click (outside a render) must
  *  sync the bodies itself. */
 let inPaint = false;
@@ -107,7 +216,7 @@ export function showSubagent(chatID: string, subtaskID: string): void {
   installEffects();
   // A re-show of the page already mounted mounts nothing, so the paint restores nothing.
   if (mounted !== undefined) {
-    pageScroll.restore(shownRef());
+    restoreScroll(mounted);
   }
 }
 
@@ -226,10 +335,11 @@ function paint(chatID: string, subtaskID: string, slice: SubagentSlice | undefin
   } finally {
     inPaint = false;
   }
-  if (kept === undefined) {
-    pageScroll.restore(subagentRef(chatID, subtaskID));
-  }
   syncBodies(m);
+  wireDoor();
+  if (kept === undefined) {
+    restoreScroll(m);
+  }
 }
 
 /** Bring the mounted transcript current, mounting it once its node is shown. Lazy: a hidden body
@@ -240,20 +350,17 @@ function syncBodies(m: MountedPage): void {
   // An EMPTY slice is left unmounted deliberately: `exec-view/detail.ts` shows the
   // empty note only while its host has no children, and that note is the honest answer
   // for a delegate that has produced nothing yet.
-  const turnID = slice.turn?.id;
-  if (
-    wanted === m.subtaskID &&
-    turnID !== undefined &&
-    holdsOutput(slice) &&
-    !m.bodies.has(wanted)
-  ) {
+  const turn = slice.turn;
+  if (wanted === m.subtaskID && turn !== undefined && holdsOutput(slice) && !m.bodies.has(wanted)) {
     m.bodies.set(wanted, {
       // Through the transcript's OWN dispatcher with this lane as render root: prose runs, fold rules
       // and grandchild cards come free.
       host: m.view.bodyFor(wanted),
-      turnID,
+      turnID: turn.id,
       shape: [],
       sealed: false,
+      to: sliceEnd(turn, wanted, 0),
+      span: 0,
     });
   }
   for (const [id, rec] of m.bodies) {
@@ -274,19 +381,27 @@ function renderBody(
     return;
   }
   const shape = blockShape(slice.entries);
+  const span = turnSpan(turn);
+  if (rec.turnID !== turn.id) {
+    rec.to = sliceEnd(turn, subtaskID, 0);
+  } else if (rec.span > 0 && rec.to >= rec.span && tailNear) {
+    rec.to = span;
+  }
+  rec.span = span;
+  const range = { from: 0, to: Math.min(rec.to, span) };
   // A turn the window no longer holds under the same id is a REBUILD whatever the
   // shape says: the render is keyed `(turn, lane)`, so the mounted one belongs to a
   // turn this pass is not rendering.
   const sameTurn = rec.turnID === turn.id;
   if (sameTurn && shapeExtends(rec.shape, shape) && rec.shape.length > 0) {
-    updateDetachedBody(rec.host, turn, chatID, subtaskID, slice.live);
+    updateDetachedBody(rec.host, turn, chatID, subtaskID, slice.live, range);
   } else {
     rebuildDetached(() => {
       disposeDetachedBody(rec.turnID, subtaskID);
       rec.host.replaceChildren();
       rec.turnID = turn.id;
       rec.sealed = false;
-      buildDetachedBody(rec.host, turn, chatID, subtaskID, slice.live);
+      buildDetachedBody(rec.host, turn, chatID, subtaskID, slice.live, range);
     });
   }
   rec.shape = shape;
@@ -309,6 +424,7 @@ function mountPage(
   slice: SubagentSlice,
 ): MountedPage {
   unmount();
+  tailNear = true;
   const built = buildExecPage({
     emptyNote: emptyNote,
     dock: dockHost,
