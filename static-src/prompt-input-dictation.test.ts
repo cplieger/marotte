@@ -63,7 +63,7 @@ beforeAll(() => {
       <button id="midturn-send-btn" class="send-btn" type="button" hidden></button>
       <button id="send-btn" class="send-btn" type="submit"></button>
     </form>`;
-  dictation = createDictation(speech.platform, input(), [sendBtn(), midTurn()]);
+  dictation = createDictation(speech.platform, input());
   initPromptInput(
     (text: string) => {
       submitted.push(text);
@@ -123,6 +123,12 @@ async function startFrom(btn: HTMLButtonElement): Promise<void> {
 /** One click of a run, `detail` being its place in the run as the browser counts it (0 for a keyboard press). */
 function clickAt(btn: HTMLButtonElement, detail: number): void {
   btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail }));
+}
+
+/** A pointer press's start, as every engine fires it before the click. */
+function pressDown(btn: HTMLButtonElement, detail = 1): void {
+  btn.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+  btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail }));
 }
 
 function expectDictateFace(btn: HTMLButtonElement, pressed: boolean): void {
@@ -294,6 +300,119 @@ describe("a double click on the dictation button (rule 3)", () => {
     await settle();
     expect(dictation.listening.value).toBe(true);
     expectDictateFace(sendBtn(), true);
+  });
+});
+
+describe("a press acts on the face it began on (rule 3)", () => {
+  function streaming(): void {
+    setSessions([session(STEERING)]);
+    setSendState({ kind: "streaming" });
+  }
+
+  it.each([
+    ["Send's slot", false],
+    ["the mid-turn slot", true],
+  ])(
+    "stops, and sends nothing, when the browser ends the session between press and click on %s",
+    async (_, mid) => {
+      if (mid) {
+        streaming();
+      }
+      const btn = mid ? midTurn() : sendBtn();
+      await startFrom(btn);
+      speech.last().hear(["almost done", false]);
+      pressDown(btn);
+      speech.last().finish();
+      expect(btn.getAttribute("aria-label"), "the end repainted the button").not.toBe("Dictate");
+      clickAt(btn, 1);
+      expect(submitted).toEqual([]);
+      expect(cancelled).not.toHaveBeenCalled();
+      expect(input().value).toBe("almost done");
+    },
+  );
+
+  it.each([
+    ["Send's slot", false],
+    ["the mid-turn slot", true],
+  ])(
+    "stops in WebKit's press order, where the press takes focus out of the box, on %s",
+    async (_, mid) => {
+      if (mid) {
+        streaming();
+      }
+      const btn = mid ? midTurn() : sendBtn();
+      await startFrom(btn);
+      speech.last().hear(["hello wor", false]);
+      pressDown(btn);
+      input().blur();
+      clickAt(btn, 1);
+      expect(dictation.listening.value).toBe(false);
+      expect(submitted).toEqual([]);
+      expect(cancelled).not.toHaveBeenCalled();
+      expect(document.activeElement, "Stop puts focus back in the box").toBe(input());
+      expect(input().value).toBe("hello wor");
+    },
+  );
+
+  it("stops on a Space press whose key up lands after the browser ended the session", async () => {
+    await startFrom(sendBtn());
+    speech.last().hear(["by keyboard", false]);
+    sendBtn().dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+    speech.last().finish();
+    clickAt(sendBtn(), 0);
+    expect(submitted).toEqual([]);
+    expect(input().value).toBe("by keyboard");
+  });
+
+  it("never opens the microphone on the second click of a double click on Send that emptied the box", () => {
+    const made = speech.made.length;
+    type("hello");
+    pressDown(sendBtn(), 1);
+    clickAt(sendBtn(), 1);
+    expectDictateFace(sendBtn(), false);
+    pressDown(sendBtn(), 2);
+    clickAt(sendBtn(), 2);
+    expect(dictation.listening.value).toBe(false);
+    expect(speech.made).toHaveLength(made);
+    expect(submitted).toEqual(["hello"]);
+  });
+
+  it("never opens the microphone from a Send press whose box emptied before the click", () => {
+    type("hello");
+    pressDown(sendBtn());
+    type("");
+    clickAt(sendBtn(), 1);
+    expect(dictation.listening.value).toBe(false);
+    expect(submitted).toEqual([]);
+  });
+
+  it("never sends from a Cancel press whose turn ended before the click", () => {
+    streaming();
+    type("not yet");
+    pressDown(sendBtn());
+    setSendState({ kind: "idle" });
+    expectSendFace(sendBtn());
+    clickAt(sendBtn(), 1);
+    expect(submitted).toEqual([]);
+    expect(cancelled).not.toHaveBeenCalled();
+  });
+
+  it("keeps dictating into the box after Cancel takes the press's focus", async () => {
+    streaming();
+    await startFrom(midTurn());
+    sendBtn().focus();
+    clickAt(sendBtn(), 1);
+    expect(cancelled).toHaveBeenCalledOnce();
+    expect(dictation.listening.value).toBe(true);
+    expect(document.activeElement).toBe(input());
+    speech.last().hear(["still here", false]);
+    expect(input().value).toBe("still here");
+  });
+
+  it("acts on the face it lands on for a press that never went down here", async () => {
+    pressDown(midTurn());
+    await startFrom(sendBtn());
+    expect(dictation.listening.value).toBe(true);
   });
 });
 

@@ -10,7 +10,7 @@ import { mountLiveRegions } from "./legacy-ui/announce.js";
 import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_RECONCILE } from "./bus.js";
 import { findGlyph } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import { $, byId } from "./dom.js";
+import { $ } from "./dom.js";
 import { initSidebarSwipe } from "./platform.js";
 import { initShellViewport } from "./shell-viewport.js";
 import { initPointerTier } from "./pointer-tier.js";
@@ -473,7 +473,7 @@ function setupInput(): void {
         rewindLatest(getActiveId());
       }
     },
-    createDictation(browserSpeechPlatform(), $.promptInput, [$.sendBtn, byId("midturn-send-btn")]),
+    createDictation(browserSpeechPlatform(), $.promptInput),
   );
 
   initNewChatControl($.newChatBtn, () => {

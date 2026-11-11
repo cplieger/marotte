@@ -110,15 +110,10 @@ export const NO_DICTATION: Dictation = {
   stop: () => undefined,
 };
 
-/** `controls` are the buttons that press it: focus moving from the box to one of them keeps the session. */
-export function createDictation(
-  platform: SpeechPlatform,
-  box: HTMLTextAreaElement,
-  controls: readonly HTMLElement[],
-): Dictation {
+export function createDictation(platform: SpeechPlatform, box: HTMLTextAreaElement): Dictation {
   return platform.Recognition === null
     ? NO_DICTATION
-    : new Controller(platform.Recognition, platform, box, controls);
+    : new Controller(platform.Recognition, platform, box);
 }
 
 /** Where a session's words go: the selection at its first result, padded so they never run into a neighbour. */
@@ -141,8 +136,8 @@ interface Session {
   /** What the session last wrote at its anchor, and the box's value right after. */
   written: string;
   after: string;
-  /** Whether that write went through the browser's editing, so one undo takes it back. */
-  native: boolean;
+  /** The phrase heard while focus was outside the box, written when it comes back. */
+  pending: string | null;
   /** Under a finger: the box's own `inputmode`, put away while the session keeps the box focused, and where focus
    *  goes back when it ends (null: it stays in the box). */
   keyboard: { readonly mode: string | null; readonly returnTo: HTMLElement | null } | null;
@@ -183,17 +178,14 @@ class Controller implements Dictation {
   private readonly on = signal(false);
   /** The session whose results land; at most one. */
   private s: Session | null = null;
+  /** A session that stopped while its last phrase waited for the box's focus. */
+  private late: Session | null = null;
   /** Set around this module's own edits, so their `input` events are not read as the reader's. */
   private writing = false;
   /** A result arrived this page, so the speech service answers. */
   private answered = false;
 
-  constructor(
-    Rec: SpeechRecognizerClass,
-    platform: SpeechPlatform,
-    box: HTMLTextAreaElement,
-    controls: readonly HTMLElement[],
-  ) {
+  constructor(Rec: SpeechRecognizerClass, platform: SpeechPlatform, box: HTMLTextAreaElement) {
     this.Rec = Rec;
     this.platform = platform;
     this.box = box;
@@ -213,11 +205,15 @@ class Controller implements Dictation {
         this.giveKeyboardBack(this.s, false);
       }
     });
-    // Outside the box the words can no longer be one undo step. A window switch keeps the box active.
-    box.addEventListener("focusout", (e) => {
-      const to = e.relatedTarget;
-      if (!(to instanceof HTMLElement && controls.includes(to)) && document.activeElement !== box) {
-        this.stop();
+    box.addEventListener("focusin", () => {
+      const late = this.late;
+      this.late = null;
+      for (const s of [late, this.s]) {
+        const phrase = s?.pending ?? null;
+        if (s !== null && phrase !== null) {
+          s.pending = null;
+          this.write(s, phrase);
+        }
       }
     });
     onBus(BUS_TAB_CHANGED, () => {
@@ -229,6 +225,8 @@ class Controller implements Dictation {
       if (next !== chat) {
         chat = next;
         this.stop();
+        // The box now holds the next chat's draft.
+        this.late = null;
       }
     });
     window.addEventListener("pagehide", () => {
@@ -310,11 +308,18 @@ class Controller implements Dictation {
   private halt(s: Session): void {
     s.accepting = false;
     s.rec?.abort();
-    if (this.s === s) {
-      this.s = null;
-    }
+    this.retire(s);
     this.unlisten(s);
     this.giveKeyboardBack(s, true);
+  }
+
+  /** The session's results stop landing; a phrase still waiting for focus lands on the box's next `focusin`. */
+  private retire(s: Session): void {
+    if (this.s !== s) {
+      return;
+    }
+    this.s = null;
+    this.late = s.pending === null ? null : s;
   }
 
   private unlisten(s: Session): void {
@@ -338,7 +343,7 @@ class Controller implements Dictation {
       anchor: null,
       written: "",
       after: "",
-      native: false,
+      pending: null,
       keyboard: null,
     };
     this.s = s;
@@ -449,9 +454,7 @@ class Controller implements Dictation {
     });
     rec.addEventListener("end", () => {
       s.accepting = false;
-      if (this.s === s) {
-        this.s = null;
-      }
+      this.retire(s);
       this.unlisten(s);
       this.giveKeyboardBack(s, true);
     });
@@ -463,18 +466,26 @@ class Controller implements Dictation {
   }
 
   /** Replace what the session wrote with `phrase`. Each write first takes the previous one back through the
-   *  browser's undo, so the whole session is one undo step. */
+   *  browser's undo, so the whole session is one undo step. Only `execCommand` keeps that history, and it edits
+   *  the focused element only, so a phrase heard while focus is elsewhere waits for the box's `focusin`. */
   private write(s: Session, phrase: string): void {
     const box = this.box;
     if (phrase === "") {
       return;
     }
-    if (s.written !== "" && box.value !== s.after) {
-      this.halt(s);
-      return;
-    }
     s.anchor ??= anchorAt(box);
     const a = s.anchor;
+    if (box.value !== (s.written === "" ? a.base : s.after)) {
+      s.pending = null;
+      if (this.s === s) {
+        this.halt(s);
+      }
+      return;
+    }
+    if (document.activeElement !== box) {
+      s.pending = phrase;
+      return;
+    }
     const text = a.prefix + phrase + a.suffix;
     if (text === s.written) {
       return;
@@ -482,7 +493,7 @@ class Controller implements Dictation {
     const caret = a.start + a.prefix.length + phrase.length;
     this.writing = true;
     try {
-      const back = s.written === "" || this.undoTo(s, a.base);
+      const back = s.written === "" || this.undoTo(a.base);
       applyEdit(box, {
         start: a.start,
         end: back ? a.end : a.start + s.written.length,
@@ -492,16 +503,12 @@ class Controller implements Dictation {
     } finally {
       this.writing = false;
     }
-    s.native = document.activeElement === box;
     s.written = text;
     s.after = box.value;
   }
 
   /** Whether the browser's undo took the box back to `base`; redone when it did not land there. */
-  private undoTo(s: Session, base: string): boolean {
-    if (!s.native || document.activeElement !== this.box) {
-      return false;
-    }
+  private undoTo(base: string): boolean {
     // eslint-disable-next-line @typescript-eslint/no-deprecated -- the only undo that keeps the browser's history.
     document.execCommand("undo");
     if (this.box.value === base) {

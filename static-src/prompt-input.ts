@@ -110,6 +110,14 @@ function paintDictate(btn: HTMLButtonElement, pressed: boolean): void {
   btn.type = "button";
 }
 
+/** What a press on Send's or Steer's slot does: `send` is the send path, which steers or queues mid-turn. */
+type Act = "send" | "cancel" | "start" | "stop";
+
+interface Pressed {
+  readonly btn: HTMLButtonElement;
+  readonly act: Act;
+}
+
 function clearDictate(btn: HTMLButtonElement): void {
   btn.removeAttribute("aria-pressed");
   btn.classList.remove("dictating");
@@ -138,8 +146,10 @@ class PromptInputController {
   private staged: Staged = signal(false);
   private dictation: Dictation = NO_DICTATION;
   private midTurn: HTMLButtonElement | null = null;
-  /** The button whose last single click started or stopped dictation. */
-  private toggledBy: HTMLButtonElement | null = null;
+  /** What the press on a button began on, read at its pointerdown or key down. */
+  private press: Pressed | null = null;
+  /** What the first click of a multi-click acted on: the rest of the run acts on it too. */
+  private run: Pressed | null = null;
   /** Each chat whose send is in flight, by the token of that send. */
   private readonly held = new Map<string, object>();
 
@@ -342,15 +352,61 @@ class PromptInputController {
     });
   }
 
-  /** Whether `e` is the second or later click of a multi-click whose first click toggled dictation on `btn`.
-   *  The toggle repaints `btn` before the rest of the pair lands, so that rest must not send, steer or cancel.
-   *  A single click or a keyboard press (`detail` 0) clears the record and acts on the face. */
-  private repeatOfToggle(btn: HTMLButtonElement, e: MouseEvent): boolean {
-    if (e.detail > 1) {
-      return this.toggledBy === btn;
+  /** What a press on `btn` would do on the face it shows now. */
+  private actOf(btn: HTMLButtonElement): Act {
+    const f = this.faces();
+    const face = btn === this.midTurn ? f.side : f.main;
+    switch (face) {
+      case "dictate":
+        return this.dictation.listening.peek() ? "stop" : "start";
+      case "cancel":
+        return "cancel";
+      case "send":
+      case "retry":
+      case "hidden":
+        return "send";
     }
-    this.toggledBy = null;
-    return false;
+  }
+
+  private pressStart(btn: HTMLButtonElement): void {
+    this.press = { btn, act: this.actOf(btn) };
+  }
+
+  /** A click acts on what its press began on, so a repaint between press and click (the engine ending, a
+   *  result, a send clearing the box) never turns Stop into Send or Send into Dictate. A click with no press
+   *  of its own (`click()`) acts on the face it lands on. */
+  private actFor(btn: HTMLButtonElement, e: MouseEvent): Act {
+    const press = this.press;
+    this.press = null;
+    if (e.detail > 1 && this.run?.btn === btn) {
+      return this.run.act;
+    }
+    const act = press?.btn === btn ? press.act : this.actOf(btn);
+    this.run = { btn, act };
+    return act;
+  }
+
+  /** `start` and `stop` do nothing once the session is already in that state, so a run's later clicks cannot
+   *  undo its first. */
+  private perform(act: Exclude<Act, "send">): void {
+    const listening = this.dictation.listening.peek();
+    switch (act) {
+      case "cancel":
+        if (this.state.kind === "streaming") {
+          this.onCancel();
+        }
+        // A pointer press focuses Cancel, and dictated words land only in the focused box.
+        if (listening) {
+          $.promptInput.focus();
+        }
+        return;
+      case "start":
+      case "stop":
+        if (listening === (act === "stop")) {
+          this.dictation.toggle();
+        }
+        return;
+    }
   }
 
   /** Both buttons' faces only: the input effect runs this on every keystroke. */
@@ -391,8 +447,7 @@ class PromptInputController {
     $.sendBtn.classList.toggle("streaming", k === "streaming");
     $.sendBtn.classList.toggle("failed", k === "error");
 
-    // type=button while streaming keeps a click out of the form: a click always cancels during a
-    // turn, while Enter still sends.
+    // type=button while streaming keeps a Cancel click out of the form, while Enter still sends.
     $.sendBtn.type = k === "streaming" ? "button" : "submit";
   }
 
@@ -436,37 +491,43 @@ class PromptInputController {
     this.onEditLast = onEditLast;
     this.staged = staged;
     this.dictation = dictation;
-    $.sendBtn.addEventListener("click", (e: MouseEvent) => {
-      if (this.repeatOfToggle($.sendBtn, e)) {
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-      }
-      if (this.faces().main === "dictate") {
-        e.preventDefault();
-        this.toggledBy = $.sendBtn;
-        this.dictation.toggle();
-        return;
-      }
-      if (this.state.kind === "streaming") {
-        e.preventDefault();
-        e.stopPropagation();
-        this.onCancel();
-      }
-    });
-
     const midTurn = byId<HTMLButtonElement>("midturn-send-btn");
     this.midTurn = midTurn;
+    for (const btn of [$.sendBtn, midTurn]) {
+      btn.addEventListener("pointerdown", () => {
+        this.pressStart(btn);
+      });
+      // Space clicks at key up, so the face can repaint in between.
+      btn.addEventListener("keydown", (e: KeyboardEvent) => {
+        if ((e.key === "Enter" || e.key === " ") && !e.repeat) {
+          this.pressStart(btn);
+        }
+      });
+      btn.addEventListener("pointercancel", () => {
+        this.press = null;
+      });
+    }
+    $.sendBtn.addEventListener("click", (e: MouseEvent) => {
+      const act = this.actFor($.sendBtn, e);
+      if (act === "send") {
+        // A face painted since the press (Dictate, Cancel) is type=button, so the form would not submit.
+        if ($.sendBtn.type !== "submit") {
+          e.preventDefault();
+          this.sendComposer();
+        }
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      this.perform(act);
+    });
     midTurn.addEventListener("click", (e: MouseEvent) => {
-      if (this.repeatOfToggle(midTurn, e)) {
+      const act = this.actFor(midTurn, e);
+      if (act === "send") {
+        this.sendComposer();
         return;
       }
-      if (this.faces().side === "dictate") {
-        this.toggledBy = midTurn;
-        this.dictation.toggle();
-        return;
-      }
-      this.sendComposer();
+      this.perform(act);
     });
 
     syncComposerText();
