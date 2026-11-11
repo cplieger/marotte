@@ -4,7 +4,7 @@
 // editor-ui, and editor-openers.
 // ---------------------------------------------------------------------------
 
-import { signal, computed, type Signal, type ReadonlySignal } from "@cplieger/ui";
+import { signal, computed, type Signal, type ReadonlySignal } from "@cplieger/reactive";
 import { lineDiff, type DiffLine } from "./diff.js";
 import { relToWorkspace } from "./workspace.js";
 import type { ConflictFile } from "./conflict.js";

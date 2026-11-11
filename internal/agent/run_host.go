@@ -607,7 +607,7 @@ func (rs *Runs) resume(ctx context.Context, workflowID string, caller controlCal
 // whether it released a lease it minted. It bounds the host session's load and the call. A var for tests.
 var retryTimeout = clientRequestBudget - 5*time.Second
 
-// clientRequestBudget is the timeout @cplieger/ui/fetch hard-wires into every apiAction.
+// clientRequestBudget is the timeout @cplieger/reactive/fetch hard-wires into every apiAction.
 const clientRequestBudget = 30 * time.Second
 
 var errRetryRunDeleting = errors.New("this run is being deleted or checked for deletion, so nothing was retried. " +

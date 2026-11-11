@@ -1,0 +1,362 @@
+/* ui-primitives.css — structural + behavioral base for the legacy-ui widgets.
+ *
+ * Ships motion + layout only. Colors, radii, fonts, borders, shadows are the
+ * consuming app's SKIN: target the .uip-* classes directly in your own CSS, or
+ * override the --uip-* custom properties below.
+ *
+ * State classes (is-entering / is-shown / is-leaving, is-destructive) are
+ * toggled by the library at runtime; style them to define your skin's motion
+ * and emphasis. */
+
+/* Structural + behavioral defaults. Override any of these in your own :root.
+ * Motion is fully parameterized: every transition/animation exposes BOTH a
+ * -duration and a paired -easing (timing function) custom property, each used
+ * with an inline fallback. Defaults reproduce the built-in motion exactly. */
+:root {
+  --uip-z-toast: 9999;
+  --uip-z-tooltip: 10000;
+  --uip-toast-offset: 1rem;
+  --uip-toast-gap: 0.5rem;
+  --uip-toast-row-gap: 0.5rem;
+  --uip-toast-max-width: 24rem;
+  --uip-toast-enter-duration: 250ms;
+  --uip-toast-enter-easing: ease;
+  --uip-toast-leave-duration: 150ms;
+  --uip-toast-leave-easing: ease;
+  --uip-toast-duration: 4000ms;
+  --uip-toast-easing: linear;
+  --uip-toast-progress-size: 2px;
+  --uip-toast-progress-color: currentcolor;
+  --uip-tooltip-fade-duration: 100ms;
+  --uip-tooltip-fade-easing: ease;
+  --uip-dialog-leave-duration: 150ms;
+  --uip-dialog-leave-easing: ease;
+  --uip-backdrop: oklch(0% 0 0deg / 50%);
+
+  /* Modal (native <dialog>). The platform top layer owns stacking (no z-index)
+   * and ::backdrop is the dim overlay (reuses --uip-backdrop by default). Fades
+   * out on leave like dialog/ask; enter is instant (matching the family). */
+  --uip-modal-backdrop: var(--uip-backdrop);
+  --uip-modal-leave-duration: 150ms;
+  --uip-modal-leave-easing: ease;
+
+  /* Disclosure (animated collapsible). */
+  --uip-disclosure-duration: 200ms;
+  --uip-disclosure-easing: ease;
+
+  /* Popover (anchored floating panel). z-index orders it below toast (9999) /
+   * tooltip (10000) in the base layer. A modal is a native <dialog> in the top
+   * layer (above every base-layer z-index), so a DISCONNECTED panel opened from
+   * within a modal is hosted INTO that <dialog> (the trigger's nearest open
+   * dialog, else the topmost open one) to sit over it; a caller-connected panel
+   * stays where the caller put it — connect it inside the dialog when opening
+   * from a modal. */
+  --uip-z-popover: 1100;
+  --uip-popover-enter-duration: 100ms;
+  --uip-popover-enter-easing: ease;
+  --uip-popover-leave-duration: 100ms;
+  --uip-popover-leave-easing: ease;
+}
+
+/* ===== Toast ============================================================= */
+
+/* The four insets and the shift are read with today's values as fallbacks and
+ * never declared in :root, because this sheet is unlayered: a host's layered
+ * declaration is then the only one, and applies. */
+.uip-toast-stack {
+  position: fixed;
+  z-index: var(--uip-z-toast, 9999);
+  inset-block: var(--uip-toast-inset-block-start, var(--uip-toast-offset, 1rem))
+    var(--uip-toast-inset-block-end, auto);
+  inset-inline: var(--uip-toast-inset-inline-start, auto)
+    var(--uip-toast-inset-inline-end, var(--uip-toast-offset, 1rem));
+  display: flex;
+  flex-direction: column;
+  gap: var(--uip-toast-gap, 0.5rem);
+  max-inline-size: var(--uip-toast-max-width, 24rem);
+  pointer-events: none;
+}
+
+/* Each toast owns pointer events; the stack itself lets clicks fall through the
+ * gaps to the app beneath.
+ *
+ * A COLUMN, because the retry button is a sibling of the message span: with no
+ * layout here it flows inline and lands wherever the wrapped message's last line
+ * ends, which moves with every message length. The visually-hidden dismiss hint
+ * and the progress bar are both out of flow, so the column holds exactly the
+ * message and the action row. */
+.uip-toast {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--uip-toast-row-gap, 0.5rem);
+  overflow: hidden;
+  pointer-events: auto;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(var(--uip-toast-shift, -8px));
+  transition:
+    opacity var(--uip-toast-enter-duration, 250ms) var(--uip-toast-enter-easing, ease),
+    transform var(--uip-toast-enter-duration, 250ms) var(--uip-toast-enter-easing, ease);
+}
+
+.uip-toast.is-shown {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.uip-toast.is-leaving {
+  opacity: 0;
+  transform: translateY(var(--uip-toast-shift, -8px));
+  transition:
+    opacity var(--uip-toast-leave-duration, 150ms) var(--uip-toast-leave-easing, ease),
+    transform var(--uip-toast-leave-duration, 150ms) var(--uip-toast-leave-easing, ease);
+}
+
+/* The action shrinks to its label and sits at the inline END of its own row,
+ * rather than stretching to the column's width like the message above it. */
+.uip-toast-retry {
+  align-self: flex-end;
+}
+
+/* The progress bar is absolutely positioned and comes LAST in the DOM, so it
+ * paints over both of these. A skin with little block padding would have the bar
+ * crossing the message's descenders or the action's lower border, so the content
+ * takes the higher layer here rather than in every consumer's skin. */
+.uip-toast-msg,
+.uip-toast-retry {
+  position: relative;
+  z-index: 1;
+}
+
+/* Countdown bar. Its duration comes from the --uip-toast-duration custom
+ * property the library sets inline per toast (do not set it here per-toast).
+ * Pause/resume is driven by animation-play-state, set inline by the library. */
+.uip-toast-progress {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  block-size: var(--uip-toast-progress-size, 2px);
+  background: var(--uip-toast-progress-color, currentcolor);
+  transform-origin: left center;
+  animation: uip-toast-progress var(--uip-toast-duration, 4000ms) var(--uip-toast-easing, linear)
+    both;
+}
+
+@keyframes uip-toast-progress {
+  from {
+    transform: scaleX(1);
+  }
+
+  to {
+    transform: scaleX(0);
+  }
+}
+
+/* ===== Tooltip =========================================================== */
+
+/* position:fixed; the library sets inset-block-start / inset-inline-start
+ * inline from a measured, viewport-clamped position (flips below when there is
+ * no room above). */
+.uip-tooltip {
+  position: fixed;
+  z-index: var(--uip-z-tooltip, 10000);
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity var(--uip-tooltip-fade-duration, 100ms) var(--uip-tooltip-fade-easing, ease);
+}
+
+.uip-tooltip.is-leaving {
+  opacity: 0;
+}
+
+/* ===== Dialog + Ask ====================================================== */
+
+/* ask is the Promise-shaped question dialog (boolean, or input-collecting
+ * with the .uip-ask--input modifier); it shares the exact same dialog-family
+ * motion (the --uip-dialog-* properties). */
+.uip-ask,
+.uip-dialog {
+  opacity: 1;
+  transition: opacity var(--uip-dialog-leave-duration, 150ms) var(--uip-dialog-leave-easing, ease);
+}
+
+.uip-ask.is-leaving,
+.uip-dialog.is-leaving {
+  opacity: 0;
+}
+
+.uip-ask::backdrop,
+.uip-dialog::backdrop {
+  background: var(--uip-backdrop, oklch(0% 0 0deg / 50%));
+  opacity: 1;
+  transition: opacity var(--uip-dialog-leave-duration, 150ms) var(--uip-dialog-leave-easing, ease);
+}
+
+.uip-ask.is-leaving::backdrop,
+.uip-dialog.is-leaving::backdrop {
+  opacity: 0;
+}
+
+/* The ask's details list: labels in a column capped at half the width. An
+ * unbroken value wraps instead of overflowing once the dialog reaches its maximum width. */
+.uip-ask-details {
+  display: grid;
+  grid-template-columns: fit-content(50%) minmax(0, 1fr);
+  gap: 0.25rem 1rem;
+}
+
+.uip-ask-details > dt,
+.uip-ask-details > dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ===== Modal (native <dialog>) ========================================== */
+
+/* Built on the platform <dialog>: the top layer, ::backdrop, focus containment,
+ * and background inerting all come from the browser (no z-index, no overlay
+ * div). Auto-margined to center in the viewport, which also sidesteps the Safari
+ * <dialog> height bug the old overlay grid-centering worked around. Like
+ * dialog/ask it fades out on leave — the library adds `is-leaving` and waits
+ * for its transitionend before close() — so exit works without display/overlay
+ * allow-discrete; enter is instant, matching the rest of the <dialog> family.
+ * The inner content keeps the `.uip-modal-dialog` class as a skinning hook. */
+.uip-modal {
+  margin: auto;
+  opacity: 1;
+  transition: opacity var(--uip-modal-leave-duration, 150ms) var(--uip-modal-leave-easing, ease);
+}
+
+.uip-modal.is-leaving {
+  opacity: 0;
+}
+
+.uip-modal::backdrop {
+  background: var(--uip-modal-backdrop, oklch(0% 0 0deg / 50%));
+  opacity: 1;
+  transition: opacity var(--uip-modal-leave-duration, 150ms) var(--uip-modal-leave-easing, ease);
+}
+
+.uip-modal.is-leaving::backdrop {
+  opacity: 0;
+}
+
+/* ===== Disclosure (animated collapsible) ================================= */
+
+/* interpolate-size lets height transition to/from the `auto` keyword on modern
+ * engines; the library falls back to a measured scrollHeight px target where it
+ * is unsupported. The library drives the height inline; this owns the clip and
+ * the transition. */
+.uip-disclosure-region {
+  overflow: hidden;
+  interpolate-size: allow-keywords;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .uip-disclosure-region {
+    transition: height var(--uip-disclosure-duration, 200ms) var(--uip-disclosure-easing, ease);
+  }
+}
+
+/* ===== Popover (anchored floating panel) ================================= */
+
+/* position:fixed; the library sets left / top (and, in full-bleed `stretch:
+ * "viewport"` mode, left + right) inline from placeAnchored's measured, flipped,
+ * clamped position. Structural only — the app skins background / border /
+ * radius / shadow by targeting .uip-popover. */
+.uip-popover {
+  position: fixed;
+  z-index: var(--uip-z-popover, 1100);
+}
+
+.uip-popover[hidden] {
+  display: none;
+}
+
+/* Optional skinnable enter fade — plays once when the panel opens. */
+.uip-popover.is-open {
+  animation: uip-popover-enter var(--uip-popover-enter-duration, 100ms)
+    var(--uip-popover-enter-easing, ease);
+}
+
+/* Leave fade — the controller adds is-leaving and waits for this transition (or
+ * a fallback timeout) before it sets [hidden], mirroring dialog/modal/toast so
+ * the panel animates out instead of vanishing on dismiss. */
+.uip-popover.is-leaving {
+  opacity: 0;
+  transition: opacity var(--uip-popover-leave-duration, 100ms) var(--uip-popover-leave-easing, ease);
+}
+
+/* is-stretched marks the full-bleed (stretch: "viewport") variant. The inset is
+ * applied inline, so this is purely a skin hook (e.g. square the top corners /
+ * drop side borders on the full-width panel); it needs no structural rule. */
+
+@keyframes uip-popover-enter {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* ===== Popup (reveal + light-dismiss, no placement) ====================== */
+
+/* The popup primitive is fully headless about motion: the library only toggles
+ * the state classes (is-open on reveal, is-leaving before [hidden]) and owns
+ * the [hidden] display rule. The app supplies any enter/exit transition on its
+ * own classes or on .uip-popup.is-open / .is-leaving; the leave finalizes on
+ * the panel's first transitionend (or a 400ms fallback when there is none). */
+.uip-popup[hidden] {
+  display: none;
+}
+
+/* ===== Visually hidden (live regions, collapsed labels) ================= */
+
+/* Standard visually-hidden ("sr-only"): removed from the visual layout but
+ * kept in the accessibility tree, which `display: none` would remove it from. */
+.uip-visually-hidden {
+  position: absolute;
+  overflow: hidden;
+  clip-path: inset(50%);
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ===== Reduced motion ==================================================== */
+
+/* Neutralize motion to near-zero rather than 0 so transitionend / animationend
+ * still fire and the library's leave-lifecycles complete promptly. The 0.01ms
+ * values are below the time-min-milliseconds threshold by design, hence the
+ * scoped disables. */
+@media (prefers-reduced-motion: reduce) {
+  .uip-toast,
+  .uip-toast.is-leaving,
+  .uip-tooltip,
+  .uip-ask,
+  .uip-dialog,
+  .uip-modal,
+  .uip-ask::backdrop,
+  .uip-dialog::backdrop,
+  .uip-modal::backdrop,
+  .uip-modal.is-leaving,
+  .uip-modal.is-leaving::backdrop,
+  .uip-popover.is-leaving {
+    /* stylelint-disable-next-line time-min-milliseconds -- sub-10ms keeps transitionend firing so JS leave-lifecycles still complete under reduced motion */
+    transition-duration: 0.01ms;
+  }
+
+  .uip-toast-progress,
+  .uip-popover.is-open {
+    /* stylelint-disable-next-line time-min-milliseconds -- sub-10ms keeps animationend firing under reduced motion */
+    animation-duration: 0.01ms;
+  }
+}

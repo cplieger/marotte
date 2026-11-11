@@ -22,7 +22,7 @@ import {
   silenceLabel,
   silenceMsFor,
 } from "./tool-silence.js";
-import { createDisclosure, type DisclosureController } from "@cplieger/ui/disclosure";
+import { createDisclosure, type DisclosureController } from "./legacy-ui/disclosure.js";
 import {
   renderInfoFor,
   disclosedClaim,
@@ -39,7 +39,7 @@ import type { ToolDenial, ToolInteraction, ToolOffload } from "./types.js";
 import type { DenialBasis } from "./wire/types.gen.js";
 import { buildPath } from "./route-path.js";
 import { askBucket, interactionFact } from "./interaction.js";
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 
 function renderInfoOf(opts: BuildToolCardOpts): ToolRenderInfo {
   return renderInfoFor(opts.kind, opts.input, {

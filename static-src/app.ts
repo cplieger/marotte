@@ -5,8 +5,8 @@
 
 import type { ServerEvent } from "./types.js";
 import { getActiveId, getSessions } from "./store.js";
-import { effect } from "@cplieger/ui";
-import { mountLiveRegions } from "@cplieger/ui/announce";
+import { effect } from "@cplieger/reactive";
+import { mountLiveRegions } from "./legacy-ui/announce.js";
 import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_RECONCILE } from "./bus.js";
 import { findGlyph } from "./icons.js";
 import { iconEl } from "./icon-el.js";

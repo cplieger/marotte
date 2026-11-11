@@ -52,7 +52,7 @@ vi.mock("./git-scroll.js", async (importOriginal) => ({
   },
 }));
 // The real confirm's `ask` imports `openDialog` and `closeDialog`, so the originals stay.
-vi.mock("@cplieger/ui/dialog", async (importOriginal) => ({
+vi.mock("./legacy-ui/dialog.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   createDialog: () => ({ open: H.dialogOpen, close: H.dialogClose }),
 }));

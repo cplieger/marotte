@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { KEY_ATTR } from "@cplieger/ui";
+import { KEY_ATTR } from "@cplieger/reactive";
 import type { TurnSummary } from "./rail-merge.js";
 
 vi.mock("./api-client.js", () => ({

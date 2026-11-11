@@ -1,6 +1,6 @@
 // Chat-input drag-drop and paste: files upload into the workspace uploads folder and their paths attach to the prompt.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { upload, partialUploadOf } from "./actions/files.js";
 import { attachPathsToActiveChat } from "./chat.js";
 import { byId } from "./dom.js";

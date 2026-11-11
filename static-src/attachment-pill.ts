@@ -2,7 +2,7 @@
 // must not reach `$.attachmentRow`). Removal is the composer's opt-in. Body and `×` are
 // SIBLINGS, so a `×` click cannot reach the open handler.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { ICON_CLOSE } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { badgeForExt, extOf } from "./file-extensions.js";

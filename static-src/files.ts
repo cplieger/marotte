@@ -50,7 +50,7 @@ import {
 } from "./files-shared.js";
 import { fetchDir, type DirResult, type FetchDirOpts } from "./files-fetch.js";
 import { fileRowsSkeleton, paintPlaceholder } from "./skeleton.js";
-import { skeletonTiming } from "@cplieger/ui/skeleton";
+import { skeletonTiming } from "./legacy-ui/skeleton.js";
 import { setOnUploadComplete } from "./files-picker.js";
 import {
   createFile,
@@ -61,7 +61,7 @@ import {
   downloadFiles,
 } from "./actions/files.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { join as joinKey } from "@cplieger/keyenc";
 import { KEY_ATTR, reconcile } from "./reconcile.js";
 import { replaceRoute } from "./router.js";

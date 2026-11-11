@@ -1,7 +1,7 @@
-// A popover for a panel that can be taller than the window: `@cplieger/ui/popover` places it and
+// A popover for a panel that can be taller than the window: `./legacy-ui/popover.js` places it and
 // flips it, but never caps its height, so a tall form anchored mid-page would run off the screen.
 
-import { createPopover, type PopoverController, type PopoverOptions } from "@cplieger/ui/popover";
+import { createPopover, type PopoverController, type PopoverOptions } from "./legacy-ui/popover.js";
 import { onViewportChange, viewportBox } from "./viewport-frame.js";
 
 const OFFSET = 4;

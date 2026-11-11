@@ -18,7 +18,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("./tabs.js", async () => {
-  const { signal } = await import("@cplieger/ui");
+  const { signal } = await import("@cplieger/reactive");
   const { tabsMock } = await import("./__test-helpers__/tabs-mock.js");
   h.openRefs = signal<string[]>([]);
   return {
@@ -35,7 +35,7 @@ vi.mock("./tabs.js", async () => {
 // The dock, shaped like the real module: one version signal, per-chat queues,
 // so a row effect's read subscribes it to decisions arriving anywhere.
 vi.mock("./decision-dock.js", async () => {
-  const { signal } = await import("@cplieger/ui");
+  const { signal } = await import("@cplieger/reactive");
   h.dockVersion = signal(0);
   return {
     hasPendingDecision: (chatID: string): boolean => {

@@ -1,5 +1,5 @@
-import { el } from "@cplieger/ui";
-import { createPopover } from "@cplieger/ui/popover";
+import { el } from "@cplieger/reactive";
+import { createPopover } from "./legacy-ui/popover.js";
 import { createDoc, type NewDocRequest } from "./actions/docs.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_PLUS_UI } from "./icons.js";

@@ -16,7 +16,7 @@ describe("a11y: missing labels", () => {
 
   it("toast is announced via the shared live region and is self-describing", async () => {
     const { showToast, _resetForTest } = await import("./toast.js");
-    const { mountLiveRegions } = await import("@cplieger/ui/announce");
+    const { mountLiveRegions } = await import("./legacy-ui/announce.js");
     const release = mountLiveRegions(document.body);
     const dismiss = showToast("File saved", "success", 5000);
     try {
@@ -195,7 +195,7 @@ describe("a11y: the composer's chat options button (static markup)", () => {
 
 describe("a11y: keyboard navigation on picker grid", () => {
   it("rovingFocus makes items focusable via tabindex", async () => {
-    const { rovingFocus } = await import("@cplieger/ui/roving-focus");
+    const { rovingFocus } = await import("./legacy-ui/roving-focus.js");
     const container = document.createElement("div");
     const btn1 = document.createElement("button");
     btn1.className = "picker-btn";

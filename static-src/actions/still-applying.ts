@@ -3,7 +3,7 @@
 // internal/command/engine_change.go own the server side.
 
 // From the library, not ./index.js: many tests replace ./index.js with a partial mock.
-import { retryNetwork, type ActionErrorLike } from "@cplieger/ui/actions";
+import { retryNetwork, type ActionErrorLike } from "@cplieger/reactive/actions";
 
 /** The code of the server's 504 for a change kiro-cli has not answered yet. */
 const STILL_APPLYING = "still_applying";

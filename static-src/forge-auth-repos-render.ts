@@ -1,7 +1,7 @@
 // Pure DOM factory: reactive state and reconcile specs are injected via RenderDeps.
 
-import { el } from "@cplieger/ui";
-import { createDisclosure, type DisclosureController } from "@cplieger/ui/disclosure";
+import { el } from "@cplieger/reactive";
+import { createDisclosure, type DisclosureController } from "./legacy-ui/disclosure.js";
 import { chevronEl } from "./chevron.js";
 import { ICON_DOWNLOAD, ICON_REPO, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";

@@ -20,7 +20,7 @@ vi.mock("./store.js", () => ({
   tabStatusFor: vi.fn(() => ""),
   apiGetTyped: vi.fn(),
 }));
-// The expandable pill is @cplieger/ui machinery; what this file needs is the list
+// The expandable pill is legacy-ui machinery; what this file needs is the list
 // rendered, which is what onExpand does.
 vi.mock("./pill-expand.js", () => ({
   makeExpandable: (_pill: HTMLElement, _list: HTMLElement, opts: { onExpand: () => void }) => {
@@ -28,7 +28,7 @@ vi.mock("./pill-expand.js", () => ({
   },
   collapseAll: vi.fn(),
 }));
-vi.mock("@cplieger/ui/roving-focus", () => ({
+vi.mock("./legacy-ui/roving-focus.js", () => ({
   rovingFocus: () => ({ refresh: vi.fn() }),
 }));
 vi.mock("./icon-el.js", () => ({ iconEl: () => document.createElement("span") }));

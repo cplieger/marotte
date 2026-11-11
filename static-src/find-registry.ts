@@ -1,7 +1,7 @@
 // Where lazily loaded pages hand Ctrl-F their entry point. A leaf with no imports, so the dispatcher can read it without
 // loading those pages. The version signal makes registration reactive.
 
-import { signal, touch } from "@cplieger/ui";
+import { signal, touch } from "@cplieger/reactive";
 
 /** Search or filter: decides glyph and wording. */
 export type FindKind = "search" | "filter";

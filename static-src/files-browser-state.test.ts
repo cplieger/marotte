@@ -69,7 +69,7 @@ vi.mock("./api-client.js", () => ({
   apiGetTyped: undefined,
   apiGetOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
 }));
-vi.mock("@cplieger/ui/skeleton", () => ({
+vi.mock("./legacy-ui/skeleton.js", () => ({
   skeletonTiming: () => armSkeleton(),
 }));
 vi.mock("./scroll.js", () => ({

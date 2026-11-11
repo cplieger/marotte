@@ -85,7 +85,7 @@ import {
 import { _resetForTest as resetFreshness, observeStamp } from "./subject-versions.js";
 import type { ChatHeader, RunView, Session, ToolCall, ToolProgressPayload } from "./types.js";
 import type { Entry, EntryToolCall, EntryToolResult, TurnOutcome } from "./wire/types.gen.js";
-import { effect } from "@cplieger/ui";
+import { effect } from "@cplieger/reactive";
 import { IDLE_RUN } from "./run-order.js";
 import {
   compactionEntry,

@@ -3,8 +3,8 @@
 // that quote in the tangent's composer. The buttons follow the selection: they show while one qualifies and go when it
 // stops.
 
-import { el, effect } from "@cplieger/ui";
-import { createPopover, type PopoverController } from "@cplieger/ui/popover";
+import { el, effect } from "@cplieger/reactive";
+import { createPopover, type PopoverController } from "./legacy-ui/popover.js";
 import { openTangentChat } from "./chat.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { setComposerValue } from "./composer-value.js";

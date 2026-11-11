@@ -34,7 +34,7 @@ interface TestSession {
 }
 
 vi.mock("./store.js", async (importOriginal) => {
-  const { signal } = (await vi.importActual("@cplieger/ui")) as { signal: SignalFactory };
+  const { signal } = (await vi.importActual("@cplieger/reactive")) as { signal: SignalFactory };
   const activeSession = signal<TestSession | undefined>(undefined);
   return {
     ...(await importOriginal<typeof Store>()),
@@ -107,11 +107,9 @@ function option(id: string): HTMLElement {
   return el as HTMLElement;
 }
 
-/** The popup arms its Escape and outside-click listeners a task after it opens. */
 async function open(): Promise<void> {
   await userEvent.click(pill());
   expect(pill().getAttribute("aria-expanded"), "the card opened").toBe("true");
-  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 async function keys(...pressed: readonly string[]): Promise<void> {

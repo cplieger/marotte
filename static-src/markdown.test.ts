@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import * as fc from "fast-check";
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { createMarkdownStream } from "./markdown.js";
 import { parser, parser_end, parser_write } from "./smd-parser.js";
 import { domRenderer } from "./smd-renderer.js";

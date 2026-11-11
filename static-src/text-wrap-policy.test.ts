@@ -3,23 +3,13 @@
 // check covers only what a test page mounts. `balance` on static headings stays legal.
 
 import { describe, it, expect } from "vitest";
-import { allRules, loadCSS } from "./__test-helpers__/css-rules.js";
-import manifest from "./css/MANIFEST?raw";
-
-/** Every sheet the bundle concatenates, by name, excluding the vendored base
- *  (@cplieger/ui is a dependency, so its declarations are not ours to police). */
-function ownSheets(): string[] {
-  return manifest
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l !== "" && !l.startsWith("#") && !l.startsWith("../"));
-}
+import { allRules, manifestSheets } from "./__test-helpers__/css-rules.js";
 
 describe("text-wrap policy", () => {
   it("declares `pretty` in no stylesheet, under either spelling", () => {
     const offenders: string[] = [];
-    for (const name of ownSheets()) {
-      for (const rule of allRules(loadCSS(name))) {
+    for (const { name, css } of manifestSheets()) {
+      for (const rule of allRules(css)) {
         // The shorthand and the longhand both reach `text-wrap-style`.
         if (/text-wrap(-style)?\s*:\s*pretty/.test(rule.body)) {
           offenders.push(`${name} { ${rule.selector} }`);
@@ -33,8 +23,8 @@ describe("text-wrap policy", () => {
     // No form-control carve-out either (Safari 26 re-wraps whole paragraphs per keystroke): swept over
     // every form-control selector in every sheet, so the guard is tied to no single rule.
     const offenders: string[] = [];
-    for (const name of ownSheets()) {
-      for (const rule of allRules(loadCSS(name))) {
+    for (const { name, css } of manifestSheets()) {
+      for (const rule of allRules(css)) {
         if (!/\b(input|textarea|select)\b/.test(rule.selector)) {
           continue;
         }
@@ -49,8 +39,8 @@ describe("text-wrap policy", () => {
   it("leaves `balance` alone", () => {
     // Not a blanket blessing: these existed, all on short static text. A new one needs its own reason.
     const found: string[] = [];
-    for (const name of ownSheets()) {
-      for (const rule of allRules(loadCSS(name))) {
+    for (const { name, css } of manifestSheets()) {
+      for (const rule of allRules(css)) {
         if (/text-wrap(-style)?\s*:\s*balance/.test(rule.body)) {
           found.push(name);
         }

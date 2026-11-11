@@ -17,7 +17,7 @@ import {
   IDEMPOTENCY_COMMAND_FIELD,
   type ActionErrorLike,
 } from "./index.js";
-import type { Action, ActionDefinition } from "@cplieger/ui/actions";
+import type { Action, ActionDefinition } from "@cplieger/reactive/actions";
 import { errorAbout } from "./subject.js";
 import { send as transportSend, type SendResult } from "../transport.js";
 import type { TabKind, TabSubject } from "../types.js";

@@ -1,6 +1,6 @@
 // The action framework's notifier, recording what production's `initActions` hands to
 // `actionNotice`: the staged subject and name, the sentence and the Retry button.
-import { configure, type NotifierRetry } from "@cplieger/ui/actions";
+import { configure, type NotifierRetry } from "@cplieger/reactive/actions";
 import { takeSubject } from "../actions/subject.js";
 
 export interface Notice {

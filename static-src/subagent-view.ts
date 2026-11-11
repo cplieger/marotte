@@ -7,7 +7,7 @@
 // say so; unopened chats fill in later.
 
 import { join } from "@cplieger/keyenc";
-import { el, effect, signal, touch } from "@cplieger/ui";
+import { el, effect, signal, touch } from "@cplieger/reactive";
 import { hasTab, openSubagentRefs, openSubagentTab } from "./tabs.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
 import { inFlight } from "./exec-view/status.js";

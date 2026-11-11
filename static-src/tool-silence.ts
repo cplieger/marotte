@@ -2,7 +2,7 @@
 // a card states about it. OBSERVABILITY, NEVER A BOUND: it cancels and orders nothing, and reads NO
 // entry `ts`. No per-call cancel either: ACP's cancel verb is turn-scoped.
 
-import { signal, touch } from "@cplieger/ui";
+import { signal, touch } from "@cplieger/reactive";
 import { toolCallSigKey } from "./store-signals.js";
 
 /** Past this much silence a card STATES the fact. Minutes, because the reader's

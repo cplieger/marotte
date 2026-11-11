@@ -1,7 +1,7 @@
 // The one add row of Settings (`.add-form`, 17-settings.css): labelled fields, then the submit button, then one error
 // line. Static rows are written in index.html in the same shape; built rows come from buildAddForm.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 
 type Field = HTMLInputElement | HTMLSelectElement;
 

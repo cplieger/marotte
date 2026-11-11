@@ -1,7 +1,7 @@
 // The inputs block of the launch-rule forms: one field per declared input, and for an event rule
 // the inputs its event sets, listed read-only.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 
 export interface RuleInputs {
   readonly el: HTMLElement;

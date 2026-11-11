@@ -2,9 +2,9 @@
 // opens listing each hook it counts once with its run count. hook-fold.ts decides which hooks fold and tool-group.ts
 // which header carries them; this draws them.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
-import { createPopover, type PopoverController } from "@cplieger/ui/popover";
+import { createPopover, type PopoverController } from "./legacy-ui/popover.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { iconEl } from "./icon-el.js";
 import { fileIcon, toolIcon } from "./icons.js";

@@ -531,7 +531,7 @@ describe("Ctrl-F overlay", () => {
 
 // Server-hit navigation: when the walker marked nothing but the server found the text, stepping reveals the hit.
 
-import { createDisclosure } from "@cplieger/ui/disclosure";
+import { createDisclosure } from "./legacy-ui/disclosure.js";
 import {
   autoCollapseGroup,
   buildToolGroupShell,

@@ -7,7 +7,7 @@
 // `isHttpMailtoOrRelativeURL` rejects `data:`. The carrier is a closed ```svg fence; a ```mermaid one is `mermaid-block.ts`'s, which draws
 // markup and so cannot share this inert path.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { extractLang } from "./code-blocks.js";
 
 /** Deliberately one member. */

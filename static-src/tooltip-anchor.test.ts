@@ -1,8 +1,7 @@
 // A TOOLTIP POINTS AT INK, NOT AT A HIT BOX. Three triggers are rows whose box is the layout's (the
 // turn footer's ledger button and changed-file rows, the git Changes rows), so a centred tip landed
 // ~250px from the ink. `data-tooltip-anchor` is DERIVED from the `attribute` option `tooltip.ts`
-// configures, so this measures through `./tooltip.js`. Requires a @cplieger/ui build whose
-// tooltip reads the mark; a failure with marks present means that pin is behind.
+// configures, so this measures through `./tooltip.js`.
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -19,7 +18,7 @@ vi.mock("./editor-openers.js", () => ({
 
 const { buildTurnFooter, updateTurnFooter } = await import("./fundamentals/turn-footer.js");
 const { initTooltips } = await import("./tooltip.js");
-const { _resetForTest } = await import("@cplieger/ui/tooltip");
+const { _resetForTest } = await import("./legacy-ui/tooltip.js");
 
 let style: HTMLStyleElement;
 let card: HTMLElement;

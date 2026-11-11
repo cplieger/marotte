@@ -1,6 +1,6 @@
 // The effort slider: a caption naming the dimension and live tier over a bar the knob slides inside; the caption is
 // why the knob carries no text. `model-switcher.ts` owns state and dispatch.
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { effortLabel } from "./effort.js";
 import type { SessionEffortLevel } from "./types.js";
 

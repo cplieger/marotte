@@ -69,10 +69,10 @@ document.body.innerHTML = `
   <span id="ctx-tools"></span>
   <span id="ctx-metering"></span>`;
 
-const { effect } = await import("@cplieger/ui");
+const { effect } = await import("@cplieger/reactive");
 const store = await import("./store.js");
 const { refreshContextUI } = await import("./context-ui.js");
-const { configure, configureTransport } = await import("@cplieger/ui/actions");
+const { configure, configureTransport } = await import("@cplieger/reactive/actions");
 const { initModelSwitcher } = await import("./model-switcher.js");
 
 // `configure({})` is the framework's silent mode; the transport must answer or the rollback undoes the optimistic write.

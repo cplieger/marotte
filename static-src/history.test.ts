@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { signal } from "@cplieger/ui";
+import { signal } from "@cplieger/reactive";
 import type { PageFind } from "./find-registry.js";
 import type * as ModHistory from "./history.js";
 import { ICON_TAB_RUN, outcomeIcon } from "./icons.js";
@@ -125,7 +125,7 @@ vi.mock("./tabs.js", () => ({
 }));
 // The pane switch pushes its URL; a forced switch (the router's) must not.
 vi.mock("./router.js", () => ({ pushRoute }));
-vi.mock("@cplieger/ui/skeleton", () => ({
+vi.mock("./legacy-ui/skeleton.js", () => ({
   // A spy: whether the arm fires is what the settled-empty case pins.
   skeletonTiming: skeletonTimingMock,
 }));

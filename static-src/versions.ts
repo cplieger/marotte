@@ -1,4 +1,4 @@
-import { signal, type Signal } from "@cplieger/ui";
+import { signal, type Signal } from "@cplieger/reactive";
 import { apiGet } from "./api-client.js";
 
 /** The wire shape of GET /api/version (internal/server/cli_handlers.go). Every

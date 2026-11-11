@@ -313,8 +313,8 @@
 }
 
 /* Branch switcher popover (singleton; placement + dismissal are
- * @cplieger/ui createPopover's — this is skin only). The z-index
- * intentionally overrides the library's --uip-z-popover default here, as the
+ * legacy-ui createPopover's — this is skin only). The z-index
+ * intentionally overrides legacy-ui's --uip-z-popover default here, as the
  * pane-local layering this panel needs is far lower. */
 .git-branch-popover {
   z-index: 100;

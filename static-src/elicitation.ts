@@ -1,7 +1,7 @@
 // Elicitation card: an MCP server requests structured input mid-tool-call (forwarded by kiro-cli over ACP), rendered
 // in the dock, which owns the queue and settle-once guard.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import type {
   ElicitationEnumOption,
   ElicitationNeededPayload,

@@ -5,7 +5,7 @@
    IS its scroller, where a box placed inside would scroll away from the toolbar
    button that opened it. */
 
-/* Both legs animate because the box is a @cplieger/ui popup: the library
+/* Both legs animate because the box is a legacy-ui popup: the widget
    un-hides the `[hidden]` attribute, forces a reflow and adds `is-open`; on
    close it swaps `is-open` for `is-leaving` and waits for this element's
    transitionend before `[hidden]` lands. INVARIANT: the RESTING state below is

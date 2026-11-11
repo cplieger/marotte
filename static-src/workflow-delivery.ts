@@ -1,5 +1,5 @@
-import { el } from "@cplieger/ui";
-import { createDisclosure, type DisclosureController } from "@cplieger/ui/disclosure";
+import { el } from "@cplieger/reactive";
+import { createDisclosure, type DisclosureController } from "./legacy-ui/disclosure.js";
 import { chevronEl } from "./chevron.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { iconEl } from "./icon-el.js";

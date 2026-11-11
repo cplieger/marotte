@@ -53,7 +53,7 @@ vi.mock("./actions/forge-list.js", async (importOriginal) => {
   };
 });
 
-import { resetActionFramework } from "@cplieger/ui/actions/testing";
+import { resetActionFramework } from "@cplieger/reactive/actions/testing";
 import { renderForgesPanel } from "./forge-auth.js";
 import { apiGetTyped } from "./api-client.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";

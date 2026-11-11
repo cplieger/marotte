@@ -204,7 +204,7 @@ describe("the vi.mock ratchet", () => {
     ].join("\n");
     const bare = `vi.mock("./store.js");`;
     const spy = `vi.mock("./chat.js", { spy: true });`;
-    const pkg = `vi.mock("@cplieger/ui/actions", () => ({ defineAction: vi.fn() }));`;
+    const pkg = `vi.mock("@cplieger/reactive/actions", () => ({ defineAction: vi.fn() }));`;
     const stringy = `vi.mock("./store.js", () => ({ label: "a ) ( ," }));`;
     // The DEFERRED verb reaches the identical defect.
     const deferred = `vi.doMock("./editor-openers.js", () => ({ openFile: noop }));`;

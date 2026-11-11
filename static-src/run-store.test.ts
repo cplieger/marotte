@@ -1,7 +1,7 @@
 // The run store: the fetch discipline, and the derived reads over one state.
 
 import { describe, it, expect, beforeEach, afterEach, onTestFinished, vi } from "vitest";
-import { effect, untracked } from "@cplieger/ui";
+import { effect, untracked } from "@cplieger/reactive";
 import { nodePathKey } from "./run-node-key.js";
 import type { RunNode, RunState } from "./run-store.js";
 import type { RunControlsResponse } from "./wire/types.gen.js";

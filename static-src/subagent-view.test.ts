@@ -3,7 +3,7 @@
 // outlives its DOM.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { signal, touch } from "@cplieger/ui";
+import { signal, touch } from "@cplieger/reactive";
 import type { Session } from "./types.js";
 import type { Entry, EntryToolCall } from "./wire/types.gen.js";
 import { makeToolCall } from "./__test-helpers__/model.js";

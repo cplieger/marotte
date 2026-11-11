@@ -1,4 +1,4 @@
-import type { TransportSendResult } from "@cplieger/ui/actions";
+import type { TransportSendResult } from "@cplieger/reactive/actions";
 import type { SendResult } from "../transport.js";
 
 /** A command's answer as `transportAction` reads it: the envelope's `reason` becomes the error code, so an

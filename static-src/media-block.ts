@@ -2,7 +2,7 @@
 // elements only. An image keeps the parser's `<img>` (utils-url.ts `rewriteServedImageSrc`), audio gets
 // `<audio controls>`, anything else a download link. `![](…)` is the one place the agent chose to present a file.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { isPlayableAudio, isViewableImage } from "./file-extensions.js";
 import { fileDownloadURL, servedPath } from "./utils-url.js";
 

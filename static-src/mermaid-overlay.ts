@@ -1,8 +1,8 @@
-// The full-screen view of one diagram: a @cplieger/ui modal over the whole viewport, where pele's zoom is on (pinch,
+// The full-screen view of one diagram: a legacy-ui modal over the whole viewport, where pele's zoom is on (pinch,
 // wheel, double-click, + / - / 0 / arrows). Built per open and disposed on close, so nothing outlives the view.
 
-import { el } from "@cplieger/ui";
-import { createModal } from "@cplieger/ui/modal";
+import { el } from "@cplieger/reactive";
+import { createModal } from "./legacy-ui/modal.js";
 import type { Mounted } from "pele/lazy";
 import { makeCopyButton } from "./code-blocks.js";
 import { iconEl } from "./icon-el.js";

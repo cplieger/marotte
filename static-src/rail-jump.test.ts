@@ -5,7 +5,7 @@
 // when `scrollend` is taken away — Chromium fires one for every programmatic scroll, so the timeout
 // path is unreachable until the event is suppressed.
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { KEY_ATTR } from "@cplieger/ui";
+import { KEY_ATTR } from "@cplieger/reactive";
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 import { makeSession } from "./__test-helpers__/model.js";
 import type * as ScrollModule from "./scroll.js";

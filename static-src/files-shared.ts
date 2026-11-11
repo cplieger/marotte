@@ -1,4 +1,4 @@
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { formatClock, formatShortDate } from "./locale-time.js";
 
 export const FB_ROW = "fb-row";

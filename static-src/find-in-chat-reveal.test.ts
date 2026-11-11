@@ -516,7 +516,8 @@ describe("find-in-chat's reveal under reduced motion", () => {
       }
       expect(currentHitEntry()).toBe("f2-e1");
 
-      foldToggle("f2").click();
+      // A click that does not bubble: one reaching the document is an outside click, which closes find.
+      foldToggle("f2").dispatchEvent(new MouseEvent("click"));
       // `content-visibility` flips to hidden only at the end of the fold's transition delay, with no mutation, so the
       // walk that drops the hit is the next streamed chunk's.
       await vi.waitFor(() => {

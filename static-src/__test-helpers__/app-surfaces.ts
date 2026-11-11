@@ -3,8 +3,8 @@
 // state and planted by hand in that module's shape where none does. `touch-targets.test.ts` walks them
 // on the coarse tier and `button-size.test.ts` classifies every control on them.
 import { expect } from "vitest";
-import { _resetForTest as resetAsk } from "@cplieger/ui/ask";
-import { _resetForTest as resetScrollLock } from "@cplieger/ui/modal";
+import { _resetForTest as resetAsk } from "../legacy-ui/ask.js";
+import { _resetForTest as resetScrollLock } from "../legacy-ui/modal.js";
 
 import indexHtml from "../../static/index.html?raw";
 import type { Pele } from "../mermaid-svg.js";

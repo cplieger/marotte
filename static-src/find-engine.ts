@@ -2,7 +2,7 @@
 // the editor's find. A leaf with no app imports, scrolling or overlay. Two modes: literal (the editor's), where each
 // occurrence is a step, and unit (the transcript's), where a step is one unit element holding every term.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { occurrences, prepare } from "./textsearch/scan.js";
 import { spans, type Matcher } from "./textsearch/query.js";
 

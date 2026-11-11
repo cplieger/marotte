@@ -3,10 +3,10 @@
 // honest count and the step list, and landing on a hit opens only that hit's containers (`search-reveal.ts`).
 
 import { foldedHookBadge, hookRowOf } from "./hook-badge.js";
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
-import { createPopup } from "@cplieger/ui/popup";
-import type { PopupController } from "@cplieger/ui/popup";
+import { createPopup } from "./legacy-ui/popup.js";
+import type { PopupController } from "./legacy-ui/popup.js";
 import { $, byId, maybeEl } from "./dom.js";
 import { jumpInFlight, jumpTo, onTranscriptMutate, shiftScroll } from "./scroll.js";
 import {

@@ -1,4 +1,4 @@
-// Public surface of the actions framework: re-exports @cplieger/ui/actions for local imports.
+// Public surface of the actions framework: re-exports @cplieger/reactive/actions for local imports.
 
 import {
   apiAction as libApiAction,
@@ -7,7 +7,7 @@ import {
   type Action,
   type ActionDefinition,
   type ApiActionDefinition,
-} from "@cplieger/ui/actions";
+} from "@cplieger/reactive/actions";
 import { captureSubjectNames } from "./subject.js";
 
 export function defineAction<TArgs, TResult, TOp = unknown>(
@@ -44,9 +44,9 @@ export {
   RETRY_STANDARD,
   IDEMPOTENCY_HEADER,
   IDEMPOTENCY_COMMAND_FIELD,
-} from "@cplieger/ui/actions";
+} from "@cplieger/reactive/actions";
 
-export { withTimeout, API_TIMEOUT_MS } from "@cplieger/ui/fetch";
+export { withTimeout, API_TIMEOUT_MS } from "@cplieger/reactive/fetch";
 
 export type {
   ActionContext,
@@ -55,4 +55,4 @@ export type {
   DebouncedDispatch,
   ApiErrorInfo,
   ApiErrorDecision,
-} from "@cplieger/ui/actions";
+} from "@cplieger/reactive/actions";

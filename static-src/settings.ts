@@ -15,7 +15,7 @@ import type { KiroDefault } from "./wire/types.gen.js";
 import { cacheTheme, cachedTheme } from "./device-view.js";
 import type { ThemeChoice } from "./device-view.js";
 import { applyThemeChoice, initThemeToggle } from "./theme.js";
-import type { ThemeStorage } from "@cplieger/ui/theme";
+import type { ThemeStorage } from "./legacy-ui/theme.js";
 import { initSettingsTabs } from "./settings-tabs.js";
 import type { IdentityVerdict } from "./identity.js";
 import { initPermissionsUI, initNativePolicyUI, loadNativePolicy } from "./permissions-ui.js";
@@ -26,7 +26,7 @@ import { apiGet } from "./api-client.js";
 import { loadVersions, getVersions } from "./versions.js";
 import { openConfigFile } from "./editor-openers.js";
 import { $, maybeEl } from "./dom.js";
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { initNotificationToggles } from "./settings-notifications.js";
 
 import { showSaving, showSaved, showError } from "./save-indicator.js";
@@ -151,7 +151,7 @@ function setTheme(choice: ThemeChoice): void {
   });
 }
 
-/** The adapter @cplieger/ui/theme's createTheme persists through. Built here and INJECTED
+/** The adapter legacy-ui/theme's createTheme persists through. Built here and INJECTED
  *  into initThemeToggle rather than reached from theme.ts, because this module already imports
  *  that one — a reverse import would be a cycle, and the direction is the reason this is a
  *  parameter. */

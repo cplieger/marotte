@@ -106,7 +106,7 @@ func TestCmdCreateChat_RepeatOpReturnsOneChat(t *testing.T) {
 }
 
 // TestCmdCreateChat_OpMintedPerAttemptMakesTwoChats pins the client's rule: `op_id` is a dispatch
-// ARGUMENT, never minted inside run(), because @cplieger/ui/actions' runWithRetry re-invokes run() per
+// ARGUMENT, never minted inside run(), because @cplieger/reactive/actions' runWithRetry re-invokes run() per
 // attempt while the idempotency key is computed once. A per-attempt id makes two chats, and no
 // server guard can prevent it.
 func TestCmdCreateChat_OpMintedPerAttemptMakesTwoChats(t *testing.T) {

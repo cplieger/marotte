@@ -3,7 +3,7 @@
 // Readers that act for the reader follow the active chat; readers of the transcript's DOM follow
 // the painted chat, so a switch's gap never sends to one chat while showing another.
 import { describe, it, expect, beforeEach } from "vitest";
-import { effect } from "@cplieger/ui";
+import { effect } from "@cplieger/reactive";
 import * as store from "./store.js";
 import { defaultUsage } from "./store.js";
 import type { Session } from "./types.js";

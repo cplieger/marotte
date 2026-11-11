@@ -64,7 +64,7 @@ function bumpMessageVersion(id: string): void {
 }
 
 vi.mock("./store.js", async () => {
-  const { signal } = await import("@cplieger/ui");
+  const { signal } = await import("@cplieger/reactive");
   return {
     // The pager effect's tracked read; a case bumps it through `bumpMessageVersion`.
     messagesVersionOf: (id: string) => {

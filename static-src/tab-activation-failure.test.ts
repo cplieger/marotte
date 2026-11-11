@@ -64,7 +64,7 @@ vi.mock("./api-client.js", async (importOriginal) => ({
   }))),
 }));
 
-import { ActionError } from "@cplieger/ui/actions";
+import { ActionError } from "@cplieger/reactive/actions";
 import { activateTab, closeTab, getActiveTabId, refreshActiveView } from "./tabs.js";
 import { tabServer, settleTabs } from "./__test-helpers__/tabs-server.js";
 import { fx, installSwitchSuite, strip } from "./__test-helpers__/tab-switch-suite.js";

@@ -1,7 +1,7 @@
 // The spec tab's page: one Kiro spec's documents, tasks.md as a live checklist.
 
-import { effect, el, signal, touch } from "@cplieger/ui";
-import { createDisclosure } from "@cplieger/ui/disclosure";
+import { effect, el, signal, touch } from "@cplieger/reactive";
+import { createDisclosure } from "./legacy-ui/disclosure.js";
 import { apiGetConditional } from "./api-client.js";
 import { BUS_USER_INPUT_ANSWERED, onBus, onSSE } from "./bus.js";
 import { sendPromptTo, type SendPromptResult } from "./chat-commands.js";

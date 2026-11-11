@@ -4,7 +4,7 @@
 // release is an effect over `chat-settled.ts`'s tracked reads, so the store is real.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { signal, touch } from "@cplieger/ui";
+import { signal, touch } from "@cplieger/reactive";
 import type { Session } from "./types.js";
 import type { NotificationPayload } from "./wire/types.gen.js";
 

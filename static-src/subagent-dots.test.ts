@@ -5,7 +5,7 @@
 // The REAL store, seeded through `openTurn`/`appendEntry`, so production's version bump is tested.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { signal } from "@cplieger/ui";
+import { signal } from "@cplieger/reactive";
 import { appendEntry, defaultUsage, get, openTurn, setSessions } from "./store.js";
 import { toolResultID } from "./entry-ids.js";
 import { subagentRef } from "./tab-materialize.js";

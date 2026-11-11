@@ -1,4 +1,4 @@
-import { el, KEY_ATTR, reconcile } from "@cplieger/ui";
+import { el, KEY_ATTR, reconcile } from "@cplieger/reactive";
 import { apiGet } from "./api-client.js";
 import { ICON_STEP_NEXT, ICON_STEP_PREV } from "./icons.js";
 import { iconEl } from "./icon-el.js";

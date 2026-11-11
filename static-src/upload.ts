@@ -5,7 +5,7 @@ import { $ } from "./dom.js";
 import { hasErrorString } from "./actions/index.js";
 import { joinPath } from "./files-shared.js";
 
-export interface UploadOptions {
+interface UploadOptions {
   files: FileList;
   targetDir: string;
   /** Called on successful upload. Receives the resolved workspace paths

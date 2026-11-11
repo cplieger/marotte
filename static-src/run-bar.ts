@@ -3,10 +3,10 @@
 // list, outside the list's clip so its touch target can reach past the row, and ends with the batch
 // button at the box's top right; one run has no header and carries the button at its row's end.
 
-import { el, computed, effect, touch, untracked } from "@cplieger/ui";
+import { el, computed, effect, touch, untracked } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import { reconcile } from "./reconcile.js";
-import { announce } from "@cplieger/ui/announce";
+import { announce } from "./legacy-ui/announce.js";
 import { $, setAttr, setText } from "./dom.js";
 import { watchActiveId } from "./store.js";
 import {

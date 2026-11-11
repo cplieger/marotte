@@ -69,7 +69,7 @@ vi.mock("./search-popup.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   createSearchPopup: vi.fn(() => ({ open: vi.fn(), close: vi.fn(), toggle: vi.fn() })),
 }));
-vi.mock("@cplieger/ui/dialog", async (importOriginal) => ({
+vi.mock("./legacy-ui/dialog.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   createDialog: vi.fn(() => ({ open: vi.fn(), close: vi.fn() })),
 }));

@@ -3,8 +3,8 @@
 // question a step asks, notes, the steps in flight as rows, and one disclosure panel with the run's
 // inputs over Steps and Timeline. Names no source: controls and notes are the consumer's.
 
-import { el } from "@cplieger/ui";
-import { createDisclosure } from "@cplieger/ui/disclosure";
+import { el } from "@cplieger/reactive";
+import { createDisclosure } from "../legacy-ui/disclosure.js";
 import { attachClamp, releaseClamp } from "../clamp-text.js";
 import { chevronEl } from "../chevron.js";
 import { publishViewportHeight } from "../dock-ask.js";

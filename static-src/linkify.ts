@@ -1,7 +1,7 @@
 // `src/foo.ts:42` in rendered prose becomes a button opening the editor at that line. Any SKIP_TAGS ancestor skips a
 // text node (the streamer wraps a link label in a span); <a>/<button> skip since a control inside a control is broken.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { fileIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { FILE_EXTS } from "./file-extensions.js";

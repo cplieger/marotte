@@ -3,7 +3,7 @@
 // a row's click answers "let me look". Tint and glyph come from the shared
 // severity table (turn-severity.ts), never from a per-outcome rule here.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import { iconEl } from "../icon-el.js";
 import { breakdownItems, requestLine } from "../context-breakdown.js";

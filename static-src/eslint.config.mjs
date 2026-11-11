@@ -30,9 +30,10 @@ export default [
   },
   {
     // dom.ts owns page-wide lookups. The audit walkers are serialised into the page and may use
-    // only page globals (audit/walkers.ts), so they cannot import it.
+    // only page globals (audit/walkers.ts), so they cannot import it. legacy-ui/ is the moved widget
+    // library, kept as it shipped: its page-wide reads find dialogs, not marotte's surfaces.
     files: ["**/*.ts"],
-    ignores: ["dom.ts", "audit/**", "**/*.test.ts", "scripts/**"],
+    ignores: ["dom.ts", "audit/**", "legacy-ui/**", "**/*.test.ts", "scripts/**"],
     rules: {
       "no-restricted-syntax": [
         "error",

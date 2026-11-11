@@ -13,6 +13,7 @@ import type * as FilesPicker from "./files-picker.js";
 import type * as ApiClient from "./api-client.js";
 import type * as Transport from "./transport.js";
 import type * as Store from "./store.js";
+import type * as Skeleton from "./legacy-ui/skeleton.js";
 
 const h = vi.hoisted(() => {
   // A memoizing registry, so a row built into `$.fbList` is still there to click.
@@ -97,7 +98,8 @@ vi.mock("./api-client.js", async (importOriginal) => ({
   apiGet: vi.fn(),
   apiGetOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
 }));
-vi.mock("@cplieger/ui/skeleton", () => ({
+vi.mock("./legacy-ui/skeleton.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Skeleton>()),
   skeletonTiming: () => ({ cancel: vi.fn(), commit: (r: () => void) => r() }),
 }));
 vi.mock("./transport.js", async (importOriginal) => ({

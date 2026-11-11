@@ -41,7 +41,7 @@
      a full-viewport-width element every frame, on exactly the devices the mobile
      breakpoint serves; translateX is compositor-only. Safe because nothing inside
      the sidebar is `position: fixed` or anchor-positioned (popovers and menus are
-     hosted into <body> by @cplieger/ui), so the containing block a
+     hosted into <body> by legacy-ui), so the containing block a
      transform introduces repositions nothing. Re-check before moving a
      fixed-position surface INTO the sidebar. */
   [id="sidebar"] {

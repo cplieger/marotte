@@ -2,8 +2,8 @@
 // picker over `GET /api/sessions`. A chat row opens its chat or adopts it via `resume_session`; a run row opens the
 // read-only run view.
 
-import { el, signal, subscribe, effect } from "@cplieger/ui";
-import { skeletonTiming } from "@cplieger/ui/skeleton";
+import { el, signal, subscribe, effect } from "@cplieger/reactive";
+import { skeletonTiming } from "./legacy-ui/skeleton.js";
 import { $, maybeEl, queryAll } from "./dom.js";
 import {
   activeChatRef,

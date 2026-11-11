@@ -23,7 +23,7 @@ vi.mock("../run-store.js", () => ({
   }),
 }));
 
-import { configure, configureApi } from "@cplieger/ui/actions";
+import { configure, configureApi } from "@cplieger/reactive/actions";
 import { retryRun } from "./runs.js";
 import { configureSubjectNotice } from "./subject.js";
 import { error as toastError, success as toastSuccess } from "../toast.js";

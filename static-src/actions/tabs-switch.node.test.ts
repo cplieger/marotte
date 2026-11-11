@@ -8,8 +8,8 @@ import {
   configure,
   type ActionErrorLike,
   type NotifierRetry,
-} from "@cplieger/ui/actions";
-import { resetActionFramework } from "@cplieger/ui/actions/testing";
+} from "@cplieger/reactive/actions";
+import { resetActionFramework } from "@cplieger/reactive/actions/testing";
 
 import { defineSwitchCommand, switchRefusal, type SwitchArgs, type SwitchHooks } from "./tabs.js";
 

@@ -64,7 +64,7 @@ vi.mock("./api-client.js", async (importOriginal) => ({
   }))),
 }));
 
-import { ActionError } from "@cplieger/ui/actions";
+import { ActionError } from "@cplieger/reactive/actions";
 import { getActiveTabId, setSwitchBoundForTest } from "./tabs.js";
 import { fx, installSwitchSuite, strip } from "./__test-helpers__/tab-switch-suite.js";
 import { until } from "./__test-helpers__/until.js";

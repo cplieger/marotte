@@ -3,7 +3,7 @@
 // (`dock.ts`), which the consumer seats in its bottom bar. The page owns the selection between
 // them and one clock for all of them. It must name no source: a consumer hands it an `ExecRun`.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { attachClamp, releaseClampsIn } from "../clamp-text.js";
 import { ICON_TAB_RUN } from "../icons.js";
 import { buildAssistantBubble } from "../fundamentals/text-bubble.js";

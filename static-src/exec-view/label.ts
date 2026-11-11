@@ -1,7 +1,7 @@
 // The one writer of a node's label on every exec surface: the verbatim text, with its scope
 // qualifier in a span of its own so a bounded column can dim it and give it up first.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import type { ExecNode } from "./model.js";
 

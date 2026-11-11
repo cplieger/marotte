@@ -27,7 +27,7 @@ import { workspaceRoot } from "./workspace.js";
 import { buildEvent } from "./messages-events.js";
 import { releaseClampsIn } from "./clamp-text.js";
 import { releaseScrollableTablesIn } from "./table-scroll.js";
-import { effect, el, touch } from "@cplieger/ui";
+import { effect, el, touch } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import { coverHeld, registerParkReads, releaseCover } from "./transcript-cover.js";
 import { $ } from "./dom.js";

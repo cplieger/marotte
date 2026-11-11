@@ -1,4 +1,4 @@
-import { KEY_ATTR } from "@cplieger/ui";
+import { KEY_ATTR } from "@cplieger/reactive";
 import { describe, it, expect, beforeEach } from "vitest";
 
 import {
