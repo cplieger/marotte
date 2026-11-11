@@ -8,6 +8,7 @@ import { initPromptInput, sendComposer, setSendState } from "./prompt-input.js";
 import { createDictation, type Dictation } from "./dictation.js";
 import { ICON_MIC, ICON_SEND } from "./icons.js";
 import { setActive, setSessions } from "./store.js";
+import { setComposerValue, writeComposerSilently } from "./composer-value.js";
 import { BUS_TAB_CHANGED, emitBus } from "./bus.js";
 import type { RunView, Session } from "./types.js";
 import { fakeSpeech, settle } from "./__test-helpers__/fake-speech.js";
@@ -45,6 +46,25 @@ function session(run?: RunView): Session {
     thinking: false,
     working_label: "Thinking",
     ...(run === undefined ? {} : { run }),
+  };
+}
+
+/** `s` with one turn whose prompt is `text`, so ArrowUp recalls it. */
+function withPrompt(s: Session, text: string): Session {
+  const entry = {
+    id: "t0-open",
+    turn: "t0",
+    lane: "",
+    kind: "turn_open" as const,
+    payload: { source: "prompt" as const, n: 1, prompt: { id: "p0", text } },
+    seq: 0,
+    ts: 0,
+  };
+  return {
+    ...s,
+    turns: new Map([["t0", { entries: [entry], openEntries: new Map() }]]),
+    turn_order: ["t0"],
+    turn_count: 1,
   };
 }
 
@@ -826,25 +846,17 @@ describe("a press's face lasts only as long as the press (rule 3)", () => {
 });
 
 describe("where focus goes when dictation ends (rule 9)", () => {
-  /** Each way a session ends: where focus goes under a finger, the box's value after, and what was sent. */
+  /** Each way a session ends, the box's value after it, and what it sent. */
   const ENDS: readonly (readonly [
     name: string,
-    focus: "the box" | "the button",
     end: () => Promise<void> | void,
     value: string,
     sent: readonly string[],
   ])[] = [
-    ["typing", "the box", () => userEvent.keyboard("x "), "hellox ", []],
-    [
-      "a paste",
-      "the box",
-      () => void document.execCommand("insertText", false, "x "),
-      "hellox ",
-      [],
-    ],
+    ["typing", () => userEvent.keyboard("x "), "hellox ", []],
+    ["a paste", () => void document.execCommand("insertText", false, "x "), "hellox ", []],
     [
       "Stop",
-      "the button",
       () => {
         sendBtn().click();
         speech.last().finish();
@@ -854,7 +866,6 @@ describe("where focus goes when dictation ends (rule 9)", () => {
     ],
     [
       "Escape",
-      "the button",
       () => {
         press("Escape");
         speech.last().finish();
@@ -862,24 +873,31 @@ describe("where focus goes when dictation ends (rule 9)", () => {
       "hello",
       [],
     ],
-    ["the browser's end", "the button", () => speech.last().finish(), "hello", []],
-    ["an engine error", "the button", () => speech.last().fail("bad-grammar"), "hello", []],
-    ["a page hide", "the button", hide, "hello", []],
-    ["a send", "the button", sendComposer, "", ["hello"]],
+    ["the browser's end", () => speech.last().finish(), "hello", []],
+    ["an engine error", () => speech.last().fail("bad-grammar"), "hello", []],
+    ["a page hide", hide, "hello", []],
+    ["a send", sendComposer, "", ["hello"]],
     [
       "a tab switch",
-      "the button",
       () => emitBus(BUS_TAB_CHANGED, { to: "__files__", kind: "files" }),
       "hello",
       [],
     ],
+    ["a chat switch", () => setActive("c2"), "hello", []],
     [
       "the error face",
-      "the button",
       () => setSendState({ kind: "error", reason: "The agent is starting." }),
       "hello",
       [],
     ],
+    ["a history recall", () => void press("ArrowUp", {}), "an earlier prompt", []],
+    [
+      "a write that announces itself (a quote, a slash command)",
+      () => setComposerValue("> q\n"),
+      "> q\n",
+      [],
+    ],
+    ["a silent write (a draft restore)", () => writeComposerSilently("a draft"), "a draft", []],
   ];
 
   function hide(): void {
@@ -891,33 +909,92 @@ describe("where focus goes when dictation ends (rule 9)", () => {
     }
   }
 
-  /** Dictate from a focused button, as a tap or a click focuses it, and hear one phrase. */
+  /** Dictate from a focused button, as a tap or a click focuses it, and hear one phrase, with one earlier prompt
+   *  in the chat's history and a second chat to switch to. */
   async function dictateHello(): Promise<void> {
+    setSessions([withPrompt(session(), "an earlier prompt"), { ...session(), id: "c2" }]);
+    setActive(CHAT);
     sendBtn().focus();
     await startFrom(sendBtn());
     speech.last().hear(["hello", true]);
     expect(document.activeElement).toBe(input());
   }
 
-  it.each(ENDS)("under a finger, %s leaves focus in %s", async (_, focus, end, value, sent) => {
-    await underFinger(async () => {
-      await dictateHello();
-      await end();
-      expect(document.activeElement).toBe(focus === "the box" ? input() : sendBtn());
-      expect(input().hasAttribute("inputmode")).toBe(false);
-      expect(dictation.listening.value).toBe(false);
-      expect(input().value).toBe(value);
-      expect(submitted).toEqual(sent);
-    });
-  });
-
-  it.each(ENDS)("with a mouse, %s keeps focus in the box", async (_, _focus, end, value, sent) => {
-    await dictateHello();
-    await end();
+  /** The end leaves focus in the box, never on a button, and the reader's next Space types there. */
+  async function expectBoxKeepsFocus(value: string, sent: readonly string[]): Promise<void> {
     expect(document.activeElement).toBe(input());
     expect(dictation.listening.value).toBe(false);
     expect(input().value).toBe(value);
     expect(submitted).toEqual(sent);
+    speech.last().hear(["hello", true], ["late", true]);
+    expect(input().value, "a late result after the end").toBe(value);
+    await userEvent.keyboard(" ");
+    expect(input().value).toBe(`${value} `);
+    expect(submitted, "a Space after the end").toEqual(sent);
+    expect(dictation.listening.value, "a Space after the end").toBe(false);
+  }
+
+  it.each(ENDS)("under a finger, %s leaves focus in the box", async (_, end, value, sent) => {
+    await underFinger(async () => {
+      await dictateHello();
+      await end();
+      expect(input().hasAttribute("inputmode")).toBe(false);
+      await expectBoxKeepsFocus(value, sent);
+    });
+  });
+
+  it.each(ENDS)("with a mouse, %s leaves focus in the box", async (_, end, value, sent) => {
+    await dictateHello();
+    await end();
+    await expectBoxKeepsFocus(value, sent);
+  });
+
+  it.each([
+    ["under a finger", underFinger],
+    ["with a mouse", (body: () => Promise<void>) => body()],
+  ] as const)(
+    "%s, the browser's end with focus on the button moves it to the box",
+    async (_, tier) => {
+      await tier(async () => {
+        await dictateHello();
+        sendBtn().focus();
+        speech.last().finish();
+        await expectBoxKeepsFocus("hello", []);
+      });
+    },
+  );
+
+  it("leaves focus the reader moved elsewhere on the page where it is", async () => {
+    const other = document.createElement("input");
+    document.body.append(other);
+    try {
+      await dictateHello();
+      other.focus();
+      speech.last().finish();
+      expect(document.activeElement).toBe(other);
+    } finally {
+      other.remove();
+    }
+  });
+
+  it.each([
+    ["under a finger", underFinger],
+    ["with a mouse", (body: () => Promise<void>) => body()],
+  ] as const)("%s, a disabled box ends it with focus on no button", async (_, tier) => {
+    await tier(async () => {
+      await dictateHello();
+      input().disabled = true;
+      await settle();
+      try {
+        expect(dictation.listening.value).toBe(false);
+        expect([sendBtn(), midTurn()]).not.toContain(document.activeElement);
+        await userEvent.keyboard(" ");
+        expect(submitted).toEqual([]);
+      } finally {
+        input().disabled = false;
+        await settle();
+      }
+    });
   });
 });
 

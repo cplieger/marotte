@@ -143,9 +143,8 @@ interface Session {
   after: string;
   /** The phrase heard while focus was outside the box, written when it comes back. */
   pending: string | null;
-  /** Under a finger: the box's own `inputmode`, put away while the session keeps the box focused, and where focus
-   *  goes back when it ends (null: it stays in the box). */
-  keyboard: { readonly mode: string | null; readonly returnTo: HTMLElement | null } | null;
+  /** Under a finger: the box's own `inputmode`, put away while the session keeps the box focused. */
+  keyboard: { readonly mode: string | null } | null;
 }
 
 /** `cloud`: whether audio is known to go to the vendor's service, which the notice says. */
@@ -172,19 +171,6 @@ function isRefused(code: string): code is Refusal {
 
 /** Codes that end a session with nothing to report: silence, or our own abort. */
 const QUIET = new Set(["no-speech", "aborted"]);
-
-/** Where focus goes when a session that put the keyboard away ends: an edit of the box keeps it in the box, so the
- *  reader's next key never lands on the slot button; every other end returns it where the press took it from. */
-const FOCUS_AFTER = {
-  /** Typing, a paste, any write of the box that is not dictation's own. */
-  edit: "box",
-  /** Stop, Escape, the browser's end, an error or a refusal. */
-  ended: "press",
-  /** A send, a tab or chat switch, a page hide, a disabled or read-only box, the error face. */
-  away: "press",
-} as const satisfies Record<string, "box" | "press">;
-
-type End = keyof typeof FOCUS_AFTER;
 
 /** How long `install()` runs before the downloading toast shows: `available()` masks an installed pack as
  *  downloadable until this origin installs it, and that install resolves at once (Web Speech API, "Download Masking"). */
@@ -218,15 +204,15 @@ class Controller implements Dictation {
     new MutationObserver(() => {
       this.syncWritable();
     }).observe(box, { attributes: true, attributeFilter: ["disabled", "readonly"] });
-    // The reader's edit or a clear (`setComposerValue`): the draft the waiting words were said into is gone.
+    // The reader's edit: the draft the waiting words were said into is gone.
     box.addEventListener("input", () => {
       if (!this.writing) {
-        this.end("edit", true);
+        this.drop();
       }
     });
     box.addEventListener("pointerdown", () => {
       if (this.s !== null) {
-        this.giveKeyboardBack(this.s, "box");
+        this.giveKeyboardBack(this.s);
       }
     });
     box.addEventListener("focusin", () => {
@@ -265,7 +251,7 @@ class Controller implements Dictation {
     const s = this.s;
     if (s?.listening === true) {
       if (s.rec === null) {
-        this.halt(s, "ended");
+        this.halt(s);
         return;
       }
       s.rec.stop();
@@ -279,15 +265,15 @@ class Controller implements Dictation {
   }
 
   stop(): void {
-    this.end("away", false);
+    this.end(false);
   }
 
   drop(): void {
-    this.end("away", true);
+    this.end(true);
   }
 
   /** `dropWords`: the words not yet in the box go too. */
-  private end(why: End, dropWords: boolean): void {
+  private end(dropWords: boolean): void {
     if (dropWords) {
       this.late = null;
     }
@@ -298,7 +284,7 @@ class Controller implements Dictation {
     if (dropWords) {
       s.pending = null;
     }
-    this.halt(s, why);
+    this.halt(s);
   }
 
   private syncWritable(): void {
@@ -313,30 +299,20 @@ class Controller implements Dictation {
   private focusBox(s: Session): void {
     const box = this.box;
     if (touchComposer()) {
-      const active = document.activeElement;
-      s.keyboard = {
-        mode: box.getAttribute("inputmode"),
-        returnTo: active instanceof HTMLElement && active !== box ? active : null,
-      };
+      s.keyboard = { mode: box.getAttribute("inputmode") };
       box.inputMode = "none";
     }
     box.focus();
   }
 
-  /** "press" first moves focus back where the press took it from, so restoring the mode raises no keyboard. */
-  private giveKeyboardBack(s: Session, to: (typeof FOCUS_AFTER)[End]): void {
+  /** Leaves focus where it is; prompt-input.ts `focusAfterDictation` owns where it goes when a session ends. */
+  private giveKeyboardBack(s: Session): void {
     const k = s.keyboard;
     if (k === null) {
       return;
     }
     s.keyboard = null;
     const box = this.box;
-    if (to === "press" && k.returnTo !== null && document.activeElement === box) {
-      k.returnTo.focus();
-      if (document.activeElement === box) {
-        box.blur();
-      }
-    }
     if (k.mode === null) {
       box.removeAttribute("inputmode");
     } else {
@@ -344,12 +320,12 @@ class Controller implements Dictation {
     }
   }
 
-  private halt(s: Session, why: End): void {
+  private halt(s: Session): void {
     s.accepting = false;
     s.rec?.abort();
     this.retire(s);
     this.unlisten(s);
-    this.giveKeyboardBack(s, FOCUS_AFTER[why]);
+    this.giveKeyboardBack(s);
   }
 
   /** The session's results stop landing; a phrase still waiting for focus lands on the box's next `focusin`. */
@@ -398,7 +374,7 @@ class Controller implements Dictation {
       } else {
         this.refuse(engine);
       }
-      this.halt(s, "ended");
+      this.halt(s);
       return;
     }
     const rec = new this.Rec();
@@ -418,7 +394,7 @@ class Controller implements Dictation {
       } else {
         errorToast("Dictation could not start.");
       }
-      this.halt(s, "ended");
+      this.halt(s);
     }
   }
 
@@ -469,8 +445,8 @@ class Controller implements Dictation {
     if (there === "unavailable") {
       return "language-not-supported";
     }
-    // An installed language pack serves even a processLocally false request (https://issues.chromium.org/issues/521896368),
-    // so only "available" says the audio goes to the cloud.
+    // An installed language pack may serve a processLocally false request (https://issues.chromium.org/issues/521896368),
+    // so the notice may overstate.
     return { local: false, cloud: there === "available" };
   }
 
@@ -509,13 +485,13 @@ class Controller implements Dictation {
       } else {
         errorToast("Dictation stopped: the speech service did not answer.");
       }
-      this.halt(s, "ended");
+      this.halt(s);
     });
     rec.addEventListener("end", () => {
       s.accepting = false;
       this.retire(s);
       this.unlisten(s);
-      this.giveKeyboardBack(s, FOCUS_AFTER.ended);
+      this.giveKeyboardBack(s);
     });
   }
 
@@ -542,7 +518,7 @@ class Controller implements Dictation {
     if (box.value !== (s.written === "" ? a.base : s.after)) {
       s.pending = null;
       if (this.s === s) {
-        this.halt(s, "away");
+        this.halt(s);
       }
       return;
     }

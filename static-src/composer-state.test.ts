@@ -305,7 +305,7 @@ describe("flushing a pending save", () => {
     // The textarea is a display surface: ArrowUp shows a submitted prompt without an `input` event, so the map is the draft.
     restoreComposerState("c1");
     type("the real draft");
-    input().value = "a prompt from the history"; // silent, like setInputValue
+    input().value = "a prompt from the history"; // silent, like recallComposerValue
     mockPending.mockReturnValue(true);
     flushComposerDraft();
     expect(mockFlush).toHaveBeenCalledWith({ chatID: "c1", text: "the real draft" });

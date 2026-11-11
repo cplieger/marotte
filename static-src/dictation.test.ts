@@ -424,7 +424,7 @@ describe("where the words go (rule 9)", () => {
         expect(box.value).toBe("before hello world after");
         d.toggle();
         speech.last().finish();
-        expect(document.activeElement, "focus goes back to the button").toBe(btn);
+        expect(document.activeElement, "focus stays in the box").toBe(box);
         expect(box.hasAttribute("inputmode")).toBe(false);
         box.focus();
         document.execCommand("undo");
@@ -444,7 +444,7 @@ describe("where the words go (rule 9)", () => {
         speech.last().fail("no-speech");
         speech.last().finish();
         expect(box.getAttribute("inputmode")).toBe("text");
-        expect(document.activeElement).toBe(btn);
+        expect(document.activeElement).toBe(box);
       } finally {
         btn.remove();
       }
@@ -478,6 +478,34 @@ describe("where the words go (rule 9)", () => {
         speech.last().finish();
         expect(box.hasAttribute("inputmode")).toBe(false);
         expect(document.activeElement).toBe(box);
+      } finally {
+        btn.remove();
+      }
+    });
+
+    it.each([
+      [
+        "a refusal",
+        () => fakeSpeech({ startThrows: new DOMException("blocked", "NotAllowedError") }),
+      ],
+      [
+        "a declined install",
+        () =>
+          fakeSpeech({
+            cloud: null,
+            available: () => Promise.resolve("downloadable"),
+            install: () => Promise.resolve(false),
+          }),
+      ],
+    ])("leaves focus in the box after %s, with the keyboard given back", async (_, make) => {
+      const btn = pressFrom();
+      try {
+        const d = createDictation(make().platform, box);
+        d.toggle();
+        await settle();
+        expect(d.listening.value).toBe(false);
+        expect(document.activeElement).toBe(box);
+        expect(box.hasAttribute("inputmode")).toBe(false);
       } finally {
         btn.remove();
       }

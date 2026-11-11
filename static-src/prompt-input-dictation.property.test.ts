@@ -2,9 +2,10 @@
 // context menu, right and middle presses, keys held with auto-repeat, a press of the other kind inside either, clicks
 // with no press of their own), interleaved with everything that repaints them mid-press (the engine ending, results,
 // focus moves, the turn starting or ending, typing, sends), never act on a face they did not begin on, and words
-// heard before a send or a clear never reach the box after it.
+// heard before a send or a clear never reach the box after it. Under a finger or a mouse, a Space typed right after
+// a session ends never sends, cancels or dictates.
 
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import fc from "fast-check";
 import { effect, signal } from "@cplieger/ui";
 import { initPromptInput, sendComposer, setSendState } from "./prompt-input.js";
@@ -54,7 +55,13 @@ interface Click {
   readonly detail: 0 | 1;
 }
 
-type Step = World | Gesture | Click;
+/** A live session's end, then a Space typed wherever focus is, as the browser delivers it. */
+interface EndThenSpace {
+  readonly k: "endThenSpace";
+  readonly how: "finish" | "fail" | "escape" | "hide";
+}
+
+type Step = World | Gesture | Click | EndThenSpace;
 
 /** What the reader saw on the button when the press began. */
 type Began = "send" | "cancel" | "start" | "stop";
@@ -443,6 +450,50 @@ async function press(
   return { face, clicked: !aborted(g) };
 }
 
+function hidePage(): void {
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+  try {
+    document.dispatchEvent(new Event("visibilitychange"));
+  } finally {
+    delete (document as { visibilityState?: unknown }).visibilityState;
+  }
+}
+
+async function endThenSpace(e: EndThenSpace): Promise<void> {
+  if (!dictation.listening.peek()) {
+    return;
+  }
+  const rec = speech.made.at(-1);
+  const before = counts();
+  switch (e.how) {
+    case "finish":
+      rec?.finish();
+      break;
+    case "fail":
+      rec?.fail("bad-grammar");
+      break;
+    case "escape":
+      key("keydown", "Escape");
+      key("keyup", "Escape");
+      rec?.finish();
+      break;
+    case "hide":
+      hidePage();
+      break;
+  }
+  await flush();
+  expect(dictation.listening.peek(), `${e.how} ended the session`).toBe(false);
+  const target = document.activeElement;
+  const down = key("keydown", " ");
+  key("keyup", " ");
+  if (target instanceof HTMLButtonElement && !down.defaultPrevented) {
+    click(target, 0);
+  }
+  await flush();
+  const done = did(before, { submitted: 0, cancelled: 0, starts: 0, made: 0 });
+  expect(done, `a Space after ${e.how} did ${done.join(", ")}`).toEqual([]);
+}
+
 async function clickOnly(c: Click): Promise<Began | null> {
   const btn = button(c.slot);
   const face = began(btn);
@@ -512,10 +563,16 @@ const clickStep: fc.Arbitrary<Click> = fc.record({
   detail: fc.constantFrom<0 | 1>(0, 1),
 });
 
+const endStep: fc.Arbitrary<EndThenSpace> = fc.record({
+  k: fc.constant("endThenSpace" as const),
+  how: fc.constantFrom("finish" as const, "fail" as const, "escape" as const, "hide" as const),
+});
+
 const step: fc.Arbitrary<Step> = fc.oneof(
   { arbitrary: gesture, weight: 3 },
   { arbitrary: clickStep, weight: 1 },
   { arbitrary: world, weight: 2 },
+  { arbitrary: endStep, weight: 1 },
 );
 
 async function reset(): Promise<void> {
@@ -583,32 +640,74 @@ const enterInsideMouseOnStop: readonly Step[] = [
   },
 ];
 
+/** Dictation started from a focused Send, then the browser ends it and the reader types a Space. */
+const endFromFocusedButton: readonly Step[] = [
+  { k: "focusButton", slot: "main" },
+  {
+    k: "gesture",
+    slot: "main",
+    input: "pointer",
+    count: 1,
+    end: "click",
+    gaps: quiet(),
+    inner: "none",
+  },
+  { k: "begin" },
+  { k: "result", text: "hello", final: true },
+  { k: "endThenSpace", how: "finish" },
+];
+
 describe("a press on the composer's buttons (rule 3)", () => {
+  afterAll(() => {
+    document.documentElement.removeAttribute("data-pointer");
+  });
+
   it("never sends or steers from Dictate or Stop, never dictates from Send or Cancel, and Stop only stops", async () => {
     await fc.assert(
-      fc.asyncProperty(fc.array(step, { minLength: 1, maxLength: 8 }), async (steps) => {
-        await reset();
-        for (const s of steps) {
-          if (s.k !== "gesture" && s.k !== "click") {
-            await apply(s);
-            continue;
+      fc.asyncProperty(
+        fc.boolean(),
+        fc.array(step, { minLength: 1, maxLength: 8 }),
+        async (finger, steps) => {
+          await reset();
+          if (finger) {
+            document.documentElement.setAttribute("data-pointer", "coarse");
+          } else {
+            document.documentElement.removeAttribute("data-pointer");
           }
-          const before = counts();
-          byInner = { submitted: 0, cancelled: 0, starts: 0, made: 0 };
-          const { face, clicked } =
-            s.k === "gesture" ? await press(s) : { face: await clickOnly(s), clicked: true };
-          expectNoStaleWords();
-          if (face === null) {
-            continue;
+          for (const s of steps) {
+            if (s.k === "endThenSpace") {
+              await endThenSpace(s);
+              continue;
+            }
+            if (s.k !== "gesture" && s.k !== "click") {
+              await apply(s);
+              continue;
+            }
+            const before = counts();
+            byInner = { submitted: 0, cancelled: 0, starts: 0, made: 0 };
+            const { face, clicked } =
+              s.k === "gesture" ? await press(s) : { face: await clickOnly(s), clicked: true };
+            expectNoStaleWords();
+            if (face === null) {
+              continue;
+            }
+            const done = did(before);
+            expect(
+              clicked ? MAY[face] : [],
+              `a ${s.k} that began on ${face} did ${done.join(", ")}`,
+            ).toEqual(expect.arrayContaining(done));
           }
-          const done = did(before);
-          expect(
-            clicked ? MAY[face] : [],
-            `a ${s.k} that began on ${face} did ${done.join(", ")}`,
-          ).toEqual(expect.arrayContaining(done));
-        }
-      }),
-      { numRuns: 300, examples: [[spaceThenHeldEnter], [enterInsideMouseOnStop]] },
+        },
+      ),
+      {
+        numRuns: 300,
+        examples: [
+          [false, spaceThenHeldEnter],
+          [false, enterInsideMouseOnStop],
+          [true, endFromFocusedButton],
+          [false, endFromFocusedButton],
+        ],
+      },
     );
   });
 });

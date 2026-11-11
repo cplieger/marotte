@@ -17,7 +17,14 @@ import { NO_DICTATION, type Dictation } from "./dictation.js";
 import { pressOwner, type Act } from "./send-press.js";
 import { iconEl } from "./icon-el.js";
 import { collapseAll } from "./pill-expand.js";
-import { composerText, isSendable, setComposerValue, syncComposerText } from "./composer-value.js";
+import {
+  composerText,
+  isSendable,
+  onComposerWrite,
+  recallComposerValue,
+  setComposerValue,
+  syncComposerText,
+} from "./composer-value.js";
 import { touchComposer, wireTouchComposer } from "./composer-touch.js";
 import { flushComposerDraft, restoreRefusedEdit } from "./composer-state.js";
 import { continueList } from "./list-continue.js";
@@ -220,10 +227,10 @@ class PromptInputController {
 
   /** ONE method for both keys that end cycling (Escape, ArrowDown off the newest prompt), because
    *  exitCycling() zeroes `draft`: read after the exit it is "". */
-  private restoreDraft(el: HTMLTextAreaElement): void {
+  private restoreDraft(): void {
     const saved = this.draft;
     this.exitCycling();
-    this.setInputValue(el, saved);
+    recallComposerValue(saved);
   }
 
   /** Whether this keystroke belongs to an IME composition, so Enter must reach the browser and
@@ -286,15 +293,6 @@ class PromptInputController {
       return false;
     }
     return !el.value.slice(pos).includes("\n");
-  }
-
-  /** Show a value in the box WITHOUT announcing it: cycling is navigation, so a displayed prompt
-   *  is a preview and `draft` still holds the typed text. An `input` event would leave the cycle
-   *  and be recorded as the new draft. Written as one edit, so Ctrl+Z takes a recalled prompt
-   *  back. */
-  private setInputValue(el: HTMLTextAreaElement, v: string): void {
-    applyEdit(el, { start: 0, end: el.value.length, text: v, caret: v.length }, { silent: true });
-    syncComposerText();
   }
 
   /** `hidden`, not opacity, so a hidden one leaves the tab order and the accessibility tree. */
@@ -407,6 +405,15 @@ class PromptInputController {
     window.addEventListener("blur", () => {
       this.press({ k: "windowblur" });
     });
+  }
+
+  /** A session's end puts focus in the box from a slot button, whose face may now send or steer on the reader's next
+   *  Space, or from nowhere; focus the reader moved elsewhere on the page stays there. */
+  private focusAfterDictation(): void {
+    const at = document.activeElement;
+    if (at === null || at === document.body || this.slotOf(at) !== null) {
+      $.promptInput.focus();
+    }
   }
 
   /** Escape leaves dictation ahead of Cancel, so a keyboard reader keeps the turn. */
@@ -533,6 +540,9 @@ class PromptInputController {
     this.onEditLast = onEditLast;
     this.staged = staged;
     this.dictation = dictation;
+    onComposerWrite(() => {
+      dictation.drop();
+    });
     const midTurn = byId<HTMLButtonElement>("midturn-send-btn");
     this.midTurn = midTurn;
     this.wirePresses([$.sendBtn, midTurn]);
@@ -579,6 +589,14 @@ class PromptInputController {
       touch(dictation.ready);
       touch(dictation.listening);
       this.applyFaces();
+    });
+    let listened = false;
+    effect(() => {
+      const listening = dictation.listening.value;
+      if (listened && !listening) {
+        this.focusAfterDictation();
+      }
+      listened = listening;
     });
 
     form.addEventListener("submit", (e: Event) => {
@@ -677,26 +695,26 @@ class PromptInputController {
         this.idx = next;
         e.preventDefault();
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        this.setInputValue(input, prompts[this.idx]!);
+        recallComposerValue(prompts[this.idx]!);
         return;
       }
 
       if (e.key === "ArrowDown" && bare && this.cursorOnLastLine(input) && this.idx !== -1) {
         e.preventDefault();
         if (this.idx === 0) {
-          this.restoreDraft(input);
+          this.restoreDraft();
           return;
         }
         this.idx -= 1;
         const prompts = this.userPrompts();
-        this.setInputValue(input, prompts[this.idx] ?? "");
+        recallComposerValue(prompts[this.idx] ?? "");
         return;
       }
 
       if (e.key === "Escape" && this.idx !== -1) {
         e.preventDefault();
         e.stopPropagation();
-        this.restoreDraft(input);
+        this.restoreDraft();
         return;
       }
 

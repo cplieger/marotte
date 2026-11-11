@@ -4,27 +4,63 @@
 
 import { signal, type ReadonlySignal } from "@cplieger/reactive";
 import { $ } from "./dom.js";
+import { applyEdit } from "./text-edit.js";
 
 const text = signal("");
 
+let beforeWrite: () => void = () => undefined;
+
+/** `fn` runs ahead of every programmatic write of the box: dictation ends its session there, as for the reader's
+ *  own edit. */
+export function onComposerWrite(fn: () => void): void {
+  beforeWrite = fn;
+}
+
 /** The composer's text, current after every write as long as each writer goes through this module: an `input`
- *  event reaches `syncComposerText` through the listener prompt-input.ts wires, and `writeComposerSilently` syncs
- *  itself. A bare `.value` assignment leaves it stale. */
+ *  event reaches `syncComposerText` through the listener prompt-input.ts wires, and `write` syncs the silent ones.
+ *  A bare `.value` assignment leaves it stale. */
 export const composerText: ReadonlySignal<string> = text;
+
+/** Every programmatic write of the box. `announce` fires a bubbling `input` event, as a keystroke does; `recall`
+ *  writes one undo step with none. */
+function write(v: string, how: "announce" | "silent" | "recall"): void {
+  beforeWrite();
+  const box = $.promptInput;
+  switch (how) {
+    case "announce":
+      box.value = v;
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+      return;
+    case "silent":
+      box.value = v;
+      break;
+    case "recall":
+      applyEdit(
+        box,
+        { start: 0, end: box.value.length, text: v, caret: v.length },
+        { silent: true },
+      );
+      break;
+  }
+  syncComposerText();
+}
 
 /** Write the composer's value and announce it, so every listener on the box
  *  sees the change whoever made it. */
 export function setComposerValue(v: string): void {
-  const input = $.promptInput;
-  input.value = v;
-  input.dispatchEvent(new Event("input", { bubbles: true }));
+  write(v, "announce");
 }
 
 /** Write the composer's value with no `input` event: the draft layer's own restores and seeds, which must not be
  *  recorded as typing. */
 export function writeComposerSilently(v: string): void {
-  $.promptInput.value = v;
-  syncComposerText();
+  write(v, "silent");
+}
+
+/** Show `v` in the box as one undo step with no `input` event: history recall is navigation, so the draft layer
+ *  must not record a recalled prompt as typing, and Ctrl+Z takes it back. */
+export function recallComposerValue(v: string): void {
+  write(v, "recall");
 }
 
 /** Re-read the box into `composerText`. */
