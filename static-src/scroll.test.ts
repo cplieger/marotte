@@ -3798,6 +3798,40 @@ describe("onAttach", () => {
   });
 });
 
+// A pin left to the view's first content delivery moves the scroller by the whole transcript inside the resize loop,
+// onto rows the near lead never laid out; Gecko then lays them out mid-loop and reports a ResizeObserver loop.
+describe("a fresh Following view's restore", () => {
+  beforeEach(realLayoutReset);
+  afterEach(() => {
+    scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
+  });
+
+  it("lands on the live edge in the restore's own task, leaving the first delivery nothing to write", async () => {
+    const wrap = realScroller();
+    const view = document.createElement("div");
+    for (let i = 0; i < 30; i++) {
+      const row = document.createElement("div");
+      row.style.cssText = "height:100px;";
+      view.appendChild(row);
+    }
+    messagesEl.replaceChildren(view);
+
+    scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
+    const inTask = wrap.scrollTop;
+    const later = recordWrites(wrap);
+    await land();
+
+    // 30 rows of 100px in a 400px scrollport: the end is 2600.
+    expect({ inTask, later, state: scroll.readingState() }).toEqual({
+      inTask: 2600,
+      later: [],
+      state: "following",
+    });
+  });
+});
+
 describe("readingLineOffset", () => {
   it("is a third of the scrollport, from its top", () => {
     const s = fakeScroller({ scrollHeight: 3000, clientHeight: 900, scrollTop: 0 });
