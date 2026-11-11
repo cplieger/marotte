@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"syscall"
 
-	"github.com/cplieger/go/health"
+	"github.com/cplieger/go/health/v2"
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/httpreply"
@@ -484,11 +484,6 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 // healthzPath is the health route: no login, method gated to GET and HEAD.
 const healthzPath = "/healthz"
 
-// verdict is a health.Signal fixed for one request.
-type verdict bool
-
-func (v verdict) Healthy() bool { return bool(v) }
-
 // handleHealth answers 200 {"status":"ok"}, or 503 {"status":"unhealthy","reasons":[...]}
 // listing every standing fault: not serving (startup or drain), the kiro-cli install verdict,
 // then sign-in. runtime-health.ts reads reasons[0], so that order is a client contract.
@@ -505,11 +500,12 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	authOK := s.authUnavailable == nil || !s.authUnavailable()
-	checks := []health.Check{{Signal: verdict(s.ready.Load()), Reason: "starting up or shutting down"}}
+	serving := s.ready.Load()
+	checks := []health.Check{{Signal: health.SignalFunc(func() bool { return serving }), Reason: "starting up or shutting down"}}
 	for _, reason := range []string{reasonInstalling, reasonRetrying, reasonUnavailable, reasonSettings} {
-		checks = append(checks, health.Check{Signal: verdict(kiroFault != reason), Reason: reason})
+		checks = append(checks, health.Check{Signal: health.SignalFunc(func() bool { return kiroFault != reason }), Reason: reason})
 	}
-	checks = append(checks, health.Check{Signal: verdict(authOK), Reason: reasonSignIn})
+	checks = append(checks, health.Check{Signal: health.SignalFunc(func() bool { return authOK }), Reason: reasonSignIn})
 	health.CheckHandler(checks...).ServeHTTP(w, r)
 }
 
