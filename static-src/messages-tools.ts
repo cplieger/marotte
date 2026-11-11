@@ -638,6 +638,7 @@ function applyStatusUpdate(card: HTMLDivElement, status: ToolStatus): void {
     mcp: null,
     // From the DOM on this path: applyOutcome reads dataset.denied, and a disclosed claim was written at build.
     disclosed: null,
+    loaded: null,
     denial: null,
   });
   refreshToolDisclosure(card);

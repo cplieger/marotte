@@ -2,6 +2,7 @@
 // glyphs. Everything draws in `currentColor`.
 
 import type { ToolKind } from "./types.js";
+import type { LoadedResource, LoadedType } from "./tool-schema.js";
 import { extToIconKey } from "./file-extensions.js";
 import { ICON_MASK_ID } from "./icon-mask.js";
 
@@ -395,9 +396,33 @@ const ICON_BY_TOOL_NAME: ReadonlyMap<string, string> = new Map([
   ["disclose_context", ICON_TOOL_READ],
 ]);
 
-/** Pick the glyph for a tool call from the identity the server named: the built-in's own glyph, else its kind's,
- *  else the wrench for a tool marotte does not know. */
-export function toolIcon(info: { readonly kind: ToolKind; readonly toolName: string }): string {
+/** What a load draws per thing it loaded: an MCP tool its plug, a built-in tool the wrench, a document the library
+ *  `disclose_context` draws for the same job. */
+const ICON_BY_LOADED: Readonly<Record<LoadedType, string>> = {
+  mcp: ICON_TOOL_MCP,
+  tool: ICON_TOOL_FALLBACK,
+  skill: ICON_TOOL_READ,
+  steering: ICON_TOOL_READ,
+  overview: ICON_TOOL_READ,
+  unknown: ICON_TOOL_FALLBACK,
+};
+
+/** A load's glyph: the one its loads share, else the wrench. */
+function loadedIcon(loaded: readonly LoadedResource[]): string {
+  const [first, ...rest] = loaded.map((r) => ICON_BY_LOADED[r.type]);
+  return first !== undefined && rest.every((g) => g === first) ? first : ICON_TOOL_FALLBACK;
+}
+
+/** Pick the glyph for a tool call from the identity the server named: what a load loaded, else the built-in's own
+ *  glyph, else its kind's, else the wrench for a tool marotte does not know. */
+export function toolIcon(info: {
+  readonly kind: ToolKind;
+  readonly toolName: string;
+  readonly loaded?: readonly LoadedResource[] | null;
+}): string {
+  if (info.loaded !== undefined && info.loaded !== null) {
+    return loadedIcon(info.loaded);
+  }
   return ICON_BY_TOOL_NAME.get(info.toolName) ?? ICON_BY_KIND[info.kind] ?? ICON_TOOL_FALLBACK; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
 }
 

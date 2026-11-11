@@ -242,6 +242,7 @@ const ROW_RENDER_INFO: ToolRenderInfo = {
   diffSources: null,
   mcp: null,
   disclosed: null,
+  loaded: null,
   denial: null,
 };
 

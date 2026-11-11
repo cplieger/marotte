@@ -26,11 +26,12 @@ import { createDisclosure, type DisclosureController } from "./legacy-ui/disclos
 import {
   renderInfoFor,
   disclosedClaim,
+  loadedClaim,
   formatMCPToolName,
   commandTitle,
   toolTitleText,
   toolDepth1,
-  hasDepth1,
+  cardDepth1,
   isToolActive,
   isToolDone,
   type ToolRenderInfo,
@@ -54,16 +55,18 @@ function renderInfoOf(opts: BuildToolCardOpts): ToolRenderInfo {
 /** Build a tool-call element. Does not append it to the DOM. */
 export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   const info = renderInfoOf(opts);
-  const depth1 = toolDepth1(info.kind);
-  const withToggle = hasDepth1(info.kind);
+  const depth1 = cardDepth1(info);
+  const withToggle = depth1 !== "none";
   const shellTitle = commandTitle(opts.title, opts.kind, opts.input);
-  // A disclose_context call names its DOCUMENT, not the tool that fetched it.
+  // A disclose_context or load call names what it loaded, not the tool that fetched it.
   const displayTitle =
     info.disclosed !== null
       ? disclosedClaim(info.disclosed)
-      : info.mcp !== null
-        ? formatMCPToolName(info.mcp.tool_name)
-        : (shellTitle ?? toolTitleText(opts.title));
+      : info.loaded !== null
+        ? loadedClaim(info.loaded)
+        : info.mcp !== null
+          ? formatMCPToolName(info.mcp.tool_name)
+          : (shellTitle ?? toolTitleText(opts.title));
 
   const node = el("div", { className: `tool-call tool-depth1-${depth1}` }) as HTMLDivElement;
   node.dataset["kind"] = info.kind;
@@ -148,6 +151,7 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     // `detailsBody`'s fetch reads, so no chevron sits over a region that can never fill.
     if (
       opts.denial !== undefined ||
+      info.loaded !== null ||
       (opts.live && opts.input !== undefined) ||
       (opts.output !== undefined && opts.output.trim() !== "") ||
       (bulkChatID(opts) !== null && DEFERRED_PARTS.some((part) => part.reveals(deferred)))
@@ -730,7 +734,8 @@ function detailsBody(node: HTMLDivElement, ctx: DeferredCtx): () => void {
       opts.live && opts.input !== undefined
         ? `<pre class="tool-input">${escText(JSON.stringify(opts.input, null, 2))}</pre>`
         : "";
-    const head = denialBlock(opts.denial ?? heldDenials.get(node)) + inputBlock;
+    const head =
+      denialBlock(opts.denial ?? heldDenials.get(node)) + loadedBlock(ctx.info) + inputBlock;
     if (head !== "") {
       details.insertAdjacentHTML("afterbegin", head);
     }
@@ -751,6 +756,15 @@ function detailsBody(node: HTMLDivElement, ctx: DeferredCtx): () => void {
       }
     });
   };
+}
+
+/** The ids a load call loaded, one per line, as the call sent them. */
+function loadedBlock(info: ToolRenderInfo): string {
+  if (info.loaded === null) {
+    return "";
+  }
+  const rows = info.loaded.map((r) => `<li><code>${escText(r.id)}</code></li>`).join("");
+  return `<ul class="tool-loaded">${rows}</ul>`;
 }
 
 /** Cards whose details region `detailsBody` has filled. */

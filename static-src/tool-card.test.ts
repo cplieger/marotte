@@ -1997,3 +1997,71 @@ describe("an MCP card is built from the server's identity", () => {
     expect(toolCardOptsFor(makeToolCall({ mcp }), false).mcp).toEqual(mcp);
   });
 });
+
+// The user, 2026-11-05: "why is "tool load" using a magnifying glass (search icon). why not a
+// tool icon. in this case it loaded agent mail {"id": "tool::agent-mail::fetch_inbox"}". The
+// id's prefix says what loaded; the card names it and draws that thing's glyph.
+describe("a tool_load or load_resource card names what it loaded", () => {
+  type Glyph = "mcp" | "tool" | "read";
+  const cases: { id: string; title: string; glyph: Glyph }[] = [
+    { id: "tool::agent-mail::fetch_inbox", title: "Loaded agent-mail fetch_inbox", glyph: "mcp" },
+    { id: "tool::inspect_workflow", title: "Loaded tool: inspect_workflow", glyph: "tool" },
+    { id: "skill::land", title: "Loaded skill: land", glyph: "read" },
+    { id: "steering::code-style", title: "Loaded steering: code-style", glyph: "read" },
+    { id: "power::aws::overview", title: "Loaded power overview: aws", glyph: "read" },
+    { id: "power::aws::tool::docs::search_docs", title: "Loaded docs search_docs", glyph: "mcp" },
+    { id: "plugin::kit::skill::release", title: "Loaded skill: release", glyph: "read" },
+    { id: "plugin::kit::steering::style", title: "Loaded steering: style", glyph: "read" },
+  ];
+
+  async function glyphOf(g: Glyph): Promise<string> {
+    const { toolIcon } = await import("./icons.js");
+    const { iconEl } = await import("./icon-el.js");
+    const kind = g === "mcp" ? "mcp" : g === "read" ? "read" : "other";
+    return iconEl(toolIcon({ kind, toolName: "" })).outerHTML;
+  }
+
+  for (const tool of ["load_resource", "tool_load"]) {
+    for (const c of cases) {
+      it(`${tool} ${c.id}`, async () => {
+        const { buildToolCard } = await import("./tool-card.js");
+        const card = buildToolCard({
+          id: `load-${tool}-${c.id}`,
+          title: tool === "tool_load" ? "Tool Load" : "Load Resource",
+          kind: "other",
+          status: "completed",
+          toolName: tool,
+          input: { id: c.id },
+          output: "loaded",
+          live: false,
+        });
+        expect(card.dataset["title"]).toBe(c.title);
+        expect(card.dataset["kind"]).not.toBe("search");
+        expect(card.querySelector(".tool-icon")?.innerHTML).toBe(await glyphOf(c.glyph));
+        expect(card.querySelector(".tool-subtitle")).toBeNull();
+        // Opened, the card shows the id it loaded, not a search layout.
+        document.body.appendChild(card);
+        card.querySelector<HTMLElement>(".tool-disclosure")?.click();
+        const loaded = card.querySelector(".tool-loaded");
+        card.remove();
+        expect(card.dataset["depth1"]).toBe("load");
+        expect(loaded?.textContent).toContain(c.id);
+      });
+    }
+  }
+
+  it("names every id an older tool_load's tool_ids carried", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const card = buildToolCard({
+      id: "load-ids",
+      title: "Tool Load",
+      kind: "other",
+      status: "completed",
+      toolName: "tool_load",
+      input: { tool_ids: ["builtin::inspect_workflow", "tool::mailbox::reply_message"] },
+      live: false,
+    });
+    expect(card.dataset["title"]).toBe("Loaded tool: inspect_workflow, mailbox reply_message");
+    expect(card.querySelector(".tool-icon")?.innerHTML).toBe(await glyphOf("tool"));
+  });
+});

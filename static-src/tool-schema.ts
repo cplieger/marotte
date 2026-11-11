@@ -8,9 +8,10 @@ export type { ToolKind };
 /** What a tool card reveals when opened ("depth 1"), per KIND. `none` is claim-only (no
  *  toggle); `diff` is windowed to whole hunks; `output` is the first and last N lines;
  *  `search` per-file counts and first matches; `move` from -> to; `fetch` URL, status and
- *  body head; `mcp` server badge, input, output; `generic` the raw input/output block. */
+ *  body head; `mcp` server badge, input, output; `load` the ids a tool_load or
+ *  load_resource call loaded; `generic` the raw input/output block. */
 export type ToolDepth1 =
-  "none" | "diff" | "output" | "search" | "move" | "fetch" | "mcp" | "generic";
+  "none" | "diff" | "output" | "search" | "move" | "fetch" | "mcp" | "load" | "generic";
 
 /** Depth-1 content per kind; the Record type makes a new ToolKind without an entry a
  *  compile error. */
@@ -45,9 +46,10 @@ export function toolDepth1(kind: ToolKind): ToolDepth1 {
   return TOOL_DEPTH1[kind];
 }
 
-/** Whether a kind has anything to reveal; a card with no depth 1 gets no toggle. */
-export function hasDepth1(kind: ToolKind): boolean {
-  return TOOL_DEPTH1[kind] !== "none";
+/** What one call's card reveals: a load shows the ids it loaded, whatever its kind. A card
+ *  with no depth 1 gets no toggle. */
+export function cardDepth1(info: Pick<ToolRenderInfo, "kind" | "loaded">): ToolDepth1 {
+  return info.loaded !== null ? "load" : TOOL_DEPTH1[info.kind];
 }
 
 interface ToolProfile {
@@ -72,17 +74,12 @@ export interface ToolRenderInfo {
   mcp: MCPToolIdentity | null;
   /** The skill or steering doc a `disclose_context` call loaded, or null. */
   disclosed: ToolDisclosed | null;
+  /** What a `tool_load` or `load_resource` call loaded, or null for any other call. */
+  loaded: readonly LoadedResource[] | null;
   /** The policy verdict that refused this call, or null; the card then reads as a
    *  refusal, not a failure. */
   denial: ToolDenial | null;
 }
-
-/** Profiles for the built-in tools whose ACP kind is `other` but whose card reads as
- *  another kind, keyed on the server's `tool_name`. */
-const TOOL_PROFILES: ReadonlyMap<string, ToolProfile> = new Map<string, ToolProfile>([
-  ["tool_load", { kind: "search", writesFile: false }],
-  ["load_resource", { kind: "search", writesFile: false }],
-]);
 
 /** Profile keyed on the ACP kind. */
 const KIND_FALLBACK: ReadonlyMap<string, ToolProfile> = new Map<string, ToolProfile>([
@@ -125,16 +122,102 @@ export function isToolDone(s: ToolStatus): boolean {
   return s === "completed" || s === "failed" || s === "aborted";
 }
 
-/** Resolve the profile for a call: an MCP identity, else the server-named tool, else the ACP kind. */
-export function profileFor(
-  toolName: string,
-  kind: string,
-  mcp: MCPToolIdentity | null,
-): ToolProfile {
+/** Resolve the profile for a call: an MCP identity, else the ACP kind. */
+export function profileFor(kind: string, mcp: MCPToolIdentity | null): ToolProfile {
   if (mcp !== null) {
     return { kind: "mcp", writesFile: false };
   }
-  return TOOL_PROFILES.get(toolName) ?? KIND_FALLBACK.get(kind) ?? OTHER;
+  return KIND_FALLBACK.get(kind) ?? OTHER;
+}
+
+/** What one id a load named is: an MCP tool, a built-in tool, a skill, a steering doc, a
+ *  Power's overview, or an id outside KAS's grammar. */
+export type LoadedType = "mcp" | "tool" | "skill" | "steering" | "overview" | "unknown";
+
+/** One resource a `tool_load` or `load_resource` call loaded, read from KAS's resource id. */
+export interface LoadedResource {
+  /** The id as the call sent it. */
+  id: string;
+  type: LoadedType;
+  /** The tool, skill, document or Power name. */
+  name: string;
+  /** The MCP server an `mcp` resource belongs to, else "". */
+  server: string;
+}
+
+/** The built-in tools that load a resource by id: `tool_load`, and `load_resource`, which
+ *  replaces it and `disclose_context` under KAS's consolidate_disclosures experiment. */
+const LOAD_TOOLS: ReadonlySet<string> = new Set(["tool_load", "load_resource"]);
+
+/** Parse one KAS resource id: `tool::<server>::<tool>`, `tool::<name>`, the older
+ *  `builtin::<name>`, `skill::<name>`, `steering::<name>`, `power::<name>::overview`, and a
+ *  Power or plugin member, `<power|plugin>::<name>::` before one of the others. */
+function parseResourceID(id: string): LoadedResource {
+  const unknown: LoadedResource = { id, type: "unknown", name: id, server: "" };
+  let parts = id.split("::");
+  const pkg = parts[0];
+  if ((pkg === "power" || pkg === "plugin") && parts.length >= 3 && parts[1] !== "") {
+    if (pkg === "power" && parts.length === 3 && parts[2] === "overview") {
+      return { id, type: "overview", name: parts[1] ?? "", server: "" };
+    }
+    parts = parts.slice(2);
+  }
+  const [head, a = "", b] = parts;
+  if (parts.length === 3 && head === "tool" && a !== "" && b !== undefined && b !== "") {
+    return { id, type: "mcp", name: b, server: a };
+  }
+  if (parts.length !== 2 || a === "") {
+    return unknown;
+  }
+  switch (head) {
+    case "tool":
+    case "builtin":
+      return { id, type: "tool", name: a, server: "" };
+    case "skill":
+    case "steering":
+      return { id, type: head, name: a, server: "" };
+    default:
+      return unknown;
+  }
+}
+
+/** What a load call loaded, from its `id` or an older call's `tool_ids`; null for a call
+ *  that is not a load or names no id yet. */
+export function loadedResources(
+  toolName: string,
+  input: Record<string, unknown> | undefined,
+): readonly LoadedResource[] | null {
+  if (!LOAD_TOOLS.has(toolName) || input === undefined) {
+    return null;
+  }
+  const one = input["id"];
+  const many = input["tool_ids"];
+  const ids =
+    typeof one === "string"
+      ? [one]
+      : Array.isArray(many)
+        ? many.filter((v): v is string => typeof v === "string")
+        : [];
+  const real = ids.filter((id) => id !== "");
+  return real.length === 0 ? null : real.map(parseResourceID);
+}
+
+function loadedLabel(r: LoadedResource): string {
+  switch (r.type) {
+    case "mcp":
+      return `${r.server} ${r.name}`;
+    case "overview":
+      return `power overview: ${r.name}`;
+    case "unknown":
+      return r.id;
+    default:
+      return `${r.type}: ${r.name}`;
+  }
+}
+
+/** The claim line for a load: what it loaded, not the tool that loaded it. */
+export function loadedClaim(loaded: readonly LoadedResource[]): string {
+  return truncate(`Loaded ${loaded.map(loadedLabel).join(", ")}`, 120);
 }
 
 /** Format an MCP tool name for display: underscores become spaces. A server name stays
@@ -230,7 +313,7 @@ export function renderInfoFor(
 ): ToolRenderInfo {
   const mcp = meta?.mcp ?? null;
   const toolName = meta?.toolName ?? "";
-  const profile = profileFor(toolName, kind, mcp);
+  const profile = profileFor(kind, mcp);
   // A hook card carries no input; its file is the hook definition KAS named.
   const filePath = profile.kind === "hook" ? (meta?.sourcePath ?? "") : pickFilePath(input);
   const fileBasename = filePath !== "" ? (filePath.split("/").pop() ?? filePath) : "";
@@ -244,6 +327,7 @@ export function renderInfoFor(
     diffSources,
     mcp,
     disclosed: meta?.disclosed ?? null,
+    loaded: loadedResources(toolName, input),
     denial: meta?.denial ?? null,
   };
 }
