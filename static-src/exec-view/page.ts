@@ -54,6 +54,8 @@ interface ExecPageOpts {
    *  starts; a click holds until then, and a container click picks its newest step, so a step is
    *  always selected. Either way, a question that opens selects its step, as a click would. */
   follow?: "attention" | "newest";
+  /** Fired when the dock's panel, the page's one list of every step, opens or closes. */
+  onPanel?: (open: boolean) => void;
 }
 
 /** The results clamp: `.ev-r-text`'s stylesheet line count, the pre-layout character guess, and
@@ -110,6 +112,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     tree,
     timeline,
     select,
+    ...(opts.onPanel === undefined ? {} : { onPanel: opts.onPanel }),
     revealSteps: (scroller) => {
       if (current !== undefined) {
         tree.reveal(focusStep(current, selected), scroller);

@@ -117,7 +117,7 @@ import { runPendingAsks } from "./decision-dock.js";
 import { apiGetOrError } from "./api-client.js";
 import { beginStepMessage, recordStepSteerQueued } from "./run-step-steers.js";
 import { invalidateRun } from "./run-store.js";
-import { openDockPanel } from "./__test-helpers__/exec-dock.js";
+import { openRunDockPanel } from "./__test-helpers__/exec-dock.js";
 
 // The bar is mounted once per module, as in the app, so every case re-attaches the same elements.
 const form = document.createElement("form");
@@ -164,8 +164,8 @@ function composerInput(): HTMLTextAreaElement {
   return el;
 }
 
-function pick(workflowID: string, nodeID: string): void {
-  openDockPanel(document);
+async function pick(workflowID: string, nodeID: string): Promise<void> {
+  await openRunDockPanel(document);
   const row = document.querySelector<HTMLElement>(
     `.ev-row[data-path="${nodePathKey([workflowID, nodeID])}"] > :first-child`,
   );
@@ -291,7 +291,7 @@ describe("run view composer target", () => {
         "Send answer",
       );
       // A pick after the question opened holds.
-      pick(ASK, "plan");
+      await pick(ASK, "plan");
       invalidateRun(ASK);
       await vi.waitFor(() => {
         expect(document.querySelector(".ev-d-title")?.textContent).toBe("plan");
@@ -322,7 +322,7 @@ describe("run view composer target", () => {
         },
       } satisfies RunInspectReply;
       vi.mocked(apiGetOrError).mockImplementation((path: string) =>
-        path === `/api/runs/${LOADING}`
+        path.startsWith(`/api/runs/${LOADING}?`) || path === `/api/runs/${LOADING}`
           ? new Promise(() => undefined)
           : Promise.resolve({ ok: true, status: 200, data: m.reply.current, error: "" }),
       );
@@ -395,8 +395,8 @@ describe("run view refused Edit", () => {
     openRunView(ID, "nightly");
     showRun(m.opened.at(-1) ?? "");
     refreshRun(ID);
-    await vi.waitFor(() => {
-      pick(ID, "review");
+    await vi.waitFor(async () => {
+      await pick(ID, "review");
       expect(composerInput().placeholder).toBe("Message review\u2026");
     });
     recordStepSteerQueued(ID, nodePathKey([ID, "review"]), {
@@ -495,13 +495,13 @@ describe("run view refused Edit", () => {
     await showEditable();
     type("draft for review");
     const refused = await editRefusedLater();
-    pick(ID, "ship");
+    await pick(ID, "ship");
     type("use the fixture");
 
     await refused();
 
     expect(composerInput().value).toBe("use the fixture");
-    pick(ID, "review");
+    await pick(ID, "review");
     expect(composerInput().value).toBe("draft for review");
   });
 });

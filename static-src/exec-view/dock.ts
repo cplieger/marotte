@@ -62,6 +62,8 @@ interface ExecDockOpts {
    *  time the panel opens on Steps or Steps is picked while it is open, never on a repaint, so a
    *  reader scrolling the tree is never moved. */
   readonly revealSteps: (scroller: HTMLElement) => void;
+  /** Fired when the panel opens or closes. */
+  readonly onPanel?: (open: boolean) => void;
 }
 
 type Segment = "steps" | "timeline";
@@ -155,6 +157,8 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
   const panels = new Map<Segment, HTMLElement>();
   const content: Record<Segment, DockPane> = { steps: opts.tree, timeline: opts.timeline };
   const body = el("div", { className: "ev-dock-body" });
+  const waiting = el("p", { className: "list-empty", hidden: true }, "Loading every step\u2026");
+  body.append(waiting);
   for (const seg of SEGMENTS) {
     const glyph = iconEl(seg.icon);
     glyph.classList.add("seg-icon");
@@ -195,6 +199,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
 
   let active: Segment = "steps";
   let open = false;
+  let partial = false;
   const paintBar = initSegmentedBar(bar, {
     attr: "data-ev-seg",
     idPrefix: id,
@@ -216,10 +221,13 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
     seatPanes(open);
   }
 
-  /** A closed panel draws nothing: only the shown segment's pane is attached, and only while open. */
+  /** A closed panel draws nothing: only the shown segment's pane is attached, and only while open
+   *  on a whole run. */
   function seatPanes(seated: boolean): void {
+    const drawn = seated && !partial;
+    waiting.hidden = !seated || !partial;
     for (const seg of SEGMENTS) {
-      content[seg.id].attach(seated && seg.id === active ? body : null);
+      content[seg.id].attach(drawn && seg.id === active ? body : null);
     }
   }
   // Before the disclosure's own listener: its open tween measures the region's height first.
@@ -235,6 +243,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
     onToggle: (isOpen) => {
       open = isOpen;
       root.toggleAttribute("data-open", isOpen);
+      opts.onPanel?.(isOpen);
       const gen = ++closeGen;
       if (isOpen) {
         seatPanes(true);
@@ -432,6 +441,13 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
 
   return {
     paint(run, selected, extra) {
+      if ((run.partial === true) !== partial) {
+        partial = run.partial === true;
+        seatPanes(open);
+        if (!partial && open && active === "steps") {
+          reveal();
+        }
+      }
       setAttr(root, "data-state", run.state);
       summary.paint(run);
       paintAsk(run, selected);

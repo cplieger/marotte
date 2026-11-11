@@ -53,6 +53,7 @@ import {
   readRunUnlessOut,
   registerRunStateDemand,
   runStateAs,
+  runHoldsEveryPass,
   runChatID,
   runPlan,
   runStepEnds,
@@ -89,7 +90,18 @@ onViewHidden("run-view", () => {
   runViewShown.value = false;
   publishScope();
 });
-registerRunStateDemand((id) => id === shownRun && runViewShown.peek(), "tree");
+/** Whether the shown page's dock lists every step (its panel is open), the one part of the page
+ *  that draws earlier passes. */
+const dockPanelOpen = signal(false);
+registerRunStateDemand((id) => id === shownRun && runViewShown.peek(), "glance");
+// A door naming a step may name one of an earlier pass, which only the tree holds.
+registerRunStateDemand(
+  (id) =>
+    id === shownRun &&
+    runViewShown.peek() &&
+    (dockPanelOpen.peek() || focusRequest?.workflowID === id),
+  "tree",
+);
 
 /** Tell the page's content scope which run and step this view draws. A run leaving it stops
  *  receiving its step content, so its stamps and tails go stale and are released; a run entering
@@ -218,7 +230,7 @@ function installViewEffect(): void {
     }
     // One batch, so the pane and the dock lines run once after the page they read is drawn.
     batch(() => {
-      paint(id, runStateAs(id, "tree"));
+      paint(id, runStateAs(id, "glance"));
     });
     if (hiddenPageRun !== "") {
       const owed = hiddenPageRun === id;
@@ -529,6 +541,12 @@ function mountPage(
       pushStepTarget(workflowID, node);
     },
     follow: "newest",
+    onPanel: (open) => {
+      dockPanelOpen.value = open;
+      if (open) {
+        widenRun(workflowID);
+      }
+    },
   });
   page = built;
   pageRun = workflowID;
@@ -561,6 +579,7 @@ function mountPage(
 
 /** Release the page, its dock and its verbs. */
 function dropPage(): void {
+  dockPanelOpen.value = false;
   page?.dispose();
   page = undefined;
   pageRun = "";
@@ -929,6 +948,9 @@ function paint(workflowID: string, state: RunState | undefined): void {
     runStepEnds(workflowID),
     foldMemo,
   );
+  if (!runHoldsEveryPass(workflowID)) {
+    run.partial = true;
+  }
   const work = workNodes(run.nodes);
   // Before the render, whose repaint publishes the selection with them.
   runFlags = { live: run.live, paused: state.status === "paused" };

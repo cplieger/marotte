@@ -25,3 +25,22 @@ export async function settledOpen(scope: ParentNode): Promise<void> {
     });
   }
 }
+
+/** `openDockPanel` on a run tab, then wait for the whole run the open reads: until it lands the
+ *  panel lists no step. */
+export async function openRunDockPanel(
+  scope: ParentNode,
+  segment: "steps" | "timeline" = "steps",
+): Promise<void> {
+  openDockPanel(scope, segment);
+  for (let i = 0; i < 50; i++) {
+    const waiting = scope.querySelector<HTMLElement>(".ev-dock-body > .list-empty");
+    if (waiting === null || waiting.hidden) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      queueMicrotask(resolve);
+    });
+  }
+  throw new Error("the run dock's panel never drew the whole run");
+}

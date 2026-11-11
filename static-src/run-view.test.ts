@@ -301,7 +301,7 @@ import {
 // The REAL router: a zero-import leaf, so no mock, and taking the node from the PARSER rather than
 // a literal is what makes the fragment case below cover the
 import { parseRoute } from "./route-path.js";
-import { openDockPanel } from "./__test-helpers__/exec-dock.js";
+import { openDockPanel, openRunDockPanel } from "./__test-helpers__/exec-dock.js";
 import type { Entry } from "./types.js";
 
 /** Kept as a helper rather than inlined per case so a case reads as "this run offers these
@@ -820,8 +820,8 @@ function resultKeys(body: HTMLElement): (string | null)[] {
   return [...body.querySelectorAll(".ev-r-item-key")].map((n) => n.textContent);
 }
 
-function selectRow(body: HTMLElement, path: string): void {
-  openDockPanel(body);
+async function selectRow(body: HTMLElement, path: string): Promise<void> {
+  await openRunDockPanel(body);
   body.querySelector<HTMLElement>(`.ev-row[data-path="${path}"] > .ev-row-main`)?.click();
 }
 
@@ -1201,7 +1201,7 @@ describe("run view step results", () => {
     expect(body.querySelector(".ev-r-text")?.textContent).toContain("built it");
     expect(body.querySelector(".ev-r-text")?.textContent).not.toContain("reviewed it");
 
-    selectRow(body, "wf_1:review");
+    await selectRow(body, "wf_1:review");
     expect(body.querySelector(".ev-d-title")?.textContent).toBe("review");
     expect(body.querySelector(".ev-r-text")?.textContent).toContain("reviewed it");
     expect(body.querySelector(".ev-r-text")?.textContent).not.toContain("built it");
@@ -1565,7 +1565,7 @@ describe("run view structure", () => {
 
   it("renders control-flow containers as rows, not as an indent", async () => {
     const { body } = await paint(openRunView, "running", { root: looping });
-    openDockPanel(body);
+    await openRunDockPanel(body);
     const kinds = [...body.querySelectorAll(".ev-row")].map((r) => r.getAttribute("data-kind"));
     // The repeat is a row of its own, and its two steps are rows beneath it.
     expect(kinds).toEqual(["repeat", "step", "step"]);
@@ -1580,7 +1580,7 @@ describe("run view structure", () => {
         { nodeId: "fix-loop", maxIterations: 5, stopCondition: "verify.output contains PASS" },
       ],
     });
-    openDockPanel(body);
+    await openRunDockPanel(body);
     const sub = body.querySelector('.ev-row[data-kind="repeat"] .ev-sub')?.textContent ?? "";
     expect(sub).toContain("up to 5 passes");
     expect(sub).toContain("verify.output contains PASS");
@@ -1601,7 +1601,7 @@ describe("run view structure", () => {
         ],
       },
     });
-    openDockPanel(body);
+    await openRunDockPanel(body);
     expect(body.querySelector('.ev-row[data-kind="repeat"]')?.getAttribute("data-state")).toBe(
       "fail",
     );
@@ -1639,7 +1639,7 @@ describe("run view structure", () => {
         ],
       },
     });
-    openDockPanel(body, "timeline");
+    await openRunDockPanel(body, "timeline");
     const names = [...body.querySelectorAll(".ev-tl-name")].map((n) => n.textContent);
     expect(names).toEqual(["a", "b"]);
     // Overlapping steps overlap on screen, which is the whole point: `b` starts a quarter of the
@@ -1664,7 +1664,7 @@ describe("run view structure", () => {
         ],
       },
     });
-    openDockPanel(body);
+    await openRunDockPanel(body);
     const top = [...body.querySelectorAll<HTMLElement>(".ev-tree > .ev-row")];
     expect(top.map((r) => r.getAttribute("data-kind"))).toEqual(["repeat", "step"]);
     expect(top.map((r) => r.classList.contains("ev-group"))).toEqual([true, false]);
@@ -1695,7 +1695,7 @@ describe("run view structure", () => {
         ],
       },
     });
-    openDockPanel(body);
+    await openRunDockPanel(body);
     const row = (id: string): HTMLElement | null =>
       body.querySelector<HTMLElement>(`.ev-row[data-path$=":${id}"]`);
     const depthOf = (id: string): string => row(id)?.style.getPropertyValue("--ev-depth") ?? "";
@@ -1712,7 +1712,7 @@ describe("run view structure", () => {
   // change must not have given it one.
   it("leaves a step row non-collapsible", async () => {
     const { body } = await paint(openRunView, "running", { root: looping });
-    openDockPanel(body);
+    await openRunDockPanel(body);
     const steps = [...body.querySelectorAll<HTMLElement>('.ev-row[data-kind="step"]')];
     expect(steps).toHaveLength(2);
     for (const step of steps) {
@@ -1750,7 +1750,7 @@ describe("run view structure", () => {
 
   it("gives the top-level box a fold and a container inside it none", async () => {
     const { body } = await paint(openRunView, "running", { root: nested });
-    openDockPanel(body);
+    await openRunDockPanel(body);
     const row = (id: string): HTMLElement =>
       body.querySelector<HTMLElement>(`.ev-row[data-path$=":${id}"]`)!;
     const twistHidden = (id: string) =>
@@ -1770,7 +1770,7 @@ describe("run view structure", () => {
 
   it("still folds the box on its own twist, and the loop stays open under it", async () => {
     const { body } = await paint(openRunView, "running", { root: nested });
-    openDockPanel(body);
+    await openRunDockPanel(body);
     const box = body.querySelector<HTMLElement>('.ev-row[data-path$=":outer"]')!;
     const kidsOf = (row: HTMLElement): HTMLElement =>
       row.querySelector<HTMLElement>(":scope > .ev-kids")!;
@@ -1849,7 +1849,7 @@ describe("run view door focus", () => {
 
     // The reader moves in the tree, and a frame lands meanwhile — which is the render that carries
     // no focus.
-    openDockPanel(body);
+    await openRunDockPanel(body);
     body.querySelector<HTMLElement>('.ev-row[data-path="wf_1:lint"] > .ev-row-main')?.click();
     expect(selectedPath(body)).toBe("wf_1:lint");
     await invalidated(two);
@@ -2192,9 +2192,9 @@ describe("run view step transcripts", () => {
         },
       },
     });
-    selectRow(body, "wf_1:limited");
+    await selectRow(body, "wf_1:limited");
     await painted("wf_1:limited");
-    selectRow(body, "wf_1:handoff");
+    await selectRow(body, "wf_1:handoff");
     await painted("wf_1:handoff");
 
     expect(m.paint.get("wf_1:limited")?.closes).toEqual([
@@ -2323,7 +2323,7 @@ describe("a step's recorded grade", () => {
       close: { outcome: "completed", stop_reason_raw: "tool_use" },
     });
     const { body } = await paint(openRunView, "running", { root: root("completed"), stepEnds: {} });
-    selectRow(body, "wf_1:limited");
+    await selectRow(body, "wf_1:limited");
     await until(() => m.paint.has("wf_1:limited"));
     expect(m.paint.get("wf_1:limited")?.closes).toEqual(["completed/"]);
     expect(rowState(body, "wf_1:limited")).toBe("ok");
@@ -2341,7 +2341,7 @@ describe("a step's recorded grade", () => {
       close: { outcome: "completed", stop_reason_raw: "tool_use" },
     });
     const { body } = await paint(openRunView, "running", { root: root("completed"), stepEnds: {} });
-    selectRow(body, "wf_1:limited");
+    await selectRow(body, "wf_1:limited");
     await until(() => m.paint.has("wf_1:limited"));
 
     await rereadWith({});
@@ -2529,7 +2529,7 @@ describe("run view step reads", () => {
       expect(m.requested).toHaveLength(4);
       logStep("wf_1", "wf_1:back", "printed meanwhile", { live: true, attempt: 2 });
       const pick = async (path: string): Promise<void> => {
-        openDockPanel(body);
+        await openRunDockPanel(body);
         body.querySelector<HTMLElement>(`.ev-row[data-path="${path}"] > .ev-row-main`)?.click();
         for (let i = 0; i < 20; i++) {
           await Promise.resolve();
@@ -2601,7 +2601,7 @@ describe("run view step reads", () => {
       expect(m.requested).toEqual(["wf_1:left"]);
       await answer("wf_1:left", "unavailable");
       // A step that needs its own read, which its selection issues once.
-      openDockPanel(body);
+      await openRunDockPanel(body);
       body.querySelector<HTMLElement>('.ev-row[data-path="wf_1:next"] > .ev-row-main')?.click();
       for (let i = 0; i < 20; i++) {
         await Promise.resolve();
@@ -2622,7 +2622,7 @@ describe("run view step reads", () => {
 
     // The reader's own gesture. A row is an ordinary `treeitem` whose click selects it
     // (`exec-view/tree.ts`), so this is the real pin rather than a reach into state.
-    openDockPanel(body);
+    await openRunDockPanel(body);
     body.querySelector<HTMLElement>('.ev-row[data-path="wf_1:coder"] > .ev-row-main')?.click();
     await Promise.resolve();
     expect(m.requested).toEqual([]);
@@ -2687,7 +2687,7 @@ describe("run view step reads", () => {
 
     // The root sequence is the run's own header rather than a row, so `wf_1:loop` is the container
     // on screen.
-    openDockPanel(body);
+    await openRunDockPanel(body);
     const head = body.querySelector<HTMLElement>('.ev-row[data-path="wf_1:loop"] > .ev-row-main');
     expect(head).not.toBeNull();
     head?.click();
@@ -2859,7 +2859,7 @@ describe("showRun and refreshRun", () => {
 
     const reads = vi
       .mocked(apiGetOrError)
-      .mock.calls.filter(([path]) => path === "/api/runs/wf_refresh");
+      .mock.calls.filter(([path]) => path.split("?")[0] === "/api/runs/wf_refresh");
     expect(reads).toHaveLength(1);
   });
 });
@@ -2926,7 +2926,7 @@ describe("the page's scroll position", () => {
       ]),
     );
     vi.mocked(apiGetOrError).mockImplementation((path: string) => {
-      const data = replies.get(path);
+      const data = replies.get(path.split("?")[0] ?? path);
       return Promise.resolve(
         data === undefined
           ? { ok: false, status: 0, data: null, error: "" }

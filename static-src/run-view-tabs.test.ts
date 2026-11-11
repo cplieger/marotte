@@ -58,7 +58,7 @@ vi.mock("./api-client.js", async (importOriginal) => ({
   apiGetTyped: (await import("./__test-helpers__/tabs-server.js")).tabListRead(),
   apiGetTypedOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
   apiGetOrError: vi.fn((path: string) => {
-    const data = m.replies.get(path);
+    const data = m.replies.get(path.split("?")[0] ?? path);
     return Promise.resolve(
       data === undefined
         ? { ok: false, status: 404, data: null, error: "not found" }

@@ -364,6 +364,14 @@ function classifyRunNode(node: RawRunNode): RunNode {
   return out;
 }
 
+/** Whether a glance left any pass out: one that folded none is the whole tree. */
+function foldsPasses(node: RawRunNode | undefined): boolean {
+  return (
+    node !== undefined &&
+    (node.earlierPasses !== undefined || (node.children ?? []).some(foldsPasses))
+  );
+}
+
 /** A glance's `earlierPasses`, or undefined for a value of another shape. */
 function earlierPassesOf(raw: unknown): EarlierPasses | undefined {
   if (typeof raw !== "object" || raw === null) {
@@ -523,6 +531,15 @@ const SHAPE_RANK: Readonly<Record<RunShape, number>> = { header: 0, glance: 1, t
 
 function wider(a: RunShape, b: RunShape): boolean {
   return SHAPE_RANK[a] > SHAPE_RANK[b];
+}
+
+/** The runs whose held glance left a pass out. */
+const folded = new Set<string>();
+
+/** Whether the held state lists every pass of every repeat: a tree, or a glance that folded none. */
+export function runHoldsEveryPass(workflowID: string): boolean {
+  const held = bodies.get(workflowID);
+  return held === "tree" || (held === "glance" && !folded.has(workflowID));
 }
 
 function heldShape(workflowID: string): RunShape {
@@ -1110,6 +1127,11 @@ async function fetchRun(workflowID: string): Promise<void> {
       stepStarts.set(workflowID, starts);
       seedStepTails(workflowID, starts);
       bodies.set(workflowID, shape);
+      if (shape === "glance" && foldsPasses(d.state.root)) {
+        folded.add(workflowID);
+      } else {
+        folded.delete(workflowID);
+      }
       holdRev(workflowID, shape === "tree" ? d.rev : undefined, d.rev);
       landRead(workflowID, state, d);
       answered = true;
@@ -1464,6 +1486,7 @@ export function forgetRun(workflowID: string): void {
   revs.delete(workflowID);
   heldRevs.delete(workflowID);
   bodies.delete(workflowID);
+  folded.delete(workflowID);
   wholeOwed.delete(workflowID);
   cancelRunRetry(workflowID);
   plans.delete(workflowID);

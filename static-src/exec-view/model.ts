@@ -126,6 +126,9 @@ export interface ExecRun {
   focus?: string;
   /** Whether anything is still moving, so the page knows to run its clock. */
   live: boolean;
+  /** Whether the source left earlier passes out of `nodes` (a glance): the panes that list every
+   *  step wait for a whole run instead of drawing a part of it. */
+  partial?: boolean;
 }
 
 /** Every node, depth-first, in plan order. */
