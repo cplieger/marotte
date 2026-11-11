@@ -17,10 +17,10 @@ export interface AnchorScope {
 }
 
 /** Where a reader's text stands, by identity: elements best first, finest first, each with its signed top offset from
- *  the reading line. An element gone from the view is found again `up` parents above whatever element now matches
- *  `sel`, then down its `path` of child indices (null `sel`: the node itself is the identity). Nodes are held weakly,
- *  so a parked anchor keeps no discarded DOM alive. `takenTop` is the view's scroll offset (`viewOffset`) when the
- *  marks were measured. */
+ *  the scrollport's top, never the reading line, which a scrollport resize moves under still text. An element gone
+ *  from the view is found again `up` parents above whatever element now matches `sel`, then down its `path` of child
+ *  indices (null `sel`: the node itself is the identity). Nodes are held weakly, so a parked anchor keeps no
+ *  discarded DOM alive. `takenTop` is the view's scroll offset (`viewOffset`) when the marks were measured. */
 export interface ReadingAnchor {
   readonly marks: readonly {
     readonly node: WeakRef<Element>;
@@ -211,7 +211,7 @@ export function readingAnchor(
       return null;
     }
     const marks: ReadingAnchor["marks"][number][] = [];
-    const offset = (el: Element): number => el.getBoundingClientRect().top - line;
+    const offset = (el: Element): number => el.getBoundingClientRect().top - box.top;
     marks.push({ node: new WeakRef(row), ...identity(row), path: [], offset: offset(row) });
     const stamp = row.matches(ENTRY_STAMP) ? row : row.querySelector(ENTRY_STAMP);
     if (stamp !== null && stamp !== row) {
@@ -248,7 +248,7 @@ export function readingAnchor(
       node: new WeakRef(el),
       ...id,
       path,
-      offset: el.getBoundingClientRect().top - line,
+      offset: el.getBoundingClientRect().top - box.top,
     });
   };
   const byNode = { sel: null, up: 0 };
@@ -322,17 +322,17 @@ export function resolveAnchor(
 
 /** How far `anchor`'s text has moved down the screen from where it was taken (negative: up), or null when no mark
  *  has a box in the view. */
-export function lineDrift(scope: AnchorScope, anchor: ReadingAnchor): number | null {
+export function screenDrift(scope: AnchorScope, anchor: ReadingAnchor): number | null {
   const r = resolveAnchor(scope.view(), anchor);
   if (r === null) {
     return null;
   }
-  return r.el.getBoundingClientRect().top - lineAt(scope) - r.offset;
+  return r.el.getBoundingClientRect().top - scope.scroll.getBoundingClientRect().top - r.offset;
 }
 
 /** How far layout moved `anchor`'s text in content space since it was taken: a scroll of any origin moves the view
  *  and the text on screen by the same amount, so it cancels and only a size change above the text is left. */
 export function layoutDrift(scope: AnchorScope, anchor: ReadingAnchor): number | null {
-  const drift = lineDrift(scope, anchor);
+  const drift = screenDrift(scope, anchor);
   return drift === null ? null : drift + (viewOffset(scope) - anchor.takenTop);
 }

@@ -5,10 +5,10 @@ import { el } from "@cplieger/ui";
 import {
   ENTRY_STAMP,
   layoutDrift,
-  lineDrift,
   readingAnchor,
   readingLineOffset,
   resolveAnchor,
+  screenDrift,
   viewOffset,
   type AnchorScope,
   type ReadingAnchor,
@@ -798,7 +798,7 @@ export class ScrollController {
     const before = viewOffset(this.scope);
     this.holdAnchor();
     const a = this.anchor;
-    const drift = a === null ? null : lineDrift(this.scope, a);
+    const drift = a === null ? null : screenDrift(this.scope, a);
     const held = viewOffset(this.scope) !== before;
     if (drift === null) {
       return held;
