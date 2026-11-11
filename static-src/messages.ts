@@ -1234,8 +1234,9 @@ function paint(): void {
       resumeView(activeView, session);
     }
     if (isChatSwitch) {
-      // After the pass's last write: the restore's scroll write is the one layout the switch forces. In a finally, so
-      // a pass that throws never leaves the restore pending, which would turn every later hold off.
+      // After the pass's last write: the restore's saved position, and a Following view's pin, are the switch's only
+      // scroll writes, and the first lays out the one layout the switch forces. In a finally, so a pass that throws
+      // never leaves the restore pending, which would turn every later hold off.
       applyPendingRestore();
     }
     if (!passed) {

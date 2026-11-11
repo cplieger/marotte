@@ -289,8 +289,8 @@ type logPage struct {
 // tool-heavy turns reached 5.7 MB and a 178 to 343 ms client ingest.
 const pageBytes = 1 << 20
 
-// page reads the window (EntryLog.window) of at most `turns` whole turns and pageBytes of log, newest or below
-// `before`, with everything the transcript GET serves beside them. False for a chat with no header; a `before` the log does not
+// page reads the window (EntryLog.window) of at most `turns` whole turns, every turn after the newest within pageBytes
+// of log, newest or below `before`, with everything the transcript GET serves beside them. False for a chat with no header; a `before` the log does not
 // hold is an error the handler answers 400.
 // The registry (Live and the open tails) is read BEFORE the chat's lock: its writers take the store
 // lock inside their own, so the reverse order deadlocks. The stamps are read under the lock with

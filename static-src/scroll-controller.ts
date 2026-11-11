@@ -794,7 +794,7 @@ export class ScrollController {
       return false;
     }
     // Layout drift first, as a hold booked into `takenTop`: unbooked, the resize delivery after this frame's callbacks
-    // would read the same change as drift again and move the text twice. What the line still shows is the platform's.
+    // would read the same change as drift again and move the text twice. What drift is left is the platform's.
     const before = viewOffset(this.scope);
     this.holdAnchor();
     const a = this.anchor;
@@ -1156,9 +1156,10 @@ export class ScrollController {
     this.pendingRestore = handle;
   }
 
-  /** Land the attached view on its saved position, or a Following view on its follow position. Its scroll write is the
-   *  one layout it forces, so it runs after every DOM write of the task and every read here follows it; the attach
-   *  listeners run last, at the restored position. A no-op with none pending. */
+  /** Land the attached view on its saved position, or a Following view on its follow position. The saved position is
+   *  one scroll write and a Following view's pin a second, both after every DOM write of the task; the reads between
+   *  them find the layout the first write laid out. The attach listeners run last, at the restored position. A no-op
+   *  with none pending. */
   applyPendingRestore(): void {
     const handle = this.pendingRestore;
     if (handle === null) {

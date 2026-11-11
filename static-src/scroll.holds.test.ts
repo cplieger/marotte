@@ -390,7 +390,8 @@ describe("a clamp from the scrollport growing", () => {
 });
 
 describe("a scrollport resize in the frame a turn below the reader resizes", () => {
-  // The turn's observer delivers before the scrollport's, so its hold sees the reading line already moved.
+  // The turn's observer delivers before the scrollport's, and the hold measures from the scrollport's top, so the
+  // reading line's move is not drift.
   it.each([350, 500])(
     "leaves the text in place at a %ipx scrollport, with no write",
     async (port) => {
