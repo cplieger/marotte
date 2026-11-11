@@ -3,13 +3,13 @@
 // mishandles a native showModal() made inside its own beforetoggle, and a controller created
 // inside the beforetoggle of an open the page cancels.
 // Its property test leaves both cases out on these premises (`opensNativelyInToggle` and
-// `controlsCancelledOpen` in legacy-ui/dialog.property.test.ts).
+// `controlsCancelledOpen` in dialog.property.test.ts).
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const ROOT = import.meta.dirname;
+const ROOT = join(import.meta.dirname, "..");
 const SKIP_DIRS = new Set([
   "node_modules",
   "legacy-ui",

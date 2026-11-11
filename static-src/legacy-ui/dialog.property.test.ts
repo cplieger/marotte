@@ -405,8 +405,8 @@ function opensNativelyInToggle(c: Case, traceLength: number, kinds: readonly str
 
 /** A generated injection that created a controller from the opening beforetoggle of the dialog
  *  in a world that cancels every open, read as `opensNativelyInToggle` reads its hit. The engine
- *  mishandles it (the seed-419639567 case below); marotte has no beforetoggle listener, which
- *  `dialog-premises.node.test.ts` keeps true. */
+ *  mishandles it (the seed-419639567 case below); no marotte code outside legacy-ui listens for
+ *  beforetoggle, so nothing cancels an open, which `dialog-premises.node.test.ts` keeps true. */
 function controlsCancelledOpen(c: Case, traceLength: number, kinds: readonly string[]): boolean {
   return (
     c.cancelWorld &&
