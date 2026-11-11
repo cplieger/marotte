@@ -61,7 +61,7 @@ func readQuote(block []string) (promptPart, bool) {
 	if named {
 		from = 2
 	}
-	inner := block[min(from, len(block)-1) : len(block)-1]
+	inner := block[from : len(block)-1]
 	lines := make([]string, len(inner))
 	for i, l := range inner {
 		lines[i] = unquote(l)
