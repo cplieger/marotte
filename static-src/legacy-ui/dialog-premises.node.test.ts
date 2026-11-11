@@ -1,9 +1,9 @@
-// No marotte source outside legacy-ui calls the native showModal() or listens for beforetoggle:
-// a dialog opens through legacy-ui (createDialog, createModal, ask). legacy-ui's dialog engine
-// mishandles a native showModal() made inside its own beforetoggle, and a controller created
-// inside the beforetoggle of an open the page cancels.
-// Its property test leaves both cases out on these premises (`opensNativelyInToggle` and
-// `controlsCancelledOpen` in dialog.property.test.ts).
+// No marotte production module outside legacy-ui calls the native showModal() or listens for
+// beforetoggle: a dialog opens through legacy-ui (createDialog, createModal, ask). Tests and
+// __test-helpers__ are not scanned. legacy-ui's dialog engine mishandles a native showModal()
+// made inside its own beforetoggle, and a controller created inside the beforetoggle of an open
+// the page cancels. Its property test leaves both cases out on these premises
+// (`opensNativelyInToggle` and `controlsCancelledOpen` in dialog.property.test.ts).
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
@@ -45,14 +45,14 @@ const SHOW_MODAL = /\.showModal\s*\(/;
 const BEFORE_TOGGLE = /["'`]beforetoggle["'`]|\.onbeforetoggle\b/;
 
 describe("dialog premises", () => {
-  it("no marotte source outside legacy-ui calls showModal()", () => {
+  it("no marotte production module outside legacy-ui calls showModal()", () => {
     expect(
       matching(SHOW_MODAL),
       "open the dialog through legacy-ui's createDialog, createModal or ask instead",
     ).toEqual([]);
   });
 
-  it("no marotte source outside legacy-ui listens for beforetoggle", () => {
+  it("no marotte production module outside legacy-ui listens for beforetoggle", () => {
     expect(
       matching(BEFORE_TOGGLE),
       "legacy-ui's dialog engine mishandles a controller created in a cancelled open's beforetoggle",
