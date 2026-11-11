@@ -123,7 +123,15 @@ func TestChatLife_AwaitQuietWarnsOnceAndKeepsWaiting(t *testing.T) {
 		lc.awaitQuiet(t.Context(), 10*time.Millisecond)
 		close(returned)
 	}()
-	time.Sleep(60 * time.Millisecond)
+	// done() only after the WARN fired: a late goroutine otherwise sees the timer and the change ready together.
+	const stuck = "a closed chat's background work has not stopped"
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(logs.String(), stuck) {
+		if time.Now().After(deadline) {
+			t.Fatal("awaitQuiet logged no WARN while a sweep ran")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	select {
 	case <-returned:
 		t.Fatal("awaitQuiet returned while a sweep ran")
@@ -136,7 +144,7 @@ func TestChatLife_AwaitQuietWarnsOnceAndKeepsWaiting(t *testing.T) {
 		t.Fatal("awaitQuiet did not return at the last done")
 	}
 	out := logs.String()
-	if n := strings.Count(out, "a closed chat's background work has not stopped"); n != 1 {
+	if n := strings.Count(out, stuck); n != 1 {
 		t.Errorf("WARN logged %d times, want 1:\n%s", n, out)
 	}
 	if !strings.Contains(out, `"sweeps":1`) {
