@@ -249,8 +249,8 @@ describe("run SSE handlers", () => {
     try {
       send("run_progress", { workflow_id: "wf_1", kind: "loop_iteration" });
       expect(invalidate).not.toHaveBeenCalled();
-      send("run_rev", { workflow_id: "wf_1", rev: 12 });
-      expect(reviseRun).toHaveBeenCalledWith("wf_1", 12);
+      send("run_rev", { workflow_id: "wf_1", rev: 12, status: "running" });
+      expect(reviseRun).toHaveBeenCalledWith("wf_1", 12, "running");
     } finally {
       vi.mocked(runRevHeld).mockReturnValue(false);
     }

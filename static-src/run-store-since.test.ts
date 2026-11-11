@@ -1,24 +1,33 @@
 // A held run moves by what changed: a new iteration's step start reads only the changed nodes
-// (`?since`), and a recorded grade arrives the same way.
+// (`?since`), a recorded grade arrives the same way, and a surface that draws only the run's
+// status reads its header, never the node tree.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import type * as ApiClientModule from "./api-client.js";
+import type * as TabsModule from "./tabs.js";
+import type * as ToastModule from "./toast.js";
+import type * as NoticeSubjectModule from "./notice-subject.js";
+import type * as NotifyModule from "./notify.js";
 import { signal } from "@cplieger/ui";
 
 const m = vi.hoisted(() => ({
   answers: [] as ((url: string) => unknown)[],
+  /** When set, answers every read itself, in place of `answers`. */
+  route: undefined as ((url: string) => unknown) | undefined,
   urls: [] as string[],
   painted: [] as { id: string; status: string }[],
   runTabs: [] as string[],
 }));
 
-vi.mock("./api-client.js", () => ({
+vi.mock("./api-client.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ApiClientModule>()),
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(() => Promise.resolve(null)),
   apiGetTypedOrError: vi.fn(),
   apiPost: vi.fn(),
   apiGetOrError: vi.fn((url: string) => {
     m.urls.push(url);
-    const answer = m.answers.shift()?.(url);
+    const answer = m.route === undefined ? m.answers.shift()?.(url) : m.route(url);
     return Promise.resolve(
       answer === undefined
         ? { ok: false, status: 0, data: null, error: "" }
@@ -28,7 +37,8 @@ vi.mock("./api-client.js", () => ({
 }));
 
 const tabsVersion = signal(0);
-vi.mock("./tabs.js", async () => ({
+vi.mock("./tabs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof TabsModule>()),
   ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
   tabIdFor: vi.fn((_kind: string, ref: string) => (m.runTabs.includes(ref) ? `tab-${ref}` : "")),
   hasTab: vi.fn((kind: string, ref: string) => kind === "run" && m.runTabs.includes(ref)),
@@ -42,9 +52,17 @@ vi.mock("./tabs.js", async () => ({
   }),
   renameTab: vi.fn(),
 }));
-vi.mock("./toast.js", () => ({ info: vi.fn(), jumpToast: vi.fn() }));
-vi.mock("./notice-subject.js", () => ({ runEndJump: vi.fn(() => undefined) }));
-vi.mock("./notify.js", () => ({
+vi.mock("./toast.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ToastModule>()),
+  info: vi.fn(),
+  jumpToast: vi.fn(),
+}));
+vi.mock("./notice-subject.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof NoticeSubjectModule>()),
+  runEndJump: vi.fn(() => undefined),
+}));
+vi.mock("./notify.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof NotifyModule>()),
   notifyOffScreen: vi.fn(),
   closeRunAsksExcept: vi.fn(() => Promise.resolve()),
 }));
@@ -56,8 +74,16 @@ const bus = await import("./bus.js");
 function send(type: string, payload: Record<string, unknown>): void {
   bus.dispatch({ type, chat_id: "", payload } as never);
 }
-const { invalidateRun, registerRunStateDemand, runState, runStepEnds } =
-  await import("./run-store.js");
+const {
+  invalidateRun,
+  registerRunStateDemand,
+  rereadHeldRuns,
+  runState,
+  runStateAs,
+  runStepEnds,
+  widenRun,
+} = await import("./run-store.js");
+const { installRunDotSubscriber } = await import("./run-dots.js");
 
 const WF = "wf_lanes";
 
@@ -119,13 +145,14 @@ function heldNodeIds(): string[] {
 
 beforeEach(() => {
   m.answers.length = 0;
+  m.route = undefined;
   m.urls.length = 0;
   m.painted.length = 0;
   m.runTabs.length = 0;
 });
 
 describe("a held run's tree moves by what changed", () => {
-  registerRunStateDemand((id) => id === WF);
+  registerRunStateDemand((id) => id === WF, "tree");
 
   it("reads only the changed nodes when a new iteration's step starts", async () => {
     m.answers.push(() => lanes());
@@ -269,5 +296,148 @@ describe("a held run's tree moves by what changed", () => {
 
     expect(m.urls).toEqual([`/api/runs/${WF}?since=7`]);
     expect(runStepEnds(WF).get(build)?.outcome).toBe("failed");
+  });
+});
+
+describe("a run tab's dot", () => {
+  it("reads the run's header, never its tree, at boot and on a revalidation", async () => {
+    const id = "wf_dot";
+    m.runTabs.push(id);
+    registerRunStateDemand((w) => w === id, "header");
+    const own = `/api/runs/${id}`;
+    m.route = (url) =>
+      url.startsWith(own)
+        ? {
+            workflowId: id,
+            rev: 3,
+            display_name: "nightly",
+            state: { workflowId: id, status: "running" },
+          }
+        : undefined;
+    const reads = (): string[] => m.urls.filter((u) => u.startsWith(own));
+
+    installRunDotSubscriber();
+    await flush();
+    rereadHeldRuns();
+    await flush();
+
+    expect(reads()).toEqual([`${own}?view=header`, `${own}?view=header`]);
+    expect(m.painted.at(-1)).toEqual({ id: `tab-${id}`, status: "working" });
+
+    m.urls.length = 0;
+    send("run_rev", { workflow_id: id, rev: 4, status: "paused" });
+    await flush();
+
+    expect(reads()).toEqual([]);
+    expect(m.painted.at(-1)?.status).not.toBe("working");
+  });
+});
+
+describe("a run read in the shape its readers draw", () => {
+  /** A header answer for `id` at `rev`, with the run `status`. */
+  const header = (id: string, rev: number, status = "running") => ({
+    workflowId: id,
+    rev,
+    display_name: "nightly",
+    state: { workflowId: id, status },
+  });
+  /** A whole answer for `id` at `rev`: one step under the root. */
+  const tree = (id: string, rev: number) => ({
+    workflowId: id,
+    rev,
+    state: {
+      workflowId: id,
+      status: "running",
+      root: {
+        nodeId: id,
+        type: "sequence",
+        status: "running",
+        children: [{ nodeId: "build", type: "step", status: "running" }],
+      },
+    },
+  });
+
+  it("reads a run no reader holds as its header", async () => {
+    const id = "wf_nobody";
+    m.route = (url) => (url.startsWith(`/api/runs/${id}`) ? header(id, 2) : undefined);
+
+    invalidateRun(id);
+    await flush();
+
+    expect(m.urls).toEqual([`/api/runs/${id}?view=header`]);
+    expect(runState(id)?.status).toBe("running");
+  });
+
+  it("reads the tree once a reader draws it, and shows none of it until then", async () => {
+    const id = "wf_widen";
+    let drawsTree = false;
+    registerRunStateDemand((w) => w === id, "header");
+    registerRunStateDemand((w) => w === id && drawsTree, "tree");
+    m.route = (url) => (url.includes("view=header") ? header(id, 2) : tree(id, 3));
+    invalidateRun(id);
+    await flush();
+    expect(runState(id)).toBeDefined();
+    expect(runStateAs(id, "tree")).toBeUndefined();
+
+    drawsTree = true;
+    widenRun(id);
+    await flush();
+
+    expect(m.urls).toEqual([`/api/runs/${id}?view=header`, `/api/runs/${id}`]);
+    expect(runStateAs(id, "tree")?.root?.children?.[0]?.nodeId).toBe("build");
+  });
+
+  it("follows a header read out when the tree is drawn with one read of the tree", async () => {
+    const id = "wf_widen_out";
+    let drawsTree = false;
+    registerRunStateDemand((w) => w === id, "header");
+    registerRunStateDemand((w) => w === id && drawsTree, "tree");
+    m.route = (url) => (url.includes("view=header") ? header(id, 2) : tree(id, 3));
+
+    invalidateRun(id);
+    drawsTree = true;
+    widenRun(id);
+    widenRun(id);
+    await flush();
+
+    expect(m.urls).toEqual([`/api/runs/${id}?view=header`, `/api/runs/${id}`]);
+    expect(runStateAs(id, "tree")).toBeDefined();
+  });
+
+  it("keeps a held tree moving by what changed once only its header is drawn", async () => {
+    const id = "wf_hidden_tab";
+    let drawsTree = true;
+    registerRunStateDemand((w) => w === id, "header");
+    registerRunStateDemand((w) => w === id && drawsTree, "tree");
+    m.route = (url) =>
+      url.includes("since=")
+        ? { workflowId: id, rev: 4, head: { status: "paused" }, nodes: [], removed: [] }
+        : tree(id, 3);
+    invalidateRun(id);
+    await flush();
+    drawsTree = false;
+    m.urls.length = 0;
+
+    send("run_rev", { workflow_id: id, rev: 4, status: "paused" });
+    await flush();
+
+    expect(m.urls).toEqual([`/api/runs/${id}?since=3`]);
+    expect(runStateAs(id, "tree")?.status).toBe("paused");
+  });
+
+  it("re-reads a glance on a new revision rather than asking what changed", async () => {
+    const id = "wf_glance";
+    registerRunStateDemand((w) => w === id, "glance");
+    m.route = () => tree(id, 5);
+    invalidateRun(id);
+    await flush();
+
+    send("run_rev", { workflow_id: id, rev: 5 });
+    send("run_rev", { workflow_id: id, rev: 6 });
+    await flush();
+
+    expect(m.urls).toEqual([`/api/runs/${id}?view=glance`, `/api/runs/${id}?view=glance`]);
+    expect(runStateAs(id, "glance")).toBeDefined();
+    expect(runStateAs(id, "tree")).toBeUndefined();
   });
 });

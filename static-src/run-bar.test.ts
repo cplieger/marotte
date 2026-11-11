@@ -47,7 +47,7 @@ vi.mock("./api-client.js", async () => ({
   // The OrError variant: the store spends a failed read's STATUS, so a run this map does not name
   // answers 0 — no request — rather than the settled 404 that would skip its retry ladder.
   apiGetOrError: vi.fn((path: string) => {
-    const hit = /^\/api\/runs\/([^/?]+)$/.exec(path);
+    const hit = /^\/api\/runs\/([^/?]+)(?:\?view=(?:header|glance))?$/.exec(path);
     if (hit !== null) {
       const id = decodeURIComponent(hit[1] ?? "");
       const fixture = inspect.get(id) as Record<string, unknown> | undefined;
@@ -78,7 +78,8 @@ const { initRunBar, _resetRunBarForTest } = await import("./run-bar.js");
 const { initActions } = await import("./actions/boot.js");
 const { configureApi } = await import("@cplieger/reactive/actions");
 const toast = await import("./toast.js");
-const { noteRunLive, noteRunSettled, invalidateRun } = await import("./run-store.js");
+const { noteRunLive, noteRunSettled, invalidateRun, rereadHeldRuns } =
+  await import("./run-store.js");
 const { setSessions, setActive } = await import("./store.js");
 const { dropDecisions } = await import("./decision-dock.js");
 const { applyRunAsks, _resetRunAsksForTest } = await import("./run-asks.js");
@@ -1895,5 +1896,25 @@ describe("the run bar's clock on a large run", () => {
 
     expect(rowText(".ev-sum-clock")).not.toEqual(before);
     expect(vi.mocked(runToExec)).not.toHaveBeenCalled();
+  });
+});
+
+describe("the run bar's read of a run", () => {
+  it("reads the run's glance, never its whole tree, at mount and on a revalidation", async () => {
+    const c = chatID();
+    chats.push(c);
+    const id = runID("glance");
+    inspect.set(id, state());
+    live(id, c);
+    await activate(c);
+    rereadHeldRuns();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const reads = vi
+      .mocked(apiGetOrError)
+      .mock.calls.map(([url]) => url)
+      .filter((u) => u.startsWith(`/api/runs/${id}`));
+    expect(reads.length).toBeGreaterThan(0);
+    expect(reads.filter((u) => !u.includes("view=glance"))).toEqual([]);
   });
 });

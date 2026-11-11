@@ -34,6 +34,9 @@ export interface ExecNode {
    *  differently, so `startGen` orders starts. */
   start?: string;
   end?: string;
+  /** On a container whose source left work out of `children` (a glance's earlier passes): that
+   *  work's window, which `windowBounds` folds in. */
+  earlier?: WindowBounds;
   /** Orders this node's current start against the run's others: larger is later, and one start
    *  keeps its value however its time is re-read. Absent before it starts. */
   startGen?: number;
@@ -510,8 +513,13 @@ export function windowBounds(nodes: readonly ExecNode[], live: boolean): WindowB
   let from = Number.POSITIVE_INFINITY;
   let closedTo = 0;
   let open = live;
-  for (const n of workNodes(nodes)) {
-    if (n.start === undefined) {
+  for (const n of flatten(nodes)) {
+    if (n.earlier !== undefined) {
+      from = Math.min(from, n.earlier.from);
+      closedTo = Math.max(closedTo, n.earlier.closedTo);
+      open ||= n.earlier.open;
+    }
+    if (!isWork(n) || n.start === undefined) {
       continue;
     }
     const s = Date.parse(n.start);

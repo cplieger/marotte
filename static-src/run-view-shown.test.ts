@@ -3,12 +3,16 @@
 // shown step up before one paint.
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
+import type * as ApiClientModule from "./api-client.js";
+import type * as TabsModule from "./tabs.js";
+import type * as DecisionDockModule from "./decision-dock.js";
 import type * as ExecPage from "./exec-view/page.js";
 import type { Entry } from "./types.js";
 
-const m = vi.hoisted(() => ({ renders: 0, applied: [] as string[][] }));
+const m = vi.hoisted(() => ({ renders: 0 }));
 
-vi.mock("./api-client.js", () => ({
+vi.mock("./api-client.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ApiClientModule>()),
   apiBlobOrError: vi.fn(),
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
@@ -17,32 +21,21 @@ vi.mock("./api-client.js", () => ({
   apiPost: vi.fn(),
 }));
 
-vi.mock("./tabs.js", async () => ({
+vi.mock("./tabs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof TabsModule>()),
   ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
 }));
 
-vi.mock("./decision-dock.js", () => ({
+vi.mock("./decision-dock.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof DecisionDockModule>()),
   mountRunDecisionDock: vi.fn(),
   rerenderDocks: vi.fn(),
   hasPendingDecision: vi.fn(() => false),
   runPendingAsks: vi.fn(() => ({ count: 0, asked: [], label: "" })),
 }));
 
-// The step transcript's renderer is out of scope here; a stand-in that writes into its host keeps
-// a paint's DOM work visible to the observer below.
-vi.mock("./run-chat-steps.js", () => ({
-  createRunStepStream: vi.fn((hostFor: (path: string) => HTMLElement) => ({
-    apply: (paints: ReadonlyMap<string, readonly { turn: { body: Entry[] } }[]>) => {
-      m.applied.push([...paints.keys()]);
-      for (const [path, list] of paints) {
-        const p = document.createElement("p");
-        p.textContent = String(list.reduce((n, x) => n + x.turn.body.length, 0));
-        hostFor(path).replaceChildren(p);
-      }
-    },
-    dispose: vi.fn(),
-  })),
-}));
+// The step stream stands in through `__mocks__/run-chat-steps.ts`.
+vi.mock("./run-chat-steps.js");
 
 // Counts the page's paints: the one observable that separates "the view drew the run" from any
 // other write the module may make.
@@ -64,6 +57,7 @@ vi.mock("./exec-view/page.js", async (importOriginal) => {
   };
 });
 
+import { clearStepPaints, stepPaints } from "./__test-helpers__/step-stream-paints.js";
 import { apiGetOrError, apiGetTyped, apiGetTypedOrError } from "./api-client.js";
 import { refreshRun, showRun } from "./run-view.js";
 import {
@@ -148,7 +142,9 @@ async function activateRunTab(): Promise<void> {
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
   m.renders = 0;
-  m.applied.length = 0;
+  clearStepPaints();
+  // The view holds the run it shows, so it is pointed at no case's run before the run is forgotten.
+  showRun("wf_none");
   forgetRun(WF);
   document.body.replaceChildren();
   mountViews();
@@ -220,7 +216,7 @@ describe("a hidden run tab", () => {
     expect(ranges).toEqual([`/api/runs/${WF}/turns/${TURN}?after=1`]);
 
     const before = m.renders;
-    const applied = m.applied.length;
+    clearStepPaints();
     answer({
       entries: [],
       open_entries: [
@@ -229,7 +225,7 @@ describe("a hidden run tab", () => {
     });
     await flush();
     // The catch-up is the step's own output: its pane paints once and the run's page not at all.
-    expect(m.applied.slice(applied)).toEqual([[STEP]]);
+    expect(stepPaints()).toEqual([[STEP]]);
     expect(m.renders - before).toBe(0);
   });
 });
@@ -306,7 +302,7 @@ describe("the shown step's transcript", () => {
     await activateRunTab();
     dockRow("a").click();
     await flush();
-    m.applied.length = 0;
+    clearStepPaints();
 
     appendRunEntry(WF, {
       id: "t-b-2",
@@ -320,7 +316,11 @@ describe("the shown step's transcript", () => {
     await flush();
 
     expect(hosts()).toEqual([`${WF}:a`]);
-    expect(m.applied.flat().filter((p) => p !== `${WF}:a`)).toEqual([]);
+    expect(
+      stepPaints()
+        .flat()
+        .filter((p) => p !== `${WF}:a`),
+    ).toEqual([]);
   });
 
   it("releases a step's host when another step is shown", async () => {

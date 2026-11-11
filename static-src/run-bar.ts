@@ -18,8 +18,10 @@ import {
   runPausedByTransientError,
   runPlan,
   runState,
+  runStateAs,
   runStepEnds,
-  invalidateRun,
+  drawRun,
+  registerRunStateDemand,
   type RunState,
 } from "./run-store.js";
 import { runPendingAsks } from "./decision-dock.js";
@@ -70,6 +72,7 @@ let bound = false;
 let prevCount = 0;
 let prevChatID = "";
 const holds = new Map<string, Hold>();
+registerRunStateDemand((id) => holds.has(id), "glance");
 const rowViews = new WeakMap<HTMLElement, RowView>();
 /** The batch button, built once by `initRunBar`: on the header row, or at the end of the one run's row. */
 let batchBtn: HTMLButtonElement | null = null;
@@ -488,7 +491,7 @@ const execs = new Map<string, HeldExec>();
 /** The run tab's model of a run, which the card and the page read as well, folded again only when
  *  the run's state or asks moved. */
 function execOf(id: string): ExecRun | undefined {
-  const st = runState(id);
+  const st = runStateAs(id, "glance");
   if (st === undefined) {
     return undefined;
   }
@@ -536,10 +539,10 @@ function reconcileHolds(ids: readonly string[]): void {
       holds.set(id, hold);
       holdRunClock(id, hold);
     }
-    // The bar's one fetch, and its only non-projection act: when it starts showing a run, and again
+    // The bar's one read, and its only non-projection act: when it starts showing a run, and again
     // whenever a rendered run has NO state to read.
     if (!held || runState(id) === undefined) {
-      invalidateRun(id);
+      drawRun(id);
     }
   }
 }

@@ -118,7 +118,7 @@ const m = vi.hoisted(() => {
     registerEvictionExemption: vi.fn(),
     // Typed, because the case below reads a registered predicate back OFF the mock and
     // calls it: one of the two is an arrow with no identity to compare against.
-    registerRunStateDemand: vi.fn<(fn: (id: string) => boolean) => () => void>(
+    registerRunStateDemand: vi.fn<(fn: (id: string) => boolean, shape: string) => () => void>(
       () => () => undefined,
     ),
     registerTurnRepair: vi.fn(),
@@ -1156,13 +1156,16 @@ describe("the run-state demands", () => {
     const { startBoot } = await freshBoot();
     await startBoot({ applyRoute: m.applyRoute });
 
-    const demands = m.registerRunStateDemand.mock.calls.flat();
-    expect(demands).toHaveLength(2);
+    const calls = m.registerRunStateDemand.mock.calls;
+    expect(calls).toHaveLength(2);
     // The fold's predicate travels by IDENTITY: `chat-run-dots.ts` owns the reader
-    // whose demand it states, the way each eviction exemption above does.
-    expect(demands).toContain(m.chatTabFoldsRun);
+    // whose demand it states, the way each eviction exemption above does. Both draw only
+    // the run's status and name, so both hold its header.
+    expect(calls).toContainEqual([m.chatTabFoldsRun, "header"]);
     // The other is the run TAB's, which asks the tab SET rather than the store.
-    const tabDemand = demands.find((fn) => fn !== m.chatTabFoldsRun);
+    const tab = calls.find(([fn]) => fn !== m.chatTabFoldsRun);
+    expect(tab?.[1]).toBe("header");
+    const tabDemand = tab?.[0];
     m.hasTab.mockReturnValue(true);
     expect(tabDemand?.("wf_1")).toBe(true);
     expect(m.hasTab).toHaveBeenCalledWith("run", "wf_1");

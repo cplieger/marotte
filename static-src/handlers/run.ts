@@ -226,7 +226,7 @@ function readUnlessRevised(workflowID: string): void {
 
 // The run read moved: a held run reads what changed since its held revision.
 onSSE("run_rev", (_chatID, p) => {
-  reviseRun(p.workflow_id, p.rev);
+  reviseRun(p.workflow_id, p.rev, p.status);
 });
 
 // Which steps of one run wait on a person, replacing the store's snapshot of that run whole. A

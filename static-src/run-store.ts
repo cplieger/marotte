@@ -68,10 +68,23 @@ export interface RunNode {
   /** KAS's credit-unit total for the step's session, recorded when the step ends; absent when KAS
    *  recorded none. */
   credits?: number;
+  /** On a repeat in a glance read: what it ran before its latest pass, which the glance leaves out. */
+  earlierPasses?: EarlierPasses;
   /** This store's, not KAS's: orders this node's current execution against every other of every
    *  run. A later execution carries a larger value, and an execution keeps its value however each
    *  source re-reports it. Absent on a node with no start. */
   startGen?: number;
+}
+
+/** A glance's fold of a repeat's passes before its latest (`workflow.EarlierPasses`): how many, their
+ *  credits, and their work's window in Unix milliseconds (`from` absent when none started; `open`
+ *  for a started step with no end). */
+export interface EarlierPasses {
+  count: number;
+  credits: number;
+  from?: number;
+  to: number;
+  open: boolean;
 }
 
 /** A run's whole state. `runLabel` is the name a launcher gave this execution, `workflowName` the
@@ -245,7 +258,8 @@ interface RunInspect {
   nodePlan?: unknown;
 }
 
-interface RawRunNode extends Omit<RunNode, "status" | "children" | "credits"> {
+interface RawRunNode extends Omit<RunNode, "status" | "children" | "credits" | "earlierPasses"> {
+  earlierPasses?: unknown;
   status: string;
   children?: RawRunNode[];
   /** KAS's `[{usage, unit?, unitPlural?}]`, read through `creditTotal`. */
@@ -327,14 +341,42 @@ function planUpdateOf(raw: unknown): RunPlanUpdate | undefined {
 }
 
 function classifyRunNode(node: RawRunNode): RunNode {
-  const { status, children, credits, ...rest } = node;
+  const { status, children, credits, earlierPasses, ...rest } = node;
   const out: RunNode = { ...rest, status: classifyRunNodeStatus(status) };
   const total = creditTotal(credits);
   if (total !== undefined) {
     out.credits = total;
   }
+  const earlier = earlierPassesOf(earlierPasses);
+  if (earlier !== undefined) {
+    out.earlierPasses = earlier;
+  }
   if (children !== undefined) {
     out.children = children.map(classifyRunNode);
+  }
+  return out;
+}
+
+/** A glance's `earlierPasses`, or undefined for a value of another shape. */
+function earlierPassesOf(raw: unknown): EarlierPasses | undefined {
+  if (typeof raw !== "object" || raw === null) {
+    return undefined;
+  }
+  const { count, credits, from, to, open } = raw as Record<string, unknown>;
+  const ms = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isSafeInteger(v) && v > 0 ? v : undefined;
+  if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) {
+    return undefined;
+  }
+  const out: EarlierPasses = {
+    count,
+    credits: typeof credits === "number" && Number.isFinite(credits) && credits > 0 ? credits : 0,
+    to: ms(to) ?? 0,
+    open: open === true,
+  };
+  const start = ms(from);
+  if (start !== undefined) {
+    out.from = start;
   }
   return out;
 }
@@ -450,13 +492,48 @@ const cells = new Map<string, Signal<RunState | undefined>>();
 
 /** Together they collapse an event storm into at most two requests: KAS emits a `run_progress` per
  *  node event, and the state that matters is the one AFTER the last of them. */
-const inFlight = new Set<string>();
+const inFlight = new Map<string, RunShape>();
 const stale = new Set<string>();
 
-/** Per run, the revision of the held read; absent until a read carries one. A held revision makes
- *  the next read a `?since` one, unless a caller owes the run a whole read (`wholeOwed`). */
+/** Per run, the revision of the held tree, which the next tree read asks `?since` unless a caller
+ *  owes the run a whole read (`wholeOwed`); absent while no tree answer carrying one is held. */
 const revs = new Map<string, number>();
 const wholeOwed = new Set<string>();
+
+/** Per run, the newest revision the held state reflects, from any answer or an applied `run_rev`. */
+const heldRevs = new Map<string, number>();
+
+/** Per run, the widest shape the held state is kept current in; absent is the header alone. A
+ *  narrower read or frame landing on a wider body leaves that body stale, so it narrows this. */
+const bodies = new Map<string, "glance" | "tree">();
+
+/** What a reader draws of a run, narrowest first: its header (status, name, controls, asks), its
+ *  glance (each repeat through its latest pass, which a run card and the run bar draw) or its
+ *  whole tree (the run tab). Each is read in its own form of `GET /api/runs/{id}`. */
+export type RunShape = "header" | "glance" | "tree";
+
+const SHAPE_RANK: Readonly<Record<RunShape, number>> = { header: 0, glance: 1, tree: 2 };
+
+function wider(a: RunShape, b: RunShape): boolean {
+  return SHAPE_RANK[a] > SHAPE_RANK[b];
+}
+
+function heldShape(workflowID: string): RunShape {
+  return bodies.get(workflowID) ?? "header";
+}
+
+/** The shape a read of the run asks: the widest a reader demands (a header when none does), or a
+ *  held tree that moves by `?since`, which costs what changed and never needs re-reading whole. */
+function readShape(workflowID: string): RunShape {
+  const wanted = demandedShape(workflowID) ?? "header";
+  return wanted !== "tree" && sinceBase(workflowID) !== undefined ? "tree" : wanted;
+}
+
+function sinceBase(workflowID: string): number | undefined {
+  return bodies.get(workflowID) === "tree" && cells.get(workflowID)?.peek() !== undefined
+    ? revs.get(workflowID)
+    : undefined;
+}
 
 /** Runs forgotten while their read was out; the read drops its answer and its retry, so a late
  *  response cannot rebuild the state `forgetRun` just released. */
@@ -591,9 +668,17 @@ function cell(workflowID: string): Signal<RunState | undefined> {
 }
 
 /** Subscribe to a run's state. `undefined` until the first fetch resolves, which is what a
- *  caller renders a loading row for. */
+ *  caller renders a loading row for. Its `root` may be a glance or stale: a reader that draws
+ *  nodes reads `runStateAs`. */
 export function runState(workflowID: string): RunState | undefined {
   return cell(workflowID).value;
+}
+
+/** `runState` for a reader that draws the run's nodes in `shape`: `undefined` while what is held is
+ *  narrower, which the reader shows as loading. */
+export function runStateAs(workflowID: string, shape: RunShape): RunState | undefined {
+  const state = cell(workflowID).value;
+  return state === undefined || wider(shape, heldShape(workflowID)) ? undefined : state;
 }
 
 /** Read a run's state WITHOUT subscribing. For a caller that must not re-run when the run
@@ -856,14 +941,20 @@ export function invalidateRun(workflowID: string): void {
 /** Whether this client holds a revision of the run's read, so the server's `run_rev` announces
  *  its every change and no frame needs a read of its own. */
 export function runRevHeld(workflowID: string): boolean {
-  return revs.has(workflowID) && cells.get(workflowID)?.peek() !== undefined;
+  return heldRevs.has(workflowID) && cells.get(workflowID)?.peek() !== undefined;
 }
 
-/** Read what changed in a held run since its held revision, which `rev` (a `run_rev`) passed; a
- *  run held at no revision is left to its frames. Coalesced with any read out, as `invalidateRun`. */
-export function reviseRun(workflowID: string, rev?: number): void {
-  const held = revs.get(workflowID);
+/** Bring a held run to `rev` (a `run_rev`, with the run's `status` there), or re-check it with no
+ *  `rev`: a tree reads what changed since its revision, a glance reads afresh, and a header takes
+ *  the frame's status with no read. A run held at no revision is left to its frames. Coalesced with
+ *  any read out, as `invalidateRun`. */
+export function reviseRun(workflowID: string, rev?: number, status?: string): void {
+  const held = heldRevs.get(workflowID);
   if (!runRevHeld(workflowID) || held === undefined || (rev !== undefined && rev <= held)) {
+    return;
+  }
+  if (rev !== undefined && readShape(workflowID) === "header") {
+    applyRevStatus(workflowID, rev, status);
     return;
   }
   if (inFlight.has(workflowID)) {
@@ -873,11 +964,61 @@ export function reviseRun(workflowID: string, rev?: number): void {
   void fetchRun(workflowID);
 }
 
-/** Read a run's current state unless a read of it is already out, which is that ask. */
+/** A header's move to `rev`: the status, which is all a header reader draws of a revision. A wider
+ *  body the frame does not move goes stale. */
+function applyRevStatus(workflowID: string, rev: number, status: string | undefined): void {
+  const held = cells.get(workflowID)?.peek();
+  if (held === undefined) {
+    return;
+  }
+  heldRevs.set(workflowID, rev);
+  bodies.delete(workflowID);
+  revs.delete(workflowID);
+  const next = classifyRunStatus(status);
+  if (next !== undefined && next !== held.status) {
+    cell(workflowID).value = { ...held, status: next };
+  }
+}
+
+/** Read a run's current state unless a read of it is already out, which is that ask; one out in a
+ *  narrower shape than its readers now demand gets a trailing read. */
 export function readRunUnlessOut(workflowID: string): void {
-  if (!inFlight.has(workflowID)) {
+  if (inFlight.has(workflowID)) {
+    widenRun(workflowID);
+  } else {
     invalidateRun(workflowID);
   }
+}
+
+/** Read the run when the state held, or the read out, is narrower than its readers now demand (or
+ *  the read out will be dropped): a reader calls it when it starts drawing more of a run. Nothing
+ *  held and nothing out is left to the reader's first read (`drawRun`). */
+export function widenRun(workflowID: string): void {
+  const want = readShape(workflowID);
+  const out = inFlight.get(workflowID);
+  if (out !== undefined) {
+    // A read out for a forgotten run drops its answer, so a returning reader needs its own.
+    if (wider(want, out) || forgotten.has(workflowID)) {
+      stale.add(workflowID);
+    }
+    return;
+  }
+  if (cells.get(workflowID)?.peek() !== undefined && wider(want, heldShape(workflowID))) {
+    void fetchRun(workflowID);
+  }
+}
+
+/** A reader starts drawing the run: read it when nothing is held or out, else as `widenRun`. A held
+ *  state is kept current in its shape, so a reader that needs no wider one reads nothing. */
+export function drawRun(workflowID: string): void {
+  if (workflowID === "") {
+    return;
+  }
+  if (!inFlight.has(workflowID) && cells.get(workflowID)?.peek() === undefined) {
+    void fetchRun(workflowID);
+    return;
+  }
+  widenRun(workflowID);
 }
 
 /** The gap repair for everything a run's state applies from frames (`run_progress`, `node_complete`,
@@ -898,8 +1039,23 @@ export function rereadHeldRuns(): void {
   }
 }
 
+/** The URL of a read in `shape`; a tree read with a `since` revision asks only what changed. */
+function readURL(workflowID: string, shape: RunShape, since: number | undefined): string {
+  const url = `/api/runs/${encodeURIComponent(workflowID)}`;
+  switch (shape) {
+    case "header":
+      return `${url}?view=header`;
+    case "glance":
+      return `${url}?view=glance`;
+    case "tree":
+      return since === undefined ? url : `${url}?since=${String(since)}`;
+  }
+}
+
 async function fetchRun(workflowID: string): Promise<void> {
-  inFlight.add(workflowID);
+  const owed = wholeOwed.delete(workflowID);
+  const shape = readShape(workflowID);
+  inFlight.set(workflowID, shape);
   let answered = false;
   let dropped: boolean;
   // The status of a read that produced nothing, which is what tells a SETTLED answer from the
@@ -908,13 +1064,9 @@ async function fetchRun(workflowID: string): Promise<void> {
   // re-asking.
   let failed = 0;
   const issued = executionsOf(workflowID).frames;
-  const since =
-    wholeOwed.delete(workflowID) || !runRevHeld(workflowID) ? undefined : revs.get(workflowID);
-  const url = `/api/runs/${encodeURIComponent(workflowID)}`;
+  const since = shape === "tree" && !owed ? sinceBase(workflowID) : undefined;
   try {
-    const r = await apiGetOrError<RawRunInspect | RawRunSince>(
-      since === undefined ? url : `${url}?since=${String(since)}`,
-    );
+    const r = await apiGetOrError<RawRunInspect | RawRunSince>(readURL(workflowID, shape, since));
     const changes = r.data !== null && isSinceAnswer(r.data) ? r.data : undefined;
     const d = r.data === null || isSinceAnswer(r.data) ? undefined : r.data;
     if (forgotten.has(workflowID)) {
@@ -929,7 +1081,10 @@ async function fetchRun(workflowID: string): Promise<void> {
       answered = true;
     } else if (changes !== undefined) {
       answered = applySince(workflowID, changes);
-    } else if (d?.state !== undefined) {
+    } else if (d?.state !== undefined && shape === "header") {
+      landHeader(workflowID, d.state, d);
+      answered = true;
+    } else if (d?.state !== undefined && shape !== "header") {
       // The plan, the step ends and the verbs BEFORE the state, because the state assignment is what
       // wakes every reader: a subscriber that re-rendered between them would draw a repeat's bound
       // from the previous plan, or the previous status's verbs beside this one.
@@ -946,7 +1101,8 @@ async function fetchRun(workflowID: string): Promise<void> {
       }
       stepEnds.set(workflowID, new Map(Object.entries(d.step_ends ?? {})));
       stepStarts.set(workflowID, starts);
-      holdRev(workflowID, d.rev);
+      bodies.set(workflowID, shape);
+      holdRev(workflowID, shape === "tree" ? d.rev : undefined, d.rev);
       landRead(workflowID, state, d);
       answered = true;
     } else {
@@ -983,6 +1139,29 @@ async function fetchRun(workflowID: string): Promise<void> {
 /** The state keys a read writes whole (the tree and `withReadExtras`'s), which a `?since` head
  *  never carries. */
 const READ_KEYS = ["root", "planUpdate", "readPosition", "autoResumeStoppedAt", "displayName"];
+
+/** The state members a header answer leaves out (the server's `headBulk`), kept from the held state. */
+const HEADER_LEAVES: ReadonlySet<string> = new Set([
+  "root",
+  "capturedOutputs",
+  "originalUserMessages",
+  "inputs",
+  "artifacts",
+]);
+
+/** Land a header answer: its head over the held state's tree and bulk, which go stale. */
+function landHeader(workflowID: string, raw: RawRunState, d: RawRunInspect): void {
+  const held = cells.get(workflowID)?.peek();
+  const kept =
+    held === undefined
+      ? {}
+      : Object.fromEntries(Object.entries(held).filter(([k]) => HEADER_LEAVES.has(k)));
+  const state: RunState = { ...kept, ...classifyRunState(raw, new Map()) };
+  withReadExtras(state, d);
+  bodies.delete(workflowID);
+  holdRev(workflowID, undefined, d.rev);
+  landRead(workflowID, state, d);
+}
 
 function isSinceAnswer(d: RawRunInspect | RawRunSince): d is RawRunSince {
   return "nodes" in d && Array.isArray(d.nodes);
@@ -1021,11 +1200,20 @@ function withReadExtras(state: RunState, d: RawRunInspect | RawRunSince): void {
   }
 }
 
-function holdRev(workflowID: string, rev: unknown): void {
-  if (typeof rev === "number" && Number.isSafeInteger(rev) && rev > 0) {
-    revs.set(workflowID, rev);
+/** Hold an answer's revisions: `tree` is the since base it leaves (none for a narrower answer),
+ *  `held` the revision it reflects. */
+function holdRev(workflowID: string, tree: unknown, held: unknown): void {
+  const valid = (rev: unknown): rev is number =>
+    typeof rev === "number" && Number.isSafeInteger(rev) && rev > 0;
+  if (valid(tree)) {
+    revs.set(workflowID, tree);
   } else {
     revs.delete(workflowID);
+  }
+  if (valid(held)) {
+    heldRevs.set(workflowID, held);
+  } else {
+    heldRevs.delete(workflowID);
   }
 }
 
@@ -1072,7 +1260,7 @@ function applySince(workflowID: string, d: RawRunSince): boolean {
   }
   stepEnds.set(workflowID, ends);
   stepStarts.set(workflowID, starts);
-  holdRev(workflowID, d.rev);
+  holdRev(workflowID, d.rev, d.rev);
   landRead(workflowID, state, d);
   return true;
 }
@@ -1206,18 +1394,36 @@ function cancelRunRetry(workflowID: string): void {
  *  `store.ts`'s eviction exemptions take the same shape. Every reader of a cell must register one
  *  (tabs, mounted notes, transcript run cards, and detached run cards in subagent pages and run-tab step streams): `forgetRun` and a dropped late read treat an
  *  unregistered reader as absent. */
-const stateDemands: ((workflowID: string) => boolean)[] = [];
+const stateDemands: {
+  readonly holds: (workflowID: string) => boolean;
+  readonly shape: RunShape;
+}[] = [];
 
 /** Whether any registered demand holds the run's state cell. */
 export function runStateDemanded(workflowID: string): boolean {
-  return stateDemands.some((fn) => fn(workflowID));
+  return stateDemands.some((d) => d.holds(workflowID));
 }
 
-/** Register one demand predicate. Returns its unregister. */
-export function registerRunStateDemand(fn: (workflowID: string) => boolean): () => void {
-  stateDemands.push(fn);
+/** The widest shape a registered demand holds the run in; undefined when none holds it. */
+function demandedShape(workflowID: string): RunShape | undefined {
+  let out: RunShape | undefined;
+  for (const d of stateDemands) {
+    if ((out === undefined || wider(d.shape, out)) && d.holds(workflowID)) {
+      out = d.shape;
+    }
+  }
+  return out;
+}
+
+/** Register one demand predicate, for a reader drawing the run in `shape`. Returns its unregister. */
+export function registerRunStateDemand(
+  holds: (workflowID: string) => boolean,
+  shape: RunShape,
+): () => void {
+  const d = { holds, shape };
+  stateDemands.push(d);
   return () => {
-    const i = stateDemands.indexOf(fn);
+    const i = stateDemands.indexOf(d);
     if (i >= 0) {
       stateDemands.splice(i, 1);
     }
@@ -1247,6 +1453,8 @@ export function forgetRun(workflowID: string): void {
   cells.delete(workflowID);
   stale.delete(workflowID);
   revs.delete(workflowID);
+  heldRevs.delete(workflowID);
+  bodies.delete(workflowID);
   wholeOwed.delete(workflowID);
   cancelRunRetry(workflowID);
   plans.delete(workflowID);

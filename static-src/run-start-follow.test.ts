@@ -22,6 +22,11 @@ vi.mock("./api-client.js", async (importOriginal) => ({
 }));
 
 const store = await import("./run-store.js");
+
+/** The page draws the run's tree, which only a tree reader's demand reads; off while the run is
+ *  forgotten between cases. */
+let drawsTree = true;
+store.registerRunStateDemand(() => drawsTree, "tree");
 const { runToExec } = await import("./run-exec-source.js");
 const { buildExecPage } = await import("./exec-view/page.js");
 
@@ -118,7 +123,9 @@ beforeEach(() => {
   responses = [];
   resolvers = [];
   selected = undefined;
+  drawsTree = false;
   store.forgetRun("wf");
+  drawsTree = true;
   dock = document.createElement("div");
   page = buildExecPage({
     emptyNote: () => "",

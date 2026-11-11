@@ -732,6 +732,10 @@ function foldNode(node: RunNode, ctx: FoldContext, at: Placed): ExecNode {
   if (node.startGen !== undefined) {
     out.startGen = node.startGen;
   }
+  const earlier = node.earlierPasses;
+  if (earlier?.from !== undefined) {
+    out.earlier = { from: earlier.from, closedTo: earlier.to, open: earlier.open };
+  }
   if (node.endedAt !== undefined) {
     out.end = node.endedAt;
   } else if (!work && settled(out.state)) {
@@ -970,9 +974,10 @@ export function runToExec(
   return out;
 }
 
-/** Every node's credits over the tree, as KAS sums run_complete's figure: only steps carry them. */
+/** Every node's credits over the tree, as KAS sums run_complete's figure (only steps carry them), with a
+ *  glance's folded passes'. */
 function runCredits(node: RunNode): number {
-  let total = node.credits ?? 0;
+  let total = (node.credits ?? 0) + (node.earlierPasses?.credits ?? 0);
   for (const k of node.children ?? []) {
     total += runCredits(k);
   }

@@ -95,10 +95,10 @@ import { delegateStopWord } from "./delegate-stop.js";
 import { callRefused } from "./hook-fold.js";
 import { buildRunCard, type RunCardView, type RunDisclosure } from "./fundamentals/run-card.js";
 import {
-  invalidateRun,
+  drawRun,
   runGone,
   runPlan,
-  runState,
+  runStateAs,
   runStepEnds,
   forgetRun,
   registerRunStateDemand,
@@ -396,7 +396,7 @@ registerRunStateDemand((workflowID) => {
     }
   }
   return false;
-});
+}, "glance");
 
 // ---------------------------------------------------------------------------
 // Public API (called by messages.ts)
@@ -1739,7 +1739,7 @@ function runCardFor(st: TurnRender, workflowID: string, name: string, owner = fa
     releaseRunCard(st, workflowID, card);
   });
   // The card's first read; later ones arrive through the effect.
-  invalidateRun(workflowID);
+  drawRun(workflowID);
   armRunCard(st, workflowID, card);
   if (launch !== undefined) {
     card.setLaunch(launch.status, launch.output);
@@ -1893,7 +1893,7 @@ function armRunCard(st: TurnRender, workflowID: string, card: RunCardView): void
   const stop = effect(() => {
     // Two inputs on different clocks: `inspect` for step state, the dock for blocked asks. KAS leaves the run
     // `running` while a step waits on a person. The plan and step ends land before the state wakes this.
-    const state = runState(workflowID);
+    const state = runStateAs(workflowID, "glance");
     card.render(state, runPendingAsks(workflowID), {
       plan: runPlan(workflowID),
       ends: runStepEnds(workflowID),

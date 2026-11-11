@@ -49,7 +49,7 @@ const gate = vi.hoisted(() => ({ holding: false, releases: [] as (() => void)[] 
 vi.mock("./api-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ApiClientModule>()),
   apiGetOrError: vi.fn((path: string) => {
-    const hit = /^\/api\/runs\/([^/?]+)$/.exec(path);
+    const hit = /^\/api\/runs\/([^/?]+)(?:\?view=(?:header|glance))?$/.exec(path);
     const id = decodeURIComponent(hit?.[1] ?? "");
     const name = names.get(id);
     reads.push(id);

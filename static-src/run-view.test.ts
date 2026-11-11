@@ -487,7 +487,8 @@ beforeEach(() => {
   // Every other typed GET this graph makes answers as a failed fetch.
   vi.mocked(apiGetTyped).mockResolvedValue(null);
   // `showRun` paints the shown run's cached state at once, so a case must not inherit the last
-  // case's `wf_1`.
+  // case's `wf_1`. The view holds the run it shows, so it is pointed at no case's run first.
+  showRun("wf_none");
   forgetRun("wf_1");
 });
 
@@ -2368,7 +2369,7 @@ describe("a step's recorded grade", () => {
   });
 
   it("the pane and the tree follow the run re-read after a missed refused-but-completed grade", async () => {
-    unhold = registerRunStateDemand((id) => id === "wf_1");
+    unhold = registerRunStateDemand((id) => id === "wf_1", "tree");
     logStep("wf_1", "wf_1:declined", "no", {
       close: { outcome: "refused", refusal: { category: "x" } },
     });
@@ -2388,7 +2389,7 @@ describe("a step's recorded grade", () => {
   });
 
   it("the pane and the tree follow the run re-read after a missed model-call-limit grade", async () => {
-    unhold = registerRunStateDemand((id) => id === "wf_1");
+    unhold = registerRunStateDemand((id) => id === "wf_1", "tree");
     logStep("wf_1", "wf_1:limited", "working", {
       close: { outcome: "completed", stop_reason_raw: "tool_use" },
     });
@@ -2406,7 +2407,7 @@ describe("a step's recorded grade", () => {
   });
 
   it("a second re-read follows a grade the first did not carry yet", async () => {
-    unhold = registerRunStateDemand((id) => id === "wf_1");
+    unhold = registerRunStateDemand((id) => id === "wf_1", "tree");
     logStep("wf_1", "wf_1:limited", "working", {
       close: { outcome: "completed", stop_reason_raw: "tool_use" },
     });
@@ -2481,6 +2482,7 @@ describe("run view step reads", () => {
       m.requested.length = 0;
       // A fresh tab per status: the mocked request has no no-refetch gate, so a cached `live0`
       // painted on the second show would be asked for again.
+      showRun("wf_none");
       forgetRun("wf_1");
       await paint(openRunView, "running", { root: oneNamedStep(`live${String(i)}`, status) });
       expect(m.requested).toEqual([`wf_1:live${String(i)}`]);
@@ -2922,6 +2924,7 @@ describe("showRun and refreshRun", () => {
   });
 
   it("refreshRun reads the run, whose read carries its controls, unless a read of it is out", () => {
+    showRun("wf_refresh");
     refreshRun("wf_refresh");
     refreshRun("wf_refresh");
 

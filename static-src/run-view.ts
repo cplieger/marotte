@@ -49,11 +49,13 @@ import {
 import {
   noteRunChat,
   readRunUnlessOut,
-  runState,
+  registerRunStateDemand,
+  runStateAs,
   runChatID,
   runPlan,
   runStepEnds,
   runStepHoles,
+  widenRun,
   runStepTurns,
   runTurnHeldSeq,
   runTurnSource,
@@ -83,6 +85,7 @@ const runViewShown = signal(false);
 onViewHidden("run-view", () => {
   runViewShown.value = false;
 });
+registerRunStateDemand((id) => id === shownRun && runViewShown.peek(), "tree");
 
 /** The run whose page was mounted when the view was hidden, so its first pass on screen again
  *  catches the shown step up. "" when nothing is owed. */
@@ -126,6 +129,8 @@ export function showRun(workflowID: string): void {
     runViewShown.value = true;
     rerenderDocks();
   });
+  // The tab's dot held only the run's header while the tab was hidden.
+  widenRun(workflowID);
   mountBottomBar();
   // Before any read resolves: until this run's page publishes a step, Send and the step dock address
   // nothing rather than the run shown before.
@@ -188,7 +193,7 @@ function installViewEffect(): void {
     }
     // One batch, so the pane and the dock lines run once after the page they read is drawn.
     batch(() => {
-      paint(id, runState(id));
+      paint(id, runStateAs(id, "tree"));
     });
     if (hiddenPageRun !== "") {
       const owed = hiddenPageRun === id;
