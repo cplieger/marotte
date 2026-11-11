@@ -7,8 +7,9 @@ import {
   blockquote,
   codeSpan,
   quoteSelection,
+  leadQuote,
   readQuoted,
-  splitLeadingQuote,
+  splitQuotes,
 } from "./message-quote.js";
 
 describe("blockquote", () => {
@@ -19,6 +20,15 @@ describe("blockquote", () => {
 
 const SRC = "From Kiro's reply";
 const SRC_LINE = `> ${SRC}:\n>`;
+
+/** The one quote `text` holds, or undefined. */
+function onlyQuote(text: string): { source: string | null; quote: string } | undefined {
+  const parts = splitQuotes(text);
+  const [part] = parts;
+  return parts.length === 1 && part?.kind === "quote"
+    ? { source: part.source, quote: part.quote }
+    : undefined;
+}
 
 describe("quoteSelection", () => {
   it("names the source, quotes the text, then the attribution as its own quoted paragraph", () => {
@@ -43,7 +53,7 @@ describe("quoteSelection", () => {
     const block = quoteSelection("x", "From run a#[[file:b]]");
     expect(carriesContextMention(block)).toBe(false);
     expect(block.split("\n")[0]).toBe("> From run a#\\[[file:b]]:");
-    expect(splitLeadingQuote(block)?.source).toBe("From run a#[[file:b]]");
+    expect(onlyQuote(block)?.source).toBe("From run a#[[file:b]]");
   });
 
   it("keeps the selection's leading and trailing whitespace", () => {
@@ -66,14 +76,14 @@ describe("quoteSelection", () => {
 
   it("caps a long selection at a word, ending on an ellipsis, within the limit", () => {
     // 1,499 kept code points end one letter into a word, which the cut steps back from.
-    const quoted = splitLeadingQuote(quoteSelection("abcdef ".repeat(500), SRC))?.quote ?? "";
+    const quoted = onlyQuote(quoteSelection("abcdef ".repeat(500), SRC))?.quote ?? "";
     expect(Array.from(quoted).length).toBeLessThanOrEqual(QUOTE_TEXT_MAX);
     expect(Array.from(quoted).length).toBeGreaterThan(QUOTE_TEXT_MAX - 10);
     expect(quoted.endsWith(" abcdef\u2026")).toBe(true);
   });
 
   it("never splits a surrogate pair at the cap", () => {
-    const quoted = splitLeadingQuote(quoteSelection("\u{1F600}".repeat(2000), SRC))?.quote ?? "";
+    const quoted = onlyQuote(quoteSelection("\u{1F600}".repeat(2000), SRC))?.quote ?? "";
     expect(Array.from(quoted)).toHaveLength(QUOTE_TEXT_MAX);
     expect(quoted).not.toMatch(
       /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/,
@@ -83,7 +93,7 @@ describe("quoteSelection", () => {
 
   it("leaves a selection at the limit whole", () => {
     const text = "x".repeat(QUOTE_TEXT_MAX);
-    expect(splitLeadingQuote(quoteSelection(text, SRC))?.quote).toBe(text);
+    expect(onlyQuote(quoteSelection(text, SRC))?.quote).toBe(text);
   });
 
   it("escapes a context token so the quote never reads as one", () => {
@@ -119,51 +129,101 @@ describe("appendQuote", () => {
   });
 });
 
-describe("splitLeadingQuote", () => {
+describe("splitQuotes", () => {
+  const quote = (text: string, source: string | null = SRC) =>
+    ({ kind: "quote", source, quote: text }) as const;
+  const words = (text: string) => ({ kind: "text", text }) as const;
+
   it("round-trips a quoted selection and returns the question after it", () => {
     const text = "line one\n\nline #[[file:x]] two";
     const prompt = `${appendQuote("", quoteSelection(text, SRC))}why is that?`;
-    expect(splitLeadingQuote(prompt)).toEqual({ source: SRC, quote: text, rest: "why is that?" });
+    expect(splitQuotes(prompt)).toEqual([quote(text), words("why is that?")]);
   });
 
   it.each([0, 1, 2])("round-trips a context opener after %i backslashes", (n) => {
     const text = `see #${"\\".repeat(n)}[[file:x]] here`;
     const block = quoteSelection(text, SRC);
     expect(carriesContextMention(block)).toBe(false);
-    expect(splitLeadingQuote(block)?.quote).toBe(text);
+    expect(onlyQuote(block)?.quote).toBe(text);
   });
 
-  it("returns an empty rest for a prompt that is only the quote", () => {
-    expect(splitLeadingQuote(quoteSelection("x", SRC))).toEqual({
-      source: SRC,
-      quote: "x",
-      rest: "",
-    });
+  it("returns the quote alone for a prompt that is only the quote", () => {
+    expect(splitQuotes(quoteSelection("x", SRC))).toEqual([quote("x")]);
   });
 
   it("reads a quote sent before quotes named their source", () => {
-    expect(splitLeadingQuote(`> old words\n>\n> ${QUOTE_ATTRIBUTION}\n\nq`)).toEqual({
-      source: null,
-      quote: "old words",
-      rest: "q",
+    expect(splitQuotes(`> old words\n>\n> ${QUOTE_ATTRIBUTION}\n\nq`)).toEqual([
+      quote("old words", null),
+      words("q"),
+    ]);
+  });
+
+  it("reads every quote wherever it sits, the reader's words between them trimmed", () => {
+    const first = appendQuote("intro", quoteSelection("one", SRC));
+    const prompt = `${appendQuote(`${first}  why?\n`, quoteSelection("two", "From Kiro's thinking"))}and?`;
+    expect(splitQuotes(prompt)).toEqual([
+      words("intro"),
+      quote("one"),
+      words("why?"),
+      quote("two", "From Kiro's thinking"),
+      words("and?"),
+    ]);
+  });
+
+  it("reads two quotes with no blank line between as two", () => {
+    const prompt = `${quoteSelection("one", SRC)}\n${quoteSelection("two", SRC)}`;
+    expect(splitQuotes(prompt)).toEqual([quote("one"), quote("two")]);
+  });
+
+  it("reads a quote whose only text is its source line as the reader's text", () => {
+    const block = `> ${SRC}:\n>\n>\n> ${QUOTE_ATTRIBUTION}`;
+    expect(splitQuotes(block)).toEqual([words(block)]);
+  });
+
+  it("leaves a hand-typed blockquote as text, before a quote or after one", () => {
+    const typed = "> something I typed\n> over two lines";
+    expect(splitQuotes(`${typed}\n\nmy question`)).toEqual([words(`${typed}\n\nmy question`)]);
+    expect(splitQuotes(`${quoteSelection("x", SRC)}\n\n${typed}`)).toEqual([
+      quote("x"),
+      words(typed),
+    ]);
+  });
+
+  it("leaves an attribution with nothing quoted above it as text", () => {
+    expect(splitQuotes(`>\n> ${QUOTE_ATTRIBUTION}\n\nq`)).toEqual([
+      words(`>\n> ${QUOTE_ATTRIBUTION}\n\nq`),
+    ]);
+    expect(splitQuotes(`> ${QUOTE_ATTRIBUTION}\n\nq`)).toEqual([
+      words(`> ${QUOTE_ATTRIBUTION}\n\nq`),
+    ]);
+  });
+
+  it("returns nothing for blank text", () => {
+    expect(splitQuotes(" \n ")).toEqual([]);
+  });
+});
+
+describe("leadQuote", () => {
+  it("takes the quote opening the prompt apart from the rest", () => {
+    const one = quoteSelection("one", SRC);
+    const two = quoteSelection("two", SRC);
+    expect(leadQuote(appendQuote(`${appendQuote("", one)}why?`, two))).toEqual({
+      lead: { source: SRC, quote: "one" },
+      rest: [
+        { kind: "text", text: "why?" },
+        { kind: "quote", source: SRC, quote: "two" },
+      ],
     });
   });
 
-  it("reads a quote whose only text is its source line as having no text", () => {
-    expect(splitLeadingQuote(`> ${SRC}:\n>\n>\n> ${QUOTE_ATTRIBUTION}`)).toBeNull();
-  });
-
-  it("ignores a hand-typed blockquote", () => {
-    expect(splitLeadingQuote("> something I typed\n> over two lines\n\nmy question")).toBeNull();
-  });
-
-  it("ignores a quote that does not lead the prompt", () => {
-    expect(splitLeadingQuote(`intro\n${quoteSelection("x", SRC)}`)).toBeNull();
-  });
-
-  it("ignores an attribution with nothing quoted above it", () => {
-    expect(splitLeadingQuote(`>\n> ${QUOTE_ATTRIBUTION}\n\nq`)).toBeNull();
-    expect(splitLeadingQuote(`> ${QUOTE_ATTRIBUTION}\n\nq`)).toBeNull();
+  it("has no lead for a prompt opening on the reader's words", () => {
+    expect(leadQuote(appendQuote("intro", quoteSelection("x", SRC)))).toEqual({
+      lead: null,
+      rest: [
+        { kind: "text", text: "intro" },
+        { kind: "quote", source: SRC, quote: "x" },
+      ],
+    });
   });
 });
 
@@ -177,6 +237,18 @@ describe("readQuoted", () => {
   it("reads a quote with nothing after it, or one that names no source, as the passage alone", () => {
     expect(readQuoted(quoteSelection("x", SRC))).toBe(`${SRC}: x`);
     expect(readQuoted(`> old words\n>\n> ${QUOTE_ATTRIBUTION}\n\nq`)).toBe("old words\n\nq");
+  });
+
+  it("reads every quote as its band does, wherever it sits", () => {
+    const one = quoteSelection("one", SRC);
+    const two = quoteSelection("two", "From Kiro's thinking");
+    expect(readQuoted(`${appendQuote(`${appendQuote("", one)}why?`, two)}and?`)).toBe(
+      `${SRC}: one\n\nwhy?\n\nFrom Kiro's thinking: two\n\nand?`,
+    );
+    expect(readQuoted(`${appendQuote(appendQuote("", one), two)}`)).toBe(
+      `${SRC}: one\n\nFrom Kiro's thinking: two`,
+    );
+    expect(readQuoted(appendQuote("intro", one))).toBe(`intro\n\n${SRC}: one`);
   });
 
   it("leaves any other text as it was, a hand-typed blockquote included", () => {

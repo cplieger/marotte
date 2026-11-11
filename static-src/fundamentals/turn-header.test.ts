@@ -702,6 +702,76 @@ describe("a request that opens with a quoted reply passage", () => {
   });
 });
 
+// The prompt "Quote in reply" builds when the reader quotes, types, then quotes again (`appendQuote`).
+describe("a request quoting more than one passage", () => {
+  const FIRST = "Activity notifications: a separate stream, after the platform is built.";
+  const SECOND = "Caddy healthcheck order: waits for you to schedule it";
+  const quote = (words: string): string => quoteSelection(words, "From Kiro's reply");
+  const request = `${appendQuote(`${appendQuote("", quote(FIRST))}remind me what this is about?`, quote(SECOND))}and is it urgent?`;
+  const bands = (h: HTMLElement): HTMLElement[] => [
+    ...h.querySelectorAll<HTMLElement>(".turn-req blockquote.turn-req-quote"),
+  ];
+  const req = (h: HTMLElement): string => h.querySelector(".turn-req")?.textContent ?? "";
+
+  it("draws every quote as a band in its place, with no quote marks or attribution left", () => {
+    const h = buildTurnHeader(data({ request }));
+    expect(bands(h).map((b) => b.textContent)).toEqual([
+      `From Kiro's reply: ${FIRST}`,
+      `From Kiro's reply: ${SECOND}`,
+    ]);
+    expect(req(h)).toBe(
+      `From Kiro's reply: ${FIRST}remind me what this is about?From Kiro's reply: ${SECOND}and is it urgent?`,
+    );
+    expect(req(h)).not.toContain(QUOTE_ATTRIBUTION);
+  });
+
+  it("draws two quotes sent back to back as two bands", () => {
+    const h = buildTurnHeader(
+      data({ request: `${appendQuote(appendQuote("", quote(FIRST)), quote(SECOND))}why?` }),
+    );
+    expect(bands(h)).toHaveLength(2);
+    expect(req(h)).toBe(`From Kiro's reply: ${FIRST}From Kiro's reply: ${SECOND}why?`);
+  });
+
+  it("draws a quote after the reader's own words as a band", () => {
+    const h = buildTurnHeader(data({ request: appendQuote("first my words", quote(SECOND)) }));
+    expect(req(h)).toBe(`first my wordsFrom Kiro's reply: ${SECOND}`);
+    expect(bands(h)).toHaveLength(1);
+  });
+
+  it("draws the same bands over a run step's request", () => {
+    const h = buildRequestHeader(request);
+    expect(bands(h).map((b) => b.textContent)).toEqual(
+      bands(buildTurnHeader(data({ request }))).map((b) => b.textContent),
+    );
+    expect(req(h)).not.toContain(">");
+  });
+
+  it("keeps the bands across a repaint and redraws them when a later quote changes", () => {
+    const h = buildTurnHeader(data({ request }));
+    const before = bands(h);
+    updateTurnHeader(h, data({ request }));
+    expect(bands(h)[0]).toBe(before[0]);
+    expect(bands(h)[1]).toBe(before[1]);
+    updateTurnHeader(h, data({ request: request.replace(SECOND, "another passage") }));
+    expect(bands(h)[1]?.textContent).toBe("From Kiro's reply: another passage");
+    updateTurnHeader(h, data({ request: "plain" }));
+    expect(bands(h)).toHaveLength(0);
+    expect(req(h)).toBe("plain");
+  });
+
+  it("draws quoted markup and the words between as text, never as elements", () => {
+    const markup = '<img src="x" onerror="alert(1)">';
+    const h = buildTurnHeader(
+      data({
+        request: `${appendQuote(`${appendQuote("", quote(FIRST))}${markup}`, quote(markup))}`,
+      }),
+    );
+    expect(h.querySelector("img")).toBeNull();
+    expect(req(h)).toBe(`From Kiro's reply: ${FIRST}${markup}From Kiro's reply: ${markup}`);
+  });
+});
+
 describe("a request an API caller sent", () => {
   const sentByLine = (h: HTMLElement): HTMLElement | null => h.querySelector(".turn-sent-by");
 

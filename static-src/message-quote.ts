@@ -67,22 +67,20 @@ export function appendQuote(draft: string, block: string): string {
   return head === "" ? `${block}\n\n` : `${head}\n\n${block}\n\n`;
 }
 
-/** A prompt opening with a `quoteSelection` block: its source (null for a quote written before quotes named one), the
- *  quoted text, both unescaped and without the attribution, and the rest of the prompt. Null for any other prompt, a
- *  hand-typed blockquote included. */
-export function splitLeadingQuote(
-  request: string,
-): { source: string | null; quote: string; rest: string } | null {
-  const lines = request.split("\n");
-  let end = 0;
-  while (end < lines.length && lines[end]?.startsWith(">") === true) {
-    end++;
-  }
-  if (end < 2 || lines[end - 1] !== ATTRIBUTION_LINE) {
-    return null;
-  }
-  const inner = lines
-    .slice(0, end - 1)
+/** A `quoteSelection` block read back: its source (null for a quote written before quotes named one) and the quoted
+ *  text, both unescaped and without the attribution. */
+export interface Quote {
+  source: string | null;
+  quote: string;
+}
+
+/** One stretch of a prompt, in order: a `quoteSelection` block, or the trimmed text around one. */
+export type PromptPart = ({ kind: "quote" } & Quote) | { kind: "text"; text: string };
+
+/** The quote `block` holds, its `>` lines ending on the attribution line, or null when nothing is quoted above it. */
+function readQuote(block: readonly string[]): Quote | null {
+  const inner = block
+    .slice(0, -1)
     .map((line) => (line.startsWith("> ") ? line.slice(2) : line.slice(1)));
   const head = inner[0] ?? "";
   // A `From …:` line then a blank line is the source line `quoteSelection` writes; an older quote opening that way
@@ -97,21 +95,70 @@ export function splitLeadingQuote(
   if (quoted === "") {
     return null;
   }
-  return {
-    source: named ? unescapeContext(head.slice(0, -1)) : null,
-    quote: quoted,
-    rest: lines.slice(end).join("\n").trim(),
-  };
+  return { source: named ? unescapeContext(head.slice(0, -1)) : null, quote: quoted };
 }
 
-/** `text` as its quote band reads: a leading `quoteSelection` block as `source: quote` without the `>` marks or the
- *  attribution, a blank line, then the rest. Any other text unchanged. For the surfaces that carry a message as one
- *  string (accessible names, button labels). */
+/** `request` cut into its `quoteSelection` blocks, wherever each sits, and the text between, blank text left out.
+ *  A quote is a run of `>` lines ending on the attribution line; any other `>` line, a hand-typed blockquote's,
+ *  stays text. */
+export function splitQuotes(request: string): PromptPart[] {
+  const parts: PromptPart[] = [];
+  let text: string[] = [];
+  let run: string[] = [];
+  const flushText = (): void => {
+    const words = text.join("\n").trim();
+    if (words !== "") {
+      parts.push({ kind: "text", text: words });
+    }
+    text = [];
+  };
+  for (const line of request.split("\n")) {
+    if (!line.startsWith(">")) {
+      text.push(...run, line);
+      run = [];
+      continue;
+    }
+    run.push(line);
+    if (line !== ATTRIBUTION_LINE) {
+      continue;
+    }
+    const quote = readQuote(run);
+    if (quote === null) {
+      text.push(...run);
+    } else {
+      flushText();
+      parts.push({ kind: "quote", ...quote });
+    }
+    run = [];
+  }
+  text.push(...run);
+  flushText();
+  return parts;
+}
+
+/** `splitQuotes(request)` with the quote opening the prompt, when one does, apart as `lead`. */
+export function leadQuote(request: string): { lead: Quote | null; rest: PromptPart[] } {
+  const parts = splitQuotes(request);
+  const first = parts[0];
+  return first?.kind === "quote"
+    ? { lead: { source: first.source, quote: first.quote }, rest: parts.slice(1) }
+    : { lead: null, rest: parts };
+}
+
+/** `text` as its quote bands read: each `quoteSelection` block as `source: quote` without the `>` marks or the
+ *  attribution, its parts a blank line apart. Text holding no quote unchanged. For the surfaces that carry a message
+ *  as one string (accessible names, button labels). */
 export function readQuoted(text: string): string {
-  const q = splitLeadingQuote(text.trim());
-  if (q === null) {
+  const parts = splitQuotes(text);
+  if (!parts.some((p) => p.kind === "quote")) {
     return text;
   }
-  const head = q.source === null ? q.quote : `${q.source}: ${q.quote}`;
-  return q.rest === "" ? head : `${head}\n\n${q.rest}`;
+  return parts
+    .map((p) => {
+      if (p.kind === "text") {
+        return p.text;
+      }
+      return p.source === null ? p.quote : `${p.source}: ${p.quote}`;
+    })
+    .join("\n\n");
 }

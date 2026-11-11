@@ -34,8 +34,8 @@ import { truncate } from "./strings.js";
 import { newMessageID } from "./transport.js";
 import type { PendingSteer, QueuedPrompt, RunEntryView, RunView, RunWait } from "./types.js";
 import type { SendNowKind } from "./wire/types.gen.js";
-import { readQuoted, splitLeadingQuote } from "./message-quote.js";
-import { buildQuoteBand } from "./quote-band.js";
+import { readQuoted, splitQuotes } from "./message-quote.js";
+import { drawParts } from "./quote-band.js";
 
 /** Where an unsent steer goes, from the run order: with an entry's wait, with the chat's next message
  *  (none carries it yet), or, for a dock with no run order (a run step's), as the next prompt. */
@@ -327,18 +327,14 @@ function syncText(row: HTMLElement, text: string): void {
 
 const shownText = new WeakMap<HTMLElement, string>();
 
-/** A leading quote as the band a sent prompt draws, then the rest on one line; rebuilt only when the
- *  text changes, so a focused path link in the band survives a repaint. */
+/** Each quote as the band a sent prompt draws, each text between on one line; rebuilt only when the
+ *  text changes, so a focused path link in a band survives a repaint. */
 function fillText(textEl: HTMLElement, text: string): void {
   if (shownText.get(textEl) === text) {
     return;
   }
   shownText.set(textEl, text);
-  const quoted = splitLeadingQuote(text.trim());
-  textEl.replaceChildren(
-    ...(quoted === null ? [] : [buildQuoteBand(quoted)]),
-    oneLine(quoted?.rest ?? text),
-  );
+  textEl.replaceChildren(...drawParts(splitQuotes(text), oneLine));
 }
 
 const actionSig = new WeakMap<HTMLElement, string>();
@@ -376,7 +372,7 @@ function buildRow(steer: PendingSteer, place: SteerPlace, state: StackState): HT
     el("span", { className: "steer-state-label" }, stateWord(steer, place)),
   );
 
-  // Collapsed to one line and clipped to four lines in CSS, the quote band counting as one, never
+  // Collapsed to one line and clipped to four lines in CSS, each quote band counting as one, never
   // truncated here: the whole message stays in the DOM, and it stays reachable through the row's
   // tooltip, its accessible name and Edit.
   const text = el("div", { className: "steer-text" });

@@ -174,7 +174,8 @@
 }
 
 /* The transcript passage a prompt quoted, led by its source: subordinate to the question, so muted, set off
- * by a neutral rule and held to one line, open or folded. */
+ * by a neutral rule and held to one line, open or folded. `clip`, not `hidden`: a `hidden` band is its own
+ * formatting context, so a line clamp around it would not count its line. */
 .turn-req-quote {
   max-inline-size: 100%;
   margin: 0;
@@ -183,9 +184,22 @@
   font-size: var(--fs-sm);
   line-height: 1.5;
   color: var(--c-text-secondary);
-  overflow: hidden;
+  overflow: clip;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* A quote inside the words keeps the gap the opening quote has from them. */
+:is(.turn-req-text, .steer-note-text) > .turn-req-quote {
+  margin-block: var(--sp-1);
+
+  &:first-child {
+    margin-block-start: 0;
+  }
+
+  &:last-child {
+    margin-block-end: 0;
+  }
 }
 
 /* FOLD-CONDITIONAL: the fold chevron opens the prompt with the body. An OPEN prompt

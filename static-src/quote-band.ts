@@ -1,10 +1,11 @@
-// The band a message opening with a `quoteSelection` block draws in place of its `>` lines.
+// The band a message draws in place of each `quoteSelection` block's `>` lines.
 
 import { el } from "@cplieger/ui";
 import { linkifyPaths } from "./linkify.js";
+import type { PromptPart, Quote } from "./message-quote.js";
 
 /** The quoted passage as one band, led by the line naming its source when it has one. */
-export function buildQuoteBand(quote: { source: string | null; quote: string }): HTMLElement {
+export function buildQuoteBand(quote: Quote): HTMLElement {
   const text = el("span", { className: "turn-req-quote-text" }, quote.quote);
   linkifyPaths(text);
   return el(
@@ -13,6 +14,14 @@ export function buildQuoteBand(quote: { source: string | null; quote: string }):
     ...(quote.source === null ? [] : [sourceEl(quote.source), " "]),
     text,
   );
+}
+
+/** `parts` in order: each quote as its band, each text as `words` draws it. */
+export function drawParts(
+  parts: readonly PromptPart[],
+  words: (text: string) => Node | string,
+): (Node | string)[] {
+  return parts.map((p) => (p.kind === "quote" ? buildQuoteBand(p) : words(p.text)));
 }
 
 /** A quote's source line as the reader sees it: its code spans (CommonMark 6.1) drawn as code. */
