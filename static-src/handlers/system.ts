@@ -26,7 +26,7 @@ import { dropAllRunAsks, runAskPosition } from "../run-asks.js";
 import { loadList, scheduleListRetry } from "../store-load.js";
 import { clearTurnState } from "../turn-teardown.js";
 import { adoptRetention } from "../retention.js";
-import { adoptConnectRuns } from "../run-store.js";
+import { adoptConnectRuns, rereadHeldRuns } from "../run-store.js";
 import { forgetAllStepSteers } from "../run-step-steers.js";
 import { fetchCatalog } from "../session-catalog.js";
 import { adoptEngineStatus, reconcileEngineStatus } from "../engine-status.js";
@@ -121,7 +121,11 @@ onSSE("settings_updated", (_chatID, p) => {
 });
 
 onSSE("engine_status", (_chatID, p) => {
-  adoptEngineStatus(p);
+  // An API read answers at once while the engine is not ready, so what it refused is asked again now.
+  if (adoptEngineStatus(p)) {
+    void fetchCatalog({ reset: true });
+    rereadHeldRuns();
+  }
 });
 
 onBus(BUS_RECONCILE, ({ cause, signal }) => {

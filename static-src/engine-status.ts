@@ -288,13 +288,16 @@ function paint(s: EngineStatus | null): void {
   paintSettingsControl(s);
 }
 
-/** Paint `s` unless the status shown is newer: the GET and the event arrive in any order. */
-export function adoptEngineStatus(s: EngineStatus): void {
-  if (!isNewerStatus(s, engineStatus.peek())) {
-    return;
+/** Paint `s` unless the status shown is newer: the GET and the event arrive in any order. True when it brings the
+ *  engine back to ready from a status shown not ready: the reads the server refused meanwhile can be asked again. */
+export function adoptEngineStatus(s: EngineStatus): boolean {
+  const held = engineStatus.peek();
+  if (!isNewerStatus(s, held)) {
+    return false;
   }
   engineStatus.value = s;
   paint(s);
+  return held !== null && held.state !== "ready" && s.state === "ready";
 }
 
 /** Counts the reconciles so far; a GET answer is adopted only in the count it was asked in. */

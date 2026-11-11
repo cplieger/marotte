@@ -7,8 +7,8 @@ import type { CatalogPhase } from "./picker.js";
 import type { CatalogState } from "./wire/types.gen.js";
 
 /** Must exceed the server's 45s budget (configTemplateTimeout,
- *  internal/agent/config_template.go): a first call waits for the agent engine
- *  to start, which unpacks the KAS runtime. Move the two together. */
+ *  internal/agent/config_template.go): a ready engine can take that long to
+ *  answer; with none ready the read answers at once. Move the two together. */
 export const CATALOG_REQUEST_TIMEOUT_MS = 50_000;
 
 // The total budget is the bound that binds: about three ~50s attempts fit in

@@ -444,7 +444,7 @@ var unknownEndpoint = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Reque
 })
 
 // middlewareStack returns the middleware wrapping the route mux, OUTERMOST FIRST: access log,
-// recovery, security (CSP + ALLOWED_HOSTS + CSRF), notify-token confinement, Fetch Metadata, canonical path, compression,
+// recovery, security (CSP + ALLOWED_HOSTS + CSRF), notify-token confinement, Fetch Metadata, the no-engine-wait read mark, canonical path, compression,
 // dedup. A method so the ORDER, a security property, is assertable without a port.
 func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []httpserver.Middleware {
 	return []httpserver.Middleware{
@@ -464,6 +464,7 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []htt
 		func(next http.Handler) http.Handler { return securityMiddleware(cspPolicy, s.hostPolicy, next) },
 		confineNotifyToken(s.notifyGate),
 		fetchMetadataGate,
+		readsWithoutEngineWait,
 		// INSIDE the host and CSRF gates (their 403 is not shadowed), OUTSIDE the mux (ServeMux
 		// canonicalizes before routing) and the dedup cache (a refusal mints no replay entry).
 		canonicalAPIPath,

@@ -1171,8 +1171,12 @@ type kasRecipe struct {
 }
 
 // recipeList is the list a person opens: a fresh listing, or the held catalog once that listing outlasts
-// recipeListPatience.
+// recipeListPatience. The listing runs on the runtime's lifetime, which waits for the engine, so a read that must not
+// wait is answered here while no engine is ready.
 func (rs *Runs) recipeList(ctx context.Context) ([]marotte.Recipe, error) {
+	if marotte.EngineWaitRefused(ctx) && !rs.engine.isReady() {
+		return nil, classifyRecipeListErr(fmt.Errorf("%w: the agent engine is not ready", marotte.ErrBridgeExited))
+	}
 	return rs.recipes.display(ctx, rs.lifecycle, rs.fetchRecipes, recipeListPatience)
 }
 

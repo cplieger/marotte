@@ -89,6 +89,19 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe("adoptEngineStatus", () => {
+  it("says when a newer status brings the engine back to ready", () => {
+    adoptEngineStatus(status({ state: "down" }));
+    expect(adoptEngineStatus(status()), "down, then ready").toBe(true);
+    expect(adoptEngineStatus(status()), "ready, then ready").toBe(false);
+    adoptEngineStatus(status({ state: "starting" }));
+    const stale = status();
+    adoptEngineStatus(status({ state: "restarting" }));
+    expect(adoptEngineStatus(stale), "an older ready status is not adopted").toBe(false);
+    expect(adoptEngineStatus(status({ state: "down" })), "restarting, then down").toBe(false);
+  });
+});
+
 describe("engine banner", () => {
   it("shows the pending banner with Restart now only while a restart is pending", () => {
     adoptEngineStatus(

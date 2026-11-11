@@ -1118,4 +1118,20 @@ describe("engine_status", () => {
     fireSSE("engine_status", "", status);
     expect(mockAdoptEngineStatus).toHaveBeenCalledWith(status);
   });
+
+  // An API read answers at once while the engine is not ready, so the engine's return re-asks the catalog and the
+  // held runs, and any other status asks nothing.
+  for (const back of [true, false]) {
+    it(`${back ? "re-reads" : "reads nothing"} when the status ${back ? "brings the engine back" : "is not a return to ready"}`, () => {
+      mockAdoptEngineStatus.mockReturnValueOnce(back);
+      fireSSE("engine_status", "", { state: "ready" });
+      if (back) {
+        expect(mockFetchCatalog).toHaveBeenCalledWith({ reset: true });
+        expect(mockRereadHeldRuns).toHaveBeenCalledTimes(1);
+      } else {
+        expect(mockFetchCatalog).not.toHaveBeenCalled();
+        expect(mockRereadHeldRuns).not.toHaveBeenCalled();
+      }
+    });
+  }
 });
