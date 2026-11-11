@@ -190,7 +190,7 @@
 /* The tree's and the timeline's stand-in for the rows their window skips
    (`exec-view/row-window.ts`): it holds their height so the scroll range is the
    whole list's. */
-.ev-gap {
+.ev-spacer {
   flex: none;
 }
 

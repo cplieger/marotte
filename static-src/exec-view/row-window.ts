@@ -79,7 +79,7 @@ export function watchScroller(scroller: HTMLElement, onMove: () => void): () => 
 
 /** A spacer for a skipped run of items: no content, a height only. */
 export function gapEl(): HTMLElement {
-  return el("div", { className: "ev-gap", "aria-hidden": "true" });
+  return el("div", { className: "ev-spacer", "aria-hidden": "true" });
 }
 
 /** Size a spacer, writing nothing when it already has that height. */

@@ -108,6 +108,18 @@ async function flush(): Promise<void> {
   }
 }
 
+/** Three animation frames: a resize observed at one frame's layout, the callback it defers to the
+ *  next, and one more for its own class change to be observed. */
+async function settleFrames(): Promise<void> {
+  for (let i = 0; i < 3; i++) {
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        resolve();
+      });
+    });
+  }
+}
+
 let runView: HTMLElement;
 let chatView: HTMLElement;
 
@@ -167,6 +179,9 @@ describe("a hidden run tab", () => {
     expect(m.renders).toBeGreaterThan(0);
 
     showOnlyView(chatView);
+    // Hiding the view resizes the dock's section bar, whose fit observer re-measures it a frame
+    // later; that one class flip belongs to the view switch, so it settles before the watch starts.
+    await settleFrames();
     const before = m.renders;
     const records: MutationRecord[] = [];
     const observer = new MutationObserver((r) => records.push(...r));
