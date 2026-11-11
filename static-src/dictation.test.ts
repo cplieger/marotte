@@ -877,20 +877,70 @@ describe("on-device first (rule 6)", () => {
     expect(toastTexts()).toEqual([]);
   });
 
-  it("installs a downloadable language, says it is downloading, then runs on-device", async () => {
+  it("installs a downloadable language, says it is downloading while the install runs, then runs on-device", async () => {
+    let installed: (ok: boolean) => void = () => undefined;
+    const speech = fakeSpeech({
+      available: () => Promise.resolve("downloadable"),
+      install: () =>
+        new Promise((resolve) => {
+          installed = resolve;
+        }),
+    });
+    const d = createDictation(speech.platform, box);
+    d.toggle();
+    await vi.waitFor(
+      () => {
+        expect(toastTexts().join(" ").toLowerCase()).toContain("download");
+      },
+      { timeout: 3000 },
+    );
+    expect(speech.made).toEqual([]);
+    installed(true);
+    await settle();
+    speech.last().begin();
+    expect(speech.installCalls).toEqual([
+      { langs: ["en-US"], processLocally: true, quality: "dictation" },
+    ]);
+    expect(speech.last().processLocally).toBe(true);
+    expect(speech.last().started).toBe(1);
+    expect(toastTexts().join(" ")).not.toContain("Google");
+  });
+
+  it("says nothing of a download when the install resolves at once (an installed pack available() masks)", async () => {
     const speech = fakeSpeech({
       available: () => Promise.resolve("downloadable"),
       install: () => Promise.resolve(true),
     });
     const d = createDictation(speech.platform, box);
     await listen(speech, d);
-    expect(speech.installCalls).toEqual([
-      { langs: ["en-US"], processLocally: true, quality: "dictation" },
-    ]);
     expect(speech.last().processLocally).toBe(true);
     expect(speech.last().started).toBe(1);
-    expect(toastTexts().join(" ").toLowerCase()).toContain("download");
-    expect(toastTexts().join(" ")).not.toContain("Google");
+    await new Promise((resolve) => {
+      setTimeout(resolve, 1000);
+    });
+    expect(toastTexts()).toEqual([]);
+  });
+
+  it("shows no downloading toast once the reader stopped during the install", async () => {
+    let installed: (ok: boolean) => void = () => undefined;
+    const speech = fakeSpeech({
+      available: () => Promise.resolve("downloadable"),
+      install: () =>
+        new Promise((resolve) => {
+          installed = resolve;
+        }),
+    });
+    const d = createDictation(speech.platform, box);
+    d.toggle();
+    await settle();
+    d.toggle();
+    await new Promise((resolve) => {
+      setTimeout(resolve, 1000);
+    });
+    expect(toastTexts()).toEqual([]);
+    installed(true);
+    await settle();
+    expect(speech.made).toEqual([]);
   });
 
   it("falls back to the cloud with a one-line notice when the install fails", async () => {

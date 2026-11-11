@@ -8,6 +8,7 @@ import { initPromptInput, sendComposer, setSendState } from "./prompt-input.js";
 import { createDictation, type Dictation } from "./dictation.js";
 import { ICON_MIC, ICON_SEND } from "./icons.js";
 import { setActive, setSessions } from "./store.js";
+import { BUS_TAB_CHANGED, emitBus } from "./bus.js";
 import type { RunView, Session } from "./types.js";
 import { fakeSpeech, settle } from "./__test-helpers__/fake-speech.js";
 import { glyphMarkup, registryMarkup } from "./__test-helpers__/glyph.js";
@@ -821,6 +822,102 @@ describe("a press's face lasts only as long as the press (rule 3)", () => {
     clickAt(sendBtn(), 1);
     expect(submitted).toEqual([]);
     expect(input().value).toBe("by finger");
+  });
+});
+
+describe("where focus goes when dictation ends (rule 9)", () => {
+  /** Each way a session ends: where focus goes under a finger, the box's value after, and what was sent. */
+  const ENDS: readonly (readonly [
+    name: string,
+    focus: "the box" | "the button",
+    end: () => Promise<void> | void,
+    value: string,
+    sent: readonly string[],
+  ])[] = [
+    ["typing", "the box", () => userEvent.keyboard("x "), "hellox ", []],
+    [
+      "a paste",
+      "the box",
+      () => void document.execCommand("insertText", false, "x "),
+      "hellox ",
+      [],
+    ],
+    [
+      "Stop",
+      "the button",
+      () => {
+        sendBtn().click();
+        speech.last().finish();
+      },
+      "hello",
+      [],
+    ],
+    [
+      "Escape",
+      "the button",
+      () => {
+        press("Escape");
+        speech.last().finish();
+      },
+      "hello",
+      [],
+    ],
+    ["the browser's end", "the button", () => speech.last().finish(), "hello", []],
+    ["an engine error", "the button", () => speech.last().fail("bad-grammar"), "hello", []],
+    ["a page hide", "the button", hide, "hello", []],
+    ["a send", "the button", sendComposer, "", ["hello"]],
+    [
+      "a tab switch",
+      "the button",
+      () => emitBus(BUS_TAB_CHANGED, { to: "__files__", kind: "files" }),
+      "hello",
+      [],
+    ],
+    [
+      "the error face",
+      "the button",
+      () => setSendState({ kind: "error", reason: "The agent is starting." }),
+      "hello",
+      [],
+    ],
+  ];
+
+  function hide(): void {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    try {
+      document.dispatchEvent(new Event("visibilitychange"));
+    } finally {
+      delete (document as { visibilityState?: unknown }).visibilityState;
+    }
+  }
+
+  /** Dictate from a focused button, as a tap or a click focuses it, and hear one phrase. */
+  async function dictateHello(): Promise<void> {
+    sendBtn().focus();
+    await startFrom(sendBtn());
+    speech.last().hear(["hello", true]);
+    expect(document.activeElement).toBe(input());
+  }
+
+  it.each(ENDS)("under a finger, %s leaves focus in %s", async (_, focus, end, value, sent) => {
+    await underFinger(async () => {
+      await dictateHello();
+      await end();
+      expect(document.activeElement).toBe(focus === "the box" ? input() : sendBtn());
+      expect(input().hasAttribute("inputmode")).toBe(false);
+      expect(dictation.listening.value).toBe(false);
+      expect(input().value).toBe(value);
+      expect(submitted).toEqual(sent);
+    });
+  });
+
+  it.each(ENDS)("with a mouse, %s keeps focus in the box", async (_, _focus, end, value, sent) => {
+    await dictateHello();
+    await end();
+    expect(document.activeElement).toBe(input());
+    expect(dictation.listening.value).toBe(false);
+    expect(input().value).toBe(value);
+    expect(submitted).toEqual(sent);
   });
 });
 
