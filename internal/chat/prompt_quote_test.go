@@ -1,6 +1,31 @@
 package chat
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
+
+// A header's search segments are one per band and per stretch of words between, the find runs
+// static-src/fundamentals/turn-header.test.ts reads off the same prompt.
+func TestDrawnWords_OneRunPerBandAndStretch(t *testing.T) {
+	const (
+		first  = "Activity notifications: a separate stream, after the platform is built."
+		second = "Caddy healthcheck order: waits for you to schedule it"
+	)
+	prompt := "> From Kiro's reply:\n>\n> " + first + "\n>\n> Quoting your earlier reply.\n\n" +
+		"remind me what this is about?\n\n" +
+		"> From Kiro's reply:\n>\n> " + second + "\n>\n> Quoting your earlier reply.\n\n" +
+		"and is it urgent?"
+	want := []string{
+		"From Kiro's reply: " + first,
+		"remind me what this is about?",
+		"From Kiro's reply: " + second,
+		"and is it urgent?",
+	}
+	if got := drawnWords(prompt); !slices.Equal(got, want) {
+		t.Errorf("drawnWords = %q, want %q", got, want)
+	}
+}
 
 // A quote's source draws each CommonMark 6.1 code span as its code, as static-src/quote-band.ts sourceEl does.
 func TestUnwrapCodeSpans(t *testing.T) {

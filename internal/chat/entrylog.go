@@ -940,7 +940,8 @@ func firstLineOf(text string) string {
 }
 
 // previewLine is the line a prompt previews as: its first, or for one opening on a quote block, the first line of
-// the reader's words holding any, else the opening quote as `source: passage`, so the preview is never `>` marks.
+// the reader's words holding any, else the opening quote as `source: line`, its passage's first line holding words,
+// so the preview is never `>` marks.
 func previewLine(text string) string {
 	parts := splitQuotes(text)
 	if len(parts) == 0 || !parts[0].quote {
@@ -958,10 +959,16 @@ func previewLine(text string) string {
 		}
 	}
 	q := parts[0]
-	if q.source != nil {
-		q.text = *q.source + ": " + q.text
+	line := ""
+	for l := range strings.SplitSeq(q.text, "\n") {
+		if collapseLine(l) != "" {
+			line = l
+			break
+		}
 	}
-	line, _, _ := strings.Cut(q.text, "\n")
+	if q.source != nil {
+		return *q.source + ": " + line
+	}
 	return line
 }
 

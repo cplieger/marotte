@@ -110,9 +110,9 @@ function opensNamed(run: readonly string[], i: number): boolean {
   );
 }
 
-/** The quote `block` holds, its `>` lines ending on the attribution line, or null when nothing is quoted above it. */
+/** The quote `block` holds, its `>` lines ending on the attribution line, or null when nothing is quoted above it.
+ *  Its source is the opening `From …:` line when `opensNamed` takes it, else null. */
 function readQuote(block: readonly string[]): Quote | null {
-  // An older quote opening on a `From …:` line then a blank line draws that line as its source too.
   const named = opensNamed(block, 0);
   const quoted = unescapeContext(
     block
@@ -157,7 +157,8 @@ function readBlock(block: readonly string[]): [string[], Quote] | null {
 
 /** `request` cut into its `quoteSelection` blocks, wherever each sits, and the text between, blank text left out.
  *  Any `>` line no quote takes, a hand-typed blockquote's, stays text. `internal/chat/prompt_quote.go` ports this
- *  cut for the turn map's preview, so a change here changes it too (`testdata/first_line.json` pins both). */
+ *  cut for the turn map's preview and for search, so a change here changes both (`testdata/first_line.json` and
+ *  `testdata/search_items.json` pin them). */
 export function splitQuotes(request: string): PromptPart[] {
   const lines = request.split("\n");
   const parts: PromptPart[] = [];

@@ -201,7 +201,8 @@ function firstLine(s: string): string {
 }
 
 /** The line a request previews as: its first, or for one opening on a quote block, the first line of the reader's
- *  words holding any, else the opening quote as `source: passage`, so the preview is never `>` marks. */
+ *  words holding any, else the opening quote as `source: line`, its passage's first line holding words, so the
+ *  preview is never `>` marks. */
 function previewLine(s: string): string {
   const parts = splitQuotes(s);
   const lead = parts[0];
@@ -215,8 +216,8 @@ function previewLine(s: string): string {
       return line;
     }
   }
-  const read = lead.source === null ? lead.quote : `${lead.source}: ${lead.quote}`;
-  return read.split("\n", 1)[0] ?? "";
+  const line = lead.quote.split("\n").find((l) => collapseLine(l) !== "") ?? "";
+  return lead.source === null ? line : `${lead.source}: ${line}`;
 }
 
 /** `line` split on Unicode White_Space, as Go's `strings.Fields` splits, and rejoined with one space. Not `\s` or

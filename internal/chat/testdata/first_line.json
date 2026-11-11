@@ -3,7 +3,8 @@
     "A turn's first_line: its prompt's first line, cut at the first newline, split on Unicode",
     "White_Space (Go's strings.Fields), rejoined with one space and capped at 120 runes plus an",
     "ellipsis. A prompt opening on a Quote in reply block previews the first line of the",
-    "reader's words after it that holds any, else its opening quote as 'source: passage'.",
+    "reader's words after it that holds any, else its opening quote as 'source: line', the",
+    "first line of its passage that holds any.",
     "Every '> Quoting your earlier reply.' line closes a quote; a passage line reading as it",
     "carries one more leading backslash, which the preview drops",
     "(entrylog.go previewLine; prompt_quote.go splitQuotes ports message-quote.ts splitQuotes).",
@@ -75,6 +76,16 @@
       "name": "a prompt that is only a quote previews it as source: passage",
       "prompt": "> From Kiro's reply:\n>\n> the passage\n> line two\n>\n> Quoting your earlier reply.",
       "first_line": "From Kiro's reply: the passage"
+    },
+    {
+      "name": "a quote-only preview skips the blank lines a selection's passage opens on",
+      "prompt": "> From Kiro's reply:\n>\n>\n>  \u00a0\n> Caddy healthcheck  order\n> line two\n>\n> Quoting your earlier reply.",
+      "first_line": "From Kiro's reply: Caddy healthcheck order"
+    },
+    {
+      "name": "a nameless quote-only preview skips its passage's blank lines too",
+      "prompt": "> \n> old words\n>\n> Quoting your earlier reply.",
+      "first_line": "old words"
     },
     {
       "name": "a quote-only preview reads its context tokens unescaped",

@@ -15,6 +15,8 @@ import { wakeLine } from "../turn-wake.js";
 import { namedWake } from "../turns.js";
 import type { EntryTurnWake } from "../wire/types.gen.js";
 import { QUOTE_ATTRIBUTION, appendQuote, codeSpan, quoteSelection } from "../message-quote.js";
+import { FindEngine } from "../find-engine.js";
+import { FIND_UNIT_SELECTOR } from "../find-unit.js";
 
 function data(over: Partial<TurnHeaderData> = {}): TurnHeaderData {
   return {
@@ -759,6 +761,23 @@ describe("a request quoting more than one passage", () => {
     updateTurnHeader(h, data({ request: "plain" }));
     expect(bands(h)).toHaveLength(0);
     expect(req(h)).toBe("plain");
+  });
+
+  // internal/chat/prompt_quote_test.go pins drawnWords to this list, the server's search segments for the header.
+  it("reads one find run per band and per stretch of words between, as search segments it", () => {
+    const h = buildTurnHeader(data({ request }));
+    document.body.append(h);
+    try {
+      const unit = h.querySelector(FIND_UNIT_SELECTOR)!;
+      expect(new FindEngine(h).unitTexts({ selector: FIND_UNIT_SELECTOR }).get(unit)).toEqual([
+        `From Kiro's reply: ${FIRST}`,
+        "remind me what this is about?",
+        `From Kiro's reply: ${SECOND}`,
+        "and is it urgent?",
+      ]);
+    } finally {
+      h.remove();
+    }
   });
 
   it("draws quoted markup and the words between as text, never as elements", () => {

@@ -1,8 +1,8 @@
 package chat
 
 // The quote blocks the client's Quote in reply writes into a prompt, cut as static-src/message-quote.ts splitQuotes
-// cuts them, so a turn's preview skips them as its header does. A port: testdata/first_line.json holds both to one
-// reading through firstLineOf.
+// cuts them, so a turn's preview skips them and search reads them as its header draws them. A port:
+// testdata/first_line.json and testdata/search_items.json pin both readings.
 
 import (
 	"regexp"
