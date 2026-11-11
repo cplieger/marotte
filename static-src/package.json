@@ -2,7 +2,7 @@
   "name": "marotte-web",
   "private": true,
   "type": "module",
-  "sseFixture": ".",
+  "sseFixture": "..",
   "sseFixtureTags": "marotte_test",
   "cplieger": {
     "vitestShards": 2

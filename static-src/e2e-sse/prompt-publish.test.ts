@@ -35,8 +35,8 @@ if (FIXTURE === undefined || FIXTURE === "") {
 const HOOK_FRAMES = 4;
 
 /** How long a test waits after the open's last expected frame before it counts header frames:
- *  ten times the server's 25 ms header coalescing window, so a second publish would have landed. */
-const QUIET_MS = 250;
+ *  past the fixture's 1 s header coalescing window, so a second publish would have landed. */
+const QUIET_MS = 1500;
 
 interface Client {
   readonly stream: Stream;
@@ -208,7 +208,7 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("a prompt's publish", (
       .held.find((h) => h.kind === "chat" && h.ref === id)?.version;
   }
 
-  /** The frames for `id` after `from`, with every header frame decoded. */
+  /** The frames for `id` at and after `from`. */
   function chatFrames(c: Client, id: string, from: number): ServerEvent[] {
     return c.frames.slice(from).filter((f) => f.chat_id === id);
   }

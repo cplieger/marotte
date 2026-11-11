@@ -92,10 +92,10 @@ type Store struct {
 const tombstoneTTL = 10 * time.Minute
 
 // headerPublishWindow is how long a chat's header saves coalesce before one chat_updated goes out.
-// A prompt's open and its close each save the header three or four times within about 6 ms (the
-// run row, the turn id bind, the counters, the composer settle); 25 ms folds each burst into one
-// frame. The delay reaches only other pages: the posting page reads its run from the prompt's answer.
-const headerPublishWindow = 25 * time.Millisecond
+// A prompt's open and its close each save the header three or four times within about 6 ms; 25 ms
+// folds each burst into one frame. The delay reaches only other pages: the posting page reads its
+// run from the prompt's answer. A var so the marotte_test fixture can widen it.
+var headerPublishWindow = 25 * time.Millisecond
 
 // tombstone keeps the display name a deleted chat had, because the record goes before
 // its bridge's teardown and a notice that bridge raises meanwhile still names it.
@@ -241,9 +241,10 @@ func (s *Store) restStamp(kind subject.Kind, ref, version string) *marotte.Subje
 	return stamp
 }
 
-// Mutate is the header's mutation primitive: load → apply → save → broadcast, under the per-chat
-// mutex, on the current header or a fresh zero-value chat. Returning false aborts without side
-// effects; a write to a recently deleted id is refused with ErrTombstoned.
+// Mutate is the header's mutation primitive: load → apply → save under the per-chat mutex, on the
+// current header or a fresh zero-value chat, then chat_created at once or one coalesced
+// chat_updated (publishHeader). Returning false aborts without side effects; a write to a recently
+// deleted id is refused with ErrTombstoned.
 //
 // A mutator must not overwrite c.ID (refused); c.CreatedAt is restored. The returned version is the
 // `chat:<id>` version this save minted, or "" when the mutator declined.
@@ -271,8 +272,8 @@ func (s *Store) mutateLocked(ctx context.Context, chatID marotte.ChatID, mutate 
 	return version, nil
 }
 
-// saveLocked is mutateLocked without the broadcast: it answers the saved header, nil when nothing
-// was saved, so a caller that announces the header itself sends one frame.
+// saveLocked is mutateLocked without the announce: it answers the saved header, nil when nothing
+// was saved, and leaves the publish to the caller.
 func (s *Store) saveLocked(ctx context.Context, chatID marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (version string, saved *marotte.Chat, exists bool, err error) {
 	c, err := s.load(ctx, chatID)
 	exists = err == nil
@@ -371,8 +372,8 @@ func (s *Store) announceCreated(ctx context.Context, chatID marotte.ChatID, c *m
 // publishHeader is the header coalescer's flush: it mints one `chats` version for every save the
 // window absorbed and emits one chat_updated carrying the header as it is now. It runs under the
 // chat's lock, so a Delete either lands first, leaving no record and no frame, or lands after,
-// its chat_deleted following this frame. Every save bumps `chats`, broadcaster or not, because
-// title, updated_at and sort order move on each.
+// its chat_deleted following this frame. A flush bumps `chats` unless the record is gone,
+// broadcaster or not, because title, updated_at and sort order moved.
 func (s *Store) publishHeader(chatID marotte.ChatID) {
 	ctx := context.Background()
 	m := s.lock(chatID)
