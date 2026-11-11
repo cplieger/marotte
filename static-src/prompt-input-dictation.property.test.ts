@@ -1,8 +1,8 @@
 // Model-based: presses on Send's and Steer's slots (pointer presses that click, tap, drag off, are cancelled or open a
-// context menu, right and middle presses, keys held with auto-repeat, clicks with no press of their own), interleaved
-// with everything that repaints them mid-press (the engine ending, results, focus moves, the turn starting or ending,
-// typing, sends), never act on a face they did not begin on, and words heard before a send or a clear never reach
-// the box after it.
+// context menu, right and middle presses, keys held with auto-repeat, a press of the other kind inside either, clicks
+// with no press of their own), interleaved with everything that repaints them mid-press (the engine ending, results,
+// focus moves, the turn starting or ending, typing, sends), never act on a face they did not begin on, and words
+// heard before a send or a clear never reach the box after it.
 
 import { beforeAll, describe, expect, it } from "vitest";
 import fc from "fast-check";
@@ -28,7 +28,8 @@ type World =
   /** The keyboard shortcut's send; a held one waits for `answer`. */
   | { readonly k: "send"; readonly held: boolean }
   | { readonly k: "answer" }
-  /** A right or middle press and release, which makes no click. */
+  /** A right or middle press and release, which makes no click; a right press's menu takes a held primary press's
+   *  release (https://bugs.chromium.org/p/chromium/issues/detail?id=149091). */
   | { readonly k: "auxPress"; readonly slot: Slot; readonly button: 1 | 2 };
 
 interface Gesture {
@@ -41,6 +42,9 @@ interface Gesture {
   readonly end: "click" | "tap" | "dragOff" | "cancel" | "contextmenu";
   /** World events before each press start, click, repeat and key up, in order. */
   readonly gaps: readonly (readonly World[])[];
+  /** A whole press of the other kind on the same button while this one is down: a key inside a pointer press, a
+   *  mouse click inside a key press. */
+  readonly inner: "none" | "enter" | "space" | "pointer";
 }
 
 /** A click with no press of its own: `click()`, or an assistive technology's simulated mouse click. */
@@ -76,6 +80,10 @@ let sentRaw: string | null = null;
 let worldSend: { readonly held: boolean } | null = null;
 let answer: (() => void) | null = null;
 let dictation: Dictation;
+/** A right press's menu opened since the gesture's press went down. */
+let menuOpened = false;
+/** What the presses inside the gesture under test did, so the gesture's own count leaves them out. */
+let byInner = { submitted: 0, cancelled: 0, starts: 0, made: 0 };
 
 const session: Session = {
   id: CHAT,
@@ -231,6 +239,7 @@ async function apply(w: World): Promise<void> {
       break;
     case "auxPress": {
       const btn = button(w.slot);
+      menuOpened ||= w.button === 2;
       pointer(btn, "pointerdown", true, w.button);
       pointer(btn, "pointerup", true, w.button);
       btn.dispatchEvent(
@@ -285,6 +294,59 @@ function pointer(btn: HTMLButtonElement, type: string, onButton = true, button =
   );
 }
 
+function counts(): typeof byInner {
+  return { submitted, cancelled, starts, made: speech.made.length };
+}
+
+/** What happened since `before`, less what `credited` already accounts for. */
+function did(before: typeof byInner, credited = byInner): string[] {
+  const sent = submitted - credited.submitted > before.submitted;
+  const cancel = cancelled - credited.cancelled > before.cancelled;
+  const dictated =
+    starts - credited.starts > before.starts || speech.made.length - credited.made > before.made;
+  return [sent && "send", cancel && "cancel", dictated && "dictate"].filter((d) => d !== false);
+}
+
+/** A whole press of `kind` on `btn`, made as the browser makes it, checked against the face it began on. */
+async function innerPress(btn: HTMLButtonElement, kind: Gesture["inner"]): Promise<void> {
+  const face = began(btn);
+  if (kind === "none" || face === null) {
+    return;
+  }
+  const before = counts();
+  if (kind === "pointer") {
+    pointer(btn, "pointerdown");
+    btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: 1 }));
+    pointer(btn, "pointerup");
+    click(btn, 1);
+  } else {
+    btn.focus();
+    const name = kind === "space" ? " " : "Enter";
+    const down = key("keydown", name);
+    if (name === "Enter" && !down.defaultPrevented) {
+      click(btn, 0);
+    }
+    await flush();
+    const kept = document.activeElement === btn;
+    key("keyup", name);
+    if (name === " " && kept && !down.defaultPrevented) {
+      click(btn, 0);
+    }
+  }
+  await flush();
+  const done = did(before, { submitted: 0, cancelled: 0, starts: 0, made: 0 });
+  expect(MAY[face], `an inner ${kind} press that began on ${face} did ${done.join(", ")}`).toEqual(
+    expect.arrayContaining(done),
+  );
+  const after = counts();
+  byInner = {
+    submitted: byInner.submitted + after.submitted - before.submitted,
+    cancelled: byInner.cancelled + after.cancelled - before.cancelled,
+    starts: byInner.starts + after.starts - before.starts,
+    made: byInner.made + after.made - before.made,
+  };
+}
+
 /** A key held on the focused button, its clicks made as the browser makes them: Enter at every key down the page
  *  did not cancel, on the element focused then; Space at key up, only on a button that kept focus throughout. */
 async function holdKey(g: Gesture, btn: HTMLButtonElement): Promise<void> {
@@ -299,6 +361,9 @@ async function holdKey(g: Gesture, btn: HTMLButtonElement): Promise<void> {
     click(btn, 0);
   }
   await flush();
+  if (g.inner === "pointer") {
+    await innerPress(btn, "pointer");
+  }
   for (let r = 0; r < g.count; r++) {
     await applyAll(g.gaps[r]);
     const target = document.activeElement;
@@ -318,8 +383,11 @@ async function holdKey(g: Gesture, btn: HTMLButtonElement): Promise<void> {
   await flush();
 }
 
-/** Run the gesture; `began` is read off the button at its first press start, after any world event before it. */
-async function press(g: Gesture): Promise<Began | null> {
+/** Run the gesture; `face` is read off the button at its first press start, after any world event before it, and
+ *  `clicked` says whether the gesture made a click of its own. */
+async function press(
+  g: Gesture,
+): Promise<{ readonly face: Began | null; readonly clicked: boolean }> {
   const btn = button(g.slot);
   if (g.input !== "pointer") {
     btn.focus();
@@ -327,7 +395,7 @@ async function press(g: Gesture): Promise<Began | null> {
     if (face !== null) {
       await holdKey(g, btn);
     }
-    return face;
+    return { face, clicked: true };
   }
   const clicks = aborted(g) ? 1 : g.count;
   let face: Began | null = null;
@@ -336,12 +404,19 @@ async function press(g: Gesture): Promise<Began | null> {
     if (i === 1) {
       face = began(btn);
       if (face === null) {
-        return null;
+        return { face, clicked: false };
       }
     }
     pointer(btn, "pointerdown");
     btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: i }));
+    menuOpened = false;
     await applyAll(g.gaps[2 * i - 1]);
+    if (i === 1 && g.inner !== "pointer") {
+      await innerPress(btn, g.inner);
+    }
+    if (menuOpened) {
+      return { face, clicked: i > 1 };
+    }
     switch (g.end) {
       case "dragOff":
         pointer(btn, "pointerup", false);
@@ -365,7 +440,7 @@ async function press(g: Gesture): Promise<Began | null> {
     }
     await flush();
   }
-  return face;
+  return { face, clicked: !aborted(g) };
 }
 
 async function clickOnly(c: Click): Promise<Began | null> {
@@ -422,6 +497,13 @@ const gesture: fc.Arbitrary<Gesture> = fc.record({
     "contextmenu" as const,
   ),
   gaps: fc.array(fc.array(world, { maxLength: 2 }), { minLength: 6, maxLength: 6 }),
+  inner: fc.oneof(
+    { arbitrary: fc.constant("none" as const), weight: 3 },
+    {
+      arbitrary: fc.constantFrom("enter" as const, "space" as const, "pointer" as const),
+      weight: 2,
+    },
+  ),
 });
 
 const clickStep: fc.Arbitrary<Click> = fc.record({
@@ -453,14 +535,6 @@ function aborted(g: Gesture): boolean {
   return g.end === "dragOff" || g.end === "cancel" || g.end === "contextmenu";
 }
 
-/** What a gesture may do: an aborted press does nothing, any other acts as the face it began on. */
-function allowed(s: Gesture | Click, face: Began): readonly string[] {
-  if (s.k === "gesture" && s.input === "pointer" && aborted(s)) {
-    return [];
-  }
-  return MAY[face];
-}
-
 const quiet = (first: readonly World[] = []): Gesture["gaps"] => [first, [], [], [], [], []];
 
 /** Space on the microphone while typing turns it to Send, then Enter on Stop with its repeat landing in the box. */
@@ -472,6 +546,7 @@ const spaceThenHeldEnter: readonly Step[] = [
     count: 1,
     end: "click",
     gaps: quiet([{ k: "type", text: "words" }]),
+    inner: "none",
   },
   {
     k: "gesture",
@@ -480,6 +555,31 @@ const spaceThenHeldEnter: readonly Step[] = [
     count: 1,
     end: "click",
     gaps: quiet([{ k: "focusBox" }]),
+    inner: "none",
+  },
+];
+
+/** The mouse held on Stop while an Enter on it stops, then the mouse's own click once the box shows Send. */
+const enterInsideMouseOnStop: readonly Step[] = [
+  {
+    k: "gesture",
+    slot: "main",
+    input: "pointer",
+    count: 1,
+    end: "click",
+    gaps: quiet(),
+    inner: "none",
+  },
+  { k: "begin" },
+  { k: "result", text: "hello", final: true },
+  {
+    k: "gesture",
+    slot: "main",
+    input: "pointer",
+    count: 1,
+    end: "click",
+    gaps: quiet(),
+    inner: "enter",
   },
 ];
 
@@ -493,24 +593,22 @@ describe("a press on the composer's buttons (rule 3)", () => {
             await apply(s);
             continue;
           }
-          const before = { submitted, cancelled, starts, made: speech.made.length };
-          const face = s.k === "gesture" ? await press(s) : await clickOnly(s);
+          const before = counts();
+          byInner = { submitted: 0, cancelled: 0, starts: 0, made: 0 };
+          const { face, clicked } =
+            s.k === "gesture" ? await press(s) : { face: await clickOnly(s), clicked: true };
           expectNoStaleWords();
           if (face === null) {
             continue;
           }
-          const sent = submitted > before.submitted;
-          const cancel = cancelled > before.cancelled;
-          const dictated = starts > before.starts || speech.made.length > before.made;
-          const did = [sent && "send", cancel && "cancel", dictated && "dictate"].filter(
-            (d) => d !== false,
-          );
-          expect(allowed(s, face), `a ${s.k} that began on ${face} did ${did.join(", ")}`).toEqual(
-            expect.arrayContaining(did),
-          );
+          const done = did(before);
+          expect(
+            clicked ? MAY[face] : [],
+            `a ${s.k} that began on ${face} did ${done.join(", ")}`,
+          ).toEqual(expect.arrayContaining(done));
         }
       }),
-      { numRuns: 300, examples: [[spaceThenHeldEnter]] },
+      { numRuns: 300, examples: [[spaceThenHeldEnter], [enterInsideMouseOnStop]] },
     );
   });
 });

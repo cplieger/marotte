@@ -533,6 +533,60 @@ describe("a held key is one press, on the face it began on (rule 3)", () => {
   );
 });
 
+describe("a press of one kind inside a press of the other (rule 3)", () => {
+  it.each([
+    ["Send's slot", false],
+    ["the mid-turn slot", true],
+  ])(
+    "only stops on an Enter on Stop while the mouse is held there, and the release sends nothing, on %s",
+    async (_, mid) => {
+      if (mid) {
+        streaming();
+      }
+      const btn = mid ? midTurn() : sendBtn();
+      await startFrom(btn);
+      speech.last().hear(["hello", true]);
+      pressDown(btn);
+      btn.focus();
+      await userEvent.keyboard("{Enter}");
+      expect(dictation.listening.value).toBe(false);
+      speech.last().finish();
+      release(btn, true);
+      clickAt(btn, 1);
+      expect(submitted).toEqual([]);
+      expect(input().value).toBe("hello");
+    },
+  );
+
+  it.each([
+    ["Send's slot", false],
+    ["the mid-turn slot", true],
+  ])(
+    "only stops on a mouse click on Stop while a Space is held there, and the Space's click sends nothing, on %s",
+    async (_, mid) => {
+      if (mid) {
+        streaming();
+      }
+      const btn = mid ? midTurn() : sendBtn();
+      await startFrom(btn);
+      speech.last().hear(["hello", true]);
+      btn.focus();
+      btn.dispatchEvent(
+        new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }),
+      );
+      pressDown(btn);
+      release(btn, true);
+      clickAt(btn, 1);
+      expect(dictation.listening.value).toBe(false);
+      speech.last().finish();
+      btn.dispatchEvent(new KeyboardEvent("keyup", { key: " ", bubbles: true }));
+      clickAt(btn, 0);
+      expect(submitted).toEqual([]);
+      expect(input().value).toBe("hello");
+    },
+  );
+});
+
 describe("a held Enter under a finger, with a hardware keyboard (rule 3)", () => {
   it.each([
     ["Send's slot", false],
@@ -614,17 +668,29 @@ describe("a press's face lasts only as long as the press (rule 3)", () => {
     expect(submitted).toEqual([]);
   });
 
-  it("keeps a primary press through a right or middle press chorded into it", async () => {
+  it("keeps a primary press through a middle press's auxclick, for its click", async () => {
     await startFrom(sendBtn());
     speech.last().hear(["chord", false]);
     pressDown(sendBtn());
     sendBtn().dispatchEvent(new MouseEvent("auxclick", { bubbles: true, button: 1 }));
-    sendBtn().dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, button: 2 }));
     speech.last().finish();
     release(sendBtn(), true);
     clickAt(sendBtn(), 1);
     expect(submitted).toEqual([]);
     expect(input().value).toBe("chord");
+  });
+
+  it("ends a primary press when a right press chorded into it opens the menu, so a later simulated click acts on the face painted", async () => {
+    await startFrom(sendBtn());
+    speech.last().hear(["chord", false]);
+    pressDown(sendBtn());
+    sendBtn().dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }),
+    );
+    speech.last().finish();
+    expectSendFace(sendBtn());
+    simulatedClick(sendBtn());
+    expect(submitted).toEqual(["chord"]);
   });
 
   it("ends a primary press that opened a context menu (a Ctrl-click, a long press)", () => {
@@ -650,7 +716,7 @@ describe("a press's face lasts only as long as the press (rule 3)", () => {
     expect(dictation.listening.value).toBe(true);
   });
 
-  it("keeps a key press past its button's blur, so its repeats never reach the box", () => {
+  it("swallows the repeats of a Space begun on a button after focus leaves it, and clicks nothing", () => {
     sendBtn().focus();
     sendBtn().dispatchEvent(
       new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }),

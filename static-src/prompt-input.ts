@@ -363,7 +363,7 @@ class PromptInputController {
     return t === $.sendBtn || t === this.midTurn ? (t as HTMLButtonElement) : null;
   }
 
-  /** Every listener below only feeds `press`, the one owner of a press. */
+  /** Every press listener below only feeds `press`, the one owner of a press; the buttons' keydown runs Escape. */
   private wirePresses(buttons: readonly HTMLButtonElement[]): void {
     for (const on of buttons) {
       on.addEventListener("pointerdown", (e: PointerEvent) => {
@@ -376,9 +376,6 @@ class PromptInputController {
       }
       on.addEventListener("contextmenu", (e: MouseEvent) => {
         this.press({ k: "contextmenu", e });
-      });
-      on.addEventListener("blur", () => {
-        this.press({ k: "blur", on });
       });
       on.addEventListener("keydown", (e: KeyboardEvent) => {
         this.escapeStops(e);
