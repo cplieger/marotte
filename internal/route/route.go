@@ -77,7 +77,7 @@ const (
 type Access struct {
 	Class    Class
 	KeyScope string // set exactly on ClassKeyScope: the scope a key or the agent key must hold
-	//deadset:ignore DS1301 -- the access gate's transport rule reads it once the gate is wired; the table tests read it until then
+	//deadset:ignore DS1301 -- the gate's transport rule (design §2.5 step 5) reads it once L3 wires the login; the table tests read it until then
 	Transport Transport // zero is refused by the table test
 	//deadset:ignore DS1301 -- the GET-safety audit: the table tests hold every GET and HEAD entry to it, and no request path reads it
 	Safe       bool          // GET/HEAD only; true exactly when its audit row names no effect
@@ -208,7 +208,7 @@ func WebSocket(pattern string, h http.Handler) Binding { return bodyless(KindWeb
 
 // Redirect binds a redirecting handler, as Raw does.
 //
-//deadset:ignore DS1102 -- no marotte route redirects before the login's OIDC callback; the route tests call it until then
+//deadset:ignore DS1102 -- design §2.7 lists it among the binding constructors; no marotte route binds through it, and the route tests cover it
 func Redirect(pattern string, h http.Handler) Binding { return bodyless(KindRedirect, pattern, h) }
 
 // AnyMethod binds a catch-all mount that answers every method itself, with no filter.

@@ -31,7 +31,7 @@ type Registrar struct {
 	sealed     bool
 }
 
-// SealError is Seal's refusal: every violation Bind recorded and every unbound entry.
+// SealError is the refusal Routes returns: every violation Bind recorded and every unbound entry.
 type SealError struct {
 	Violations []string
 }
