@@ -7,7 +7,7 @@ import (
 )
 
 // TestNextDeadline_TakesTheTighterBoundAndNeverGoesBelowTheFloor pins the composition of
-// one clock over three inputs.
+// one clock over the idle window, the slot and the floor.
 func TestNextDeadline_TakesTheTighterBoundAndNeverGoesBelowTheFloor(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 1, 3, 0, 0, 0, time.UTC)
@@ -18,7 +18,7 @@ func TestNextDeadline_TakesTheTighterBoundAndNeverGoesBelowTheFloor(t *testing.T
 		in   Bounds
 		want time.Time
 	}{
-		"no slot and no backstop, so the idle window is the whole bound": {
+		"no slot, so the idle window is the whole bound": {
 			in:   Bounds{Idle: idle, Floor: floor},
 			want: now.Add(idle),
 		},
@@ -46,44 +46,6 @@ func TestNextDeadline_TakesTheTighterBoundAndNeverGoesBelowTheFloor(t *testing.T
 			in:   Bounds{SlotAt: now.Add(floor), Idle: idle, Floor: floor},
 			want: now.Add(floor),
 		},
-		"a backstop inside the idle window wins": {
-			in:   Bounds{BackstopAt: now.Add(7 * time.Minute), Idle: idle, Floor: floor},
-			want: now.Add(7 * time.Minute),
-		},
-		"a backstop beyond the window loses, so an ordinary refill is unaffected": {
-			in:   Bounds{BackstopAt: now.Add(100 * idle), Idle: idle, Floor: floor},
-			want: now.Add(idle),
-		},
-		// In the PAST: a spent backstop is honoured, not floored, or progress rolls it forward forever.
-		"a spent backstop is honoured, not floored": {
-			in:   Bounds{BackstopAt: now.Add(-time.Hour), Idle: idle, Floor: floor},
-			want: now.Add(-time.Hour),
-		},
-		"a spent backstop outranks a slot inside the floor too": {
-			in: Bounds{
-				SlotAt: now.Add(90 * time.Second), BackstopAt: now.Add(-time.Hour),
-				Idle: idle, Floor: floor,
-			},
-			want: now.Add(-time.Hour),
-		},
-		"a zero backstop does not bound the run": {
-			in:   Bounds{Idle: idle, Floor: floor},
-			want: now.Add(idle),
-		},
-		"slot and backstop both set: the tighter one wins": {
-			in: Bounds{
-				SlotAt: now.Add(12 * time.Minute), BackstopAt: now.Add(9 * time.Minute),
-				Idle: idle, Floor: floor,
-			},
-			want: now.Add(9 * time.Minute),
-		},
-		"slot and backstop both set: the slot can be the tighter one": {
-			in: Bounds{
-				SlotAt: now.Add(9 * time.Minute), BackstopAt: now.Add(12 * time.Minute),
-				Idle: idle, Floor: floor,
-			},
-			want: now.Add(9 * time.Minute),
-		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -92,45 +54,10 @@ func TestNextDeadline_TakesTheTighterBoundAndNeverGoesBelowTheFloor(t *testing.T
 				t.Errorf("NextDeadline = %v, want %v (in %v / %v from now)",
 					got, tc.want, got.Sub(now), tc.want.Sub(now))
 			}
-			spent := !tc.in.BackstopAt.IsZero() && tc.in.BackstopAt.Before(now.Add(floor))
-			if !spent && got.Before(now.Add(floor)) {
+			if got.Before(now.Add(floor)) {
 				t.Errorf("NextDeadline = %v, below the floor %v", got.Sub(now), floor)
 			}
-			if spent && !got.Equal(tc.in.BackstopAt) {
-				t.Errorf("NextDeadline = %v with a spent backstop at %v; the backstop instant is "+
-					"the answer, or a floor rolls the absolute bound forward on every stamp",
-					got.Sub(now), tc.in.BackstopAt.Sub(now))
-			}
 		})
-	}
-}
-
-// TestNextDeadline_FloorOutranksTheSlotButNotTheBackstop pins the one disagreement: the
-// floor outranks the slot, while any backstop tighter than the floor wins.
-func TestNextDeadline_FloorOutranksTheSlotButNotTheBackstop(t *testing.T) {
-	t.Parallel()
-	now := time.Now()
-	const floor = 5 * time.Minute
-
-	slot := NextDeadline(now, Bounds{SlotAt: now.Add(time.Second), Idle: 15 * time.Minute, Floor: floor})
-	if want := now.Add(floor); !slot.Equal(want) {
-		t.Errorf("with a one-second slot NextDeadline = %v after now, want the floor %v",
-			slot.Sub(now), want.Sub(now))
-	}
-
-	backstop := now.Add(-time.Hour)
-	spent := NextDeadline(now, Bounds{BackstopAt: backstop, Idle: 15 * time.Minute, Floor: floor})
-	if !spent.Equal(backstop) {
-		t.Errorf("with a spent backstop NextDeadline = %v after now, want the backstop instant "+
-			"%v; a floor here is a fresh budget on every stamp, so the absolute bound becomes a "+
-			"rolling window a productive-looking runaway never reaches",
-			spent.Sub(now), backstop.Sub(now))
-	}
-
-	// A refill a moment later computes the same instant: the backstop anchor is fixed.
-	later := NextDeadline(now.Add(2*time.Minute), Bounds{BackstopAt: backstop, Idle: 15 * time.Minute, Floor: floor})
-	if !later.Equal(spent) {
-		t.Errorf("a stamp two minutes later moved the spent backstop from %v to %v", spent, later)
 	}
 }
 

@@ -246,42 +246,24 @@ func TestScheduledRun_ALateEndingNeverLandsOnANewerFire(t *testing.T) {
 	}
 }
 
-// TestScheduledRun_ABoundStopSaysWhyOnTheRow pins that a stall or the backstop writes its reason on the row, and
-// the cancel's own terminal frame, which carries none, does not overwrite it.
-func TestScheduledRun_ABoundStopSaysWhyOnTheRow(t *testing.T) {
-	for name, tc := range map[string]struct {
-		mark       func(h *Runtime, id string)
-		wantReason string
-	}{
-		"stalled": {func(*Runtime, string) {}, "15 minutes"},
-		"past the backstop": {func(h *Runtime, id string) {
-			h.runs.mu.Lock()
-			if h.runs.bounds.executed == nil {
-				h.runs.bounds.executed = map[string]time.Duration{}
-			}
-			h.runs.bounds.executed[id] = runBackstop
-			h.runs.mu.Unlock()
-		}, "36 hours"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			h, br, st, entry := scheduledHub(t)
-			const id = "wf_1"
-			launchScheduled(t, h, br, &entry, id)
-			h.runs.armDeadline(t.Context(), id)
-			tc.mark(h, id)
-			l, _ := h.runs.lease(id)
+// TestScheduledRun_AStallSaysWhyOnTheRow pins that a stall writes its reason on the row, and the cancel's own
+// terminal frame, which carries none, does not overwrite it.
+func TestScheduledRun_AStallSaysWhyOnTheRow(t *testing.T) {
+	h, br, st, entry := scheduledHub(t)
+	const id = "wf_1"
+	launchScheduled(t, h, br, &entry, id)
+	h.runs.armDeadline(t.Context(), id)
+	l, _ := h.runs.lease(id)
 
-			h.runs.cancelExpired(id, l.Deadline)
-			h.runs.observeComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
-				"workflowId": id, "status": "cancelled",
-			}))
+	h.runs.cancelExpired(id, l.Deadline)
+	h.runs.observeComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
+		"workflowId": id, "status": "cancelled",
+	}))
 
-			row := onlyRow(t, st)
-			if row.LastStatus != launchrule.StatusFailed || !strings.Contains(row.LastReason, tc.wantReason) {
-				t.Errorf("a run stopped %s left the row reading (%q, %q), want failed naming %q",
-					name, row.LastStatus, row.LastReason, tc.wantReason)
-			}
-		})
+	row := onlyRow(t, st)
+	if row.LastStatus != launchrule.StatusFailed || !strings.Contains(row.LastReason, "15 minutes") {
+		t.Errorf("a stalled run left the row reading (%q, %q), want failed naming 15 minutes",
+			row.LastStatus, row.LastReason)
 	}
 }
 
@@ -290,23 +272,16 @@ func TestScheduledRun_ABoundStopSaysWhyOnTheRow(t *testing.T) {
 func TestScheduledRun_ABoundStopRecordsOnlyOnceItsCancelLands(t *testing.T) {
 	for name, tc := range map[string]struct {
 		slotIn     time.Duration
-		backstop   bool
 		wantReason string
 	}{
-		"stalled":           {time.Hour, false, "15 minutes"},
-		"past the backstop": {time.Hour, true, "36 hours"},
-		"at its slot":       {-time.Minute, false, reasonOverran},
+		"stalled":     {time.Hour, "15 minutes"},
+		"at its slot": {-time.Minute, reasonOverran},
 	} {
 		expire := func(t *testing.T, h *Runtime, br *fakeBridge, entry *launchrule.Rule) {
 			t.Helper()
 			const id = "wf_1"
 			leaseScheduledWithSlot(t, h, br, entry, id, tc.slotIn)
 			h.runs.armDeadline(t.Context(), id)
-			if tc.backstop {
-				h.runs.mu.Lock()
-				h.runs.bounds.executed = map[string]time.Duration{id: runBackstop}
-				h.runs.mu.Unlock()
-			}
 			l, _ := h.runs.lease(id)
 			h.runs.cancelExpired(id, l.Deadline)
 		}
@@ -344,12 +319,10 @@ func TestScheduledRun_ABoundStopRecordsOnlyOnceItsCancelLands(t *testing.T) {
 // skipped. A person's own cancel is theirs to see on the run page and leaves the row alone.
 func TestScheduledRun_ABoundStopWhoseCancelIsNeverAcceptedSaysSo(t *testing.T) {
 	for name, tc := range map[string]struct {
-		slotIn   time.Duration
-		backstop bool
+		slotIn time.Duration
 	}{
-		"stalled":           {time.Hour, false},
-		"past the backstop": {time.Hour, true},
-		"at its slot":       {-time.Minute, false},
+		"stalled":     {time.Hour},
+		"at its slot": {-time.Minute},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, br, st, entry := scheduledHub(t)
@@ -359,11 +332,6 @@ func TestScheduledRun_ABoundStopWhoseCancelIsNeverAcceptedSaysSo(t *testing.T) {
 			before := failureCounts(t)
 			leaseScheduledWithSlot(t, h, br, &entry, id, tc.slotIn)
 			h.runs.armDeadline(t.Context(), id)
-			if tc.backstop {
-				h.runs.mu.Lock()
-				h.runs.bounds.executed = map[string]time.Duration{id: runBackstop}
-				h.runs.mu.Unlock()
-			}
 			l, _ := h.runs.lease(id)
 
 			h.runs.cancelExpired(id, l.Deadline)

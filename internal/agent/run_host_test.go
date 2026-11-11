@@ -1670,13 +1670,6 @@ func triggeredRetryHubOn(t *testing.T, c TriggerConfirmer, dir string, o launchO
 	return h, br
 }
 
-func executedRecorded(rs *Runs, workflowID string) bool {
-	rs.mu.Lock()
-	defer rs.mu.Unlock()
-	_, ok := rs.bounds.executed[workflowID]
-	return ok
-}
-
 func retryFailed(t *testing.T, h *Runtime) error {
 	t.Helper()
 	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"}))
@@ -1691,17 +1684,9 @@ func TestRetryOfAbandonedRunTakesRetryLease(t *testing.T) {
 		dir := t.TempDir()
 		fc := &fakeConfirmer{retried: true}
 		h, br := triggeredRetryHub(t, fc, dir)
-		h.runs.armDeadline(t.Context(), "wf_1")
-		h.runs.disarmDeadline(t.Context(), "wf_1")
-		if !executedRecorded(h.runs, "wf_1") {
-			t.Fatal("the fixture's abandoned run banked no executed time")
-		}
 
 		if err := retryFailed(t, h); err != nil {
 			t.Fatalf("retry: %v", err)
-		}
-		if executedRecorded(h.runs, "wf_1") {
-			t.Error("the abandoned run's executed time carried into the person's retry, shortening its backstop")
 		}
 		if !br.called(methodKiroWorkflowRetry) {
 			t.Error("the retry verb was not sent")

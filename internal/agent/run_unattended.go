@@ -67,14 +67,10 @@ const logMsgRunOverran = "scheduled run still going when its next slot came due;
 const reasonOverran = "still running when its next slot came due, so it was cancelled. " +
 	"Give the schedule a longer interval, or make the workflow finish inside it"
 
-// reasonStalled and reasonBackstop are the row's text for the other two bounds (cancelExpired).
-var (
-	reasonStalled = "made no progress and had no live shell for " +
-		strconv.Itoa(int(runIdleWindow.Minutes())) + " minutes, so it was cancelled. " +
-		"Open the run to see the step it stopped in"
-	reasonBackstop = "ran for " + strconv.Itoa(int(runBackstop.Hours())) +
-		" hours in total, the most one run may, so it was cancelled. Make the workflow finish sooner"
-)
+// reasonStalled is the row's text for the idle window (cancelExpired).
+var reasonStalled = "made no progress and had no live shell for " +
+	strconv.Itoa(int(runIdleWindow.Minutes())) + " minutes, so it was cancelled. " +
+	"Open the run to see the step it stopped in"
 
 // reasonCancelRefused is the row's text once retryTermination gives up on a stop marotte decided.
 var reasonCancelRefused = "reached a limit that stops it, but kiro-cli refused the cancel " +

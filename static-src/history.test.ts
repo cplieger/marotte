@@ -830,12 +830,12 @@ describe("history: an overrun reads differently from a cancel", () => {
 
   const sub = (row: Element): string => row.querySelector(".entry-sub")?.textContent ?? "";
 
-  it("says a wall-clock overrun stopped the run", async () => {
+  it("says the next scheduled slot stopped the run", async () => {
     await render({
       sessions: [],
       runs: [{ ...runRow, status: "aborted", end_reason: "overran" }],
     });
-    expect(sub(rowOf("r:wf_1"))).toContain("ran past its time limit");
+    expect(sub(rowOf("r:wf_1"))).toContain("next scheduled slot came due");
   });
 
   it("says the idle window stopped the run, and settles it as aborted", async () => {
@@ -898,7 +898,7 @@ describe("history: an overrun reads differently from a cancel", () => {
     });
     const row = rowOf("r:wf_1");
     expect(row.querySelector(".tool-icon")).not.toBeNull();
-    expect(sub(row)).toContain("ran past its time limit");
+    expect(sub(row)).toContain("next scheduled slot came due");
   });
 
   it("ignores an end reason it does not recognise", async () => {

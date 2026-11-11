@@ -1,7 +1,7 @@
 package agent
 
 // The idle window measures liveness: any live step frame refills it, an open step turn holds it, and it
-// fires only on a true stall. A step hung inside its turn meets the backstop alone (cancelExpired).
+// fires only on a true stall.
 
 import (
 	"context"
@@ -85,23 +85,6 @@ func TestCancelExpired_AnUnreadableRunWithNoOpenStepIsAStall(t *testing.T) {
 	}
 }
 
-// An open step holds only the idle window; the backstop fires regardless.
-func TestCancelExpired_ASpentBackstopOutranksAnOpenStep(t *testing.T) {
-	const id = "wf_1"
-	h, _ := stepFixture(t, id)
-	openStep(t, h, id, []string{"root", "a"}, "step-session-a")
-	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
-	h.runs.mu.Lock()
-	h.runs.bounds.executed = map[string]time.Duration{id: runBackstop}
-	h.runs.mu.Unlock()
-
-	h.runs.cancelExpired(id, deadline)
-
-	if got := h.runs.endReason(id); got != runEndOverran {
-		t.Errorf("endReason = %q, want %q: a spent backstop is not a stall and an open step does not lift it", got, runEndOverran)
-	}
-}
-
 // A manual run's next slot outranks an open step.
 func TestCancelExpired_ASlotOutranksAnOpenStep(t *testing.T) {
 	const id = "wf_1"
@@ -116,28 +99,6 @@ func TestCancelExpired_ASlotOutranksAnOpenStep(t *testing.T) {
 	}
 	if !slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
 		t.Errorf("no cancel went out at the slot: %v", br.callLog())
-	}
-}
-
-// An open step inside the backstop's last minute: the refill stamps the backstop instant, so a timer stands and no cancel goes out.
-func TestCancelExpired_ARefillInsideTheBackstopsLastMinuteStillBounds(t *testing.T) {
-	const id = "wf_1"
-	h, br := stepFixture(t, id)
-	defer shutdownHub(t, h)
-	openStep(t, h, id, []string{"root", "a"}, "step-session-a")
-	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
-	h.runs.mu.Lock()
-	h.runs.bounds.armedAt[id] = time.Now().Add(-runBackstop + 30*time.Second)
-	h.runs.mu.Unlock()
-
-	h.runs.cancelExpired(id, deadline)
-
-	if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
-		t.Errorf("a cancel went out for a run with an open step: %v", br.callLog())
-	}
-	l, _ := h.runs.lease(id)
-	if budget := time.Until(l.Deadline); budget <= 0 || budget > time.Minute {
-		t.Errorf("the refill left %v of budget, want the backstop instant inside the next minute", budget.Round(time.Second))
 	}
 }
 

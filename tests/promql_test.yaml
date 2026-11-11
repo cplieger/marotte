@@ -326,11 +326,9 @@ tests:
                 watching, was refused and failed. Add a permission rule for that
                 tool, or turn on approval under Unattended runs in Settings.
 
-  - name: MarotteUnattendedRunStopped covers the five stop reasons and leaves the others to their rules
+  - name: MarotteUnattendedRunStopped covers the four stop reasons and leaves the others to their rules
     interval: 1m
     input_series:
-      - series: 'marotte_unattended_run_failures_total{job="marotte",instance="a:9847",origin="scheduled",reason="backstop"}'
-        values: "0 1x10"
       - series: 'marotte_unattended_run_failures_total{job="marotte",instance="a:9847",origin="triggered",reason="stalled"}'
         values: "0 1x10"
       - series: 'marotte_unattended_run_failures_total{job="marotte",instance="a:9847",origin="scheduled",reason="paused"}'
@@ -352,41 +350,29 @@ tests:
               summary: "marotte stopped an unattended run"
               description: >
                 A scheduled run ended as overran. overran
-                outlived its slot, backstop spent its time budget, stalled stopped
-                making progress, paused had nobody to resume it, and orphaned was
-                cut off by a restart.
+                outlived its slot, stalled stopped making progress, paused had
+                nobody to resume it, and orphaned was cut off by a restart.
           - exp_labels: {severity: warning, job: marotte, instance: "a:9847", origin: triggered, reason: orphaned}
             exp_annotations:
               summary: "marotte stopped an unattended run"
               description: >
                 A triggered run ended as orphaned. overran
-                outlived its slot, backstop spent its time budget, stalled stopped
-                making progress, paused had nobody to resume it, and orphaned was
-                cut off by a restart.
-          - exp_labels: {severity: warning, job: marotte, instance: "a:9847", origin: scheduled, reason: backstop}
-            exp_annotations:
-              summary: "marotte stopped an unattended run"
-              description: >
-                A scheduled run ended as backstop. overran
-                outlived its slot, backstop spent its time budget, stalled stopped
-                making progress, paused had nobody to resume it, and orphaned was
-                cut off by a restart.
+                outlived its slot, stalled stopped making progress, paused had
+                nobody to resume it, and orphaned was cut off by a restart.
           - exp_labels: {severity: warning, job: marotte, instance: "a:9847", origin: triggered, reason: stalled}
             exp_annotations:
               summary: "marotte stopped an unattended run"
               description: >
                 A triggered run ended as stalled. overran
-                outlived its slot, backstop spent its time budget, stalled stopped
-                making progress, paused had nobody to resume it, and orphaned was
-                cut off by a restart.
+                outlived its slot, stalled stopped making progress, paused had
+                nobody to resume it, and orphaned was cut off by a restart.
           - exp_labels: {severity: warning, job: marotte, instance: "a:9847", origin: scheduled, reason: paused}
             exp_annotations:
               summary: "marotte stopped an unattended run"
               description: >
                 A scheduled run ended as paused. overran
-                outlived its slot, backstop spent its time budget, stalled stopped
-                making progress, paused had nobody to resume it, and orphaned was
-                cut off by a restart.
+                outlived its slot, stalled stopped making progress, paused had
+                nobody to resume it, and orphaned was cut off by a restart.
 
   - name: MarotteUnattendedRunCancelFailed fires when every cancel was refused
     interval: 1m
