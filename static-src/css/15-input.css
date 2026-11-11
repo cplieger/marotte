@@ -1868,14 +1868,15 @@
   }
 
   /* THE BREATH — a slow swell of the hue while a turn runs, so a working agent
-     reads off the composer without the glyph. Opacity on a pre-painted overlay
+     reads off the composer without the glyph, and while dictation listens, so the
+     open microphone does too. Opacity on a pre-painted overlay
      carrying the shared `vk-dot-beat` (03-base.css) at its own peak, so it beats
      in step with the tab dot of the chat it belongs to — the delay comes off one
      global origin. Reduced motion runs it once and it rests at the `opacity: 0`
      declared here, leaving this face identical to a still one. 8% of the hue is ~5 points of depth
      wherever the ladder sits — 38 -> 43 resting, 46 -> 50 hovered, half the
      rest-to-hover step. Radius `--pill-radius` - 1px, concentric with the ring above. */
-  &:where(.streaming)::before {
+  &:where(.streaming, .dictating)::before {
     content: "";
     position: absolute;
     z-index: -1;

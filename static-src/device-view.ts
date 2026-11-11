@@ -157,6 +157,15 @@ export function markCoarseSeen(): void {
   writeBlob({ pointer_coarse_seen: true });
 }
 
+/** Whether this screen was told that its browser's dictation sends audio to a cloud service; sticky. */
+export function dictationCloudNoted(): boolean {
+  return readBlob()["dictation_cloud_noted"] === true;
+}
+
+export function markDictationCloudNoted(): void {
+  writeBlob({ dictation_cloud_noted: true });
+}
+
 /** Refresh the cache for the next load's pre-paint; `null` clears it, so prepaint.js follows the OS. */
 export function cacheTheme(theme: ThemeChoice | null): void {
   if (theme === null) {

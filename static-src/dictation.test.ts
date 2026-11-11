@@ -319,7 +319,6 @@ describe("where the words go (rule 9)", () => {
     speech.last().hear(["hello wor", false]);
     speech.last().hear(["hello world", true]);
     expect(box.value).toBe("before hello world after");
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- the browser's own undo, as Ctrl+Z runs it.
     document.execCommand("undo");
     expect(box.value).toBe("before after");
   });

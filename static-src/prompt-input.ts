@@ -3,14 +3,17 @@
 // send-state.ts drives three button faces: idle sends, streaming cancels, error retries; the error
 // face means there is nothing to send TO, so every other failure reports through a toast and the
 // turn's own divider. While a turn streams and the composer holds a send (text or a staged file), a
-// second button beside Cancel sends it, because a touch Return is a new line.
+// second button beside Cancel sends it, because a touch Return is a new line. With nothing to send,
+// a microphone takes Send's or that button's slot (send-faces.ts decides which face shows).
 
 import { $, byId, maybeEl, queryEl } from "./dom.js";
 import { activeSession, getActive, getActiveId } from "./store.js";
 import { afterWords } from "./run-order.js";
 import { payloadOf, turnOpenOf } from "./turns.js";
 import { fixIOSViewport } from "./platform.js";
-import { ICON_SEND, ICON_CANCEL, ICON_ALERT, ICON_HOURGLASS } from "./icons.js";
+import { ICON_SEND, ICON_CANCEL, ICON_ALERT, ICON_HOURGLASS, ICON_MIC } from "./icons.js";
+import { sendFaces, type Faces } from "./send-faces.js";
+import type { Dictation } from "./dictation.js";
 import { iconEl } from "./icon-el.js";
 import { collapseAll } from "./pill-expand.js";
 import { composerText, isSendable, setComposerValue, syncComposerText } from "./composer-value.js";
@@ -18,6 +21,7 @@ import { touchComposer, wireTouchComposer } from "./composer-touch.js";
 import { flushComposerDraft, restoreRefusedEdit } from "./composer-state.js";
 import { continueList } from "./list-continue.js";
 import { applyEdit } from "./text-edit.js";
+import { sigChanged } from "./paint-sig.js";
 import { computed, effect, el, signal, touch, type ReadonlySignal } from "@cplieger/reactive";
 import type { SendVerb } from "./wire/types.gen.js";
 
@@ -96,6 +100,29 @@ function reasonOf(s: SendState): string {
   return s.kind === "error" ? s.reason : "";
 }
 
+/** Where the browser cannot dictate: Send stays exactly as it was. */
+const NO_DICTATION: Dictation = {
+  ready: signal(false),
+  listening: signal(false),
+  toggle: () => undefined,
+  stop: () => undefined,
+};
+
+/** A toggle's name stays stable and `aria-pressed` carries the state; the tooltip says what a press does. */
+function paintDictate(btn: HTMLButtonElement, pressed: boolean): void {
+  btn.replaceChildren(el("span", { className: "send-btn-label" }, "Dictate"), iconEl(ICON_MIC));
+  btn.setAttribute("aria-label", "Dictate");
+  btn.setAttribute("aria-pressed", String(pressed));
+  btn.setAttribute("data-tooltip", pressed ? "Stop dictation" : "Dictate");
+  btn.classList.toggle("dictating", pressed);
+  btn.type = "button";
+}
+
+function clearDictate(btn: HTMLButtonElement): void {
+  btn.removeAttribute("aria-pressed");
+  btn.classList.remove("dictating");
+}
+
 let initialized = false;
 
 /** How long after `compositionend` an Enter is still the IME's commit key rather than a send.
@@ -117,8 +144,8 @@ class PromptInputController {
   private onSubmit: Submit = () => undefined;
   private onEditLast: EditLast = () => undefined;
   private staged: Staged = signal(false);
+  private dictation: Dictation = NO_DICTATION;
   private midTurn: HTMLButtonElement | null = null;
-  private midTurnName = "";
   /** Each chat whose send is in flight, by the token of that send. */
   private readonly held = new Map<string, object>();
 
@@ -131,6 +158,8 @@ class PromptInputController {
     if (this.heldHere() || !isSendable(text, this.staged.peek())) {
       return;
     }
+    // Before the box clears, so no late words refill it.
+    this.dictation.stop();
     this.exitCycling();
     const chatID = getActiveId();
     const sending = this.onSubmit(text);
@@ -280,9 +309,8 @@ class PromptInputController {
     if (btn === null) {
       return;
     }
-    const hide =
-      this.state.kind !== "streaming" || !isSendable(composerText.peek(), this.staged.peek());
-    if (hide) {
+    const side = this.faces().side;
+    if (side === "hidden") {
       // Its own send or the turn's end hides it under a keyboard user, who keeps their place in
       // the composer rather than falling to <body>. A tap's focus is left to the platform.
       const keyboard = !btn.hidden && btn.matches(":focus-visible");
@@ -293,21 +321,57 @@ class PromptInputController {
       return;
     }
     btn.hidden = false;
+    const pressed = this.dictation.listening.peek();
     const face = MIDTURN_FACE[sendVerb.peek()];
     const name = face.name(queueWait.peek());
-    if (this.midTurnName === name) {
+    const parts = side === "dictate" ? [side, String(pressed)] : [side, face.label, name];
+    if (!sigChanged(btn, parts)) {
       return;
     }
-    this.midTurnName = name;
+    if (side === "dictate") {
+      paintDictate(btn, pressed);
+      return;
+    }
+    clearDictate(btn);
     btn.replaceChildren(el("span", { className: "send-btn-label" }, face.label), iconEl(face.icon));
     btn.setAttribute("data-tooltip", name);
     btn.setAttribute("aria-label", name);
   }
 
-  private applyButtonState(): void {
+  private faces(): Faces {
+    return sendFaces({
+      turn: this.state.kind,
+      text: composerText.peek(),
+      staged: this.staged.peek(),
+      canDictate: this.dictation.ready.peek(),
+      dictating: this.dictation.listening.peek(),
+    });
+  }
+
+  /** Both buttons' faces and nothing else: unlike `applyButtonState` it leaves `disabled` alone, so a composer
+   *  something else disabled stays disabled. */
+  private applyFaces(): void {
+    this.paintMain();
+    this.applyMidTurnSend();
+  }
+
+  private paintMain(): void {
     const k = this.state.kind;
     const reason = reasonOf(this.state);
     const held = this.heldHere();
+    const main = this.faces().main;
+    const pressed = this.dictation.listening.peek();
+    const parts = main === "dictate" ? [main, String(pressed)] : [main, reason, String(held)];
+    if (!sigChanged($.sendBtn, parts)) {
+      return;
+    }
+    if (main === "dictate") {
+      paintDictate($.sendBtn, pressed);
+      $.sendBtn.removeAttribute("aria-busy");
+      $.sendBtn.classList.remove("streaming", "failed");
+      return;
+    }
+    clearDictate($.sendBtn);
     $.sendBtn.replaceChildren(
       el("span", { className: "send-btn-label" }, STATE_LABEL[k]),
       held ? el("span", { className: "spinner-sm", "aria-hidden": "true" }) : iconEl(STATE_ICON[k]),
@@ -326,6 +390,10 @@ class PromptInputController {
     // type=button while streaming keeps a click out of the form: a click always cancels during a
     // turn, while Enter still sends.
     $.sendBtn.type = k === "streaming" ? "button" : "submit";
+  }
+
+  private applyButtonState(): void {
+    this.paintMain();
     // Unconditional, so nothing that ever set them can leave the composer off.
     $.sendBtn.disabled = false;
     $.promptInput.disabled = false;
@@ -338,10 +406,19 @@ class PromptInputController {
       return;
     }
     this.state = next;
+    if (next.kind === "error") {
+      this.dictation.stop();
+    }
     this.applyButtonState();
   }
 
-  init(onSubmit: Submit, onCancel: Cancel, staged: Staged, onEditLast: EditLast): void {
+  init(
+    onSubmit: Submit,
+    onCancel: Cancel,
+    staged: Staged,
+    onEditLast: EditLast,
+    dictation: Dictation,
+  ): void {
     if (initialized) {
       return;
     }
@@ -354,7 +431,13 @@ class PromptInputController {
     this.onSubmit = onSubmit;
     this.onEditLast = onEditLast;
     this.staged = staged;
+    this.dictation = dictation;
     $.sendBtn.addEventListener("click", (e: MouseEvent) => {
+      if (this.faces().main === "dictate") {
+        e.preventDefault();
+        this.dictation.toggle();
+        return;
+      }
       if (this.state.kind === "streaming") {
         e.preventDefault();
         e.stopPropagation();
@@ -364,6 +447,10 @@ class PromptInputController {
 
     this.midTurn = byId<HTMLButtonElement>("midturn-send-btn");
     this.midTurn.addEventListener("click", () => {
+      if (this.faces().side === "dictate") {
+        this.dictation.toggle();
+        return;
+      }
       this.sendComposer();
     });
 
@@ -382,7 +469,9 @@ class PromptInputController {
     effect(() => {
       touch(composerText);
       touch(staged);
-      this.applyMidTurnSend();
+      touch(dictation.ready);
+      touch(dictation.listening);
+      this.applyFaces();
     });
 
     form.addEventListener("submit", (e: Event) => {
@@ -504,6 +593,14 @@ class PromptInputController {
         return;
       }
 
+      // Ahead of Cancel: a keyboard reader leaves dictation without losing the turn.
+      if (e.key === "Escape" && bare && this.dictation.listening.peek() && !escapeOwnerOpen()) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.dictation.toggle();
+        return;
+      }
+
       // The Cancel face's own action, and the last claimant of Escape here. Spent whole, so a
       // toast survives the press; a repeat does nothing, so a held Escape that closed a card or
       // left recall never cancels.
@@ -568,14 +665,15 @@ export function setSendState(next: SendState): void {
 
 /** `staged` tracks the pill row for `isSendable`. It is injected because importing
  *  attachments.ts here would close an import cycle. `onEditLast` answers Ctrl/Cmd+Up in an empty
- *  composer. */
+ *  composer. Without `dictation`, Send never becomes the microphone. */
 export function initPromptInput(
   onSubmit: Submit,
   onCancel: Cancel,
   staged: Staged = signal(false),
   onEditLast: EditLast = () => undefined,
+  dictation: Dictation = NO_DICTATION,
 ): void {
-  instance.init(onSubmit, onCancel, staged, onEditLast);
+  instance.init(onSubmit, onCancel, staged, onEditLast, dictation);
 }
 
 /** Send the composer's contents: the keyboard shortcut's entry point, and the same path Enter
