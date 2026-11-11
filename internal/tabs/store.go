@@ -88,6 +88,9 @@ func (s *Store) Open(ctx context.Context, spec marotte.OpenTab) (subject marotte
 			Parent: spec.Parent,
 			Owns:   spec.Owns,
 		}
+		if spec.Kind == marotte.TabKindChat {
+			subject.Bot = spec.Bot
+		}
 		if spec.Kind == marotte.TabKindRun && spec.Launch != nil {
 			subject.LaunchChats = slices.Clone(spec.Launch.Chats)
 			subject.LaunchResolved = true

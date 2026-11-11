@@ -536,10 +536,12 @@ type Chat struct {
 	TangentMerges []TangentMerge `json:"tangent_merges,omitempty"`
 	// Keep holds every fact that keeps this chat out of the retention purge, by holder key. Server-internal:
 	// Header copies none of it. Only internal/chat's keep primitives write it.
-	Keep      map[string]KeepFact `json:"keep,omitempty"`
-	Usage     Usage               `json:"usage"`
-	CreatedAt int64               `json:"created_at"`
-	UpdatedAt int64               `json:"updated_at"`
+	Keep map[string]KeepFact `json:"keep,omitempty"`
+	// Bot makes this chat a Bot; nil is a regular chat.
+	Bot       *Bot  `json:"bot,omitempty"`
+	Usage     Usage `json:"usage"`
+	CreatedAt int64 `json:"created_at"`
+	UpdatedAt int64 `json:"updated_at"`
 	// KeepFilledAt is the Unix ms at which a create or the first keep-state reconcile wrote this record's keep
 	// facts; zero on a record that predates them. The purge ages a chat from the later of this and UpdatedAt.
 	KeepFilledAt int64 `json:"keep_filled_at,omitempty"`
@@ -746,6 +748,7 @@ func (c *Chat) Header() ChatHeader {
 		InterruptMode:       c.InterruptMode,
 		Run:                 RunViewOf(c.Run, c.RunVersion, c.InterruptMode),
 		Tangent:             c.Tangent,
+		Bot:                 c.Bot.summary(),
 	}
 }
 
@@ -823,10 +826,12 @@ type ChatHeader struct {
 	// InterruptMode mirrors Chat's for the composer.
 	InterruptMode InterruptMode `json:"interrupt_mode,omitempty"`
 	// Run is Chat.Run as the dock and the composer draw it.
-	Run       RunView `json:"run"`
-	Usage     Usage   `json:"usage"`
-	CreatedAt int64   `json:"created_at"`
-	UpdatedAt int64   `json:"updated_at"`
+	Run RunView `json:"run"`
+	// Bot is the Bot's summary; absent on a regular chat.
+	Bot       *BotSummary `json:"bot,omitempty"`
+	Usage     Usage       `json:"usage"`
+	CreatedAt int64       `json:"created_at"`
+	UpdatedAt int64       `json:"updated_at"`
 	// ReadPosition is wire-only: EntryLog.ReadPosition of the opened log, 0 when the log is not
 	// open. chat.Store fills it; Chat.Header does not.
 	ReadPosition   uint64 `json:"read_position,omitempty"`
@@ -861,6 +866,8 @@ type ResumableSession struct {
 	UpdatedAt     int64   `json:"updated_at"`
 	CreatedAt     int64   `json:"created_at,omitempty"`
 	TurnCount     int     `json:"turn_count,omitempty"`
+	// Bot labels a Bot's row, from its owning chat's header.
+	Bot bool `json:"bot,omitempty"`
 }
 
 // ReadState is one list read's outcome on GET /api/sessions. Two-valued: an empty list is
