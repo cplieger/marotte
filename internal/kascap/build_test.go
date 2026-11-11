@@ -70,6 +70,7 @@ var sessionMatrix = []struct {
 	{"work validation on", SessionSpawn{WorkValidation: "on"}},
 	{"work validation off", SessionSpawn{WorkValidation: "off"}},
 	{"workflows on", SessionSpawn{Workflows: true}},
+	{"messages between chats on", SessionSpawn{Messaging: true}},
 	{"a chat session", SessionSpawn{ProfileAgentTurns: true}},
 	{"a Bot's chat session", SessionSpawn{ProfileAgentTurns: true, CustomAgents: []marotte.ClientCustomAgent{probeAgent}}},
 	{"every gate on", SessionSpawn{
@@ -77,7 +78,7 @@ var sessionMatrix = []struct {
 		Presets:           []string{"read-workspace"},
 		MemoryMode:        "read_write", MemoryReflection: true,
 		DisableAutoCompaction: true, SpecPlan: "full", SpecAskClarification: true,
-		WorkValidation: "on", Workflows: true, ProfileAgentTurns: true,
+		WorkValidation: "on", Workflows: true, Messaging: true, ProfileAgentTurns: true,
 		CustomAgents: []marotte.ClientCustomAgent{probeAgent},
 	}},
 }
@@ -408,6 +409,25 @@ func TestSessionDoor_WorkflowsFollowsTheSetting(t *testing.T) {
 		connection, _ := Capabilities(&tc.spawn)[settingsKey].(map[string]any)
 		if _, present := connection["workflows"]; present {
 			t.Errorf("%s: Capabilities carries workflows; KAS reads it on the session door only", tc.name)
+		}
+	}
+}
+
+// TestSessionDoor_MessagingFollowsTheSetting pins settings.sessionTools.messaging in both states, the shape KAS's
+// session-tools reader takes (`keys:["sessionTools"]`, then `.messaging.enabled` as a boolean): on load a stated
+// false clears the persisted sessionMessagingEnabled, so off is sent too.
+func TestSessionDoor_MessagingFollowsTheSetting(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		settings, _ := SessionMeta(&SessionSpawn{Messaging: on})[settingsKey].(map[string]any)
+		want := map[string]any{"messaging": map[string]any{"enabled": on}}
+		if got := settings["sessionTools"]; !reflect.DeepEqual(got, want) {
+			t.Errorf("SessionMeta(Messaging=%v) sessionTools = %#v, want %#v", on, got, want)
+		}
+	}
+	for _, tc := range engineMatrix {
+		connection, _ := Capabilities(&tc.spawn)[settingsKey].(map[string]any)
+		if _, present := connection["sessionTools"]; present {
+			t.Errorf("%s: Capabilities carries sessionTools; KAS reads it on session/new and session/load only", tc.name)
 		}
 	}
 }

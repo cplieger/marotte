@@ -32,6 +32,7 @@ const EXPECTED_KEYS = [
   "steering_reminders_enabled",
   "workflows_enabled",
   "workflow_launch",
+  "chat_messaging_enabled",
   "work_validation",
   "auto_routing",
   "auto_delegation",

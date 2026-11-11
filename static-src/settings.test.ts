@@ -506,6 +506,24 @@ describe("the Model fallback switch", () => {
   });
 });
 
+describe("the Messages between chats switch", () => {
+  it("shows the stored value and writes chat_messaging_enabled on a flip", async () => {
+    const { patchSettings } = await import("./persist.js");
+    document.body.innerHTML = `<input type="checkbox" id="flag-chat-messaging">`;
+    const box = document.getElementById("flag-chat-messaging") as HTMLInputElement;
+    initRetention(settingsPayload({ chat_messaging_enabled: false }));
+    expect(box.checked).toBe(false);
+
+    box.checked = true;
+    box.dispatchEvent(new Event("change"));
+
+    expect(patchSettings).toHaveBeenLastCalledWith(
+      { chat_messaging_enabled: true },
+      { el: box, key: "chat_messaging_enabled", on: false },
+    );
+  });
+});
+
 describe("the config.json door in Settings > General", () => {
   it("opens config.json from the config directory", () => {
     document.body.innerHTML = `<button type="button" id="settings-open-config">config.json</button>`;

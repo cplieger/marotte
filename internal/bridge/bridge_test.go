@@ -2242,6 +2242,26 @@ func TestSessionDoorWorkflowsFollowsTheSetting(t *testing.T) {
 	}
 }
 
+// TestSessionDoorMessagingFollowsTheSetting pins the Messages between chats setting on both verbs as KAS's
+// settings.sessionTools.messaging {"enabled": bool}; off is sent as false, which on load clears a persisted on.
+func TestSessionDoorMessagingFollowsTheSetting(t *testing.T) {
+	for _, method := range []string{"session/new", "session/load"} {
+		for _, on := range []bool{false, true} {
+			opts := &marotte.SessionOpts{Model: "m", Features: marotte.SessionFeatures{Messaging: on}}
+			if method == "session/load" {
+				opts.SessionID = "sess_resume_door"
+			}
+			settings := metaKiroSettings(t, captureRequest(t, method, opts))
+			tools, _ := settings["sessionTools"].(map[string]any)
+			got, ok := tools["messaging"].(map[string]any)
+			if !ok || got["enabled"] != on || len(got) != 1 {
+				t.Errorf("%s with Messaging=%v sent sessionTools=%v, want {\"messaging\":{\"enabled\":%v}}",
+					method, on, settings["sessionTools"], on)
+			}
+		}
+	}
+}
+
 // TestSessionDoorCarriesBackgroundExecution pins settings.backgroundExecution as {"enabled":true} on both verbs.
 func TestSessionDoorCarriesBackgroundExecution(t *testing.T) {
 	for _, method := range []string{"session/new", "session/load"} {
