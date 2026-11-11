@@ -453,14 +453,15 @@ func startOf(e *marotte.Entry, ended bool) marotte.RunStepStart {
 	return marotte.RunStepStart{StartedAt: time.UnixMilli(e.Ts).UTC().Format(time.RFC3339Nano), Ended: ended}
 }
 
-// assertStarts checks the registry's answer against want.
+// assertStarts checks the registry's attempt (its start and whether it ended) against want.
 func assertStarts(t *testing.T, r *runLog, path string, want marotte.RunStepStart) {
 	t.Helper()
 	got, err := r.stepStarts(t.Context(), "wf1")
 	if err != nil {
 		t.Fatalf("StepStarts: %v", err)
 	}
-	if got[path] != want || len(got) != 1 {
+	row := got[path]
+	if row.StartedAt != want.StartedAt || row.Ended != want.Ended || len(got) != 1 {
 		t.Errorf("StepStarts = %+v, want only %s = %+v", got, path, want)
 	}
 }

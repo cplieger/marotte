@@ -3954,6 +3954,14 @@ export const decodeRunStepStart: Decoder<RunStepStart> = (v) => {
     started_at: reqStr(o, "started_at", "$.run_step_start"),
     ended: reqBool(o, "ended", "$.run_step_start"),
   };
+  {
+    const $v = own(o, "turn");
+    if ($v !== undefined && $v !== null) out.turn = reqStr(o, "turn", "$.run_step_start");
+  }
+  {
+    const $v = own(o, "tail");
+    if ($v !== undefined && $v !== null) out.tail = reqStr(o, "tail", "$.run_step_start");
+  }
   return out;
 };
 

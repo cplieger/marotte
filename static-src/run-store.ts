@@ -7,6 +7,7 @@ import { nodePathKey, nodePathSegment } from "./run-node-key.js";
 import { forgetSubject, observeStamp } from "./subject-versions.js";
 import { turnOpenOf, type TurnSource } from "./turns.js";
 import { settleWorkflowMessages, turnsInOrder } from "./workflow-delivery.js";
+import { forgetStepTails, seedStepTails } from "./run-step-tail.js";
 import type { Entry, OpenEntry, TurnState } from "./types.js";
 import {
   decodeLiveRunsResponse,
@@ -1101,6 +1102,7 @@ async function fetchRun(workflowID: string): Promise<void> {
       }
       stepEnds.set(workflowID, new Map(Object.entries(d.step_ends ?? {})));
       stepStarts.set(workflowID, starts);
+      seedStepTails(workflowID, starts);
       bodies.set(workflowID, shape);
       holdRev(workflowID, shape === "tree" ? d.rev : undefined, d.rev);
       landRead(workflowID, state, d);
@@ -1260,6 +1262,7 @@ function applySince(workflowID: string, d: RawRunSince): boolean {
   }
   stepEnds.set(workflowID, ends);
   stepStarts.set(workflowID, starts);
+  seedStepTails(workflowID, starts);
   holdRev(workflowID, d.rev, d.rev);
   landRead(workflowID, state, d);
   return true;
@@ -1467,6 +1470,7 @@ export function forgetRun(workflowID: string): void {
   frameLabels.delete(workflowID);
   resumedBy.delete(workflowID);
   runLogs.delete(workflowID);
+  forgetStepTails(workflowID);
   logObserver?.forget(workflowID);
 }
 
@@ -1790,6 +1794,20 @@ export function runStepHoles(workflowID: string, nodePath: string): readonly str
 export function runTurnHeldSeq(workflowID: string, turnID: string): number | undefined {
   const state = runLogs.get(workflowID)?.turns.get(turnID);
   return state === undefined || state.entries.length === 0 ? undefined : state.entries.length - 1;
+}
+
+/** The held turns of a run's log with no `turn_close`, in log order. */
+export function runOpenTurnIDs(workflowID: string): string[] {
+  const l = runLogs.get(workflowID);
+  return l === undefined ? [] : l.order.filter((id) => l.turns.get(id)?.closeAt === undefined);
+}
+
+/** Drop the `run_turn` stamps of a run whose frames stop reaching this page, so a revalidation
+ *  re-reads no turn nobody draws. The next frame or read applied to a held turn stamps it again. */
+export function forgetRunTurnStamps(workflowID: string): void {
+  for (const id of runOpenTurnIDs(workflowID)) {
+    forgetSubject("run_turn", runTurnRef(workflowID, id));
+  }
 }
 
 /** Retire a hole the reader's own repair closed. The chat store's twin restores residency when

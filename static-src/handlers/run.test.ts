@@ -2,7 +2,7 @@
 // refetches depends on the event (`run_start` re-fires on resume; `node_complete` carries neither
 // iteration nor branch). A run's own LOG is its own describe below.
 
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
 vi.mock("../run-store.js", () => ({
   // `false` by default: the frame did not land, which is the arm that still
@@ -26,6 +26,8 @@ vi.mock("../run-store.js", () => ({
   sealRunEntry: vi.fn(),
   appendRunEntry: vi.fn(),
   runStepEnds: vi.fn(() => new Map()),
+  // Held by default, so a log frame reaches the log; a sibling step's case holds nothing.
+  runTurnHeldSeq: vi.fn((): number | undefined => 0),
   // No revision held by default: a frame the store cannot apply reads the run.
   runRevHeld: vi.fn(() => false),
   reviseRun: vi.fn(),
@@ -68,8 +70,11 @@ import {
   runLabelOf,
   reviseRun,
   runRevHeld,
+  runTurnHeldSeq,
   sealRunEntry,
 } from "../run-store.js";
+import { setRunContentScope } from "../run-content-scope.js";
+import { forgetStepTails, stepTail } from "../run-step-tail.js";
 import { isBusy } from "../store.js";
 import { trackRun } from "../run-dots.js";
 import { info, jumpToast } from "../toast.js";
@@ -701,6 +706,105 @@ describe("a run's own log", () => {
     // And nothing about a run moved either: no refetch, no toast, no tracking.
     expect(invalidate).not.toHaveBeenCalled();
     expect(toasts()).toEqual([]);
+  });
+});
+
+describe("a scoped run's frames for a step the pane does not show", () => {
+  const RUN = "wf_route";
+  const SHOWN = "wf_route:shown";
+  const SIDE = "wf_route:side";
+
+  beforeEach(() => {
+    forgetStepTails(RUN);
+    setRunContentScope(RUN, SHOWN);
+    vi.mocked(runTurnHeldSeq).mockReturnValue(undefined);
+  });
+  afterEach(() => {
+    setRunContentScope("", "");
+  });
+
+  function opened(turn: string, path: string): void {
+    send(
+      "turn_opened",
+      {
+        workflow_id: RUN,
+        entry: {
+          id: `${turn}-0`,
+          turn,
+          kind: "turn_open",
+          seq: 0,
+          ts: 1,
+          payload: { source: "workflow_step", node_path: path, n: 1 },
+        },
+      },
+      "",
+    );
+  }
+
+  it("moves only the step's tail: its turn is not opened and its entries reach no log", () => {
+    opened("t-side", SIDE);
+    send(
+      "entry_opened",
+      { workflow_id: RUN, open: { turn: "t-side", id: "o1", kind: "text", text: "", n: 0 } },
+      "",
+    );
+    for (const [n, delta] of ["## Plan\n", "- check", "ing the tree"].entries()) {
+      send(
+        "entry_delta",
+        { workflow_id: RUN, turn: "t-side", entry_id: "o1", lane: "", n: n + 1, delta },
+        "",
+      );
+    }
+
+    expect(stepTail(RUN, SIDE)).toBe("checking the tree");
+    expect(runTurnOpened).not.toHaveBeenCalled();
+    expect(runEntryOpened).not.toHaveBeenCalled();
+    expect(runDelta).not.toHaveBeenCalled();
+
+    send(
+      "entry_appended",
+      {
+        workflow_id: RUN,
+        entry: {
+          id: "e2",
+          turn: "t-side",
+          kind: "tool_call",
+          seq: 2,
+          ts: 3,
+          payload: { title: "rg heavy" },
+        },
+      },
+      "",
+    );
+    expect(stepTail(RUN, SIDE)).toBe("rg heavy");
+    expect(runAppended).not.toHaveBeenCalled();
+  });
+
+  it("leaves a sub-agent lane's text out of the step's line", () => {
+    opened("t-lane", SIDE);
+    send(
+      "entry_opened",
+      {
+        workflow_id: RUN,
+        open: { turn: "t-lane", id: "o2", lane: "sub-1", kind: "text", text: "deep", n: 0 },
+      },
+      "",
+    );
+    expect(stepTail(RUN, SIDE)).toBe("");
+  });
+
+  it("opens the shown step's turn into the log", () => {
+    opened("t-shown", SHOWN);
+    expect(runTurnOpened).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops a frame for a turn no read or turn_opened named", () => {
+    send(
+      "entry_delta",
+      { workflow_id: RUN, turn: "t-unknown", entry_id: "o1", lane: "", n: 1, delta: "x" },
+      "",
+    );
+    expect(runDelta).not.toHaveBeenCalled();
   });
 });
 

@@ -3395,6 +3395,12 @@ export interface RunStepMessageResponse {
 export interface RunStepStart {
   /** StartedAt is RFC 3339. */
   started_at: string;
+  /**
+ * Turn and Tail are set on an attempt in flight: its newest turn id and the newest line its own lane printed, the
+ * seed of the run tab's dock line for a step whose transcript the page does not hold.
+ */
+  turn?: string;
+  tail?: string;
   ended: boolean;
 }
 

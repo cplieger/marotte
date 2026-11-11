@@ -47,6 +47,8 @@ type runTurn struct {
 	turn *turnlog.Turn
 	// endWait is closed at the current KAS turn's turn_end, made only when a heal waits for it (runLog.askTurnEnd).
 	endWait chan struct{}
+	// tail is the newest line the turn's own lane printed (printedLine), nil until it prints; written by the sink.
+	tail atomic.Pointer[string]
 	// lastError is the newest model error KAS displayed in the step's current KAS turn, zero when none.
 	lastError marotte.EngineError
 	// rawStop is the last turn_end's stop reason, carried by the close.
@@ -86,6 +88,9 @@ func (s runSink) Append(ctx context.Context, e *marotte.Entry) error {
 	}
 	s.turn.seq.Store(e.Seq)
 	s.turn.answer.see(e)
+	if line := printedLine(e); line != "" {
+		s.turn.tail.Store(&line)
+	}
 	return nil
 }
 
@@ -961,6 +966,9 @@ func (r *runLog) closeLocked(ctx context.Context, rec *runRecord, t *runTurn, c 
 	}
 	if rec.starts != nil {
 		noteAttemptClose(rec.starts, t.path, c.Outcome)
+		if line := t.tail.Load(); line != nil {
+			noteAttemptLine(rec.starts, t.path, *line)
+		}
 	}
 	return sealed, err
 }
@@ -1183,40 +1191,59 @@ func scanStepFactsLocked(rec *runRecord, l *chat.EntryLog) error {
 // scanStepFacts folds a log's turn_open paths, turn_close and step_graded entries in file order into each path's
 // newest close, under its grade, its current attempt and its turn ids.
 func scanStepFacts(all []marotte.Entry) (closes map[string]stepClose, starts map[string]stepAttempt, turns map[string][]string) {
-	closes = make(map[string]stepClose)
-	starts = make(map[string]stepAttempt)
-	turns = make(map[string][]string)
-	paths := make(map[string]string)
-	for i := range all {
-		e := &all[i]
-		switch e.Kind {
-		case marotte.EntryKindTurnOpen:
-			var to marotte.EntryTurnOpen
-			if json.Unmarshal(e.Payload, &to) == nil && to.NodePath != "" {
-				paths[e.Turn] = to.NodePath
-				turns[to.NodePath] = append(turns[to.NodePath], e.Turn)
-				noteAttemptOpen(starts, to.NodePath, e.Ts)
-			}
-		case marotte.EntryKindTurnClose:
-			var tc marotte.EntryTurnClose
-			if path, ok := paths[e.Turn]; ok && json.Unmarshal(e.Payload, &tc) == nil {
-				closes[path] = stepCloseOf(&tc, e.Turn)
-				noteAttemptClose(starts, path, tc.Outcome)
-			}
-		case marotte.EntryKindStepGraded:
-			var g marotte.EntryStepGraded
-			path, ok := paths[e.Turn]
-			if c, has := closes[path]; ok && has && c.turn == e.Turn && json.Unmarshal(e.Payload, &g) == nil {
-				closes[path] = c.withGrade(&g)
-			}
-		}
+	sc := stepFactScan{
+		closes: make(map[string]stepClose),
+		starts: make(map[string]stepAttempt),
+		turns:  make(map[string][]string),
+		paths:  make(map[string]string),
 	}
-	return closes, starts, turns
+	for i := range all {
+		sc.see(&all[i])
+	}
+	return sc.closes, sc.starts, sc.turns
 }
 
-// stepAttempt is one path's current attempt: when its first turn opened, whether its newest turn is open, and
-// whether that turn's close was an interruption (a bridge death or a restart), which the path's next turn continues.
+// stepFactScan is scanStepFacts' fold, with each turn's path as its turn_open named it.
+type stepFactScan struct {
+	closes map[string]stepClose
+	starts map[string]stepAttempt
+	turns  map[string][]string
+	paths  map[string]string
+}
+
+func (sc *stepFactScan) see(e *marotte.Entry) {
+	switch e.Kind {
+	case marotte.EntryKindTurnOpen:
+		var to marotte.EntryTurnOpen
+		if json.Unmarshal(e.Payload, &to) == nil && to.NodePath != "" {
+			sc.paths[e.Turn] = to.NodePath
+			sc.turns[to.NodePath] = append(sc.turns[to.NodePath], e.Turn)
+			noteAttemptOpen(sc.starts, to.NodePath, e.Ts)
+		}
+	case marotte.EntryKindTurnClose:
+		var tc marotte.EntryTurnClose
+		if path, ok := sc.paths[e.Turn]; ok && json.Unmarshal(e.Payload, &tc) == nil {
+			sc.closes[path] = stepCloseOf(&tc, e.Turn)
+			noteAttemptClose(sc.starts, path, tc.Outcome)
+		}
+	case marotte.EntryKindText, marotte.EntryKindThinking, marotte.EntryKindToolCall:
+		if path, ok := sc.paths[e.Turn]; ok {
+			noteAttemptLine(sc.starts, path, printedLine(e))
+		}
+	case marotte.EntryKindStepGraded:
+		var g marotte.EntryStepGraded
+		path, ok := sc.paths[e.Turn]
+		if c, has := sc.closes[path]; ok && has && c.turn == e.Turn && json.Unmarshal(e.Payload, &g) == nil {
+			sc.closes[path] = c.withGrade(&g)
+		}
+	}
+}
+
+// stepAttempt is one path's current attempt: when its first turn opened, whether its newest turn is open, whether
+// that turn's close was an interruption (a bridge death or a restart), which the path's next turn continues, and the
+// newest line the attempt's sealed turns printed (an open turn's own is runTurn.tail).
 type stepAttempt struct {
+	tail        string
 	at          int64
 	open        bool
 	interrupted bool
@@ -1227,9 +1254,19 @@ type stepAttempt struct {
 func noteAttemptOpen(starts map[string]stepAttempt, path string, ts int64) {
 	a, ok := starts[path]
 	if !ok || (!a.open && !a.interrupted) {
-		a.at = ts
+		a.at, a.tail = ts, ""
 	}
 	a.open, a.interrupted = true, false
+	starts[path] = a
+}
+
+// noteAttemptLine records a line a path's attempt printed; "" and a path with no recorded open leave it alone.
+func noteAttemptLine(starts map[string]stepAttempt, path, line string) {
+	a, ok := starts[path]
+	if !ok || line == "" {
+		return
+	}
+	a.tail = line
 	starts[path] = a
 }
 
@@ -1261,12 +1298,31 @@ func (r *runLog) stepStarts(ctx context.Context, workflowID string) (map[string]
 	}
 	out := make(map[string]marotte.RunStepStart, len(rec.starts))
 	for path, a := range rec.starts {
-		out[path] = marotte.RunStepStart{
+		row := marotte.RunStepStart{
 			StartedAt: time.UnixMilli(a.at).UTC().Format(time.RFC3339Nano),
 			Ended:     !a.open && !a.interrupted,
 		}
+		if !row.Ended {
+			row.Turn, row.Tail = attemptTail(rec, path, a)
+		}
+		out[path] = row
 	}
 	return out, nil
+}
+
+// attemptTail is an in-flight attempt's newest turn and the newest line it printed: the open turn's own line, else
+// the line its sealed turns left.
+func attemptTail(rec *runRecord, path string, a stepAttempt) (turn, tail string) {
+	if turnIDs := rec.turns[path]; len(turnIDs) > 0 {
+		turn = turnIDs[len(turnIDs)-1]
+	}
+	tail = a.tail
+	if t := rec.open[path]; t != nil {
+		if line := t.tail.Load(); line != nil {
+			tail = *line
+		}
+	}
+	return turn, tail
 }
 
 // runOutcome maps KAS's status to `completed`, `failed`, `cancelled`, or `unknown` with the status as raw stop.

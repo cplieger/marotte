@@ -35,6 +35,10 @@ interface RunInspectReply {
   };
   nodePlan?: unknown;
   step_ends?: Record<string, { outcome: string; failure_kind?: string; failure_reason?: string }>;
+  step_starts?: Record<
+    string,
+    { started_at: string; ended: boolean; turn?: string; tail?: string }
+  >;
 }
 
 /** What a door decided, which is all a door decides now: `owns` (does the × stop the run) and
@@ -331,6 +335,8 @@ async function paint(
     state?: { pauseReason?: string; pauseDetail?: { class?: string; code?: string } };
     /** The run read's `step_ends`, the server's grade of each step under KAS's record. */
     stepEnds?: RunInspectReply["step_ends"];
+    /** The run read's `step_starts`, each in-flight step's turn and printed line among them. */
+    stepStarts?: RunInspectReply["step_starts"];
   } = {},
 ): Promise<{ labels: string[]; refusals: string[]; tab: OpenedTab; body: HTMLElement }> {
   const id = opts.id ?? "wf_1";
@@ -350,6 +356,7 @@ async function paint(
     // store keeps the two apart for that reason.
     ...(opts.nodePlan === undefined ? {} : { nodePlan: opts.nodePlan }),
     ...(opts.stepEnds === undefined ? {} : { step_ends: opts.stepEnds }),
+    ...(opts.stepStarts === undefined ? {} : { step_starts: opts.stepStarts }),
   };
   m.reply.current = reply;
   m.controls.current =
@@ -1113,13 +1120,6 @@ describe("the run dock", () => {
   });
 
   describe("a tab opened while parallel steps are printing", () => {
-    beforeEach(() => {
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    });
-    afterEach(() => {
-      vi.useRealTimers();
-    });
-
     const fan = (seats: readonly string[]): unknown => ({
       nodeId: "wf_1",
       type: "sequence",
@@ -1147,31 +1147,25 @@ describe("the run dock", () => {
       [...document.querySelectorAll("#run-exec-dock .ev-dock-tail")]
         .map((n) => n.textContent ?? "")
         .sort();
-    /** What `fetchStep`'s `finally` does with an answer: record the verdict, bump the version. */
-    const answer = async (path: string, state: "unavailable" | "ready"): Promise<void> => {
-      m.reads.set(path, { state });
-      stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
-      await flush();
-    };
+    const started = (lines: Record<string, string>): NonNullable<RunInspectReply["step_starts"]> =>
+      Object.fromEntries(
+        Object.entries(lines).map(([path, tail]) => [
+          path,
+          { started_at: "2026-11-10T10:00:00Z", ended: false, turn: `t-${path}`, tail },
+        ]),
+      );
 
-    it("gives every folded row the line its step printed before the tab opened", async () => {
+    it("gives every folded row the line the run read names, reading only the shown step", async () => {
       const seats = ["late-a", "late-b", "late-c"];
       const paths = seats.map((s) => `wf_1:fan:${s}`);
-      await paint(openRunView, "running", { root: fan(seats) });
-      expect([...m.requested].sort()).toEqual(paths);
-      expect(tails()).toEqual(["", "", ""]);
-
-      // Each read's answer, adopted into the run's log as `fetchStep` does; no live frame follows.
-      for (const path of paths) {
-        logStep("wf_1", path, `started ${path}\nlatest ${path}`, { live: true });
-        await answer(path, "ready");
-      }
-      expect(tails()).toEqual(paths.map((p) => `latest ${p}`));
-
-      vi.advanceTimersByTime(60_000);
-      invalidateRun("wf_1");
+      await paint(openRunView, "running", {
+        root: fan(seats),
+        stepStarts: started(Object.fromEntries(paths.map((p) => [p, `latest ${p}`]))),
+      });
       await flush();
-      expect(m.requested).toHaveLength(3);
+      expect(tails()).toEqual(paths.map((p) => `latest ${p}`));
+      // The shown step is the first seat, whose transcript the pane reads; its siblings read none.
+      expect(m.requested).toEqual(["wf_1:fan:late-a"]);
     });
 
     it("reads nothing for a sibling whose turn the log already holds", async () => {
@@ -1180,79 +1174,14 @@ describe("the run dock", () => {
       expect(m.requested).toEqual(["wf_1:fan:held-a"]);
     });
 
-    it("re-asks a sibling whose catch-up failed, three times at most", async () => {
-      await paint(openRunView, "running", { root: fan(["miss-a", "miss-b"]) });
-      // With no start recorded, the first seat is the shown one and settles its own read.
-      const [shown, sibling] = ["wf_1:fan:miss-a", "wf_1:fan:miss-b"];
-      expect(document.querySelector("#run-body .ev-d-title")?.textContent).toBe("miss-a");
-      expect(m.requested).toEqual([shown, sibling]);
-      await answer(shown, "ready");
-      await answer(sibling, "unavailable");
-      vi.advanceTimersByTime(999);
-      expect(m.requested).toHaveLength(2);
-      vi.advanceTimersByTime(1);
-      expect(m.requested).toEqual([shown, sibling, sibling]);
-      for (const delay of [2000, 4000, 8000, 16_000]) {
-        await answer(sibling, "unavailable");
-        vi.advanceTimersByTime(delay);
-      }
-      expect(m.requested).toEqual([shown, sibling, sibling, sibling, sibling]);
-    });
-
-    it("keeps re-asking a sibling after its own output arrives, until a read answers", async () => {
-      await paint(openRunView, "running", { root: fan(["moot-a", "moot-b"]) });
-      await answer("wf_1:fan:moot-a", "ready");
-      await answer("wf_1:fan:moot-b", "unavailable");
-      logStep("wf_1", "wf_1:fan:moot-b", "printed meanwhile", { live: true, attempt: 2 });
-      await flush();
-      expect(tails()).toEqual(["", "printed meanwhile"]);
-      vi.advanceTimersByTime(1000);
-      expect(m.requested.filter((p) => p === "wf_1:fan:moot-b")).toHaveLength(2);
-
-      await answer("wf_1:fan:moot-b", "ready");
-      vi.advanceTimersByTime(60_000);
-      expect(m.requested.filter((p) => p === "wf_1:fan:moot-b")).toHaveLength(2);
-    });
-
-    it("reads a sibling the reader picks after it printed over a failed catch-up", async () => {
-      await paint(openRunView, "running", { root: fan(["pick-a", "pick-b"]) });
-      await answer("wf_1:fan:pick-a", "ready");
-      await answer("wf_1:fan:pick-b", "unavailable");
-      logStep("wf_1", "wf_1:fan:pick-b", "printed meanwhile", { live: true, attempt: 2 });
-      await flush();
-      openDockPanel(document);
-      document
-        .querySelector<HTMLElement>('.ev-row[data-path="wf_1:fan:pick-b"] > .ev-row-main')
-        ?.click();
-      await flush();
-      expect(document.querySelector("#run-body .ev-d-title")?.textContent).toBe("pick-b");
-      expect(m.requested.filter((p) => p === "wf_1:fan:pick-b")).toHaveLength(2);
-    });
-
-    it("drops a sibling's pending re-ask when the tab shows another run", async () => {
-      await paint(openRunView, "running", { root: fan(["gone-a", "gone-b"]) });
-      await answer("wf_1:fan:gone-a", "ready");
-      await answer("wf_1:fan:gone-b", "unavailable");
-      await paint(openRunView, "completed", {
-        id: "wf_other",
-        root: { nodeId: "wf_other", type: "sequence", status: "completed", children: [] },
+    it("draws a held step's own line over the run read's", async () => {
+      logStep("wf_1", "wf_1:fan:mine-b", "printed here", { live: true });
+      await paint(openRunView, "running", {
+        root: fan(["mine-a", "mine-b"]),
+        stepStarts: started({ "wf_1:fan:mine-b": "read earlier" }),
       });
-      const asked = m.requested.length;
-      vi.advanceTimersByTime(60_000);
-      expect(m.requested).toHaveLength(asked);
-    });
-
-    it("drops a sibling's pending re-ask when the page is rebuilt", async () => {
-      await paint(openRunView, "running", { root: fan(["again-a", "again-b"]) });
-      await answer("wf_1:fan:again-a", "ready");
-      await answer("wf_1:fan:again-b", "unavailable");
-      // A fresh run body remounts the same run's page, which asks once afresh and is answered.
-      await paint(openRunView, "running", { root: fan(["again-a", "again-b"]) });
-      expect(m.requested.slice(2)).toEqual(["wf_1:fan:again-a", "wf_1:fan:again-b"]);
-      await answer("wf_1:fan:again-b", "ready");
-      const asked = m.requested.length;
-      vi.advanceTimersByTime(60_000);
-      expect(m.requested).toHaveLength(asked);
+      await flush();
+      expect(tails()).toEqual(["", "printed here"]);
     });
   });
 });
@@ -2712,9 +2641,9 @@ describe("run view step reads", () => {
 
     expect(body.querySelector<HTMLElement>(".ev-d-title")?.textContent).toBe("coder");
     // EXACTLY one, which is the other half: arming per repaint would re-ask on every frame of a
-    // live run, and `unavailable` is a verdict a repeat ask retries. `verify` is the dock row's own
-    // catch-up, now that it runs.
-    expect(m.requested).toEqual(["wf_1:coder", "wf_1:verify"]);
+    // live run, and `unavailable` is a verdict a repeat ask retries. `verify`'s dock row reads its
+    // line from the run read, not a transcript.
+    expect(m.requested).toEqual(["wf_1:coder"]);
   });
 
   // GATE 3, and the one that makes the log the SOURCE rather than a preference: the turn is already

@@ -135,7 +135,7 @@ func TestHandleRun_CarriesTheRunsStepStarts(t *testing.T) {
 		if err := json.Unmarshal([]byte(body), &reply); err != nil {
 			t.Fatalf("decoding the run reply: %s", err)
 		}
-		want := marotte.RunStepStart{StartedAt: time.UnixMilli(opened.Ts).UTC().Format(time.RFC3339Nano)}
+		want := marotte.RunStepStart{StartedAt: time.UnixMilli(opened.Ts).UTC().Format(time.RFC3339Nano), Turn: opened.Turn}
 		if got := reply.StepStarts[build]; got != want || len(reply.StepStarts) != 1 {
 			t.Errorf("step_starts = %+v, want only %s = %+v: %s", reply.StepStarts, build, want, body)
 		}

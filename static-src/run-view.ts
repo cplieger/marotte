@@ -35,7 +35,8 @@ import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
 import { inFlight, neverRan, settled } from "./exec-view/status.js";
 import { flatten, workNodes, type ExecNode } from "./exec-view/model.js";
 import { runToExec, type ExecFoldMemo, type StepEnds } from "./run-exec-source.js";
-import { lastPrintedLine } from "./run-step-tail.js";
+import { lastPrintedLine, leaveStepTails, stepTail } from "./run-step-tail.js";
+import { setRunContentScope } from "./run-content-scope.js";
 import type { RunStepPaint, RunStepStream } from "./run-chat-steps.js";
 import {
   clearStepTranscripts,
@@ -47,6 +48,7 @@ import {
   stepTranscriptVersion,
 } from "./run-step-transcript.js";
 import {
+  forgetRunTurnStamps,
   noteRunChat,
   readRunUnlessOut,
   registerRunStateDemand,
@@ -57,6 +59,7 @@ import {
   runStepHoles,
   widenRun,
   runStepTurns,
+  runOpenTurnIDs,
   runTurnHeldSeq,
   runTurnSource,
   type RunState,
@@ -84,8 +87,29 @@ const shownVersion = signal(0);
 const runViewShown = signal(false);
 onViewHidden("run-view", () => {
   runViewShown.value = false;
+  publishScope();
 });
 registerRunStateDemand((id) => id === shownRun && runViewShown.peek(), "tree");
+
+/** Tell the page's content scope which run and step this view draws. A run leaving it stops
+ *  receiving its step content, so its stamps and tails go stale and are released; a run entering
+ *  it catches each turn its log holds open up from the held seq, one range read each. */
+function publishScope(): void {
+  const run = runViewShown.peek() ? shownRun : "";
+  const before = setRunContentScope(run, shownStep.peek());
+  if (before === run) {
+    return;
+  }
+  if (before !== "") {
+    forgetRunTurnStamps(before);
+    leaveStepTails(before);
+  }
+  if (run !== "") {
+    for (const turnID of runOpenTurnIDs(run)) {
+      requestRunTurnRange(run, turnID, runTurnHeldSeq(run, turnID));
+    }
+  }
+}
 
 /** The run whose page was mounted when the view was hidden, so its first pass on screen again
  *  catches the shown step up. "" when nothing is owed. */
@@ -129,6 +153,7 @@ export function showRun(workflowID: string): void {
     runViewShown.value = true;
     rerenderDocks();
   });
+  publishScope();
   // The tab's dot held only the run's header while the tab was hidden.
   widenRun(workflowID);
   mountBottomBar();
@@ -233,7 +258,8 @@ function installViewEffect(): void {
     }
     const tails = new Map<string, string>();
     for (const path of rows) {
-      const tail = lastPrintedLine(runStepTurns(id, path).map(([, t]) => t));
+      const held = lastPrintedLine(runStepTurns(id, path).map(([, t]) => t));
+      const tail = held === "" ? stepTail(id, path) : held;
       if (tail !== "") {
         tails.set(path, tail);
       }
@@ -242,21 +268,13 @@ function installViewEffect(): void {
   });
 }
 
-/** Bring the shown step current after its tab was hidden: each live turn from its held seq, else
- *  the read `armStepRead` owes. The tree needs none, since the run's lifecycle frames reach every
- *  page. */
+/** Bring the shown step current after its tab was hidden when its log holds no live turn: the read
+ *  `armStepRead` owes. A held live turn is caught up by `publishScope`, and the tree needs nothing,
+ *  since the run's lifecycle frames reach every page. */
 function catchUpShownStep(workflowID: string): void {
   const node = shownNode;
-  if (node === undefined) {
-    return;
-  }
-  const live = runStepTurns(workflowID, node.path).filter(([, t]) => turnIsLive(t));
-  if (live.length === 0) {
+  if (node !== undefined && !runStepTurns(workflowID, node.path).some(([, t]) => turnIsLive(t))) {
     armStepRead(node);
-    return;
-  }
-  for (const [turnID] of live) {
-    requestRunTurnRange(workflowID, turnID, runTurnHeldSeq(workflowID, turnID));
   }
 }
 
@@ -530,8 +548,8 @@ function mountPage(
   shownStep.value = "";
   holesAnswered = "";
   cancelStepRetry();
-  cancelDockCatchUps();
   catchUpsOwed.clear();
+  publishScope();
   // Beside the other per-run caches, and for their reason: a retarget must not carry another run's
   // pick into the page it is about to build.
   if (focusRequest !== undefined && focusRequest.workflowID !== workflowID) {
@@ -633,6 +651,7 @@ let holesAnswered = "";
 function armStepRead(node: ExecNode | undefined): void {
   shownNode = node?.transcript === true ? node : undefined;
   shownStep.value = shownNode?.path ?? "";
+  publishScope();
   if (node?.deferredOutput === true && settled(node.state) && shownRun !== "") {
     requestStepCapture(shownRun, node.path);
   }
@@ -748,78 +767,6 @@ function armShownStepRetry(workflowID: string): void {
     stepRetry.attempts++;
     requestStepTranscript(shownRun, shown.path);
   }, delay);
-}
-
-/** The run dock's catch-up reads, per in-flight step path. The shown step's read and ladder are
- *  `armStepRead`'s and `armShownStepRetry`'s, so this owns only the siblings the dock rows summarise. */
-const dockCatchUps = new Map<
-  string,
-  { attempts: number; timer: ReturnType<typeof setTimeout> | undefined }
->();
-
-function cancelDockCatchUps(): void {
-  for (const c of dockCatchUps.values()) {
-    if (c.timer !== undefined) {
-      clearTimeout(c.timer);
-    }
-  }
-  dockCatchUps.clear();
-}
-
-/** Read, once per page, each in-flight step the dock summarises that the log holds nothing of, then
- *  re-ask on the shown step's bounded ladder until a read settles it, live output or not. Live
- *  frames carry only what is appended from now on, so without it a sibling's row stays blank until
- *  the step prints again. */
-function catchUpDockSteps(workflowID: string, flying: readonly ExecNode[]): void {
-  const wanted = new Set<string>();
-  for (const node of flying) {
-    const path = node.path;
-    const owed = catchUpsOwed.has(join(workflowID, path));
-    // Untracked: whether the log holds the step decides only its first ask, which a run paint makes.
-    const held = (): boolean => untracked(() => runStepTurns(workflowID, path)).length > 0;
-    if (path === shownNode?.path || (!owed && held())) {
-      continue;
-    }
-    wanted.add(path);
-    const c = dockCatchUps.get(path);
-    if (c === undefined) {
-      dockCatchUps.set(path, { attempts: 0, timer: undefined });
-      catchUpsOwed.add(join(workflowID, path));
-      requestStepTranscript(workflowID, path);
-      continue;
-    }
-    if (stepRead(workflowID, path)?.state !== "unavailable") {
-      // Another read answered or is out, so a rung armed by the last miss would only repeat it.
-      if (c.timer !== undefined) {
-        clearTimeout(c.timer);
-        c.timer = undefined;
-      }
-      continue;
-    }
-    if (c.timer !== undefined || c.attempts >= STEP_RETRY_LIMIT) {
-      continue;
-    }
-    c.timer = setTimeout(
-      () => {
-        c.timer = undefined;
-        // Re-pointing the tab at another run repaints nothing until that run's state lands.
-        if (shownRun !== workflowID) {
-          return;
-        }
-        c.attempts++;
-        requestStepTranscript(workflowID, path);
-      },
-      STEP_RETRY_BASE_MS * 2 ** c.attempts,
-    );
-  }
-  // A step whose catch-up settled, or that settled or became the shown one, needs no rung of this
-  // ladder.
-  for (const [path, c] of dockCatchUps) {
-    if (!wanted.has(path) && c.timer !== undefined) {
-      clearTimeout(c.timer);
-      c.timer = undefined;
-    }
-  }
 }
 
 /** Whether the pane still lacks what a read would bring: a gate of `stepReadVerb`, or a holed turn. */
@@ -1000,11 +947,6 @@ function paint(workflowID: string, state: RunState | undefined): void {
   }
   paintGen.value = paintGen.peek() + 1;
   dockRows.value = view.dockRowPaths();
-  // After the render, whose `onShowNode` names the shown step this leaves to its own read.
-  catchUpDockSteps(
-    workflowID,
-    work.filter((n) => n.transcript === true && inFlight(n.state)),
-  );
 }
 
 /** Project the shown step's turns, and only its: a step stops costing anything once another is

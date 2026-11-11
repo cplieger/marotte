@@ -2406,6 +2406,8 @@ const arbModel = fc.letrec<{
   RunStepStart: fc.record(
     {
       started_at: fc.string(),
+      turn: fc.string(),
+      tail: fc.string(),
       ended: fc.boolean(),
     },
     { requiredKeys: ["started_at", "ended"] },
