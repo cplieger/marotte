@@ -52,8 +52,8 @@ interface ExecDockOpts {
   /** The head's identity glyph. */
   readonly icon: string;
   /** The page's step tree and timeline, which the panel's segments hold. */
-  readonly tree: HTMLElement;
-  readonly timeline: HTMLElement;
+  readonly tree: DockPane;
+  readonly timeline: DockPane;
   /** Show a step, as a tree row click does. */
   readonly select: (path: string) => void;
   /** Bring the step that matters into view in `scroller`, the Steps pane's box. Called once each
@@ -63,6 +63,12 @@ interface ExecDockOpts {
 }
 
 type Segment = "steps" | "timeline";
+
+/** A pane the panel holds: it draws only while attached to the panel's scroller. */
+interface DockPane {
+  readonly root: HTMLElement;
+  attach(scroller: HTMLElement | null): void;
+}
 
 const SEGMENTS: readonly { id: Segment; label: string; icon: string }[] = [
   { id: "steps", label: "Steps", icon: ICON_SEG_STEPS },
@@ -143,7 +149,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
   const inputs = el("dl", { className: "ev-dock-inputs", "aria-label": "Inputs" });
   const bar = el("nav", { className: "seg-bar ev-dock-seg", "aria-label": "Run detail sections" });
   const panels = new Map<Segment, HTMLElement>();
-  const content: Record<Segment, HTMLElement> = { steps: opts.tree, timeline: opts.timeline };
+  const content: Record<Segment, DockPane> = { steps: opts.tree, timeline: opts.timeline };
   const body = el("div", { className: "ev-dock-body" });
   for (const seg of SEGMENTS) {
     const glyph = iconEl(seg.icon);
@@ -165,7 +171,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
         role: "tabpanel",
         "aria-labelledby": `${id}-tab-${seg.id}`,
       },
-      content[seg.id],
+      content[seg.id].root,
     );
     panels.set(seg.id, panel);
     body.append(panel);
@@ -184,6 +190,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
   );
 
   let active: Segment = "steps";
+  let open = false;
   const paintBar = initSegmentedBar(bar, {
     attr: "data-ev-seg",
     idPrefix: id,
@@ -202,15 +209,42 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
     for (const [key, panel] of panels) {
       panel.hidden = key !== seg;
     }
+    seatPanes(open);
   }
+
+  /** A closed panel draws nothing: only the shown segment's pane is attached, and only while open. */
+  function seatPanes(seated: boolean): void {
+    for (const seg of SEGMENTS) {
+      content[seg.id].attach(seated && seg.id === active ? body : null);
+    }
+  }
+  // Before the disclosure's own listener: its open tween measures the region's height first.
+  toggle.addEventListener("click", () => {
+    if (!open) {
+      seatPanes(true);
+    }
+  });
   show(active);
 
+  let closeGen = 0;
   const ctl = createDisclosure(toggle, region, {
-    onToggle: (open) => {
-      root.toggleAttribute("data-open", open);
-      if (open && active === "steps") {
-        reveal();
+    onToggle: (isOpen) => {
+      open = isOpen;
+      root.toggleAttribute("data-open", isOpen);
+      const gen = ++closeGen;
+      if (isOpen) {
+        seatPanes(true);
+        if (active === "steps") {
+          reveal();
+        }
+        return;
       }
+      // The rows leave once the close has played, so the panel does not empty as it shuts.
+      void Promise.allSettled(region.getAnimations().map((a) => a.finished)).then(() => {
+        if (gen === closeGen && !open) {
+          seatPanes(false);
+        }
+      });
     },
   });
 
@@ -244,6 +278,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
   more.addEventListener("click", () => {
     show("steps");
     if (!ctl.isOpen) {
+      seatPanes(true);
       ctl.open();
     }
   });
@@ -435,6 +470,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
       return shownPaths;
     },
     dispose() {
+      seatPanes(false);
       ctl.dispose();
       releaseClamp(askText);
       opts.host.replaceChildren();

@@ -30,6 +30,15 @@ import {
 import { paintLabel } from "./label.js";
 import { setAttr, setText } from "../dom.js";
 import { STATE_WORD, inFlight, paintStateMark, type ExecState } from "./status.js";
+import {
+  bandOf,
+  gapEl,
+  offsetsOf,
+  pitchOf,
+  rangeOf,
+  sizeGap,
+  watchScroller,
+} from "./row-window.js";
 
 /** The kind glyph: a step gets the agent hexagon; a container gets a glyph
  *  naming what it does, since "sequence"/"parallel" shouldn't require reading.
@@ -56,6 +65,9 @@ export interface ExecTreeView {
   /** Re-render from a fresh tree. Rows are reconciled by PATH, so a collapsed
    *  container and the selected row survive the refetches a live run drives. */
   render(nodes: readonly ExecNode[], selected: string): void;
+  /** Draw the rows `scroller` shows, plus an overscan, and follow its scroll and size; null
+   *  unmounts every row, so a tree nobody sees holds nothing. Until then `render` only records. */
+  attach(scroller: HTMLElement | null): void;
   /** Advance the durations of the rows still running. */
   tick(): void;
   /** Unfold every container above `path`'s row and centre the row in `scroller`, the box the tree
@@ -74,10 +86,25 @@ interface Row {
   kids: HTMLElement | null;
   start?: string;
   end?: string;
-  collapsed: boolean;
   /** Top-level only — see the ONE FOLD PER BOX note at the top of this file. */
   collapsible: boolean;
 }
+
+/** One seated child of a sibling list: a row, or the spacer for the rows the window skips. */
+type Slot =
+  | { readonly node: ExecNode; readonly pos: number }
+  | { readonly gap: "lead" | "tail"; readonly px: number };
+
+/** The rows the tree would draw unwindowed, in document order: each path's index, the index past
+ *  its subtree, and every row's top. */
+interface Flat {
+  readonly at: ReadonlyMap<string, number>;
+  readonly end: ReadonlyMap<string, number>;
+  readonly offsets: Float64Array;
+}
+
+/** A row's height before one is measured: the `--row-tap` floor at the default type scale. */
+const ROW_PX = 36;
 
 /** Build the tree pane. `onSelect` is injected so this file points only
  *  downward; the page owns what selection means. */
@@ -89,6 +116,41 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
   });
   /** Each mounted row's parts, by its root; a removed row is collected with it. */
   const rowParts = new WeakMap<HTMLElement, Row>();
+  /** The top-level containers the reader folded, by path: a fold outlives its row's unmount. */
+  const folded = new Set<string>();
+
+  let nodes: readonly ExecNode[] = [];
+  let selected = "";
+  let box: HTMLElement | null = null;
+  let release: (() => void) | undefined;
+  let rowPx = ROW_PX;
+  /** `.ev-tree`'s gap, which only top-level entries take, and a group box's two border lines. */
+  let topGap = 0;
+  let boxPx = 0;
+  let measured = false;
+  let flat: Flat = { at: new Map(), end: new Map(), offsets: new Float64Array(1) };
+  let range = { from: 0, to: 0 };
+
+  function flatOf(): Flat {
+    const at = new Map<string, number>();
+    const end = new Map<string, number>();
+    const heights: number[] = [];
+    const walk = (n: ExecNode, depth: number): void => {
+      at.set(n.path, heights.length);
+      const top = depth === 0 && heights.length > 0 ? topGap : 0;
+      heights.push(rowPx + top + (depth === 0 && n.children.length > 0 ? boxPx : 0));
+      if (!(depth === 0 && folded.has(n.path))) {
+        for (const k of n.children) {
+          walk(k, depth + 1);
+        }
+      }
+      end.set(n.path, heights.length);
+    };
+    for (const n of nodes) {
+      walk(n, 0);
+    }
+    return { at, end, offsets: offsetsOf(heights) };
+  }
 
   function buildRow(node: ExecNode, depth: number): Row {
     const glyph = el("span", { className: "ev-state", "aria-hidden": "true" });
@@ -134,7 +196,6 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
       kindSlot,
       chevron,
       kids: null,
-      collapsed: false,
       collapsible: depth === 0,
     };
 
@@ -142,8 +203,11 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
       // The twist is a zone of the row, not a nested control; the handler tells
       // them apart by target, keeping the row one activation target.
       if (row.collapsible && chevron.contains(e.target as Node) && row.kids !== null) {
-        row.collapsed = !row.collapsed;
-        applyCollapse(row);
+        if (!folded.delete(node.path)) {
+          folded.add(node.path);
+        }
+        flat = flatOf();
+        paintWindow();
         return;
       }
       onSelect(node.path);
@@ -159,8 +223,8 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
 
   /** The one writer of a row's fold state, in all three channels. Reads `collapsible`, so a nested
    *  container is held open and carries no `aria-expanded`. */
-  function applyCollapse(row: Row): void {
-    const collapsed = row.collapsible && row.collapsed;
+  function applyCollapse(row: Row, path: string): void {
+    const collapsed = row.collapsible && folded.has(path);
     row.root.classList.toggle("ev-collapsed", collapsed);
     setAttr(row.root, "aria-expanded", row.collapsible ? String(!collapsed) : null);
     if (row.kids !== null) {
@@ -168,36 +232,82 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
     }
   }
 
+  /** The slots of one sibling list under the current window: the rows it touches, and a spacer for
+   *  each run of rows it skips. A folded box's list is empty. */
+  function slotsOf(siblings: readonly ExecNode[]): Slot[] {
+    const first = siblings[0];
+    const last = siblings.at(-1);
+    if (first === undefined || last === undefined) {
+      return [];
+    }
+    const top = flat.at.get(first.path);
+    const bottom = flat.end.get(last.path);
+    if (top === undefined || bottom === undefined) {
+      return [];
+    }
+    const out: Slot[] = [];
+    let seatedEnd = top;
+    siblings.forEach((node, pos) => {
+      const at = flat.at.get(node.path) ?? 0;
+      const end = flat.end.get(node.path) ?? at;
+      if (end > range.from && at < range.to) {
+        if (out.length === 0 && at > top) {
+          out.push({ gap: "lead", px: px(top, at) });
+        }
+        out.push({ node, pos });
+        seatedEnd = end;
+      }
+    });
+    if (out.length === 0) {
+      return [{ gap: "lead", px: px(top, bottom) }];
+    }
+    if (bottom > seatedEnd) {
+      out.push({ gap: "tail", px: px(seatedEnd, bottom) });
+    }
+    return out;
+  }
+
+  function px(from: number, to: number): number {
+    return (flat.offsets[to] ?? 0) - (flat.offsets[from] ?? 0);
+  }
+
   /** One sibling list, keyed by path rather than kind: `paint` repaints a kind change in place,
    *  so the row element, with its fold and focus, survives it. */
-  function seatRows(
-    into: HTMLElement,
-    nodes: readonly ExecNode[],
-    depth: number,
-    selected: string,
-  ): void {
-    reconcile(into, nodes, {
-      key: (n) => n.path,
-      mount: (n) => {
-        const row = buildRow(n, depth);
+  function seatRows(into: HTMLElement, siblings: readonly ExecNode[], depth: number): void {
+    reconcile(into, slotsOf(siblings), {
+      key: (s) => ("gap" in s ? `\u0001${s.gap}` : s.node.path),
+      mount: (s) => {
+        if ("gap" in s) {
+          const gap = gapEl();
+          sizeGap(gap, s.px);
+          return gap;
+        }
+        const row = buildRow(s.node, depth);
         rowParts.set(row.root, row);
-        paint(row, n, depth, selected);
+        paint(row, s.node, depth, s.pos, siblings.length);
         return row.root;
       },
-      update: (rowRoot, n) => {
-        const row = rowParts.get(rowRoot);
+      update: (slotEl, s) => {
+        if ("gap" in s) {
+          sizeGap(slotEl, s.px);
+          return;
+        }
+        const row = rowParts.get(slotEl);
         if (row !== undefined) {
-          paint(row, n, depth, selected);
+          paint(row, s.node, depth, s.pos, siblings.length);
         }
       },
     });
   }
 
-  function paint(row: Row, node: ExecNode, depth: number, selected: string): void {
+  function paint(row: Row, node: ExecNode, depth: number, pos: number, size: number): void {
     paintLabel(row.label, node);
     setText(row.sub, node.subtitle ?? "");
     setAttr(row.sub, "hidden", (node.subtitle ?? "") === "" ? "" : null);
     setAttr(row.root, "data-state", node.state);
+    // A windowed tree mounts only part of each list, so a row states its own place in it.
+    setAttr(row.root, "aria-posinset", String(pos + 1));
+    setAttr(row.root, "aria-setsize", String(size));
     // Rows are keyed by PATH, and a replanned run can put a different kind at one path.
     if (row.root.dataset["kind"] !== node.kind) {
       row.kindSlot.replaceChildren(kindGlyph(node.kind));
@@ -246,14 +356,87 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
     if (row.kids.parentNode !== row.root) {
       row.root.appendChild(row.kids);
     }
-    seatRows(row.kids, node.children, depth + 1, selected);
-    applyCollapse(row);
+    seatRows(row.kids, row.collapsible && folded.has(node.path) ? [] : node.children, depth + 1);
+    applyCollapse(row, node.path);
+  }
+
+  function paintWindow(): void {
+    if (box === null) {
+      return;
+    }
+    const band = bandOf(root, box);
+    range = rangeOf(flat.offsets, band.top, band.bottom);
+    seatRows(root, nodes, 0);
+  }
+
+  /** Read the row height, the gap and a box's border off the mounted rows; true when they moved
+   *  the estimate. */
+  function measure(): boolean {
+    const px = pitchOf(root.querySelector(".ev-row-main"), rowPx);
+    const gap = Number.parseFloat(getComputedStyle(root).rowGap) || 0;
+    const group = root.querySelector(".ev-row.ev-group");
+    const border =
+      group === null
+        ? boxPx
+        : (Number.parseFloat(getComputedStyle(group).borderTopWidth) || 0) +
+          (Number.parseFloat(getComputedStyle(group).borderBottomWidth) || 0);
+    measured = root.querySelector(".ev-row-main") !== null;
+    if ([px - rowPx, gap - topGap, border - boxPx].every((d) => Math.abs(d) < 0.5)) {
+      return false;
+    }
+    rowPx = px;
+    topGap = gap;
+    boxPx = border;
+    flat = flatOf();
+    return true;
+  }
+
+  /** A scroll or a resize: re-measure after a resize or before the first measure, then redraw
+   *  only when the window moved. */
+  function onMove(): void {
+    if (box === null) {
+      return;
+    }
+    const was = range;
+    const band = bandOf(root, box);
+    const next = rangeOf(flat.offsets, band.top, band.bottom);
+    if (measure() || !measured || next.from !== was.from || next.to !== was.to) {
+      paintWindow();
+    }
   }
 
   return {
     root,
-    render(nodes, selected) {
-      seatRows(root, nodes, 0, selected);
+    render(next, pick) {
+      nodes = next;
+      selected = pick;
+      if (box === null) {
+        return;
+      }
+      flat = flatOf();
+      paintWindow();
+      if (!measured && measure()) {
+        paintWindow();
+      }
+    },
+    attach(scroller) {
+      if (scroller === box) {
+        return;
+      }
+      release?.();
+      release = undefined;
+      box = scroller;
+      if (scroller === null) {
+        root.replaceChildren();
+        return;
+      }
+      measured = false;
+      flat = flatOf();
+      paintWindow();
+      if (measure()) {
+        paintWindow();
+      }
+      release = watchScroller(scroller, onMove);
     },
     tick() {
       for (const rowRoot of root.querySelectorAll<HTMLElement>(".ev-row")) {
@@ -268,29 +451,43 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
       }
     },
     reveal(path, scroller) {
+      const top = nodes.find((n) => n.path === path || nodeAt(n.children, path) !== undefined);
+      if (top !== undefined && folded.delete(top.path)) {
+        flat = flatOf();
+      }
+      const at = flat.at.get(path);
+      if (at === undefined || box !== scroller) {
+        return;
+      }
+      // The row may be outside the window: scroll to its estimated place so the window seats it,
+      // then centre it on its measured line. The first pass seats an unfolded box's spacers, or
+      // the scroll range is still the folded one's and clamps the scroll.
+      paintWindow();
+      const viewTop =
+        root.getBoundingClientRect().top -
+        scroller.getBoundingClientRect().top -
+        scroller.clientTop +
+        scroller.scrollTop;
+      scroller.scrollTo({
+        top: viewTop + (flat.offsets[at] ?? 0) - (scroller.clientHeight - rowPx) / 2,
+        behavior: "instant",
+      });
+      paintWindow();
       const target = [...root.querySelectorAll<HTMLElement>(".ev-row")].find(
         (r) => r.dataset["path"] === path,
       );
       if (target === undefined) {
         return;
       }
-      let up = target.parentElement?.closest<HTMLElement>(".ev-row") ?? null;
-      while (up !== null) {
-        const row = rowParts.get(up);
-        if (row?.collapsed === true) {
-          row.collapsed = false;
-          applyCollapse(row);
-        }
-        up = up.parentElement?.closest<HTMLElement>(".ev-row") ?? null;
-      }
       // The row's own line, not the row: a container's row box holds its children too.
       const line = (target.firstElementChild ?? target).getBoundingClientRect();
-      const box = scroller.getBoundingClientRect();
-      const offset = line.top - box.top - scroller.clientTop;
+      const rect = scroller.getBoundingClientRect();
+      const offset = line.top - rect.top - scroller.clientTop;
       scroller.scrollTo({
         top: scroller.scrollTop + offset - (scroller.clientHeight - line.height) / 2,
         behavior: "instant",
       });
+      paintWindow();
     },
   };
 }

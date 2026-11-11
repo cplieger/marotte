@@ -41,6 +41,16 @@ function recordsOf(root: HTMLElement, act: () => void): MutationRecord[] {
   return out;
 }
 
+/** A 300px box scrolling `view`, as the dock's panel body does. */
+function scroller(view: HTMLElement): HTMLElement {
+  const box = document.createElement("div");
+  box.style.blockSize = "300px";
+  box.style.overflowY = "auto";
+  box.append(view);
+  document.body.append(box);
+  return box;
+}
+
 afterEach(() => {
   vi.useRealTimers();
   document.body.replaceChildren();
@@ -51,7 +61,7 @@ describe("a repaint of unchanged nodes", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-11-10T10:10:00.000Z"));
     const tree = buildExecTree(vi.fn());
-    document.body.append(tree.root);
+    tree.attach(scroller(tree.root));
     tree.render(rows(), "g0:s1");
 
     expect(recordsOf(tree.root, () => tree.render(rows(), "g0:s1"))).toEqual([]);
@@ -61,7 +71,7 @@ describe("a repaint of unchanged nodes", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-11-10T10:10:00.000Z"));
     const timeline = buildExecTimeline(vi.fn());
-    document.body.append(timeline.root);
+    timeline.attach(scroller(timeline.root));
     timeline.render(rows(), "g0:s1", true);
 
     expect(recordsOf(timeline.root, () => timeline.render(rows(), "g0:s1", true))).toEqual([]);

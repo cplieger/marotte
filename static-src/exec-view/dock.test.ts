@@ -208,7 +208,7 @@ describe("the live rows", () => {
 
   it("keep the shown step named once it has settled and others run", () => {
     page.render(run([step("plan", "ok", 0), step("build", "running", 1)]));
-    host.querySelector<HTMLElement>('.ev-row[data-path="root/plan"] > .ev-row-main')?.click();
+    page.select("root/plan");
     expect(rowLabels()).toEqual(["build", "plan"]);
   });
 
@@ -562,6 +562,8 @@ describe("the timeline segment", () => {
     page.render(
       run([step("plan", "running", 0), step("build", "pending"), step("ship", "pending")]),
     );
+    toggle().click();
+    segment("timeline").click();
     const lanes = [...host.querySelectorAll<HTMLElement>(".ev-tl-lane")];
     expect(lanes.map((l) => l.dataset["path"])).toEqual(["root/plan", "root/build", "root/ship"]);
     expect(lanes.map((l) => l.querySelector<HTMLElement>(".ev-tl-bar")!.hidden)).toEqual([
@@ -599,7 +601,7 @@ describe("the shown step in a one-row dock", () => {
     host.style.inlineSize = "22rem";
     try {
       page.render(run([step("plan", "ok", 0), step("a", "running", 1), step("b", "running", 2)]));
-      host.querySelector<HTMLElement>('.ev-row[data-path="root/plan"] > .ev-row-main')?.click();
+      page.select("root/plan");
       expect(rowLabels()).toEqual(["a", "b", "plan"]);
       const visible = onScreen();
       expect(visible.map((r) => r.querySelector(".ev-dock-label")?.textContent)).toEqual(["plan"]);
@@ -684,8 +686,8 @@ describe("the Steps tree on open", () => {
 
   it("lands on the step waiting on the reader, over the shown one in flight", async () => {
     page.render(run(many((i) => (i === 12 ? "input" : i === 30 ? "running" : "ok"))));
-    expect(body().scrollHeight).toBeGreaterThan(body().clientHeight * 2);
     await opened("root/s12");
+    expect(body().scrollHeight).toBeGreaterThan(body().clientHeight * 2);
   });
 
   it("lands on a failed step", async () => {
@@ -696,19 +698,19 @@ describe("the Steps tree on open", () => {
   it("lands on the step a paused run has parked", async () => {
     const parked = many((i) => (i === 14 ? "waiting" : i < 14 ? "ok" : "pending"));
     page.render({ ...run(parked), state: "waiting" });
-    rowLine("root/s02").click();
+    page.select("root/s02");
     await opened("root/s14");
   });
 
   it("lands on the shown step while it is in flight, over a newer one", async () => {
     page.render(run(many((i) => (i === 10 || i === 30 ? "running" : "ok"))));
-    rowLine("root/s10").click();
+    page.select("root/s10");
     await opened("root/s10");
   });
 
   it("lands on the newest step in flight when the shown one has settled", async () => {
     page.render(run(many((i) => (i === 15 || i === 20 ? "running" : "ok"))));
-    rowLine("root/s05").click();
+    page.select("root/s05");
     await opened("root/s20");
   });
 
@@ -719,7 +721,7 @@ describe("the Steps tree on open", () => {
         false,
       ),
     );
-    rowLine("root/s18").click();
+    page.select("root/s18");
     await opened("root/s18");
   });
 

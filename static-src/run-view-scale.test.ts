@@ -43,8 +43,15 @@ vi.mock("./run-exec-source.js", { spy: true });
 import { apiGetOrError, apiGetTyped } from "./api-client.js";
 import { runToExec } from "./run-exec-source.js";
 import { refreshRun, showRun } from "./run-view.js";
-import { applyRunDelta, appendRunEntry, forgetRun, openRunEntry, openRunTurn } from "./run-store.js";
+import {
+  applyRunDelta,
+  appendRunEntry,
+  forgetRun,
+  openRunEntry,
+  openRunTurn,
+} from "./run-store.js";
 import { showOnlyView } from "./view-swap.js";
+import { openDockPanel, settledOpen } from "./__test-helpers__/exec-dock.js";
 
 const WF = "wf_scale";
 const GROUPS = 100;
@@ -135,30 +142,39 @@ afterEach(() => {
 });
 
 describe("a streamed frame on a 10,000-step run", () => {
-  it("re-projects no tree and writes no tree row or timeline lane", { timeout: 300_000 }, async () => {
-    showOnlyView(runView);
-    showRun(WF);
-    refreshRun(WF);
-    await flush();
-    runView.querySelector<HTMLButtonElement>(".ev-box-toggle")?.click();
-    await flush();
-    vi.mocked(runToExec).mockClear();
-    m.applied.length = 0;
-    const records: MutationRecord[] = [];
-    const observer = new MutationObserver((r) => records.push(...r));
-    for (const root of runView.querySelectorAll(".ev-tree, .ev-tl")) {
-      observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
-    }
+  it(
+    "re-projects no tree and writes no tree row or timeline lane",
+    { timeout: 300_000 },
+    async () => {
+      showOnlyView(runView);
+      showRun(WF);
+      refreshRun(WF);
+      await flush();
+      openDockPanel(runView);
+      await settledOpen(runView);
+      vi.mocked(runToExec).mockClear();
+      m.applied.length = 0;
+      const records: MutationRecord[] = [];
+      const observer = new MutationObserver((r) => records.push(...r));
+      for (const root of runView.querySelectorAll(".ev-tree, .ev-tl")) {
+        observer.observe(root, {
+          subtree: true,
+          childList: true,
+          attributes: true,
+          characterData: true,
+        });
+      }
 
-    for (let n = 1; n <= 200; n++) {
-      applyRunDelta(WF, TURN, `${TURN}-2`, "", n, "x");
-    }
-    await flush();
-    records.push(...observer.takeRecords());
-    observer.disconnect();
+      for (let n = 1; n <= 200; n++) {
+        applyRunDelta(WF, TURN, `${TURN}-2`, "", n, "x");
+      }
+      await flush();
+      records.push(...observer.takeRecords());
+      observer.disconnect();
 
-    expect(vi.mocked(runToExec)).not.toHaveBeenCalled();
-    expect(records).toHaveLength(0);
-    expect(new Set(m.applied.flat())).toEqual(new Set([LIVE]));
-  });
+      expect(vi.mocked(runToExec)).not.toHaveBeenCalled();
+      expect(records).toHaveLength(0);
+      expect(new Set(m.applied.flat())).toEqual(new Set([LIVE]));
+    },
+  );
 });

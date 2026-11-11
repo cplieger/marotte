@@ -52,6 +52,7 @@ describe("the tree spins for running work, never for a container", () => {
       /* selection is not under test */
     });
     document.body.appendChild(view.root);
+    view.attach(document.body);
     view.render([loop], "");
     try {
       expect(ring(view.root, "l").content).toBe("none");
@@ -67,6 +68,7 @@ describe("the tree spins for running work, never for a container", () => {
       /* selection is not under test */
     });
     document.body.appendChild(view.root);
+    view.attach(document.body);
     view.render(
       [{ ...loop, state: "fail", children: [{ ...pass, state: "fail", children: [] }] }],
       "",

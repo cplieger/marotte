@@ -58,7 +58,7 @@ function selectedPath(): string {
 }
 
 function click(path: string): void {
-  dock.querySelector<HTMLElement>(`.ev-row[data-path="${path}"] > .ev-row-main`)?.click();
+  page.select(path);
 }
 
 describe("following the newest step", () => {

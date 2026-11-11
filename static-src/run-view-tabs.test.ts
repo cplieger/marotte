@@ -82,6 +82,7 @@ import { openRunView, refreshRun, showRun } from "./run-view.js";
 import { forgetRun, noteRunChat } from "./run-store.js";
 
 import { installRunDotSubscriber } from "./run-dots.js";
+import { openDockPanel } from "./__test-helpers__/exec-dock.js";
 
 bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
 let dotsInstalled = false;
@@ -197,6 +198,10 @@ afterEach(() => {
 });
 
 function shown(): { head: string; title: string; rows: string[]; composer: string } {
+  const dock = document.getElementById("run-exec-dock");
+  if (dock?.querySelector(".ev-box-toggle") != null) {
+    openDockPanel(dock);
+  }
   return {
     composer: document.querySelector<HTMLTextAreaElement>("#run-composer-input")?.placeholder ?? "",
     head: document.querySelector("#run-exec-dock .ev-dock-head")?.textContent ?? "",

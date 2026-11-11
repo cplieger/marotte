@@ -18,6 +18,16 @@ import {
 import { STATE_WORD } from "./status.js";
 import { paintLabel } from "./label.js";
 import { setAttr, setText } from "../dom.js";
+import {
+  bandOf,
+  gapEl,
+  offsetsOf,
+  pitchOf,
+  rangeOf,
+  sizeGap,
+  watchScroller,
+  type ItemRange,
+} from "./row-window.js";
 
 export interface ExecTimelineView {
   readonly root: HTMLElement;
@@ -26,7 +36,14 @@ export interface ExecTimelineView {
   /** Re-place the bars of anything still running: a live run's bar grows and the
    *  window stretches with it. */
   tick(nodes: readonly ExecNode[], selected: string, live: boolean): void;
+  /** Draw the lanes `scroller` shows, plus an overscan, and follow its scroll and size; null
+   *  unmounts every lane. Until then `render` and `tick` only record. */
+  attach(scroller: HTMLElement | null): void;
 }
+
+/** A lane's and a pass header's heights before one is measured, at the default type scale. */
+const LANE_PX = 21;
+const PASS_PX = 30;
 
 /** A loop pass container's number; undefined for anything else, a step a repeat holds directly
  *  included, which is a lane. */
@@ -116,11 +133,48 @@ export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelin
     setText(dur, ms > 0 ? formatElapsed(ms) : "");
   }
 
+  /** One seated item: a lane or pass header, or the spacer for a run the window skips. */
+  type Slot =
+    | { readonly node: ExecNode; readonly pass: number | undefined }
+    | { readonly gap: "lead" | "tail"; readonly px: number };
+
+  let shown: { nodes: readonly ExecNode[]; selected: string; live: boolean } = {
+    nodes: [],
+    selected: "",
+    live: false,
+  };
+  let box: HTMLElement | null = null;
+  let release: (() => void) | undefined;
+  let lanePx = LANE_PX;
+  let passPx = PASS_PX;
+  let measured = false;
+  let range: ItemRange = { from: 0, to: 0 };
+
+  /** Every lane and pass header the run has, in order, with the tops a window places them at. */
+  function itemsOf(nodes: readonly ExecNode[]): {
+    items: { node: ExecNode; pass: number | undefined }[];
+    offsets: Float64Array;
+  } {
+    const items = flatten(nodes)
+      .map((node) => ({ node, pass: passOf(node) }))
+      .filter((it) => isWork(it.node) || it.pass !== undefined);
+    return {
+      items,
+      offsets: offsetsOf(items.map((it) => (it.pass === undefined ? lanePx : passPx))),
+    };
+  }
+
   /** RECONCILED by path, not rebuilt: each lane is a focusable `role="button"`, and replacing it on
    *  the 1s tick drops focus and `:hover`. The geometry is recomputed every pass and written onto
    *  the REUSED element. */
-  function paint(nodes: readonly ExecNode[], selected: string, live: boolean): void {
-    const ls = flatten(nodes).filter((n) => isWork(n) || passOf(n) !== undefined);
+  function paint(): void {
+    if (box === null) {
+      return;
+    }
+    const { nodes, selected, live } = shown;
+    const { items, offsets } = itemsOf(nodes);
+    const band = bandOf(lanes, box);
+    range = rangeOf(offsets, band.top, band.bottom);
     const win = execWindow(nodes, live);
     const lanePass = passesOf(nodes);
 
@@ -165,35 +219,102 @@ export function buildExecTimeline(onSelect: (path: string) => void): ExecTimelin
       setText(lane.dur, durText);
     };
 
-    reconcile(lanes, ls, {
-      key: (n) => n.path,
-      mount: (n) => {
-        const pass = passOf(n);
-        if (pass !== undefined) {
+    const slots: Slot[] = items.slice(range.from, range.to);
+    if (range.from > 0) {
+      slots.unshift({ gap: "lead", px: offsets[range.from] ?? 0 });
+    }
+    if (range.to < items.length) {
+      slots.push({ gap: "tail", px: (offsets[items.length] ?? 0) - (offsets[range.to] ?? 0) });
+    }
+    reconcile(lanes, slots, {
+      key: (s) => ("gap" in s ? `\u0001${s.gap}` : s.node.path),
+      mount: (s) => {
+        if ("gap" in s) {
+          const gap = gapEl();
+          sizeGap(gap, s.px);
+          return gap;
+        }
+        if (s.pass !== undefined) {
           const head = buildPassHead();
-          paintPassHead(head, n, pass);
+          paintPassHead(head, s.node, s.pass);
           return head;
         }
-        const lane = buildLane(n.path);
+        const lane = buildLane(s.node.path);
         laneParts.set(lane.root, lane);
-        paintLane(lane, n);
+        paintLane(lane, s.node);
         return lane.root;
       },
-      update: (row, n) => {
+      update: (row, s) => {
+        if ("gap" in s) {
+          sizeGap(row, s.px);
+          return;
+        }
         const lane = laneParts.get(row);
-        const pass = passOf(n);
         if (lane !== undefined) {
-          paintLane(lane, n);
-        } else if (pass !== undefined) {
-          paintPassHead(row, n, pass);
+          paintLane(lane, s.node);
+        } else if (s.pass !== undefined) {
+          paintPassHead(row, s.node, s.pass);
         }
       },
     });
   }
 
+  /** Read a lane's and a header's pitch off the mounted ones; true when they moved the estimate. */
+  function measure(): boolean {
+    const gap = Number.parseFloat(getComputedStyle(lanes).rowGap) || 0;
+    const lane = pitchOf(lanes.querySelector(".ev-tl-lane"), lanePx - gap) + gap;
+    const pass = pitchOf(lanes.querySelector(".ev-tl-pass:not(:first-child)"), passPx - gap) + gap;
+    measured = lanes.querySelector(".ev-tl-lane") !== null;
+    if (Math.abs(lane - lanePx) < 0.5 && Math.abs(pass - passPx) < 0.5) {
+      return false;
+    }
+    lanePx = lane;
+    passPx = pass;
+    return true;
+  }
+
+  /** A scroll or a resize: redraw when the window moved or the measure did. */
+  function onMove(): void {
+    if (box === null) {
+      return;
+    }
+    const was = range;
+    const band = bandOf(lanes, box);
+    const next = rangeOf(itemsOf(shown.nodes).offsets, band.top, band.bottom);
+    if (measure() || !measured || next.from !== was.from || next.to !== was.to) {
+      paint();
+    }
+  }
+
+  function draw(nodes: readonly ExecNode[], selected: string, live: boolean): void {
+    shown = { nodes, selected, live };
+    paint();
+    if (box !== null && !measured && measure()) {
+      paint();
+    }
+  }
+
   return {
     root,
-    render: paint,
-    tick: paint,
+    render: draw,
+    tick: draw,
+    attach(scroller) {
+      if (scroller === box) {
+        return;
+      }
+      release?.();
+      release = undefined;
+      box = scroller;
+      if (scroller === null) {
+        lanes.replaceChildren();
+        return;
+      }
+      measured = false;
+      paint();
+      if (measure()) {
+        paint();
+      }
+      release = watchScroller(scroller, onMove);
+    },
   };
 }

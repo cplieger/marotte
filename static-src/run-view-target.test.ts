@@ -117,6 +117,7 @@ import { runPendingAsks } from "./decision-dock.js";
 import { apiGetOrError } from "./api-client.js";
 import { beginStepMessage, recordStepSteerQueued } from "./run-step-steers.js";
 import { invalidateRun } from "./run-store.js";
+import { openDockPanel } from "./__test-helpers__/exec-dock.js";
 
 // The bar is mounted once per module, as in the app, so every case re-attaches the same elements.
 const form = document.createElement("form");
@@ -164,6 +165,7 @@ function composerInput(): HTMLTextAreaElement {
 }
 
 function pick(workflowID: string, nodeID: string): void {
+  openDockPanel(document);
   const row = document.querySelector<HTMLElement>(
     `.ev-row[data-path="${nodePathKey([workflowID, nodeID])}"] > :first-child`,
   );

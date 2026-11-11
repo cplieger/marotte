@@ -105,8 +105,8 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
   const dock: ExecDockView = buildExecDock({
     host: opts.dock,
     icon: opts.icon ?? ICON_TAB_RUN,
-    tree: tree.root,
-    timeline: timeline.root,
+    tree,
+    timeline,
     select,
     revealSteps: (scroller) => {
       if (current !== undefined) {
