@@ -25,6 +25,7 @@ Labels carry fixed values only, with one exception. `rule_id` is the random id m
 
 | Series | Type | Labels | Meaning |
 | --- | --- | --- | --- |
+| `marotte_build_info` | gauge | `version` | Always 1. `version` is the release tag the image was built from, or `dev` for a build without one |
 | `marotte_engine_up` | gauge | none | 1 while the agent engine is ready to take prompts, else 0 |
 | `marotte_engine_exits_total` | counter | `cause` | Agent engine exits, by cause |
 | `marotte_engine_resident_memory_bytes` | gauge | none | The running engine's resident memory at its last sample, taken every 60 seconds. Absent while no engine runs |

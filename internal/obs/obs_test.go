@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cplieger/marotte/internal/version"
 )
 
 func scrape() *httptest.ResponseRecorder {
@@ -99,6 +101,13 @@ func sample(series string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func TestBuildInfo_IsOneForTheRunningVersionFromTheStart(t *testing.T) {
+	series := `marotte_build_info{version="` + version.Build + `"}`
+	if v, ok := sample(series); !ok || v != "1" {
+		t.Errorf("%s = %q (on the page %v), want 1", series, v, ok)
+	}
 }
 
 func TestEngineUp_IsOneOnlyForAReadyEngine(t *testing.T) {
