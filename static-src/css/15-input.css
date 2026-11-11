@@ -1861,6 +1861,13 @@
     --send-depth: 54%;
   }
 
+  /* Listening holds the press depth: under reduced motion the breath below rests
+     at 0, and this is then the only mark of an open microphone. After `:hover`,
+     which ties it, so a hover cannot lift it. */
+  &.dictating {
+    --send-depth: 54%;
+  }
+
   /* Streaming = Cancel. Stopping is destructive-ish, so the face differs from
      Send by hue in both the fill and the ring, not by the glyph alone. */
   &:where(.streaming) {

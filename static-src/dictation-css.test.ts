@@ -71,4 +71,17 @@ describe("the listening face under reduced motion", () => {
       b.remove();
     }
   });
+
+  it("still looks different from the resting microphone", () => {
+    const resting = button("send-btn");
+    const listening = button("send-btn dictating");
+    try {
+      expect(getComputedStyle(listening).backgroundColor).not.toBe(
+        getComputedStyle(resting).backgroundColor,
+      );
+    } finally {
+      resting.remove();
+      listening.remove();
+    }
+  });
 });
