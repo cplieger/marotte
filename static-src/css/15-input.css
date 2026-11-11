@@ -1856,14 +1856,10 @@
   }
 
   /* A colour step, not a scale: it survives prefers-reduced-motion, which a
-     transform does not. */
-  &:active {
-    --send-depth: 54%;
-  }
-
-  /* Listening holds the press depth: under reduced motion the breath below rests
-     at 0, and this is then the only mark of an open microphone. After `:hover`,
-     which ties it, so a hover cannot lift it. */
+     transform does not. Listening holds the press depth, the only mark of an open
+     microphone once the breath below rests at 0 under reduced motion. After
+     `:hover`, which ties it, so a hover cannot lift it. */
+  &:active,
   &.dictating {
     --send-depth: 54%;
   }
@@ -1874,15 +1870,14 @@
     --send-hue: var(--c-red);
   }
 
-  /* THE BREATH — a slow swell of the hue while a turn runs, so a working agent
-     reads off the composer without the glyph, and while dictation listens, so the
-     open microphone does too. Opacity on a pre-painted overlay
-     carrying the shared `vk-dot-beat` (03-base.css) at its own peak, so it beats
-     in step with the tab dot of the chat it belongs to — the delay comes off one
-     global origin. Reduced motion runs it once and it rests at the `opacity: 0`
-     declared here, leaving this face identical to a still one. 8% of the hue is ~5 points of depth
-     wherever the ladder sits — 38 -> 43 resting, 46 -> 50 hovered, half the
-     rest-to-hover step. Radius `--pill-radius` - 1px, concentric with the ring above. */
+  /* THE BREATH — a slow swell of the hue while a turn runs or dictation listens,
+     so the state reads off the composer without the glyph. Opacity on a pre-painted
+     overlay carrying the shared `vk-dot-beat` (03-base.css) at its own peak, so it
+     beats in step with the tab dot of the chat it belongs to — the delay comes off
+     one global origin. Reduced motion runs it once and it rests at the `opacity: 0`
+     declared here, leaving this face identical to a still one. 8% of the hue is ~5
+     points of depth wherever the ladder sits, half the rest-to-hover step. Radius
+     `--pill-radius` - 1px, concentric with the ring above. */
   &:where(.streaming, .dictating)::before {
     content: "";
     position: absolute;

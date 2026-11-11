@@ -10,9 +10,9 @@ import type {
 } from "../dictation.js";
 
 /** One result as the test speaks it: the transcript and whether the engine has committed it. */
-export type Heard = readonly [transcript: string, final: boolean];
+type Heard = readonly [transcript: string, final: boolean];
 
-export class FakeRecognizer extends EventTarget implements SpeechRecognizer {
+class FakeRecognizer extends EventTarget implements SpeechRecognizer {
   lang = "";
   continuous = false;
   interimResults = false;
