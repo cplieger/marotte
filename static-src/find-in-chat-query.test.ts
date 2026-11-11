@@ -36,7 +36,7 @@ const messagesEl = document.createElement("div");
 messagesEl.id = "messages";
 scrollerEl.appendChild(messagesEl);
 
-const { setSessions, setActive, bumpMessages } = await import("./store.js");
+const { setSessions, setActive, setPainted, bumpMessages } = await import("./store.js");
 const { mountChatView, teardownAll } = await import("./messages.js");
 const { scrollToBottom, readingState } = await import("./scroll.js");
 const { restAtLiveEdge } = await import("./__test-helpers__/scroll-rest.js");
@@ -205,6 +205,7 @@ async function load(chat: string, turns = chatTurns()): Promise<void> {
     },
   ]);
   setActive(chat);
+  setPainted(chat);
   bumpMessages(chat, "load");
   await vi.waitFor(() => {
     // Every turn but the newest folds, and the newest's last entry is mounted.
@@ -259,6 +260,7 @@ beforeEach(() => {
   resetFoldState();
   setSessions([]);
   setActive("");
+  setPainted("");
   vi.mocked(api.apiGetTyped).mockReset();
 });
 

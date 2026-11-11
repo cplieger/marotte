@@ -1,4 +1,3 @@
-import { join } from "@cplieger/keyenc";
 import type { TurnSummary } from "./rail-merge.js";
 import { severityOf } from "./turn-severity.js";
 import type { TurnSeverity } from "./turn-severity.js";
@@ -79,7 +78,8 @@ export function binTurns(turns: readonly TurnSummary[], trackPx: number): TurnMa
       }
     }
     bins.push({
-      key: join(String(slot * k + 1), String((slot + 1) * k)),
+      // Two integers, so a plain separator cannot collide and no keyenc call runs per render.
+      key: `${String(slot * k + 1)}-${String((slot + 1) * k)}`,
       first,
       last,
       members,

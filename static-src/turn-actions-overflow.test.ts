@@ -14,6 +14,7 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 vi.mock("./store.js", () => ({
   getActive: () => ({ id: "c1", name: "chat", messages: [] }),
   getActiveId: () => "c1",
+  getPaintedId: () => "c1",
   get: vi.fn(() => undefined),
   getSessions: vi.fn(() => []),
   tabStatusFor: vi.fn(() => ""),

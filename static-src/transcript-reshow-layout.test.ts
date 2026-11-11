@@ -142,6 +142,7 @@ beforeEach(() => {
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
+  store.setPainted("");
   chatView.classList.remove("hidden");
 });
 
@@ -153,6 +154,7 @@ describe(
       const { session, append } = openTurnChat("c-reshow");
       store.setSessions([session]);
       store.setActive(session.id);
+      store.setPainted(session.id);
       store.bumpMessages(session.id, "load");
       await frames(4);
       await fill(append);
@@ -178,6 +180,7 @@ describe(
       const other = makeSession({ id: "c-other", name: "c-other" });
       store.setSessions([session, other]);
       store.setActive(session.id);
+      store.setPainted(session.id);
       store.bumpMessages(session.id, "load");
       await frames(4);
       await fill(append);
@@ -190,11 +193,13 @@ describe(
       expect(scroll.readingState()).toBe("reading");
 
       store.setActive(other.id);
+      store.setPainted(other.id);
       await frames(4);
       append("tool");
       append("text");
       await frames(2);
       store.setActive(session.id);
+      store.setPainted(session.id);
       await frames(30);
 
       expect({ unlaid: unlaidRows(), unmarked: unmarkedInPort() }).toEqual({

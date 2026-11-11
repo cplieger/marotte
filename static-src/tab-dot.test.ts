@@ -298,8 +298,13 @@ vi.mock("./api-client.js", () =>
     const listTabs = m.tabListRead();
     return {
       apiBlobOrError: vi.fn(),
+      // A read no case stubbed (the docs tab's activation) answers null, as a failed read does;
+      // the real reader never resolves undefined.
       apiGetTyped: vi.fn((path: string, decode: unknown) =>
-        path === "/api/tabs" ? listTabs(path) : mockApiGetTyped(path, decode),
+        path === "/api/tabs"
+          ? listTabs(path)
+          : ((mockApiGetTyped(path, decode) as Promise<unknown> | undefined) ??
+            Promise.resolve(null)),
       ),
       // Present-but-inert so real-ESM linking succeeds: store-load's deep-link
       // confirmation reads it, and that module is in this graph. No case here
@@ -406,8 +411,11 @@ async function resetProjection(): Promise<void> {
   seededDots.clear();
   registerTabOpeners({
     chat: {
+      prefetch: vi.fn(),
+      select: vi.fn(),
+      loadFailed: vi.fn(),
       show: vi.fn(),
-      refresh: vi.fn(),
+      refresh: vi.fn(() => Promise.resolve()),
       close: vi.fn(),
       dot: (chatID: string) => seededDots.get(chatID) ?? "",
     },

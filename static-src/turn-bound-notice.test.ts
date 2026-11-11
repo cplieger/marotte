@@ -30,7 +30,7 @@ vi.mock("./api-client.js", async (importOriginal) => ({
 }));
 
 const { mountChatView, activeTranscriptView } = await import("./messages.js");
-const { setSessions, setActive, bumpMessages } = await import("./store.js");
+const { setSessions, setActive, setPainted, bumpMessages } = await import("./store.js");
 
 mountChatView();
 
@@ -57,6 +57,7 @@ async function paint(chatID: string, close: Record<string, unknown>): Promise<HT
     { ...makeSession({ id: chatID, name: chatID }), turns, turn_order: ["t1"], turn_count: 1 },
   ]);
   setActive(chatID);
+  setPainted(chatID);
   bumpMessages(chatID, "load");
   const deadline = Date.now() + FRAME_BUDGET_MS;
   for (;;) {

@@ -123,6 +123,7 @@ vi.mock("./run-store.js", async (importOriginal) => ({
 vi.mock("./composer-state.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ComposerState>()),
   retargetComposer: vi.fn(),
+  adoptUnownedComposer: vi.fn(),
   restoreFailedSend: vi.fn(),
   saveComposerState: vi.fn(),
   restoreComposerState: vi.fn(),
@@ -187,7 +188,15 @@ beforeEach(() => {
   _resetTabsSyncForTest();
   _resetTabOpenersForTest();
   registerTabOpeners({
-    chat: { show: vi.fn(), refresh: vi.fn(), close: vi.fn(), dot: () => "" },
+    chat: {
+      prefetch: vi.fn(),
+      select: vi.fn(),
+      loadFailed: vi.fn(),
+      show: vi.fn(),
+      refresh: vi.fn(() => Promise.resolve()),
+      close: vi.fn(),
+      dot: () => "",
+    },
     editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn() },
     run: { show: vi.fn(), refresh: vi.fn() },
     subagent: { show: vi.fn(), refresh: vi.fn() },

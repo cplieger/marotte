@@ -126,6 +126,15 @@ type turnState struct {
 	emptySteer bool
 }
 
+// logBytes is the size of the turn's lines in the log, which bounds what a page serves of it from above.
+func (st *turnState) logBytes() int64 {
+	var n int64
+	for _, r := range st.ranges {
+		n += r.to - r.from
+	}
+	return n
+}
+
 // unsettled are the turn's tool_calls neither appended settled nor answered by a tool_result, in open order, which a
 // close aborts them in.
 func (st *turnState) unsettled() []entryCall {
@@ -1355,10 +1364,10 @@ type window struct {
 	HasMore bool
 }
 
-// window reads the `turns` surviving turns with the highest n, or the `turns` surviving turns below before when it
-// names a surviving turn here. `turns` is a page size: the read is a set of whole turns, never split. One pread per
-// byte range; lines of turns outside the set are skipped.
-func (l *EntryLog) window(turns int, before string) (window, error) {
+// window reads the newest surviving turns, or those below before when it names a surviving turn here: at most `turns`
+// of them, contiguous, and no more than maxBytes of log lines, except that the newest one is always served whole
+// however large. A turn is never split. One pread per byte range; lines of turns outside the set are skipped.
+func (l *EntryLog) window(turns int, before string, maxBytes int64) (window, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	// One slice for resolution, selection and HasMore: resolving `before` against l.order would accept a reverted id
@@ -1372,7 +1381,16 @@ func (l *EntryLog) window(turns int, before string) (window, error) {
 		}
 		upper = i
 	}
-	lower := max(upper-max(turns, 0), 0)
+	lower := upper
+	var taken int64
+	for lower > 0 && upper-lower < turns {
+		size := l.turns[order[lower-1]].logBytes()
+		if lower < upper && taken+size > maxBytes {
+			break
+		}
+		taken += size
+		lower--
+	}
 	entries, err := l.readSurvivingLocked(order[lower:upper])
 	if err != nil {
 		return window{}, err

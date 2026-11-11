@@ -242,6 +242,21 @@
   .uip-toast.is-leaving {
     transform: translateY(-0.5rem);
   }
+
+  /* THE OPEN DRAWER IS THE WHOLE SCREEN, and under the notice band a toast lands on its
+     actions row or its first tab rows, the row a close or switch toast reports on. It sits
+     over the footer band instead (`toast-drawer-css.test.ts`): a tap meant for the account
+     button dismisses the toast. Bottom-anchored, so newest-first is `column-reverse` and it
+     enters and leaves downward. `:where()` keeps the base's `.is-shown` transform winning. */
+  :where(body:has([id="sidebar"].open)) .uip-toast-stack {
+    inset-block: auto calc(env(safe-area-inset-bottom, 0px) + var(--sp-1));
+    flex-direction: column-reverse;
+  }
+
+  :where(body:has([id="sidebar"].open)) .uip-toast,
+  :where(body:has([id="sidebar"].open)) .uip-toast.is-leaving {
+    transform: translateY(0.5rem);
+  }
 }
 
 /* ==========================================================================

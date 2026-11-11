@@ -1308,8 +1308,10 @@ describe("a large tool card below the streaming block", () => {
     }, true);
     await land();
 
-    // The history edge's report asks whatever the reader's position, which is what keeps the anchored
-    // pin — the geometry the defect needs — in place.
+    // The history edge's report asks whatever the reader's position once a gesture armed it; a request for the live
+    // edge arms it and keeps the anchored pin, the geometry the defect needs, in place.
+    scroll.scrollToBottom();
+    await land();
     scroll.noteHistoryEdge(true);
     await land();
 
@@ -1758,6 +1760,7 @@ describe("the resume control's landing", () => {
     scrollBtn.click();
     await land(60);
     scroll.attach({ el: messagesEl, scrollTop: 300, readingState: "reading" });
+    scroll.applyPendingRestore();
     await land(400);
 
     expect(wrap.scrollTop).toBe(300);
@@ -1961,6 +1964,7 @@ describe("the streaming follow write's licence", () => {
     await Promise.resolve();
     scroll.detach();
     scroll.attach({ el: messagesEl, scrollTop: 250, readingState: "reading" });
+    scroll.applyPendingRestore();
     await land(300);
 
     expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
@@ -2776,6 +2780,7 @@ describe("laying out what is near the scrollport", () => {
   // The attach case re-roots the observers on its own view; hand them back to the transcript root.
   afterEach(() => {
     scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
   });
 
   /** A `.tool-call` box `px` tall, appended to `host`. */
@@ -2850,6 +2855,7 @@ describe("laying out what is near the scrollport", () => {
     const shown = document.createElement("div");
     messagesEl.replaceChildren(shown);
     scroll.attach({ el: shown, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
     // Built beside the attached view, the way the multiplexer seats a chat's view.
     const incoming = document.createElement("div");
     const box = skippable(incoming, 100);
@@ -2858,6 +2864,7 @@ describe("laying out what is near the scrollport", () => {
     const before = box.hasAttribute("data-near");
 
     scroll.attach({ el: incoming, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
     await land();
 
     expect({ before, after: box.hasAttribute("data-near") }).toEqual({
@@ -2941,6 +2948,7 @@ describe("a cold row laid out above the reader", () => {
   afterEach(() => {
     sheet.remove();
     scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
   });
 
   const frame = (): Promise<void> =>
@@ -3028,6 +3036,7 @@ describe("a cold row laid out above the reader", () => {
     const b = document.createElement("div");
     b.style.cssText = "height:2000px;";
     scroll.attach({ el: a, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
     await land();
     // The reader parks with the cold row 850px above the scrollport, past the 600px lead.
     readerScrollTo(wrap, 2900);
@@ -3037,11 +3046,13 @@ describe("a cold row laid out above the reader", () => {
     a.hidden = true;
     messagesEl.appendChild(b);
     scroll.attach({ el: b, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
     await land();
     scroll.detach();
     b.remove();
     a.hidden = false;
     scroll.attach({ el: a, ...parked });
+    scroll.applyPendingRestore();
     await land();
     const premise = {
       state: scroll.readingState(),
@@ -3067,6 +3078,7 @@ describe("a cold row laid out above the reader", () => {
     // Five blocks below the cold row: at the live edge it sits 100px above the scrollport, inside the 600px lead.
     const { view, cold } = coldView(5);
     scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
     scroll.scrollToBottom();
     await land();
     const grown = cold.getBoundingClientRect().height;
@@ -3099,6 +3111,7 @@ describe("a parked view's restore under a platform reset", () => {
   afterEach(() => {
     skeleton.px = 0;
     scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
   });
 
   /** A view of forty 100px rows inside the transcript root. */
@@ -3123,6 +3136,7 @@ describe("a parked view's restore under a platform reset", () => {
   ): Promise<number[]> {
     const wrap = scroll.getScrollEl();
     scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
     await land();
     if (state === "reading") {
       readerScrollTo(wrap, 1200);
@@ -3136,12 +3150,14 @@ describe("a parked view's restore under a platform reset", () => {
     other.style.cssText = "height:2000px;";
     messagesEl.appendChild(other);
     scroll.attach({ el: other, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
     await land();
     scroll.detach();
     other.remove();
     view.hidden = false;
     beforeReturn();
     scroll.attach({ el: view, ...parked });
+    scroll.applyPendingRestore();
     view.style.display = "none";
     expect(wrap.scrollTop).toBe(0);
     view.style.display = "";
@@ -3202,15 +3218,45 @@ describe("a parked view's restore under a platform reset", () => {
     });
   });
 
+  // A row above the reader takes its real size in the pass that re-shows the view (a cold card built, a
+  // content-visibility estimate replaced): the reader's text holds still, so the offset moves by the growth.
+  it("keeps a reader's text still when a row above them grows in the restoring pass", async () => {
+    const view = rowsView();
+    await switchBackUnderReset(view, "reading", () => {
+      (view.children[2] as HTMLElement).style.height = "136px";
+    });
+
+    expect({ top: scroll.getScrollEl().scrollTop, state: scroll.readingState() }).toEqual({
+      top: 1236,
+      state: "reading",
+    });
+  });
+
+  it("keeps a following reader on the live edge when a row above grows in the restoring pass", async () => {
+    const view = rowsView();
+    const seen = await switchBackUnderReset(view, "following", () => {
+      (view.children[2] as HTMLElement).style.height = "136px";
+    });
+    const wrap = scroll.getScrollEl();
+    const edge = wrap.scrollHeight - wrap.clientHeight;
+
+    expect({
+      off: seen.filter((top) => Math.abs(top - edge) >= 1),
+      state: scroll.readingState(),
+    }).toEqual({ off: [], state: "following" });
+  });
+
   it("hands the scroller to a reader who scrolls before the restore settles", async () => {
     const wrap = scroll.getScrollEl();
     const view = rowsView();
     scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
     await land();
     readerScrollTo(wrap, 1200);
     await land();
     const parked = scroll.detach();
     scroll.attach({ el: view, ...parked });
+    scroll.applyPendingRestore();
     readerScrollTo(wrap, 600);
     await land();
 
@@ -3231,6 +3277,7 @@ describe("a parked view's restore under a platform reset", () => {
   ): Promise<{ moves: number[]; state: string }> {
     const wrap = scroll.getScrollEl();
     scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
     await land();
     readerScrollTo(wrap, top);
     await land(400);
@@ -3240,12 +3287,14 @@ describe("a parked view's restore under a platform reset", () => {
     other.style.cssText = "height:2000px;";
     messagesEl.appendChild(other);
     scroll.attach({ el: other, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
     await land();
     scroll.detach();
     other.remove();
     view.hidden = false;
     opts.beforeReturn?.();
     scroll.attach({ el: view, ...parked });
+    scroll.applyPendingRestore();
     const box = wrap.getBoundingClientRect();
     const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 3)!;
     const ref = opts.ref ?? ((): Element => hit);
@@ -3274,6 +3323,7 @@ describe("a parked view's restore under a platform reset", () => {
     const wrap = scroll.getScrollEl();
     const view = rowsView();
     scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
     await land();
     readerScrollTo(wrap, 500);
     await land();
@@ -3291,11 +3341,13 @@ describe("a parked view's restore under a platform reset", () => {
     other.style.cssText = "height:2000px;";
     messagesEl.appendChild(other);
     scroll.attach({ el: other, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
     await land();
     scroll.detach();
     other.remove();
     view.hidden = false;
     scroll.attach({ el: view, ...parked });
+    scroll.applyPendingRestore();
     await land();
 
     expect({
@@ -3305,19 +3357,22 @@ describe("a parked view's restore under a platform reset", () => {
     }).toEqual({ loading: true, moved: 0, state: "reading" });
   });
 
-  it("keeps the reader's text still when an older page's skeleton lands above them on return", async () => {
+  it("asks for no older page and keeps the reader's text still when the view returns inside the history lead", async () => {
     const view = rowsView();
     skeleton.px = 200;
-    // The activation rewires pagination; with the reader inside the history lead the first delivery asks for a page,
-    // whose skeleton lands above them while the fetch is pending, and the pass compensates its height.
+    // The activation rewires pagination with the reader inside the history lead; until the reader moves, the
+    // re-shown view costs no page.
+    const load = vi.fn();
     const out = await movesAfterReturn(view, 500, () => {
-      scroll.setLoadMore(() => undefined, true);
+      scroll.setLoadMore(load, true);
+      scroll.noteHistoryEdge(true);
     });
 
     expect({
-      skeleton: document.getElementById("load-more-skeleton")?.getBoundingClientRect().height,
+      asks: load.mock.calls.length,
+      skeleton: document.getElementById("load-more-skeleton"),
       ...out,
-    }).toEqual({ skeleton: 200, moves: [], state: "reading" });
+    }).toEqual({ asks: 0, skeleton: null, moves: [], state: "reading" });
   });
 
   it("keeps the reader's text still when a row above them grows in the first frame after return", async () => {
@@ -3610,6 +3665,7 @@ describe("a parked view's restore under a platform reset", () => {
     const wrap = scroll.getScrollEl();
     const { view, inner } = tallEntryView();
     scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
     await land();
     readerScrollTo(wrap, 1800);
     await land(400);
@@ -3654,6 +3710,7 @@ describe("a parked view's restore under a platform reset", () => {
     const wrap = scroll.getScrollEl();
     const view = rowsView();
     scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
     await land();
     readerScrollTo(wrap, 500);
     await land();
@@ -3673,11 +3730,13 @@ describe("a parked view's restore under a platform reset", () => {
     other.style.cssText = "height:2000px;";
     messagesEl.appendChild(other);
     scroll.attach({ el: other, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
     await land();
     scroll.detach();
     other.remove();
     view.hidden = false;
     scroll.attach({ el: view, ...parked });
+    scroll.applyPendingRestore();
     await land();
 
     expect({
@@ -3727,13 +3786,49 @@ describe("onAttach", () => {
     const off = scroll.onAttach(seen);
 
     scroll.attach({ el: view, scrollTop: 250, readingState: "reading" });
+    scroll.applyPendingRestore();
     expect(seen).toHaveBeenCalledTimes(1);
     expect(seen.mock.results[0]?.value).toBe(250);
 
     off();
     scroll.attach({ el: view, scrollTop: 100, readingState: "reading" });
+    scroll.applyPendingRestore();
 
     expect(seen).toHaveBeenCalledTimes(1);
+  });
+});
+
+// A pin left to the view's first content delivery moves the scroller by the whole transcript inside the resize loop,
+// onto rows the near lead never laid out; Gecko then lays them out mid-loop and reports a ResizeObserver loop.
+describe("a fresh Following view's restore", () => {
+  beforeEach(realLayoutReset);
+  afterEach(() => {
+    scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
+  });
+
+  it("lands on the live edge in the restore's own task, leaving the first delivery nothing to write", async () => {
+    const wrap = realScroller();
+    const view = document.createElement("div");
+    for (let i = 0; i < 30; i++) {
+      const row = document.createElement("div");
+      row.style.cssText = "height:100px;";
+      view.appendChild(row);
+    }
+    messagesEl.replaceChildren(view);
+
+    scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
+    const inTask = wrap.scrollTop;
+    const later = recordWrites(wrap);
+    await land();
+
+    // 30 rows of 100px in a 400px scrollport: the end is 2600.
+    expect({ inTask, later, state: scroll.readingState() }).toEqual({
+      inTask: 2600,
+      later: [],
+      state: "following",
+    });
   });
 });
 
@@ -3754,6 +3849,7 @@ describe("the history edge's observer", () => {
     const wrap = realScroller();
     block(3000);
     scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
     await land();
     return wrap;
   }
@@ -3810,6 +3906,7 @@ describe("pagination furniture belongs to its own view", () => {
     const { parked, active } = twoViews();
     const parkedSkeleton = plantSkeleton(parked);
     scroll.attach({ el: active, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
     const activeSkeleton = plantSkeleton(active);
 
     // `resetScrollState` ends in `abandonLoadPass`, and it is the reachable door: a chat switch
@@ -3826,9 +3923,11 @@ describe("pagination furniture belongs to its own view", () => {
     // One marker serves every chat, as the live edge's does: a parked view's own top is not a history edge.
     const { parked, active } = twoViews();
     scroll.attach({ el: parked, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
     expect(parked.querySelector(".transcript-top")).not.toBeNull();
 
     scroll.attach({ el: active, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
 
     expect({
       parkedHas: parked.querySelector(".transcript-top") !== null,
@@ -3985,6 +4084,25 @@ describe("the owner's own flight", () => {
     expect({ during, after: load.mock.calls.length }).toEqual({ during: 0, after: 1 });
   });
 
+  it("ends the flight unlanded when its view is parked, asking no older page for it", async () => {
+    const load = vi.fn();
+    const { landed } = await flightFromTheEnd();
+    scroll.setLoadMore(load, true);
+    scroll.noteHistoryEdge(true);
+
+    scroll.detach();
+    const result = await landed;
+    const skeleton = document.getElementById("load-more-skeleton");
+    scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
+
+    expect({ result, asks: load.mock.calls.length, skeleton }).toEqual({
+      result: false,
+      asks: 0,
+      skeleton: null,
+    });
+  });
+
   it("lands a flight a shift aborts in the shift's own task", async () => {
     // An instant write aborts a smooth scroll, and the aborted scroll fires no scrollend of its own.
     const { landed } = await flightFromTheEnd();
@@ -4034,6 +4152,7 @@ describe("a shift during a gesture", () => {
     block(4000);
     // An earlier suite may leave another view attached; the shift is measured on this one.
     scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
     await land();
     scroll.scrollToBottom();
     await land();

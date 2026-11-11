@@ -131,6 +131,64 @@ function browserProject(
               );
             }
           },
+          /** Real mouse clicks at `points` (CSS px in a tester frame `frameWidth` wide), each pressed
+           *  `gapMs` after the last one's release and released `holdMs` after its press; answers once
+           *  they are scheduled. Raw CDP input, unawaited: Playwright's `mouse` waits for each
+           *  event's ack, and a move is acked only after a busy main thread frees, so its press would
+           *  reach the page after the long task instead of waiting in the input queue behind it. */
+          async queueClicks(
+            { page, frame },
+            points: readonly { readonly x: number; readonly y: number }[],
+            gapMs: number,
+            holdMs: number,
+            frameWidth: number,
+          ) {
+            const box = await (await (await frame()).frameElement()).boundingBox();
+            if (box === null) {
+              throw new Error("the tester frame has no box");
+            }
+            const scale = box.width / frameWidth;
+            const cdp = await page.context().newCDPSession(page);
+            const sent: Promise<unknown>[] = [];
+            const send = (
+              type: "mouseMoved" | "mousePressed" | "mouseReleased",
+              x: number,
+              y: number,
+            ): void => {
+              const pressed = type === "mousePressed";
+              const ack = cdp
+                .send("Input.dispatchMouseEvent", {
+                  type,
+                  x,
+                  y,
+                  button: type === "mouseMoved" ? "none" : "left",
+                  buttons: pressed ? 1 : 0,
+                  clickCount: type === "mouseMoved" ? 0 : 1,
+                })
+                .catch((e: unknown) => {
+                  console.error("queueClicks", type, e);
+                });
+              sent.push(ack);
+            };
+            const sleep = (ms: number): Promise<void> =>
+              new Promise((resolve) => setTimeout(resolve, ms));
+            void (async () => {
+              for (const p of points) {
+                await sleep(gapMs);
+                const x = box.x + p.x * scale;
+                const y = box.y + p.y * scale;
+                send("mouseMoved", x, y);
+                send("mousePressed", x, y);
+                await sleep(holdMs);
+                send("mouseReleased", x, y);
+              }
+              // Detach only once every event is acked, so no event is still in flight on the session.
+              await Promise.all(sent);
+              await cdp.detach().catch((e: unknown) => {
+                console.error("queueClicks detach", e);
+              });
+            })();
+          },
         },
       },
     },

@@ -6,9 +6,10 @@ import { stampFindUnit } from "./find-unit.js";
 import { turnRevision } from "./turn-revision.js";
 import {
   get,
-  getActive,
   getActiveId,
-  watchActiveId,
+  getPainted,
+  getPaintedId,
+  watchPaintedId,
   messagesVersionOf,
   renderCauseOf,
   bumpMessages,
@@ -16,6 +17,7 @@ import {
   codeReferencesFor,
   liveRefusalFor,
   sessionBusy,
+  isEmptyChat,
 } from "./store.js";
 import { clearTurnSigs } from "./store-signals.js";
 import { BUS_FOLDS_CHANGED, onBus } from "./bus.js";
@@ -27,8 +29,8 @@ import { releaseClampsIn } from "./clamp-text.js";
 import { releaseScrollableTablesIn } from "./table-scroll.js";
 import { effect, el, touch } from "@cplieger/ui";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
-import { CHAT_SKELETON_ID } from "./skeleton.js";
-import { $, maybeEl } from "./dom.js";
+import { coverHeld, registerParkReads, releaseCover } from "./transcript-cover.js";
+import { $ } from "./dom.js";
 import {
   followTargetChanged,
   getScrollEl,
@@ -44,19 +46,22 @@ import {
   setAnchorProvider,
   setResumeLabel,
   readingState,
+  landingTop,
   jumpTo,
   attach as attachScroll,
   detach as detachScroll,
+  snapshot as snapshotScroll,
   readerAt,
   heldMutation,
   onContentResize,
   readingLineOffset,
+  applyPendingRestore,
 } from "./scroll.js";
 import type { ViewScrollState } from "./scroll-controller.js";
 import {
   buildTurnHeader,
   updateTurnHeader,
-  syncWakeRowRuns,
+  queueWakeRowSync,
   type TurnHeaderData,
 } from "./fundamentals/turn-header.js";
 import {
@@ -191,6 +196,9 @@ interface ChatView {
   /** Resume rebuilds them even if closed since: their binding effects were disposed, so they missed
    *  every update while parked. */
   pausedStreaming: Set<string>;
+  /** Where the reader was at park, read before the park's first write; the unpark pass plans from it, since its
+   *  scroll restore lands only after the pass's writes. */
+  parkedAt: ReaderPosition;
 }
 
 /** Resident views by chat id, iterated in LRU order: activation re-inserts, so the first parked one is evicted. */
@@ -245,6 +253,20 @@ function mountedBodies(view: ChatView): [string, HTMLElement][] {
   return out;
 }
 
+/** What `parkView` reads, taken at a switch's clean layout (transcript-cover.ts `takeParkReads`). */
+let parkReads: { view: ChatView; parkedAt: ReaderPosition; scroll: ViewScrollState } | null = null;
+
+function takeParkReads(): void {
+  parkReads =
+    activeView === null
+      ? null
+      : {
+          view: activeView,
+          parkedAt: readerPosition(lastTurns, openableOf(activeView.chatID, lastTurns)),
+          scroll: snapshotScroll(),
+        };
+}
+
 /** Park the active view: pause every writer, save the handle, hide. */
 function parkView(view: ChatView): void {
   // Focus first: an inert subtree drops focus to <body>, and the composer is the app's focus home.
@@ -252,7 +274,11 @@ function parkView(view: ChatView): void {
   if (focused !== null && view.el.contains(focused)) {
     $.promptInput.focus();
   }
-  view.scroll = detachScroll();
+  const taken = parkReads?.view === view ? parkReads : null;
+  parkReads = null;
+  // Both before the first write, at the layout the task started from, unless the switch took them.
+  view.parkedAt = taken?.parkedAt ?? readerPosition(lastTurns, openableOf(view.chatID, lastTurns));
+  view.scroll = detachScroll(taken?.scroll);
   view.followBaseline = followBaseline;
   view.reachableEntries = reachableEntries;
   view.lastNewestTurnID = lastNewestTurnID;
@@ -294,6 +320,7 @@ function activateView(chatID: string): boolean {
       lastNewestTurnID: undefined,
       resumeLabel: "",
       pausedStreaming: new Set(),
+      parkedAt: AT_LIVE_EDGE,
     };
     messagesEl.appendChild(view.el);
   } else {
@@ -319,16 +346,44 @@ function activateView(chatID: string): boolean {
   if (unparking) {
     setResumeLabel(view.resumeLabel);
   }
-  evictParkedViews();
+  scheduleEviction();
   return unparking;
+}
+
+let evictionQueued = false;
+
+/** Dispose the over-budget parked views in a later task, so tearing down an LRU view never sits
+ *  between the incoming view and its first paint. One task per burst of activations. */
+function scheduleEviction(): void {
+  if (evictionQueued) {
+    return;
+  }
+  evictionQueued = true;
+  setTimeout(() => {
+    evictionQueued = false;
+    evictParkedViews();
+  }, 0);
+}
+
+let parkedViewExempt: (chatID: string) => boolean = () => false;
+
+/** Keep every parked view `exempt` names past the budget: a view whose tab a rollback may put
+ *  back, which must unpark with its scroll. INJECTED by the composition root, since what is
+ *  pending lives in the tab layer above this one. Exempt views still count toward the budget. */
+export function setParkedViewExemption(exempt: (chatID: string) => boolean): void {
+  parkedViewExempt = exempt;
 }
 
 function evictParkedViews(): void {
   const parked = [...views.values()].filter((v) => v.parked);
-  for (let i = 0; i <= parked.length - 1 - PARKED_VIEWS; i++) {
-    const victim = parked[i];
-    if (victim !== undefined) {
+  let over = parked.length - PARKED_VIEWS;
+  for (const victim of parked) {
+    if (over <= 0) {
+      return;
+    }
+    if (!parkedViewExempt(victim.chatID)) {
       disposeChatView(victim.chatID);
+      over -= 1;
     }
   }
 }
@@ -368,7 +423,7 @@ export function disposeChatView(chatID: string): void {
   views.delete(chatID);
   if (activeView === view) {
     activeView = null;
-    lastActiveId = undefined;
+    lastPaintedId = undefined;
   }
 }
 
@@ -516,7 +571,7 @@ function disposeEntryEffects(turnID: string, seqs: Iterable<number>): void {
  */
 const appendNewIds = new Set<string>();
 let lastNewestTurnID: string | undefined;
-let lastActiveId: string | undefined;
+let lastPaintedId: string | undefined;
 
 /** The newest resident turn id, where the next arrival walk starts; `turn_order` is file order. */
 function newestTurnID(s: Session): string | undefined {
@@ -563,6 +618,12 @@ export function mountChatView(): void {
   }
   mounted = true;
   initFollowModel();
+  registerParkReads({
+    take: takeParkReads,
+    drop: () => {
+      parkReads = null;
+    },
+  });
   // In the positioned outer wrapper, not the scroller, so it does not scroll away with the content.
   mountTurnRail($.messagesWrapOuter);
   // Both stub-landing surfaces call this module's on-demand build; injected because a static import back would cycle.
@@ -579,7 +640,7 @@ export function mountChatView(): void {
   onContentResize(queueCoverPass);
   onLiveEdgeRequest(mountLiveEdge);
   onBus(BUS_FOLDS_CHANGED, () => {
-    const id = getActiveId();
+    const id = getPaintedId();
     if (id !== "") {
       bumpMessages(id, "shape");
     }
@@ -599,9 +660,9 @@ export function mountChatView(): void {
   registerEvictionExemption((chatID) => views.has(chatID));
   // Page unload is the one moment every view goes away; close/delete/LRU dispose per view.
   registerCleanup(teardownAll);
-  // Inputs: which chat is active, and that chat's transcript version. Header-only updates bump no version.
+  // Inputs: which chat is painted, and that chat's transcript version. Header-only updates bump no version.
   effect(() => {
-    const id = watchActiveId();
+    const id = watchPaintedId();
     touch(messagesVersionOf(id));
     paint();
   });
@@ -654,7 +715,7 @@ function refreshResumeLabel(): void {
   if (readingState() === "following") {
     return;
   }
-  const session = getActive();
+  const session = getPainted();
   const behind = reachableEntries - followBaseline;
   if (behind > 0) {
     setResumeLabel(`${String(behind)} new block${behind === 1 ? "" : "s"}`);
@@ -826,9 +887,11 @@ function coverCard(
   return out;
 }
 
-/** Whether any turn's spacer shows inside the scrollport, the state `coverBand` exists to prevent. */
-function spacerInView(): boolean {
-  const port = getScrollEl().getBoundingClientRect();
+/** Whether any turn's spacer shows inside the scrollport, the state `coverBand` exists to prevent; `ahead` px moves
+ *  the port down the content, to a position the scroller has not landed on yet. */
+function spacerInView(ahead = 0): boolean {
+  const scrollport = getScrollEl().getBoundingClientRect();
+  const port = { top: scrollport.top + ahead, bottom: scrollport.bottom + ahead };
   for (const card of turnCards(paintRoot())) {
     const box = card.getBoundingClientRect();
     if (box.bottom <= port.top || box.top >= port.bottom) {
@@ -844,16 +907,49 @@ function spacerInView(): boolean {
   return false;
 }
 
+/** Where the reader is: the residency anchor, and off the live edge the ordinals each turn shows in the reader band
+ *  and the ordinals that cover it (`coverBand`). */
+interface ReaderPosition {
+  readonly anchor: ResidencyAnchor | undefined;
+  readonly seen: ReadonlyMap<string, EntryRange>;
+  readonly covered: ReadonlyMap<string, EntryRange>;
+}
+
+const AT_LIVE_EDGE: ReaderPosition = { anchor: undefined, seen: new Map(), covered: new Map() };
+
+/** Reads only, so a caller can take it before its first write. */
+function readerPosition(turns: readonly Turn[], openable: readonly Turn[]): ReaderPosition {
+  const anchor = residencyAnchor(openable);
+  if (anchor === undefined) {
+    return AT_LIVE_EDGE;
+  }
+  const band = readerBand();
+  const seen = new Map<string, EntryRange>();
+  for (const t of turns) {
+    const range = seenRange(t.id, band);
+    if (range !== undefined) {
+      seen.set(t.id, range);
+    }
+  }
+  return { anchor, seen, covered: coverBand(openable, band) };
+}
+
+/** The turns the window grows over: a folded body holds zero height. A store predicate, never `data-folded`. */
+function openableOf(chatID: string, turns: readonly Turn[]): Turn[] {
+  return turns.filter((t, i) => isTurnOpen(chatID, t, i, turns.length) || !turnFoldHides(t));
+}
+
 function computeFoldPlan(
   chatID: string,
   turns: readonly Turn[],
   openable: readonly Turn[],
-  anchor: ResidencyAnchor | undefined,
+  reader: ReaderPosition,
   growOnly = false,
 ): void {
   foldPlan.clear();
   turnByID.clear();
   wantedWindow.clear();
+  readerAnchor = reader.anchor;
   // The dispatcher's one turn-scope input: a render holds one turn and cannot see its neighbours' runs.
   const owners = runCardOwners(turns);
   setRunCardOwners(owners);
@@ -862,10 +958,7 @@ function computeFoldPlan(
     ownedRuns.set(owner.turn, `${ownedRuns.get(owner.turn) ?? ""}${run}=${owner.entry};`);
   }
   // The transcript's root lane; `planResidency` takes no default.
-  const window = planResidency(openable, anchor, "");
-  const band = anchor === undefined ? undefined : readerBand();
-  // Following covers too: a fold flush or a mount's animation can bring a spacer into a view at the live edge.
-  const covered = band === undefined ? undefined : coverBand(openable, band);
+  const window = planResidency(openable, reader.anchor, "");
   for (const [i, t] of turns.entries()) {
     turnByID.set(t.id, t);
     const hides = turnFoldHides(t);
@@ -879,8 +972,8 @@ function computeFoldPlan(
     const merged =
       grown === undefined ? asked : asked === undefined || covers(grown, asked) ? grown : asked;
     // Residency never takes what the reader can see: an ordinal mounted in the band stays, whatever the budget.
-    const seen = band === undefined ? undefined : seenRange(t.id, band);
-    const cover = covered?.get(t.id);
+    const seen = reader.seen.get(t.id);
+    const cover = reader.covered.get(t.id);
     // A pass no reader move asked for only fills: it keeps every mounted ordinal, and the next reader pass trims.
     const held = growOnly ? mountedWindow(t.id) : undefined;
     const kept = [seen, cover, held].reduce<EntryRange | undefined>(
@@ -940,7 +1033,8 @@ function demandRange(chatID: string, t: Turn): EntryRange | undefined {
 /** The latest projection per turn id; the fold toggle reads it, since its closure holds the build-time turn. */
 const turnByID = new Map<string, Turn>();
 
-/** The last full pass's projection, which `windowPass` re-filters per scroll frame. */
+/** The last full pass's projection, the active view's, which `windowPass` re-filters per scroll frame and
+ *  `parkView` reads the reader's position over. */
 let lastTurns: readonly Turn[] = [];
 
 /**
@@ -1094,43 +1188,132 @@ function clearArrivedPin(chatID: string, anchor: ResidencyAnchor | undefined): v
 /** Whether the current full pass mounted a new card: born-folded cards queue nothing, so `fillViewport` needs this. */
 let paintMountedCards = false;
 
+/** Park the mounted view with no successor, so the next paint of any chat is a full chat-switch
+ *  pass; the transcript root is left empty for a box the caller paints there. */
+export function parkPaintedView(): void {
+  if (activeView !== null) {
+    parkView(activeView);
+  }
+  lastPaintedId = undefined;
+}
+
 function paint(): void {
-  const session = getActive();
+  const session = getPainted();
   if (session === undefined) {
-    // Touch the views only when there is genuinely no active chat: an empty reconcile during a chat switch, then a
+    // Touch the views only when there is genuinely no painted chat: an empty reconcile during a chat switch, then a
     // re-populate, flashes.
-    if (getActiveId() === "") {
+    if (getPaintedId() === "") {
       // Hide without disposing: the last-tab window can reopen this chat. Disposal belongs to close/delete.
       pruneDeadViews();
-      if (activeView !== null) {
-        parkView(activeView);
-      }
-      lastActiveId = undefined;
+      parkPaintedView();
     }
     return;
   }
-  const isChatSwitch = lastActiveId !== session.id;
+  const isChatSwitch = lastPaintedId !== session.id;
   let unparked = false;
   if (isChatSwitch) {
-    pruneDeadViews();
+    // Park first: its reads must precede every write of the task, and pruning disposes views.
     if (activeView !== null && activeView.chatID !== session.id) {
       parkView(activeView);
     }
-    unparked = activateView(session.id);
+    pruneDeadViews();
+    // Already active only after a switch pass that threw: its finally landed the restore, and a second attach would
+    // put the reader back on the park's snapshot.
+    if (activeView?.chatID !== session.id) {
+      unparked = activateView(session.id);
+    }
   }
+  let cards: HTMLElement[] | null;
+  let passed = false;
+  try {
+    cards = paintPass(session, isChatSwitch, unparked);
+    passed = true;
+  } finally {
+    if (unparked && activeView !== null) {
+      // After the pass, one that threw included: a body left paused never takes another write.
+      resumeView(activeView, session);
+    }
+    if (isChatSwitch) {
+      // After the pass's last write: the restore's saved position, and a Following view's pin, are the switch's only
+      // scroll writes, and the first lays out the one layout the switch forces. In a finally, so a pass that throws
+      // never leaves the restore pending, which would turn every later hold off.
+      applyPendingRestore();
+    }
+    if (!passed) {
+      // The effect runner swallows the throw, so no caller lifts the cover, and a parked re-show has no later paint.
+      releaseCover(session.id);
+    }
+  }
+  if (cards === null) {
+    return;
+  }
+  // The one releaser for content: an empty turn list is a chat still loading, unless the window is
+  // the server's answer or the chat has nothing to load.
+  if (cards.length > 0 || session.residency === "loaded" || isEmptyChat(session)) {
+    releaseCoverOverBuiltRows(session.id);
+  }
+}
+
+/** The chat whose cover waits on the owed builds of the rows the reader landed on; "" when none. */
+let coverOwed = "";
+let coverCheckFrame = 0;
+
+/**
+ * Lift `chatID`'s cover now, or, while it holds bodies this pass could only start, from the first
+ * frame once no unbuilt row shows where the reader lands. In the frame, so the paint task forces no
+ * layout read of its own. A release in the task needs no landing read: the scroll owner's follow
+ * write runs in the next frame before it renders.
+ */
+function releaseCoverOverBuiltRows(chatID: string): void {
+  coverOwed = "";
+  if (!paintedOwesBuild() || !coverHeld(chatID)) {
+    releaseCover(chatID);
+    return;
+  }
+  cancelAnimationFrame(coverCheckFrame);
+  coverCheckFrame = requestAnimationFrame(() => {
+    coverCheckFrame = 0;
+    if (getPaintedId() !== chatID) {
+      return;
+    }
+    coverOwed = chatID;
+    liftOwedCover();
+  });
+}
+
+/** Lift a cover waiting on owed builds once none is left or none shows a spacer where the reader lands. */
+function liftOwedCover(): void {
+  const chatID = coverOwed;
+  if (chatID === "" || getPaintedId() !== chatID) {
+    return;
+  }
+  // At the landing, not the scroller: a page answered in a task is checked before the owner's follow write lands.
+  if (!paintedOwesBuild() || !spacerInView(landingTop() - getScrollEl().scrollTop)) {
+    coverOwed = "";
+    releaseCover(chatID);
+  }
+}
+
+/** Bring the painted view to the store's state and return the turn cards it walked; null when the flushed cause
+ *  needed only tail bookkeeping. */
+function paintPass(
+  session: Session,
+  isChatSwitch: boolean,
+  unparked: boolean,
+): HTMLElement[] | null {
   // What the flushed version was for, untracked by design. A chat switch is always the full pass.
   const flushed = isChatSwitch ? undefined : renderCauseOf(session.id);
   if (flushed?.cause === "chunk") {
     // Text growth of mounted entries: their signal effects painted it, so only tail bookkeeping remains.
     refreshResumeLabel();
     lastNewestTurnID = newestTurnID(session);
-    return;
+    return null;
   }
   if (flushed?.cause === "tool" && refreshToolTurn(session, flushed.turnID)) {
     // The keyed update refreshed that one turn; an absent render falls through to the full pass, which alone mounts.
     refreshResumeLabel();
     lastNewestTurnID = newestTurnID(session);
-    return;
+    return null;
   }
   // Only genuinely new appended turns get the entry animation.
   appendNewIds.clear();
@@ -1161,45 +1344,41 @@ function paint(): void {
     }
   }
   const turns = projectTurns(session);
-  // The turns the window grows over: a folded body holds zero height. A store predicate, never `data-folded`.
-  const openable = turns.filter(
-    (t, i) => isTurnOpen(session.id, t, i, turns.length) || !turnFoldHides(t),
-  );
+  const openable = openableOf(session.id, turns);
   lastTurns = turns;
-  const anchor = residencyAnchor(openable);
-  clearArrivedPin(session.id, anchor);
-  computeFoldPlan(session.id, turns, openable, anchor);
+  // An unparked view is read at its park: its restore lands after this pass's writes, so a read here would force a
+  // layout at a position the reader is not at.
+  const reader =
+    unparked && activeView !== null ? activeView.parkedAt : readerPosition(turns, openable);
+  clearArrivedPin(session.id, reader.anchor);
+  computeFoldPlan(session.id, turns, openable, reader);
   paintMountedCards = false;
   paintSyncEntries = PAINT_SYNC_ENTRIES;
   const root = paintRoot();
-  // The placeholder never coexists with content, so it is dropped where content lands, scoped to this view. An empty
-  // turn list is a chat still loading; the load-more furniture mounts beside real turns.
-  if (turns.length > 0) {
-    const skel = maybeEl(CHAT_SKELETON_ID);
-    if (skel !== null && root.contains(skel)) {
-      skel.remove();
-    }
-  }
   beginCardPass(session);
-  heldMutation(() => {
-    reconcile(root, turns, turnSpec);
-    // One walk builds the card list the rail and the fold pass share.
-    const cards = turnCards(root);
-    // Re-run per full pass: the set changes as pages load and turns arrive.
-    setResidentTurns(cards);
-    applyFoldPass(session.id, turns, cards, false);
-  });
+  // One walk builds the card list the rail, the fold pass and the cover release share.
+  let cards: HTMLElement[] = [];
+  inFullPass = true;
+  try {
+    heldMutation(() => {
+      reconcile(root, turns, turnSpec);
+      cards = turnCards(root);
+      // Re-run per full pass: the set changes as pages load and turns arrive.
+      setResidentTurns(cards);
+      applyFoldPass(session.id, turns, cards, false);
+    });
+  } finally {
+    inFullPass = false;
+  }
   // After the fold pass: an unmounted card is owed no build, and a folded one builds invisibly.
   drainColdBuilds();
   finalizeStreamingIfNeeded(turns);
   reachableEntries = entryCount(turns);
   refreshResumeLabel();
   lastNewestTurnID = newestTurnID(session);
-  lastActiveId = session.id;
-  if (unparked && activeView !== null) {
-    // The DOM is at the store's state; now the paused effects come back.
-    resumeView(activeView, session);
-  }
+  // Last: a pass that throws leaves the next paint a chat switch, so it runs the full pass again.
+  lastPaintedId = session.id;
+  return cards;
 }
 
 function turnCards(root: HTMLElement): HTMLElement[] {
@@ -1215,6 +1394,9 @@ function turnCards(root: HTMLElement): HTMLElement[] {
 /** Not re-entrant: a pass's mutations move the scroller through the owner's hold. Across frames the plan-equality exit
  *  terminates. */
 let inWindowPass = false;
+
+/** Whether the full pass is building cards: under a cover, the one build that may finish the reader's body. */
+let inFullPass = false;
 
 /**
  * The plan the DOM was last brought to, which the window pass compares against. Not the current plan:
@@ -1279,9 +1461,9 @@ function windowPass(trigger: PassTrigger = "scroll"): void {
     }
     readerMoved = false;
   }
-  const session = getActive();
+  const session = getPainted();
   const turns = lastTurns;
-  if (session === undefined || session.id !== lastActiveId || turns.length === 0) {
+  if (session === undefined || session.id !== lastPaintedId || turns.length === 0) {
     return;
   }
   // A filling body reports coordinates for a partial range; the builder's settle runs the skipped pass. A live-edge
@@ -1289,15 +1471,13 @@ function windowPass(trigger: PassTrigger = "scroll"): void {
   if (trigger !== "live-edge" && (coldBuilds.size > 0 || turnBodyBuilds.size > 0)) {
     return;
   }
-  const openable = turns.filter(
-    (t, i) => isTurnOpen(session.id, t, i, turns.length) || !turnFoldHides(t),
-  );
+  const openable = openableOf(session.id, turns);
   // Rows that came out shorter than their price can leave a spacer in view after one pass; each re-plan measures
   // them, so a few converge.
   for (let pass = 0; pass < WINDOW_PASS_ROUNDS; pass++) {
-    const anchor = residencyAnchor(openable);
-    clearArrivedPin(session.id, anchor);
-    computeFoldPlan(session.id, turns, openable, anchor, trigger === "cover");
+    const reader = readerPosition(turns, openable);
+    clearArrivedPin(session.id, reader.anchor);
+    computeFoldPlan(session.id, turns, openable, reader, trigger === "cover");
     if (planSignature() === appliedPlan) {
       if (pass === 0) {
         return; // the common case for a scroll that stays inside the overscan
@@ -1404,7 +1584,7 @@ function rewindConfirmation(target: EntryPrompt, discarded: readonly Turn[]): Co
  *  button; this is the second gate. A revert that lands while its chat is still active puts the prompt's
  *  text (never its attachments) in the composer, unless the composer already holds text. */
 async function handleRewindClick(target: EntryPrompt): Promise<void> {
-  const session = getActive();
+  const session = getPainted();
   if (session === undefined) {
     return;
   }
@@ -1422,7 +1602,7 @@ async function handleRewindClick(target: EntryPrompt): Promise<void> {
     return;
   }
   const outcome = await rewindChat.dispatch({ chatID: session.id, messageID: target.id }).outcome;
-  if (outcome.status !== "success" || getActiveId() !== session.id) {
+  if (outcome.status !== "success" || getPaintedId() !== session.id) {
     return;
   }
   const input = $.promptInput;
@@ -1438,7 +1618,7 @@ async function handleRewindClick(target: EntryPrompt): Promise<void> {
  * no such turn.
  */
 export async function rewindLatestTurn(chatID: string): Promise<boolean> {
-  const session = getActive();
+  const session = getPainted();
   if (session?.id !== chatID) {
     return false;
   }
@@ -1466,8 +1646,9 @@ export function teardownAll(): void {
   resetBlockRenders();
   resetScrollState();
   resetTurnRail();
-  lastActiveId = undefined;
+  lastPaintedId = undefined;
   lastNewestTurnID = undefined;
+  parkReads = null;
 }
 
 // Two keyed levels: turns by id, then each card's `.turn-body` over its entries. Safe because reconcile considers
@@ -1793,7 +1974,7 @@ function collectWindowMove(
     return true;
   }
   const live = turnIsLive(t);
-  // The pass's own chat, never `getActiveId()`, since the closure runs at a later frame.
+  // The pass's own chat, never `getPaintedId()`, since the closure runs at a later frame.
   changes.push(() => {
     // Re-checked when it runs: a newer plan's pass has already applied itself.
     const now = wantedWindow.get(t.id);
@@ -1855,7 +2036,7 @@ function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void 
       return;
     }
     const open = card.hasAttribute("data-folded");
-    const chatID = getActiveId();
+    const chatID = getPaintedId();
     if (chatID !== "") {
       setTurnOpen(chatID, t.id, open);
     }
@@ -1886,7 +2067,7 @@ function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void 
  * pass defers a fold while the reader reads, and find's reader is always reading.
  */
 function foldReleasedTurn(chatID: string, turnID: string): void {
-  if (chatID !== getActiveId()) {
+  if (chatID !== getPaintedId()) {
     return;
   }
   const t = turnByID.get(turnID);
@@ -1928,7 +2109,7 @@ function setCardsFolded(items: readonly { card: HTMLElement; folded: boolean }[]
       card.toggleAttribute("data-folded", folded);
       const header = card.querySelector<HTMLElement>(":scope > .turn-header");
       if (header !== null) {
-        syncWakeRowRuns(header);
+        queueWakeRowSync(header);
         // On the toggle, not the band: a roleless div takes no `aria-expanded` (axe `aria-allowed-attr`).
         header
           .querySelector<HTMLButtonElement>(":scope > .turn-head-row > .turn-fold-toggle")
@@ -2025,7 +2206,7 @@ function offersCompact(t: Turn): boolean {
   if (closeOfBody(t.body)?.failure_kind !== "context_limit") {
     return false;
   }
-  const s = get(getActiveId());
+  const s = get(getPaintedId());
   if (s?.turn_order[s.turn_order.length - 1] !== t.id) {
     return false;
   }
@@ -2044,7 +2225,7 @@ function syncCompactAction(card: HTMLElement, t: Turn): void {
   if (existing !== null) {
     return;
   }
-  const chatID = getActiveId();
+  const chatID = getPaintedId();
   const btn = el(
     "button",
     { type: "button", className: "btn-small", [CHROME_ATTR]: "" },
@@ -2155,7 +2336,7 @@ function buildTurn(t: Turn): HTMLElement {
   // After the footer, which holds Rewind; the face's order is independent since it anchors on the notice.
   mountRewind(card, t);
   syncTurnNotice(card, t);
-  syncTurnCloseNotes(card, t, getActiveId());
+  syncTurnCloseNotes(card, t, getPaintedId());
   syncTurnFace(card, t);
   syncTurnBodyless(card);
   paintMountedCards = true;
@@ -2183,7 +2364,7 @@ function updateTurn(card: HTMLElement, t: Turn): void {
     // the fold pass's `mountHeadRange`.
     const range = bodyRange(t, plan);
     heldMutation(() => {
-      updateAssistantBody(body, t, getActiveId(), turnIsLive(t), range);
+      updateAssistantBody(body, t, getPaintedId(), turnIsLive(t), range);
       // What is mounted, not the plan: a plan the deferred fold pass has not applied would price away mounted rows.
       syncSpacers(body, t, mountedWindow(t.id) ?? range);
     });
@@ -2191,7 +2372,7 @@ function updateTurn(card: HTMLElement, t: Turn): void {
   mountTurnFooter(card, t);
   mountRewind(card, t);
   syncTurnNotice(card, t);
-  syncTurnCloseNotes(card, t, getActiveId());
+  syncTurnCloseNotes(card, t, getPaintedId());
   syncTurnBodyless(card);
   syncTurnFace(card, t);
 }
@@ -2244,8 +2425,8 @@ function unmountTurnBody(card: HTMLElement): void {
 const BUILD_BATCH_ENTRIES = 32;
 
 /**
- * Entries one full pass may mount synchronously, refilled by `paint`: a work cap. Only a demand grant can make it
- * bind, and that body is then born empty for `drainColdBuilds`.
+ * Entries one pass may mount synchronously, refilled per pass: a work cap. A body born once it is spent is empty
+ * for `drainColdBuilds`.
  */
 const PAINT_SYNC_ENTRIES = RESIDENT_ENTRIES;
 let paintSyncEntries = PAINT_SYNC_ENTRIES;
@@ -2258,41 +2439,77 @@ const turnBodyBuilds = new Map<
 
 /**
  * Turns whose cold build owes the rest after its first slice, drained at the pass's end, so the frame that creates
- * the cards never finishes them.
+ * the cards finishes no body but a covered reader's.
  */
 const coldBuilds = new Set<string>();
+
+/** Whether the painted chat owes a body. The set spans chats: the one left keeps its entries until its drain's next
+ *  build finds no card, and they never hold this chat's cover. */
+function paintedOwesBuild(): boolean {
+  for (const id of coldBuilds) {
+    if (turnByID.has(id)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /** Whether `turnID`'s body is mid-build; the full pass keeps its hands off a partial body. */
 function hasPendingBuild(turnID: string): boolean {
   return coldBuilds.has(turnID) || turnBodyBuilds.has(turnID);
 }
 
-/** Once the pass's allowance is spent, build over an empty range so `drainColdBuilds` mounts it off
- *  the frame. */
+/**
+ * Build one batch of the body now and leave the rest to `drainColdBuilds`. Under a landing's cover the full pass
+ * gives the reader's turn what is left of the allowance instead: its rows fill the view the cover waits on, and
+ * the frame shows only the cover. Every other build keeps the batch, its frame being the reader's.
+ */
 function startFirstSlice(body: HTMLElement, t: Turn, range: EntryRange): void {
-  const take = Math.min(BUILD_BATCH_ENTRIES, Math.max(0, paintSyncEntries));
-  const to = Math.min(range.to, range.from + take);
+  const readerBody =
+    inFullPass && coverHeld(getPaintedId()) && lastTurns[readerIndex()]?.id === t.id;
+  const cap = readerBody ? paintSyncEntries : BUILD_BATCH_ENTRIES;
+  const take = Math.min(cap, Math.max(0, paintSyncEntries));
+  const slice = firstSliceOf(t, range, take);
   heldMutation(() => {
-    buildAssistantBody(body, t, getActiveId(), turnIsLive(t), { from: range.from, to });
-    syncSpacers(body, t, { from: range.from, to });
+    buildAssistantBody(body, t, getPaintedId(), turnIsLive(t), slice);
+    syncSpacers(body, t, slice);
   });
-  paintSyncEntries -= to - range.from;
-  if (to < range.to) {
+  paintSyncEntries -= slice.to - slice.from;
+  if (slice.from > range.from || slice.to < range.to) {
     coldBuilds.add(t.id);
   }
 }
 
 /**
- * Where the next slice ends, or `done`, derived from the mounted window: a full pass may finish the range while
- * this yields. Tail only; `mountHeadRange` owns the head.
+ * The `take` entries of `range` nearest where the reader lands: the tail of a turn above the reader's, and of the
+ * newest at the live edge; else the head, since an anchored reader reads down from a stub's face. The drain grows
+ * the rest outward, so the paint never leaves the rows in view to it.
  */
-function nextBuildTo(turnID: string, want: EntryRange): number | "done" {
-  const have = mountedWindow(turnID);
-  const from = have === undefined ? want.from : have.to;
-  if (have !== undefined && have.to >= want.to) {
-    return "done";
+function firstSliceOf(t: Turn, range: EntryRange, take: number): EntryRange {
+  const reader = readerIndex();
+  const i = lastTurns.findIndex((x) => x.id === t.id);
+  const tailFirst = i >= 0 && (i < reader || (i === reader && readerAnchor === undefined));
+  const from = tailFirst ? Math.max(range.from, range.to - take) : range.from;
+  return bodyRange(t, { from, to: Math.min(range.to, from + take) });
+}
+
+/**
+ * The next batch toward `want`, or `done`, derived from the mounted window: a full pass may finish the range while
+ * this yields. The tail grows first, then the head, outward from where the first slice started.
+ */
+function nextBuildSlice(t: Turn, want: EntryRange): EntryRange | "done" {
+  const have = mountedWindow(t.id);
+  if (have === undefined || have.to < want.to) {
+    const from = have?.to ?? want.from;
+    return { from, to: Math.min(want.to, from + BUILD_BATCH_ENTRIES) };
   }
-  return Math.min(want.to, from + BUILD_BATCH_ENTRIES);
+  if (have.from > want.from) {
+    return bodyRange(t, {
+      from: Math.max(want.from, have.from - BUILD_BATCH_ENTRIES),
+      to: have.from,
+    });
+  }
+  return "done";
 }
 
 /** `card`'s body, created empty after the header when absent; null only for a headerless card. */
@@ -2310,33 +2527,81 @@ function existingOrNewBody(card: HTMLElement): HTMLElement | null {
   return body;
 }
 
+let draining = false;
+
 /**
- * Finish the bodies this pass could only start, one yielded build per turn; each slice re-reads the store and DOM.
- * The chat is read here, since another chat's build has no card to find.
+ * Finish the bodies passes could only start, one turn at a time, nearest the reader first: built side by side they
+ * would all finish late, the one in view among them. Each slice re-reads the store and DOM.
  */
 function drainColdBuilds(): void {
-  if (coldBuilds.size === 0) {
+  if (draining || coldBuilds.size === 0) {
     return;
   }
-  const chatID = getActiveId();
-  for (const id of [...coldBuilds]) {
-    // The entry stays until the build settles, keeping `hasPendingBuild` true across the yield.
-    void yieldToBrowser()
-      .then(() => buildOrJoin(chatID, id, wantedWindow.get(id) ?? EMPTY_RANGE))
-      .catch((e: unknown) => {
+  draining = true;
+  void drainNearestFirst().catch((e: unknown) => {
+    console.warn("[messages] cold body drain failed", e);
+  });
+}
+
+async function drainNearestFirst(): Promise<void> {
+  try {
+    for (;;) {
+      await yieldToBrowser();
+      // Picked after the yield: a pass may have dropped or added an owed body meanwhile.
+      const id = nearestColdBuild();
+      if (id === undefined) {
+        return;
+      }
+      // The entry stays until the build settles, keeping `hasPendingBuild` true across its yields. The chat is read
+      // per build, since another chat's build has no card to find.
+      try {
+        await buildOrJoin(getPaintedId(), id, wantedWindow.get(id) ?? EMPTY_RANGE);
+      } catch (e: unknown) {
         console.warn("[messages] cold body build failed", e);
-      })
-      .finally(() => {
-        coldBuilds.delete(id);
-        // `buildOrJoin`'s own pass refused while this entry stood.
-        windowPass("settle");
-      });
+      }
+      coldBuilds.delete(id);
+      // `buildOrJoin`'s own pass refused while this entry stood.
+      windowPass("settle");
+      liftOwedCover();
+    }
+  } finally {
+    draining = false;
+    // An unmount can take the last owed body with no build settling.
+    liftOwedCover();
   }
 }
 
+/** The reader's anchor at the last plan; undefined at the live edge. */
+let readerAnchor: ResidencyAnchor | undefined;
+
+/** The reader's turn in `lastTurns`: the anchor's, the newest at the live edge. */
+function readerIndex(): number {
+  const id = readerAnchor?.turnID;
+  const anchor = id === undefined ? -1 : lastTurns.findIndex((t) => t.id === id);
+  return anchor < 0 ? lastTurns.length - 1 : anchor;
+}
+
+/** The owed body nearest the reader's turn, ties going to the turn below; a body the last projection lacks (another
+ *  chat's) comes last. */
+function nearestColdBuild(): string | undefined {
+  const at = readerIndex();
+  let best: string | undefined;
+  let bestRank = Infinity;
+  for (const [i, t] of lastTurns.entries()) {
+    const rank = 2 * Math.abs(i - at) - (i >= at ? 1 : 0);
+    if (coldBuilds.has(t.id) && rank < bestRank) {
+      best = t.id;
+      bestRank = rank;
+    }
+  }
+  return best ?? coldBuilds.values().next().value;
+}
+
+/** A `scheduler.yield` continuation runs ahead of every plain task, the next frame's among them, so a chat being
+ *  left (the active chat moved off the painted one) yields as a plain task and its switch goes first. */
 function yieldToBrowser(): Promise<void> {
   const sched = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
-  if (sched?.yield !== undefined) {
+  if (sched?.yield !== undefined && getActiveId() === getPaintedId()) {
     return sched.yield.call(sched);
   }
   return new Promise((resolve) => {
@@ -2385,7 +2650,7 @@ function buildOrJoin(chatID: string, turnID: string, want: EntryRange): Promise<
 
 async function buildTurnBodyBatches(chatID: string, turnID: string): Promise<void> {
   for (;;) {
-    const session = getActive();
+    const session = getPainted();
     if (session?.id !== chatID) {
       return;
     }
@@ -2416,26 +2681,35 @@ async function buildTurnBodyBatches(chatID: string, turnID: string): Promise<voi
     }
     // Recomputed per slice: the window can move while this yields.
     const range = bodyRange(t, want);
-    const to = nextBuildTo(turnID, range);
-    if (to === "done") {
+    const slice = nextBuildSlice(t, range);
+    if (slice === "done") {
       heldMutation(() => {
         syncSpacers(body, t, range);
       });
       syncTurnBodyless(card);
       return;
     }
-    const slice = { from: range.from, to };
+    const before = mountedWindow(turnID);
     heldMutation(() => {
-      updateAssistantBody(body, t, chatID, turnIsLive(t), slice);
+      if (before !== undefined && slice.to <= before.from) {
+        mountHeadRange(t, slice, turnIsLive(t));
+      } else {
+        updateAssistantBody(body, t, chatID, turnIsLive(t), {
+          from: before?.from ?? slice.from,
+          to: slice.to,
+        });
+      }
       syncSpacers(body, t, slice);
     });
-    const after = nextBuildTo(turnID, range);
-    if (after === "done") {
+    // Per batch, not per body: the rows in view are often a few batches of a body much longer than the view.
+    liftOwedCover();
+    if (nextBuildSlice(t, range) === "done") {
       syncTurnBodyless(card);
       return;
     }
     // A slice that moved no edge mounted nothing; spinning would hold `hasPendingBuild` true.
-    if (after === to) {
+    const after = mountedWindow(turnID);
+    if (after?.from === before?.from && after?.to === before?.to) {
       return;
     }
     await yieldToBrowser();
@@ -2470,7 +2744,7 @@ function headerData(t: Turn): TurnHeaderData {
     attachments: t.trigger?.attachments ?? [],
     wake: t.wake === undefined ? undefined : wakeLine(t.wake),
     onOpenRun: (run) => {
-      openNoteRun(getActiveId(), run.id, run.named ? run.name : undefined);
+      openNoteRun(getPaintedId(), run.id, run.named ? run.name : undefined);
     },
   };
 }

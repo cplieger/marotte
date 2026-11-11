@@ -40,7 +40,7 @@ import {
   chatTurnLive,
   delegateStatusFor,
   get,
-  getActiveId,
+  getPaintedId,
   paintsTheSame,
   settledToolCall,
   turnLive,
@@ -167,19 +167,19 @@ export function getLiveAnchor(): HTMLElement | null {
   return liveAnchor?.el ?? null;
 }
 
-/** The newest live render of the active chat, last writer wins. */
+/** The newest live render of the painted chat, last writer wins. */
 function scanLiveAnchor(): { renderID: string; el: HTMLElement } | null {
-  const activeChat = getActiveId();
+  const paintedChat = getPaintedId();
   let found: { renderID: string; el: HTMLElement } | null = null;
   for (const [id, st] of renders) {
-    if (!st.detached && st.chatID === activeChat && st.topLiveEl !== null) {
+    if (!st.detached && st.chatID === paintedChat && st.topLiveEl !== null) {
       found = { renderID: id, el: st.topLiveEl };
     }
   }
   return found;
 }
 
-/** Only the active chat's renders are rescanned. */
+/** Only the painted chat's renders are rescanned. */
 function clearLiveAnchor(el: HTMLElement): void {
   if (liveAnchor?.el !== el) {
     return;

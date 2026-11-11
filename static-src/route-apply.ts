@@ -109,7 +109,7 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
       // openTab would spend a POST /api/command round trip per Back press for a mutation the server
       // answers created:false to.
       pointFilesTab(ref, dir);
-      activateTab(id);
+      void activateTab(id);
       break;
     }
     case "file":

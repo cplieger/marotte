@@ -158,6 +158,7 @@ async function paint(turnEntries: readonly Entry[][], expected: number): Promise
     },
   ]);
   store.setActive(id);
+  store.setPainted(id);
   await until(() => cards().length === expected, `${String(expected)} cards for ${id}`);
   await until(
     () =>

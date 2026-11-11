@@ -111,6 +111,7 @@ async function paint(chatID: string, turns: [string, Entry[]][]): Promise<HTMLEl
     session(chatID, { turns: map, turn_order: turns.map(([id]) => id), turn_count: turns.length }),
   ]);
   store.setActive(chatID);
+  store.setPainted(chatID);
   store.bumpMessages(chatID, "load");
   await Promise.resolve();
   const el = messages.transcriptViewFor(chatID);
@@ -124,6 +125,7 @@ beforeEach(() => {
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
+  store.setPainted("");
 });
 
 describe("a step's notice KAS logged when it read it", () => {
@@ -302,6 +304,7 @@ describe("a message between two chats", () => {
       session("c-billing", { name: "Billing" }),
     ]);
     store.setActive(c);
+    store.setPainted(c);
     store.bumpMessages(c, "load");
     await Promise.resolve();
     const view = messages.transcriptViewFor(c);

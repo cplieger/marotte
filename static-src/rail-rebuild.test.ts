@@ -209,3 +209,70 @@ describe("a changed map still redraws", () => {
     expect(rowFor(2).dataset["trigger"]).toBe("system");
   });
 });
+
+describe("a re-point to another chat", () => {
+  const FIVE = [summary(1), summary(2), summary(3), summary(4), summary(5)];
+
+  /** Record, for every row the repaint places, whether the stack was in the document then. */
+  function watchInserts(): { connected: boolean[]; stop: () => void } {
+    const stack = outer.querySelector<HTMLElement>(".turn-map-stack");
+    if (stack === null) {
+      throw new Error("no turn-map stack");
+    }
+    const connected: boolean[] = [];
+    const insert = stack.insertBefore.bind(stack);
+    stack.insertBefore = <T extends Node>(node: T, child: Node | null): T => {
+      connected.push(stack.isConnected);
+      return insert(node, child);
+    };
+    return {
+      connected,
+      stop: () => {
+        Reflect.deleteProperty(stack, "insertBefore");
+      },
+    };
+  }
+
+  async function paintOther(turns: TurnSummary[]): Promise<void> {
+    vi.mocked(apiGet).mockResolvedValue({ turns } as never);
+    await rail.loadTurnRail("c-rail-other", { force: true });
+    messagesEl.replaceChildren();
+    for (const t of turns) {
+      card(t.n);
+    }
+    rail.setResidentTurns([...messagesEl.children] as HTMLElement[]);
+    await settle();
+  }
+
+  it("swaps the rows with the stack out of the document", async () => {
+    await paint(THREE);
+    const seen = watchInserts();
+
+    await paintOther(FIVE);
+    seen.stop();
+
+    expect(links()).toHaveLength(5);
+    expect(seen.connected.length, "the new chat's rows were placed").toBeGreaterThan(0);
+    expect(
+      seen.connected.every((c) => !c),
+      "every row placed off the document",
+    ).toBe(true);
+    expect(outer.querySelector(".turn-map-track > .turn-map-stack")).not.toBeNull();
+  });
+
+  it("keeps a keyboard reader's focus on a row the new chat keeps", async () => {
+    await paint(THREE);
+    const link = linkFor(2);
+    link.focus();
+    const seen = watchInserts();
+
+    await paintOther(FIVE);
+    seen.stop();
+
+    expect(document.activeElement, "a re-point must not take focus off a row").toBe(link);
+    expect(
+      seen.connected.every((c) => c),
+      "the focused stack stays in place",
+    ).toBe(true);
+  });
+});

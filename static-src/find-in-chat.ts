@@ -19,7 +19,7 @@ import { parseChatQuery } from "./chat-query.js";
 import { FIND_UNIT_SELECTOR } from "./find-unit.js";
 import { releaseChain, revealChain, revealTurnOnly } from "./search-reveal.js";
 import { prepareMatcher, type Matcher } from "./textsearch/query.js";
-import { getActive, getActiveId } from "./store.js";
+import { getPainted, getPaintedId, getActiveId } from "./store.js";
 import { loadOlderTurns } from "./store-load.js";
 import { BUS_TAB_CHANGED, onBus } from "./bus.js";
 import { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
@@ -496,7 +496,7 @@ function landInPlace(hit: Hit): boolean {
   if (engine === null || shell === null || (hit.lane ?? "") !== "" || hit.kind === "turn") {
     return false;
   }
-  const chatID = getActiveId();
+  const chatID = getPaintedId();
   const card = turnCardEl(hit.turn_id);
   const item = itemElement(hit);
   if (card === null || card.hasAttribute("data-folded") || item === null || diffOwed(item, hit)) {
@@ -807,9 +807,9 @@ function nextRender(): Promise<boolean> {
 
 /** Page history until the hit's turn is resident, bounded by `has_more`, a no-progress check and a page cap. */
 async function ensureHitResident(chatID: string, hit: Hit): Promise<boolean> {
-  const resident = (): boolean => getActive()?.turns.has(hit.turn_id) === true;
+  const resident = (): boolean => getPainted()?.turns.has(hit.turn_id) === true;
   for (let pages = 0; !resident(); pages++) {
-    const session = getActive();
+    const session = getPainted();
     if (session?.has_more !== true || session.id !== chatID || pages >= HIT_PAGE_CAP) {
       return false;
     }

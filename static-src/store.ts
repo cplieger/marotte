@@ -183,7 +183,13 @@ export function parseContextSize(description: string): number | undefined {
 /** Structure ops fire `sessions.ids`; per-session field writes fire `signalFor(id)`. Module-private:
  *  consumers go through the typed accessors below and the `activeSession` computed. */
 const sessions = createCollection<Session>((s) => s.id);
+// Two chat pointers, equal except in a chat switch's gap and while a non-chat tab shows after a
+// closed chat. ACTIVE is the chat the reader is on (a switch's gesture moves it); PAINTED is the
+// chat whose transcript is mounted (its activation moves it). Code acting for the reader (send,
+// cancel, steers, attachments, the composer) reads the active chat; code reading or writing the
+// transcript's DOM reads the painted chat. Mixing them sends to one chat while showing another.
 const activeId = signal("");
+const paintedId = signal("");
 /** Active session, tracking the active id AND the active session's signal, so subscribers
  *  re-render only when that session or which session is active changes. */
 export const activeSession = computed<Session | undefined>(() => {
@@ -204,6 +210,17 @@ export function watchActiveId(): string {
 }
 export function getActive(): Session | undefined {
   const id = activeId.peek();
+  return id === "" ? undefined : sessions.get(id);
+}
+export function getPaintedId(): string {
+  return paintedId.peek();
+}
+/** The painted chat id as a TRACKED read; `getPaintedId` is the untracked peek. */
+export function watchPaintedId(): string {
+  return paintedId.value;
+}
+export function getPainted(): Session | undefined {
+  const id = paintedId.peek();
   return id === "" ? undefined : sessions.get(id);
 }
 export function get(id: string): Session | undefined {
@@ -267,9 +284,16 @@ export function setActive(id: string): void {
   if (activeId.peek() === id) {
     return;
   }
-  // Re-derives `activeSession`, so the messages renderer repaints the new chat's #messages; without
-  // it the renderer keeps the previous chat's DOM.
   activeId.value = id;
+  stampActivity(id);
+}
+
+/** Move the painted chat; the messages renderer repaints `#messages` for it. */
+export function setPainted(id: string): void {
+  if (paintedId.peek() === id) {
+    return;
+  }
+  paintedId.value = id;
   stampActivity(id);
 }
 
@@ -308,14 +332,14 @@ export function registerEvictionExemption(fn: (chatID: string) => boolean): () =
   };
 }
 
-/** Five exemptions, each alone decisive: the active chat, a busy chat, a chat with an EXECUTING run,
- *  a parked view, and an open subagent tab projecting the chat. */
+/** Five exemptions, each alone decisive: the active or painted chat, a busy chat, a chat with an
+ *  EXECUTING run, a parked view, and an open subagent tab projecting the chat. */
 function evictable(s: Session, now: number): boolean {
   if (s.turn_order.length === 0) {
     return false; // nothing resident to reclaim
   }
-  if (s.id === activeId.peek()) {
-    return false; // the active chat is being read
+  if (s.id === activeId.peek() || s.id === paintedId.peek()) {
+    return false; // the reader's chat, or the mounted one
   }
   if (s.thinking) {
     return false; // busy: a live turn is streaming into this window
@@ -888,10 +912,11 @@ export function removeChat(id: string): void {
     return;
   }
   const wasActive = activeId.peek() === id;
+  const wasPainted = paintedId.peek() === id;
   const order = sessions.ids.peek();
-  // Both reactive writes below feed the `activeSession` computed. Batch them so subscribers
-  // re-derive ONCE; otherwise removing the active chat double-fires it and the messages renderer
-  // flashes a transient teardown of the new chat's DOM.
+  // The reactive writes below feed `activeSession` and the messages renderer's effect. Batch them
+  // so subscribers re-derive ONCE; otherwise removing the painted chat double-fires the renderer
+  // and it flashes a transient teardown of the new chat's DOM.
   batch(() => {
     sessions.remove(id);
     clearLiveTurnFacts(id);
@@ -908,6 +933,10 @@ export function removeChat(id: string): void {
     if (wasActive) {
       const remaining = order.filter((x) => x !== id);
       activeId.value = remaining[0] ?? "";
+    }
+    // No paint may target a removed row.
+    if (wasPainted) {
+      paintedId.value = activeId.peek();
     }
   });
 }

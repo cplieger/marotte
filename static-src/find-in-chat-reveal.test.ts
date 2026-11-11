@@ -37,8 +37,15 @@ const messagesEl = document.createElement("div");
 messagesEl.id = "messages";
 scrollerEl.appendChild(messagesEl);
 
-const { setSessions, setActive, bumpMessages, appendEntry, getActive, applyToolProgress } =
-  await import("./store.js");
+const {
+  setSessions,
+  setActive,
+  setPainted,
+  bumpMessages,
+  appendEntry,
+  getActive,
+  applyToolProgress,
+} = await import("./store.js");
 const { mountChatView, teardownAll } = await import("./messages.js");
 const { scrollToBottom, readingState } = await import("./scroll.js");
 const { restAtLiveEdge } = await import("./__test-helpers__/scroll-rest.js");
@@ -280,6 +287,7 @@ async function loadAtLiveEdge(chat: string, live: boolean, matchAbove = false): 
     { ...makeSession({ id: chat, name: chat }), turns, turn_order: ["big"], turn_count: 1 },
   ]);
   setActive(chat);
+  setPainted(chat);
   bumpMessages(chat, "load");
   await vi.waitFor(() => {
     expect(messagesEl.querySelectorAll("[data-entry-seq]").length).toBeGreaterThan(ENTRIES / 4);
@@ -409,6 +417,7 @@ beforeEach(() => {
   resetFoldState();
   setSessions([]);
   setActive("");
+  setPainted("");
 });
 
 describe("find-in-chat's reveal under reduced motion", () => {
@@ -480,6 +489,7 @@ describe("find-in-chat's reveal under reduced motion", () => {
         },
       ]);
       setActive(chat);
+      setPainted(chat);
       bumpMessages(chat, "load");
       // Older turns load folded; the reader opens both.
       await vi.waitFor(() => {
@@ -553,6 +563,7 @@ describe("find-in-chat's reveal under reduced motion", () => {
         },
       ]);
       setActive(chat);
+      setPainted(chat);
       bumpMessages(chat, "load");
       await vi.waitFor(() => {
         entryById("cmd-e2");

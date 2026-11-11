@@ -100,6 +100,7 @@ vi.mock("./store.js", () =>
 // The composer half of the close gesture (tabs.ts reaches it for the rollback's
 // draft restore); inert here, per-chat state this suite does not stage.
 vi.mock("./composer-state.js", () => ({
+  adoptUnownedComposer: vi.fn(),
   retargetComposer: vi.fn(),
   restoreFailedSend: vi.fn(),
   saveComposerState: vi.fn(),
@@ -194,10 +195,13 @@ function registerOpeners(): void {
   };
   registerTabOpeners({
     chat: {
+      prefetch: vi.fn(),
+      select: vi.fn(),
+      loadFailed: vi.fn(),
       show: (ref) => {
         record("chat", ref);
       },
-      refresh: vi.fn(),
+      refresh: vi.fn(() => Promise.resolve()),
       close: vi.fn(),
       dot: () => "",
     },
@@ -232,6 +236,9 @@ function registerOpeners(): void {
 /** Two channels: injected openers, or the singletons' lazy loaders (for settings, its REFRESH via
  *  the gate). */
 async function expectActivated(kind: TabKind, ref: string): Promise<void> {
+  // The activation half runs in a task after the frame that painted the strip.
+  await paint();
+  await new Promise((r) => setTimeout(r, 0));
   if (kind === "chat" || kind === "editor" || kind === "run") {
     expect(shown.at(-1)).toEqual({ kind, ref, rowPresent: true });
     return;
@@ -250,12 +257,13 @@ function paint(): Promise<void> {
 }
 
 /** The strip as REFS, which is what makes an order assertion readable when the
- *  ids are opaque. A singleton's ref is empty, so it reads as its kind. */
+ *  ids are opaque. A singleton's ref is empty, so it reads as its kind. Departing rows are
+ *  excluded: no stylesheet runs their exit. */
 async function rowRefs(): Promise<string[]> {
   await paint();
   const byID = new Map(tabServer.subjects().map((s) => [s.id, s.ref === "" ? s.kind : s.ref]));
   const list = document.getElementById("tab-list");
-  return [...(list?.querySelectorAll<HTMLElement>("[data-tab-id]") ?? [])].map(
+  return [...(list?.querySelectorAll<HTMLElement>("[data-tab-id]:not(.exiting)") ?? [])].map(
     (n) => byID.get(n.dataset["tabId"] ?? "") ?? n.dataset["tabId"] ?? "",
   );
 }

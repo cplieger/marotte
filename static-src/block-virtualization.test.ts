@@ -42,7 +42,7 @@ messagesEl.id = "messages";
 scrollerEl.appendChild(messagesEl);
 
 const { RESIDENT_ENTRIES, OVERSCAN_ENTRIES } = await import("./block-window.js");
-const { setSessions, setActive, bumpMessages } = await import("./store.js");
+const { setSessions, setActive, setPainted, bumpMessages } = await import("./store.js");
 const { openEntry, applyDelta, appendEntry } = await import("./store.js");
 const { mountChatView, mountTurnBody, activeTranscriptView, teardownAll } =
   await import("./messages.js");
@@ -270,6 +270,7 @@ function activate(chat: string, turnEntries: readonly (readonly Entry[])[], live
     },
   ]);
   setActive(chat);
+  setPainted(chat);
   bumpMessages(chat, "load");
 }
 
@@ -373,6 +374,7 @@ beforeEach(() => {
   resetFoldState();
   setSessions([]);
   setActive("");
+  setPainted("");
 });
 
 describe("a cold load of a 700-entry turn mounts a WINDOW", () => {
@@ -410,7 +412,7 @@ describe("a cold load of a 700-entry turn mounts a WINDOW", () => {
     const id = chatID();
     activate(id, [hugeTurn("big", HUGE)]);
     // The window is 320 ordinals of ONE turn, so a builder cutting only between turns would
-    // mount them all in one paint.
+    // mount them all in one paint. No cover is held, so the reader sees this frame.
     expect(mountedSeqs("big").length).toBeLessThanOrEqual(BUILD_BATCH_ENTRIES);
     // Nothing is lost: the drain finishes the window off the frame.
     await vi.waitFor(() => {

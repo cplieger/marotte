@@ -44,7 +44,7 @@ func TestEntryLogCrashLeavesEverySealedEntry(t *testing.T) {
 		}
 		defer func() { _ = lg.Close() }()
 
-		survived, err := lg.window(len(written)+8, "")
+		survived, err := lg.window(len(written)+8, "", noByteBound)
 		if err != nil {
 			rt.Fatalf("read the surviving log: %v", err)
 		}
@@ -649,7 +649,7 @@ func (s *revertScene) betweenTurns(tag string) {
 	if !holdsEntryID(entries, e.ID) {
 		s.rt.Fatalf("%s: All() does not hold the between-turns entry %q, so it landed where no reader looks", tag, e.ID)
 	}
-	w, err := s.log.window(len(s.order)+1, "")
+	w, err := s.log.window(len(s.order)+1, "", noByteBound)
 	if err != nil {
 		s.rt.Fatalf("%s: Window: %v", tag, err)
 	}
@@ -685,7 +685,7 @@ func (s *revertScene) check(when string) {
 		s.rt.Fatalf("%s: openTurnsLocked() names %v, want none: every generated turn is closed and no carrier is left open",
 			when, open)
 	}
-	w, err := s.log.window(len(s.order)+1, "")
+	w, err := s.log.window(len(s.order)+1, "", noByteBound)
 	if err != nil {
 		s.rt.Fatalf("%s: Window: %v", when, err)
 	}
@@ -699,7 +699,7 @@ func (s *revertScene) check(when string) {
 		if _, err := turnRange(s.log, id, 0); !errors.Is(err, ErrTurnNotInLog) {
 			s.rt.Fatalf("%s: TurnRange(%q) = %v, want ErrTurnNotInLog for a reverted turn", when, id, err)
 		}
-		if _, err := s.log.window(1, id); err == nil {
+		if _, err := s.log.window(1, id, noByteBound); err == nil {
 			s.rt.Fatalf("%s: Window(1, %q) refused nothing, want the refusal the chat route renders as 400", when, id)
 		}
 	}

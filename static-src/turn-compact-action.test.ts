@@ -40,7 +40,7 @@ vi.mock("./actions/chat.js", async (importOriginal) => ({
 
 const { mountChatView, activeTranscriptView } = await import("./messages.js");
 const { compactionPolicy } = await import("./context-ring.js");
-const { setSessions, setActive, bumpMessages } = await import("./store.js");
+const { setSessions, setActive, setPainted, bumpMessages } = await import("./store.js");
 
 mountChatView();
 
@@ -101,6 +101,7 @@ async function mount(chatID: string, turnRows: Entry[][]): Promise<HTMLElement[]
     },
   ]);
   setActive(chatID);
+  setPainted(chatID);
   bumpMessages(chatID, "load");
   const deadline = Date.now() + FRAME_BUDGET_MS;
   while (cards().length !== order.length) {

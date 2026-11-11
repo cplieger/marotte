@@ -531,13 +531,32 @@ describe("demand for the mounted page", () => {
 
 describe("refreshSubagent delegates to the launching chat", () => {
   it("refreshes the launching chat and nothing else", () => {
-    vi.mocked(refreshChatView).mockImplementation(() => undefined);
+    vi.mocked(refreshChatView).mockImplementation(() => Promise.resolve());
+    const signal = new AbortController().signal;
 
-    refreshSubagent("c-launcher");
+    refreshSubagent("c-launcher", signal);
 
     expect(refreshChatView).toHaveBeenCalledTimes(1);
-    expect(refreshChatView).toHaveBeenCalledWith("c-launcher");
+    expect(refreshChatView).toHaveBeenCalledWith("c-launcher", signal);
     expect(vi.mocked(sliceSubagent)).not.toHaveBeenCalled();
+  });
+
+  // The subagent page keeps its own error row, so the parent's failed load is not its refusal.
+  it("resolves when the launching chat's load fails", async () => {
+    const parentLoad = Promise.reject(new Error("load failed"));
+    vi.mocked(refreshChatView).mockImplementation(
+      () => parentLoad as unknown as ReturnType<typeof refreshChatView>,
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      refreshSubagent("c-launcher", new AbortController().signal);
+      await new Promise((r) => setTimeout(r, 0));
+      // The spy records the promise's settlement, which marks it handled, so the owner is
+      // witnessed by its log rather than by the absence of an unhandled rejection.
+      expect(warn, "nothing owned the parent's failed load").toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

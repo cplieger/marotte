@@ -26,7 +26,7 @@ const transcriptEl = document.createElement("div");
 transcriptEl.id = "messages";
 scrollerEl.appendChild(transcriptEl);
 
-const { setSessions, setActive, bumpMessages } = await import("./store.js");
+const { setSessions, setActive, setPainted, bumpMessages } = await import("./store.js");
 const { mountChatView, disposeChatView } = await import("./messages.js");
 const { KEY_ATTR } = await import("./reconcile.js");
 
@@ -97,6 +97,7 @@ function paint(chat: string, turnRows: Entry[][]): void {
     },
   ]);
   setActive(chat);
+  setPainted(chat);
   bumpMessages(chat, "load");
 }
 
@@ -104,6 +105,7 @@ function paint(chat: string, turnRows: Entry[][]): void {
 function reset(): void {
   setSessions([]);
   setActive("");
+  setPainted("");
 }
 
 describe("a transcript's markdown tables", () => {
@@ -181,6 +183,7 @@ describe("a transcript's markdown tables", () => {
       makeSession({ id: other, name: "o" }),
     ]);
     setActive(chat);
+    setPainted(chat);
     bumpMessages(chat, "load");
     const first = transcriptEl.querySelector("table");
     expect(first, "the open turn's table").not.toBeNull();
@@ -188,8 +191,10 @@ describe("a transcript's markdown tables", () => {
 
     // Parking marks the open turn for a rebuild; coming back replaces its body.
     setActive(other);
+    setPainted(other);
     await Promise.resolve();
     setActive(chat);
+    setPainted(chat);
     await vi.waitFor(() => {
       expect(first?.isConnected, "the old body is replaced").toBe(false);
     });

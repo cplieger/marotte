@@ -17,12 +17,14 @@ import {
   IDEMPOTENCY_COMMAND_FIELD,
   type ActionErrorLike,
 } from "./index.js";
-import type { ActionDefinition } from "@cplieger/ui/actions";
+import type { Action, ActionDefinition } from "@cplieger/ui/actions";
+import { errorAbout } from "./subject.js";
 import { send as transportSend, type SendResult } from "../transport.js";
 import type { TabKind, TabSubject } from "../types.js";
 import { decodeTabSubject } from "../wire/decoders.gen.js";
 import type { CloseImpact } from "../wire/types.gen.js";
 import { impactRefusal } from "./close-impact.js";
+import { CLOSE_CONFIRM_MS } from "../tabs-sync.js";
 
 /** What `open_tab` needs about the thing being opened. `ref` is empty for a
  *  singleton, whose identity is its kind. */
@@ -111,10 +113,6 @@ interface CloseTabArgs {
    *  close or a singleton toggle sends none and is unchecked. */
   impact?: CloseImpact;
 }
-
-/** How long a close may stay unanswered before the pending-op machine VERIFIES by re-listing
- *  (the removal stays applied). */
-const CLOSE_CONFIRM_MS = 5000;
 
 /** What the server committed for a close: a list (a parent and children close together); empty
  *  is normal, since two devices can close one tab. */
@@ -306,6 +304,96 @@ export const ackTabCommand = defineAction<AckTabArgs, number>({
   },
   error: false,
 });
+
+// --- The switch (sends nothing: the active tab is this device's alone) ---
+
+export interface SwitchArgs {
+  /** The tab to show. */
+  readonly to: string;
+  /** What the refusal notice is about (`notice-subject.ts`): a chat id, `run:<id>`, or "". */
+  readonly subject: string;
+}
+
+/** `superseded`: a newer activation replaced this one, or the reader left the tab. */
+export type SwitchVerdict = "shown" | "superseded";
+
+/** What `begin` committed: the activation's generation and the last settled tab to return to. */
+export interface SwitchOp {
+  readonly gen: number;
+  readonly from: string;
+}
+
+/** The switch's halves, injected by tabs.ts, which imports this module. */
+export interface SwitchHooks {
+  /** The gesture half, inside the dispatch. */
+  begin(args: SwitchArgs): SwitchOp;
+  /** The whole run, its retries included. MUST observe `signal`: the time bound only aborts it,
+   *  so a `settle` that ignores it never settles and never rolls back. */
+  settle(args: SwitchArgs, signal: AbortSignal): Promise<SwitchVerdict>;
+  /** Undo a definitive failure. Answers true when the reader stays on the failed tab because no
+   *  other tab is left to return to. */
+  revert(args: SwitchArgs, op: SwitchOp, err: ActionErrorLike): boolean;
+}
+
+/** Whether a failed load may be tried again: `settle`'s own retry loop and the toast's Retry
+ *  button read this one predicate. A timeout passes it, so its toast offers Retry, but `settle`
+ *  stops at its signal's abort before consulting it. */
+export function switchRetryable(err: ActionErrorLike): boolean {
+  return err.code !== "show_failed" && err.status !== 404 && err.status !== 400;
+}
+
+/** Errors whose revert kept the reader on the failed tab, so their sentence drops "so you are back
+ *  on the previous tab". The framework hands `rollback` and the notice the same error object. */
+const stayed = new WeakSet<ActionErrorLike>();
+
+/** The sentence a failed switch reads as, after the subject's name. A timeout is matched before
+ *  status 0, because the framework's own timeout error carries status 0 too. */
+export function switchRefusal(_args: SwitchArgs, err: ActionErrorLike): string {
+  const back = stayed.has(err) ? "." : ", so you are back on the previous tab.";
+  if (err.code === "timeout") {
+    return `This conversation did not load in time${back}`;
+  }
+  if (err.status === 404) {
+    return "This conversation no longer exists.";
+  }
+  if (err.code === "show_failed") {
+    return "Could not show that tab.";
+  }
+  if (err.status === 400) {
+    return "Could not load this conversation.";
+  }
+  if (err.status === 0) {
+    return `Could not reach marotte${back}`;
+  }
+  return `Could not load this conversation${back}`;
+}
+
+/** The user's tab switch: `begin` is the optimistic gesture half, `settle` awaits the view's first
+ *  content, and a definitive failure reverts with a toast. `timeoutMs` bounds the whole run.
+ *
+ *  No `retry` field: the framework sleeps its back-off on the run signal and, when the bound fires
+ *  in that sleep, rolls back without calling `run` again, so a switch the reader already left would
+ *  revert over the newer tab. `settle` runs the retries and checks supersession after each sleep. */
+export function defineSwitchCommand(
+  hooks: SwitchHooks,
+  timeoutMs: number,
+): Action<SwitchArgs, SwitchVerdict> {
+  return defineAction<SwitchArgs, SwitchVerdict, SwitchOp>({
+    name: "tabs.switch",
+    // A resident view needs no network; an offline load fails as `network`.
+    networkMode: "always",
+    timeout: timeoutMs,
+    retryable: switchRetryable,
+    optimistic: (args) => hooks.begin(args),
+    run: (args, signal) => hooks.settle(args, signal),
+    rollback: (args, op, err) => {
+      if (err.code !== "cancelled" && op !== undefined && hooks.revert(args, op, err)) {
+        stayed.add(err);
+      }
+    },
+    error: errorAbout((a: SwitchArgs) => a.subject, switchRefusal),
+  });
+}
 
 // --- Shared reply handling ---
 

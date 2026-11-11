@@ -108,15 +108,11 @@ vi.mock("./device-view.js", () => {
 vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
 vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
 
-const { mockApiGetTyped } = vi.hoisted(() => ({ mockApiGetTyped: vi.fn() }));
 vi.mock("./api-client.js", () =>
   import("./__test-helpers__/tabs-server.js").then((mod) => {
-    const listTabs = mod.tabListRead();
     return {
       apiBlobOrError: vi.fn(),
-      apiGetTyped: vi.fn((path: string, decode: unknown) =>
-        path === "/api/tabs" ? listTabs(path) : mockApiGetTyped(path, decode),
-      ),
+      apiGetTyped: mod.tabListRead(),
       apiGetTypedOrError: vi.fn(),
       // tabs.ts reaches api-client.ts through the files-shared.js edge the
       // multi-instance browser added, so the real link needs this name present.
@@ -172,7 +168,15 @@ async function resetProjection(): Promise<void> {
   _resetTabsSyncForTest();
   _resetTabOpenersForTest();
   registerTabOpeners({
-    chat: { show: vi.fn(), refresh: vi.fn(), close: vi.fn(), dot: () => "" },
+    chat: {
+      prefetch: vi.fn(),
+      select: vi.fn(),
+      loadFailed: vi.fn(),
+      show: vi.fn(),
+      refresh: vi.fn(() => Promise.resolve()),
+      close: vi.fn(),
+      dot: () => "",
+    },
     editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn() },
     run: { show: vi.fn(), refresh: vi.fn() },
     subagent: { show: vi.fn(), refresh: vi.fn() },

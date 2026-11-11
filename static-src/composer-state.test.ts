@@ -169,16 +169,50 @@ describe("draft text across a chat switch", () => {
       });
     });
 
-    it("leaves a draft the chat already holds in place of the box's text", () => {
+    it("keeps the chat's own draft and the box's text after it, a blank line between", () => {
       restoreComposerState("c2");
       type("c2's own draft");
       saveComposerState();
       input().value = "typed with no chat open";
+      mockDispatch.mockClear();
 
       retargetComposer("c2");
 
-      expect(input().value).toBe("c2's own draft");
-      expect(composerDraft("c2")).toBe("c2's own draft");
+      const kept = "c2's own draft\n\ntyped with no chat open";
+      expect(input().value).toBe(kept);
+      expect(composerDraft("c2")).toBe(kept);
+      expect(mockDispatch).toHaveBeenLastCalledWith({ chatID: "c2", text: kept });
+    });
+
+    it("keeps the server's stored draft of a chat not yet typed into on this device", () => {
+      setSessions([makeSession("c2", "the stored draft")]);
+      input().value = "typed with no chat open";
+
+      retargetComposer("c2");
+
+      expect(input().value).toBe("the stored draft\n\ntyped with no chat open");
+    });
+
+    it("hands files staged with no chat open to the chat it opens, after the chat's own", () => {
+      restoreComposerState("c2");
+      addAttachment("/w/own.png");
+      saveComposerState();
+      addAttachment("/w/staged.png");
+
+      retargetComposer("c2");
+
+      expect(takeAttachments().map((a) => a.path)).toEqual(["/w/own.png", "/w/staged.png"]);
+    });
+
+    it("leaves text typed with no chat open in the box when no chat takes it", () => {
+      saveComposerState();
+      type("typed on the empty strip");
+
+      retargetComposer("");
+
+      expect(input().value).toBe("typed on the empty strip");
+      retargetComposer("c2");
+      expect(composerDraft("c2")).toBe("typed on the empty strip");
     });
   });
 

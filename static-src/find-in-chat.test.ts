@@ -637,6 +637,8 @@ describe("server-hit navigation", () => {
     };
     vi.mocked(store.getActiveId).mockReturnValue("c1");
     vi.mocked(store.getActive).mockReturnValue(session);
+    vi.mocked(store.getPaintedId).mockReturnValue("c1");
+    vi.mocked(store.getPainted).mockReturnValue(session);
     return session;
   }
 

@@ -72,6 +72,7 @@ function load(chatID: string, turns: Record<string, Entry[]>): void {
   s.turn_count = s.turn_order.length;
   store.setSessions([s]);
   store.setActive(chatID);
+  store.setPainted(chatID);
   store.bumpMessages(chatID, "load");
 }
 

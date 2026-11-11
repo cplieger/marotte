@@ -55,6 +55,7 @@ vi.mock("./send-state.js", () => ({
   reportSendRefused: mockReportSendRefused,
 }));
 vi.mock("./composer-state.js", () => ({
+  adoptUnownedComposer: vi.fn(),
   restoreFailedSend: mockRestoreFailedSend,
   // Present-but-inert so real-ESM linking succeeds: the tab projection reaches
   // this module now (the close rollback), so every export has to resolve.

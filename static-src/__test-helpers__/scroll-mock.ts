@@ -8,7 +8,9 @@ export const scrollMock = {
   getScrollEl: vi.fn(() => document.createElement("div")),
   // The default snapshot is a fresh view's state, so a mocked park/unpark round-trips unprimed.
   attach: vi.fn(),
+  applyPendingRestore: vi.fn(),
   detach: vi.fn((): ViewScrollState => ({ scrollTop: 0, readingState: "following" })),
+  snapshot: vi.fn((): ViewScrollState => ({ scrollTop: 0, readingState: "following" })),
   scrollToBottom: vi.fn(),
   pressHold: vi.fn(),
   jumpTo: vi.fn(),
@@ -30,6 +32,7 @@ export const scrollMock = {
   setLoadMore: vi.fn(),
   noteHistoryEdge: vi.fn(),
   readingState: vi.fn((): ReadingState => "following"),
+  landingTop: vi.fn(() => 0),
   onReadingStateChange: vi.fn(),
   // Inert registrations: a mocked scroller never fires them; each returns the promised unregister.
   onTranscriptMutate: vi.fn(() => () => undefined),

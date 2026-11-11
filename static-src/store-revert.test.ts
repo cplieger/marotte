@@ -21,7 +21,12 @@ const { mockApiGetTyped } = vi.hoisted(() => ({ mockApiGetTyped: vi.fn() }));
 // reaches, which is the collection failure section 1.2 bans.
 vi.mock("./api-client.js", async (importOriginal) => {
   const actual = await importOriginal<typeof ApiClient>();
-  return { ...actual, apiGetTyped: mockApiGetTyped };
+  const { orErrorOver } = await import("./__test-helpers__/api-result.js");
+  return {
+    ...actual,
+    apiGetTyped: mockApiGetTyped,
+    apiGetTypedOrError: orErrorOver(mockApiGetTyped),
+  };
 });
 
 const CHAT = "c-1";
@@ -273,7 +278,7 @@ describe("the revert handler", () => {
     expect(read.signal()?.aborted).toBe(true);
 
     read.answer(page([3, 4, 5], 7));
-    expect(await load).toBe(false);
+    expect(await load).toEqual({ kind: "aborted" });
     const s = get(CHAT);
     expect(s?.turn_order).toEqual([]);
     expect(s?.turn_count).toBe(2);
@@ -292,7 +297,7 @@ describe("the revert handler", () => {
     fresh.answer(page([1, 2], 2));
     // The aborted caller answers with the re-issued load's result: an activation awaiting it must
     // see a loaded window, not a failure.
-    expect(await first).toBe(true);
+    expect(await first).toEqual({ kind: "loaded" });
     expect(heldOrdinals()).toEqual([1, 2]);
     expect(get(CHAT)?.turn_count).toBe(2);
   });
@@ -308,7 +313,7 @@ describe("the revert handler", () => {
     expect(stale.signal()?.aborted).toBe(true);
 
     stale.answer(page([1, 2, 3, 4], 4));
-    expect(await first).toBe(true);
+    expect(await first).toEqual({ kind: "loaded" });
     expect(get(CHAT)?.residency).toBe("loaded");
     expect(heldOrdinals()).toEqual([1, 2]);
     expect(get(CHAT)?.turn_count).toBe(2);
@@ -319,7 +324,7 @@ describe("the revert handler", () => {
     // while the server serves 1..2 under a count of 2.
     seed(1, 5);
     mockApiGetTyped.mockResolvedValueOnce(page([1, 2], 2));
-    expect(await loadMessages(CHAT)).toBe(true);
+    expect(await loadMessages(CHAT)).toEqual({ kind: "loaded" });
 
     expect(heldOrdinals()).toEqual([1, 2]);
     expect(get(CHAT)?.turn_count).toBe(2);
@@ -338,7 +343,7 @@ describe("the revert handler", () => {
       ts: 0,
     });
     read.answer(page([1, 2], 2));
-    expect(await load).toBe(true);
+    expect(await load).toEqual({ kind: "loaded" });
 
     expect(heldOrdinals()).toEqual([1, 2, 3]);
   });

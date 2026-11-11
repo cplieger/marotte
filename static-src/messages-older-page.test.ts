@@ -137,6 +137,7 @@ function cardFor(turnID: string): HTMLElement {
 beforeEach(() => {
   messages.teardownAll();
   store.setActive("");
+  store.setPainted("");
   store.setSessions([]);
   apiGetMock.mockImplementation(() => Promise.resolve({ turns: [] } as never));
 });
@@ -147,6 +148,7 @@ describe("an older page landing through the paint", () => {
     seat(s, [4, 5, 6, 7, 8, 9], "back");
     store.setSessions([s]);
     store.setActive("c1");
+    store.setPainted("c1");
     await until(
       () => messages.activeTranscriptView()?.querySelector(".turn") !== null,
       "the first paint",

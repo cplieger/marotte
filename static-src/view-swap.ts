@@ -71,6 +71,13 @@ const VIEWS_SELECTOR = "[data-tab-view]";
  *  navigable). */
 const KEPT_IN_PAGE: ReadonlySet<string> = new Set(["chat-view", "web-view"]);
 
+/** A same-value `classList.add` still writes the attribute and queues a mutation record. */
+function hide(v: HTMLElement): void {
+  if (!v.classList.contains("hidden")) {
+    v.classList.add("hidden");
+  }
+}
+
 /** Show `target` alone among the `[data-tab-view]` views, parking the hidden ones (dom.ts `park`). Swaps, with the
  *  entry fade, only when `target` is not already the one shown: callers re-run this on every projection change. */
 export function showOnlyView(target: HTMLElement | null): void {
@@ -88,7 +95,7 @@ export function showOnlyView(target: HTMLElement | null): void {
   }
   swapViews(() => {
     for (const v of views) {
-      v.classList.add("hidden");
+      hide(v);
     }
     if (target !== null) {
       unpark(target, () => {

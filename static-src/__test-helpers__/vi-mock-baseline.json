@@ -116,7 +116,6 @@
   "messages-resume-reach.test.ts",
   "messages-reveal-run-card.test.ts",
   "messages-send-pin.test.ts",
-  "messages-skeleton.test.ts",
   "messages-tools-terminal.test.ts",
   "messages-tools.test.ts",
   "messages-turn-actions.test.ts",

@@ -143,6 +143,7 @@ function seed(...sessions: Session[]): void {
   const first = sessions[0];
   if (first !== undefined) {
     store.setActive(first.id);
+    store.setPainted(first.id);
     store.bumpMessages(first.id, "load");
   }
 }
@@ -178,6 +179,7 @@ beforeEach(() => {
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
+  store.setPainted("");
   apiGetOrErrorMock.mockReset();
   // Status 0 keeps the store's retry ladder, where a settled 404 would skip it.
   apiGetOrErrorMock.mockResolvedValue({ ok: false, status: 0, data: null, error: "" });
@@ -206,6 +208,7 @@ describe("composite tool identity", () => {
     await flushed();
 
     store.setActive(b);
+    store.setPainted(b);
     await flushed();
     // Re-queried per read: `resumeTurnBody` rebuilds an open turn's body, so a held node detaches at unpark.
     const cardA = (): HTMLElement | null =>
@@ -230,6 +233,7 @@ describe("composite tool identity", () => {
     expect(cardA()?.dataset["outcome"]).toBe("running");
 
     store.setActive(a);
+    store.setPainted(a);
     await flushed();
     expect(cardA()?.dataset["outcome"]).toBe("fail");
     expect(cardB()?.dataset["outcome"]).toBe("ok");
@@ -260,6 +264,7 @@ describe("the parked terminal buffer", () => {
     expect(pre()).toBe("live line\n");
 
     store.setActive(b);
+    store.setPainted(b);
     await flushed();
 
     // 90 KB parked exceeds the 64 KB cap, so the oldest drops, as shell scrollback does.
@@ -276,6 +281,7 @@ describe("the parked terminal buffer", () => {
     expect(pre()).toBe("live line\n");
 
     store.setActive(a);
+    store.setPainted(a);
     await flushed();
     // Drained once: the two newest chunks land after the text already on screen.
     const text = pre();
@@ -286,8 +292,10 @@ describe("the parked terminal buffer", () => {
 
     // The buffer was consumed by the drain, so a second cycle replays nothing.
     store.setActive(b);
+    store.setPainted(b);
     await flushed();
     store.setActive(a);
+    store.setPainted(a);
     await flushed();
     expect(pre()).toBe(text);
 
@@ -358,6 +366,7 @@ describe("the run clock", () => {
 
     // Park A: the detached surface's hold keeps the shared interval alive.
     store.setActive(b);
+    store.setPainted(b);
     await flushed();
 
     const before = detachedClock?.textContent ?? "";
@@ -372,6 +381,7 @@ describe("the run clock", () => {
     expect(parkedClock?.textContent ?? "").toBe(parkedBefore);
 
     store.setActive(a);
+    store.setPainted(a);
     await flushed();
     const resumedClock = viewOf(a).querySelector<HTMLElement>(".run-ledger");
     const resumedBefore = resumedClock?.textContent ?? "";

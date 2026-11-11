@@ -695,7 +695,7 @@ describe("paintBootSnapshot", () => {
       window: snapWindow("c1", [turnOpen("turn-1", 1)]),
     });
 
-    // `activateChatView` fetches on `transcriptStale`, so a painted window must not pass for an
+    // `refreshChatView` fetches on `transcriptStale`, so a painted window must not pass for an
     // answered one.
     expect(transcriptStale(row("c1"))).toBe(true);
   });

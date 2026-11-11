@@ -112,6 +112,7 @@ vi.mock("./tabs-drag.js", async (importOriginal) => ({
 // is both sufficient and one fewer thing to keep in step with `store.ts`'s own exports.
 vi.mock("./run-store.js", () => ({ runLabelOf: vi.fn(() => "") }));
 vi.mock("./composer-state.js", () => ({
+  adoptUnownedComposer: vi.fn(),
   retargetComposer: vi.fn(),
   restoreFailedSend: vi.fn(),
   saveComposerState: vi.fn(),
@@ -171,7 +172,7 @@ let openers: Openers;
 function registerOpeners(): void {
   openers = {
     chatShow: vi.fn<TabOpeners["chat"]["show"]>(),
-    chatRefresh: vi.fn<TabOpeners["chat"]["refresh"]>(),
+    chatRefresh: vi.fn<TabOpeners["chat"]["refresh"]>(() => Promise.resolve()),
     chatClose: vi.fn<TabOpeners["chat"]["close"]>(),
     editorShow: vi.fn<TabOpeners["editor"]["show"]>(),
     editorRefresh: vi.fn<TabOpeners["editor"]["refresh"]>(),
@@ -185,6 +186,9 @@ function registerOpeners(): void {
   };
   registerTabOpeners({
     chat: {
+      prefetch: vi.fn(),
+      select: vi.fn(),
+      loadFailed: vi.fn(),
       show: openers.chatShow,
       refresh: openers.chatRefresh,
       close: openers.chatClose,

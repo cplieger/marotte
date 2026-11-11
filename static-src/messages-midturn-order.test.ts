@@ -86,6 +86,7 @@ function streamingRows(): string[] {
 async function streamingChat(chatID: string): Promise<void> {
   store.setSessions([session(chatID)]);
   store.setActive(chatID);
+  store.setPainted(chatID);
   store.openTurn(chatID, turnOpen());
   store.openEntry(chatID, open("say-1", "the reply so far"));
   await vi.waitFor(() => {
@@ -121,6 +122,7 @@ function reloaded(chatID: string, e: Entry): void {
   s.turn_count = 1;
   store.setSessions([s]);
   store.setActive(chatID);
+  store.setPainted(chatID);
   store.bumpMessages(chatID, "load");
 }
 
@@ -128,6 +130,7 @@ function reloaded(chatID: string, e: Entry): void {
 async function streamingAs(chatID: string, kind: OpenEntry["kind"], text: string): Promise<void> {
   store.setSessions([session(chatID)]);
   store.setActive(chatID);
+  store.setPainted(chatID);
   store.openTurn(chatID, turnOpen());
   store.openEntry(chatID, open("say-1", text, kind));
   await vi.waitFor(() => {
@@ -165,6 +168,7 @@ function reloadedWhole(
   s.turn_count = 1;
   store.setSessions([s]);
   store.setActive(chatID);
+  store.setPainted(chatID);
   store.bumpMessages(chatID, "load");
 }
 
@@ -178,6 +182,7 @@ beforeEach(() => {
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
+  store.setPainted("");
 });
 
 const PLAN: Entry = sealed(2, "plan", {
@@ -424,6 +429,7 @@ describe("an entry arriving mid-stream does not cut the stream", () => {
     const first = sealed(1, "text", { text: "Done with the first part. " }, "say-0");
     store.setSessions([session(chat)]);
     store.setActive(chat);
+    store.setPainted(chat);
     store.openTurn(chat, turnOpen());
     store.openEntry(chat, open("say-0", "Done with the first part. "));
     store.sealEntry(chat, TURN, "say-0", "", 1, 2, 1);

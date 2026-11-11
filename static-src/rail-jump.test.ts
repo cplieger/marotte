@@ -277,6 +277,7 @@ async function residentChat(n: number): Promise<void> {
 beforeEach(async () => {
   rail.resetTurnRail();
   store.setActive("");
+  store.setPainted("");
   store.setSessions([]);
   messagesEl.replaceChildren();
   wrap.scrollTop = 0;
@@ -362,6 +363,7 @@ describe("the jump's own scroll", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, 
     await rail.loadTurnRail(chat);
     store.setSessions([session(chat, [4, 5, 6], true, 6)]);
     store.setActive(chat);
+    store.setPainted(chat);
     for (const n of [4, 5, 6]) {
       card(n, 200);
     }
@@ -431,18 +433,43 @@ describe("what releases the jump", { timeout: testTimeoutFor(FRAME_BUDGET_MS) },
 
     // Counted from here: a scroll event an earlier reset left queued can publish one under load.
     const before = probe.gestures;
+    // The reader's position is where their move's scroll event finds the scroller: under load the
+    // compositor's smooth-scroll tick can still land a few pixels after the assignment.
+    const moved = new Promise<number>((resolve) => {
+      wrap.addEventListener(
+        "scroll",
+        () => {
+          resolve(wrap.scrollTop);
+        },
+        { once: true },
+      );
+    });
+    const ownerWrites: string[] = [];
+    for (const name of ["scrollTo", "scrollBy"] as const) {
+      const platform = wrap[name];
+      wrap[name] = ((...args: unknown[]) => {
+        ownerWrites.push(name);
+        Reflect.apply(platform, wrap, args);
+      }) as typeof platform;
+    }
 
     wrap.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
     wrap.scrollTop = 40;
+    const reader = await moved;
 
     await until(() => probe.gestures > before, "the reader's gesture to reach the map");
     await released();
     await quiet();
+    Reflect.deleteProperty(wrap, "scrollTo");
+    Reflect.deleteProperty(wrap, "scrollBy");
+    // Turn 2 starts at 200, so the reader is in turn 1, far from turn 4's landing.
+    expect(reader, "the premise: the reader's move landed").toBeLessThan(200);
     expect({
       scrollTop: wrap.scrollTop,
+      ownerWrites,
       landings: probe.landings.length,
       current: document.querySelectorAll(".turn-map [data-current]").length,
-    }).toEqual({ scrollTop: 40, landings: 1, current: 1 });
+    }).toEqual({ scrollTop: reader, ownerWrites: [], landings: 1, current: 1 });
   });
 
   it("hands the position back when the reader wheels between two corrections", async () => {

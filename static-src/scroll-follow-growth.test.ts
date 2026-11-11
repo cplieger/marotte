@@ -97,6 +97,7 @@ async function openChat(): Promise<void> {
   s.turn_count = 5;
   store.setSessions([s]);
   store.setActive(id);
+  store.setPainted(id);
   await until(() => lastFooter() !== null, "the last turn's footer");
   await settled();
 }

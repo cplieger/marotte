@@ -142,6 +142,7 @@ async function paintChat(
     },
   ]);
   store.setActive(id);
+  store.setPainted(id);
   await until(() => cards().length === count, `${String(count)} cards for ${id}`);
   return id;
 }

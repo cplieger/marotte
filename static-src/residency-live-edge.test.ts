@@ -26,7 +26,7 @@ const messagesEl = document.createElement("div");
 messagesEl.id = "messages";
 scrollerEl.appendChild(messagesEl);
 
-const { setSessions, setActive, bumpMessages } = await import("./store.js");
+const { setSessions, setActive, setPainted, bumpMessages } = await import("./store.js");
 const { mountChatView, activeTranscriptView, mountTurnBody } = await import("./messages.js");
 const { scrollToBottom } = await import("./scroll.js");
 const { setTurnOpen, resetFoldState } = await import("./fold-state.js");
@@ -115,6 +115,7 @@ function activate(chat: string, turnEntries: readonly (readonly Entry[])[]): voi
     },
   ]);
   setActive(chat);
+  setPainted(chat);
   bumpMessages(chat, "load");
 }
 
@@ -172,6 +173,7 @@ describe("asking for the live edge after reading far up", () => {
     resetFoldState();
     setSessions([]);
     setActive("");
+    setPainted("");
   });
 
   async function settled(): Promise<void> {
