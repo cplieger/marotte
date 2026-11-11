@@ -13,7 +13,7 @@ import {
   touchEvent,
   wheel,
 } from "./__test-helpers__/scroll-scene.js";
-import { clearDeviceScale, setDeviceScale } from "./__test-helpers__/device-scale.js";
+import { restoreDeviceScale, setDeviceScale } from "./__test-helpers__/device-scale.js";
 
 vi.mock("./dom.js", async (importOriginal) => {
   const { domProxy: proxy } = await import("./__test-helpers__/scroll-scene.js");
@@ -838,7 +838,7 @@ describe("whose move it is, and which way", () => {
 
   describe("a no-input move 1px a frame (selection or middle-click autoscroll, a script)", () => {
     afterEach(async () => {
-      await clearDeviceScale();
+      await restoreDeviceScale();
     });
 
     /** 60 steps of 1px a frame, each its own instant scroll; with `ends` off no `scrollend` reaches the scroller. */
