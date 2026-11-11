@@ -724,6 +724,16 @@ anything is sent is the telemetryEnabled row, which the Data sharing switch driv
 The external memory eligibility arm. marotte used to write it from the memory
 setting; the session-door memory row's explicit mode replaces that, and mode
 "disabled" holds whatever the arm says.`,
+	"env.KIRO_FEATURE_MEMORY_IMPORT_FEATURE_EXTERNAL_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+The memory_import_feature_external_enabled experiment (default off). Either import arm on
+admits _kiro/memory/import, _kiro/memory/export and _kiro/memory/getImportPrompt on a chat
+whose memory is on; off they refuse. marotte calls none of the three.`,
+	"env.KIRO_FEATURE_MEMORY_IMPORT_FEATURE_INTERNAL_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+The memory_import_feature_internal_enabled experiment (default off), the internal cohort's twin
+of the external import arm: either on admits the memory import, export and import-prompt
+methods.`,
 	"env.KIRO_FEATURE_MEMORY_QUALITY_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 The memory_quality_enabled experiment (default off): on, KAS scores memories by access and use,
