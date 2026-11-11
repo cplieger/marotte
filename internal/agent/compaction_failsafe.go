@@ -106,15 +106,20 @@ func (l *runList) dropResume() {
 	}
 }
 
+// dropResumeOf removes the waiting resume the failsafe stop token listed; a resume an earlier stop listed stays.
+func (l *runList) dropResumeOf(token uint64) {
+	if r := l.resume(); r != nil && r.fsToken == token {
+		l.remove(r)
+	}
+}
+
 // withdrawFailsafe takes back what the failsafe stop token listed: its waiting resume goes, and the compaction it
 // took over gets back its prior origin and turn. A resume an earlier stop listed stays.
 func (l *runList) withdrawFailsafe(token uint64) {
 	if token == 0 {
 		return
 	}
-	if r := l.resume(); r != nil && r.fsToken == token {
-		l.remove(r)
-	}
+	l.dropResumeOf(token)
 	if c := l.compaction(); c != nil && c.fsToken == token && c.origin == marotte.RunFromFailsafe {
 		c.origin, c.forTurn, c.fsToken = c.fsPrior, c.fsPriorFor, 0
 		l.touch()

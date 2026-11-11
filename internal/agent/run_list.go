@@ -1138,26 +1138,13 @@ type stopPlan struct {
 }
 
 // stopHead stops the live entry target names, or with target "" the one RunView.Cancel names (the session itself
-// on an idle list). It never stops a compaction, a stopping or closing entry, or anything not live. A stop naming a
-// turn the failsafe is stopping (a Cancel drawn before the failsafe's stop reached the page) stops nothing more but
-// withdraws that stop's resume: the reader asked for the task to stop.
+// on an idle list). It never stops a compaction, a stopping or closing entry, or anything not live.
 func (l *runList) stopHead(target string, token uint64) stopPlan {
-	n := l.liveLen()
-	if target == "" && n == 0 {
+	if target == "" && l.liveLen() == 0 {
 		return stopPlan{arm: stopSession}
 	}
-	if target == "" {
-		target = marotte.CancelTarget(l.project())
-	}
-	i, e := l.find(target)
-	if e != nil && i < n && e.state == marotte.RunStopping && e.fsStopped {
-		if r := l.resume(); r != nil && r.fsToken == e.stopBy {
-			l.remove(r)
-		}
-		return stopPlan{}
-	}
-	if e == nil || i >= n || !e.kind.TurnKind() ||
-		(e.state != marotte.RunStarting && e.state != marotte.RunRunning) {
+	i, e := l.stopTarget(target)
+	if e == nil {
 		return stopPlan{}
 	}
 	mark := func(x *runEntry) {
@@ -1184,6 +1171,28 @@ func (l *runList) stopHead(target string, token uint64) stopPlan {
 	}
 	l.stopRunningAt(i, token, mark)
 	return stopPlan{entry: e, arm: stopRunning}
+}
+
+// stopTarget is the live starting or running turn stopHead's target names, with its index, or nil. A target naming
+// a turn the failsafe is stopping (a Cancel drawn before the failsafe's stop reached the page) gives nil but
+// withdraws that stop's resume: the reader asked for the task to stop.
+func (l *runList) stopTarget(target string) (int, *runEntry) {
+	n := l.liveLen()
+	if target == "" {
+		target = marotte.CancelTarget(l.project())
+	}
+	i, e := l.find(target)
+	if e == nil || i >= n {
+		return i, nil
+	}
+	if e.state == marotte.RunStopping && e.fsStopped {
+		l.dropResumeOf(e.stopBy)
+		return i, nil
+	}
+	if !e.kind.TurnKind() || (e.state != marotte.RunStarting && e.state != marotte.RunRunning) {
+		return i, nil
+	}
+	return i, e
 }
 
 // stopRunningAt marks the running entry at i stopping. With kiro-cli's wire turn beside a sent, unbound prompt, one
