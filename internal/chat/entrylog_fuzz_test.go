@@ -9,7 +9,13 @@ import (
 
 // quoteBlock is the quote block the client's quoteSelection writes for passage, unescaped context tokens aside.
 func quoteBlock(passage string) string {
-	lines := strings.Split("From Kiro's reply:\n\n"+passage+"\n\nQuoting your earlier reply.", "\n")
+	body := strings.Split(passage, "\n")
+	for i, l := range body {
+		if strings.TrimLeft(l, `\`) == quoteAttribution {
+			body[i] = `\` + l
+		}
+	}
+	lines := strings.Split("From Kiro's reply:\n\n"+strings.Join(body, "\n")+"\n\n"+quoteAttribution, "\n")
 	for i, l := range lines {
 		if l == "" {
 			lines[i] = ">"
@@ -33,6 +39,8 @@ func FuzzFirstLineBoundedAndWellFormed(f *testing.F) {
 	f.Add("\u0085\ufeff\u3000")
 	f.Add("Quoting your earlier reply.")
 	f.Add("a\nQuoting your earlier reply.\nFrom the docs:")
+	f.Add("intro\n\nQuoting your earlier reply.\nFrom the docs:\n\nline b")
+	f.Add("\\Quoting your earlier reply.")
 	f.Add("> typed\n\n> From x:\n>\n> Quoting your earlier reply.")
 	f.Add("#\\[[file:a]]\n\nFrom the docs:\n")
 	f.Fuzz(func(t *testing.T, in string) {
@@ -49,27 +57,11 @@ func FuzzFirstLineBoundedAndWellFormed(f *testing.F) {
 				t.Errorf("firstLineOf(%q) = %q, not one collapsed line", prompt, got)
 			}
 		}
-		if strings.TrimFunc(in, jsSpace) == "" || ambiguousPassage(in) {
+		if strings.TrimFunc(in, jsSpace) == "" {
 			return
 		}
 		if got := firstLineOf(quoteBlock(in) + "\n\nwhy?"); got != "why?" {
 			t.Errorf("a prompt opening on a quote of %q previews %q, want the words after it", in, got)
 		}
 	})
-}
-
-// ambiguousPassage reports the one passage the stored form cannot tell from two quotes: words, the attribution
-// sentence on a line of its own, a source-like line and a blank one, then more words.
-func ambiguousPassage(p string) bool {
-	lines := strings.Split(p, "\n")
-	for i := 1; i+2 < len(lines); i++ {
-		head := lines[i+1]
-		if lines[i] == "Quoting your earlier reply." && strings.HasPrefix(head, "From ") &&
-			strings.HasSuffix(head, ":") && lines[i+2] == "" &&
-			strings.TrimFunc(strings.Join(lines[:i], "\n"), jsSpace) != "" &&
-			strings.TrimFunc(strings.Join(lines[i+3:], "\n"), jsSpace) != "" {
-			return true
-		}
-	}
-	return false
 }

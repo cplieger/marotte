@@ -1323,6 +1323,46 @@
       ]
     },
     {
+      "name": "a steer's quotes are searched as their bands draw them",
+      "body": [
+        {
+          "id": "st1",
+          "kind": "steer",
+          "payload": {
+            "text": "\u003e From the output of `go test`:\n\u003e\n\u003e the security\n\u003e failure\n\u003e\n\u003e Quoting your earlier reply.\n\nwhy that?\n\n\u003e From Kiro's reply:\n\u003e\n\u003e \\Quoting your earlier reply.\n\u003e\n\u003e Quoting your earlier reply.",
+            "origin": "user",
+            "state": "read"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "steer",
+          "lane": "",
+          "anchor": "st1",
+          "entries": [
+            "st1"
+          ],
+          "texts": [
+            "From the output of go test: the security\nfailure",
+            "why that?",
+            "From Kiro's reply: Quoting your earlier reply."
+          ]
+        }
+      ]
+    },
+    {
       "name": "a turn's header and failure are items",
       "body": [
         {

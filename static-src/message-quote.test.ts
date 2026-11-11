@@ -97,6 +97,14 @@ describe("quoteSelection", () => {
     expect(onlyQuote(quoteSelection(text, SRC))?.quote).toBe(text);
   });
 
+  it("escapes a passage line reading as the attribution, so only the block's own line closes it", () => {
+    expect(
+      quoteSelection(`a\n${QUOTE_ATTRIBUTION}\n\\${QUOTE_ATTRIBUTION}\n ${QUOTE_ATTRIBUTION}`, SRC),
+    ).toBe(
+      `${SRC_LINE}\n> a\n> \\${QUOTE_ATTRIBUTION}\n> \\\\${QUOTE_ATTRIBUTION}\n>  ${QUOTE_ATTRIBUTION}\n>\n> ${QUOTE_ATTRIBUTION}`,
+    );
+  });
+
   it("escapes a context token so the quote never reads as one", () => {
     const block = quoteSelection("see #[[file:a.ts]] here", SRC);
     expect(carriesContextMention(block)).toBe(false);
@@ -182,10 +190,38 @@ describe("splitQuotes", () => {
     ["a middle line", `line a\n${QUOTE_ATTRIBUTION}\nline b`],
     ["the line before a source-like line", `${QUOTE_ATTRIBUTION}\nFrom the docs:\n\nline b`],
     ["the line before a source-like last line", `line a\n${QUOTE_ATTRIBUTION}\nFrom the docs:`],
+    [
+      "a line after words, before a source",
+      `intro\n${QUOTE_ATTRIBUTION}\nFrom the docs:\n\nline b`,
+    ],
+    [
+      "a paragraph between words and a source",
+      `intro\n\n${QUOTE_ATTRIBUTION}\nFrom the docs:\n\nline b`,
+    ],
+    ["a line after backslashes", `\\${QUOTE_ATTRIBUTION}\n\\\\${QUOTE_ATTRIBUTION}`],
   ])("keeps a passage holding the attribution sentence as %s whole", (_, passage) => {
     const prompt = `${appendQuote("", quoteSelection(passage, SRC))}what now?`;
     expect(splitQuotes(prompt)).toEqual([quote(passage), words("what now?")]);
     expect(splitQuotes(quoteSelection(passage, SRC))).toEqual([quote(passage)]);
+  });
+
+  it("tells a passage quoting the attribution sentence from two quotes", () => {
+    const one = quoteSelection(`intro\n\n${QUOTE_ATTRIBUTION}\nFrom the docs:\n\nline b`, SRC);
+    const two = `${quoteSelection("intro", SRC)}\n${quoteSelection("line b", "From the docs")}`;
+    expect(one).not.toBe(two);
+    expect(splitQuotes(two)).toEqual([quote("intro"), quote("line b", "From the docs")]);
+  });
+
+  it("reads a typed `>` line between two quotes in one run as text", () => {
+    const prompt = `${quoteSelection("one", SRC)}\n> mine\n${quoteSelection("two", SRC)}`;
+    expect(splitQuotes(prompt)).toEqual([quote("one"), words("> mine"), quote("two")]);
+  });
+
+  it("keeps a nameless quote whole when a named stretch quoting nothing follows it in its run", () => {
+    const empty = `> From B:\n>\n> ${QUOTE_ATTRIBUTION}`;
+    const run = `> p1\n>\n> ${QUOTE_ATTRIBUTION}\n${empty}`;
+    expect(splitQuotes(run)).toEqual([quote("p1", null), words(empty)]);
+    expect(splitQuotes(`${run}\n\nafter`)).toEqual([quote("p1", null), words(`${empty}\n\nafter`)]);
   });
 
   it("leaves a typed `>` line touching a quote as text, above it or below it", () => {
@@ -201,18 +237,12 @@ describe("splitQuotes", () => {
     ]);
   });
 
-  // The one passage the stored form cannot tell from two quotes: words, then the attribution sentence on a line of
-  // its own, a source-like line and a blank one, then more words.
-  const ambiguous = new RegExp(
-    `\\S.*\\n${QUOTE_ATTRIBUTION.replace(".", "\\.")}\\nFrom [^\\n]*:\\n\\n.*\\S`,
-    "s",
-  );
-
   it("round-trips any two passages and the words around them", () => {
     const passage = fc
       .array(
         fc.constantFrom(
           QUOTE_ATTRIBUTION,
+          `\\${QUOTE_ATTRIBUTION}`,
           "From the docs:",
           "> typed",
           "#[[file:a]]",
@@ -223,11 +253,14 @@ describe("splitQuotes", () => {
         { minLength: 1, maxLength: 8 },
       )
       .map((lines) => lines.join("\n"))
-      .filter((p) => p.trim() !== "" && !ambiguous.test(p));
+      .filter((p) => p.trim() !== "");
     const reply = fc.constantFrom("why?", "a\nb", "> mine");
+    const gap = fc.constantFrom("\n", "\n\n");
     fc.assert(
-      fc.property(passage, passage, reply, reply, (one, two, between, after) => {
-        const prompt = `${appendQuote(`${appendQuote("", quoteSelection(one, SRC))}${between}`, quoteSelection(two, SRC))}${after}`;
+      fc.property(passage, passage, reply, reply, gap, (one, two, between, after, sep) => {
+        const prompt = [quoteSelection(one, SRC), between, quoteSelection(two, SRC), after].join(
+          sep,
+        );
         expect(splitQuotes(prompt)).toEqual([
           quote(one.trimEnd()),
           words(between),

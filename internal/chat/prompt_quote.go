@@ -11,8 +11,11 @@ import (
 	"unicode"
 )
 
-// quoteAttributionLine ends every quote block; static-src/message-quote.ts QUOTE_ATTRIBUTION owns the sentence.
-const quoteAttributionLine = "> Quoting your earlier reply."
+// quoteAttribution ends every quote block; static-src/message-quote.ts QUOTE_ATTRIBUTION owns the sentence.
+const (
+	quoteAttribution     = "Quoting your earlier reply."
+	quoteAttributionLine = "> " + quoteAttribution
+)
 
 // promptPart is one stretch of a prompt: a quote block, or the trimmed text around one.
 type promptPart struct {
@@ -25,6 +28,15 @@ var escapedContext = regexp.MustCompile(`#\\(\\*)\[\[`)
 
 func unescapeContext(s string) string {
 	return escapedContext.ReplaceAllString(s, "#${1}[[")
+}
+
+// unescapeAttribution is a passage line without the one backslash the client's escapeAttribution gives a line
+// reading as the attribution.
+func unescapeAttribution(line string) string {
+	if strings.HasPrefix(line, `\`) && strings.TrimLeft(line, `\`) == quoteAttribution {
+		return line[1:]
+	}
+	return line
 }
 
 // jsSpace is what the client's String.prototype.trim strips: ECMA-262 WhiteSpace and LineTerminator. Not
@@ -64,7 +76,7 @@ func readQuote(block []string) (promptPart, bool) {
 	inner := block[from : len(block)-1]
 	lines := make([]string, len(inner))
 	for i, l := range inner {
-		lines[i] = unquote(l)
+		lines[i] = unescapeAttribution(unquote(l))
 	}
 	quoted := unescapeContext(strings.TrimRightFunc(strings.Join(lines, "\n"), jsSpace))
 	if quoted == "" {
@@ -81,38 +93,19 @@ func readQuote(block []string) (promptPart, bool) {
 // readRun is a run of `>` lines as its quotes and the typed lines around them, in order, cut by the rule
 // message-quote.ts readRun states.
 func readRun(run []string) (pieces []runPiece) {
-	start, prevFrom := 0, -1
-	for _, end := range quoteEnds(run) {
-		if read, ok := readBlock(run[start : end+1]); ok {
-			prevFrom = start
-			pieces = append(pieces, read...)
-			start = end + 1
-		} else if prevFrom >= 0 {
-			read, _ = readBlock(run[prevFrom : end+1])
-			pieces = append(pieces[:len(pieces)-2], read...)
-			start = end + 1
+	start := 0
+	for i, line := range run {
+		if line != quoteAttributionLine {
+			continue
 		}
+		if read, ok := readBlock(run[start : i+1]); ok {
+			pieces = append(pieces, read...)
+		} else {
+			pieces = append(pieces, runPiece{typed: run[start : i+1]})
+		}
+		start = i + 1
 	}
 	return append(pieces, runPiece{typed: run[start:]})
-}
-
-// quoteEnds is the indexes of the attribution lines in run that may close a quote, in order.
-func quoteEnds(run []string) []int {
-	var ends []int
-	for i, line := range run {
-		if line == quoteAttributionLine && (i == len(run)-1 || opensNamed(run, i+1)) {
-			ends = append(ends, i)
-		}
-	}
-	for i, line := range slices.Backward(run) {
-		if line == quoteAttributionLine {
-			if len(ends) == 0 || ends[len(ends)-1] != i {
-				ends = append(ends, i)
-			}
-			break
-		}
-	}
-	return ends
 }
 
 // readBlock is the typed lines above block's first named opener and the quote from there, or false when it quotes
@@ -136,6 +129,70 @@ func readBlock(block []string) ([]runPiece, bool) {
 type runPiece struct {
 	quote *promptPart
 	typed []string
+}
+
+// drawnWords is prompt as a message draws it, one string per find run: each quote block its band's words, each
+// stretch around one its trimmed text, in order. A prompt holding no quote is itself.
+func drawnWords(prompt string) []string {
+	parts := splitQuotes(prompt)
+	if !slices.ContainsFunc(parts, func(p promptPart) bool { return p.quote }) {
+		return []string{prompt}
+	}
+	out := make([]string, len(parts))
+	for i, p := range parts {
+		out[i] = p.text
+		if p.source != nil {
+			out[i] = unwrapCodeSpans(*p.source) + ": " + p.text
+		}
+	}
+	return out
+}
+
+// unwrapCodeSpans is a quote's source as static-src/quote-band.ts sourceEl draws it, each code span as its code. A
+// span is a backtick run, then text neither starting nor ending on a backtick nor holding a line terminator, then the
+// same run with no backtick after it, the shortest such text; code padded by a space at each end, and not all space,
+// loses both (CommonMark 6.1).
+func unwrapCodeSpans(s string) string {
+	var b strings.Builder
+	at := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] != '`' {
+			continue
+		}
+		from := i
+		for from < len(s) && s[from] == '`' {
+			from++
+		}
+		end, ok := codeSpanEnd(s, from, s[i:from])
+		if !ok {
+			continue
+		}
+		code := s[from:end]
+		if len(code) >= 2 && code[0] == ' ' && code[len(code)-1] == ' ' && strings.TrimFunc(code, jsSpace) != "" {
+			code = code[1 : len(code)-1]
+		}
+		b.WriteString(s[at:i])
+		b.WriteString(code)
+		at = end + from - i
+		i = at - 1
+	}
+	b.WriteString(s[at:])
+	return b.String()
+}
+
+// codeSpanEnd is where the code starting at s[from] ends before a closing fence, or false.
+func codeSpanEnd(s string, from int, fence string) (int, bool) {
+	for end := from + 1; end <= len(s); end++ {
+		last := s[end-1:]
+		if last[0] == '\n' || last[0] == '\r' || strings.HasPrefix(last, "\u2028") || strings.HasPrefix(last, "\u2029") {
+			return 0, false
+		}
+		rest := s[end:]
+		if last[0] != '`' && strings.HasPrefix(rest, fence) && (len(rest) == len(fence) || rest[len(fence)] != '`') {
+			return end, true
+		}
+	}
+	return 0, false
 }
 
 // splitQuotes is prompt cut into its quote blocks, wherever each sits, and the trimmed text between them, blank

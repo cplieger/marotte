@@ -40,6 +40,25 @@ function unescapeContext(text: string): string {
   return text.replace(/#\\(\\*)\[\[/g, "#$1[[");
 }
 
+/** Whether `line` is `QUOTE_ATTRIBUTION` after any run of backslashes: a passage line `escapeAttribution` takes. */
+function isAttribution(line: string): boolean {
+  return line.replace(/^\\*/, "") === QUOTE_ATTRIBUTION;
+}
+
+/** Every passage line reading as the attribution gains one backslash, so only a block's own attribution line closes
+ *  it; `readQuote` removes exactly that one. Per `\n` line, as `splitQuotes` cuts, not a multiline regex, whose `$`
+ *  also matches before U+2028. */
+function escapeAttribution(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => (isAttribution(line) ? `\\${line}` : line))
+    .join("\n");
+}
+
+function unescapeAttribution(line: string): string {
+  return line.startsWith("\\") && isAttribution(line) ? line.slice(1) : line;
+}
+
 /** `text` as a CommonMark inline code span (spec 6.1): fenced by a backtick run longer than any inside it, and
  *  padded with a space where an edge backtick or edge spaces would otherwise merge with the fence or be stripped. */
 export function codeSpan(text: string): string {
@@ -50,14 +69,15 @@ export function codeSpan(text: string): string {
 }
 
 /** The quote block for a selected passage, edge whitespace kept, or "" for blank text: `source` on one line above it,
- *  naming where the words came from, then the text, then `QUOTE_ATTRIBUTION`. Both are escaped by `escapeContext`. */
+ *  naming where the words came from, then the text, then `QUOTE_ATTRIBUTION`. Both are escaped by `escapeContext`,
+ *  and the text by `escapeAttribution`. */
 export function quoteSelection(text: string, source: string): string {
   const normalized = text.replace(/\r\n?/g, "\n");
   if (normalized.trim() === "") {
     return "";
   }
   const from = escapeContext(source.replace(/\s+/g, " ").trim());
-  const body = escapeContext(capQuote(normalized));
+  const body = escapeAttribution(escapeContext(capQuote(normalized)));
   return blockquote(`${from}:\n\n${body}\n\n${QUOTE_ATTRIBUTION}`);
 }
 
@@ -97,7 +117,7 @@ function readQuote(block: readonly string[]): Quote | null {
   const quoted = unescapeContext(
     block
       .slice(named ? 2 : 0, -1)
-      .map(unquote)
+      .map((line) => unescapeAttribution(unquote(line)))
       .join("\n")
       .trimEnd(),
   );
@@ -108,30 +128,17 @@ function readQuote(block: readonly string[]): Quote | null {
   return { source: named ? unescapeContext(source) : null, quote: quoted };
 }
 
-/** A run of `>` lines as its quotes, in order, and the hand-typed lines around them. A passage may itself hold the
- *  attribution line, so one closes a quote only where the run ends, a named quote opens next or it is the run's
- *  last; a stretch it closes that quotes nothing belongs to the passage of the quote before it, or with none, the
- *  one after. A typed line above a named quote stays text. */
+/** A run of `>` lines as its quotes, in order, and the hand-typed lines around them. Every attribution line closes a
+ *  quote, since `quoteSelection` escapes one inside a passage. A stretch that quotes nothing, and the lines after the
+ *  last attribution line, stay text. */
 function readRun(run: readonly string[]): (Quote | string[])[] {
-  const ends = run.flatMap((line, i) =>
-    line === ATTRIBUTION_LINE && (i === run.length - 1 || opensNamed(run, i + 1)) ? [i] : [],
-  );
-  const last = run.lastIndexOf(ATTRIBUTION_LINE);
-  if (last >= 0 && ends.at(-1) !== last) {
-    ends.push(last);
-  }
   const out: (Quote | string[])[] = [];
   let start = 0;
-  let prevFrom: number | undefined;
-  for (const end of ends) {
-    const read = readBlock(run.slice(start, end + 1));
-    if (read !== null) {
-      prevFrom = start;
-      out.push(...read);
-      start = end + 1;
-    } else if (prevFrom !== undefined) {
-      out.splice(-2, 2, ...(readBlock(run.slice(prevFrom, end + 1)) ?? []));
-      start = end + 1;
+  for (const [i, line] of run.entries()) {
+    if (line === ATTRIBUTION_LINE) {
+      const piece = run.slice(start, i + 1);
+      out.push(...(readBlock(piece) ?? [piece]));
+      start = i + 1;
     }
   }
   out.push(run.slice(start));
