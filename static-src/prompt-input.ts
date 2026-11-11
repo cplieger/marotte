@@ -118,6 +118,14 @@ interface Pressed {
   readonly act: Act;
 }
 
+/** A press still under way. A pointer's feeds only a pointer's click (detail 1 or more), a key's only a key's
+ *  (detail 0), so a click with no press of its own never reads another's face. */
+type Press = Pressed &
+  (
+    | { readonly by: "pointer"; up: boolean }
+    | { readonly by: "key"; readonly key: string; spent: boolean }
+  );
+
 function clearDictate(btn: HTMLButtonElement): void {
   btn.removeAttribute("aria-pressed");
   btn.classList.remove("dictating");
@@ -146,8 +154,8 @@ class PromptInputController {
   private staged: Staged = signal(false);
   private dictation: Dictation = NO_DICTATION;
   private midTurn: HTMLButtonElement | null = null;
-  /** What the press on a button began on, read at its pointerdown or key down. */
-  private press: Pressed | null = null;
+  /** What the press on a button began on, from its pointerdown or key down until it ends. */
+  private press: Press | null = null;
   /** What the first click of a multi-click acted on: the rest of the run acts on it too. */
   private run: Pressed | null = null;
   /** Each chat whose send is in flight, by the token of that send. */
@@ -163,7 +171,7 @@ class PromptInputController {
       return;
     }
     // Before the box clears, so no late words refill it.
-    this.dictation.stop();
+    this.dictation.drop();
     this.exitCycling();
     const chatID = getActiveId();
     const sending = this.onSubmit(text);
@@ -368,22 +376,98 @@ class PromptInputController {
     }
   }
 
-  private pressStart(btn: HTMLButtonElement): void {
-    this.press = { btn, act: this.actOf(btn) };
+  /** A key press acts once: Enter's auto-repeat would click again, and every key down until the key's up
+   *  belongs to the same press. */
+  private keyDown(btn: HTMLButtonElement, e: KeyboardEvent): void {
+    if (this.escapeStops(e) || (e.key !== "Enter" && e.key !== " ")) {
+      return;
+    }
+    if (e.repeat || this.press?.by === "key") {
+      if (e.key === "Enter" || !e.repeat) {
+        e.preventDefault();
+      }
+      return;
+    }
+    this.press = { btn, act: this.actOf(btn), by: "key", key: e.key, spent: false };
+  }
+
+  private keyUp(btn: HTMLButtonElement, e: KeyboardEvent): void {
+    const p = this.press;
+    if (p?.by !== "key" || p.btn !== btn || p.key !== e.key) {
+      return;
+    }
+    if (p.spent) {
+      this.press = null;
+      return;
+    }
+    // Space clicks after this key up's listeners, in the same task.
+    setTimeout(() => {
+      if (this.press === p) {
+        this.press = null;
+      }
+    });
+  }
+
+  /** A release off the button makes no click, so its press ends there. */
+  private pointerUp(e: PointerEvent): void {
+    const p = this.press;
+    if (p?.by !== "pointer") {
+      return;
+    }
+    const r = p.btn.getBoundingClientRect();
+    if (
+      e.clientX >= r.left &&
+      e.clientX <= r.right &&
+      e.clientY >= r.top &&
+      e.clientY <= r.bottom
+    ) {
+      // Under a finger the click comes in a later task, after the capture is released.
+      p.up = true;
+    } else {
+      this.press = null;
+    }
   }
 
   /** A click acts on what its press began on, so a repaint between press and click (the engine ending, a
-   *  result, a send clearing the box) never turns Stop into Send or Send into Dictate. A click with no press
-   *  of its own (`click()`) acts on the face it lands on. */
-  private actFor(btn: HTMLButtonElement, e: MouseEvent): Act {
-    const press = this.press;
-    this.press = null;
+   *  result, a send clearing the box) never turns Stop into Send or Send into Dictate; a held key's later clicks
+   *  do nothing (null). A click with no live press of its own kind (`click()`, an assistive technology's
+   *  action) acts on the face it lands on. */
+  private actFor(btn: HTMLButtonElement, e: MouseEvent): Act | null {
+    const live = this.press;
+    const p = live?.btn === btn && (live.by === "key") === (e.detail === 0) ? live : null;
+    if (p?.by === "key") {
+      if (p.spent) {
+        return null;
+      }
+      p.spent = true;
+    } else if (p !== null) {
+      this.press = null;
+    }
     if (e.detail > 1 && this.run?.btn === btn) {
       return this.run.act;
     }
-    const act = press?.btn === btn ? press.act : this.actOf(btn);
+    const act = p?.act ?? this.actOf(btn);
     this.run = { btn, act };
     return act;
+  }
+
+  /** Escape leaves dictation ahead of Cancel, so a keyboard reader keeps the turn. */
+  private escapeStops(e: KeyboardEvent): boolean {
+    if (
+      e.key !== "Escape" ||
+      e.shiftKey ||
+      e.altKey ||
+      e.ctrlKey ||
+      e.metaKey ||
+      !this.dictation.listening.peek() ||
+      escapeOwnerOpen()
+    ) {
+      return false;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    this.dictation.toggle();
+    return true;
   }
 
   /** `start` and `stop` do nothing once the session is already in that state, so a run's later clicks cannot
@@ -395,7 +479,7 @@ class PromptInputController {
         if (this.state.kind === "streaming") {
           this.onCancel();
         }
-        // A pointer press focuses Cancel, and dictated words land only in the focused box.
+        // A press can take focus off the box, and dictated words land only in the focused box.
         if (listening) {
           $.promptInput.focus();
         }
@@ -495,18 +579,39 @@ class PromptInputController {
     this.midTurn = midTurn;
     for (const btn of [$.sendBtn, midTurn]) {
       btn.addEventListener("pointerdown", () => {
-        this.pressStart(btn);
+        this.press = { btn, act: this.actOf(btn), by: "pointer", up: false };
       });
-      // Space clicks at key up, so the face can repaint in between.
       btn.addEventListener("keydown", (e: KeyboardEvent) => {
-        if ((e.key === "Enter" || e.key === " ") && !e.repeat) {
-          this.pressStart(btn);
+        this.keyDown(btn, e);
+      });
+      btn.addEventListener("keyup", (e: KeyboardEvent) => {
+        this.keyUp(btn, e);
+      });
+      // A pointer's click lands on its button wherever focus went (WebKit never focuses it), so blur ends only a key's.
+      btn.addEventListener("blur", () => {
+        if (this.press?.by === "key" && this.press.btn === btn) {
+          this.press = null;
         }
       });
       btn.addEventListener("pointercancel", () => {
-        this.press = null;
+        if (this.press?.by === "pointer") {
+          this.press = null;
+        }
+      });
+      btn.addEventListener("lostpointercapture", () => {
+        if (this.press?.by === "pointer" && !this.press.up) {
+          this.press = null;
+        }
       });
     }
+    // On the document: a release dragged off the button never reaches it.
+    document.addEventListener(
+      "pointerup",
+      (e: PointerEvent) => {
+        this.pointerUp(e);
+      },
+      true,
+    );
     $.sendBtn.addEventListener("click", (e: MouseEvent) => {
       const act = this.actFor($.sendBtn, e);
       if (act === "send") {
@@ -519,15 +624,17 @@ class PromptInputController {
       }
       e.preventDefault();
       e.stopPropagation();
-      this.perform(act);
+      if (act !== null) {
+        this.perform(act);
+      }
     });
     midTurn.addEventListener("click", (e: MouseEvent) => {
       const act = this.actFor(midTurn, e);
       if (act === "send") {
         this.sendComposer();
-        return;
+      } else if (act !== null) {
+        this.perform(act);
       }
-      this.perform(act);
     });
 
     syncComposerText();
@@ -611,7 +718,10 @@ class PromptInputController {
           return;
         }
         e.preventDefault();
-        this.sendComposer();
+        // A held Enter is one send: Stop and Cancel move focus here while the key is still down.
+        if (!e.repeat) {
+          this.sendComposer();
+        }
         return;
       }
 
@@ -669,11 +779,7 @@ class PromptInputController {
         return;
       }
 
-      // Ahead of Cancel: a keyboard reader leaves dictation without losing the turn.
-      if (e.key === "Escape" && bare && this.dictation.listening.peek() && !escapeOwnerOpen()) {
-        e.preventDefault();
-        e.stopPropagation();
-        this.dictation.toggle();
+      if (this.escapeStops(e)) {
         return;
       }
 

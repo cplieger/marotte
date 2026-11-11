@@ -1,11 +1,12 @@
-// Model-based: presses on Send's and Steer's slots, interleaved with everything that repaints them mid-press (the
-// engine ending, results, focus moves, the turn starting or ending, typing), never act on a face they did not
-// begin on.
+// Model-based: presses on Send's and Steer's slots (pointer presses that click, tap, drag off or are cancelled, keys
+// held with auto-repeat, clicks with no press of their own), interleaved with everything that repaints them
+// mid-press (the engine ending, results, focus moves, the turn starting or ending, typing, sends), never act on a
+// face they did not begin on, and words heard before a send or a clear never reach the box after it.
 
 import { beforeAll, describe, expect, it } from "vitest";
 import fc from "fast-check";
 import { effect, signal } from "@cplieger/ui";
-import { initPromptInput, setSendState } from "./prompt-input.js";
+import { initPromptInput, sendComposer, setSendState } from "./prompt-input.js";
 import { createDictation, type Dictation } from "./dictation.js";
 import { setActive, setSessions } from "./store.js";
 import type { Session } from "./types.js";
@@ -22,18 +23,31 @@ type World =
   | { readonly k: "focusButton"; readonly slot: Slot }
   | { readonly k: "blurBox" }
   | { readonly k: "turn"; readonly on: boolean }
-  | { readonly k: "type"; readonly text: string };
+  | { readonly k: "type"; readonly text: string }
+  /** The keyboard shortcut's send; a held one waits for `answer`. */
+  | { readonly k: "send"; readonly held: boolean }
+  | { readonly k: "answer" };
 
 interface Gesture {
   readonly k: "gesture";
   readonly slot: Slot;
   readonly input: "pointer" | "space" | "enter";
-  readonly clicks: number;
-  /** World events before each press start and each click, in order. */
+  /** Pointer: the clicks of a multi-click. Key: the auto-repeats while held. */
+  readonly count: number;
+  /** How a pointer press ends: a mouse click, a finger's tap, a release dragged off, or a cancel. */
+  readonly end: "click" | "tap" | "dragOff" | "cancel";
+  /** World events before each press start, click, repeat and key up, in order. */
   readonly gaps: readonly (readonly World[])[];
 }
 
-type Step = World | Gesture;
+/** A click with no press of its own: `click()`, or an assistive technology's simulated mouse click. */
+interface Click {
+  readonly k: "click";
+  readonly slot: Slot;
+  readonly detail: 0 | 1;
+}
+
+type Step = World | Gesture | Click;
 
 /** What the reader saw on the button when the press began. */
 type Began = "send" | "cancel" | "start" | "stop";
@@ -52,6 +66,12 @@ const staged = signal(false);
 let submitted = 0;
 let cancelled = 0;
 let starts = 0;
+/** Recognizers made before the last send or clear; their words must never reach the box again. */
+let cut = 0;
+/** What the box held when the send still waiting for its answer went. */
+let sentRaw: string | null = null;
+let worldSend: { readonly held: boolean } | null = null;
+let answer: (() => void) | null = null;
 let dictation: Dictation;
 
 const session: Session = {
@@ -85,8 +105,21 @@ beforeAll(() => {
   dictation = createDictation(speech.platform, box());
   initPromptInput(
     () => {
-      submitted++;
-      return undefined;
+      cut = speech.made.length;
+      const by = worldSend;
+      if (by === null) {
+        submitted++;
+        return undefined;
+      }
+      if (!by.held) {
+        return undefined;
+      }
+      sentRaw = box().value;
+      return new Promise((resolve) => {
+        answer = () => {
+          resolve("sent");
+        };
+      });
     },
     () => {
       cancelled++;
@@ -128,6 +161,7 @@ function began(btn: HTMLButtonElement): Began | null {
 }
 
 function type(text: string): void {
+  cut = speech.made.length;
   const el = box();
   el.value = text;
   el.setSelectionRange(text.length, text.length);
@@ -140,11 +174,22 @@ async function flush(): Promise<void> {
   }
 }
 
+/** Settles the send waiting for its answer, as the server's answer does. */
+async function answerSend(): Promise<void> {
+  const settle = answer;
+  answer = null;
+  settle?.();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  sentRaw = null;
+}
+
 async function apply(w: World): Promise<void> {
+  const i = speech.made.length - 1;
   const rec = speech.made.at(-1);
   switch (w.k) {
     case "result":
-      rec?.hear([w.text, w.final]);
+      // Each recognizer's words carry its index, so the box shows whose words it holds.
+      rec?.hear([`${w.text} r${String(i)}`, w.final]);
       break;
     case "end":
       rec?.finish();
@@ -165,10 +210,36 @@ async function apply(w: World): Promise<void> {
       setSendState({ kind: w.on ? "streaming" : "idle" });
       break;
     case "type":
-      type(w.text);
+      // The reader cannot type into a held send's read-only box.
+      if (!box().readOnly) {
+        type(w.text);
+      }
+      break;
+    case "send":
+      worldSend = w;
+      try {
+        sendComposer();
+      } finally {
+        worldSend = null;
+      }
+      break;
+    case "answer":
+      await answerSend();
       break;
   }
   await flush();
+  expectNoStaleWords();
+}
+
+/** A held send's read-only box shows exactly what was sent, and no other box shows words said before the cut. */
+function expectNoStaleWords(): void {
+  const b = box();
+  if (b.readOnly) {
+    expect(b.value, "words written into a held send's box").toBe(sentRaw);
+    return;
+  }
+  const stale = [...b.value.matchAll(/r(\d+)/g)].filter((m) => Number(m[1]) < cut);
+  expect(stale, `words said before the send or clear reached the box: ${b.value}`).toEqual([]);
 }
 
 async function applyAll(ws: readonly World[] | undefined): Promise<void> {
@@ -177,29 +248,74 @@ async function applyAll(ws: readonly World[] | undefined): Promise<void> {
   }
 }
 
+function click(btn: HTMLButtonElement, detail: number): void {
+  btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail }));
+}
+
+function key(type: "keydown" | "keyup", name: string, repeat = false): KeyboardEvent {
+  const e = new KeyboardEvent(type, { key: name, repeat, bubbles: true, cancelable: true });
+  document.activeElement?.dispatchEvent(e);
+  return e;
+}
+
+function pointer(btn: HTMLButtonElement, type: string, onButton = true): void {
+  const r = btn.getBoundingClientRect();
+  const at = {
+    clientX: onButton ? r.left + r.width / 2 : r.right + 40,
+    clientY: r.top + r.height / 2,
+  };
+  (onButton ? btn : document.body).dispatchEvent(
+    new PointerEvent(type, { bubbles: true, cancelable: true, ...at }),
+  );
+}
+
+/** A key held on the focused button, its clicks made as the browser makes them: Enter at every key down the page
+ *  did not cancel, on the element focused then; Space at key up, only on a button that kept focus throughout. */
+async function holdKey(g: Gesture, btn: HTMLButtonElement): Promise<void> {
+  const name = g.input === "space" ? " " : "Enter";
+  let kept = true;
+  const lost = (): void => {
+    kept = false;
+  };
+  btn.addEventListener("blur", lost);
+  const down = key("keydown", name);
+  if (name === "Enter" && !down.defaultPrevented) {
+    click(btn, 0);
+  }
+  await flush();
+  for (let r = 0; r < g.count; r++) {
+    await applyAll(g.gaps[r]);
+    const target = document.activeElement;
+    const again = key("keydown", name, true);
+    if (name === "Enter" && target instanceof HTMLButtonElement && !again.defaultPrevented) {
+      click(target, 0);
+    }
+    await flush();
+  }
+  await applyAll(g.gaps[g.count]);
+  const target = document.activeElement;
+  key("keyup", name);
+  if (name === " " && target === btn && kept && !down.defaultPrevented) {
+    click(btn, 0);
+  }
+  btn.removeEventListener("blur", lost);
+  await flush();
+}
+
 /** Run the gesture; `began` is read off the button at its first press start, after any world event before it. */
 async function press(g: Gesture): Promise<Began | null> {
   const btn = button(g.slot);
-  const click = (detail: number): void => {
-    btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail }));
-  };
   if (g.input !== "pointer") {
+    btn.focus();
     const face = began(btn);
-    if (face === null) {
-      return null;
+    if (face !== null) {
+      await holdKey(g, btn);
     }
-    btn.dispatchEvent(
-      new KeyboardEvent("keydown", { key: g.input === "space" ? " " : "Enter", bubbles: true }),
-    );
-    if (g.input === "space") {
-      await applyAll(g.gaps[0]);
-    }
-    click(0);
-    await flush();
     return face;
   }
+  const clicks = g.end === "dragOff" || g.end === "cancel" ? 1 : g.count;
   let face: Began | null = null;
-  for (let i = 1; i <= g.clicks; i++) {
+  for (let i = 1; i <= clicks; i++) {
     await applyAll(g.gaps[2 * i - 2]);
     if (i === 1) {
       face = began(btn);
@@ -207,12 +323,44 @@ async function press(g: Gesture): Promise<Began | null> {
         return null;
       }
     }
-    btn.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+    pointer(btn, "pointerdown");
     btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: i }));
     await applyAll(g.gaps[2 * i - 1]);
-    click(i);
+    switch (g.end) {
+      case "dragOff":
+        pointer(btn, "pointerup", false);
+        break;
+      case "cancel":
+        pointer(btn, "pointercancel");
+        break;
+      case "tap":
+        pointer(btn, "pointerup");
+        pointer(btn, "lostpointercapture");
+        click(btn, i);
+        break;
+      case "click":
+        pointer(btn, "pointerup");
+        click(btn, i);
+        break;
+    }
     await flush();
   }
+  return face;
+}
+
+async function clickOnly(c: Click): Promise<Began | null> {
+  const btn = button(c.slot);
+  const face = began(btn);
+  if (face === null) {
+    return null;
+  }
+  if (c.detail === 0) {
+    btn.click();
+  } else {
+    btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: 1 }));
+    click(btn, 1);
+  }
+  await flush();
   return face;
 }
 
@@ -232,30 +380,34 @@ const world: fc.Arbitrary<World> = fc.oneof(
   fc.constant({ k: "blurBox" as const }),
   fc.record({ k: fc.constant("turn" as const), on: fc.boolean() }),
   fc.record({ k: fc.constant("type" as const), text: fc.constantFrom("", "  ", "words") }),
+  fc.record({ k: fc.constant("send" as const), held: fc.boolean() }),
+  fc.constant({ k: "answer" as const }),
 );
 
-const gesture: fc.Arbitrary<Gesture> = fc
-  .record({
-    slot: fc.constantFrom<Slot>("main", "side"),
-    input: fc.constantFrom("pointer" as const, "space" as const, "enter" as const),
-    clicks: fc.integer({ min: 1, max: 3 }),
-  })
-  .chain((g) =>
-    fc
-      .array(fc.array(world, { maxLength: 2 }), {
-        minLength: 2 * g.clicks,
-        maxLength: 2 * g.clicks,
-      })
-      .map((gaps) => ({ k: "gesture" as const, ...g, gaps })),
-  );
+const gesture: fc.Arbitrary<Gesture> = fc.record({
+  k: fc.constant("gesture" as const),
+  slot: fc.constantFrom<Slot>("main", "side"),
+  input: fc.constantFrom("pointer" as const, "space" as const, "enter" as const),
+  count: fc.integer({ min: 1, max: 3 }),
+  end: fc.constantFrom("click" as const, "tap" as const, "dragOff" as const, "cancel" as const),
+  gaps: fc.array(fc.array(world, { maxLength: 2 }), { minLength: 6, maxLength: 6 }),
+});
+
+const clickStep: fc.Arbitrary<Click> = fc.record({
+  k: fc.constant("click" as const),
+  slot: fc.constantFrom<Slot>("main", "side"),
+  detail: fc.constantFrom<0 | 1>(0, 1),
+});
 
 const step: fc.Arbitrary<Step> = fc.oneof(
   { arbitrary: gesture, weight: 3 },
+  { arbitrary: clickStep, weight: 1 },
   { arbitrary: world, weight: 2 },
 );
 
 async function reset(): Promise<void> {
-  dictation.stop();
+  await answerSend();
+  dictation.drop();
   setSendState({ kind: "idle" });
   box().focus();
   type("");
@@ -265,18 +417,27 @@ async function reset(): Promise<void> {
   starts = 0;
 }
 
+/** What a gesture may do: an aborted press does nothing, any other acts as the face it began on. */
+function allowed(s: Gesture | Click, face: Began): readonly string[] {
+  if (s.k === "gesture" && s.input === "pointer" && (s.end === "dragOff" || s.end === "cancel")) {
+    return [];
+  }
+  return MAY[face];
+}
+
 describe("a press on the composer's buttons (rule 3)", () => {
   it("never sends or steers from Dictate or Stop, never dictates from Send or Cancel, and Stop only stops", async () => {
     await fc.assert(
       fc.asyncProperty(fc.array(step, { minLength: 1, maxLength: 8 }), async (steps) => {
         await reset();
         for (const s of steps) {
-          if (s.k !== "gesture") {
+          if (s.k !== "gesture" && s.k !== "click") {
             await apply(s);
             continue;
           }
           const before = { submitted, cancelled, starts, made: speech.made.length };
-          const face = await press(s);
+          const face = s.k === "gesture" ? await press(s) : await clickOnly(s);
+          expectNoStaleWords();
           if (face === null) {
             continue;
           }
@@ -286,7 +447,7 @@ describe("a press on the composer's buttons (rule 3)", () => {
           const did = [sent && "send", cancel && "cancel", dictated && "dictate"].filter(
             (d) => d !== false,
           );
-          expect(MAY[face], `a press that began on ${face} did ${did.join(", ")}`).toEqual(
+          expect(allowed(s, face), `a ${s.k} that began on ${face} did ${did.join(", ")}`).toEqual(
             expect.arrayContaining(did),
           );
         }

@@ -2,6 +2,7 @@
 // where a press goes, and that it never sends or cancels by itself.
 
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { userEvent } from "vitest/browser";
 import { signal } from "@cplieger/ui";
 import { initPromptInput, sendComposer, setSendState } from "./prompt-input.js";
 import { createDictation, type Dictation } from "./dictation.js";
@@ -18,6 +19,8 @@ const cancelled = vi.fn();
 const staged = signal(false);
 const speech = fakeSpeech({ available: () => Promise.resolve("available") });
 let dictation: Dictation;
+/** What the next send answers with: undefined clears the box at once, a promise holds the send until it settles. */
+let nextSend: Promise<unknown> | undefined;
 
 function session(run?: RunView): Session {
   return {
@@ -67,7 +70,9 @@ beforeAll(() => {
   initPromptInput(
     (text: string) => {
       submitted.push(text);
-      return undefined;
+      const answer = nextSend;
+      nextSend = undefined;
+      return answer;
     },
     cancelled,
     staged,
@@ -77,7 +82,10 @@ beforeAll(() => {
 });
 
 beforeEach(async () => {
-  dictation.stop();
+  // Every press a case left down ends, as a real one does.
+  release(sendBtn(), false);
+  input().focus();
+  dictation.drop();
   setSessions([session()]);
   setActive(CHAT);
   setSendState({ kind: "idle" });
@@ -129,6 +137,23 @@ function clickAt(btn: HTMLButtonElement, detail: number): void {
 function pressDown(btn: HTMLButtonElement, detail = 1): void {
   btn.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
   btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail }));
+}
+
+/** A pointer press's release, on the button or dragged off it. */
+function release(btn: HTMLButtonElement, onButton: boolean): void {
+  const r = btn.getBoundingClientRect();
+  const at = {
+    clientX: onButton ? r.left + r.width / 2 : r.right + 40,
+    clientY: r.top + r.height / 2,
+  };
+  (onButton ? btn : document.body).dispatchEvent(
+    new PointerEvent("pointerup", { bubbles: true, cancelable: true, ...at }),
+  );
+}
+
+function streaming(): void {
+  setSessions([session(STEERING)]);
+  setSendState({ kind: "streaming" });
 }
 
 function expectDictateFace(btn: HTMLButtonElement, pressed: boolean): void {
@@ -304,11 +329,6 @@ describe("a double click on the dictation button (rule 3)", () => {
 });
 
 describe("a press acts on the face it began on (rule 3)", () => {
-  function streaming(): void {
-    setSessions([session(STEERING)]);
-    setSendState({ kind: "streaming" });
-  }
-
   it.each([
     ["Send's slot", false],
     ["the mid-turn slot", true],
@@ -357,8 +377,10 @@ describe("a press acts on the face it began on (rule 3)", () => {
   it("stops on a Space press whose key up lands after the browser ended the session", async () => {
     await startFrom(sendBtn());
     speech.last().hear(["by keyboard", false]);
+    sendBtn().focus();
     sendBtn().dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
     speech.last().finish();
+    sendBtn().dispatchEvent(new KeyboardEvent("keyup", { key: " ", bubbles: true }));
     clickAt(sendBtn(), 0);
     expect(submitted).toEqual([]);
     expect(input().value).toBe("by keyboard");
@@ -413,6 +435,160 @@ describe("a press acts on the face it began on (rule 3)", () => {
     pressDown(midTurn());
     await startFrom(sendBtn());
     expect(dictation.listening.value).toBe(true);
+  });
+});
+
+describe("a held key is one press, on the face it began on (rule 3)", () => {
+  it.each([
+    ["Send's slot", false],
+    ["the mid-turn slot", true],
+  ])("only stops on Enter held on Stop, sending and steering nothing, on %s", async (_, mid) => {
+    if (mid) {
+      streaming();
+    }
+    const btn = mid ? midTurn() : sendBtn();
+    await startFrom(btn);
+    speech.last().hear(["hello", true]);
+    btn.focus();
+    await userEvent.keyboard("{Enter>3}{/Enter}");
+    expect(dictation.listening.value).toBe(false);
+    expect(submitted).toEqual([]);
+    expect(cancelled).not.toHaveBeenCalled();
+    expect(input().value).toBe("hello");
+  });
+
+  it("cancels once on Enter held on Cancel while dictating, and sends nothing", async () => {
+    streaming();
+    await startFrom(midTurn());
+    speech.last().hear(["hello", true]);
+    sendBtn().focus();
+    await userEvent.keyboard("{Enter>3}{/Enter}");
+    expect(cancelled).toHaveBeenCalledOnce();
+    expect(submitted).toEqual([]);
+    expect(input().value).toBe("hello");
+  });
+
+  it("sends once on Enter held on Send, and never opens the microphone on the face the send left", async () => {
+    const made = speech.made.length;
+    type("hi there");
+    sendBtn().focus();
+    await userEvent.keyboard("{Enter>3}{/Enter}");
+    expect(submitted).toEqual(["hi there"]);
+    expect(dictation.listening.value).toBe(false);
+    expect(speech.made).toHaveLength(made);
+  });
+
+  it("ignores every other click until the key comes up, then a click acts on the face painted", () => {
+    type("hi");
+    sendBtn().focus();
+    sendBtn().dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+    clickAt(sendBtn(), 0);
+    expect(submitted).toEqual(["hi"]);
+    expectDictateFace(sendBtn(), false);
+    clickAt(sendBtn(), 0);
+    expect(dictation.listening.value, "a click during the hold").toBe(false);
+    sendBtn().dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
+    clickAt(sendBtn(), 0);
+    expect(dictation.listening.value).toBe(true);
+  });
+
+  it.each([
+    ["Send's slot", false],
+    ["the mid-turn slot", true],
+  ])(
+    "stops on Escape with focus on Stop, keeping the words and cancelling nothing, on %s",
+    async (_, mid) => {
+      if (mid) {
+        streaming();
+      }
+      const btn = mid ? midTurn() : sendBtn();
+      await startFrom(btn);
+      speech.last().hear(["keep me", false]);
+      btn.focus();
+      await userEvent.keyboard("{Escape}");
+      expect(dictation.listening.value).toBe(false);
+      expect(cancelled).not.toHaveBeenCalled();
+      expect(input().value).toBe("keep me");
+    },
+  );
+});
+
+describe("a press's face lasts only as long as the press (rule 3)", () => {
+  it("sends from a click() after a press dragged off the microphone, never dictating", () => {
+    const made = speech.made.length;
+    pressDown(sendBtn());
+    release(sendBtn(), false);
+    type("hello");
+    sendBtn().click();
+    expect(submitted).toEqual(["hello"]);
+    expect(dictation.listening.value).toBe(false);
+    expect(speech.made).toHaveLength(made);
+  });
+
+  it("dictates from a click() on the microphone after a press on Send dragged off", () => {
+    type("hello");
+    pressDown(sendBtn());
+    release(sendBtn(), false);
+    type("");
+    sendBtn().click();
+    expect(dictation.listening.value).toBe(true);
+    expect(submitted).toEqual([]);
+  });
+
+  it("acts on the face painted for a click() while a pointer press is still down", () => {
+    pressDown(sendBtn());
+    type("hello");
+    sendBtn().click();
+    expect(submitted).toEqual(["hello"]);
+    expect(dictation.listening.value).toBe(false);
+  });
+
+  it("acts on the face painted for a click after a press that lost its capture before the release", () => {
+    pressDown(sendBtn());
+    sendBtn().dispatchEvent(new PointerEvent("lostpointercapture", { bubbles: true }));
+    type("hello");
+    clickAt(sendBtn(), 1);
+    expect(submitted).toEqual(["hello"]);
+    expect(dictation.listening.value).toBe(false);
+  });
+
+  it("keeps a finger's press through its release and the capture's end, for the click that follows", async () => {
+    await startFrom(sendBtn());
+    speech.last().hear(["by finger", false]);
+    pressDown(sendBtn());
+    speech.last().finish();
+    release(sendBtn(), true);
+    sendBtn().dispatchEvent(new PointerEvent("lostpointercapture", { bubbles: true }));
+    clickAt(sendBtn(), 1);
+    expect(submitted).toEqual([]);
+    expect(input().value).toBe("by finger");
+  });
+});
+
+describe("words heard while focus is off the box (rule 9)", () => {
+  it("never reach the box of a send held for its answer, nor the box the answer clears", async () => {
+    let answer: (v: unknown) => void = () => undefined;
+    nextSend = new Promise((resolve) => {
+      answer = resolve;
+    });
+    await startFrom(sendBtn());
+    speech.last().hear(["hello", true]);
+    sendBtn().focus();
+    speech.last().hear(["hello", true], ["world", false]);
+    expect(input().value, "the second phrase waits for the box").toBe("hello");
+    sendComposer();
+    expect(submitted).toEqual(["hello"]);
+    expect(input().readOnly).toBe(true);
+    input().focus();
+    expect(input().value).toBe("hello");
+    answer("sent");
+    await settle();
+    expect(input().value).toBe("");
+    input().blur();
+    input().focus();
+    expect(input().value).toBe("");
   });
 });
 

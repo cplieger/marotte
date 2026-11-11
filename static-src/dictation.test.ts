@@ -582,7 +582,7 @@ describe("what stops it and keeps the words (rule 9)", () => {
     expectStoppedKeeping(speech, d);
   });
 
-  it("stop(), the send path's call", async () => {
+  it("stop()", async () => {
     const { speech, d } = await dictatingWithWords();
     d.stop();
     expectStoppedKeeping(speech, d);
@@ -703,6 +703,74 @@ describe("focus outside the box (rule 9: undo works)", () => {
     expect(d.listening.value).toBe(false);
     box.focus();
     expect(box.value).toBe("before the switch");
+  });
+
+  it("drops the held phrase on drop(), the send path's call, and listens no more", async () => {
+    const speech = onDevice();
+    const d = createDictation(speech.platform, box);
+    await listen(speech, d);
+    other.focus();
+    speech.last().hear(["said before the send", true]);
+    d.drop();
+    expect(d.listening.value).toBe(false);
+    box.focus();
+    expect(box.value).toBe("");
+  });
+
+  it("drops a phrase held after the browser ended the session on drop()", async () => {
+    const speech = onDevice();
+    const d = createDictation(speech.platform, box);
+    await listen(speech, d);
+    other.focus();
+    speech.last().hear(["said while away", true]);
+    speech.last().finish();
+    d.drop();
+    box.focus();
+    expect(box.value).toBe("");
+  });
+
+  it("drops the held phrase when the composer is disabled meanwhile", async () => {
+    const speech = onDevice();
+    const d = createDictation(speech.platform, box);
+    await listen(speech, d);
+    other.focus();
+    speech.last().hear(["said before the bot draft", true]);
+    box.disabled = true;
+    await settle();
+    box.disabled = false;
+    await settle();
+    box.focus();
+    expect(box.value).toBe("");
+  });
+
+  it("never writes a held phrase into a read-only box, even before the box's change is seen", async () => {
+    const speech = onDevice();
+    const d = createDictation(speech.platform, box);
+    await listen(speech, d);
+    other.focus();
+    speech.last().hear(["said off the box", true]);
+    speech.last().finish();
+    box.readOnly = true;
+    box.focus();
+    expect(box.value).toBe("");
+    box.readOnly = false;
+    await settle();
+    other.focus();
+    box.focus();
+    expect(box.value).toBe("");
+  });
+
+  it("drops the held phrase on a clear, even of a box that was already empty", async () => {
+    const speech = onDevice();
+    const d = createDictation(speech.platform, box);
+    await listen(speech, d);
+    other.focus();
+    speech.last().hear(["said before the clear", true]);
+    box.value = "";
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(d.listening.value).toBe(false);
+    box.focus();
+    expect(box.value).toBe("");
   });
 
   it("drops the held phrase when the box changed meanwhile", async () => {

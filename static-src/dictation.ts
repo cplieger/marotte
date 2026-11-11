@@ -56,8 +56,12 @@ export interface Dictation {
   readonly listening: ReadonlySignal<boolean>;
   /** Start, or stop so the words still being recognized land. */
   toggle(): void;
-  /** Stop now and drop the words still on their way; what is in the box stays. */
+  /** Stop now: the words still being recognized are dropped, and a phrase waiting for the box's focus lands when
+   *  it comes back. What is in the box stays. */
   stop(): void;
+  /** Stop now and drop every word not yet in the box, because the box no longer holds the draft they were said
+   *  into (a send, another chat). */
+  drop(): void;
 }
 
 interface NavigatorShape {
@@ -108,6 +112,7 @@ export const NO_DICTATION: Dictation = {
   listening: signal(false),
   toggle: () => undefined,
   stop: () => undefined,
+  drop: () => undefined,
 };
 
 export function createDictation(platform: SpeechPlatform, box: HTMLTextAreaElement): Dictation {
@@ -195,9 +200,10 @@ class Controller implements Dictation {
     new MutationObserver(() => {
       this.syncWritable();
     }).observe(box, { attributes: true, attributeFilter: ["disabled", "readonly"] });
+    // The reader's edit or a clear (`setComposerValue`): the draft the waiting words were said into is gone.
     box.addEventListener("input", () => {
       if (!this.writing) {
-        this.stop();
+        this.drop();
       }
     });
     box.addEventListener("pointerdown", () => {
@@ -224,9 +230,7 @@ class Controller implements Dictation {
       const next = watchActiveId();
       if (next !== chat) {
         chat = next;
-        this.stop();
-        // The box now holds the next chat's draft.
-        this.late = null;
+        this.drop();
       }
     });
     window.addEventListener("pagehide", () => {
@@ -262,10 +266,18 @@ class Controller implements Dictation {
     }
   }
 
+  drop(): void {
+    this.late = null;
+    if (this.s !== null) {
+      this.s.pending = null;
+      this.halt(this.s);
+    }
+  }
+
   private syncWritable(): void {
     this.writable.value = !this.box.disabled && !this.box.readOnly;
     if (!this.writable.peek()) {
-      this.stop();
+      this.drop();
     }
   }
 
@@ -475,6 +487,11 @@ class Controller implements Dictation {
   private write(s: Session, phrase: string): void {
     const box = this.box;
     if (phrase === "") {
+      return;
+    }
+    // A held send's box is read-only, and `setRangeText` would write into it anyway.
+    if (box.readOnly || box.disabled) {
+      s.pending = null;
       return;
     }
     s.anchor ??= anchorAt(box);
