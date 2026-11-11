@@ -80,6 +80,7 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.RunWait](),
 	wiregen.TypeRef[marotte.RunEntryView](),
 	wiregen.TypeRef[marotte.RunView](),
+	wiregen.TypeRef[marotte.BotSummary](),
 	wiregen.TypeRef[marotte.ChatHeader](),
 	wiregen.TypeRef[marotte.PermissionOption](),
 	wiregen.TypeRef[marotte.ApprovalFile](),
@@ -397,6 +398,8 @@ var wireEnums = []wiregen.EnumRef{
 	wiregen.StringEnum[marotte.RejectionNote](),
 	// One definition of the tab kinds; TabSubject.kind fails the decoder on an unknown one.
 	wiregen.StringEnum[marotte.TabKind](),
+	// The sidebar and History word a Bot from its state, so an unknown one is refused.
+	wiregen.StringEnum[marotte.BotState](),
 	// The composer's placeholder and the chat-options menu's radio branch on it.
 	wiregen.StringEnum[marotte.InterruptMode](),
 	// The dock and the composer draw the run order from these, and branch on each.

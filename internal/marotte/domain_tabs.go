@@ -101,6 +101,8 @@ type TabSubject struct {
 	// LaunchResolved is true on every run tab whose holders were resolved at open; false only on a tab that predates
 	// LaunchChats, which the keep-state reconcile resolves.
 	LaunchResolved bool `json:"launch_resolved,omitempty"`
+	// Bot marks a Bot's chat tab. Set once at open, never changed.
+	Bot bool `json:"bot,omitempty"`
 }
 
 // OpenTab is the argument to tabs.Store.Open: everything a subject needs that the store cannot
@@ -123,6 +125,8 @@ type OpenTab struct {
 	// decides it, because only the caller knows whether it launched the thing
 	// this tab shows.
 	Owns bool `json:"owns,omitempty"`
+	// Bot is copied onto TabSubject.Bot. Never decoded, so no client states it.
+	Bot bool `json:"-"`
 }
 
 // RunLaunch is what the run-tab door resolved about a run's holders, stored as TabSubject.LaunchChats.

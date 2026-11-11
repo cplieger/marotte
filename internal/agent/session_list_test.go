@@ -445,6 +445,32 @@ func TestWithChatFacts_CopiesHeaderFacts(t *testing.T) {
 	}
 }
 
+// TestWithChatFacts_LabelsABotsRow pins that History labels a closed Bot without its chat open: the row takes the
+// fact from the owning chat's header, and a regular chat's row stays unlabelled.
+func TestWithChatFacts_LabelsABotsRow(t *testing.T) {
+	rows := []marotte.ResumableSession{
+		{SessionID: "s-bot", ChatID: "c-bot"},
+		{SessionID: "s-plain", ChatID: "c-plain"},
+		{SessionID: "s-free"},
+	}
+	headers := []marotte.ChatHeader{
+		{ID: "c-plain", Model: "claude"},
+		{ID: "c-bot", Model: "claude", Bot: &marotte.BotSummary{State: "closed"}},
+	}
+
+	withChatFacts(rows, headers)
+
+	if !rows[0].Bot {
+		t.Errorf("a Bot's row = %+v, want bot true", rows[0])
+	}
+	if rows[1].Bot {
+		t.Errorf("a regular chat's row = %+v, want bot false", rows[1])
+	}
+	if rows[2].Bot {
+		t.Errorf("an unclaimed row = %+v, want bot false", rows[2])
+	}
+}
+
 // TestWithParentNames_NamesTheLaunchingChat pins that a run row carries its launching chat's stored name.
 func TestWithParentNames_NamesTheLaunchingChat(t *testing.T) {
 	runs := []marotte.WorkflowRun{

@@ -127,6 +127,31 @@ func TestCmdOpenTab_PayloadRefusals(t *testing.T) {
 	}
 }
 
+// TestCmdOpenTab_APayloadNamingBotSetsNothing pins that no client states the Bot fact: open_tab has no field for it,
+// so a payload naming it opens a regular chat's tab as a regular tab.
+func TestCmdOpenTab_APayloadNamingBotSetsNothing(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	mem, st, _ := newTabbedMembership(t, store)
+	seedRecord(t, store, "c-open")
+	cmd := &marotte.ClientCommand{Type: marotte.CmdOpenTab, Payload: json.RawMessage(`{"kind":"chat","ref":"c-open","bot":true}`)}
+
+	body, err := cmdOpenTab(t.Context(), mem, cmd)
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", statusOf(err), errText(err))
+	}
+
+	subject, ok := bodyField(t, body, "subject").(marotte.TabSubject)
+	if !ok {
+		t.Fatalf("subject is %T, want marotte.TabSubject", bodyField(t, body, "subject"))
+	}
+	if subject.Bot {
+		t.Errorf("subject = %+v, want bot false: the payload's bot is not the server's fact", subject)
+	}
+	if open, _ := st.List(); len(open) != 1 || open[0].Bot {
+		t.Errorf("stored tabs = %+v, want one tab with bot false", open)
+	}
+}
+
 // TestCmdOpenTab_ForAMissingChatIs404. The delete-ordering gate seen from the
 // command boundary: a 404 is what tells the client to drop the row rather than
 // retry it.
