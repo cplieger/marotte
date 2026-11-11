@@ -1212,7 +1212,8 @@ export class ScrollController {
       return 0;
     }
     let next = skel.nextElementSibling;
-    while (next !== null && next.getClientRects().length === 0) {
+    // The top sentinel follows the prepended skeleton but is drawn at its top (`order: -1`).
+    while (next !== null && (next === this.topSentinel || next.getClientRects().length === 0)) {
       next = next.nextElementSibling;
     }
     return next === null ? 0 : next.getBoundingClientRect().top - skel.getBoundingClientRect().top;
