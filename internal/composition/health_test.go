@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// fakeHealthz serves /healthz with status, the body marotte's own handler sends for it.
+// fakeHealthz serves GET /healthz answering status.
 func fakeHealthz(t *testing.T, status int) string {
 	t.Helper()
 	mux := http.NewServeMux()

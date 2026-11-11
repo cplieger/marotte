@@ -47,6 +47,9 @@ func runMain() int {
 		return composition.RunHealth(os.Stderr)
 	}
 	cfg := composition.ConfigFromEnv()
+	if err := composition.DropListenerEnv(); err != nil {
+		slog.Warn("config: children may inherit the listener settings", "error", err)
+	}
 	cfg.ToolCatalogRequire = toolbelt.ParseRequireList(requiredToolsList)
 
 	workspace.SetKiroHomeResolver(func() string {

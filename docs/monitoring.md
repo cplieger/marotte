@@ -6,7 +6,7 @@ marotte serves a Prometheus metrics page and ships metric alert rules in [`alert
 
 | You run | You get | You set up |
 | --- | --- | --- |
-| Prometheus, Mimir or VictoriaMetrics, with Alertmanager | Every alert below, `up` for a dead container, and graphs of every series | A scrape job named `marotte` on port 9847, a scraper name in `ALLOWED_HOSTS`, and `alerts/promql.yaml` in your ruler |
+| Prometheus, Mimir or VictoriaMetrics, with Alertmanager | Every alert below, `up` for a dead container, and graphs of every series | A scrape job named `marotte` on port 9847 (or the port `LISTEN_ADDR` names), a scraper name in `ALLOWED_HOSTS`, and `alerts/promql.yaml` in your ruler |
 | Loki and Alertmanager, no metric store | No alerts: marotte's rules need a metric store | Push notifications, below |
 | Grafana-managed alerting only | The same alerts, imported into Grafana | A Prometheus data source that scrapes marotte, and the rules imported from `alerts/promql.yaml` |
 | Docker or Unraid only | Push notifications for finished turns and workflow runs and for permission requests, and Docker health | An uptime prober on `/healthz`, or something that watches Docker health |
@@ -15,11 +15,11 @@ Push notifications need marotte installed as an app over HTTPS, as [Features](fe
 
 ## Metrics
 
-The page is always on at `http://<host>:9847/metrics`, on the same port as the web page, and answers `GET` only. It has no setting to turn it off.
+The page is always on at `http://<host>:9847/metrics` (or the port `LISTEN_ADDR` names), on the same port as the web page, and answers `GET` only. It has no setting to turn it off.
 
 When `ALLOWED_HOSTS` is set, the scraper must call marotte by a name in that list, or marotte answers `403`. A Docker network name such as `marotte` works once you add it to the list. [Host allowlist](configuration.md#host-allowlist-allowed_hosts) explains the setting.
 
-The page has no login, and marotte has none of its own. If you put marotte behind a reverse proxy that asks for a login, exempt `/metrics` at the proxy. Otherwise, scrape the container directly, but only from a network you already trust with the whole agent, because anyone who reaches port 9847 can use it.
+The page has no login, and marotte has none of its own. If you put marotte behind a reverse proxy that asks for a login, exempt `/metrics` at the proxy. Otherwise, scrape the container directly, but only from a network you already trust with the whole agent, because anyone who reaches port 9847 (or the port `LISTEN_ADDR` names) can use it.
 
 Labels carry fixed values only, with one exception. `rule_id` is the random id marotte gives a schedule or an event rule, and it names no workflow, path, repository or command.
 

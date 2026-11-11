@@ -131,6 +131,12 @@ func ConfigFromEnv() Config {
 	}
 }
 
+// DropListenerEnv unsets LISTEN_ADDR and ALLOWED_HOSTS, for a caller that has run ConfigFromEnv:
+// every child inherits marotte's environment, and apps an agent runs read both as their own.
+func DropListenerEnv() error {
+	return errors.Join(os.Unsetenv(listenAddrVar), os.Unsetenv("ALLOWED_HOSTS"))
+}
+
 // absDir makes a configured directory absolute against the startup cwd: the browse roots, the file
 // API and the config-file doors treat the config dir as an absolute identity, and a relative tools
 // dir would give toolbelt's bin/ symlinks targets resolved against bin/ itself. A failed Getwd

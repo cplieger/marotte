@@ -32,19 +32,21 @@ func listenAddrFromEnv() (addr, local string, err error) {
 	}
 	parsed, _ := url.Parse(u) // LocalURL returns only a URL url.Parse accepts
 	if !loopbackHost(parsed.Hostname()) {
-		return addr, "", fmt.Errorf("%s=%q: the host is not empty, 0.0.0.0, ::, localhost or a loopback address, "+
-			"which the healthcheck and the in-container API need", listenAddrVar, addr)
+		return addr, "", fmt.Errorf("%s=%q: the host is not empty, 0.0.0.0, ::, localhost or a loopback address without a zone "+
+			"other than 127.255.255.255, which the healthcheck and the in-container API need", listenAddrVar, addr)
 	}
 	return addr, parsed.Host, nil
 }
 
 // loopbackHost reports whether ALLOWED_HOSTS and the loopback-only routes admit a request
 // addressed to host from inside the container. A zone is refused: httpserver's Host
-// canonicalisation reads no zoned address as loopback.
+// canonicalisation reads no zoned address as loopback. 127.255.255.255 is refused because it
+// binds but cannot be dialled.
 func loopbackHost(host string) bool {
 	if strings.EqualFold(host, "localhost") {
 		return true
 	}
 	a, err := netip.ParseAddr(host)
-	return err == nil && a.Zone() == "" && a.IsLoopback()
+	return err == nil && a.Zone() == "" && a.IsLoopback() &&
+		a.Unmap() != netip.AddrFrom4([4]byte{127, 255, 255, 255})
 }

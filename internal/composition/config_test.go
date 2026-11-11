@@ -33,6 +33,20 @@ func TestConfigFromEnv_Defaults(t *testing.T) {
 	}
 }
 
+func TestDropListenerEnv(t *testing.T) {
+	for _, name := range []string{"LISTEN_ADDR", "ALLOWED_HOSTS"} {
+		t.Setenv(name, "set-by-the-operator")
+	}
+	if err := DropListenerEnv(); err != nil {
+		t.Fatalf("DropListenerEnv() = %v", err)
+	}
+	for _, name := range []string{"LISTEN_ADDR", "ALLOWED_HOSTS"} {
+		if v, ok := os.LookupEnv(name); ok {
+			t.Errorf("%s = %q after DropListenerEnv, want unset so children do not inherit it", name, v)
+		}
+	}
+}
+
 func TestConfigFromEnv_Overrides(t *testing.T) {
 	t.Setenv("KIRO_WORK_DIR", "/custom/work")
 	t.Setenv("KIRO_CONFIG_DIR", "/custom/config")

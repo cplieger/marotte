@@ -4,7 +4,7 @@ This page is for anyone deciding where to run marotte and who can reach it. It c
 
 ## Who can reach it
 
-marotte has no login of its own. Anyone who can reach port 9847 can use the agent, which runs commands and reads and writes files under `/workspace` and any [additional directory](configuration.md#folders-the-agent-can-use-beyond-workspace) you add. They can also use the Kiro sign-in marotte keeps in `/config`. Keep the port on your private network, or put marotte behind a [reverse proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md) that asks for a login. Caddy forward-auth, oauth2-proxy and Authentik all work. Doing both is better.
+marotte has no login of its own. Anyone who can reach port 9847 (or the port `LISTEN_ADDR` names) can use the agent, which runs commands and reads and writes files under `/workspace` and any [additional directory](configuration.md#folders-the-agent-can-use-beyond-workspace) you add. They can also use the Kiro sign-in marotte keeps in `/config`. Keep the port on your private network, or put marotte behind a [reverse proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md) that asks for a login. Caddy forward-auth, oauth2-proxy and Authentik all work. Doing both is better.
 
 Signing in on the page gives the agent your Kiro account. That is the agent's identity, and it does not protect marotte itself. marotte keeps the sign-in in `/config/signin.json`, which only the container's user may read or write. marotte tightens a file that others can read, and refuses to use one it cannot tighten. It never reads the sign-in of a `kiro-cli` you run in the terminal.
 

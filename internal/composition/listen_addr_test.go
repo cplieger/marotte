@@ -67,6 +67,7 @@ func TestListenAddrFromEnv_RefusesAHostTheContainerCannotReachAsLoopback(t *test
 		{"one IPv6 address", "[2001:db8::1]:9847"},
 		{"a hostname", "marotte.lan:9847"},
 		{"a zoned IPv6 loopback, whose Host the allowlist cannot read", "[::1%lo]:9847"},
+		{"the IPv4 loopback broadcast address, which binds but cannot be dialled", "127.255.255.255:9847"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

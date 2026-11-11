@@ -79,7 +79,7 @@ Settings in the compose `environment:` block are read at start, so recreate the 
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `LISTEN_ADDR` | Address the server listens on, as `host:port`. The host may be empty, `0.0.0.0` or `::`, which listen on every address, or `localhost` or a loopback address; any other host stops startup, because the healthcheck and the in-container API reach the server on loopback. Change it on a host-network install (`network_mode: host`) when another service on the host holds port 9847; `ports:` does not apply there. On the default network, change the host side of `ports:` instead. A value without a port number from 1 to 65535 stops startup. | `:9847` |
+| `LISTEN_ADDR` | Address the server listens on, as `host:port`. The host may be empty, `0.0.0.0` or `::`, which listen on every address, or `localhost` or a loopback address such as `127.0.0.1` or `::1` (without a `%zone`, and not `127.255.255.255`); any other host stops startup, because the healthcheck and the in-container API reach the server on loopback. Change it on a host-network install (`network_mode: host`) when another service on the host holds port 9847; `ports:` does not apply there. On the default network, change the host side of `ports:` instead. A value without a port number from 1 to 65535 stops startup. | `:9847` |
 | `ALLOWED_HOSTS` | Hostnames and IPs you open marotte at, comma-separated. Any other address gets `403`. | _(unset)_ |
 | `TRUSTED_PROXIES` | Address ranges of your reverse proxy, so the logs record the real client address. | _(unset)_ |
 | `TRUSTED_INSTALL_UIDS` | User IDs that may write to the tools folder (`MAROTTE_TOOLS_DIR`, by default `/config/tools`) without marotte refusing to install kiro-cli or start the tools engine. Only for shared or network volumes. | _(unset)_ |
@@ -97,11 +97,11 @@ Every setting, with what each one checks, is in [Configuration](docs/configurati
 
 | Port | Description |
 | --- | --- |
-| `9847` | The web page, its live updates, the terminal, the [health check](docs/monitoring.md#knowing-the-app-is-alive) at `/healthz` and the [metrics page](docs/monitoring.md#metrics) at `/metrics` |
+| `9847`, or the port `LISTEN_ADDR` names | The web page, its live updates, the terminal, the [health check](docs/monitoring.md#knowing-the-app-is-alive) at `/healthz` and the [metrics page](docs/monitoring.md#metrics) at `/metrics` |
 
 ## Security
 
-marotte has no login of its own. Anyone who can reach port 9847 can use the agent, which runs commands and reads and writes files under `/workspace` and any [additional directory](docs/configuration.md#folders-the-agent-can-use-beyond-workspace) you add. They can also use the Kiro sign-in in `/config`. Keep the port on your private network, or put marotte behind a [reverse proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md) that asks for a login, such as Caddy forward-auth, oauth2-proxy or Authentik. Signing in on the page gives the agent your Kiro account. It does not protect marotte itself.
+marotte has no login of its own. Anyone who can reach port 9847 (or the port `LISTEN_ADDR` names) can use the agent, which runs commands and reads and writes files under `/workspace` and any [additional directory](docs/configuration.md#folders-the-agent-can-use-beyond-workspace) you add. They can also use the Kiro sign-in in `/config`. Keep the port on your private network, or put marotte behind a [reverse proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md) that asks for a login, such as Caddy forward-auth, oauth2-proxy or Authentik. Signing in on the page gives the agent your Kiro account. It does not protect marotte itself.
 
 `/metrics` has no login either, so exempt it at a login proxy or scrape it only from a network you trust with the agent.
 
@@ -125,7 +125,7 @@ Docker checks `/healthz` every 30 seconds. The container shows healthy once maro
 
 ## Monitoring
 
-marotte serves Prometheus metrics at `/metrics` on port 9847, and alert rules for Prometheus ship in [`alerts/promql.yaml`](alerts/promql.yaml). Add your scraper's name to `ALLOWED_HOSTS`. [Monitoring and alerts](docs/monitoring.md) lists the series and the alerts and says who tells you when the container stops.
+marotte serves Prometheus metrics at `/metrics` on port 9847 (or the port `LISTEN_ADDR` names), and alert rules for Prometheus ship in [`alerts/promql.yaml`](alerts/promql.yaml). Add your scraper's name to `ALLOWED_HOSTS`. [Monitoring and alerts](docs/monitoring.md) lists the series and the alerts and says who tells you when the container stops.
 
 ## Documentation
 
