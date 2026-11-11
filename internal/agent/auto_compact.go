@@ -107,10 +107,10 @@ func (a *autoCompactor) noteToolCall(chatID marotte.ChatID) {
 
 // noteUsage lists the running turn's compaction the first time a reading inside it reaches the point, once per turn
 // and never after the reader cancelled that turn's (runList.crossing). A reading at compactionFailsafePct stops the
-// turn to compact and resume it (runList.failsafe) when the response it measures called a tool, so the turn goes on;
-// while an ask is open the stop is owed until the asks settle (askSettled) or a later reading replaces it. Each
-// reading is one model response's own (translate passes no published figure, replay or breakdown twin as live).
-// One under the point re-arms the failsafe.
+// turn to compact it and, under compactionFailsafeResumes, resume it (runList.failsafe) when the response it measures
+// called a tool, so the turn goes on; while an ask is open the stop is owed until the asks settle (askSettled) or a
+// later reading replaces it. Each reading is one model response's own (translate passes no published figure, replay
+// or breakdown twin as live). One under the point re-arms the failsafe.
 func (a *autoCompactor) noteUsage(ctx context.Context, chatID marotte.ChatID, pct float64) {
 	if a == nil {
 		return

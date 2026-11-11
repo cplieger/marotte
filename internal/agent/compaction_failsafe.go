@@ -37,9 +37,10 @@ type failsafeFacts struct {
 }
 
 // failsafe stops the lone running turn turnID names, as the reader's Cancel does, and lists its compaction (taking
-// over the one already listed) with the resume directly behind it. It fires once per turn, never in a turn whose
-// compaction the reader declined, and not again after an accepted failsafe compaction until usageUnderThePoint. A
-// fold-opened wire turn is left alone: its compaction is taken beside it at once and closes it (compactionStart).
+// over the one already listed) with the resume directly behind it while under compactionFailsafeResumes
+// (takeOverCompaction). It fires once per turn, never in a turn whose compaction the reader declined, and not again
+// after an accepted failsafe compaction until usageUnderThePoint. A fold-opened wire turn is left alone: its
+// compaction is taken beside it at once and closes it (compactionStart).
 func (l *runList) failsafe(f failsafeFacts) stopPlan {
 	if f.turnID == "" || f.turnID == l.failsafeFor || f.turnID == l.declined || l.failsafeHeld || l.liveLen() != 1 {
 		return stopPlan{}

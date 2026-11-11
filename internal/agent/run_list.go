@@ -611,7 +611,7 @@ func (l *runList) sendNow(id, stop string, hasStop bool) (*runEntry, error) {
 	l.remove(e)
 	e.state, e.pausedBy, e.next = marotte.RunPending, 0, true
 	l.insert(l.frontOfPending(true), e)
-	l.dropResume()
+	l.readerTookOver()
 	if !hasStop {
 		stop = marotte.CancelTarget(l.project())
 	}
@@ -1179,16 +1179,22 @@ func (l *runList) stopHead(target string, token uint64) stopPlan {
 	return stopPlan{entry: e, arm: stopRunning}
 }
 
-// readerStop is every stop the reader makes (Cancel, the composer's stop, a send-now press's stop): stopHead, and
-// whatever it stops, the waiting resume is withdrawn and a turn the failsafe is stopping becomes the reader's stop,
-// whose close leaves the rows paused (pauseRule). The reader asked for the work to stop, so marotte does not
-// continue it; the withdrawal holds when the cancel is not delivered, as a later stop drops a retry (overtaken).
+// readerStop is every stop the reader makes (Cancel, the composer's stop, a send-now press's stop): readerTookOver,
+// then stopHead.
 func (l *runList) readerStop(target string, token uint64) stopPlan {
+	l.readerTookOver()
+	return l.stopHead(target, token)
+}
+
+// readerTookOver withdraws the waiting resume and makes a turn the failsafe is stopping the reader's stop, whose close
+// leaves the rows paused (pauseRule) and tells nothing of the resume limit. The reader stopped the work or sent the
+// next message, so marotte does not continue it; the withdrawal holds when the cancel is not delivered, as a later
+// stop drops a retry (overtaken).
+func (l *runList) readerTookOver() {
 	l.dropResume()
 	for _, e := range l.entries[:l.liveLen()] {
 		e.fsStopped = false
 	}
-	return l.stopHead(target, token)
 }
 
 // stopTarget is the live starting or running turn stopHead's target names, with its index, or nil.

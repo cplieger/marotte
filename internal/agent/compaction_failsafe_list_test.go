@@ -804,6 +804,7 @@ func TestFailsafe_TheResumeLimitsNoticeWaitsForTheStopToHold(t *testing.T) {
 	for _, tc := range []struct {
 		after func(w *tableWorld)
 		name  string
+		order string
 	}{
 		{name: "the reply finished first", after: func(w *tableWorld) {
 			w.closed("m-resume", listClose{clean: true, completed: true})
@@ -816,6 +817,13 @@ func TestFailsafe_TheResumeLimitsNoticeWaitsForTheStopToHold(t *testing.T) {
 			w.l.readerStop("m-resume", 3)
 			w.closed("m-resume", listClose{})
 		}},
+		{name: "the reader pressed send-now", order: "compact-2:starting m-q1:pending", after: func(w *tableWorld) {
+			w.send("m-q1", marotte.SendPlain, marotte.InterruptQueue)
+			if _, err := w.l.sendNow("m-q1", "", false); err != nil {
+				t.Fatalf("Setup: send-now = %v", err)
+			}
+			w.closed("m-resume", listClose{})
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := resumeRunning(t)
@@ -826,6 +834,9 @@ func TestFailsafe_TheResumeLimitsNoticeWaitsForTheStopToHold(t *testing.T) {
 			tc.after(w)
 			if fx := w.l.takeEffects(); len(fx.notices) != 0 {
 				t.Errorf("notices = %q, want none", fx.notices)
+			}
+			if got := w.order(); tc.order != "" && got != tc.order {
+				t.Errorf("list = %q, want %q", got, tc.order)
 			}
 		})
 	}
