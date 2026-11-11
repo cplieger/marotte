@@ -141,9 +141,7 @@ func writeShellHint(b *strings.Builder, toolsDir string, onPath bool) {
 	b.WriteString("path (`" + toolsDir + "/bin/<tool>`)")
 }
 
-// 9847 mirrors internal/server's unexported port const; steering cannot import
-// server (server imports steering).
-func writeToolsEngine(b *strings.Builder, configDir, toolsDir string) {
+func writeToolsEngine(b *strings.Builder, configDir, toolsDir, serverAddr string) {
 	b.WriteString("## Tools engine\n\n")
 	if toolsDir == "" {
 		b.WriteString("- The tools engine is off because the server cannot use the folder configured for it; ")
@@ -151,15 +149,15 @@ func writeToolsEngine(b *strings.Builder, configDir, toolsDir string) {
 		b.WriteString("`MAROTTE_TOOLS_DIR` (or `KIRO_CONFIG_DIR`, which holds it by default) to a folder the server accepts\n\n")
 		return
 	}
-	b.WriteString("- marotte's own HTTP server answers on `localhost:9847` inside the container (correct from ")
-	b.WriteString("in here whatever the host published). `curl -s 'localhost:9847/api/tools/search?q=<name>'` ")
+	b.WriteString("- marotte's own HTTP server answers on `" + serverAddr + "` inside the container (correct from ")
+	b.WriteString("in here whatever the host published). `curl -s '" + serverAddr + "/api/tools/search?q=<name>'` ")
 	b.WriteString("searches the tool catalog AND the host's Debian packages in one answer; a hit is ")
 	b.WriteString("`{name, source, version?, match?, apt?, unavailable?, reason?}`, and the same name can ")
 	b.WriteString("appear twice at two versions (`aqua:…` and `apt:…`), which is why both are shown\n")
-	b.WriteString("- `curl -s -X POST localhost:9847/api/tools -H 'content-type: application/json' ")
+	b.WriteString("- `curl -s -X POST " + serverAddr + "/api/tools -H 'content-type: application/json' ")
 	b.WriteString("-d '{\"name\":\"<name>\"}'` installs one and answers `202 {\"job\":…}`; an `apt:` hit also needs ")
 	b.WriteString("its `\"source\":\"apt:<name>\"`, or the engine answers `unknown tool`; progress streams to ")
-	b.WriteString("Settings → Tools, and `GET localhost:9847/api/tools/jobs` lists jobs. A catalog install ")
+	b.WriteString("Settings → Tools, and `GET " + serverAddr + "/api/tools/jobs` lists jobs. A catalog install ")
 	b.WriteString("lands under `" + toolsDir + "/opt/<name>/<version>/` with a symlink in ")
 	b.WriteString("`" + toolsDir + "/bin/`, is recorded in `" + configDir + "/tools.json`, and survives a ")
 	b.WriteString("container recreate. An `\"apt\":true` hit is recorded too but installs into the container ")

@@ -75,6 +75,12 @@ type Config struct {
 	BrowseRoots []string
 	// notifyErr is a configured but unusable notify token, which validateConfig makes fatal.
 	notifyErr error
+	// listenErr is an unusable LISTEN_ADDR, which validateConfig makes fatal.
+	listenErr error
+	// ListenAddr is the server's net.Listen address, from LISTEN_ADDR.
+	ListenAddr string
+	// LocalAddr is the host:port a process in the container reaches the server at.
+	LocalAddr string
 	// ACPArgs are operator kiro-cli launch flags from MAROTTE_KIRO_ACP_ARGS, filtered by
 	// bridge.ParseACPArgs and appended to the agent engine's argv. An escape hatch for a flag
 	// upstream adds, not a capability switch.
@@ -96,9 +102,13 @@ func ConfigFromEnv() Config {
 	configDir := paths.configDir
 	workDir := absDir("KIRO_WORK_DIR", cmp.Or(envx.String("KIRO_WORK_DIR"), "/workspace"))
 	notifyGate, notifyErr := notifyGateFromEnv()
+	listenAddr, localAddr, listenErr := listenAddrFromEnv()
 	return Config{
 		NotifyGate:          notifyGate,
 		notifyErr:           notifyErr,
+		listenErr:           listenErr,
+		ListenAddr:          listenAddr,
+		LocalAddr:           localAddr,
 		WorkDir:             workDir,
 		ConfigDir:           configDir,
 		KiroCLIVersion:      envx.String("KIRO_CLI_VERSION"),

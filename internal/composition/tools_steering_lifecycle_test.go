@@ -26,7 +26,7 @@ func TestWireToolsSteering_StopCancelsAndJoinsTheBootRegeneration(t *testing.T) 
 		down := newToolsSlot(filepath.Join(t.TempDir(), toolsManifestName), func() (*toolbelt.Engine, error) {
 			return nil, errToolsDirUnusable
 		})
-		steer := steering.New(t.TempDir(), t.TempDir(), "")
+		steer := steering.New(steering.Config{WorkDir: t.TempDir(), ConfigDir: t.TempDir()})
 		release := make(chan struct{})
 		steer.SetMCPSnapshot(func() steering.MCPSnapshot {
 			<-release

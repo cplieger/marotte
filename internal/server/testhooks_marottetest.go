@@ -16,15 +16,6 @@ import (
 	"github.com/cplieger/marotte/internal/push"
 )
 
-// The browser-mode suite starts one beside whatever already holds the default port.
-const testPortEnv = "MAROTTE_TEST_PORT"
-
-func init() {
-	if p := os.Getenv(testPortEnv); p != "" {
-		listenPort = p
-	}
-}
-
 // sseProbe is the runtime as the SSE control surface reads it. *agent.Runtime
 // satisfies it; a server wired to a narrower engine mounts no hooks.
 type sseProbe interface {
