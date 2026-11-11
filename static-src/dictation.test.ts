@@ -110,7 +110,7 @@ describe("support (rule 4)", () => {
     vi.stubGlobal("webkitSpeechRecognition", undefined);
     const platform = browserSpeechPlatform();
     expect(platform.Recognition).toBeNull();
-    expect(createDictation(platform, box).ready.value).toBe(false);
+    expect(createDictation(platform, box, []).ready.value).toBe(false);
   });
 
   it("takes the prefixed constructor where only that exists", () => {
@@ -137,13 +137,14 @@ describe("support (rule 4)", () => {
   });
 
   it("is ready with a recognizer and a writable box", () => {
-    expect(createDictation(onDevice().platform, box).ready.value).toBe(true);
+    expect(createDictation(onDevice().platform, box, []).ready.value).toBe(true);
   });
 
   it("makes no recognizer and does nothing when unsupported", () => {
     const d = createDictation(
       { Recognition: null, lang: "en-US", cloud: null, cumulative: false },
       box,
+      [],
     );
     d.toggle();
     expect(d.listening.value).toBe(false);
@@ -166,7 +167,7 @@ describe("language (rule 7)", () => {
       available: () => Promise.resolve("downloadable"),
       install: () => Promise.resolve(true),
     });
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     d.toggle();
     await settle();
     expect(speech.last().lang).toBe("fr-FR");
@@ -178,7 +179,7 @@ describe("language (rule 7)", () => {
 describe("listening and results (rule 3)", () => {
   it("listens continuously with interim results", async () => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     expect(speech.last().started).toBe(1);
     expect(speech.last().continuous).toBe(true);
@@ -186,14 +187,14 @@ describe("listening and results (rule 3)", () => {
   });
 
   it("is listening from the press, before the engine answers", () => {
-    const d = createDictation(onDevice().platform, box);
+    const d = createDictation(onDevice().platform, box, []);
     d.toggle();
     expect(d.listening.value).toBe(true);
   });
 
   it("shows interim words in the box and replaces them with the final result", async () => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     speech.last().hear(["hel", false]);
     expect(box.value).toBe("hel");
@@ -206,7 +207,7 @@ describe("listening and results (rule 3)", () => {
 
   it("joins the engine's results into one spaced phrase", async () => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     speech.last().hear(["hello", true], [" world", false]);
     expect(box.value).toBe("hello world");
@@ -214,7 +215,7 @@ describe("listening and results (rule 3)", () => {
 
   it("keeps a cumulative list (Chrome on Android) from repeating words", async () => {
     const speech = fakeSpeech({ cumulative: true, available: () => Promise.resolve("available") });
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     speech.last().hear(["hello", true], ["hello world", true]);
     expect(box.value).toBe("hello world");
@@ -222,7 +223,7 @@ describe("listening and results (rule 3)", () => {
 
   it("keeps distinct segments on a list that is not cumulative", async () => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     speech.last().hear(["no", true], ["no way", true]);
     expect(box.value).toBe("no no way");
@@ -243,7 +244,7 @@ describe("listening and results (rule 3)", () => {
 
   it("stops on a second press and keeps the final result that follows", async () => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     speech.last().hear(["hello wor", false]);
     d.toggle();
@@ -256,7 +257,7 @@ describe("listening and results (rule 3)", () => {
 
   it("ends when the browser ends it", async () => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     speech.last().hear(["hello", true]);
     speech.last().finish();
@@ -266,7 +267,7 @@ describe("listening and results (rule 3)", () => {
 
   it("ends quietly when nobody spoke", async () => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     speech.last().fail("no-speech");
     speech.last().finish();
@@ -277,7 +278,7 @@ describe("listening and results (rule 3)", () => {
 
   it("ends on a network error after words arrived and says so, staying available", async () => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     speech.last().hear(["hello", false]);
     speech.last().fail("network");
@@ -289,7 +290,7 @@ describe("listening and results (rule 3)", () => {
 
   it("turns off for the page on a network error before any result (Brave)", async () => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     speech.last().fail("network");
     speech.last().finish();
@@ -301,9 +302,23 @@ describe("listening and results (rule 3)", () => {
     expect(text?.toLowerCase()).toContain("reload");
   });
 
+  it("stays available on a network error before any result once an earlier session heard words", async () => {
+    const speech = onDevice();
+    const d = createDictation(speech.platform, box, []);
+    await listen(speech, d);
+    speech.last().hear(["hello", true]);
+    d.toggle();
+    speech.last().finish();
+    await listen(speech, d);
+    speech.last().fail("network");
+    speech.last().finish();
+    expect(d.ready.value).toBe(true);
+    expect(toastTexts()).toEqual(["Dictation stopped: the speech service did not answer."]);
+  });
+
   it("starts a fresh recognizer on the next press", async () => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     d.toggle();
     speech.last().finish();
@@ -314,7 +329,7 @@ describe("listening and results (rule 3)", () => {
 
   it("stops listening when the reader edits the box mid-dictation, and never overwrites the edit", async () => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     speech.last().hear(["hello", false]);
     box.value = "hello there";
@@ -328,7 +343,7 @@ describe("listening and results (rule 3)", () => {
 describe("where the words go (rule 9)", () => {
   it("inserts at the caret, spaced from the text on both sides", async () => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     box.value = "before after";
     box.setSelectionRange(6, 6);
     await listen(speech, d);
@@ -338,7 +353,7 @@ describe("where the words go (rule 9)", () => {
 
   it("adds no second space where the caret already sits after one", async () => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     box.value = "before after";
     box.setSelectionRange(7, 7);
     await listen(speech, d);
@@ -348,7 +363,7 @@ describe("where the words go (rule 9)", () => {
 
   it("replaces a selection", async () => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     box.value = "keep this part";
     box.setSelectionRange(5, 9);
     await listen(speech, d);
@@ -358,7 +373,7 @@ describe("where the words go (rule 9)", () => {
 
   it("puts focus in the box, so the words land as editing the reader can undo", async () => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     const btn = document.createElement("button");
     document.body.append(btn);
     btn.focus();
@@ -372,7 +387,7 @@ describe("where the words go (rule 9)", () => {
 
   it("is taken back by one undo", async () => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     box.value = "before after";
     box.focus();
     box.setSelectionRange(7, 7);
@@ -398,7 +413,7 @@ describe("where the words go (rule 9)", () => {
       const btn = pressFrom();
       try {
         const speech = onDevice();
-        const d = createDictation(speech.platform, box);
+        const d = createDictation(speech.platform, box, []);
         box.value = "before after";
         box.setSelectionRange(7, 7);
         await listen(speech, d);
@@ -425,7 +440,7 @@ describe("where the words go (rule 9)", () => {
       try {
         box.setAttribute("inputmode", "text");
         const speech = onDevice();
-        const d = createDictation(speech.platform, box);
+        const d = createDictation(speech.platform, box, []);
         await listen(speech, d);
         speech.last().fail("no-speech");
         speech.last().finish();
@@ -440,7 +455,7 @@ describe("where the words go (rule 9)", () => {
       const btn = pressFrom();
       try {
         const speech = onDevice();
-        const d = createDictation(speech.platform, box);
+        const d = createDictation(speech.platform, box, []);
         await listen(speech, d);
         box.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
         expect(box.hasAttribute("inputmode")).toBe(false);
@@ -452,11 +467,28 @@ describe("where the words go (rule 9)", () => {
       }
     });
 
+    it("keeps the keyboard the reader took back through Stop and the end", async () => {
+      const btn = pressFrom();
+      try {
+        const speech = onDevice();
+        const d = createDictation(speech.platform, box, []);
+        await listen(speech, d);
+        box.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+        d.toggle();
+        expect(box.hasAttribute("inputmode")).toBe(false);
+        speech.last().finish();
+        expect(box.hasAttribute("inputmode")).toBe(false);
+        expect(document.activeElement).toBe(box);
+      } finally {
+        btn.remove();
+      }
+    });
+
     it("keeps the box focused at the end when it was focused at the press", async () => {
       document.documentElement.setAttribute("data-pointer", "coarse");
       box.focus();
       const speech = onDevice();
-      const d = createDictation(speech.platform, box);
+      const d = createDictation(speech.platform, box, []);
       await listen(speech, d);
       expect(box.inputMode).toBe("none");
       d.stop();
@@ -467,7 +499,7 @@ describe("where the words go (rule 9)", () => {
 
   it("announces the committed text to the draft layer with an input event", async () => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     const seen: string[] = [];
     box.addEventListener("input", () => {
       seen.push(box.value);
@@ -481,7 +513,7 @@ describe("where the words go (rule 9)", () => {
 describe("what stops it and keeps the words (rule 9)", () => {
   async function dictatingWithWords(): Promise<{ speech: FakeSpeech; d: Dictation }> {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     speech.last().hear(["half a thought", false]);
     return { speech, d };
@@ -520,6 +552,38 @@ describe("what stops it and keeps the words (rule 9)", () => {
     const { speech, d } = await dictatingWithWords();
     window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
     expectStoppedKeeping(speech, d);
+  });
+
+  it("focus moving out of the box, after which one undo takes the words back", async () => {
+    const other = document.createElement("button");
+    document.body.append(other);
+    try {
+      const { speech, d } = await dictatingWithWords();
+      other.focus();
+      expectStoppedKeeping(speech, d);
+      box.focus();
+      document.execCommand("undo");
+      expect(box.value).toBe("");
+    } finally {
+      other.remove();
+    }
+  });
+
+  it("keeps listening when focus moves to one of its buttons, or the window loses focus", async () => {
+    const control = document.createElement("button");
+    document.body.append(control);
+    try {
+      const speech = onDevice();
+      const d = createDictation(speech.platform, box, [control]);
+      await listen(speech, d);
+      control.focus();
+      expect(d.listening.value).toBe(true);
+      box.focus();
+      box.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: null }));
+      expect(d.listening.value, "the box stays active across a window switch").toBe(true);
+    } finally {
+      control.remove();
+    }
   });
 
   it("the page going to the background", async () => {
@@ -563,7 +627,7 @@ describe("what stops it and keeps the words (rule 9)", () => {
   it("does not start in a disabled composer", () => {
     const speech = onDevice();
     box.disabled = true;
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     expect(d.ready.value).toBe(false);
     d.toggle();
     expect(speech.made).toHaveLength(0);
@@ -571,7 +635,7 @@ describe("what stops it and keeps the words (rule 9)", () => {
 
   it("a stop during the availability check starts nothing", async () => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     d.toggle();
     d.toggle();
     await settle();
@@ -583,7 +647,7 @@ describe("what stops it and keeps the words (rule 9)", () => {
 describe("never sends (rule 3)", () => {
   it("leaves the text in the box through a final result, the end and an error", async () => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     const form = document.createElement("form");
     form.append(box);
     document.body.append(form);
@@ -618,7 +682,7 @@ describe("permission and microphone (rule 5)", () => {
     ["language-not-supported", "language"],
   ])("on %s says so in plain words, names the reload, and stays off", async (code, word) => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     speech.last().fail(code);
     speech.last().finish();
@@ -634,7 +698,7 @@ describe("permission and microphone (rule 5)", () => {
 
   it("stays off when the engine refuses at start", async () => {
     const speech = fakeSpeech({ startThrows: new DOMException("blocked", "NotAllowedError") });
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     d.toggle();
     await settle();
     expect(d.listening.value).toBe(false);
@@ -646,7 +710,7 @@ describe("permission and microphone (rule 5)", () => {
 describe("on-device first (rule 6)", () => {
   it("runs on-device where the language is installed, with no notice", async () => {
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     expect(speech.availableCalls[0]).toEqual({
       langs: ["en-US"],
@@ -663,7 +727,7 @@ describe("on-device first (rule 6)", () => {
       available: () => Promise.resolve("downloadable"),
       install: () => Promise.resolve(true),
     });
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     expect(speech.installCalls).toEqual([
       { langs: ["en-US"], processLocally: true, quality: "dictation" },
@@ -679,7 +743,7 @@ describe("on-device first (rule 6)", () => {
       available: (o) => Promise.resolve(o.processLocally ? "downloadable" : "available"),
       install: () => Promise.resolve(false),
     });
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     expect(speech.last().processLocally).toBe(false);
     expect(speech.last().started).toBe(1);
@@ -693,7 +757,7 @@ describe("on-device first (rule 6)", () => {
       cloud: "Microsoft's speech service",
       available: (o) => Promise.resolve(o.processLocally ? "unavailable" : "available"),
     });
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     expect(speech.last().processLocally).toBe(false);
     expect(toastTexts()).toEqual([
@@ -707,7 +771,7 @@ describe("on-device first (rule 6)", () => {
         Promise.resolve(o.processLocally ? ("unavailable" as const) : ("available" as const)),
     };
     const denied = fakeSpeech(shape);
-    createDictation(denied.platform, box).toggle();
+    createDictation(denied.platform, box, []).toggle();
     await settle();
     expect(toastTexts(), "nothing before the start event").toEqual([]);
     denied.last().fail("not-allowed");
@@ -716,7 +780,7 @@ describe("on-device first (rule 6)", () => {
     expect(toastTexts().join(" ")).not.toContain("sends audio");
     resetToasts();
     const next = fakeSpeech(shape);
-    await listen(next, createDictation(next.platform, box));
+    await listen(next, createDictation(next.platform, box, []));
     expect(toastTexts()).toEqual([
       "Dictation in this browser sends audio to Google's speech service.",
     ]);
@@ -728,7 +792,7 @@ describe("on-device first (rule 6)", () => {
       available: (o) => Promise.resolve(o.processLocally ? "downloadable" : "available"),
       install: () => Promise.reject(new Error("install failed")),
     });
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     expect(speech.last().processLocally).toBe(false);
     expect(speech.last().started).toBe(1);
@@ -742,7 +806,7 @@ describe("on-device first (rule 6)", () => {
       cloud: null,
       available: () => Promise.reject(new DOMException("blocked", "NotAllowedError")),
     });
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     d.toggle();
     await settle();
     expect(speech.made).toHaveLength(0);
@@ -759,7 +823,7 @@ describe("on-device first (rule 6)", () => {
           ? Promise.reject(new DOMException("blocked", "NotAllowedError"))
           : Promise.resolve("available"),
     });
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     expect(speech.last().processLocally).toBe(false);
     expect(speech.last().started).toBe(1);
@@ -771,20 +835,20 @@ describe("on-device first (rule 6)", () => {
         Promise.resolve(o.processLocally ? ("unavailable" as const) : ("available" as const)),
     };
     const first = fakeSpeech(shape);
-    const d = createDictation(first.platform, box);
+    const d = createDictation(first.platform, box, []);
     await listen(first, d);
     d.toggle();
     first.last().finish();
     resetToasts();
     await listen(first, d);
     const second = fakeSpeech(shape);
-    await listen(second, createDictation(second.platform, box));
+    await listen(second, createDictation(second.platform, box, []));
     expect(toastTexts()).toEqual([]);
   });
 
   it("takes the cloud with the notice where the browser cannot say (Safari)", async () => {
     const speech = fakeSpeech({ cloud: "Apple's speech service" });
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     expect(speech.last().started).toBe(1);
     expect(toastTexts()).toEqual([
@@ -794,7 +858,7 @@ describe("on-device first (rule 6)", () => {
 
   it("stays off for the page when no engine serves the language, and names the reload", async () => {
     const speech = fakeSpeech({ available: () => Promise.resolve("unavailable") });
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     d.toggle();
     await settle();
     expect(speech.made.every((r) => r.started === 0)).toBe(true);
@@ -812,7 +876,7 @@ describe("on-device first (rule 6)", () => {
       available: () => Promise.resolve("downloadable"),
       install: () => Promise.resolve(false),
     });
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     d.toggle();
     await settle();
     expect(speech.made.every((r) => r.started === 0)).toBe(true);
@@ -867,7 +931,7 @@ describe("announcements (rule 8)", () => {
   it("announces the start and the stop, and never the words", async () => {
     const seen = recordAnnouncements();
     const speech = onDevice();
-    const d = createDictation(speech.platform, box);
+    const d = createDictation(speech.platform, box, []);
     await listen(speech, d);
     await vi.waitFor(() => {
       expect(seen).toContain("Dictation started");

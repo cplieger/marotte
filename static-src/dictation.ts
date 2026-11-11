@@ -110,10 +110,15 @@ export const NO_DICTATION: Dictation = {
   stop: () => undefined,
 };
 
-export function createDictation(platform: SpeechPlatform, box: HTMLTextAreaElement): Dictation {
+/** `controls` are the buttons that press it: focus moving from the box to one of them keeps the session. */
+export function createDictation(
+  platform: SpeechPlatform,
+  box: HTMLTextAreaElement,
+  controls: readonly HTMLElement[],
+): Dictation {
   return platform.Recognition === null
     ? NO_DICTATION
-    : new Controller(platform.Recognition, platform, box);
+    : new Controller(platform.Recognition, platform, box, controls);
 }
 
 /** Where a session's words go: the selection at its first result, padded so they never run into a neighbour. */
@@ -138,8 +143,6 @@ interface Session {
   after: string;
   /** Whether that write went through the browser's editing, so one undo takes it back. */
   native: boolean;
-  /** A result arrived, so the speech service answers. */
-  heard: boolean;
   /** Under a finger: the box's own `inputmode`, put away while the session keeps the box focused, and where focus
    *  goes back when it ends (null: it stays in the box). */
   keyboard: { readonly mode: string | null; readonly returnTo: HTMLElement | null } | null;
@@ -182,8 +185,15 @@ class Controller implements Dictation {
   private s: Session | null = null;
   /** Set around this module's own edits, so their `input` events are not read as the reader's. */
   private writing = false;
+  /** A result arrived this page, so the speech service answers. */
+  private answered = false;
 
-  constructor(Rec: SpeechRecognizerClass, platform: SpeechPlatform, box: HTMLTextAreaElement) {
+  constructor(
+    Rec: SpeechRecognizerClass,
+    platform: SpeechPlatform,
+    box: HTMLTextAreaElement,
+    controls: readonly HTMLElement[],
+  ) {
     this.Rec = Rec;
     this.platform = platform;
     this.box = box;
@@ -201,6 +211,13 @@ class Controller implements Dictation {
     box.addEventListener("pointerdown", () => {
       if (this.s !== null) {
         this.giveKeyboardBack(this.s, false);
+      }
+    });
+    // Outside the box the words can no longer be one undo step. A window switch keeps the box active.
+    box.addEventListener("focusout", (e) => {
+      const to = e.relatedTarget;
+      if (!(to instanceof HTMLElement && controls.includes(to)) && document.activeElement !== box) {
+        this.stop();
       }
     });
     onBus(BUS_TAB_CHANGED, () => {
@@ -232,7 +249,7 @@ class Controller implements Dictation {
         return;
       }
       s.rec.stop();
-      this.focusBox(s);
+      this.box.focus();
       this.unlisten(s);
       return;
     }
@@ -258,7 +275,7 @@ class Controller implements Dictation {
    *  session, so the focus does not raise it over the words. */
   private focusBox(s: Session): void {
     const box = this.box;
-    if (touchComposer() && s.keyboard === null) {
+    if (touchComposer()) {
       const active = document.activeElement;
       s.keyboard = {
         mode: box.getAttribute("inputmode"),
@@ -322,7 +339,6 @@ class Controller implements Dictation {
       written: "",
       after: "",
       native: false,
-      heard: false,
       keyboard: null,
     };
     this.s = s;
@@ -413,7 +429,7 @@ class Controller implements Dictation {
       }
     });
     rec.addEventListener("result", (e) => {
-      s.heard = true;
+      this.answered = true;
       if (s.accepting && this.s === s) {
         this.write(s, phraseOf(e as ResultEvent, this.platform.cumulative));
       }
@@ -424,7 +440,7 @@ class Controller implements Dictation {
         return;
       }
       // A service that never answered (Brave: https://github.com/brave/brave-browser/issues/2802) never will.
-      if (typeof code === "string" && isRefused(code) && !(code === "network" && s.heard)) {
+      if (typeof code === "string" && isRefused(code) && !(code === "network" && this.answered)) {
         this.refuse(code);
       } else {
         errorToast("Dictation stopped: the speech service did not answer.");

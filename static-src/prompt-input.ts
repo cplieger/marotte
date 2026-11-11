@@ -138,6 +138,8 @@ class PromptInputController {
   private staged: Staged = signal(false);
   private dictation: Dictation = NO_DICTATION;
   private midTurn: HTMLButtonElement | null = null;
+  /** The button whose last single click started or stopped dictation. */
+  private toggledBy: HTMLButtonElement | null = null;
   /** Each chat whose send is in flight, by the token of that send. */
   private readonly held = new Map<string, object>();
 
@@ -340,8 +342,18 @@ class PromptInputController {
     });
   }
 
-  /** Both buttons' faces and nothing else: unlike `applyButtonState` it leaves `disabled` alone, so a composer
-   *  something else disabled stays disabled. */
+  /** Whether `e` is the second or later click of a multi-click whose first click toggled dictation on `btn`.
+   *  The toggle repaints `btn` before the rest of the pair lands, so that rest must not send, steer or cancel.
+   *  A single click or a keyboard press (`detail` 0) clears the record and acts on the face. */
+  private repeatOfToggle(btn: HTMLButtonElement, e: MouseEvent): boolean {
+    if (e.detail > 1) {
+      return this.toggledBy === btn;
+    }
+    this.toggledBy = null;
+    return false;
+  }
+
+  /** Both buttons' faces only: the input effect runs this on every keystroke. */
   private applyFaces(): void {
     this.paintMain();
     this.applyMidTurnSend();
@@ -425,8 +437,14 @@ class PromptInputController {
     this.staged = staged;
     this.dictation = dictation;
     $.sendBtn.addEventListener("click", (e: MouseEvent) => {
+      if (this.repeatOfToggle($.sendBtn, e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       if (this.faces().main === "dictate") {
         e.preventDefault();
+        this.toggledBy = $.sendBtn;
         this.dictation.toggle();
         return;
       }
@@ -437,9 +455,14 @@ class PromptInputController {
       }
     });
 
-    this.midTurn = byId<HTMLButtonElement>("midturn-send-btn");
-    this.midTurn.addEventListener("click", () => {
+    const midTurn = byId<HTMLButtonElement>("midturn-send-btn");
+    this.midTurn = midTurn;
+    midTurn.addEventListener("click", (e: MouseEvent) => {
+      if (this.repeatOfToggle(midTurn, e)) {
+        return;
+      }
       if (this.faces().side === "dictate") {
+        this.toggledBy = midTurn;
         this.dictation.toggle();
         return;
       }

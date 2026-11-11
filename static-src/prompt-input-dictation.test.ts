@@ -63,7 +63,7 @@ beforeAll(() => {
       <button id="midturn-send-btn" class="send-btn" type="button" hidden></button>
       <button id="send-btn" class="send-btn" type="submit"></button>
     </form>`;
-  dictation = createDictation(speech.platform, input());
+  dictation = createDictation(speech.platform, input(), [sendBtn(), midTurn()]);
   initPromptInput(
     (text: string) => {
       submitted.push(text);
@@ -118,6 +118,11 @@ async function startFrom(btn: HTMLButtonElement): Promise<void> {
   btn.click();
   await settle();
   speech.last().begin();
+}
+
+/** One click of a run, `detail` being its place in the run as the browser counts it (0 for a keyboard press). */
+function clickAt(btn: HTMLButtonElement, detail: number): void {
+  btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail }));
 }
 
 function expectDictateFace(btn: HTMLButtonElement, pressed: boolean): void {
@@ -254,6 +259,41 @@ describe("pressing it (rules 3 and 8)", () => {
     expect(dictation.listening.value).toBe(false);
     expect(cancelled).not.toHaveBeenCalled();
     expect(input().value).toBe("keep me");
+  });
+});
+
+describe("a double click on the dictation button (rule 3)", () => {
+  it("sends nothing from Send's slot, and the next single click sends", async () => {
+    await startFrom(sendBtn());
+    speech.last().hear(["hello wor", false]);
+    clickAt(sendBtn(), 1);
+    clickAt(sendBtn(), 2);
+    expect(submitted).toEqual([]);
+    expectSendFace(sendBtn());
+    clickAt(sendBtn(), 1);
+    expect(submitted).toEqual(["hello wor"]);
+  });
+
+  it("steers nothing from the mid-turn slot, and a keyboard press after it steers", async () => {
+    setSessions([session(STEERING)]);
+    setSendState({ kind: "streaming" });
+    await startFrom(midTurn());
+    speech.last().hear(["try the other", false]);
+    clickAt(midTurn(), 1);
+    clickAt(midTurn(), 2);
+    expect(submitted).toEqual([]);
+    expect(cancelled).not.toHaveBeenCalled();
+    expect(midTurn().getAttribute("aria-label")).toBe("Steer the running turn");
+    clickAt(midTurn(), 0);
+    expect(submitted).toEqual(["try the other"]);
+  });
+
+  it("keeps listening when the click that started it is doubled", async () => {
+    clickAt(sendBtn(), 1);
+    clickAt(sendBtn(), 2);
+    await settle();
+    expect(dictation.listening.value).toBe(true);
+    expectDictateFace(sendBtn(), true);
   });
 });
 
