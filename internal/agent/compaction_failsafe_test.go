@@ -114,7 +114,14 @@ func (fc *failsafeChat) compactsWith(pct float64) {
 // response's own reading, in KAS's order (processChunkStream emits the reading after the response's tool calls).
 func (fc *failsafeChat) respond(pct float64) {
 	fc.br.deliver(toolCallMsg())
+	fc.reading(pct)
+}
+
+// reading is a model response's own reading as KAS sends it: the plain frame, then its breakdown twin with the same
+// figure (handleContextUsageUpdate; the translate package's elicit.jsonl capture).
+func (fc *failsafeChat) reading(pct float64) {
 	fc.br.deliver(liveReadingMsg(pct))
+	fc.br.deliver(breakdownReadingMsg(pct))
 }
 
 var toolCalls atomic.Int64
@@ -133,6 +140,17 @@ func toolCallMsg() *marotte.RPCResponse {
 func liveReadingMsg(pct float64) *marotte.RPCResponse {
 	return newSessionInfoMsg(map[string]any{
 		"kind": "context_usage", "usagePercentage": pct, "contextUsage": map[string]any{"usagePercentage": pct},
+	})
+}
+
+// breakdownReadingMsg is the twin KAS sends after a response's plain reading: the same figure with its breakdown.
+func breakdownReadingMsg(pct float64) *marotte.RPCResponse {
+	return newSessionInfoMsg(map[string]any{
+		"kind": "context_usage", "usagePercentage": pct, "contextUsage": map[string]any{"usagePercentage": pct},
+		"breakdown": map[string]any{
+			"tools":       map[string]any{"tokens": 7131, "percent": 0.7},
+			"yourPrompts": map[string]any{"tokens": 0, "percent": 2.2},
+		},
 	})
 }
 
@@ -346,19 +364,37 @@ func TestFailsafe_AnOwedStopWaitsForTheLastOpenAsk(t *testing.T) {
 	}
 }
 
-// A later reading decides on its own: a tool-free response's reading after the owed one ends the turn, so the ask's
-// answer stops nothing.
-func TestFailsafe_ALaterReadingReplacesAnOwedStop(t *testing.T) {
+// KAS sends a response's reading twice, the plain frame then its breakdown twin (the elicit.jsonl capture: the tool
+// call, then the pair). The twin is the same reading, not a later one, so the stop the plain frame owed while the
+// tool's ask was open still fires once the ask is answered.
+func TestFailsafe_TheReadingsBreakdownTwinKeepsAnOwedStop(t *testing.T) {
+	fc := newFailsafeChat(t, true)
+	id := addPermission(t, fc.h, fc.br, 7, "")
+	fc.br.deliver(toolCallMsg())
+	fc.br.deliver(liveReadingMsg(96))
+	fc.br.deliver(breakdownReadingMsg(96))
+	fc.settled(t)
+
+	fc.answerAsk(t, id)
+
+	if !eventually(func() bool { return fc.cancels() == 1 }) {
+		t.Errorf("session/cancel writes = %d after the ask settled, want 1; list %v", fc.cancels(), failsafeWords(t, fc.cs))
+	}
+}
+
+// A later response's reading decides on its own: a response that called a tool at 92% after the owed reading
+// replaces the owed stop, so the ask's answer stops nothing.
+func TestFailsafe_ALaterResponsesReadingReplacesAnOwedStop(t *testing.T) {
 	fc := newFailsafeChat(t, true)
 	id := addPermission(t, fc.h, fc.br, 7, "")
 	fc.respond(96)
-	fc.br.deliver(liveReadingMsg(96))
+	fc.respond(92)
 	fc.settled(t)
 
 	fc.answerAsk(t, id)
 
 	staysFalse(t, 150*time.Millisecond, func() bool { return fc.cancels() > 0 },
-		"an owed stop fired after a later reading had decided")
+		"an owed stop fired after a later response's reading had decided")
 }
 
 // An owed stop belongs to its turn: once that turn has closed, the ask's answer stops nothing, not even the next
@@ -446,7 +482,7 @@ func TestFailsafe_OnlyAResponseThatCalledAToolStopsTheTurn(t *testing.T) {
 	fc := newFailsafeChat(t, true)
 
 	fc.respond(50)
-	fc.br.deliver(liveReadingMsg(96))
+	fc.reading(96)
 	fc.settled(t)
 	staysFalse(t, 150*time.Millisecond, func() bool { return fc.cancels() > 0 }, "a tool-free reply at 96% stopped the turn")
 	if got := failsafeWords(t, fc.cs); !slices.Equal(got, []string{"m-a running", "compaction threshold pending", "m-q1 pending", "m-q2 pending"}) {
