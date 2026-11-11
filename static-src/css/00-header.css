@@ -77,8 +77,8 @@
  *  `inherits: false` keeps each frame's invalidation on the one ring, which is the
  *  mistake the deleted `--vk-beat` made in the other direction.
  *
- *  Every ring's gradient carries an explicit `border-box` inside the `background`
- *  shorthand, and it is load-bearing rather than tidy: `background-origin`
+ *  A ring whose box keeps a border carries an explicit `border-box` inside the
+ *  `background` shorthand, and it is load-bearing rather than tidy: `background-origin`
  *  defaults to the PADDING box, so a ring that keeps a border to hold its
  *  diameter (every pseudo-element one does — the reset's `*` does not reach a
  *  pseudo-element, so it is content-box) sizes its gradient tile to the box
@@ -88,15 +88,24 @@
  *  shorthand because the shorthand resets the longhand.
  *
  *  It starts at -45deg so a conic sector of `0deg 90deg` is the TOP quarter,
- *  which is the quarter a `border-top-color` painted. Every ring therefore reads
- *  a plain `from var(--vk-spin-arc)` and still rests where it used to — visible
- *  under `prefers-reduced-motion`, where the sweep zeroes the duration and the
- *  angle reverts to this value. */
+ *  which is the quarter a `border-top-color` painted. A painted ring reads a plain
+ *  `from var(--vk-spin-arc)`, a turning disc `from -45deg`, and both rest there —
+ *  visible under `prefers-reduced-motion`, where the sweep zeroes the duration and
+ *  the angle or the turn reverts to its start. */
 @property --vk-spin-arc {
   syntax: "<angle>";
   inherits: false;
   initial-value: -45deg;
 }
+
+/* A RING THAT SPINS WHILE WORK RUNS turns on the compositor and still never
+ *  resamples its rim: the host box holds the ring's shape (`clip-path: circle()` for
+ *  the outer edge, a radial mask for the hole) and never moves, and its `::before`
+ *  is the arc's conic disc, scaled past the clip, turning under it (`vk-spin-rotate`).
+ *  A painted `--vk-spin-arc` ring re-runs style, paint and commit on the main thread
+ *  every frame, about 4% of a Chromium core per ring. Only a ring drawn on a host
+ *  that holds other content (a loading button) still paints its arc: it has no still
+ *  box of its own to clip it. */
 
 /* Beat synchronisation is a shared phase ORIGIN (`--beat-phase`, an unregistered
  *  plain custom property read once as a delay), never a registered property

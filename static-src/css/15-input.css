@@ -2018,18 +2018,10 @@
   }
 }
 
-/* The one consumer that still ROTATES its box, because its mark is a stroked arc
- * with round caps rather than a ring: a conic gradient cannot draw a cap, and the
- * dash alternative is refused for a measured reason recorded at `ICON_SPINNER`
- * (icons.ts). So it keeps its own keyframe — `vk-spin` animates a ring's arc angle
- * now and would leave this static — and takes the same period token, which is what
- * `spin-period.test.ts` sweeps for. */
-@keyframes vk-spin-rotate {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
+/* The one consumer that rotates its WHOLE box, rim and all, because its mark is a
+ * stroked arc with round caps rather than a ring: a conic gradient cannot draw a
+ * cap, and the dash alternative is refused for a measured reason recorded at
+ * `ICON_SPINNER` (icons.ts). */
 .icon-spinner {
   transform-origin: center;
   animation: vk-spin-rotate var(--spin-dur) linear infinite;
@@ -2048,19 +2040,26 @@
   width: 1rem;
   height: 1rem;
   flex-shrink: 0;
-  border-radius: 50%;
-  background: conic-gradient(
-      from var(--vk-spin-arc),
-      var(--c-text-primary) 0deg 90deg,
-      var(--c-border) 90deg 360deg
-    )
-    border-box;
+  clip-path: circle();
   mask: radial-gradient(
     closest-side,
     transparent calc(100% - var(--vk-ring-band)),
     #000 calc(100% - var(--vk-ring-band))
   );
-  animation: vk-spin var(--spin-dur) linear infinite;
+}
+
+.spinner::before {
+  content: "";
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  background: conic-gradient(
+    from -45deg,
+    var(--c-text-primary) 0deg 90deg,
+    var(--c-border) 90deg 360deg
+  );
+  scale: 1.5;
+  animation: vk-spin-rotate var(--spin-dur) linear infinite;
 }
 
 /* `flex-shrink: 0` on both, like `.tool-spinner` and `.subagent-spinner`: these
@@ -2073,19 +2072,26 @@
   width: 0.875rem;
   height: 0.875rem;
   flex-shrink: 0;
-  border-radius: 50%;
-  background: conic-gradient(
-      from var(--vk-spin-arc),
-      var(--c-text-primary) 0deg 90deg,
-      var(--c-border) 90deg 360deg
-    )
-    border-box;
+  clip-path: circle();
   mask: radial-gradient(
     closest-side,
     transparent calc(100% - var(--vk-ring-band)),
     #000 calc(100% - var(--vk-ring-band))
   );
-  animation: vk-spin var(--spin-dur) linear infinite;
+}
+
+.spinner-sm::before {
+  content: "";
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  background: conic-gradient(
+    from -45deg,
+    var(--c-text-primary) 0deg 90deg,
+    var(--c-border) 90deg 360deg
+  );
+  scale: 1.5;
+  animation: vk-spin-rotate var(--spin-dur) linear infinite;
 }
 
 /* The `/` and `#` menu: in flow above .prompt-box on .steer-stack's measure, so the bar

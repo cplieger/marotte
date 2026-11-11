@@ -57,7 +57,7 @@ describe("the tree spins for running work, never for a container", () => {
     try {
       expect(ring(view.root, "l").content).toBe("none");
       expect(ring(view.root, "l:p").content).toBe("none");
-      expect(ring(view.root, "l:p:code").animationName).toBe("vk-spin");
+      expect(ring(view.root, "l:p:code").animationName).toBe("vk-spin-rotate");
     } finally {
       view.root.remove();
     }
