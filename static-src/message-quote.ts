@@ -77,34 +77,84 @@ export interface Quote {
 /** One stretch of a prompt, in order: a `quoteSelection` block, or the trimmed text around one. */
 export type PromptPart = ({ kind: "quote" } & Quote) | { kind: "text"; text: string };
 
+function unquote(line: string): string {
+  return line.startsWith("> ") ? line.slice(2) : line.slice(1);
+}
+
+/** Whether `run[i]` opens a named quote: the `From …:` line `quoteSelection` writes, then a bare `>`. */
+function opensNamed(run: readonly string[], i: number): boolean {
+  const head = unquote(run[i] ?? "");
+  const next = run[i + 1];
+  return (
+    head.startsWith("From ") && head.endsWith(":") && next !== undefined && unquote(next) === ""
+  );
+}
+
 /** The quote `block` holds, its `>` lines ending on the attribution line, or null when nothing is quoted above it. */
 function readQuote(block: readonly string[]): Quote | null {
-  const inner = block
-    .slice(0, -1)
-    .map((line) => (line.startsWith("> ") ? line.slice(2) : line.slice(1)));
-  const head = inner[0] ?? "";
-  // A `From …:` line then a blank line is the source line `quoteSelection` writes; an older quote opening that way
-  // draws its first line as the source.
-  const named = head.startsWith("From ") && head.endsWith(":") && inner[1] === "";
+  // An older quote opening on a `From …:` line then a blank line draws that line as its source too.
+  const named = opensNamed(block, 0);
   const quoted = unescapeContext(
-    inner
-      .slice(named ? 2 : 0)
+    block
+      .slice(named ? 2 : 0, -1)
+      .map(unquote)
       .join("\n")
       .trimEnd(),
   );
   if (quoted === "") {
     return null;
   }
-  return { source: named ? unescapeContext(head.slice(0, -1)) : null, quote: quoted };
+  const source = unquote(block[0] ?? "").slice(0, -1);
+  return { source: named ? unescapeContext(source) : null, quote: quoted };
+}
+
+/** A run of `>` lines as its quotes, in order, and the hand-typed lines around them. A passage may itself hold the
+ *  attribution line, so one closes a quote only where the run ends, a named quote opens next or it is the run's
+ *  last; a stretch it closes that quotes nothing belongs to the passage of the quote before it, or with none, the
+ *  one after. A typed line above a named quote stays text. */
+function readRun(run: readonly string[]): (Quote | string[])[] {
+  const ends = run.flatMap((line, i) =>
+    line === ATTRIBUTION_LINE && (i === run.length - 1 || opensNamed(run, i + 1)) ? [i] : [],
+  );
+  const last = run.lastIndexOf(ATTRIBUTION_LINE);
+  if (last >= 0 && ends.at(-1) !== last) {
+    ends.push(last);
+  }
+  const out: (Quote | string[])[] = [];
+  let start = 0;
+  let prevFrom: number | undefined;
+  for (const end of ends) {
+    const read = readBlock(run.slice(start, end + 1));
+    if (read !== null) {
+      prevFrom = start;
+      out.push(...read);
+      start = end + 1;
+    } else if (prevFrom !== undefined) {
+      out.splice(-2, 2, ...(readBlock(run.slice(prevFrom, end + 1)) ?? []));
+      start = end + 1;
+    }
+  }
+  out.push(run.slice(start));
+  return out;
+}
+
+/** The typed lines above `block`'s first named opener, and the quote from there, or null when it quotes nothing. */
+function readBlock(block: readonly string[]): [string[], Quote] | null {
+  const at = Math.max(
+    block.findIndex((_, i) => opensNamed(block, i)),
+    0,
+  );
+  const quote = readQuote(block.slice(at));
+  return quote === null ? null : [block.slice(0, at), quote];
 }
 
 /** `request` cut into its `quoteSelection` blocks, wherever each sits, and the text between, blank text left out.
- *  A quote is a run of `>` lines ending on the attribution line; any other `>` line, a hand-typed blockquote's,
- *  stays text. */
+ *  Any `>` line no quote takes, a hand-typed blockquote's, stays text. `internal/chat/prompt_quote.go` ports this
+ *  cut for the turn map's preview, so a change here changes it too (`testdata/first_line.json` pins both). */
 export function splitQuotes(request: string): PromptPart[] {
+  const lines = request.split("\n");
   const parts: PromptPart[] = [];
   let text: string[] = [];
-  let run: string[] = [];
   const flushText = (): void => {
     const words = text.join("\n").trim();
     if (words !== "") {
@@ -112,26 +162,26 @@ export function splitQuotes(request: string): PromptPart[] {
     }
     text = [];
   };
-  for (const line of request.split("\n")) {
-    if (!line.startsWith(">")) {
-      text.push(...run, line);
-      run = [];
+  for (let i = 0; i < lines.length;) {
+    let end = i;
+    while (lines[end]?.startsWith(">") === true) {
+      end++;
+    }
+    if (end === i) {
+      text.push(lines[i] ?? "");
+      i++;
       continue;
     }
-    run.push(line);
-    if (line !== ATTRIBUTION_LINE) {
-      continue;
+    for (const piece of readRun(lines.slice(i, end))) {
+      if (Array.isArray(piece)) {
+        text.push(...piece);
+      } else {
+        flushText();
+        parts.push({ kind: "quote", ...piece });
+      }
     }
-    const quote = readQuote(run);
-    if (quote === null) {
-      text.push(...run);
-    } else {
-      flushText();
-      parts.push({ kind: "quote", ...quote });
-    }
-    run = [];
+    i = end;
   }
-  text.push(...run);
   flushText();
   return parts;
 }

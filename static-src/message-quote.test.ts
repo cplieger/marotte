@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import fc from "fast-check";
 import { carriesContextMention } from "./context-mentions.js";
 import {
   QUOTE_ATTRIBUTION,
@@ -173,6 +174,68 @@ describe("splitQuotes", () => {
   it("reads two quotes with no blank line between as two", () => {
     const prompt = `${quoteSelection("one", SRC)}\n${quoteSelection("two", SRC)}`;
     expect(splitQuotes(prompt)).toEqual([quote("one"), quote("two")]);
+  });
+
+  it.each([
+    ["the whole selection", QUOTE_ATTRIBUTION],
+    ["its last line", `line a\n${QUOTE_ATTRIBUTION}`],
+    ["a middle line", `line a\n${QUOTE_ATTRIBUTION}\nline b`],
+    ["the line before a source-like line", `${QUOTE_ATTRIBUTION}\nFrom the docs:\n\nline b`],
+    ["the line before a source-like last line", `line a\n${QUOTE_ATTRIBUTION}\nFrom the docs:`],
+  ])("keeps a passage holding the attribution sentence as %s whole", (_, passage) => {
+    const prompt = `${appendQuote("", quoteSelection(passage, SRC))}what now?`;
+    expect(splitQuotes(prompt)).toEqual([quote(passage), words("what now?")]);
+    expect(splitQuotes(quoteSelection(passage, SRC))).toEqual([quote(passage)]);
+  });
+
+  it("leaves a typed `>` line touching a quote as text, above it or below it", () => {
+    const block = quoteSelection("q", SRC);
+    expect(splitQuotes(`> my note\n${block}\n\nwhy`)).toEqual([
+      words("> my note"),
+      quote("q"),
+      words("why"),
+    ]);
+    expect(splitQuotes(`${block}\n> my note\n\nwhy`)).toEqual([
+      quote("q"),
+      words("> my note\n\nwhy"),
+    ]);
+  });
+
+  // The one passage the stored form cannot tell from two quotes: words, then the attribution sentence on a line of
+  // its own, a source-like line and a blank one, then more words.
+  const ambiguous = new RegExp(
+    `\\S.*\\n${QUOTE_ATTRIBUTION.replace(".", "\\.")}\\nFrom [^\\n]*:\\n\\n.*\\S`,
+    "s",
+  );
+
+  it("round-trips any two passages and the words around them", () => {
+    const passage = fc
+      .array(
+        fc.constantFrom(
+          QUOTE_ATTRIBUTION,
+          "From the docs:",
+          "> typed",
+          "#[[file:a]]",
+          "word",
+          " ",
+          "",
+        ),
+        { minLength: 1, maxLength: 8 },
+      )
+      .map((lines) => lines.join("\n"))
+      .filter((p) => p.trim() !== "" && !ambiguous.test(p));
+    const reply = fc.constantFrom("why?", "a\nb", "> mine");
+    fc.assert(
+      fc.property(passage, passage, reply, reply, (one, two, between, after) => {
+        const prompt = `${appendQuote(`${appendQuote("", quoteSelection(one, SRC))}${between}`, quoteSelection(two, SRC))}${after}`;
+        expect(splitQuotes(prompt)).toEqual([
+          quote(one.trimEnd()),
+          words(between),
+          quote(two.trimEnd()),
+          words(after),
+        ]);
+      }),
+    );
   });
 
   it("reads a quote whose only text is its source line as the reader's text", () => {
