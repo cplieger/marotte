@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
 # renovate: datasource=golang-version depName=golang
-ARG GO_VERSION=1.27.3
+ARG GO_VERSION=1.27.4
 RUN ARCH=$(dpkg --print-architecture) && \
     curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" \
     | tar -C /usr/local -xz
@@ -48,7 +48,7 @@ RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 
 # css/ui-primitives.css is concatenated into static/style.css by cmd/bundle.
 # This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=@cplieger/ui
-ARG CPLIEGER_UI_VERSION=1.0.0
+ARG CPLIEGER_UI_VERSION=1.1.0
 RUN mkdir -p static-src/node_modules/@cplieger/ui && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/ui/-/ui-${CPLIEGER_UI_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/ui --strip-components=1
@@ -67,7 +67,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-ui && \
 
 # This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=@cplieger/keyenc
-ARG CPLIEGER_KEYENC_VERSION=1.1.0
+ARG CPLIEGER_KEYENC_VERSION=1.2.0
 RUN mkdir -p static-src/node_modules/@cplieger/keyenc && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/keyenc/-/keyenc-${CPLIEGER_KEYENC_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/keyenc --strip-components=1
