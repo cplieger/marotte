@@ -84,6 +84,7 @@ beforeAll(() => {
 beforeEach(async () => {
   // Every press a case left down ends, as a real one does.
   release(sendBtn(), false);
+  window.dispatchEvent(new Event("blur"));
   input().focus();
   dictation.drop();
   setSessions([session()]);
@@ -139,16 +140,33 @@ function pressDown(btn: HTMLButtonElement, detail = 1): void {
   btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail }));
 }
 
-/** A pointer press's release, on the button or dragged off it. */
-function release(btn: HTMLButtonElement, onButton: boolean): void {
+/** A pointer press's release, on the button or dragged off it; `button` 2 is a right press's. */
+function release(btn: HTMLButtonElement, onButton: boolean, button = 0): void {
   const r = btn.getBoundingClientRect();
   const at = {
     clientX: onButton ? r.left + r.width / 2 : r.right + 40,
     clientY: r.top + r.height / 2,
   };
   (onButton ? btn : document.body).dispatchEvent(
-    new PointerEvent("pointerup", { bubbles: true, cancelable: true, ...at }),
+    new PointerEvent("pointerup", { bubbles: true, cancelable: true, button, ...at }),
   );
+}
+
+/** A click with no pointer press of its own, as an extension's simulated click makes it. */
+function simulatedClick(btn: HTMLButtonElement): void {
+  btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: 1 }));
+  btn.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, detail: 1 }));
+  clickAt(btn, 1);
+}
+
+/** Lay the page out for a finger, as a tablet with a hardware keyboard is. */
+async function underFinger(body: () => Promise<void>): Promise<void> {
+  document.documentElement.setAttribute("data-pointer", "coarse");
+  try {
+    await body();
+  } finally {
+    document.documentElement.removeAttribute("data-pointer");
+  }
 }
 
 function streaming(): void {
@@ -515,7 +533,141 @@ describe("a held key is one press, on the face it began on (rule 3)", () => {
   );
 });
 
+describe("a held Enter under a finger, with a hardware keyboard (rule 3)", () => {
+  it.each([
+    ["Send's slot", false],
+    ["the mid-turn slot", true],
+  ])("only stops on Stop, writing no new line into the box, on %s", async (_, mid) => {
+    await underFinger(async () => {
+      if (mid) {
+        streaming();
+      }
+      const btn = mid ? midTurn() : sendBtn();
+      await startFrom(btn);
+      speech.last().hear(["hello", true]);
+      btn.focus();
+      await userEvent.keyboard("{Enter>3}{/Enter}");
+      expect(input().value).toBe("hello");
+      expect(dictation.listening.value).toBe(false);
+      expect(submitted).toEqual([]);
+      expect(cancelled).not.toHaveBeenCalled();
+    });
+  });
+
+  it("cancels once on Cancel while dictating, and keeps listening with the words unchanged", async () => {
+    await underFinger(async () => {
+      streaming();
+      await startFrom(midTurn());
+      speech.last().hear(["hello", true]);
+      sendBtn().focus();
+      await userEvent.keyboard("{Enter>3}{/Enter}");
+      expect(cancelled).toHaveBeenCalledOnce();
+      expect(input().value).toBe("hello");
+      expect(dictation.listening.value).toBe(true);
+    });
+  });
+
+  it("starts once on Dictate, and keeps listening into an empty box", async () => {
+    await underFinger(async () => {
+      const made = speech.made.length;
+      sendBtn().focus();
+      await userEvent.keyboard("{Enter>3}{/Enter}");
+      await settle();
+      expect(input().value).toBe("");
+      expect(dictation.listening.value).toBe(true);
+      expect(speech.made).toHaveLength(made + 1);
+    });
+  });
+
+  it("still writes a new line for every repeat of an Enter held in the box", async () => {
+    await underFinger(async () => {
+      input().focus();
+      await userEvent.keyboard("{Enter>3}{/Enter}");
+      expect(input().value).toBe("\n\n\n");
+      expect(submitted).toEqual([]);
+    });
+  });
+});
+
 describe("a press's face lasts only as long as the press (rule 3)", () => {
+  it("never records a right press, so a later simulated click acts on the face painted", () => {
+    sendBtn().dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 2 }),
+    );
+    release(sendBtn(), true, 2);
+    sendBtn().dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, button: 2 }));
+    type("hello");
+    simulatedClick(sendBtn());
+    expect(submitted).toEqual(["hello"]);
+    expect(dictation.listening.value).toBe(false);
+  });
+
+  it("dictates from a simulated click on the microphone after a right press on Send", () => {
+    type("hello");
+    sendBtn().dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 2 }),
+    );
+    release(sendBtn(), true, 2);
+    type("");
+    simulatedClick(sendBtn());
+    expect(dictation.listening.value).toBe(true);
+    expect(submitted).toEqual([]);
+  });
+
+  it("keeps a primary press through a right or middle press chorded into it", async () => {
+    await startFrom(sendBtn());
+    speech.last().hear(["chord", false]);
+    pressDown(sendBtn());
+    sendBtn().dispatchEvent(new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+    sendBtn().dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, button: 2 }));
+    speech.last().finish();
+    release(sendBtn(), true);
+    clickAt(sendBtn(), 1);
+    expect(submitted).toEqual([]);
+    expect(input().value).toBe("chord");
+  });
+
+  it("ends a primary press that opened a context menu (a Ctrl-click, a long press)", () => {
+    pressDown(sendBtn());
+    sendBtn().dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    release(sendBtn(), true);
+    type("hello");
+    simulatedClick(sendBtn());
+    expect(submitted).toEqual(["hello"]);
+    expect(dictation.listening.value).toBe(false);
+  });
+
+  it("ends a key press whose key up went to another window", () => {
+    type("hi");
+    sendBtn().focus();
+    sendBtn().dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+    clickAt(sendBtn(), 0);
+    expect(submitted).toEqual(["hi"]);
+    window.dispatchEvent(new Event("blur"));
+    clickAt(sendBtn(), 0);
+    expect(dictation.listening.value).toBe(true);
+  });
+
+  it("keeps a key press past its button's blur, so its repeats never reach the box", () => {
+    sendBtn().focus();
+    sendBtn().dispatchEvent(
+      new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }),
+    );
+    input().focus();
+    const again = new KeyboardEvent("keydown", {
+      key: " ",
+      repeat: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    input().dispatchEvent(again);
+    expect(again.defaultPrevented).toBe(true);
+    input().dispatchEvent(new KeyboardEvent("keyup", { key: " ", bubbles: true }));
+    expect(dictation.listening.value, "a Space released off its button clicks nothing").toBe(false);
+  });
+
   it("sends from a click() after a press dragged off the microphone, never dictating", () => {
     const made = speech.made.length;
     pressDown(sendBtn());

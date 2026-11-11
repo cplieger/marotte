@@ -148,7 +148,8 @@ interface Session {
   keyboard: { readonly mode: string | null; readonly returnTo: HTMLElement | null } | null;
 }
 
-type Engine = { readonly local: boolean | null } | "declined" | Refusal;
+/** `cloud`: whether audio is known to go to the vendor's service, which the notice says. */
+type Engine = { readonly local: boolean | null; readonly cloud: boolean } | "declined" | Refusal;
 
 const REFUSED = {
   "not-allowed":
@@ -381,7 +382,7 @@ class Controller implements Dictation {
     if (engine.local !== null) {
       rec.processLocally = engine.local;
     }
-    this.wire(s, rec, engine.local);
+    this.wire(s, rec, engine.cloud);
     s.rec = rec;
     try {
       rec.start();
@@ -401,7 +402,7 @@ class Controller implements Dictation {
     const available = this.Rec.available?.bind(this.Rec);
     const install = this.Rec.install?.bind(this.Rec);
     if (available === undefined) {
-      return { local: null };
+      return { local: null, cloud: true };
     }
     const opts = (processLocally: boolean): SpeechOptions => ({
       langs: [this.platform.lang],
@@ -410,12 +411,12 @@ class Controller implements Dictation {
     });
     const here = await availability(available, opts(true));
     if (here === "available") {
-      return { local: true };
+      return { local: true, cloud: false };
     }
     if ((here === "downloadable" || here === "downloading") && install !== undefined) {
       info("Downloading speech recognition for this language. Dictation starts when it is ready.");
       if (await install(opts(true)).catch(() => false)) {
-        return { local: true };
+        return { local: true, cloud: false };
       }
       if (this.platform.cloud === null) {
         return "declined";
@@ -428,18 +429,23 @@ class Controller implements Dictation {
     if (there === "refused") {
       return "service-not-allowed";
     }
-    return there === "unavailable" ? "language-not-supported" : { local: false };
+    if (there === "unavailable") {
+      return "language-not-supported";
+    }
+    // An installed language pack serves even a processLocally false request (https://issues.chromium.org/issues/521896368),
+    // so only "available" says the audio goes to the cloud.
+    return { local: false, cloud: there === "available" };
   }
 
-  /** `local` is the engine `begin` chose; the cloud notice waits for `start`, when audio really flows. */
-  private wire(s: Session, rec: SpeechRecognizer, local: boolean | null): void {
+  /** The cloud notice waits for `start`, when audio really flows. */
+  private wire(s: Session, rec: SpeechRecognizer, toCloud: boolean): void {
     rec.addEventListener("start", () => {
       s.begun = true;
       if (!s.listening) {
         return;
       }
       const { cloud } = this.platform;
-      if (local !== true && cloud !== null && !dictationCloudNoted()) {
+      if (toCloud && cloud !== null && !dictationCloudNoted()) {
         markDictationCloudNoted();
         const notice = `Dictation in this browser sends audio to ${cloud}.`;
         // The toast announces its text, and a later polite announcement replaces a pending one: say both at once.

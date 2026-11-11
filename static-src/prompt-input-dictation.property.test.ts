@@ -1,7 +1,8 @@
-// Model-based: presses on Send's and Steer's slots (pointer presses that click, tap, drag off or are cancelled, keys
-// held with auto-repeat, clicks with no press of their own), interleaved with everything that repaints them
-// mid-press (the engine ending, results, focus moves, the turn starting or ending, typing, sends), never act on a
-// face they did not begin on, and words heard before a send or a clear never reach the box after it.
+// Model-based: presses on Send's and Steer's slots (pointer presses that click, tap, drag off, are cancelled or open a
+// context menu, right and middle presses, keys held with auto-repeat, clicks with no press of their own), interleaved
+// with everything that repaints them mid-press (the engine ending, results, focus moves, the turn starting or ending,
+// typing, sends), never act on a face they did not begin on, and words heard before a send or a clear never reach
+// the box after it.
 
 import { beforeAll, describe, expect, it } from "vitest";
 import fc from "fast-check";
@@ -26,7 +27,9 @@ type World =
   | { readonly k: "type"; readonly text: string }
   /** The keyboard shortcut's send; a held one waits for `answer`. */
   | { readonly k: "send"; readonly held: boolean }
-  | { readonly k: "answer" };
+  | { readonly k: "answer" }
+  /** A right or middle press and release, which makes no click. */
+  | { readonly k: "auxPress"; readonly slot: Slot; readonly button: 1 | 2 };
 
 interface Gesture {
   readonly k: "gesture";
@@ -34,8 +37,8 @@ interface Gesture {
   readonly input: "pointer" | "space" | "enter";
   /** Pointer: the clicks of a multi-click. Key: the auto-repeats while held. */
   readonly count: number;
-  /** How a pointer press ends: a mouse click, a finger's tap, a release dragged off, or a cancel. */
-  readonly end: "click" | "tap" | "dragOff" | "cancel";
+  /** How a pointer press ends: a mouse click, a finger's tap, a release dragged off, a cancel, or a context menu. */
+  readonly end: "click" | "tap" | "dragOff" | "cancel" | "contextmenu";
   /** World events before each press start, click, repeat and key up, in order. */
   readonly gaps: readonly (readonly World[])[];
 }
@@ -226,6 +229,19 @@ async function apply(w: World): Promise<void> {
     case "answer":
       await answerSend();
       break;
+    case "auxPress": {
+      const btn = button(w.slot);
+      pointer(btn, "pointerdown", true, w.button);
+      pointer(btn, "pointerup", true, w.button);
+      btn.dispatchEvent(
+        new MouseEvent(w.button === 2 ? "contextmenu" : "auxclick", {
+          bubbles: true,
+          cancelable: true,
+          button: w.button,
+        }),
+      );
+      break;
+    }
   }
   await flush();
   expectNoStaleWords();
@@ -258,14 +274,14 @@ function key(type: "keydown" | "keyup", name: string, repeat = false): KeyboardE
   return e;
 }
 
-function pointer(btn: HTMLButtonElement, type: string, onButton = true): void {
+function pointer(btn: HTMLButtonElement, type: string, onButton = true, button = 0): void {
   const r = btn.getBoundingClientRect();
   const at = {
     clientX: onButton ? r.left + r.width / 2 : r.right + 40,
     clientY: r.top + r.height / 2,
   };
   (onButton ? btn : document.body).dispatchEvent(
-    new PointerEvent(type, { bubbles: true, cancelable: true, ...at }),
+    new PointerEvent(type, { bubbles: true, cancelable: true, button, ...at }),
   );
 }
 
@@ -313,7 +329,7 @@ async function press(g: Gesture): Promise<Began | null> {
     }
     return face;
   }
-  const clicks = g.end === "dragOff" || g.end === "cancel" ? 1 : g.count;
+  const clicks = aborted(g) ? 1 : g.count;
   let face: Began | null = null;
   for (let i = 1; i <= clicks; i++) {
     await applyAll(g.gaps[2 * i - 2]);
@@ -332,6 +348,10 @@ async function press(g: Gesture): Promise<Began | null> {
         break;
       case "cancel":
         pointer(btn, "pointercancel");
+        break;
+      case "contextmenu":
+        btn.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+        pointer(btn, "pointerup");
         break;
       case "tap":
         pointer(btn, "pointerup");
@@ -382,6 +402,11 @@ const world: fc.Arbitrary<World> = fc.oneof(
   fc.record({ k: fc.constant("type" as const), text: fc.constantFrom("", "  ", "words") }),
   fc.record({ k: fc.constant("send" as const), held: fc.boolean() }),
   fc.constant({ k: "answer" as const }),
+  fc.record({
+    k: fc.constant("auxPress" as const),
+    slot: fc.constantFrom<Slot>("main", "side"),
+    button: fc.constantFrom<1 | 2>(1, 2),
+  }),
 );
 
 const gesture: fc.Arbitrary<Gesture> = fc.record({
@@ -389,7 +414,13 @@ const gesture: fc.Arbitrary<Gesture> = fc.record({
   slot: fc.constantFrom<Slot>("main", "side"),
   input: fc.constantFrom("pointer" as const, "space" as const, "enter" as const),
   count: fc.integer({ min: 1, max: 3 }),
-  end: fc.constantFrom("click" as const, "tap" as const, "dragOff" as const, "cancel" as const),
+  end: fc.constantFrom(
+    "click" as const,
+    "tap" as const,
+    "dragOff" as const,
+    "cancel" as const,
+    "contextmenu" as const,
+  ),
   gaps: fc.array(fc.array(world, { maxLength: 2 }), { minLength: 6, maxLength: 6 }),
 });
 
@@ -417,9 +448,14 @@ async function reset(): Promise<void> {
   starts = 0;
 }
 
+/** A pointer press that makes no click. */
+function aborted(g: Gesture): boolean {
+  return g.end === "dragOff" || g.end === "cancel" || g.end === "contextmenu";
+}
+
 /** What a gesture may do: an aborted press does nothing, any other acts as the face it began on. */
 function allowed(s: Gesture | Click, face: Began): readonly string[] {
-  if (s.k === "gesture" && s.input === "pointer" && (s.end === "dragOff" || s.end === "cancel")) {
+  if (s.k === "gesture" && s.input === "pointer" && aborted(s)) {
     return [];
   }
   return MAY[face];

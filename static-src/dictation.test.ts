@@ -920,6 +920,21 @@ describe("on-device first (rule 6)", () => {
     ]);
   });
 
+  it.each(["downloadable", "downloading"] as const)(
+    "gives no cloud notice when the fallback check answers %s, since an installed pack may still serve it",
+    async (answer) => {
+      const speech = fakeSpeech({
+        available: (o) => Promise.resolve(o.processLocally ? "unavailable" : answer),
+      });
+      const d = createDictation(speech.platform, box);
+      await listen(speech, d);
+      expect(speech.last().processLocally).toBe(false);
+      expect(speech.last().started).toBe(1);
+      expect(toastTexts().join(" ")).not.toContain("sends audio");
+      expect(dictationCloudNoted()).toBe(false);
+    },
+  );
+
   it("shows the notice only once the microphone opens, so a denied first press spends nothing", async () => {
     const shape = {
       available: (o: { processLocally: boolean }) =>
