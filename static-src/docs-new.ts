@@ -18,7 +18,8 @@ const NEW_LABEL: Readonly<Record<NewDocTab, string>> = {
 
 /** A tab's one-line usage note, shown beside its New button: a saved prompt's use is nowhere else on the page. */
 const USAGE_HINT: Readonly<Partial<Record<NewDocTab, string>>> = {
-  prompts: "Type / in a chat and pick the prompt. The whole file is the message; $ARGUMENTS takes what you type after its name.",
+  prompts:
+    "Type / in a chat and pick the prompt. The whole file is the message; $ARGUMENTS takes what you type after its name.",
 };
 
 function isCreatable(tab: DocsTab): tab is NewDocTab {
