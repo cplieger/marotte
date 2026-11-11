@@ -53,7 +53,7 @@ func (s *Store) logFor(ctx context.Context, chatID marotte.ChatID) (*EntryLog, e
 	// first; the settle's save announces nothing, so this one frame carries both. The `chat`
 	// version stays: the transcript did not move.
 	if c != nil && (settled || l.readPosition() != 0) {
-		s.broadcastMutation(ctx, chatID, c, true)
+		s.headers.Mark(chatID)
 	}
 	return l, nil
 }
@@ -520,8 +520,8 @@ func (s *Store) Revert(ctx context.Context, chatID marotte.ChatID, turn, kasMess
 
 // Reconcile runs the resume's merge swap over the chat's log and header under the
 // chat lock; swap answers whether it rewrote the log. On a rewrite the `chat`
-// version is minted and the header the rewrite's hooks wrote is broadcast, and the
-// minted version comes back for the subject_changed stamp. The caller holds the
+// version is minted and the header is marked for publishing (bumpChatWindow), and
+// the minted version comes back for the subject_changed stamp. The caller holds the
 // lifecycle mutex across this call, so the swap's gates and its rewrite see one
 // log.
 func (s *Store) Reconcile(ctx context.Context, chatID marotte.ChatID, swap func(l *EntryLog, h EntryHeader) (bool, error)) (version string, changed bool, err error) {
@@ -539,25 +539,25 @@ func (s *Store) Reconcile(ctx context.Context, chatID marotte.ChatID, swap func(
 	return s.bumpChatWindow(ctx, chatID), true, nil
 }
 
-// bumpChatWindow mints the `chat` and `chats` versions after an operation that changed which turns
-// the window holds (a revert's append, the merge swap), and broadcasts the header, so a
-// disconnected client's digest sees the record move.
+// bumpChatWindow mints the `chat` version after an operation that changed which turns the window
+// holds (a revert's append, the merge swap), and marks the header for publishing, so a
+// disconnected client's digest sees the record move. A chat with no readable header answers "".
 func (s *Store) bumpChatWindow(ctx context.Context, chatID marotte.ChatID) string {
 	m := s.lock(chatID)
 	m.Lock()
-	c, err := s.load(ctx, chatID)
+	_, err := s.load(ctx, chatID)
 	m.Unlock()
 	if err != nil {
 		return ""
 	}
 	version := s.versions.BumpCounter(subject.KindChat, string(chatID))
-	s.broadcastMutation(ctx, chatID, c, true)
+	s.headers.Mark(chatID)
 	return version
 }
 
 // WriteCounters caches the log's turn_count and last_turn_outcome on the header
-// and broadcasts the header: the write the closer and the turn open run after
-// releasing the lifecycle mutex. It broadcasts even when the counters held,
+// and marks the header for publishing: the write the closer and the turn open run
+// after releasing the lifecycle mutex. It marks even when the counters held,
 // because the read position moves at a close that leaves both unchanged.
 func (s *Store) WriteCounters(ctx context.Context, chatID marotte.ChatID) error {
 	if err := ctx.Err(); err != nil {
@@ -571,16 +571,12 @@ func (s *Store) WriteCounters(ctx context.Context, chatID marotte.ChatID) error 
 		return err
 	}
 	err = l.writeCounters(ctx)
-	after, aerr := s.load(ctx, chatID)
 	m.Unlock()
 	if err != nil {
 		return err
 	}
-	if aerr != nil {
-		return aerr
-	}
 	s.versions.BumpCounter(subject.KindChat, string(chatID))
-	s.broadcastMutation(ctx, chatID, after, true)
+	s.headers.Mark(chatID)
 	return nil
 }
 

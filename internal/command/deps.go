@@ -121,8 +121,7 @@ type chatStore interface {
 	// Lookup is Get keeping missing apart from unreadable: found is false with
 	// a nil error only when no record exists.
 	Lookup(ctx context.Context, id marotte.ChatID) (c *marotte.Chat, found bool, err error)
-	// Mutate is the header write primitive: load, apply, save, broadcast
-	// chat_created / chat_updated.
+	// Mutate is the header write primitive (chat.Store.Mutate owns what it announces).
 	Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error)
 	// Revert appends the log's record of a rewind: turn and everything after it
 	// become unreadable rather than absent, so nothing is cut and nothing is

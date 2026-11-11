@@ -37,7 +37,7 @@ type bridgeChatRecords interface {
 	// PublishIfPresent publishes a ready generation under the chat's lock once its record loads, so
 	// no delete lands between the verdict and the publication.
 	PublishIfPresent(ctx context.Context, id marotte.ChatID, publish func()) chat.Presence
-	// Mutate is the header write primitive: load, apply, save, broadcast.
+	// Mutate is the header write primitive (chat.Store.Mutate owns what it announces).
 	Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error)
 	// All answers every entry of the chat's log in file order.
 	All(ctx context.Context, chatID marotte.ChatID) ([]marotte.Entry, error)

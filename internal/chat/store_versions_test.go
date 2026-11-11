@@ -3,6 +3,7 @@ package chat
 import (
 	"slices"
 	"testing"
+	"testing/synctest"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
@@ -56,6 +57,10 @@ func TestMutate_ReturnsTheChatVersionTheRegistryReports(t *testing.T) {
 }
 
 func TestMutate_HeaderFrameCarriesChatsAndNoChatStamp(t *testing.T) {
+	synctest.Test(t, testHeaderFrameCarriesChatsAndNoChatStamp)
+}
+
+func testHeaderFrameCarriesChatsAndNoChatStamp(t *testing.T) {
 	s, b, v := newVersionedTestStore(t)
 	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "one"
@@ -79,12 +84,16 @@ func TestMutate_HeaderFrameCarriesChatsAndNoChatStamp(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Mutate: %v", err)
 	}
+	synctest.Sleep(headerPublishWindow)
 	updated := lastEvent(t, b, marotte.EventChatUpdated)
 	if updated.Subject == nil || updated.Subject.Kind != "chats" {
 		t.Fatalf("chat_updated Subject = %+v, want a chats stamp", updated.Subject)
 	}
 	if updated.Subject.Version == chats {
 		t.Errorf("chat_updated chats version %q did not move from the create's", chats)
+	}
+	if now, _ := v.Current(subject.KindChats, ""); updated.Subject.Version != now {
+		t.Errorf("chat_updated chats version = %q, want the registry's %q", updated.Subject.Version, now)
 	}
 }
 

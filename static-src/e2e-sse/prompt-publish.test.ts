@@ -1,8 +1,9 @@
-// Against the REAL binary: one Mutate publishes a header frame (`chat_updated`, stamped `chats`)
-// then its transcript frames, with the ONE `chat` stamp on the last. Each case kills the stream
-// between the frames (close-after hook), reconnects FRESH (no replay) and requires the hello's
-// digest to answer `changed` for chat:X. Node, not browser: the fixture refuses cross-site POSTs
-// and sets no CORS header.
+// Against the REAL binary: what a prompt's open publishes, and the digest that covers a stream cut
+// inside it. The open sends `turn_opened` (unstamped), then `draft_changed` (stamped `chat`) when
+// the prompt cleared a page's draft, then one coalesced `chat_updated` (stamped `chats`). Each cut
+// case kills the stream after `turn_opened` (close-after hook), reconnects FRESH (no replay) and
+// requires the hello's digest to answer `changed`. Node, not browser: the fixture refuses
+// cross-site POSTs and sets no CORS header.
 
 import { afterEach, beforeEach, describe, expect, inject, it } from "vitest";
 
@@ -19,7 +20,8 @@ import {
 import { decodeEnvelope } from "../bus.js";
 import { _resetForTest, observeStamp, versionMap } from "../subject-versions.js";
 import type { ServerEvent } from "../types.js";
-import { decodeSubjectStamp } from "../wire/decoders.gen.js";
+import { decodeChatHeader, decodeSubjectStamp } from "../wire/decoders.gen.js";
+import type { ChatHeader } from "../wire/types.gen.js";
 
 const SKIP_REASON =
   "marotte fixture not started: set SSE_FIXTURE to a marotte binary built with -tags marotte_test";
@@ -31,6 +33,10 @@ if (FIXTURE === undefined || FIXTURE === "") {
 /** Frames a FRESH connect writes before any live frame (hello, connected, pending_snapshot,
  *  status_snapshot); the hook counts data frames, so a live frame's ordinal is HOOK_FRAMES + n. */
 const HOOK_FRAMES = 4;
+
+/** How long a test waits after the open's last expected frame before it counts header frames:
+ *  past the fixture's 1 s header coalescing window, so a second publish would have landed. */
+const QUIET_MS = 1500;
 
 interface Client {
   readonly stream: Stream;
@@ -65,15 +71,19 @@ function until(predicate: () => boolean, what: string, timeoutMs = 10_000): Prom
   });
 }
 
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function messageID(): string {
   return `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function subjects(states: readonly { kind: string; ref: string }[]): string[] {
-  return states.map((s) => `${s.kind}:${s.ref}`);
+  return states.map((s) => `${s.kind}:${s.ref}`).sort();
 }
 
-describe.skipIf(FIXTURE === undefined || FIXTURE === "")("the two-frame publish", () => {
+describe.skipIf(FIXTURE === undefined || FIXTURE === "")("a prompt's publish", () => {
   const base = (): string => inject("marotteURL");
   let client: Client | null = null;
 
@@ -81,10 +91,11 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("the two-frame publish"
   const visibility = createVisibilityManager({ visible: () => true, listen: unlisten });
   const online = createOnlineManager({ online: () => true, listen: unlisten });
 
+  /** Sent as the page sends it (`Sec-Fetch-Site: same-origin`), so a prompt settles the composer. */
   async function command(type: string, chatID: string, payload: unknown): Promise<unknown> {
     const res = await fetch(`${base()}/api/command`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Sec-Fetch-Site": "same-origin" },
       body: JSON.stringify({ type, chat_id: chatID, payload }),
     });
     if (!res.ok) {
@@ -93,14 +104,20 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("the two-frame publish"
     return res.json();
   }
 
-  async function createChat(): Promise<string> {
-    const body = (await command("create_chat", "", { name: "two-frame" })) as {
+  /** A named chat, so the prompt's composer settle has no default name to replace. */
+  async function createChat(c: Client): Promise<string> {
+    const body = (await command("create_chat", "", { name: "prompt-publish" })) as {
       chat: { id: string };
     };
-    return body.chat.id;
+    const id = body.chat.id;
+    await until(
+      () => c.frames.some((f) => f.type === "chat_created" && f.chat_id === id),
+      "chat_created",
+    );
+    return id;
   }
 
-  /** `GET /api/chats/{id}`: the client's own load, observing the stamp as store-load does. */
+  /** `GET /api/chats/{id}`: the client's own load, observing every stamp as store-load does. */
   async function loadChat(id: string): Promise<ChatRead> {
     const res = await fetch(`${base()}/api/chats/${encodeURIComponent(id)}?limit=50`);
     const body = (await res.json()) as {
@@ -108,10 +125,21 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("the two-frame publish"
       draft?: unknown;
       entries?: { kind?: string; payload?: { prompt?: { id?: string } } }[];
     };
-    const stamp = decodeSubjectStamp(body.subject);
-    observeStamp(stamp);
+    if (!Array.isArray(body.subject)) {
+      throw new Error(
+        `GET /api/chats/${id} answered subject ${JSON.stringify(body.subject)}, want an array`,
+      );
+    }
+    const stamps = body.subject.map((s) => decodeSubjectStamp(s));
+    for (const stamp of stamps) {
+      observeStamp(stamp);
+    }
+    const own = stamps.find((s) => s.kind === "chat" && s.ref === id);
+    if (own === undefined) {
+      throw new Error(`GET /api/chats/${id} carried no chat stamp: ${JSON.stringify(stamps)}`);
+    }
     return {
-      version: stamp.version,
+      version: own.version,
       draft: typeof body.draft === "string" ? body.draft : "",
       promptIDs: (body.entries ?? [])
         .filter((e) => e.kind === "turn_open")
@@ -136,7 +164,7 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("the two-frame publish"
     const versions = versionMap();
     const stream = createStream({
       url: `${base()}/api/events`,
-      headers: { "SSE-Client": "e2e_two_frame_publish_" },
+      headers: { "SSE-Client": "e2e_prompt_publish_" },
       versions,
       visibility,
       online,
@@ -180,6 +208,15 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("the two-frame publish"
       .held.find((h) => h.kind === "chat" && h.ref === id)?.version;
   }
 
+  /** The frames for `id` at and after `from`. */
+  function chatFrames(c: Client, id: string, from: number): ServerEvent[] {
+    return c.frames.slice(from).filter((f) => f.chat_id === id);
+  }
+
+  function headers(frames: readonly ServerEvent[]): ChatHeader[] {
+    return frames.filter((f) => f.type === "chat_updated").map((f) => decodeChatHeader(f.payload));
+  }
+
   /** Arms the cut for the NEXT connection, then makes this client's fresh reconnect be it. */
   async function reconnectArmed(c: Client, after: number): Promise<void> {
     const before = hellos(c).length;
@@ -213,38 +250,82 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("the two-frame publish"
     client = null;
   });
 
-  it("transcript variant: the stream dies after the header frame, the fresh digest says changed", async () => {
+  it("the open sends turn_opened, then one header frame bound to the turn", async () => {
     client = connect();
     const c = client;
     await until(() => hooksSeen(c) === 1, "the first hook");
+    const id = await createChat(c);
+    await pause(QUIET_MS);
+    const from = c.frames.length;
 
-    const id = await createChat();
-    await until(() => c.frames.some((f) => f.type === "chat_created"), "chat_created");
+    // The fixture's kiro-cli never answers, so the open is all this prompt publishes.
+    await command("prompt", id, { text: "hello", message_id: messageID() });
+    await until(() => headers(chatFrames(c, id, from)).length > 0, "the open's chat_updated");
+    await pause(QUIET_MS);
+
+    const frames = chatFrames(c, id, from);
+    expect(frames.map((f) => f.type)).toEqual(["turn_opened", "chat_updated"]);
+    expect(frames[0]?.subject).toBeUndefined();
+    expect(frames[1]?.subject?.kind).toBe("chats");
+    const [header] = headers(frames);
+    expect(header?.turn_count).toBe(1);
+    expect(header?.run.entries).toHaveLength(1);
+    expect(header?.run.entries[0]?.turn).toMatch(/^t-/);
+  });
+
+  it("a prompt that clears a page's draft adds one draft_changed and still one header frame", async () => {
+    client = connect();
+    const c = client;
+    await until(() => hooksSeen(c) === 1, "the first hook");
+    const id = await createChat(c);
+    await command("set_draft", id, { text: "typed on B" });
+    await until(
+      () => c.frames.some((f) => f.type === "draft_changed" && f.chat_id === id),
+      "the draft's draft_changed",
+    );
+    await pause(QUIET_MS);
+    const from = c.frames.length;
+
+    await command("prompt", id, { text: "typed on B", message_id: messageID() });
+    await until(() => headers(chatFrames(c, id, from)).length > 0, "the open's chat_updated");
+    await pause(QUIET_MS);
+
+    const frames = chatFrames(c, id, from);
+    expect(frames.map((f) => f.type)).toEqual(["turn_opened", "draft_changed", "chat_updated"]);
+    expect(frames[1]?.subject?.kind).toBe("chat");
+    expect(frames[2]?.subject?.kind).toBe("chats");
+  });
+
+  it("transcript variant: the stream dies after turn_opened, the fresh digest says changed", async () => {
+    client = connect();
+    const c = client;
+    await until(() => hooksSeen(c) === 1, "the first hook");
+    const id = await createChat(c);
+    await pause(QUIET_MS);
     const before = await loadChat(id);
     expect(before.promptIDs).toEqual([]);
     expect(heldVersion(id)).toBe(before.version);
 
-    // Frame 5 is the header frame; frame 6, the transcript frame, is the write that fails.
+    // Frame 5 is `turn_opened`; frame 6, the coalesced header frame, is the write that fails.
     await reconnectArmed(c, HOOK_FRAMES + 1);
     const seenBefore = c.frames.length;
     const dropsBefore = dropped(c);
 
-    // The fixture's kiro-cli never answers, so this Mutate is the only chat:X mutation.
     const sent = messageID();
     await command("prompt", id, { text: "hello", message_id: sent });
     await until(() => dropped(c) === dropsBefore + 1, "the armed connection to be cut");
 
     const delivered = c.frames.slice(seenBefore).map((f) => f.type);
-    expect(delivered).toContain("chat_updated");
-    expect(delivered).not.toContain("turn_opened");
-    // The header frame carried `chats`, never `chat`: the held chat version is unmoved.
+    expect(delivered).toContain("turn_opened");
+    expect(delivered).not.toContain("chat_updated");
+    // `turn_opened` carries no stamp: the held chat version is unmoved.
     expect(heldVersion(id)).toBe(before.version);
 
     const verdict = await reconnectFresh(c);
     expect(verdict.kind).toBe("ok");
     if (verdict.kind === "ok") {
-      // chat:X moved; the header the client DID receive keeps `chats` current.
-      expect(subjects(verdict.changed)).toEqual([`chat:${id}`]);
+      // The open moved chat:X, and the header frame that would have moved `chats` was lost.
+      expect(subjects(verdict.changed)).toEqual([`chat:${id}`, "chats:"]);
       expect(verdict.removed).toEqual([]);
     }
     // And the refetch lands the message the stream lost.
@@ -257,21 +338,24 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("the two-frame publish"
     client = connect();
     const c = client;
     await until(() => hooksSeen(c) === 1, "the first hook");
-
-    const id = await createChat();
+    const id = await createChat(c);
     // Device B types; A loads the chat and holds the draft with its version.
     await command("set_draft", id, { text: "typed on B" });
-    await until(() => c.frames.some((f) => f.type === "draft_changed"), "B's draft_changed");
+    await until(
+      () => c.frames.some((f) => f.type === "draft_changed" && f.chat_id === id),
+      "B's draft_changed",
+    );
+    await pause(QUIET_MS);
     const before = await loadChat(id);
     expect(before.draft).toBe("typed on B");
     expect(heldVersion(id)).toBe(before.version);
 
-    // Frame 5 the header, 6 `turn_opened` (unstamped: a `draft_changed` follows), 7 `draft_changed`.
-    await reconnectArmed(c, HOOK_FRAMES + 2);
+    // Frame 5 is `turn_opened`; frame 6, `draft_changed`, is the write that fails.
+    await reconnectArmed(c, HOOK_FRAMES + 1);
     const seenBefore = c.frames.length;
     const dropsBefore = dropped(c);
 
-    // The prompt leaves the composer and clears the draft in the same Mutate.
+    // The prompt leaves the composer and clears the draft.
     const sent = messageID();
     await command("prompt", id, { text: "typed on B", message_id: sent });
     await until(() => dropped(c) === dropsBefore + 1, "the armed connection to be cut");
@@ -279,15 +363,16 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("the two-frame publish"
     const delivered = c.frames.slice(seenBefore);
     expect(delivered.map((f) => f.type)).toContain("turn_opened");
     expect(delivered.map((f) => f.type)).not.toContain("draft_changed");
-    // The turn_opened of a Mutate that also clears the draft carries NO stamp.
-    const appended = delivered.find((f) => f.type === "turn_opened");
-    expect(appended?.subject).toBeUndefined();
     expect(heldVersion(id)).toBe(before.version);
 
     const verdict = await reconnectFresh(c);
     expect(verdict.kind).toBe("ok");
     if (verdict.kind === "ok") {
-      expect(subjects(verdict.changed)).toEqual([`chat:${id}`]);
+      // The cut lands before the header window closes, so this digest may run before the `chats`
+      // bump; the header frame then reaches the new stream instead.
+      const changed = subjects(verdict.changed);
+      expect(changed).toContain(`chat:${id}`);
+      expect(changed.filter((s) => s !== `chat:${id}` && s !== "chats:")).toEqual([]);
       expect(verdict.removed).toEqual([]);
     }
     // The refetch clears A's composer and lands the message.

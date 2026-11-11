@@ -38,7 +38,7 @@ var versionSources = []string{
 // mintingBodies are the critical sections themselves, exempted while their callers are checked. The four page
 // builders read their stamps under the lock serving the entries; live_turn and run_turn versions are newest served seqs.
 var mintingBodies = []string{
-	"Mutate", "broadcastMutation", "setComposer", "Remove",
+	"Mutate", "announceCreated", "publishHeader", "setComposer", "Remove",
 	"mergeStamped", "snapshotStamped", "registry", "statusStamp",
 	"pendingSnapshot", "liveRunRowsStamped", "modesModelsStamped", "mintPending",
 	"clearWaiting", "clear", "setModes", "SetModels",

@@ -152,7 +152,7 @@ type steerBuffer interface {
 type chatRecords interface {
 	// Get returns the chat header at id, or false if it does not exist or could not be read.
 	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
-	// Mutate is the header write primitive: load, apply, save, broadcast.
+	// Mutate is the header write primitive (chat.Store.Mutate owns what it announces).
 	Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error)
 	// PromptTexts is every prompt the chat's log holds, in turn order: what KAS
 	// derives a session title from, so the focus filter can tell a derivation
