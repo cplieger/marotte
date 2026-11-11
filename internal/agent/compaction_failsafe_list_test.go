@@ -2,6 +2,7 @@ package agent
 
 import (
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -386,12 +387,16 @@ func TestFailsafe_UnreadSteersGoAfterTheCompactionAndBeforeTheResume(t *testing.
 }
 
 // A turn whose reply finished before the cancel landed has nothing to continue: the compaction still runs first,
-// with no resume, and the rows go after it as a clean end lets them.
+// as the point's again (no stopped task to speak of), with no resume, and the rows go after it as a clean end lets
+// them.
 func TestFailsafe_ATurnThatFinishedBeforeTheCancelGetsNoResume(t *testing.T) {
 	w := firedOn(t)
 	w.closed("m-a", listClose{clean: true, completed: true})
 	if got, want := w.order(), "compact-1:starting m-q1:pending"; got != want {
 		t.Errorf("list = %q, want %q", got, want)
+	}
+	if got := entryOrigin(w, "compact-1"); got != marotte.RunFromThreshold {
+		t.Errorf("compaction origin = %q, want %q back", got, marotte.RunFromThreshold)
 	}
 }
 
@@ -448,10 +453,27 @@ func TestFailsafe_AnUndeliveredCancelWithdrawsTheResume(t *testing.T) {
 	}
 }
 
-// The reader's Cancel during the sequence: while the turn stops it stops nothing more, and during the resume it
-// stops the resume, whose rows then wait for the next clean end.
+// The reader's Cancel during the sequence: drawn against the turn the failsafe is stopping, it stops nothing more
+// but the task is not continued (the compaction still runs); naming nothing while the turn stops, it changes
+// nothing; during the resume it stops the resume, whose rows then wait for the next clean end.
 func TestFailsafe_AReaderCancelDuringTheSequence(t *testing.T) {
-	t.Run("while the turn stops", func(t *testing.T) {
+	t.Run("drawn against the turn the failsafe stops", func(t *testing.T) {
+		w := firedOn(t)
+		if plan := w.l.stopHead("m-a", 2); plan.arm != stopNothing {
+			t.Errorf("Cancel = %+v, want nothing more stopped", plan)
+		}
+		if got, want := w.order(), "m-a:stopping compact-1:pending m-q1:paused"; got != want {
+			t.Errorf("list = %q, want %q", got, want)
+		}
+		w.closed("m-a", listClose{})
+		w.l.compactionStart("compact-1", w.facts())
+		w.l.compactionEnded("compact-1", true, nil)
+		w.advance()
+		if got := w.order(); got != "m-q1:paused" {
+			t.Errorf("list after the compaction = %q, want only m-q1 paused", got)
+		}
+	})
+	t.Run("naming no entry while the turn stops", func(t *testing.T) {
 		w := firedOn(t)
 		before := w.order()
 		if plan := w.l.stopHead("", 2); plan.arm != stopNothing {
@@ -554,6 +576,182 @@ func TestListCloseOf_CompletedIsTheOutcomesOwnGrade(t *testing.T) {
 			c := h.coord.listCloseOf(t.Context(), turn, tc.closer, &cf, marotte.TurnResult{}, false)
 			if c.clean != tc.clean || c.completed != tc.completed {
 				t.Errorf("close = clean %v completed %v, want clean %v completed %v", c.clean, c.completed, tc.clean, tc.completed)
+			}
+		})
+	}
+}
+
+// resumeRunning is chat m-a stopped by the failsafe under token 1 and compacted, with its resume's turn running and
+// nothing queued.
+func resumeRunning(t *testing.T) *tableWorld {
+	t.Helper()
+	w := newTableWorld()
+	w.send("m-a", marotte.SendPlain, "")
+	w.running("m-a")
+	if plan := w.fire("m-a", 1); plan.arm != stopRunning {
+		t.Fatalf("Setup: fire = %+v, want m-a stopped", plan)
+	}
+	w.closed("m-a", listClose{})
+	w.l.compactionStart("compact-1", w.facts())
+	w.l.compactionEnded("compact-1", true, nil)
+	w.advance()
+	w.running("m-resume")
+	w.l.usageUnderThePoint()
+	if got := w.order(); got != "m-resume:running" {
+		t.Fatalf("Setup: list = %q, want the resume running alone", got)
+	}
+	w.l.takeEffects()
+	return w
+}
+
+// marotte continues a stopped task on its own once per turn the reader sent: a resume that fills the context again
+// is stopped and compacted (stopping at 95% still beats running out), but nothing continues it, the rows stay
+// paused and the reader is told to send a message.
+func TestFailsafe_AResumeThatFillsTheContextAgainIsStoppedAndCompactedButNotResumed(t *testing.T) {
+	w := firedOn(t)
+	w.compacted(t)
+	w.running("m-resume")
+	w.l.usageUnderThePoint()
+	w.l.takeEffects()
+
+	if plan := w.l.failsafe(failsafeFacts{turnID: "t-m-resume", resumeID: "m-resume-2", token: 2}); plan.arm != stopRunning {
+		t.Fatalf("fire in the resume = %+v, want it stopped", plan)
+	}
+	fx := w.l.takeEffects()
+	if got, want := w.order(), "m-resume:stopping compact-2:pending m-q1:paused"; got != want {
+		t.Errorf("list = %q, want %q", got, want)
+	}
+	if !slices.Equal(fx.notices, []string{resumeLimitNotice}) {
+		t.Errorf("notices = %q, want %q", fx.notices, resumeLimitNotice)
+	}
+	w.closed("m-resume", listClose{})
+	w.l.compactionStart("compact-2", w.facts())
+	w.l.compactionEnded("compact-2", true, nil)
+	w.advance()
+	if got := w.order(); got != "m-q1:paused" {
+		t.Errorf("list after the compaction = %q, want only m-q1 paused", got)
+	}
+}
+
+// A turn the reader sent (a message, or the steers the reader sent that the turn left unread) allows the next
+// resume again; kiro-cli's own turn does not.
+func TestFailsafe_ATurnTheReaderSentAllowsTheNextResume(t *testing.T) {
+	for _, tc := range []struct {
+		turn    func(w *tableWorld) (entry string)
+		name    string
+		resumes bool
+	}{
+		{name: "a message the reader sent", resumes: true, turn: func(w *tableWorld) string {
+			w.closed("m-resume", listClose{clean: true, completed: true})
+			w.send("m-b", marotte.SendPlain, "")
+			w.running("m-b")
+			return "m-b"
+		}},
+		{name: "the steers the resume left unread", resumes: true, turn: func(w *tableWorld) string {
+			_, r := w.l.find("m-resume")
+			token := r.res.Token
+			w.l.turnClosed(listClose{turnID: r.turnID, seq: w.nextSeq, clean: true, completed: true}, w.facts())
+			w.l.endsChanged(1, 0, []string{"s-1"}, false, true, w.facts())
+			w.l.closeEndsResolved("m-resume", false, true, w.facts())
+			w.l.tailEnded("m-resume", false)
+			w.held = false
+			w.l.reservationReleased(token)
+			w.advance()
+			w.running("m-unread")
+			return "m-unread"
+		}},
+		{name: "kiro-cli's own wire turn", turn: func(w *tableWorld) string {
+			w.closed("m-resume", listClose{clean: true, completed: true})
+			w.wireOpen("t-w", true)
+			return "t-w"
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := resumeRunning(t)
+			id := tc.turn(w)
+			_, e := w.l.find(id)
+			if e == nil || e.state != marotte.RunRunning || w.l.liveLen() != 1 {
+				t.Fatalf("Setup: list = %q, want %s running alone", w.order(), id)
+			}
+			w.l.usageUnderThePoint()
+			w.l.takeEffects()
+			if plan := w.l.failsafe(failsafeFacts{turnID: e.turnID, resumeID: "m-resume-2", token: 2}); plan.arm != stopRunning {
+				t.Fatalf("fire in %s = %+v, want it stopped", id, plan)
+			}
+			fx := w.l.takeEffects()
+			_, r := w.l.find("m-resume-2")
+			if got := r != nil; got != tc.resumes {
+				t.Errorf("resume listed = %v, want %v; list %q", got, tc.resumes, w.order())
+			}
+			if got := len(fx.notices) == 1; got == tc.resumes {
+				t.Errorf("notices = %q with resume %v, want the limit notice only when no resume is listed", fx.notices, tc.resumes)
+			}
+		})
+	}
+}
+
+// A turn that runs ahead of a waiting resume (kiro-cli's own, or the stopped turn's unread steers) and reaches 95%
+// lists its compaction ahead of that resume, which waits on behind it: one resume, never two. Undoing the new stop
+// leaves the resume, which belongs to the first stop.
+func TestFailsafe_AFireAheadOfAWaitingResumeKeepsOneResume(t *testing.T) {
+	w := firedOn(t)
+	w.closed("m-a", listClose{})
+	w.l.compactionStart("compact-1", w.facts())
+	w.held = true
+	w.l.compactionEnded("compact-1", true, nil)
+	w.advance()
+	w.wireOpen("t-w", true)
+	if got, want := w.order(), "t-w:running m-resume:pending m-q1:paused"; got != want {
+		t.Fatalf("Setup: list = %q, want %q", got, want)
+	}
+	w.l.usageUnderThePoint()
+
+	if plan := w.l.failsafe(failsafeFacts{turnID: "t-w", resumeID: "m-resume-2", token: 2}); plan.arm != stopRunning {
+		t.Fatalf("fire in the wire turn = %+v, want it stopped", plan)
+	}
+	if got, want := w.order(), "t-w:stopping compact-2:pending m-resume:pending m-q1:paused"; got != want {
+		t.Errorf("list = %q, want %q", got, want)
+	}
+	w.l.stopUndone(2, func(string) bool { return true })
+	if got, want := w.order(), "t-w:running compact-2:pending m-resume:pending m-q1:paused"; got != want {
+		t.Errorf("list after the undo = %q, want %q", got, want)
+	}
+	if got := entryOrigin(w, "compact-2"); got != marotte.RunFromThreshold {
+		t.Errorf("compaction origin after the undo = %q, want %q", got, marotte.RunFromThreshold)
+	}
+}
+
+// A resume whose launch is refused continues nothing: it goes from the dock, the rows stay paused and the reader is
+// told, unless a stop withdrew it or the chat's life ended.
+func TestFailsafe_ARefusedResumeLaunchTellsTheReader(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		want    []string
+		refusal launchRefusal
+		ended   bool
+	}{
+		{name: "refused", refusal: launchClosed, want: []string{resumeRefusedNotice}},
+		{name: "withdrawn by a stop", refusal: launchWithdrawn},
+		{name: "on an ended life", refusal: launchClosed, ended: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := firedOn(t)
+			w.compacted(t)
+			_, r := w.l.find("m-resume")
+			if r == nil || r.state != marotte.RunStarting {
+				t.Fatalf("Setup: list = %q, want the resume starting", w.order())
+			}
+			if tc.ended {
+				w.l.endLife()
+			}
+			w.l.takeEffects()
+			w.l.launched("m-resume", r.res.Token, "", tc.refusal, errors.New("the bridge went away"))
+			fx := w.l.takeEffects()
+			if got := w.order(); got != "m-q1:paused" {
+				t.Errorf("list = %q, want only m-q1 paused", got)
+			}
+			if !slices.Equal(fx.notices, tc.want) {
+				t.Errorf("notices = %q, want %q", fx.notices, tc.want)
 			}
 		})
 	}

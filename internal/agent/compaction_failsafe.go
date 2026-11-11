@@ -6,6 +6,10 @@ import "github.com/cplieger/marotte/internal/marotte"
 // KAS's own compaction is off on every chat session, so nothing else saves a turn that crosses the point mid-turn.
 const compactionFailsafePct = 95
 
+// compactionFailsafeResumes is how many resumes marotte sends between two turns the reader sent: a task whose every
+// step refills the context (a tool call too big) would otherwise stop, compact and resume with no end.
+const compactionFailsafeResumes = 1
+
 // resumeText is the prompt marotte sends after a failsafe compaction, so the stopped work continues.
 const resumeText = "The context window was nearly full, so marotte stopped your task mid-turn and compacted the " +
 	"conversation. Continue the task from where it stopped. A command or file edit that was running when the turn " +
@@ -18,6 +22,13 @@ const failsafeStopNotice = "The context was nearly full, so marotte stopped this
 // compactFailsafeFailed is the toast for a failsafe compaction that did not run, whose stopped turn is not resumed.
 const compactFailsafeFailed = "The compaction did not run (the agent was busy, or the summary failed or the chat " +
 	"changed before it finished), so marotte did not continue the stopped turn. Send a message to go on."
+
+// resumeLimitNotice tells the reader a failsafe stop at compactionFailsafeResumes lists no resume.
+const resumeLimitNotice = "The context filled up again, so marotte stopped the turn to compact the context. It " +
+	"continues a stopped task on its own once per message you send, so send a message to go on."
+
+// resumeRefusedNotice tells the reader the resume's launch was refused, so the stopped turn is not continued.
+const resumeRefusedNotice = "marotte could not continue the stopped turn. Send a message to go on."
 
 type failsafeFacts struct {
 	turnID   string
@@ -46,7 +57,9 @@ func (l *runList) failsafe(f failsafeFacts) stopPlan {
 }
 
 // takeOverCompaction makes the chat's compaction the failsafe's and lists the resume behind it. A compaction an
-// earlier fire already took over keeps its resume, or the reader's removal of it.
+// earlier fire already took over keeps its resume, or the reader's removal of it. A resume already waiting (a turn
+// ran ahead of it) moves behind the compaction and keeps its stop's token, so undoing this stop leaves it; at
+// compactionFailsafeResumes none is listed and the reader is told.
 func (l *runList) takeOverCompaction(f failsafeFacts) {
 	c, joined := l.requestCompaction(marotte.RunFromFailsafe, f.turnID)
 	if !joined || c.origin != marotte.RunFromFailsafe {
@@ -55,11 +68,22 @@ func (l *runList) takeOverCompaction(f failsafeFacts) {
 			c.fsPrior, c.fsPriorFor = c.origin, c.forTurn
 		}
 		c.origin, c.fsToken = marotte.RunFromFailsafe, f.token
-		at, _ := l.find(c.id)
-		l.insert(at+1, &runEntry{
-			id: f.resumeID, kind: marotte.RunKindResume, origin: marotte.RunFromFailsafe, state: marotte.RunPending,
-			row: &marotte.QueuedPrompt{ID: f.resumeID, Text: resumeText}, fsToken: f.token,
-		})
+		r := l.resume()
+		switch {
+		case r != nil:
+			l.remove(r)
+		case l.resumed < compactionFailsafeResumes:
+			r = &runEntry{
+				id: f.resumeID, kind: marotte.RunKindResume, origin: marotte.RunFromFailsafe, state: marotte.RunPending,
+				row: &marotte.QueuedPrompt{ID: f.resumeID, Text: resumeText}, fsToken: f.token,
+			}
+		default:
+			l.fx.notices = append(l.fx.notices, resumeLimitNotice)
+		}
+		if r != nil {
+			at, _ := l.find(c.id)
+			l.insert(at+1, r)
+		}
 	}
 	c.forTurn = f.turnID
 	l.touch()
@@ -79,6 +103,21 @@ func (l *runList) resume() *runEntry {
 func (l *runList) dropResume() {
 	if r := l.resume(); r != nil {
 		l.remove(r)
+	}
+}
+
+// withdrawFailsafe takes back what the failsafe stop token listed: its waiting resume goes, and the compaction it
+// took over gets back its prior origin and turn. A resume an earlier stop listed stays.
+func (l *runList) withdrawFailsafe(token uint64) {
+	if token == 0 {
+		return
+	}
+	if r := l.resume(); r != nil && r.fsToken == token {
+		l.remove(r)
+	}
+	if c := l.compaction(); c != nil && c.fsToken == token && c.origin == marotte.RunFromFailsafe {
+		c.origin, c.forTurn, c.fsToken = c.fsPrior, c.fsPriorFor, 0
+		l.touch()
 	}
 }
 

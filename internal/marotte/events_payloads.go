@@ -301,6 +301,9 @@ const (
 	// ErrCodeTangentMergeFailed means a tangent merge stopped after it was accepted: the summary
 	// turn did not finish cleanly, or its summary could not be delivered.
 	ErrCodeTangentMergeFailed ErrorCode = "tangent_merge_failed"
+	// ErrCodeResumeNotSent means marotte stopped a turn to compact the context and sends no prompt to continue it,
+	// so the stopped task waits for the reader's next message.
+	ErrCodeResumeNotSent ErrorCode = "resume_not_sent"
 )
 
 // ErrorPayload is the payload for type="error"; Code lets clients react per-class.

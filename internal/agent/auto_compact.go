@@ -35,8 +35,8 @@ type autoCompactor struct {
 	// position are folded. Both nil in tests.
 	budget func(context.Context, time.Duration) (context.Context, context.CancelFunc)
 	folded func(ctx context.Context, chatID marotte.ChatID, seq uint64) bool
-	// failed tells the chat's pages that a compaction the dock showed did not run.
-	failed func(ctx context.Context, chatID marotte.ChatID, detail string)
+	// toast tells the chat's pages of a compaction the dock showed that did not run, or a resume not sent.
+	toast func(ctx context.Context, chatID marotte.ChatID, code marotte.ErrorCode, detail string)
 	// asksOpen reports an ask the chat's own turn is parked on (a permission, a question, an elicitation).
 	asksOpen func(marotte.ChatID) bool
 	// carryOutStop carries out the failsafe's stop as a Cancel does (command.Dispatcher.CarryOutStop).
@@ -70,9 +70,9 @@ func newAutoCompactor(
 		compact: command.Compact,
 		budget:  bc.engine.stallAware,
 		folded:  bc.turns.awaitPosition,
-		failed: func(ctx context.Context, chatID marotte.ChatID, detail string) {
+		toast: func(ctx context.Context, chatID marotte.ChatID, code marotte.ErrorCode, detail string) {
 			bc.broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
-				Code: marotte.ErrCodeCompactionFailed, Message: detail,
+				Code: code, Message: detail,
 			}))
 		},
 		asksOpen:     asksOpen,

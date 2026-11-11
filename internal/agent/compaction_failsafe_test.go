@@ -17,28 +17,31 @@ import (
 
 // failsafeChat is chat c1 with Compact automatically on at 90%, whose prompt m-a runs with its session/prompt held
 // until release, which answers it with mAStop (cancelled unless set); m-q1 and m-q2 wait behind it. Every later prompt
-// answers end_turn, unless hold named its words.
+// answers end_turn, unless hold named its words (holdStops names another answer).
 type failsafeChat struct {
-	h       *Runtime
-	cs      *testChatStore
-	br      *fakeBridge
-	release func()
-	holds   map[string]chan struct{}
-	mAStop  string
-	toasts  []string
-	mu      sync.Mutex
+	h         *Runtime
+	cs        *testChatStore
+	br        *fakeBridge
+	release   func()
+	holds     map[string]chan struct{}
+	holdStops map[string]string
+	mAStop    string
+	toasts    []string
+	mu        sync.Mutex
 }
 
 func newFailsafeChat(t *testing.T, policyOn bool) *failsafeChat {
 	t.Helper()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
-	fc := &failsafeChat{h: h, cs: cs, br: br, holds: map[string]chan struct{}{}, mAStop: "cancelled"}
+	fc := &failsafeChat{
+		h: h, cs: cs, br: br, holds: map[string]chan struct{}{}, holdStops: map[string]string{}, mAStop: "cancelled",
+	}
 	ac := h.coord.autoCompact
 	ac.policy = func(context.Context) (bool, int) { return policyOn, 90 }
-	ac.failed = func(_ context.Context, _ marotte.ChatID, detail string) {
+	ac.toast = func(_ context.Context, _ marotte.ChatID, code marotte.ErrorCode, detail string) {
 		fc.mu.Lock()
 		defer fc.mu.Unlock()
-		fc.toasts = append(fc.toasts, detail)
+		fc.toasts = append(fc.toasts, string(code)+": "+detail)
 	}
 	gate := make(chan struct{})
 	var once sync.Once
@@ -54,9 +57,10 @@ func newFailsafeChat(t *testing.T, policyOn bool) *failsafeChat {
 		held := first
 		first = false
 		var wait chan struct{}
+		var waitStop string
 		for text, ch := range fc.holds {
 			if bytes.Contains(words, []byte(text)) {
-				wait = ch
+				wait, waitStop = ch, fc.holdStops[text]
 			}
 		}
 		fc.mu.Unlock()
@@ -69,6 +73,9 @@ func newFailsafeChat(t *testing.T, policyOn bool) *failsafeChat {
 			return json.RawMessage(`{"stopReason":"` + stop + `"}`), nil, true
 		case wait != nil:
 			<-wait
+			if waitStop != "" {
+				return json.RawMessage(`{"stopReason":"` + waitStop + `"}`), nil, true
+			}
 		}
 		return nil, nil, false
 	})
@@ -465,8 +472,8 @@ func TestFailsafe_ARefusedCompactionsToastSaysTheTurnWasNotContinued(t *testing.
 	if !eventually(func() bool { return len(fc.toastsSoFar()) == 1 }) {
 		t.Fatalf("toasts = %v, want one", fc.toastsSoFar())
 	}
-	if got := fc.toastsSoFar(); !slices.Equal(got, []string{compactFailsafeFailed}) {
-		t.Errorf("toasts = %v, want %q", got, compactFailsafeFailed)
+	if got, want := fc.toastsSoFar(), []string{string(marotte.ErrCodeCompactionFailed) + ": " + compactFailsafeFailed}; !slices.Equal(got, want) {
+		t.Errorf("toasts = %v, want %q", got, want)
 	}
 	staysFalse(t, 150*time.Millisecond, func() bool { return len(openedPrompts(t, fc.cs)) > 2 },
 		"a prompt opened after the refused failsafe compaction")
@@ -566,4 +573,46 @@ func TestFailsafe_KASRepublishingItsFigureAfterAPointCompactionStopsNothing(t *t
 	if !eventually(func() bool { return fc.cancels() == 1 }) {
 		t.Errorf("session/cancel writes = %d after a fresh reading at 96%%, want 1", fc.cancels())
 	}
+}
+
+// A resume that fills the context again is stopped and compacted, but marotte sends no second resume: the reader is
+// told to send a message and the rows stay paused until they do.
+func TestFailsafe_ASecondFillStopsAndCompactsButSendsNoSecondResume(t *testing.T) {
+	fc := newFailsafeChat(t, true)
+	fc.compactsWith(96)
+	releaseResume := fc.hold(t, "stopped your task mid-turn")
+	fc.mu.Lock()
+	fc.holdStops["stopped your task mid-turn"] = "cancelled"
+	fc.mu.Unlock()
+
+	fc.respond(96)
+	if !eventually(func() bool { return fc.cancels() == 1 }) {
+		t.Fatalf("Setup: session/cancel writes = %d, want 1", fc.cancels())
+	}
+	fc.release()
+	waitFor(t, func() bool {
+		w := failsafeWords(t, fc.cs)
+		return len(w) > 0 && w[0] == "resume running"
+	})
+	fc.respond(40)
+	fc.respond(96)
+	if !eventually(func() bool { return fc.cancels() == 2 }) {
+		t.Fatalf("session/cancel writes = %d after the resume reached 96%%, want 2", fc.cancels())
+	}
+	releaseResume()
+
+	want := string(marotte.ErrCodeResumeNotSent) + ": " + resumeLimitNotice
+	if !eventually(func() bool { return slices.Contains(fc.toastsSoFar(), want) }) {
+		t.Errorf("toasts = %q, want %q", fc.toastsSoFar(), want)
+	}
+	if !eventually(func() bool {
+		return slices.Equal(failsafeWords(t, fc.cs), []string{"m-q1 paused", "m-q2 paused"})
+	}) {
+		t.Fatalf("list = %v, want the rows paused with no compaction or resume left", failsafeWords(t, fc.cs))
+	}
+	if got := countCalls(fc.br, marotte.MethodSessionCompact); got != 2 {
+		t.Errorf("compactions = %d, want 2", got)
+	}
+	staysFalse(t, 150*time.Millisecond, func() bool { return len(openedPrompts(t, fc.cs)) > 3 },
+		"a prompt opened after the second failsafe compaction")
 }

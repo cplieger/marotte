@@ -30,8 +30,8 @@ type runEffectsHost interface {
 	writeRun(chatID marotte.ChatID, mutate func(c *marotte.Chat) bool) error
 	// startEntry carries out a take on its own goroutine: a launch, or a compaction's start.
 	startEntry(lc *chatLifecycle, e *runEntry)
-	// compactionFailed tells the chat's pages, in detail's words, that a compaction the dock showed did not run.
-	compactionFailed(chatID marotte.ChatID, detail string)
+	// toast tells the chat's pages, in detail's words, of a run-list outcome the dock alone does not explain.
+	toast(chatID marotte.ChatID, code marotte.ErrorCode, detail string)
 	// spawnRun runs fn on the process's in-flight count, refused once shutdown began.
 	spawnRun(fn func())
 }
@@ -67,7 +67,10 @@ func (lc *chatLifecycle) flushRunLocked() {
 		if slices.ContainsFunc(fx.toast, func(e *runEntry) bool { return e.origin == marotte.RunFromFailsafe }) {
 			detail = compactFailsafeFailed
 		}
-		host.spawnRun(func() { host.compactionFailed(lc.chatID, detail) })
+		host.spawnRun(func() { host.toast(lc.chatID, marotte.ErrCodeCompactionFailed, detail) })
+	}
+	for _, detail := range fx.notices {
+		host.spawnRun(func() { host.toast(lc.chatID, marotte.ErrCodeResumeNotSent, detail) })
 	}
 }
 
@@ -240,9 +243,9 @@ func (bc *bridgeCoordinator) writeRun(chatID marotte.ChatID, mutate func(c *maro
 	return err
 }
 
-func (bc *bridgeCoordinator) compactionFailed(chatID marotte.ChatID, detail string) {
-	if bc.autoCompact != nil && bc.autoCompact.failed != nil {
-		bc.autoCompact.failed(context.Background(), chatID, detail)
+func (bc *bridgeCoordinator) toast(chatID marotte.ChatID, code marotte.ErrorCode, detail string) {
+	if bc.autoCompact != nil && bc.autoCompact.toast != nil {
+		bc.autoCompact.toast(context.Background(), chatID, code, detail)
 	}
 }
 
