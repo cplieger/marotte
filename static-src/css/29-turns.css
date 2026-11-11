@@ -202,6 +202,12 @@
   }
 }
 
+/* A `flex-start` item is never narrower than its min-content, and a band's is its whole one-line passage: the cap
+ * keeps words holding a band inside the header, so the band ellipsizes instead of running past it. */
+.turn-req-text {
+  max-inline-size: 100%;
+}
+
 /* FOLD-CONDITIONAL: the fold chevron opens the prompt with the body. An OPEN prompt
  * is not clamped, full text however long (the composer spills a long paste into an
  * attachment); a FOLDED one clamps to four lines, because folded rows are the

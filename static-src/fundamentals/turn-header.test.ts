@@ -770,6 +770,35 @@ describe("a request quoting more than one passage", () => {
     expect(h.querySelector("img")).toBeNull();
     expect(req(h)).toBe(`From Kiro's reply: ${FIRST}${markup}From Kiro's reply: ${markup}`);
   });
+
+  it("holds a later quote to one line inside the header, open or folded", () => {
+    const style = mountAppCSS();
+    const card = document.createElement("div");
+    card.className = "turn";
+    card.style.inlineSize = "160px";
+    try {
+      const h = buildTurnHeader(
+        data({
+          request: `${appendQuote(`${appendQuote("", quote(FIRST))}why?`, quote("word ".repeat(40)))}and?`,
+        }),
+      );
+      card.append(h);
+      document.body.append(card);
+      const later = bands(h)[1]!;
+      const line = parseFloat(getComputedStyle(later).lineHeight);
+      const edge = h.querySelector(".turn-req")!.getBoundingClientRect().right;
+      for (const folded of [false, true]) {
+        card.toggleAttribute("data-folded", folded);
+        expect(later.getBoundingClientRect().height).toBeCloseTo(line, 0);
+        expect(later.scrollWidth).toBeGreaterThan(later.clientWidth);
+        expect(later.getBoundingClientRect().right).toBeLessThanOrEqual(edge);
+        expect(card.scrollWidth).toBeLessThanOrEqual(card.clientWidth);
+      }
+    } finally {
+      card.remove();
+      style.remove();
+    }
+  });
 });
 
 describe("a request an API caller sent", () => {
