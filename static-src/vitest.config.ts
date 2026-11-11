@@ -91,9 +91,9 @@ function browserProject(
           ) {
             await page.emulateMedia(features);
           },
-          /** Set the page's device pixel ratio (null restores the ratio the page started with). Chromium only, CI's
-           *  engine. The override is page-wide and outlives the test that set it, so a suite that sets one restores it
-           *  in `afterEach`. A restore that leaves the page short of its viewport throws. */
+          /** Set the page's device pixel ratio; null restores the ratio the page had when this command first ran on
+           *  it. Chromium only, CI's engine. The override is page-wide and outlives the test that set it. A restore
+           *  that leaves the top page at any size but its viewport throws. */
           async setDeviceScaleFactor({ page }, dpr: number | null) {
             // An Emulation override lasts as long as the CDP session that set it, so the session is kept per page.
             let session = dprSessions.get(page);
@@ -105,10 +105,10 @@ function browserProject(
               dprSessions.set(page, session);
             }
             const size = page.viewportSize() ?? { width: 1280, height: 720 };
-            // Never `Emulation.clearDeviceMetricsOverride`: it also drops Playwright's viewport override, the page
-            // falls back to its window's content area (1280x633, or a stale phone size after a `page.viewport`
-            // cycle), and every later file on the page inherits it, since Playwright and vitest both cache the
-            // viewport they last set. The restore re-sends Playwright's own desktop override instead.
+            // Not `Emulation.clearDeviceMetricsOverride`: Chromium disables the page's device emulation outright
+            // (content/browser/devtools/protocol/emulation_handler.cc), Playwright's viewport included, and every
+            // later file on the page inherits the window's content area, since Playwright (`_updateViewport`) and
+            // vitest (`currentViewport`) cache the viewport they last set. The restore re-sends Playwright's override.
             await session.cdp.send("Emulation.setDeviceMetricsOverride", {
               width: size.width,
               height: size.height,

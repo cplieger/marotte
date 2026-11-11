@@ -19,7 +19,7 @@ export async function setDeviceScale(dpr: number): Promise<void> {
     .toBeCloseTo(dpr, 4);
 }
 
-/** Restore the ratio this file started with and assert the page sees it. */
+/** Restore the page's ratio and assert it is the one this file started with. */
 export async function restoreDeviceScale(): Promise<void> {
   await server.commands.setDeviceScaleFactor(null);
   await expect
