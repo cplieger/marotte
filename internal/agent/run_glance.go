@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
 
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/workflow"
@@ -20,9 +21,12 @@ type glanceCache struct {
 // it (each repeat through its latest pass), with the step ends and starts of the nodes it keeps. A
 // read it cannot shape goes out whole, which the client also reads.
 func (rs *Runs) glanceRead(ctx context.Context, id string) (json.RawMessage, error) {
-	raw, x, err := rs.wholeRead(ctx, id)
-	if err != nil {
-		return nil, err
+	raw, x, held := rs.heldWhole(id)
+	if !held {
+		var err error
+		if raw, x, err = rs.wholeRead(ctx, id); err != nil {
+			return nil, err
+		}
 	}
 	doc, paths, err := rs.glanceOf(id, raw, x)
 	if err != nil {
@@ -38,6 +42,24 @@ func (rs *Runs) glanceRead(ctx context.Context, id string) (json.RawMessage, err
 		return doc, nil
 	}
 	return out, nil
+}
+
+// heldWhole is the whole read from the run's held revision, as headerRead serves the header from
+// it; false when the run's cell holds none, which a fresh read answers.
+func (rs *Runs) heldWhole(id string) (json.RawMessage, *runExtras, bool) {
+	c := rs.cellFor(id)
+	if c == nil {
+		return nil, nil, false
+	}
+	rv := &c.revision
+	rv.mu.Lock()
+	defer rv.mu.Unlock()
+	if rv.rev == 0 || rv.served == nil {
+		return nil, nil, false
+	}
+	x := rs.heldExtras(c, rv)
+	x.ends, x.starts = maps.Clone(rv.ends), maps.Clone(rv.starts)
+	return rv.served, x, true
 }
 
 // glanceOf is raw's glance, from the run's cache when x describes a revision it holds.

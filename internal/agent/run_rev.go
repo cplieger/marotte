@@ -67,6 +67,8 @@ type runRevision struct {
 	nodes  map[string]workflow.IndexedNode
 	ends   map[string]marotte.RunStepEnd
 	starts map[string]marotte.RunStepStart
+	// kas is KAS's record of the steps in the held read, which an interrupted step end is weighed against.
+	kas    map[string]workflow.StepRecord
 	turns  turnsRead
 	served json.RawMessage
 	head   []workflow.Member
@@ -121,9 +123,8 @@ func (m *revMint) mint() uint64 {
 	return m.last.Add(1)
 }
 
-// revise moves c's revision to fresh (nil re-reads the run log's extras alone) and publishes
-// run_rev when anything moved. A read it cannot index drops the revision, so every client reads
-// the run whole until the next read indexes.
+// revise moves c's revision to fresh and publishes run_rev when anything moved. A read it cannot
+// index drops the revision, so every client reads the run whole until the next read indexes.
 func (rs *Runs) revise(ctx context.Context, c *askCell, fresh *freshRead) revSnapshot {
 	if c.transient {
 		return revSnapshot{}
@@ -131,29 +132,92 @@ func (rs *Runs) revise(ctx context.Context, c *askCell, fresh *freshRead) revSna
 	rv := &c.revision
 	rv.mu.Lock()
 	defer rv.mu.Unlock()
-	next, ix, served, err := rv.readSlotsLocked(c.workflowID, fresh)
-	switch {
-	case err != nil:
+	served := summarizedOrWhole(c.workflowID, fresh.raw)
+	ix, err := workflow.IndexRead(served)
+	if err != nil {
 		slog.Warn("run revision: the read could not be indexed; clients read it whole",
 			"workflow_id", logsafe.Field(c.workflowID), "error", err)
 		rv.resetLocked()
 		return revSnapshot{served: served}
-	case next == nil:
-		return revSnapshot{}
 	}
-	nodes, head, in := rv.nodes, rv.head, c.heldInspect()
-	if fresh != nil {
-		rv.served, rv.turns, in = served, fresh.turns, fresh.in
-		nodes, head = ix.Nodes, ix.Head
-	}
-	ends, starts := rs.revisedExtras(ctx, c.workflowID, in, rv, fresh != nil)
+	next := map[revSlot][]byte{}
+	readSlots(next, &ix)
+	kas := kasSteps(fresh.in)
+	ends, starts := rs.revisedExtras(ctx, c.workflowID, kas, rv)
 	extraSlots(next, ends, starts)
 	first := rv.rev == 0
-	changed := changedSlots(rv.values, next, rv.nodes, nodes)
-	rv.values, rv.nodes, rv.head, rv.ends, rv.starts = next, nodes, head, ends, starts
-	if !first && len(changed) == 0 {
-		return rv.snapshotLocked()
+	changed := changedSlots(rv.values, next, rv.nodes, ix.Nodes)
+	rv.values, rv.nodes, rv.head, rv.ends, rv.starts = next, ix.Nodes, ix.Head, ends, starts
+	rv.served, rv.turns, rv.kas = served, fresh.turns, kas
+	if first || len(changed) > 0 {
+		rs.publishRevLocked(ctx, c, changed, first)
 	}
+	return rv.snapshotLocked()
+}
+
+// reviseStep moves c's held revision by the step rows of the path step turn turn ran on, the only
+// rows its open, its close or its grade move, and publishes run_rev when either changed. The
+// rest of the revision stays as the last fresh read left it, so the cost is the path's.
+func (rs *Runs) reviseStep(ctx context.Context, c *askCell, turn string) {
+	if c.transient || rs.log == nil {
+		return
+	}
+	rv := &c.revision
+	rv.mu.Lock()
+	defer rv.mu.Unlock()
+	if rv.rev == 0 {
+		return
+	}
+	row, ok, err := rs.log.stepRowOfTurn(ctx, c.workflowID, turn, rv.kas)
+	if err != nil {
+		slog.Warn("run revision: the run log's step rows could not be read", "workflow_id", logsafe.Field(c.workflowID),
+			"error", err)
+		return
+	}
+	if !ok {
+		return
+	}
+	if rv.ends == nil {
+		rv.ends = map[string]marotte.RunStepEnd{}
+	}
+	if rv.starts == nil {
+		rv.starts = map[string]marotte.RunStepStart{}
+	}
+	var changed []revSlot
+	if s := (revSlot{kind: slotEnd, key: row.path}); setRow(rv.values, rv.ends, s, row.end) {
+		changed = append(changed, s)
+	}
+	if s := (revSlot{kind: slotStart, key: row.path}); setRow(rv.values, rv.starts, s, row.start) {
+		changed = append(changed, s)
+		if _, ok := rv.nodes[row.path]; ok {
+			changed = append(changed, revSlot{kind: slotNode, key: row.path})
+		}
+	}
+	if len(changed) > 0 {
+		rs.publishRevLocked(ctx, c, changed, false)
+	}
+}
+
+// setRow sets slot s and its row to row (nil removes both); false when it already held that value.
+func setRow[T any](values map[revSlot][]byte, rows map[string]T, s revSlot, row *T) bool {
+	old, had := values[s]
+	if row == nil {
+		delete(values, s)
+		delete(rows, s.key)
+		return had
+	}
+	b, err := json.Marshal(*row)
+	if err != nil || (had && bytes.Equal(old, b)) {
+		return false
+	}
+	values[s], rows[s.key] = b, *row
+	return true
+}
+
+// publishRevLocked mints the revision that changed slots, keeps its changes unless it is the
+// first, and announces it while the run lives.
+func (rs *Runs) publishRevLocked(ctx context.Context, c *askCell, changed []revSlot, first bool) {
+	rv := &c.revision
 	prev := rv.rev
 	rv.rev = rs.revs.mint()
 	if !first {
@@ -167,40 +231,12 @@ func (rs *Runs) revise(ctx context.Context, c *askCell, fresh *freshRead) revSna
 			WorkflowID: c.workflowID, Rev: rv.rev, Status: rv.statusLocked(),
 		}))
 	}
-	return rv.snapshotLocked()
-}
-
-// readSlotsLocked is the head, node and plan slots of fresh as the run read serves it (with the
-// served bytes and their index), or of the held revision for a nil fresh; nil slots when nothing
-// is held.
-func (rv *runRevision) readSlotsLocked(workflowID string, fresh *freshRead) (
-	slots map[revSlot][]byte, ix workflow.ReadIndex, served json.RawMessage, err error,
-) {
-	if fresh == nil {
-		if rv.rev == 0 {
-			return nil, ix, nil, nil
-		}
-		slots = map[revSlot][]byte{}
-		for s, v := range rv.values {
-			if s.kind == slotHead || s.kind == slotNode || s.kind == slotPlan {
-				slots[s] = v
-			}
-		}
-		return slots, ix, nil, nil
-	}
-	served = summarizedOrWhole(workflowID, fresh.raw)
-	if ix, err = workflow.IndexRead(served); err != nil {
-		return nil, ix, served, err
-	}
-	slots = map[revSlot][]byte{}
-	readSlots(slots, &ix)
-	return slots, ix, served, nil
 }
 
 // resetLocked drops every revision: an answer from the held read then reads whole.
 func (rv *runRevision) resetLocked() {
 	rv.values, rv.nodes, rv.ends, rv.starts, rv.served, rv.head, rv.ring = nil, nil, nil, nil, nil, nil, nil
-	rv.turns, rv.rev, rv.glance = turnsRead{}, 0, glanceCache{}
+	rv.turns, rv.rev, rv.glance, rv.kas = turnsRead{}, 0, glanceCache{}, nil
 }
 
 func (c *askCell) heldInspect() workflow.Inspect {
@@ -215,20 +251,16 @@ func (c *askCell) isEnded() bool {
 	return c.ended
 }
 
-// revisedExtras reads the run log's step ends and starts against in, recording the grades due
-// under it only when in is a fresh read (grade); a failed read keeps the revision's own.
-func (rs *Runs) revisedExtras(ctx context.Context, workflowID string, in workflow.Inspect, rv *runRevision, grade bool) (
+// revisedExtras reads the run log's step ends and starts against a fresh read's kas, recording
+// the grades due under it; a failed read keeps the revision's own.
+func (rs *Runs) revisedExtras(ctx context.Context, workflowID string, kas map[string]workflow.StepRecord, rv *runRevision) (
 	ends map[string]marotte.RunStepEnd, starts map[string]marotte.RunStepStart,
 ) {
 	if rs.log == nil {
 		return nil, nil
 	}
 	ends, starts = rv.ends, rv.starts
-	read := rs.log.recordedStepEnds
-	if grade {
-		read = rs.stepEnds
-	}
-	if e, err := read(ctx, workflowID, kasSteps(in)); err == nil {
+	if e, err := rs.stepEnds(ctx, workflowID, kas); err == nil {
 		ends = e
 	} else {
 		slog.Warn("run revision: the run log's step ends could not be read", "workflow_id", logsafe.Field(workflowID),
@@ -301,8 +333,11 @@ func changedSlots(was, now map[revSlot][]byte, wasNodes, nowNodes map[string]wor
 	return slices.Collect(maps.Keys(set))
 }
 
+// snapshotLocked copies the step rows, which reviseStep changes in place after the lock is let go.
 func (rv *runRevision) snapshotLocked() revSnapshot {
-	return revSnapshot{ends: rv.ends, starts: rv.starts, served: rv.served, rev: rv.rev, ok: rv.rev != 0}
+	return revSnapshot{
+		ends: maps.Clone(rv.ends), starts: maps.Clone(rv.starts), served: rv.served, rev: rv.rev, ok: rv.rev != 0,
+	}
 }
 
 func (rv *runRevision) statusLocked() string {
@@ -383,15 +418,14 @@ type sinceBody struct {
 	StartsRemoved []string        `json:"step_starts_removed"`
 }
 
-// sinceRead answers GET /api/runs/{id}?since=<from> from the cell's held read, after re-reading
-// the run log's extras; false when the run has no revision holding from, which a whole read
-// answers.
-func (rs *Runs) sinceRead(ctx context.Context, workflowID string, from uint64) (out json.RawMessage, ok bool, err error) {
+// sinceRead answers GET /api/runs/{id}?since=<from> from the cell's held revision, which every
+// fresh read and step frame has already moved; false when the run has no revision holding from,
+// which a whole read answers.
+func (rs *Runs) sinceRead(workflowID string, from uint64) (out json.RawMessage, ok bool, err error) {
 	c := rs.asks.get(workflowID)
 	if c == nil || c.transient {
 		return nil, false, nil
 	}
-	rs.revise(ctx, c, nil)
 	rv := &c.revision
 	rv.mu.Lock()
 	defer rv.mu.Unlock()
@@ -620,7 +654,7 @@ func (rr *runRoutes) serveRunView(w http.ResponseWriter, r *http.Request, id str
 		httpreply.BadRequest(w, "invalid since revision")
 		return true
 	}
-	out, ok, err := rr.runs.sinceRead(r.Context(), id, from)
+	out, ok, err := rr.runs.sinceRead(id, from)
 	if err != nil {
 		slog.Warn("workflow inspect: a revision's changes could not be written; answering whole",
 			"workflow_id", logsafe.Field(id), "error", err)
@@ -633,11 +667,11 @@ func (rr *runRoutes) serveRunView(w http.ResponseWriter, r *http.Request, id str
 }
 
 // noteRunEvent is the bus's observer. A run's lifecycle frame moves KAS's state, so it schedules
-// the run's cell a read; a step turn's open or close or a recorded grade moves only the run log's
-// extras, which it revises with no engine read. Off the emitter's goroutine, since emitters may
+// the run's cell a read; a step turn's open or close or a recorded grade moves only that step's
+// rows, which it revises with no engine read. Off the emitter's goroutine, since emitters may
 // hold the cell's locks.
 func (rs *Runs) noteRunEvent(evt *marotte.ServerEvent) {
-	id, engine := runEventSubject(evt)
+	id, turn, engine := runEventSubject(evt)
 	if id == "" || rs.lifecycle == nil {
 		return
 	}
@@ -650,29 +684,29 @@ func (rs *Runs) noteRunEvent(evt *marotte.ServerEvent) {
 		default:
 			ctx, cancel := rs.lifecycle.derivedContext()
 			defer cancel()
-			rs.revise(ctx, c, nil)
+			rs.reviseStep(ctx, c, turn)
 		}
 	})
 }
 
-// runEventSubject is the run evt moves the run read of ("" for any other event), and whether it
-// moved KAS's state rather than the run log's.
-func runEventSubject(evt *marotte.ServerEvent) (string, bool) {
+// runEventSubject is the run evt moves the run read of ("" for any other event), the step turn
+// it names, and whether it moved KAS's state rather than the run log's.
+func runEventSubject(evt *marotte.ServerEvent) (workflowID, turn string, engine bool) {
 	switch p := evt.Payload.(type) {
 	case marotte.RunProgressPayload:
-		return p.WorkflowID, true
+		return p.WorkflowID, "", true
 	case marotte.RunStartedPayload:
-		return p.WorkflowID, true
+		return p.WorkflowID, "", true
 	case marotte.RunFinishedPayload:
-		return p.WorkflowID, true
+		return p.WorkflowID, "", true
 	case marotte.TurnOpenedPayload:
-		return p.WorkflowID, false
+		return p.WorkflowID, p.Entry.Turn, false
 	case marotte.TurnClosedPayload:
-		return p.WorkflowID, false
+		return p.WorkflowID, p.Entry.Turn, false
 	case marotte.EntryAppendedPayload:
 		if p.Entry.Kind == marotte.EntryKindStepGraded {
-			return p.WorkflowID, false
+			return p.WorkflowID, p.Entry.Turn, false
 		}
 	}
-	return "", false
+	return "", "", false
 }

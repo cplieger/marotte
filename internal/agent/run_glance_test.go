@@ -120,3 +120,23 @@ func TestHandleRun_TheGlanceViewKeepsEachRepeatsLatestPass(t *testing.T) {
 		t.Errorf("the glance is %d bytes at 10 passes and %d at 1,000; want the same within the digits", smallBytes, largeBytes)
 	}
 }
+
+// A glance of a run whose read is held answers from that read, as the header view does: a
+// revision's glance costs no engine read, and it is the glance a fresh read gives.
+func TestHandleRun_AWarmGlanceAnswersFromTheHeldRead(t *testing.T) {
+	h, br := hostedLeasedRun(t, repeatInspect(t, 20))
+	h.runs.log = newRunLog(t.TempDir())
+	cold := httptest.NewRecorder()
+	h.runRoutes.handleRun(cold, runViewReq("wf_1", "glance"))
+	br.forgetCalls()
+
+	warm := httptest.NewRecorder()
+	h.runRoutes.handleRun(warm, runViewReq("wf_1", "glance"))
+
+	if br.called(methodKiroWorkflowInspect) {
+		t.Error("a warm glance asked the engine again")
+	}
+	if warm.Code != http.StatusOK || warm.Body.String() != cold.Body.String() {
+		t.Errorf("warm glance = %d %.300s, want the fresh read's %.300s", warm.Code, warm.Body.String(), cold.Body.String())
+	}
+}
