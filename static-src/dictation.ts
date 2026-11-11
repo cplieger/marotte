@@ -426,11 +426,15 @@ class Controller implements Dictation {
       if (!s.listening) {
         return;
       }
-      announce("Dictation started");
       const { cloud } = this.platform;
       if (local !== true && cloud !== null && !dictationCloudNoted()) {
         markDictationCloudNoted();
-        info(`Dictation in this browser sends audio to ${cloud}.`);
+        const notice = `Dictation in this browser sends audio to ${cloud}.`;
+        // The toast announces its text, and a later polite announcement replaces a pending one: say both at once.
+        info(notice);
+        announce(`Dictation started. ${notice}`);
+      } else {
+        announce("Dictation started");
       }
     });
     rec.addEventListener("result", (e) => {

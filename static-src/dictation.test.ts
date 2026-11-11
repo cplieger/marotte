@@ -1032,4 +1032,19 @@ describe("announcements (rule 8)", () => {
     });
     expect(seen.join(" ")).not.toContain("secret");
   });
+
+  it("announces the start with the cloud notice on first use, so neither replaces the other", async () => {
+    const seen = recordAnnouncements();
+    const speech = fakeSpeech({
+      available: (o) => Promise.resolve(o.processLocally ? "unavailable" : "available"),
+    });
+    await listen(speech, createDictation(speech.platform, box));
+    await vi.waitFor(() => {
+      expect(seen.some((t) => t.includes("Dictation started"))).toBe(true);
+    });
+    expect(seen.join(" ")).toContain("sends audio to Google's speech service");
+    expect(toastTexts()).toEqual([
+      "Dictation in this browser sends audio to Google's speech service.",
+    ]);
+  });
 });
