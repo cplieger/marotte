@@ -73,6 +73,8 @@ interface FakeSpeechOptions {
   readonly install?: (o: SpeechOptions) => Promise<boolean>;
   /** What every recognizer's `start()` throws, for an engine that refuses synchronously. */
   readonly startThrows?: Error;
+  /** Chrome on Android's result lists, which repeat earlier final results inside later ones. */
+  readonly cumulative?: boolean;
 }
 
 export interface FakeSpeech {
@@ -114,6 +116,7 @@ export function fakeSpeech(opts: FakeSpeechOptions = {}): FakeSpeech {
       Recognition: ctor,
       lang: opts.lang ?? "en-US",
       cloud: opts.cloud === undefined ? "Google's speech service" : opts.cloud,
+      cumulative: opts.cumulative ?? false,
     },
     made,
     availableCalls,

@@ -13,6 +13,7 @@ import { fakeSpeech, settle, type FakeSpeech } from "./__test-helpers__/fake-spe
 import { _resetForTest as resetToasts } from "./toast.js";
 import { BUS_TAB_CHANGED, emitBus } from "./bus.js";
 import { setActive, setSessions } from "./store.js";
+import { dictationCloudNoted } from "./device-view.js";
 import type { Session } from "./types.js";
 
 let box: HTMLTextAreaElement;
@@ -34,6 +35,7 @@ beforeEach(() => {
 
 afterEach(() => {
   box.remove();
+  document.documentElement.removeAttribute("data-pointer");
   resetToasts();
   vi.unstubAllGlobals();
   localStorage.clear();
@@ -118,6 +120,14 @@ describe("support (rule 4)", () => {
     expect(browserSpeechPlatform().Recognition).toBe(speech.platform.Recognition);
   });
 
+  it("is off on an insecure origin, where the microphone never opens", () => {
+    const speech = fakeSpeech();
+    vi.stubGlobal("isSecureContext", false);
+    vi.stubGlobal("SpeechRecognition", speech.platform.Recognition);
+    vi.stubGlobal("webkitSpeechRecognition", speech.platform.Recognition);
+    expect(browserSpeechPlatform().Recognition).toBeNull();
+  });
+
   it("prefers the unprefixed constructor", () => {
     const a = fakeSpeech();
     const b = fakeSpeech();
@@ -131,7 +141,10 @@ describe("support (rule 4)", () => {
   });
 
   it("makes no recognizer and does nothing when unsupported", () => {
-    const d = createDictation({ Recognition: null, lang: "en-US", cloud: null }, box);
+    const d = createDictation(
+      { Recognition: null, lang: "en-US", cloud: null, cumulative: false },
+      box,
+    );
     d.toggle();
     expect(d.listening.value).toBe(false);
   });
@@ -139,7 +152,12 @@ describe("support (rule 4)", () => {
 
 describe("language (rule 7)", () => {
   it("follows the page's language in the browser platform", () => {
-    expect(browserSpeechPlatform().lang).toBe(navigator.language);
+    Object.defineProperty(navigator, "language", { configurable: true, value: "fr-FR" });
+    try {
+      expect(browserSpeechPlatform().lang).toBe("fr-FR");
+    } finally {
+      delete (navigator as { language?: string }).language;
+    }
   });
 
   it("recognizes, checks and installs in the platform's language", async () => {
@@ -194,6 +212,35 @@ describe("listening and results (rule 3)", () => {
     expect(box.value).toBe("hello world");
   });
 
+  it("keeps a cumulative list (Chrome on Android) from repeating words", async () => {
+    const speech = fakeSpeech({ cumulative: true, available: () => Promise.resolve("available") });
+    const d = createDictation(speech.platform, box);
+    await listen(speech, d);
+    speech.last().hear(["hello", true], ["hello world", true]);
+    expect(box.value).toBe("hello world");
+  });
+
+  it("keeps distinct segments on a list that is not cumulative", async () => {
+    const speech = onDevice();
+    const d = createDictation(speech.platform, box);
+    await listen(speech, d);
+    speech.last().hear(["no", true], ["no way", true]);
+    expect(box.value).toBe("no no way");
+  });
+
+  it("reads a cumulative list from an Android user agent only", () => {
+    const ua = (value: string): boolean => {
+      Object.defineProperty(navigator, "userAgent", { configurable: true, value });
+      try {
+        return browserSpeechPlatform().cumulative;
+      } finally {
+        delete (navigator as { userAgent?: string }).userAgent;
+      }
+    };
+    expect(ua("Mozilla/5.0 (Linux; Android 10; K) Chrome/150.0 Mobile Safari/537.36")).toBe(true);
+    expect(ua("Mozilla/5.0 (X11; Linux x86_64) Chrome/150.0 Safari/537.36")).toBe(false);
+  });
+
   it("stops on a second press and keeps the final result that follows", async () => {
     const speech = onDevice();
     const d = createDictation(speech.platform, box);
@@ -228,15 +275,30 @@ describe("listening and results (rule 3)", () => {
     expect(toastTexts()).toEqual([]);
   });
 
-  it("ends on an error and says so, staying available", async () => {
+  it("ends on a network error after words arrived and says so, staying available", async () => {
+    const speech = onDevice();
+    const d = createDictation(speech.platform, box);
+    await listen(speech, d);
+    speech.last().hear(["hello", false]);
+    speech.last().fail("network");
+    speech.last().finish();
+    expect(d.listening.value).toBe(false);
+    expect(d.ready.value).toBe(true);
+    expect(toastTexts()).toEqual(["Dictation stopped: the speech service did not answer."]);
+  });
+
+  it("turns off for the page on a network error before any result (Brave)", async () => {
     const speech = onDevice();
     const d = createDictation(speech.platform, box);
     await listen(speech, d);
     speech.last().fail("network");
     speech.last().finish();
     expect(d.listening.value).toBe(false);
-    expect(d.ready.value).toBe(true);
-    expect(toastTexts()).toHaveLength(1);
+    expect(d.ready.value).toBe(false);
+    const [text, ...rest] = toastTexts();
+    expect(rest).toEqual([]);
+    expect(text?.toLowerCase()).toContain("did not answer");
+    expect(text?.toLowerCase()).toContain("reload");
   });
 
   it("starts a fresh recognizer on the next press", async () => {
@@ -321,6 +383,86 @@ describe("where the words go (rule 9)", () => {
     expect(box.value).toBe("before hello world after");
     document.execCommand("undo");
     expect(box.value).toBe("before after");
+  });
+
+  describe("under a finger", () => {
+    function pressFrom(): HTMLButtonElement {
+      document.documentElement.setAttribute("data-pointer", "coarse");
+      const btn = document.createElement("button");
+      document.body.append(btn);
+      btn.focus();
+      return btn;
+    }
+
+    it("keeps the keyboard away while listening, and one undo takes the session back", async () => {
+      const btn = pressFrom();
+      try {
+        const speech = onDevice();
+        const d = createDictation(speech.platform, box);
+        box.value = "before after";
+        box.setSelectionRange(7, 7);
+        await listen(speech, d);
+        expect(box.inputMode).toBe("none");
+        expect(document.activeElement).toBe(box);
+        speech.last().hear(["hel", false]);
+        speech.last().hear(["hello wor", false]);
+        speech.last().hear(["hello world", true]);
+        expect(box.value).toBe("before hello world after");
+        d.toggle();
+        speech.last().finish();
+        expect(document.activeElement, "focus goes back to the button").toBe(btn);
+        expect(box.hasAttribute("inputmode")).toBe(false);
+        box.focus();
+        document.execCommand("undo");
+        expect(box.value).toBe("before after");
+      } finally {
+        btn.remove();
+      }
+    });
+
+    it("gives back the box's own inputmode when the browser ends the session", async () => {
+      const btn = pressFrom();
+      try {
+        box.setAttribute("inputmode", "text");
+        const speech = onDevice();
+        const d = createDictation(speech.platform, box);
+        await listen(speech, d);
+        speech.last().fail("no-speech");
+        speech.last().finish();
+        expect(box.getAttribute("inputmode")).toBe("text");
+        expect(document.activeElement).toBe(btn);
+      } finally {
+        btn.remove();
+      }
+    });
+
+    it("hands the keyboard back at once when the reader taps the box, and leaves focus there", async () => {
+      const btn = pressFrom();
+      try {
+        const speech = onDevice();
+        const d = createDictation(speech.platform, box);
+        await listen(speech, d);
+        box.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+        expect(box.hasAttribute("inputmode")).toBe(false);
+        expect(d.listening.value, "a tap is not an edit").toBe(true);
+        d.stop();
+        expect(document.activeElement).toBe(box);
+      } finally {
+        btn.remove();
+      }
+    });
+
+    it("keeps the box focused at the end when it was focused at the press", async () => {
+      document.documentElement.setAttribute("data-pointer", "coarse");
+      box.focus();
+      const speech = onDevice();
+      const d = createDictation(speech.platform, box);
+      await listen(speech, d);
+      expect(box.inputMode).toBe("none");
+      d.stop();
+      expect(document.activeElement).toBe(box);
+      expect(box.hasAttribute("inputmode")).toBe(false);
+    });
   });
 
   it("announces the committed text to the draft layer with an input event", async () => {
@@ -473,6 +615,7 @@ describe("permission and microphone (rule 5)", () => {
     ["not-allowed", "microphone"],
     ["service-not-allowed", "speech"],
     ["audio-capture", "microphone"],
+    ["language-not-supported", "language"],
   ])("on %s says so in plain words, names the reload, and stays off", async (code, word) => {
     const speech = onDevice();
     const d = createDictation(speech.platform, box);
@@ -558,6 +701,57 @@ describe("on-device first (rule 6)", () => {
     ]);
   });
 
+  it("shows the notice only once the microphone opens, so a denied first press spends nothing", async () => {
+    const shape = {
+      available: (o: { processLocally: boolean }) =>
+        Promise.resolve(o.processLocally ? ("unavailable" as const) : ("available" as const)),
+    };
+    const denied = fakeSpeech(shape);
+    createDictation(denied.platform, box).toggle();
+    await settle();
+    expect(toastTexts(), "nothing before the start event").toEqual([]);
+    denied.last().fail("not-allowed");
+    denied.last().finish();
+    expect(dictationCloudNoted()).toBe(false);
+    expect(toastTexts().join(" ")).not.toContain("sends audio");
+    resetToasts();
+    const next = fakeSpeech(shape);
+    await listen(next, createDictation(next.platform, box));
+    expect(toastTexts()).toEqual([
+      "Dictation in this browser sends audio to Google's speech service.",
+    ]);
+    expect(dictationCloudNoted()).toBe(true);
+  });
+
+  it("falls back to the cloud with the notice when the install rejects", async () => {
+    const speech = fakeSpeech({
+      available: (o) => Promise.resolve(o.processLocally ? "downloadable" : "available"),
+      install: () => Promise.reject(new Error("install failed")),
+    });
+    const d = createDictation(speech.platform, box);
+    await listen(speech, d);
+    expect(speech.last().processLocally).toBe(false);
+    expect(speech.last().started).toBe(1);
+    expect(toastTexts()).toContain(
+      "Dictation in this browser sends audio to Google's speech service.",
+    );
+  });
+
+  it("says the browser does not allow its speech service when an on-device-only check is refused", async () => {
+    const speech = fakeSpeech({
+      cloud: null,
+      available: () => Promise.reject(new DOMException("blocked", "NotAllowedError")),
+    });
+    const d = createDictation(speech.platform, box);
+    d.toggle();
+    await settle();
+    expect(speech.made).toHaveLength(0);
+    expect(d.ready.value).toBe(false);
+    expect(toastTexts()).toEqual([
+      "Dictation is off: this browser does not allow its speech service here. Reload the page to try again.",
+    ]);
+  });
+
   it("treats a refused availability check as no on-device engine", async () => {
     const speech = fakeSpeech({
       available: (o) =>
@@ -598,7 +792,7 @@ describe("on-device first (rule 6)", () => {
     ]);
   });
 
-  it("stays off for the page when no engine serves the language", async () => {
+  it("stays off for the page when no engine serves the language, and names the reload", async () => {
     const speech = fakeSpeech({ available: () => Promise.resolve("unavailable") });
     const d = createDictation(speech.platform, box);
     d.toggle();
@@ -606,7 +800,10 @@ describe("on-device first (rule 6)", () => {
     expect(speech.made.every((r) => r.started === 0)).toBe(true);
     expect(d.listening.value).toBe(false);
     expect(d.ready.value).toBe(false);
-    expect(toastTexts()).toHaveLength(1);
+    const [text, ...rest] = toastTexts();
+    expect(rest).toEqual([]);
+    expect(text?.toLowerCase()).toContain("language");
+    expect(text?.toLowerCase()).toContain("reload");
   });
 
   it("never takes a cloud path on an on-device-only browser (Firefox), and lets a declined install retry", async () => {

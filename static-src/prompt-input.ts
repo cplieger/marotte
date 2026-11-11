@@ -13,7 +13,7 @@ import { payloadOf, turnOpenOf } from "./turns.js";
 import { fixIOSViewport } from "./platform.js";
 import { ICON_SEND, ICON_CANCEL, ICON_ALERT, ICON_HOURGLASS, ICON_MIC } from "./icons.js";
 import { sendFaces, type Faces } from "./send-faces.js";
-import type { Dictation } from "./dictation.js";
+import { NO_DICTATION, type Dictation } from "./dictation.js";
 import { iconEl } from "./icon-el.js";
 import { collapseAll } from "./pill-expand.js";
 import { composerText, isSendable, setComposerValue, syncComposerText } from "./composer-value.js";
@@ -99,14 +99,6 @@ const DEFAULT_TOOLTIP: Record<SendKind, string> = {
 function reasonOf(s: SendState): string {
   return s.kind === "error" ? s.reason : "";
 }
-
-/** Where the browser cannot dictate: Send stays exactly as it was. */
-const NO_DICTATION: Dictation = {
-  ready: signal(false),
-  listening: signal(false),
-  toggle: () => undefined,
-  stop: () => undefined,
-};
 
 /** A toggle's name stays stable and `aria-pressed` carries the state; the tooltip says what a press does. */
 function paintDictate(btn: HTMLButtonElement, pressed: boolean): void {
