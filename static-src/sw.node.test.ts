@@ -83,7 +83,7 @@ describe("the service worker and the app badge", () => {
     const reached = [...worker.sources.keys()];
     expect(reached).toContain(join(ROOT, "push-subject.ts"));
     // A package path may come back through its realpath, so only its tail is pinned.
-    expect(reached.filter((f) => f.endsWith("/@cplieger/keyenc/src/index.ts"))).toHaveLength(1);
+    expect(reached.filter((f) => f.endsWith("/@cplieger/keyenc/src/keyenc.ts"))).toHaveLength(1);
   });
 
   it("reports a badge write reached through a side-effect import, a re-export and import()", () => {

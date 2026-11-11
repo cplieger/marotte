@@ -42,7 +42,7 @@
     "vitest": "5.0.5"
   },
   "dependencies": {
-    "@cplieger/keyenc": "1.2.0",
+    "@cplieger/keyenc": "1.1.0",
     "@cplieger/sse": "1.2.1",
     "@cplieger/ui": "1.1.0",
     "@cplieger/web-terminal-engine": "6.4.0",
