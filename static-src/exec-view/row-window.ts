@@ -1,7 +1,7 @@
 // The window the exec view's Steps and Timeline panes draw: the items their scroller shows plus an
 // overscan, with a spacer standing in for each skipped run so the scroll range stays the list's.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 
 /** Items seated past each edge of the visible band, so a scroll of a few rows meets no blank. */
 const OVERSCAN_ROWS = 16;

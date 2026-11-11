@@ -3,7 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type * as ApiClientModule from "./api-client.js";
-import { effect } from "@cplieger/ui";
+import { effect } from "@cplieger/reactive";
 import type { Entry } from "./types.js";
 import type { RunStepTranscript } from "./wire/types.gen.js";
 

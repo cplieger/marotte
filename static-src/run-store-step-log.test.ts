@@ -2,7 +2,7 @@
 // that step's turns in the order they opened.
 
 import { describe, it, expect, afterEach } from "vitest";
-import { effect } from "@cplieger/ui";
+import { effect } from "@cplieger/reactive";
 import type { Entry } from "./types.js";
 import {
   applyRunDelta,

@@ -8,7 +8,7 @@ import type * as TabsModule from "./tabs.js";
 import type * as ToastModule from "./toast.js";
 import type * as NoticeSubjectModule from "./notice-subject.js";
 import type * as NotifyModule from "./notify.js";
-import { signal } from "@cplieger/ui";
+import { signal } from "@cplieger/reactive";
 
 const m = vi.hoisted(() => ({
   answers: [] as ((url: string) => unknown)[],

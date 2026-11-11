@@ -1,6 +1,6 @@
 // The run's range read: `GET /api/runs/{id}/turns/{turn}?after=<seq>`.
 
-import { batch } from "@cplieger/ui";
+import { batch } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import { apiGetTyped } from "./api-client.js";
 import { asArray, asObject, type Decoder } from "./wire/validators.gen.js";

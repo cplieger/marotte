@@ -2,7 +2,7 @@
 // the turns the run's log holds, or, for a step whose transcript the page does not hold, from that
 // step's tail cell, seeded by the run read's `step_starts` and moved by the step's own frames.
 
-import { signal, type Signal } from "@cplieger/ui";
+import { signal, type Signal } from "@cplieger/reactive";
 import type { Entry, OpenEntry, TurnState } from "./types.js";
 import type { RunStepStart } from "./wire/types.gen.js";
 
