@@ -389,6 +389,34 @@ describe("a clamp from the scrollport growing", () => {
   });
 });
 
+describe("a scrollport resize in the frame a turn below the reader resizes", () => {
+  // The turn's observer delivers before the scrollport's, so its hold sees the reading line already moved.
+  it.each([350, 500])(
+    "leaves the text in place at a %ipx scrollport, with no write",
+    async (port) => {
+      const wrap = await reset();
+      block(1000);
+      block(1980);
+      const last = block(20);
+      await land();
+      await readAt(wrap, 2300);
+      const line = onReadingLine(wrap);
+      const before = screenTop(wrap, line);
+      const writes = recordWrites(wrap);
+
+      wrap.style.height = `${String(port)}px`;
+      last.style.height = "40px";
+      await land();
+
+      expect({
+        state: scroll.readingState(),
+        moved: Math.round(screenTop(wrap, line) - before),
+        writes,
+      }).toEqual({ state: "reading", moved: 0, writes: [] });
+    },
+  );
+});
+
 describe("holds on the engine's grid", () => {
   afterEach(async () => {
     await restoreDeviceScale();
