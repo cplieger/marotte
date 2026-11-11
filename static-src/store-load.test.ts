@@ -950,6 +950,38 @@ describe("mergeTurn keeps what landed while the request was in flight", () => {
     await loadMessages("c1");
     expect(turnOf("c1", "t1").openEntries.get("sub-1")?.id).toBe("o-sub");
   });
+
+  it("drops the page's tail for an entry the held stream has since sealed", async () => {
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1), entry("t1", 1, "text", { text: "done" }, { id: "o1" })]);
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1)],
+      open: [openTail("t1", "o1", 3)],
+      header: { turn_count: 1 },
+    });
+
+    await loadMessages("c1");
+    expect(seqsOf("c1", "t1")).toEqual([0, 1]);
+    expect(turnOf("c1", "t1").openEntries.size).toBe(0);
+  });
+
+  it("keeps the held tail that opened on a lane after the page's tail there sealed", async () => {
+    const s = seedSession("c1");
+    seedTurn(
+      s,
+      "t1",
+      [turnOpen("t1", 1), entry("t1", 1, "text", { text: "done" }, { id: "o1" })],
+      [openTail("t1", "o2", 1)],
+    );
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1)],
+      open: [openTail("t1", "o1", 3)],
+      header: { turn_count: 1 },
+    });
+
+    await loadMessages("c1");
+    expect([...turnOf("c1", "t1").openEntries.values()].map((o) => o.id)).toEqual(["o2"]);
+  });
 });
 
 describe("loadOlderTurns is the one door to an older page", () => {
@@ -1664,19 +1696,52 @@ describe("the range read repairs one turn", () => {
     expect(mockBumpMessages).toHaveBeenCalledWith("c1", "load");
   });
 
-  it("REPLACES the turn's open tails with the answer's, lane set included", async () => {
+  it("merges the turn's open tails by version: the answer's on a shared lane, a sealed one gone", async () => {
     const s = seedSession("c1");
     seedTurn(
       s,
       "t1",
       [turnOpen("t1", 1)],
-      [openTail("t1", "stale", 1), openTail("t1", "stale-sub", 1, { lane: "sub-1" })],
+      [
+        openTail("t1", "older", 1),
+        openTail("t1", "sealed-sub", 1, { lane: "sub-1" }),
+        openTail("t1", "only-held", 2, { lane: "sub-2" }),
+      ],
     );
-    answerRange({ entries: [textEntry("t1", 1)], open: [openTail("t1", "fresh", 4)] });
+    answerRange({
+      entries: [entry("t1", 1, "text", { text: "done" }, { id: "sealed-sub", lane: "sub-1" })],
+      open: [openTail("t1", "fresh", 4)],
+    });
 
     requestTurnRange("c1", "t1", 0);
     await vi.waitFor(() => expect(turnOf("c1", "t1").entries).toHaveLength(2));
-    expect([...turnOf("c1", "t1").openEntries.values()].map((o) => o.id)).toEqual(["fresh"]);
+    expect(
+      Object.fromEntries([...turnOf("c1", "t1").openEntries].map(([l, o]) => [l, o.id])),
+    ).toEqual({
+      "": "fresh",
+      "sub-2": "only-held",
+    });
+  });
+
+  it("leaves an entry the stream sealed while the read was out sealed, with no tail", async () => {
+    const s = seedSession("c1");
+    const held = seedTurn(s, "t1", [turnOpen("t1", 1)], [openTail("t1", "o1", 1)]);
+    let answerNow: (v: unknown) => void = () => undefined;
+    mockApiGetTyped.mockReturnValueOnce(
+      new Promise((r) => {
+        answerNow = r;
+      }),
+    );
+
+    requestTurnRange("c1", "t1", 0);
+    // The stream's seal of o1, as `sealEntry` leaves the held turn.
+    held.entries.push(entry("t1", 1, "text", { text: "so far!" }, { id: "o1" }));
+    held.openEntries.delete("");
+    answerNow({ entries: [], open_entries: [openTail("t1", "o1", 1)], subject: [] });
+
+    await vi.waitFor(() => expect(mockBumpMessages).toHaveBeenCalledWith("c1", "load"));
+    expect(seqsOf("c1", "t1")).toEqual([0, 1]);
+    expect(turnOf("c1", "t1").openEntries.size).toBe(0);
   });
 
   it("stops at a SECOND gap rather than folding an entry in at the wrong index", async () => {

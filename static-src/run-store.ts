@@ -8,6 +8,12 @@ import { forgetSubject, observeStamp } from "./subject-versions.js";
 import { turnOpenOf, type TurnSource } from "./turns.js";
 import { settleWorkflowMessages, turnsInOrder } from "./workflow-delivery.js";
 import { forgetStepTails, seedStepTails } from "./run-step-tail.js";
+import {
+  deltaIsRedelivery,
+  mergeOpenTails,
+  openIsRedelivery,
+  sealIsRedelivery,
+} from "./open-tails.js";
 import type { Entry, OpenEntry, TurnState } from "./types.js";
 import {
   decodeLiveRunsResponse,
@@ -1958,16 +1964,18 @@ export function openRunEntry(workflowID: string, open: OpenEntry): void {
     markRunHole(workflowID, open.turn);
     return;
   }
+  if (openIsRedelivery(state.entries, state.openEntries, open)) {
+    return;
+  }
   const lane = open.lane ?? "";
   state.openEntries.set(lane, { ...open, lane });
   bumpLog(workflowID, open.turn);
 }
 
-/** Replace one turn's open tails with the ones a WHOLE-TURN read answered, which is
- *  authoritative about them: a tail whose entry has since sealed is absent from it, and seating
- *  without replacing leaves that stale tail beside the sealed entry it became for as long as the
- *  pane lives, because no later frame addresses its lane. */
-export function adoptRunOpenEntries(
+/** Merge a read's open tails for one turn into the held ones, after its sealed entries are seated
+ *  (`open-tails.ts` `mergeOpenTails` owns the rule): a frame that landed while the read was out
+ *  keeps its word, and a tail whose entry has sealed does not come back. */
+export function mergeRunOpenEntries(
   workflowID: string,
   turnID: string,
   open: readonly OpenEntry[],
@@ -1976,19 +1984,16 @@ export function adoptRunOpenEntries(
   if (state === undefined) {
     return;
   }
-  state.openEntries = new Map();
-  for (const o of open) {
-    if (o.turn !== turnID) {
-      continue;
-    }
-    const lane = o.lane ?? "";
-    state.openEntries.set(lane, { ...o, lane });
-  }
+  state.openEntries = mergeOpenTails(
+    state.entries,
+    state.openEntries,
+    open.filter((o) => o.turn === turnID),
+  );
   bumpLog(workflowID, turnID);
 }
 
 /** Extend a lane's open entry by one delta. `n` is the running count AFTER the delta, so `open.n
- *  + 1` is the only admissible value. */
+ *  + 1` is the only admissible value once a delta the turn already holds is dropped. */
 export function applyRunDelta(
   workflowID: string,
   turnID: string,
@@ -2003,6 +2008,9 @@ export function applyRunDelta(
     return;
   }
   const open = state.openEntries.get(lane);
+  if (deltaIsRedelivery(state.entries, open, entryID, n)) {
+    return;
+  }
   if (open?.id !== entryID || n !== open.n + 1) {
     markRunHole(workflowID, turnID);
     bumpLog(workflowID, turnID);
@@ -2029,6 +2037,9 @@ export function sealRunEntry(
     return;
   }
   const open = state.openEntries.get(lane);
+  if (sealIsRedelivery(state.entries, entryID, seq)) {
+    return;
+  }
   if (open?.id !== entryID || n !== open.n) {
     markRunHole(workflowID, turnID);
     bumpLog(workflowID, turnID);

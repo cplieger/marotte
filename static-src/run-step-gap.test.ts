@@ -88,7 +88,8 @@ function streamingStep(): void {
 /** One entry seals on the server while the client holds the pane and receives no frame. The turn
  *  stays open. */
 function sealDuringGap(): void {
-  log = [...log, entry(3, "text", { text: "three" })];
+  // Sealed under its open id, as the server seals every streamed entry.
+  log = [...log, { ...entry(3, "text", { text: "three" }), id: `${TURN}-open3` }];
   tail = undefined;
 }
 

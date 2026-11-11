@@ -37,7 +37,7 @@ vi.mock("./run-store.js", () => ({
   openRunEntry: vi.fn(),
   appendRunEntry: vi.fn(),
   // The open tails a whole-turn read REPLACES, reached by the range read in this graph.
-  adoptRunOpenEntries: vi.fn(),
+  mergeRunOpenEntries: vi.fn(),
   clearRunHole: vi.fn(),
   registerLiveRunObserver: vi.fn(),
   registerRunStateDemand: vi.fn(),

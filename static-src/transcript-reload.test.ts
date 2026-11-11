@@ -72,7 +72,8 @@ function serverLog(): void {
 /** Seal the open tail as the turn's next entry: the one thing that happens while the client
  *  holds a window and receives no frame. The turn stays OPEN. */
 function sealDuringGap(): void {
-  log = [...log, entry(4, "text", { text: "three" })];
+  // Sealed under its open id, as the server seals every streamed entry.
+  log = [...log, { ...entry(4, "text", { text: "three" }), id: `${TURN}-open4` }];
   tail = undefined;
 }
 

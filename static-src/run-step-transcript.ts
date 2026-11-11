@@ -4,7 +4,7 @@ import { apiGetTypedOrError } from "./api-client.js";
 import { decodeRunStepCapture, decodeRunStepTranscript } from "./wire/decoders.gen.js";
 import { runStepCaptureURL, runStepURL } from "./actions/runs.js";
 import {
-  adoptRunOpenEntries,
+  mergeRunOpenEntries,
   appendRunEntry,
   clearRunHole,
   openRunEntry,
@@ -175,7 +175,7 @@ function adopt(workflowID: string, answer: { entries: Entry[]; open_entries: Ope
     }
   }
   for (const turnID of turns) {
-    adoptRunOpenEntries(workflowID, turnID, tails.get(turnID) ?? []);
+    mergeRunOpenEntries(workflowID, turnID, tails.get(turnID) ?? []);
     tails.delete(turnID);
     clearRunHole(workflowID, turnID);
   }

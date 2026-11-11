@@ -34,6 +34,7 @@ import { clearTurnState } from "./turn-teardown.js";
 import { newerRun } from "./run-order.js";
 import { framedSince, headerFrameMark } from "./header-frames.js";
 import { observeStamp } from "./subject-versions.js";
+import { mergeOpenTails } from "./open-tails.js";
 import { settleWorkflowMessages, turnsInOrder } from "./workflow-delivery.js";
 import type { Entry, OpenEntry, SubjectStamp } from "./wire/types.gen.js";
 
@@ -207,8 +208,8 @@ function seatOpenEntries(
 }
 
 /** The page is a point-in-time read, so an entry that landed during the flight is NEWER than the
- *  answer and goes back on past its end, contiguously; a held open tail travels the same way unless
- *  the page carries that entry SEALED, which is the answer that the tail is history. */
+ *  answer and goes back on past its end, contiguously; the open tails then merge by their versions
+ *  (`open-tails.ts`). */
 function mergeTurn(page: TurnState, held: TurnState): TurnState {
   for (let i = page.entries.length; i < held.entries.length; i++) {
     const e = held.entries[i];
@@ -220,18 +221,7 @@ function mergeTurn(page: TurnState, held: TurnState): TurnState {
       page.closeAt = e.seq;
     }
   }
-  if (held.openEntries.size > 0) {
-    const sealed = new Set(page.entries.map((e) => e.id));
-    for (const [lane, open] of held.openEntries) {
-      if (sealed.has(open.id)) {
-        continue;
-      }
-      const fromPage = page.openEntries.get(lane);
-      if (fromPage === undefined || (fromPage.id === open.id && open.n > fromPage.n)) {
-        page.openEntries.set(lane, open);
-      }
-    }
-  }
+  page.openEntries = mergeOpenTails(page.entries, held.openEntries, page.openEntries.values());
   return page;
 }
 
@@ -916,8 +906,11 @@ function applyTurnRange(
     console.warn(`turn range: ${chatID} ${turnID} answered no turn_open`);
     return;
   }
-  state.openEntries = new Map();
-  seatOpenEntries(new Map([[turnID, state]]), new Map(), open);
+  state.openEntries = mergeOpenTails(
+    state.entries,
+    state.openEntries,
+    open.filter((o) => o.turn === turnID),
+  );
   if (held === undefined) {
     insertTurnByOrdinal(session, turnID, state);
   }

@@ -86,7 +86,7 @@ vi.mock("./run-store.js", async (importOriginal) => ({
   openRunTurn: vi.fn(),
   openRunEntry: vi.fn(),
   // The open tails a whole-turn read REPLACES, reached by the step GET in this graph.
-  adoptRunOpenEntries: vi.fn(),
+  mergeRunOpenEntries: vi.fn(),
   clearRunHole: vi.fn(),
   // The log's two READERS, which the run view asks for the selected step's rows. Empty answers,
   // which is what a run nobody has painted holds.
