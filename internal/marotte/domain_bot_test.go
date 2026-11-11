@@ -44,8 +44,8 @@ func TestChat_ABotBlockRoundTripsThroughChatJSON(t *testing.T) {
 	}
 }
 
-// TestChat_ARegularChatCarriesNoBot pins that only a Bot's record and header say "bot": the client sorts a chat into
-// the Bots section, and labels it in History, from the key's presence.
+// TestChat_ARegularChatCarriesNoBot pins that only a Bot's record and header say "bot": History labels a row from the
+// header key's presence.
 func TestChat_ARegularChatCarriesNoBot(t *testing.T) {
 	c := &Chat{ID: "c1", Name: "Hello"}
 	record, err := json.Marshal(c)
@@ -146,8 +146,8 @@ func TestBotWireShapes_AreStrict(t *testing.T) {
 	}
 }
 
-// TestTabBotFact_HasNoClientDoor pins that no client can state a tab's Bot fact: the server derives it from the
-// record, so OpenTab.Bot is never decoded and the open_tab payload has no field for it.
+// TestTabBotFact_HasNoClientDoor pins that no client can state a tab's Bot fact: OpenTab.Bot is never decoded and the
+// open_tab payload has no field for it.
 func TestTabBotFact_HasNoClientDoor(t *testing.T) {
 	f, ok := reflect.TypeFor[OpenTab]().FieldByName("Bot")
 	if !ok {

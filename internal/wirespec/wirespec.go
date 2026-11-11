@@ -398,7 +398,7 @@ var wireEnums = []wiregen.EnumRef{
 	wiregen.StringEnum[marotte.RejectionNote](),
 	// One definition of the tab kinds; TabSubject.kind fails the decoder on an unknown one.
 	wiregen.StringEnum[marotte.TabKind](),
-	// The sidebar and History word a Bot from its state, so an unknown one is refused.
+	// BotSummary.state fails the decoder on an unknown one; the Bot row's meta branches on it.
 	wiregen.StringEnum[marotte.BotState](),
 	// The composer's placeholder and the chat-options menu's radio branch on it.
 	wiregen.StringEnum[marotte.InterruptMode](),

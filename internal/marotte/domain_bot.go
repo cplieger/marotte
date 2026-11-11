@@ -3,7 +3,7 @@ package marotte
 // Bot is the block that makes a chat a Bot: a chat whose record carries it is one, for good, and every setting
 // marotte keeps about the Bot lives here, in the chat's own chat.json. Field order is fieldalignment's.
 type Bot struct {
-	// Goal is what the Bot keeps working toward; starting a Bot requires one.
+	// Goal is what the Bot keeps working toward.
 	Goal string `json:"goal"`
 	// Steering is the user's custom steering for the Bot, markdown.
 	Steering string `json:"steering,omitempty"`

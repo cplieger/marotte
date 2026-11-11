@@ -125,7 +125,7 @@ type OpenTab struct {
 	// decides it, because only the caller knows whether it launched the thing
 	// this tab shows.
 	Owns bool `json:"owns,omitempty"`
-	// Bot is copied onto TabSubject.Bot. Never decoded, so no client states it.
+	// Bot is copied onto a chat tab's TabSubject.Bot. Never decoded, so no client states it.
 	Bot bool `json:"-"`
 }
 

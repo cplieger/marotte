@@ -16,8 +16,8 @@ func botOf(t *testing.T, tabs []marotte.TabSubject, id string) bool {
 	return tabs[i].Bot
 }
 
-// TestOpen_CopiesTheBotFactOntoTheSubject pins that the store keeps what the coordinator derived: the client sorts a
-// tab into the Bots section from this fact alone, so a dropped copy files a Bot among the open chats.
+// TestOpen_CopiesTheBotFactOntoTheSubject pins that Open stores the spec's Bot fact: the client sorts a tab into the
+// Bots section from it alone, so a dropped copy files a Bot among the open chats.
 func TestOpen_CopiesTheBotFactOntoTheSubject(t *testing.T) {
 	s, dir := newTestStore(t)
 	bot := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-bot", Bot: true})
@@ -79,4 +79,40 @@ func TestBotFact_SurvivesEveryLaterTabWrite(t *testing.T) {
 	if botOf(t, stored, other.ID) || botOf(t, stored, spec.ID) {
 		t.Errorf("a reload gave a regular tab the Bot fact: %+v", stored)
 	}
+}
+
+// TestBotFact_IsAChatTabsOnly pins that the store holds the Bot fact on a chat tab alone, at both of its doors: Open
+// drops it from a run or spec spec, and a load clears it off a hand-edited tabs.json. A mis-kinded fact would file a
+// run or spec tab in the Bots section.
+func TestBotFact_IsAChatTabsOnly(t *testing.T) {
+	t.Run("open", func(t *testing.T) {
+		s, dir := newTestStore(t)
+		run := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1", Bot: true})
+		spec := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindSpec, Ref: ".kiro/specs/x", Bot: true})
+		if run.Bot || spec.Bot {
+			t.Errorf("Open(Bot: true) of a run and a spec tab returned Bot %v and %v, want false on both", run.Bot, spec.Bot)
+		}
+		if doc := onDisk(t, dir); botOf(t, doc.Tabs, run.ID) || botOf(t, doc.Tabs, spec.ID) {
+			t.Errorf("tabs.json = %+v, want no Bot fact on the run or spec tab", doc.Tabs)
+		}
+	})
+	t.Run("load", func(t *testing.T) {
+		dir := t.TempDir()
+		writeDoc(t, dir, file{Version: 3, Tabs: []marotte.TabSubject{
+			{ID: "t-chat", Kind: marotte.TabKindChat, Ref: "c-bot", Bot: true},
+			{ID: "t-run", Kind: marotte.TabKindRun, Ref: "wf_1", Bot: true},
+			{ID: "t-spec", Kind: marotte.TabKindSpec, Ref: ".kiro/specs/x", Bot: true},
+		}})
+		s, err := NewStore(dir)
+		if err != nil {
+			t.Fatalf("NewStore(%q): %v", dir, err)
+		}
+		tabs, _ := s.List()
+		if !botOf(t, tabs, "t-chat") {
+			t.Error("a load cleared a chat tab's Bot fact")
+		}
+		if botOf(t, tabs, "t-run") || botOf(t, tabs, "t-spec") {
+			t.Errorf("a load kept the Bot fact on a run or spec tab: %+v", tabs)
+		}
+	})
 }
