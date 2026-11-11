@@ -51,7 +51,7 @@
       "reason": "restart",
       "label": "Workflow result not delivered · the session restarted",
       "sites": [
-        "internal/agent/bridge_coord.go:1929",
+        "internal/agent/bridge_coord.go:1917",
         "internal/agent/entry_merge.go:609",
         "internal/agent/runtime.go:795"
       ]
@@ -239,7 +239,7 @@
   ],
   "sites": [
     {
-      "site": "internal/agent/bridge_coord.go:1929",
+      "site": "internal/agent/bridge_coord.go:1917",
       "form": "literal",
       "origin": "agent",
       "state": "dropped",

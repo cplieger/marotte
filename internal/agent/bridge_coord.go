@@ -191,6 +191,8 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		steerKASSettled:  h.bus.steers.kasSettled,
 	}
 	turns.runHost = bc
+	turns.sendRole = bc.reassertBotRole
+	turns.spawnRole = bc.spawnRole
 	return bc
 }
 
@@ -249,26 +251,12 @@ func (bc *bridgeCoordinator) openBridgeBy(
 			return nil, nil, err
 		}
 		if !reopen {
-			return bc.handOut(ctx, chatID, sb, existed, release, res.Token)
+			if existed {
+				bc.repairEffort(ctx, chatID, sb)
+			}
+			return sb, release, nil
 		}
 	}
-}
-
-// handOut answers opener's door with sb and its open hold. A resident session (existed) first gets back what it may
-// have lost since its door, a Bot's role then the chat's effort; a role it cannot restore releases the hold and fails
-// the open.
-func (bc *bridgeCoordinator) handOut(
-	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, existed bool, release func(), opener uint64,
-) (*sharedBridge, func(), error) {
-	if !existed {
-		return sb, release, nil
-	}
-	if err := bc.holdResidentBotRole(ctx, chatID, sb, opener); err != nil {
-		release()
-		return nil, nil, err
-	}
-	bc.repairEffort(ctx, chatID, sb)
-	return sb, release, nil
 }
 
 // generationAt returns chatID's entry for a door whose intent began at stamp, starting the new entry's door
@@ -609,7 +597,7 @@ func (bc *bridgeCoordinator) openGeneration(
 		bc.failGeneration(chatID, sb, err)
 		return
 	}
-	if err := bc.holdBotDoor(ctx, rec, session, false); err != nil {
+	if err := bc.holdBotDoor(ctx, rec, sb, session, false); err != nil {
 		sessionID := string(session.SessionID())
 		bc.restoreUnservedModel(ctx, chatID, held)
 		bc.failGeneration(chatID, sb, err)
@@ -913,7 +901,7 @@ func (bc *bridgeCoordinator) tryLoadSession(
 	case !session.Open():
 		return false, fmt.Errorf("%w: the session ended during its replay", marotte.ErrBridgeExited)
 	}
-	if err := bc.holdBotDoor(ctx, rec, session, true); err != nil {
+	if err := bc.holdBotDoor(ctx, rec, sb, session, true); err != nil {
 		return false, err
 	}
 	title := session.SessionTitle()

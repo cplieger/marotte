@@ -100,7 +100,7 @@ func (rt *Runtime) initDispatch() {
 		marotte.ACPUpdateToolCall:   rt.translator.HandleToolCall,
 		marotte.ACPUpdateToolUpdate: rt.translator.HandleToolCallUpdate,
 		marotte.ACPUpdatePlan:       rt.translator.HandlePlan,
-		marotte.ACPUpdateModeChange: rt.coord.healBotRole(ignoreAttribution(rt.translator.HandleModeUpdate)),
+		marotte.ACPUpdateModeChange: rt.coord.keepBotRole(ignoreAttribution(rt.translator.HandleModeUpdate)),
 		// The metadata channels.
 		marotte.ACPUpdateSessionInfo: rt.translator.HandleSessionInfoUpdate,
 		marotte.ACPUpdateUsage:       ignoreAttribution(rt.translator.HandleUsageUpdate),

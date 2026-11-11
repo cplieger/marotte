@@ -378,6 +378,9 @@ func (lc *chatLifecycle) sendAttempt(
 		return 0, nil, nil, nil, errPromptTurnClosed
 	}
 	step, fold = lc.markSentLocked(t)
+	if step == sendRoleFailed {
+		return 0, nil, nil, nil, errBotRoleNotLoaded
+	}
 	if step == sendNow {
 		commit = lc.sendCommitLocked(t)
 		// The list marked t running and steerable; the header must say so before the call is written.

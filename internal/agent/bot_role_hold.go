@@ -24,14 +24,29 @@ var errBotRoleNotLoaded = errors.New(botRoleNotLoaded) //nolint:staticcheck // S
 // botRoleSetTimeout bounds one session/set_mode to the role, and one context-file edit.
 const botRoleSetTimeout = 10 * time.Second
 
-// holdBotDoor runs a started Bot's door steps on its just-opened session, the role then the memory file; any other
-// chat's door has none, since only a started Bot's door sends the role (chatSessionOpts).
-func (bc *bridgeCoordinator) holdBotDoor(ctx context.Context, rec *marotte.Chat, session engineSession, loaded bool) error {
+// holdBotDoor runs a started Bot's door steps on its just-opened session sb, the role then the memory file, after
+// resetting the chat's role keeper onto sb; any other chat's door has none, since only a started Bot's door sends the
+// role (chatSessionOpts).
+func (bc *bridgeCoordinator) holdBotDoor(
+	ctx context.Context, rec *marotte.Chat, sb *sharedBridge, session engineSession, loaded bool,
+) error {
+	chatID := marotte.ChatID(rec.ID)
+	lc, kept := bc.turns.closeOwner(chatID, sb)
+	if kept {
+		lc.resetRole(sb, rec.IsStartedBot())
+	}
 	if !rec.IsStartedBot() {
 		return nil
 	}
-	if err := bc.holdBotRole(ctx, marotte.ChatID(rec.ID), session); err != nil {
+	if err := bc.holdBotRole(ctx, chatID, session); err != nil {
+		// The generation fails with sb: the keeper holds no session until the next door.
+		if kept {
+			lc.resetRole(nil, true)
+		}
 		return err
+	}
+	if kept {
+		lc.reportRole(sb, marotte.BotRoleID, true)
 	}
 	bc.holdBotMemory(ctx, rec, session, loaded)
 	return nil
@@ -48,41 +63,17 @@ func (bc *bridgeCoordinator) holdBotRole(ctx context.Context, chatID marotte.Cha
 	if err == nil {
 		return nil
 	}
-	return bc.failBotRole(ctx, chatID, fmt.Errorf("the door reported %q: %w", session.CurrentMode(), err))
-}
-
-// failBotRole fails a Bot's open whose session is off its role, telling the chat in the Bot's own words.
-func (bc *bridgeCoordinator) failBotRole(ctx context.Context, chatID marotte.ChatID, err error) error {
-	slog.Error("a Bot's session did not take its role; the open fails", "chat_id", chatID, "error", err)
-	bc.broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
-		Code: marotte.ErrCodeModeNotApplied, Message: botRoleNotLoaded,
-	}))
+	slog.Error("a Bot's session did not take its role; the open fails", "chat_id", chatID,
+		"reported", session.CurrentMode(), "error", err)
+	bc.tellBotRoleNotLoaded(ctx, chatID)
 	return errBotRoleNotLoaded
 }
 
-var errBotSessionBusy = errors.New("the session runs a turn, a hosted step or a KAS run, which a set_mode would cut")
-
-// holdResidentBotRole puts a kept Bot session that a failed re-assert left off its role back on it before the door
-// hands it out: a hold can refuse the reload that re-assert marked, and the session's door report still names the
-// role. Only a started Bot's session is ever marked off its role (healBotRole). No set_mode is sent while KAS runs
-// work on the session at opener's door, since KAS switches the profile under it.
-func (bc *bridgeCoordinator) holdResidentBotRole(
-	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, opener uint64,
-) error {
-	if !sb.roleIsOff() {
-		return nil
-	}
-	if lc, ok := bc.turns.closeOwner(chatID, sb); ok && lc.sessionRunning(opener) {
-		return bc.failBotRole(ctx, chatID, errBotSessionBusy)
-	}
-	err := sb.use(ctx, func(ctx context.Context, s engineSession) error { return bc.setBotRole(ctx, chatID, s) })
-	switch {
-	case err == nil:
-		return nil
-	case errors.Is(err, marotte.ErrChatClosedDuringCall):
-		return err
-	}
-	return bc.failBotRole(ctx, chatID, err)
+// tellBotRoleNotLoaded tells the chat, in the Bot's own words, that its session is off its role.
+func (bc *bridgeCoordinator) tellBotRoleNotLoaded(ctx context.Context, chatID marotte.ChatID) {
+	bc.broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
+		Code: marotte.ErrCodeModeNotApplied, Message: botRoleNotLoaded,
+	}))
 }
 
 var errBotRoleMissing = errors.New("KAS reported the Bot role absent from its session")
@@ -106,9 +97,6 @@ func (bc *bridgeCoordinator) setBotRole(ctx context.Context, chatID marotte.Chat
 	}
 	if sb != nil && sb.takeRoleMissing() {
 		return errBotRoleMissing
-	}
-	if sb != nil {
-		sb.setRoleOff(false)
 	}
 	return nil
 }
@@ -196,9 +184,9 @@ func callSessionContext(ctx context.Context, s acpSessionCaller, params *marotte
 	return nil
 }
 
-// healBotRole wraps the mode handler to note a Bot's session moving off its role, which reassertBotRole undoes once
-// the turn ends: a set_mode inside the turn would cut across the agent's own switch.
-func (bc *bridgeCoordinator) healBotRole(next sessionUpdateHandler) sessionUpdateHandler {
+// keepBotRole wraps the mode handler to give a chat-owned mode report to the chat's role keeper (botRoleKeeper),
+// which ignores it on any chat but a started Bot's session.
+func (bc *bridgeCoordinator) keepBotRole(next sessionUpdateHandler) sessionUpdateHandler {
 	return func(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr translate.FrameAttribution) {
 		next(ctx, chatID, raw, attr)
 		if !attr.ChatOwned() {
@@ -207,35 +195,36 @@ func (bc *bridgeCoordinator) healBotRole(next sessionUpdateHandler) sessionUpdat
 		var p struct {
 			ModeID string `json:"currentModeId"`
 		}
-		if json.Unmarshal(raw, &p) != nil || p.ModeID == "" || p.ModeID == marotte.BotRoleID {
+		if json.Unmarshal(raw, &p) != nil || p.ModeID == "" {
 			return
 		}
 		sb := bc.bridgeFor(chatID)
-		if sb == nil {
-			return
-		}
-		if rec, ok := bc.chatStore.Get(ctx, chatID); ok && rec.IsStartedBot() {
-			sb.markRoleLeft()
+		if lc, ok := bc.turns.closeOwner(chatID, sb); ok {
+			lc.reportRole(sb, p.ModeID, p.ModeID == marotte.BotRoleID)
 		}
 	}
 }
 
-// reassertBotRole sends a Bot's session back to its role after a turn that moved it off. On a failure the session
-// stays off the role, so lc's next door reloads it or re-asserts the role on it (holdResidentBotRole), and either
-// restores the role or fails the open.
-func (bc *bridgeCoordinator) reassertBotRole(ctx context.Context, lc *chatLifecycle) {
-	sb := bc.bridgeFor(lc.chatID)
-	if sb == nil || !sb.takeRoleLeft() {
-		return
-	}
+// reassertBotRole is the role keeper's sender (roleSender): one session/set_mode to the role on sb, answered back
+// to lc's keeper. A refusal tells the chat; the keeper marked it for reload.
+func (bc *bridgeCoordinator) reassertBotRole(ctx context.Context, lc *chatLifecycle, sb *sharedBridge) {
 	err := sb.use(ctx, func(ctx context.Context, s engineSession) error { return bc.setBotRole(ctx, lc.chatID, s) })
+	in := roleAccepted
 	switch {
-	case errors.Is(err, marotte.ErrChatClosedDuringCall):
-		slog.Debug("Bot role re-assert stood down: the chat closed", "chat_id", lc.chatID)
-	case err != nil:
-		sb.setRoleOff(true)
-		lc.markReload(sb)
-		slog.Warn("a Bot's session left its role and the re-assert failed; its next message reloads the session",
-			"chat_id", lc.chatID, "error", err)
+	case err == nil:
+	case ctx.Err() != nil, errors.Is(err, marotte.ErrChatClosedDuringCall), errors.Is(err, marotte.ErrSessionClosing),
+		errors.Is(err, marotte.ErrSessionClosed):
+		in = roleCut
+	default:
+		in = roleRefused
+	}
+	failed, mode := lc.answerRole(sb, in)
+	switch {
+	case failed:
+		slog.Warn("a Bot's session left its role and KAS refused it back; its next message reloads the session",
+			"chat_id", lc.chatID, "reported", mode, "error", err)
+		bc.tellBotRoleNotLoaded(ctx, lc.chatID)
+	case in == roleCut:
+		slog.Debug("Bot role re-assert stood down: the session or the chat closed", "chat_id", lc.chatID, "error", err)
 	}
 }
