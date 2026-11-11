@@ -830,6 +830,32 @@ func TestSearch_SteerTextIsSearched(t *testing.T) {
 	})
 }
 
+// A quoted prompt or steer is searched as its bands draw it: the passage, its source and the reader's words hit,
+// the quote block's attribution and `>` marks do not, and a passage quoting the attribution sentence hits on it.
+func TestSearch_QuoteBlocksAreSearchedAsTheirBandsDraw(t *testing.T) {
+	const block = "> From Kiro's reply:\n>\n> the needle passage\n>\n> Quoting your earlier reply."
+	const quotesIt = "> From Kiro's reply:\n>\n> a needle\n> \\Quoting your earlier reply.\n>\n> Quoting your earlier reply."
+	entries, drawn := chatOf(openTurn("t-1", 1, prompt("m-1", quotesIt+"\n\nwhy the haystack?")).
+		add("", "steer-1", marotte.EntryKindSteer, marotte.EntrySteer{
+			Text: "also the haystack\n\n" + block, Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead,
+		}))
+	header := wantHit{entry: "t-1", kind: itemHeader, segs: []SegmentKind{segmentPrompt}}
+	steer := wantHit{entry: "steer-1", kind: itemSteer, segs: []SegmentKind{segmentSteer}}
+	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{header, steer})
+	assertHits(t, searchHits(entries, drawn, "haystack"), []wantHit{header, steer})
+	assertHits(t, searchHits(entries, drawn, `"reply: the needle"`), []wantHit{steer})
+	for _, q := range []string{`"> the"`, `\Quoting`} {
+		if hits := searchHits(entries, drawn, q); len(hits) != 0 {
+			t.Errorf("search(%s) = %+v, want none: no band draws it", q, hits)
+		}
+	}
+	hits := searchHits(entries, drawn, `"earlier reply"`)
+	assertHits(t, hits, []wantHit{header})
+	if len(hits) == 1 && (strings.Contains(hits[0].Excerpt, ">") || strings.Count(hits[0].Excerpt, "earlier reply") != 1) {
+		t.Errorf("excerpt %q, want the passage's one quoted sentence and no marks", hits[0].Excerpt)
+	}
+}
+
 // A compaction failure's reason and a safety block's properties render as text, so each is a notice.
 func TestSearch_CompactionFailedAndSafetyBlockedAreNotices(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).

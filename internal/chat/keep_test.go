@@ -332,7 +332,7 @@ func TestRelease_RemovesTheKeyOnlyOnEvidence(t *testing.T) {
 	if _, ok := readChat(t, s, "c1").Keep[key]; !ok {
 		t.Fatal("a release with no evidence removed the fact")
 	}
-	for _, ev := range []Evidence{EvidenceTabClosed, EvidenceRunCancelled, EvidenceRunDeleted, EvidenceTurnEnded, EvidenceProcessGone} {
+	for _, ev := range []Evidence{EvidenceTabClosed, EvidenceRunCancelled, EvidenceRunDeleted, EvidenceProcessGone} {
 		if _, err := s.Hold(t.Context(), "c1", key, KeepDurable); err != nil {
 			t.Fatal(err)
 		}

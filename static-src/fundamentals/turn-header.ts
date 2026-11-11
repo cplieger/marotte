@@ -13,8 +13,8 @@ import { workflowIcon } from "../icons.js";
 import { watchCut } from "../clamp-text.js";
 import { linkifyPaths } from "../linkify.js";
 import { buildAttachmentPill, type AttachmentRef } from "../attachment-pill.js";
-import { splitLeadingQuote } from "../message-quote.js";
-import { buildQuoteBand } from "../quote-band.js";
+import { leadQuote, type PromptPart, type Quote } from "../message-quote.js";
+import { buildQuoteBand, drawParts } from "../quote-band.js";
 // The dot's words, shared with the turn map — see turn-severity.ts.
 // Colour is never the sole channel (WCAG 1.4.1), and these are that channel.
 import { OUTCOME_LABEL, OUTCOME_TOOLTIP, severityOf } from "../turn-severity.js";
@@ -101,15 +101,15 @@ const FOLD_LABEL = "Expand or collapse this turn";
 /** The request band alone, for a turn drawn without card chrome: a run step's turn that a message resumed,
  *  headed by its Sent-by line when `caller` sent it through the API. */
 export function buildRequestHeader(request: string, caller?: Caller): HTMLElement {
-  const quoted = splitLeadingQuote(request.trim());
-  const text = el("div", { className: "turn-req-text" }, quoted?.rest ?? request);
-  linkifyPaths(text);
+  const { lead, rest } = leadQuote(request);
+  const text = el("div", { className: "turn-req-text" });
+  setRequestParts(text, rest);
   const header = el(
     "div",
     { className: "turn-header", "data-trigger": caller === undefined ? "user" : "caller" },
     el("div", { className: "turn-req", "data-find-unit": "header" }, text),
   );
-  syncQuote(header, quoted ?? undefined);
+  syncQuote(header, lead ?? undefined);
   syncSentBy(header, caller);
   return header;
 }
@@ -191,19 +191,53 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   header.dataset["trigger"] = d.caller === undefined ? "user" : "caller";
   const body = d.request.trim();
   const label = d.label?.trim() ?? "";
-  const quoted = label === "" ? splitLeadingQuote(body) : null;
-  syncQuote(header, quoted ?? undefined);
+  const { lead, rest } = label === "" ? leadQuote(body) : { lead: null, rest: [] };
+  syncQuote(header, lead ?? undefined);
   syncSentBy(header, d.caller);
-  setRequestText(text, label !== "" ? label : (quoted?.rest ?? body));
+  if (label === "") {
+    setRequestParts(text, rest);
+  } else {
+    setRequestText(text, label);
+  }
   syncFullText(header, label === "" ? undefined : body);
 }
 
+/** The parts each request text was last drawn from, so a repaint of the same parts keeps their nodes. */
+const drawnParts = new WeakMap<HTMLElement, string>();
+
 function setRequestText(text: HTMLElement, shown: string): void {
-  if (text.textContent !== shown || text.dataset["rows"] !== undefined) {
+  if (text.textContent !== shown || text.dataset["rows"] !== undefined || drawnParts.has(text)) {
     delete text.dataset["rows"];
+    drawnParts.delete(text);
     text.textContent = shown;
     linkifyPaths(text);
   }
+}
+
+/** The request's words with the quotes after its opening one drawn as bands in their places. */
+function setRequestParts(text: HTMLElement, parts: readonly PromptPart[]): void {
+  const only = parts.length === 1 && parts[0]?.kind === "text" ? parts[0].text : null;
+  if (parts.length === 0 || only !== null) {
+    setRequestText(text, only ?? "");
+    return;
+  }
+  const key = join(
+    ...parts.map((p) =>
+      p.kind === "text" ? join("t", p.text) : join("q", p.source ?? "", p.quote),
+    ),
+  );
+  if (drawnParts.get(text) === key) {
+    return;
+  }
+  drawnParts.set(text, key);
+  delete text.dataset["rows"];
+  text.replaceChildren(...drawParts(parts, linkedWords));
+}
+
+function linkedWords(words: string): HTMLElement {
+  const span = el("span", {}, words);
+  linkifyPaths(span);
+  return span;
 }
 
 /** A re-delivery's messages in the request text, one per line as `body` joins them, each opening on its
@@ -218,6 +252,7 @@ function setWakeRows(
     return;
   }
   text.dataset["rows"] = key;
+  drawnParts.delete(text);
   const parts: (Node | string)[] = [];
   rows.forEach((r, i) => {
     if (i > 0) {
@@ -350,10 +385,7 @@ const CLIP_EPSILON = 0.5;
 
 /** The passage a prompt opened with (`message-quote.ts`), drawn as one band before the text, led by the line naming
  *  its source when it has one; `quote` undefined removes it. */
-function syncQuote(
-  header: HTMLElement,
-  quote: { source: string | null; quote: string } | undefined,
-): void {
+function syncQuote(header: HTMLElement, quote: Quote | undefined): void {
   const req = header.querySelector<HTMLElement>(":scope > .turn-req");
   if (req === null) {
     return;

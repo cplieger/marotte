@@ -285,6 +285,33 @@ describe("a steer that opens with a quoted passage", () => {
     expect(n.getAttribute("aria-label")).toBe("Mid-turn message: From Kiro's reply: quoted reply");
   });
 
+  it("draws every quote in the steer as a band in its place, as the prompt does", () => {
+    const quote = (words: string): string => quoteSelection(words, "From Kiro's reply");
+    const two = `${appendQuote(`${appendQuote("", quote("one"))}reply`, quote("two"))}more`;
+    const header = buildTurnHeader({
+      n: 1,
+      outcome: "completed",
+      ts: 0,
+      request: two,
+      attachments: [],
+    });
+    const n = note({ text: two });
+    const bands = [...n.querySelectorAll("blockquote.turn-req-quote")];
+    expect(bands.map((b) => b.textContent)).toEqual([
+      "From Kiro's reply: one",
+      "From Kiro's reply: two",
+    ]);
+    expect(bands[1]?.innerHTML).toBe(header.querySelectorAll(".turn-req-quote")[1]?.innerHTML);
+    const words = n.querySelector(".steer-note-body")?.cloneNode(true) as HTMLElement;
+    words.querySelectorAll("button").forEach((b) => {
+      b.remove();
+    });
+    expect(words.textContent).toBe("From Kiro's reply: onereplyFrom Kiro's reply: twomore");
+    expect(n.getAttribute("aria-label")).toBe(
+      "Mid-turn message: From Kiro's reply: one reply From Kiro's reply: two more",
+    );
+  });
+
   it("leaves a hand-typed blockquote as the reader's own text, as a prompt does", () => {
     const n = note({ text: "> quoted\n\nreply" });
     expect(bandOf(n)).toBeNull();

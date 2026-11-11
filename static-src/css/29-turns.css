@@ -183,9 +183,37 @@
   font-size: var(--fs-sm);
   line-height: 1.5;
   color: var(--c-text-secondary);
-  overflow: hidden;
   white-space: nowrap;
+}
+
+/* The band's one line clips and ellipsizes in an inline-block, so the band starts no formatting context of its own:
+ * a line clamp around it (a dock row, a folded steer note) counts it as one of its lines. A band clipping itself is
+ * either uncounted (`hidden`) or, with `clip`, loses its ellipsis in Firefox inside a `-webkit-box` clamp. */
+.turn-req-quote-line {
+  display: inline-block;
+  max-inline-size: 100%;
+  vertical-align: top;
+  overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* A quote inside the words keeps the gap the opening quote has from them. */
+:is(.turn-req-text, .steer-note-text) > .turn-req-quote {
+  margin-block: var(--sp-1);
+
+  &:first-child {
+    margin-block-start: 0;
+  }
+
+  &:last-child {
+    margin-block-end: 0;
+  }
+}
+
+/* A `flex-start` item is never narrower than its min-content, and a band's is its whole one-line passage: the cap
+ * keeps words holding a band inside the header, so the band ellipsizes instead of running past it. */
+.turn-req-text {
+  max-inline-size: 100%;
 }
 
 /* FOLD-CONDITIONAL: the fold chevron opens the prompt with the body. An OPEN prompt

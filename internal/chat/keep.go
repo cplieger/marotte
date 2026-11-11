@@ -72,8 +72,6 @@ const (
 	EvidenceRunCancelled
 	// EvidenceRunDeleted is a stopped run's delete, which the engine took.
 	EvidenceRunDeleted
-	// EvidenceTurnEnded is the turn lifecycle's idle transition.
-	EvidenceTurnEnded
 	// EvidenceProcessGone is a process-scope fact another boot wrote.
 	EvidenceProcessGone
 )
@@ -86,8 +84,6 @@ func (e Evidence) String() string {
 		return "run_cancelled"
 	case EvidenceRunDeleted:
 		return "run_deleted"
-	case EvidenceTurnEnded:
-		return "turn_ended"
 	case EvidenceProcessGone:
 		return "process_gone"
 	case evidenceNone:

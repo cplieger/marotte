@@ -1032,6 +1032,34 @@ describe("quoting a selection", () => {
     }
   });
 
+  it("appends a second quote below the words typed after the first, and the sent prompt draws both", async () => {
+    const { reply, second } = turn();
+    select(textOf(reply, 0), 0, textOf(reply, 0), 5);
+    await frames();
+    action()?.click();
+    input.value += "remind me";
+    select(textOf(second, 0), 0, textOf(second, 0), 7);
+    await frames();
+    action()?.click();
+    const block = (words: string): string =>
+      `> From Kiro's reply:\n>\n> ${words}\n>\n> ${QUOTE_ATTRIBUTION}`;
+    expect(input.value).toBe(`${block("first")}\n\nremind me\n\n${block("another")}\n\n`);
+
+    const header = buildTurnHeader({
+      n: 1,
+      outcome: "completed",
+      ts: 0,
+      request: input.value,
+      attachments: [],
+    });
+    const bands = [...header.querySelectorAll(".turn-req blockquote.turn-req-quote")];
+    expect(bands.map((b) => b.textContent)).toEqual([
+      "From Kiro's reply: first",
+      "From Kiro's reply: another",
+    ]);
+    expect(header.querySelector(".turn-req")?.textContent).not.toContain(">");
+  });
+
   it("quotes nothing when the selection left the reply before the click", async () => {
     const { reply, prompt } = turn();
     select(textOf(reply, 0), 0, textOf(reply, 0), 5);

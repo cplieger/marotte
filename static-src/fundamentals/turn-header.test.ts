@@ -15,6 +15,8 @@ import { wakeLine } from "../turn-wake.js";
 import { namedWake } from "../turns.js";
 import type { EntryTurnWake } from "../wire/types.gen.js";
 import { QUOTE_ATTRIBUTION, appendQuote, codeSpan, quoteSelection } from "../message-quote.js";
+import { FindEngine } from "../find-engine.js";
+import { FIND_UNIT_SELECTOR } from "../find-unit.js";
 
 function data(over: Partial<TurnHeaderData> = {}): TurnHeaderData {
   return {
@@ -687,13 +689,131 @@ describe("a request that opens with a quoted reply passage", () => {
       card.append(h);
       document.body.append(card);
       const b = band(h)!;
+      const cut = b.querySelector<HTMLElement>(".turn-req-quote-line")!;
       const line = parseFloat(getComputedStyle(b).lineHeight);
       for (const folded of [false, true]) {
         card.toggleAttribute("data-folded", folded);
         expect(b.getBoundingClientRect().height).toBeCloseTo(line, 0);
-        expect(b.scrollWidth).toBeGreaterThan(b.clientWidth);
+        expect(cut.scrollWidth).toBeGreaterThan(cut.clientWidth);
         expect(card.scrollWidth).toBeLessThanOrEqual(card.clientWidth);
-        expect(getComputedStyle(b).textOverflow).toBe("ellipsis");
+        expect(getComputedStyle(cut).textOverflow).toBe("ellipsis");
+      }
+    } finally {
+      card.remove();
+      style.remove();
+    }
+  });
+});
+
+// The prompt "Quote in reply" builds when the reader quotes, types, then quotes again (`appendQuote`).
+describe("a request quoting more than one passage", () => {
+  const FIRST = "Activity notifications: a separate stream, after the platform is built.";
+  const SECOND = "Caddy healthcheck order: waits for you to schedule it";
+  const quote = (words: string): string => quoteSelection(words, "From Kiro's reply");
+  const request = `${appendQuote(`${appendQuote("", quote(FIRST))}remind me what this is about?`, quote(SECOND))}and is it urgent?`;
+  const bands = (h: HTMLElement): HTMLElement[] => [
+    ...h.querySelectorAll<HTMLElement>(".turn-req blockquote.turn-req-quote"),
+  ];
+  const req = (h: HTMLElement): string => h.querySelector(".turn-req")?.textContent ?? "";
+
+  it("draws every quote as a band in its place, with no quote marks or attribution left", () => {
+    const h = buildTurnHeader(data({ request }));
+    expect(bands(h).map((b) => b.textContent)).toEqual([
+      `From Kiro's reply: ${FIRST}`,
+      `From Kiro's reply: ${SECOND}`,
+    ]);
+    expect(req(h)).toBe(
+      `From Kiro's reply: ${FIRST}remind me what this is about?From Kiro's reply: ${SECOND}and is it urgent?`,
+    );
+    expect(req(h)).not.toContain(QUOTE_ATTRIBUTION);
+  });
+
+  it("draws two quotes sent back to back as two bands", () => {
+    const h = buildTurnHeader(
+      data({ request: `${appendQuote(appendQuote("", quote(FIRST)), quote(SECOND))}why?` }),
+    );
+    expect(bands(h)).toHaveLength(2);
+    expect(req(h)).toBe(`From Kiro's reply: ${FIRST}From Kiro's reply: ${SECOND}why?`);
+  });
+
+  it("draws a quote after the reader's own words as a band", () => {
+    const h = buildTurnHeader(data({ request: appendQuote("first my words", quote(SECOND)) }));
+    expect(req(h)).toBe(`first my wordsFrom Kiro's reply: ${SECOND}`);
+    expect(bands(h)).toHaveLength(1);
+  });
+
+  it("draws the same bands over a run step's request", () => {
+    const h = buildRequestHeader(request);
+    expect(bands(h).map((b) => b.textContent)).toEqual(
+      bands(buildTurnHeader(data({ request }))).map((b) => b.textContent),
+    );
+    expect(req(h)).not.toContain(">");
+  });
+
+  it("keeps the bands across a repaint and redraws them when a later quote changes", () => {
+    const h = buildTurnHeader(data({ request }));
+    const before = bands(h);
+    updateTurnHeader(h, data({ request }));
+    expect(bands(h)[0]).toBe(before[0]);
+    expect(bands(h)[1]).toBe(before[1]);
+    updateTurnHeader(h, data({ request: request.replace(SECOND, "another passage") }));
+    expect(bands(h)[1]?.textContent).toBe("From Kiro's reply: another passage");
+    updateTurnHeader(h, data({ request: "plain" }));
+    expect(bands(h)).toHaveLength(0);
+    expect(req(h)).toBe("plain");
+  });
+
+  // internal/chat/prompt_quote_test.go pins drawnWords to this list, the server's search segments for the header.
+  it("reads one find run per band and per stretch of words between, as search segments it", () => {
+    const h = buildTurnHeader(data({ request }));
+    document.body.append(h);
+    try {
+      const unit = h.querySelector(FIND_UNIT_SELECTOR)!;
+      expect(new FindEngine(h).unitTexts({ selector: FIND_UNIT_SELECTOR }).get(unit)).toEqual([
+        `From Kiro's reply: ${FIRST}`,
+        "remind me what this is about?",
+        `From Kiro's reply: ${SECOND}`,
+        "and is it urgent?",
+      ]);
+    } finally {
+      h.remove();
+    }
+  });
+
+  it("draws quoted markup and the words between as text, never as elements", () => {
+    const markup = '<img src="x" onerror="alert(1)">';
+    const h = buildTurnHeader(
+      data({
+        request: `${appendQuote(`${appendQuote("", quote(FIRST))}${markup}`, quote(markup))}`,
+      }),
+    );
+    expect(h.querySelector("img")).toBeNull();
+    expect(req(h)).toBe(`From Kiro's reply: ${FIRST}${markup}From Kiro's reply: ${markup}`);
+  });
+
+  it("holds a later quote to one line inside the header, open or folded", () => {
+    const style = mountAppCSS();
+    const card = document.createElement("div");
+    card.className = "turn";
+    card.style.inlineSize = "160px";
+    try {
+      const h = buildTurnHeader(
+        data({
+          request: `${appendQuote(`${appendQuote("", quote(FIRST))}why?`, quote("word ".repeat(40)))}and?`,
+        }),
+      );
+      card.append(h);
+      document.body.append(card);
+      const later = bands(h)[1]!;
+      const line = parseFloat(getComputedStyle(later).lineHeight);
+      const edge = h.querySelector(".turn-req")!.getBoundingClientRect().right;
+      for (const folded of [false, true]) {
+        card.toggleAttribute("data-folded", folded);
+        expect(later.getBoundingClientRect().height).toBeCloseTo(line, 0);
+        const cut = later.querySelector<HTMLElement>(".turn-req-quote-line")!;
+        expect(cut.scrollWidth).toBeGreaterThan(cut.clientWidth);
+        expect(later.getBoundingClientRect().right).toBeLessThanOrEqual(edge);
+        expect(card.scrollWidth).toBeLessThanOrEqual(card.clientWidth);
       }
     } finally {
       card.remove();
