@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type * as Dom from "./dom.js";
 import type * as Skeleton from "./skeleton.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
-import { clearDeviceScale, setDeviceScale } from "./__test-helpers__/device-scale.js";
+import { restoreDeviceScale, setDeviceScale } from "./__test-helpers__/device-scale.js";
 import { emulateA11yMedia, resetA11yMedia } from "./__test-helpers__/a11y-media.js";
 import {
   frames,
@@ -79,7 +79,7 @@ function onReadingLine(wrap: HTMLElement): Element {
 
 describe("the follow write on fractional geometry", () => {
   afterEach(async () => {
-    await clearDeviceScale();
+    await restoreDeviceScale();
   });
 
   it.each([
@@ -389,7 +389,7 @@ describe("a clamp from the scrollport growing", () => {
 
 describe("holds on the engine's grid", () => {
   afterEach(async () => {
-    await clearDeviceScale();
+    await restoreDeviceScale();
   });
 
   it.each([
