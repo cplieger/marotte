@@ -249,12 +249,26 @@ func (bc *bridgeCoordinator) openBridgeBy(
 			return nil, nil, err
 		}
 		if !reopen {
-			if existed {
-				bc.repairEffort(ctx, chatID, sb)
-			}
-			return sb, release, nil
+			return bc.handOut(ctx, chatID, sb, existed, release, res.Token)
 		}
 	}
+}
+
+// handOut answers opener's door with sb and its open hold. A resident session (existed) first gets back what it may
+// have lost since its door, a Bot's role then the chat's effort; a role it cannot restore releases the hold and fails
+// the open.
+func (bc *bridgeCoordinator) handOut(
+	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, existed bool, release func(), opener uint64,
+) (*sharedBridge, func(), error) {
+	if !existed {
+		return sb, release, nil
+	}
+	if err := bc.holdResidentBotRole(ctx, chatID, sb, opener); err != nil {
+		release()
+		return nil, nil, err
+	}
+	bc.repairEffort(ctx, chatID, sb)
+	return sb, release, nil
 }
 
 // generationAt returns chatID's entry for a door whose intent began at stamp, starting the new entry's door
@@ -1133,7 +1147,7 @@ func (bc *bridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 			return false
 		}
 		requestedMode = doorMode(c)
-		bot = c.Bot != nil
+		bot = c.IsStartedBot()
 		c.RecordSession(string(newSessionID))
 		prevModel := c.Model
 		if newModelID != "" {
@@ -1152,7 +1166,7 @@ func (bc *bridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 		return fmt.Errorf("%w: %s", command.ErrChatGone, chatID)
 	}
 	reassertUserName(ctx, chatID, bridge, renameTo)
-	// A Bot's mode is the door's to report (holdBotRole).
+	// A started Bot's mode is the door's to report (holdBotRole).
 	if !bot {
 		bc.reportModeNotApplied(ctx, chatID, requestedMode, currentMode)
 	}

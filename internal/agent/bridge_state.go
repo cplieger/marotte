@@ -26,6 +26,8 @@ type sharedBridge struct {
 	roleLeft bool
 	// roleMissing is KAS reporting a Bot's role absent from its session since setBotRole's last send (noteBotRoleMissing).
 	roleMissing bool
+	// roleOff is a Bot's session a failed re-assert left off its role, until setBotRole succeeds (holdResidentBotRole).
+	roleOff bool
 }
 
 // The manager registers the record before the door, so map presence is not liveness.
@@ -81,4 +83,16 @@ func (sb *sharedBridge) takeRoleMissing() bool {
 	missing := sb.roleMissing
 	sb.roleMissing = false
 	return missing
+}
+
+func (sb *sharedBridge) setRoleOff(off bool) {
+	sb.mu.Lock()
+	sb.roleOff = off
+	sb.mu.Unlock()
+}
+
+func (sb *sharedBridge) roleIsOff() bool {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	return sb.roleOff
 }

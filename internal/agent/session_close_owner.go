@@ -208,6 +208,15 @@ func (lc *chatLifecycle) doorAskLocked(sb *sharedBridge, opener uint64, reads do
 	return askAnswer{verdict: askPending}
 }
 
+// sessionRunning reports whether KAS runs work on the chat's session at opener's door: a turn other than opener's
+// unsent prompt, a hosted run step, or a run KAS reports.
+func (lc *chatLifecycle) sessionRunning(opener uint64) bool {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return turnRefuses(lc.own, opener) || turnRefuses(lc.pending, opener) || len(lc.steps) > 0 ||
+		lc.kas.state == kasRunning || lc.kas.state == kasHeldRunning
+}
+
 // reloadMarked reports whether sb is marked for a reload (markReload).
 func (lc *chatLifecycle) reloadMarked(sb *sharedBridge) bool {
 	lc.mu.Lock()

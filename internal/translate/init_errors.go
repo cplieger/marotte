@@ -28,7 +28,7 @@ func (t *Translator) HandleAgentNotFound(ctx context.Context, chatID marotte.Cha
 			if !ex {
 				return false
 			}
-			bot = c.Bot != nil
+			bot = c.IsStartedBot()
 			return p.Fallback != "" && c.AdoptMode(p.Fallback)
 		})
 		if errors.Is(err, chat.ErrTombstoned) {

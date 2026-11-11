@@ -252,9 +252,9 @@ func TestBotDoor_AMemoryFileOutsideItsFolderIsNeverSent(t *testing.T) {
 	}
 }
 
-// TestBotDoor_MemoryOffWithNoPathToRemoveLogsTheKeptFile pins the load with memory off whose file cannot be named:
-// no remove is sent, the chat is told nothing (its Bot has no memory), and the log records the entry KAS keeps.
-func TestBotDoor_MemoryOffWithNoPathToRemoveLogsTheKeptFile(t *testing.T) {
+// TestBotDoor_MemoryOffWithNoPathToRemoveWarns pins the load with memory off whose file cannot be named: no remove is
+// sent, the chat is told nothing (its Bot has no memory), and the log says KAS may keep the entry.
+func TestBotDoor_MemoryOffWithNoPathToRemoveWarns(t *testing.T) {
 	logs := captureLogs(t)
 	br := reporting(marotte.BotRoleID, marotte.DefaultModeID, marotte.BotRoleID)
 	h, cs := botRuntime(t, br)
@@ -275,11 +275,11 @@ func TestBotDoor_MemoryOffWithNoPathToRemoveLogsTheKeptFile(t *testing.T) {
 	}
 	var kept bool
 	for line := range strings.Lines(logs.String()) {
-		kept = kept || strings.Contains(line, `"level":"WARN"`) && strings.Contains(line, "kept its memory file") &&
+		kept = kept || strings.Contains(line, `"level":"WARN"`) && strings.Contains(line, "may still hold its memory file") &&
 			strings.Contains(line, `"chat_id":"c1"`)
 	}
 	if !kept {
-		t.Errorf("no warning that the session kept its memory file; logs:\n%s", logs.String())
+		t.Errorf("no warning that the session may still hold its memory file; logs:\n%s", logs.String())
 	}
 }
 

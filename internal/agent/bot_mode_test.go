@@ -377,6 +377,7 @@ func TestBotTurn_AFailedReassertReloadsTheSessionAtTheNextMessage(t *testing.T) 
 		if got := setModeParams(br); len(got) != 1 {
 			t.Fatalf("session/set_mode after the switching turn = %v, want one try", got)
 		}
+		waitNoHold(t, h, "c1")
 		return h, cs, br
 	}
 
@@ -419,6 +420,188 @@ func TestBotTurn_AFailedReassertReloadsTheSessionAtTheNextMessage(t *testing.T) 
 			t.Errorf("the next door's error reads %q, want %q", got, botRoleMessage)
 		}
 	})
+}
+
+// TestBotTurn_AFailedReassertIsRestoredAtADoorThatKeepsTheSession pins design §7.1 where a hold refuses the reload a
+// failed turn-end re-assert marked: the door re-asserts the role on the kept session before the next prompt reaches
+// it, fails the open with the Bot's sentence when KAS refuses, and sends nothing while KAS runs work on the session.
+func TestBotTurn_AFailedReassertIsRestoredAtADoorThatKeepsTheSession(t *testing.T) {
+	switched := func(t *testing.T) (*Runtime, *testChatStore, *fakeBridge) {
+		t.Helper()
+		br := reporting(marotte.BotRoleID, marotte.DefaultModeID, "kiro_spec", marotte.BotRoleID)
+		modeUpdateOnPrompt(br, "kiro_spec")
+		br.setCallErr(marotte.MethodSetMode, context.DeadlineExceeded)
+		h, cs := botRuntime(t, br)
+		seedModeChat(t, cs, "c1", true, false)
+		runPrompt(t, h, cs, "c1", "m1")
+		if got := setModeParams(br); len(got) != 1 {
+			t.Fatalf("session/set_mode after the switching turn = %v, want one try", got)
+		}
+		return h, cs, br
+	}
+	for _, hold := range []struct {
+		name string
+		take func(h *Runtime)
+	}{
+		{"config.json does not read", func(h *Runtime) { h.coord.configHeld = func() bool { return true } }},
+		{"a run_complete wake is owed", func(h *Runtime) { h.coord.turns.holdWake("c1", "wf_1") }},
+	} {
+		t.Run(hold.name+": the role is re-asserted first", func(t *testing.T) {
+			h, cs, br := switched(t)
+			hold.take(h)
+			br.clearCallErr(marotte.MethodSetMode)
+			br.setOnCall(nil)
+
+			runPrompt(t, h, cs, "c1", "m2")
+
+			if sessionClosed(br) {
+				t.Fatal("the session was closed, want it kept under the hold")
+			}
+			if got := setModeParams(br); !slices.Equal(got, []any{marotte.BotRoleID, marotte.BotRoleID}) {
+				t.Errorf("session/set_mode modeIds = %v, want the failed try and the door's", got)
+			}
+			if set, prompt := lastCall(br, marotte.MethodSetMode), lastCall(br, marotte.MethodPrompt); set > prompt {
+				t.Errorf("the second prompt (call %d) reached the session before its role (call %d)", prompt, set)
+			}
+
+			runPrompt(t, h, cs, "c1", "m3")
+
+			if got := setModeParams(br); len(got) != 2 {
+				t.Errorf("session/set_mode modeIds after a third prompt = %v, want none once the role is back", got)
+			}
+		})
+		t.Run(hold.name+": a refused role fails the open", func(t *testing.T) {
+			h, _, br := switched(t)
+			hold.take(h)
+
+			_, err := h.coord.openReleased(t.Context(), "c1", "")
+
+			if got := rpcerr.Text(err); got != botRoleMessage {
+				t.Errorf("the door's error reads %q, want %q", got, botRoleMessage)
+			}
+			if got := setModeParams(br); len(got) != 2 {
+				t.Errorf("session/set_mode modeIds = %v, want the failed try and the door's", got)
+			}
+			if _, err := h.coord.openReleased(t.Context(), "c1", ""); rpcerr.Text(err) != botRoleMessage {
+				t.Errorf("the door after a refused re-assert answered %v, want the Bot's sentence again", err)
+			}
+		})
+	}
+	t.Run("a refused role holds nothing: once config.json reads, the next door reloads", func(t *testing.T) {
+		h, _, br := switched(t)
+		h.coord.configHeld = func() bool { return true }
+		if _, err := h.coord.openReleased(t.Context(), "c1", ""); rpcerr.Text(err) != botRoleMessage {
+			t.Fatalf("the held door answered %v, want the Bot's sentence", err)
+		}
+		h.coord.configHeld = func() bool { return false }
+
+		_, _ = h.coord.openReleased(t.Context(), "c1", "")
+
+		if !sessionClosed(br) {
+			t.Error("the session left off the role was kept: the failed door's open hold outlived it")
+		}
+	})
+	for _, busy := range []struct {
+		name string
+		take func(t *testing.T, h *Runtime, br *fakeBridge)
+	}{
+		{"a hosted run step", func(_ *testing.T, h *Runtime, _ *fakeBridge) { h.coord.turns.holdStep("c1", "turn_step") }},
+		{"a turn KAS opened", func(t *testing.T, h *Runtime, br *fakeBridge) {
+			br.deliver(newTurnStartMsg())
+			waitFor(t, func() bool { return h.coord.turns.live("c1") })
+		}},
+	} {
+		t.Run(busy.name+": nothing is sent", func(t *testing.T) {
+			h, _, br := switched(t)
+			busy.take(t, h, br)
+			br.clearCallErr(marotte.MethodSetMode)
+			since := h.bus.fanout.Position().Head
+
+			_, err := h.coord.openReleased(t.Context(), "c1", "")
+
+			if got := rpcerr.Text(err); got != botRoleMessage {
+				t.Errorf("the door's error reads %q, want %q", got, botRoleMessage)
+			}
+			if got := setModeParams(br); len(got) != 1 {
+				t.Errorf("session/set_mode modeIds = %v, want only the failed try: a set_mode cuts the running work", got)
+			}
+			if got := modeErrorsSince(t, h, since); !slices.Equal(got, []string{botRoleMessage}) {
+				t.Errorf("mode_not_applied messages = %q, want %q", got, botRoleMessage)
+			}
+		})
+	}
+}
+
+// TestBotTurn_OnlyAStartedBotsSwitchIsReasserted pins that the turn-end re-assert is a started Bot's: a draft's
+// session never registered the role, so its agent's switch is its own.
+func TestBotTurn_OnlyAStartedBotsSwitchIsReasserted(t *testing.T) {
+	br := reporting(marotte.DefaultModeID, marotte.DefaultModeID, "kiro_spec")
+	modeUpdateOnPrompt(br, "kiro_spec")
+	h, cs := botRuntime(t, br)
+	seedModeChat(t, cs, "c1", false, false)
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Bot = &marotte.Bot{Goal: "Not started yet."}
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	runPrompt(t, h, cs, "c1", "m1")
+
+	if got := setModeParams(br); len(got) != 0 {
+		t.Errorf("session/set_mode modeIds after a draft's switch = %v, want none", got)
+	}
+}
+
+// waitNoHold waits until no hold on chatID's life refuses a close: runPrompt returns before the turn's close tail
+// ends, and a door opened directly under that tail keeps the session.
+func waitNoHold(t *testing.T, h *Runtime, chatID marotte.ChatID) {
+	t.Helper()
+	waitFor(t, func() bool {
+		lc, ok := h.coord.turns.lookup(chatID)
+		if !ok {
+			return true
+		}
+		lc.mu.Lock()
+		defer lc.mu.Unlock()
+		return lc.blockerLocked(0) == holdKinds
+	})
+}
+
+// TestPersistNewSessionMetadata_ADraftIsToldItsModeDidNotApply pins that only a started Bot's door reports its own
+// mode (holdBotRole): a draft's new session reporting another mode than the one asked gets the regular toast.
+func TestPersistNewSessionMetadata_ADraftIsToldItsModeDidNotApply(t *testing.T) {
+	br := reporting("kiro_spec", marotte.DefaultModeID, "kiro_spec")
+	h, cs := botRuntime(t, br)
+	seedModeChat(t, cs, "c1", false, false)
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.CurrentModeID = marotte.BotRoleID
+		c.Bot = &marotte.Bot{Goal: "Not started yet."}
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	since := h.bus.fanout.Position().Head
+
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	if got := modeErrorsSince(t, h, since); len(got) != 1 || got[0] == botRoleMessage {
+		t.Errorf("mode_not_applied messages = %q, want the regular chat's one", got)
+	}
+}
+
+// lastCall is the position of b's last call to method among all its calls, -1 for none.
+func lastCall(b *fakeBridge, method string) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i, m := range slices.Backward(b.calls) {
+		if m == method {
+			return i
+		}
+	}
+	return -1
 }
 
 // TestBotRole_ANotFoundBeforeTheSetModeIsNotItsRefusal pins that only a not_found KAS sends for the set_mode itself

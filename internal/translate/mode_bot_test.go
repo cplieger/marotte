@@ -84,6 +84,29 @@ func TestHandleModeUpdate_ARegularChatNeverTakesTheBotRole(t *testing.T) {
 	}
 }
 
+// TestHandleAgentNotFound_ADraftShowsTheFallback pins that the swallowed toast is a started Bot's: a draft's session
+// never asked for the role, so a fallback KAS reports for it is the regular chat's message.
+func TestHandleAgentNotFound_ADraftShowsTheFallback(t *testing.T) {
+	tr, _, events := modeTranslator(t, func(c *marotte.Chat) {
+		c.CurrentModeID = marotte.BotRoleID
+		c.Bot = &marotte.Bot{Goal: "Not started yet."}
+	})
+
+	tr.HandleAgentNotFound(t.Context(), "c1", &marotte.RPCResponse{
+		Params: mustJSON(t, map[string]any{"requestedAgent": "kiro_spec", "fallbackAgent": marotte.DefaultModeID}),
+	})
+
+	var shown int
+	for _, e := range *events {
+		if p, ok := e.Payload.(marotte.ErrorPayload); ok && p.Code == marotte.ErrCodeAgentNotFound {
+			shown++
+		}
+	}
+	if shown != 1 {
+		t.Errorf("%d agent_not_found toasts for a draft, want 1", shown)
+	}
+}
+
 // TestHandleAgentNotFound_ABotPersistsNoFallback pins design §7.1: KAS falling back from a role it could not load
 // leaves the Bot's record on the role, and the door's failure is the one message the user sees, not the fallback's.
 func TestHandleAgentNotFound_ABotPersistsNoFallback(t *testing.T) {
