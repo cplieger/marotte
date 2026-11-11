@@ -577,4 +577,7 @@ func (b *bus) announceDecisionSettled(evt marotte.ServerEvent, askID int64, sett
 		SettledBy: settledBy,
 	}))
 	b.retractPush(notice.AskSubject(evt.ChatID, marotte.DecisionRunID(evt.Payload)), notice.AskKey(askID))
+	if inScope(&evt, evt.ChatID, command.ScopeChatSession) {
+		b.askSettled(evt.ChatID)
+	}
 }

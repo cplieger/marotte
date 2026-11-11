@@ -27,7 +27,7 @@ import {
   ICON_TRASH,
 } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import { sentBy } from "./sent-by.js";
+import { SENT_BY_MAROTTE, sentBy } from "./sent-by.js";
 import { wireSignature } from "./paint-sig.js";
 import { dockEntries, entryLive, waitWords } from "./run-order.js";
 import { truncate } from "./strings.js";
@@ -41,10 +41,12 @@ import { drawParts } from "./quote-band.js";
  *  (none carries it yet), or, for a dock with no run order (a run step's), as the next prompt. */
 type SteerPlace = RunWait | "next_message" | undefined;
 
-/** One dock row: a steer the agent has not read, a compaction entry, or a message the server holds. */
+/** One dock row: a steer the agent has not read, a compaction entry, the failsafe's resume, or a
+ *  message the server holds. */
 type DockRow =
   | { kind: "steer"; steer: PendingSteer; place: SteerPlace }
   | { kind: "compact"; entry: RunEntryView }
+  | { kind: "resume"; entry: RunEntryView }
   | { kind: "queued"; entry: RunEntryView; stop: string | undefined };
 
 export interface SteerStackSource {
@@ -220,7 +222,9 @@ function dockRows(steers: readonly PendingSteer[], run: RunView | undefined): Do
       out.push(
         e.kind === "compaction"
           ? { kind: "compact", entry: e }
-          : { kind: "queued", entry: e, stop: run.cancel },
+          : e.kind === "resume"
+            ? { kind: "resume", entry: e }
+            : { kind: "queued", entry: e, stop: run.cancel },
       );
     }
     if (!plainDone && afterCompaction && e.kind === "compaction") {
@@ -254,6 +258,8 @@ function rowSpec(state: StackState): ReconcileSpec<DockRow> {
           return `s:${r.steer.id}`;
         case "compact":
           return `c:${r.entry.id}`;
+        case "resume":
+          return `r:${r.entry.id}`;
         case "queued":
           return `q:${r.entry.id}`;
       }
@@ -264,6 +270,8 @@ function rowSpec(state: StackState): ReconcileSpec<DockRow> {
           return buildRow(r.steer, r.place, state);
         case "compact":
           return buildCompactRow(r.entry);
+        case "resume":
+          return buildResumeRow(r.entry);
         case "queued":
           return buildQueuedRow(r.entry, r.stop);
       }
@@ -275,6 +283,9 @@ function rowSpec(state: StackState): ReconcileSpec<DockRow> {
           return;
         case "compact":
           updateCompactRow(el, r.entry);
+          return;
+        case "resume":
+          updateResumeRow(el, r.entry);
           return;
         case "queued":
           updateQueuedRow(el, r.entry, r.stop);
@@ -712,6 +723,8 @@ const chatSource: SteerStackSource = {
 
 const COMPACT_TEXT = "Compact the context";
 const COMPACTING_TEXT = "Compacting the context\u2026";
+const FAILSAFE_COMPACT_TEXT = "Compact the context before it runs out";
+const FAILSAFE_COMPACTING_TEXT = "Compacting the context before it runs out\u2026";
 
 /** The compaction entry's row: its wait, what it does, and while it waits Cancel, the one control (it
  *  has no words to edit and never stops a turn). Keyed by the entry, so the row changes in place
@@ -733,14 +746,22 @@ function buildCompactRow(entry: RunEntryView): HTMLElement {
   return li;
 }
 
-const compactShown = new WeakMap<HTMLElement, boolean>();
+function compactText(live: boolean, failsafe: boolean): string {
+  if (failsafe) {
+    return live ? FAILSAFE_COMPACTING_TEXT : FAILSAFE_COMPACT_TEXT;
+  }
+  return live ? COMPACTING_TEXT : COMPACT_TEXT;
+}
 
-/** The icon and the control are rebuilt only when the entry goes live, so a repaint never takes
- *  focus off the Cancel button. */
+const compactShown = new WeakMap<HTMLElement, string>();
+
+/** The icon and the control are rebuilt only when the entry goes live or the failsafe takes it over,
+ *  so a repaint never takes focus off the Cancel button. */
 function updateCompactRow(li: HTMLElement, entry: RunEntryView): void {
   const live = entryLive(entry);
+  const failsafe = entry.origin === "failsafe";
   const word = waitWords(entry.wait);
-  const text = live ? COMPACTING_TEXT : COMPACT_TEXT;
+  const text = compactText(live, failsafe);
   li.dataset["state"] = live ? "compacting" : "queued";
   li.dataset["tooltip"] = text;
   li.setAttribute("aria-label", `${word}: ${text}`);
@@ -752,10 +773,11 @@ function updateCompactRow(li: HTMLElement, entry: RunEntryView): void {
   if (textEl !== null) {
     textEl.textContent = text;
   }
-  if (compactShown.get(li) === live) {
+  const shown = `${String(live)}:${String(failsafe)}`;
+  if (compactShown.get(li) === shown) {
     return;
   }
-  compactShown.set(li, live);
+  compactShown.set(li, shown);
   li.querySelector(".steer-state-icon")?.replaceChildren(
     live ? el("span", { className: "steer-spinner" }) : iconEl(ICON_COMPACT),
   );
@@ -766,7 +788,9 @@ function updateCompactRow(li: HTMLElement, entry: RunEntryView): void {
           actionButton(
             ICON_TRASH,
             "Cancel the queued compaction",
-            "The context stays as it is",
+            failsafe
+              ? "The context stays as it is, and the stopped task is not continued"
+              : "The context stays as it is",
             () => {
               void cancelQueuedCompaction(entry.id);
             },
@@ -783,6 +807,69 @@ async function cancelQueuedCompaction(id: string): Promise<void> {
   }
   announce("Cancelling the queued compaction");
   await cancelCompact.dispatch({ chatID, id }).outcome;
+}
+
+const RESUME_TEXT = "Continue the stopped task";
+
+/** The failsafe's resume: marotte's own prompt, so its row says who sent it, shows the prompt only as
+ *  its tooltip, and offers no Edit or send-now; while it waits, removing it is the one control. */
+function buildResumeRow(entry: RunEntryView): HTMLElement {
+  const li = el(
+    "li",
+    { className: "steer-row", "data-kind": "resume", "data-state": "queued" },
+    el(
+      "span",
+      { className: "steer-state" },
+      el("span", { className: "steer-state-icon", "aria-hidden": "true" }, iconEl(ICON_HOURGLASS)),
+      el("span", { className: "steer-state-label" }),
+    ),
+    el("span", { className: "steer-text" }, RESUME_TEXT),
+    el("span", { className: "steer-actions" }),
+  );
+  updateResumeRow(li, entry);
+  return li;
+}
+
+const resumeRemovable = new WeakMap<HTMLElement, boolean>();
+
+/** The control is rebuilt only when the entry is taken, so a repaint never takes focus off it. */
+function updateResumeRow(li: HTMLElement, entry: RunEntryView): void {
+  const word = `${SENT_BY_MAROTTE} \u00b7 ${lowerFirst(waitWords(entry.wait))}`;
+  li.dataset["tooltip"] = entry.row?.text ?? "";
+  li.setAttribute("aria-label", `${word}: ${RESUME_TEXT}`);
+  const label = li.querySelector(".steer-state-label");
+  if (label !== null) {
+    label.textContent = word;
+  }
+  const removable = !entryLive(entry);
+  if (resumeRemovable.get(li) === removable) {
+    return;
+  }
+  resumeRemovable.set(li, removable);
+  li.querySelector(".steer-actions")?.replaceChildren(
+    ...(removable
+      ? [
+          actionButton(
+            ICON_TRASH,
+            "Do not continue the stopped task",
+            "marotte will not ask the agent to continue after the compaction",
+            () => {
+              void removeResume(entry.id);
+            },
+            "steer-act-danger",
+          ),
+        ]
+      : []),
+  );
+}
+
+async function removeResume(id: string): Promise<void> {
+  const chatID = getActiveId();
+  if (chatID === "") {
+    return;
+  }
+  announce("marotte will not continue the stopped task");
+  await unqueuePrompt.dispatch({ chatID, messageID: id }).outcome;
 }
 
 /** A queued row's state in words, and the ONE spelling of it, led by who sent the row when an API

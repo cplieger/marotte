@@ -63,6 +63,8 @@ type baseDeps struct {
 	compactionFailures []compactionFailure
 	// usageReadings records every context reading ObserveContextUsage heard, in order.
 	usageReadings []float64
+	// compactorHeard records the compactor's signals in order: "tool" per ObserveToolCall, "reading" per reading.
+	compactorHeard []string
 	// catalogModels is the last model list SetModels was handed.
 	catalogModels []marotte.SessionModel
 	// parent is returned by ParentACPSession; "" means parent unknown.
@@ -726,6 +728,11 @@ func (d *baseDeps) CompactionFailed(chatID marotte.ChatID, turnID, detail string
 
 func (d *baseDeps) ObserveContextUsage(_ context.Context, _ marotte.ChatID, pct float64) {
 	d.usageReadings = append(d.usageReadings, pct)
+	d.compactorHeard = append(d.compactorHeard, "reading")
+}
+
+func (d *baseDeps) ObserveToolCall(marotte.ChatID) {
+	d.compactorHeard = append(d.compactorHeard, "tool")
 }
 
 // AccumulateSpend and StageConversationTurnSummary stand in for the host's per-turn

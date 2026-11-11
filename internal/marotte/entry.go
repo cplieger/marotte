@@ -119,6 +119,8 @@ type EntryPrompt struct {
 	Label       string       `json:"label,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 	Resends     []string     `json:"resends,omitempty"`
+	// Automatic marks a prompt marotte sent on its own: the resume after a failsafe compaction.
+	Automatic bool `json:"automatic,omitempty"`
 }
 
 // EntryTurnOpen is the turn_open payload. Prompt is present for a prompt or
@@ -520,6 +522,8 @@ type EntryTurnClose struct {
 	// EndedOffTurn marks a workflow step's close that its own turn did not end: KAS had parked the node,
 	// or its turn had not ended, when node_complete came.
 	EndedOffTurn bool `json:"ended_off_turn,omitempty"`
+	// StoppedToCompact marks a cancelled close of a turn marotte stopped to compact; FailureReason is then its notice.
+	StoppedToCompact bool `json:"stopped_to_compact,omitempty"`
 }
 
 // EntryStepGraded is the step_graded payload: a run-log step turn's end under KAS's record of the node, filed after

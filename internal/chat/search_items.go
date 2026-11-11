@@ -429,9 +429,9 @@ func (sc *itemScan) addHit(mk func() Hit) {
 func baseHit(it *searchItem) Hit {
 	h := Hit{TurnID: it.turn, EntryID: it.entries[0], Lane: it.lane, Kind: it.kind, Turn: it.ordinal, Segments: []SegmentKind{}}
 	for _, sg := range it.segs {
-		if sg.caller != nil {
+		h.Automatic = h.Automatic || sg.automatic
+		if sg.caller != nil && h.Caller == nil {
 			h.Caller = sg.caller
-			break
 		}
 	}
 	return h

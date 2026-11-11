@@ -20,7 +20,7 @@ export type EngineState = "starting" | "ready" | "restarting" | "down";
 
 export type EntryKind = "turn_open" | "turn_bind" | "turn_wake" | "run_named" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "steer_cleared" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "turn_revert" | "context_reset" | "reconciled" | "turn_close" | "step_graded";
 
-export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed";
+export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed" | "resume_not_sent";
 
 export type FailureKind = "context_limit" | "model_call_limit" | "empty_answer";
 
@@ -70,9 +70,9 @@ export type RunAskRefusal = "ask_stopping" | "ask_pending" | "ask_stale" | "ask_
 
 export type RunAskText = "asked" | "last_message" | "unseen";
 
-export type RunEntryKind = "turn" | "row" | "unread" | "retry" | "compaction" | "revert";
+export type RunEntryKind = "turn" | "row" | "unread" | "retry" | "compaction" | "revert" | "resume";
 
-export type RunEntryOrigin = "prompt" | "queue" | "tangent" | "summary" | "unread" | "retry" | "wire" | "run" | "carried" | "request" | "threshold" | "turn_end" | "context_limit" | "rewind";
+export type RunEntryOrigin = "prompt" | "queue" | "tangent" | "summary" | "unread" | "retry" | "wire" | "run" | "carried" | "request" | "threshold" | "turn_end" | "context_limit" | "rewind" | "failsafe";
 
 export type RunEntryState = "pending" | "paused" | "held" | "starting" | "running" | "stopping" | "closing";
 
@@ -1195,6 +1195,8 @@ export interface EntryPrompt {
   label?: string;
   attachments?: Attachment[];
   resends?: string[];
+  /** Automatic marks a prompt marotte sent on its own: the resume after a failsafe compaction. */
+  automatic?: boolean;
 }
 
 /**
@@ -1479,6 +1481,8 @@ export interface EntryTurnClose {
  * or its turn had not ended, when node_complete came.
  */
   ended_off_turn?: boolean;
+  /** StoppedToCompact marks a cancelled close of a turn marotte stopped to compact; FailureReason is then its notice. */
+  stopped_to_compact?: boolean;
 }
 
 /**
@@ -1843,6 +1847,8 @@ export interface Hit {
   segments: SegmentKind[];
   /** Turn is the 1-based session-absolute ordinal (turn_open's n), for marking the rail beyond the window. */
   turn: number;
+  /** Automatic is set on a hit in a prompt marotte sent on its own (EntryPrompt.Automatic). */
+  automatic?: boolean;
 }
 
 /**
@@ -4593,6 +4599,11 @@ export interface Usage {
   credits: number;
   last_turn_ms: number;
   has_real_data: boolean;
+  /**
+ * ContextCompacted: a compaction committed and no live reading has come since, so a figure KAS
+ * publishes is the context before it and is not stored.
+ */
+  context_compacted?: boolean;
 }
 
 /**

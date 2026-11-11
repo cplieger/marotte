@@ -165,6 +165,7 @@ func (bc *bridgeCoordinator) listCloseOf(
 ) *listClose {
 	return &listClose{
 		clean:      command.CloseFacts{Outcome: cf.outcome, Unattended: cf.unattended}.Clean(),
+		completed:  marotte.SeverityOf(cf.outcome) == marotte.TurnSeverityClean,
 		compact:    bc.autoCompact.turnEndCompaction(ctx, t.Chat, contextLimit),
 		handoff:    closer == closerPromptHandoff,
 		emptyRetry: result.WireEnded && result.Stop == marotte.StopReasonEndTurn && result.EmittedNothing,
@@ -405,6 +406,9 @@ func (bc *bridgeCoordinator) claimForCloser(ctx context.Context, chatID marotte.
 func (bc *bridgeCoordinator) closeTurn(ctx context.Context, t *activeTurn, stop marotte.StopReason, reason string, kind marotte.FailureKind, closer turnCloser) (marotte.TurnResult, marotte.TurnOutcome) {
 	chatID := t.Chat
 	c := bc.concludeStop(chatID, stop, reason, kind)
+	if c.Outcome == marotte.TurnOutcomeCancelled && bc.turns.stopCauseAfter(chatID, t.ID) == marotte.TurnStopCompaction {
+		c.Reason, c.StoppedToCompact = failsafeStopNotice, true
+	}
 	if closer == closerPromptResponse && stop == marotte.StopReasonEndTurn && !t.Log.Emitted() && t.unbracketedPrompt() {
 		c = c.Unobserved()
 	}

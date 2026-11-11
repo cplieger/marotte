@@ -507,7 +507,10 @@ func writeTurnOpenMarkdown(b *strings.Builder, e *marotte.Entry) {
 		return
 	}
 	who := "User"
-	if c := open.Prompt.Caller; c != nil {
+	switch c := open.Prompt.Caller; {
+	case open.Prompt.Automatic:
+		who = marotte.SentByMarotte
+	case c != nil:
 		who = oneLine(c.SentBy())
 	}
 	fmt.Fprintf(b, "**%s**\n\n", who)

@@ -215,6 +215,23 @@ func TestRunViewOf(t *testing.T) {
 			},
 		},
 		{
+			name: "the failsafe's compaction and resume behind the turn it stopped",
+			entries: []RunEntry{
+				turn("A", RunStopping), func() RunEntry { e := compaction(RunPending); e.Origin = RunFromFailsafe; return e }(),
+				failsafeResume(), row("m-q1", RunPaused), row("m-q2", RunPaused),
+			},
+			want: want{
+				send: SendQueue, next: turns(1), unread: waitOf(WaitCompaction),
+				waits: map[string]RunWait{
+					"compact-1": waitOf(waitNext), "m-resume": waitOf(WaitCompaction), "m-q1": turns(1), "m-q2": turns(2),
+				},
+				arrows: map[string]SendNowKind{
+					"m-q1": SendNowAfterCompaction, "m-q2": SendNowAfterCompaction,
+				},
+				carries: "m-resume",
+			},
+		},
+		{
 			name:    "a next row carries the unread steers",
 			entries: []RunEntry{turn("A", RunRunning), func() RunEntry { e := row("m-q1", RunPending); e.Next = true; return e }()},
 			want:    want{send: SendSteer, cancel: "A", next: turns(2), unread: thisTurn(), carries: "m-q1"},
@@ -290,7 +307,7 @@ func TestSanitizeRun(t *testing.T) {
 		wire("w", RunRunning), compaction(RunPending), opened, taken, row("m-q1", RunPending),
 		{ID: "u-1", Kind: RunKindUnread, State: RunPending, Row: &QueuedPrompt{ID: "u-1"}},
 		{ID: "r-1", Kind: RunKindRetry, State: RunPending, Row: &QueuedPrompt{ID: "r-1"}},
-		next, row("m-q0", RunPaused), row("m-h", RunHeld), carried,
+		next, row("m-q0", RunPaused), row("m-h", RunHeld), carried, failsafeResume(),
 	}
 	ids := func(es []RunEntry) (out []string) {
 		for _, e := range es {
@@ -319,4 +336,41 @@ func TestSanitizeRun(t *testing.T) {
 			}
 		}
 	})
+}
+
+// KAS re-prompts what a session/cancel cleared whoever sent the cancel, so marotte's failsafe stop reads as the
+// reader's does; a teardown's cancel is followed by the session's close.
+func TestTurnStopCause_KASRewakes(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cause TurnStopCause
+		want  bool
+	}{
+		{name: "no stop", cause: TurnStopNone, want: false},
+		{name: "the reader's stop", cause: TurnStopReader, want: true},
+		{name: "a teardown", cause: TurnStopTeardown, want: false},
+		{name: "the failsafe's stop", cause: TurnStopCompaction, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.cause.KASRewakes(); got != tc.want {
+				t.Errorf("KASRewakes = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// The resume is marotte's prompt, never a message of the reader's: the queue's caps and drafts never count it.
+func TestRunRows_LeavesTheResumeOut(t *testing.T) {
+	entries := []RunEntry{failsafeResume(), row("m-q1", RunPaused)}
+	rows := RunRows(entries)
+	if len(rows) != 1 || rows[0].ID != "m-q1" {
+		t.Errorf("rows = %+v, want only m-q1", rows)
+	}
+}
+
+func failsafeResume() RunEntry {
+	return RunEntry{
+		ID: "m-resume", Kind: RunKindResume, State: RunPending, Origin: RunFromFailsafe,
+		Row: &QueuedPrompt{ID: "m-resume", Text: "continue"},
+	}
 }

@@ -14,6 +14,9 @@ func (c *Caller) SentBy() string {
 	return "Sent by " + c.Label
 }
 
+// SentByMarotte is how the transcript names a prompt marotte sent on its own (EntryPrompt.Automatic).
+const SentByMarotte = "Sent by marotte"
+
 // SharedCaller is who a joined message's parts came from: nil when any part is the user's, so words the user wrote
 // keep the message the user's; the one caller when every part names it; an unnamed API caller when the callers differ.
 func SharedCaller(parts []*Caller) *Caller {

@@ -2464,6 +2464,8 @@ function headerData(t: Turn): TurnHeaderData {
     request: request !== undefined && request.trim() !== "" ? request : undefined,
     label: t.trigger?.label,
     caller: t.trigger?.caller,
+    automatic: t.trigger?.automatic,
+    stoppedToCompact: closeOfBody(t.body)?.stopped_to_compact,
     // From the trigger entry: attachments never appear in the prompt text.
     attachments: t.trigger?.attachments ?? [],
     wake: t.wake === undefined ? undefined : wakeLine(t.wake),

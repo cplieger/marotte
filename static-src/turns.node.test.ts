@@ -1032,6 +1032,18 @@ describe("turnFailureText", () => {
     expect(textOf({ outcome: "cancelled", failure_reason: "The turn was cancelled." })).toBe("");
   });
 
+  // The reader did not stop it, so the footer's "Cancelled" alone would leave the stop unexplained.
+  it("speaks the notice of a turn marotte stopped to compact", () => {
+    const notice =
+      "The context was nearly full, so marotte stopped this turn to compact the context before it ran out.";
+    expect(textOf({ outcome: "cancelled", stopped_to_compact: true, failure_reason: notice })).toBe(
+      notice,
+    );
+    expect(textOf({ outcome: "cancelled", stopped_to_compact: true, failure_reason: "  " })).toBe(
+      "",
+    );
+  });
+
   it("answers empty for a clean turn — the card shows the answer instead", () => {
     expect(textOf({ outcome: "completed" })).toBe("");
   });

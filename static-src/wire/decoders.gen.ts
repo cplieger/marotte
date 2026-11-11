@@ -13,7 +13,7 @@ const DECISION_KINDS = ["permission", "elicitation", "user_input"] as const;
 const DENIAL_BASISS = ["unparseable", "cedar-unavailable", "not-loaded", "permissions-invalid"] as const;
 const ENGINE_STATES = ["starting", "ready", "restarting", "down"] as const;
 const ENTRY_KINDS = ["turn_open", "turn_bind", "turn_wake", "run_named", "text", "thinking", "tool_call", "tool_result", "steer", "steer_ack", "steer_delivered", "steer_cleared", "plan", "compaction", "compaction_failed", "safety_blocked", "model_switched", "model_routed", "model_fallback", "mode_switched", "turn_revert", "context_reset", "reconciled", "turn_close", "step_graded"] as const;
-const ERROR_CODES = ["recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "agent_config_error", "rate_limit", "switch_failed", "compaction_failed", "mode_not_applied", "supervised_not_applied", "model_not_served", "auth_token_unavailable", "tangent_merge_failed"] as const;
+const ERROR_CODES = ["recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "agent_config_error", "rate_limit", "switch_failed", "compaction_failed", "mode_not_applied", "supervised_not_applied", "model_not_served", "auth_token_unavailable", "tangent_merge_failed", "resume_not_sent"] as const;
 const FAILURE_KINDS = ["context_limit", "model_call_limit", "empty_answer"] as const;
 const FILE_MATCH_KINDS = ["content", "name", "dir"] as const;
 const FORGE_STATUSS = ["connected", "retrying", "refused", "reconnect", "unusable"] as const;
@@ -36,8 +36,8 @@ const REGISTRY_FAILURE_REASONS = ["rate_limited", "rejected", "unavailable"] as 
 const REJECTION_NOTES = ["reason", "plan_edits"] as const;
 const RUN_ASK_BLOCKERS = ["stopping", "pending", "branch_running", "unsettled", "settling"] as const;
 const RUN_ASK_TEXTS = ["asked", "last_message", "unseen"] as const;
-const RUN_ENTRY_KINDS = ["turn", "row", "unread", "retry", "compaction", "revert"] as const;
-const RUN_ENTRY_ORIGINS = ["prompt", "queue", "tangent", "summary", "unread", "retry", "wire", "run", "carried", "request", "threshold", "turn_end", "context_limit", "rewind"] as const;
+const RUN_ENTRY_KINDS = ["turn", "row", "unread", "retry", "compaction", "revert", "resume"] as const;
+const RUN_ENTRY_ORIGINS = ["prompt", "queue", "tangent", "summary", "unread", "retry", "wire", "run", "carried", "request", "threshold", "turn_end", "context_limit", "rewind", "failsafe"] as const;
 const RUN_ENTRY_STATES = ["pending", "paused", "held", "starting", "running", "stopping", "closing"] as const;
 const RUN_PROGRESS_KINDS = ["node_start", "node_complete", "node_paused", "loop_iteration", "watch_poll", "paused", "steps_queued"] as const;
 const RUN_STANDING_KINDS = ["step", "watch", "pass_limit"] as const;
@@ -1157,6 +1157,10 @@ export const decodeEntryPrompt: Decoder<EntryPrompt> = (v) => {
     const $v = own(o, "resends");
     if ($v !== undefined && $v !== null) out.resends = own(o, "resends") === null ? [] : decodeArray(own(o, "resends"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.entry_prompt.resends");
   }
+  {
+    const $v = own(o, "automatic");
+    if ($v !== undefined && $v !== null) out.automatic = reqBool(o, "automatic", "$.entry_prompt");
+  }
   return out;
 };
 
@@ -1644,6 +1648,10 @@ export const decodeEntryTurnClose: Decoder<EntryTurnClose> = (v) => {
     const $v = own(o, "ended_off_turn");
     if ($v !== undefined && $v !== null) out.ended_off_turn = reqBool(o, "ended_off_turn", "$.entry_turn_close");
   }
+  {
+    const $v = own(o, "stopped_to_compact");
+    if ($v !== undefined && $v !== null) out.stopped_to_compact = reqBool(o, "stopped_to_compact", "$.entry_turn_close");
+  }
   return out;
 };
 
@@ -2007,6 +2015,10 @@ export const decodeHit: Decoder<Hit> = (v) => {
   {
     const $v = own(o, "lane");
     if ($v !== undefined && $v !== null) out.lane = reqStr(o, "lane", "$.hit");
+  }
+  {
+    const $v = own(o, "automatic");
+    if ($v !== undefined && $v !== null) out.automatic = reqBool(o, "automatic", "$.hit");
   }
   return out;
 };
@@ -5135,6 +5147,10 @@ export const decodeUsage: Decoder<Usage> = (v) => {
   {
     const $v = own(o, "metering_items");
     if ($v !== undefined && $v !== null) out.metering_items = own(o, "metering_items") === null ? [] : decodeArray(own(o, "metering_items"), decodeMeteringItem, "$.usage.metering_items");
+  }
+  {
+    const $v = own(o, "context_compacted");
+    if ($v !== undefined && $v !== null) out.context_compacted = reqBool(o, "context_compacted", "$.usage");
   }
   return out;
 };

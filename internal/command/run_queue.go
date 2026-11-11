@@ -147,6 +147,19 @@ type runQueue interface {
 	ModeChanged(chatID marotte.ChatID)
 }
 
+// CarryOutStop carries out a stop the run order applied outside a command, as a Cancel does: answered asks, one
+// session/cancel, the turn's terminals killed and the grace armed. A cancel not delivered restores what the stop
+// marked (runQueue.StopUndone) and answers its error.
+func (d *Dispatcher) CarryOutStop(ctx context.Context, chatID marotte.ChatID, rs RunStop) error {
+	if d == nil || d.carryStop == nil {
+		return errStopUnwired
+	}
+	return d.carryStop(ctx, chatID, rs)
+}
+
+// errStopUnwired fails a stop carried out before RegisterDefaults bound its collaborators, a wiring error.
+var errStopUnwired = errors.New("command: a stop was carried out before the dispatcher was registered")
+
 // LaunchEntry opens the turn of a taken run entry on its reservation and answers the opened turn's id, or the
 // refusal before the open (the reservation is then released). A retry runs its whole turn before it returns.
 func (d *Dispatcher) LaunchEntry(ctx context.Context, chatID marotte.ChatID, l *EntryLaunch) (string, error) {
@@ -164,6 +177,8 @@ func launchEntry(ctx context.Context, roles *promptRoles, chatID marotte.ChatID,
 		return launchRetry(ctx, roles, chatID, l)
 	case marotte.RunKindRow:
 		return launchQueuedRow(ctx, roles, l)
+	case marotte.RunKindResume:
+		return launchResume(ctx, roles, l)
 	case marotte.RunKindTurn, marotte.RunKindCompaction, marotte.RunKindRevert:
 	}
 	roles.admission.ReleaseTurnReservation(l.Res)
@@ -186,6 +201,20 @@ func launchQueuedRow(ctx context.Context, roles *promptRoles, l *EntryLaunch) (s
 		return "", err
 	}
 	slog.Info("queued prompt dispatched", "chat_id", l.Res.Chat, "message_id", row.ID)
+	return turnID, nil
+}
+
+// launchResume opens marotte's own prompt that continues a turn the compaction failsafe stopped, on the session's
+// model. kiro-cli stores every prompt as the user's (kirodotdev/Kiro#12346), so only its turn_open's Automatic says
+// marotte sent it.
+func launchResume(ctx context.Context, roles *promptRoles, l *EntryLaunch) (string, error) {
+	p := &marotte.PromptCommand{Text: l.Row.Text, MessageID: l.Row.ID}
+	turnID, err := startPrompt(ctx, roles, l.Res.Chat, p, &launch{res: l.Res, fence: l.Fence, automatic: true})
+	if err != nil {
+		logLaunchRefused(l.Res.Chat, l.Row.ID, err)
+		return "", err
+	}
+	slog.Info("resumed the turn the compaction failsafe stopped", "chat_id", l.Res.Chat, "message_id", l.Row.ID)
 	return turnID, nil
 }
 

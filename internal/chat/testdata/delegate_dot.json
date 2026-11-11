@@ -45,7 +45,7 @@
       "sites": [
         "internal/chat/entrylog.go:1126",
         "internal/translate/projection_entries.go:726",
-        "internal/translate/streaming_tools.go:482",
+        "internal/translate/streaming_tools.go:487",
         "internal/translate/wire_enums.go:36",
         "internal/turnlog/turnlog.go:691"
       ]
@@ -189,47 +189,47 @@
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:353",
+      "site": "internal/translate/streaming_tools.go:358",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:457",
+      "site": "internal/translate/streaming_tools.go:462",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:481",
+      "site": "internal/translate/streaming_tools.go:486",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:482",
+      "site": "internal/translate/streaming_tools.go:487",
       "form": "status_assign",
       "status": "aborted"
     },
     {
-      "site": "internal/translate/streaming_tools.go:504",
+      "site": "internal/translate/streaming_tools.go:509",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:518",
+      "site": "internal/translate/streaming_tools.go:523",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:518",
+      "site": "internal/translate/streaming_tools.go:523",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:540",
+      "site": "internal/translate/streaming_tools.go:545",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:62",
+      "site": "internal/translate/streaming_tools.go:67",
       "form": "compare",
       "status": "pending"
     },

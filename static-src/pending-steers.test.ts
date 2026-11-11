@@ -127,7 +127,13 @@ import { setSessions, setActive, recordSteerQueued, openTurn, appendEntry, get }
 import { initPendingSteers, mountSteerStack, type SteerStackSource } from "./pending-steers.js";
 import { signal } from "@cplieger/ui";
 import type { Entry, PendingSteer, QueuedPrompt, RunEntryView, RunView, Session } from "./types.js";
-import { compactionEntry, rowEntry, runAt, turnEntry } from "./__test-helpers__/run-order.js";
+import {
+  compactionEntry,
+  resumeEntry,
+  rowEntry,
+  runAt,
+  turnEntry,
+} from "./__test-helpers__/run-order.js";
 import type { Confirmation } from "./confirm.js";
 import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 import { confirmText } from "./__test-helpers__/confirm-text.js";
@@ -1217,6 +1223,113 @@ describe("the steer stack", () => {
     expect(rows().map(textOf)).toEqual(["Compacting the context\u2026", "a"]);
     expect(rows().map(labelOf)).toEqual(["Running", "Unread \u00b7 after the compaction"]);
     expect(actions(rowAt(1))).not.toContain("Send this message now");
+  });
+
+  // THE COMPACTION FAILSAFE. At 95% context use marotte stops the turn, compacts, then sends its own resume ahead of
+  // the rows the stop paused.
+  const RESUME =
+    "The context window was nearly full, so marotte stopped your task mid-turn. Continue the task.";
+
+  function failsafeRun(): RunEntryView[] {
+    return [
+      turnEntry("t1", { origin: "prompt", kind: "row", state: "stopping" }),
+      compactionEntry("compact-1", { after: "next" }, { origin: "failsafe" }),
+      resumeEntry("m-resume", RESUME),
+      rowEntry(
+        "m-q1",
+        { after: "turns", turns: 1 },
+        { state: "paused", row: { id: "m-q1", text: "first" }, send_now: "after_compaction" },
+      ),
+      rowEntry(
+        "m-q2",
+        { after: "turns", turns: 2 },
+        { state: "paused", row: { id: "m-q2", text: "second" }, send_now: "after_compaction" },
+      ),
+    ];
+  }
+
+  it("draws the failsafe's compaction, then marotte's resume, then the rows the stop paused", () => {
+    withRun(failsafeRun(), { send: "queue" }, false);
+
+    expect(rows().map(textOf)).toEqual([
+      "Compact the context before it runs out",
+      "Continue the stopped task",
+      "first",
+      "second",
+    ]);
+    expect(rows().map(labelOf)).toEqual([
+      "Sends next",
+      "Sent by marotte \u00b7 after the compaction",
+      "After the next turn",
+      "After 2 turns",
+    ]);
+    const resume = rowAt(1);
+    expect(resume.getAttribute("aria-label")).toBe(
+      "Sent by marotte \u00b7 after the compaction: Continue the stopped task",
+    );
+    expect(resume.dataset["tooltip"]).toBe(RESUME);
+  });
+
+  // The resume has no words of the reader's to edit and is never the reader's to send early: removing it is the one
+  // control, and it removes only the resume.
+  it("lets the reader remove the resume and nothing else", async () => {
+    withRun(failsafeRun(), { send: "queue" }, false);
+    const resume = rowAt(1);
+    expect(actions(resume)).toEqual(["Do not continue the stopped task"]);
+    expect(actionButton(resume, "Do not continue").dataset["tooltip"]).toBe(
+      "marotte will not ask the agent to continue after the compaction",
+    );
+
+    clickAction(resume, "Do not continue");
+    await vi.waitFor(() => {
+      expect(unqueueDispatch).toHaveBeenCalledExactlyOnceWith({
+        chatID: "chat-1",
+        messageID: "m-resume",
+      });
+    });
+    expect(cancelCompactDispatch).not.toHaveBeenCalled();
+  });
+
+  it("says cancelling the failsafe's compaction also leaves the stopped task", () => {
+    withRun(failsafeRun(), { send: "queue" }, false);
+
+    expect(actions(firstRow())).toEqual(["Cancel the queued compaction"]);
+    expect(actionButton(firstRow(), "Cancel the queued compaction").dataset["tooltip"]).toBe(
+      "The context stays as it is, and the stopped task is not continued",
+    );
+  });
+
+  it("draws the failsafe's running compaction with its reason", () => {
+    withRun(
+      [
+        compactionEntry("compact-1", { after: "running" }, { origin: "failsafe" }),
+        resumeEntry("m-resume", RESUME),
+      ],
+      { send: "queue" },
+      false,
+    );
+
+    expect(rows().map(textOf)).toEqual([
+      "Compacting the context before it runs out\u2026",
+      "Continue the stopped task",
+    ]);
+  });
+
+  it("draws a resume taken with no turn open yet as starting, and none once its turn opens", () => {
+    withRun(
+      [resumeEntry("m-resume", RESUME, { after: "starting" }, { state: "starting" })],
+      { send: "queue" },
+      false,
+    );
+    expect(rows().map(labelOf)).toEqual(["Sent by marotte \u00b7 starting"]);
+    expect(actions(firstRow())).toEqual([]);
+
+    withRun(
+      [resumeEntry("m-resume", RESUME, { after: "running" }, { state: "running", turn: "t2" })],
+      { send: "steer", cancel: "m-resume" },
+      false,
+    );
+    expect(rows()).toEqual([]);
   });
 
   it("keeps a steer the agent has yet to read above every entry, under the running turn", () => {

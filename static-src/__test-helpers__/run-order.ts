@@ -41,6 +41,19 @@ export function compactionEntry(
   ) as RunEntryView;
 }
 
+/** The failsafe's resume waiting `wait`, carrying marotte's prompt `text`. */
+export function resumeEntry(
+  id: string,
+  text: string,
+  wait: RunWait = { after: "compaction" },
+  over: Partial<RunEntryView> = {},
+): RunEntryView {
+  return Object.assign(
+    { id, kind: "resume", state: "pending", origin: "failsafe", row: { id, text }, wait },
+    over,
+  ) as RunEntryView;
+}
+
 /** A running turn kind entry at the head (a prompt's or kiro-cli's own), which the dock never draws. */
 export function turnEntry(id: string, over: Partial<RunEntryView> = {}): RunEntryView {
   return Object.assign(

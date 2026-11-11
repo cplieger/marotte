@@ -327,6 +327,7 @@ describe("ERROR_ROUTES", () => {
     ],
     ["rate_limit", { surface: "toast" }],
     ["compaction_failed", { surface: "toast" }],
+    ["resume_not_sent", { surface: "toast" }],
     // The four failed-ATTEMPT codes leave a promptable chat, so none reaches the send button.
     ["switch_failed", { surface: "toast" }],
     ["prompt_failed", { surface: "toast" }],

@@ -38,6 +38,8 @@ export const ERROR_ROUTES: Readonly<Partial<Record<ErrorCode, ErrorRoute>>> = {
   },
   rate_limit: { surface: "toast" },
   compaction_failed: { surface: "toast" },
+  // marotte stopped a turn to compact and will not continue it on its own; the toast says to send a message.
+  resume_not_sent: { surface: "toast" },
   // The chat is running, just not in the mode that was asked for, and the fix is
   // one click on the mode pill, so this reports without blocking the composer.
   mode_not_applied: { surface: "toast" },

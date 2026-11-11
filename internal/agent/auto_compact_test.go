@@ -46,7 +46,7 @@ func onCompactor(h *Runtime, pct int, enabled bool, usage float64) *compactCalls
 		c.calls++
 		return !c.refuse, 0, nil
 	}
-	ac.failed = func(_ context.Context, _ marotte.ChatID, detail string) {
+	ac.toast = func(_ context.Context, _ marotte.ChatID, _ marotte.ErrorCode, detail string) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.failures = append(c.failures, detail)
@@ -120,7 +120,7 @@ func TestAutoCompact_ACancelHoldsForTheTurn(t *testing.T) {
 	h, cs, _, tails := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, true, 95)
 	id, _ := h.stagePromptTurn(t, "c1")
-	h.coord.ObserveContextUsage(t.Context(), "c1", 95)
+	h.coord.ObserveContextUsage(t.Context(), "c1", 92)
 	c := compactionEntry(t, cs, "c1")
 	if c.ID == "" {
 		t.Fatal("Setup: the crossing listed no compaction")

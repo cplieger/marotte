@@ -161,6 +161,8 @@ type TurnConclusion struct {
 	Unanswered bool
 	// EndedOffTurn is persisted as turn_close.ended_off_turn.
 	EndedOffTurn bool
+	// StoppedToCompact is persisted as turn_close.stopped_to_compact.
+	StoppedToCompact bool
 }
 
 // ConcludeStopReason maps a wire stop reason onto the turn's outcome.

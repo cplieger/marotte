@@ -48,10 +48,15 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID marotte.ChatID, 
 	entry := marotte.EntryToolCallOf(&call)
 	var sealed []turnlog.Sealed
 	var err error
+	lane := call.AgentSubtaskID
 	if tc.Meta.Kiro.Kind == subagentInvocationKind {
-		sealed, err = turn.Invocation(ctx, turn.IssuerLane(), tc.Meta.Kiro.AgentSubtaskID, &entry)
+		lane = turn.IssuerLane()
+		sealed, err = turn.Invocation(ctx, lane, tc.Meta.Kiro.AgentSubtaskID, &entry)
 	} else {
-		sealed, err = turn.ToolCall(ctx, call.AgentSubtaskID, &entry)
+		sealed, err = turn.ToolCall(ctx, lane, &entry)
+	}
+	if lane == "" && attr.ChatOwned() {
+		t.usage.ObserveToolCall(chatID)
 	}
 	t.publishSealed(ctx, sc, sealed)
 	if err != nil {

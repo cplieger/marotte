@@ -75,13 +75,19 @@ type runEntry struct {
 	// replaces is a retry's empty turn, passed as TurnOpen.Replaces so a stop during its refresh refuses the open.
 	replaces string
 	// forTurn is the turn whose reading or end asked for a compaction (cancel_compact declines it).
-	forTurn  string
-	res      command.Reservation
-	afterSeq uint64
-	stopBy   uint64
-	pausedBy uint64
-	next     bool
-	retry    bool
+	forTurn string
+	// fsPrior and fsPriorFor are the origin and turn a compaction had before the failsafe took it over, given back
+	// when the failsafe's stop is undone.
+	fsPrior    marotte.RunEntryOrigin
+	fsPriorFor string
+	res        command.Reservation
+	afterSeq   uint64
+	stopBy     uint64
+	pausedBy   uint64
+	// fsToken is the failsafe stop that listed this resume or took over this compaction.
+	fsToken uint64
+	next    bool
+	retry   bool
 	// submitter: submit's own take, whose POST still waits on launch.
 	submitter bool
 	yields    bool
@@ -95,6 +101,12 @@ type runEntry struct {
 	cancelled bool
 	sawTurn   bool
 	waiter    bool
+	// fsStopped marks a turn the failsafe stopped: a close whose own outcome is clean (listClose.completed) has nothing
+	// to resume.
+	fsStopped bool
+	// fsNoResume marks a failsafe stop at compactionFailsafeResumes, which listed no resume: its close tells the reader
+	// while fsStopped holds.
+	fsNoResume bool
 }
 
 func (e *runEntry) live() bool { return e.state.Live() }
@@ -147,6 +159,8 @@ type runEffects struct {
 	launch []*runEntry
 	// toast lists the compactions whose failure the reader is told of (compactFailed).
 	toast []*runEntry
+	// notices are the words the reader is told a stopped turn is not continued in (ErrCodeResumeNotSent).
+	notices []string
 	// changed: the projection changed, so the version is bumped and the list written and announced.
 	changed bool
 }
@@ -160,22 +174,31 @@ type runList struct {
 	intent   *runEntry
 	crossed  string
 	declined string
-	endsLast []string
-	entries  []*runEntry
-	stored   []marotte.RunEntry
-	fx       runEffects
+	// failsafeFor is the last turn the failsafe fired in: once per turn, even when its stop was undone.
+	failsafeFor string
+	// failsafeOwed is the turn a fire was skipped in because an ask was open, fired once the asks settle
+	// (autoCompactor.fireOwed); it lapses with the turn, since failsafe fires only in the running turn it names.
+	failsafeOwed string
+	endsLast     []string
+	entries      []*runEntry
+	stored       []marotte.RunEntry
+	fx           runEffects
 	// wireSeq is the open sequence of the newest wire turn: a retry overtaken by kiro-cli's own turn is dropped.
-	wireSeq       uint64
-	intentStamp   uint64
-	endsSeq       uint64
-	seq           uint64
-	version       uint64
+	wireSeq     uint64
+	intentStamp uint64
+	endsSeq     uint64
+	seq         uint64
+	version     uint64
+	// resumed counts the resumes opened since the last turn the reader sent opened (compactionFailsafeResumes).
+	resumed       int
 	intentRefused takeAnswer
 	endsOwed      bool
 	endsWait      bool
 	drained       bool
 	dirty         bool
 	ended         bool
+	// failsafeHeld: a failsafe compaction was accepted and no reading under the point has come since.
+	failsafeHeld bool
 }
 
 var (
@@ -188,7 +211,7 @@ func (l *runList) touch() { l.fx.changed = true }
 
 // owesEffects reports effects recorded since the last takeEffects.
 func (l *runList) owesEffects() bool {
-	return l.fx.changed || len(l.fx.launch) > 0 || len(l.fx.toast) > 0
+	return l.fx.changed || len(l.fx.launch) > 0 || len(l.fx.toast) > 0 || len(l.fx.notices) > 0
 }
 
 // takeEffects hands the recorded effects to the glue, bumping the version when the projection changed.
@@ -463,6 +486,7 @@ func (l *runList) take(e *runEntry, at int) {
 	e.state = marotte.RunStarting
 	if e.kind == marotte.RunKindRevert {
 		e.state = marotte.RunRunning
+		l.dropResume()
 	}
 	l.fx.launch = append(l.fx.launch, e)
 }
@@ -587,6 +611,7 @@ func (l *runList) sendNow(id, stop string, hasStop bool) (*runEntry, error) {
 	l.remove(e)
 	e.state, e.pausedBy, e.next = marotte.RunPending, 0, true
 	l.insert(l.frontOfPending(true), e)
+	l.readerTookOver()
 	if !hasStop {
 		stop = marotte.CancelTarget(l.project())
 	}
@@ -651,6 +676,9 @@ func (l *runList) cancelCompaction(id string) {
 	_, e := l.find(id)
 	if e == nil || e.kind != marotte.RunKindCompaction {
 		return
+	}
+	if e.origin == marotte.RunFromFailsafe {
+		l.dropResume()
 	}
 	if e.state == marotte.RunPending {
 		l.declined = e.forTurn
@@ -721,10 +749,12 @@ func (l *runList) compactionEnded(id string, accepted bool, err error) {
 	if e == nil || e.kind != marotte.RunKindCompaction || e.state != marotte.RunRunning {
 		return
 	}
+	failsafe := e.origin == marotte.RunFromFailsafe
 	switch {
 	case accepted || e.cancelled:
 		e.done.finish(accepted, false, nil)
 		l.remove(e)
+		l.failsafeHeld = l.failsafeHeld || (failsafe && accepted && !e.cancelled)
 	case err == nil && e.sawTurn:
 		e.sawTurn = false
 		if e.waiter {
@@ -735,11 +765,20 @@ func (l *runList) compactionEnded(id string, accepted bool, err error) {
 		e.state = marotte.RunPending
 		l.insert(l.frontOfPending(false), e)
 	default:
-		e.done.finish(false, false, err)
-		l.remove(e)
-		if !e.waiter && !errors.Is(err, marotte.ErrChatClosedDuringCall) {
-			l.fx.toast = append(l.fx.toast, e)
-		}
+		l.compactionNotRun(e, err, failsafe)
+	}
+}
+
+// compactionNotRun removes a compaction call that failed or was refused. A failsafe compaction's resume goes with it,
+// and its failure is toasted even when a /compact waits on it, since the toast says the stopped turn was not continued.
+func (l *runList) compactionNotRun(e *runEntry, err error, failsafe bool) {
+	e.done.finish(false, false, err)
+	l.remove(e)
+	if failsafe {
+		l.dropResume()
+	}
+	if (!e.waiter || failsafe) && !errors.Is(err, marotte.ErrChatClosedDuringCall) {
+		l.fx.toast = append(l.fx.toast, e)
 	}
 }
 
@@ -767,6 +806,12 @@ func (l *runList) turnOpened(o openFacts) bool {
 			return false
 		}
 		e.turnID = o.turnID
+		switch e.kind {
+		case marotte.RunKindResume:
+			l.resumed++
+		case marotte.RunKindRow, marotte.RunKindUnread:
+			l.resumed = 0
+		}
 		l.touch()
 		return true
 	}
@@ -830,6 +875,8 @@ type listClose struct {
 	compact marotte.RunEntryOrigin
 	seq     uint64
 	clean   bool
+	// completed: the turn's own outcome graded clean, an unattended close not counted (clean counts it).
+	completed bool
 	// handoff: marotte closed a fold-opened turn to send its next call (closerPromptHandoff).
 	handoff bool
 	// emptyRetry: the closed turn ended clean on the wire with nothing emitted.
@@ -846,12 +893,19 @@ func (l *runList) turnClosed(c listClose, f *orderFacts) {
 	stopped := e.state == marotte.RunStopping
 	e.state, e.steerable, e.clean = marotte.RunClosing, false, c.clean
 	l.touch()
+	finished := stopped && e.fsStopped && c.completed
+	switch {
+	case finished:
+		l.withdrawFailsafe(e.stopBy)
+	case stopped && e.fsStopped && e.fsNoResume:
+		l.fx.notices = append(l.fx.notices, resumeLimitNotice)
+	}
 	if n == 2 && l.closedBeside(i, e, c, stopped) {
 		return
 	}
 	retry := retryOwed(e, c, f)
 	if !c.handoff {
-		l.pauseRule(c.clean || retry, stopped)
+		l.pauseRule(c.clean || retry, stopped && !finished)
 	}
 	l.afterHeadClose(e, c, retry)
 }
@@ -1041,6 +1095,11 @@ func (l *runList) launched(id string, token uint64, turnID string, refusal launc
 		return false
 	}
 	switch {
+	case e.kind == marotte.RunKindResume:
+		l.remove(e)
+		if refusal != launchWithdrawn && !l.ended {
+			l.fx.notices = append(l.fx.notices, resumeRefusedNotice)
+		}
 	case e.origin == marotte.RunFromSummary, e.kind == marotte.RunKindRetry:
 		l.remove(e)
 	case refusal == launchWithdrawn:
@@ -1087,16 +1146,11 @@ type stopPlan struct {
 // stopHead stops the live entry target names, or with target "" the one RunView.Cancel names (the session itself
 // on an idle list). It never stops a compaction, a stopping or closing entry, or anything not live.
 func (l *runList) stopHead(target string, token uint64) stopPlan {
-	n := l.liveLen()
-	if target == "" && n == 0 {
+	if target == "" && l.liveLen() == 0 {
 		return stopPlan{arm: stopSession}
 	}
-	if target == "" {
-		target = marotte.CancelTarget(l.project())
-	}
-	i, e := l.find(target)
-	if e == nil || i >= n || !e.kind.TurnKind() ||
-		(e.state != marotte.RunStarting && e.state != marotte.RunRunning) {
+	i, e := l.stopTarget(target)
+	if e == nil {
 		return stopPlan{}
 	}
 	mark := func(x *runEntry) {
@@ -1110,7 +1164,11 @@ func (l *runList) stopHead(target string, token uint64) stopPlan {
 	case e.state == marotte.RunStarting && e.turnID == "":
 		res := e.res
 		l.pauseRows(token)
-		l.putBack(e, marotte.RunPaused, token)
+		if e.kind == marotte.RunKindResume {
+			l.remove(e)
+		} else {
+			l.putBack(e, marotte.RunPaused, token)
+		}
 		return stopPlan{entry: e, res: res, arm: stopWithdraw}
 	case e.state == marotte.RunStarting:
 		mark(e)
@@ -1119,6 +1177,37 @@ func (l *runList) stopHead(target string, token uint64) stopPlan {
 	}
 	l.stopRunningAt(i, token, mark)
 	return stopPlan{entry: e, arm: stopRunning}
+}
+
+// readerStop is every stop the reader makes (Cancel, the composer's stop, a send-now press's stop): readerTookOver,
+// then stopHead.
+func (l *runList) readerStop(target string, token uint64) stopPlan {
+	l.readerTookOver()
+	return l.stopHead(target, token)
+}
+
+// readerTookOver withdraws the waiting resume and makes a turn the failsafe is stopping the reader's stop, whose close
+// leaves the rows paused (pauseRule) and tells nothing of the resume limit. The reader stopped the work or sent the
+// next message, so marotte does not continue it; the withdrawal holds when the cancel is not delivered, as a later
+// stop drops a retry (overtaken).
+func (l *runList) readerTookOver() {
+	l.dropResume()
+	for _, e := range l.entries[:l.liveLen()] {
+		e.fsStopped = false
+	}
+}
+
+// stopTarget is the live starting or running turn stopHead's target names, with its index, or nil.
+func (l *runList) stopTarget(target string) (int, *runEntry) {
+	n := l.liveLen()
+	if target == "" {
+		target = marotte.CancelTarget(l.project())
+	}
+	i, e := l.find(target)
+	if e == nil || i >= n || !e.kind.TurnKind() || (e.state != marotte.RunStarting && e.state != marotte.RunRunning) {
+		return i, nil
+	}
+	return i, e
 }
 
 // stopRunningAt marks the running entry at i stopping. With kiro-cli's wire turn beside a sent, unbound prompt, one
@@ -1139,7 +1228,7 @@ func (l *runList) stopRunningAt(i int, token uint64, mark func(*runEntry)) {
 
 // stopUndone restores what the stop with that token marked, when its session/cancel was not delivered: entries
 // still stopping whose turn is still open (open reports it) go back to their prior state, and rows it paused that
-// are still paused go back to pending. A compaction is never touched.
+// are still paused go back to pending. A failsafe stop's own listing is withdrawn (withdrawFailsafe).
 func (l *runList) stopUndone(token uint64, open func(turnID string) bool) {
 	if token == 0 {
 		return
@@ -1147,13 +1236,14 @@ func (l *runList) stopUndone(token uint64, open func(turnID string) bool) {
 	for _, e := range l.entries {
 		switch {
 		case e.stopBy == token && e.state == marotte.RunStopping && (e.runEntry() || open(e.turnID)):
-			e.state, e.stopBy, e.prior = e.prior, 0, ""
+			e.state, e.stopBy, e.prior, e.fsStopped = e.prior, 0, "", false
 			l.touch()
 		case e.pausedBy == token && e.state == marotte.RunPaused:
 			e.state, e.pausedBy = marotte.RunPending, 0
 			l.touch()
 		}
 	}
+	l.withdrawFailsafe(token)
 }
 
 // holdCarried absorbs a shutdown's unread steers into the list's carried row, or inserts a held carried row after

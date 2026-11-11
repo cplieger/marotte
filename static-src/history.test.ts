@@ -1102,6 +1102,19 @@ describe("history: cross-chat search", () => {
     );
   });
 
+  it("names marotte when the words matched are its own resume prompt", async () => {
+    const named = match();
+    const { table } = await search({
+      matches: [{ ...named, best: { ...named.best, automatic: true } }],
+      scanned: 1,
+      matched: 1,
+      truncated: false,
+    });
+    expect(table.querySelector(".entry-sub")?.textContent).toBe(
+      "Sent by marotte: we moved the cache to redis",
+    );
+  });
+
   // A title-only match has no hit, and must not render an empty excerpt.
   it("explains a title-only match instead of showing an empty excerpt", async () => {
     const { best: _best, ...titleOnly } = match({ hits: 0 });

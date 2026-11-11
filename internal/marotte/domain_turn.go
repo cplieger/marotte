@@ -25,7 +25,13 @@ const (
 	// TurnStopTeardown is a tab close or a chat delete: KAS's cancel starts re-delivering the
 	// notifications it cleared, and the session/close or session/delete that follows aborts that turn.
 	TurnStopTeardown
+	// TurnStopCompaction is marotte's own stop of a turn whose context reached the failsafe point, so it can
+	// compact before the context runs out.
+	TurnStopCompaction
 )
+
+// KASRewakes reports a stop whose session/cancel KAS follows by re-prompting the notifications it cleared.
+func (c TurnStopCause) KASRewakes() bool { return c == TurnStopReader || c == TurnStopCompaction }
 
 // TurnResult is what a finalized turn reports. Immutable once the turn's
 // completion handle fires.

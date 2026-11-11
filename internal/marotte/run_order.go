@@ -18,11 +18,13 @@ const (
 	RunKindCompaction RunEntryKind = "compaction"
 	// RunKindRevert is a rewind's checkpoint revert.
 	RunKindRevert RunEntryKind = "revert"
+	// RunKindResume is marotte's prompt that continues a turn the failsafe stopped, once its compaction ran.
+	RunKindResume RunEntryKind = "resume"
 )
 
 // TurnKind reports a kind whose take opens a turn.
 func (k RunEntryKind) TurnKind() bool {
-	return k == RunKindTurn || k == RunKindRow || k == RunKindUnread || k == RunKindRetry
+	return k == RunKindTurn || k == RunKindRow || k == RunKindUnread || k == RunKindRetry || k == RunKindResume
 }
 
 // RunEntryState is where an entry stands in the run order.
@@ -54,7 +56,7 @@ func (s RunEntryState) Live() bool {
 type RunEntryOrigin string
 
 // The paths that put an entry on the list: a message's (prompt to carried), kiro-cli's (wire, run), a compaction's
-// (request to context_limit) and a rewind's.
+// (request to context_limit), a rewind's, and the failsafe's (its compaction and its resume).
 const (
 	RunFromPrompt       RunEntryOrigin = "prompt"
 	RunFromQueue        RunEntryOrigin = "queue"
@@ -70,6 +72,7 @@ const (
 	RunFromTurnEnd      RunEntryOrigin = "turn_end"
 	RunFromContextLimit RunEntryOrigin = "context_limit"
 	RunFromRewind       RunEntryOrigin = "rewind"
+	RunFromFailsafe     RunEntryOrigin = "failsafe"
 )
 
 // RunEntry is one entry of Chat.Run, in run order: the live entries first, then what runs after them.

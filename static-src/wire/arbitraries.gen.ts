@@ -13,7 +13,7 @@ export const arbDecisionKind: fc.Arbitrary<DecisionKind> = fc.constantFrom("perm
 export const arbDenialBasis: fc.Arbitrary<DenialBasis> = fc.constantFrom("unparseable", "cedar-unavailable", "not-loaded", "permissions-invalid");
 export const arbEngineState: fc.Arbitrary<EngineState> = fc.constantFrom("starting", "ready", "restarting", "down");
 export const arbEntryKind: fc.Arbitrary<EntryKind> = fc.constantFrom("turn_open", "turn_bind", "turn_wake", "run_named", "text", "thinking", "tool_call", "tool_result", "steer", "steer_ack", "steer_delivered", "steer_cleared", "plan", "compaction", "compaction_failed", "safety_blocked", "model_switched", "model_routed", "model_fallback", "mode_switched", "turn_revert", "context_reset", "reconciled", "turn_close", "step_graded");
-export const arbErrorCode: fc.Arbitrary<ErrorCode> = fc.constantFrom("recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "agent_config_error", "rate_limit", "switch_failed", "compaction_failed", "mode_not_applied", "supervised_not_applied", "model_not_served", "auth_token_unavailable", "tangent_merge_failed");
+export const arbErrorCode: fc.Arbitrary<ErrorCode> = fc.constantFrom("recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "agent_config_error", "rate_limit", "switch_failed", "compaction_failed", "mode_not_applied", "supervised_not_applied", "model_not_served", "auth_token_unavailable", "tangent_merge_failed", "resume_not_sent");
 export const arbFailureKind: fc.Arbitrary<FailureKind> = fc.constantFrom("context_limit", "model_call_limit", "empty_answer");
 export const arbFileMatchKind: fc.Arbitrary<FileMatchKind> = fc.constantFrom("content", "name", "dir");
 export const arbForgeStatus: fc.Arbitrary<ForgeStatus> = fc.constantFrom("connected", "retrying", "refused", "reconnect", "unusable");
@@ -38,8 +38,8 @@ export const arbRejectionNote: fc.Arbitrary<RejectionNote> = fc.constantFrom("re
 export const arbRunAskBlocker: fc.Arbitrary<RunAskBlocker> = fc.constantFrom("stopping", "pending", "branch_running", "unsettled", "settling");
 export const arbRunAskRefusal: fc.Arbitrary<RunAskRefusal> = fc.constantFrom("ask_stopping", "ask_pending", "ask_stale", "ask_gone", "ask_branch_running", "ask_unsettled", "ask_settling", "ask_unreadable", "ask_unnamed", "run_answer_pending");
 export const arbRunAskText: fc.Arbitrary<RunAskText> = fc.constantFrom("asked", "last_message", "unseen");
-export const arbRunEntryKind: fc.Arbitrary<RunEntryKind> = fc.constantFrom("turn", "row", "unread", "retry", "compaction", "revert");
-export const arbRunEntryOrigin: fc.Arbitrary<RunEntryOrigin> = fc.constantFrom("prompt", "queue", "tangent", "summary", "unread", "retry", "wire", "run", "carried", "request", "threshold", "turn_end", "context_limit", "rewind");
+export const arbRunEntryKind: fc.Arbitrary<RunEntryKind> = fc.constantFrom("turn", "row", "unread", "retry", "compaction", "revert", "resume");
+export const arbRunEntryOrigin: fc.Arbitrary<RunEntryOrigin> = fc.constantFrom("prompt", "queue", "tangent", "summary", "unread", "retry", "wire", "run", "carried", "request", "threshold", "turn_end", "context_limit", "rewind", "failsafe");
 export const arbRunEntryState: fc.Arbitrary<RunEntryState> = fc.constantFrom("pending", "paused", "held", "starting", "running", "stopping", "closing");
 export const arbRunNodeStatus: fc.Arbitrary<RunNodeStatus> = fc.constantFrom("pending", "running", "paused", "completed", "failed", "aborted", "skipped");
 export const arbRunProgressKind: fc.Arbitrary<RunProgressKind> = fc.constantFrom("node_start", "node_complete", "node_paused", "loop_iteration", "watch_poll", "paused", "steps_queued");
@@ -966,6 +966,7 @@ const arbModel = fc.letrec<{
       label: fc.string(),
       attachments: fc.array(tie("Attachment"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       resends: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
+      automatic: fc.boolean(),
     },
     { requiredKeys: ["id", "text"] },
   ),
@@ -1159,6 +1160,7 @@ const arbModel = fc.letrec<{
       carrier: fc.boolean(),
       unanswered: fc.boolean(),
       ended_off_turn: fc.boolean(),
+      stopped_to_compact: fc.boolean(),
     },
     { requiredKeys: ["outcome"] },
   ),
@@ -1366,6 +1368,7 @@ const arbModel = fc.letrec<{
       excerpt: fc.string(),
       segments: fc.array(arbSegmentKind, { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       turn: fc.double({ noNaN: true, noDefaultInfinity: true }),
+      automatic: fc.boolean(),
     },
     { requiredKeys: ["turn_id", "entry_id", "kind", "excerpt", "segments", "turn"] },
   ),
@@ -3044,6 +3047,7 @@ const arbModel = fc.letrec<{
       credits: fc.double({ noNaN: true, noDefaultInfinity: true }),
       last_turn_ms: fc.double({ noNaN: true, noDefaultInfinity: true }),
       has_real_data: fc.boolean(),
+      context_compacted: fc.boolean(),
     },
     { requiredKeys: ["context_pct", "context_size", "credits", "last_turn_ms", "has_real_data"] },
   ),

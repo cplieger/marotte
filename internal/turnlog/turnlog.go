@@ -698,19 +698,20 @@ func (t *Turn) Close(ctx context.Context, c marotte.TurnConclusion) ([]Sealed, e
 	}
 	c = c.WithContent(t.emitted)
 	footer := marotte.EntryTurnClose{
-		ChangedFiles:   t.agg.changed,
-		Refusal:        t.agg.refusal,
-		Outcome:        c.Outcome,
-		StopReasonRaw:  string(c.RawStop),
-		FailureReason:  c.Reason,
-		FailureKind:    c.FailureKind,
-		Model:          t.agg.model,
-		CodeReferences: t.agg.refs,
-		Credits:        t.agg.credits,
-		ElapsedMs:      t.agg.elapsed,
-		Truncated:      c.Truncated,
-		Unanswered:     c.Unanswered,
-		EndedOffTurn:   c.EndedOffTurn,
+		ChangedFiles:     t.agg.changed,
+		Refusal:          t.agg.refusal,
+		Outcome:          c.Outcome,
+		StopReasonRaw:    string(c.RawStop),
+		FailureReason:    c.Reason,
+		FailureKind:      c.FailureKind,
+		Model:            t.agg.model,
+		CodeReferences:   t.agg.refs,
+		Credits:          t.agg.credits,
+		ElapsedMs:        t.agg.elapsed,
+		Truncated:        c.Truncated,
+		Unanswered:       c.Unanswered,
+		EndedOffTurn:     c.EndedOffTurn,
+		StoppedToCompact: c.StoppedToCompact,
 	}
 	t.agg.facts.Stamp(&footer)
 	if e := t.agg.engine; e != nil {
