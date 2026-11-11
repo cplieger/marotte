@@ -156,6 +156,9 @@ async function failedSwitch(a: string, b: string, onActive?: () => void): Promis
     scroller.clientHeight + 150,
   );
   await settledFrames();
+  // The chat opened on its end, so the top turns first lay out under the reader's move; the reader rests at 5 after.
+  readTo(scroller, 5);
+  await settledFrames();
   readTo(scroller, 5);
   expect(scroll.readingState()).toBe("reading");
 

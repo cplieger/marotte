@@ -1156,9 +1156,9 @@ export class ScrollController {
     this.pendingRestore = handle;
   }
 
-  /** Land the attached view on its saved position. Its scroll write is the one layout it forces, so it runs after
-   *  every DOM write of the task and every read here follows it; the attach listeners run last, at the restored
-   *  position. A no-op with none pending. */
+  /** Land the attached view on its saved position, or a Following view on its follow position. Its scroll write is the
+   *  one layout it forces, so it runs after every DOM write of the task and every read here follows it; the attach
+   *  listeners run last, at the restored position. A no-op with none pending. */
   applyPendingRestore(): void {
     const handle = this.pendingRestore;
     if (handle === null) {
@@ -1168,6 +1168,11 @@ export class ScrollController {
     // The write before any read: `writeTop` measures the end first, which would force the task's layout ahead of it.
     this.scrollEl.scrollTo({ top: Math.max(0, Math.round(handle.scrollTop)), behavior: "instant" });
     this.noteOwnWrite();
+    // A Following view pins here, before the near marks: a pin left to the first content delivery would move farther
+    // than the size change it answers (`correct`'s resize-loop invariant).
+    if (this.state === "following") {
+      this.correct();
+    }
     const saved = handle.anchor;
     if (
       this.state === "reading" &&

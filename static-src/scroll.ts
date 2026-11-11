@@ -38,8 +38,8 @@ export function pressHold(): void {
 export function attach(handle: ViewAttachHandle): void {
   getInstance().attach(handle);
 }
-/** Land the attached view on its saved position: after the task's last DOM write, since the
- *  scroll write forces a layout. */
+/** Land the attached view on its saved position, a Following one on its follow position: after
+ *  the task's last DOM write, since the scroll write forces a layout. */
 export function applyPendingRestore(): void {
   getInstance().applyPendingRestore();
 }
