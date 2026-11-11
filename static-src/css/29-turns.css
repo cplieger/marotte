@@ -174,8 +174,7 @@
 }
 
 /* The transcript passage a prompt quoted, led by its source: subordinate to the question, so muted, set off
- * by a neutral rule and held to one line, open or folded. `clip`, not `hidden`: a `hidden` band is its own
- * formatting context, so a line clamp around it would not count its line. */
+ * by a neutral rule and held to one line, open or folded. */
 .turn-req-quote {
   max-inline-size: 100%;
   margin: 0;
@@ -184,8 +183,17 @@
   font-size: var(--fs-sm);
   line-height: 1.5;
   color: var(--c-text-secondary);
-  overflow: clip;
   white-space: nowrap;
+}
+
+/* The band's one line clips and ellipsizes in an inline-block, so the band starts no formatting context of its own:
+ * a line clamp around it (a dock row, a folded steer note) counts it as one of its lines. A band clipping itself is
+ * either uncounted (`hidden`) or, with `clip`, loses its ellipsis in Firefox inside a `-webkit-box` clamp. */
+.turn-req-quote-line {
+  display: inline-block;
+  max-inline-size: 100%;
+  vertical-align: top;
+  overflow: hidden;
   text-overflow: ellipsis;
 }
 

@@ -687,13 +687,14 @@ describe("a request that opens with a quoted reply passage", () => {
       card.append(h);
       document.body.append(card);
       const b = band(h)!;
+      const cut = b.querySelector<HTMLElement>(".turn-req-quote-line")!;
       const line = parseFloat(getComputedStyle(b).lineHeight);
       for (const folded of [false, true]) {
         card.toggleAttribute("data-folded", folded);
         expect(b.getBoundingClientRect().height).toBeCloseTo(line, 0);
-        expect(b.scrollWidth).toBeGreaterThan(b.clientWidth);
+        expect(cut.scrollWidth).toBeGreaterThan(cut.clientWidth);
         expect(card.scrollWidth).toBeLessThanOrEqual(card.clientWidth);
-        expect(getComputedStyle(b).textOverflow).toBe("ellipsis");
+        expect(getComputedStyle(cut).textOverflow).toBe("ellipsis");
       }
     } finally {
       card.remove();
@@ -790,7 +791,8 @@ describe("a request quoting more than one passage", () => {
       for (const folded of [false, true]) {
         card.toggleAttribute("data-folded", folded);
         expect(later.getBoundingClientRect().height).toBeCloseTo(line, 0);
-        expect(later.scrollWidth).toBeGreaterThan(later.clientWidth);
+        const cut = later.querySelector<HTMLElement>(".turn-req-quote-line")!;
+        expect(cut.scrollWidth).toBeGreaterThan(cut.clientWidth);
         expect(later.getBoundingClientRect().right).toBeLessThanOrEqual(edge);
         expect(card.scrollWidth).toBeLessThanOrEqual(card.clientWidth);
       }

@@ -8,12 +8,13 @@ import type { PromptPart, Quote } from "./message-quote.js";
 export function buildQuoteBand(quote: Quote): HTMLElement {
   const text = el("span", { className: "turn-req-quote-text" }, quote.quote);
   linkifyPaths(text);
-  return el(
-    "blockquote",
-    { className: "turn-req-quote" },
+  const line = el(
+    "span",
+    { className: "turn-req-quote-line" },
     ...(quote.source === null ? [] : [sourceEl(quote.source), " "]),
     text,
   );
+  return el("blockquote", { className: "turn-req-quote" }, line);
 }
 
 /** `parts` in order: each quote as its band, each text as `words` draws it. */

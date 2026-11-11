@@ -1822,6 +1822,12 @@ describe("the row's clamp", () => {
     const textLine = parseFloat(getComputedStyle(textEl(row)).lineHeight);
     expect(textEl(row).clientHeight).toBeCloseTo(bandLine + 3 * textLine, 0);
     expect(textEl(row).scrollHeight).toBeGreaterThan(textEl(row).clientHeight);
+    // Firefox draws no ellipsis on a band that clips itself inside the clamp, which Chromium cannot show: the band
+    // clips nothing, and its line clips and ellipsizes.
+    const line = band!.querySelector<HTMLElement>(":scope > .turn-req-quote-line")!;
+    expect(getComputedStyle(band!).overflow).toBe("visible");
+    expect(getComputedStyle(line).textOverflow).toBe("ellipsis");
+    expect(line.scrollWidth).toBeGreaterThan(line.clientWidth);
     const read = `From Kiro's reply: ${"word ".repeat(60)}end\n\n${LONG.trim()}`;
     expect(row.dataset["tooltip"]).toBe(read);
     expect(row.getAttribute("aria-label")).toBe(
