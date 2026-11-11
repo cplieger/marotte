@@ -283,7 +283,8 @@ type logPage struct {
 	Live        bool
 }
 
-// pageBytes bounds a page's log bytes, which bound its JSON from above (previewEntries only shrinks payloads).
+// pageBytes caps the log bytes of a page's turns after its newest, which is served whole however large; a page never
+// splits a turn.
 // 1 MiB keeps a page near the cost of the 11 to 545 KB pages (11 to 100 ms server, one short client task), where 20
 // tool-heavy turns reached 5.7 MB and a 178 to 343 ms client ingest.
 const pageBytes = 1 << 20

@@ -72,8 +72,8 @@ func (rt *router) routeChatSubResource(w http.ResponseWriter, r *http.Request, c
 
 // serveChatPage serves /api/chats/{id}: a window of whole turns, its open tails, the liveness verdict and the stamps
 // certifying those bytes. `?limit=` counts turns; `?before=<turn_id>` pages older (no tails, the `chat` stamp only).
-// Tool payloads are bounded to the preview budget with has_full; a page is at most `limit` turns and pageBytes of
-// log bytes, and never splits a turn.
+// Tool payloads are bounded to the preview budget with has_full; a page is at most `limit` whole turns, sized by
+// pageBytes.
 func (rt *router) serveChatPage(w http.ResponseWriter, r *http.Request, id marotte.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
