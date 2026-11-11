@@ -59,7 +59,7 @@ func violations(t *testing.T, err error) []string {
 	t.Helper()
 	var se *SealError
 	if !errors.As(err, &se) {
-		t.Fatalf("Seal() = %v, want a *SealError", err)
+		t.Fatalf("seal() = %v, want a *SealError", err)
 	}
 	return se.Violations
 }
@@ -84,8 +84,8 @@ func TestRegistrar_SealPassesWhenEveryEntryIsBound(t *testing.T) {
 		route.Typed[struct{}, regReply](http.MethodGet), route.Typed[struct{}, regReply](http.MethodPut)))
 	g.Bind(route.JSON[struct{}, regReply]("GET /api/runs/{id}", status(http.StatusOK)))
 	g.Bind(route.AnyMethod("/api/", status(http.StatusNotFound)))
-	if err := g.Seal(); err != nil {
-		t.Fatalf("Seal() = %v, want nil", err)
+	if err := g.seal(); err != nil {
+		t.Fatalf("seal() = %v, want nil", err)
 	}
 }
 
@@ -101,7 +101,7 @@ func TestRegistrar_SealListsEveryViolation(t *testing.T) {
 	g.Bind(route.JSON[struct{}, regReply]("POST /api/twice", status(http.StatusOK)))
 	g.Bind(route.JSON[struct{}, regReply]("GET example.com/api/host", status(http.StatusOK)))
 
-	vs := violations(t, g.Seal())
+	vs := violations(t, g.seal())
 	for name, parts := range map[string][]string{
 		"an unbound entry":    {"GET /api/unbound", "unbound"},
 		"a binding no entry":  {"GET /api/no-entry", "no entry"},
@@ -145,8 +145,8 @@ func TestRegistrar_EveryComparedFieldIsAViolation(t *testing.T) {
 	t.Run("matching", func(t *testing.T) {
 		g := NewRegistrar(http.NewServeMux(), []route.Entry{base})
 		g.Bind(bind())
-		if err := g.Seal(); err != nil {
-			t.Errorf("Seal() = %v, want nil", err)
+		if err := g.seal(); err != nil {
+			t.Errorf("seal() = %v, want nil", err)
 		}
 	})
 	for field, mutate := range cases {
@@ -155,7 +155,7 @@ func TestRegistrar_EveryComparedFieldIsAViolation(t *testing.T) {
 			mutate(&e)
 			g := NewRegistrar(http.NewServeMux(), []route.Entry{e})
 			g.Bind(bind())
-			if vs := violations(t, g.Seal()); !hasViolation(vs, "POST /api/x/{id}", field) {
+			if vs := violations(t, g.seal()); !hasViolation(vs, "POST /api/x/{id}", field) {
 				t.Errorf("violations %q name no %s mismatch", vs, field)
 			}
 		})
@@ -166,7 +166,7 @@ func TestRegistrar_ACatchAllNeedsExactlyItsSevenEntries(t *testing.T) {
 	short := anyEntries("/x/")[:6]
 	g := NewRegistrar(http.NewServeMux(), short)
 	g.Bind(route.AnyMethod("/x/", status(http.StatusOK)))
-	if vs := violations(t, g.Seal()); !hasViolation(vs, "OPTIONS /x/", "no entry") {
+	if vs := violations(t, g.seal()); !hasViolation(vs, "OPTIONS /x/", "no entry") {
 		t.Errorf("violations %q, want the missing OPTIONS entry named", vs)
 	}
 }
@@ -174,14 +174,14 @@ func TestRegistrar_ACatchAllNeedsExactlyItsSevenEntries(t *testing.T) {
 func TestRegistrar_BindAfterSealMountsNothing(t *testing.T) {
 	mux := http.NewServeMux()
 	g := NewRegistrar(mux, withTwin(jsonEntry("getLate", http.MethodGet, "/api/late")))
-	if err := g.Seal(); err == nil {
-		t.Fatal("Seal() = nil with an unbound entry")
+	if err := g.seal(); err == nil {
+		t.Fatal("seal() = nil with an unbound entry")
 	}
 	g.Bind(route.JSON[struct{}, regReply]("GET /api/late", status(http.StatusTeapot)))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/late", http.NoBody))
 	if rec.Code == http.StatusTeapot {
-		t.Error("a binding after Seal was mounted")
+		t.Error("a binding after seal was mounted")
 	}
 }
 
@@ -231,7 +231,7 @@ func TestRegistrar_ACatchAllServesEveryMethodUnfiltered(t *testing.T) {
 	}
 }
 
-func TestRegistrar_EntryOfIsTheDispatchedEntry(t *testing.T) {
+func TestRegistrar_EntryLookupIsTheDispatchedEntry(t *testing.T) {
 	entries := withTwin(jsonEntry("getRun", http.MethodGet, "/api/runs/{id}"), jsonEntry("getX", http.MethodGet, "/api/x"))
 	entries = append(entries, jsonEntry("putX", http.MethodPut, "/api/x"))
 	entries = append(entries, anyEntries("/api/")...)
@@ -241,8 +241,8 @@ func TestRegistrar_EntryOfIsTheDispatchedEntry(t *testing.T) {
 	g.Bind(route.Methods("/api/x", status(http.StatusOK),
 		route.Typed[struct{}, regReply](http.MethodGet), route.Typed[struct{}, regReply](http.MethodPut)))
 	g.Bind(route.AnyMethod("/api/", status(http.StatusNotFound)))
-	if err := g.Seal(); err != nil {
-		t.Fatalf("Seal() = %v", err)
+	if err := g.seal(); err != nil {
+		t.Fatalf("seal() = %v", err)
 	}
 	cases := []struct {
 		method, path string
@@ -259,13 +259,13 @@ func TestRegistrar_EntryOfIsTheDispatchedEntry(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
 			_, pattern := mux.Handler(httptest.NewRequest(tc.method, tc.path, http.NoBody))
-			e, ok := g.EntryOf(pattern, tc.method)
+			e, ok := g.entryOf(pattern, tc.method)
 			if ok != tc.ok || (ok && e.Key() != tc.want) {
-				t.Errorf("EntryOf(%q, %s) = %+v %v, want %+v %v", pattern, tc.method, e.Key(), ok, tc.want, tc.ok)
+				t.Errorf("entryOf(%q, %s) = %+v %v, want %+v %v", pattern, tc.method, e.Key(), ok, tc.want, tc.ok)
 			}
 		})
 	}
-	if _, ok := g.EntryOf("", http.MethodGet); ok {
-		t.Error(`EntryOf("") answered ok`)
+	if _, ok := g.entryOf("", http.MethodGet); ok {
+		t.Error(`entryOf("") answered ok`)
 	}
 }

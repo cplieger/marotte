@@ -54,6 +54,8 @@ const (
 )
 
 // KeyScopes is every scope a ClassKeyScope entry may name.
+//
+//deadset:ignore DS1102 -- the login wiring passes it to access as the key scope list; until then the table tests read it
 func KeyScopes() []string {
 	return []string{ScopeChatsRead, ScopeRunsRead, ScopeRunsAnswer, ScopeRunsControl, ScopeTools, ScopeMetricsRead, ScopeNotify}
 }
@@ -63,17 +65,21 @@ type Transport uint8
 
 // The plain-HTTP transport rules.
 const (
-	TransportAny         Transport = iota + 1 // both transports, no method rule
-	TransportHTTPSOnly                        // passkey and OIDC routes: plain answers access_method_needs_https
-	TransportPlainSwitch                      // sign-in, setup, step-up, recovery start: plain needs the switch on
+	TransportAny Transport = iota + 1 // both transports, no method rule
+	//deadset:ignore DS1005 -- the passkey and OIDC entries the login adds carry it
+	TransportHTTPSOnly // passkey and OIDC routes: plain answers access_method_needs_https
+	//deadset:ignore DS1005 -- the sign-in, setup, step-up and recovery-start entries the login adds carry it
+	TransportPlainSwitch // sign-in, setup, step-up, recovery start: plain needs the switch on
 )
 
 // Access is one entry's access level: Class and KeyScope are access's row, the other fields marotte's.
 // Nothing else decides a class.
 type Access struct {
-	Class      Class
-	KeyScope   string        // set exactly on ClassKeyScope: the scope a key or the agent key must hold
-	Transport  Transport     // zero is refused by the table test
+	Class    Class
+	KeyScope string // set exactly on ClassKeyScope: the scope a key or the agent key must hold
+	//deadset:ignore DS1301 -- the access gate's transport rule reads it once the gate is wired; the table tests read it until then
+	Transport Transport // zero is refused by the table test
+	//deadset:ignore DS1301 -- the GET-safety audit: the table tests hold every GET and HEAD entry to it, and no request path reads it
 	Safe       bool          // GET/HEAD only; true exactly when its audit row names no effect
 	RecentAuth time.Duration // ClassRecentAuth only: 10 min, or 8 h for the shell upgrade
 }
@@ -141,13 +147,6 @@ type Entry struct {
 // Key is e's (Method, Path).
 func (e *Entry) Key() Key { return Key{Method: e.Method, Path: e.Path} }
 
-// Resolved is what the gate reads of the entry a request is dispatched to.
-type Resolved struct {
-	Key    Key
-	Access Access
-	Kind   Kind
-}
-
 // AnyMethods are the seven methods each catch-all mount has an entry for.
 func AnyMethods() []string {
 	return []string{
@@ -208,6 +207,8 @@ func Stream(pattern string, h http.Handler) Binding { return bodyless(KindEventS
 func WebSocket(pattern string, h http.Handler) Binding { return bodyless(KindWebSocket, pattern, h) }
 
 // Redirect binds a redirecting handler, as Raw does.
+//
+//deadset:ignore DS1102 -- no marotte route redirects before the login's OIDC callback; the route tests call it until then
 func Redirect(pattern string, h http.Handler) Binding { return bodyless(KindRedirect, pattern, h) }
 
 // AnyMethod binds a catch-all mount that answers every method itself, with no filter.

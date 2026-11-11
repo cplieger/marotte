@@ -86,8 +86,8 @@ type ExportQuery struct {
 	Format string `json:"format,omitempty"`
 }
 
-// Export is the json export's body.
-type Export struct {
+// jsonExport is the json export's body.
+type jsonExport struct {
 	Chat    *marotte.Chat   `json:"chat"`
 	Entries []marotte.Entry `json:"entries"`
 }
@@ -297,7 +297,7 @@ func (rt *router) handleExport(w http.ResponseWriter, r *http.Request) {
 	if format == exportFormatJSON {
 		w.Header().Set("Content-Disposition",
 			dispositionAttachment(exportFilename(c.Name, string(chatID), ".json")))
-		httpserver.WriteJSON(w, Export{Chat: c, Entries: nonNilEntries(entries)})
+		httpserver.WriteJSON(w, jsonExport{Chat: c, Entries: nonNilEntries(entries)})
 		return
 	}
 	w.Header().Set("Content-Disposition",

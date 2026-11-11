@@ -204,13 +204,13 @@ func (*Store) writeErr(w http.ResponseWriter, err error) {
 	}
 }
 
-// ValidationRefusal is the 400 a failed validate produces.
+// validationRefusal is the 400 a failed validate produces.
 //
 // `error` is the joined message text, so a client reading only that field
 // keeps working unchanged. `fields` is the addition: one entry per
 // failure, carrying the wire field name so the form can mark inputs
 // individually.
-type ValidationRefusal struct {
+type validationRefusal struct {
 	Error  string       `json:"error"`
 	Fields []fieldError `json:"fields,omitempty"`
 }
@@ -226,5 +226,5 @@ func writeValidationErr(w http.ResponseWriter, err error) {
 		return
 	}
 	httpserver.WriteJSONStatus(w, http.StatusBadRequest,
-		ValidationRefusal{Error: err.Error(), Fields: fields})
+		validationRefusal{Error: err.Error(), Fields: fields})
 }

@@ -29,6 +29,8 @@ type probeEngine struct {
 	v3      uint64
 }
 
+var _ sseProbe = (*probeEngine)(nil)
+
 func (p *probeEngine) SSEClientCount() int           { return p.clients }
 func (p *probeEngine) SSEConnects() (uint64, uint64) { return p.legacy, p.v3 }
 func (p *probeEngine) CloseNextSSEAfter(n int)       { p.armed = n }

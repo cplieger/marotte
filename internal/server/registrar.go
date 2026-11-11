@@ -56,7 +56,7 @@ func NewRegistrar(mux *http.ServeMux, entries []route.Entry) *Registrar {
 
 // Bind mounts b's handler and binds it to b's table entries. A binding with no entry, a
 // type that differs from its entry's, or a second binding of one entry is recorded, and
-// Seal refuses the boot with every violation listed. A Bind after Seal mounts nothing.
+// seal refuses the boot with every violation listed. A Bind after seal mounts nothing.
 func (g *Registrar) Bind(b route.Binding) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -153,8 +153,8 @@ func differences(e *route.Entry, k route.Kind, mt *route.MethodTypes) []string {
 	return out
 }
 
-// Seal fixes the mux; it fails when any table entry is unbound or Bind recorded a violation.
-func (g *Registrar) Seal() error {
+// seal fixes the mux; it fails when any table entry is unbound or Bind recorded a violation.
+func (g *Registrar) seal() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.sealed = true
@@ -173,9 +173,11 @@ func (g *Registrar) Seal() error {
 	return &SealError{Violations: vs}
 }
 
-// EntryOf maps the pattern mux.Handler returned and r's method to the entry ServeMux will
+// entryOf maps the pattern mux.Handler returned and r's method to the entry ServeMux will
 // dispatch to; ok is false for "" and for a method the entry set lacks.
-func (g *Registrar) EntryOf(pattern, method string) (route.Entry, bool) {
+//
+//deadset:ignore DS1102 -- the access gate's route lookup, wired with the gate; the registrar tests read it until then
+func (g *Registrar) entryOf(pattern, method string) (route.Entry, bool) {
 	if pattern == "" {
 		return route.Entry{}, false
 	}

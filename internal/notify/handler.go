@@ -16,8 +16,8 @@ import (
 	"github.com/cplieger/marotte/internal/route"
 )
 
-// Pattern is the route's path.
-const Pattern = routePrefix + "{session}" + routeSuffix
+// pattern is the route's path.
+const pattern = routePrefix + "{session}" + routeSuffix
 
 // Request is the route's body. Each field is a pointer so a missing field is told from an empty one.
 type Request struct {
@@ -32,9 +32,9 @@ type Delivery struct {
 	Duplicate bool   `json:"duplicate,omitempty"`
 }
 
-// Binding binds h at POST Pattern.
+// Binding binds h at POST pattern.
 func Binding(h http.Handler) route.Binding {
-	return route.WithParams[marotte.SessionPath](route.JSON[Request, Delivery](http.MethodPost+" "+Pattern, h))
+	return route.WithParams[marotte.SessionPath](route.JSON[Request, Delivery](http.MethodPost+" "+pattern, h))
 }
 
 // What a delivery became: the chat's live turn read it as a steer, or it opened a turn as a prompt.
@@ -76,7 +76,7 @@ const (
 // steer buffer to drain, short enough that a wake-up stays timely.
 const retryAfterSeconds = "5"
 
-// Handler serves POST Pattern.
+// Handler serves POST pattern.
 type Handler struct {
 	deliv  Deliverer
 	dedupe *dedupeTable

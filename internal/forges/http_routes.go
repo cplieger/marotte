@@ -96,11 +96,11 @@ func (h *HTTPHandler) RegisterRoutes(m routeMux) {
 		route.Typed[InventoryWatch, struct{}](http.MethodPost).WithStatus(http.StatusNoContent).
 			WithHeaders(route.Header{Name: clientTagHeader, Arg: "sseClient", Required: true, MinBytes: 1, MaxBytes: 64}))
 	name := reflect.TypeFor[marotte.NamePath]()
-	bind("/api/forges/oauth/{name}/start", outbound(h.grantRoute(h.handleGrantStart)),
+	bind("/api/forges/oauth/{name}/start", outbound(grantRoute(h.handleGrantStart)),
 		route.Typed[GrantStart, DeviceFlowResponse](http.MethodPost).WithParams(name))
-	bind("/api/forges/oauth/{name}/poll", h.grantRoute(func(w http.ResponseWriter, r *http.Request, _ Kind) { h.handleGrantPoll(w, r) }),
+	bind("/api/forges/oauth/{name}/poll", grantRoute(func(w http.ResponseWriter, r *http.Request, _ Kind) { h.handleGrantPoll(w, r) }),
 		route.Typed[GrantRef, PollResult](http.MethodPost).WithParams(name))
-	bind("/api/forges/oauth/{name}/cancel", h.grantRoute(func(w http.ResponseWriter, r *http.Request, _ Kind) { h.handleGrantCancel(w, r) }),
+	bind("/api/forges/oauth/{name}/cancel", grantRoute(func(w http.ResponseWriter, r *http.Request, _ Kind) { h.handleGrantCancel(w, r) }),
 		route.Typed[GrantRef, struct{}](http.MethodPost).WithParams(name).WithStatus(http.StatusNoContent))
 
 	bind("/api/forges/{id}", http.HandlerFunc(h.handleForge),
@@ -198,7 +198,7 @@ func (h *HTTPHandler) itemRoute(invalid string, fn func(http.ResponseWriter, *ht
 }
 
 // grantRoute serves fn for a kind with a device grant, and 404 for any other.
-func (h *HTTPHandler) grantRoute(fn func(http.ResponseWriter, *http.Request, Kind)) http.Handler {
+func grantRoute(fn func(http.ResponseWriter, *http.Request, Kind)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		kind := Kind(r.PathValue("name"))
 		if _, ok := marotteApp(kind.family()); !ok {

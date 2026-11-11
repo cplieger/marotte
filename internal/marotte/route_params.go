@@ -33,13 +33,6 @@ type RunStepPath struct {
 	Path string `json:"path"`
 }
 
-// RunStepVerbPath is a run step action's {id}, {path} and {verb}.
-type RunStepVerbPath struct {
-	ID   string `json:"id"`
-	Path string `json:"path"`
-	Verb string `json:"verb"`
-}
-
 // NamePath is a route's {name}.
 type NamePath struct {
 	Name string `json:"name"`

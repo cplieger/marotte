@@ -532,12 +532,12 @@ func TestHandleCollection_POST_persistFailure_is500(t *testing.T) {
 	}
 }
 
-func decodeValidation400(t *testing.T, rec *httptest.ResponseRecorder) ValidationRefusal {
+func decodeValidation400(t *testing.T, rec *httptest.ResponseRecorder) validationRefusal {
 	t.Helper()
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (body %s)", rec.Code, rec.Body.String())
 	}
-	var got ValidationRefusal
+	var got validationRefusal
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode 400 body %q: %v", rec.Body.String(), err)
 	}

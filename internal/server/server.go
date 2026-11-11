@@ -371,7 +371,7 @@ func (s *Server) Register(m routeMux) {
 // Its error is a *SealError listing every disagreement between the two.
 func (s *Server) Routes() (*http.ServeMux, error) {
 	mux, g := s.routes()
-	if err := g.Seal(); err != nil {
+	if err := g.seal(); err != nil {
 		return nil, err
 	}
 	return mux, nil

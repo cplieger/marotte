@@ -218,12 +218,20 @@ export interface EndpointSpec {
 /** A generated client function's answer. A failure's `code` is the server's code only when the
  *  endpoint's union lists it; `status` is 0 for a transport failure, as fetch reports it. */
 export type ApiResult<T, E extends string> =
-  | { readonly ok: true; readonly status: number; readonly data: T }
+  | {
+      readonly ok: true;
+      readonly status: number;
+      // deadset:ignore DS1301 -- wiregen's generated client functions return it (docs/http-client.md, Transport module); marotte calls the generated descriptors, so no caller reads it
+      readonly data: T;
+    }
   | {
       readonly ok: false;
       readonly status: number;
+      // deadset:ignore DS1301 -- wiregen's generated client functions return it (docs/http-client.md, Transport module); marotte calls the generated descriptors, so no caller reads it
       readonly error: string;
+      // deadset:ignore DS1301 -- wiregen's generated client functions return it (docs/http-client.md, Transport module); marotte calls the generated descriptors, so no caller reads it
       readonly code?: E;
+      // deadset:ignore DS1301 -- wiregen's generated client functions return it (docs/http-client.md, Transport module); marotte calls the generated descriptors, so no caller reads it
       readonly body?: unknown;
     };
 
