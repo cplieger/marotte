@@ -92,9 +92,9 @@ type Store struct {
 const tombstoneTTL = 10 * time.Minute
 
 // headerPublishWindow is how long a chat's header saves coalesce before one chat_updated goes out.
-// A prompt's open and its close each save the header three or four times within about 6 ms; 25 ms
-// folds each burst into one frame. The delay reaches only other pages: the posting page reads its
-// run from the prompt's answer. A var so the marotte_test fixture can widen it.
+// A prompt's open and its close each save the header three to five times within about 6 ms; 25 ms
+// folds each burst into one frame and is below a visible delay. A var so the marotte_test fixture
+// can widen it.
 var headerPublishWindow = 25 * time.Millisecond
 
 // tombstone keeps the display name a deleted chat had, because the record goes before
@@ -369,8 +369,8 @@ func (s *Store) announceCreated(ctx context.Context, chatID marotte.ChatID, c *m
 	s.broadcast.Broadcast(ctx, frame)
 }
 
-// publishHeader is the header coalescer's flush: it mints one `chats` version for every save the
-// window absorbed and emits one chat_updated carrying the header as it is now. It runs under the
+// publishHeader is the header coalescer's flush: it mints one `chats` version covering every save
+// the window absorbed and emits one chat_updated carrying the header as it is now. It runs under the
 // chat's lock, so a Delete either lands first, leaving no record and no frame, or lands after,
 // its chat_deleted following this frame. A flush bumps `chats` unless the record is gone,
 // broadcaster or not, because title, updated_at and sort order moved.

@@ -98,7 +98,7 @@ func TestPublishHeader_ASaveAfterTheWindowSendsTheNextFrame(t *testing.T) {
 
 func TestPublishHeader_ADeleteInsideTheWindowSendsNoUpdate(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s, b := newTestStore(t)
+		s, b, v := newVersionedTestStore(t)
 		rename(t, s, "created")
 		rename(t, s, "renamed")
 		if _, err := s.Delete(t.Context(), publishChat); err != nil {
@@ -106,11 +106,19 @@ func TestPublishHeader_ADeleteInsideTheWindowSendsNoUpdate(t *testing.T) {
 		}
 		synctest.Sleep(headerPublishWindow)
 
-		if n := len(framesOf(b, marotte.EventChatDeleted)); n != 1 {
-			t.Errorf("chat_deleted frames = %d, want 1", n)
+		deleted := framesOf(b, marotte.EventChatDeleted)
+		if len(deleted) != 1 {
+			t.Fatalf("chat_deleted frames = %d, want 1", len(deleted))
 		}
 		if updated := framesOf(b, marotte.EventChatUpdated); len(updated) != 0 {
 			t.Errorf("chat_updated after the chat was deleted: %+v", updated)
+		}
+		// Only the version tells the gone-record arm from the unreadable one: neither sends a frame.
+		if deleted[0].Subject == nil {
+			t.Fatal("chat_deleted carries no subject stamp")
+		}
+		if chats, _ := v.Current(subject.KindChats, ""); chats != deleted[0].Subject.Version {
+			t.Errorf("chats version after the flush = %q, want the chat_deleted stamp's %q", chats, deleted[0].Subject.Version)
 		}
 	})
 }

@@ -520,8 +520,8 @@ func (s *Store) Revert(ctx context.Context, chatID marotte.ChatID, turn, kasMess
 
 // Reconcile runs the resume's merge swap over the chat's log and header under the
 // chat lock; swap answers whether it rewrote the log. On a rewrite the `chat`
-// version is minted and the header the rewrite's hooks wrote is broadcast, and the
-// minted version comes back for the subject_changed stamp. The caller holds the
+// version is minted and the header is marked for publishing (bumpChatWindow), and
+// the minted version comes back for the subject_changed stamp. The caller holds the
 // lifecycle mutex across this call, so the swap's gates and its rewrite see one
 // log.
 func (s *Store) Reconcile(ctx context.Context, chatID marotte.ChatID, swap func(l *EntryLog, h EntryHeader) (bool, error)) (version string, changed bool, err error) {
