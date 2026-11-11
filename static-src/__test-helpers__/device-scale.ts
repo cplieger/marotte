@@ -11,7 +11,7 @@ declare module "vitest/internal/browser" {
 
 const initial = window.devicePixelRatio;
 
-/** Set the page's device pixel ratio and assert the page sees it. Clear it with `clearDeviceScale` in `afterEach`. */
+/** Set the page's device pixel ratio and assert the page sees it. Undo it with `restoreDeviceScale` in `afterEach`. */
 export async function setDeviceScale(dpr: number): Promise<void> {
   await server.commands.setDeviceScaleFactor(dpr);
   await expect
@@ -19,10 +19,10 @@ export async function setDeviceScale(dpr: number): Promise<void> {
     .toBeCloseTo(dpr, 4);
 }
 
-/** Clear the override and assert the ratio is back to the one this file started with. */
-export async function clearDeviceScale(): Promise<void> {
+/** Restore the ratio this file started with and assert the page sees it. */
+export async function restoreDeviceScale(): Promise<void> {
   await server.commands.setDeviceScaleFactor(null);
   await expect
-    .poll(() => window.devicePixelRatio, { message: "the DPR override is cleared" })
+    .poll(() => window.devicePixelRatio, { message: "the DPR is restored" })
     .toBe(initial);
 }

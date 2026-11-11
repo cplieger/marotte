@@ -31,7 +31,7 @@ const sharedExclude = [
 // Off by default: the snapshots cost time on every browser file and CI has nowhere to publish them.
 const traceView = process.env["VITEST_TRACE"] === "1";
 
-const dprSessions = new WeakMap<object, CDPSession>();
+const dprSessions = new WeakMap<object, { cdp: CDPSession; initialDpr: number }>();
 
 // A test needing a coarse pointer is `*.touch.test.ts` and runs in `browser-touch`, whose pages are
 // touch devices from creation: touch emulation switched off inside a page leaves headless Chromium
@@ -91,26 +91,45 @@ function browserProject(
           ) {
             await page.emulateMedia(features);
           },
-          /** Set the page's device pixel ratio (null clears the override). Chromium only, CI's engine. The override is
-           *  page-wide and outlives the test that set it, so a suite that sets one clears it in `afterEach`. */
+          /** Set the page's device pixel ratio (null restores the ratio the page started with). Chromium only, CI's
+           *  engine. The override is page-wide and outlives the test that set it, so a suite that sets one restores it
+           *  in `afterEach`. A restore that leaves the page short of its viewport throws. */
           async setDeviceScaleFactor({ page }, dpr: number | null) {
             // An Emulation override lasts as long as the CDP session that set it, so the session is kept per page.
-            let cdp = dprSessions.get(page);
-            if (cdp === undefined) {
-              cdp = await page.context().newCDPSession(page);
-              dprSessions.set(page, cdp);
-            }
-            if (dpr === null) {
-              await cdp.send("Emulation.clearDeviceMetricsOverride");
-              return;
+            let session = dprSessions.get(page);
+            if (session === undefined) {
+              session = {
+                cdp: await page.context().newCDPSession(page),
+                initialDpr: await page.evaluate<number>("window.devicePixelRatio"),
+              };
+              dprSessions.set(page, session);
             }
             const size = page.viewportSize() ?? { width: 1280, height: 720 };
-            await cdp.send("Emulation.setDeviceMetricsOverride", {
+            // Never `Emulation.clearDeviceMetricsOverride`: it also drops Playwright's viewport override, the page
+            // falls back to its window's content area (1280x633, or a stale phone size after a `page.viewport`
+            // cycle), and every later file on the page inherits it, since Playwright and vitest both cache the
+            // viewport they last set. The restore re-sends Playwright's own desktop override instead.
+            await session.cdp.send("Emulation.setDeviceMetricsOverride", {
               width: size.width,
               height: size.height,
-              deviceScaleFactor: dpr,
+              screenWidth: size.width,
+              screenHeight: size.height,
+              deviceScaleFactor: dpr ?? session.initialDpr,
               mobile: false,
+              screenOrientation: { angle: 0, type: "landscapePrimary" },
             });
+            if (dpr !== null) {
+              return;
+            }
+            const [width, height] = await page.evaluate<[number, number]>(
+              "[window.innerWidth, window.innerHeight]",
+            );
+            if (width !== size.width || height !== size.height) {
+              throw new Error(
+                `the DPR restore left the page at ${String(width)}x${String(height)}, not its ` +
+                  `${String(size.width)}x${String(size.height)} viewport`,
+              );
+            }
           },
         },
       },
