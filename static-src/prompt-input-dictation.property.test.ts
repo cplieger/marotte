@@ -461,6 +461,28 @@ function allowed(s: Gesture | Click, face: Began): readonly string[] {
   return MAY[face];
 }
 
+const quiet = (first: readonly World[] = []): Gesture["gaps"] => [first, [], [], [], [], []];
+
+/** Space on the microphone while typing turns it to Send, then Enter on Stop with its repeat landing in the box. */
+const spaceThenHeldEnter: readonly Step[] = [
+  {
+    k: "gesture",
+    slot: "main",
+    input: "space",
+    count: 1,
+    end: "click",
+    gaps: quiet([{ k: "type", text: "words" }]),
+  },
+  {
+    k: "gesture",
+    slot: "main",
+    input: "enter",
+    count: 1,
+    end: "click",
+    gaps: quiet([{ k: "focusBox" }]),
+  },
+];
+
 describe("a press on the composer's buttons (rule 3)", () => {
   it("never sends or steers from Dictate or Stop, never dictates from Send or Cancel, and Stop only stops", async () => {
     await fc.assert(
@@ -488,7 +510,7 @@ describe("a press on the composer's buttons (rule 3)", () => {
           );
         }
       }),
-      { numRuns: 300 },
+      { numRuns: 300, examples: [[spaceThenHeldEnter]] },
     );
   });
 });

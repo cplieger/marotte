@@ -668,6 +668,45 @@ describe("a press's face lasts only as long as the press (rule 3)", () => {
     expect(dictation.listening.value, "a Space released off its button clicks nothing").toBe(false);
   });
 
+  it("ends a Space press at its click, so an Enter pressed right after it sends", async () => {
+    await startFrom(sendBtn());
+    speech.last().hear(["hello", true]);
+    sendBtn().focus();
+    sendBtn().dispatchEvent(
+      new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }),
+    );
+    sendBtn().dispatchEvent(new KeyboardEvent("keyup", { key: " ", bubbles: true }));
+    clickAt(sendBtn(), 0);
+    speech.last().finish();
+    expect(dictation.listening.value).toBe(false);
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    sendBtn().dispatchEvent(enter);
+    expect(enter.defaultPrevented, "the Enter makes its click").toBe(false);
+    clickAt(sendBtn(), 0);
+    expect(submitted).toEqual(["hello"]);
+  });
+
+  it("swallows the repeats of a second key pressed on the button during a key press, wherever focus moved", async () => {
+    await startFrom(sendBtn());
+    speech.last().hear(["hello", true]);
+    sendBtn().focus();
+    sendBtn().dispatchEvent(
+      new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }),
+    );
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    sendBtn().dispatchEvent(enter);
+    expect(enter.defaultPrevented, "a second key clicks nothing").toBe(true);
+    sendBtn().dispatchEvent(new KeyboardEvent("keyup", { key: " ", bubbles: true }));
+    clickAt(sendBtn(), 0);
+    expect(dictation.listening.value).toBe(false);
+    input().focus();
+    const again = press("Enter", { repeat: true });
+    expect(again.defaultPrevented).toBe(true);
+    expect(submitted).toEqual([]);
+    expect(input().value).toBe("hello");
+    input().dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
+  });
+
   it("sends from a click() after a press dragged off the microphone, never dictating", () => {
     const made = speech.made.length;
     pressDown(sendBtn());

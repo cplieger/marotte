@@ -13,7 +13,7 @@ interface Pressed {
 type Press = Pressed &
   (
     | { readonly by: "pointer"; up: boolean }
-    | { readonly by: "key"; readonly key: string; spent: boolean }
+    | { readonly by: "key"; readonly key: string; spent: boolean; up: boolean }
   );
 
 /** Every input that begins, feeds or ends a press. `on` is the slot button the event reached, null elsewhere. */
@@ -34,6 +34,10 @@ export function pressOwner(faceOf: (btn: HTMLButtonElement) => Act): (i: PressIn
   let press: Press | null = null;
   /** What the first click of a multi-click acted on: the rest of the run acts on it too. */
   let run: Pressed | null = null;
+  /** Enter and Space keys that went down on a slot button, until their key up: a held one's repeats are swallowed
+   *  wherever focus moved (Stop and Cancel move it into the box), since Enter's would click, send or write a new line
+   *  and Space's would type. */
+  const held = new Set<string>();
 
   /** A release off the button makes no click, so its press ends there. */
   const pointerUp = (p: Press & { by: "pointer" }, e: PointerEvent): void => {
@@ -52,44 +56,44 @@ export function pressOwner(faceOf: (btn: HTMLButtonElement) => Act): (i: PressIn
   };
 
   /** Fed from the document, so a key press lives from its first key down to its key up wherever its click moved
-   *  focus (Stop and Cancel move it into the box), and every repeat of that key is swallowed: Enter's would click,
-   *  send or write a new line, Space's would type. */
+   *  focus. */
   const keyDown = (on: HTMLButtonElement | null, e: KeyboardEvent): void => {
     if (e.key !== "Enter" && e.key !== " ") {
       return;
     }
-    const p = press;
-    if (p?.by === "key") {
-      if (e.key === p.key && e.repeat) {
+    const p = press?.by === "key" ? press : null;
+    if (e.repeat) {
+      if (held.has(e.key)) {
         // On its own button a Space repeat does nothing, and that button clicks at the key's up.
-        if (e.key === "Enter" || on !== p.btn) {
+        if (!(e.key === " " && p?.key === " " && on === p.btn)) {
           e.preventDefault();
         }
         e.stopImmediatePropagation();
-        return;
+      } else if (on !== null) {
+        // A key held down elsewhere never presses this button.
+        e.preventDefault();
       }
-      if (e.key !== p.key) {
-        // A second key on a button during the press would click it again.
-        if (on !== null) {
-          e.preventDefault();
-        }
-        return;
-      }
-      // The same key down again, not a repeat: its key up never came.
+      return;
+    }
+    // The same key down again, not a repeat: its key up never came.
+    held.delete(e.key);
+    if (p?.key === e.key) {
       press = null;
     }
     if (on === null) {
       return;
     }
-    if (e.repeat) {
-      // A key held down elsewhere never presses this button.
+    held.add(e.key);
+    if (press?.by === "key") {
+      // A second key on a button during the press would click it again.
       e.preventDefault();
       return;
     }
-    press = { btn: on, act: faceOf(on), by: "key", key: e.key, spent: false };
+    press = { btn: on, act: faceOf(on), by: "key", key: e.key, spent: false, up: false };
   };
 
   const keyUp = (e: KeyboardEvent): void => {
+    held.delete(e.key);
     const p = press;
     if (p?.by !== "key" || p.key !== e.key) {
       return;
@@ -98,7 +102,9 @@ export function pressOwner(faceOf: (btn: HTMLButtonElement) => Act): (i: PressIn
       press = null;
       return;
     }
-    // Space clicks after this key up's listeners, in the same task.
+    // Space clicks after this key up's listeners, in the same task, and that click ends the press; one whose click
+    // never comes (its button disabled meanwhile) ends a task later.
+    p.up = true;
     setTimeout(() => {
       if (press === p) {
         press = null;
@@ -117,6 +123,9 @@ export function pressOwner(faceOf: (btn: HTMLButtonElement) => Act): (i: PressIn
         return null;
       }
       p.spent = true;
+      if (p.up) {
+        press = null;
+      }
     } else if (p !== null) {
       press = null;
     }
@@ -172,7 +181,8 @@ export function pressOwner(faceOf: (btn: HTMLButtonElement) => Act): (i: PressIn
         }
         return null;
       case "windowblur":
-        // The key's up goes to another window.
+        // The keys' ups go to another window.
+        held.clear();
         if (press?.by === "key") {
           press = null;
         }
