@@ -17,9 +17,9 @@ export class FakeRecognizer extends EventTarget implements SpeechRecognizer {
   continuous = false;
   interimResults = false;
   processLocally = false;
-  started = 0;
-  stopped = 0;
-  aborted = 0;
+  started = 0; // deadset:ignore DS1301 -- the fake's call record, read by the dictation tests
+  stopped = 0; // deadset:ignore DS1301 -- the fake's call record, read by the dictation tests
+  aborted = 0; // deadset:ignore DS1301 -- the fake's call record, read by the dictation tests
   startThrows: Error | null = null;
 
   start(): void {
