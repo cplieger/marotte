@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -10,12 +11,16 @@ import (
 	"github.com/cplieger/marotte/internal/runlease"
 )
 
-// runOutcomePush records the push kind too: it must reach the registry as run_outcome.
+// runOutcomePush records the push kind too: it must reach the registry as run_outcome. It publishes each raised
+// notice's frame through the publisher New set, as the push service does.
 type runOutcomePush struct {
-	sent    chan runPushSent
-	subject marotte.PushSubject
-	mu      sync.Mutex
-	ctxs    []context.Context // each Send's ctx, read after the sender returned
+	pushStub
+	sent     chan runPushSent
+	frames   func(marotte.ChatID, marotte.NotificationPayload)
+	subject  marotte.PushSubject
+	mu       sync.Mutex
+	ctxs     []context.Context // each delivery's ctx, read after the sender returned
+	position []uint64          // each Raise's position
 }
 
 type runPushSent struct {
@@ -30,20 +35,34 @@ func newRunOutcomePush() *runOutcomePush {
 	return &runOutcomePush{sent: make(chan runPushSent, 4)}
 }
 
-func (*runOutcomePush) HasSubscribers() bool                     { return true }
-func (*runOutcomePush) SetPreferences(map[marotte.PushKind]bool) {}
-func (*runOutcomePush) Preferences() map[marotte.PushKind]bool   { return nil }
-func (*runOutcomePush) Close()                                   {}
-func (*runOutcomePush) Retract(marotte.PushSubject, string)      {}
-func (p *runOutcomePush) Send(ctx context.Context, n *marotte.NotificationPayload) {
+func (p *runOutcomePush) SetFrames(publish func(marotte.ChatID, marotte.NotificationPayload)) {
+	p.frames = publish
+}
+
+func (p *runOutcomePush) Raise(_ context.Context, chatID marotte.ChatID, n *marotte.NotificationPayload, position uint64) func(context.Context) {
 	p.mu.Lock()
-	p.ctxs = append(p.ctxs, ctx)
+	p.position = append(p.position, position)
 	p.mu.Unlock()
-	p.subject = n.PushSubject
-	select {
-	case p.sent <- runPushSent{title: n.Title, body: n.Body, ask: n.Ask, kind: n.Kind, subject: n.PushSubject}:
-	default:
+	if p.frames != nil {
+		p.frames(chatID, *n)
 	}
+	return func(ctx context.Context) {
+		p.mu.Lock()
+		p.ctxs = append(p.ctxs, ctx)
+		p.mu.Unlock()
+		p.subject = n.PushSubject
+		select {
+		case p.sent <- runPushSent{title: n.Title, body: n.Body, ask: n.Ask, kind: n.Kind, subject: n.PushSubject}:
+		default:
+		}
+	}
+}
+
+// positions is each Raise's position, in call order.
+func (p *runOutcomePush) positions() []uint64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return slices.Clone(p.position)
 }
 
 // canceledSends counts the sends whose ctx is canceled now: a push whose POST would fail with context canceled.

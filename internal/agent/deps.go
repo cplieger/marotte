@@ -102,14 +102,26 @@ type chatRecords interface {
 
 type pushNotifier interface {
 	HasSubscribers() bool
-	Send(ctx context.Context, n *marotte.NotificationPayload)
-	// Retract drops the push about subject announcing ask (NotificationPayload.Ask) still held for delivery.
-	Retract(subject marotte.PushSubject, ask string)
+	// Raise records n about chatID at its tab's read position and returns the push fan-out, run outside every lock.
+	Raise(ctx context.Context, chatID marotte.ChatID, n *marotte.NotificationPayload, position uint64) func(context.Context)
+	// Settled ends every notice about subject announcing ask (NotificationPayload.Ask).
+	Settled(subject marotte.PushSubject, ask string)
 }
 
-// pushService is the runtime's view of push: send plus the preference and lifecycle calls it owns.
+// pushService is the runtime's view of push: the notice ledger plus the preference and lifecycle calls it owns.
 type pushService interface {
 	pushNotifier
+
+	// SetFrames sets the publisher of the page's notification frame.
+	SetFrames(publish func(marotte.ChatID, marotte.NotificationPayload))
+	// View records a page's view report under its profile's tag.
+	View(tag string, v marotte.PageView)
+	// Shown and Declined are a page's report about the notice id.
+	Shown(tag, id string)
+	Declined(tag, id string)
+	// Seen ends the notices about a tab at a read position up to marker; TabClosed forgets the tab.
+	Seen(kind marotte.TabKind, ref string, marker uint64)
+	TabClosed(kind marotte.TabKind, ref string)
 
 	// SetPreferences sets each toggle prefs names; a kind it omits keeps its toggle.
 	SetPreferences(prefs map[marotte.PushKind]bool)

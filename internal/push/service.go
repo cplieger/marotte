@@ -95,6 +95,8 @@ type Service struct {
 	suppressed map[marotte.PushKind]*atomic.Uint64
 	subject    string
 	dir        string
+	// frames publishes the page's notification frame; set once before the first Raise.
+	frames func(marotte.ChatID, marotte.NotificationPayload)
 	// deferred is the held set of the deferred-send variant (deferred.go); empty
 	// for the life of the process while that switch is off.
 	deferred deferred

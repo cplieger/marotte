@@ -10,7 +10,7 @@ import (
 )
 
 // noSubscriberLine is reportNoSubscribers' message, matched whole so a rewording fails here.
-const noSubscriberLine = `"msg":"no push subscribers; notifications are being dropped until a browser subscribes"`
+const noSubscriberLine = `"msg":"no push subscribers; pushes are dropped until a browser subscribes"`
 
 func newDropHub(t *testing.T) (*Runtime, *recordingPush) {
 	t.Helper()
@@ -32,6 +32,7 @@ func TestNotify_ReportsANoSubscriberDropOncePerEpisode(t *testing.T) {
 		h.coord.Notify(ctx, "c1", &dropAsk)
 	}
 
+	joinInflight(t, h)
 	got := logs.String()
 	if n := strings.Count(got, noSubscriberLine); n != 1 {
 		t.Errorf("3 drops logged the no-subscriber line %d times, want 1; the latch is what keeps a"+

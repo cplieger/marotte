@@ -1,6 +1,11 @@
 package marotte
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+
+	"github.com/cplieger/go/keyenc"
+)
 
 // Push types: Web Push subscription shapes and push notification kind
 // constants. Consumed by the push package and the runtime's push-notification
@@ -79,9 +84,65 @@ type NotificationPayload struct {
 	Kind  PushKind `json:"kind"`
 	Title string   `json:"title"`
 	Body  string   `json:"body"`
+	// ID names this notice on both channels, so a page reports what became of it and shows it once.
+	ID string `json:"id"`
 	// Ask is the decision a PushKindPermission notification announces, the id its retraction names; it never
 	// reaches either channel.
 	Ask string `json:"-"`
+	// ShowIn lists the pages offered the notice, at most one per browser profile; never set on a push.
+	ShowIn []string `json:"show_in,omitempty"`
+}
+
+// Tab is the open tab s names, the one a page showing it is looking at: a chat's, a run's, or the run
+// tab of a step's wait. ok is false for a pull request, a launch rule, the workspace and a hashed
+// wait position. The client's twin is tabOf in handlers/push-message.ts.
+func (s PushSubject) Tab() (kind TabKind, ref string, ok bool) {
+	switch {
+	case s.ChatID != "":
+		return TabKindChat, string(s.ChatID), true
+	case strings.HasPrefix(s.Key, RunSubjectPrefix):
+		return TabKindRun, strings.TrimPrefix(s.Key, RunSubjectPrefix), true
+	case strings.HasPrefix(s.Key, runAskSubjectPrefix):
+		parts, err := keyenc.Split(strings.TrimPrefix(s.Key, runAskSubjectPrefix))
+		if err != nil || len(parts) == 0 || parts[0] == "" {
+			return "", "", false
+		}
+		return TabKindRun, parts[0], true
+	default:
+		return "", "", false
+	}
+}
+
+// TabRef names a chat or run tab in a page's view report.
+type TabRef struct {
+	Kind TabKind `json:"kind"`
+	Ref  string  `json:"ref"`
+}
+
+// PageView is one page's report to POST /api/events/view: whether it is visible and focused, and the
+// chat or run tab it shows (nil for every other tab, or none). Closed ends the page's row and voids
+// the other fields.
+type PageView struct {
+	Tab     *TabRef `json:"tab,omitempty"`
+	Page    string  `json:"page"`
+	Visible bool    `json:"visible"`
+	Focused bool    `json:"focused"`
+	Closed  bool    `json:"closed,omitempty"`
+}
+
+// NoticeOutcome is what a page did with a notice it was offered or pushed.
+type NoticeOutcome string
+
+// The two outcomes a page reports.
+const (
+	NoticeShown    NoticeOutcome = "shown"
+	NoticeDeclined NoticeOutcome = "declined"
+)
+
+// NoticeReport is a page's report to POST /api/events/notice about the notice ID.
+type NoticeReport struct {
+	ID      string        `json:"id"`
+	Outcome NoticeOutcome `json:"outcome"`
 }
 
 // ChatSubject is the subject of a notification about one chat. Pass a zero

@@ -480,6 +480,12 @@ func (bc *bridgeCoordinator) concludeStop(
 	return c
 }
 
+// finishAskSettled hears that one of chatID's chat-session asks settled, which may release its parked finish.
+func (*bridgeCoordinator) finishAskSettled(marotte.ChatID) {}
+
+// dropFinish drops chatID's parked finish: its last tab closed.
+func (*bridgeCoordinator) dropFinish(marotte.ChatID) {}
+
 // pushTurnOutcome sends a finished turn's notification, reading the severity so it never claims success. On the
 // detached context: the push fans out on its own goroutine.
 func (bc *bridgeCoordinator) pushTurnOutcome(

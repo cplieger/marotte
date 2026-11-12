@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -145,7 +146,7 @@ func TestDeferred_RetractionBeforeTheFlipDeliversNothing(t *testing.T) {
 	s.presence.Observe(connected(tagOf(presentEP)))
 
 	s.Send(t.Context(), &marotte.NotificationPayload{PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindPermission, Title: "title", Body: "body"})
-	s.Retract(marotte.ChatSubject("c1"), "")
+	s.Settled(marotte.ChatSubject("c1"), "")
 	if n := s.heldCount(); n != 0 {
 		t.Fatalf("held deliveries after the retraction = %d, want 0", n)
 	}
@@ -188,7 +189,7 @@ func TestDeferred_RetractingAnAskLeavesOtherWorkHeld(t *testing.T) {
 			s.Send(t.Context(), &marotte.NotificationPayload{
 				PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindAgentFinished, Title: "done", Body: "body",
 			})
-			s.Retract(marotte.ChatSubject("c1"), tc.answered)
+			s.Settled(marotte.ChatSubject("c1"), tc.answered)
 
 			if n := s.heldCount(); n != 2 {
 				t.Fatalf("held deliveries after an answer = %d, want the other ask's and the turn's", n)
@@ -216,7 +217,7 @@ func TestDeferred_ADebouncedAskReplacesTheHeldPayload(t *testing.T) {
 			PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindPermission, Title: "ask " + id, Body: "body", Ask: id,
 		})
 	}
-	s.Retract(marotte.ChatSubject("c1"), "1")
+	s.Settled(marotte.ChatSubject("c1"), "1")
 
 	key := heldKey{tag: tagOf(presentEP), kind: marotte.PushKindPermission, subject: "c1"}
 	s.deferred.mu.Lock()
@@ -259,7 +260,7 @@ func TestSend_TheEnvelopeIsTheNotification(t *testing.T) {
 	if err := json.Unmarshal(held.events[0].payload, &got); err != nil {
 		t.Fatalf("held payload is not the envelope: %v", err)
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("envelope = %+v, want %+v", got, want)
 	}
 }

@@ -41,6 +41,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		Sessions:  r.Sessions,
 		Lifecycle: r.Lifecycle,
 		Impact:    r.Impact,
+		Notices:   r.Notices,
 	})
 
 	// The handlers take the narrower chatStore; only the coordinator writes keep facts.

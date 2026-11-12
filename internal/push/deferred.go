@@ -95,10 +95,10 @@ func (s *Service) joinHeld(kind marotte.PushKind, subject marotte.PushSubject, a
 	}
 }
 
-// Retract drops the held ask push about subject that announces ask: the ask was answered on some
+// Settled drops the held ask push about subject that announces ask: the ask was answered on some
 // surface, so a nudge about it has nothing left to say. A later ask's push and another kind's stay
 // held. A no-op with the variant off, since nothing is ever held.
-func (s *Service) Retract(subject marotte.PushSubject, ask string) {
+func (s *Service) Settled(subject marotte.PushSubject, ask string) {
 	if !deferSuppressedSends {
 		return
 	}

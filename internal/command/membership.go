@@ -182,6 +182,8 @@ type Membership struct {
 	teardowns teardownQueue
 	// impact reads what a close stops, for the check of a confirmation; nil leaves every close unchecked.
 	impact closeImpactReader
+	// notices hears each ack's stored marker and each tab no open tab shows any more; nil hears nothing.
+	notices noticeLedger
 	// runs answers a run's owners and a session's runs. Nil refuses every new run tab
 	// and every create that claims a session, since neither can then be checked.
 	runs runOwner
@@ -235,6 +237,8 @@ type membershipDeps struct {
 	Teardowns teardownQueue
 	// Impact reads what a close stops; nil leaves every close unchecked.
 	Impact closeImpactReader
+	// Notices nil tells no ledger about acks and closes.
+	Notices noticeLedger
 }
 
 // newMembership builds the coordinator.
@@ -256,6 +260,7 @@ func newMembership(deps *membershipDeps) *Membership {
 		recentWake:        make(chan struct{}, 1),
 		teardowns:         deps.Teardowns,
 		impact:            deps.Impact,
+		notices:           deps.Notices,
 	}
 	if m.teardowns == nil {
 		m.teardowns = newTeardownRunner(deps.Lifecycle, m.runJob)

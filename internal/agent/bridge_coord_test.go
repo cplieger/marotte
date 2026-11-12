@@ -54,45 +54,48 @@ func newRecordingStartHub(t *testing.T) (*Runtime, *testChatStore, *recordingSta
 	return h, cs, rb
 }
 
-// recordingPush records each Send's body on a channel, plus the latest subject and chat
+// recordingPush records each delivered notice's body on a channel, plus the latest subject and chat
 // name, read only after a body arrives.
 type recordingPush struct {
+	pushStub
 	sends chan string
 	// noSubs flips HasSubscribers to false; the zero value keeps a subscriber.
 	noSubs  atomic.Bool
 	subject marotte.PushSubject
 	title   string
-	// retracted records each Retract call's subject and ask, in order; asks records each Send's ask.
+	// retracted records each Settled call's subject and ask, in order; asks records each delivery's ask.
 	retracted []retraction
 	asks      []string
 	mu        sync.Mutex
 }
 
-// retraction is one Retract call.
+// retraction is one Settled call.
 type retraction struct {
 	subject marotte.PushSubject
 	ask     string
 }
 
-func (p *recordingPush) HasSubscribers() bool                   { return !p.noSubs.Load() }
-func (*recordingPush) SetPreferences(map[marotte.PushKind]bool) {}
-func (*recordingPush) Preferences() map[marotte.PushKind]bool   { return nil }
-func (*recordingPush) Close()                                   {}
-func (p *recordingPush) Retract(subj marotte.PushSubject, ask string) {
+func (p *recordingPush) HasSubscribers() bool { return !p.noSubs.Load() }
+func (p *recordingPush) Settled(subj marotte.PushSubject, ask string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.retracted = append(p.retracted, retraction{subject: subj, ask: ask})
 }
 
-func (p *recordingPush) Send(_ context.Context, n *marotte.NotificationPayload) {
-	p.mu.Lock()
-	p.asks = append(p.asks, n.Ask)
-	p.mu.Unlock()
-	p.subject = n.PushSubject
-	p.title = n.Title
-	select {
-	case p.sends <- n.Body:
-	default:
+func (p *recordingPush) Raise(_ context.Context, _ marotte.ChatID, n *marotte.NotificationPayload, _ uint64) func(context.Context) {
+	return func(context.Context) {
+		if p.noSubs.Load() {
+			return
+		}
+		p.mu.Lock()
+		p.asks = append(p.asks, n.Ask)
+		p.mu.Unlock()
+		p.subject = n.PushSubject
+		p.title = n.Title
+		select {
+		case p.sends <- n.Body:
+		default:
+		}
 	}
 }
 

@@ -1,8 +1,10 @@
 package marotte_test
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/cplieger/go/keyenc"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -41,6 +43,33 @@ func TestPRSubject_KeysOnRepoID(t *testing.T) {
 			}
 			if got.ChatID != "" {
 				t.Errorf("PRSubject(%q, %q, %d).ChatID = %q, want empty", tc.forgeID, tc.repoID, tc.number, got.ChatID)
+			}
+		})
+	}
+}
+
+// Tab is the tab a page showing the subject is looking at: the chat, the run, or a wait's run; nothing else names one.
+func TestPushSubject_Tab(t *testing.T) {
+	cases := []struct {
+		name    string
+		subject marotte.PushSubject
+		kind    marotte.TabKind
+		ref     string
+		ok      bool
+	}{
+		{"chat", marotte.ChatSubject("c-1"), marotte.TabKindChat, "c-1", true},
+		{"run", marotte.RunSubject("wf_1"), marotte.TabKindRun, "wf_1", true},
+		{"wait", marotte.RunAskSubject(keyenc.Join("wf_1", "0/1", "s1")), marotte.TabKindRun, "wf_1", true},
+		{"hashed wait", marotte.RunAskSubject(keyenc.Join("wf_1", strings.Repeat("p", keyenc.MaxComponentBytes+1))), "", "", false},
+		{"pull request", marotte.PRSubject("github:github.com", "v1.61", 7), "", "", false},
+		{"rule", marotte.RuleSubject("r1"), "", "", false},
+		{"workspace", marotte.PushSubject{}, "", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			kind, ref, ok := tc.subject.Tab()
+			if kind != tc.kind || ref != tc.ref || ok != tc.ok {
+				t.Errorf("Tab() = (%q, %q, %v), want (%q, %q, %v)", kind, ref, ok, tc.kind, tc.ref, tc.ok)
 			}
 		})
 	}

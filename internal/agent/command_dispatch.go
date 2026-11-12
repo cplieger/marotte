@@ -15,6 +15,7 @@ func (rt *Runtime) registerCommandHandlers() {
 		Sessions:  rt.chatStore,
 		Bus:       rt.bus,
 		Tabs:      tabSetOrNil(rt.tabs),
+		Notices:   noticeRole{push: rt.push, coord: rt.coord},
 		Runs:      rt.runs,
 		RunCutter: rt.runs,
 		Effort:    rt.coord,

@@ -306,7 +306,7 @@ func (rs *Runs) retractAsks(positions []string) {
 		return
 	}
 	for _, p := range positions {
-		rs.coord.retractPush(marotte.RunAskSubject(p), p)
+		rs.coord.settleNotice(marotte.RunAskSubject(p), p)
 	}
 }
 

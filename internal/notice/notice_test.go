@@ -1,6 +1,7 @@
 package notice
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -76,7 +77,7 @@ func TestBuilders_titleIsTheTabAndBodyIsPhraseThenDetail(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.got != tc.want {
+			if !reflect.DeepEqual(tc.got, tc.want) {
 				t.Errorf("got %+v, want %+v", tc.got, tc.want)
 			}
 		})

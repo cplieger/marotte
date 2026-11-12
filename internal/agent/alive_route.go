@@ -37,3 +37,13 @@ func (rt *Runtime) handleAlive(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// handleView records a page's view report (marotte.PageView) for its SSE-Client tag. Answers 204.
+func (*Runtime) handleView(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleNotice records a page's report about a notice (marotte.NoticeReport) for its SSE-Client tag. Answers 204.
+func (*Runtime) handleNotice(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
