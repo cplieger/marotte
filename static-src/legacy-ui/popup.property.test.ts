@@ -195,7 +195,7 @@ function scenario(w: World): Scenario<Step> {
       fail(`a document ${entry.type} listener added with ${open.length.toString()} popups open`);
       return;
     }
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- the one API naming the event in dispatch
+    // window.event is the one API naming the event in dispatch.
     armedBy.set(entry.listener, { pop, opening: window.event ?? null });
   };
   let dismissing: Event | null = null;

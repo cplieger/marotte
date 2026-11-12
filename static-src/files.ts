@@ -36,7 +36,7 @@ import {
   parentPath,
   FB_ROOT,
   normalizeDirPath,
-  listNotice,
+  errorNotice,
   FB_NOTICE,
   sortEntries,
   initEditablePath,
@@ -586,22 +586,10 @@ function mountFbEntry(e: FbEntry): HTMLElement {
     case "entry":
       return entryRow(e.entry);
     case "error":
-      return errorNotice(e.message);
-  }
-}
-
-function errorNotice(message: string): HTMLDivElement {
-  const actions = [{ label: "Retry", run: retryListing }];
-  // Off the root, offer the way back (a nested granted root's parent is not browsable; a deleted directory).
-  if (cur().currentPath !== FB_ROOT) {
-    actions.push({
-      label: "Go to root",
-      run: () => {
+      return errorNotice(e.message, cur().currentPath, retryListing, () => {
         navigate(FB_ROOT);
-      },
-    });
+      });
   }
-  return listNotice(message, actions);
 }
 
 /** Middle-click opens in the background; no engine emits `click` for it. The `mousedown` companion cancels autoscroll. */

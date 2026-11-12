@@ -12,17 +12,22 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// ServeHTTP answers /preview/<token>/<rel>. The preview header set goes on
-// first, so every response, a refusal included, is sandboxed and framable only
-// by marotte itself.
+// ServeHTTP answers /preview/<token>/<rel> and its tab form under tabPathPrefix.
+// The preview header set goes on first, so every response, a refusal included,
+// is sandboxed under its route's policy.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	escaped := r.URL.EscapedPath()
+	prefix, tab := PathPrefix, strings.HasPrefix(escaped, tabPathPrefix)
+	if tab {
+		prefix = tabPathPrefix
+	}
 	hostOK := len(r.Host) <= maxHostBytes && hostPattern.MatchString(r.Host)
-	tok, rel, perr := splitServePath(r.URL.EscapedPath())
+	tok, rel, perr := splitServePath(escaped, prefix)
 	src := ""
 	if hostOK && len(tok) <= tokenMaxLen && tokenPattern.MatchString(tok) {
-		src = "http://" + r.Host + PathPrefix + tok + "/"
+		src = "http://" + r.Host + prefix + tok + "/"
 	}
-	setPreviewHeaders(w.Header(), src)
+	setPreviewHeaders(w.Header(), src, tab)
 
 	folder, ok := h.admit(w, r, hostOK, tok, rel, perr)
 	if !ok {
@@ -48,7 +53,7 @@ func (h *Handler) admit(w http.ResponseWriter, r *http.Request, hostOK bool, tok
 	}
 	capb, err := h.signer.verify(tok)
 	if err != nil {
-		httpreply.Forbidden(w, "This preview link has expired or is invalid. Reload the preview.")
+		httpreply.Forbidden(w, "This preview link has expired or is invalid. Reload the preview in marotte.")
 		return "", false
 	}
 	if len(rel) == 0 || rel[len(rel)-1] == "" {
@@ -120,9 +125,17 @@ func servePage(w http.ResponseWriter, r *http.Request, f *os.File) {
 // httpserver.SecurityHeaders sets before the handler and documents as overridable.
 // src is the granted folder as a CSP source, or "" when the request named none
 // worth trusting, in which case every list that would hold only it is 'none'.
-func setPreviewHeaders(h http.Header, src string) {
-	h.Set("Content-Security-Policy", previewCSP(src))
-	h.Set("X-Frame-Options", "SAMEORIGIN")
+// tab is the tab route, whose page may download and renders only top-level, so
+// the Preview frame cannot navigate itself into a frame that downloads. The route
+// alone decides, never Sec-Fetch-Dest: browsers send no Fetch Metadata to plain
+// HTTP off localhost (https://w3c.github.io/webappsec-fetch-metadata/).
+func setPreviewHeaders(h http.Header, src string, tab bool) {
+	h.Set("Content-Security-Policy", previewCSP(src, tab))
+	if tab {
+		h.Set("X-Frame-Options", "DENY")
+	} else {
+		h.Set("X-Frame-Options", "SAMEORIGIN")
+	}
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Cache-Control", "no-store")
 	// The sandboxed document's origin is opaque, so its module scripts, fonts and
@@ -132,7 +145,9 @@ func setPreviewHeaders(h http.Header, src string) {
 	h.Set("Referrer-Policy", "no-referrer")
 }
 
-func previewCSP(src string) string {
+// previewCSP never grants allow-same-origin: the opaque origin keeps a page,
+// framed or in its own tab, out of marotte's cookies, storage and API.
+func previewCSP(src string, tab bool) string {
 	list := func(srcs ...string) string {
 		var kept []string
 		for _, s := range srcs {
@@ -145,7 +160,11 @@ func previewCSP(src string) string {
 		}
 		return strings.Join(kept, " ")
 	}
-	return "sandbox allow-scripts allow-forms allow-modals; default-src 'none'" +
+	sandbox, ancestors := "sandbox allow-scripts allow-forms allow-modals", "'self'"
+	if tab {
+		sandbox, ancestors = sandbox+" allow-downloads", "'none'"
+	}
+	return sandbox + "; default-src 'none'" +
 		"; script-src " + list(src, "https:", "'unsafe-inline'", "'unsafe-eval'", "'wasm-unsafe-eval'", "blob:") +
 		"; style-src " + list(src, "https:", "'unsafe-inline'") +
 		"; img-src " + list(src, "https:", "data:", "blob:") +
@@ -156,5 +175,5 @@ func previewCSP(src string) string {
 		"; manifest-src 'none'; object-src 'none'; frame-src 'none'" +
 		"; base-uri " + list(src) +
 		"; form-action " + list(src) +
-		"; frame-ancestors 'self'"
+		"; frame-ancestors " + ancestors
 }

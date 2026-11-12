@@ -73,6 +73,16 @@
   gap: var(--sp-2);
 }
 
+/* Open in browser before its page has a grant: a link cannot be `:disabled`. */
+.web-open-btn[aria-disabled="true"] {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+
+  &:hover {
+    background: none;
+  }
+}
+
 /* One row of icon segments; the bar's height and each target's expander are
    the shared `.seg`'s (11-page-lists.css). */
 .web-viewport {

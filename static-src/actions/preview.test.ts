@@ -14,6 +14,7 @@ const mockFetch = vi.fn();
 
 const GRANT = {
   url: "/preview/tok/index.html",
+  tab_url: "/preview/tab/tok/index.html",
   base: "/preview/tok/",
   expires_at: "2026-10-03T12:00:00Z",
   epoch: "e1",
@@ -62,6 +63,7 @@ describe("preview.grant", () => {
     const later = {
       ...GRANT,
       url: "/preview/tok2/index.html",
+      tab_url: "/preview/tab/tok2/index.html",
       base: "/preview/tok2/",
       stamp: "s2",
     };

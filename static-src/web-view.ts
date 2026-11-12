@@ -6,6 +6,7 @@ import { $ } from "./dom.js";
 import { iconEl } from "./icon-el.js";
 import {
   ICON_EDIT_UI,
+  ICON_EXTERNAL,
   ICON_REFRESH,
   ICON_VIEWPORT_DESKTOP,
   ICON_VIEWPORT_FILL,
@@ -47,6 +48,8 @@ interface WebTab {
   status: TabStatus;
   hint: PreviewHint | undefined;
   epoch: string;
+  /** The tab URL of the grant last mounted, "" while there is none; an in-frame navigation does not move it. */
+  tabURL: string;
   /** Bumped by every load and unload, so a grant that lands late is dropped. */
   loadSeq: number;
   /** The stamp the grant for the document on screen was minted at, and a
@@ -110,6 +113,7 @@ export function showWebTab(path: string): void {
   tab.shownAt = ++showCounter;
   paintPath(tab);
   paintRadios(tab);
+  paintOpen(tab);
   if (tab.status === "idle") {
     void load(tab);
   }
@@ -145,6 +149,7 @@ function createTab(path: string): WebTab {
     status: "idle",
     hint: undefined,
     epoch: "",
+    tabURL: "",
     loadSeq: 0,
     baseline: "",
     pending: undefined,
@@ -181,6 +186,7 @@ function unload(tab: WebTab): void {
   tab.loadSeq++;
   tab.frame = null;
   tab.status = "idle";
+  tab.tabURL = "";
   tab.baseline = "";
   tab.pending = undefined;
   tab.wrapper.replaceChildren();
@@ -217,6 +223,7 @@ function ensureInit(): void {
       void load(tab);
     }
   });
+  $.webOpenBtn.replaceChildren(iconEl(ICON_EXTERNAL));
   $.webEditBtn.replaceChildren(iconEl(ICON_EDIT_UI));
   $.webEditBtn.addEventListener("click", () => {
     const tab = shownTab();
@@ -308,6 +315,10 @@ async function load(tab: WebTab): Promise<void> {
     paintRadios(tab);
   }
   mountFrame(tab, grant.url);
+  tab.tabURL = grant.tab_url;
+  if (shown) {
+    paintOpen(tab);
+  }
   tab.status = "loaded";
   tab.baseline = grant.stamp;
   tab.pending = undefined;
@@ -352,6 +363,10 @@ function enforceMountCap(incoming: WebTab): void {
 function showError(tab: WebTab, message: string): void {
   tab.frame = null;
   tab.status = "error";
+  tab.tabURL = "";
+  if (shownPath === tab.path) {
+    paintOpen(tab);
+  }
   const retry = el("button", { type: "button", className: "btn btn-small" }, "Retry");
   retry.addEventListener("click", () => {
     void load(tab);
@@ -404,6 +419,22 @@ function paintPath(tab: WebTab): void {
   const path = $.webPath;
   path.replaceChildren(el("bdi", {}, relToWorkspace(tab.path)));
   path.dataset["tooltip"] = tab.path;
+}
+
+/** internal/preview setPreviewHeaders owns which route may download. */
+function paintOpen(tab: WebTab): void {
+  const open = $.webOpenBtn;
+  if (tab.tabURL === "") {
+    open.removeAttribute("href");
+    open.removeAttribute("target");
+    open.removeAttribute("rel");
+    open.setAttribute("aria-disabled", "true");
+    return;
+  }
+  open.setAttribute("href", tab.tabURL);
+  open.target = "_blank";
+  open.rel = "noopener noreferrer";
+  open.removeAttribute("aria-disabled");
 }
 
 function radioSpecs(hint: PreviewHint | undefined): RadioSpec[] {

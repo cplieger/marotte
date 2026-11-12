@@ -1,5 +1,6 @@
 // Package preview serves an agent-written HTML page and the folder it sits in
-// to a sandboxed iframe on marotte's own origin. A grant is an HMAC capability
+// to a sandboxed iframe on marotte's own origin, or to a sandboxed top-level tab
+// that may download. A grant is an HMAC capability
 // naming one folder; the serve route answers only paths beneath it, resolved by
 // the kernel with symlinks refused, under a response policy that gives the
 // document an opaque origin.

@@ -61,6 +61,7 @@ const PAIRS: readonly (readonly [
   // The shell toggle is not here (see the divergence test). Docs categories the app already draws elsewhere.
   ["docs tab Steering", 'data-docs-tab="steering"', toolIcon({ kind: "steering", toolName: "" })],
   ["docs tab Hooks", 'data-docs-tab="hooks"', toolIcon({ kind: "hook", toolName: "" })],
+  ["docs tab Skills", 'data-docs-tab="skills"', ICON_SUBAGENT_INTROSPECT],
   ["docs tab Agents", 'data-docs-tab="agents"', ICON_TAB_AGENT],
   ["docs tab Specs", 'data-docs-tab="specs"', ICON_TAB_SPEC],
   ["docs tab Workflows", 'data-docs-tab="workflows"', ICON_TAB_RUN],
@@ -149,6 +150,19 @@ describe("hand-authored glyphs in static/index.html", () => {
     expect(glyphOf('id="docs-btn"'), "the sidebar button").toBe(libraryBig);
     expect(inner(ICON_TAB_DOCS), "the docs tab").toBe(libraryBig);
     expect(inner(toolIcon({ kind: "read", toolName: "" })), "the read family").toBe(libraryBig);
+  });
+
+  // Two spellings of one bolt pass the distinct-glyph test above, so the marks themselves are pinned: Skills is Lucide
+  // `graduation-cap` (lucide-icons/lucide icons/graduation-cap.svg, minus stroke-width), Powers keeps its bolt.
+  it("draws a graduation cap for Skills and keeps the bolt for Powers", () => {
+    const graduationCap =
+      '<path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z"/>' +
+      '<path d="M22 10v6"/><path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5"/>';
+    const zap =
+      '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63' +
+      'l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>';
+    expect(glyphOf('data-docs-tab="skills"'), "the Skills tab").toBe(graduationCap);
+    expect(glyphOf('data-docs-tab="powers"'), "the Powers tab").toBe(zap);
   });
 
   // Introspect's old book was indistinguishable from the read glyph at 16px in one transcript.

@@ -2756,7 +2756,8 @@ export interface PollResult {
 
 /**
  * PreviewGrant is a capability to read one folder through /preview/. URL is the
- * entry page and is used verbatim as the iframe src; Epoch changes when the
+ * entry page and is used verbatim as the iframe src; TabURL is the same page on
+ * the route for a top-level tab, which may download; Epoch changes when the
  * server restarts, which invalidates every grant it minted. Hint is absent when
  * the page states no size. Stamp is the folder's PreviewStamp.Stamp read before
  * the grant was minted, so it is never newer than the document URL serves.
@@ -2765,6 +2766,7 @@ export interface PreviewGrant {
   expires_at: string;
   hint?: PreviewHint;
   url: string;
+  tab_url: string;
   base: string;
   epoch: string;
   stamp: string;

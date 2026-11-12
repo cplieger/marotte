@@ -124,3 +124,18 @@ export function listNotice(msg: string, actions: readonly NoticeAction[] = []): 
   }
   return notice;
 }
+
+/** A listing's error: off the root it also offers the root, since an error clears the ".." row (a nested granted
+ *  root's parent is not browsable; a deleted directory). */
+export function errorNotice(
+  message: string,
+  path: string,
+  retry: () => void,
+  toRoot: () => void,
+): HTMLDivElement {
+  const actions: NoticeAction[] = [{ label: "Retry", run: retry }];
+  if (path !== FB_ROOT) {
+    actions.push({ label: "Go to root", run: toRoot });
+  }
+  return listNotice(message, actions);
+}
