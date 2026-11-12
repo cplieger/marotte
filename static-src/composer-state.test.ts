@@ -41,6 +41,7 @@ import {
   addAttachmentTo,
   attachmentGeneration,
 } from "./attachments.js";
+import { onComposerWrite } from "./composer-value.js";
 import { setSessions } from "./store.js";
 import type { Session } from "./types.js";
 
@@ -250,6 +251,37 @@ describe("draft text across a chat switch", () => {
   });
 });
 
+describe("which restores count as an edit of the box (onComposerWrite)", () => {
+  function writesDuring(fn: () => void): number {
+    let n = 0;
+    onComposerWrite(() => {
+      n++;
+    });
+    try {
+      fn();
+    } finally {
+      onComposerWrite(() => undefined);
+    }
+    return n;
+  }
+
+  it("treats putting the parked chat's own draft back as no edit", () => {
+    restoreComposerState("c1");
+    type("my draft");
+    saveComposerState();
+    expect(writesDuring(() => restoreComposerState("c1"))).toBe(0);
+    expect(input().value).toBe("my draft");
+  });
+
+  it("treats showing another chat's draft as an edit", () => {
+    restoreComposerState("c1");
+    type("my draft");
+    saveComposerState();
+    expect(writesDuring(() => restoreComposerState("c2"))).toBe(1);
+    expect(input().value).toBe("");
+  });
+});
+
 describe("the listeners this module owns on the composer element", () => {
   it("records typing through the input event", () => {
     restoreComposerState("c1");
@@ -305,7 +337,7 @@ describe("flushing a pending save", () => {
     // The textarea is a display surface: ArrowUp shows a submitted prompt without an `input` event, so the map is the draft.
     restoreComposerState("c1");
     type("the real draft");
-    input().value = "a prompt from the history"; // silent, like setInputValue
+    input().value = "a prompt from the history"; // silent, like recallComposerValue
     mockPending.mockReturnValue(true);
     flushComposerDraft();
     expect(mockFlush).toHaveBeenCalledWith({ chatID: "c1", text: "the real draft" });

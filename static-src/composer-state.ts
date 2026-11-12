@@ -4,7 +4,7 @@
 // (`seedComposerState`), except for a chat this device is not typing in (`adoptRemoteComposerState`).
 
 import { $ } from "./dom.js";
-import { writeComposerSilently } from "./composer-value.js";
+import { restoreComposerDraft, writeComposerSilently } from "./composer-value.js";
 import { get } from "./store.js";
 import { setDraft } from "./actions/chat.js";
 import { debouncedDispatch, registerCleanup, type DebouncedDispatch } from "./actions/index.js";
@@ -28,6 +28,9 @@ const drafts = new Map<string, string>();
 
 /** The chat the textarea belongs to; "" between a save and its restore, so `noteComposerText` no-ops on "". */
 let liveChatID = "";
+
+/** The chat the last save parked, so a restore of it is known to put its own draft back. */
+let parkedChatID = "";
 
 let debouncedSave: DebouncedDispatch<{ chatID: string; text: string }> | null = null;
 
@@ -102,13 +105,20 @@ export function flushComposerDraft(): void {
 export function saveComposerState(): void {
   flushComposerDraft();
   stashAttachments();
+  parkedChatID = liveChatID;
   liveChatID = "";
 }
 
 /** Put `chatID`'s composer contents on screen; a chat with no draft gets an empty box, never the previous one's. */
 export function restoreComposerState(chatID: string): void {
+  const own = chatID === parkedChatID;
   liveChatID = chatID;
-  writeComposerSilently(drafts.get(chatID) ?? "");
+  const text = drafts.get(chatID) ?? "";
+  if (own) {
+    restoreComposerDraft(text);
+  } else {
+    writeComposerSilently(text);
+  }
   restoreAttachments(chatID);
 }
 
@@ -250,5 +260,6 @@ export function _resetComposerStateForTest(): void {
   debouncedSave = null;
   drafts.clear();
   liveChatID = "";
+  parkedChatID = "";
   _resetAttachmentsForTest();
 }
