@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -20,7 +22,12 @@ const botRoleMessage = "This Bot's role did not load. Its next message retries."
 // so the role's paths sit under it.
 func botRuntime(t *testing.T, bridges ...*fakeBridge) (*Runtime, *testChatStore) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// KIRO_HOME exists as kiro-cli and marotte's boot steering leave it; a Bot's memory file is made below it.
+	if err := os.Mkdir(filepath.Join(home, ".kiro"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	var mu sync.Mutex
 	next := bridges
 	factory := func() engineSession {

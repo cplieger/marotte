@@ -62,7 +62,7 @@ func (in *inbound) respondFSRead(ctx context.Context, chatID marotte.ChatID, ori
 		in.respondFSError(ctx, chatID, origin, msg, errors.New("path is required"))
 		return
 	}
-	target, err := in.confineRead(ctx, p.SessionID, p.Path)
+	target, err := in.confineFor(ctx, chatID, p.SessionID, p.Path, fsRead)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return

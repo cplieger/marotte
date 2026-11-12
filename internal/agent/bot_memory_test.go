@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -280,6 +281,165 @@ func TestBotDoor_MemoryOffWithNoPathToRemoveWarns(t *testing.T) {
 	}
 	if !kept {
 		t.Errorf("no warning that the session may still hold its memory file; logs:\n%s", logs.String())
+	}
+}
+
+// startingMemory is design §7.2 "Starting text".
+const startingMemory = "# Memory\n\nYour notes for future turns. Keep this file under 40,000 characters.\n"
+
+// botMemoryHome is the test HOME's KIRO_HOME, created as kiro-cli and marotte's boot steering leave it, and c1's
+// memory file under it.
+func botMemoryHome(t *testing.T) (kiroHome, file string) {
+	t.Helper()
+	kiroHome = filepath.Join(homeOf(t), ".kiro")
+	if err := os.MkdirAll(kiroHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return kiroHome, filepath.Join(kiroHome, "bots", "c1", "memory.md")
+}
+
+func permOf(t *testing.T, path string) (os.FileMode, bool) {
+	t.Helper()
+	fi, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return 0, false
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fi.Mode().Perm(), true
+}
+
+// TestBotDoor_MemoryOnCreatesTheFile pins design §3.4 and §7.2 "Starting text" at the door: a started Bot with memory
+// on opens with its directory (0700) and memory file (0600) in place, the starting text in a new file and the notes
+// kept in one that exists.
+func TestBotDoor_MemoryOnCreatesTheFile(t *testing.T) {
+	for _, door := range doors {
+		for _, notes := range []string{"", "- the backlog is at seven\n"} {
+			t.Run(door.name+" with notes "+strconv.Quote(notes), func(t *testing.T) {
+				h, cs := botRuntime(t, reporting(marotte.BotRoleID, marotte.DefaultModeID, marotte.BotRoleID))
+				_, file := botMemoryHome(t)
+				want := startingMemory
+				if notes != "" {
+					want = notes
+					if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(file, []byte(notes), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				seedModeChat(t, cs, "c1", true, door.resumed)
+
+				if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
+					t.Fatalf("open the Bot: %v", err)
+				}
+
+				if got, err := os.ReadFile(file); err != nil || string(got) != want {
+					t.Errorf("memory.md = %q, %v; want %q", got, err, want)
+				}
+				if mode, ok := permOf(t, file); !ok || mode != 0o600 {
+					t.Errorf("memory.md mode = %o (exists %v), want 600", mode, ok)
+				}
+				if mode, ok := permOf(t, filepath.Dir(file)); !ok || mode != 0o700 {
+					t.Errorf("the Bot's directory mode = %o (exists %v), want 700", mode, ok)
+				}
+			})
+		}
+	}
+}
+
+// TestBotDoor_NoMemoryCreatesNothingAndKeepsTheNotes pins design §7.2 "Memory off": a Bot with memory off, a draft and
+// a regular chat open with no memory file made, and memory off keeps the notes a Bot already wrote.
+func TestBotDoor_NoMemoryCreatesNothingAndKeepsTheNotes(t *testing.T) {
+	for _, door := range doors {
+		for _, tc := range []struct {
+			name string
+			bot  *marotte.Bot
+		}{
+			{"a Bot with memory off", &marotte.Bot{Goal: "Answer the weekly questions.", StartedAt: 1}},
+			{"a draft with memory on", &marotte.Bot{Goal: "Answer the weekly questions.", Memory: true}},
+			{"a regular chat", nil},
+		} {
+			t.Run(door.name+" "+tc.name, func(t *testing.T) {
+				h, cs := botRuntime(t, reporting(marotte.BotRoleID, marotte.DefaultModeID, marotte.BotRoleID))
+				kiroHome, _ := botMemoryHome(t)
+				seedModeChat(t, cs, "c1", tc.bot != nil && tc.bot.StartedAt != 0, door.resumed)
+				if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+					c.Bot = tc.bot
+					return true
+				}); err != nil {
+					t.Fatal(err)
+				}
+
+				if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
+					t.Fatalf("open: %v", err)
+				}
+
+				if _, ok := permOf(t, filepath.Join(kiroHome, "bots")); ok {
+					t.Error("bots/ was created for a chat with no memory")
+				}
+			})
+		}
+		t.Run(door.name+" memory off keeps the notes", func(t *testing.T) {
+			h, cs := botRuntime(t, reporting(marotte.BotRoleID, marotte.DefaultModeID, marotte.BotRoleID))
+			_, file := botMemoryHome(t)
+			if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(file, []byte("- the backlog is at seven\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			seedModeChat(t, cs, "c1", true, door.resumed)
+			setBotMemory(t, cs, "c1", false)
+
+			if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
+				t.Fatalf("open the Bot: %v", err)
+			}
+
+			if got, err := os.ReadFile(file); err != nil || string(got) != "- the backlog is at seven\n" {
+				t.Errorf("memory.md = %q, %v; want the notes kept", got, err)
+			}
+		})
+	}
+}
+
+// TestBotDoor_ALinkedDirectoryIsNotWrittenThrough pins design §3.4 at the door: a link where the Bot's directory goes
+// is refused, nothing lands at its target, the session is not told to load what it points at, the chat is told the
+// memory did not load, and the Bot still opens.
+func TestBotDoor_ALinkedDirectoryIsNotWrittenThrough(t *testing.T) {
+	for _, door := range doors {
+		t.Run(door.name, func(t *testing.T) {
+			br := reporting(marotte.BotRoleID, marotte.DefaultModeID, marotte.BotRoleID)
+			h, cs := botRuntime(t, br)
+			kiroHome, file := botMemoryHome(t)
+			target := filepath.Join(kiroHome, "steering")
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(kiroHome, "bots"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, filepath.Dir(file)); err != nil {
+				t.Fatal(err)
+			}
+			seedModeChat(t, cs, "c1", true, door.resumed)
+			since := h.bus.fanout.Position().Head
+
+			if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
+				t.Fatalf("open the Bot: %v", err)
+			}
+
+			if entries, _ := os.ReadDir(target); len(entries) != 0 {
+				t.Errorf("the link's target holds %v, want nothing written there", entries)
+			}
+			if n, _ := contextCalls(br); n != 0 {
+				t.Errorf("%d %s calls, want none for a linked directory", n, marotte.MethodSessionContext)
+			}
+			if got := memoryErrorsSince(t, h, since); !slices.Equal(got, []string{botMemoryMessage}) {
+				t.Errorf("memory_not_loaded messages = %q, want %q", got, []string{botMemoryMessage})
+			}
+		})
 	}
 }
 

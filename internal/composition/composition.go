@@ -18,6 +18,7 @@ import (
 	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/auth"
+	"github.com/cplieger/marotte/internal/bot"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/chat/archive"
 	"github.com/cplieger/marotte/internal/command"
@@ -153,6 +154,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Before agent.New, so no Bot door makes a directory while the sweep judges it.
+	sweepBotDirs(ctx, chatStore, bot.Paths{KiroHome: workspace.KiroHome()})
 
 	// The sign-in the agent engine is answered from, on the app's lifetime: its poll and renewals outlive a request.
 	vault := signin.Open(appCtx, cfg.ConfigDir, signinBackends()...)

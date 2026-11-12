@@ -83,15 +83,23 @@ func (c *capture) writeMemory(rec *marotte.Chat, body string) error {
 	return os.WriteFile(file, []byte(body), 0o600)
 }
 
-// botDoor opens rec's session as marotte's Bot door does: the role on the door, then the memory file added as a
-// context file while memory is on, or removed on a load while it is off (internal/agent holdBotMemory).
+// botDoor opens rec's session as marotte's Bot door does: the role on the door, the Bot's directory among the
+// session's additional directories and granted to it while memory is on, then the memory file added as a context file,
+// or removed on a load while memory is off (internal/agent holdBotMemory).
 func (c *capture) botDoor(ctx context.Context, e *bridge.Engine, rec *marotte.Chat, sessionID string, presets []string) (*bridge.Session, int, error) {
 	o := botOpts(c.botRole(rec), presets)
 	o.SessionID = sessionID
+	var dirs []string
+	if rec.Bot.Memory {
+		dir, _ := bot.Dir(rec.ID, bot.Paths{KiroHome: c.home})
+		dirs = []string{dir}
+		o.AdditionalDirectories = dirs
+	}
 	s, lane, err := c.openSession(ctx, e, o)
 	if err != nil {
 		return nil, 0, err
 	}
+	c.grant(s.SessionID(), dirs...)
 	sub := marotte.SessionContextAdd
 	switch {
 	case !rec.Bot.Memory && sessionID == "":
@@ -140,6 +148,9 @@ func (c *capture) openSession(ctx context.Context, e *bridge.Engine, o *marotte.
 	}
 	if len(o.Presets) > 0 {
 		kiro["policyPreset"] = o.Presets
+	}
+	if len(o.AdditionalDirectories) > 0 {
+		params["additionalDirectories"] = o.AdditionalDirectories
 	}
 	params["_meta"] = map[string]any{"kiro": kiro}
 	req := c.out(lane, map[string]any{"method": method, "params": params})

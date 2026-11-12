@@ -69,6 +69,8 @@ func TestCaptureKASCorpus(t *testing.T) {
 		{name: "bot_role", about: "A regular chat's session/new; a Bot's session/new on its role and a prompt; reopens through the Bot door with the same role, with an edited role (goal changed, memory on as a context file, a prompt), with memory off (the file removed), and with no role, then session/set_mode to the role.", run: runBotRole},
 		{name: "bot_policy", about: "Under each Permission profile, _kiro/policy/check on a Default chat and on a Bot for the same probes, then the Bot's memory write; under Trusted, each session lists its own tools with sub-agents on.", run: runBotPolicy},
 		{name: "bot_memory", about: "A Bot whose memory file is a context file added before the file exists: a prompt, the file written, a prompt, an edit, a prompt, the file deleted and its listing, the file recreated, a prompt; then a regular session's context and a prompt, and a fork of the Bot loaded and its context.", run: runBotMemory},
+		{name: "bot_memory_write", about: "A Bot with memory on and its directory in additionalDirectories writes its memory file in a turn; reopens with memory off (no directory) and on again, a prompt; then a regular session asked to write the same file, which the client refuses.", run: runBotMemoryWrite},
+		{name: "bot_tangent", about: "A Bot with memory on and a prompt; a tangent forked from it on the default mode, loaded as a regular chat, asked to read the Bot's memory file, which the client refuses.", run: runBotTangent},
 	} {
 		t.Run(sc.name, func(t *testing.T) { captureScenario(t, &env, sc) })
 	}
@@ -120,6 +122,9 @@ type capture struct {
 	home    string
 	reached map[int]uint64
 	cutoff  map[int]uint64
+	// grants are the directories past the workspace a session's file requests reach, as marotte grants a Bot's own
+	// directory to the sessions of its chain alone.
+	grants map[marotte.SessionID][]string
 	// onFrame is the scenario's hook, run on the pump goroutine after the frame is recorded.
 	onFrame func(s *bridge.Session, msg *marotte.RPCResponse)
 	cond    *sync.Cond
@@ -140,6 +145,7 @@ func newCapture(t *testing.T, env *captureEnv) *capture {
 		home:    t.TempDir(),
 		reached: map[int]uint64{},
 		cutoff:  map[int]uint64{},
+		grants:  map[marotte.SessionID][]string{},
 	}
 	c.cond = sync.NewCond(&c.mu)
 	t.Setenv("KIRO_HOME", c.home)
@@ -377,8 +383,10 @@ func (c *capture) answer(s *bridge.Session, lane int, msg *marotte.RPCResponse) 
 
 func (c *capture) resolve(msg *marotte.RPCResponse) (any, error) {
 	var p struct {
-		Path    string `json:"path"`
-		Options []struct {
+		SessionID marotte.SessionID `json:"sessionId"`
+		Path      string            `json:"path"`
+		Content   string            `json:"content"`
+		Options   []struct {
 			OptionID string `json:"optionId"`
 			Kind     string `json:"kind"`
 		} `json:"options"`
@@ -393,13 +401,18 @@ func (c *capture) resolve(msg *marotte.RPCResponse) (any, error) {
 		}
 		return nil, errors.New("no allow_once option offered")
 	case marotte.MethodFSRead:
-		data, err := c.readScratch(p.Path)
+		data, err := c.readScratch(p.SessionID, p.Path)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"content": string(data)}, nil
+	case marotte.MethodFSWrite:
+		if err := c.writeScratch(p.SessionID, p.Path, p.Content); err != nil {
+			return nil, err
+		}
+		return map[string]any{}, nil
 	case "_kiro/fs/stat":
-		info, err := c.statScratch(p.Path)
+		info, err := c.statScratch(p.SessionID, p.Path)
 		if err != nil {
 			return nil, err
 		}
@@ -409,7 +422,7 @@ func (c *capture) resolve(msg *marotte.RPCResponse) (any, error) {
 		}
 		return map[string]any{"type": kind, "size": info.Size()}, nil
 	case "_kiro/fs/read_directory":
-		return c.listScratch(p.Path)
+		return c.listScratch(p.SessionID, p.Path)
 	case "_kiro/search/text_search", "_kiro/search/find_files":
 		return c.search(msg)
 	case marotte.MethodElicitationCreate:
@@ -421,17 +434,30 @@ func (c *capture) resolve(msg *marotte.RPCResponse) (any, error) {
 	return nil, &marotte.RPCError{Code: -32601, Message: "method not found: " + msg.Method}
 }
 
-func (c *capture) scratchRoot(path string) (*os.Root, string, error) {
-	rel, err := filepath.Rel(c.work, path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
-		return nil, "", fmt.Errorf("%s is outside the capture workspace", path)
-	}
-	root, err := os.OpenRoot(c.work)
-	return root, rel, err
+// grant sets the directories past the workspace session's file requests reach; none takes them away.
+func (c *capture) grant(session marotte.SessionID, dirs ...string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.grants[session] = dirs
 }
 
-func (c *capture) readScratch(path string) ([]byte, error) {
-	root, rel, err := c.scratchRoot(path)
+// scratchRoot opens the root holding path for session's request: the workspace, or a directory granted to it.
+func (c *capture) scratchRoot(session marotte.SessionID, path string) (*os.Root, string, error) {
+	c.mu.Lock()
+	dirs := append([]string{c.work}, c.grants[session]...)
+	c.mu.Unlock()
+	for _, dir := range dirs {
+		rel, err := filepath.Rel(dir, path)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+			root, err := os.OpenRoot(dir)
+			return root, rel, err
+		}
+	}
+	return nil, "", fmt.Errorf("%s is outside the capture workspace", path)
+}
+
+func (c *capture) readScratch(session marotte.SessionID, path string) ([]byte, error) {
+	root, rel, err := c.scratchRoot(session, path)
 	if err != nil {
 		return nil, err
 	}
@@ -439,8 +465,17 @@ func (c *capture) readScratch(path string) ([]byte, error) {
 	return root.ReadFile(rel)
 }
 
-func (c *capture) statScratch(path string) (os.FileInfo, error) {
-	root, rel, err := c.scratchRoot(path)
+func (c *capture) writeScratch(session marotte.SessionID, path, content string) error {
+	root, rel, err := c.scratchRoot(session, path)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.WriteFile(rel, []byte(content), 0o600)
+}
+
+func (c *capture) statScratch(session marotte.SessionID, path string) (os.FileInfo, error) {
+	root, rel, err := c.scratchRoot(session, path)
 	if err != nil {
 		return nil, err
 	}
@@ -448,8 +483,8 @@ func (c *capture) statScratch(path string) (os.FileInfo, error) {
 	return root.Stat(rel)
 }
 
-func (c *capture) listScratch(path string) (any, error) {
-	root, rel, err := c.scratchRoot(path)
+func (c *capture) listScratch(session marotte.SessionID, path string) (any, error) {
+	root, rel, err := c.scratchRoot(session, path)
 	if err != nil {
 		return nil, err
 	}

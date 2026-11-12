@@ -131,9 +131,10 @@ func botPaths() bot.Paths {
 	return bot.Paths{KiroHome: workspace.KiroHome()}
 }
 
-// holdBotMemory makes a Bot's just-opened session load its memory file as a context file while memory is on, and drop
-// it on a load while memory is off: KAS keeps a session's context files across loads, and a new session has none. A
-// call is tried twice; a failed add warns in the chat, and the open goes on either way.
+// holdBotMemory makes a Bot's just-opened session load its memory file as a context file while memory is on, made
+// first where it is missing, and drop it on a load while memory is off: KAS keeps a session's context files across
+// loads, and a new session has none. A call is tried twice; a file that cannot be made or a failed add warns in the
+// chat, and the open goes on either way.
 func (bc *bridgeCoordinator) holdBotMemory(ctx context.Context, rec *marotte.Chat, session engineSession, loaded bool) {
 	chatID := marotte.ChatID(rec.ID)
 	file, ok := bot.MemoryFile(rec, botPaths())
@@ -150,6 +151,12 @@ func (bc *bridgeCoordinator) holdBotMemory(ctx context.Context, rec *marotte.Cha
 	case !ok:
 		bc.warnBotMemory(ctx, chatID, errors.New("no memory file under an absolute KIRO_HOME"))
 		return
+	default:
+		// KAS would load whatever a refused link points at.
+		if err := bot.EnsureMemory(rec, botPaths()); err != nil {
+			bc.warnBotMemory(ctx, chatID, err)
+			return
+		}
 	}
 	err := callSessionContext(ctx, session, &params)
 	if err != nil {
