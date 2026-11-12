@@ -46,7 +46,7 @@ var (
 	forbiddenInCapture = []string{"/config/", "/workspace/", "/root/", "/home/", "_kiro/auth/", "accessToken"}
 )
 
-// TestCaptureKASCorpus records the KAS frames marotte's own bridge receives for four scenarios and
+// TestCaptureKASCorpus records the KAS frames marotte's own bridge receives for each scenario and
 // rewrites internal/translate/testdata/kas/*.jsonl, whose decode tests check invariants, not snapshots.
 // It spends model credits, so it needs both MAROTTE_LIVE_KIRO_CLI (a signed-in kiro-cli of the
 // entrypoint's pinned version) and -kas-capture.
@@ -66,6 +66,9 @@ func TestCaptureKASCorpus(t *testing.T) {
 		{name: "compact", about: "Two one-word turns, _kiro/session/compact, a third turn; then a fresh engine and a session/load of the same id.", run: runCompact},
 		{name: "delegate", about: "A prompt that delegates to a sub-agent with AutoDelegation on; then session/close and a same-id session/load on the same engine.", run: runDelegate},
 		{name: "elicit", about: "An MCP tool that sends elicitation/create, answered accept with marotte.ElicitationResult, and the tool's completion.", run: runElicit},
+		{name: "bot_role", about: "A regular chat's session/new; a Bot's session/new on its role and a prompt; reopens through the Bot door with the same role, with an edited role (goal changed, memory on as a context file, a prompt), with memory off (the file removed), and with no role, then session/set_mode to the role.", run: runBotRole},
+		{name: "bot_policy", about: "Under each Permission profile, _kiro/policy/check on a Default chat and on a Bot for the same probes, then the Bot's memory write; under Trusted, each session lists its own tools with sub-agents on.", run: runBotPolicy},
+		{name: "bot_memory", about: "A Bot whose memory file is a context file added before the file exists: a prompt, the file written, a prompt, an edit, a prompt, the file deleted and its listing, the file recreated, a prompt; then a regular session's context and a prompt, and a fork of the Bot loaded and its context.", run: runBotMemory},
 	} {
 		t.Run(sc.name, func(t *testing.T) { captureScenario(t, &env, sc) })
 	}

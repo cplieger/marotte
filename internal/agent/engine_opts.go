@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"strconv"
 
+	"github.com/cplieger/marotte/internal/bot"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 )
@@ -179,11 +181,11 @@ func (rt *Runtime) sessionFingerprint(ctx context.Context) (string, bool) {
 // chatSessionOpts is what a chat's session door sends.
 func (rt *Runtime) chatSessionOpts(ctx context.Context, rec *marotte.Chat, ask *sessionAsk, steering []marotte.ClientSteeringDoc) *marotte.SessionOpts {
 	s := rt.readSessionSettings(ctx)
-	return &marotte.SessionOpts{
+	opts := &marotte.SessionOpts{
 		Role:                  marotte.SessionRoleChat,
 		Model:                 ask.model,
 		Effort:                ask.effort,
-		Mode:                  rec.CurrentModeID,
+		Mode:                  doorMode(rec),
 		Thinking:              ask.thinking,
 		Presets:               s.Presets,
 		AdditionalDirectories: s.AdditionalDirectories,
@@ -194,4 +196,24 @@ func (rt *Runtime) chatSessionOpts(ctx context.Context, rec *marotte.Chat, ask *
 		// marotte's autoCompactor is a chat's one compactor, at a turn's end.
 		DisableAutoCompaction: true,
 	}
+	if rec.IsStartedBot() {
+		opts.CustomAgents = []marotte.ClientCustomAgent{bot.Role(rec, botPaths())}
+		if doc, ok := bot.SteeringDoc(rec); ok {
+			opts.Steering = append(slices.Clone(steering), doc)
+		}
+	}
+	return opts
+}
+
+// doorMode is the mode a chat's door asks for. Only a started Bot's door registers the role, so it asks for the role
+// whatever its record was left on, and any other record naming the role (a draft's, which marotte.Chat.AdoptMode holds
+// there) asks for the default mode.
+func doorMode(rec *marotte.Chat) string {
+	switch {
+	case rec.IsStartedBot():
+		return marotte.BotRoleID
+	case rec.CurrentModeID == marotte.BotRoleID:
+		return marotte.DefaultModeID
+	}
+	return rec.CurrentModeID
 }

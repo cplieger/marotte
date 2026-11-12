@@ -28,10 +28,12 @@ const (
 	workSession
 	// workCloser is the chat's closer goroutine (askClose); it is the life's work, not a hold.
 	workCloser
+	// workRole is a Bot role keeper's set_mode (chatLifecycle.sendRoleLocked).
+	workRole
 	workKinds
 )
 
-var workKindNames = [workKinds]string{"doors", "forwards", "tails", "sweeps", "sessions", "closers"}
+var workKindNames = [workKinds]string{"doors", "forwards", "tails", "sweeps", "sessions", "closers", "role re-asserts"}
 
 // newLifecycle builds a lifecycle for chatID admitted at stamp, its context a child of the registry's lifetime, holding
 // the chat's open hosted steps. Caller holds r.mu.

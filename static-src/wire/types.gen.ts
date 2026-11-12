@@ -20,7 +20,7 @@ export type EngineState = "starting" | "ready" | "restarting" | "down";
 
 export type EntryKind = "turn_open" | "turn_bind" | "turn_wake" | "run_named" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "steer_cleared" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "turn_revert" | "context_reset" | "reconciled" | "turn_close" | "step_graded";
 
-export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed" | "resume_not_sent";
+export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "memory_not_loaded" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed" | "resume_not_sent";
 
 export type FailureKind = "context_limit" | "model_call_limit" | "empty_answer";
 

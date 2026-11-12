@@ -359,6 +359,13 @@ var table = []decl{
 		send:        true,
 	},
 	{
+		key:         "customAgents",
+		door:        doorSession,
+		resolver:    resolverObjectList,
+		sessionGate: func(s *SessionSpawn) (any, bool) { return s.CustomAgents, len(s.CustomAgents) > 0 },
+		send:        true,
+	},
+	{
 		key:      "overrideSessionId",
 		door:     doorSession,
 		resolver: resolverText,

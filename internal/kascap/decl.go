@@ -12,6 +12,8 @@
 // table.go is the record; Capabilities, SessionMeta, ChildEnv and PromptMeta are its projections.
 package kascap
 
+import "github.com/cplieger/marotte/internal/marotte"
+
 // KAS decides it: the connection and environment doors are read once per engine, the session door once per
 // session, the prompt door once per prompt. The zero value is deliberately not a door: a row
 // that forgets to declare one fails TestDeclIsWellFormed rather than default onto a door.
@@ -67,6 +69,9 @@ const (
 	// resolverEnumList is a top-level key whose value is an array of such ids. policyPreset is the
 	// instance: KAS throws on a non-array and validatePresetIds on an unknown id.
 	resolverEnumList resolver = "enum-list"
+	// resolverObjectList is a top-level key whose value is an array of objects KAS validates one by one, dropping an
+	// invalid entry with only a log line. customAgents is the instance.
+	resolverObjectList resolver = "object-list"
 	// KAS's env provider accepts only the strings "true" and "false" (anything else warns and is
 	// ignored), so a sent row's value is one of those.
 	resolverEnv resolver = "env"
@@ -119,7 +124,9 @@ type SessionSpawn struct {
 	WorkValidation string
 	// Presets are the KAS policy-preset ids of the active security profile (policyfile.Profile). EMPTY means the
 	// Custom profile, so the key is withheld. KAS persists neither door's ids, so both doors resolve from this field.
-	Presets          []string
+	Presets []string
+	// CustomAgents are the session's client custom agents; none withholds the key.
+	CustomAgents     []marotte.ClientCustomAgent
 	MemoryReflection bool
 	// DisableAutoCompaction turns KAS's own compaction off for this session; the row is value-gated, so false is
 	// sent too.

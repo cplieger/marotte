@@ -29,6 +29,9 @@ func cmdSetMode(
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil || p.ModeID == "" {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
+	if err := refuseBotMode(ctx, chats, cmd.ChatID, p.ModeID); err != nil {
+		return nil, err
+	}
 	unlock, lockErr := lockSessionChange(ctx, modeLocks, cmd.ChatID)
 	if lockErr != nil {
 		return nil, lockErr
@@ -52,17 +55,13 @@ func cmdSetMode(
 			// A fresh chat is auto-created so the pick survives to session/new; Mutate refuses
 			// tombstoned ids.
 			c.Name = marotte.DefaultChatName
-			c.CurrentModeID = p.ModeID
+			c.AdoptMode(p.ModeID)
 			changed = true
 			return true
 		}
-		if c.CurrentModeID == p.ModeID {
-			return false
-		}
 		from = c.CurrentModeID
-		c.CurrentModeID = p.ModeID
-		changed = true
-		return true
+		changed = c.AdoptMode(p.ModeID)
+		return changed
 	}); err != nil {
 		// A tombstoned id (deleted in the last ten minutes) is the whole 404 condition; a repeat
 		// pick is a no-op success.
@@ -79,6 +78,27 @@ func cmdSetMode(
 	}
 	slog.Info("mode set", "chat", cmd.ChatID, "mode", p.ModeID)
 	return responseWith(map[string]any{"mode_id": p.ModeID}), nil
+}
+
+// errBotMode is set_mode's refusal on a Bot, and of the Bot role on any other chat.
+var errBotMode = errors.New("a Bot runs only on its own role")
+
+const reasonBotMode = "bot_mode"
+
+// refuseBotMode answers 409 bot_mode when the switch would move a Bot off its role or put a regular chat on it,
+// before any session is asked. A chat's bot block is set at creation and never removed, so the read needs no lock.
+func refuseBotMode(ctx context.Context, chats chatStore, chatID marotte.ChatID, modeID string) error {
+	if modeID == marotte.BotRoleID {
+		return StatusErrorReason(http.StatusConflict, reasonBotMode, errBotMode)
+	}
+	c, found, err := chats.Lookup(ctx, chatID)
+	if err != nil {
+		return StatusError(http.StatusInternalServerError, err)
+	}
+	if found && c.Bot != nil {
+		return StatusErrorReason(http.StatusConflict, reasonBotMode, errBotMode)
+	}
+	return nil
 }
 
 // lockSessionChange holds a chat's lock for one change verb across its engine call and its persist. A change

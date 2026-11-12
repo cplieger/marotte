@@ -191,6 +191,8 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		steerKASSettled:  h.bus.steers.kasSettled,
 	}
 	turns.runHost = bc
+	turns.sendRole = bc.reassertBotRole
+	turns.spawnRole = bc.spawnRole
 	return bc
 }
 
@@ -567,7 +569,7 @@ func (bc *bridgeCoordinator) openGeneration(
 	if rec.ACPSessionID != "" {
 		so := bc.sessionOpts(ctx, rec, &ask, steering)
 		so.SessionID = rec.ACPSessionID
-		loaded, err := bc.tryLoadSession(ctx, chatID, sb, so, held, stamp)
+		loaded, err := bc.tryLoadSession(ctx, chatID, sb, rec, so, held, stamp)
 		switch {
 		case loaded:
 			bc.settleResumed(ctx, lc, chatID, sb)
@@ -582,7 +584,8 @@ func (bc *bridgeCoordinator) openGeneration(
 
 	// The forward attaches before the door writes: KAS's requests during session/new must be answered for it to
 	// finish.
-	session, err := bc.engine.openSession(ctx, bc.sessionOpts(ctx, rec, &ask, steering), func(s engineSession) error {
+	so := bc.sessionOpts(ctx, rec, &ask, steering)
+	session, err := bc.engine.openSession(ctx, so, func(s engineSession) error {
 		if _, err := bc.goForward(ctx, chatID, s, stamp); err != nil {
 			return err
 		}
@@ -592,6 +595,13 @@ func (bc *bridgeCoordinator) openGeneration(
 	if err = closeCut(ctx, err); err != nil {
 		bc.restoreUnservedModel(ctx, chatID, held)
 		bc.failGeneration(chatID, sb, err)
+		return
+	}
+	if err := bc.holdBotDoor(ctx, rec, sb, session, false); err != nil {
+		sessionID := string(session.SessionID())
+		bc.restoreUnservedModel(ctx, chatID, held)
+		bc.failGeneration(chatID, sb, err)
+		bc.reapSession(sessionID)
 		return
 	}
 	if err := bc.persistNewSessionMetadata(ctx, chatID, session, ask.first); err != nil {
@@ -851,7 +861,8 @@ func (bc *bridgeCoordinator) reportSupervisedNotApplied(ctx context.Context, cha
 // restored none of the chat's turns (errReplayRestoredNothing) both return loaded false with a nil error after
 // retireSession, so the generation opens session/new.
 func (bc *bridgeCoordinator) tryLoadSession(
-	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, so *marotte.SessionOpts, held unservedSelection, stamp uint64,
+	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, rec *marotte.Chat, so *marotte.SessionOpts,
+	held unservedSelection, stamp uint64,
 ) (loaded bool, err error) {
 	// Open the projection first: KAS replays inside the door. The forward attaches before the door writes; a failed
 	// load closed its session, and the generation still owns its entry (bridgeManager.removeIfBridge).
@@ -889,6 +900,9 @@ func (bc *bridgeCoordinator) tryLoadSession(
 		return false, verdict
 	case !session.Open():
 		return false, fmt.Errorf("%w: the session ended during its replay", marotte.ErrBridgeExited)
+	}
+	if err := bc.holdBotDoor(ctx, rec, sb, session, true); err != nil {
+		return false, err
 	}
 	title := session.SessionTitle()
 	bc.catalog.setModes(session.Modes())
@@ -1039,7 +1053,7 @@ func adoptKASTitle(c *marotte.Chat, stored string) {
 // the catalogue no longer serves, cleared here and settled by commitUnservedModel.
 func applyLoadedSessionFacts(c *marotte.Chat, facts acpSessionFacts, title string) (renameTo string, dropped unservedSelection) {
 	if mode := facts.CurrentMode(); mode != "" {
-		c.CurrentModeID = mode
+		c.AdoptMode(mode)
 	}
 	// An absent catalog keeps the previous set (ApplyServedModels is false for empty).
 	marotte.ApplyServedModels(c, facts.Catalog())
@@ -1115,18 +1129,20 @@ func (bc *bridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 	bc.catalog.SetModels(bridge.Models())
 	// Read before the next line overwrites it with what landed.
 	var requestedMode string
+	var bot bool
 	version, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
-		requestedMode = c.CurrentModeID
+		requestedMode = doorMode(c)
+		bot = c.IsStartedBot()
 		c.RecordSession(string(newSessionID))
 		prevModel := c.Model
 		if newModelID != "" {
 			c.MoveToModel(string(newModelID))
 		}
 		c.Effort = first.onto(c.Effort, prevModel, c.Model)
-		c.CurrentModeID = currentMode
+		c.AdoptMode(currentMode)
 		marotte.ApplyServedModels(c, catalog)
 		renameTo = reconcileUserName(c, title, titleSetByUser)
 		return true
@@ -1138,7 +1154,10 @@ func (bc *bridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 		return fmt.Errorf("%w: %s", command.ErrChatGone, chatID)
 	}
 	reassertUserName(ctx, chatID, bridge, renameTo)
-	bc.reportModeNotApplied(ctx, chatID, requestedMode, currentMode)
+	// A started Bot's mode is the door's to report (holdBotRole).
+	if !bot {
+		bc.reportModeNotApplied(ctx, chatID, requestedMode, currentMode)
+	}
 	return nil
 }
 

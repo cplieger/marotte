@@ -38,7 +38,7 @@ func (rt *Runtime) initDispatch() {
 		marotte.MethodSessionUpdate: rt.handleSessionUpdate,
 		// v3 _kiro/* notifications.
 		methodV3RateLimit:            rt.translator.HandleRateLimit,
-		methodV3CustomAgentNotFound:  rt.translator.HandleAgentNotFound,
+		methodV3CustomAgentNotFound:  rt.coord.noteBotRoleMissing(rt.translator.HandleAgentNotFound),
 		methodV3CustomAgentConfigErr: rt.translator.HandleAgentConfigError,
 		methodV3MCPStatus:            rt.translator.HandleMCPStatus,
 		methodV3CodeReferences:       rt.translator.HandleCodeReferences,
@@ -100,7 +100,7 @@ func (rt *Runtime) initDispatch() {
 		marotte.ACPUpdateToolCall:   rt.translator.HandleToolCall,
 		marotte.ACPUpdateToolUpdate: rt.translator.HandleToolCallUpdate,
 		marotte.ACPUpdatePlan:       rt.translator.HandlePlan,
-		marotte.ACPUpdateModeChange: ignoreAttribution(rt.translator.HandleModeUpdate),
+		marotte.ACPUpdateModeChange: rt.coord.keepBotRole(ignoreAttribution(rt.translator.HandleModeUpdate)),
 		// The metadata channels.
 		marotte.ACPUpdateSessionInfo: rt.translator.HandleSessionInfoUpdate,
 		marotte.ACPUpdateUsage:       ignoreAttribution(rt.translator.HandleUsageUpdate),

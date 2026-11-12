@@ -98,6 +98,7 @@ func sessionSpawnOf(o *marotte.SessionOpts) kascap.SessionSpawn {
 		WorkValidation:        o.Features.WorkValidation,
 		Workflows:             o.Features.Workflows,
 		Presets:               slices.Clone(o.Presets),
+		CustomAgents:          slices.Clone(o.CustomAgents),
 		DisableAutoCompaction: o.DisableAutoCompaction,
 		ProfileAgentTurns:     o.Role == marotte.SessionRoleChat,
 	}

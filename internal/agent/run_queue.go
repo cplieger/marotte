@@ -299,6 +299,15 @@ func (bc *bridgeCoordinator) spawnRun(fn func()) {
 	}
 }
 
+// spawnRole runs a Bot role keeper's set_mode on inflight unless Shutdown began (chatLifecycle.sendRoleLocked).
+func (bc *bridgeCoordinator) spawnRole(work func()) bool {
+	if bc.lifecycle == nil {
+		go work()
+		return true
+	}
+	return bc.lifecycle.goUnlessDraining(work)
+}
+
 // entryLaunched applies a launch's result to the list (runList.launched). A tangent delivery opened with a receipt
 // hold its submitter no longer waits on releases that hold here; a refused row whose submitter still waits on an
 // ended life is removed from the record too, so the next life never sends the text the client kept as its draft.

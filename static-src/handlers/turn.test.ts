@@ -335,6 +335,8 @@ describe("ERROR_ROUTES", () => {
     // which is the other half of choosing a model.
     ["model_not_served", { surface: "toast" }],
     ["tangent_merge_failed", { surface: "toast" }],
+    // A Bot whose memory file did not load still answers, so the composer stays open.
+    ["memory_not_loaded", { surface: "toast" }],
     // Empty-turn recovery could not respawn or resend. Routed explicitly rather
     // than left to the unknown-code fallthrough, on the one error whose meaning is
     // "the automatic repair failed".
