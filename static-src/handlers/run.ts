@@ -13,8 +13,7 @@ import {
   noteRunChat,
   noteRunLabel,
   noteRunResumed,
-  noteRunLive,
-  noteRunSettled,
+  applyLiveRunFrame,
   hasLiveRunForChat,
   openRunEntry,
   runChatID,
@@ -114,9 +113,6 @@ onSSE("run_started", (chatID, p) => {
   noteRunChat(p.workflow_id, chatID);
   noteRunLabel(p.workflow_id, p.name);
   noteRunResumed(p.workflow_id, p.initiator ?? "", p.initiator_reason ?? "");
-  // A start frame is proof of execution: it fires on the launch and again on every
-  // resume, so it is exactly the moment frames begin arriving into this chat.
-  noteRunLive(p.workflow_id, chatID, true);
   invalidateRun(p.workflow_id);
   emitBus(BUS_RUNS_CHANGED);
   const kind = startKind(p.unattended);
@@ -126,27 +122,25 @@ onSSE("run_started", (chatID, p) => {
   }
 });
 
+onSSE("live_run", (_chatID, p, subject) => {
+  applyLiveRunFrame(p, subject);
+});
+
 onSSE("run_finished", (chatID, p) => {
   trackRun(p.workflow_id);
   // Recorded even here: a later re-open nests under the launching chat.
   noteRunChat(p.workflow_id, chatID);
   noteRunLabel(p.workflow_id, p.name);
-  // `paused` stays live: stopped waiting for something, not over. Anything
-  // else is an ending.
-  if (p.status === "paused") {
-    // A policy stop (`onMaxIterations`) reports through this same frame, so the run
-    // is resumable and its row stays — but it has stopped executing, which is what
-    // lets its chat's message window be reclaimed while it sits.
-    noteRunLive(p.workflow_id, chatID, false);
-  } else {
-    noteRunSettled(p.workflow_id);
+  // `paused` is stopped waiting for something, not over. Anything else is an ending.
+  if (p.status !== "paused") {
     // A run that is over cannot still be waiting on a person; its step questions leave with the
     // server's final `run_asks`, its requests here.
     dropRunRequests(p.workflow_id);
     // The ORPHANS: a step's ask with an EMPTY `run_id` is reachable only by the turn-scoped sweep,
     // whose `turn_closed` trigger never fires for a step-driven turn. Gate 1 spares the turn of a user
     // who prompted meanwhile (a live JSON-RPC request); gate 2 spares a still-running sibling run's
-    // orphan. An empty chat id is a parentless run, already reached through `run:<id>`.
+    // orphan. An empty chat id is a parentless run, already reached through `run:<id>`. The server
+    // sends this run's `live_run` removal before this frame, so gate 2 no longer counts it.
     if (chatID !== "" && !isBusy(chatID) && !hasLiveRunForChat(chatID)) {
       dropTurnDecisions(chatID);
     }
@@ -332,9 +326,6 @@ onSSE("run_asks", (chatID, p) => {
 onSSE("run_progress", (chatID, p) => {
   trackRun(p.workflow_id);
   noteRunChat(p.workflow_id, chatID);
-  // Proof of life; proof of EXECUTION unless run-level `paused`. A node-level `node_paused` is a step
-  // waiting inside a running run, so it reads as executing.
-  noteRunLive(p.workflow_id, chatID, p.kind !== "paused");
   if (!applyRunProgress(p)) {
     readUnlessRevised(p.workflow_id);
   }

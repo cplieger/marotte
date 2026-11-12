@@ -45,7 +45,7 @@ func TestTranslateMCPStatus(t *testing.T) {
 					t.Errorf("error = %q", snap[0].Error)
 				}
 			},
-			wantEvents: []string{"mcp_failed"},
+			wantEvents: []string{"mcp_status"},
 		},
 		{
 			// The status entry's URL belongs to an attempt whose listener KAS closed, so it is no relay anchor.
@@ -57,7 +57,7 @@ func TestTranslateMCPStatus(t *testing.T) {
 					t.Errorf("snapshot = %+v, want needs_auth with no URL", snap)
 				}
 			},
-			wantEvents: []string{"mcp_oauth_needed"},
+			wantEvents: []string{"mcp_status"},
 		},
 	}
 

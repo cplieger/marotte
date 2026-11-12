@@ -71,14 +71,24 @@ func standingSignIn(h *Runtime) string {
 	return strings.Join(out, ",")
 }
 
+// rowOf is name's served GET /api/mcp/status row. It fails the test when the served rows are not the projection the
+// records give: a write that moved the records without committing them.
 func rowOf(t *testing.T, h *Runtime, name string) mcpServerRuntime {
 	t.Helper()
-	for _, s := range h.mcpRegistry.snapshot() {
+	served := servedMCPBody(t, h).Servers
+	projected := h.mcpRegistry.snapshot()
+	if !slices.EqualFunc(served, projected, func(a marotte.MCPServerStatus, b mcpServerRuntime) bool {
+		ra := mcpServerRuntime(a)
+		return sameRecord(&ra, &b)
+	}) {
+		t.Errorf("served rows %+v, want the records' projection %+v", served, projected)
+	}
+	for _, s := range served {
 		if s.Name == name {
-			return s
+			return mcpServerRuntime(s)
 		}
 	}
-	t.Fatalf("server %q is not in the registry", name)
+	t.Fatalf("server %q is not in the served rows", name)
 	return mcpServerRuntime{}
 }
 
@@ -313,9 +323,10 @@ func TestSignIn_EngineErrorEndsTheStandingSignIn(t *testing.T) {
 	if row.State != mcpStateOAuth || !strings.Contains(row.Error, "MCP governance is disabled") {
 		t.Errorf("row = %+v, want needs_auth with the engine's reason", row)
 	}
-	needed := eventsOfType(h, marotte.EventMCPOAuthNeeded)
-	if len(needed) == 0 || !strings.Contains(string(needed[len(needed)-1].Payload), "MCP governance is disabled") {
-		t.Errorf("mcp_oauth_needed = %+v, want the last one carrying the engine's reason", needed)
+	frames := mcpStatusFrames(t, h, 0, "linear")
+	if len(frames) == 0 || frames[len(frames)-1].Payload.Status == nil ||
+		!strings.Contains(frames[len(frames)-1].Payload.Status.Error, "MCP governance is disabled") {
+		t.Errorf("mcp_status frames for linear = %+v, want the last one carrying the engine's reason", frames)
 	}
 	if code, body := postSignIn(h, "linear"); code != http.StatusAccepted {
 		t.Errorf("retry = %d %s, want 202", code, body)
@@ -387,11 +398,16 @@ func TestSignIn_ARefusalsReasonEndsWithTheNextStatusOrClaim(t *testing.T) {
 	})
 	t.Run("a new sign-in clears it", func(t *testing.T) {
 		h, _ := refuse(t)
+		before := h.bus.fanout.Position().Head
 		if _, err := h.mcpRegistry.claimSignIn(t.Context(), "linear"); err != nil {
 			t.Fatalf("claimSignIn = %v", err)
 		}
 		if row := rowOf(t, h, "linear"); row.Error != "" {
 			t.Errorf("row = %+v after a new claim, want no reason", row)
+		}
+		frames := mcpStatusFrames(t, h, before, "linear")
+		if len(frames) != 1 || frames[0].Payload.Status == nil || frames[0].Payload.Status.Error != "" {
+			t.Errorf("mcp_status frames for linear after the claim = %+v, want one row with no reason", frames)
 		}
 		h.mcpRegistry.dropSession(t.Context(), sessionOf("linear"))
 	})
@@ -457,7 +473,7 @@ func TestSignIn_TerminalStatusEndsTheStandingSignIn(t *testing.T) {
 			h.mcpRegistry.dropSession(t.Context(), sessionOf(name))
 		},
 		"the engine ended": func(t *testing.T, h *Runtime, _ string) {
-			h.mcpRegistry.clearAll(t.Context())
+			h.mcpRegistry.clearAll()
 		},
 	}
 	for name, report := range cases {
@@ -607,8 +623,8 @@ func TestSignIn_AnExpiredSignInReturnsItsServerToNeedsAuth(t *testing.T) {
 	joinInflight(t, h)
 }
 
-// The deadline ends a sign-in by itself, with no frame and no request, and the clients hear the server needs a
-// sign-in again. The bubble's clock moves only once every goroutine waits, so the URL is claimed before the deadline
+// The deadline ends a sign-in by itself, with no frame and no request, and one mcp_status row tells the clients the
+// server needs a sign-in again. The bubble's clock moves only once every goroutine waits, so the URL is claimed before the deadline
 // however slow the runner is.
 func TestSignIn_TheDeadlineEndsTheSignInWithNoFrame(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -625,8 +641,10 @@ func TestSignIn_TheDeadlineEndsTheSignInWithNoFrame(t *testing.T) {
 		time.Sleep(signInTTL)
 		synctest.Wait()
 
-		if !slices.Contains(extractTypes(t, bufferedSince(h, before)), string(marotte.EventMCPOAuthNeeded)) {
-			t.Errorf("no mcp_oauth_needed past the deadline; row = %+v", rowOf(t, h, "linear"))
+		frames := mcpStatusFrames(t, h, before, "linear")
+		if len(frames) != 1 || frames[0].Payload.Status == nil ||
+			frames[0].Payload.Status.State != mcpStateOAuth || frames[0].Payload.Status.OAuthURL != "" {
+			t.Errorf("mcp_status frames for linear past the deadline = %+v, want one needs_auth row with no consent URL", frames)
 		}
 		if row := rowOf(t, h, "linear"); row.State != mcpStateOAuth || row.OAuthURL != "" {
 			t.Errorf("row = %+v past the deadline, want needs_auth with no consent URL", row)
@@ -663,18 +681,15 @@ func TestOpenExternalURL_ClaimedBySignInRecordsTheAnchor(t *testing.T) {
 	if row.Origin != marotte.OriginWorkspace || row.OriginRoot != "/w" {
 		t.Errorf("row provenance = %q %q, want the workspace's kept", row.Origin, row.OriginRoot)
 	}
-	types := extractTypes(t, bufferedSince(h, before))
-	if missing := missingEvents(types, string(marotte.EventMCPSignInOpen)); len(missing) > 0 {
-		t.Errorf("missing %v; got %v", missing, types)
-	}
-	for _, ty := range types {
+	for _, ty := range extractTypes(t, bufferedSince(h, before)) {
 		if ty == string(marotte.EventOpenExternalURL) {
 			t.Errorf("the claimed URL was also raised as a chat banner")
 		}
 	}
-	opened := eventsOfType(h, marotte.EventMCPSignInOpen)
-	if len(opened) != 1 || !strings.Contains(string(opened[0].Payload), `"server":"theirs"`) {
-		t.Errorf("mcp_sign_in_open = %+v, want one naming theirs", opened)
+	frames := mcpStatusFrames(t, h, before, "theirs")
+	if len(frames) != 1 || frames[0].Payload.Status == nil ||
+		frames[0].Payload.Status.State != mcpStateSigningIn || frames[0].Payload.Status.OAuthURL != consent {
+		t.Errorf("mcp_status frames for theirs = %+v, want one signing_in row on the consent URL", frames)
 	}
 }
 

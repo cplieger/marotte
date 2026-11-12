@@ -27,7 +27,28 @@ describe("dispatch (SSE routing)", () => {
         return { handler, unsub };
       },
       event: { type: "chat_created", chat_id: "c1", payload: { id: "c1", title: "Test" } },
-      expectedCalls: [["c1", { id: "c1", title: "Test" }]],
+      expectedCalls: [["c1", { id: "c1", title: "Test" }, undefined]],
+    },
+    {
+      name: "a stamped frame's subject reaches the handler as its third argument",
+      setup: () => {
+        const handler = vi.fn();
+        const unsub = onSSE("live_run", handler);
+        return { handler, unsub };
+      },
+      event: {
+        type: "live_run",
+        chat_id: "",
+        payload: { workflow_id: "wf-a", chat_id: "c1", live: true, executing: true },
+        subject: { kind: "runs", ref: "", version: "7" },
+      },
+      expectedCalls: [
+        [
+          "",
+          { workflow_id: "wf-a", chat_id: "c1", live: true, executing: true },
+          { kind: "runs", ref: "", version: "7" },
+        ],
+      ],
     },
     {
       name: "subscriber receives empty string chatID when chat_id is undefined",
@@ -37,7 +58,7 @@ describe("dispatch (SSE routing)", () => {
         return { handler, unsub };
       },
       event: { type: "settings_updated" },
-      expectedCalls: [["", undefined]],
+      expectedCalls: [["", undefined, undefined]],
     },
     {
       name: "unknown event type is a no-op (no handlers fire)",
@@ -96,7 +117,7 @@ describe("dispatch (SSE routing)", () => {
       expect(h1).toHaveBeenCalledTimes(1);
       expect(h2).toHaveBeenCalledTimes(1);
       expect(h3).toHaveBeenCalledTimes(1);
-      expect(h1).toHaveBeenCalledWith("c1", { code: "test", message: "fail" });
+      expect(h1).toHaveBeenCalledWith("c1", { code: "test", message: "fail" }, undefined);
     } finally {
       unsub1();
       unsub2();

@@ -1,5 +1,5 @@
-// Package bot builds what a Bot's session doors carry from its chat record: the session-scoped role and its custom
-// steering.
+// Package bot builds what a Bot's session doors carry from its chat record (the session-scoped role, its custom
+// steering) and keeps each Bot's own directory under KIRO_HOME.
 package bot
 
 import (
@@ -8,7 +8,6 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/policyfile"
 )
@@ -116,13 +115,13 @@ func SteeringDoc(rec *marotte.Chat) (marotte.ClientSteeringDoc, bool) {
 }
 
 // MemoryFile is the memory file of the Bot rec, <KiroHome>/bots/<chat id>/memory.md, which the Bot's session door loads
-// as a context file when memory is on. False when rec's id is not one folder name or KiroHome is not absolute: KAS
-// resolves a relative context path against the workspace.
+// as a context file when memory is on. False where Dir is: KAS resolves a relative context path against the workspace.
 func MemoryFile(rec *marotte.Chat, paths Paths) (string, bool) {
-	if !ids.ValidChatID(rec.ID) || !filepath.IsAbs(paths.KiroHome) {
+	dir, ok := Dir(rec.ID, paths)
+	if !ok {
 		return "", false
 	}
-	return filepath.Join(paths.KiroHome, "bots", rec.ID, "memory.md"), true
+	return filepath.Join(dir, memoryName), true
 }
 
 // firstLine is goal's first line cut to descriptionGoalRunes on a rune boundary.

@@ -13,8 +13,8 @@ var (
 	botMode  = marotte.SessionMode{ID: marotte.BotRoleID, Name: marotte.BotRoleID, Description: "Weekly answers: Answer the weekly questions.", Source: "bundled"}
 )
 
-// TestCatalog_NeverRecordsTheBotRole pins design §7.4: the role is one session's agent, not a workspace fact, so the
-// catalog drops it by id before it compares or stores, and a Bot's list equal to a regular chat's changes nothing.
+// TestCatalog_NeverRecordsTheBotRole pins that the role is one session's agent, not a workspace fact, so the catalog
+// drops it by id before it compares or stores, and a Bot's list equal to a regular chat's changes nothing.
 func TestCatalog_NeverRecordsTheBotRole(t *testing.T) {
 	c := &catalog{}
 

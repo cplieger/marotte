@@ -201,6 +201,10 @@ func (rt *Runtime) chatSessionOpts(ctx context.Context, rec *marotte.Chat, ask *
 		if doc, ok := bot.SteeringDoc(rec); ok {
 			opts.Steering = append(slices.Clone(steering), doc)
 		}
+		// A root, so KAS's own checks treat the memory file as the session's; marotte's grant is confineBotDir.
+		if dir, ok := bot.Dir(rec.ID, botPaths()); ok && rec.Bot.Memory {
+			opts.AdditionalDirectories = append(slices.Clone(s.AdditionalDirectories), dir)
+		}
 	}
 	return opts
 }

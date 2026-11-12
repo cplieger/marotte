@@ -21,7 +21,9 @@ import {
 import { registerCleanup } from "./actions/index.js";
 import { BUS_PAGE_RESUMED, BUS_RECONCILE, decodeEnvelope, emitBus } from "./bus.js";
 import { inventoryHeld } from "./git-prs-state.js";
-import { rebuildLiveRuns, rereadHeldRuns, runTurnHeldSeq } from "./run-store.js";
+import { mcpState } from "./mcp-state.js";
+import { isMirrorKind } from "./mirror.js";
+import { refetchLiveRuns, rereadHeldRuns, runTurnHeldSeq } from "./run-store.js";
 import { runContentScoped } from "./run-content-scope.js";
 import { requestRunTurnRange } from "./run-turn-range.js";
 import { setSSEStatus } from "./send-state.js";
@@ -207,8 +209,12 @@ function runContentOf(evt: ServerEvent): string {
   return RUN_CONTENT.has(evt.type) ? rawWorkflowID(evt.payload) : "";
 }
 
-/** Whether this client holds the projection a stamp certifies. */
+/** Whether this client holds the projection a stamp certifies. A mirror observes its own
+ *  subject's stamps, after it applied the frame, so a frame it refused records nothing. */
 function projectionHeld(stamp: SubjectStamp): boolean {
+  if (isMirrorKind(stamp.kind)) {
+    return false;
+  }
   switch (stamp.kind) {
     case "chat":
       return get(stamp.ref)?.residency === "loaded";
@@ -361,7 +367,9 @@ function runStampAction(stamp: SubjectStamp | undefined, signal?: AbortSignal): 
       return Promise.resolve(false);
     }
     case "runs":
-      return rebuildLiveRuns(signal).then(() => false);
+      return refetchLiveRuns(signal).then(() => false);
+    case "mcp_status":
+      return mcpState.refetchStatus(signal).then(() => false);
     case "catalog":
       return fetchCatalog(signal === undefined ? {} : { signal }).then(() => false);
     case "forge_inventory":

@@ -32,7 +32,7 @@ var versionSources = []string{
 	"AppendTextDelta", "AppendThinkingDelta", "AppendToolUseBlock",
 	"TrackFileChanges", "RecordToolStart", "ComputeDuration", "MarkInFlightToolsAborted",
 	"mergeStamped", "snapshotStamped", "pendingSnapshotStamped", "pendingSnapshot",
-	"liveRunRowsStamped", "modesModelsStamped", "listStamped",
+	"liveRunRowsStamped", "modesModelsStamped", "listStamped", "statusRowsStamped",
 }
 
 // mintingBodies are the critical sections themselves, exempted while their callers are checked. The four page
@@ -40,7 +40,7 @@ var versionSources = []string{
 var mintingBodies = []string{
 	"Mutate", "announceCreated", "publishHeader", "setComposer", "Remove",
 	"mergeStamped", "snapshotStamped", "registry", "statusStamp",
-	"pendingSnapshot", "liveRunRowsStamped", "modesModelsStamped", "mintPending",
+	"pendingSnapshot", "liveRunRowsStamped", "modesModelsStamped", "mintPending", "statusRowsStamped", "commitLocked",
 	"clearWaiting", "clear", "setModes", "SetModels",
 	"page", "TurnPage", "stepTurns", "turnRange",
 }

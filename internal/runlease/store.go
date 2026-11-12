@@ -9,12 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/asidefile"
+	"github.com/cplieger/marotte/internal/subject"
 )
 
 // FileName is the store's file, beside launch-rules.json: a sibling so a malformed file
@@ -33,29 +33,39 @@ type file struct {
 	Version int     `json:"version"`
 }
 
-// Store persists run leases in one 0600 JSON file, rewritten atomically per mutation.
-// The zero value is usable and persists nothing. filesafe verifies the 0600 on the
-// written descriptor, so no EnforceFile pass by NAME is needed.
+// Store persists run leases in one 0600 JSON file, rewritten atomically per mutation, and
+// owns the live-runs inventory: its `runs` version and the announcement of each row change.
+// Build it with NewStore or NewMemory. filesafe verifies the 0600 on the written descriptor,
+// so no EnforceFile pass by NAME is needed.
 type Store struct {
 	leases map[string]Lease
-	path   string
+	// versions and announce are what BindInventory binds; announce is nil until then.
+	versions *subject.Versions
+	announce func(row Row, live bool, version string)
+	path     string
 	// unread and refuseWrites are immutable after construction (see Unread).
-	unread string
-	// version is the collection's version, bumped under mu by every mutation that
-	// changed the set; ListStamped pairs it with the set it describes.
-	version      uint64
+	unread       string
 	mu           sync.Mutex
 	refuseWrites bool
 }
 
 // NewMemory returns an in-memory store that persists nothing.
-func NewMemory() *Store { return &Store{leases: map[string]Lease{}} }
+func NewMemory() *Store { return &Store{leases: map[string]Lease{}, versions: &subject.Versions{}} }
+
+// BindInventory mints the store's `runs` version in v from now on and hands every row change
+// to announce with the version it minted, under the store's lock, so announcements arrive in
+// version order. Call it once, before the first mutation anyone reads the version of; v is non-nil.
+func (s *Store) BindInventory(v *subject.Versions, announce func(row Row, live bool, version string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.versions, s.announce = v, announce
+}
 
 // NewStore opens (or starts) the store at <dir>/runs.json. It ALWAYS returns a usable store;
 // the error is diagnostic. A lease is derived state, so refusing to open would leave no run
 // bounded. A file it cannot fully read is moved aside and the store starts empty with Unread set.
 func NewStore(dir string) (*Store, error) {
-	s := &Store{path: filepath.Join(dir, FileName), leases: map[string]Lease{}}
+	s := &Store{path: filepath.Join(dir, FileName), leases: map[string]Lease{}, versions: &subject.Versions{}}
 	if err := s.load(); err != nil {
 		s.leases = map[string]Lease{}
 		err = s.keepAside(err)
@@ -102,13 +112,43 @@ func (s *Store) List() []Lease {
 	return s.sortedLocked()
 }
 
-// ListStamped is List plus the collection version the set is at, read in the same
-// critical section so the two cannot disagree. The version is decimal, starting at
-// "0" for a store nothing has mutated this process.
+// ListStamped is List plus the `runs` version the set is at, read in the same critical
+// section so the two cannot disagree. The version is decimal, subject.Unminted until the
+// first row change this process.
 func (s *Store) ListStamped() (leases []Lease, version string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.sortedLocked(), strconv.FormatUint(s.version, 10)
+	version, _ = s.versions.Current(subject.KindRuns, "")
+	return s.sortedLocked(), version
+}
+
+// rowLocked is a run's inventory row and whether a lease holds the run.
+func (s *Store) rowLocked(workflowID string) (Row, bool) {
+	l, ok := s.leases[workflowID]
+	if !ok {
+		return Row{}, false
+	}
+	return l.Row(), true
+}
+
+// commitLocked mints the `runs` version and announces the run's row when the mutation just
+// written moved it, so the version counts row changes and every version has its frame. It
+// runs before persistLocked: a mutation keeps its in-memory change when the persist fails,
+// and ListStamped already serves that row.
+func (s *Store) commitLocked(workflowID string, before Row, had bool) {
+	after, has := s.rowLocked(workflowID)
+	if had == has && before == after {
+		return
+	}
+	version := s.versions.BumpCounter(subject.KindRuns, "")
+	if s.announce == nil {
+		return
+	}
+	if has {
+		s.announce(after, true, version)
+		return
+	}
+	s.announce(Row{WorkflowID: before.WorkflowID, ChatID: before.ChatID}, false, version)
 }
 
 func (s *Store) sortedLocked() []Lease {
@@ -139,8 +179,9 @@ func (s *Store) Put(ctx context.Context, l *Lease) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	before, had := s.rowLocked(l.WorkflowID)
 	s.leases[l.WorkflowID] = l.clone()
-	s.version++
+	s.commitLocked(l.WorkflowID, before, had)
 	return s.persistLocked(ctx)
 }
 
@@ -149,11 +190,12 @@ func (s *Store) Put(ctx context.Context, l *Lease) error {
 func (s *Store) Release(ctx context.Context, workflowID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.leases[workflowID]; !ok {
+	before, had := s.rowLocked(workflowID)
+	if !had {
 		return nil
 	}
 	delete(s.leases, workflowID)
-	s.version++
+	s.commitLocked(workflowID, before, had)
 	return s.persistLocked(ctx)
 }
 
@@ -205,12 +247,13 @@ func (s *Store) update(ctx context.Context, workflowID string, change func(l *Le
 	if !ok {
 		return ErrNotFound
 	}
+	before := l.Row()
 	l = l.clone()
 	if !change(&l) {
 		return nil
 	}
 	s.leases[workflowID] = l
-	s.version++
+	s.commitLocked(workflowID, before, true)
 	return s.persistLocked(ctx)
 }
 
@@ -225,9 +268,10 @@ func (s *Store) SetParentSessionID(ctx context.Context, workflowID, session stri
 	if l.ParentSessionID == session {
 		return nil
 	}
+	before := l.Row()
 	l.ParentSessionID = session
 	s.leases[workflowID] = l
-	s.version++
+	s.commitLocked(workflowID, before, true)
 	return s.persistLocked(ctx)
 }
 
@@ -244,9 +288,10 @@ func (s *Store) SetDeadline(ctx context.Context, workflowID string, deadline tim
 	if l.Deadline.Equal(deadline) {
 		return nil
 	}
+	before := l.Row()
 	l.Deadline = deadline
 	s.leases[workflowID] = l
-	s.version++
+	s.commitLocked(workflowID, before, true)
 	return s.persistLocked(ctx)
 }
 

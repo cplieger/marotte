@@ -25,6 +25,7 @@ import (
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
+	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/workflow"
@@ -464,24 +465,29 @@ func (rr *runRoutes) handleLiveRuns(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, marotte.LiveRunsResponse{Runs: rows, Subject: stamp})
 }
 
-// liveRunRows projects every held lease, shared by this route and the SSE connect so they agree. Cannot fail.
-func (rs *Runs) liveRunRows() []marotte.LiveRun {
-	rows, _ := rs.liveRunRowsStamped()
-	return rows
-}
-
-// liveRunRowsStamped is liveRunRows with the lease store's `runs` version, paired under its lock.
+// liveRunRowsStamped projects every held lease with the lease store's `runs` version, paired under its lock;
+// shared by this route and the SSE connect so they agree. Cannot fail.
 func (rs *Runs) liveRunRowsStamped() ([]marotte.LiveRun, *marotte.SubjectStamp) {
 	held, version := rs.leaseStore().ListStamped()
 	out := make([]marotte.LiveRun, 0, len(held))
 	for i := range held {
-		out = append(out, marotte.LiveRun{
-			WorkflowID: held[i].WorkflowID,
-			ChatID:     held[i].ChatID,
-			Executing:  held[i].Bounded(),
-		})
+		out = append(out, liveRunOf(held[i].Row()))
 	}
 	return out, marotte.NewSubjectStamp(string(subject.KindRuns), "", version)
+}
+
+func liveRunOf(r runlease.Row) marotte.LiveRun {
+	return marotte.LiveRun{WorkflowID: r.WorkflowID, ChatID: r.ChatID, Executing: r.Executing}
+}
+
+// announceLiveRun is the lease store's announcer: one stamped live_run frame per row change. The store calls
+// it under its own lock, and Broadcast takes no lock the store's callers hold.
+func (b *bus) announceLiveRun(r runlease.Row, live bool, version string) {
+	frame := marotte.NewEvent(marotte.EventLiveRun, "", marotte.LiveRunPayload{
+		WorkflowID: r.WorkflowID, ChatID: r.ChatID, Live: live, Executing: r.Executing,
+	})
+	frame.Subject = marotte.NewSubjectStamp(string(subject.KindRuns), "", version)
+	b.Broadcast(context.Background(), frame)
 }
 
 // head reads one run's current state head, a zero head (status "") for an unknown run (the caller's 404): control

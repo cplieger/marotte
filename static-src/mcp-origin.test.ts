@@ -1,8 +1,14 @@
 // A server the agent reports that this page does not configure gets a read-only row with a provenance chip.
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-// The status fetch is the only input to the read-only name list.
+// The status fetch and the config list are the inputs to the read-only name list. Each read is stamped at the next
+// `mcp_status` version, shared with the frames below: the mirror is module state that outlives a case.
 const statusResponse = { servers: [] as Record<string, unknown>[] };
+let statusVersion = 0;
+function nextStatusStamp(): SubjectStamp {
+  statusVersion++;
+  return { kind: "mcp_status", ref: "", version: String(statusVersion) };
+}
 const standingResponse = { standing: [] as Record<string, unknown>[], load_errors: {} };
 // The real signature, generics included: tsconfig.test.json checks the factory against Partial<typeof module>.
 vi.mock(import("./api-client.js"), async (importOriginal) => {
@@ -11,7 +17,7 @@ vi.mock(import("./api-client.js"), async (importOriginal) => {
     ...actual,
     apiGetTyped: async <T>(path: string, decode: Decoder<T>): Promise<T | null> =>
       path === "/api/mcp/status"
-        ? decode(statusResponse)
+        ? decode({ ...statusResponse, subject: nextStatusStamp() })
         : path === "/api/config/standing"
           ? decode(standingResponse)
           : null,
@@ -63,7 +69,7 @@ import {
 } from "./mcp-state.js";
 import type { RuntimeStatus, Server } from "./mcp-state.js";
 import { configStanding, refreshConfigStanding } from "./config-standing.js";
-import type { MCPOrigin, MCPPrewarmState } from "./wire/types.gen.js";
+import type { MCPOrigin, MCPPrewarmState, SubjectStamp } from "./wire/types.gen.js";
 
 function status(over: Partial<RuntimeStatus> = {}): RuntimeStatus {
   return { name: "s", origin: "power", state: "connected", ...over } as RuntimeStatus;
@@ -183,10 +189,10 @@ function shown(b: HTMLButtonElement | null): boolean {
 }
 
 describe("a server marotte owns", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     servers.clear();
     statusResponse.servers = [];
-    unconfiguredNames.value = [];
+    await mcpState.refetchStatus();
   });
 
   async function report(...entries: Record<string, unknown>[]): Promise<void> {
@@ -256,10 +262,10 @@ describe("a server marotte owns", () => {
 });
 
 describe("a server marotte does not own", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     servers.clear();
     statusResponse.servers = [];
-    unconfiguredNames.value = [];
+    await mcpState.refetchStatus();
   });
 
   it("is a read-only row: no edit, no delete, no toggle", async () => {
@@ -286,10 +292,10 @@ describe("a server marotte does not own", () => {
 });
 
 describe("sign-in follows the live report onto either row", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     servers.clear();
     statusResponse.servers = [];
-    unconfiguredNames.value = [];
+    await mcpState.refetchStatus();
   });
 
   const signIn = (row: HTMLElement) => ({
@@ -374,7 +380,6 @@ describe("sign-in follows the live report onto either row", () => {
   });
 
   it("keeps Sign in on a row whose last sign-in kiro-cli refused, and says why", async () => {
-    unconfiguredNames.value = [];
     statusResponse.servers = [
       { name: "theirs", state: "needs_auth", origin: "power", error: "listener busy" },
     ];
@@ -418,8 +423,17 @@ describe("the sign-in frames", () => {
     initMCP();
 
     dispatch({
-      type: "mcp_sign_in_open",
-      payload: { server: "frames", url: "https://auth.example.com/authorize?state=s" },
+      type: "mcp_status",
+      payload: {
+        server: "frames",
+        status: {
+          name: "frames",
+          state: "signing_in",
+          origin: "user",
+          oauth_url: "https://auth.example.com/authorize?state=s",
+        },
+      },
+      subject: nextStatusStamp(),
     } as ServerEvent);
     expect(statusSignalFor("frames").value).toMatchObject({
       state: "signing_in",
@@ -427,7 +441,14 @@ describe("the sign-in frames", () => {
       relayed: false,
     });
 
-    dispatch({ type: "mcp_oauth_needed", payload: { server: "frames" } } as ServerEvent);
+    dispatch({
+      type: "mcp_status",
+      payload: {
+        server: "frames",
+        status: { name: "frames", state: "needs_auth", origin: "user" },
+      },
+      subject: nextStatusStamp(),
+    } as ServerEvent);
     expect(statusSignalFor("frames").value).toEqual({
       name: "frames",
       origin: "user",
@@ -435,8 +456,12 @@ describe("the sign-in frames", () => {
     });
 
     dispatch({
-      type: "mcp_oauth_needed",
-      payload: { server: "frames", error: "listener busy" },
+      type: "mcp_status",
+      payload: {
+        server: "frames",
+        status: { name: "frames", state: "needs_auth", origin: "user", error: "listener busy" },
+      },
+      subject: nextStatusStamp(),
     } as ServerEvent);
     expect(statusSignalFor("frames").value).toEqual({
       name: "frames",
@@ -477,10 +502,10 @@ describe("renderForeignMeta", () => {
 });
 
 describe("unconfiguredNames after a status fetch", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     servers.clear();
     statusResponse.servers = [];
-    unconfiguredNames.value = [];
+    await mcpState.refetchStatus();
   });
 
   it("lists a server the config list does not hold, and only that one", async () => {
@@ -522,6 +547,19 @@ describe("unconfiguredNames after a status fetch", () => {
     expect(unconfiguredNames.value).toEqual(["mine"]);
   });
 
+  it("a config read that lands after the status updates the foreign list", async () => {
+    // The two reads are independent, so the status can land first, while the config still holds the name.
+    servers.setAll([configured("Z")]);
+    statusResponse.servers = [{ name: "Z", state: "connected", origin: "power" }];
+    mcpState.refetchStatus();
+    await settle();
+    expect(unconfiguredNames.value).toEqual([]);
+
+    servers.setAll([]);
+
+    expect(unconfiguredNames.value).toEqual(["Z"]);
+  });
+
   it("empties the list once the foreign server stops being reported", async () => {
     statusResponse.servers = [{ name: "gone-later", state: "connected", origin: "power" }];
     mcpState.refetchStatus();
@@ -535,25 +573,30 @@ describe("unconfiguredNames after a status fetch", () => {
   });
 });
 
-describe("setStatusFromEvent", () => {
-  it("keeps the origin an SSE frame cannot carry", async () => {
+describe("an mcp_status row's provenance", () => {
+  it("keeps a foreign server's origin through a failure", async () => {
     statusResponse.servers = [{ name: "from-a-power", state: "connected", origin: "power" }];
     mcpState.refetchStatus();
     await settle();
 
-    // mcp_failed carries no origin; falling back to "user" would present another config's server as the user's own.
-    mcpState.setStatusFromEvent("from-a-power", {
-      name: "from-a-power",
-      state: "failed",
-      error: "boom",
-    });
+    // Falling back to "user" would present another config's server as the user's own.
+    mcpState.applyStatusFrame(
+      "from-a-power",
+      {
+        name: "from-a-power",
+        state: "failed",
+        origin: "power",
+        error: "boom",
+      },
+      nextStatusStamp(),
+    );
 
     const after = statusSignalFor("from-a-power").peek();
     expect(after.origin).toBe<MCPOrigin>("power");
     expect(after.state).toBe("failed");
   });
 
-  it("keeps the workspace root and the shadow flag an SSE frame cannot carry", async () => {
+  it("keeps the workspace root and the shadow flag through a failure", async () => {
     statusResponse.servers = [
       {
         name: "shadowed",
@@ -566,7 +609,18 @@ describe("setStatusFromEvent", () => {
     mcpState.refetchStatus();
     await settle();
 
-    mcpState.setStatusFromEvent("shadowed", { name: "shadowed", state: "failed", error: "boom" });
+    mcpState.applyStatusFrame(
+      "shadowed",
+      {
+        name: "shadowed",
+        state: "failed",
+        origin: "workspace",
+        origin_root: "/workspace/app",
+        shadows: true,
+        error: "boom",
+      },
+      nextStatusStamp(),
+    );
 
     const after = statusSignalFor("shadowed").peek();
     expect(after.originRoot).toBe("/workspace/app");
@@ -590,7 +644,7 @@ describe("resource templates after a status fetch", () => {
     await settle();
 
     expect(discoverySignalFor("tpl").peek().resource_templates).toEqual([
-      { name: "issue", uri_template: "gh://issues/{number}" },
+      { name: "issue", uri_template: "gh://issues/{number}", mime_type: "text/plain" },
     ]);
   });
 });

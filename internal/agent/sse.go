@@ -126,7 +126,7 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, h *sse.Hello, legacy bool)
 		slog.Warn("connect busy-chat list withheld: over cap", "cap", maxBusyChats, "count", len(busy))
 		busy = nil
 	}
-	liveRuns := rt.runs.liveRunRows()
+	liveRuns, liveRunsStamp := rt.runs.liveRunRowsStamped()
 	liveRunsStated := len(liveRuns) <= maxConnectLiveRuns
 	if !liveRunsStated {
 		slog.Warn("connect live-run inventory withheld: over cap",
@@ -134,11 +134,12 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, h *sse.Hello, legacy bool)
 		liveRuns = nil
 	}
 	connected := marotte.ConnectedPayload{
-		Workspace:      rt.lifecycle.workDir,
-		BusyChats:      busy,
-		LiveRuns:       liveRuns,
-		BusyStated:     busyStated,
-		LiveRunsStated: liveRunsStated,
+		Workspace:       rt.lifecycle.workDir,
+		BusyChats:       busy,
+		LiveRuns:        liveRuns,
+		BusyStated:      busyStated,
+		LiveRunsStated:  liveRunsStated,
+		LiveRunsVersion: liveRunsStamp.Version,
 	}
 	if legacy {
 		// The v2 bundle reads floor 0 as "not resumed, refetch".

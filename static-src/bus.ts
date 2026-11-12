@@ -7,11 +7,12 @@ import type {
   EngineStatus,
   MCPPrewarmPayload,
   MCPSignInClosedPayload,
-  MCPSignInOpenPayload,
+  MCPStatusPayload,
   NotificationPayload,
   RunAsksPayload,
   RunRevPayload,
   SettingsUpdatedPayload,
+  SubjectStamp,
 } from "./wire/types.gen.js";
 import type {
   ServerEvent,
@@ -30,10 +31,6 @@ import type {
   PermissionNeeded,
   ErrorPayload,
   ConnectedPayload,
-  MCPConnectedPayload,
-  MCPOAuthPayload,
-  MCPFailedPayload,
-  MCPDisconnectedPayload,
   ElicitationNeededPayload,
   UserInputNeededPayload,
   DecisionSettledPayload,
@@ -59,6 +56,7 @@ import type {
   RunStartedPayload,
   RunProgressPayload,
   RunFinishedPayload,
+  LiveRunPayload,
 } from "./types.js";
 
 // --- Typed SSE surface ---
@@ -117,12 +115,8 @@ export interface SSEPayloads {
   readonly settings_updated: SettingsUpdatedPayload;
   readonly mcp_config_changed: undefined;
   readonly mcp_pool_changed: undefined;
-  readonly mcp_connected: MCPConnectedPayload;
-  readonly mcp_oauth_needed: MCPOAuthPayload;
-  readonly mcp_sign_in_open: MCPSignInOpenPayload;
+  readonly mcp_status: MCPStatusPayload;
   readonly mcp_sign_in_closed: MCPSignInClosedPayload;
-  readonly mcp_failed: MCPFailedPayload;
-  readonly mcp_disconnected: MCPDisconnectedPayload;
   readonly mcp_prewarm: MCPPrewarmPayload;
   readonly mode_changed: { readonly mode_id: string };
   readonly safety_status: SafetyStatusPayload;
@@ -152,6 +146,8 @@ export interface SSEPayloads {
   readonly run_started: RunStartedPayload;
   readonly run_progress: RunProgressPayload;
   readonly run_finished: RunFinishedPayload;
+  // One row change of the live-runs inventory, stamped `runs`. Workspace-global.
+  readonly live_run: LiveRunPayload;
   // One run's steps waiting on a person, replaced whole per (epoch, seq). Keyed to the
   // launching chat, or `run:<workflowId>` when parentless.
   readonly run_asks: RunAsksPayload;
@@ -168,7 +164,7 @@ export interface SSEPayloads {
 
 export type SSEHandler<K extends keyof SSEPayloads> = SSEPayloads[K] extends undefined
   ? (chatID: string) => void
-  : (chatID: string, payload: SSEPayloads[K]) => void;
+  : (chatID: string, payload: SSEPayloads[K], subject: SubjectStamp | undefined) => void;
 
 type AnyHandler = (...args: unknown[]) => void;
 
@@ -228,7 +224,7 @@ export function dispatch(evt: ServerEvent): void {
   const chatID = evt.chat_id ?? "";
   for (const fn of fns) {
     try {
-      fn(chatID, evt.payload);
+      fn(chatID, evt.payload, evt.subject);
     } catch (e) {
       console.error(`[bus] SSE handler error for "${evt.type}":`, e);
     }
