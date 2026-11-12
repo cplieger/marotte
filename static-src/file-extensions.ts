@@ -69,7 +69,6 @@ export const KNOWN_EXTENSIONS: Readonly<Record<string, ExtMeta>> = {
   webp: { iconKey: "img" },
   ico: { iconKey: "img" },
   bmp: { iconKey: "img" },
-  // A pseudo-extension for fenced-code detection.
   dockerfile: {},
   lua: { iconKey: "lua" },
 };
