@@ -97,22 +97,22 @@ func TestSwitchModel_WithModelOverride(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
-		c.Model = "claude-opus"
+		c.Model = "model-a"
 		c.ACPSessionID = "old-acp"
 		return true
 	})
 
 	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "switch_model", ChatID: "c1",
-		Payload: json.RawMessage(`{"model":"claude-sonnet"}`),
+		Payload: json.RawMessage(`{"model":"model-b"}`),
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
 	}
 
 	c, _ := cs.Get(t.Context(), "c1")
-	if c.Model == "claude-opus" {
-		t.Errorf("chat.Model = %q, want it to change from claude-opus", c.Model)
+	if c.Model == "model-a" {
+		t.Errorf("chat.Model = %q, want it to change from model-a", c.Model)
 	}
 }
 

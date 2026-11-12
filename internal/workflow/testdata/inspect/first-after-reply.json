@@ -17,7 +17,7 @@
      "type": "step",
      "status": "paused",
      "agentName": "asker",
-     "modelId": "claude-sonnet-5.5",
+     "modelId": "model-b-5.5",
      "effortLevel": "high",
      "startedAt": "2026-11-01T09:58:26.480Z",
      "sessionId": "sess_4cd99833-1963-491f-a2b0-a3b26b5b6e85",
@@ -45,7 +45,7 @@
   },
   "memoryConfigSource": "legacy",
   "backgroundExecution": false,
-  "parentModelId": "claude-sonnet-5.5",
+  "parentModelId": "model-b-5.5",
   "parentEffortLevel": "high",
   "attention": [
    {
@@ -65,7 +65,7 @@
    "nodeId": "ask",
    "type": "step",
    "agentName": "asker",
-   "modelId": "claude-sonnet-5.5",
+   "modelId": "model-b-5.5",
    "effortLevel": "high"
   }
  ]

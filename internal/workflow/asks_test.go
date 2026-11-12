@@ -1,6 +1,6 @@
 package workflow
 
-// The fixtures under testdata/inspect are real kiro-cli 2.37.0 replies (workspacePath scrubbed),
+// The fixtures under testdata/inspect are real kiro-cli 2.37.0 replies (workspacePath and model ids scrubbed),
 // recorded around one park of a one-step recipe whose step calls send_message warning: the park,
 // the first read after an admitted answer (run running, step still paused), the answered step
 // running, the parent session's send_message resuming it, its re-park, and a cancel. gated-park is

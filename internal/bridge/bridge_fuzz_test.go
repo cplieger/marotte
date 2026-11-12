@@ -54,7 +54,7 @@ func FuzzValidSessionID(f *testing.F) {
 func FuzzValidIdent(f *testing.F) {
 	seeds := []string{
 		"", "kiro_default", "kiro-planner", "my.custom.agent",
-		"Claude3_5", "a", "kiro..planner",
+		"Model3_5", "a", "kiro..planner",
 		"../../../etc/passwd", "agent/with/slashes",
 		"agent with spaces", "agent;rm -rf /", "agent\nname",
 		"agent\x00name", "agent$(whoami)",

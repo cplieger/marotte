@@ -26,7 +26,7 @@ func reconciledOf(t *testing.T, entries []marotte.Entry) []marotte.EntryReconcil
 // The turn form clears only the named turn's signal.
 func TestAppendReconciled_TurnFormClearsTheSignalOfTheTurnItNames(t *testing.T) {
 	f := newLogFixture(t)
-	if err := f.header.write(t.Context(), &marotte.Chat{ID: "c-abcdef01", Model: "opus"}); err != nil {
+	if err := f.header.write(t.Context(), &marotte.Chat{ID: "c-abcdef01", Model: "model-a"}); err != nil {
 		t.Fatalf("write header: %v", err)
 	}
 	first := f.prompt("one")

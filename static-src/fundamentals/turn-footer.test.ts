@@ -141,7 +141,7 @@ describe("the ledger row", () => {
         outcome,
         credits: 1.5,
         elapsedMs: 92000,
-        models: ["sonnet-4"],
+        models: ["model-b-4"],
         changedFiles: TWO_FILES,
       });
       expect(line(el), `${outcome} says only its lead word`).toBe(word);
@@ -427,7 +427,7 @@ describe("the info panel", () => {
       delegateCount: 1,
       delegateMs: 9000,
       credits: 1.5,
-      models: ["sonnet-4"],
+      models: ["model-b-4"],
       stopReasonRaw: "max_tokens",
       truncated: true,
     });
@@ -620,12 +620,12 @@ describe("the info panel", () => {
   });
 
   it("names the model, and both models with an arrow on a mid-turn switch", () => {
-    expect(sectionRows(buildTurnFooter({ models: ["sonnet-4"] }), "Model and cost")).toEqual([
-      ["Answered by", "sonnet-4"],
+    expect(sectionRows(buildTurnFooter({ models: ["model-b-4"] }), "Model and cost")).toEqual([
+      ["Answered by", "model-b-4"],
     ]);
     expect(
-      sectionRows(buildTurnFooter({ models: ["sonnet-4", "opus-4"] }), "Model and cost"),
-    ).toEqual([["Answered by", "sonnet-4 \u2192 opus-4"]]);
+      sectionRows(buildTurnFooter({ models: ["model-b-4", "model-a-4"] }), "Model and cost"),
+    ).toEqual([["Answered by", "model-b-4 \u2192 model-a-4"]]);
   });
 
   it("withholds Model rather than inventing one", () => {
@@ -785,8 +785,8 @@ describe("earnsTurnFooter", () => {
   // NOT widened for the model: every completed turn has one, so it would put a footer on every
   // turn. The model rides a footer that already earned its place.
   it("is not made true by a model alone", () => {
-    expect(earnsTurnFooter({ models: ["sonnet-4"] })).toBe(false);
-    expect(earnsTurnFooter({ models: ["sonnet-4"], outcome: "completed" })).toBe(false);
+    expect(earnsTurnFooter({ models: ["model-b-4"] })).toBe(false);
+    expect(earnsTurnFooter({ models: ["model-b-4"], outcome: "completed" })).toBe(false);
   });
 
   // The fields `turnFacts` emits nothing for: no fact, so no lead, so no footer.
@@ -812,11 +812,11 @@ describe("earnsTurnFooter", () => {
   });
 
   it("still shows the model on a footer something else earned", () => {
-    expect(earnsTurnFooter({ models: ["sonnet-4"], credits: 0.1 })).toBe(true);
+    expect(earnsTurnFooter({ models: ["model-b-4"], credits: 0.1 })).toBe(true);
     expect(
-      sectionRows(buildTurnFooter({ models: ["sonnet-4"], credits: 0.1 }), "Model and cost"),
+      sectionRows(buildTurnFooter({ models: ["model-b-4"], credits: 0.1 }), "Model and cost"),
     ).toEqual([
-      ["Answered by", "sonnet-4"],
+      ["Answered by", "model-b-4"],
       ["Credits", "0.10"],
     ]);
   });
@@ -983,7 +983,7 @@ describe("every reason a footer is earned paints something", () => {
     endedAt: { d: { endedAt: 1_700_000_009_000 }, earns: false },
     stopReasonRaw: { d: { stopReasonRaw: "max_tokens" }, earns: false },
     truncated: { d: { truncated: true }, earns: false },
-    models: { d: { models: ["sonnet-4"] }, earns: false },
+    models: { d: { models: ["model-b-4"] }, earns: false },
     asks: { d: { asks: { allowed: 1 } }, earns: false },
     requestIds: { d: { requestIds: ["req-1"] }, earns: false },
     firstOutput: { d: { firstOutput: { total_ms: 4200 } }, earns: false },
@@ -1175,7 +1175,7 @@ describe("the info panel repaints only when its data moved", () => {
 const FIELD_PROBES = {
   elapsedMs: { elapsedMs: 9999 },
   credits: { credits: 1.5 },
-  models: { models: ["opus", "sonnet"] },
+  models: { models: ["model-a", "model-b"] },
   toolMs: { toolMs: 1200 },
   kindCounts: { kindCounts: { search: 3 } },
   delegateCount: { delegateCount: 2 },
@@ -1341,12 +1341,12 @@ describe("the panel states the turn's KAS facts", () => {
 
   it("orders Model and cost as model then credits, and counts requests only under Diagnostics", () => {
     const el = buildTurnFooter({
-      models: ["sonnet-4"],
+      models: ["model-b-4"],
       credits: 0.5,
       requestIds: ["a", "b", "c"],
     });
     expect(sectionRows(el, "Model and cost")).toEqual([
-      ["Answered by", "sonnet-4"],
+      ["Answered by", "model-b-4"],
       ["Credits", "0.50"],
     ]);
     expect(sectionRows(el, "Diagnostics")).toEqual([["Request IDs", "3"]]);

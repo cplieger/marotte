@@ -7,6 +7,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"iter"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/ids"
@@ -509,7 +512,8 @@ func (c *capture) listScratch(session marotte.SessionID, path string) (any, erro
 	return map[string]any{"entries": entries}, nil
 }
 
-// write scrubs the scratch paths, refuses a capture that would leak, and writes the corpus file.
+// write scrubs the scratch paths and the model catalog, refuses a capture that would leak, and writes the
+// corpus file.
 func (c *capture) write(sc scenario) error {
 	c.mu.Lock()
 	lines := slices.Clone(c.lines)
@@ -526,7 +530,10 @@ func (c *capture) write(sc scenario) error {
 		buf.Write(raw)
 		buf.WriteByte('\n')
 	}
-	out := c.scrub(buf.Bytes())
+	out, err := scrubModels(c.scrub(buf.Bytes()))
+	if err != nil {
+		return err
+	}
 	for _, bad := range forbiddenInCapture {
 		if i := bytes.Index(out, []byte(bad)); i >= 0 {
 			return fmt.Errorf("capture holds %q near %q", bad, excerpt(out, i))
@@ -548,6 +555,201 @@ func (c *capture) scrub(b []byte) []byte {
 		b = bytes.ReplaceAll(b, quoted[1:len(quoted)-1], []byte(r.to))
 	}
 	return b
+}
+
+var (
+	// modelTagRe is one bracketed tag in a model description; modeltext.Hidden reads [Deprecated]
+	// and [Legacy] from these, so the scrub keeps every tag.
+	modelTagRe = regexp.MustCompile(`\[[^\]]*\]`)
+	// modelStemRe is a word of an id or display name: digits and punctuation split it, and a run of
+	// one or two letters (k3, m2.5, 1m) is a version, not a name.
+	modelStemRe  = regexp.MustCompile(`\pL{3,}`)
+	wordRe       = regexp.MustCompile(`\pL+`)
+	jsonStringRe = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
+	// genericModelWords are catalog words ordinary prose also uses ("check next"); refusing them
+	// would refuse a capture for plain prose.
+	genericModelWords = []string{
+		"auto", "beta", "coder", "deprecated", "experimental", "internal", "latest", "legacy", "max",
+		"mini", "model", "next", "preview", "pro", "thinking",
+	}
+)
+
+type modelOption struct{ value, name, desc string }
+
+// scrubModels replaces each model the catalog offers, other than Auto, with a placeholder in order of
+// first appearance (model-a, "Model A"): every JSON string equal to an option's id, name or
+// description becomes the placeholder id, name, or the description's bracketed tags plus the name.
+// Upstream retires model ids, and the corpus is public. It refuses a capture that still names an
+// offered model.
+func scrubModels(b []byte) ([]byte, error) {
+	var opts []modelOption
+	for line := range bytes.Lines(b) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var v any
+		if err := json.Unmarshal(line, &v); err != nil {
+			return nil, fmt.Errorf("decode capture line: %w", err)
+		}
+		collectModelOptions(v, &opts)
+	}
+	placeholder := map[string]string{}
+	placeholders := map[string]bool{}
+	replace := map[string]string{}
+	set := func(from, to string) {
+		// An empty old string would turn every empty JSON string in the capture into a model name.
+		if _, taken := replace[from]; from != "" && !taken {
+			replace[from] = to
+		}
+	}
+	for _, o := range opts {
+		if _, ok := placeholder[o.value]; !ok {
+			placeholder[o.value] = "model-" + modelLetters(len(placeholder))
+		}
+		// Ids are set before any name or description: a catalog may name a model by its id.
+		set(o.value, placeholder[o.value])
+	}
+	for _, o := range opts {
+		id := placeholder[o.value]
+		name := "Model " + strings.ToUpper(id[len("model-"):])
+		placeholders[id], placeholders[strings.ToLower(name)] = true, true
+		set(o.desc, strings.Join(append(modelTagRe.FindAllString(o.desc, -1), name), " "))
+		set(o.name, name)
+	}
+	out := jsonStringRe.ReplaceAllFunc(b, func(tok []byte) []byte {
+		var s string
+		if json.Unmarshal(tok, &s) != nil {
+			return tok
+		}
+		if to, ok := replace[s]; ok {
+			return []byte(quoteJSON(to))
+		}
+		return tok
+	})
+	return out, refuseModelMentions(out, opts, placeholders)
+}
+
+// refuseModelMentions errors when a decoded string in b holds an offered model's id, display name,
+// a word of either, or a vendor word from its description, in any case and with no letter right
+// before or after it, unless that text is itself a placeholder or a generic word.
+func refuseModelMentions(b []byte, opts []modelOption, placeholders map[string]bool) error {
+	seen := map[string]bool{}
+	var words []string
+	add := func(s string) {
+		l := strings.ToLower(s)
+		if l == "" || seen[l] || placeholders[l] || slices.Contains(genericModelWords, l) {
+			return
+		}
+		seen[l] = true
+		words = append(words, regexp.QuoteMeta(l))
+	}
+	for _, o := range opts {
+		add(o.value)
+		add(o.name)
+		for _, s := range modelStemRe.FindAllString(o.value+" "+o.name, -1) {
+			add(s)
+		}
+		for _, s := range wordRe.FindAllString(o.desc, -1) {
+			if isVendorWord(s) {
+				add(s)
+			}
+		}
+	}
+	if len(words) == 0 {
+		return nil
+	}
+	re := regexp.MustCompile(`(?i)(?:^|\PL)(` + strings.Join(words, "|") + `)(?:$|\PL)`)
+	for line := range bytes.Lines(b) {
+		var v any
+		if json.Unmarshal(line, &v) != nil {
+			continue
+		}
+		for s := range jsonStrings(v) {
+			if m := re.FindStringSubmatchIndex(s); m != nil {
+				return fmt.Errorf("capture still names an offered model near %q", excerpt([]byte(s), m[2]))
+			}
+		}
+	}
+	return nil
+}
+
+// isVendorWord reports a description word spelled in mixed case after its first letter (eCorp,
+// QuillSoft), the shape of a vendor name; title-case and all-caps description words are ordinary prose.
+func isVendorWord(w string) bool {
+	r := []rune(w)
+	return len(r) >= 3 && slices.ContainsFunc(r[1:], unicode.IsUpper) && slices.ContainsFunc(r, unicode.IsLower)
+}
+
+// jsonStrings yields every key and string value under v. The check reads decoded strings so a JSON
+// escape such as \n before a word does not hide its word boundary.
+func jsonStrings(v any) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		var walk func(any) bool
+		walk = func(v any) bool {
+			switch t := v.(type) {
+			case string:
+				return yield(t)
+			case map[string]any:
+				for k, child := range t {
+					if !yield(k) || !walk(child) {
+						return false
+					}
+				}
+			case []any:
+				for _, child := range t {
+					if !walk(child) {
+						return false
+					}
+				}
+			}
+			return true
+		}
+		walk(v)
+	}
+}
+
+// collectModelOptions appends the options of every model select under v, once per distinct option.
+func collectModelOptions(v any, opts *[]modelOption) {
+	switch t := v.(type) {
+	case map[string]any:
+		if list, ok := t["options"].([]any); ok && t["id"] == "model" {
+			for _, item := range list {
+				m, _ := item.(map[string]any)
+				o := modelOption{}
+				o.value, _ = m["value"].(string)
+				o.name, _ = m["name"].(string)
+				o.desc, _ = m["description"].(string)
+				if o.value != "" && o.value != marotte.ModelAuto && !slices.Contains(*opts, o) {
+					*opts = append(*opts, o)
+				}
+			}
+		}
+		for _, k := range slices.Sorted(maps.Keys(t)) {
+			collectModelOptions(t[k], opts)
+		}
+	case []any:
+		for _, child := range t {
+			collectModelOptions(child, opts)
+		}
+	}
+}
+
+// modelLetters is i in bijective base 26: a to z, then aa.
+func modelLetters(i int) string {
+	s := ""
+	for i++; i > 0; i = (i - 1) / 26 {
+		s = string(rune('a'+(i-1)%26)) + s
+	}
+	return s
+}
+
+// quoteJSON is s as a JSON string without HTML escaping, the form KAS writes.
+func quoteJSON(s string) string {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(s)
+	return strings.TrimSuffix(buf.String(), "\n")
 }
 
 func excerpt(b []byte, i int) string {

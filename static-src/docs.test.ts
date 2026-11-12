@@ -194,10 +194,10 @@ describe("row rendering", () => {
       category: "agent",
       name: "trial-judge",
       path: "workspace/.kiro/agents/trial-judge.md",
-      model: "claude-opus-5",
+      model: "model-a-5",
       tools: ["read", "write", "shell"],
     });
-    expect(row.textContent).toContain("claude-opus-5");
+    expect(row.textContent).toContain("model-a-5");
     expect(row.textContent).toContain("3 tools");
     const chip = [...row.querySelectorAll(".docs-badge")].find((e) => e.textContent === "3 tools");
     expect(chip?.getAttribute("data-tooltip")).toBe("read, write, shell");

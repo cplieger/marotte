@@ -870,14 +870,14 @@ func TestSearch_CompactionFailedAndSafetyBlockedAreNotices(t *testing.T) {
 // A model fallback is a notice found by the model ids its row draws; KAS's codes the row words are not searched.
 func TestSearch_ModelFallbackIsANotice(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
-		add("", "fb-1", marotte.EntryKindModelFallback, marotte.EntryModelFallback{From: "opus-5", To: "sonnet-5", Trigger: "availability", Reason: "chainExhausted"}).
-		add("", "fb-2", marotte.EntryKindModelFallback, marotte.EntryModelFallback{From: "opus-5", To: "sonnet-5", Trigger: "refusal"}))
-	assertHits(t, searchHits(entries, drawn, "opus"), []wantHit{
+		add("", "fb-1", marotte.EntryKindModelFallback, marotte.EntryModelFallback{From: "model-a-5", To: "model-b-5", Trigger: "availability", Reason: "chainExhausted"}).
+		add("", "fb-2", marotte.EntryKindModelFallback, marotte.EntryModelFallback{From: "model-a-5", To: "model-b-5", Trigger: "refusal"}))
+	assertHits(t, searchHits(entries, drawn, "model-a"), []wantHit{
 		{entry: "fb-1", kind: itemNotice, segs: []SegmentKind{segmentContent}},
 		{entry: "fb-2", kind: itemNotice, segs: []SegmentKind{segmentContent}},
 	})
 	// A decline names no target, so only the retry's row holds the model it moved to.
-	assertHits(t, searchHits(entries, drawn, "sonnet"), []wantHit{
+	assertHits(t, searchHits(entries, drawn, "model-b"), []wantHit{
 		{entry: "fb-2", kind: itemNotice, segs: []SegmentKind{segmentContent}},
 	})
 	for _, q := range []string{"exhausted", "refusal", "availability"} {

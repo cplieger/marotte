@@ -20,7 +20,7 @@ func TestRenderChatMarkdown_FullTranscript(t *testing.T) {
 	c := &marotte.Chat{
 		ID:            "abc123",
 		Name:          "My Chat",
-		Model:         "claude-x",
+		Model:         "model-x",
 		CurrentModeID: "vibe",
 		CreatedAt:     1_700_000_000_000,
 		UpdatedAt:     1_700_000_100_000,
@@ -40,7 +40,7 @@ func TestRenderChatMarkdown_FullTranscript(t *testing.T) {
 			}).
 		close(marotte.EntryTurnClose{
 			Outcome: marotte.TurnOutcomeInterrupted, FailureReason: "interrupted by restart",
-			ElapsedMs: 4200, Credits: 0.5, Model: "claude-x",
+			ElapsedMs: 4200, Credits: 0.5, Model: "model-x",
 		}))
 
 	md := renderChatMarkdown(c, stampedAt(entries, 1_700_000_050_000))
@@ -48,7 +48,7 @@ func TestRenderChatMarkdown_FullTranscript(t *testing.T) {
 	wants := []string{
 		"# My Chat",
 		"**Chat ID:** `abc123`",
-		"**Model:** claude-x",
+		"**Model:** model-x",
 		"**Mode:** vibe",
 		"**Turns:** 1",
 		"**Created:** 2023-11-14 22:13:20 UTC",
@@ -68,7 +68,7 @@ func TestRenderChatMarkdown_FullTranscript(t *testing.T) {
 		"`a.go:3`",
 		"file contents here",
 		"{\n  \"path\": \"a.go\"\n}", // the JSON input, indented rather than raw
-		"_Outcome: interrupted · 4.2s · 0.50 credits · claude-x_",
+		"_Outcome: interrupted · 4.2s · 0.50 credits · model-x_",
 		"_Reason: interrupted by restart_",
 	}
 	for _, want := range wants {
@@ -321,41 +321,41 @@ func TestRenderChatMarkdown_SaysWhichModelSwitchedTriggerFired(t *testing.T) {
 	}{
 		{
 			name:    "model_and_tier",
-			payload: marotte.EntryModelSwitched{From: "sonnet-5", To: "opus-5", Effort: "high"},
-			want:    "**Event: model_switched** sonnet-5 → opus-5 (high)",
+			payload: marotte.EntryModelSwitched{From: "model-b-5", To: "model-a-5", Effort: "high"},
+			want:    "**Event: model_switched** model-b-5 → model-a-5 (high)",
 		},
 		{
 			name:    "tier_not_offered",
-			payload: marotte.EntryModelSwitched{From: "opus-5", To: "gpt-5", Effort: "high", Unoffered: "max"},
-			want:    "**Event: model_switched** opus-5 → gpt-5 (high; max is not offered)",
+			payload: marotte.EntryModelSwitched{From: "model-a-5", To: "model-e-5", Effort: "high", Unoffered: "max"},
+			want:    "**Event: model_switched** model-a-5 → model-e-5 (high; max is not offered)",
 		},
 		{
 			name:    "no_tier_and_one_not_offered",
-			payload: marotte.EntryModelSwitched{From: "opus-5", To: "gpt-5", Unoffered: "max"},
-			want:    "**Event: model_switched** opus-5 → gpt-5 (max is not offered)",
+			payload: marotte.EntryModelSwitched{From: "model-a-5", To: "model-e-5", Unoffered: "max"},
+			want:    "**Event: model_switched** model-a-5 → model-e-5 (max is not offered)",
 		},
 		{
 			name:     "tier_only",
-			payload:  marotte.EntryModelSwitched{From: "opus-5", To: "opus-5", Effort: "high"},
+			payload:  marotte.EntryModelSwitched{From: "model-a-5", To: "model-a-5", Effort: "high"},
 			want:     "**Event: model_switched** reasoning effort: high",
 			unwanted: []string{"→"},
 		},
 		{
 			// `effort` is optional on the wire, so an older chat file renders as before.
 			name:     "no_tier",
-			payload:  marotte.EntryModelSwitched{From: "sonnet-5", To: "opus-5"},
-			want:     "**Event: model_switched** sonnet-5 → opus-5",
+			payload:  marotte.EntryModelSwitched{From: "model-b-5", To: "model-a-5"},
+			want:     "**Event: model_switched** model-b-5 → model-a-5",
 			unwanted: []string{"(", "switched by KAS"},
 		},
 		{
 			name:    "repinned_by_kas",
-			payload: marotte.EntryModelSwitched{From: "opus-5", To: "sonnet-5", Reason: marotte.ModelSwitchReasonUnavailable},
-			want:    "**Event: model_switched** opus-5 → sonnet-5, switched by KAS: unavailable",
+			payload: marotte.EntryModelSwitched{From: "model-a-5", To: "model-b-5", Reason: marotte.ModelSwitchReasonUnavailable},
+			want:    "**Event: model_switched** model-a-5 → model-b-5, switched by KAS: unavailable",
 		},
 		{
 			// A reset is its own kind, so an empty target never reads as one.
 			name:     "empty_target",
-			payload:  marotte.EntryModelSwitched{From: "sonnet-5", To: ""},
+			payload:  marotte.EntryModelSwitched{From: "model-b-5", To: ""},
 			want:     "**Event: model_switched**",
 			unwanted: []string{"context reset"},
 		},
@@ -401,18 +401,18 @@ func TestRenderChatMarkdown_NamesAModelFallbacksDecision(t *testing.T) {
 	}{
 		{
 			name:    "retried_for_the_turn",
-			payload: marotte.EntryModelFallback{From: "opus-5", To: "sonnet-5", Scope: "turn", Trigger: "availability"},
-			want:    "**Event: model_fallback** availability: opus-5 → sonnet-5\n",
+			payload: marotte.EntryModelFallback{From: "model-a-5", To: "model-b-5", Scope: "turn", Trigger: "availability"},
+			want:    "**Event: model_fallback** availability: model-a-5 → model-b-5\n",
 		},
 		{
 			name:    "retried_for_the_session",
-			payload: marotte.EntryModelFallback{From: "opus-5", To: "sonnet-5", Scope: "session", Trigger: "refusal"},
-			want:    "**Event: model_fallback** refusal: opus-5 → sonnet-5, now serves the session\n",
+			payload: marotte.EntryModelFallback{From: "model-a-5", To: "model-b-5", Scope: "session", Trigger: "refusal"},
+			want:    "**Event: model_fallback** refusal: model-a-5 → model-b-5, now serves the session\n",
 		},
 		{
 			name:    "declined",
-			payload: marotte.EntryModelFallback{From: "opus-5", Scope: "session", Trigger: "availability", Reason: "chainExhausted"},
-			want:    "**Event: model_fallback** availability: opus-5, declined: chainExhausted\n",
+			payload: marotte.EntryModelFallback{From: "model-a-5", Scope: "session", Trigger: "availability", Reason: "chainExhausted"},
+			want:    "**Event: model_fallback** availability: model-a-5, declined: chainExhausted\n",
 		},
 	}
 	for _, tc := range cases {
@@ -431,7 +431,7 @@ func TestRenderChatMarkdown_NamesAModelFallbacksDecision(t *testing.T) {
 func TestRenderChatMarkdown_LeavesOutASubagentsModelFallback(t *testing.T) {
 	entries, _ := chatOf(openTurn("t-1", 1, nil).
 		add("", "fb-1", marotte.EntryKindModelFallback, marotte.EntryModelFallback{
-			From: "opus-5", To: "sonnet-5", Scope: "session", Trigger: "refusal", Subagent: true,
+			From: "model-a-5", To: "model-b-5", Scope: "session", Trigger: "refusal", Subagent: true,
 		}))
 	if md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Fallback"}, entries); strings.Contains(md, "model_fallback") {
 		t.Errorf("export names a sub-agent's fallback:\n%s", md)

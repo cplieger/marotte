@@ -295,7 +295,7 @@ func TestListRecipes_CarriesKASsValidationError(t *testing.T) {
 }
 
 // workflowStandingCapture is testdata/workflow_standing_capture.json: kiro-cli 2.31.1's getState and listRecipes over
-// a workspace holding wsonly, a home layer holding homeonly, and shared in both.
+// a workspace holding wsonly, a home layer holding homeonly, and shared in both, its model ids replaced.
 type workflowStandingCapture struct {
 	GetState    json.RawMessage `json:"getState"`
 	ListRecipes json.RawMessage `json:"listRecipes"`
@@ -1951,7 +1951,7 @@ func TestLaunchTriggeredRefusesBadDefaults(t *testing.T) {
 	fc := &fakeConfirmer{}
 	h.runs.confirmer = fc
 
-	id, err := launchTriggered(t, h, nil, marotte.RunDefaults{Model: "gpt-9"})
+	id, err := launchTriggered(t, h, nil, marotte.RunDefaults{Model: "model-e-9"})
 	if id != "" || !errors.Is(err, errDefaultsRefused) {
 		t.Errorf("LaunchTriggered = %q, %v; want no id and errDefaultsRefused", id, err)
 	}
@@ -1994,7 +1994,7 @@ func TestLaunchTriggeredTakesDrainHold(t *testing.T) {
 		go func() {
 			defer close(returned)
 			_, _ = h.runs.LaunchTriggered(context.WithoutCancel(t.Context()), "bundled://publish", "rule-1",
-				testTriggerKey, testTriggerCoalesce, nil, marotte.RunDefaults{Model: "opus"})
+				testTriggerKey, testTriggerCoalesce, nil, marotte.RunDefaults{Model: "model-a"})
 		}()
 		waitForCall(t, br, methodKiroConfigTemplate)
 		done := make(chan struct{})

@@ -16,15 +16,15 @@ import (
 	"github.com/cplieger/marotte/internal/schedule"
 )
 
-// runDefaultsHub is a hub whose live catalog offers opus (low, medium, high), haiku (low) and
+// runDefaultsHub is a hub whose live catalog offers model-a (low, medium, high), model-c (low) and
 // auto (none), with one launchable recipe and a launch-rule store behind the run routes.
 func runDefaultsHub(t *testing.T) (*Runtime, *fakeBridge, *http.ServeMux) {
 	t.Helper()
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_pick")
 	h.catalog.SetModels([]marotte.SessionModel{
-		{ID: "opus", Name: "Opus", EffortTiers: []string{"low", "medium", "high"}},
-		{ID: "haiku", Name: "Haiku", EffortTiers: []string{"low"}},
+		{ID: "model-a", Name: "Model A", EffortTiers: []string{"low", "medium", "high"}},
+		{ID: "model-c", Name: "Model C", EffortTiers: []string{"low"}},
 		{ID: "auto", Name: "Auto"},
 	})
 	st, _, err := launchrule.NewStore(t.TempDir())
@@ -65,11 +65,11 @@ func TestLaunchRoute_SendsTheModelPickOnlyWhenSet(t *testing.T) {
 		wantEffort any
 	}{
 		{name: "default", body: `{"source":"bundled://publish"}`},
-		{name: "model only", body: `{"source":"bundled://publish","model":"opus"}`, wantModel: "opus"},
+		{name: "model only", body: `{"source":"bundled://publish","model":"model-a"}`, wantModel: "model-a"},
 		{
 			name:      "model and effort",
-			body:      `{"source":"bundled://publish","model":"opus","effort":"high"}`,
-			wantModel: "opus", wantEffort: "high",
+			body:      `{"source":"bundled://publish","model":"model-a","effort":"high"}`,
+			wantModel: "model-a", wantEffort: "high",
 		},
 	}
 	for _, tc := range cases {
@@ -98,10 +98,10 @@ func TestLaunchRoute_RefusesAPickTheCatalogDoesNotOffer(t *testing.T) {
 	cases := []struct {
 		name, body, wantText string
 	}{
-		{name: "unknown model", body: `{"source":"bundled://publish","model":"gpt-9"}`, wantText: `"gpt-9" is not offered`},
+		{name: "unknown model", body: `{"source":"bundled://publish","model":"model-e-9"}`, wantText: `"model-e-9" is not offered`},
 		{name: "effort with no model", body: `{"source":"bundled://publish","effort":"high"}`, wantText: "an effort needs a model"},
 		{name: "effort on a tierless model", body: `{"source":"bundled://publish","model":"auto","effort":"high"}`, wantText: `"auto" offers no effort levels`},
-		{name: "tier the model does not offer", body: `{"source":"bundled://publish","model":"opus","effort":"max"}`, wantText: `does not offer the effort level "max"`},
+		{name: "tier the model does not offer", body: `{"source":"bundled://publish","model":"model-a","effort":"max"}`, wantText: `does not offer the effort level "max"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -177,7 +177,7 @@ func TestLaunchRoute_ChecksThePickAgainstTheTemplateWithNoLiveCatalog(t *testing
 func TestLaunchRuleRoute_StoresThePickAndRefusesAnUnknownOne(t *testing.T) {
 	h, _, mux := runDefaultsHub(t)
 	const spec = `"when":{"clock":{"freq":"daily","hour":2,"minute":0}}`
-	rec := postRoute(t, mux, "/api/launch-rules", `{"source":"bundled://publish","model":"opus","effort":"high",`+spec+`,"enabled":true}`)
+	rec := postRoute(t, mux, "/api/launch-rules", `{"source":"bundled://publish","model":"model-a","effort":"high",`+spec+`,"enabled":true}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST /api/launch-rules = %d %s, want 200", rec.Code, rec.Body.String())
 	}
@@ -185,18 +185,18 @@ func TestLaunchRuleRoute_StoresThePickAndRefusesAnUnknownOne(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
 		t.Fatalf("decode %s: %v", rec.Body.String(), err)
 	}
-	if view.Model != "opus" || view.Effort != "high" {
-		t.Errorf("saved view model/effort = %q/%q, want opus/high", view.Model, view.Effort)
+	if view.Model != "model-a" || view.Effort != "high" {
+		t.Errorf("saved view model/effort = %q/%q, want model-a/high", view.Model, view.Effort)
 	}
 
-	rec = postRoute(t, mux, "/api/launch-rules", `{"source":"bundled://publish","model":"gpt-9",`+spec+`,"enabled":true}`)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(errorText(t, rec), `"gpt-9" is not offered`) {
+	rec = postRoute(t, mux, "/api/launch-rules", `{"source":"bundled://publish","model":"model-e-9",`+spec+`,"enabled":true}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(errorText(t, rec), `"model-e-9" is not offered`) {
 		t.Errorf("POST /api/launch-rules with an unknown model = %d %s, want 400 naming it", rec.Code, rec.Body.String())
 	}
 
 	list := h.runs.launchRules.Clocks()
-	if len(list) != 1 || list[0].Model != "opus" || list[0].Effort != "high" {
-		t.Errorf("stored schedules = %+v, want the one opus/high row the refusal left alone", list)
+	if len(list) != 1 || list[0].Model != "model-a" || list[0].Effort != "high" {
+		t.Errorf("stored schedules = %+v, want the one model-a/high row the refusal left alone", list)
 	}
 }
 
@@ -205,12 +205,12 @@ func TestLaunchScheduled_SendsTheSchedulesPick(t *testing.T) {
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_sched")
 	if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", launchrule.Row{ID: "sched-1"},
-		nil, marotte.RunDefaults{Model: "opus", Effort: "low"}, time.Now().Add(time.Hour)); err != nil {
+		nil, marotte.RunDefaults{Model: "model-a", Effort: "low"}, time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("LaunchScheduled: %v", err)
 	}
 	params := br.paramsFor(methodKiroWorkflowNew)
-	if params["modelId"] != "opus" || params["effortLevel"] != "low" {
-		t.Errorf("workflow/new modelId/effortLevel = %v/%v, want opus/low", params["modelId"], params["effortLevel"])
+	if params["modelId"] != "model-a" || params["effortLevel"] != "low" {
+		t.Errorf("workflow/new modelId/effortLevel = %v/%v, want model-a/low", params["modelId"], params["effortLevel"])
 	}
 }
 
@@ -227,8 +227,8 @@ func TestHandleConfigTemplate_ListsEachModelsTiers(t *testing.T) {
 	for _, m := range got.Models {
 		tiers[m.ID] = m.EffortTiers
 	}
-	if want := []string{"low", "medium", "high"}; !slices.Equal(tiers["opus"], want) || len(tiers["auto"]) != 0 {
-		t.Errorf("served tiers = %v, want opus %v and auto none", tiers, want)
+	if want := []string{"low", "medium", "high"}; !slices.Equal(tiers["model-a"], want) || len(tiers["auto"]) != 0 {
+		t.Errorf("served tiers = %v, want model-a %v and auto none", tiers, want)
 	}
 }
 
@@ -247,25 +247,25 @@ func checkPins(t *testing.T, plan string, defaults marotte.RunDefaults) error {
 // KAS keeps a step's effortLevel only when its model offers it and otherwise runs the model's
 // default, with no error, so marotte refuses the launch instead.
 func TestCheckRecipePins_RefusesUnofferedStepEffort(t *testing.T) {
-	err := checkPins(t, "["+planStep("review", "opus", "xhigh")+"]", marotte.RunDefaults{})
+	err := checkPins(t, "["+planStep("review", "model-a", "xhigh")+"]", marotte.RunDefaults{})
 	if !errors.Is(err, errDefaultsRefused) {
 		t.Fatalf("checkRecipePins = %v, want errDefaultsRefused", err)
 	}
 	if got := err.Error(); !strings.Contains(got, `step "review"`) || !strings.Contains(got, `"xhigh"`) {
 		t.Errorf("refusal = %q, want it to name the step and the level", got)
 	}
-	if err := checkPins(t, "["+planStep("review", "opus", "high")+"]", marotte.RunDefaults{}); err != nil {
-		t.Errorf("checkRecipePins(opus, high) = %v, want nil for an offered pair", err)
+	if err := checkPins(t, "["+planStep("review", "model-a", "high")+"]", marotte.RunDefaults{}); err != nil {
+		t.Errorf("checkRecipePins(model-a, high) = %v, want nil for an offered pair", err)
 	}
 }
 
 // A step pinned to a model the account is not served fails at its first model call.
 func TestCheckRecipePins_RefusesUnknownStepModel(t *testing.T) {
-	err := checkPins(t, "["+planStep("build", "gpt-9", "")+"]", marotte.RunDefaults{Model: "opus"})
+	err := checkPins(t, "["+planStep("build", "model-e-9", "")+"]", marotte.RunDefaults{Model: "model-a"})
 	if !errors.Is(err, errDefaultsRefused) {
 		t.Fatalf("checkRecipePins = %v, want errDefaultsRefused", err)
 	}
-	if got := err.Error(); !strings.Contains(got, `step "build"`) || !strings.Contains(got, `"gpt-9" is not offered`) {
+	if got := err.Error(); !strings.Contains(got, `step "build"`) || !strings.Contains(got, `"model-e-9" is not offered`) {
 		t.Errorf("refusal = %q, want it to name the step and the model", got)
 	}
 }
@@ -285,20 +285,20 @@ func TestCheckRecipePins_InheritedModelChecksVocabularyOnly(t *testing.T) {
 		{name: "a level some model offers", plan: "[" + planStep("s", "", "high") + "]"},
 		{
 			name: "the run's model does not run the level", plan: "[" + planStep("s", "", "high") + "]",
-			defaults: marotte.RunDefaults{Model: "haiku"}, wantText: `"haiku" does not offer the effort level "high"`,
+			defaults: marotte.RunDefaults{Model: "model-c"}, wantText: `"model-c" does not offer the effort level "high"`,
 		},
 		{
 			name: "the run's model runs the level", plan: "[" + planStep("s", "", "high") + "]",
-			defaults: marotte.RunDefaults{Model: "opus"},
+			defaults: marotte.RunDefaults{Model: "model-a"},
 		},
 		{
-			name: "the run's effort on the step's model", plan: "[" + planStep("s", "haiku", "") + "]",
-			defaults: marotte.RunDefaults{Model: "opus", Effort: "high"}, wantText: `step "s": the model "haiku" does not offer`,
+			name: "the run's effort on the step's model", plan: "[" + planStep("s", "model-c", "") + "]",
+			defaults: marotte.RunDefaults{Model: "model-a", Effort: "high"}, wantText: `step "s": the model "model-c" does not offer`,
 		},
 		{
 			name:     "the workflow creator ignores the run's model",
 			plan:     `[{"nodeId":"s","type":"step","agentName":"wf-workflow-creator","effortLevel":"high"}]`,
-			defaults: marotte.RunDefaults{Model: "haiku"},
+			defaults: marotte.RunDefaults{Model: "model-c"},
 		},
 		{
 			name: "a run default of auto declares no model", plan: "[" + planStep("s", "", "high") + "]",
@@ -306,7 +306,7 @@ func TestCheckRecipePins_InheritedModelChecksVocabularyOnly(t *testing.T) {
 		},
 		{
 			name: "a step on auto takes the run's model", plan: "[" + planStep("s", "auto", "high") + "]",
-			defaults: marotte.RunDefaults{Model: "haiku"}, wantText: `"haiku" does not offer the effort level "high"`,
+			defaults: marotte.RunDefaults{Model: "model-c"}, wantText: `"model-c" does not offer the effort level "high"`,
 		},
 	}
 	for _, tc := range cases {
@@ -327,11 +327,11 @@ func TestCheckRecipePins_InheritedModelChecksVocabularyOnly(t *testing.T) {
 
 // KAS nests a sequence's and a repeat's body under steps and a parallel's under branches.
 func TestCheckRecipePins_WalksNestedChildren(t *testing.T) {
-	bad := planStep("deep", "opus", "max")
+	bad := planStep("deep", "model-a", "max")
 	cases := map[string]string{
 		"sequence": `[{"nodeId":"seq","type":"sequence","steps":[` + planStep("ok", "", "") + `,` + bad + `]}]`,
 		"repeat":   `[{"nodeId":"loop","type":"repeat","maxIterations":3,"onMaxIterations":"pause","steps":[` + bad + `]}]`,
-		"parallel": `[{"nodeId":"fan","type":"parallel","branches":[` + planStep("ok", "opus", "low") + `,` + bad + `]}]`,
+		"parallel": `[{"nodeId":"fan","type":"parallel","branches":[` + planStep("ok", "model-a", "low") + `,` + bad + `]}]`,
 		"parallel in a repeat": `[{"nodeId":"loop","type":"repeat","maxIterations":2,"onMaxIterations":"pause","steps":[` +
 			`{"nodeId":"fan","type":"parallel","branches":[{"nodeId":"seq","type":"sequence","steps":[` + bad + `]}]}]}]`,
 	}
@@ -355,7 +355,7 @@ func pinnedRecipe(br *fakeBridge, step string) {
 // The refusal comes before the run's host session opens or any run is created.
 func TestLaunch_RefusesBadStepPinBeforeWorkflowNew(t *testing.T) {
 	_, br, mux := runDefaultsHub(t)
-	pinnedRecipe(br, planStep("review", "opus", "xhigh"))
+	pinnedRecipe(br, planStep("review", "model-a", "xhigh"))
 	rec := postRoute(t, mux, "/api/runs", `{"source":"bundled://publish"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("POST /api/runs = %d %s, want 400", rec.Code, rec.Body.String())
@@ -385,7 +385,7 @@ func TestHandleLaunch_UncheckableStepPinsAnswersTryLater(t *testing.T) {
 		return br, mux
 	}
 	t.Run("a pinned step", func(t *testing.T) {
-		br, mux := newHub(t, planStep("review", "opus", "high"))
+		br, mux := newHub(t, planStep("review", "model-a", "high"))
 		rec := postRoute(t, mux, "/api/runs", `{"source":"bundled://publish"}`)
 		if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" {
 			t.Errorf("POST /api/runs = %d (Retry-After %q) %s, want 503 with Retry-After",
@@ -415,7 +415,7 @@ func TestLaunchScheduled_StepPinRefusals(t *testing.T) {
 	t.Run("uncheckable", func(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_sched")
-		pinnedRecipe(br, planStep("review", "opus", "high"))
+		pinnedRecipe(br, planStep("review", "model-a", "high"))
 		br.callErrs = map[string]error{methodKiroConfigTemplate: errors.New("engine down")}
 		_, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", launchrule.Row{ID: "sched-1"},
 			nil, marotte.RunDefaults{}, time.Now().Add(time.Hour))
@@ -425,7 +425,7 @@ func TestLaunchScheduled_StepPinRefusals(t *testing.T) {
 	})
 	t.Run("refused", func(t *testing.T) {
 		h, br, _ := runDefaultsHub(t)
-		pinnedRecipe(br, planStep("review", "gpt-9", ""))
+		pinnedRecipe(br, planStep("review", "model-e-9", ""))
 		_, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", launchrule.Row{ID: "sched-1"},
 			nil, marotte.RunDefaults{}, time.Now().Add(time.Hour))
 		if !errors.Is(err, errDefaultsRefused) || errors.Is(err, schedule.ErrEngineBusy) {

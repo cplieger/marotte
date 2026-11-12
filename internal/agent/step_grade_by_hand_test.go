@@ -72,7 +72,7 @@ func byHandHub(t *testing.T, id, nodeID, status, signal string) (*Runtime, *test
 }
 
 // TestStepEnd_AStepEndedByHandAfterAThrottledTurnReadsCompletedEndedByHand replays wf_09004949bdedbb2b's
-// account-review-claude: throttled turns parked the node, a later turn on the parked node signalled and answered, and
+// account-review-a: throttled turns parked the node, a later turn on the parked node signalled and answered, and
 // the parent's update_status completed it, so KAS records it completed with no signal. A step its own warning parked
 // and Mark step done completed (account-gate) reads the same.
 func TestStepEnd_AStepEndedByHandAfterAThrottledTurnReadsCompletedEndedByHand(t *testing.T) {
@@ -97,7 +97,7 @@ func TestStepEnd_AStepEndedByHandAfterAThrottledTurnReadsCompletedEndedByHand(t 
 		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
-			h, cs, s := byHandHub(t, id, "account-review-claude", "completed", "")
+			h, cs, s := byHandHub(t, id, "account-review-a", "completed", "")
 			tc.drive(s)
 			s.complete("completed")
 			joinInflight(t, h)
@@ -127,7 +127,7 @@ func TestStepEnd_AStepEndedByHandAfterAThrottledTurnReadsCompletedEndedByHand(t 
 // came before it.
 func TestStepEnd_AStepKASFailedAfterAThrottledTurnStaysFailed(t *testing.T) {
 	const id = "wf_09004949bdedbb2b"
-	h, _, s := byHandHub(t, id, "account-review-claude", "failed", "")
+	h, _, s := byHandHub(t, id, "account-review-a", "failed", "")
 	s.throttle()
 	s.signalledTurn()
 	h.runs.RunNodeComplete(t.Context(), id, s.path, "failed", "model service error")

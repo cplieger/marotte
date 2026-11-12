@@ -42,11 +42,11 @@ func TestColdCatalogPin(t *testing.T) {
 		choices []string
 		want    bool
 	}{
-		"the saved model alone":         {"opus", []string{"opus"}, true},
-		"one choice naming another":     {"opus", []string{"fable"}, false},
-		"a catalog holding the current": {"opus", []string{"auto", "opus"}, false},
+		"the saved model alone":         {"model-a", []string{"model-a"}, true},
+		"one choice naming another":     {"model-a", []string{"model-d"}, false},
+		"a catalog holding the current": {"model-a", []string{"auto", "model-a"}, false},
 		"no current value":              {"", []string{""}, false},
-		"no choices":                    {"opus", nil, false},
+		"no choices":                    {"model-a", nil, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := ColdCatalogPin(tc.current, tc.choices); got != tc.want {

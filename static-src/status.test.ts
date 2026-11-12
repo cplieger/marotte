@@ -101,28 +101,26 @@ describe("the model pill", () => {
   it("names the model alone when it is handed no tier", async () => {
     mountContextBar();
 
-    await paint("claude-opus-5", "");
+    await paint("model-a-5", "");
 
     const { $ } = await import("./dom.js");
-    expect($.ctxModelPill.textContent).toBe("claude opus 5");
+    expect($.ctxModelPill.textContent).toBe("model a 5");
     // Hidden rather than emptied: `.pill` is a flex row with a gap, so an empty span would still
     // pad the pill.
     expect($.ctxEffortPill.textContent).toBe("");
     expect($.ctxEffortPill.classList.contains("hidden")).toBe(true);
-    expect($.switchModelBtn.getAttribute("aria-label")).toBe(
-      "Switch model, currently claude opus 5",
-    );
+    expect($.switchModelBtn.getAttribute("aria-label")).toBe("Switch model, currently model a 5");
   });
 
   it("names the tier beside the model when it is handed one", async () => {
     mountContextBar();
 
-    await paint("claude-opus-5", "max");
+    await paint("model-a-5", "max");
 
     const { $ } = await import("./dom.js");
     // Its OWN span, not appended to the model label: the label is capped at 10rem with an ellipsis,
     // so a concatenated tier is the half that gets clipped.
-    expect($.ctxModelPill.textContent).toBe("claude opus 5");
+    expect($.ctxModelPill.textContent).toBe("model a 5");
     expect($.ctxEffortPill.textContent).toBe("· max");
     expect($.ctxEffortPill.classList.contains("hidden")).toBe(false);
   });
@@ -130,26 +128,26 @@ describe("the model pill", () => {
   it("names the current selection in the button's aria-label", async () => {
     mountContextBar();
 
-    await paint("claude-opus-5", "max");
+    await paint("model-a-5", "max");
 
     // The button's aria-label wins over its own text, so this is the only path the selection
     // reaches assistive tech by. Spelled in words: the separator above is read out.
     const { $ } = await import("./dom.js");
     expect($.switchModelBtn.getAttribute("aria-label")).toBe(
-      "Switch model, currently claude opus 5 at max reasoning effort",
+      "Switch model, currently model a 5 at max reasoning effort",
     );
   });
 
   it("clears the tier when a later paint carries none", async () => {
     mountContextBar();
 
-    await paint("claude-opus-5", "max");
-    await paint("claude-sonnet-5", "");
+    await paint("model-a-5", "max");
+    await paint("model-b-5", "");
 
     // A model switch can leave the new model with no tier to name, so the span has to empty again
     // rather than keep the previous model's.
     const { $ } = await import("./dom.js");
-    expect($.ctxModelPill.textContent).toBe("claude sonnet 5");
+    expect($.ctxModelPill.textContent).toBe("model b 5");
     expect($.ctxEffortPill.textContent).toBe("");
     expect($.ctxEffortPill.classList.contains("hidden")).toBe(true);
   });
@@ -183,7 +181,7 @@ async function paintRing(
     credits: 0,
     turnCount: 0,
     lastTurnMs: 0,
-    model: "claude-opus-5",
+    model: "model-a-5",
   });
   await new Promise((r) => {
     requestAnimationFrame(() => {
@@ -203,7 +201,7 @@ describe("the credits line", () => {
       credits,
       turnCount: 0,
       lastTurnMs: 0,
-      model: "claude-opus-5",
+      model: "model-a-5",
       effort: "",
     });
     await new Promise((r) => {

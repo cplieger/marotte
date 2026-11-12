@@ -214,7 +214,7 @@ describe("the composer, measured at real viewport sizes", () => {
       document.getElementById("task-list-pill")?.classList.remove("hidden");
       const model = document.getElementById("ctx-model-pill");
       if (model !== null) {
-        model.textContent = "claude-opus-4.5-thinking";
+        model.textContent = "model-alpha-4.5-thinking";
       }
       const at = `${String(w)}x${String(h)} ${tier}`;
       const pills = [
@@ -367,7 +367,7 @@ describe("the composer, measured at real viewport sizes", () => {
       document.getElementById("task-list-pill")?.classList.remove("hidden");
       const model = document.getElementById("ctx-model-pill");
       if (model !== null) {
-        model.textContent = "claude-opus-4.5-thinking";
+        model.textContent = "model-alpha-4.5-thinking";
       }
       const row = document.querySelector<HTMLElement>(".prompt-pills");
       if (row === null) {

@@ -552,13 +552,13 @@ func TestPersistModelSwitch_KeepsACompactionsWaitForALiveReading(t *testing.T) {
 func TestPersistEffortChange_AppendsTheTierBetweenTurns(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "opus-5"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "model-a-5"; return true })
 	finishedTurn(t, h, "c1")
 
-	h.coord.PersistEffortChange(ctx, "c1", "opus-5", marotte.EffortMax)
+	h.coord.PersistEffortChange(ctx, "c1", "model-a-5", marotte.EffortMax)
 
 	switches := switchesOf(t, logOf(t, cs, "c1"))
-	want := marotte.EntryModelSwitched{From: "opus-5", To: "opus-5", Effort: "max"}
+	want := marotte.EntryModelSwitched{From: "model-a-5", To: "model-a-5", Effort: "max"}
 	if len(switches) != 1 || switches[0] != want {
 		t.Errorf("model_switched entries = %+v, want one %+v", switches, want)
 	}
@@ -571,12 +571,12 @@ func TestPersistEffortChange_OnAnEmptyLogAnnouncesAClosedCarrier(t *testing.T) {
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
-		c.Model = "opus-5"
+		c.Model = "model-a-5"
 		c.TurnCount = 1
 		return true
 	})
 
-	h.coord.PersistEffortChange(ctx, "c1", "opus-5", marotte.EffortLevel("medium"))
+	h.coord.PersistEffortChange(ctx, "c1", "model-a-5", marotte.EffortLevel("medium"))
 
 	var kinds []string
 	for _, e := range logOf(t, cs, "c1") {
@@ -601,14 +601,14 @@ func TestPersistEffortChange_OnAnEmptyLogAnnouncesAClosedCarrier(t *testing.T) {
 func TestPersistEffortChange_FoldsTheTierIntoAnOpenTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "opus-5"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "model-a-5"; return true })
 	turnID, _ := streamingPromptTurn(t, h, "c1", "the reply")
 
-	h.coord.PersistEffortChange(ctx, "c1", "opus-5", "high")
+	h.coord.PersistEffortChange(ctx, "c1", "model-a-5", "high")
 
 	entries := logOf(t, cs, "c1")
 	switches := switchesOf(t, entries)
-	want := marotte.EntryModelSwitched{From: "opus-5", To: "opus-5", Effort: "high"}
+	want := marotte.EntryModelSwitched{From: "model-a-5", To: "model-a-5", Effort: "high"}
 	if len(switches) != 1 || switches[0] != want {
 		t.Fatalf("model_switched entries = %+v, want one %+v", switches, want)
 	}
@@ -647,20 +647,20 @@ func finishedTurn(t *testing.T, h *Runtime, chatID marotte.ChatID) {
 func TestPersistSwitches_RecordNothingBeforeTheFirstPrompt(t *testing.T) {
 	tests := map[string]func(h *Runtime){
 		"effort": func(h *Runtime) {
-			h.coord.PersistEffortChange(t.Context(), "c1", "opus-5", "high")
+			h.coord.PersistEffortChange(t.Context(), "c1", "model-a-5", "high")
 		},
 		"mode": func(h *Runtime) {
 			h.coord.PersistModeSwitch(t.Context(), "c1",
 				marotte.EntryModeSwitched{From: "", To: "spec", Source: marotte.ModeSwitchSourceUser})
 		},
 		"model": func(h *Runtime) {
-			h.coord.persistModelSwitch(t.Context(), "c1", &effortDecision{from: "opus-5", to: "sonnet-5"}, 1234)
+			h.coord.persistModelSwitch(t.Context(), "c1", &effortDecision{from: "model-a-5", to: "model-b-5"}, 1234)
 		},
 	}
 	for name, persist := range tests {
 		t.Run(name, func(t *testing.T) {
 			h, cs, _ := newTestHub()
-			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "opus-5"; return true })
+			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "model-a-5"; return true })
 
 			persist(h)
 
@@ -678,16 +678,16 @@ func TestPersistModelSwitch_UnstartedChatTakesThePickOnTheHeader(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
-		c.Model = "opus-5"
-		c.PendingModel = "sonnet-5"
+		c.Model = "model-a-5"
+		c.PendingModel = "model-b-5"
 		return true
 	})
 
-	h.coord.persistModelSwitch(t.Context(), "c1", &effortDecision{from: "opus-5", to: "sonnet-5"}, 1234)
+	h.coord.persistModelSwitch(t.Context(), "c1", &effortDecision{from: "model-a-5", to: "model-b-5"}, 1234)
 
 	c, _ := cs.Get(t.Context(), "c1")
-	if c.Model != "sonnet-5" || c.PendingModel != "" || c.Usage.ContextSize != 1234 {
-		t.Errorf("header = {Model %q, PendingModel %q, ContextSize %d}, want {sonnet-5, \"\", 1234}",
+	if c.Model != "model-b-5" || c.PendingModel != "" || c.Usage.ContextSize != 1234 {
+		t.Errorf("header = {Model %q, PendingModel %q, ContextSize %d}, want {model-b-5, \"\", 1234}",
 			c.Model, c.PendingModel, c.Usage.ContextSize)
 	}
 }

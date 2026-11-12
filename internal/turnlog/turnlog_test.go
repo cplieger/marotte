@@ -521,8 +521,8 @@ func TestCloseSealsAbortsThenWritesTheAggregate(t *testing.T) {
 	turn, rec := open(t)
 	turn.Meter(1.5, 100)
 	turn.Meter(0.5, 50)
-	turn.SetModel("opus")
-	turn.SetModel("sonnet")
+	turn.SetModel("model-a")
+	turn.SetModel("model-b")
 	turn.ChangedFile("a.go", 3, 1, false)
 	turn.ChangedFile("a.go", 2, 0, false)
 	turn.AddCodeReferences(marotte.CodeReference{LicenseName: "MIT"}, marotte.CodeReference{LicenseName: "MIT"})
@@ -558,7 +558,7 @@ func TestCloseSealsAbortsThenWritesTheAggregate(t *testing.T) {
 		t.Errorf("credits are %v, want the two frames summed", footer.Credits)
 	case footer.ElapsedMs != 150:
 		t.Errorf("elapsed_ms is %v, want the two frames summed", footer.ElapsedMs)
-	case footer.Model != "opus":
+	case footer.Model != "model-a":
 		t.Errorf("model is %q, want the first latched", footer.Model)
 	case footer.ChangedFiles["a.go"].LinesAdded != 5:
 		t.Errorf("a.go added %d lines, want both edits summed", footer.ChangedFiles["a.go"].LinesAdded)

@@ -225,20 +225,20 @@ describe("what it matches", () => {
         category: "agent",
         name: "reviewer",
         path: "r.md",
-        model: "sonnet-4",
+        model: "model-b-4",
         tools: ["grepSearch", "readFile"],
       },
       {
         category: "agent",
         name: "planner",
         path: "p.md",
-        model: "haiku",
+        model: "model-c",
         tools: ["listDirectory"],
       },
     ]);
     render();
     expect(names("agents")).toEqual(["reviewer", "planner"]);
-    type("sonnet");
+    type("model-b");
     expect(names("agents")).toEqual(["reviewer"]);
     type("listdirectory");
     expect(names("agents")).toEqual(["planner"]);
@@ -604,7 +604,7 @@ describe("the census: every string a row renders is matchable", () => {
         category: "agent",
         name: "reviewer",
         path: "workspace/.kiro/agents/reviewer.md",
-        model: "sonnet-4",
+        model: "model-b-4",
         tools: ["grepSearch", "readFile"],
       },
       {

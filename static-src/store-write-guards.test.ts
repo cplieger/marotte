@@ -127,9 +127,9 @@ describe("upsertHeader and the compaction watermark", () => {
 describe("parseContextSize reads a bare 1M as a window", () => {
   // The `<N>M context` spellings are a table in `store.test.ts`.
   const cases: [string, number | undefined][] = [
-    ["Claude Sonnet 4.5 (1M)", 1_000_000],
+    ["Model B 4.5 (1M)", 1_000_000],
     ["1M", 1_000_000],
-    ["Sonnet 1M beta", 1_000_000],
+    ["Model B 1M beta", 1_000_000],
     // Not a bare `1M`: no word boundary on either side, so neither arm may claim it.
     ["11M tokens", undefined],
     ["1Mb", undefined],

@@ -46,7 +46,7 @@ func TestHandleSessionInfoUpdate_ModelFallbackRefusalAppendsEntry(t *testing.T) 
 
 	chunk("refused attempt")
 	tr.HandleSessionInfoUpdate(t.Context(), chatID, modelFallbackInfo(t, map[string]any{
-		"from": "claude-opus-4.7", "to": "claude-sonnet-4.6", "scope": "session", "trigger": "refusal",
+		"from": "model-a-4.7", "to": "model-b-4.6", "scope": "session", "trigger": "refusal",
 	}), FrameAttribution{})
 	chunk("retry")
 
@@ -58,7 +58,7 @@ func TestHandleSessionInfoUpdate_ModelFallbackRefusalAppendsEntry(t *testing.T) 
 		t.Errorf("open entries = %+v, want the retry alone in a new lane", open)
 	}
 	got := modelFallbacksOf(t, entries)
-	if want := (marotte.EntryModelFallback{From: "claude-opus-4.7", To: "claude-sonnet-4.6", Scope: "session", Trigger: "refusal"}); got[0] != want {
+	if want := (marotte.EntryModelFallback{From: "model-a-4.7", To: "model-b-4.6", Scope: "session", Trigger: "refusal"}); got[0] != want {
 		t.Errorf("payload = %+v, want %+v", got[0], want)
 	}
 }
@@ -71,14 +71,14 @@ func TestHandleSessionInfoUpdate_ModelFallbackDeclinedHasNoTo(t *testing.T) {
 	}), false, FrameAttribution{})
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", modelFallbackInfo(t, map[string]any{
-		"from": "claude-opus-4.7", "trigger": "availability", "reason": "noServedTarget",
+		"from": "model-a-4.7", "trigger": "availability", "reason": "noServedTarget",
 	}), FrameAttribution{})
 
 	got := modelFallbacksOf(t, deps.chatEntries("c1"))
 	if len(got) != 1 {
 		t.Fatalf("model_fallback entries = %d, want 1", len(got))
 	}
-	if want := (marotte.EntryModelFallback{From: "claude-opus-4.7", Trigger: "availability", Reason: "noServedTarget"}); got[0] != want {
+	if want := (marotte.EntryModelFallback{From: "model-a-4.7", Trigger: "availability", Reason: "noServedTarget"}); got[0] != want {
 		t.Errorf("declined payload = %+v, want %+v", got[0], want)
 	}
 }
@@ -146,12 +146,12 @@ func TestModelFallbackPayload_ReadsAPromotionAsTheSessionsFallback(t *testing.T)
 	}{
 		{
 			name:   "refusal with a target",
-			fields: modelFallbackFields{From: "opus", To: "sonnet", Trigger: "refusal", Reason: "x"},
-			want:   marotte.EntryModelFallback{From: "opus", To: "sonnet", Scope: "session", Trigger: "refusal"},
+			fields: modelFallbackFields{From: "model-a", To: "model-b", Trigger: "refusal", Reason: "x"},
+			want:   marotte.EntryModelFallback{From: "model-a", To: "model-b", Scope: "session", Trigger: "refusal"},
 			show:   true,
 		},
-		{name: "no target", fields: modelFallbackFields{From: "opus", Trigger: "refusal"}},
-		{name: "availability", fields: modelFallbackFields{From: "opus", To: "sonnet", Trigger: "availability"}},
+		{name: "no target", fields: modelFallbackFields{From: "model-a", Trigger: "refusal"}},
+		{name: "availability", fields: modelFallbackFields{From: "model-a", To: "model-b", Trigger: "availability"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -216,7 +216,7 @@ func TestHandleStepInfoUpdate_ModelFallbackLandsInTheStepsTurn(t *testing.T) {
 }
 
 func TestEntryProjection_ModelFallbackReplay(t *testing.T) {
-	fields := map[string]any{"from": "claude-opus-4.7", "to": "claude-sonnet-4.6", "scope": "session", "trigger": "refusal"}
+	fields := map[string]any{"from": "model-a-4.7", "to": "model-b-4.6", "scope": "session", "trigger": "refusal"}
 	turns := entryProject([][2]any{
 		turnStartFrame(t),
 		agentChunkFrame(t, "before"),
@@ -236,7 +236,7 @@ func TestEntryProjection_ModelFallbackReplay(t *testing.T) {
 		t.Fatalf("entry kinds = %v, want %v:\n%s", got, want, dumpTurns(turns))
 	}
 	payload, _ := modelFallbackPayload(infoKindModelFallback, &modelFallbackFields{
-		From: "claude-opus-4.7", To: "claude-sonnet-4.6", Scope: "session", Trigger: "refusal",
+		From: "model-a-4.7", To: "model-b-4.6", Scope: "session", Trigger: "refusal",
 	})
 	live, err := json.Marshal(payload)
 	if err != nil {
@@ -311,14 +311,14 @@ func TestHandleSessionInfoUpdate_ModelFallbackPromotedReadsAsTheSessionsFallback
 	}), false, FrameAttribution{})
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", modelFallbackInfo(t, map[string]any{
-		"kind": infoKindModelFallbackPromoted, "from": "opus", "to": "sonnet", "trigger": "refusal",
+		"kind": infoKindModelFallbackPromoted, "from": "model-a", "to": "model-b", "trigger": "refusal",
 	}), FrameAttribution{})
 
 	entries := deps.chatEntries("c1")
 	if got, want := entryKinds(entries), []marotte.EntryKind{marotte.EntryKindText, marotte.EntryKindModelFallback}; !slices.Equal(got, want) {
 		t.Fatalf("sealed entries = %v, want %v", got, want)
 	}
-	if got, want := modelFallbacksOf(t, entries), []marotte.EntryModelFallback{{From: "opus", To: "sonnet", Scope: "session", Trigger: "refusal"}}; !slices.Equal(got, want) {
+	if got, want := modelFallbacksOf(t, entries), []marotte.EntryModelFallback{{From: "model-a", To: "model-b", Scope: "session", Trigger: "refusal"}}; !slices.Equal(got, want) {
 		t.Errorf("model_fallback = %+v, want %+v", got, want)
 	}
 	if strings.Contains(logbuf.String(), "UNKNOWN") {

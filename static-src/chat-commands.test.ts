@@ -24,7 +24,7 @@ import { makeSession } from "./__test-helpers__/model.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  setSessions([makeSession({ id: "chat1", model: "claude" })]);
+  setSessions([makeSession({ id: "chat1", model: "model-x" })]);
 });
 
 // sendPromptTo dispatches once and maps the result to sent/queued/starting/failed; what
@@ -38,7 +38,7 @@ describe("sendPromptTo", () => {
       expect.objectContaining({
         chatID: "chat1",
         text: "hello",
-        model: "claude",
+        model: "model-x",
       }),
     );
     // No attachments passed → the key is omitted (exactOptionalPropertyTypes),
@@ -70,13 +70,13 @@ describe("sendPromptTo", () => {
   it("carries the target chat's own model, not one picked in another chat", async () => {
     mockSendPromptDispatch.mockResolvedValue("sent");
     setSessions([
-      makeSession({ id: "chat-a", model: "claude" }),
-      makeSession({ id: "chat-b", model: "gpt-5.5" }),
+      makeSession({ id: "chat-a", model: "model-x" }),
+      makeSession({ id: "chat-b", model: "model-e-5.5" }),
     ]);
-    setModel("chat-a", "claude-opus");
+    setModel("chat-a", "model-a");
     await sendPromptTo("chat-b", "hello");
     expect(mockSendPromptDispatch).toHaveBeenCalledWith(
-      expect.objectContaining({ chatID: "chat-b", model: "gpt-5.5" }),
+      expect.objectContaining({ chatID: "chat-b", model: "model-e-5.5" }),
     );
   });
 

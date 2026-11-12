@@ -321,7 +321,7 @@ describe("the progress phrase states where the run stands", () => {
 
     it("keeps the pass when every branch in flight shares one loop pass", () => {
       const pass = passOf(2, [
-        group("review", "parallel", [work("gpt", "running"), work("claude", "running")]),
+        group("review", "parallel", [work("seat-b", "running"), work("seat-a", "running")]),
         work("agg", "pending"),
       ]);
       const run = running([loop([earlier(1), pass], { label: "review-loop", maxPasses: 3 })]);
@@ -399,8 +399,8 @@ describe("miniBar draws one segment per step of the current pass", () => {
 
   it("keeps the double gap before a sibling parallel branch inside a long loop", () => {
     const fan = group("review", "parallel", [
-      { ...group("gpt", "sequence", steps("g", ["running", "pending"])), path: "gpt" },
-      { ...group("claude", "sequence", steps("c", ["running"])), path: "claude" },
+      { ...group("seat-b", "sequence", steps("g", ["running", "pending"])), path: "seat-b" },
+      { ...group("seat-a", "sequence", steps("c", ["running"])), path: "seat-a" },
     ]);
     const bar = miniBar(running([loopAt(2, 20, [fan, work("agg", "pending")])]));
     expect(bar.map((s) => s.branch)).toEqual([false, false, true, false]);

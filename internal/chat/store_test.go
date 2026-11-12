@@ -106,7 +106,7 @@ func TestMutate_CreatesChatAndBroadcasts(t *testing.T) {
 			t.Error("exists = true on fresh chat")
 		}
 		c.Name = "Hello"
-		c.Model = "claude"
+		c.Model = "model-x"
 		return true
 	})
 	if err != nil {
@@ -116,7 +116,7 @@ func TestMutate_CreatesChatAndBroadcasts(t *testing.T) {
 	if !ok {
 		t.Fatal("Get returned false for created chat")
 	}
-	if got.Name != "Hello" || got.Model != "claude" {
+	if got.Name != "Hello" || got.Model != "model-x" {
 		t.Errorf("fields: %+v", got)
 	}
 	if got.CreatedAt == 0 || got.UpdatedAt == 0 {
