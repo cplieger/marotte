@@ -16,7 +16,7 @@ const noticeRunBoundTimeout = 3 * time.Second
 func newReadBound(
 	chatBound func(context.Context, marotte.ChatID) (uint64, error),
 	runBound func(context.Context, string) (uint64, error),
-	_ time.Duration,
+	runTimeout time.Duration,
 ) func(context.Context, marotte.TabKind, string) uint64 {
 	return func(ctx context.Context, kind marotte.TabKind, ref string) uint64 {
 		var (
@@ -27,7 +27,9 @@ func newReadBound(
 		case marotte.TabKindChat:
 			bound, err = chatBound(ctx, marotte.ChatID(ref))
 		case marotte.TabKindRun:
-			bound, err = runBound(ctx, ref)
+			runCtx, cancel := context.WithTimeout(ctx, runTimeout)
+			bound, err = runBound(runCtx, ref)
+			cancel()
 		default:
 			return 0
 		}

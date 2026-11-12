@@ -132,3 +132,16 @@ func (pg *pageRow) offerBefore(id string, other *pageRow, otherID string, now ti
 	}
 	return id < otherID
 }
+
+// tagsWithPages is every tag holding a page row, unjudged: the candidates a notice is decided for.
+func (p *Presence) tagsWithPages() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var tags []string
+	for tag, row := range p.rows {
+		if len(row.pages) > 0 {
+			tags = append(tags, tag)
+		}
+	}
+	return tags
+}

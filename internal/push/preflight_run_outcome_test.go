@@ -24,9 +24,9 @@ func TestPreflightSend_HonoursTheRunOutcomePreference(t *testing.T) {
 			t.Cleanup(s.Close)
 			s.SetPreferences(map[marotte.PushKind]bool{marotte.PushKindRunOutcome: tc.enabled})
 
-			subs, _ := s.preflightSend(marotte.PushKindRunOutcome, marotte.RunSubject("wf_x"))
+			v := s.preflightSend(marotte.PushKindRunOutcome, marotte.RunSubject("wf_x"))
 
-			if got := subs != nil; got != tc.wantSend {
+			if got := v.pushable; got != tc.wantSend {
 				t.Errorf("preflightSend(run_outcome) sends = %v with the preference %v, want %v",
 					got, tc.enabled, tc.wantSend)
 			}

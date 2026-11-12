@@ -26,61 +26,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Send delivers n to all subscribers, debounced per kind AND subject. The payload is n
-// itself, so the service worker shows what the page would. preflightSend's nil means do
-// not send; a non-nil empty slice has stamped the debounce.
-func (s *Service) Send(ctx context.Context, sent *marotte.NotificationPayload) {
-	n := *sent
-	slog.Debug("push: send", "kind", string(n.Kind))
-	// Trim against the MARSHALED size: the JSON envelope and escaping count toward pushBodyCap,
-	// and push() drops an over-cap payload rather than truncating it.
-	if fit, truncated := fitToCap(&n); truncated {
-		slog.Warn("push: payload too large, truncating",
-			"bytes", len(n.Title)+len(n.Body), "cap", pushBodyCap)
-		n = fit
-	}
-	payload, err := json.Marshal(n)
-	if err != nil {
-		slog.Error("push: marshal payload", "error", err)
-		return
-	}
-	subs, debounced := s.preflightSend(n.Kind, n.PushSubject)
-	if debounced {
-		s.joinHeld(n.Kind, n.PushSubject, n.Ask, payload)
-		return
-	}
-	if subs == nil {
-		return
-	}
-	s.fanOut(ctx, s.absent(subs, n.Kind, n.PushSubject, n.Ask, payload), payload, n.Kind)
-}
-
-// absent is the send filter: subscriptions whose profile is not receiving the event on a
-// stream. It lives here, not in the coordinator, so the PR status poller is filtered too.
-// A subscription with no presence row is sent: a tag mismatch costs one notification too
-// many, never one too few.
-func (s *Service) absent(
-	subs []marotte.PushSubscription, kind marotte.PushKind, subject marotte.PushSubject, ask string, payload []byte,
-) []marotte.PushSubscription {
-	if s.presence == nil {
-		return subs
-	}
-	out := make([]marotte.PushSubscription, 0, len(subs))
-	for _, sub := range subs {
-		tag := tagOf(sub.Endpoint)
-		if s.presence.Gone(tag) {
-			out = append(out, sub)
-			continue
-		}
-		if counter, ok := s.suppressed[kind]; ok {
-			counter.Add(1)
-		}
-		slog.Debug("push: suppressed, profile present", "kind", string(kind), "tag", tag)
-		s.holdForLater(sub, kind, subject, ask, payload)
-	}
-	return out
-}
-
 func (s *Service) fanOut(
 	ctx context.Context, subs []marotte.PushSubscription, payload []byte, kind marotte.PushKind,
 ) {
@@ -105,7 +50,8 @@ func (s *Service) fanOut(
 	s.pruneStale(outcome.prunable())
 }
 
-// Suppressed reports how many subscriptions the send filter skipped for kind since start.
+// Suppressed reports how many notices of kind a present profile was not pushed at raise since start: offered,
+// held, or already read.
 func (s *Service) Suppressed(kind marotte.PushKind) uint64 {
 	if counter, ok := s.suppressed[kind]; ok {
 		return counter.Load()
@@ -344,40 +290,42 @@ func parseRetryAfter(h string) time.Duration {
 	return 0
 }
 
-// preflightSend evaluates every pre-send gate and stamps the debounce under one mu hold
-// (closing the decide/record TOCTOU), and returns the subscriber snapshot, or nil to drop;
-// debounced reports a drop by the quiet window alone.
-func (s *Service) preflightSend(
-	notifyType marotte.PushKind, subject marotte.PushSubject,
-) (subs []marotte.PushSubscription, debounced bool) {
+// pushVerdict is the push channel's answer for one notice. subs is keyed by profile tag and is empty unless
+// pushable; debounced reports the kind and subject's quiet window still open, which bounds pushes only.
+type pushVerdict struct {
+	subs      map[string]marotte.PushSubscription
+	pushable  bool
+	debounced bool
+}
+
+// preflightSend evaluates every pre-send gate and stamps the debounce under one mu hold (closing the
+// decide/record TOCTOU). pushable is healthy and the kind registered and enabled.
+func (s *Service) preflightSend(notifyType marotte.PushKind, subject marotte.PushSubject) pushVerdict {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.healthy {
-		return nil, false
+		return pushVerdict{}
 	}
 	if !notifyType.Valid() {
 		slog.Warn("push: unknown notification kind", "kind", string(notifyType))
-		return nil, false
+		return pushVerdict{}
 	}
-	enabled, known := s.prefs[notifyType]
-	if !known {
-		return nil, false
+	if !s.prefs[notifyType] {
+		return pushVerdict{}
 	}
-	if !enabled {
-		return nil, false
+	v := pushVerdict{pushable: true, subs: make(map[string]marotte.PushSubscription, len(s.subs))}
+	for _, sub := range s.subs {
+		v.subs[tagOf(sub.Endpoint)] = sub
 	}
 	key := debounceKey(notifyType, subject)
 	if last, ok := s.lastPush[key]; ok && time.Since(last) < pushDebounce {
 		slog.Debug("push: debounced", "kind", string(notifyType), "subject", key.subject)
-		return nil, true
+		v.debounced = true
+		return v
 	}
 	s.pruneDebounceLocked()
 	s.lastPush[key] = time.Now()
-	subs = make([]marotte.PushSubscription, 0, len(s.subs))
-	for _, sub := range s.subs {
-		subs = append(subs, sub)
-	}
-	return subs, false
+	return v
 }
 
 // pruneDebounceLocked drops entries whose window has expired. Caller holds mu.
