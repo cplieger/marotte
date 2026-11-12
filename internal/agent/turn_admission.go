@@ -378,8 +378,11 @@ func (lc *chatLifecycle) sendAttempt(
 		return 0, nil, nil, nil, errPromptTurnClosed
 	}
 	step, fold = lc.markSentLocked(t)
-	if step == sendRoleFailed {
+	switch step {
+	case sendRoleFailed:
 		return 0, nil, nil, nil, errBotRoleNotLoaded
+	case sendRoleCut:
+		return 0, nil, nil, nil, errBotRoleCut
 	}
 	if step == sendNow {
 		commit = lc.sendCommitLocked(t)

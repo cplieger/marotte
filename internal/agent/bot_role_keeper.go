@@ -29,9 +29,12 @@ const (
 	roleIdle                         // the session is idle (roleIdleLocked)
 	roleAccepted                     // KAS accepted the set_mode
 	roleRefused                      // KAS refused it
-	roleCut                          // the set_mode was never answered: the lease was refused or the life ended
+	roleCut                          // the set_mode was never answered: its lease or spawn was refused, or the life ended
 	nRoleInputs
 )
+
+func (in roleInput) resets() bool  { return in == roleResetBot || in == roleResetOther }
+func (in roleInput) reports() bool { return in == roleReportRole || in == roleReportOther }
 
 // roleTransitions is the whole table (design §7.1 "The role keeper"). Every row lists every input: an omitted cell
 // reads as roleUnkept, which would let a prompt go out off the role.
@@ -69,28 +72,32 @@ type botRoleKeeper struct {
 	state roleState
 }
 
-// keepRoleLocked applies one input for sb and carries out its row's effects: the claim from off starts the one
-// set_mode (sendRoleLocked), a refusal marks sb for reload, and a cut detaches sb so nothing is sent on it again. It
-// answers whether a refusal failed the keeper. Caller holds mu and wakes.
-func (lc *chatLifecycle) keepRoleLocked(sb *sharedBridge, in roleInput) (failed bool) {
+// keepRoleLocked applies one input for sb, with mode the mode a report input names, and carries out its row's
+// effects: the claim from off starts the one set_mode (sendRoleLocked, a cut when Shutdown refuses it), a refusal
+// marks sb for reload, and a cut detaches sb and marks it for reload, so nothing is sent on it again and the next
+// door resets the keeper. It answers whether a refusal failed the keeper. Caller holds mu and wakes.
+func (lc *chatLifecycle) keepRoleLocked(sb *sharedBridge, in roleInput, mode string) (failed bool) {
 	k := &lc.role
-	if in != roleResetBot && in != roleResetOther && (sb == nil || sb != k.sb) {
+	if !in.resets() && (sb == nil || sb != k.sb) {
 		return false
 	}
 	prev := k.state
 	k.state = roleTransitions[prev][in]
 	switch {
-	case in == roleResetBot || in == roleResetOther:
+	case in.resets():
 		k.sb, k.mode = sb, ""
+	case in.reports():
+		k.mode = mode
 	case prev == roleOff && k.state == roleReasserting:
-		lc.sendRoleLocked(sb)
-	case prev == roleReasserting && k.state == roleFailed:
-		if !lc.ended {
-			lc.reloadFor = sb
+		if !lc.sendRoleLocked(sb) {
+			return lc.keepRoleLocked(sb, roleCut, "")
 		}
+	case prev == roleReasserting && k.state == roleFailed:
+		lc.markReloadLocked(sb)
 		return true
 	case prev == roleReasserting && in == roleCut:
 		k.sb = nil
+		lc.markReloadLocked(sb)
 	}
 	return false
 }
@@ -109,24 +116,25 @@ func unsentOrNone(t *activeTurn) bool { return t == nil || t.awaitsSend() }
 // the session is idle. Caller holds mu.
 func (lc *chatLifecycle) feedRoleIdleLocked() {
 	if lc.role.state == roleOff && lc.role.sb != nil && lc.reg != nil && lc.reg.spawnRole != nil && lc.roleIdleLocked() {
-		lc.keepRoleLocked(lc.role.sb, roleIdle)
+		lc.keepRoleLocked(lc.role.sb, roleIdle, "")
 	}
 }
 
 // sendRoleLocked starts the claimed set_mode on sb through the runtime's drain gate, as the life's counted work, so a
-// teardown and Shutdown both wait for its answer. Caller holds mu.
-func (lc *chatLifecycle) sendRoleLocked(sb *sharedBridge) {
+// teardown and Shutdown both wait for its answer. It answers false when Shutdown began, having sent nothing. Caller
+// holds mu.
+func (lc *chatLifecycle) sendRoleLocked(sb *sharedBridge) (started bool) {
 	// roleIdleLocked held in this section, so the life stands and the count is taken.
 	ctx, done, _ := lc.beginLocked(workRole, nil, nil)
 	if lc.reg.spawnRole(func() {
 		defer done()
 		lc.reg.sendRole(ctx, lc, sb)
 	}) {
-		return
+		return true
 	}
-	// Shutdown began: nothing is sent, so the count is undone here (done takes mu) and the keeper lets sb go, as a cut.
+	// done takes mu, so the count is undone here.
 	lc.work[workRole]--
-	lc.role.state, lc.role.sb = roleOff, nil
+	return false
 }
 
 // resetRole is a door's reset of the keeper onto sb, its new session: held for a started Bot, else unkept.
@@ -137,7 +145,7 @@ func (lc *chatLifecycle) resetRole(sb *sharedBridge, bot bool) {
 	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	lc.keepRoleLocked(sb, in)
+	lc.keepRoleLocked(sb, in, "")
 	lc.wakeLocked()
 }
 
@@ -149,10 +157,7 @@ func (lc *chatLifecycle) reportRole(sb *sharedBridge, mode string, onRole bool) 
 	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	if sb != nil && sb == lc.role.sb {
-		lc.role.mode = mode
-	}
-	lc.keepRoleLocked(sb, in)
+	lc.keepRoleLocked(sb, in, mode)
 	lc.wakeLocked()
 }
 
@@ -162,15 +167,21 @@ func (lc *chatLifecycle) answerRole(sb *sharedBridge, in roleInput) (failed bool
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	mode = lc.role.mode
-	failed = lc.keepRoleLocked(sb, in)
+	failed = lc.keepRoleLocked(sb, in, "")
 	lc.wakeLocked()
 	return failed, mode
 }
 
-// roleSendStepLocked is the send gate's reading of the keeper (markSentLocked), its only reader. Caller holds mu.
+// roleSendStepLocked is the send gate's reading of the keeper (markSentLocked), its only reader: off holding no
+// session has no set_mode left to send, so its prompt is refused rather than left waiting. Caller holds mu.
 func (lc *chatLifecycle) roleSendStepLocked() sendStep {
 	switch lc.role.state {
-	case roleOff, roleReasserting:
+	case roleOff:
+		if lc.role.sb == nil {
+			return sendRoleCut
+		}
+		return sendWait
+	case roleReasserting:
 		return sendWait
 	case roleFailed:
 		return sendRoleFailed

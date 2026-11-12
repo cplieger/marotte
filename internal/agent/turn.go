@@ -515,6 +515,7 @@ const (
 	sendCloseFold                  // own was a fold-opened wire turn, now claimed; the caller closes it, then asks again
 	sendStopped                    // the reader's stop keeps t unsent, or keeps a later attempt of it unwritten
 	sendRoleFailed                 // a Bot's session did not take its role back, so t is refused unsent (botRoleKeeper)
+	sendRoleCut                    // a Bot's role keeper let its session go, so t is refused unsent to be sent again
 )
 
 // markSentLocked lets t's send through only once t owns the chat (caller holds mu, t live and unclaimed), since t's

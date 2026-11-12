@@ -21,6 +21,10 @@ const botRoleNotLoaded = "This Bot's role did not load. Its next message retries
 // errBotRoleNotLoaded fails the generation; its text is the reason a failed prompt shows (rpcerr.Text).
 var errBotRoleNotLoaded = errors.New(botRoleNotLoaded) //nolint:staticcheck // ST1005: the text is the user's sentence.
 
+// errBotRoleCut fails a prompt whose Bot session the role keeper let go before it was sent (sendRoleCut); the
+// session tells the chat nothing about its role, so no mode_not_applied goes with it.
+var errBotRoleCut = errors.New("this Bot's session closed before this prompt was sent, so it was not sent; send it again")
+
 // botRoleSetTimeout bounds one session/set_mode to the role, and one context-file edit.
 const botRoleSetTimeout = 10 * time.Second
 

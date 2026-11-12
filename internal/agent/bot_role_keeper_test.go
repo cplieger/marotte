@@ -86,7 +86,7 @@ func keeperLife(t *testing.T, state roleState, sb *sharedBridge) (lc *chatLifecy
 
 // TestRoleKeeper_CarriesOutItsRowsEffects pins the effects design §7.1 gives the table's rows: the claim from off
 // sends once on the keeper's session, a refusal marks that session for reload, a cut detaches it so no idle edge sends
-// on it again, and an input naming another session is dropped.
+// on it again and marks it for reload, and an input naming another session is dropped.
 func TestRoleKeeper_CarriesOutItsRowsEffects(t *testing.T) {
 	t.Run("off at an idle edge sends once on its session", func(t *testing.T) {
 		sb := &sharedBridge{}
@@ -146,44 +146,69 @@ func TestRoleKeeper_CarriesOutItsRowsEffects(t *testing.T) {
 			t.Errorf("an ended life: sender started %d times, state %d; want none and off", len(got), lc.role.state)
 		}
 	})
-	t.Run("a claim Shutdown refuses lets its session go", func(t *testing.T) {
-		lc, _ := keeperLife(t, roleOff, &sharedBridge{})
+	t.Run("a claim Shutdown refuses is a cut", func(t *testing.T) {
+		sb := &sharedBridge{}
+		lc, _ := keeperLife(t, roleOff, sb)
 		lc.reg.spawnRole = func(func()) bool { return false }
 		lc.mu.Lock()
 		lc.feedRoleIdleLocked()
-		state, held, work := lc.role.state, lc.role.sb, lc.work[workRole]
+		state, held, work, marked := lc.role.state, lc.role.sb, lc.work[workRole], lc.reloadFor == sb
 		lc.mu.Unlock()
-		if state != roleOff || held != nil || work != 0 {
-			t.Errorf("a refused claim: state %d, session %v, role work %d; want off, none, 0", state, held, work)
+		if state != roleOff || held != nil || work != 0 || !marked {
+			t.Errorf("a refused claim: state %d, session %v, role work %d, reload marked %v; want off, none, 0, marked",
+				state, held, work, marked)
 		}
 	})
 	t.Run("a refusal marks its session for reload", func(t *testing.T) {
 		sb := &sharedBridge{}
 		lc, _ := keeperLife(t, roleReasserting, sb)
 		lc.mu.Lock()
-		failed := lc.keepRoleLocked(sb, roleRefused)
+		failed := lc.keepRoleLocked(sb, roleRefused, "")
 		lc.mu.Unlock()
 		if !failed || lc.role.state != roleFailed || lc.reloadFor != sb {
 			t.Errorf("after a refusal: failed %v, state %d, reload marked %v; want true, failed, marked",
 				failed, lc.role.state, lc.reloadFor == sb)
 		}
 	})
-	t.Run("a cut detaches its session", func(t *testing.T) {
+	t.Run("a cut detaches its session and marks it for reload", func(t *testing.T) {
 		sb := &sharedBridge{}
 		lc, sent := keeperLife(t, roleReasserting, sb)
 		lc.mu.Lock()
-		lc.keepRoleLocked(sb, roleCut)
+		lc.keepRoleLocked(sb, roleCut, "")
 		lc.feedRoleIdleLocked()
 		lc.mu.Unlock()
-		if got := sent(); len(got) != 0 || lc.role.sb != nil {
-			t.Errorf("after a cut: sender started %d times, keeper holds %v; want none and no session", len(got), lc.role.sb)
+		if got := sent(); len(got) != 0 || lc.role.sb != nil || lc.reloadFor != sb {
+			t.Errorf("after a cut: sender started %d times, keeper holds %v, reload marked %v; want none, no session, marked",
+				len(got), lc.role.sb, lc.reloadFor == sb)
+		}
+	})
+	t.Run("an ended life's cut marks nothing", func(t *testing.T) {
+		sb := &sharedBridge{}
+		lc, _ := keeperLife(t, roleReasserting, sb)
+		lc.ended = true
+		lc.mu.Lock()
+		lc.keepRoleLocked(sb, roleCut, "")
+		lc.mu.Unlock()
+		if lc.reloadFor != nil {
+			t.Error("an ended life's cut marked its session for reload, want no mark")
+		}
+	})
+	t.Run("a refusal answers the mode last reported", func(t *testing.T) {
+		sb := &sharedBridge{}
+		lc, sent := keeperLife(t, roleOn, sb)
+		lc.reportRole(sb, "kiro_spec", false)
+		if got := sent(); len(got) != 1 {
+			t.Fatalf("sender started %d times after the report, want once", len(got))
+		}
+		if failed, mode := lc.answerRole(sb, roleRefused); !failed || mode != "kiro_spec" {
+			t.Errorf("the refusal answered failed %v, mode %q; want true, %q", failed, mode, "kiro_spec")
 		}
 	})
 	t.Run("another session's input is dropped", func(t *testing.T) {
 		sb := &sharedBridge{}
 		lc, _ := keeperLife(t, roleReasserting, sb)
 		lc.mu.Lock()
-		failed := lc.keepRoleLocked(&sharedBridge{}, roleRefused)
+		failed := lc.keepRoleLocked(&sharedBridge{}, roleRefused, "")
 		lc.mu.Unlock()
 		if failed || lc.role.state != roleReasserting || lc.reloadFor != nil {
 			t.Errorf("a stale refusal moved the keeper: failed %v, state %d", failed, lc.role.state)
@@ -193,7 +218,7 @@ func TestRoleKeeper_CarriesOutItsRowsEffects(t *testing.T) {
 		old, next := &sharedBridge{}, &sharedBridge{}
 		lc, _ := keeperLife(t, roleFailed, old)
 		lc.mu.Lock()
-		lc.keepRoleLocked(next, roleResetBot)
+		lc.keepRoleLocked(next, roleResetBot, "")
 		lc.mu.Unlock()
 		if lc.role.state != roleOff || lc.role.sb != next {
 			t.Errorf("after a door: state %d on the new session %v, want off on it", lc.role.state, lc.role.sb == next)
@@ -439,6 +464,41 @@ func TestBotRole_ASetModeTheSessionsCloseCutIsNoRefusal(t *testing.T) {
 	awaitRoleSent(t, h, "c1")
 	if keeperIs(h, "c1", roleFailed) || keeperHoldsASession(h, "c1") {
 		t.Error("a cut re-assert failed the keeper or kept its session, want it let go")
+	}
+	if got := modeErrorsSince(t, h, since); len(got) != 0 {
+		t.Errorf("mode_not_applied %q for a cut re-assert, want none", got)
+	}
+}
+
+// TestBotRole_APromptWaitingOnACutReassertIsRefusedToBeSentAgain pins design §7.1's "cut with a prompt waiting" row:
+// a prompt waiting at the send gate while the set_mode is in flight, whose set_mode is then cut, is refused unsent with
+// the sentence asking to send it again, with no mode_not_applied and no second set_mode.
+func TestBotRole_APromptWaitingOnACutReassertIsRefusedToBeSentAgain(t *testing.T) {
+	br := reporting(marotte.BotRoleID, marotte.DefaultModeID, "kiro_spec", marotte.BotRoleID)
+	release := stallSetMode(br, marotte.ErrSessionClosed)
+	t.Cleanup(release)
+	h, cs := switchedBot(t, br, nil)
+	waitFor(t, func() bool { return len(setModeParams(br)) == 1 })
+	br.setOnCall(nil)
+	passes := gatePasses(h)
+	if code := <-postPromptAsync(t, h, "c1", "m2"); code != http.StatusOK {
+		t.Fatalf("prompt m2 = %d", code)
+	}
+	waitFor(t, func() bool { return passes.Load() > 0 })
+	since := h.bus.fanout.Position().Head
+
+	release()
+
+	waitFor(t, func() bool { return len(closesOf(t, logOf(t, cs, "c1"))) == 2 })
+	const sendAgain = "this Bot's session closed before this prompt was sent, so it was not sent; send it again"
+	if got := closesOf(t, logOf(t, cs, "c1"))[1].FailureReason; got != sendAgain {
+		t.Errorf("m2's turn_close failure_reason = %q, want %q", got, sendAgain)
+	}
+	if n := countCalls(br, marotte.MethodPrompt); n != 1 {
+		t.Errorf("%d prompts reached the session whose set_mode was cut, want only m1", n)
+	}
+	if got := setModeParams(br); len(got) != 1 {
+		t.Errorf("session/set_mode modeIds = %v, want only the cut one", got)
 	}
 	if got := modeErrorsSince(t, h, since); len(got) != 0 {
 		t.Errorf("mode_not_applied %q for a cut re-assert, want none", got)
