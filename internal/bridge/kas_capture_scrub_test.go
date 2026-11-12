@@ -45,6 +45,13 @@ func TestScrubModels_rewrites(t *testing.T) {
 				`{"dir":"out","frame":{"params":{"configId":"model","value":"model-b"}}}` + "\n",
 		},
 		{
+			name: "an id that is also the display name stays an id",
+			in: catalogLine(`{"value":"acme-large-2","name":"acme-large-2","description":"Acme Large 2 model"}`) + "\n" +
+				`{"dir":"out","frame":{"params":{"configId":"model","value":"acme-large-2"}}}` + "\n",
+			want: catalogLine(`{"value":"model-a","name":"model-a","description":"Model A"}`) + "\n" +
+				`{"dir":"out","frame":{"params":{"configId":"model","value":"model-a"}}}` + "\n",
+		},
+		{
 			name: "escaped spelling of a value is replaced whole",
 			in: catalogLine(`{"value":"acme-large-2","name":"Acme \u0026 Large","description":"Acme \u0026 Large"}`) + "\n" +
 				`{"text":"\u0061cme-large-2"}` + "\n",

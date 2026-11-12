@@ -603,16 +603,18 @@ func scrubModels(b []byte) ([]byte, error) {
 		}
 	}
 	for _, o := range opts {
-		id, ok := placeholder[o.value]
-		if !ok {
-			id = "model-" + modelLetters(len(placeholder))
-			placeholder[o.value] = id
+		if _, ok := placeholder[o.value]; !ok {
+			placeholder[o.value] = "model-" + modelLetters(len(placeholder))
 		}
+		// Ids are set before any name or description: a catalog may name a model by its id.
+		set(o.value, placeholder[o.value])
+	}
+	for _, o := range opts {
+		id := placeholder[o.value]
 		name := "Model " + strings.ToUpper(id[len("model-"):])
 		placeholders[id], placeholders[strings.ToLower(name)] = true, true
 		set(o.desc, strings.Join(append(modelTagRe.FindAllString(o.desc, -1), name), " "))
 		set(o.name, name)
-		set(o.value, id)
 	}
 	out := jsonStringRe.ReplaceAllFunc(b, func(tok []byte) []byte {
 		var s string
