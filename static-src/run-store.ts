@@ -606,6 +606,10 @@ const executions = new Map<string, RunExecutions>();
 /** Module-wide rather than per run, so a forgotten run read again still counts upward. */
 let lastStartGen = 0;
 
+/** Counts down from 0 for the starts in the passes a held glance folded, when the tree brings
+ *  them: each began before its repeat's latest pass, so none may read as newer than a held start. */
+let firstStartGen = 0;
+
 function executionsOf(workflowID: string): RunExecutions {
   let run = executions.get(workflowID);
   if (run === undefined) {
@@ -621,26 +625,76 @@ function otherSession(known: string | undefined, seen: string | undefined): bool
   return known !== undefined && seen !== undefined && known !== seen;
 }
 
-/** Stamp a freshly read tree's executions. */
-function stampStarts(workflowID: string, root: RunNode): void {
-  const read: [RunNode, string][] = [];
-  const walk = (n: RunNode, parent: RunNode | undefined, trail: readonly string[]): void => {
+/** Stamp a freshly read tree's executions. `glance` is the held glance this read widens, whose
+ *  folded passes are history. */
+function stampStarts(workflowID: string, root: RunNode, glance?: RunNode): void {
+  /** Each glance node's key, true for a repeat that folded passes. */
+  const glanceFolds = new Map<string, boolean>();
+  const index = (n: RunNode, parent: RunNode | undefined, trail: readonly string[]): void => {
     const path = [...trail, nodePathSegment(n, parent)];
-    read.push([n, nodePathKey(path)]);
+    glanceFolds.set(nodePathKey(path), n.earlierPasses !== undefined);
     for (const k of n.children ?? []) {
-      walk(k, n, path);
+      index(k, n, path);
     }
   };
-  walk(root, undefined, []);
-  stampNodes(workflowID, read);
+  if (glance !== undefined) {
+    index(glance, undefined, []);
+  }
+  const read: [RunNode, string][] = [];
+  const history: [RunNode, string][] = [];
+  const walk = (n: RunNode, path: readonly string[], key: string, folded: boolean): void => {
+    (folded ? history : read).push([n, key]);
+    const folds = glanceFolds.get(key) === true;
+    for (const k of n.children ?? []) {
+      const childPath = [...path, nodePathSegment(k, n)];
+      const childKey = nodePathKey(childPath);
+      walk(k, childPath, childKey, folded || (folds && !glanceFolds.has(childKey)));
+    }
+  };
+  const rootPath = [nodePathSegment(root, undefined)];
+  walk(root, rootPath, nodePathKey(rootPath), false);
+  stampNodes(workflowID, read, history);
 }
 
 /** Stamp the executions of freshly read nodes, each with its path key. A path showing another
  *  session, or a live start after an end, holds a new execution. KAS's persisted time is read only
- *  to rank several new executions this one read found. */
-function stampNodes(workflowID: string, read: readonly [RunNode, string][]): void {
+ *  to rank several new executions this one read found; `history`'s are ranked below every other
+ *  start (`firstStartGen`). */
+function stampNodes(
+  workflowID: string,
+  read: readonly [RunNode, string][],
+  history: readonly [RunNode, string][] = [],
+): void {
   const run = executionsOf(workflowID);
-  const fresh: { node: RunNode; path: string; at: string; session: string | undefined }[] = [];
+  const past = freshOf(run, history);
+  past.sort(byStart);
+  for (const f of past.toReversed()) {
+    firstStartGen--;
+    holdExecution(run, f, firstStartGen);
+  }
+  const fresh = freshOf(run, read);
+  fresh.sort(byStart);
+  for (const f of fresh) {
+    lastStartGen++;
+    holdExecution(run, f, lastStartGen);
+  }
+}
+
+interface FreshStart {
+  node: RunNode;
+  path: string;
+  at: string;
+  session: string | undefined;
+}
+
+/** Stable, so equal times keep plan order. */
+function byStart(a: FreshStart, b: FreshStart): number {
+  return Date.parse(a.at) - Date.parse(b.at) || 0;
+}
+
+/** The starts of `read` that hold a new execution; the others keep theirs, stamped in place. */
+function freshOf(run: RunExecutions, read: readonly [RunNode, string][]): FreshStart[] {
+  const fresh: FreshStart[] = [];
   for (const [n, key] of read) {
     const at = nonEmpty(n.startedAt);
     const ex = run.paths.get(key);
@@ -663,17 +717,23 @@ function stampNodes(workflowID: string, read: readonly [RunNode, string][]): voi
       }
     }
   }
-  // Stable, so equal times keep plan order.
-  fresh.sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || 0);
-  for (const f of fresh) {
-    lastStartGen++;
-    run.paths.set(f.path, {
-      gen: lastStartGen,
-      ...(f.session === undefined ? {} : { session: f.session }),
-      ended: !holdsLiveStart(f.node),
-    });
-    f.node.startGen = lastStartGen;
-  }
+  return fresh;
+}
+
+function holdExecution(run: RunExecutions, f: FreshStart, gen: number): void {
+  run.paths.set(f.path, {
+    gen,
+    ...(f.session === undefined ? {} : { session: f.session }),
+    ended: !holdsLiveStart(f.node),
+  });
+  f.node.startGen = gen;
+}
+
+/** The held glance's root when a `shape` read widens a glance that folded passes. */
+function widenedGlance(workflowID: string, shape: RunShape): RunNode | undefined {
+  return shape === "tree" && bodies.get(workflowID) === "glance" && folded.has(workflowID)
+    ? peekRunState(workflowID)?.root
+    : undefined;
 }
 
 /** Per-run step ends by node path, beside the signal for the plan's reason. */
@@ -1121,7 +1181,7 @@ async function fetchRun(workflowID: string): Promise<void> {
       const state = classifyRunState(d.state, starts);
       withReadExtras(state, d);
       if (state.root !== undefined) {
-        stampStarts(workflowID, state.root);
+        stampStarts(workflowID, state.root, widenedGlance(workflowID, shape));
       }
       stepEnds.set(workflowID, new Map(Object.entries(d.step_ends ?? {})));
       stepStarts.set(workflowID, starts);

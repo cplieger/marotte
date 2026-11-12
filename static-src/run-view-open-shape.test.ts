@@ -40,13 +40,18 @@ import { openDockPanel, settledOpen } from "./__test-helpers__/exec-dock.js";
 const WF = "wf_open_shape";
 const PASSES = 50;
 
-function step(id: string, status: string): unknown {
+/** `minute` minutes past 10:00, so each pass starts after the one before it. */
+function at(minute: number): string {
+  return new Date(Date.UTC(2026, 10, 10, 10, minute)).toISOString();
+}
+
+function step(id: string, status: string, minute: number): unknown {
   return {
     nodeId: id,
     type: "step",
     status,
-    startedAt: "2026-11-10T10:00:00Z",
-    ...(status === "running" ? {} : { endedAt: "2026-11-10T10:01:00Z" }),
+    ...(status === "pending" ? {} : { startedAt: at(minute) }),
+    ...(status === "running" || status === "pending" ? {} : { endedAt: at(minute + 1) }),
     children: [],
   };
 }
@@ -59,8 +64,8 @@ function pass(i: number): unknown {
     type: "sequence",
     status: last ? "running" : "completed",
     children: [
-      step("build", last ? "running" : "completed"),
-      step("review", last ? "pending" : "completed"),
+      step("build", last ? "running" : "completed", 2 * i),
+      step("review", last ? "pending" : "completed", 2 * i + 1),
     ],
   };
 }
@@ -175,6 +180,23 @@ describe("opening a run tab", () => {
     expect(reads()).toEqual({ glance: 1, tree: 1 });
     const text = runView.querySelector(".ev-dock-body")?.textContent ?? "";
     expect(text).toContain("pass 2");
+  });
+
+  it("keeps showing the running step when the panel's tree brings the earlier passes", async () => {
+    showOnlyView(runView);
+    showRun(WF);
+    refreshRun(WF);
+    await flush();
+    const current = (): string | null =>
+      runView.querySelector(".ev-dock-row[aria-current=true]")?.getAttribute("aria-label") ?? null;
+    expect(current()).toMatch(/^build, running/);
+
+    openDockPanel(runView);
+    await flush();
+    await settledOpen(runView);
+
+    expect(reads().tree).toBe(1);
+    expect(current()).toMatch(/^build, running/);
   });
 
   it("lists no part of the run while the whole tree is still being read", async () => {
