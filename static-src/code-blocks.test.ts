@@ -19,6 +19,13 @@ describe("isRunnableShell", () => {
     // reads as shell or as nothing.
     { name: "untagged undetected text treated as shell", lang: "", text: "cd", expected: true },
     { name: "untagged $ prompt accepted", lang: "", text: "$ ls -la", expected: true },
+    // The docs: `function name() {` counts for both shell and JavaScript, so the commands in its body decide.
+    {
+      name: "untagged shell function accepted",
+      lang: "",
+      text: "function greet() {\n  echo hello\n}",
+      expected: true,
+    },
     {
       name: "untagged Go rejected",
       lang: "",
