@@ -57,6 +57,15 @@ RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/reactive/-/reactive-${CPLIEGER_REACTIVE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/reactive --strip-components=1
 
+# Only ./markdown, ./highlight and css/system.css are used; cmd/bundle copies the
+# fonts and icons the stylesheet names, with their notices, into static/vendor/ui/.
+# This pin and static-src/package.json's track the same exact version.
+# renovate: datasource=npm depName=@cplieger/ui
+ARG CPLIEGER_UI_VERSION=1.3.0-dev.12
+RUN mkdir -p static-src/node_modules/@cplieger/ui && \
+    curl -fsSL "https://registry.npmjs.org/@cplieger/ui/-/ui-${CPLIEGER_UI_VERSION}.tgz" \
+      | tar -xz -C static-src/node_modules/@cplieger/ui --strip-components=1
+
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
 ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.5.0-dev.9
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
@@ -189,7 +198,12 @@ RUN CGO_ENABLED=0 go build \
 COPY scripts/collect-licenses.sh scripts/
 RUN sh scripts/collect-licenses.sh --name marotte . && \
     mkdir -p /out/usr/share/licenses/pele && \
-    cp static-src/node_modules/pele/LICENSE /out/usr/share/licenses/pele/LICENSE
+    cp static-src/node_modules/pele/LICENSE /out/usr/share/licenses/pele/LICENSE && \
+    mkdir -p /out/usr/share/licenses/cplieger-ui && \
+    cp static-src/node_modules/@cplieger/ui/LICENSE static-src/node_modules/@cplieger/ui/NOTICE \
+      static-src/node_modules/@cplieger/ui/THIRD_PARTY_NOTICES.md \
+      static-src/node_modules/@cplieger/ui/fonts/LICENSE-* static-src/node_modules/@cplieger/ui/icons/LICENSE-* \
+      /out/usr/share/licenses/cplieger-ui/
 
 FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 

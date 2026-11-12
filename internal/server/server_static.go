@@ -21,11 +21,15 @@ const (
 	noStoreHTML     = "no-store"
 )
 
-// The trailing slash keeps a sibling directory sharing the prefix out.
-const fontAssetPrefix = "vendor/fonts/"
+// The trailing slash keeps a sibling directory sharing the prefix out. cmd/bundle stamps
+// every name under both: the terminal faces, and @cplieger/ui's fonts and icons.
+const (
+	fontAssetPrefix = "vendor/fonts/"
+	uiAssetPrefix   = "vendor/ui/"
+)
 
-// Without the stamp a face revalidates rather than going stale.
-var stampedFont = regexp.MustCompile(`\.[0-9a-f]{8}\.[^./]+$`)
+// Without the stamp an asset revalidates rather than going stale.
+var stampedAsset = regexp.MustCompile(`\.[0-9a-f]{8}\.[^./]+$`)
 
 // contentHashedAsset matches cmd/bundle's `chunks/[name]-[hash]` (8 uppercase base32),
 // anchored so a hand-authored asset never gets a year-long cache.
@@ -39,7 +43,8 @@ func assetCachePolicy(assetPath string) string {
 		return immutableAsset
 	case strings.HasSuffix(assetPath, ".html"):
 		return noStoreHTML
-	case strings.HasPrefix(assetPath, fontAssetPrefix) && stampedFont.MatchString(assetPath):
+	case (strings.HasPrefix(assetPath, fontAssetPrefix) || strings.HasPrefix(assetPath, uiAssetPrefix)) &&
+		stampedAsset.MatchString(assetPath):
 		return immutableAsset
 	default:
 		return revalidateAsset

@@ -574,8 +574,14 @@ function paddingBox(e: Element, cs: CSSStyleDeclaration): Box {
   };
 }
 
-/** Cut `b` to what `e` lets through: its padding box on each axis it clips. */
+/** Cut `b` to what `e` lets through: its padding box on each axis it clips. The root's
+ *  overflow, and the body's while the root's is visible, apply to the viewport rather than
+ *  their own box (CSS Overflow 3 §3.3), and `walk` crops to the screen for that. */
 function clipBy(e: Element, b: Box): Box {
+  const root = document.documentElement;
+  if (e === root || (e === document.body && getComputedStyle(root).overflow === "visible")) {
+    return b;
+  }
   const cs = getComputedStyle(e);
   const paint = /paint|strict|content/.test(cs.contain) || cs.contentVisibility === "auto";
   const x = paint || cs.overflowX !== "visible";

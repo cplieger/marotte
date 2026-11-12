@@ -17,8 +17,8 @@
 # (30-utilities) afterwards flipped ZERO pairs — the layers were pure risk.
 #
 # Ordering rules that carry weight:
-#   00-02  header (layer decl + @property defs), tokens, legacy-ui base +
-#          skin (unlayered, skin wins by order), reset
+#   00-02  header (layer decl + @property defs), fonts, @cplieger/ui system,
+#          tokens, legacy-ui base + skin (unlayered, skin wins by order), reset
 #   03     base — shared element defaults; every feature file may override
 #   10-29  feature stylesheets, split by feature. 10-shell-app is FIRST so
 #          feature files override its shell chrome (chevrons, icon buttons)
@@ -42,6 +42,13 @@
 # everything below, which costs nothing — @font-face is not subject to the
 # cascade at all.
 00-fonts.css
+# @cplieger/ui's design language, which styles what @cplieger/ui/markdown and
+# ./highlight render. A library before its consumer, like the legacy-ui base. Its
+# element defaults apply only under class "cp", which only the rendered-markdown
+# hosts carry; the file viewer and the diff pane take "cp-syntax", the token
+# colours alone. cmd/bundle points its relative font and icon URLs at the copies
+# it writes under /vendor/ui/.
+../node_modules/@cplieger/ui/css/system.css
 01-tokens.css
 # The legacy-ui widgets' headless base (structure + motion), then marotte's
 # skin. Both unlayered so the skin's .uip-* rules win by source order.

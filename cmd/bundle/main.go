@@ -124,11 +124,13 @@ func precacheAssets(onDemand map[string]bool) ([]string, error) {
 }
 
 // Committed assets are untouched. Ownership is by extension at any depth, matching .gitignore's
-// `static/**/*.js`. `chunks` is removed whole. `vendor` is kept: the Dockerfile fetches the web
-// fonts into it BEFORE the bundle runs.
+// `static/**/*.js`. `chunks` and `vendor/ui` are removed whole. The rest of `vendor` is kept:
+// the Dockerfile fetches the web fonts into it BEFORE the bundle runs.
 func cleanOutputs() error {
-	if err := os.RemoveAll(filepath.Join(outDir, "chunks")); err != nil {
-		return err
+	for _, owned := range []string{"chunks", uiAssetDir} {
+		if err := os.RemoveAll(filepath.Join(outDir, owned)); err != nil {
+			return err
+		}
 	}
 	if err := removeBundleFiles(outDir); err != nil {
 		return err
@@ -525,10 +527,145 @@ func hashFile(path string) (string, error) {
 	return hex.EncodeToString(sum.Sum(nil))[:8], nil
 }
 
+// uiDir is @cplieger/ui's package root. Its stylesheet names its fonts and icons relative to
+// its own css/ folder, which the served style.css is not in.
+var (
+	uiDir        = filepath.Join(srcDir, "node_modules", "@cplieger", "ui")
+	uiStylesheet = filepath.Join(uiDir, "css", "system.css")
+)
+
+// uiAssetDir is where @cplieger/ui's assets land under outDir, each name content-stamped,
+// which internal/server.assetCachePolicy also reads. cleanOutputs removes it whole.
+const uiAssetDir = "vendor/ui"
+
+var uiAssetRef = regexp.MustCompile(`url\("\.\./([^"]+)"\)`)
+
+// uiNotices travel with the served copies: Apache-2.0 section 4 for the package, and each
+// asset folder's LICENSE* (the fonts' OFL 1.1, the icons' ISC) beside it.
+var uiNotices = []string{"LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"}
+
+// vendorUIAssets copies every file @cplieger/ui's stylesheet names into outDir/uiAssetDir
+// under a content stamp, with the notices, and returns the sheet pointing at the copies.
+// Reads and writes go through an os.Root each, since a URL in the sheet becomes a path.
+func vendorUIAssets(css []byte) ([]byte, error) {
+	src, err := os.OpenRoot(uiDir)
+	if err != nil {
+		return nil, fmt.Errorf("ui asset: %w", err)
+	}
+	defer src.Close()
+	dst, err := openAssetRoot()
+	if err != nil {
+		return nil, err
+	}
+	defer dst.Close()
+	served, folders, err := stampUIAssets(css, src, dst)
+	if err != nil {
+		return nil, err
+	}
+	notices, err := copyUINotices(folders, src, dst)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("bundle: ui assets %d stamped, %d notices\n", len(served), notices)
+	return uiAssetRef.ReplaceAllFunc(css, func(ref []byte) []byte {
+		return []byte(`url("` + served[string(uiAssetRef.FindSubmatch(ref)[1])] + `")`)
+	}), nil
+}
+
+func openAssetRoot() (*os.Root, error) {
+	dir := filepath.Join(outDir, uiAssetDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("ui asset: %w", err)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, fmt.Errorf("ui asset: %w", err)
+	}
+	return root, nil
+}
+
+// stampUIAssets copies each named file once and returns its served URL by the sheet's
+// relative name, with the top-level folders the copies came from.
+func stampUIAssets(css []byte, src, dst *os.Root) (served map[string]string, folders []string, err error) {
+	served = map[string]string{}
+	for _, m := range uiAssetRef.FindAllSubmatch(css, -1) {
+		rel := string(m[1])
+		if _, done := served[rel]; done {
+			continue
+		}
+		if !filepath.IsLocal(rel) || strings.Contains(rel, `\`) {
+			return nil, nil, fmt.Errorf("ui asset: %q leaves the package", rel)
+		}
+		data, err := src.ReadFile(rel)
+		if err != nil {
+			return nil, nil, fmt.Errorf("ui asset: %w", err)
+		}
+		sum := sha256.Sum256(data)
+		ext := filepath.Ext(rel)
+		stamped := strings.TrimSuffix(rel, ext) + "." + hex.EncodeToString(sum[:])[:8] + ext
+		if err := writeAsset(dst, stamped, data); err != nil {
+			return nil, nil, err
+		}
+		served[rel] = "/" + uiAssetDir + "/" + stamped
+		if folder, _, _ := strings.Cut(rel, "/"); !slices.Contains(folders, folder) {
+			folders = append(folders, folder)
+		}
+	}
+	return served, folders, nil
+}
+
+// copyUINotices copies the package notices and each served folder's LICENSE* beside the
+// copies, refusing a served folder with none; it returns how many it copied.
+func copyUINotices(folders []string, src, dst *os.Root) (int, error) {
+	notices := slices.Clone(uiNotices)
+	for _, folder := range folders {
+		licences, err := fs.Glob(src.FS(), folder+"/LICENSE*")
+		if err != nil {
+			return 0, fmt.Errorf("ui notice: %w", err)
+		}
+		if len(licences) == 0 {
+			return 0, fmt.Errorf("ui notice: %s/ is served with no LICENSE file", folder)
+		}
+		notices = append(notices, licences...)
+	}
+	for _, n := range notices {
+		data, err := src.ReadFile(n)
+		if err != nil {
+			return 0, fmt.Errorf("ui notice: %w", err)
+		}
+		if err := writeAsset(dst, n, data); err != nil {
+			return 0, err
+		}
+	}
+	return len(notices), nil
+}
+
+func writeAsset(dst *os.Root, name string, data []byte) error {
+	if err := dst.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+		return fmt.Errorf("ui asset: %w", err)
+	}
+	if err := dst.WriteFile(name, data, 0o600); err != nil {
+		return fmt.Errorf("ui asset: %w", err)
+	}
+	return nil
+}
+
 // Paths are relative to baseDir.
 type cssManifest struct {
 	manifestPath string
 	baseDir      string
+}
+
+// readCSSPart reads one manifest part; @cplieger/ui's sheet comes back pointing at its served assets.
+func readCSSPart(path string) ([]byte, error) {
+	part, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("css part: %w", err)
+	}
+	if path == uiStylesheet {
+		return vendorUIAssets(part)
+	}
+	return part, nil
 }
 
 // buildCSS assembles static/style.css: the @cplieger/web-terminal-ui bundle FIRST, then
@@ -552,9 +689,9 @@ func buildCSS() error {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			part, err := os.ReadFile(filepath.Join(src.baseDir, line))
+			part, err := readCSSPart(filepath.Join(src.baseDir, line))
 			if err != nil {
-				return fmt.Errorf("css part: %w", err)
+				return err
 			}
 			out.Write(part)
 			parts++
