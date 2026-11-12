@@ -69,13 +69,13 @@ func jsonChoice(choice string, on, off map[string]any) (any, bool) {
 	return string(b), true
 }
 
-// envTrueIf writes an env row as "true" when on and withholds it otherwise, so off leaves KAS's
-// own default (and any ramp) in force rather than pinning "false".
-func envTrueIf(on bool) (any, bool) {
-	if !on {
-		return nil, false
+// envBool writes an env row as "true" or "false" in both positions: KAS reads an absent row as
+// the flag's default, so a switch over a default-on flag must spell its off out.
+func envBool(on bool) (any, bool) {
+	if on {
+		return "true", true
 	}
-	return "true", true
+	return "false", true
 }
 
 // table is every capability key marotte knows about, sent or withheld.
@@ -549,7 +549,7 @@ var table = []decl{
 		key:          "KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED",
 		door:         doorEnvironment,
 		resolver:     resolverEnv,
-		engineGate:   func(s *EngineSpawn) (any, bool) { return envTrueIf(s.ModelFallback) },
+		engineGate:   func(s *EngineSpawn) (any, bool) { return envBool(s.ModelFallback) },
 		send:         true,
 		settingOwned: true,
 	},
@@ -557,7 +557,7 @@ var table = []decl{
 		key:          "KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED",
 		door:         doorEnvironment,
 		resolver:     resolverEnv,
-		engineGate:   func(s *EngineSpawn) (any, bool) { return envTrueIf(s.ModelFallback) },
+		engineGate:   func(s *EngineSpawn) (any, bool) { return envBool(s.ModelFallback) },
 		send:         true,
 		settingOwned: true,
 	},

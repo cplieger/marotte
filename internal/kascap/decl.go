@@ -106,7 +106,8 @@ type EngineSpawn struct {
 	SteeringReminders bool
 	// DisableTelemetry sends telemetryEnabled false at initialize; the zero value is KAS's own default, on.
 	DisableTelemetry bool
-	// ModelFallback writes KIRO_FEATURE_MODEL_FALLBACK_{REFUSAL,AVAILABILITY}_ENABLED=true; false writes neither.
+	// ModelFallback writes KIRO_FEATURE_MODEL_FALLBACK_{REFUSAL,AVAILABILITY}_ENABLED as "true" or "false", both
+	// positions, since KAS defaults them on: the zero value turns fallback off.
 	ModelFallback bool
 }
 

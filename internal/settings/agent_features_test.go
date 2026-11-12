@@ -118,9 +118,9 @@ func TestEffective_AgentCapabilityDefaultsAreKiroCLIs(t *testing.T) {
 	if d := EffectiveDefaults(); d.ChatMessaging {
 		t.Error("EffectiveDefaults().ChatMessaging = true, want false")
 	}
-	// kiro-cli ships the refusal and availability fallback flags off.
-	if defaultModelFallback {
-		t.Error("defaultModelFallback = true, want false")
+	// kiro-cli 3.2.0 ships the refusal and availability fallback flags on (FEATURES model_fallback_*).
+	if !defaultModelFallback {
+		t.Error("defaultModelFallback = false, want true")
 	}
 	// KAS's own workflowLaunch default for a new session.
 	if DefaultWorkflowLaunch != "when-asked" {

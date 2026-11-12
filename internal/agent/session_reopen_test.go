@@ -273,7 +273,7 @@ var configWrites = []struct {
 	{key: settings.KeyCloudFormationSafety, value: settings.FeatureOn, reach: reachEngine},
 	{key: settings.KeyAutoRouting, value: settings.FeatureOff, reach: reachEngine},
 	{key: settings.KeyAutoDelegation, value: settings.FeatureOff, reach: reachEngine},
-	{key: settings.KeyModelFallback, value: true, reach: reachEngine},
+	{key: settings.KeyModelFallback, value: false, reach: reachEngine},
 	{key: settings.KeyKnowledgeEnabled, value: false, reach: reachEngine},
 	// marotte's compactor reads both at each trigger; every chat door turns KAS's own compaction off.
 	{key: settings.KeyAutoCompactionEnabled, value: false, reach: reachLive},

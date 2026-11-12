@@ -49,7 +49,7 @@ const (
 	defaultCloudFormationSafety     = FeatureFollowKiro
 	defaultAutoRouting              = FeatureFollowKiro
 	defaultAutoDelegation           = FeatureFollowKiro
-	defaultModelFallback            = false
+	defaultModelFallback            = true
 	DefaultWorkflowLaunch           = marotte.WorkflowLaunchWhenAsked
 	defaultTerminalCommandTimeoutMs = 0
 )

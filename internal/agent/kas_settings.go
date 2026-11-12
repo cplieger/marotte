@@ -62,9 +62,18 @@ func engineFeatures(d settings.Document) marotte.EngineFeatures {
 		InfraSafetyMonitor:       settingString(d, settings.KeyCloudFormationSafety, settings.ValidFeatureChoice),
 		AutoRouting:              settingString(d, settings.KeyAutoRouting, settings.ValidFeatureChoice),
 		AutoDelegation:           settingString(d, settings.KeyAutoDelegation, settings.ValidFeatureChoice),
-		ModelFallback:            settingBool(d, settings.KeyModelFallback),
+		ModelFallback:            modelFallbackEnabled(d),
 		TerminalCommandTimeoutMs: terminalCommandTimeoutMs(d),
 	}
+}
+
+// modelFallbackEnabled reads the default-on Model fallback switch; absent or invalid is on.
+func modelFallbackEnabled(d settings.Document) bool {
+	var b bool
+	if !d.Into(settings.KeyModelFallback, &b) {
+		return true
+	}
+	return b
 }
 
 // terminalCommandTimeoutMs reads the shell tool's default timeout; 0 is unset.

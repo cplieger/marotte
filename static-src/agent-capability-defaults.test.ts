@@ -16,7 +16,7 @@ function shippedSwitch(id: string): HTMLInputElement {
 describe("Agent capabilities switches before settings load", () => {
   it.each([
     ["flag-knowledge", true],
-    ["flag-model-fallback", false],
+    ["flag-model-fallback", true],
     ["flag-spec-ask-first", false],
     ["flag-steering-reminders", false],
     ["flag-workflows", true],

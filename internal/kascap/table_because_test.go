@@ -770,15 +770,15 @@ The experiment value of the memorySync setting (memory_sync_enabled, default off
 syncs a signed-in user's memories to a cloud store when an endpoint is configured.`,
 	"env.KIRO_FEATURE_MODEL_FALLBACK_AUTO_REFUSAL_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
-The model_fallback_auto_refusal flag (default off). A refusal on a turn whose model is Auto
-falls back only with it on, so with "Model fallback" on such a refusal is still declined
-(autoRefusalDisabled) until AWS ramps the flag.`,
-	"env.KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED": `SENT as "true" only when "Model fallback" (model_fallback_enabled, default off as in
-kiro-cli) is on; off writes nothing, so KAS's default and any ramp stay in force rather than an
-explicit off. Lets a turn whose model is unavailable move to the next model of the chain
+The model_fallback_auto_refusal flag (default on in 3.2.0). While "Model fallback" is on, a
+refusal on a turn whose model is Auto and has no chain of its own is retried server-side with it
+on, and declined (autoRefusalDisabled) with it off.`,
+	"env.KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED": `SENT as "true" or "false" as "Model fallback" (model_fallback_enabled, default on as
+in kiro-cli 3.2.0's FEATURES model_fallback_availability) says; off must be explicit, since KAS
+reads an absent value as its default, on. Lets a turn whose model is unavailable move to the next model of the chain
 getModelFallbacks serves; marotte records the move as a model_fallback entry.`,
-	"env.KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED": `SENT as "true" only when "Model fallback" (model_fallback_enabled, default off as in
-kiro-cli) is on; off writes nothing. Lets a turn whose model refused move to the next model of
+	"env.KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED": `SENT as "true" or "false" as "Model fallback" (model_fallback_enabled, default on as
+in kiro-cli 3.2.0's FEATURES model_fallback_refusal) says; off must be explicit. Lets a turn whose model refused move to the next model of
 the chain getModelFallbacks serves, and KAS then pins the chat to that model unless the user
 picked a different one explicitly.`,
 	"env.KIRO_FEATURE_SESSION_TITLE_LLM_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI

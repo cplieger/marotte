@@ -413,24 +413,28 @@ func TestStart_NeverDisablesSessionTitles(t *testing.T) {
 	}
 }
 
-// The setting decides both flags whatever marotte inherited: off must not let an ambient value through.
-// Not parallel: it sets environment variables.
+// The setting decides both flags in both positions whatever marotte inherited: kiro-cli defaults them on, so
+// off must reach the engine as an explicit false. Not parallel: it sets environment variables.
 func TestStart_SpawnEnvCarriesModelFallback(t *testing.T) {
-	flags := []string{"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=true", "KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=true"}
-	for _, kv := range flags {
-		name, _, _ := strings.Cut(kv, "=")
+	names := []string{"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED", "KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED"}
+	for _, name := range names {
 		t.Setenv(name, "ambient")
 	}
-	on := spawnEnvDump(t, &marotte.EngineOpts{Features: marotte.EngineFeatures{ModelFallback: true}})
-	off := spawnEnvDump(t, &marotte.EngineOpts{})
-	for _, want := range flags {
-		if !slices.Contains(on, want) {
-			t.Errorf("child environment with ModelFallback on is missing %q", want)
-		}
-	}
-	for _, line := range off {
-		if strings.HasPrefix(line, "KIRO_FEATURE_MODEL_FALLBACK_") {
-			t.Errorf("child environment with ModelFallback off carries %q; off must leave KAS's default", line)
+	for _, tc := range []struct {
+		value string
+		on    bool
+	}{{"true", true}, {"false", false}} {
+		env := spawnEnvDump(t, &marotte.EngineOpts{Features: marotte.EngineFeatures{ModelFallback: tc.on}})
+		for _, name := range names {
+			var got []string
+			for _, line := range env {
+				if strings.HasPrefix(line, name+"=") {
+					got = append(got, line)
+				}
+			}
+			if want := []string{name + "=" + tc.value}; !slices.Equal(got, want) {
+				t.Errorf("child environment with ModelFallback %v carries %q, want %q", tc.on, got, want)
+			}
 		}
 	}
 }

@@ -89,6 +89,24 @@ func TestFeatures_MessagingFollowsTheToggle(t *testing.T) {
 	}
 }
 
+// Model fallback defaults on, as in kiro-cli, so an absent or invalid value spawns the engine with it on.
+func TestEngineFeatures_ModelFallbackDefaultsOn(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		want bool
+	}{
+		{`{}`, true},
+		{`{"model_fallback_enabled": false}`, false},
+		{`{"model_fallback_enabled": "off"}`, true},
+	} {
+		dir := t.TempDir()
+		writeAgentSettings(t, dir, tc.body)
+		if got := engineFeatures(docAt(t, dir)).ModelFallback; got != tc.want {
+			t.Errorf("engineFeatures(%s).ModelFallback = %v, want %v", tc.body, got, tc.want)
+		}
+	}
+}
+
 func TestSessionFeatures_WorkflowLaunchFollowsTheSetting(t *testing.T) {
 	for _, tc := range []struct {
 		name string

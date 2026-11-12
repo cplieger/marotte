@@ -280,10 +280,16 @@ func TestMemoryRow_FailsClosedAndNeverVetoes(t *testing.T) {
 const classifierEnv = "KIRO_TRUST_CLASSIFIER_MODE=enforce"
 
 // TestChildEnv_PinsNoArmByDefault pins that a zero EngineSpawn writes no KIRO_FEATURE_* or KIRO_DISABLE_*
-// variable, so every arm follows the experiment ramp unless a Settings control decides it.
+// variable beyond the model fallback pair, which its switch decides in both positions, so every other arm
+// follows the experiment ramp unless a Settings control decides it.
 func TestChildEnv_PinsNoArmByDefault(t *testing.T) {
-	if got := ChildEnv(&EngineSpawn{}); !reflect.DeepEqual(got, []string{classifierEnv}) {
-		t.Errorf("ChildEnv(&EngineSpawn{}) = %q, want only %q", got, classifierEnv)
+	want := []string{
+		"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=false",
+		"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=false",
+		classifierEnv,
+	}
+	if got := ChildEnv(&EngineSpawn{}); !reflect.DeepEqual(got, want) {
+		t.Errorf("ChildEnv(&EngineSpawn{}) = %q, want %q", got, want)
 	}
 	for _, tc := range engineMatrix {
 		for _, kv := range ChildEnv(&tc.spawn) {
@@ -325,25 +331,33 @@ func TestChildEnv_AutoModelChoicesFollowTheirSwitches(t *testing.T) {
 		choice string
 		want   []string
 	}{
-		{"", []string{classifierEnv}},
+		{"", []string{
+			"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=true",
+			"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=true",
+			classifierEnv,
+		}},
 		{"on", []string{
 			`KIRO_FEATURE_CASCADE_CONFIG={"cascadeClientNotificationEnabled":true,"cascadeEnabled":true}`,
 			`KIRO_FEATURE_DYNAMIC_DELEGATION_CONFIG={"delegationEnabled":true}`,
+			"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=true",
+			"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=true",
 			classifierEnv,
 		}},
 		{"off", []string{
 			`KIRO_FEATURE_CASCADE_CONFIG={"cascadeEnabled":false}`,
 			`KIRO_FEATURE_DYNAMIC_DELEGATION_CONFIG={"delegationEnabled":false}`,
+			"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=true",
+			"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=true",
 			classifierEnv,
 		}},
 	} {
-		got := ChildEnv(&EngineSpawn{AutoRouting: tc.choice, AutoDelegation: tc.choice})
+		got := ChildEnv(&EngineSpawn{AutoRouting: tc.choice, AutoDelegation: tc.choice, ModelFallback: true})
 		if !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("ChildEnv(AutoRouting=AutoDelegation=%q) = %q, want %q", tc.choice, got, tc.want)
 		}
 	}
-	if got := ChildEnv(&EngineSpawn{AutoRouting: "on"}); len(got) != 2 || got[0] != `KIRO_FEATURE_CASCADE_CONFIG={"cascadeClientNotificationEnabled":true,"cascadeEnabled":true}` {
-		t.Errorf("ChildEnv(AutoRouting=on alone) = %q, want the cascade arm and the classifier gate", got)
+	if got := ChildEnv(&EngineSpawn{AutoRouting: "on", ModelFallback: true}); len(got) != 4 || got[0] != `KIRO_FEATURE_CASCADE_CONFIG={"cascadeClientNotificationEnabled":true,"cascadeEnabled":true}` {
+		t.Errorf("ChildEnv(AutoRouting=on alone) = %q, want the cascade arm, the fallback pair and the classifier gate", got)
 	}
 	for _, tc := range sessionMatrix {
 		if settings, _ := SessionMeta(&tc.spawn)[settingsKey].(map[string]any); settings["cascade"] != nil {
@@ -352,14 +366,18 @@ func TestChildEnv_AutoModelChoicesFollowTheirSwitches(t *testing.T) {
 	}
 }
 
-// TestChildEnv_ModelFallbackSendsBothFlagsOnlyWhenOn pins that off writes neither flag: an explicit
-// false would override KAS's default and any server-side ramp.
-func TestChildEnv_ModelFallbackSendsBothFlagsOnlyWhenOn(t *testing.T) {
+// TestChildEnv_ModelFallbackWritesBothFlagsEitherWay pins that the switch decides both flags in
+// both positions: kiro-cli 3.2.0 defaults them on, so an off that wrote nothing would leave fallback live.
+func TestChildEnv_ModelFallbackWritesBothFlagsEitherWay(t *testing.T) {
 	for _, tc := range []struct {
 		want []string
 		on   bool
 	}{
-		{on: false, want: []string{classifierEnv}},
+		{on: false, want: []string{
+			"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=false",
+			"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=false",
+			classifierEnv,
+		}},
 		{on: true, want: []string{
 			"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=true",
 			"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=true",
