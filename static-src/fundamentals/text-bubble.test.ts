@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { buildAssistantBubble } from "./text-bubble.js";
 import { framesBudgetMs, testTimeoutFor } from "../__test-helpers__/frame-budget.js";
-import { tableObservationCount } from "../table-scroll.js";
+import { liveRenderCount } from "../markdown.js";
 
 /** `reveal.ts` clamps a frame's advance to MAX_DT_SECS (0.1s), so 400 characters need ~10
  *  throttled frames; sized at twice that. */
@@ -37,18 +37,18 @@ describe("buildAssistantBubble", { timeout: testTimeoutFor(REVEAL_BUDGET_MS) }, 
   });
 
   it("lets go of a replayed table when growth re-renders the bubble through a stream", () => {
-    const before = tableObservationCount();
+    const before = liveRenderCount();
     const b = buildAssistantBubble("| a | b |\n|---|---|\n| 1 | 2 |\n\nafter the table\n", false);
     const replayed = b.root.querySelector("table");
     expect(replayed, "the replayed table").not.toBeNull();
-    expect(tableObservationCount() - before, "one watched").toBe(1);
+    expect(liveRenderCount() - before, "the replay's render held").toBe(1);
 
     b.append("\nmore\n");
     b.finishNow();
 
     expect(replayed?.isConnected, "the replayed table was replaced").toBe(false);
     expect(b.root.querySelectorAll("table").length, "one table in the bubble").toBe(1);
-    expect(tableObservationCount() - before, "only the table now in the bubble").toBe(1);
+    expect(liveRenderCount() - before, "only the stream now in the bubble").toBe(1);
   });
 
   it("defers growth on a live bubble and lands all of it", async () => {
@@ -135,18 +135,21 @@ describe("buildAssistantBubble", { timeout: testTimeoutFor(REVEAL_BUDGET_MS) }, 
     const b = buildAssistantBubble("", true);
     b.setText("# Heading\n\nBody text with `code` in it.\n");
     b.finishNow();
-    expect(b.root.querySelector("h1")?.textContent).toBe("Heading");
+    expect(b.root.querySelector("h2")?.textContent).toBe("Heading");
     expect(b.root.querySelector("code")?.textContent).toBe("code");
   });
 
   it("reveals a fenced block's chrome and its final highlighting", async () => {
-    // A fence arriving through the reveal is the case where the two buffers meet:
-    // the per-slice sweep gives an open fence its label, and end() finalizes it.
+    // A fence arriving through the reveal is the case where the two buffers meet.
     const b = buildAssistantBubble("", true);
     b.setText("```js\nconst x = 1;\n```\n");
     b.finishNow();
-    expect(b.root.querySelector("pre")).not.toBeNull();
-    expect(b.root.textContent).toContain("const x = 1;");
+    const block = b.root.querySelector(".cp-code");
+    // markdown.md "The code block": the label is the language's name.
+    expect(block?.querySelector('[data-part="lang"]')?.textContent).toBe("JavaScript");
+    expect(block?.getAttribute("data-code-state")).toBe("final");
+    expect(block?.querySelector('pre > code [data-token="keyword"]')?.textContent).toBe("const");
+    expect(block?.querySelector("pre")?.textContent).toBe("const x = 1;");
   });
 });
 

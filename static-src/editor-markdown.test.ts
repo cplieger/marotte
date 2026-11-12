@@ -92,7 +92,7 @@ import { renderMarkdownDoc } from "./editor-markdown.js";
 import { renderReadSurface } from "./editor-ui.js";
 import { freshState, type FileMode } from "./editor-types.js";
 import { rendersMarkdown } from "./viewer-rules.js";
-import { tableObservationCount } from "./table-scroll.js";
+import { liveRenderCount } from "./markdown.js";
 
 function hidden(el: HTMLElement): boolean {
   return el.classList.contains("hidden");
@@ -151,7 +151,8 @@ describe("read mode for a markdown document", () => {
     expect(hidden(surfaces.editorMarkdown)).toBe(false);
     expect(hidden(surfaces.editorViewer)).toBe(true);
     expect(hidden(surfaces.editorContent)).toBe(true);
-    expect(surfaces.editorMarkdown.querySelector("h1")?.textContent).toBe("Title");
+    // The editor's read view sits under the page's title bar, so `#` is an h2.
+    expect(surfaces.editorMarkdown.querySelector("h2")?.textContent).toBe("Title");
     expect(surfaces.editorMarkdown.querySelector("strong")?.textContent).toBe("bold");
     // The raw markers are gone from the rendered text.
     expect(surfaces.editorMarkdown.textContent).not.toContain("**");
@@ -187,19 +188,19 @@ describe("read mode for a markdown document", () => {
     renderReadSurface(loaded("docs/a.md", "# First\n"));
     renderReadSurface(loaded("docs/b.md", "# Second\n"));
     expect(surfaces.editorMarkdown.textContent).not.toContain("First");
-    expect(surfaces.editorMarkdown.querySelector("h1")?.textContent).toBe("Second");
+    expect(surfaces.editorMarkdown.querySelector("h2")?.textContent).toBe("Second");
   });
 
   it("lets go of the previous document's tables when it repaints", () => {
-    const before = tableObservationCount();
+    const before = liveRenderCount();
     renderReadSurface(loaded("docs/a.md", "| a | b |\n|---|---|\n| 1 | 2 |\n\nafter\n"));
     expect(surfaces.editorMarkdown.querySelectorAll("table").length, "table rendered").toBe(1);
-    expect(tableObservationCount() - before, "one watched").toBe(1);
+    expect(liveRenderCount() - before, "its render held").toBe(1);
 
     renderReadSurface(loaded("docs/b.md", "# No table\n"));
 
     expect(surfaces.editorMarkdown.querySelector("table")).toBeNull();
-    expect(tableObservationCount() - before).toBe(0);
+    expect(liveRenderCount() - before).toBe(0);
   });
 });
 
@@ -215,7 +216,7 @@ describe("read mode for a non-markdown file", () => {
   // surface is keyed on the path, and a .ts file full of `#` comments is source.
   it("does not render a source file that happens to contain markdown", () => {
     renderReadSurface(loaded("notes.ts", "# Title\n"));
-    expect(surfaces.editorMarkdown.querySelector("h1")).toBeNull();
+    expect(surfaces.editorMarkdown.querySelector("h1, h2")).toBeNull();
     expect(surfaces.editorViewer.textContent).toContain("# Title");
   });
 });
@@ -260,14 +261,14 @@ describe("the front-matter block", () => {
     renderMarkdownDoc(host, doc);
     const prose = host.querySelector(".message.assistant");
     expect(prose?.textContent).not.toContain("fileMatchPattern");
-    expect(prose?.querySelector("h1")?.textContent).toBe("Heading");
+    expect(prose?.querySelector("h2")?.textContent).toBe("Heading");
   });
 
   it("renders no block for a document without front-matter", () => {
     const host = document.createElement("div");
     renderMarkdownDoc(host, "# Requirements\n\nNo header here.\n");
     expect(host.querySelector(".editor-fm")).toBeNull();
-    expect(host.querySelector("h1")?.textContent).toBe("Requirements");
+    expect(host.querySelector("h2")?.textContent).toBe("Requirements");
   });
 });
 

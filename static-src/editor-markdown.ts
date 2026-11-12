@@ -22,19 +22,9 @@ export function renderMarkdownDoc(host: HTMLElement, text: string, headingLevel:
   host.replaceChildren(...children);
 }
 
-/** The front-matter metadata block.
- *
- *  Rendered rather than stripped because the header IS the interesting part of a
- *  steering doc: the inclusion mode answers "is this costing me tokens every
- *  session", `fileMatchPattern` answers "when does it load", and an agent's
- *  `model` and `tools` are the whole spec. Stripping it would hide the one thing
- *  a reader came for, and rendering it as markdown is not an option — a `---`
- *  fence is a horizontal rule and `key: value` lines are a paragraph.
- *
- *  A `<dl>` because that is what this is: declared terms and their values. Keys
- *  keep the author's order and spelling; nothing is defaulted in (an absent
- *  `inclusion` means the file did not declare one, and saying "always" here
- *  would be this surface inventing a steering rule for a skill). */
+/** The front-matter as a `<dl>` of its terms and values, in the author's order and spelling with nothing defaulted
+ *  in: it says when a steering doc loads and what an agent is, and as markdown its `---` fence would be a rule and
+ *  its `key: value` lines a paragraph. */
 function frontMatterBlock(fields: FrontMatterField[]): HTMLElement {
   const list = el("dl", { className: "editor-fm-list" });
   for (const f of fields) {

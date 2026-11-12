@@ -145,13 +145,9 @@
     color var(--dur-micro) var(--ease-standard);
 }
 
-/* NO resting `opacity`. It was 0.6, and it COMPOUNDED with the row's own 0.7 for
-   an effective 0.42: the copy and export glyphs measured 1.967:1 dark / 1.742:1
-   light against the card, the lowest ratio anywhere in the app and well under the
-   3:1 WCAG 1.4.11 asks of a meaningful graphic. Two stacked multipliers is also
-   why neither contrast gate could report it: each rule looked reasonable alone.
-   The glyph inherits the row's ink (4.771 / 4.719) and hover keeps its own ink
-   and fill lift, which is the whole affordance. */
+/* No resting `opacity`: it multiplies with the row's own 0.7, which takes the
+   glyph under the 3:1 WCAG 1.4.11 asks of a meaningful graphic against the card.
+   The glyph inherits the row's ink; hover lifts ink and fill. */
 .turn-action-btn,
 .turn-rewind {
   display: inline-flex;

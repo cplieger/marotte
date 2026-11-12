@@ -9,7 +9,7 @@ import { byId, park, queryAll, unpark } from "./dom.js";
 import { closeModal, createParkedDialog, initAllModals, openModal } from "./modals.js";
 import { showOnlyView } from "./view-swap.js";
 import { initClockSetting } from "./clock-setting.js";
-import { adoptLinkGuard, formPayloadLink, installLinkGuard, linkAnchor } from "./link-guard.js";
+import { adoptLinkGuard, formPayloadLink, installLinkGuard } from "./link-guard.js";
 import type { EffectiveSettings } from "./wire/types.gen.js";
 
 const frame = (): Promise<void> =>
@@ -343,7 +343,7 @@ describe("a page-wide redraw", () => {
     const stop = installLinkGuard();
     adoptLinkGuard({ guard_payload_links: true } as EffectiveSettings);
     const host = parkedHost();
-    const anchor = linkAnchor();
+    const anchor = document.createElement("a");
     anchor.textContent = "link";
     host.append(anchor);
     formPayloadLink(anchor, "https://example.com/?d=aGVsbG8gd29ybGQ");

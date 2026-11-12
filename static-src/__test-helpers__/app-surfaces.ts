@@ -1498,7 +1498,7 @@ export const SURFACES: readonly Surface[] = [
     name: "a reply",
     sizes: TWO,
     setup: plantReply,
-    controls: [".code-act-btn"],
+    controls: ['.cp-code [data-part="actions"] > .cp-button'],
     rows: [".subagent-header"],
   },
   {

@@ -200,7 +200,8 @@ async function settled(): Promise<void> {
 /** The spec's controls: elements that act or take input, and UI chrome. A run's or a file's name drawn as a control
  *  is content, also inside chrome that does not act (a steer note's head). */
 const WIDGETS = `button, [role="button"], summary, input, textarea, select, [contenteditable="true"], [role^="menu"]`;
-const CHROME = `[${CHROME_ATTR}]`;
+/** Chrome: marotte's marker, and a code block's bar (@cplieger/ui/markdown), whose label names the language. */
+const CHROME = `[${CHROME_ATTR}], .cp-code > [data-part="bar"]`;
 const NAMES =
   ".run-bar-open, .run-head, .run-step-head, .turn-wake-run, .turn-wake-row-run, .tool-file-link, .steer-note-run";
 

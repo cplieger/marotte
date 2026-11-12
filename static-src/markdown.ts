@@ -48,15 +48,15 @@ const BLOCK_ENTER_ATTR = "data-vk-block-enter";
 const BLOCK_OBJECT = ".preview-card, .media-audio, .media-download";
 const OBJECT_TAIL = "block-object-tail";
 
-/** internal/filebrowse.WholeFileMax: a document view renders every byte the viewer reads. */
-const WHOLE_FILE_BYTES = 2 << 20;
+/** No cut: a whole file's view renders all the server sent, and the server owns the viewer's cap. */
+const WHOLE_FILE_BYTES = Number.MAX_SAFE_INTEGER;
 
 type HeadingLevel = 1 | 2 | 3 | 4 | 5 | 6;
 
 export interface RenderOpts {
   /** The element `#` renders as: 2 under the page's title bar, 3 under a page's own `h2`. Default 2. */
   readonly headingLevel?: HeadingLevel;
-  /** A whole file's view reads up to the viewer's cap rather than the library's 1 MiB. */
+  /** A whole file's view renders all of it rather than the library's first 1 MiB. */
   readonly wholeFile?: boolean;
 }
 
@@ -405,6 +405,12 @@ export function releaseMarkdownIn(root: Element): void {
       renders.delete(controller);
     }
   }
+}
+
+/** Renders still holding overflow observers. Test-only. */
+// deadset:ignore DS1102 -- test seam: observes the renders `releaseMarkdownIn` lets go
+export function liveRenderCount(): number {
+  return renders.size;
 }
 
 function streamOptions(

@@ -38,15 +38,6 @@ const SEAMS: readonly Seam[] = [
     why: "the same band at the other end",
   },
   {
-    name: "code block: head → pre",
-    sheet: "13-messages.css",
-    owner: ".code-head",
-    prop: "border-block-end",
-    fillOwner: ".code-head",
-    step: true,
-    why: "the box-rung head sits over the pre's well",
-  },
-  {
     name: "tool card: claim row → details",
     sheet: "14-tools.css",
     owner: ".tool-details",

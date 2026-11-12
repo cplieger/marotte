@@ -11,10 +11,8 @@ function links(root: HTMLElement): HTMLButtonElement[] {
   return [...root.querySelectorAll<HTMLButtonElement>("button.inline-file-link")];
 }
 
-/** A fence NESTED IN A LIST ITEM: the shape where the linkify pass genuinely walks over code,
- *  because the completed top-level block is the <ul> and the <pre><code> is one of its
- *  descendants. A TOP-LEVEL fence cannot show this — `decorate` returns from its PRE branch
- *  before the walk is reached — so the walker's own skip is only observable one level in. */
+/** A fence NESTED IN A LIST ITEM: the completed top-level block the linkify pass walks is the
+ *  <ul>, and the code block is one of its descendants. */
 const LIST_FENCE = "- see src/outer.ts\n  ```go\n  internal/agent/auth.go\n  ```\n\ncloser\n";
 
 /** The same shape one construct in: a code SPAN inside a list item's prose. */
@@ -60,7 +58,7 @@ describe("code inside prose is never linkified", () => {
     // route it past linkify's parent test.
     const h = host();
     const r = createMarkdownStream(h, { flushIntervalMs: 0 });
-    r.writeDelta(LIST_FENCE);
+    r.write(LIST_FENCE);
     r.end(); // drains synchronously, so no timer and no await
     const pre = h.querySelector("pre");
     expect(pre).not.toBeNull();

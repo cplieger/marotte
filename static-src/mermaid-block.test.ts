@@ -114,6 +114,11 @@ function skeleton(host: HTMLElement): HTMLElement | null {
   return host.querySelector<HTMLElement>(".mermaid-skeleton");
 }
 
+/** A bar button's name: marotte's carry `aria-label`, the library's Copy its word. */
+function accessibleName(b: Element): string {
+  return b.getAttribute("aria-label") ?? b.textContent.trim();
+}
+
 function parts(host: HTMLElement): {
   wrap: HTMLElement;
   pre: HTMLElement;
@@ -121,7 +126,7 @@ function parts(host: HTMLElement): {
   svg: SVGSVGElement | null;
   button: (label: string) => HTMLButtonElement | null;
 } {
-  const wrap = host.querySelector<HTMLElement>(".code-wrap");
+  const wrap = host.querySelector<HTMLElement>(".cp-code");
   const pre = host.querySelector<HTMLElement>("pre");
   if (wrap === null || pre === null) {
     throw new Error("no code block rendered");
@@ -132,7 +137,9 @@ function parts(host: HTMLElement): {
     canvas: wrap.querySelector<HTMLElement>(".mermaid-canvas"),
     svg: wrap.querySelector<SVGSVGElement>(".mermaid-canvas > svg"),
     button: (label) =>
-      wrap.querySelector<HTMLButtonElement>(`.code-actions > button[aria-label="${label}"]`),
+      [...wrap.querySelectorAll<HTMLButtonElement>('[data-part="actions"] > button')].find(
+        (b) => accessibleName(b) === label,
+      ) ?? null,
   };
 }
 
@@ -169,7 +176,7 @@ describe("which fences are drawn", () => {
     expect(parts(replayed).canvas).toBeNull();
     expect(sourceShown(replayed)).toBe(true);
     const { host, stream } = live();
-    stream.writeDelta("```mermaid\n" + FLOW);
+    stream.write("```mermaid\n" + FLOW);
     stream.end();
     expect(host.querySelector(".mermaid-canvas")).toBeNull();
     expect(skeleton(host)).toBeNull();
@@ -189,7 +196,7 @@ describe("while the fence streams in", () => {
     ];
     const names: (string | null)[] = [];
     for (const chunk of chunks) {
-      stream.writeDelta(chunk);
+      stream.write(chunk);
       expect(sourceShown(host), `source on screen after ${JSON.stringify(chunk)}`).toBe(false);
       expect(host.querySelector(".mermaid-canvas")).toBeNull();
       names.push(skeleton(host)?.getAttribute("aria-label") ?? null);
@@ -203,11 +210,11 @@ describe("while the fence streams in", () => {
     expect(skel.getAttribute("aria-busy")).toBe("true");
     expect(skel.getBoundingClientRect().height).toBeGreaterThan(0);
 
-    const wrap = host.querySelector(".code-wrap");
+    const wrap = host.querySelector(".cp-code");
     const pre = host.querySelector("pre");
     const observer = new MutationObserver(() => undefined);
     observer.observe(host, { childList: true, subtree: true });
-    stream.writeDelta("```\n\nAfter.\n");
+    stream.write("```\n\nAfter.\n");
     const removed = observer
       .takeRecords()
       .flatMap((r) => [...r.removedNodes])
@@ -218,7 +225,7 @@ describe("while the fence streams in", () => {
     expect(sourceShown(host)).toBe(false);
     expect(removed, "the skeleton is the one element taken out").toHaveLength(1);
     expect(removed[0]).toBe(skel);
-    expect(host.querySelector(".code-wrap"), "the block itself stays in place").toBe(wrap);
+    expect(host.querySelector(".cp-code"), "the block itself stays in place").toBe(wrap);
     expect(host.querySelector("pre")).toBe(pre);
     stream.end();
     expect(host.querySelectorAll(".mermaid-canvas")).toHaveLength(1);
@@ -226,8 +233,8 @@ describe("while the fence streams in", () => {
 
   it("keeps the source toggle working on a diagram drawn from a stream", async () => {
     const { host, stream } = live();
-    stream.writeDelta("```mermaid\n" + FLOW);
-    stream.writeDelta("```\n");
+    stream.write("```mermaid\n" + FLOW);
+    stream.write("```\n");
     stream.end();
     const { pre, canvas, button } = parts(host);
     await userEvent.click(button("Show source") as HTMLButtonElement);
@@ -238,7 +245,7 @@ describe("while the fence streams in", () => {
 
   it("pulses while it waits", () => {
     const { host, stream } = live();
-    stream.writeDelta("```mermaid\nflowchart TD\n");
+    stream.write("```mermaid\nflowchart TD\n");
     const box = host.querySelector(".mermaid-skeleton > .skeleton") as HTMLElement;
     const [pulse] = box.getAnimations();
     expect(pulse?.effect?.getTiming().iterations).toBe(Infinity);
@@ -247,10 +254,10 @@ describe("while the fence streams in", () => {
 
   it("streams every other fence as code", () => {
     const { host, stream } = live();
-    stream.writeDelta("```go\npackage main\n");
+    stream.write("```go\npackage main\n");
     expect(sourceShown(host)).toBe(true);
     expect(skeleton(host)).toBeNull();
-    stream.writeDelta("```\n");
+    stream.write("```\n");
     expect(sourceShown(host)).toBe(true);
     expect(skeleton(host)).toBeNull();
   });
@@ -258,7 +265,7 @@ describe("while the fence streams in", () => {
   // Only a top-level fence is drawn (markdown.ts `decorate`), so a nested one would never leave its skeleton.
   it("streams a fence nested in a list as code", () => {
     const { host, stream } = live();
-    stream.writeDelta("- step\n  ```mermaid\n  flowchart TD\n");
+    stream.write("- step\n  ```mermaid\n  flowchart TD\n");
     expect(host.querySelector("li pre")).not.toBeNull();
     expect(sourceShown(host)).toBe(true);
     expect(skeleton(host)).toBeNull();
@@ -266,20 +273,20 @@ describe("while the fence streams in", () => {
 
   it("shows an empty fence as code once it closes", () => {
     const { host, stream } = live();
-    stream.writeDelta("```mermaid\n");
+    stream.write("```mermaid\n");
     expect(skeleton(host)).not.toBeNull();
-    stream.writeDelta("```\n");
+    stream.write("```\n");
     expect(skeleton(host)).toBeNull();
     expect(sourceShown(host)).toBe(true);
-    expect(host.querySelector(".code-wrap")?.hasAttribute("data-mermaid")).toBe(false);
+    expect(host.querySelector(".cp-code")?.hasAttribute("data-mermaid")).toBe(false);
   });
 
   it("ends in the source under the notice when the streamed diagram cannot be drawn", () => {
     const { host, stream } = live();
-    stream.writeDelta("```mermaid\nflowchart TD\n");
-    stream.writeDelta("  A -->\n");
+    stream.write("```mermaid\nflowchart TD\n");
+    stream.write("  A -->\n");
     expect(sourceShown(host)).toBe(false);
-    stream.writeDelta("```\n");
+    stream.write("```\n");
     const { wrap, pre } = parts(host);
     expect(wrap.getAttribute("data-mermaid")).toBe("failed");
     expect(skeleton(host)).toBeNull();
@@ -318,7 +325,7 @@ describe("the skeleton under reduced motion", () => {
 
   it("holds still", async () => {
     const { host, stream } = live();
-    stream.writeDelta("```mermaid\nflowchart TD\n");
+    stream.write("```mermaid\nflowchart TD\n");
     const box = host.querySelector(".mermaid-skeleton > .skeleton") as HTMLElement;
     await vi.waitFor(() => {
       expect(box.getAnimations().filter((a) => a.playState === "running")).toEqual([]);
@@ -404,8 +411,16 @@ describe("the block's controls", () => {
   it("copies the source, not the drawing", async () => {
     const copied: string[] = [];
     setCopyCallback((t) => copied.push(t));
+    // The block's Copy is the library's, which writes the clipboard itself.
+    const write = vi.spyOn(navigator.clipboard, "writeText").mockImplementation(async (t) => {
+      copied.push(t);
+    });
     const { button } = parts(render(fence(FLOW)));
     await userEvent.click(button("Copy") as HTMLButtonElement);
+    await vi.waitFor(() => {
+      expect(copied).toHaveLength(1);
+    });
+    write.mockRestore();
     await userEvent.click(button("Expand") as HTMLButtonElement);
     await userEvent.click(
       document.querySelector(
@@ -417,9 +432,7 @@ describe("the block's controls", () => {
 
   it("orders the row source toggle, copy, download, expand", () => {
     const { wrap } = parts(render(fence(FLOW)));
-    const labels = [...wrap.querySelectorAll(".code-actions > button")].map((b) =>
-      b.getAttribute("aria-label"),
-    );
+    const labels = [...wrap.querySelectorAll('[data-part="actions"] > button')].map(accessibleName);
     expect(labels).toEqual(["Show source", "Copy", "Download SVG", "Expand"]);
   });
 
@@ -565,7 +578,7 @@ describe("the drawn SVG in this page", () => {
 describe("the exported SVG", () => {
   it("carries the theme's resolved colours and background, and parses as SVG", async () => {
     const pele = await loadPele();
-    const { canvas } = parts(render(fence(FLOW)));
+    const { canvas, wrap } = parts(render(fence(FLOW)));
     const raw = pele.render(FLOW).svg;
     const out = exportableSvg(raw, canvas as HTMLElement);
     expect(out).not.toContain("var(");
@@ -575,7 +588,8 @@ describe("the exported SVG", () => {
     const surface = pixelHex(
       getComputedStyle(canvas as HTMLElement).getPropertyValue("--pele-surface"),
     );
-    const bg = pixelHex(getComputedStyle(canvas as HTMLElement).getPropertyValue("--pele-bg"));
+    // The inline drawing has no fill of its own: the block's fill is what the reader saw it on.
+    const bg = pixelHex(getComputedStyle(wrap).backgroundColor);
     expect(root.getAttribute("style")).toContain(`--_s:${surface}`);
     expect(root.getAttribute("style")).toContain(`background-color:${bg}`);
     expect(root.getAttribute("style")).toContain("font-family:system-ui, sans-serif");
@@ -583,13 +597,21 @@ describe("the exported SVG", () => {
 
   it("follows the theme it is exported in", async () => {
     const pele = await loadPele();
-    const { canvas } = parts(render(fence(FLOW)));
+    const { canvas, wrap } = parts(render(fence(FLOW)));
     const raw = pele.render(FLOW).svg;
+    const background = (svg: string): string | undefined =>
+      /background-color:(#[0-9a-f]+)/.exec(svg)?.[1];
     document.documentElement.setAttribute("data-theme", "dark");
     const dark = exportableSvg(raw, canvas as HTMLElement);
+    const darkFill = pixelHex(getComputedStyle(wrap).backgroundColor);
     document.documentElement.setAttribute("data-theme", "light");
     const light = exportableSvg(raw, canvas as HTMLElement);
+    const lightFill = pixelHex(getComputedStyle(wrap).backgroundColor);
     expect(light).not.toBe(dark);
+    // The block's fill is written per theme (`light-dark()`), which the export must resolve by the page's theme.
+    expect(darkFill).not.toBe(lightFill);
+    expect(background(dark)).toBe(darkFill);
+    expect(background(light)).toBe(lightFill);
   });
 });
 

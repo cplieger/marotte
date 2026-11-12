@@ -1,13 +1,8 @@
-import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
+import { renderMarkdown } from "@cplieger/ui/markdown";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
-import {
-  isRunnableShell,
-  extractLang,
-  decorateCodeBlocks,
-  decorateStreamingCodeTail,
-  setCopyCallback,
-  setShellRunCallback,
-} from "./code-blocks.js";
+import { isRunnableShell, finishCodeBlock, setShellRunCallback } from "./code-blocks.js";
+import { createMarkdownStream, renderMarkdownInto } from "./markdown.js";
 
 describe("isRunnableShell", () => {
   const cases: { name: string; lang: string; text: string; expected: boolean }[] = [
@@ -93,222 +88,134 @@ describe("isRunnableShell", () => {
   }
 });
 
-describe("extractLang", () => {
-  // The markdown renderer puts `language-<tag>` on the <code>; the <pre> channel serves callers that pass it there.
-  const cases: { name: string; pre: string; code: string | null; want: string }[] = [
-    { name: "the code element's language- class", pre: "code", code: "language-go", want: "go" },
-    { name: "the pre element's own class", pre: "code python", code: null, want: "python" },
-    {
-      name: "the pre channel wins over the code channel",
-      pre: "code rust",
-      code: "language-go",
-      want: "rust",
-    },
-    { name: "no language anywhere", pre: "code", code: null, want: "" },
-    { name: "no classes at all", pre: "", code: null, want: "" },
-    { name: "the tag is lowercased", pre: "code", code: "language-TypeScript", want: "typescript" },
-    {
-      name: "an unknown tag passes through",
-      pre: "code",
-      code: "language-brainfuck",
-      want: "brainfuck",
-    },
-  ];
-
-  for (const tc of cases) {
-    it(tc.name, () => {
-      const pre = document.createElement("pre");
-      pre.className = tc.pre;
-      let code: HTMLElement | null = null;
-      if (tc.code !== null) {
-        code = document.createElement("code");
-        code.className = tc.code;
-        pre.appendChild(code);
-      }
-      expect(extractLang(pre, code)).toBe(tc.want);
-    });
-  }
-});
-
-function fixture(lang: string, text: string): { root: HTMLElement; pre: HTMLElement } {
+/**
+ * The `.cp-code` block @cplieger/ui/markdown builds for a fence, given to `finishCodeBlock` as the `code` hook gives
+ * it: the block, the tag as written and the fence's text.
+ */
+function fixture(lang: string, text: string): { root: HTMLElement; block: HTMLElement } {
   const root = document.createElement("div");
-  const pre = document.createElement("pre");
-  pre.className = "code";
-  const code = document.createElement("code");
-  if (lang !== "") {
-    code.className = `language-${lang}`;
+  renderMarkdown(root, `\`\`\`${lang}\nx\n\`\`\``, { highlight: false });
+  const block = root.querySelector<HTMLElement>(".cp-code");
+  if (block === null) {
+    throw new Error("the library rendered no code block");
   }
-  code.textContent = text;
-  pre.appendChild(code);
-  root.appendChild(pre);
-  return { root, pre };
+  const code = block.querySelector("pre > code");
+  if (code !== null) {
+    code.textContent = text;
+  }
+  finishCodeBlock(block, lang, text);
+  return { root, block };
 }
 
-function head(root: HTMLElement): HTMLElement | null {
-  return root.querySelector(".code-wrap > .code-head");
+/** The bar's buttons other than the library's Copy. */
+function ownButtons(root: HTMLElement): HTMLButtonElement[] {
+  return [
+    ...root.querySelectorAll<HTMLButtonElement>('[data-part="actions"] > button:not(.cp-copy)'),
+  ];
 }
 
-describe("decorateCodeBlocks: the title bar", () => {
-  it("prints the raw fence tag as the language label", () => {
-    const { root } = fixture("go", "func main() {}");
-    decorateCodeBlocks(root);
-    expect(head(root)?.querySelector(".code-lang")?.textContent).toBe("go");
+function runButton(root: HTMLElement): HTMLButtonElement | undefined {
+  return ownButtons(root)[0];
+}
+
+describe("finishCodeBlock", () => {
+  it("adds Run to a shell fence's actions, after the library's Copy", () => {
+    setShellRunCallback(vi.fn());
+    const { block } = fixture("bash", "echo hi");
+    const actions = [...(block.querySelector('[data-part="actions"]')?.children ?? [])];
+    expect(actions).toHaveLength(2);
+    expect(actions[0]?.classList.contains("cp-copy")).toBe(true);
+    expect(actions[1]?.getAttribute("aria-label")).toBe("Run in shell");
   });
 
-  it("prints an unrecognised fence tag verbatim rather than dropping it", () => {
-    // The label is the author's tag; `normalizeLang` decides highlighting only.
-    const { root } = fixture("brainfuck", "++++");
-    decorateCodeBlocks(root);
-    expect(root.querySelector(".code-lang")?.textContent).toBe("brainfuck");
+  it("gives Run the bar's button family: quiet and small", () => {
+    setShellRunCallback(vi.fn());
+    const btn = runButton(fixture("bash", "echo hi").root);
+    expect(btn?.classList.contains("cp-button")).toBe(true);
+    expect(btn?.getAttribute("data-variant")).toBe("quiet");
+    expect(btn?.getAttribute("data-size")).toBe("sm");
+    expect(btn?.type).toBe("button");
   });
 
-  it("leaves the label empty for a fence with no tag, and still builds the bar", () => {
-    const { root } = fixture("", "ls -la");
-    decorateCodeBlocks(root);
-    expect(root.querySelector(".code-lang")?.textContent).toBe("");
-    expect(head(root)).not.toBeNull();
+  it("offers Run on no other language", () => {
+    expect(ownButtons(fixture("go", "func main() {}").root)).toHaveLength(0);
+    expect(ownButtons(fixture("python", "print('hi')").root)).toHaveLength(0);
   });
 
-  it("puts the actions inside the title bar, not floating over the pre", () => {
-    const { root } = fixture("go", "func main() {}");
-    decorateCodeBlocks(root);
-    expect(head(root)?.querySelector(".code-actions")).not.toBeNull();
-    expect(root.querySelector(".code-wrap > .code-actions")).toBeNull();
-  });
-
-  it("puts the bar before the pre inside the wrapper", () => {
-    const { root } = fixture("go", "x");
-    decorateCodeBlocks(root);
-    const kids = [...(root.querySelector(".code-wrap")?.children ?? [])].map((e) =>
-      e.tagName.toLowerCase(),
-    );
-    expect(kids).toEqual(["div", "pre"]);
-  });
-
-  it("is idempotent: a second pass adds no second bar and no second button", () => {
-    const { root } = fixture("bash", "echo hi");
-    decorateCodeBlocks(root);
-    decorateCodeBlocks(root);
-    decorateCodeBlocks(root);
-    expect(root.querySelectorAll(".code-head")).toHaveLength(1);
-    expect(root.querySelectorAll(".code-act-btn")).toHaveLength(2); // copy + run
-  });
-
-  it("highlights a known language and leaves an unknown one as text", () => {
-    const { root: known } = fixture("go", "func main() {}");
-    decorateCodeBlocks(known);
-    expect(known.querySelector("code")?.querySelector(".hl-kw, [class^='hl-']")).not.toBeNull();
-
-    const { root: unknown } = fixture("brainfuck", "++++");
-    decorateCodeBlocks(unknown);
-    expect(unknown.querySelector("code")?.children).toHaveLength(0);
-  });
-
-  it("offers Run only for a runnable shell snippet", () => {
-    const { root: shell } = fixture("bash", "echo hi");
-    decorateCodeBlocks(shell);
-    expect(shell.querySelectorAll(".code-act-btn")).toHaveLength(2);
-
-    const { root: go } = fixture("go", "func main() {}");
-    decorateCodeBlocks(go);
-    expect(go.querySelectorAll(".code-act-btn")).toHaveLength(1);
-  });
-});
-
-describe("decorateStreamingCodeTail: a fence that has not closed", () => {
-  it("gives the open block its bar and its Copy button", () => {
-    // The renderer's per-block callback fires only on close, so without this sweep a streaming block has no chrome.
-    const { root } = fixture("go", "func main() {");
-    decorateStreamingCodeTail(root);
-    expect(root.querySelector(".code-wrap")?.getAttribute("data-code-state")).toBe("streaming");
-    expect(root.querySelector(".code-lang")?.textContent).toBe("go");
-    expect(root.querySelectorAll(".code-act-btn")).toHaveLength(1);
-  });
-
-  it("withholds highlighting and Run while the text is still growing", () => {
-    const { root } = fixture("bash", "echo hi");
-    decorateStreamingCodeTail(root);
-    // No Run: an incomplete command must not reach a shell.
-    expect(root.querySelectorAll(".code-act-btn")).toHaveLength(1);
-    expect(root.querySelector("code")?.children).toHaveLength(0);
-  });
-
-  it("upgrades in place when the fence closes: highlight, Run, one bar", () => {
-    const { root } = fixture("bash", "echo hi");
-    decorateStreamingCodeTail(root);
-    decorateCodeBlocks(root);
-    expect(root.querySelector(".code-wrap")?.getAttribute("data-code-state")).toBe("final");
-    expect(root.querySelectorAll(".code-head")).toHaveLength(1);
-    expect(root.querySelectorAll(".code-act-btn")).toHaveLength(2);
-  });
-
-  it("leaves a block that already closed alone", () => {
-    // The close callback runs inside the parse slice, so the tail sweep after it sees the just-finalized block as last.
-    const { root } = fixture("bash", "echo hi");
-    decorateCodeBlocks(root);
-    decorateStreamingCodeTail(root);
-    expect(root.querySelector(".code-wrap")?.getAttribute("data-code-state")).toBe("final");
-    expect(root.querySelectorAll(".code-act-btn")).toHaveLength(2);
-  });
-
-  it("copies the text as it is at CLICK time, not as it was when the button was built", () => {
-    const copied: string[] = [];
-    setCopyCallback((t) => copied.push(t));
-    const { root } = fixture("go", "func main() {");
-    decorateStreamingCodeTail(root);
-    const code = root.querySelector("code");
-    code?.appendChild(document.createTextNode("\n\tprintln()\n}"));
-    root.querySelector<HTMLButtonElement>(".code-act-btn")?.click();
-    expect(copied).toEqual(["func main() {\n\tprintln()\n}"]);
-  });
-
-  it("does nothing when there is no code block", () => {
-    const root = document.createElement("div");
-    root.appendChild(document.createElement("p"));
-    decorateStreamingCodeTail(root);
-    expect(root.querySelector(".code-wrap")).toBeNull();
+  it("marks the block final, which ends the streaming dot", () => {
+    expect(fixture("go", "x").block.getAttribute("data-code-state")).toBe("final");
   });
 
   it("wires Run to the shell callback with the trimmed command", () => {
     const run = vi.fn();
     setShellRunCallback(run);
-    const { root } = fixture("bash", "  echo hi\n");
-    decorateCodeBlocks(root);
-    const buttons = [...root.querySelectorAll<HTMLButtonElement>(".code-act-btn")];
-    buttons[1]?.click();
+    runButton(fixture("bash", "  echo hi\n").root)?.click();
     expect(run).toHaveBeenCalledWith("echo hi");
   });
 
   it("labels the shell button as running the command", () => {
     setShellRunCallback(vi.fn());
-    const { root } = fixture("bash", "echo hi");
-    decorateCodeBlocks(root);
-    const buttons = [...root.querySelectorAll<HTMLButtonElement>(".code-act-btn")];
-    expect(buttons[1]?.getAttribute("data-tooltip")).toBe("Run in shell");
-    expect(buttons[1]?.getAttribute("aria-label")).toBe("Run in shell");
+    const btn = runButton(fixture("bash", "echo hi").root);
+    expect(btn?.getAttribute("data-tooltip")).toBe("Run in shell");
+    expect(btn?.getAttribute("aria-label")).toBe("Run in shell");
   });
 
   it("gives a multi-line block the same Run button as a one-line block", () => {
     setShellRunCallback(vi.fn());
-    const { root } = fixture("bash", "cd /tmp\nls -la");
-    decorateCodeBlocks(root);
-    const buttons = [...root.querySelectorAll<HTMLButtonElement>(".code-act-btn")];
-    expect(buttons).toHaveLength(2);
-    expect(buttons[1]?.disabled).toBe(false);
-    expect(buttons[1]?.getAttribute("data-tooltip")).toBe("Run in shell");
-    expect(buttons[1]?.getAttribute("aria-label")).toBe("Run in shell");
-  });
-
-  it("withholds Run from a multi-line block that is still streaming", () => {
-    const { root } = fixture("bash", "cd /tmp\nls -la");
-    decorateStreamingCodeTail(root);
-    expect(root.querySelectorAll(".code-act-btn")).toHaveLength(1);
+    const buttons = ownButtons(fixture("bash", "cd /tmp\nls -la").root);
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]?.disabled).toBe(false);
+    expect(buttons[0]?.getAttribute("aria-label")).toBe("Run in shell");
   });
 });
 
-function runButton(root: HTMLElement): HTMLButtonElement | undefined {
-  return [...root.querySelectorAll<HTMLButtonElement>(".code-act-btn")][1];
-}
+// Through marotte's hooks: the library calls `code` once, at the fence's close or at the end.
+describe("Run on a rendered fence", () => {
+  let host: HTMLElement;
+
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.append(host);
+  });
+
+  afterEach(() => {
+    host.remove();
+  });
+
+  it("is in a replayed answer's shell fence and not in its Go fence", () => {
+    setShellRunCallback(vi.fn());
+    renderMarkdownInto(host, "```bash\necho hi\n```\n\n```go\nfunc main() {}\n```\n");
+    const blocks = [...host.querySelectorAll<HTMLElement>(".cp-code")];
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0]?.querySelector('[aria-label="Run in shell"]')).not.toBeNull();
+    expect(blocks[1]?.querySelector('[aria-label="Run in shell"]')).toBeNull();
+  });
+
+  it("is withheld while the fence streams, then added once it closes", () => {
+    setShellRunCallback(vi.fn());
+    const stream = createMarkdownStream(host, { flushIntervalMs: 0 });
+    stream.write("```bash\necho hi\n");
+    const block = host.querySelector(".cp-code");
+    // An incomplete command must not reach a shell.
+    expect(block?.querySelector('[aria-label="Run in shell"]')).toBeNull();
+    expect(block?.hasAttribute("data-code-state")).toBe(false);
+    stream.write("```\n\n");
+    expect(block?.getAttribute("data-code-state")).toBe("final");
+    expect(block?.querySelectorAll('[aria-label="Run in shell"]')).toHaveLength(1);
+    stream.end();
+    expect(host.querySelectorAll('[aria-label="Run in shell"]')).toHaveLength(1);
+  });
+
+  it("is added to a fence the answer never closed, once the answer ends", () => {
+    setShellRunCallback(vi.fn());
+    const stream = createMarkdownStream(host, { flushIntervalMs: 0 });
+    stream.write("```bash\necho hi\n");
+    stream.end();
+    const block = host.querySelector(".cp-code");
+    expect(block?.getAttribute("data-code-state")).toBe("final");
+    expect(block?.querySelectorAll('[aria-label="Run in shell"]')).toHaveLength(1);
+  });
+});
 
 describe("Run never sends a character the reader cannot see", () => {
   // Each is a code point Unicode classes as a control (Cc), format (Cf), private-use (Co),
@@ -348,7 +255,6 @@ describe("Run never sends a character the reader cannot see", () => {
       const run = vi.fn();
       setShellRunCallback(run);
       const { root } = fixture("bash", tc.text);
-      decorateCodeBlocks(root);
       const btn = runButton(root);
       expect(btn?.disabled).toBe(true);
       expect(btn?.getAttribute("data-tooltip")).toBe(
@@ -374,7 +280,6 @@ describe("Run never sends a character the reader cannot see", () => {
       const run = vi.fn();
       setShellRunCallback(run);
       const { root } = fixture("bash", tc.text);
-      decorateCodeBlocks(root);
       const btn = runButton(root);
       expect(btn?.disabled).toBe(false);
       btn?.click();
@@ -386,7 +291,6 @@ describe("Run never sends a character the reader cannot see", () => {
     const run = vi.fn();
     setShellRunCallback(run);
     const { root } = fixture("bash", "\t\u00A0echo hi\u3000\t");
-    decorateCodeBlocks(root);
     const btn = runButton(root);
     expect(btn?.disabled).toBe(false);
     btn?.click();
@@ -413,12 +317,12 @@ describe("Run on a line that is partly out of view", () => {
 
   function mounted(text: string, width: string): HTMLElement {
     const { root } = fixture("bash", text);
+    root.classList.add("cp", "cp-prose");
     host = document.createElement("div");
     host.className = "message";
     host.style.width = width;
     host.appendChild(root);
     document.body.appendChild(host);
-    decorateCodeBlocks(root);
     return root;
   }
 
@@ -512,12 +416,12 @@ describe("Run on a multi-line block", () => {
 
   function mounted(text: string): HTMLElement {
     const { root } = fixture("bash", text);
+    root.classList.add("cp", "cp-prose");
     host = document.createElement("div");
     host.className = "message";
     host.style.width = "40rem";
     host.appendChild(root);
     document.body.appendChild(host);
-    decorateCodeBlocks(root);
     return root;
   }
 

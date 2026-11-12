@@ -1,5 +1,6 @@
-// A workspace page link becomes a card that stands as a full-width block in the transcript, whatever
-// sentence it sat in: the text around it breaks above and below, never onto the card's line. Laid out
+// A workspace page link becomes a card that stands as a block as wide as the prose column (its paragraph, which
+// the library's prose caps at its measure), whatever sentence it sat in: the text around it breaks above and
+// below, never onto the card's line. Laid out
 // with the app's sheet, rendered whole (a reload) and streamed one character at a time (live).
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -40,7 +41,7 @@ function prose(md: string, mode: Mode): HTMLElement {
   } else {
     const stream = createMarkdownStream(host, { flushIntervalMs: 0 });
     for (const ch of md) {
-      stream.writeDelta(ch);
+      stream.write(ch);
     }
     stream.end();
   }
@@ -77,7 +78,7 @@ function shownText(host: HTMLElement, card: HTMLElement): string {
 
 function expectBlockCard(host: HTMLElement, card: HTMLElement, what: string): void {
   const box = card.getBoundingClientRect();
-  const column = host.getBoundingClientRect();
+  const column = (card.closest("p") ?? host).getBoundingClientRect();
   expect(Math.abs(box.width - column.width), `${what}: full width`).toBeLessThanOrEqual(0.5);
   for (const line of textLines(host, card)) {
     const overlap = Math.min(line.bottom, box.bottom) - Math.max(line.top, box.top);

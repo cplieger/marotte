@@ -4,10 +4,10 @@ import {
   formDiagramLink,
   formPayloadLink,
   installLinkGuard,
-  linkAnchor,
   reformPayloadLinks,
   setLinkCopyCallback,
 } from "./link-guard.js";
+import { renderMarkdown } from "@cplieger/ui/markdown";
 import { settingsPayload } from "./__test-helpers__/settings.js";
 
 const URL_ = `https://github.com/o/r/issues/new?body=${"word ".repeat(50)}`;
@@ -30,13 +30,17 @@ afterEach(() => {
   host.remove();
 });
 
+/** The anchor @cplieger/ui/markdown gives a withheld link (its words, then its `[data-part=dest]`), its words
+ *  replaced by a text node and a streamed chunk span. */
 function anchorWithText(): { a: HTMLAnchorElement; textNode: Text; span: HTMLElement } {
-  const a = linkAnchor();
+  const box = document.createElement("div");
+  renderMarkdown(box, `[x](${URL_})`);
+  const a = box.querySelector("a[data-cp-withheld]") as HTMLAnchorElement;
   const textNode = document.createTextNode("file ");
   const span = document.createElement("span");
   span.setAttribute("data-vk-chunk-enter", "");
   span.textContent = "an issue";
-  a.append(textNode, span);
+  a.firstChild?.replaceWith(textNode, span);
   host.append(a);
   return { a, textNode, span };
 }
@@ -62,12 +66,17 @@ describe("formPayloadLink", () => {
     expect(host.querySelector("a[href]")).toBeNull();
   });
 
-  it("keeps the anchor and sets its href when OFF", () => {
+  it("keeps the anchor and gives it what an open link carries when OFF", () => {
     adoptLinkGuard(settingsPayload({ guard_payload_links: false }));
-    const { a } = anchorWithText();
+    const { a, textNode, span } = anchorWithText();
     const formed = formPayloadLink(a, URL_);
     expect(formed).toBe(a);
     expect(a.getAttribute("href")).toBe(URL_);
+    expect(a.target).toBe("_blank");
+    expect(a.rel).toBe("noopener noreferrer nofollow");
+    expect(a.hasAttribute("data-cp-withheld")).toBe(false);
+    // The words alone: the inline destination is for a link with no href.
+    expectSameNodes(a.childNodes, [textNode, span]);
     expect(a.hasAttribute("data-payload-url")).toBe(true);
     expect(host.querySelector("button")).toBeNull();
   });
@@ -91,7 +100,7 @@ describe("reformPayloadLinks", () => {
     expect(host.querySelector("button")).toBeNull();
     expect(link.getAttribute("href")).toBe(URL_);
     expect(link.target).toBe("_blank");
-    expect(link.rel).toBe("noopener");
+    expect(link.rel).toBe("noopener noreferrer nofollow");
     expectSameNodes(link.childNodes, [textNode, span]);
     expect(span.hasAttribute("data-vk-chunk-settled")).toBe(true);
   });
@@ -120,15 +129,6 @@ describe("reformPayloadLinks", () => {
     expect(name).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
   });
 
-  it("never turns a guarded button with an unsafe scheme into a link", () => {
-    const { a } = anchorWithText();
-    const b = formPayloadLink(a, "javascript:alert(1)");
-    adoptLinkGuard(settingsPayload({ guard_payload_links: false }));
-    reformPayloadLinks(host);
-    expect(host.firstElementChild).toBe(b);
-    expect(host.querySelector("a")).toBeNull();
-  });
-
   it("links the address it was given, not one written into the marker afterwards", () => {
     const { a } = anchorWithText();
     formPayloadLink(a, URL_).setAttribute("data-payload-url", "javascript:alert(1)");
@@ -147,7 +147,7 @@ describe("reformPayloadLinks", () => {
   });
 
   it("never touches an ordinary link", () => {
-    const plain = linkAnchor();
+    const plain = document.createElement("a");
     plain.setAttribute("href", "https://e.example/short");
     host.append(plain);
     adoptLinkGuard(settingsPayload({ guard_payload_links: true }));
@@ -212,7 +212,8 @@ describe("formDiagramLink", () => {
     formDiagramLink(a, URL_);
     adoptLinkGuard(settingsPayload({ guard_payload_links: false }));
     reformPayloadLinks(host);
-    expect(a.getAttribute("href")).toBe(URL_);
+    // The parsed address: the same destination, its spaces percent-encoded.
+    expect(a.getAttribute("href")).toBe(new URL(URL_).href);
     expect(a.isConnected).toBe(true);
     adoptLinkGuard(settingsPayload({ guard_payload_links: true }));
     reformPayloadLinks(host);

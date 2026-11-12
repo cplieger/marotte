@@ -132,9 +132,11 @@ describe("the markdown renderer", () => {
     expect(host.querySelector(".preview-card")).toBeNull();
   });
 
+  // markdown.md "Safety": a refused destination gets no href, and no card.
   it("still neutralises an unsafe href", () => {
     const host = render("[x](javascript:alert(1))");
-    expect(host.querySelector("a")?.getAttribute("href")).toBe("#");
+    expect(host.querySelector("a")?.hasAttribute("href")).toBe(false);
+    expect(host.querySelector(".preview-card")).toBeNull();
   });
 
   it("builds the same card streamed one character at a time", () => {
@@ -142,7 +144,7 @@ describe("the markdown renderer", () => {
     const host = document.createElement("div");
     const stream = createMarkdownStream(host, { flushIntervalMs: 0 });
     for (const ch of md) {
-      stream.writeDelta(ch);
+      stream.write(ch);
     }
     stream.end();
     expect(host.querySelector("p > button.preview-card .preview-card-label")?.textContent).toBe(

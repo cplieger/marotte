@@ -8,39 +8,22 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 const SVG = '<svg viewBox="0 0 10 10"><rect width="10" height="10"/></svg>';
 
-function fence(lang: string, source: string): HTMLElement {
-  const pre = document.createElement("pre");
-  pre.className = "code";
-  const code = document.createElement("code");
-  code.className = `language-${lang}`;
-  code.textContent = source;
-  pre.appendChild(code);
-  const host = document.createElement("div");
-  host.appendChild(pre);
-  return pre;
-}
-
 describe("renderSvgBlock", () => {
-  it("replaces an svg fence with a figure holding an image", () => {
-    const pre = fence("svg", SVG);
-    const host = pre.parentElement;
-    const figure = renderSvgBlock(pre);
+  it("gives a figure holding an image", () => {
+    const figure = renderSvgBlock(SVG);
     expect(figure?.tagName).toBe("FIGURE");
-    expect(host?.querySelector("pre")).toBeNull();
-    expect(host?.querySelector("figure > img")).not.toBeNull();
+    expect(figure?.querySelector(":scope > img")).not.toBeNull();
   });
 
   it("encodes the source as a data: URL on the image's src", () => {
-    const pre = fence("svg", SVG);
-    const img = renderSvgBlock(pre)?.querySelector("img");
+    const img = renderSvgBlock(SVG)?.querySelector("img");
     expect(img?.getAttribute("src")).toBe(`data:image/svg+xml,${encodeURIComponent(SVG)}`);
   });
 
   // THE invariant. The source text reaches the document only as a percent-encoded
   // URL, so no `<svg>`, `<script>` or `<rect>` node is ever parsed into the page.
   it("parses no markup: the SVG becomes no element of its own", () => {
-    const pre = fence("svg", '<svg onload="alert(1)"><script>alert(2)</script></svg>');
-    const figure = renderSvgBlock(pre);
+    const figure = renderSvgBlock('<svg onload="alert(1)"><script>alert(2)</script></svg>');
     expect(figure).not.toBeNull();
     expect(figure?.querySelector("svg")).toBeNull();
     expect(figure?.querySelector("script")).toBeNull();
@@ -51,41 +34,22 @@ describe("renderSvgBlock", () => {
   // A `data:` URL, not a blob URL: CSP is `img-src 'self' data:` and `blob:` is
   // absent, so createObjectURL would be blocked outright.
   it("uses a data: URL rather than a blob: URL", () => {
-    const pre = fence("svg", SVG);
-    const src = renderSvgBlock(pre)?.querySelector("img")?.getAttribute("src") ?? "";
+    const src = renderSvgBlock(SVG)?.querySelector("img")?.getAttribute("src") ?? "";
     expect(src.startsWith("data:image/svg+xml,")).toBe(true);
     expect(src.startsWith("blob:")).toBe(false);
   });
 
   it("carries alt text so the figure is not an empty announcement", () => {
-    const pre = fence("svg", SVG);
-    expect(renderSvgBlock(pre)?.querySelector("img")?.getAttribute("alt")).not.toBe("");
-  });
-
-  it("leaves every other fence alone", () => {
-    for (const lang of ["go", "ts", "bash", "", "xml", "html", "mermaid"]) {
-      const pre = fence(lang, SVG);
-      expect(renderSvgBlock(pre), lang).toBeNull();
-      expect(pre.parentElement?.querySelector("pre"), lang).toBe(pre);
-    }
-  });
-
-  // Mermaid source is not SVG: mermaid-block.ts draws it, never this inert path.
-  it("does not claim a mermaid fence", () => {
-    const pre = fence("mermaid", "graph TD; A-->B;");
-    expect(renderSvgBlock(pre)).toBeNull();
+    expect(renderSvgBlock(SVG)?.querySelector("img")?.getAttribute("alt")).not.toBe("");
   });
 
   // A diagram that cannot be built is better read as its source.
-  it("leaves an empty fence as source", () => {
-    const pre = fence("svg", "   \n  ");
-    expect(renderSvgBlock(pre)).toBeNull();
-    expect(pre.parentElement?.querySelector("pre")).toBe(pre);
+  it("declines an empty source", () => {
+    expect(renderSvgBlock("   \n  ")).toBeNull();
   });
 
   it("degrades to a named message when the image fails to load", () => {
-    const pre = fence("svg", SVG);
-    const figure = renderSvgBlock(pre);
+    const figure = renderSvgBlock(SVG);
     const img = figure?.querySelector("img");
     img?.dispatchEvent(new Event("error"));
     expect(figure?.querySelector("img")).toBeNull();
@@ -138,9 +102,8 @@ describe("on the shipped stylesheet", () => {
   // the diagram's backdrop whatever the app theme.
   it.each(["dark", "light"])("backs a diagram with a surface black ink reads on (%s)", (theme) => {
     document.documentElement.setAttribute("data-theme", theme);
-    const pre = fence("svg", SVG);
-    column.appendChild(pre.parentElement as HTMLElement);
-    const img = renderSvgBlock(pre)?.querySelector("img");
+    renderMarkdownInto(column, "```svg\n" + SVG + "\n```\n");
+    const img = column.querySelector("figure > img");
     expect(img).not.toBeNull();
     const contrast = (luminance(getComputedStyle(img as Element).backgroundColor) + 0.05) / 0.05;
     expect(contrast).toBeGreaterThanOrEqual(4.5);
@@ -164,18 +127,32 @@ describe("through the markdown renderer", () => {
   // language label, Copy button or highlighting for source nobody can see.
   it("collects no code-block chrome", () => {
     const host = render("```svg\n" + SVG + "\n```\n");
-    expect(host.querySelector(".code-lang")).toBeNull();
+    expect(host.querySelector(".cp-code")).toBeNull();
+    expect(host.querySelector('[data-part="lang"]')).toBeNull();
     expect(host.textContent).not.toContain("<rect");
   });
 
-  it("still renders an ordinary fence as a code block", () => {
-    const host = render("```go\npackage main\n```\n");
-    expect(host.querySelector("pre")).not.toBeNull();
-    expect(host.querySelector("figure")).toBeNull();
+  it("still renders every other fence as a code block", () => {
+    for (const lang of ["go", "ts", "bash", "", "xml", "html"]) {
+      const host = render("```" + lang + "\n" + SVG + "\n```\n");
+      expect(host.querySelector(".cp-code > pre"), lang).not.toBeNull();
+      expect(host.querySelector("figure"), lang).toBeNull();
+    }
   });
 
-  // Inline `<svg>` in prose is TEXT and stays text — that is the property this
-  // work protects rather than changes. There is no HTML token in the parser.
+  // Mermaid source is not SVG: mermaid-block.ts draws it, never this inert path.
+  it("does not claim a mermaid fence", () => {
+    const host = render("```mermaid\ngraph TD; A-->B;\n```\n");
+    expect(host.querySelector("figure.svg-figure")).toBeNull();
+  });
+
+  it("leaves an empty svg fence as source", () => {
+    const host = render("```svg\n   \n```\n");
+    expect(host.querySelector("figure")).toBeNull();
+    expect(host.querySelector(".cp-code > pre")).not.toBeNull();
+  });
+
+  // Inline `<svg>` in prose is TEXT and stays text. There is no HTML token in the parser.
   it("leaves inline svg markup in prose as literal text", () => {
     const host = render("here is <svg><script>alert(1)</script></svg> inline\n");
     expect(host.querySelector("svg")).toBeNull();
@@ -184,23 +161,19 @@ describe("through the markdown renderer", () => {
     expect(host.textContent).toContain("<svg>");
   });
 
-  // The src must be assigned outside smd-renderer's set_attr funnel, which gates
-  // `src` through isHttpMailtoOrRelativeURL, which rejects `data:`, so a diagram routed through
-  // it would be rewritten to "#".
-  it("does not lose the src to the renderer's url gate", () => {
+  // The library's gate refuses `data:`, so the diagram's src must be set outside it.
+  it("keeps the data: src the gate would refuse", () => {
     const host = render("```svg\n" + SVG + "\n```\n");
-    expect(host.querySelector("img")?.getAttribute("src")).not.toBe("#");
+    expect(host.querySelector("img")?.getAttribute("src")).toMatch(/^data:image\/svg\+xml,/);
   });
 
   it("is safe against an unterminated fence: source, not a broken diagram", () => {
     const host = render("```svg\n" + SVG);
     expect(host.querySelector("figure")).toBeNull();
-    expect(host.querySelector("pre")).not.toBeNull();
+    expect(host.querySelector(".cp-code > pre")).not.toBeNull();
   });
 });
 
-// Scoped to the SVG PATH: `code-blocks.ts` `finalizeBlock` uses innerHTML for ordinary escaped code.
-// SVG source never reaches a parser sink because conversion runs before code decoration.
 describe("svg source never reaches an HTML parser sink", () => {
   it("renders a diagram without assigning innerHTML or calling insertAdjacentHTML", async () => {
     const proto = Element.prototype as unknown as Record<string, unknown>;
@@ -212,8 +185,8 @@ describe("svg source never reaches an HTML parser sink", () => {
       get: () => "",
       set: setter,
     });
+    const host = document.createElement("div");
     try {
-      const host = document.createElement("div");
       renderMarkdownInto(host, "```svg\n" + SVG + "\n```\n");
     } finally {
       if (descriptor !== undefined) {
@@ -221,78 +194,55 @@ describe("svg source never reaches an HTML parser sink", () => {
       }
       insert.mockRestore();
     }
+    expect(host.querySelector("figure > img")).not.toBeNull();
     expect(setter).not.toHaveBeenCalled();
     expect(insert).not.toHaveBeenCalled();
     await Promise.resolve();
   });
-
-  // The counterexample that makes the narrower claim the honest one. An ordinary
-  // fence DOES use the sink, deliberately (it highlights already-escaped text), so a
-  // test asserting the whole pipeline is sink-free would be asserting a falsehood.
-  it("does use the sink for an ordinary code block, which is why the claim is scoped", () => {
-    const host = document.createElement("div");
-    renderMarkdownInto(host, "```go\npackage main\n```\n");
-    const code = host.querySelector("pre code");
-    expect(code).not.toBeNull();
-    // Highlighting produced element children out of what arrived as one text node.
-    expect(code?.querySelectorAll("*").length).toBeGreaterThan(0);
-  });
 });
 
-// The live path, which no test reached before: replay never performs the
-// provisional pass, so the wrapper bug was invisible to every test above.
+// The live path: the library builds the code block when the fence opens, so the diagram replaces
+// a block that was on screen.
 describe("a fence that streams in over several deltas", () => {
-  /** Write `parts` as separate deltas, forcing the 200ms flush between each so the
-   *  provisional decoration pass actually runs — that pass is the whole subject. */
-  function stream(...parts: string[]): HTMLElement {
-    const host = document.createElement("div");
-    const r = createMarkdownStream(host);
-    for (const part of parts) {
-      r.writeDelta(part);
-      vi.advanceTimersByTime(250);
-    }
-    r.end();
-    return host;
-  }
+  let host: HTMLElement;
 
   beforeEach(() => {
-    vi.useFakeTimers();
+    host = document.createElement("div");
+    document.body.append(host);
   });
+
   afterEach(() => {
-    vi.useRealTimers();
+    host.remove();
   });
 
-  // An open fence collects `.code-wrap`, a label and Copy (`decorateStreamingCodeTail`); replacing
-  // only the `<pre>` made live and replay DOM differ.
-  it("leaves no code-block chrome around the converted diagram", () => {
-    const host = stream("```svg\n" + SVG.slice(0, 20), SVG.slice(20) + "\n```\n");
-
-    expect(host.querySelectorAll("figure")).toHaveLength(1);
-    expect(host.querySelector("figure > img")).not.toBeNull();
-    expect(host.querySelector(".code-wrap")).toBeNull();
-    expect(host.querySelector(".code-lang")).toBeNull();
-    expect(host.querySelector(".code-head")).toBeNull();
-    expect(host.querySelector(".code-act-btn")).toBeNull();
-    expect(host.querySelector("pre")).toBeNull();
-  });
-
-  // The provisional pass must genuinely have run, or the test above would pass for
-  // the wrong reason on a change that simply stopped decorating open fences.
-  it("really does decorate the fence while it is still open", () => {
-    const host = document.createElement("div");
-    const r = createMarkdownStream(host);
-    r.writeDelta("```svg\n" + SVG.slice(0, 20));
-    vi.advanceTimersByTime(250);
-    expect(host.querySelector(".code-wrap")).not.toBeNull();
+  it("shows the open fence as a code block until it closes", () => {
+    const r = createMarkdownStream(host, { flushIntervalMs: 0 });
+    r.write("```svg\n" + SVG.slice(0, 20));
+    expect(host.querySelector(".cp-code")).not.toBeNull();
     expect(host.querySelector("figure")).toBeNull();
     r.end();
   });
 
-  // An ordinary fence keeps every piece of that chrome; only a diagram sheds it.
-  it("keeps the chrome on a streamed ordinary fence", () => {
-    const host = stream("```go\npackage ", "main\n```\n");
-    expect(host.querySelector(".code-wrap")).not.toBeNull();
-    expect(host.querySelector(".code-lang")?.textContent).toBe("go");
+  it("leaves no code-block chrome around the converted diagram", () => {
+    const r = createMarkdownStream(host, { flushIntervalMs: 0 });
+    r.write("```svg\n" + SVG.slice(0, 20));
+    r.write(SVG.slice(20) + "\n```\n");
+    r.end();
+
+    expect(host.querySelectorAll("figure")).toHaveLength(1);
+    expect(host.querySelector("figure > img")).not.toBeNull();
+    expect(host.querySelector(".cp-code")).toBeNull();
+    expect(host.querySelector("pre")).toBeNull();
+  });
+
+  it("keeps the code block on a streamed ordinary fence", () => {
+    const r = createMarkdownStream(host, { flushIntervalMs: 0 });
+    r.write("```go\npackage ");
+    r.write("main\n```\n");
+    r.end();
+    expect(host.querySelector(".cp-code > pre")).not.toBeNull();
+    // markdown.md "The code block": the label is the language's name.
+    expect(host.querySelector('[data-part="lang"]')?.textContent).toBe("Go");
     expect(host.querySelector("figure")).toBeNull();
   });
 });

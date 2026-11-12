@@ -16,7 +16,7 @@ describe("before pele has loaded", () => {
     host = document.createElement("div");
     document.body.appendChild(host);
     renderMarkdownInto(host, "```mermaid\n" + FLOW + "```\n");
-    const wrap = host.querySelector(".code-wrap");
+    const wrap = host.querySelector(".cp-code");
     expect(wrap?.getAttribute("data-mermaid")).toBe("pending");
     expect(host.querySelector("pre")?.hidden).toBe(true);
     expect(host.querySelector(".mermaid-skeleton")?.getAttribute("aria-label")).toBe(
@@ -36,10 +36,10 @@ describe("before pele has loaded", () => {
     host = document.createElement("div");
     document.body.appendChild(host);
     const stream = createMarkdownStream(host, { flushIntervalMs: 0 });
-    stream.writeDelta("```mermaid\nsequenceDiagram\n  Alice->>Bob: hello\n");
-    stream.writeDelta("```\n");
+    stream.write("```mermaid\nsequenceDiagram\n  Alice->>Bob: hello\n");
+    stream.write("```\n");
     stream.end();
-    const wrap = host.querySelector(".code-wrap");
+    const wrap = host.querySelector(".cp-code");
     expect(wrap?.getAttribute("data-mermaid")).toBe("pending");
     expect(host.querySelector("pre")?.checkVisibility()).toBe(false);
     expect(host.querySelector(".mermaid-skeleton")?.getAttribute("aria-label")).toBe(
