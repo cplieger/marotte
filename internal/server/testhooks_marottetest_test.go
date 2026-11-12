@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,16 @@ type probeEngine struct {
 func (p *probeEngine) SSEClientCount() int           { return p.clients }
 func (p *probeEngine) SSEConnects() (uint64, uint64) { return p.legacy, p.v3 }
 func (p *probeEngine) CloseNextSSEAfter(n int)       { p.armed = n }
+
+// runLogEngine is a probeEngine that also publishes a run's log frames, recording each run asked for.
+type runLogEngine struct {
+	published []string
+	probeEngine
+}
+
+func (e *runLogEngine) PublishRunLog(_ context.Context, runID string) {
+	e.published = append(e.published, runID)
+}
 
 func TestTestHooks_CensusReadsTheProbe(t *testing.T) {
 	eng := &probeEngine{clients: 2, legacy: 1, v3: 5}
@@ -69,6 +80,39 @@ func TestTestHooks_CloseAfterArmsTheProbe(t *testing.T) {
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("close-after %s = %d, want 400", body, rec.Code)
 		}
+	}
+}
+
+func TestTestHooks_RunLogPublishesThroughTheProbe(t *testing.T) {
+	eng := &runLogEngine{}
+	mux := http.NewServeMux()
+	(&Server{agent: eng}).registerTestHooks(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/test/sse/run-log", strings.NewReader(`{"run":"wf_ab12"}`)))
+	if rec.Code != http.StatusNoContent || !slices.Equal(eng.published, []string{"wf_ab12"}) {
+		t.Errorf("run-log = %d, published %q; want 204 and [wf_ab12]", rec.Code, eng.published)
+	}
+
+	// sse.ValidTopic: "run:<id>" is 1 to 128 bytes of printable ASCII, no space.
+	long := strings.Repeat("a", 125)
+	for _, body := range []string{`{"run":""}`, `{"run":"wf 1"}`, `{"run":"` + long + `"}`, `not json`} {
+		rec = httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/test/sse/run-log", strings.NewReader(body)))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("run-log %s = %d, want 400", body, rec.Code)
+		}
+	}
+	if len(eng.published) != 1 {
+		t.Errorf("published %q after refused bodies, want only the first", eng.published)
+	}
+
+	bare := http.NewServeMux()
+	(&Server{agent: &probeEngine{}}).registerTestHooks(bare)
+	rec = httptest.NewRecorder()
+	bare.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/test/sse/run-log", strings.NewReader(`{"run":"wf_ab12"}`)))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("run-log with no run log probe = %d, want 404", rec.Code)
 	}
 }
 

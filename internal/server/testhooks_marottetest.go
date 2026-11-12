@@ -3,6 +3,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/sse/v2"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/preview"
@@ -56,10 +58,21 @@ type closeAfterRequest struct {
 	After int `json:"after"`
 }
 
+// runLogProbe publishes a run's log frames with no engine. *agent.Runtime satisfies it in this build.
+type runLogProbe interface {
+	PublishRunLog(ctx context.Context, runID string)
+}
+
+type runLogRequest struct {
+	Run string `json:"run"`
+}
+
 // registerTestHooks mounts the SSE control surface the browser-mode suite drives (connection
-// census with presence, the close-after cut) plus the preview token minter. Test builds only.
+// census with presence, the close-after cut, a run's log frames) plus the preview token minter.
+// Test builds only.
 func (s *Server) registerTestHooks(mux *http.ServeMux) {
 	s.registerPreviewTestHook(mux)
+	s.registerRunLogTestHook(mux)
 	probe, ok := s.agent.(sseProbe)
 	if !ok {
 		return
@@ -98,6 +111,24 @@ func (s *Server) registerTestHooks(mux *http.ServeMux) {
 			return
 		}
 		probe.CloseNextSSEAfter(req.After)
+		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
+// registerRunLogTestHook mounts the run-log publish when the engine answers runLogProbe.
+func (s *Server) registerRunLogTestHook(mux *http.ServeMux) {
+	runLog, ok := s.agent.(runLogProbe)
+	if !ok {
+		return
+	}
+	mux.HandleFunc("POST /api/test/sse/run-log", func(w http.ResponseWriter, r *http.Request) {
+		var req runLogRequest
+		err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req)
+		if err != nil || req.Run == "" || !sse.ValidTopic(marotte.RunTopic(req.Run)) {
+			httpreply.BadRequest(w, "run must be a workflow id its run topic admits")
+			return
+		}
+		runLog.PublishRunLog(r.Context(), req.Run)
 		w.WriteHeader(http.StatusNoContent)
 	})
 }
