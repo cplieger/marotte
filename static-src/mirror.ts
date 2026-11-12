@@ -29,10 +29,7 @@ export interface MirrorOptions<K, V> {
   /** One read of the whole inventory; null when the read failed. */
   readonly fetch: (signal?: AbortSignal) => Promise<MirrorSnapshot<K, V> | null>;
   /** Every change the mirror applied, in order, before its stamp is observed. */
-  readonly onChange?: (
-    changes: readonly MirrorChange<K, V>[],
-    via: "frame" | "fetch" | "adopt",
-  ) => void;
+  readonly onChange?: (changes: readonly MirrorChange<K, V>[]) => void;
   /** Once after a fetched snapshot applied, after its `onChange` and its stamp; never for a frame
    *  or `adopt`, nor for a read that failed, was refused or was dropped. */
   readonly onFetched?: () => void;
@@ -48,8 +45,8 @@ export interface Mirror<K, V> {
   ): MirrorChange<K, V> | undefined;
   /** Apply a snapshot another reader already read, ordered like a fetched one. */
   adopt(rows: ReadonlyMap<K, V>, version: string): void;
-  /** Read the inventory and apply the answer. Joins a read already out under the current
-   *  generation; never rejects for a refused or dropped answer. */
+  /** Start a read of the inventory and apply its answer; a read already out is not joined, so
+   *  the answer was read after the call. Never rejects for a refused or dropped answer. */
   refetch(signal?: AbortSignal): Promise<void>;
   /** Untracked. */
   get(key: K): V | undefined;
@@ -99,7 +96,8 @@ export function createMirror<K, V>(o: MirrorOptions<K, V>): Mirror<K, V> {
   let epoch: string | null = versionMap().epoch();
   let applied = false;
   let generation = 0;
-  let inflight: { readonly generation: number; done: Promise<void> } | null = null;
+  // The newest read still out, compared by identity.
+  let inflight: object | null = null;
   let warned = false;
 
   function warnOnce(what: string): void {
@@ -199,20 +197,16 @@ export function createMirror<K, V>(o: MirrorOptions<K, V>): Mirror<K, V> {
       }
     });
     if (changes.length > 0) {
-      o.onChange?.(changes, "frame");
+      o.onChange?.(changes);
     }
     settle(version, stamp);
     return changes[0];
   }
 
-  /** Answers whether the snapshot applied. A snapshot AT the floor applies as a no-op on the
-   *  rows, so a read of an unchanged inventory still reaches `onFetched`. */
-  function applySnapshot(
-    answer: ReadonlyMap<K, V>,
-    version: bigint,
-    stamp: SubjectStamp,
-    via: "fetch" | "adopt",
-  ): boolean {
+  /** Answers whether the snapshot applied. A snapshot AT the floor still applies, so a read of an
+   *  unchanged inventory reaches `onFetched`, and rewrites each key without its own version whose
+   *  value is a different reference. */
+  function applySnapshot(answer: ReadonlyMap<K, V>, version: bigint, stamp: SubjectStamp): boolean {
     followEpoch();
     if (floor !== null && version < floor) {
       return false;
@@ -238,7 +232,7 @@ export function createMirror<K, V>(o: MirrorOptions<K, V>): Mirror<K, V> {
       }
     });
     if (changes.length > 0) {
-      o.onChange?.(changes, via);
+      o.onChange?.(changes);
     }
     settle(version, stamp);
     return true;
@@ -259,20 +253,17 @@ export function createMirror<K, V>(o: MirrorOptions<K, V>): Mirror<K, V> {
       warnOnce("a read with no usable stamp");
       return;
     }
-    if (applySnapshot(answer.rows, version, answer.stamp, "fetch")) {
+    if (applySnapshot(answer.rows, version, answer.stamp)) {
       o.onFetched?.();
     }
   }
 
   function refetch(abort?: AbortSignal): Promise<void> {
-    if (inflight !== null && inflight.generation === generation) {
-      return inflight.done;
-    }
     const readGeneration = generation;
     // Held before the fetch starts: a fetch that throws synchronously reaches `finally` at once.
-    const read = { generation: readGeneration, done: Promise.resolve() };
+    const read = {};
     inflight = read;
-    read.done = (async (): Promise<void> => {
+    return (async (): Promise<void> => {
       let answer: MirrorSnapshot<K, V> | null = null;
       try {
         answer = await o.fetch(abort);
@@ -286,7 +277,6 @@ export function createMirror<K, V>(o: MirrorOptions<K, V>): Mirror<K, V> {
       }
       applyFetched(answer, readGeneration);
     })();
-    return read.done;
   }
 
   function adopt(answer: ReadonlyMap<K, V>, version: string): void {
@@ -296,7 +286,7 @@ export function createMirror<K, V>(o: MirrorOptions<K, V>): Mirror<K, V> {
       void refetch();
       return;
     }
-    applySnapshot(answer, v, { kind: o.kind, ref: "", version }, "adopt");
+    applySnapshot(answer, v, { kind: o.kind, ref: "", version });
   }
 
   registry.set(o.kind, {

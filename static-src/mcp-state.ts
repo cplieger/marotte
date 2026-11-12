@@ -428,7 +428,7 @@ class MCPStateController {
     unreadableEntries.value = d?.unreadable ?? 0;
   }
 
-  /** Read the status inventory again; joins a read already out. */
+  /** Read the status inventory again (`Mirror.refetch`). */
   refetchStatus(signal?: AbortSignal): Promise<void> {
     return mcpStatus.refetch(signal);
   }

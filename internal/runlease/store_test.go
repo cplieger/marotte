@@ -523,15 +523,15 @@ func TestStore_WritesA0600File(t *testing.T) {
 	}
 }
 
-// announcement is one row change Publish's announcer was handed.
+// announcement is one row change BindInventory's announcer was handed.
 type announcement struct {
 	version string
 	row     Row
 	live    bool
 }
 
-// publishTo binds s to a fresh registry and returns the announcements it records.
-func publishTo(s *Store) *[]announcement {
+// bindInventory binds s to a fresh registry and returns the announcements it records.
+func bindInventory(s *Store) *[]announcement {
 	got := &[]announcement{}
 	s.BindInventory(&subject.Versions{}, func(row Row, live bool, version string) {
 		*got = append(*got, announcement{row: row, live: live, version: version})
@@ -544,7 +544,7 @@ func publishTo(s *Store) *[]announcement {
 // was mints nothing, and ListStamped serves the last announced version.
 func TestStoreAnnouncesEachRowChange(t *testing.T) {
 	s := NewMemory()
-	got := publishTo(s)
+	got := bindInventory(s)
 	if leases, version := s.ListStamped(); len(leases) != 0 || version != subject.Unminted {
 		t.Fatalf("fresh ListStamped = (%d leases, %q), want (0, %q)", len(leases), version, subject.Unminted)
 	}
@@ -616,7 +616,7 @@ func TestStoreAnnouncesARowChangeWhosePersistFailed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	got := publishTo(s)
+	got := bindInventory(s)
 	// A regular file where the directory was makes every write fail, as root too.
 	if err := os.RemoveAll(dir); err != nil {
 		t.Fatal(err)

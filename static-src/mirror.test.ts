@@ -202,7 +202,7 @@ describe("the order a mirror applies frames and snapshots in", () => {
     expect(mirror.get("gone")).toBeUndefined();
   });
 
-  it("adopt orders like a fetch and reports its changes as adopted", () => {
+  it("adopt orders like a fetch", () => {
     const onChange = vi.fn();
     const fetched = vi.fn();
     const { mirror, kind } = scripted({ onChange, onFetched: fetched });
@@ -211,10 +211,7 @@ describe("the order a mirror applies frames and snapshots in", () => {
     expect(mirror.applyFrame("a", "old", frameStamp(kind, "5"))).toBeUndefined();
 
     expect(mirror.entries()).toEqual([["a", "1"]]);
-    expect(onChange).toHaveBeenCalledExactlyOnceWith(
-      [{ key: "a", prev: undefined, next: "1" }],
-      "adopt",
-    );
+    expect(onChange).toHaveBeenCalledExactlyOnceWith([{ key: "a", prev: undefined, next: "1" }]);
     expect(fetched).not.toHaveBeenCalled();
   });
 
@@ -226,10 +223,29 @@ describe("the order a mirror applies frames and snapshots in", () => {
     expect(mirror.applyFrame("a", "x", frameStamp(kind, "v3"))).toBeUndefined();
 
     expect(mirror.get("a")).toBeUndefined();
-    expect(reads, "the three refusals join one read").toHaveLength(1);
+    expect(reads, "each refusal reads again").toHaveLength(3);
     expect(warn).toHaveBeenCalledTimes(1);
     await answerRead(reads, 0, Promise.resolve(), [["a", "read"]], "1");
     await until(() => mirror.get("a") === "read", "the re-read to apply");
+  });
+
+  it.each([
+    ["the older answers first", [0, 1]],
+    ["the newer answers first", [1, 0]],
+  ] as const)("a refetch while a read is out starts its own read: %s", async (_, order) => {
+    const { mirror, reads } = scripted();
+    const pending = [mirror.refetch(), mirror.refetch()];
+    expect(reads, "the second refetch's own read").toHaveLength(2);
+
+    const answers = [
+      () => reads[0]?.answer([["a", "before"]], "4"),
+      () => reads[1]?.answer([["a", "after"]], "6"),
+    ];
+    for (const index of order) {
+      answers[index]?.();
+    }
+    await Promise.all(pending);
+    expect(mirror.get("a"), "the newer read's row").toBe("after");
   });
 
   it("a reconcile forgets the versions, keeps the values and reads again", async () => {
@@ -311,7 +327,7 @@ describe("the epoch and the generation a read is applied under", () => {
     const { mirror, reads } = scripted();
     const early = mirror.refetch();
     reconcile();
-    await until(() => reads.length === 2, "a fresh read, not the joined one");
+    await until(() => reads.length === 2, "the reconcile's own read");
 
     await answerRead(reads, 0, early, [["early", "e"]], "5");
     expect(mirror.get("early"), "an empty epoch").toBeUndefined();
