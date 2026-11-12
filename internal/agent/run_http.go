@@ -278,7 +278,8 @@ func withRunExtras(raw json.RawMessage, x *runExtras) (json.RawMessage, error) {
 	}
 	keys := x.keys()
 	head := bytes.TrimRightFunc(body[:len(body)-1], unicode.IsSpace)
-	out := bytes.NewBuffer(make([]byte, 0, len(body)+512))
+	var out bytes.Buffer
+	out.Grow(len(body))
 	out.Write(head)
 	sep := len(head) > 1
 	for _, k := range keys {
