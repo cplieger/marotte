@@ -12,6 +12,7 @@ import type { CDPSession } from "playwright";
 import { msw } from "msw/vite";
 
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
+import { CostSequencer } from "./__test-helpers__/shard-sequencer.js";
 
 // Exclude compiled output and node_modules. `**/.stryker-tmp/**` keeps Stryker's `inPlace` backup
 // copy from being collected twice (its fixtures are missing, so it fails). Every unit project needs
@@ -390,6 +391,7 @@ export default defineConfig({
     // Reproducible ordering. hooks: "stack" = afterEach/afterAll run in
     // reverse definition order (correct teardown semantics).
     sequence: {
+      sequencer: CostSequencer,
       shuffle: { files: false, tests: false },
       concurrent: false,
       hooks: "stack",
