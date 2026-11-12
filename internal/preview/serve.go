@@ -127,7 +127,8 @@ func servePage(w http.ResponseWriter, r *http.Request, f *os.File) {
 // worth trusting, in which case every list that would hold only it is 'none'.
 // tab is the tab route, whose page may download and renders only top-level, so
 // the Preview frame cannot navigate itself into a frame that downloads. The route
-// alone decides: browsers send no Fetch Metadata to plain HTTP off localhost.
+// alone decides, never Sec-Fetch-Dest: browsers send no Fetch Metadata to plain
+// HTTP off localhost (https://w3c.github.io/webappsec-fetch-metadata/).
 func setPreviewHeaders(h http.Header, src string, tab bool) {
 	h.Set("Content-Security-Policy", previewCSP(src, tab))
 	if tab {

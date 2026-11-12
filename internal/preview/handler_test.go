@@ -301,10 +301,6 @@ func TestGrant_TabURLNamesThePageUnderTheTabRoute(t *testing.T) {
 	}
 }
 
-// The tab route's policy is decided by the route alone: browsers send no Fetch
-// Metadata to a URL that is not potentially trustworthy, such as plain HTTP to a
-// LAN address (https://w3c.github.io/webappsec-fetch-metadata/), so no request
-// header may decide it.
 func TestServe_OnlyTheTabRouteMayDownload(t *testing.T) {
 	f := newFixture(t)
 	g := f.grant(t, filepath.Join(f.demo, "index.html"))
