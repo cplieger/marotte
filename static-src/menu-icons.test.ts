@@ -73,8 +73,7 @@ const PAIRS: readonly (readonly [
   ["docs tab Hooks", 'data-docs-tab="hooks"', toolIcon({ kind: "hook", toolName: "" })],
   ["docs tab Skills", 'data-docs-tab="skills"', ICON_SUBAGENT_INTROSPECT],
   ["docs tab Agents", 'data-docs-tab="agents"', ICON_TAB_AGENT],
-  // A Tool Load card draws the tab of the document it loaded.
-  ["docs tab Skills", 'data-docs-tab="skills"', loadIcon("skill::x")],
+  // A Tool Load card draws the tab of the document it loaded (a skill load: the test below).
   ["docs tab Powers", 'data-docs-tab="powers"', loadIcon("power::x::overview")],
   ["docs tab Specs", 'data-docs-tab="specs"', ICON_TAB_SPEC],
   ["docs tab Workflows", 'data-docs-tab="workflows"', ICON_TAB_RUN],
@@ -176,6 +175,10 @@ describe("hand-authored glyphs in static/index.html", () => {
       'l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>';
     expect(glyphOf('data-docs-tab="skills"'), "the Skills tab").toBe(graduationCap);
     expect(glyphOf('data-docs-tab="powers"'), "the Powers tab").toBe(zap);
+  });
+
+  it("draws the Skills tab's constant on a skill load card", () => {
+    expect(loadIcon("skill::x")).toBe(ICON_SUBAGENT_INTROSPECT);
   });
 
   // Introspect's old book was indistinguishable from the read glyph at 16px in one transcript.

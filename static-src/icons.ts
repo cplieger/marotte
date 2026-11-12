@@ -365,8 +365,13 @@ const ICON_TOOL_STEERING = svg(
   '<circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>',
 );
 
-/** The docs page's Skills tab glyph, duplicated as static markup there (pinned by `menu-icons.test.ts`). */
-const ICON_TAB_SKILL = svg("ui", '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>');
+/** Lucide "graduation-cap": the introspect subagent's header, and the docs page's Skills tab as static markup there
+ *  (pinned by `menu-icons.test.ts`). A book would collide with `ICON_TOOL_READ` in the transcript, and a circled `?`
+ *  with `ICON_INFO`. */
+export const ICON_SUBAGENT_INTROSPECT = svg(
+  "ui",
+  '<path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z"/><path d="M22 10v6"/><path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5"/>',
+);
 
 /** The docs page's Powers tab glyph, duplicated as static markup there (pinned by `menu-icons.test.ts`). */
 const ICON_TAB_POWER = svg(
@@ -410,7 +415,7 @@ const ICON_BY_TOOL_NAME: ReadonlyMap<string, string> = new Map([
 const ICON_BY_LOADED: Readonly<Record<LoadedType, string>> = {
   mcp: ICON_TOOL_MCP,
   tool: ICON_TOOL_FALLBACK,
-  skill: ICON_TAB_SKILL,
+  skill: ICON_SUBAGENT_INTROSPECT,
   steering: ICON_TOOL_STEERING,
   overview: ICON_TAB_POWER,
   unknown: ICON_TOOL_FALLBACK,
@@ -528,13 +533,8 @@ export const ICON_TAB_AGENT = svg(
   "ui",
   '<path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><circle cx="12" cy="12" r="2.5"/>',
 );
-// Subagent header icons, one per bundled kiro-cli subagent; unknown ones fall back to ICON_TAB_AGENT (roles.ts
-// iconForSubagent). Introspect is Lucide "graduation-cap": a book would collide with `ICON_TOOL_READ` in the
-// transcript, and a circled `?` with `ICON_INFO`.
-export const ICON_SUBAGENT_INTROSPECT = svg(
-  "ui",
-  '<path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z"/><path d="M22 10v6"/><path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5"/>',
-);
+// Subagent header icons, one per bundled kiro-cli subagent (introspect's is `ICON_SUBAGENT_INTROSPECT`, above);
+// unknown ones fall back to ICON_TAB_AGENT (roles.ts iconForSubagent).
 // Context gatherer (Lucide "telescope"): explores the codebase read-only. Not the magnifier, which the search tools
 // draw inside this subagent's block.
 export const ICON_SUBAGENT_GATHERER = svg(
