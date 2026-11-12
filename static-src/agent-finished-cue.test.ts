@@ -11,7 +11,7 @@ import type { NotificationPayload } from "./wire/types.gen.js";
 
 /** The server's notification for a finished turn on `chatID`. */
 function finished(body: string, chatID = "c1"): NotificationPayload {
-  return { chat_id: chatID, kind: "agent_finished", title: "test", body };
+  return { id: `n-${chatID}`, chat_id: chatID, kind: "agent_finished", title: "test", body };
 }
 
 // The live-runs read answers the EMPTY inventory, at the file's next `runs` version: a run that

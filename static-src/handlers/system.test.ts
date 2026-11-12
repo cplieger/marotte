@@ -907,9 +907,9 @@ describe("a client that missed a run's final run_asks", () => {
     const a = stepAsk("wf_1");
     fireSSE("run_asks", "c1", runAsksFrame("wf_1", [a], "c1"));
     const subject = `runask:${runAskPosition("wf_1", a)}`;
-    expect(notifyOffScreen({ kind: "permission", title: "c1", body: "Ship it?", subject })).toBe(
-      true,
-    );
+    expect(
+      notifyOffScreen({ id: "n-c1", kind: "permission", title: "c1", body: "Ship it?", subject }),
+    ).toBe(true);
     tray.push({ tag: askTag("wf_1", a), closed: false });
     return a;
   }

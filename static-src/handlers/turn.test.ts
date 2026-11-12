@@ -845,6 +845,7 @@ describe("the notification waits for the chat's asks, not its runs", () => {
     openTurnOn(chatID);
     fireClose(chatID, { payload: { outcome } });
     const notice: NotificationPayload = {
+      id: `n-${chatID}`,
       chat_id: chatID,
       kind: "agent_finished",
       title: "seeded",

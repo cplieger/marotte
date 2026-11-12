@@ -44,7 +44,12 @@ function arrivedNotice(msg: PushPageMessage): NotificationPayload | null {
   if (!isPushKind(kind)) {
     return null;
   }
-  const notice: NotificationPayload = { kind, title: msg.title ?? "", body: msg.body ?? "" };
+  const notice: NotificationPayload = {
+    id: "",
+    kind,
+    title: msg.title ?? "",
+    body: msg.body ?? "",
+  };
   if (msg.chatId !== "") {
     notice.chat_id = msg.chatId;
   }

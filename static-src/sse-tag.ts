@@ -51,6 +51,11 @@ export async function adoptSubscriptionTag(
   return tag;
 }
 
+/** Whether `value` fits the header's grammar. */
+export function wellFormedTag(value: string): boolean {
+  return TAG_GRAMMAR.test(value);
+}
+
 function readTag(): string | null {
   let held: string | null = null;
   try {
@@ -58,7 +63,7 @@ function readTag(): string | null {
   } catch {
     /* storage refused; a per-document tag still counts this connection */
   }
-  return held !== null && TAG_GRAMMAR.test(held) ? held : null;
+  return held !== null && wellFormedTag(held) ? held : null;
 }
 
 function writeTag(tag: string): void {

@@ -6,6 +6,8 @@ import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { Route } from "../route-path.js";
 import { registerNotificationOpener } from "../notification-open.js";
 import { chatTarget, runTarget, type PushTarget } from "../push-subject.js";
+import type * as SSEAdapter from "../sse-adapter.js";
+import type * as Tabs from "../tabs.js";
 
 vi.mock("../persist.js", () => ({
   patchSettings: async (): Promise<{ outcome: string }> => ({ outcome: "committed" }),
@@ -14,6 +16,19 @@ vi.mock("../persist.js", () => ({
 vi.mock("../actions/notify.js", () => ({
   registerPush: { dispatch: async (): Promise<null> => null, cancel: vi.fn() },
   unsubscribePush: { dispatch: async (): Promise<null> => null },
+}));
+
+// The tab on screen, for the arrival's own on-screen test.
+const tabsState = vi.hoisted(() => ({ active: "", ids: new Map<string, string>() }));
+vi.mock("../tabs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Tabs>()),
+  getActiveTabId: (): string => tabsState.active,
+  tabIdFor: (kind: string, ref = ""): string => tabsState.ids.get(`${kind}:${ref}`) ?? "",
+}));
+
+vi.mock("../sse-adapter.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof SSEAdapter>()),
+  presentedTag: (): string => "tag-A",
 }));
 
 const notify = await import("../notify.js");
@@ -152,6 +167,69 @@ describe("initPushMessages", () => {
       body: "Response complete",
     });
     expect(shown).toEqual([]);
+  });
+});
+
+describe("an arrival on a focused page", () => {
+  const fetchSpy = vi.fn(
+    async (_url: string, _init?: RequestInit): Promise<Response> =>
+      new Response(null, { status: 204 }),
+  );
+
+  function reports(): unknown[] {
+    return fetchSpy.mock.calls
+      .filter(([url]) => url === "/api/events/notice")
+      .map(([, init]) => JSON.parse(String(init?.body)) as unknown);
+  }
+
+  /** Chat `chatID`'s tab is open and active on a visible page. */
+  function chatOnScreen(chatID: string): void {
+    tabsState.ids.set(`chat:${chatID}`, `tab-${chatID}`);
+    tabsState.active = `tab-${chatID}`;
+    onScreen = chatTarget(chatID);
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  }
+
+  beforeEach(() => {
+    fetchSpy.mockClear();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+
+  afterEach(() => {
+    tabsState.active = "";
+    tabsState.ids.clear();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  function arrive(id: string, chatID: string): void {
+    postFromWorker({
+      type: "push",
+      reason: "arrived",
+      id,
+      chatId: chatID,
+      subject: "",
+      kind: "agent_finished",
+      title: `title ${id}`,
+      body: "Response complete",
+    });
+  }
+
+  it("raises nothing and reports nothing for the chat on screen", async () => {
+    chatOnScreen("c1");
+    arrive("n-on", "c1");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(shown).toEqual([]);
+    expect(reports()).toEqual([]);
+  });
+
+  it("raises an arrival for another chat once and reports it shown", async () => {
+    chatOnScreen("c2");
+    arrive("n-off", "c3");
+    expect(shown.map((n) => n.title)).toEqual(["title n-off"]);
+    await vi.waitFor(() => {
+      expect(reports()).toEqual([{ id: "n-off", outcome: "shown" }]);
+    });
   });
 });
 

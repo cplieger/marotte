@@ -584,6 +584,16 @@ export function presentedTag(): string {
   return presented;
 }
 
+const presentedListeners = new Set<(tag: string) => void>();
+
+/** Call `listener` with each new tag this page presents; returns its removal. */
+export function onPresentedTag(listener: (tag: string) => void): () => void {
+  presentedListeners.add(listener);
+  return () => {
+    presentedListeners.delete(listener);
+  };
+}
+
 /** Adopt the tag of the push subscription this profile holds (sse-tag.ts). */
 export async function adoptPushSubscription(
   sub: { readonly endpoint: string } | null,

@@ -1384,7 +1384,13 @@ describe("initAttention", () => {
         const b = await openChat("b", { activate: false });
         finish(b, "b", "done");
         expect(
-          notifyOffScreen({ kind: "agent_finished", chat_id: "b", title: "b", body: "" }),
+          notifyOffScreen({
+            id: "n-b",
+            kind: "agent_finished",
+            chat_id: "b",
+            title: "b",
+            body: "",
+          }),
         ).toBe(true);
 
         tabServer.ackRemotely(b, 1);
