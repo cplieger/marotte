@@ -17,6 +17,7 @@ import {
   initSlashMenu,
 } from "./slash-menu.js";
 import { setActive, setSessions, setTurnOpen } from "./store.js";
+import { _resetAttachmentsForTest, addAttachment, removeAttachmentFrom } from "./attachments.js";
 import type { RunView, SendVerb } from "./wire/types.gen.js";
 import { makeSession } from "./__test-helpers__/model.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -37,6 +38,7 @@ describe("a tap on a menu row", () => {
   let input: HTMLTextAreaElement;
   let menu: HTMLUListElement;
   let style: HTMLStyleElement;
+  let pills: HTMLUListElement;
 
   beforeEach(() => {
     style = mountAppCSS();
@@ -46,7 +48,9 @@ describe("a tap on a menu row", () => {
     menu.hidden = true;
     input = document.createElement("textarea");
     input.id = "prompt-input";
-    document.body.append(menu, input);
+    pills = document.createElement("ul");
+    pills.id = "attachment-row";
+    document.body.append(menu, input, pills);
     setSessions([makeSession({ id: CHAT })]);
     setActive(CHAT);
     initSlashMenu(() => undefined);
@@ -64,6 +68,8 @@ describe("a tap on a menu row", () => {
 
   afterEach(() => {
     _stopSlashMenuForTest();
+    _resetAttachmentsForTest();
+    pills.remove();
     input.blur();
     input.remove();
     menu.remove();
@@ -102,6 +108,30 @@ describe("a tap on a menu row", () => {
     });
     await tap(row("/chat-extract"));
     expect(input.value).toBe("/chat-extract ");
+  });
+
+  it("takes the tap on a saved prompt mid-turn when a staged file makes the message queue", async () => {
+    setSessions([
+      makeSession({ id: CHAT, turn_open: true, interrupt_mode: "steer", run: runningRun("steer") }),
+    ]);
+    addAttachment("docs/plan.md");
+    await userEvent.keyboard("/chat");
+    expect(greyedRows()).toEqual([]);
+    await tap(row("/chat-extract"));
+    expect(input.value).toBe("/chat-extract ");
+  });
+
+  it("greys an open saved-prompt row once the staged file is removed mid-turn", async () => {
+    setSessions([
+      makeSession({ id: CHAT, turn_open: true, interrupt_mode: "steer", run: runningRun("steer") }),
+    ]);
+    addAttachment("docs/plan.md");
+    await userEvent.keyboard("/chat");
+    expect(greyedRows()).toEqual([]);
+    removeAttachmentFrom("", "docs/plan.md");
+    await vi.waitFor(() => {
+      expect(greyedRows()).toEqual(["/chat-extract"]);
+    });
   });
 
   it("takes the tap on a saved prompt mid-turn when the message would queue", async () => {

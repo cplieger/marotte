@@ -1,4 +1,4 @@
-// The one owner of the `tap` command's `BrowserCommands` augmentation (declared in vitest.config.ts).
+// Types the `tap` browser command that vitest.config.ts registers.
 
 import { server } from "vitest/browser";
 

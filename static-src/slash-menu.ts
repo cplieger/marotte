@@ -5,6 +5,7 @@
 import { computed, effect, el, signal, touch, untracked } from "@cplieger/reactive";
 import { ask } from "./legacy-ui/ask.js";
 import { apiGetTyped } from "./api-client.js";
+import { stagedAttachment } from "./attachments.js";
 import { onBus, onSSE, BUS_RECONCILE } from "./bus.js";
 import { $ } from "./dom.js";
 import { setComposerValue } from "./composer-value.js";
@@ -154,14 +155,15 @@ function close(): void {
   $.promptInput.removeAttribute("aria-activedescendant");
 }
 
-/** Whether a send on the chat would steer its running turn (the server's `run.send`). */
-function steers(s: Session | undefined): boolean {
-  return s !== undefined && sessionBusy(s) && s.run?.send === "steer";
+/** Whether a send from the composer would steer the chat's running turn. `run.send` is the
+ *  server's verb for a plain send; a staged file makes the send labelled, which never steers. */
+function steers(s: Session | undefined, attached: boolean): boolean {
+  return !attached && s !== undefined && sessionBusy(s) && s.run?.send === "steer";
 }
 
 function slashRows(query: string): Row[] {
   const id = getActiveId();
-  const steering = id !== "" && steers(get(id));
+  const steering = id !== "" && steers(get(id), stagedAttachment.peek());
   return matchEntries(query, menuEntries(catalog.value)).map((e) => {
     const enabled = entryEnabled(e, steering);
     return {
@@ -466,10 +468,11 @@ export function initSlashMenu(openPicker: () => void): void {
   });
   input.addEventListener("blur", close);
   // An open `/` menu greys its catalog rows by the chat's send verb, so a turn ending, a mode
-  // switch or a new catalog re-renders it; else a greyed row ignores taps until the next keystroke.
+  // switch, a staged file or a new catalog re-renders it; else a greyed row ignores taps until the
+  // next keystroke.
   const steering = computed(() => {
     const id = watchActiveId();
-    return id !== "" && watchBusy(id) && steers(watchSession(id));
+    return id !== "" && watchBusy(id) && steers(watchSession(id), stagedAttachment.value);
   });
   stopVerbRender?.();
   stopVerbRender = effect(() => {
