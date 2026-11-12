@@ -11,18 +11,24 @@ const SOURCE_TEXT_SUITES = ["**/turn-base-writers.node.test.ts"];
 
 // Added per PROJECT, never at the root: a project's `exclude` REPLACES the root
 // one rather than adding to it (vitest.config.ts states this at `sharedExclude`),
-// so a root-level entry here would be silently inert.
-const projects = base.test?.projects?.map((project) =>
-  typeof project === "object" && "test" in project
-    ? {
-        ...project,
-        test: {
-          ...project.test,
-          exclude: [...(project.test?.exclude ?? []), ...SOURCE_TEXT_SUITES],
-        },
-      }
-    : project,
-);
+// so a root-level entry here would be silently inert. The e2e-sse project is left
+// out: the mutation job builds no SSE_FIXTURE server, and its setup refuses a CI run without one.
+const projects = base.test?.projects
+  ?.filter(
+    (project) =>
+      !(typeof project === "object" && "test" in project && project.test?.name === "e2e-sse"),
+  )
+  .map((project) =>
+    typeof project === "object" && "test" in project
+      ? {
+          ...project,
+          test: {
+            ...project.test,
+            exclude: [...(project.test?.exclude ?? []), ...SOURCE_TEXT_SUITES],
+          },
+        }
+      : project,
+  );
 
 const baseSetupFiles = base.test?.setupFiles ?? [];
 
