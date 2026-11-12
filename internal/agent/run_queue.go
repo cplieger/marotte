@@ -125,7 +125,7 @@ func (lc *chatLifecycle) orderFactsLocked() orderFacts {
 			}
 			return a.res, takeGranted
 		},
-		unsent:       func() int { return lc.runUnsent },
+		unsent:       func() int { return lc.run.unsent },
 		newMessageID: func() string { return "m-" + newMessageID() },
 		stamp:        lc.stamp,
 		nextSeq:      lc.nextSeq,
@@ -774,9 +774,6 @@ func (bc *bridgeCoordinator) runFactsChanged(chatID marotte.ChatID) {
 		lc.mu.Lock()
 		f := lc.orderFactsLocked()
 		reread, d := lc.run.endsChanged(seq, ends, unsent, drained, live, &f)
-		if !reread {
-			lc.runUnsent = len(unsent)
-		}
 		lc.wakeLocked()
 		lc.mu.Unlock()
 		if !reread {
@@ -803,7 +800,6 @@ func (bc *bridgeCoordinator) closeEndsResolved(lc *chatLifecycle, turnID string,
 	f := lc.orderFactsLocked()
 	if bc.steerFacts != nil {
 		lc.run.endsChanged(seq, n, unsent, drained, live, &f)
-		lc.runUnsent = len(unsent)
 	}
 	_, e := lc.run.byTurn(turnID)
 	if e != nil {

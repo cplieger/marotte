@@ -444,3 +444,43 @@ func compactionSends(t *testing.T, cs *testChatStore, chatID marotte.ChatID) (ru
 	}
 	return running, false
 }
+
+// A steer-facts read the list has already passed (an older sequence, read before lc.mu) changes nothing: its unsent
+// count of zero would let the taker drop the unread entry whose steer is still unsent.
+func TestRunFactsChanged_AnOlderReadKeepsTheUnsentCount(t *testing.T) {
+	h, cs, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	seedChat(t, cs, "c1")
+	h.insertBridgeNow("c1", testBridge(br, bridgeReady))
+	lc, ok := h.coord.turns.lookup("c1")
+	if !ok {
+		t.Fatal("setup: the chat has no lifecycle")
+	}
+	var (
+		mu    sync.Mutex
+		ends  int
+		keys  []string
+		facts uint64
+	)
+	h.coord.steerFacts = func(marotte.ChatID, bool) (int, []string, uint64) {
+		mu.Lock()
+		defer mu.Unlock()
+		return ends, keys, facts
+	}
+	read := func(n int, unsent []string, seq uint64) {
+		mu.Lock()
+		ends, keys, facts = n, unsent, seq
+		mu.Unlock()
+		h.coord.runFactsChanged("c1")
+	}
+
+	read(0, []string{"steer-a"}, 2)
+	read(1, nil, 1)
+
+	lc.mu.Lock()
+	got := lc.orderFactsLocked().unsent()
+	lc.mu.Unlock()
+	if got != 1 {
+		t.Errorf("unsent after an older read = %d, want 1: the newer read's steer is still unsent", got)
+	}
+}

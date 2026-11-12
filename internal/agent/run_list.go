@@ -190,7 +190,10 @@ type runList struct {
 	seq         uint64
 	version     uint64
 	// resumed counts the resumes opened since the last turn the reader sent opened (compactionFailsafeResumes).
-	resumed       int
+	resumed int
+	// unsent is the unsent row count of the newest steer-facts read endsChanged applied; the taker drops an unread
+	// entry at zero.
+	unsent        int
 	intentRefused takeAnswer
 	endsOwed      bool
 	endsWait      bool
@@ -998,6 +1001,13 @@ func (l *runList) endsChanged(seq uint64, n int, unsent []string, drainedRead, b
 		return false, false
 	}
 	l.endsSeq = seq
+	// Only an applied read sets the count: one dropped as older, or read again with other death bits, leaves the
+	// newest applied read's, or the taker drops an unread entry whose steer is still unsent.
+	defer func() {
+		if !reread {
+			l.unsent = len(unsent)
+		}
+	}()
 	l.endsOwed = n > 0
 	if n > 0 {
 		return false, false
