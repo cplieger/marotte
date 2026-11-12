@@ -149,7 +149,7 @@ type SessionFeatures struct {
 	WorkflowLaunch string
 	// Workflows gives the agent its workflow tools; the zero value withholds them.
 	Workflows bool
-	// Messaging lets the agent send_message another chat; KAS delivers only when both sessions have it on.
+	// Messaging is KAS's sessionToolsMessaging switch; KAS delivers only between sessions that both have it on.
 	Messaging            bool
 	SpecAskClarification bool
 }
