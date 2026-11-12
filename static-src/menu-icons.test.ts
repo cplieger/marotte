@@ -19,6 +19,7 @@ import {
   ICON_TOOL_TERMINAL,
   toolIcon,
 } from "./icons.js";
+import { loadedResources } from "./tool-schema.js";
 
 /** Whitespace runs only: inside path data whitespace separates coordinates. */
 function norm(markup: string): string {
@@ -45,6 +46,15 @@ function glyphOf(anchor: string, close = "</button>"): string {
   return inner(m?.[0] ?? "");
 }
 
+/** The glyph a `load_resource` card draws for one id. */
+function loadIcon(id: string): string {
+  return toolIcon({
+    kind: "other",
+    toolName: "load_resource",
+    loaded: loadedResources("load_resource", { id }),
+  });
+}
+
 /** `</button>` by default; the account link takes `</a>`. */
 const PAIRS: readonly (readonly [
   label: string,
@@ -63,6 +73,9 @@ const PAIRS: readonly (readonly [
   ["docs tab Hooks", 'data-docs-tab="hooks"', toolIcon({ kind: "hook", toolName: "" })],
   ["docs tab Skills", 'data-docs-tab="skills"', ICON_SUBAGENT_INTROSPECT],
   ["docs tab Agents", 'data-docs-tab="agents"', ICON_TAB_AGENT],
+  // A Tool Load card draws the tab of the document it loaded.
+  ["docs tab Skills", 'data-docs-tab="skills"', loadIcon("skill::x")],
+  ["docs tab Powers", 'data-docs-tab="powers"', loadIcon("power::x::overview")],
   ["docs tab Specs", 'data-docs-tab="specs"', ICON_TAB_SPEC],
   ["docs tab Workflows", 'data-docs-tab="workflows"', ICON_TAB_RUN],
   // History's panes name what a chat tab and a run tab draw.

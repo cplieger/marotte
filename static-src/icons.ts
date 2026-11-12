@@ -365,6 +365,15 @@ const ICON_TOOL_STEERING = svg(
   '<circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>',
 );
 
+/** The docs page's Skills tab glyph, duplicated as static markup there (pinned by `menu-icons.test.ts`). */
+const ICON_TAB_SKILL = svg("ui", '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>');
+
+/** The docs page's Powers tab glyph, duplicated as static markup there (pinned by `menu-icons.test.ts`). */
+const ICON_TAB_POWER = svg(
+  "ui",
+  '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
+);
+
 const ICON_BY_KIND: Record<ToolKind, string> = {
   read: ICON_TOOL_READ,
   edit: ICON_TOOL_EDIT,
@@ -396,14 +405,14 @@ const ICON_BY_TOOL_NAME: ReadonlyMap<string, string> = new Map([
   ["disclose_context", ICON_TOOL_READ],
 ]);
 
-/** What a load draws per thing it loaded: an MCP tool its plug, a built-in tool the wrench, a document the library
- *  `disclose_context` draws for the same job. */
+/** What a load draws per thing it loaded: an MCP tool its plug, a built-in tool the wrench, a document the glyph of
+ *  the docs page tab that lists it. */
 const ICON_BY_LOADED: Readonly<Record<LoadedType, string>> = {
   mcp: ICON_TOOL_MCP,
   tool: ICON_TOOL_FALLBACK,
-  skill: ICON_TOOL_READ,
-  steering: ICON_TOOL_READ,
-  overview: ICON_TOOL_READ,
+  skill: ICON_TAB_SKILL,
+  steering: ICON_TOOL_STEERING,
+  overview: ICON_TAB_POWER,
   unknown: ICON_TOOL_FALLBACK,
 };
 

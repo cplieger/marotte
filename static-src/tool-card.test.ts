@@ -285,6 +285,7 @@ describe("outcome is the row's one mark, not a word and not a badge", () => {
       mcp: null,
       disclosed: null,
       denial: null,
+      loaded: null,
     });
     const icon = card.querySelector(".tool-icon");
     expect(icon?.classList.contains("is-warn")).toBe(true);
@@ -322,6 +323,7 @@ describe("outcome is the row's one mark, not a word and not a badge", () => {
       mcp: null,
       disclosed: null,
       denial: null,
+      loaded: null,
     } as const;
     // Same state twice, then a change, then the same state again: the writer REPLACES the
     // slot's child, so two marks in one glyph is unrepresentable.
@@ -360,6 +362,7 @@ describe("outcome is the row's one mark, not a word and not a badge", () => {
       mcp: null,
       disclosed: null,
       denial: null,
+      loaded: null,
     } as const;
     applyOutcome(card, "failed", "Run Command", info);
     expect(icon?.querySelector("svg")?.outerHTML).not.toBe(identity);
@@ -388,6 +391,7 @@ describe("outcome is the row's one mark, not a word and not a badge", () => {
       mcp: null,
       disclosed: null,
       denial: null,
+      loaded: null,
     } as const;
     applyOutcome(node, "failed", "Run Command", info);
     expect(icon.querySelectorAll("svg")).toHaveLength(1);
@@ -2002,23 +2006,36 @@ describe("an MCP card is built from the server's identity", () => {
 // tool icon. in this case it loaded agent mail {"id": "tool::agent-mail::fetch_inbox"}". The
 // id's prefix says what loaded; the card names it and draws that thing's glyph.
 describe("a tool_load or load_resource card names what it loaded", () => {
-  type Glyph = "mcp" | "tool" | "read";
+  // A document draws its docs page tab's glyph (the tab whose list holds it).
+  type Glyph = "mcp" | "tool" | "skills" | "steering" | "powers";
   const cases: { id: string; title: string; glyph: Glyph }[] = [
     { id: "tool::agent-mail::fetch_inbox", title: "Loaded agent-mail fetch_inbox", glyph: "mcp" },
     { id: "tool::inspect_workflow", title: "Loaded tool: inspect_workflow", glyph: "tool" },
-    { id: "skill::land", title: "Loaded skill: land", glyph: "read" },
-    { id: "steering::code-style", title: "Loaded steering: code-style", glyph: "read" },
-    { id: "power::aws::overview", title: "Loaded power overview: aws", glyph: "read" },
+    { id: "skill::land", title: "Loaded skill: land", glyph: "skills" },
+    { id: "steering::code-style", title: "Loaded steering: code-style", glyph: "steering" },
+    { id: "power::aws::overview", title: "Loaded power overview: aws", glyph: "powers" },
     { id: "power::aws::tool::docs::search_docs", title: "Loaded docs search_docs", glyph: "mcp" },
-    { id: "plugin::kit::skill::release", title: "Loaded skill: release", glyph: "read" },
-    { id: "plugin::kit::steering::style", title: "Loaded steering: style", glyph: "read" },
+    { id: "plugin::kit::skill::release", title: "Loaded skill: release", glyph: "skills" },
+    { id: "plugin::kit::steering::style", title: "Loaded steering: style", glyph: "steering" },
   ];
 
   async function glyphOf(g: Glyph): Promise<string> {
-    const { toolIcon } = await import("./icons.js");
-    const { iconEl } = await import("./icon-el.js");
-    const kind = g === "mcp" ? "mcp" : g === "read" ? "read" : "other";
-    return iconEl(toolIcon({ kind, toolName: "" })).outerHTML;
+    if (g === "mcp" || g === "tool") {
+      const { toolIcon } = await import("./icons.js");
+      return toolIcon({ kind: g === "mcp" ? "mcp" : "other", toolName: "" });
+    }
+    const { default: indexHtml } = await import("../static/index.html?raw");
+    const page = new DOMParser().parseFromString(indexHtml, "text/html");
+    const tab = page.querySelector(`[data-docs-tab="${g}"] svg`);
+    expect(tab, `the docs page's ${g} tab draws no glyph`).not.toBeNull();
+    return tab?.outerHTML ?? "";
+  }
+
+  /** The drawing only: the tab's <svg> carries its own class and aria attributes. */
+  function drawing(svg: string): string {
+    const t = document.createElement("template");
+    t.innerHTML = svg;
+    return t.content.querySelector("svg")?.innerHTML.replace(/\s+/g, " ").trim() ?? "";
   }
 
   for (const tool of ["load_resource", "tool_load"]) {
@@ -2037,7 +2054,9 @@ describe("a tool_load or load_resource card names what it loaded", () => {
         });
         expect(card.dataset["title"]).toBe(c.title);
         expect(card.dataset["kind"]).not.toBe("search");
-        expect(card.querySelector(".tool-icon")?.innerHTML).toBe(await glyphOf(c.glyph));
+        expect(drawing(card.querySelector(".tool-icon")?.innerHTML ?? "")).toBe(
+          drawing(await glyphOf(c.glyph)),
+        );
         expect(card.querySelector(".tool-subtitle")).toBeNull();
         // Opened, the card shows the id it loaded, not a search layout.
         document.body.appendChild(card);
@@ -2062,6 +2081,8 @@ describe("a tool_load or load_resource card names what it loaded", () => {
       live: false,
     });
     expect(card.dataset["title"]).toBe("Loaded tool: inspect_workflow, mailbox reply_message");
-    expect(card.querySelector(".tool-icon")?.innerHTML).toBe(await glyphOf("tool"));
+    expect(drawing(card.querySelector(".tool-icon")?.innerHTML ?? "")).toBe(
+      drawing(await glyphOf("tool")),
+    );
   });
 });
