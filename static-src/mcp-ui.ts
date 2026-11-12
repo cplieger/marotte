@@ -26,6 +26,7 @@ import {
   unconfiguredNames,
   unreadableEntries,
   mcpState,
+  adaptStatus,
   standingFor,
   statusSignalFor,
   prewarmSignalFor,
@@ -214,7 +215,7 @@ async function addRegistryServer(name: string): Promise<void> {
     return;
   }
   mcpState.refetchServers();
-  mcpState.refetchStatus();
+  void mcpState.refetchStatus();
 }
 
 /**
@@ -510,8 +511,8 @@ export function mountRow(s: Server, id: string): HTMLElement {
         silent: true,
         onSuccess: () => {
           mcpState.refetchServers();
-          // A toggle changes what KAS runs, so status is re-read; both fetches coalesce per microtask.
-          mcpState.refetchStatus();
+          // A toggle changes what KAS runs, so status is re-read.
+          void mcpState.refetchStatus();
         },
       },
     );
@@ -967,7 +968,7 @@ export function renderOAuthRelay(serverName: string): HTMLDetailsElement {
             // Delivered, not connected: the token exchange is KAS's to finish, and only `_kiro/mcp/status` reports it.
             setNote("Delivered. Waiting for the server to finish signing in…", "ok");
             input.value = "";
-            mcpState.refetchStatus();
+            void mcpState.refetchStatus();
           },
           // Only the server can name which part was wrong; the client never sees the stored authorization URL.
           onError: (err) => {
@@ -1037,7 +1038,7 @@ function renderDeleteBtn(s: Server, cleanups: (() => void)[]): HTMLButtonElement
         {
           onSuccess: () => {
             mcpState.refetchServers();
-            mcpState.refetchStatus();
+            void mcpState.refetchStatus();
           },
         },
       );
@@ -1066,7 +1067,7 @@ function renderReconnectBtn(label: string, serverName: () => string): HTMLButton
         {
           onSuccess: () => {
             // The reset re-emits _kiro/mcp/status; refetch for the dot and discovery.
-            mcpState.refetchStatus();
+            void mcpState.refetchStatus();
           },
         },
       )
@@ -1173,26 +1174,25 @@ export function initMCP(): void {
   // Status and config flow through the per-server signals; rows re-render reactively.
   onSSE("mcp_config_changed", () => {
     mcpState.refetchServers();
-    mcpState.refetchStatus();
+    void mcpState.refetchStatus();
   });
-  onSSE("mcp_status", (_chat, p) => {
-    // Read the previous row first: each toast fires on a transition, and a row frame repeats an unchanged state.
-    const prev = statusSignalFor(p.server).peek();
-    mcpState.applyStatusFrame(p.server, p.status);
-    const next = p.status;
-    if (next?.state === "failed") {
-      announceMCPFailure(p.server, next.error ?? "", prev.state);
+  onSSE("mcp_status", (_chat, p, subject) => {
+    // Toasts fire from the change the mirror applied, so a frame older than the row held raises none.
+    const c = mcpState.applyStatusFrame(p.server, p.status, subject);
+    const next = c?.next;
+    if (next === undefined) {
+      return;
+    }
+    const prev = c?.prev === undefined ? undefined : adaptStatus(c.prev);
+    if (next.state === "failed") {
+      announceMCPFailure(p.server, next.error ?? "", prev?.state ?? "idle");
     } else if (
-      next?.state === "needs_auth" &&
+      next.state === "needs_auth" &&
       next.error !== undefined &&
       next.error !== "" &&
-      (prev.state !== "needs_auth" || prev.error !== next.error)
+      (prev?.state !== "needs_auth" || prev.error !== next.error)
     ) {
       showToast(signInFailureText(p.server, next.error), "error");
-    }
-    if (next?.state === "connected") {
-      // A foreign server's own row is listed from /api/mcp/status.
-      mcpState.refetchStatus();
     }
   });
   onSSE("mcp_prewarm", (_chat, p) => {
@@ -1205,7 +1205,7 @@ export function initMCP(): void {
   onGovernanceChange(applyGovernance);
 
   mcpState.refetchServers();
-  mcpState.refetchStatus();
+  void mcpState.refetchStatus();
   refreshConfigStanding();
 }
 

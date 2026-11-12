@@ -21,6 +21,7 @@ import {
 import { registerCleanup } from "./actions/index.js";
 import { BUS_PAGE_RESUMED, BUS_RECONCILE, decodeEnvelope, emitBus } from "./bus.js";
 import { inventoryHeld } from "./git-prs-state.js";
+import { mcpState } from "./mcp-state.js";
 import { isMirrorKind } from "./mirror.js";
 import { peekRunState, refetchLiveRuns, rereadHeldRuns, runTurnHeldSeq } from "./run-store.js";
 import { requestRunTurnRange } from "./run-turn-range.js";
@@ -345,6 +346,8 @@ function runStampAction(stamp: SubjectStamp | undefined, signal?: AbortSignal): 
     }
     case "runs":
       return refetchLiveRuns(signal).then(() => false);
+    case "mcp_status":
+      return mcpState.refetchStatus(signal).then(() => false);
     case "catalog":
       return fetchCatalog(signal === undefined ? {} : { signal }).then(() => false);
     case "forge_inventory":

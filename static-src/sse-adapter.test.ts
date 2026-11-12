@@ -1306,6 +1306,14 @@ describe("every revalidation re-reads the held runs once", () => {
 });
 
 describe("the MCP status subject re-reads the status inventory", () => {
+  // The server's `mcp_status` counter, increasing across the cases: the status mirror is module state that outlives
+  // a case, while each case starts with an empty version map.
+  let counter = 0;
+  function nextVersion(): string {
+    counter++;
+    return String(counter);
+  }
+
   function statusReads(): ScriptedFetch["requests"] {
     return scripted.requests.filter((r) => r.url === "/api/mcp/status");
   }
@@ -1324,18 +1332,21 @@ describe("the MCP status subject re-reads the status inventory", () => {
   }
 
   it("a verdict naming mcp_status reads the status and holds its version once applied", async () => {
-    observeStamp({ kind: "mcp_status", ref: "", version: "1" });
-    scripted.respond("/api/sync", digestAnswer([{ kind: "mcp_status", ref: "", version: "2" }]));
-    scripted.respond("/api/mcp/status", () => statusAnswer("2"));
+    observeStamp({ kind: "mcp_status", ref: "", version: nextVersion() });
+    const moved = nextVersion();
+    scripted.respond("/api/sync", digestAnswer([{ kind: "mcp_status", ref: "", version: moved }]));
+    scripted.respond("/api/mcp/status", () => statusAnswer(moved));
 
     await _revalidateForTest(ctx());
 
     expect(statusReads()).toHaveLength(1);
-    expect(heldStatusVersion()).toBe("2");
+    expect(heldStatusVersion()).toBe(moved);
   });
 
   it("a refused mcp_status frame reads the status, and the held version moves only with the read", async () => {
-    observeStamp({ kind: "mcp_status", ref: "", version: "1" });
+    const held = nextVersion();
+    const moved = nextVersion();
+    observeStamp({ kind: "mcp_status", ref: "", version: held });
     const conn = await connectSettled();
     let release = (): void => undefined;
     const gate = new Promise<void>((resolve) => {
@@ -1343,19 +1354,19 @@ describe("the MCP status subject re-reads the status inventory", () => {
     });
     scripted.respond("/api/mcp/status", async () => {
       await gate;
-      return statusAnswer("2");
+      return statusAnswer(moved);
     });
 
     conn?.frame({
       type: "subject_changed",
       chat_id: "",
-      subject: { kind: "mcp_status", ref: "", version: "2" },
+      subject: { kind: "mcp_status", ref: "", version: moved },
     });
     await until(() => statusReads().length === 1, "the status read");
-    expect(heldStatusVersion(), "the frame's own stamp is not observed").toBe("1");
+    expect(heldStatusVersion(), "the frame's own stamp is not observed").toBe(held);
 
     release();
-    await until(() => heldStatusVersion() === "2", "the read's stamp to be observed");
+    await until(() => heldStatusVersion() === moved, "the read's stamp to be observed");
     expect(statusReads()).toHaveLength(1);
   });
 });

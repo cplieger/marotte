@@ -1,6 +1,9 @@
 // A toast when a broken MCP server is used. Dedupe keys on the state transition (KAS emits one status copy per
 // resident session), and the notice carries kiro-cli's captured text, which tells a missing command from a timeout.
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
+
+import type { ServerEvent } from "./types.js";
+import type { MCPServerStatus } from "./wire/types.gen.js";
 
 const toastCalls: { message: string; level: string }[] = [];
 
@@ -21,7 +24,7 @@ vi.mock("./toast.js", () => ({
 
 // mcp-ui.ts's heavy siblings are stubbed; every name its graph reaches must exist, since Browser Mode links ESM for real.
 vi.mock("./dom.js", () => ({
-  $: {},
+  $: { mcpModal: document.createElement("div") },
   byId: () => document.createElement("div"),
   maybeEl: () => null,
   setBusy: () => undefined,
@@ -29,7 +32,14 @@ vi.mock("./dom.js", () => ({
   forceReflow: () => 0,
 }));
 
-const { announceMCPFailure, mcpFailureText } = await import("./mcp-ui.js");
+// No status read answers: the rows here come only from the frames each case delivers.
+vi.mock(import("./api-client.js"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, apiGetTyped: async (): Promise<null> => null };
+});
+
+const { announceMCPFailure, initMCP, mcpFailureText } = await import("./mcp-ui.js");
+const { dispatch } = await import("./bus.js");
 
 describe("mcpFailureText", () => {
   it("carries the captured reason", () => {
@@ -89,5 +99,56 @@ describe("announceMCPFailure", () => {
       announceMCPFailure("github", "boom", prev);
       expect(toastCalls, `prev=${prev}`).toHaveLength(1);
     }
+  });
+});
+
+describe("the toasts an mcp_status frame raises", () => {
+  let version = 0;
+
+  /** Deliver `row` for its server at `at`, or at the next version. */
+  function frame(row: Omit<MCPServerStatus, "origin">, at?: number): void {
+    if (at === undefined) {
+      version++;
+    }
+    dispatch({
+      type: "mcp_status",
+      chat_id: "",
+      payload: { server: row.name, status: { origin: "user", ...row } },
+      subject: { kind: "mcp_status", ref: "", version: String(at ?? version) },
+    } as ServerEvent);
+  }
+
+  beforeAll(() => {
+    initMCP();
+  });
+  beforeEach(() => {
+    toastCalls.length = 0;
+  });
+
+  it("fires once on the move into failed, and not for a frame older than the row", () => {
+    frame({ name: "f1", state: "connected" });
+    const stale = version;
+    version += 10;
+    frame({ name: "f1", state: "connected" });
+    // Older than the connected row held, so applying it would paint a live server dead.
+    frame({ name: "f1", state: "failed", error: "old" }, stale);
+    expect(toastCalls).toHaveLength(0);
+
+    frame({ name: "f1", state: "failed", error: "spawn ENOENT" });
+    frame({ name: "f1", state: "failed", error: "spawn ENOENT" });
+    expect(toastCalls).toHaveLength(1);
+    expect(toastCalls[0]?.message).toContain("spawn ENOENT");
+  });
+
+  it("fires the sign-in failure toast each time the waiting server's reason moves", () => {
+    frame({ name: "f2", state: "needs_auth" });
+    frame({ name: "f2", state: "needs_auth", error: "listener busy" });
+    frame({ name: "f2", state: "needs_auth", error: "listener busy" });
+    frame({ name: "f2", state: "needs_auth", error: "port taken" });
+
+    expect(toastCalls.map((t) => t.message)).toEqual([
+      'Signing in to "f2" failed: listener busy',
+      'Signing in to "f2" failed: port taken',
+    ]);
   });
 });

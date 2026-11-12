@@ -291,8 +291,8 @@ async function submitServer(
   }
   closeModal($.mcpModal);
   mcpState.refetchServers();
-  // A save can change what KAS runs, so status is re-read; both fetches coalesce per microtask.
-  mcpState.refetchStatus();
+  // A save can change what KAS runs, so status is re-read.
+  void mcpState.refetchStatus();
 }
 
 setSwitchMode((kind, slug, identifier, fields) => {
@@ -737,7 +737,7 @@ async function submitPaste(
   }
   closeModal($.mcpModal);
   mcpState.refetchServers();
-  mcpState.refetchStatus();
+  void mcpState.refetchStatus();
 }
 
 const RAW_TEMPLATE = `{

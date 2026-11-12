@@ -53,6 +53,7 @@ import { BUS_RECONCILE, dispatch, emitBus } from "./bus.js";
 import type { ServerEvent } from "./types.js";
 import { initMCP } from "./mcp-ui.js";
 import { mcpState, servers, statusSignalFor } from "./mcp-state.js";
+import { installMirrors } from "./mirror.js";
 import type { Server } from "./mcp-state.js";
 
 // The server's `mcp_status` counter, increasing across the file: the copy is module state that outlives a case.
@@ -99,6 +100,8 @@ beforeAll(async () => {
   const modal = document.createElement("div");
   modal.id = "mcp-modal";
   document.body.replaceChildren(section, modal);
+  // As app.ts boots: the mirrors follow the transport reconcile.
+  installMirrors();
   initMCP();
   // initMCP's own first read: the server has no MCP rows yet.
   await readOpened(1);
