@@ -218,17 +218,17 @@ func (t *Translator) HandleModeUpdate(ctx context.Context, chatID marotte.ChatID
 		return
 	}
 	var (
-		changed bool
-		from    string
+		changed  bool
+		from, to string
 	)
 	_, err := t.chats.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
-		if !ex || c.CurrentModeID == p.ModeID {
+		if !ex {
 			return false
 		}
 		from = c.CurrentModeID
-		c.CurrentModeID = p.ModeID
-		changed = true
-		return true
+		changed = c.AdoptMode(p.ModeID)
+		to = c.CurrentModeID
+		return changed
 	})
 	if errors.Is(err, chat.ErrTombstoned) {
 		return
@@ -239,10 +239,10 @@ func (t *Translator) HandleModeUpdate(ctx context.Context, chatID marotte.ChatID
 	if !changed {
 		return
 	}
-	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventModeChanged, chatID, marotte.ModeChangedPayload{ModeID: p.ModeID}))
+	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventModeChanged, chatID, marotte.ModeChangedPayload{ModeID: to}))
 	// The header write is the idempotence gate: KAS's echo of a reader's switch changes nothing
 	// and appends no second entry.
-	sw := marotte.EntryModeSwitched{From: from, To: p.ModeID, Source: marotte.ModeSwitchSourceAgent}
+	sw := marotte.EntryModeSwitched{From: from, To: to, Source: marotte.ModeSwitchSourceAgent}
 	t.appendLaneless(ctx, chatID, marotte.EntryKindModeSwitched, "", sw,
 		func(ctx context.Context, turn *turnlog.Turn) ([]turnlog.Sealed, error) {
 			return turn.ModeSwitched(ctx, sw)

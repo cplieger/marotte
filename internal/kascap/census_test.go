@@ -28,6 +28,8 @@ const (
 
 	// Every anchor is built from it because the bundle's identifiers are mangled.
 	jsIdent = `[A-Za-z_$][A-Za-z0-9_$]*`
+	// identStart opens an anchor on a mangled name: RE2's \b is ASCII, so it misses `$x` and matches inside it.
+	identStart = `(?:^|[^A-Za-z0-9_$])`
 )
 
 var (
@@ -91,6 +93,18 @@ var (
 		`function\s+(` + jsIdent + `)\s*\(` + jsIdent + `,\s*` + jsIdent + `,\s*` + jsIdent +
 			`\)\s*\{\s*return\s+` + jsIdent + `\.data\[` + jsIdent + `\]\?\.enabled\s*\?\?\s*` +
 			jsIdent + `\s*;?\s*\}`,
+	)
+
+	// wireReaderRe is the settings registry's reader object for one fixed key,
+	// `{keys:["sessionTools"],read:...}`.
+	wireReaderRe  = regexp.MustCompile(`\{keys:\["(` + jsIdent + `)"\],read:`)
+	wireReaderLit = `{keys:[`
+
+	// wireFactoryRe names a registry reader factory taking its key as the first parameter,
+	// `function f(t,e){return{keys:[t],read:...}}`; group 2 must equal group 3, which RE2 cannot say.
+	wireFactoryRe = regexp.MustCompile(
+		`function\s+(` + jsIdent + `)\s*\((` + jsIdent + `)[^()]*\)\s*\{\s*return\s*\{keys:\[(` +
+			jsIdent + `)\],read:`,
 	)
 
 	// absentTrueResolverRe is settingResolverRe's subset whose fallback ends in a literal true, so
@@ -470,7 +484,7 @@ of parameters. Re-read the pattern rather than regenerating the fixture.`,
 	bindRe := regexp.MustCompile(`(` + jsIdent + `)\s*=\s*` +
 		regexp.QuoteMeta(param) + `\??\._meta\?\.kiro`)
 	local := discoverOne(t, "the top-level _meta.kiro local in "+name, bindRe, body)
-	return keysIn(regexp.MustCompile(`\b`+regexp.QuoteMeta(local)+`\??\.(`+jsIdent+`)`), body)
+	return keysIn(regexp.MustCompile(identStart+regexp.QuoteMeta(local)+`\??\.(`+jsIdent+`)`), body)
 }
 
 // initScopeKeys returns the keys read off every local the agent server binds to
@@ -485,7 +499,7 @@ func initScopeKeys(t *testing.T, src string) []string {
 		if scope == "" {
 			t.Fatalf("the _meta.kiro binding at byte %d has no enclosing block within %d bytes", m[0], bindingScopeReach)
 		}
-		keys = append(keys, keysIn(regexp.MustCompile(`\b`+regexp.QuoteMeta(local)+`\??\.(`+jsIdent+`)`), scope)...)
+		keys = append(keys, keysIn(regexp.MustCompile(identStart+regexp.QuoteMeta(local)+`\??\.(`+jsIdent+`)`), scope)...)
 	}
 	slices.Sort(keys)
 	return slices.Compact(keys)
@@ -504,7 +518,7 @@ func bindingScope(src string, pos int) string {
 	return ""
 }
 
-// readSettingKeys returns the _meta.kiro.settings keys the agent server reads through its five
+// readSettingKeys returns the _meta.kiro.settings keys the agent server reads through its seven
 // static reader shapes.
 func readSettingKeys(t *testing.T, src string) []string {
 	t.Helper()
@@ -513,21 +527,44 @@ func readSettingKeys(t *testing.T, src string) []string {
 
 	direct := requireNonEmpty(t, "isSettingEnabled calls", slices.Concat(
 		keysIn(settingEnabledRe, src),
-		keysAround(regexp.MustCompile(`\b`+regexp.QuoteMeta(settingFn)+
+		keysAround(regexp.MustCompile(identStart+regexp.QuoteMeta(settingFn)+
 			`\([^,()]*,\s*["'](`+jsIdent+`)["']\)`), settingFn+"(", src),
 	))
 	features := requireNonEmpty(t, "isFeatureEnabled calls", slices.Concat(
 		keysIn(featureEnabledRe, src),
-		keysAround(regexp.MustCompile(`\b`+regexp.QuoteMeta(featureFn)+
+		keysAround(regexp.MustCompile(identStart+regexp.QuoteMeta(featureFn)+
 			`\(["'](`+jsIdent+`)["']\)`), featureFn+"(", src),
 	))
 	resolved := requireNonEmpty(t, "settings resolvers", keysAround(settingResolverRe, ".data.", src))
 	destructured := requireNonEmpty(t, "destructuring resolvers", keysAround(settingDestructureRe, ".data.", src))
 	computed := requireNonEmpty(t, "computed-member resolver calls", computedResolverKeys(t, src))
+	wired := requireNonEmpty(t, "fixed-key wire readers", keysAround(wireReaderRe, wireReaderLit, src))
+	built := requireNonEmpty(t, "wire-reader factory calls", wireFactoryKeys(t, src))
 
-	all := slices.Concat(direct, features, resolved, destructured, computed)
+	all := slices.Concat(direct, features, resolved, destructured, computed, wired, built)
 	slices.Sort(all)
 	return slices.Compact(all)
+}
+
+// wireFactoryKeys returns the literal keys passed to the settings registry's reader factories.
+func wireFactoryKeys(t *testing.T, src string) []string {
+	t.Helper()
+	var keys []string
+	for _, fn := range requireNonEmpty(t, "wire-reader factories", wireFactories(src)) {
+		keys = append(keys, keysAround(regexp.MustCompile(identStart+regexp.QuoteMeta(fn)+`\("(`+jsIdent+`)"`), fn+"(", src)...)
+	}
+	slices.Sort(keys)
+	return slices.Compact(keys)
+}
+
+func wireFactories(src string) []string {
+	seen := make(map[string]bool)
+	for _, m := range findAround(wireFactoryRe, wireReaderLit, src) {
+		if src[m[4]:m[5]] == src[m[6]:m[7]] {
+			seen[src[m[2]:m[3]]] = true
+		}
+	}
+	return slices.Sorted(maps.Keys(seen))
 }
 
 // computedResolverKeys returns the literal keys passed to the computed-member
@@ -535,7 +572,7 @@ func readSettingKeys(t *testing.T, src string) []string {
 func computedResolverKeys(t *testing.T, src string) []string {
 	t.Helper()
 	fn := discoverOne(t, "the computed-member settings resolver", settingComputedFnRe, src)
-	return keysAround(regexp.MustCompile(`\b`+regexp.QuoteMeta(fn)+`\([^,()]*,\s*["'](`+jsIdent+`)["']`), fn+"(", src)
+	return keysAround(regexp.MustCompile(identStart+regexp.QuoteMeta(fn)+`\([^,()]*,\s*["'](`+jsIdent+`)["']`), fn+"(", src)
 }
 
 // A withheld row counts as declared: recording a deliberate omission is the table's job.

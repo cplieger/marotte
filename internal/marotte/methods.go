@@ -38,6 +38,9 @@ const (
 	// `summarization_completed`; typed `/compact` does nothing in KAS. `{success: false}` covers
 	// both a turn in flight and a compaction already running, with no discriminator.
 	MethodSessionCompact = "_kiro/session/compact"
+	// MethodSessionContext edits the session's own context files (SessionContextParams), which KAS persists with the
+	// session and reads again before every prompt, adding a changed snapshot to the conversation.
+	MethodSessionContext = "_kiro/session/context"
 	// MethodSessionRename sets a session's title as the USER's, latching
 	// titleSetByUser so KAS stops emitting agent titles for it. Served for a
 	// resident session and, for one the engine does not hold, as a write to its stored metadata.

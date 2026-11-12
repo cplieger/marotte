@@ -257,6 +257,20 @@ func DecisionRunID(payload any) string {
 	}
 }
 
+// DecisionNodeID is the workflow node a *_needed payload's ask came from, "" for any other payload or one of no run.
+func DecisionNodeID(payload any) string {
+	switch p := payload.(type) {
+	case PermissionNeededPayload:
+		return p.NodeID
+	case ElicitationNeededPayload:
+		return p.NodeID
+	case UserInputNeededPayload:
+		return p.NodeID
+	default:
+		return ""
+	}
+}
+
 // DecisionRequestID is the ask id a *_needed payload carries, 0 for any other payload.
 func DecisionRequestID(payload any) int64 {
 	switch p := payload.(type) {
@@ -291,6 +305,9 @@ const (
 	// runs unsupervised. Unlike mode_not_applied, the record keeps the REQUEST, so the next spawn
 	// re-asserts; this event is the only thing naming the refusal.
 	ErrCodeSupervisedNotApplied ErrorCode = "supervised_not_applied"
+	// ErrCodeMemoryNotLoaded means a Bot's session opened without its memory file loaded; the Bot runs without its
+	// notes until its next session opens.
+	ErrCodeMemoryNotLoaded ErrorCode = "memory_not_loaded"
 	// ErrCodeModelNotServed means an explicitly-picked model is absent from the set this
 	// account's session advertises, so it was refused before the wire rather than rejected
 	// mid-prompt on every later turn.

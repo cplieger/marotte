@@ -13,7 +13,7 @@ export const arbDecisionKind: fc.Arbitrary<DecisionKind> = fc.constantFrom("perm
 export const arbDenialBasis: fc.Arbitrary<DenialBasis> = fc.constantFrom("unparseable", "cedar-unavailable", "not-loaded", "permissions-invalid");
 export const arbEngineState: fc.Arbitrary<EngineState> = fc.constantFrom("starting", "ready", "restarting", "down");
 export const arbEntryKind: fc.Arbitrary<EntryKind> = fc.constantFrom("turn_open", "turn_bind", "turn_wake", "run_named", "text", "thinking", "tool_call", "tool_result", "steer", "steer_ack", "steer_delivered", "steer_cleared", "plan", "compaction", "compaction_failed", "safety_blocked", "model_switched", "model_routed", "model_fallback", "mode_switched", "turn_revert", "context_reset", "reconciled", "turn_close", "step_graded");
-export const arbErrorCode: fc.Arbitrary<ErrorCode> = fc.constantFrom("recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "agent_config_error", "rate_limit", "switch_failed", "compaction_failed", "mode_not_applied", "supervised_not_applied", "model_not_served", "auth_token_unavailable", "tangent_merge_failed", "resume_not_sent");
+export const arbErrorCode: fc.Arbitrary<ErrorCode> = fc.constantFrom("recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "agent_config_error", "rate_limit", "switch_failed", "compaction_failed", "mode_not_applied", "supervised_not_applied", "memory_not_loaded", "model_not_served", "auth_token_unavailable", "tangent_merge_failed", "resume_not_sent");
 export const arbFailureKind: fc.Arbitrary<FailureKind> = fc.constantFrom("context_limit", "model_call_limit", "empty_answer");
 export const arbFileMatchKind: fc.Arbitrary<FileMatchKind> = fc.constantFrom("content", "name", "dir");
 export const arbForgeStatus: fc.Arbitrary<ForgeStatus> = fc.constantFrom("connected", "retrying", "refused", "reconnect", "unusable");
@@ -42,7 +42,7 @@ export const arbRunEntryKind: fc.Arbitrary<RunEntryKind> = fc.constantFrom("turn
 export const arbRunEntryOrigin: fc.Arbitrary<RunEntryOrigin> = fc.constantFrom("prompt", "queue", "tangent", "summary", "unread", "retry", "wire", "run", "carried", "request", "threshold", "turn_end", "context_limit", "rewind", "failsafe");
 export const arbRunEntryState: fc.Arbitrary<RunEntryState> = fc.constantFrom("pending", "paused", "held", "starting", "running", "stopping", "closing");
 export const arbRunNodeStatus: fc.Arbitrary<RunNodeStatus> = fc.constantFrom("pending", "running", "paused", "completed", "failed", "aborted", "skipped");
-export const arbRunProgressKind: fc.Arbitrary<RunProgressKind> = fc.constantFrom("node_start", "node_complete", "node_paused", "loop_iteration", "watch_poll", "paused", "steps_queued");
+export const arbRunProgressKind: fc.Arbitrary<RunProgressKind> = fc.constantFrom("node_start", "node_complete", "node_paused", "loop_iteration", "watch_poll", "paused", "steps_queued", "silence");
 export const arbRunStandingKind: fc.Arbitrary<RunStandingKind> = fc.constantFrom("step", "watch", "pass_limit");
 export const arbRunStatus: fc.Arbitrary<RunStatus> = fc.constantFrom("running", "paused", "completed", "failed", "aborted", "cancelled");
 export const arbRunStepEndRefusal: fc.Arbitrary<RunStepEndRefusal> = fc.constantFrom("step_not_paused", "step_unnamed");
@@ -738,6 +738,7 @@ const arbModel = fc.letrec<{
       spec_planning_ask_first: fc.boolean(),
       steering_reminders_enabled: fc.boolean(),
       workflows_enabled: fc.boolean(),
+      chat_messaging_enabled: fc.boolean(),
       supervised_default: fc.boolean(),
       scheduled_auto_approve: fc.boolean(),
       debug_logs: fc.boolean(),
@@ -745,7 +746,7 @@ const arbModel = fc.letrec<{
       model_fallback_enabled: fc.boolean(),
       hook_status_shown: fc.boolean(),
     },
-    { requiredKeys: ["last_effort_by_model", "kiro_defaults", "additional_directories_refused", "theme", "last_model", "last_merge_method", "memory_mode", "spec_planning", "work_validation", "cloudformation_safety_check", "auto_routing", "auto_delegation", "output_style", "workflow_launch", "agent_ignore_files", "additional_directories", "rejected_keys", "chat_retention_days", "auto_compact_pct", "auto_compact_pct_range", "terminal_command_timeout_ms", "engine_heap_mib", "trigger_max_live_runs", "trigger_max_launches_per_hour", "settings_epoch", "settings_revision", "auto_compaction_enabled", "knowledge_enabled", "content_collection_enabled", "guard_payload_links", "mcp_wait_for_ready", "notifications_enabled", "notify_agent_finished", "notify_pr_status", "notify_run_outcome", "spec_planning_ask_first", "steering_reminders_enabled", "workflows_enabled", "supervised_default", "scheduled_auto_approve", "debug_logs", "high_throughput_optimizations", "model_fallback_enabled", "hook_status_shown"] },
+    { requiredKeys: ["last_effort_by_model", "kiro_defaults", "additional_directories_refused", "theme", "last_model", "last_merge_method", "memory_mode", "spec_planning", "work_validation", "cloudformation_safety_check", "auto_routing", "auto_delegation", "output_style", "workflow_launch", "agent_ignore_files", "additional_directories", "rejected_keys", "chat_retention_days", "auto_compact_pct", "auto_compact_pct_range", "terminal_command_timeout_ms", "engine_heap_mib", "trigger_max_live_runs", "trigger_max_launches_per_hour", "settings_epoch", "settings_revision", "auto_compaction_enabled", "knowledge_enabled", "content_collection_enabled", "guard_payload_links", "mcp_wait_for_ready", "notifications_enabled", "notify_agent_finished", "notify_pr_status", "notify_run_outcome", "spec_planning_ask_first", "steering_reminders_enabled", "workflows_enabled", "chat_messaging_enabled", "supervised_default", "scheduled_auto_approve", "debug_logs", "high_throughput_optimizations", "model_fallback_enabled", "hook_status_shown"] },
   ),
   ElicitationEnumOption: fc.record(
     {

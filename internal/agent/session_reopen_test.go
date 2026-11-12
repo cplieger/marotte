@@ -198,6 +198,27 @@ func TestSpecPlanningAskFirst_ReopensOnlyWhilePlanningIsOn(t *testing.T) {
 	}
 }
 
+// KAS delivers a peer send_message only when messaging is on for both the sender's and the target's session, so
+// every chat door carries the setting: off until the user turns it on, then on at the chat's reload.
+func TestChatMessaging_ReachesEveryChatDoor(t *testing.T) {
+	h, configDir := reopenFixture(t)
+	first, err := h.coord.openReleased(t.Context(), "c1", "")
+	if err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+	if fakeOf(first).lastSessionOpts().Features.Messaging {
+		t.Error("a chat opened with the setting unset carried messaging on, want off")
+	}
+
+	if !reloadsAfter(t, h, func() { writeSetting(t, configDir, settings.KeyChatMessaging, true) }) {
+		t.Fatal("turning Messages between chats on did not reload the open chat")
+	}
+	sb := h.bridge.mgr.get("c1")
+	if opts := fakeOf(sb).lastSessionOpts(); opts.SessionID != string(first.SessionID()) || !opts.Features.Messaging {
+		t.Errorf("the reload = %+v, want the chat's own session loaded with messaging on", opts)
+	}
+}
+
 func TestWorkflowLaunch_ReopensOnlyWhileWorkflowsAreOn(t *testing.T) {
 	for _, tc := range []struct {
 		workflows bool
@@ -241,6 +262,7 @@ var configWrites = []struct {
 	{key: settings.KeyMemoryMode, value: "learn", reach: reachReopen},
 	{key: settings.KeySecurityProfile, value: policyfile.ProfileTrusted, reach: reachReopen},
 	{key: settings.KeyWorkflowsEnabled, value: false, reach: reachReopen},
+	{key: settings.KeyChatMessaging, value: true, reach: reachReopen},
 	// Read only while workflows are on: TestWorkflowLaunch_ReopensOnlyWhileWorkflowsAreOn.
 	{key: settings.KeyWorkflowLaunch, value: marotte.WorkflowLaunchDelegateAll, reach: reachReopen},
 	{key: settings.KeySpecPlanning, value: settings.SpecPlanningQuick, reach: reachReopen},

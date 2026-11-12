@@ -119,6 +119,9 @@ type SessionOpts struct {
 	// Steering is the chat's client steering, sent on both doors; nil sends no key. Chat sessions
 	// only: it carries chat-user guidance a workflow host and an observer have no use for.
 	Steering []ClientSteeringDoc
+	// CustomAgents are the session-scoped client custom agents, sent on both doors: KAS rebuilds the session's
+	// registry from each call's list. A started Bot's chat carries its role; every other session none.
+	CustomAgents []ClientCustomAgent
 	// AdditionalDirectories are the directories beyond the workspace the session may reach, sent
 	// on BOTH doors: KAS adopts the list per call, so a door without it drops them.
 	AdditionalDirectories []string
@@ -145,7 +148,9 @@ type SessionFeatures struct {
 	// option; empty asserts nothing.
 	WorkflowLaunch string
 	// Workflows gives the agent its workflow tools; the zero value withholds them.
-	Workflows            bool
+	Workflows bool
+	// Messaging is KAS's sessionToolsMessaging switch; KAS delivers only between sessions that both have it on.
+	Messaging            bool
 	SpecAskClarification bool
 }
 

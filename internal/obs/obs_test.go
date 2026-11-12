@@ -56,7 +56,7 @@ func TestCounters_EveryKnownValueIsOnThePageBeforeItsFirstEvent(t *testing.T) {
 	}
 	for _, origin := range []string{"scheduled", "triggered"} {
 		for _, reason := range []string{
-			"needs_approval", "overran", "backstop", "stalled", "paused", "orphaned", "cancel_given_up",
+			"needs_approval", "overran", "stalled", "paused", "orphaned", "cancel_given_up",
 		} {
 			want = append(want, `marotte_unattended_run_failures_total{origin="`+origin+`",reason="`+reason+`"} `)
 		}

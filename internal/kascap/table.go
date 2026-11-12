@@ -229,6 +229,16 @@ var table = []decl{
 		send:        true,
 	},
 	{
+		// KAS's sessionToolsMessaging switch, read as settings.sessionTools.messaging.enabled (record field
+		// sessionMessagingEnabled). Always present: on load a stated value replaces the persisted sessionMessagingEnabled
+		// (saveSessionMessaging), so an explicit false is what turns a resumed chat's peer messaging off.
+		key:         "sessionTools",
+		door:        doorSession,
+		resolver:    resolverSettingObject,
+		sessionGate: func(s *SessionSpawn) (any, bool) { return map[string]any{"messaging": enabledIf(s.Messaging)}, true },
+		send:        true,
+	},
+	{
 		key:      "backgroundExecution",
 		door:     doorSession,
 		resolver: resolverSetting,
@@ -356,6 +366,13 @@ var table = []decl{
 		// Custom profile's whole implementation: no key makes the permissions files the entire
 		// policy. resolvePresetIds treats an empty array as absent anyway.
 		sessionGate: func(s *SessionSpawn) (any, bool) { return s.Presets, len(s.Presets) > 0 },
+		send:        true,
+	},
+	{
+		key:         "customAgents",
+		door:        doorSession,
+		resolver:    resolverObjectList,
+		sessionGate: func(s *SessionSpawn) (any, bool) { return s.CustomAgents, len(s.CustomAgents) > 0 },
 		send:        true,
 	},
 	{

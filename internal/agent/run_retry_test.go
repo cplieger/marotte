@@ -536,8 +536,8 @@ func TestHandleRetry_RejectsNonPOSTAndAMissingID(t *testing.T) {
 	}
 }
 
-// A retried run starts with its own heal and backstop budgets even when marotte missed its last run's terminal
-// frame and kept that run's lease: the retry is a new run, and the budgets are a run's.
+// A retried run starts with its own heal budget even when marotte missed its last run's terminal frame and kept that
+// run's lease: the retry is a new run, and the budget is a run's.
 func TestRetry_ARunWhoseEndWasMissedStartsWithItsOwnBudgets(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -550,12 +550,6 @@ func TestRetry_ARunWhoseEndWasMissedStartsWithItsOwnBudgets(t *testing.T) {
 	for range maxAutoHeals {
 		h.runs.claimHeal("wf_1")
 	}
-	h.runs.mu.Lock()
-	if h.runs.bounds.executed == nil {
-		h.runs.bounds.executed = map[string]time.Duration{}
-	}
-	h.runs.bounds.executed["wf_1"] = runBackstop
-	h.runs.mu.Unlock()
 	if err := h.runs.stopAutoResume(t.Context(), "wf_1", true); err != nil {
 		t.Fatalf("stopAutoResume: %v", err)
 	}
@@ -566,9 +560,6 @@ func TestRetry_ARunWhoseEndWasMissedStartsWithItsOwnBudgets(t *testing.T) {
 
 	if attempt, ok := h.runs.claimHeal("wf_1"); !ok || attempt != 1 {
 		t.Errorf("the retried run's first heal = (%d, %v), want (1, true): it inherited its last run's spent heals", attempt, ok)
-	}
-	if h.runs.backstopSpent("wf_1") {
-		t.Error("the retried run's backstop reads spent: it inherited its last run's executing time")
 	}
 	if h.runs.autoResumeStopped("wf_1") {
 		t.Error("the retried run reads stopped before any run_start: it inherited its last run's auto-resume stop")

@@ -374,6 +374,11 @@ func (*turnRegistry) closeOwner(chatID marotte.ChatID, sb *sharedBridge) (*chatL
 func (lc *chatLifecycle) markReload(sb *sharedBridge) bool {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
+	return lc.markReloadLocked(sb)
+}
+
+// markReloadLocked is markReload with mu held.
+func (lc *chatLifecycle) markReloadLocked(sb *sharedBridge) bool {
 	if lc.ended || lc.reloadFor == sb {
 		return false
 	}

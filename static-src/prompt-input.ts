@@ -3,21 +3,33 @@
 // send-state.ts drives three button faces: idle sends, streaming cancels, error retries; the error
 // face means there is nothing to send TO, so every other failure reports through a toast and the
 // turn's own divider. While a turn streams and the composer holds a send (text or a staged file), a
-// second button beside Cancel sends it, because a touch Return is a new line.
+// second button beside Cancel sends it, because a touch Return is a new line. With nothing to send,
+// a microphone takes Send's or that button's slot (send-faces.ts decides which face shows).
 
 import { $, byId, maybeEl, queryEl } from "./dom.js";
 import { activeSession, getActive, getActiveId } from "./store.js";
 import { afterWords } from "./run-order.js";
 import { payloadOf, turnOpenOf } from "./turns.js";
 import { fixIOSViewport } from "./platform.js";
-import { ICON_SEND, ICON_CANCEL, ICON_ALERT, ICON_HOURGLASS } from "./icons.js";
+import { ICON_SEND, ICON_CANCEL, ICON_ALERT, ICON_HOURGLASS, ICON_MIC } from "./icons.js";
+import { sendFaces, type Faces } from "./send-faces.js";
+import { NO_DICTATION, type Dictation } from "./dictation.js";
+import { pressOwner, type Act } from "./send-press.js";
 import { iconEl } from "./icon-el.js";
 import { collapseAll } from "./pill-expand.js";
-import { composerText, isSendable, setComposerValue, syncComposerText } from "./composer-value.js";
+import {
+  composerText,
+  isSendable,
+  onComposerWrite,
+  recallComposerValue,
+  setComposerValue,
+  syncComposerText,
+} from "./composer-value.js";
 import { touchComposer, wireTouchComposer } from "./composer-touch.js";
 import { flushComposerDraft, restoreRefusedEdit } from "./composer-state.js";
 import { continueList } from "./list-continue.js";
 import { applyEdit } from "./text-edit.js";
+import { sigChanged } from "./paint-sig.js";
 import { computed, effect, el, signal, touch, type ReadonlySignal } from "@cplieger/reactive";
 import type { SendVerb } from "./wire/types.gen.js";
 
@@ -96,6 +108,21 @@ function reasonOf(s: SendState): string {
   return s.kind === "error" ? s.reason : "";
 }
 
+/** A toggle's name stays stable and `aria-pressed` carries the state; the tooltip says what a press does. */
+function paintDictate(btn: HTMLButtonElement, pressed: boolean): void {
+  btn.replaceChildren(el("span", { className: "send-btn-label" }, "Dictate"), iconEl(ICON_MIC));
+  btn.setAttribute("aria-label", "Dictate");
+  btn.setAttribute("aria-pressed", String(pressed));
+  btn.setAttribute("data-tooltip", pressed ? "Stop dictation" : "Dictate");
+  btn.classList.toggle("dictating", pressed);
+  btn.type = "button";
+}
+
+function clearDictate(btn: HTMLButtonElement): void {
+  btn.removeAttribute("aria-pressed");
+  btn.classList.remove("dictating");
+}
+
 let initialized = false;
 
 /** How long after `compositionend` an Enter is still the IME's commit key rather than a send.
@@ -117,8 +144,9 @@ class PromptInputController {
   private onSubmit: Submit = () => undefined;
   private onEditLast: EditLast = () => undefined;
   private staged: Staged = signal(false);
+  private dictation: Dictation = NO_DICTATION;
   private midTurn: HTMLButtonElement | null = null;
-  private midTurnName = "";
+  private readonly press = pressOwner((btn) => this.actOf(btn));
   /** Each chat whose send is in flight, by the token of that send. */
   private readonly held = new Map<string, object>();
 
@@ -131,6 +159,8 @@ class PromptInputController {
     if (this.heldHere() || !isSendable(text, this.staged.peek())) {
       return;
     }
+    // Before the box clears, so no late words refill it.
+    this.dictation.drop();
     this.exitCycling();
     const chatID = getActiveId();
     const sending = this.onSubmit(text);
@@ -197,10 +227,10 @@ class PromptInputController {
 
   /** ONE method for both keys that end cycling (Escape, ArrowDown off the newest prompt), because
    *  exitCycling() zeroes `draft`: read after the exit it is "". */
-  private restoreDraft(el: HTMLTextAreaElement): void {
+  private restoreDraft(): void {
     const saved = this.draft;
     this.exitCycling();
-    this.setInputValue(el, saved);
+    recallComposerValue(saved);
   }
 
   /** Whether this keystroke belongs to an IME composition, so Enter must reach the browser and
@@ -265,24 +295,14 @@ class PromptInputController {
     return !el.value.slice(pos).includes("\n");
   }
 
-  /** Show a value in the box WITHOUT announcing it: cycling is navigation, so a displayed prompt
-   *  is a preview and `draft` still holds the typed text. An `input` event would leave the cycle
-   *  and be recorded as the new draft. Written as one edit, so Ctrl+Z takes a recalled prompt
-   *  back. */
-  private setInputValue(el: HTMLTextAreaElement, v: string): void {
-    applyEdit(el, { start: 0, end: el.value.length, text: v, caret: v.length }, { silent: true });
-    syncComposerText();
-  }
-
   /** `hidden`, not opacity, so a hidden one leaves the tab order and the accessibility tree. */
   private applyMidTurnSend(): void {
     const btn = this.midTurn;
     if (btn === null) {
       return;
     }
-    const hide =
-      this.state.kind !== "streaming" || !isSendable(composerText.peek(), this.staged.peek());
-    if (hide) {
+    const side = this.faces().side;
+    if (side === "hidden") {
       // Its own send or the turn's end hides it under a keyboard user, who keeps their place in
       // the composer rather than falling to <body>. A tap's focus is left to the platform.
       const keyboard = !btn.hidden && btn.matches(":focus-visible");
@@ -293,21 +313,174 @@ class PromptInputController {
       return;
     }
     btn.hidden = false;
+    const pressed = this.dictation.listening.peek();
     const face = MIDTURN_FACE[sendVerb.peek()];
     const name = face.name(queueWait.peek());
-    if (this.midTurnName === name) {
+    const parts = side === "dictate" ? [side, String(pressed)] : [side, face.label, name];
+    if (!sigChanged(btn, parts)) {
       return;
     }
-    this.midTurnName = name;
+    if (side === "dictate") {
+      paintDictate(btn, pressed);
+      return;
+    }
+    clearDictate(btn);
     btn.replaceChildren(el("span", { className: "send-btn-label" }, face.label), iconEl(face.icon));
     btn.setAttribute("data-tooltip", name);
     btn.setAttribute("aria-label", name);
   }
 
-  private applyButtonState(): void {
+  private faces(): Faces {
+    return sendFaces({
+      turn: this.state.kind,
+      text: composerText.peek(),
+      staged: this.staged.peek(),
+      canDictate: this.dictation.ready.peek(),
+      dictating: this.dictation.listening.peek(),
+    });
+  }
+
+  /** What a press on `btn` would do on the face it shows now. */
+  private actOf(btn: HTMLButtonElement): Act {
+    const f = this.faces();
+    const face = btn === this.midTurn ? f.side : f.main;
+    switch (face) {
+      case "dictate":
+        return this.dictation.listening.peek() ? "stop" : "start";
+      case "cancel":
+        return "cancel";
+      case "send":
+      case "retry":
+      case "hidden":
+        return "send";
+    }
+  }
+
+  /** The slot button `t` is, or null. */
+  private slotOf(t: EventTarget | null): HTMLButtonElement | null {
+    return t === $.sendBtn || t === this.midTurn ? (t as HTMLButtonElement) : null;
+  }
+
+  /** Every press listener below only feeds `press`, the one owner of a press; the buttons' keydown runs Escape. */
+  private wirePresses(buttons: readonly HTMLButtonElement[]): void {
+    for (const on of buttons) {
+      on.addEventListener("pointerdown", (e: PointerEvent) => {
+        this.press({ k: "pointerdown", on, e });
+      });
+      for (const k of ["lostpointercapture", "pointercancel"] as const) {
+        on.addEventListener(k, () => {
+          this.press({ k });
+        });
+      }
+      on.addEventListener("contextmenu", (e: MouseEvent) => {
+        this.press({ k: "contextmenu", e });
+      });
+      on.addEventListener("keydown", (e: KeyboardEvent) => {
+        this.escapeStops(e);
+      });
+    }
+    // On the document: a release dragged off the button never reaches it, and a key press's repeats and up follow
+    // focus wherever its click moved it, ahead of the box's own listener.
+    document.addEventListener(
+      "pointerup",
+      (e: PointerEvent) => {
+        this.press({ k: "pointerup", e });
+      },
+      true,
+    );
+    document.addEventListener(
+      "keydown",
+      (e: KeyboardEvent) => {
+        this.press({ k: "keydown", on: this.slotOf(e.target), e });
+      },
+      true,
+    );
+    document.addEventListener(
+      "keyup",
+      (e: KeyboardEvent) => {
+        this.press({ k: "keyup", e });
+      },
+      true,
+    );
+    window.addEventListener("blur", () => {
+      this.press({ k: "windowblur" });
+    });
+  }
+
+  /** A session's end puts focus in the box from a slot button, whose face may now send or steer on the reader's next
+   *  Space, or from nowhere; focus the reader moved elsewhere on the page stays there. */
+  private focusAfterDictation(): void {
+    const at = document.activeElement;
+    if (at === null || at === document.body || this.slotOf(at) !== null) {
+      $.promptInput.focus();
+    }
+  }
+
+  /** Escape leaves dictation ahead of Cancel, so a keyboard reader keeps the turn. */
+  private escapeStops(e: KeyboardEvent): boolean {
+    if (
+      e.key !== "Escape" ||
+      e.shiftKey ||
+      e.altKey ||
+      e.ctrlKey ||
+      e.metaKey ||
+      !this.dictation.listening.peek() ||
+      escapeOwnerOpen()
+    ) {
+      return false;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    this.dictation.toggle();
+    return true;
+  }
+
+  /** `start` and `stop` do nothing once the session is already in that state, so a run's later clicks cannot
+   *  undo its first. */
+  private perform(act: Exclude<Act, "send">): void {
+    const listening = this.dictation.listening.peek();
+    switch (act) {
+      case "cancel":
+        if (this.state.kind === "streaming") {
+          this.onCancel();
+        }
+        // A press can take focus off the box, and dictated words land only in the focused box.
+        if (listening) {
+          $.promptInput.focus();
+        }
+        return;
+      case "start":
+      case "stop":
+        if (listening === (act === "stop")) {
+          this.dictation.toggle();
+        }
+        return;
+    }
+  }
+
+  /** Both buttons' faces only: the input effect runs this on every keystroke. */
+  private applyFaces(): void {
+    this.paintMain();
+    this.applyMidTurnSend();
+  }
+
+  private paintMain(): void {
     const k = this.state.kind;
     const reason = reasonOf(this.state);
     const held = this.heldHere();
+    const main = this.faces().main;
+    const pressed = this.dictation.listening.peek();
+    const parts = main === "dictate" ? [main, String(pressed)] : [main, reason, String(held)];
+    if (!sigChanged($.sendBtn, parts)) {
+      return;
+    }
+    if (main === "dictate") {
+      paintDictate($.sendBtn, pressed);
+      $.sendBtn.removeAttribute("aria-busy");
+      $.sendBtn.classList.remove("streaming", "failed");
+      return;
+    }
+    clearDictate($.sendBtn);
     $.sendBtn.replaceChildren(
       el("span", { className: "send-btn-label" }, STATE_LABEL[k]),
       held ? el("span", { className: "spinner-sm", "aria-hidden": "true" }) : iconEl(STATE_ICON[k]),
@@ -323,9 +496,12 @@ class PromptInputController {
     $.sendBtn.classList.toggle("streaming", k === "streaming");
     $.sendBtn.classList.toggle("failed", k === "error");
 
-    // type=button while streaming keeps a click out of the form: a click always cancels during a
-    // turn, while Enter still sends.
+    // type=button while streaming keeps a Cancel click out of the form, while Enter still sends.
     $.sendBtn.type = k === "streaming" ? "button" : "submit";
+  }
+
+  private applyButtonState(): void {
+    this.paintMain();
     // Unconditional, so nothing that ever set them can leave the composer off.
     $.sendBtn.disabled = false;
     $.promptInput.disabled = false;
@@ -338,10 +514,19 @@ class PromptInputController {
       return;
     }
     this.state = next;
+    if (next.kind === "error") {
+      this.dictation.stop();
+    }
     this.applyButtonState();
   }
 
-  init(onSubmit: Submit, onCancel: Cancel, staged: Staged, onEditLast: EditLast): void {
+  init(
+    onSubmit: Submit,
+    onCancel: Cancel,
+    staged: Staged,
+    onEditLast: EditLast,
+    dictation: Dictation,
+  ): void {
     if (initialized) {
       return;
     }
@@ -354,17 +539,36 @@ class PromptInputController {
     this.onSubmit = onSubmit;
     this.onEditLast = onEditLast;
     this.staged = staged;
+    this.dictation = dictation;
+    onComposerWrite(() => {
+      dictation.drop();
+    });
+    const midTurn = byId<HTMLButtonElement>("midturn-send-btn");
+    this.midTurn = midTurn;
+    this.wirePresses([$.sendBtn, midTurn]);
     $.sendBtn.addEventListener("click", (e: MouseEvent) => {
-      if (this.state.kind === "streaming") {
-        e.preventDefault();
-        e.stopPropagation();
-        this.onCancel();
+      const act = this.press({ k: "click", on: $.sendBtn, e });
+      if (act === "send") {
+        // A face painted since the press (Dictate, Cancel) is type=button, so the form would not submit.
+        if ($.sendBtn.type !== "submit") {
+          e.preventDefault();
+          this.sendComposer();
+        }
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      if (act !== null) {
+        this.perform(act);
       }
     });
-
-    this.midTurn = byId<HTMLButtonElement>("midturn-send-btn");
-    this.midTurn.addEventListener("click", () => {
-      this.sendComposer();
+    midTurn.addEventListener("click", (e: MouseEvent) => {
+      const act = this.press({ k: "click", on: midTurn, e });
+      if (act === "send") {
+        this.sendComposer();
+      } else if (act !== null) {
+        this.perform(act);
+      }
     });
 
     syncComposerText();
@@ -382,7 +586,17 @@ class PromptInputController {
     effect(() => {
       touch(composerText);
       touch(staged);
-      this.applyMidTurnSend();
+      touch(dictation.ready);
+      touch(dictation.listening);
+      this.applyFaces();
+    });
+    let listened = false;
+    effect(() => {
+      const listening = dictation.listening.value;
+      if (listened && !listening) {
+        this.focusAfterDictation();
+      }
+      listened = listening;
     });
 
     form.addEventListener("submit", (e: Event) => {
@@ -481,26 +695,30 @@ class PromptInputController {
         this.idx = next;
         e.preventDefault();
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        this.setInputValue(input, prompts[this.idx]!);
+        recallComposerValue(prompts[this.idx]!);
         return;
       }
 
       if (e.key === "ArrowDown" && bare && this.cursorOnLastLine(input) && this.idx !== -1) {
         e.preventDefault();
         if (this.idx === 0) {
-          this.restoreDraft(input);
+          this.restoreDraft();
           return;
         }
         this.idx -= 1;
         const prompts = this.userPrompts();
-        this.setInputValue(input, prompts[this.idx] ?? "");
+        recallComposerValue(prompts[this.idx] ?? "");
         return;
       }
 
       if (e.key === "Escape" && this.idx !== -1) {
         e.preventDefault();
         e.stopPropagation();
-        this.restoreDraft(input);
+        this.restoreDraft();
+        return;
+      }
+
+      if (this.escapeStops(e)) {
         return;
       }
 
@@ -568,14 +786,15 @@ export function setSendState(next: SendState): void {
 
 /** `staged` tracks the pill row for `isSendable`. It is injected because importing
  *  attachments.ts here would close an import cycle. `onEditLast` answers Ctrl/Cmd+Up in an empty
- *  composer. */
+ *  composer. Without `dictation`, Send never becomes the microphone. */
 export function initPromptInput(
   onSubmit: Submit,
   onCancel: Cancel,
   staged: Staged = signal(false),
   onEditLast: EditLast = () => undefined,
+  dictation: Dictation = NO_DICTATION,
 ): void {
-  instance.init(onSubmit, onCancel, staged, onEditLast);
+  instance.init(onSubmit, onCancel, staged, onEditLast, dictation);
 }
 
 /** Send the composer's contents: the keyboard shortcut's entry point, and the same path Enter

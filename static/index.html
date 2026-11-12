@@ -825,6 +825,19 @@
                   <p class="section-hint" id="trigger-max-launches-per-hour-hint">How many runs forge events may start in any hour, across every workflow, from 1 to 100. An event past the limit waits for the hour to make room. 6 by default.</p>
                 </div>
               </div>
+              <div class="section-option">
+                <label class="toggle">
+                  <input type="checkbox" id="flag-chat-messaging" aria-label="Messages between chats" aria-describedby="flag-chat-messaging-hint">
+                  <span class="toggle-slider"></span>
+                </label>
+                <div>
+                  <div class="section-title-status-row">
+                    <span class="section-option-label">Messages between chats</span>
+                    <span class="settings-save-status hidden" data-save-status="chat_messaging_enabled" aria-live="polite"></span>
+                  </div>
+                  <p class="section-hint" id="flag-chat-messaging-hint">On: the agent in one chat can message another chat, for example to say an API changed, and that chat's agent replies; sending needs Workflows on and a mode other than Plan, Autonomous, Spec, Quick Spec or Bug Fix. Turn it on when your chats work on related tasks; off by default.</p>
+                </div>
+              </div>
               <div class="section-option section-option-fixed">
                 <div class="section-field">
                   <div class="section-title-status-row">

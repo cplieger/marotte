@@ -90,6 +90,7 @@ import { makeExpandable } from "./pill-expand.js";
 import { initContextCard } from "./context-card.js";
 import { loadAccountUsage } from "./account-usage.js";
 import { initPromptInput, sendComposer } from "./prompt-input.js";
+import { browserSpeechPlatform, createDictation } from "./dictation.js";
 import { rewindLatest } from "./typed-commands.js";
 import { initComposerState } from "./composer-state.js";
 import { initSlashMenu } from "./slash-menu.js";
@@ -472,6 +473,7 @@ function setupInput(): void {
         rewindLatest(getActiveId());
       }
     },
+    createDictation(browserSpeechPlatform(), $.promptInput),
   );
 
   initNewChatControl($.newChatBtn, () => {

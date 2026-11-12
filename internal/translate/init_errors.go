@@ -12,7 +12,8 @@ import (
 )
 
 // HandleAgentNotFound handles _kiro/customAgent/not_found: the requested agent (a mode id on
-// v3) does not exist. It persists the fallback mode ("vibe") and broadcasts a typed error.
+// v3) does not exist. It persists the fallback mode ("vibe") and broadcasts a typed error. On a Bot it does neither:
+// the session door's re-assert fails the generation with the Bot's own message, and the record keeps the role.
 func (t *Translator) HandleAgentNotFound(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[struct {
 		Requested string `json:"requestedAgent"`
@@ -21,13 +22,14 @@ func (t *Translator) HandleAgentNotFound(ctx context.Context, chatID marotte.Cha
 	if !ok {
 		return
 	}
-	if p.Fallback != "" && chatID != "" {
+	var bot bool
+	if chatID != "" {
 		_, err := t.chats.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
 			if !ex {
 				return false
 			}
-			c.CurrentModeID = p.Fallback
-			return true
+			bot = c.IsStartedBot()
+			return p.Fallback != "" && c.AdoptMode(p.Fallback)
 		})
 		if errors.Is(err, chat.ErrTombstoned) {
 			return
@@ -35,6 +37,9 @@ func (t *Translator) HandleAgentNotFound(ctx context.Context, chatID marotte.Cha
 		if err != nil {
 			slog.Error("agent_not_found: persist fallback", "error", err)
 		}
+	}
+	if bot {
+		return
 	}
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
 		Code:    marotte.ErrCodeAgentNotFound,

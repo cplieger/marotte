@@ -20,7 +20,7 @@ export type EngineState = "starting" | "ready" | "restarting" | "down";
 
 export type EntryKind = "turn_open" | "turn_bind" | "turn_wake" | "run_named" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "steer_cleared" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "turn_revert" | "context_reset" | "reconciled" | "turn_close" | "step_graded";
 
-export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed" | "resume_not_sent";
+export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "memory_not_loaded" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed" | "resume_not_sent";
 
 export type FailureKind = "context_limit" | "model_call_limit" | "empty_answer";
 
@@ -78,7 +78,7 @@ export type RunEntryState = "pending" | "paused" | "held" | "starting" | "runnin
 
 export type RunNodeStatus = "pending" | "running" | "paused" | "completed" | "failed" | "aborted" | "skipped";
 
-export type RunProgressKind = "node_start" | "node_complete" | "node_paused" | "loop_iteration" | "watch_poll" | "paused" | "steps_queued";
+export type RunProgressKind = "node_start" | "node_complete" | "node_paused" | "loop_iteration" | "watch_poll" | "paused" | "steps_queued" | "silence";
 
 export type RunStandingKind = "step" | "watch" | "pass_limit";
 
@@ -877,12 +877,13 @@ export interface EffectiveSettings {
  * SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
  * unattended run's permission ask at its deadline and is fail-closed by
  * decision. DebugLogs raises the log level. All three default off.
- * SpecPlanningAskFirst and SteeringReminders default off, matching kiro-cli.
+ * SpecPlanningAskFirst, SteeringReminders and ChatMessaging default off, matching kiro-cli.
  * WorkflowsEnabled defaults ON (user's choice, where the TUI's default is off).
  */
   spec_planning_ask_first: boolean;
   steering_reminders_enabled: boolean;
   workflows_enabled: boolean;
+  chat_messaging_enabled: boolean;
   supervised_default: boolean;
   scheduled_auto_approve: boolean;
   debug_logs: boolean;

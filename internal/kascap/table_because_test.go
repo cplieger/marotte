@@ -199,6 +199,22 @@ gates what the AGENT can reach: KAS's workflowsGatedOn hides the run tool,
 the chat workflow tools and the steering doc, while _kiro/workflow/new reads
 no workflowsEnabled, so marotte's own run surfaces work either way. An
 observer pass resolves no setting and sends false.`,
+	"setting-object.sessionTools": `SENT on both session doors as {"messaging": {"enabled": bool}}, the
+Messages between chats setting (chat_messaging_enabled, default off, kiro-cli's
+own sessionToolsMessaging default). KAS's session-tools reader takes
+settings.sessionTools and reads each switch's .enabled as a boolean, a
+non-boolean being malformed and dropped. With it on, the agent's send_message
+can target another session as a peer. A chat gets send_message only inside
+workflowChatTools, pushed while workflowsGatedOn holds: workflowsEnabled on and
+a mode other than plan, autonomous, spec, quick-spec or bug-fix. Receiving
+reads only the target's messaging flag; KAS authorizes that only when the
+workspace is trusted, both sessions have messaging on, the target is not a
+workflow step and the two sessions' workspace paths overlap, so every chat door
+carries it. The delivered message is a _kiro/session/notify with sender peer,
+which marotte renders as the From and To rows. Always present because on load a
+stated value replaces the persisted sessionMessagingEnabled
+(saveSessionMessaging) while an absent one leaves it in force, so withholding
+off would leave a chat once opened with it on still reachable.`,
 	"setting.backgroundExecution": `SENT {"enabled": true} on both session doors, so every session marotte
 creates (chat, run host, observer) and every workflow step (KAS copies the
 parent's resolved value into run state) uses KAS's control_process class: a start
@@ -459,6 +475,15 @@ a checkpoint card the dock already draws.
 Both spec capabilities are sent together for the reason they were
 withheld together: they are two thirds of one spec-mode prompt arm, and
 neither is a security decision.`,
+	"object-list.customAgents": `customAgents registers client custom agents in the one session that sends them
+(validateAndConvertClientCustomAgents, then the session registry's client scope): a Bot's chat
+carries its role, marotte-bot, built by internal/bot from the chat record, and every other session
+sends no key. Both doors: session/load rebuilds the session's registry from that call's list, so a
+load without it cannot resolve the restored marotte-bot mode, falls back to vibe and queues
+_kiro/customAgent/not_found, and an edited role reaches KAS only on the next door. A session agent
+rather than a file under agents/: a file agent would be listed in every chat's mode pill and in
+kiro-cli's TUI, and would be a second copy of the record. KAS drops an invalid entry with only a log
+line, so a malformed role shows as that same not_found fallback.`,
 	"enum-list.policyPreset": `policyPreset restores the fs_read floor that KAS grants a bundled mode
 and denies a custom one, which kiro-cli 2.19.1 turned from a latent asymmetry
 into a silent capability loss.

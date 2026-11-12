@@ -2,9 +2,10 @@
 // keeps from KAS's `available_commands_update` (already narrowed to what KAS resolves before the
 // model: saved prompts, steering docs, /goal) beside marotte's own verbs.
 
-import { el, signal } from "@cplieger/reactive";
+import { computed, effect, el, signal, touch, untracked } from "@cplieger/reactive";
 import { ask } from "./legacy-ui/ask.js";
 import { apiGetTyped } from "./api-client.js";
+import { stagedAttachment } from "./attachments.js";
 import { onBus, onSSE, BUS_RECONCILE } from "./bus.js";
 import { $ } from "./dom.js";
 import { setComposerValue } from "./composer-value.js";
@@ -13,10 +14,11 @@ import type { HashQuery, MentionProvider } from "./context-mentions.js";
 import { itemsFor, resetMentionSources } from "./context-sources.js";
 import type { MentionItem } from "./context-sources.js";
 import { join as joinKey } from "@cplieger/keyenc";
-import { getActiveId, isBusy } from "./store.js";
+import { get, getActiveId, sessionBusy, watchActiveId, watchBusy, watchSession } from "./store.js";
 import { chatNotice, subjectName } from "./notice-subject.js";
 import { MAROTTE_COMMANDS } from "./typed-commands.js";
 import { decodeSlashCommandsResponse } from "./wire/decoders.gen.js";
+import type { Session } from "./types.js";
 import type { SlashCommand, SlashCommandKind } from "./wire/types.gen.js";
 
 /** One menu row. `kind` is `marotte` for a verb typed-commands.ts handles. */
@@ -27,8 +29,9 @@ interface MenuEntry {
   readonly hint: string;
 }
 
-/** Why a server-resolved row is greyed while a turn runs. */
-export const BUSY_REASON = "Runs as a new turn, available when the agent is idle";
+/** Why a server-resolved row is greyed while a send would steer. */
+export const BUSY_REASON =
+  "A steer cannot run this. Send it when the turn ends, or turn on Queue messages";
 
 const catalog = signal<readonly SlashCommand[]>([]);
 
@@ -93,12 +96,13 @@ export function matchEntries(query: string, entries: readonly MenuEntry[]): Menu
   return [...prefix, ...inner];
 }
 
-/** A server-resolved row is a prompt-path command, so a steer cannot carry it. */
-export function entryEnabled(entry: MenuEntry, thinking: boolean): boolean {
-  return entry.kind === "marotte" || !thinking;
+/** A server-resolved row is a prompt-path command, so a steer cannot carry it; a queued row is
+ *  sent as its own prompt, so it can. */
+export function entryEnabled(entry: MenuEntry, steers: boolean): boolean {
+  return entry.kind === "marotte" || !steers;
 }
 
-/** Whether `text` invokes a catalog command, which submit.ts holds mid-turn. Before a catalog
+/** Whether `text` invokes a catalog command, which a steer cannot carry. Before a catalog
  *  has loaded, any command-shaped name that is not a marotte verb counts, so a saved prompt is
  *  never steered as prose. */
 export function invokesCatalogCommand(text: string): boolean {
@@ -151,15 +155,17 @@ function close(): void {
   $.promptInput.removeAttribute("aria-activedescendant");
 }
 
-function thinkingNow(): boolean {
-  const id = getActiveId();
-  return id !== "" && isBusy(id);
+/** Whether a send from the composer would steer the chat's running turn. `run.send` is the
+ *  server's verb for a plain send; a staged file makes the send labelled, which never steers. */
+function steers(s: Session | undefined, attached: boolean): boolean {
+  return !attached && s !== undefined && sessionBusy(s) && s.run?.send === "steer";
 }
 
 function slashRows(query: string): Row[] {
-  const thinking = thinkingNow();
+  const id = getActiveId();
+  const steering = id !== "" && steers(get(id), stagedAttachment.peek());
   return matchEntries(query, menuEntries(catalog.value)).map((e) => {
-    const enabled = entryEnabled(e, thinking);
+    const enabled = entryEnabled(e, steering);
     return {
       name: `/${e.name}`,
       hint: e.hint,
@@ -446,6 +452,8 @@ function onKeydown(ev: KeyboardEvent): void {
   ev.stopImmediatePropagation();
 }
 
+let stopVerbRender: (() => void) | null = null;
+
 /** Wire the menu to the composer and keep the catalog fresh. `openPicker` is what the Attach
  *  file provider row opens. */
 export function initSlashMenu(openPicker: () => void): void {
@@ -459,6 +467,22 @@ export function initSlashMenu(openPicker: () => void): void {
     render();
   });
   input.addEventListener("blur", close);
+  // An open `/` menu greys its catalog rows by the chat's send verb, so a turn ending, a mode
+  // switch, a staged file or a new catalog re-renders it; else a greyed row ignores taps until the
+  // next keystroke.
+  const steering = computed(() => {
+    const id = watchActiveId();
+    return id !== "" && watchBusy(id) && steers(watchSession(id), stagedAttachment.value);
+  });
+  stopVerbRender?.();
+  stopVerbRender = effect(() => {
+    touch(steering, catalog);
+    untracked(() => {
+      if (isOpen() && slashQuery(input.value, input.selectionStart) !== null) {
+        render();
+      }
+    });
+  });
   onSSE("mcp_pool_changed", () => {
     mcpGen++;
     refreshMcpRows();
@@ -478,4 +502,11 @@ export function _setCatalogForTest(commands: readonly SlashCommand[]): void {
 export function _resetCatalogForTest(): void {
   catalog.value = [];
   catalogReady = false;
+}
+
+/** Stop the re-render effect `initSlashMenu` starts, before a test removes the menu it reads. */
+// deadset:ignore DS1102 -- test seam: stops the open menu's re-render effect
+export function _stopSlashMenuForTest(): void {
+  stopVerbRender?.();
+  stopVerbRender = null;
 }

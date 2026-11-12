@@ -1988,3 +1988,64 @@ describe("planToExec, the Run form's preview", () => {
     }
   });
 });
+
+// The server flags a running run whose open step turns sent nothing for an hour; the run keeps running.
+describe("a silent step", () => {
+  const silentTree = (status: string, extra: Record<string, unknown>) =>
+    stateWith(
+      {
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "running",
+        children: [step("build", "running"), step("test", "completed"), step("ship", "pending")],
+      },
+      { status, ...extra },
+    );
+
+  it("marks only the steps in flight of a flagged running run", () => {
+    const run = runToExec(
+      silentTree("running", { silentSince: "2026-11-12T00:00:00Z" }),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.nodes.map((n) => n.silence)).toEqual([
+      "No activity for 1 hour",
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("marks a running step of a flagged run but not the running watch beside it", () => {
+    const run = runToExec(
+      stateWith(
+        {
+          nodeId: "wf_1",
+          type: "sequence",
+          status: "running",
+          children: [
+            step("build", "running"),
+            { nodeId: "mail", type: "watch", status: "running", children: [] },
+          ],
+        },
+        { status: "running", silentSince: "2026-11-12T00:00:00Z" },
+      ),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.nodes.map((n) => n.silence)).toEqual(["No activity for 1 hour", undefined]);
+  });
+
+  it("marks nothing on a run with no flag", () => {
+    const run = runToExec(silentTree("running", {}), undefined, NO_ASKS);
+    expect(run.nodes.map((n) => n.silence)).toEqual([undefined, undefined, undefined]);
+  });
+
+  it("marks nothing once the run is no longer running", () => {
+    const run = runToExec(
+      silentTree("paused", { silentSince: "2026-11-12T00:00:00Z" }),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.nodes.map((n) => n.silence)).toEqual([undefined, undefined, undefined]);
+  });
+});

@@ -168,8 +168,8 @@ type RunVerdict = "completed" | "failed" | "aborted";
  * `aborted` for both; this is where the difference is stated.
  */
 const END_REASON_TEXT: Readonly<Record<string, string>> = {
-  overran: "stopped: it ran past its time limit",
-  stalled: "stopped: no activity and no live shell within its idle window",
+  overran: "stopped: its recipe's next scheduled slot came due",
+  stalled: "stopped: it showed no activity for too long",
   orphaned: "stopped: the server restarted while it was running",
   unattended: "stopped: it paused with nobody to resume it",
 };

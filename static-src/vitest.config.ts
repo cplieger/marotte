@@ -6,6 +6,7 @@
 // (`attention-no-dom.node.test.ts` asserts its premise). `*.fuzz.test.ts` is ts-ci's fuzz axis. `channel: "chromium"` is the real
 // browser, not headless-shell: `npx playwright install --with-deps chromium`.
 import { configDefaults, defineConfig, type TestProjectInlineConfiguration } from "vitest/config";
+import type { BrowserCommand } from "vitest/node";
 import { playwright } from "@vitest/browser-playwright";
 import type { CDPSession } from "playwright";
 import { msw } from "msw/vite";
@@ -32,6 +33,11 @@ const sharedExclude = [
 const traceView = process.env["VITEST_TRACE"] === "1";
 
 const dprSessions = new WeakMap<object, { cdp: CDPSession; initialDpr: number }>();
+
+/** A real tap through Playwright's touchscreen, which every engine implements, unlike CDP input. */
+const tapCommand: BrowserCommand<[selector: string]> = async ({ iframe }, selector) => {
+  await iframe.locator(selector).tap();
+};
 
 // A test needing a coarse pointer is `*.touch.test.ts` and runs in `browser-touch`, whose pages are
 // touch devices from creation: touch emulation switched off inside a page leaves headless Chromium
@@ -78,6 +84,7 @@ function browserProject(
         // `commands` is a `test.browser` option and NOT a `test` option; the
         // two nest one line apart and the wrong one type-checks nowhere.
         commands: {
+          tap: tapCommand,
           /** Emulate the two accessibility media features this app has arms for, per page and per test:
            *  the provider's `contextOptions` is project-global and would invert the `tab-dot.test.ts` family.
            *  Playwright's typed `emulateMedia` rather than `cdp()`, whose `CDPSession` is typed empty; one
@@ -214,6 +221,10 @@ const engineInstances = (
   provider: playwright({ contextOptions: { deviceScaleFactor: dpr, hasTouch: touch } }),
 }));
 
+/** The touch files whose taps go through `tap` rather than CDP, run again in WebKit on a phone's
+ *  viewport. Opt-in (`TOUCH_ENGINES=1`): it needs `npx playwright install webkit`, which CI does not. */
+const touchEngineFiles = ["slash-menu.touch.test.ts"];
+
 export default defineConfig({
   // Serves the MSW worker script from the package for the browser tests that mock the network;
   // each such test starts its own worker.
@@ -303,6 +314,28 @@ export default defineConfig({
                   screenshotFailures: false,
                   provider: playwright(),
                   instances: engineInstances,
+                },
+              },
+            } satisfies TestProjectInlineConfiguration,
+          ]
+        : []),
+      ...(process.env["TOUCH_ENGINES"] === "1"
+        ? [
+            {
+              extends: true,
+              test: {
+                name: "browser-touch-webkit",
+                include: touchEngineFiles,
+                exclude: sharedExclude,
+                setupFiles: ["./ro-loop-gate.ts", "./storage-reset-setup.ts"],
+                browser: {
+                  enabled: true,
+                  headless: true,
+                  screenshotFailures: false,
+                  provider: playwright({ contextOptions: { hasTouch: true } }),
+                  instances: [{ browser: "webkit" }],
+                  viewport: { width: 390, height: 844 },
+                  commands: { tap: tapCommand },
                 },
               },
             } satisfies TestProjectInlineConfiguration,

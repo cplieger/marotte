@@ -13,7 +13,7 @@ const DECISION_KINDS = ["permission", "elicitation", "user_input"] as const;
 const DENIAL_BASISS = ["unparseable", "cedar-unavailable", "not-loaded", "permissions-invalid"] as const;
 const ENGINE_STATES = ["starting", "ready", "restarting", "down"] as const;
 const ENTRY_KINDS = ["turn_open", "turn_bind", "turn_wake", "run_named", "text", "thinking", "tool_call", "tool_result", "steer", "steer_ack", "steer_delivered", "steer_cleared", "plan", "compaction", "compaction_failed", "safety_blocked", "model_switched", "model_routed", "model_fallback", "mode_switched", "turn_revert", "context_reset", "reconciled", "turn_close", "step_graded"] as const;
-const ERROR_CODES = ["recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "agent_config_error", "rate_limit", "switch_failed", "compaction_failed", "mode_not_applied", "supervised_not_applied", "model_not_served", "auth_token_unavailable", "tangent_merge_failed", "resume_not_sent"] as const;
+const ERROR_CODES = ["recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "agent_config_error", "rate_limit", "switch_failed", "compaction_failed", "mode_not_applied", "supervised_not_applied", "memory_not_loaded", "model_not_served", "auth_token_unavailable", "tangent_merge_failed", "resume_not_sent"] as const;
 const FAILURE_KINDS = ["context_limit", "model_call_limit", "empty_answer"] as const;
 const FILE_MATCH_KINDS = ["content", "name", "dir"] as const;
 const FORGE_STATUSS = ["connected", "retrying", "refused", "reconnect", "unusable"] as const;
@@ -39,7 +39,7 @@ const RUN_ASK_TEXTS = ["asked", "last_message", "unseen"] as const;
 const RUN_ENTRY_KINDS = ["turn", "row", "unread", "retry", "compaction", "revert", "resume"] as const;
 const RUN_ENTRY_ORIGINS = ["prompt", "queue", "tangent", "summary", "unread", "retry", "wire", "run", "carried", "request", "threshold", "turn_end", "context_limit", "rewind", "failsafe"] as const;
 const RUN_ENTRY_STATES = ["pending", "paused", "held", "starting", "running", "stopping", "closing"] as const;
-const RUN_PROGRESS_KINDS = ["node_start", "node_complete", "node_paused", "loop_iteration", "watch_poll", "paused", "steps_queued"] as const;
+const RUN_PROGRESS_KINDS = ["node_start", "node_complete", "node_paused", "loop_iteration", "watch_poll", "paused", "steps_queued", "silence"] as const;
 const RUN_STANDING_KINDS = ["step", "watch", "pass_limit"] as const;
 const RUN_STATUSS = ["running", "paused", "completed", "failed", "aborted", "cancelled"] as const;
 const RUN_STEP_END_STATUSS = ["completed", "failed"] as const;
@@ -734,6 +734,7 @@ export const decodeEffectiveSettings: Decoder<EffectiveSettings> = (v) => {
     spec_planning_ask_first: reqBool(o, "spec_planning_ask_first", "$.effective_settings"),
     steering_reminders_enabled: reqBool(o, "steering_reminders_enabled", "$.effective_settings"),
     workflows_enabled: reqBool(o, "workflows_enabled", "$.effective_settings"),
+    chat_messaging_enabled: reqBool(o, "chat_messaging_enabled", "$.effective_settings"),
     supervised_default: reqBool(o, "supervised_default", "$.effective_settings"),
     scheduled_auto_approve: reqBool(o, "scheduled_auto_approve", "$.effective_settings"),
     debug_logs: reqBool(o, "debug_logs", "$.effective_settings"),

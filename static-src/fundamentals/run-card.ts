@@ -358,6 +358,9 @@ export function buildRunCard(
     if (node.interruption !== undefined) {
       bits.push(truncate(node.interruption, 80));
     }
+    if (node.silence !== undefined) {
+      bits.push(node.silence);
+    }
     row.meta.textContent = bits.join(" \u00b7 ");
 
     const ms = elapsed(node.start, node.end);

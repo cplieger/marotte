@@ -49,6 +49,8 @@ func TestValidateAgentPatch_RefusesValuesTheUICannotProduce(t *testing.T) {
 		{name: "reminders null", key: KeySteeringReminders, raw: `null`, wantErr: true},
 		{name: "workflows off", key: KeyWorkflowsEnabled, raw: `false`},
 		{name: "workflows string", key: KeyWorkflowsEnabled, raw: `"off"`, wantErr: true},
+		{name: "chat messaging on", key: KeyChatMessaging, raw: `true`},
+		{name: "chat messaging string", key: KeyChatMessaging, raw: `"on"`, wantErr: true},
 		{name: "model fallback on", key: KeyModelFallback, raw: `true`},
 		{name: "model fallback string", key: KeyModelFallback, raw: `"on"`, wantErr: true},
 		{name: "workflow use when asked", key: KeyWorkflowLaunch, raw: `"when-asked"`},
@@ -111,6 +113,10 @@ func TestEffective_AgentCapabilityDefaultsAreKiroCLIs(t *testing.T) {
 	// Workflows is the one departure from kiro-cli: on, by the user's choice.
 	if !DefaultWorkflowsEnabled {
 		t.Error("DefaultWorkflowsEnabled = false, want true")
+	}
+	// kiro-cli's sessionToolsMessaging defaults off, and the user kept it off.
+	if d := EffectiveDefaults(); d.ChatMessaging {
+		t.Error("EffectiveDefaults().ChatMessaging = true, want false")
 	}
 	// kiro-cli ships the refusal and availability fallback flags off.
 	if defaultModelFallback {

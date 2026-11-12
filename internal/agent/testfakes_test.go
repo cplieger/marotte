@@ -436,6 +436,22 @@ func (b *fakeBridge) PromptAt(ctx context.Context, params any, commit func() err
 	return resp, b.seqNow(), err
 }
 
+// paramsMap is a call's params as the wire carries them: a typed params struct is read back through its JSON.
+func paramsMap(params any) (map[string]any, bool) {
+	if p, ok := params.(map[string]any); ok {
+		return p, true
+	}
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return nil, false
+	}
+	var p map[string]any
+	if json.Unmarshal(raw, &p) != nil || p == nil {
+		return nil, false
+	}
+	return p, true
+}
+
 // callScript answers one call from the script, pushing the frames it carries through deliver before returning.
 func (b *fakeBridge) callScript(
 	ctx context.Context, method string, params any, deliver func(*marotte.RPCResponse), commit func() error,
@@ -451,7 +467,7 @@ func (b *fakeBridge) callScript(
 	}
 	b.mu.Lock()
 	b.calls = append(b.calls, method)
-	if p, ok := params.(map[string]any); ok {
+	if p, ok := paramsMap(params); ok {
 		if b.lastParams == nil {
 			b.lastParams = map[string]map[string]any{}
 		}
@@ -475,6 +491,9 @@ func (b *fakeBridge) callScript(
 		// KAS lists no runs as an empty array; a reply without one is a partial list (errRunListPartial).
 		res = json.RawMessage(`{"runs":[]}`)
 	}
+	if method == marotte.MethodSessionContext {
+		res = json.RawMessage(`{"success":true}`)
+	}
 	if r, ok := b.callResults[method]; ok {
 		res = r
 	}
@@ -487,7 +506,7 @@ func (b *fakeBridge) callScript(
 	refusal := b.refuseAfterCall[method]
 	failure := b.failAfterCall[method]
 	b.mu.Unlock()
-	p, _ := params.(map[string]any)
+	p, _ := paramsMap(params)
 	if hook != nil {
 		if r, hooked, ok := hook(method, p); ok {
 			res, frames = r, hooked

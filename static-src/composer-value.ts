@@ -4,27 +4,71 @@
 
 import { signal, type ReadonlySignal } from "@cplieger/reactive";
 import { $ } from "./dom.js";
+import { applyEdit } from "./text-edit.js";
 
 const text = signal("");
 
+let beforeWrite: () => void = () => undefined;
+
+/** `fn` runs ahead of every programmatic write but `restoreComposerDraft`; one hook, the last registration wins. */
+export function onComposerWrite(fn: () => void): void {
+  beforeWrite = fn;
+}
+
 /** The composer's text, current after every write as long as each writer goes through this module: an `input`
- *  event reaches `syncComposerText` through the listener prompt-input.ts wires, and `writeComposerSilently` syncs
- *  itself. A bare `.value` assignment leaves it stale. */
+ *  event reaches `syncComposerText` through the listener prompt-input.ts wires, and `write` syncs the silent ones.
+ *  A bare `.value` assignment leaves it stale. */
 export const composerText: ReadonlySignal<string> = text;
+
+/** Every programmatic write of the box. `announce` fires a bubbling `input` event, as a keystroke does; `recall`
+ *  writes one undo step with none; `restore` is no edit, so the write hook does not run. */
+function write(v: string, how: "announce" | "silent" | "recall" | "restore"): void {
+  if (how !== "restore") {
+    beforeWrite();
+  }
+  const box = $.promptInput;
+  switch (how) {
+    case "announce":
+      box.value = v;
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+      return;
+    case "silent":
+    case "restore":
+      box.value = v;
+      break;
+    case "recall":
+      applyEdit(
+        box,
+        { start: 0, end: box.value.length, text: v, caret: v.length },
+        { silent: true },
+      );
+      break;
+  }
+  syncComposerText();
+}
 
 /** Write the composer's value and announce it, so every listener on the box
  *  sees the change whoever made it. */
 export function setComposerValue(v: string): void {
-  const input = $.promptInput;
-  input.value = v;
-  input.dispatchEvent(new Event("input", { bubbles: true }));
+  write(v, "announce");
 }
 
-/** Write the composer's value with no `input` event: the draft layer's own restores and seeds, which must not be
- *  recorded as typing. */
+/** Write the composer's value with no `input` event, so it is not recorded as typing: another chat's draft, an
+ *  adopted or remote draft, a failed send put back, a cleared box. The write hook runs. */
 export function writeComposerSilently(v: string): void {
-  $.promptInput.value = v;
-  syncComposerText();
+  write(v, "silent");
+}
+
+/** Put the chat the box was parked from back on screen with its own draft, with no `input` event: the reader comes
+ *  back to the text they left, so nothing in the box was edited. */
+export function restoreComposerDraft(v: string): void {
+  write(v, "restore");
+}
+
+/** Show `v` in the box as one undo step with no `input` event: history recall is navigation, so the draft layer
+ *  must not record a recalled prompt as typing, and Ctrl+Z takes it back. */
+export function recallComposerValue(v: string): void {
+  write(v, "recall");
 }
 
 /** Re-read the box into `composerText`. */

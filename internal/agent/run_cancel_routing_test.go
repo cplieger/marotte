@@ -406,7 +406,7 @@ func TestCancelUnretriedMessage_IsGreppable(t *testing.T) {
 		}
 	}
 	for _, other := range []string{
-		logMsgRunStalled, logMsgRunBackstop, logMsgRunOrphaned, logMsgRunYieldedToSlot,
+		logMsgRunStalled, logMsgRunOrphaned, logMsgRunYieldedToSlot,
 	} {
 		if logMsgCancelUnretried == other {
 			t.Errorf("logMsgCancelUnretried duplicates %q, so a rule reading one would "+

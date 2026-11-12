@@ -48,6 +48,8 @@ export interface ExecNode {
   /** What an engine end did to the step's newest turn: "Interrupted, resumed", or "Interrupted: <reason>" while
    *  nothing has resumed it. Never a failure. */
   interruption?: string;
+  /** On a step still in flight whose turn has sent nothing for an hour: the source's sentence saying so. */
+  silence?: string;
   /** Set on a step that finished because a person or its parent ended it, not its own turn: it reads succeeded. */
   endedByHand?: true;
   /** What the node produced, as markdown. */

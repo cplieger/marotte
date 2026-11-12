@@ -186,7 +186,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 	t.Run("a wire turn before a taken compaction is written", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		entered, releaseStart := make(chan struct{}), make(chan struct{})
-		withCompactionStartHook(t, func(marotte.ChatID) {
+		withCompactionStartHook(t, h, func(marotte.ChatID) {
 			close(entered)
 			<-releaseStart
 		})
