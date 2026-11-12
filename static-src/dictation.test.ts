@@ -284,7 +284,20 @@ describe("listening and results (rule 3)", () => {
     speech.last().finish();
     expect(d.listening.value).toBe(false);
     expect(d.ready.value).toBe(true);
-    expect(toastTexts()).toEqual(["Dictation stopped: the speech service did not answer."]);
+    expect(toastTexts()).toEqual(["Dictation stopped: the speech service stopped responding."]);
+  });
+
+  it("ends on any other engine error and says so, staying available", async () => {
+    const speech = onDevice();
+    const d = createDictation(speech.platform, box);
+    await listen(speech, d);
+    speech.last().fail("bad-grammar");
+    speech.last().finish();
+    expect(d.listening.value).toBe(false);
+    expect(d.ready.value).toBe(true);
+    expect(toastTexts()).toEqual([
+      "Dictation stopped: the browser reported a speech recognition error.",
+    ]);
   });
 
   it("turns off for the page on a network error before any result (Brave)", async () => {
@@ -312,7 +325,7 @@ describe("listening and results (rule 3)", () => {
     speech.last().fail("network");
     speech.last().finish();
     expect(d.ready.value).toBe(true);
-    expect(toastTexts()).toEqual(["Dictation stopped: the speech service did not answer."]);
+    expect(toastTexts()).toEqual(["Dictation stopped: the speech service stopped responding."]);
   });
 
   it("starts a fresh recognizer on the next press", async () => {

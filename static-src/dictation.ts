@@ -482,8 +482,10 @@ class Controller implements Dictation {
       // A service that never answered (Brave: https://github.com/brave/brave-browser/issues/2802) never will.
       if (typeof code === "string" && isRefused(code) && !(code === "network" && this.answered)) {
         this.refuse(code);
+      } else if (code === "network") {
+        errorToast("Dictation stopped: the speech service stopped responding.");
       } else {
-        errorToast("Dictation stopped: the speech service did not answer.");
+        errorToast("Dictation stopped: the browser reported a speech recognition error.");
       }
       this.halt(s);
     });

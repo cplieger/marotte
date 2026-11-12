@@ -10,8 +10,7 @@ const text = signal("");
 
 let beforeWrite: () => void = () => undefined;
 
-/** `fn` runs ahead of every programmatic write that edits the box, every one but `restoreComposerDraft`; one hook,
- *  the last registration wins. */
+/** `fn` runs ahead of every programmatic write but `restoreComposerDraft`; one hook, the last registration wins. */
 export function onComposerWrite(fn: () => void): void {
   beforeWrite = fn;
 }
@@ -54,8 +53,8 @@ export function setComposerValue(v: string): void {
   write(v, "announce");
 }
 
-/** Write the composer's value with no `input` event: the draft layer's own restores and seeds, which must not be
- *  recorded as typing. */
+/** Write the composer's value with no `input` event, so it is not recorded as typing: another chat's draft, an
+ *  adopted or remote draft, a failed send put back, a cleared box. The write hook runs. */
 export function writeComposerSilently(v: string): void {
   write(v, "silent");
 }
