@@ -28,6 +28,8 @@ type Presence struct {
 // A row is created by whichever feed arrives first, since the first acknowledgement can race the
 // hook's connected.
 type presenceRow struct {
+	// pages are the tag's page views (pages.go), cleared whenever the tag is judged gone.
+	pages       map[string]*pageRow
 	lastAliveAt time.Time
 	// leftAt is when connected last fell to zero; the zero time while the tag has
 	// a connection, or has never had one.
@@ -178,6 +180,9 @@ func (p *Presence) judge(row *presenceRow, now time.Time) bool {
 	left := row.connected == 0 &&
 		(row.leftAt.IsZero() || now.Sub(row.leftAt) >= liveness.ReconnectDelay)
 	gone := silent || left
+	if gone {
+		row.pages = nil
+	}
 	if gone == row.gone {
 		return gone
 	}

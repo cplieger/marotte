@@ -21,7 +21,11 @@ func (s *Service) Raise(_ context.Context, chatID marotte.ChatID, n *marotte.Not
 }
 
 // View records one page's view report under its profile's tag.
-func (*Service) View(string, marotte.PageView) {}
+func (s *Service) View(tag string, v marotte.PageView) {
+	if s.presence != nil {
+		s.presence.View(tag, v)
+	}
+}
 
 // Shown ends the notice id on tag: a page of that profile showed it.
 func (*Service) Shown(string, string) {}
