@@ -19,6 +19,7 @@ import { initClockSetting } from "./clock-setting.js";
 import { initPageTitleFit } from "./page-title.js";
 import { initRolePicker } from "./role-picker.js";
 import * as sse from "./sse-adapter.js";
+import { installMirrors } from "./mirror.js";
 import { initUI, renderIdentity } from "./settings.js";
 import { initPostAuth, onTransportStatus, startBoot } from "./boot.js";
 import { resolveIdentity } from "./identity.js";
@@ -224,6 +225,7 @@ function init(): void {
   onBus(BUS_RECONCILE, ({ signal }) => {
     void listTabs(signal);
   });
+  installMirrors();
 
   sse.init((evt: ServerEvent) => {
     dispatch(evt);

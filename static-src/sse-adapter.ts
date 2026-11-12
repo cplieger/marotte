@@ -21,6 +21,7 @@ import {
 import { registerCleanup } from "./actions/index.js";
 import { BUS_PAGE_RESUMED, BUS_RECONCILE, decodeEnvelope, emitBus } from "./bus.js";
 import { inventoryHeld } from "./git-prs-state.js";
+import { isMirrorKind } from "./mirror.js";
 import { peekRunState, rebuildLiveRuns, rereadHeldRuns, runTurnHeldSeq } from "./run-store.js";
 import { requestRunTurnRange } from "./run-turn-range.js";
 import { setSSEStatus } from "./send-state.js";
@@ -185,8 +186,12 @@ function deliver(evt: ServerEvent): void {
   }
 }
 
-/** Whether this client holds the projection a stamp certifies. */
+/** Whether this client holds the projection a stamp certifies. A mirror observes its own
+ *  subject's stamps, after it applied the frame, so a frame it refused records nothing. */
 function projectionHeld(stamp: SubjectStamp): boolean {
+  if (isMirrorKind(stamp.kind)) {
+    return false;
+  }
   switch (stamp.kind) {
     case "chat":
       return get(stamp.ref)?.residency === "loaded";
