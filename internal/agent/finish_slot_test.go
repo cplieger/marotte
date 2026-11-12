@@ -8,14 +8,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// newFinishHub is a withhold hub whose chat c1 has a record, so a parked finish is released rather than dropped.
-func newFinishHub(t *testing.T) (*Runtime, *runOutcomePush) {
-	t.Helper()
-	h, fp := newWithholdHub(t)
-	h.chatStore.(*testChatStore).seed(t, "c1", nil)
-	return h, fp
-}
-
 // openTurn gives c1 an open turn of its own, the turn a close parks its finish behind; the returned func closes it.
 func openTurn(t *testing.T, h *Runtime) (closeIt func()) {
 	t.Helper()
@@ -50,7 +42,7 @@ func settleAsk(t *testing.T, h *Runtime, acpID int64) {
 }
 
 func TestPushTurnOutcome_ParksTheFinishWhileATurnIsOpen(t *testing.T) {
-	h, fp := newFinishHub(t)
+	h, fp := newWithholdHub(t)
 	closeB := openTurn(t, h)
 
 	closeClean(t, h, "focus-A")
@@ -65,7 +57,7 @@ func TestPushTurnOutcome_ParksTheFinishWhileATurnIsOpen(t *testing.T) {
 }
 
 func TestPushTurnOutcome_ReleasesItAtTheLastAskSettle(t *testing.T) {
-	h, fp := newFinishHub(t)
+	h, fp := newWithholdHub(t)
 	addPermission(t, h, nil, 1, "")
 	addPermission(t, h, nil, 2, "")
 
@@ -81,7 +73,7 @@ func TestPushTurnOutcome_ReleasesItAtTheLastAskSettle(t *testing.T) {
 }
 
 func TestPushTurnOutcome_DropsItWithTheChat(t *testing.T) {
-	h, fp := newFinishHub(t)
+	h, fp := newWithholdHub(t)
 	addPermission(t, h, nil, 1, "")
 
 	closeClean(t, h, "focus-A")
@@ -94,7 +86,7 @@ func TestPushTurnOutcome_DropsItWithTheChat(t *testing.T) {
 }
 
 func TestPushTurnOutcome_ReleasesItWhenTheBlockingTurnClosesUnderALiveRun(t *testing.T) {
-	h, fp := newFinishHub(t)
+	h, fp := newWithholdHub(t)
 	closeB := openTurn(t, h)
 
 	closeClean(t, h, "focus-A")
@@ -112,7 +104,7 @@ func TestPushTurnOutcome_ReleasesItWhenTheBlockingTurnClosesUnderALiveRun(t *tes
 func TestPushTurnOutcome_DropsItAtTheChatsLastTabClose(t *testing.T) {
 	for name, push := range map[string]bool{"with a push service": true, "with no push service": false} {
 		t.Run(name, func(t *testing.T) {
-			h, fp := newFinishHub(t)
+			h, fp := newWithholdHub(t)
 			closeB := openTurn(t, h)
 			closeClean(t, h, "focus-A")
 
@@ -130,7 +122,7 @@ func TestPushTurnOutcome_DropsItAtTheChatsLastTabClose(t *testing.T) {
 }
 
 func TestPushTurnOutcome_ParksABrokenCloseBehindAnAsk(t *testing.T) {
-	h, fp := newFinishHub(t)
+	h, fp := newWithholdHub(t)
 	addPermission(t, h, nil, 1, "")
 
 	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonError), "")
@@ -143,7 +135,7 @@ func TestPushTurnOutcome_ParksABrokenCloseBehindAnAsk(t *testing.T) {
 }
 
 func TestPushTurnOutcome_ALiveRunDoesNotHoldAParkedFinish(t *testing.T) {
-	h, fp := newFinishHub(t)
+	h, fp := newWithholdHub(t)
 	addPermission(t, h, nil, 1, "")
 	closeClean(t, h, "focus-A")
 	awaitNoPush(t, h, fp, "the chat has a pending ask")
@@ -157,7 +149,7 @@ func TestPushTurnOutcome_ALiveRunDoesNotHoldAParkedFinish(t *testing.T) {
 }
 
 func TestPushTurnOutcome_ARunAskDoesNotHoldThePark(t *testing.T) {
-	h, fp := newFinishHub(t)
+	h, fp := newWithholdHub(t)
 	addPermission(t, h, nil, 1, "wf_1")
 
 	closeClean(t, h, "focus-A")
@@ -168,7 +160,7 @@ func TestPushTurnOutcome_ARunAskDoesNotHoldThePark(t *testing.T) {
 }
 
 func TestPushTurnOutcome_AnAskOnAnotherChatDoesNotPark(t *testing.T) {
-	h, fp := newFinishHub(t)
+	h, fp := newWithholdHub(t)
 	h.bus.pendingPerms.add(1, permNeeded("c2", 0), nil)
 
 	closeClean(t, h, "focus-A")
@@ -179,7 +171,7 @@ func TestPushTurnOutcome_AnAskOnAnotherChatDoesNotPark(t *testing.T) {
 }
 
 func TestPushTurnOutcome_RaisesAtOnceWithNothingOutstanding(t *testing.T) {
-	h, fp := newFinishHub(t)
+	h, fp := newWithholdHub(t)
 
 	closeClean(t, h, "focus-A")
 

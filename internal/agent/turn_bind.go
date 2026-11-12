@@ -70,6 +70,17 @@ func (r *turnRegistry) foldTarget(chatID marotte.ChatID) (*turnlog.Turn, bool) {
 	return lc.own.Log, true
 }
 
+// turnOpen reports whether chatID has a turn no closer has claimed: one owed its bracket or one of its own.
+func (r *turnRegistry) turnOpen(chatID marotte.ChatID) bool {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return false
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return (lc.pending != nil && !lc.pending.finalizing) || (lc.own != nil && !lc.own.finalizing)
+}
+
 func (r *turnRegistry) promptTurn(chatID marotte.ChatID) (*turnlog.Turn, bool) {
 	lc, ok := r.lookup(chatID)
 	if !ok {

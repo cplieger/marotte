@@ -63,7 +63,13 @@ func TestLedger_AckBeforeRaiseEndsTheNoticeAtRaise(t *testing.T) {
 			r.raise(t, finished("c1", "done"), tc.position)
 			r.leave()
 
-			if got := r.pushesTo(epB); len(got) != tc.pushed {
+			var got []marotte.NotificationPayload
+			if tc.pushed > 0 {
+				got = r.awaitPushTo(t, epB)
+			} else {
+				got = r.pushesTo(epB)
+			}
+			if len(got) != tc.pushed {
 				t.Errorf("pushes = %d, want %d", len(got), tc.pushed)
 			}
 		})

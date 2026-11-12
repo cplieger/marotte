@@ -699,6 +699,7 @@ func (m *Membership) closeTab(ctx context.Context, id, opID string, byPerson boo
 		Version:    version,
 		OpID:       opID,
 	})
+	m.noticeClosed(closed)
 	stops := m.releaseForClosed(rollCtx, owed, "", byPerson && m.closeChat != nil)
 	deleted := m.deleteDoomedRecords(rollCtx, doomed)
 	jobs, retentionTabClosed := jobsFor(closed, deleted, holds, stops, byPerson)
@@ -964,6 +965,9 @@ func (m *Membership) ackTab(ctx context.Context, id string, seen uint64, opID st
 	changed, ok := m.subject(id)
 	if version != before && ok {
 		m.emit(ctx, &marotte.TabsChangedPayload{Changed: &changed, Recent: m.recentChange(recent), Version: version, OpID: opID})
+	}
+	if ok && changed.Seen > 0 && m.notices != nil {
+		m.notices.Seen(changed.Kind, changed.Ref, changed.Seen)
 	}
 	return version, changed.Seen, nil
 }
@@ -1508,6 +1512,7 @@ func (m *Membership) closeTabsFor(ctx context.Context, chatID marotte.ChatID, op
 			Version:    version,
 			OpID:       opID,
 		})
+		m.noticeClosed(closed)
 		m.releaseForClosed(ctx, owed, chatID, false)
 	}
 	return jobs
@@ -1535,6 +1540,19 @@ func (m *Membership) closeRemovedTab(ctx context.Context, chatID marotte.ChatID,
 		return nil, nil, 0, false
 	}
 	return closed, owed, version, true
+}
+
+// noticeClosed tells the notice ledger each closed subject no open tab still shows. Caller holds mu.
+func (m *Membership) noticeClosed(closed []marotte.TabSubject) {
+	if m.notices == nil {
+		return
+	}
+	open, _ := m.tabs.List()
+	for _, t := range closed {
+		if indexOfSubject(open, t.Kind, t.Ref) < 0 {
+			m.notices.TabClosed(t.Kind, t.Ref)
+		}
+	}
 }
 
 // holdDescendants holds every chat whose tab sits under a tab showing chatID, chatID itself excluded, once per
