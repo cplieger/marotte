@@ -8,7 +8,7 @@ import { ICON_COPY, ICON_PLAY } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { confirm } from "./confirm.js";
 
-const SHELL_LANGS = new Set(["sh", "bash", "zsh", "shell", "console", "terminal"]);
+const SHELL_LANGS = new Set(["sh", "bash", "zsh", "ksh", "shell", "console", "terminal"]);
 
 /** `final` once the block's `code` hook ran; a block without it is still streaming (13-messages.css's dot). */
 export const CODE_STATE_ATTR = "data-code-state";

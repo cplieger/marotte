@@ -13,7 +13,10 @@ describe("isRunnableShell", () => {
     { name: "console lang accepted", lang: "console", text: "whoami", expected: true },
     { name: "terminal lang accepted", lang: "terminal", text: "date", expected: true },
     { name: "shell lang accepted", lang: "shell", text: "uname -a", expected: true },
-    // highlight.md "Detection": an untagged fence is shell unless it reads as another language.
+    // highlight.md "Languages": `ksh` is one of Shell's names.
+    { name: "ksh lang accepted", lang: "ksh", text: "print hi", expected: true },
+    // highlight.md "Detection" decides what an untagged fence reads as; Run goes to one that reads as shell or as
+    // nothing.
     { name: "untagged undetected text treated as shell", lang: "", text: "cd", expected: true },
     { name: "untagged $ prompt accepted", lang: "", text: "$ ls -la", expected: true },
     {
@@ -237,6 +240,15 @@ describe("Run on a rendered fence", () => {
       { label: "Shell", run: true },
       { label: "Python", run: false },
     ]);
+  });
+
+  // highlight.md "Languages": `ksh` is one of Shell's names, so its bar says Shell.
+  it("is on a ksh fence, which the bar labels Shell", () => {
+    setShellRunCallback(vi.fn());
+    renderMarkdownInto(host, "```ksh\nprint hi\n```\n");
+    const block = host.querySelector(".cp-code");
+    expect(block?.querySelector('[data-part="lang"]')?.textContent).toBe("Shell");
+    expect(block?.querySelector('[aria-label="Run in shell"]')).not.toBeNull();
   });
 
   it("is withheld while the fence streams, then added once it closes", () => {
