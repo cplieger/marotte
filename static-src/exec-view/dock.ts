@@ -33,11 +33,18 @@ import { buildExecSummary } from "./summary.js";
 import { setAttr, setText } from "../dom.js";
 
 export interface ExecDockView {
-  /** Paint the run, its shown step and the consumer's own notes. Safe on every tick. */
+  /** Paint the run, its shown step and the consumer's own notes. */
   paint(run: ExecRun, selected: string, notes: readonly string[]): void;
+  /** Move the head's and the rows' clocks alone, from the last `paint`'s run. */
+  tick(): void;
   /** Seat the run's verbs in the head; the same element again moves nothing, so focus inside it
    *  survives a repaint. */
   setControls(row: HTMLElement | null): void;
+  /** The newest line each step printed, by path, written into the rows on screen and kept for the
+   *  rows a later paint mounts: a step's output moves on its own clock, not the run's. */
+  paintTails(tails: ReadonlyMap<string, string>): void;
+  /** The paths of the step rows the last paint showed, in order. */
+  rowPaths(): readonly string[];
   /** Release the panel, the clamps and the host. */
   dispose(): void;
 }
@@ -47,17 +54,25 @@ interface ExecDockOpts {
   /** The head's identity glyph. */
   readonly icon: string;
   /** The page's step tree and timeline, which the panel's segments hold. */
-  readonly tree: HTMLElement;
-  readonly timeline: HTMLElement;
+  readonly tree: DockPane;
+  readonly timeline: DockPane;
   /** Show a step, as a tree row click does. */
   readonly select: (path: string) => void;
   /** Bring the step that matters into view in `scroller`, the Steps pane's box. Called once each
    *  time the panel opens on Steps or Steps is picked while it is open, never on a repaint, so a
    *  reader scrolling the tree is never moved. */
   readonly revealSteps: (scroller: HTMLElement) => void;
+  /** Fired when the panel opens or closes. */
+  readonly onPanel?: (open: boolean) => void;
 }
 
 type Segment = "steps" | "timeline";
+
+/** A pane the panel holds: it draws only while attached to the panel's scroller. */
+interface DockPane {
+  readonly root: HTMLElement;
+  attach(scroller: HTMLElement | null): void;
+}
 
 const SEGMENTS: readonly { id: Segment; label: string; icon: string }[] = [
   { id: "steps", label: "Steps", icon: ICON_SEG_STEPS },
@@ -74,6 +89,7 @@ const TAKEOVER = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
 
 /** One step row: a button that shows its step. */
 interface LiveRow {
+  readonly path: string;
   readonly root: HTMLElement;
   readonly btn: HTMLButtonElement;
   readonly mark: HTMLElement;
@@ -81,6 +97,8 @@ interface LiveRow {
   readonly label: HTMLElement;
   readonly tail: HTMLElement;
   readonly dur: HTMLElement;
+  /** The step the last paint drew here, which the tick reads its clock from. */
+  node?: ExecNode;
 }
 
 interface DockNote {
@@ -137,8 +155,10 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
   const inputs = el("dl", { className: "ev-dock-inputs", "aria-label": "Inputs" });
   const bar = el("nav", { className: "seg-bar ev-dock-seg", "aria-label": "Run detail sections" });
   const panels = new Map<Segment, HTMLElement>();
-  const content: Record<Segment, HTMLElement> = { steps: opts.tree, timeline: opts.timeline };
+  const content: Record<Segment, DockPane> = { steps: opts.tree, timeline: opts.timeline };
   const body = el("div", { className: "ev-dock-body" });
+  const waiting = el("p", { className: "list-empty", hidden: true }, "Loading every step\u2026");
+  body.append(waiting);
   for (const seg of SEGMENTS) {
     const glyph = iconEl(seg.icon);
     glyph.classList.add("seg-icon");
@@ -159,7 +179,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
         role: "tabpanel",
         "aria-labelledby": `${id}-tab-${seg.id}`,
       },
-      content[seg.id],
+      content[seg.id].root,
     );
     panels.set(seg.id, panel);
     body.append(panel);
@@ -178,6 +198,8 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
   );
 
   let active: Segment = "steps";
+  let open = false;
+  let partial = false;
   const paintBar = initSegmentedBar(bar, {
     attr: "data-ev-seg",
     idPrefix: id,
@@ -196,15 +218,46 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
     for (const [key, panel] of panels) {
       panel.hidden = key !== seg;
     }
+    seatPanes(open);
   }
+
+  /** A closed panel draws nothing: only the shown segment's pane is attached, and only while open
+   *  on a whole run. */
+  function seatPanes(seated: boolean): void {
+    const drawn = seated && !partial;
+    waiting.hidden = !seated || !partial;
+    for (const seg of SEGMENTS) {
+      content[seg.id].attach(drawn && seg.id === active ? body : null);
+    }
+  }
+  // Before the disclosure's own listener: its open tween measures the region's height first.
+  toggle.addEventListener("click", () => {
+    if (!open) {
+      seatPanes(true);
+    }
+  });
   show(active);
 
+  let closeGen = 0;
   const ctl = createDisclosure(toggle, region, {
-    onToggle: (open) => {
-      root.toggleAttribute("data-open", open);
-      if (open && active === "steps") {
-        reveal();
+    onToggle: (isOpen) => {
+      open = isOpen;
+      root.toggleAttribute("data-open", isOpen);
+      opts.onPanel?.(isOpen);
+      const gen = ++closeGen;
+      if (isOpen) {
+        seatPanes(true);
+        if (active === "steps") {
+          reveal();
+        }
+        return;
       }
+      // The rows leave once the close has played, so the panel does not empty as it shuts.
+      void Promise.allSettled(region.getAnimations().map((a) => a.finished)).then(() => {
+        if (gen === closeGen && !open) {
+          seatPanes(false);
+        }
+      });
     },
   });
 
@@ -238,12 +291,18 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
   more.addEventListener("click", () => {
     show("steps");
     if (!ctl.isOpen) {
+      seatPanes(true);
       ctl.open();
     }
   });
   opts.host.replaceChildren(root);
 
   const rowParts = new WeakMap<HTMLElement, LiveRow>();
+  let tails: ReadonlyMap<string, string> = new Map();
+  // The silence outranks the tail: the newest line is an hour old once it shows.
+  const tailOf = (path: string, n: ExecNode | undefined): string =>
+    n?.silence ?? tails.get(path) ?? "";
+  let shownPaths: readonly string[] = [];
   const buildRow = (path: string): LiveRow => {
     const mark = el("span", { className: "ev-state", "aria-hidden": "true" });
     const kind = el("span", { className: "ev-kind", "aria-hidden": "true" });
@@ -263,6 +322,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
       opts.select(path);
     });
     const row = {
+      path,
       root: el("li", { className: "ev-dock-li" }, btn),
       btn,
       mark,
@@ -286,8 +346,12 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
       row.btn.dataset["kind"] = n.kind;
     }
     paintLabel(row.label, n);
-    // The silence outranks the tail: the newest line is an hour old once it shows.
-    setText(row.tail, n.silence ?? n.tail ?? "");
+    setText(row.tail, tailOf(n.path, n));
+    row.node = n;
+    paintTime(row, n);
+    setAttr(row.btn, "aria-current", shown ? "true" : null);
+  };
+  const paintTime = (row: LiveRow, n: ExecNode): void => {
     const ms = elapsed(n.start, n.end);
     const time = ms > 0 ? formatElapsed(ms) : "";
     setText(row.dur, time);
@@ -296,11 +360,6 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
       "aria-label",
       [n.label, STATE_WORD[n.state], n.silence ?? "", time].filter((s) => s !== "").join(", "),
     );
-    if (shown) {
-      row.btn.setAttribute("aria-current", "true");
-    } else {
-      row.btn.removeAttribute("aria-current");
-    }
   };
 
   /** The steps in flight, else the newest started one, plus the shown step wherever it stands. A
@@ -335,7 +394,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
       askCount,
       questions.length > 1 ? `${String(at)} of ${String(questions.length)} questions` : "",
     );
-    askCount.hidden = questions.length < 2;
+    setAttr(askCount, "hidden", questions.length < 2 ? "" : null);
     const label = q.step === undefined ? "A step asks" : `${q.step} asks`;
     setAttr(ask, "aria-label", label);
     if (askText.textContent !== q.text) {
@@ -385,12 +444,20 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
 
   return {
     paint(run, selected, extra) {
-      root.dataset["state"] = run.state;
+      if ((run.partial === true) !== partial) {
+        partial = run.partial === true;
+        seatPanes(open);
+        if (!partial && open && active === "steps") {
+          reveal();
+        }
+      }
+      setAttr(root, "data-state", run.state);
       summary.paint(run);
       paintAsk(run, selected);
       setText(pauseSaid, run.alert?.kind === "paused" ? run.alert.text : "");
       paintNotes(run, extra);
       const steps = liveSteps(run, selected);
+      shownPaths = steps.map((n) => n.path);
       const lead = (steps.find((n) => n.path === selected) ?? steps[0])?.path;
       reconcile(rows, steps, {
         key: (n) => n.path,
@@ -408,16 +475,38 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
           rowRoot.toggleAttribute("data-lead", n.path === lead);
         },
       });
-      more.hidden = steps.length <= 1;
+      setAttr(more, "hidden", steps.length <= 1 ? "" : null);
       setText(more, `+${String(steps.length - 1)}`);
       const hidden = steps.length - 1;
       setAttr(more, "aria-label", `Show ${String(hidden)} more ${hidden === 1 ? "step" : "steps"}`);
       paintInputs(run);
     },
+    tick() {
+      summary.tick();
+      for (const rowRoot of rows.children) {
+        const row = rowParts.get(rowRoot as HTMLElement);
+        if (row?.node !== undefined) {
+          paintTime(row, row.node);
+        }
+      }
+    },
     setControls(row) {
       seat(act, row);
     },
+    paintTails(next) {
+      tails = next;
+      for (const rowRoot of rows.children) {
+        const row = rowParts.get(rowRoot as HTMLElement);
+        if (row !== undefined) {
+          setText(row.tail, tailOf(row.path, row.node));
+        }
+      }
+    },
+    rowPaths() {
+      return shownPaths;
+    },
     dispose() {
+      seatPanes(false);
       ctl.dispose();
       releaseClamp(askText);
       opts.host.replaceChildren();

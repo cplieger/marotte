@@ -6,8 +6,15 @@ import { apiGetOrError, apiGetTyped } from "./api-client.js";
 import { createMirror } from "./mirror.js";
 import { nodePathKey, nodePathSegment } from "./run-node-key.js";
 import { forgetSubject, observeStamp } from "./subject-versions.js";
-import { turnOpenOf } from "./turns.js";
+import { turnOpenOf, type TurnSource } from "./turns.js";
 import { settleWorkflowMessages, turnsInOrder } from "./workflow-delivery.js";
+import { forgetStepTails, seedStepTails } from "./run-step-tail.js";
+import {
+  deltaIsRedelivery,
+  mergeOpenTails,
+  openIsRedelivery,
+  sealIsRedelivery,
+} from "./open-tails.js";
 import type { Entry, OpenEntry, TurnState } from "./types.js";
 import {
   decodeLiveRunsResponse,
@@ -55,7 +62,11 @@ export interface RunNode {
   branchId?: string;
   children?: RunNode[];
   artifacts?: Record<string, string>;
+  /** A watch's whole capture. A step's comes only from its capture read (`requestStepCapture`): the
+   *  run read carries its first lines as `captureSummary`, and `hasCapture` says it captured. */
   capturedOutput?: string;
+  captureSummary?: string;
+  hasCapture?: boolean;
   watchTerminal?: boolean;
   failureReason?: string;
   /** This store's, from the live frames KAS persists nothing for: why the step paused, and why a
@@ -67,10 +78,23 @@ export interface RunNode {
   /** KAS's credit-unit total for the step's session, recorded when the step ends; absent when KAS
    *  recorded none. */
   credits?: number;
+  /** On a repeat in a glance read: what it ran before its latest pass, which the glance leaves out. */
+  earlierPasses?: EarlierPasses;
   /** This store's, not KAS's: orders this node's current execution against every other of every
    *  run. A later execution carries a larger value, and an execution keeps its value however each
    *  source re-reports it. Absent on a node with no start. */
   startGen?: number;
+}
+
+/** A glance's fold of a repeat's passes before its latest (`workflow.EarlierPasses`): how many, their
+ *  credits, and their work's window in Unix milliseconds (`from` absent when none started; `open`
+ *  for a started step with no end). */
+export interface EarlierPasses {
+  count: number;
+  credits: number;
+  from?: number;
+  to: number;
+  open: boolean;
 }
 
 /** A run's whole state. `runLabel` is the name a launcher gave this execution, `workflowName` the
@@ -247,7 +271,8 @@ interface RunInspect {
   nodePlan?: unknown;
 }
 
-interface RawRunNode extends Omit<RunNode, "status" | "children" | "credits"> {
+interface RawRunNode extends Omit<RunNode, "status" | "children" | "credits" | "earlierPasses"> {
+  earlierPasses?: unknown;
   status: string;
   children?: RawRunNode[];
   /** KAS's `[{usage, unit?, unitPlural?}]`, read through `creditTotal`. */
@@ -275,6 +300,30 @@ interface RawRunInspect extends Omit<RunInspect, "state"> {
   display_name?: unknown;
   /** marotte's own key beside KAS's reply: what may be done to the run, decided from this read's state. */
   controls?: unknown;
+  /** marotte's own key beside KAS's reply: the read's revision, which `?since` reads from. */
+  rev?: unknown;
+}
+
+/** One changed node of a `?since` answer: its own members (no `children`), its parent's path ("" for
+ *  the root) and its index among the parent's children. Every ancestor of a changed node comes too. */
+interface SinceRecord {
+  path: string;
+  parent: string;
+  index: number;
+  node: RawRunNode;
+}
+
+/** `GET /api/runs/{id}?since=<rev>`: the run read's extras, the head members and nodes that changed
+ *  since `rev`, and what is gone. `nodePlan` is present only when it changed (null: removed). */
+interface RawRunSince extends Omit<RawRunInspect, "state" | "nodePlan"> {
+  head?: Record<string, unknown>;
+  head_removed?: string[];
+  /** Each a `SinceRecord`, read through `sinceRecordOf`. */
+  nodes: unknown[];
+  removed?: string[];
+  nodePlan?: unknown;
+  step_ends_removed?: string[];
+  step_starts_removed?: string[];
 }
 
 /** The reply's read position, 0 for none or a value that is not a non-negative safe integer. */
@@ -307,14 +356,50 @@ function planUpdateOf(raw: unknown): RunPlanUpdate | undefined {
 }
 
 function classifyRunNode(node: RawRunNode): RunNode {
-  const { status, children, credits, ...rest } = node;
+  const { status, children, credits, earlierPasses, ...rest } = node;
   const out: RunNode = { ...rest, status: classifyRunNodeStatus(status) };
   const total = creditTotal(credits);
   if (total !== undefined) {
     out.credits = total;
   }
+  const earlier = earlierPassesOf(earlierPasses);
+  if (earlier !== undefined) {
+    out.earlierPasses = earlier;
+  }
   if (children !== undefined) {
     out.children = children.map(classifyRunNode);
+  }
+  return out;
+}
+
+/** Whether a glance left any pass out: one that folded none is the whole tree. */
+function foldsPasses(node: RawRunNode | undefined): boolean {
+  return (
+    node !== undefined &&
+    (node.earlierPasses !== undefined || (node.children ?? []).some(foldsPasses))
+  );
+}
+
+/** A glance's `earlierPasses`, or undefined for a value of another shape. */
+function earlierPassesOf(raw: unknown): EarlierPasses | undefined {
+  if (typeof raw !== "object" || raw === null) {
+    return undefined;
+  }
+  const { count, credits, from, to, open } = raw as Record<string, unknown>;
+  const ms = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isSafeInteger(v) && v > 0 ? v : undefined;
+  if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) {
+    return undefined;
+  }
+  const out: EarlierPasses = {
+    count,
+    credits: typeof credits === "number" && Number.isFinite(credits) && credits > 0 ? credits : 0,
+    to: ms(to) ?? 0,
+    open: open === true,
+  };
+  const start = ms(from);
+  if (start !== undefined) {
+    out.from = start;
   }
   return out;
 }
@@ -430,8 +515,57 @@ const cells = new Map<string, Signal<RunState | undefined>>();
 
 /** Together they collapse an event storm into at most two requests: KAS emits a `run_progress` per
  *  node event, and the state that matters is the one AFTER the last of them. */
-const inFlight = new Set<string>();
+const inFlight = new Map<string, RunShape>();
 const stale = new Set<string>();
+
+/** Per run, the revision of the held tree, which the next tree read asks `?since` unless a caller
+ *  owes the run a whole read (`wholeOwed`); absent while no tree answer carrying one is held. */
+const revs = new Map<string, number>();
+const wholeOwed = new Set<string>();
+
+/** Per run, the newest revision the held state reflects, from any answer or an applied `run_rev`. */
+const heldRevs = new Map<string, number>();
+
+/** Per run, the widest shape the held state is kept current in; absent is the header alone. A
+ *  narrower read or frame landing on a wider body leaves that body stale, so it narrows this. */
+const bodies = new Map<string, "glance" | "tree">();
+
+/** What a reader draws of a run, narrowest first: its header (status, name, controls, asks), its
+ *  glance (each repeat through its latest pass, which a run card and the run bar draw) or its
+ *  whole tree (the run tab). Each is read in its own form of `GET /api/runs/{id}`. */
+type RunShape = "header" | "glance" | "tree";
+
+const SHAPE_RANK: Readonly<Record<RunShape, number>> = { header: 0, glance: 1, tree: 2 };
+
+function wider(a: RunShape, b: RunShape): boolean {
+  return SHAPE_RANK[a] > SHAPE_RANK[b];
+}
+
+/** The runs whose held glance left a pass out. */
+const folded = new Set<string>();
+
+/** Whether the held state lists every pass of every repeat: a tree, or a glance that folded none. */
+export function runHoldsEveryPass(workflowID: string): boolean {
+  const held = bodies.get(workflowID);
+  return held === "tree" || (held === "glance" && !folded.has(workflowID));
+}
+
+function heldShape(workflowID: string): RunShape {
+  return bodies.get(workflowID) ?? "header";
+}
+
+/** The shape a read of the run asks: the widest a reader demands (a header when none does), or a
+ *  held tree that moves by `?since`, which costs what changed and never needs re-reading whole. */
+function readShape(workflowID: string): RunShape {
+  const wanted = demandedShape(workflowID) ?? "header";
+  return wanted !== "tree" && sinceBase(workflowID) !== undefined ? "tree" : wanted;
+}
+
+function sinceBase(workflowID: string): number | undefined {
+  return bodies.get(workflowID) === "tree" && cells.get(workflowID)?.peek() !== undefined
+    ? revs.get(workflowID)
+    : undefined;
+}
 
 /** Runs forgotten while their read was out; the read drops its answer and its retry, so a late
  *  response cannot rebuild the state `forgetRun` just released. */
@@ -480,6 +614,10 @@ const executions = new Map<string, RunExecutions>();
 /** Module-wide rather than per run, so a forgotten run read again still counts upward. */
 let lastStartGen = 0;
 
+/** Counts down from 0 for the starts in the passes a held glance folded, when the tree brings
+ *  them: each began before its repeat's latest pass, so none may read as newer than a held start. */
+let firstStartGen = 0;
+
 function executionsOf(workflowID: string): RunExecutions {
   let run = executions.get(workflowID);
   if (run === undefined) {
@@ -495,15 +633,77 @@ function otherSession(known: string | undefined, seen: string | undefined): bool
   return known !== undefined && seen !== undefined && known !== seen;
 }
 
-/** Stamp a freshly read tree's executions. A path showing another session, or a live start after
- *  an end, holds a new execution. KAS's persisted time is read only to rank several new
- *  executions this one read found. */
-function stampStarts(workflowID: string, root: RunNode): void {
-  const run = executionsOf(workflowID);
-  const fresh: { node: RunNode; path: string; at: string; session: string | undefined }[] = [];
-  const walk = (n: RunNode, parent: RunNode | undefined, trail: readonly string[]): void => {
+/** Stamp a freshly read tree's executions. `glance` is the held glance this read widens, whose
+ *  folded passes are history. */
+function stampStarts(workflowID: string, root: RunNode, glance?: RunNode): void {
+  /** Each glance node's key, true for a repeat that folded passes. */
+  const glanceFolds = new Map<string, boolean>();
+  const index = (n: RunNode, parent: RunNode | undefined, trail: readonly string[]): void => {
     const path = [...trail, nodePathSegment(n, parent)];
-    const key = nodePathKey(path);
+    glanceFolds.set(nodePathKey(path), n.earlierPasses !== undefined);
+    for (const k of n.children ?? []) {
+      index(k, n, path);
+    }
+  };
+  if (glance !== undefined) {
+    index(glance, undefined, []);
+  }
+  const read: [RunNode, string][] = [];
+  const history: [RunNode, string][] = [];
+  const walk = (n: RunNode, path: readonly string[], key: string, folded: boolean): void => {
+    (folded ? history : read).push([n, key]);
+    const folds = glanceFolds.get(key) === true;
+    for (const k of n.children ?? []) {
+      const childPath = [...path, nodePathSegment(k, n)];
+      const childKey = nodePathKey(childPath);
+      walk(k, childPath, childKey, folded || (folds && !glanceFolds.has(childKey)));
+    }
+  };
+  const rootPath = [nodePathSegment(root, undefined)];
+  walk(root, rootPath, nodePathKey(rootPath), false);
+  stampNodes(workflowID, read, history);
+}
+
+/** Stamp the executions of freshly read nodes, each with its path key. A path showing another
+ *  session, or a live start after an end, holds a new execution. KAS's persisted time is read only
+ *  to rank several new executions this one read found; `history`'s are ranked below every other
+ *  start (`firstStartGen`). */
+function stampNodes(
+  workflowID: string,
+  read: readonly [RunNode, string][],
+  history: readonly [RunNode, string][] = [],
+): void {
+  const run = executionsOf(workflowID);
+  const past = freshOf(run, history);
+  past.sort(byStart);
+  for (const f of past.toReversed()) {
+    firstStartGen--;
+    holdExecution(run, f, firstStartGen);
+  }
+  const fresh = freshOf(run, read);
+  fresh.sort(byStart);
+  for (const f of fresh) {
+    lastStartGen++;
+    holdExecution(run, f, lastStartGen);
+  }
+}
+
+interface FreshStart {
+  node: RunNode;
+  path: string;
+  at: string;
+  session: string | undefined;
+}
+
+/** Stable, so equal times keep plan order. */
+function byStart(a: FreshStart, b: FreshStart): number {
+  return Date.parse(a.at) - Date.parse(b.at) || 0;
+}
+
+/** The starts of `read` that hold a new execution; the others keep theirs, stamped in place. */
+function freshOf(run: RunExecutions, read: readonly [RunNode, string][]): FreshStart[] {
+  const fresh: FreshStart[] = [];
+  for (const [n, key] of read) {
     const at = nonEmpty(n.startedAt);
     const ex = run.paths.get(key);
     if (at === undefined) {
@@ -524,22 +724,24 @@ function stampStarts(workflowID: string, root: RunNode): void {
         n.startGen = ex.gen;
       }
     }
-    for (const k of n.children ?? []) {
-      walk(k, n, path);
-    }
-  };
-  walk(root, undefined, []);
-  // Stable, so equal times keep plan order.
-  fresh.sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || 0);
-  for (const f of fresh) {
-    lastStartGen++;
-    run.paths.set(f.path, {
-      gen: lastStartGen,
-      ...(f.session === undefined ? {} : { session: f.session }),
-      ended: !holdsLiveStart(f.node),
-    });
-    f.node.startGen = lastStartGen;
   }
+  return fresh;
+}
+
+function holdExecution(run: RunExecutions, f: FreshStart, gen: number): void {
+  run.paths.set(f.path, {
+    gen,
+    ...(f.session === undefined ? {} : { session: f.session }),
+    ended: !holdsLiveStart(f.node),
+  });
+  f.node.startGen = gen;
+}
+
+/** The held glance's root when a `shape` read widens a glance that folded passes. */
+function widenedGlance(workflowID: string, shape: RunShape): RunNode | undefined {
+  return shape === "tree" && bodies.get(workflowID) === "glance" && folded.has(workflowID)
+    ? peekRunState(workflowID)?.root
+    : undefined;
 }
 
 /** Per-run step ends by node path, beside the signal for the plan's reason. */
@@ -558,9 +760,17 @@ function cell(workflowID: string): Signal<RunState | undefined> {
 }
 
 /** Subscribe to a run's state. `undefined` until the first fetch resolves, which is what a
- *  caller renders a loading row for. */
+ *  caller renders a loading row for. Its `root` may be a glance or stale: a reader that draws
+ *  nodes reads `runStateAs`. */
 export function runState(workflowID: string): RunState | undefined {
   return cell(workflowID).value;
+}
+
+/** `runState` for a reader that draws the run's nodes in `shape`: `undefined` while what is held is
+ *  narrower, which the reader shows as loading. */
+export function runStateAs(workflowID: string, shape: RunShape): RunState | undefined {
+  const state = cell(workflowID).value;
+  return state === undefined || wider(shape, heldShape(workflowID)) ? undefined : state;
 }
 
 /** Read a run's state WITHOUT subscribing. For a caller that must not re-run when the run
@@ -812,6 +1022,7 @@ export function invalidateRun(workflowID: string): void {
   if (workflowID === "") {
     return;
   }
+  wholeOwed.add(workflowID);
   if (inFlight.has(workflowID)) {
     stale.add(workflowID);
     return;
@@ -819,11 +1030,87 @@ export function invalidateRun(workflowID: string): void {
   void fetchRun(workflowID);
 }
 
-/** Read a run's current state unless a read of it is already out, which is that ask. */
+/** Whether this client holds a revision of the run's read, so the server's `run_rev` announces
+ *  its every change and no frame needs a read of its own. */
+export function runRevHeld(workflowID: string): boolean {
+  return heldRevs.has(workflowID) && cells.get(workflowID)?.peek() !== undefined;
+}
+
+/** Bring a held run to `rev` (a `run_rev`, with the run's `status` there), or re-check it with no
+ *  `rev`: a tree reads what changed since its revision, a glance reads afresh, and a header takes
+ *  the frame's status with no read. A run held at no revision is left to its frames. Coalesced with
+ *  any read out, as `invalidateRun`. */
+export function reviseRun(workflowID: string, rev?: number, status?: string): void {
+  const held = heldRevs.get(workflowID);
+  if (!runRevHeld(workflowID) || held === undefined || (rev !== undefined && rev <= held)) {
+    return;
+  }
+  if (rev !== undefined && readShape(workflowID) === "header") {
+    applyRevStatus(workflowID, rev, status);
+    return;
+  }
+  if (inFlight.has(workflowID)) {
+    stale.add(workflowID);
+    return;
+  }
+  void fetchRun(workflowID);
+}
+
+/** A header's move to `rev`: the status, which is all a header reader draws of a revision. A wider
+ *  body the frame does not move goes stale. */
+function applyRevStatus(workflowID: string, rev: number, status: string | undefined): void {
+  const held = cells.get(workflowID)?.peek();
+  if (held === undefined) {
+    return;
+  }
+  heldRevs.set(workflowID, rev);
+  bodies.delete(workflowID);
+  revs.delete(workflowID);
+  const next = classifyRunStatus(status);
+  if (next !== undefined && next !== held.status) {
+    cell(workflowID).value = { ...held, status: next };
+  }
+}
+
+/** Read a run's current state unless a read of it is already out, which is that ask; one out in a
+ *  narrower shape than its readers now demand gets a trailing read. */
 export function readRunUnlessOut(workflowID: string): void {
-  if (!inFlight.has(workflowID)) {
+  if (inFlight.has(workflowID)) {
+    widenRun(workflowID);
+  } else {
     invalidateRun(workflowID);
   }
+}
+
+/** Read the run when the state held, or the read out, is narrower than its readers now demand (or
+ *  the read out will be dropped): a reader calls it when it starts drawing more of a run. Nothing
+ *  held and nothing out is left to the reader's first read (`drawRun`). */
+export function widenRun(workflowID: string): void {
+  const want = readShape(workflowID);
+  const out = inFlight.get(workflowID);
+  if (out !== undefined) {
+    // A read out for a forgotten run drops its answer, so a returning reader needs its own.
+    if (wider(want, out) || forgotten.has(workflowID)) {
+      stale.add(workflowID);
+    }
+    return;
+  }
+  if (cells.get(workflowID)?.peek() !== undefined && wider(want, heldShape(workflowID))) {
+    void fetchRun(workflowID);
+  }
+}
+
+/** A reader starts drawing the run: read it when nothing is held or out, else as `widenRun`. A held
+ *  state is kept current in its shape, so a reader that needs no wider one reads nothing. */
+export function drawRun(workflowID: string): void {
+  if (workflowID === "") {
+    return;
+  }
+  if (!inFlight.has(workflowID) && cells.get(workflowID)?.peek() === undefined) {
+    void fetchRun(workflowID);
+    return;
+  }
+  widenRun(workflowID);
 }
 
 /** The gap repair for everything a run's state applies from frames (`run_progress`, `node_complete`,
@@ -832,14 +1119,35 @@ export function readRunUnlessOut(workflowID: string): void {
  *  may predate the gap. */
 export function rereadHeldRuns(): void {
   for (const id of cells.keys()) {
-    if (runStateDemanded(id)) {
+    if (!runStateDemanded(id)) {
+      continue;
+    }
+    // A revision the server no longer holds answers whole.
+    if (runRevHeld(id)) {
+      reviseRun(id);
+    } else {
       invalidateRun(id);
     }
   }
 }
 
+/** The URL of a read in `shape`; a tree read with a `since` revision asks only what changed. */
+function readURL(workflowID: string, shape: RunShape, since: number | undefined): string {
+  const url = `/api/runs/${encodeURIComponent(workflowID)}`;
+  switch (shape) {
+    case "header":
+      return `${url}?view=header`;
+    case "glance":
+      return `${url}?view=glance`;
+    case "tree":
+      return since === undefined ? url : `${url}?since=${String(since)}`;
+  }
+}
+
 async function fetchRun(workflowID: string): Promise<void> {
-  inFlight.add(workflowID);
+  const owed = wholeOwed.delete(workflowID);
+  const shape = readShape(workflowID);
+  inFlight.set(workflowID, shape);
   let answered = false;
   let dropped: boolean;
   // The status of a read that produced nothing, which is what tells a SETTLED answer from the
@@ -848,17 +1156,27 @@ async function fetchRun(workflowID: string): Promise<void> {
   // re-asking.
   let failed = 0;
   const issued = executionsOf(workflowID).frames;
+  const since = shape === "tree" && !owed ? sinceBase(workflowID) : undefined;
   try {
-    const r = await apiGetOrError<RawRunInspect>(`/api/runs/${encodeURIComponent(workflowID)}`);
-    const d = r.data;
+    const r = await apiGetOrError<RawRunInspect | RawRunSince>(readURL(workflowID, shape, since));
+    const changes = r.data !== null && isSinceAnswer(r.data) ? r.data : undefined;
+    const d = r.data === null || isSinceAnswer(r.data) ? undefined : r.data;
     if (forgotten.has(workflowID)) {
       // The last reader left while this read was out: writing the answer would recreate a cell nobody holds.
-    } else if (d?.state !== undefined && executionsOf(workflowID).frames !== issued) {
+    } else if (
+      (changes !== undefined || d?.state !== undefined) &&
+      executionsOf(workflowID).frames !== issued
+    ) {
       // A frame changed the tree while this read was out, so the answer may predate it. Only a
       // read issued after the frame can say which side of it KAS is on.
       stale.add(workflowID);
       answered = true;
-    } else if (d?.state !== undefined) {
+    } else if (changes !== undefined) {
+      answered = applySince(workflowID, changes);
+    } else if (d?.state !== undefined && shape === "header") {
+      landHeader(workflowID, d.state, d);
+      answered = true;
+    } else if (d?.state !== undefined && shape !== "header") {
       // The plan, the step ends and the verbs BEFORE the state, because the state assignment is what
       // wakes every reader: a subscriber that re-rendered between them would draw a repeat's bound
       // from the previous plan, or the previous status's verbs beside this one.
@@ -869,31 +1187,21 @@ async function fetchRun(workflowID: string): Promise<void> {
       }
       const starts = new Map(Object.entries(d.step_starts ?? {}));
       const state = classifyRunState(d.state, starts);
-      const planUpdate = planUpdateOf(d.plan_update);
-      if (planUpdate !== undefined) {
-        state.planUpdate = planUpdate;
-      }
-      state.readPosition = readPositionOf(d.read_position);
-      if (typeof d.auto_resume_stopped_at === "string" && d.auto_resume_stopped_at !== "") {
-        state.autoResumeStoppedAt = d.auto_resume_stopped_at;
-      }
-      if (typeof d.silent_since === "string" && d.silent_since !== "") {
-        state.silentSince = d.silent_since;
-      }
-      if (typeof d.display_name === "string" && d.display_name !== "") {
-        state.displayName = d.display_name;
-      }
+      withReadExtras(state, d);
       if (state.root !== undefined) {
-        stampStarts(workflowID, state.root);
+        stampStarts(workflowID, state.root, widenedGlance(workflowID, shape));
       }
       stepEnds.set(workflowID, new Map(Object.entries(d.step_ends ?? {})));
       stepStarts.set(workflowID, starts);
-      controlCell(workflowID).value = controlsOf(d.controls);
-      const gone = goneCells.get(workflowID);
-      if (gone !== undefined) {
-        gone.value = false;
+      seedStepTails(workflowID, starts);
+      bodies.set(workflowID, shape);
+      if (shape === "glance" && foldsPasses(d.state.root)) {
+        folded.add(workflowID);
+      } else {
+        folded.delete(workflowID);
       }
-      cell(workflowID).value = state;
+      holdRev(workflowID, shape === "tree" ? d.rev : undefined, d.rev);
+      landRead(workflowID, state, d);
       answered = true;
     } else {
       failed = r.status;
@@ -924,6 +1232,231 @@ async function fetchRun(workflowID: string): Promise<void> {
   if (stale.delete(workflowID)) {
     await fetchRun(workflowID);
   }
+}
+
+/** The state keys a read writes whole (the tree and `withReadExtras`'s), which a `?since` head
+ *  never carries. */
+const READ_KEYS = [
+  "root",
+  "planUpdate",
+  "readPosition",
+  "autoResumeStoppedAt",
+  "silentSince",
+  "displayName",
+];
+
+/** The state members a header answer leaves out (the server's `headBulk`), kept from the held state. */
+const HEADER_LEAVES: ReadonlySet<string> = new Set([
+  "root",
+  "capturedOutputs",
+  "originalUserMessages",
+  "inputs",
+  "artifacts",
+]);
+
+/** Land a header answer: its head over the held state's tree and bulk, which go stale. */
+function landHeader(workflowID: string, raw: RawRunState, d: RawRunInspect): void {
+  const held = cells.get(workflowID)?.peek();
+  const kept =
+    held === undefined
+      ? {}
+      : Object.fromEntries(Object.entries(held).filter(([k]) => HEADER_LEAVES.has(k)));
+  const state: RunState = { ...kept, ...classifyRunState(raw, new Map()) };
+  withReadExtras(state, d);
+  bodies.delete(workflowID);
+  holdRev(workflowID, undefined, d.rev);
+  landRead(workflowID, state, d);
+}
+
+function isSinceAnswer(d: RawRunInspect | RawRunSince): d is RawRunSince {
+  return "nodes" in d && Array.isArray(d.nodes);
+}
+
+/** A `?since` record, or undefined for an element of another shape. */
+function sinceRecordOf(v: unknown): SinceRecord | undefined {
+  if (typeof v !== "object" || v === null) {
+    return undefined;
+  }
+  const { path, parent, index, node } = v as Record<string, unknown>;
+  if (typeof path !== "string" || typeof node !== "object" || node === null) {
+    return undefined;
+  }
+  return {
+    path,
+    parent: typeof parent === "string" ? parent : "",
+    index:
+      typeof index === "number" && Number.isSafeInteger(index) ? index : Number.MAX_SAFE_INTEGER,
+    node: node as RawRunNode,
+  };
+}
+
+/** marotte's keys of a read, written onto its state. */
+function withReadExtras(state: RunState, d: RawRunInspect | RawRunSince): void {
+  const planUpdate = planUpdateOf(d.plan_update);
+  if (planUpdate !== undefined) {
+    state.planUpdate = planUpdate;
+  }
+  state.readPosition = readPositionOf(d.read_position);
+  if (typeof d.auto_resume_stopped_at === "string" && d.auto_resume_stopped_at !== "") {
+    state.autoResumeStoppedAt = d.auto_resume_stopped_at;
+  }
+  if (typeof d.silent_since === "string" && d.silent_since !== "") {
+    state.silentSince = d.silent_since;
+  }
+  if (typeof d.display_name === "string" && d.display_name !== "") {
+    state.displayName = d.display_name;
+  }
+}
+
+/** Hold an answer's revisions: `tree` is the since base it leaves (none for a narrower answer),
+ *  `held` the revision it reflects. */
+function holdRev(workflowID: string, tree: unknown, held: unknown): void {
+  const valid = (rev: unknown): rev is number =>
+    typeof rev === "number" && Number.isSafeInteger(rev) && rev > 0;
+  if (valid(tree)) {
+    revs.set(workflowID, tree);
+  } else {
+    revs.delete(workflowID);
+  }
+  if (valid(held)) {
+    heldRevs.set(workflowID, held);
+  } else {
+    heldRevs.delete(workflowID);
+  }
+}
+
+/** Write an answered read: the verbs and the gone flag BEFORE the state, whose assignment wakes
+ *  every reader. */
+function landRead(workflowID: string, state: RunState, d: RawRunInspect | RawRunSince): void {
+  controlCell(workflowID).value = controlsOf(d.controls);
+  const gone = goneCells.get(workflowID);
+  if (gone !== undefined) {
+    gone.value = false;
+  }
+  cell(workflowID).value = state;
+}
+
+/** Apply a `?since` answer onto the held state in one write; false when no state is held to apply
+ *  it to, which owes the run a whole read. */
+function applySince(workflowID: string, d: RawRunSince): boolean {
+  const held = cells.get(workflowID)?.peek();
+  if (held === undefined) {
+    wholeOwed.add(workflowID);
+    stale.add(workflowID);
+    return true;
+  }
+  if ("nodePlan" in d) {
+    if (d.nodePlan === null || d.nodePlan === undefined) {
+      plans.delete(workflowID);
+    } else {
+      plans.set(workflowID, d.nodePlan);
+    }
+  }
+  const starts = mergedRows(stepStarts.get(workflowID), d.step_starts, d.step_starts_removed);
+  const ends = mergedRows(stepEnds.get(workflowID), d.step_ends, d.step_ends_removed);
+  const drop = new Set<string>([...READ_KEYS, ...(d.head_removed ?? [])]);
+  const head = {
+    ...Object.fromEntries(Object.entries(held).filter(([k]) => !drop.has(k))),
+    ...d.head,
+  };
+  const state = classifyRunState(head as RawRunState, starts);
+  withReadExtras(state, d);
+  if (held.root !== undefined) {
+    const rebuilt: [RunNode, string][] = [];
+    state.root = applyRecords(held.root, d.nodes, new Set(d.removed ?? []), starts, rebuilt);
+    stampNodes(workflowID, rebuilt);
+  }
+  stepEnds.set(workflowID, ends);
+  stepStarts.set(workflowID, starts);
+  seedStepTails(workflowID, starts);
+  holdRev(workflowID, d.rev, d.rev);
+  landRead(workflowID, state, d);
+  return true;
+}
+
+function mergedRows<T>(
+  held: ReadonlyMap<string, T> | undefined,
+  changed: Record<string, T> | undefined,
+  removed: readonly string[] | undefined,
+): Map<string, T> {
+  const out = new Map(held);
+  for (const k of removed ?? []) {
+    out.delete(k);
+  }
+  for (const [k, v] of Object.entries(changed ?? {})) {
+    out.set(k, v);
+  }
+  return out;
+}
+
+/** The held tree with each record's node rebuilt in place, its kids kept by identity unless a record
+ *  or `removed` names them, and new kids seated at their index. Only the records' nodes are walked:
+ *  the server sends every ancestor of a changed node. `rebuilt` collects each rebuilt node with its
+ *  path key, for `stampNodes`. */
+function applyRecords(
+  root: RunNode,
+  records: readonly unknown[],
+  removed: ReadonlySet<string>,
+  starts: StepStarts,
+  rebuilt: [RunNode, string][],
+): RunNode {
+  const byPath = new Map<string, SinceRecord>();
+  const byParent = new Map<string, SinceRecord[]>();
+  for (const v of records) {
+    const r = sinceRecordOf(v);
+    if (r === undefined) {
+      continue;
+    }
+    byPath.set(r.path, r);
+    const siblings = byParent.get(r.parent) ?? [];
+    siblings.push(r);
+    byParent.set(r.parent, siblings);
+  }
+  const rebuild = (
+    rec: SinceRecord,
+    held: RunNode | undefined,
+    parent: RunNode | undefined,
+    trail: readonly string[],
+  ): RunNode => {
+    const ownRaw = { ...rec.node };
+    delete ownRaw.children;
+    const own = classifyRunNode(ownRaw);
+    const path = [...trail, nodePathSegment(own, parent)];
+    const kids: RunNode[] = [];
+    const seen = new Set<string>();
+    for (const k of held?.children ?? []) {
+      const key = nodePathKey([...path, nodePathSegment(k, own)]);
+      const r = byPath.get(key);
+      if (removed.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      kids.push(r === undefined ? k : rebuild(r, k, own, path));
+    }
+    const added = (byParent.get(rec.path) ?? []).filter((r) => !seen.has(r.path));
+    for (const r of added.sort((a, b) => a.index - b.index)) {
+      kids.splice(Math.min(Math.max(r.index, 0), kids.length), 0, rebuild(r, undefined, own, path));
+    }
+    if (held?.children !== undefined || kids.length > 0) {
+      own.children = kids;
+    }
+    const log = starts.get(rec.path);
+    let startedAt = attemptStart(own.startedAt, own.status, log);
+    if (log === undefined && startedAt !== undefined) {
+      for (const k of kids) {
+        startedAt = earlier(startedAt, k.startedAt);
+      }
+    }
+    if (startedAt === undefined) {
+      delete own.startedAt;
+    } else {
+      own.startedAt = startedAt;
+    }
+    rebuilt.push([own, rec.path]);
+    return own;
+  };
+  const top = byPath.get(nodePathKey([nodePathSegment(root, undefined)]));
+  return top === undefined ? root : rebuild(top, root, undefined, []);
 }
 
 function scheduleRunRetry(workflowID: string, status: number): void {
@@ -970,18 +1503,36 @@ function cancelRunRetry(workflowID: string): void {
  *  `store.ts`'s eviction exemptions take the same shape. Every reader of a cell must register one
  *  (tabs, mounted notes, transcript run cards, and detached run cards in subagent pages and run-tab step streams): `forgetRun` and a dropped late read treat an
  *  unregistered reader as absent. */
-const stateDemands: ((workflowID: string) => boolean)[] = [];
+const stateDemands: {
+  readonly holds: (workflowID: string) => boolean;
+  readonly shape: RunShape;
+}[] = [];
 
 /** Whether any registered demand holds the run's state cell. */
 export function runStateDemanded(workflowID: string): boolean {
-  return stateDemands.some((fn) => fn(workflowID));
+  return stateDemands.some((d) => d.holds(workflowID));
 }
 
-/** Register one demand predicate. Returns its unregister. */
-export function registerRunStateDemand(fn: (workflowID: string) => boolean): () => void {
-  stateDemands.push(fn);
+/** The widest shape a registered demand holds the run in; undefined when none holds it. */
+function demandedShape(workflowID: string): RunShape | undefined {
+  let out: RunShape | undefined;
+  for (const d of stateDemands) {
+    if ((out === undefined || wider(d.shape, out)) && d.holds(workflowID)) {
+      out = d.shape;
+    }
+  }
+  return out;
+}
+
+/** Register one demand predicate, for a reader drawing the run in `shape`. Returns its unregister. */
+export function registerRunStateDemand(
+  holds: (workflowID: string) => boolean,
+  shape: RunShape,
+): () => void {
+  const d = { holds, shape };
+  stateDemands.push(d);
   return () => {
-    const i = stateDemands.indexOf(fn);
+    const i = stateDemands.indexOf(d);
     if (i >= 0) {
       stateDemands.splice(i, 1);
     }
@@ -1010,6 +1561,11 @@ export function forgetRun(workflowID: string): void {
   }
   cells.delete(workflowID);
   stale.delete(workflowID);
+  revs.delete(workflowID);
+  heldRevs.delete(workflowID);
+  bodies.delete(workflowID);
+  folded.delete(workflowID);
+  wholeOwed.delete(workflowID);
   cancelRunRetry(workflowID);
   plans.delete(workflowID);
   executions.delete(workflowID);
@@ -1021,7 +1577,7 @@ export function forgetRun(workflowID: string): void {
   frameLabels.delete(workflowID);
   resumedBy.delete(workflowID);
   runLogs.delete(workflowID);
-  logVersions.delete(workflowID);
+  forgetStepTails(workflowID);
   logObserver?.forget(workflowID);
 }
 
@@ -1249,57 +1805,78 @@ interface RunLog {
   turns: Map<string, TurnState>;
   order: string[];
   holes: Set<string>;
+  /** Each step path's turn ids in `order`'s order, so a step's reader never scans the run. */
+  byPath: Map<string, string[]>;
+  /** One version per step path, beside the state cells rather than inside them: a step's entries
+   *  and the run's tree move on different clocks, and a frame repaints only its own step's readers. */
+  pathVersions: Map<string, Signal<number>>;
 }
 
 const runLogs = new Map<string, RunLog>();
 
-/** Per-run log versions, beside the state cells rather than inside them: a step's entries and
- *  the run's tree move on different clocks, so a reader of one must not repaint for the other. */
-const logVersions = new Map<string, Signal<number>>();
-
-function logCell(workflowID: string): Signal<number> {
-  let c = logVersions.get(workflowID);
-  if (c === undefined) {
-    c = signal(0);
-    logVersions.set(workflowID, c);
-  }
-  return c;
-}
-
 function log(workflowID: string): RunLog {
   let l = runLogs.get(workflowID);
   if (l === undefined) {
-    l = { turns: new Map(), order: [], holes: new Set() };
+    l = {
+      turns: new Map(),
+      order: [],
+      holes: new Set(),
+      byPath: new Map(),
+      pathVersions: new Map(),
+    };
     runLogs.set(workflowID, l);
   }
   return l;
 }
 
-function bumpLog(workflowID: string): void {
-  const c = logCell(workflowID);
-  c.value = c.peek() + 1;
+function pathCell(l: RunLog, nodePath: string): Signal<number> {
+  let c = l.pathVersions.get(nodePath);
+  if (c === undefined) {
+    c = signal(0);
+    l.pathVersions.set(nodePath, c);
+  }
+  return c;
 }
 
-/** Subscribe to a run's log: the turns it holds in the order they opened. The pane reads the
- *  turn whose `turn_open.node_path` is the step it renders. */
-export function runTurns(workflowID: string): readonly [string, TurnState][] {
-  touch(logCell(workflowID));
+/** Tell the readers of a held turn's step; a turn the log does not hold has none yet. */
+function bumpLog(workflowID: string, turnID: string): void {
   const l = runLogs.get(workflowID);
-  if (l === undefined) {
-    return [];
+  const state = l?.turns.get(turnID);
+  const path = state === undefined ? undefined : turnOpenOf(state)?.node_path;
+  if (l !== undefined && path !== undefined) {
+    const c = pathCell(l, path);
+    c.value = c.peek() + 1;
   }
-  return l.order.flatMap((id) => {
+}
+
+/** Subscribe to one step's turns, in the order they opened: a frame of another step does not
+ *  re-run the caller. */
+export function runStepTurns(workflowID: string, nodePath: string): readonly [string, TurnState][] {
+  const l = log(workflowID);
+  touch(pathCell(l, nodePath));
+  return (l.byPath.get(nodePath) ?? []).flatMap((id) => {
     const t = l.turns.get(id);
     return t === undefined ? [] : [[id, t] as [string, TurnState]];
   });
 }
 
-/** The turns this run's log is missing entries for. The pane re-reads such a turn through the
- *  step GET, which serves the whole turn; the digest's own repair is the range read
- *  (`run-turn-range.ts`), and both clear the marker through `clearRunHole`. */
-export function runTurnHoles(workflowID: string): readonly string[] {
-  touch(logCell(workflowID));
-  return [...(runLogs.get(workflowID)?.holes ?? [])];
+/** The run's whole log as a `TurnSource`, UNTRACKED and uncopied: the projection context for a
+ *  step's turns, which its caller subscribes to through `runStepTurns`. */
+export function runTurnSource(workflowID: string): TurnSource {
+  const l = runLogs.get(workflowID);
+  return l === undefined
+    ? { turns: new Map(), turn_order: [] }
+    : { turns: l.turns, turn_order: l.order };
+}
+
+/** The turns of one step this run's log is missing entries for, subscribing to that step only.
+ *  The pane re-reads such a turn through the step GET, which serves the whole turn; the digest's
+ *  own repair is the range read (`run-turn-range.ts`), and both clear the marker through
+ *  `clearRunHole`. */
+export function runStepHoles(workflowID: string, nodePath: string): readonly string[] {
+  const l = log(workflowID);
+  touch(pathCell(l, nodePath));
+  return (l.byPath.get(nodePath) ?? []).filter((id) => l.holes.has(id));
 }
 
 /** The newest `seq` this client holds for one step turn, which is what a `run_turn` repair asks
@@ -1310,6 +1887,20 @@ export function runTurnHeldSeq(workflowID: string, turnID: string): number | und
   return state === undefined || state.entries.length === 0 ? undefined : state.entries.length - 1;
 }
 
+/** The held turns of a run's log with no `turn_close`, in log order. */
+export function runOpenTurnIDs(workflowID: string): string[] {
+  const l = runLogs.get(workflowID);
+  return l === undefined ? [] : l.order.filter((id) => l.turns.get(id)?.closeAt === undefined);
+}
+
+/** Drop the `run_turn` stamps of a run whose frames stop reaching this page, so a revalidation
+ *  re-reads no turn nobody draws. The next frame or read applied to a held turn stamps it again. */
+export function forgetRunTurnStamps(workflowID: string): void {
+  for (const id of runOpenTurnIDs(workflowID)) {
+    forgetSubject("run_turn", runTurnRef(workflowID, id));
+  }
+}
+
 /** Retire a hole the reader's own repair closed. The chat store's twin restores residency when
  *  no repair is left out; here the range read and the pane's step GET are the repairs, so the
  *  reader that adopts that answer is what says the turn is whole again. */
@@ -1318,7 +1909,7 @@ export function clearRunHole(workflowID: string, turnID: string): void {
   if (!l?.holes.delete(turnID)) {
     return;
   }
-  bumpLog(workflowID);
+  bumpLog(workflowID, turnID);
 }
 
 /** The `run_turn` digest ref for one open step turn. The server spells it `<workflowID>/<turn>`
@@ -1392,8 +1983,18 @@ export function openRunTurn(workflowID: string, entry: Entry): void {
   } else {
     l.order.splice(at, 0, entry.turn);
   }
+  const path = turnOpenOf(state)?.node_path;
+  if (path !== undefined) {
+    const ids = l.byPath.get(path) ?? [];
+    const near = ids.findIndex((id) => {
+      const other = l.turns.get(id);
+      return other !== undefined && runTurnOrdinal(other) > n;
+    });
+    ids.splice(near < 0 ? ids.length : near, 0, entry.turn);
+    l.byPath.set(path, ids);
+  }
   stampRunTurn(workflowID, entry.turn, state);
-  bumpLog(workflowID);
+  bumpLog(workflowID, entry.turn);
 }
 
 /** A turn without a readable ordinal sorts last, where a newer turn belongs. */
@@ -1409,7 +2010,6 @@ export function appendRunEntry(workflowID: string, entry: Entry): void {
   const state = l.turns.get(entry.turn);
   if (state === undefined) {
     markRunHole(workflowID, entry.turn);
-    bumpLog(workflowID);
     return;
   }
   if (entry.seq !== state.entries.length) {
@@ -1417,7 +2017,7 @@ export function appendRunEntry(workflowID: string, entry: Entry): void {
       return;
     }
     markRunHole(workflowID, entry.turn);
-    bumpLog(workflowID);
+    bumpLog(workflowID, entry.turn);
     return;
   }
   state.entries.push(entry);
@@ -1439,7 +2039,7 @@ export function appendRunEntry(workflowID: string, entry: Entry): void {
   } else {
     stampRunTurn(workflowID, entry.turn, state);
   }
-  bumpLog(workflowID);
+  bumpLog(workflowID, entry.turn);
 }
 
 /** Seat a lane's open entry of a run's turn. */
@@ -1447,19 +2047,20 @@ export function openRunEntry(workflowID: string, open: OpenEntry): void {
   const state = runLogs.get(workflowID)?.turns.get(open.turn);
   if (state === undefined) {
     markRunHole(workflowID, open.turn);
-    bumpLog(workflowID);
+    return;
+  }
+  if (openIsRedelivery(state.entries, state.openEntries, open)) {
     return;
   }
   const lane = open.lane ?? "";
   state.openEntries.set(lane, { ...open, lane });
-  bumpLog(workflowID);
+  bumpLog(workflowID, open.turn);
 }
 
-/** Replace one turn's open tails with the ones a WHOLE-TURN read answered, which is
- *  authoritative about them: a tail whose entry has since sealed is absent from it, and seating
- *  without replacing leaves that stale tail beside the sealed entry it became for as long as the
- *  pane lives, because no later frame addresses its lane. */
-export function adoptRunOpenEntries(
+/** Merge a read's open tails for one turn into the held ones, after its sealed entries are seated
+ *  (`open-tails.ts` `mergeOpenTails` owns the rule): a frame that landed while the read was out
+ *  keeps its word, and a tail whose entry has sealed does not come back. */
+export function mergeRunOpenEntries(
   workflowID: string,
   turnID: string,
   open: readonly OpenEntry[],
@@ -1468,19 +2069,16 @@ export function adoptRunOpenEntries(
   if (state === undefined) {
     return;
   }
-  state.openEntries = new Map();
-  for (const o of open) {
-    if (o.turn !== turnID) {
-      continue;
-    }
-    const lane = o.lane ?? "";
-    state.openEntries.set(lane, { ...o, lane });
-  }
-  bumpLog(workflowID);
+  state.openEntries = mergeOpenTails(
+    state.entries,
+    state.openEntries,
+    open.filter((o) => o.turn === turnID),
+  );
+  bumpLog(workflowID, turnID);
 }
 
 /** Extend a lane's open entry by one delta. `n` is the running count AFTER the delta, so `open.n
- *  + 1` is the only admissible value. */
+ *  + 1` is the only admissible value once a delta the turn already holds is dropped. */
 export function applyRunDelta(
   workflowID: string,
   turnID: string,
@@ -1492,17 +2090,19 @@ export function applyRunDelta(
   const state = runLogs.get(workflowID)?.turns.get(turnID);
   if (state === undefined) {
     markRunHole(workflowID, turnID);
-    bumpLog(workflowID);
     return;
   }
   const open = state.openEntries.get(lane);
+  if (deltaIsRedelivery(state.entries, open, entryID, n)) {
+    return;
+  }
   if (open?.id !== entryID || n !== open.n + 1) {
     markRunHole(workflowID, turnID);
-    bumpLog(workflowID);
+    bumpLog(workflowID, turnID);
     return;
   }
   state.openEntries.set(lane, { ...open, text: open.text + delta, n });
-  bumpLog(workflowID);
+  bumpLog(workflowID, turnID);
 }
 
 /** Seal a lane's open entry: build the `Entry` from the open state and hand it to
@@ -1519,13 +2119,15 @@ export function sealRunEntry(
   const state = runLogs.get(workflowID)?.turns.get(turnID);
   if (state === undefined) {
     markRunHole(workflowID, turnID);
-    bumpLog(workflowID);
     return;
   }
   const open = state.openEntries.get(lane);
+  if (sealIsRedelivery(state.entries, entryID, seq)) {
+    return;
+  }
   if (open?.id !== entryID || n !== open.n) {
     markRunHole(workflowID, turnID);
-    bumpLog(workflowID);
+    bumpLog(workflowID, turnID);
     return;
   }
   state.openEntries.delete(lane);

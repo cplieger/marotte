@@ -39,6 +39,8 @@ interface ExecPageOpts {
   controls?: (run: ExecRun) => HTMLElement | null;
   /** The consumer's own statements about the execution (a control refusal), as dock notes. */
   notes?: (run: ExecRun) => readonly string[];
+  /** The output of a node marked `deferredOutput`, once the consumer holds it. */
+  output?: (node: ExecNode) => string | undefined;
   /** Fired when the node the DETAIL PANE is showing changes, or when that node's
    *  state moves — the seam a consumer arms an on-demand fetch on (`emptyNote`/`emptyAction`
    *  run on every render and must stay pure). The STATE half is required because `select()`
@@ -52,6 +54,8 @@ interface ExecPageOpts {
    *  starts; a click holds until then, and a container click picks its newest step, so a step is
    *  always selected. Either way, a question that opens selects its step, as a click would. */
   follow?: "attention" | "newest";
+  /** Fired when the dock's panel, the page's one list of every step, opens or closes. */
+  onPanel?: (open: boolean) => void;
 }
 
 /** The results clamp: `.ev-r-text`'s stylesheet line count, the pre-layout character guess, and
@@ -64,10 +68,18 @@ export interface ExecPageView {
   readonly root: HTMLElement;
   /** Draw an execution. Idempotent and safe on every invalidation. */
   render(run: ExecRun | undefined): void;
+  /** The dock rows' newest printed lines, by path (`ExecDockView.paintTails`). */
+  paintTails(tails: ReadonlyMap<string, string>): void;
+  /** The paths of the dock's step rows as the last render drew them. */
+  dockRowPaths(): readonly string[];
   /** The host a node's live transcript renders into. */
   bodyFor(path: string): HTMLElement;
+  /** Remove a node's host, once its transcript is disposed. */
+  releaseBody(path: string): void;
   /** Show a node as a click on its row does, repainting before it returns. */
   select(path: string): void;
+  /** Stop the clock while the page is not on screen; the next `render` restarts it. */
+  pause(): void;
   /** Release the clock and the dock. Called when the page stops being shown. */
   dispose(): void;
 }
@@ -97,9 +109,10 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
   const dock: ExecDockView = buildExecDock({
     host: opts.dock,
     icon: opts.icon ?? ICON_TAB_RUN,
-    tree: tree.root,
-    timeline: timeline.root,
+    tree,
+    timeline,
     select,
+    ...(opts.onPanel === undefined ? {} : { onPanel: opts.onPanel }),
     revealSteps: (scroller) => {
       if (current !== undefined) {
         tree.reveal(focusStep(current, selected), scroller);
@@ -125,7 +138,6 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
   );
 
   let current: ExecRun | undefined;
-  let notes: readonly string[] = [];
   let timer: ReturnType<typeof setInterval> | undefined;
   const follow = opts.follow ?? "attention";
   let seenGen = 0;
@@ -192,8 +204,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     }
     tree.render(run.nodes, selected);
     timeline.render(run.nodes, selected, run.live);
-    notes = opts.notes?.(run) ?? [];
-    dock.paint(run, selected, notes);
+    dock.paint(run, selected, opts.notes?.(run) ?? []);
     dock.setControls(opts.controls?.(run) ?? null);
     const node = nodeAt(run.nodes, selected);
     detail.render(node);
@@ -217,8 +228,10 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
   function renderResults(node: ExecNode | undefined): void {
     const merged = new Map<string, string>();
     if (node !== undefined && settled(node.state)) {
-      if (node.output !== undefined) {
-        merged.set("", node.output);
+      const output =
+        node.output ?? (node.deferredOutput === true ? opts.output?.(node) : undefined);
+      if (output !== undefined) {
+        merged.set("", output);
       }
       // Artifacts win a key collision, being the value a step CHOSE to publish.
       for (const [k, v] of Object.entries(node.artifacts ?? {})) {
@@ -289,7 +302,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
         tree.tick();
         detail.tick();
         timeline.tick(run.nodes, selected, run.live);
-        dock.paint(run, selected, notes);
+        dock.tick();
       }, 1000);
       return;
     }
@@ -344,10 +357,22 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
       repaint();
       setClock(run.live);
     },
+    paintTails(tails) {
+      dock.paintTails(tails);
+    },
+    dockRowPaths() {
+      return dock.rowPaths();
+    },
     bodyFor(path) {
       return detail.bodyFor(path);
     },
+    releaseBody(path) {
+      detail.releaseBody(path);
+    },
     select,
+    pause() {
+      setClock(false);
+    },
     dispose() {
       setClock(false);
       dock.dispose();

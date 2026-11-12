@@ -189,11 +189,12 @@ describe("the live rows", () => {
     page.render(
       run([
         step("plan", "ok", 0),
-        step("seat-a", "running", 1, { tail: "Reading the diff" }),
+        step("seat-a", "running", 1),
         step("seat-b", "input", 2),
         step("ship", "pending"),
       ]),
     );
+    page.paintTails(new Map([["root/seat-a", "Reading the diff"]]));
     expect(rowLabels()).toEqual(["seat-a", "seat-b"]);
     const [a, b] = [...host.querySelectorAll<HTMLButtonElement>(".ev-dock-row")];
     expect(a?.querySelector(".ev-dock-tail")?.textContent).toBe("Reading the diff");
@@ -207,7 +208,7 @@ describe("the live rows", () => {
 
   it("keep the shown step named once it has settled and others run", () => {
     page.render(run([step("plan", "ok", 0), step("build", "running", 1)]));
-    host.querySelector<HTMLElement>('.ev-row[data-path="root/plan"] > .ev-row-main')?.click();
+    page.select("root/plan");
     expect(rowLabels()).toEqual(["build", "plan"]);
   });
 
@@ -508,12 +509,13 @@ describe("the head and rows, as surfaces", () => {
   it("lines the rows' columns up across rows", () => {
     const style = mountAppCSS();
     try {
-      page.render(
-        run([
-          step("a", "running", 0, { tail: "short" }),
-          step("a-much-longer-step-name", "running", 1, { tail: "tail" }),
+      page.paintTails(
+        new Map([
+          ["root/a", "short"],
+          ["root/a-much-longer-step-name", "tail"],
         ]),
       );
+      page.render(run([step("a", "running", 0), step("a-much-longer-step-name", "running", 1)]));
       const tails = [...host.querySelectorAll<HTMLElement>(".ev-dock-tail")];
       const [x0, x1] = tails.map((t) => t.getBoundingClientRect().left);
       expect(x0).toBe(x1);
@@ -560,6 +562,8 @@ describe("the timeline segment", () => {
     page.render(
       run([step("plan", "running", 0), step("build", "pending"), step("ship", "pending")]),
     );
+    toggle().click();
+    segment("timeline").click();
     const lanes = [...host.querySelectorAll<HTMLElement>(".ev-tl-lane")];
     expect(lanes.map((l) => l.dataset["path"])).toEqual(["root/plan", "root/build", "root/ship"]);
     expect(lanes.map((l) => l.querySelector<HTMLElement>(".ev-tl-bar")!.hidden)).toEqual([
@@ -597,7 +601,7 @@ describe("the shown step in a one-row dock", () => {
     host.style.inlineSize = "22rem";
     try {
       page.render(run([step("plan", "ok", 0), step("a", "running", 1), step("b", "running", 2)]));
-      host.querySelector<HTMLElement>('.ev-row[data-path="root/plan"] > .ev-row-main')?.click();
+      page.select("root/plan");
       expect(rowLabels()).toEqual(["a", "b", "plan"]);
       const visible = onScreen();
       expect(visible.map((r) => r.querySelector(".ev-dock-label")?.textContent)).toEqual(["plan"]);
@@ -682,8 +686,8 @@ describe("the Steps tree on open", () => {
 
   it("lands on the step waiting on the reader, over the shown one in flight", async () => {
     page.render(run(many((i) => (i === 12 ? "input" : i === 30 ? "running" : "ok"))));
-    expect(body().scrollHeight).toBeGreaterThan(body().clientHeight * 2);
     await opened("root/s12");
+    expect(body().scrollHeight).toBeGreaterThan(body().clientHeight * 2);
   });
 
   it("lands on a failed step", async () => {
@@ -694,19 +698,19 @@ describe("the Steps tree on open", () => {
   it("lands on the step a paused run has parked", async () => {
     const parked = many((i) => (i === 14 ? "waiting" : i < 14 ? "ok" : "pending"));
     page.render({ ...run(parked), state: "waiting" });
-    rowLine("root/s02").click();
+    page.select("root/s02");
     await opened("root/s14");
   });
 
   it("lands on the shown step while it is in flight, over a newer one", async () => {
     page.render(run(many((i) => (i === 10 || i === 30 ? "running" : "ok"))));
-    rowLine("root/s10").click();
+    page.select("root/s10");
     await opened("root/s10");
   });
 
   it("lands on the newest step in flight when the shown one has settled", async () => {
     page.render(run(many((i) => (i === 15 || i === 20 ? "running" : "ok"))));
-    rowLine("root/s05").click();
+    page.select("root/s05");
     await opened("root/s20");
   });
 
@@ -717,7 +721,7 @@ describe("the Steps tree on open", () => {
         false,
       ),
     );
-    rowLine("root/s18").click();
+    page.select("root/s18");
     await opened("root/s18");
   });
 
@@ -815,8 +819,11 @@ describe("the Steps tree on open", () => {
 });
 
 describe("the phone budget", () => {
-  const fan = (): ExecNode[] =>
-    ["a", "b", "c", "d"].map((id, i) => step(`review/${id}`, "running", i, { tail: "Reading" }));
+  const fan = (): ExecNode[] => {
+    const steps = ["a", "b", "c", "d"].map((id, i) => step(`review/${id}`, "running", i));
+    page.paintTails(new Map(steps.map((n) => [n.path, "Reading"])));
+    return steps;
+  };
 
   async function phone(): Promise<HTMLStyleElement> {
     await browser.viewport(390, 844);

@@ -49,7 +49,7 @@ describe("step results tables", () => {
   }
 
   function select(path: string): void {
-    document.querySelector<HTMLElement>(`.ev-row[data-path="${path}"] > .ev-row-main`)?.click();
+    page?.select(path);
   }
 
   it("lets go of the previous step's tables when another step is selected", () => {

@@ -16,6 +16,7 @@ describe("the tree pane's tick", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-09-20T06:01:00.000Z"));
     const tree = buildExecTree(vi.fn());
+    tree.attach(document.createElement("div"));
     const running = node("k", { start: "2026-09-20T06:00:00.000Z" });
     const settled = node("d", {
       state: "ok",

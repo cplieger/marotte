@@ -47,7 +47,7 @@ vi.mock("./api-client.js", async () => ({
   // The OrError variant: the store spends a failed read's STATUS, so a run this map does not name
   // answers 0 — no request — rather than the settled 404 that would skip its retry ladder.
   apiGetOrError: vi.fn((path: string) => {
-    const hit = /^\/api\/runs\/([^/?]+)$/.exec(path);
+    const hit = /^\/api\/runs\/([^/?]+)(?:\?view=(?:header|glance))?$/.exec(path);
     if (hit !== null) {
       const id = decodeURIComponent(hit[1] ?? "");
       const fixture = inspect.get(id) as Record<string, unknown> | undefined;
@@ -71,17 +71,20 @@ vi.mock("./api-client.js", async () => ({
 
 // Called through, so the one toast a batch raises is countable.
 vi.mock("./toast.js", { spy: true });
+// Called through, so a tick that re-projects the run is countable.
+vi.mock("./run-exec-source.js", { spy: true });
 
 const { initRunBar, _resetRunBarForTest } = await import("./run-bar.js");
 const { initActions } = await import("./actions/boot.js");
 const { configureApi } = await import("@cplieger/reactive/actions");
 const toast = await import("./toast.js");
-const { invalidateRun } = await import("./run-store.js");
+const { invalidateRun, rereadHeldRuns } = await import("./run-store.js");
 const { frameRunGone, frameRunLive } = await import("./__test-helpers__/live-runs.js");
 const { setSessions, setActive } = await import("./store.js");
 const { dropDecisions } = await import("./decision-dock.js");
 const { applyRunAsks, _resetRunAsksForTest } = await import("./run-asks.js");
 const { apiGetOrError } = await import("./api-client.js");
+const { runToExec } = await import("./run-exec-source.js");
 
 const bar = document.getElementById("run-bar") as HTMLUListElement;
 const fold = document.getElementById("run-bar-fold")!;
@@ -1851,5 +1854,67 @@ describe("Pause all and Resume all", () => {
       expect(btn?.getAttribute("aria-label")).toBe("Resume all");
       expectOnHeader(btn);
     });
+  });
+});
+
+describe("the run bar's clock on a large run", () => {
+  it("moves the clock without re-projecting the run", async () => {
+    const c = chatID();
+    chats.push(c);
+    const id = runID("big");
+    const start = new Date(Date.now() - 5000).toISOString();
+    inspect.set(
+      id,
+      state({
+        root: {
+          nodeId: "root",
+          type: "sequence",
+          status: "running",
+          startedAt: start,
+          children: [
+            ...Array.from({ length: 999 }, (_, i) => ({
+              nodeId: `s${String(i)}`,
+              type: "step",
+              status: "completed",
+              startedAt: start,
+              endedAt: start,
+            })),
+            { nodeId: "live", type: "step", status: "running", startedAt: start },
+          ],
+        },
+      }),
+    );
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    live(id, c);
+    await activate(c);
+    expect(rowText(".ev-sum-label")).toEqual(["nightly sweep"]);
+    const before = rowText(".ev-sum-clock");
+    vi.mocked(runToExec).mockClear();
+
+    vi.advanceTimersByTime(10_000);
+    vi.useRealTimers();
+
+    expect(rowText(".ev-sum-clock")).not.toEqual(before);
+    expect(vi.mocked(runToExec)).not.toHaveBeenCalled();
+  });
+});
+
+describe("the run bar's read of a run", () => {
+  it("reads the run's glance, never its whole tree, at mount and on a revalidation", async () => {
+    const c = chatID();
+    chats.push(c);
+    const id = runID("glance");
+    inspect.set(id, state());
+    live(id, c);
+    await activate(c);
+    rereadHeldRuns();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const reads = vi
+      .mocked(apiGetOrError)
+      .mock.calls.map(([url]) => url)
+      .filter((u) => u.startsWith(`/api/runs/${id}`));
+    expect(reads.length).toBeGreaterThan(0);
+    expect(reads.filter((u) => !u.includes("view=glance"))).toEqual([]);
   });
 });

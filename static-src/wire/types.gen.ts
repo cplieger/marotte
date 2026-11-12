@@ -3330,6 +3330,17 @@ export interface RunRetriedResponse {
 }
 
 /**
+ * RunRevPayload is the payload for type="run_rev": the run read moved to Rev, which a client
+ * holding an earlier revision reads as GET /api/runs/{id}?since=<its rev>. Status is the run's
+ * status at Rev.
+ */
+export interface RunRevPayload {
+  workflow_id: string;
+  status?: string;
+  rev: number;
+}
+
+/**
  * RunStanding is where a running or paused run stands, from KAS's list row. Node is a bare
  * node id; for pass_limit it is the repeat at its cap.
  */
@@ -3354,6 +3365,17 @@ export interface RunStartedPayload {
   initiator?: string;
   initiator_reason?: string;
   unattended?: string;
+}
+
+/**
+ * RunStepCapture is GET /api/runs/{id}/steps/{path}/capture's reply: the whole captured output of
+ * one node, which the run read carries only as its summary.
+ */
+export interface RunStepCapture {
+  /** CapturedOutput is absent when the node captured nothing; "" is a capture of no text. */
+  captured_output?: string;
+  workflow_id: string;
+  node_path: string;
 }
 
 /**
@@ -3408,8 +3430,20 @@ export interface RunStepMessageResponse {
  * shows in flight past an ended attempt is on a new one.
  */
 export interface RunStepStart {
+  /**
+ * Open is set on an attempt in flight whose turn's own lane is streaming an entry, as the entry stood when the
+ * read was written: the id and delta count its next entry_delta follows, and the end of its text from the newest
+ * finished line that prints, all the dock line reads of it.
+ */
+  open?: OpenEntry;
   /** StartedAt is RFC 3339. */
   started_at: string;
+  /**
+ * Turn and Tail are set on an attempt in flight: its newest turn id and the newest line its own lane printed, the
+ * seed of the run tab's dock line for a step whose transcript the page does not hold.
+ */
+  turn?: string;
+  tail?: string;
   ended: boolean;
 }
 

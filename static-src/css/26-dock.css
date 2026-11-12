@@ -946,20 +946,23 @@
   height: 0.85rem;
 }
 
-/* `.tool-spinner`'s painted arc (14-tools.css), at the glyph's size. */
+/* `.tool-spinner`'s ring (14-tools.css), at the glyph's size. */
 .steer-spinner {
   width: 0.85rem;
   height: 0.85rem;
   flex-shrink: 0;
-  border-radius: 50%;
-  background: conic-gradient(
-      from var(--vk-spin-arc),
-      var(--c-accent) 0deg 90deg,
-      var(--c-border) 90deg 360deg
-    )
-    border-box;
+  clip-path: circle();
   mask: radial-gradient(closest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
-  animation: vk-spin var(--spin-dur) linear infinite;
+}
+
+.steer-spinner::before {
+  content: "";
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  background: conic-gradient(from -45deg, var(--c-accent) 0deg 90deg, var(--c-border) 90deg 360deg);
+  scale: 1.5;
+  animation: vk-spin-rotate var(--spin-dur) linear infinite;
 }
 
 /* The WORD, not only the glyph. "Sent" is the fact the stack exists to state:

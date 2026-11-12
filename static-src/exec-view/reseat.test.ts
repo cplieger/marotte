@@ -35,6 +35,7 @@ describe("the tree pane", () => {
   it("does not restart a running row's animation on re-render", async () => {
     const tree = buildExecTree(vi.fn());
     host.appendChild(tree.root);
+    tree.attach(host);
     const nodes = [step("a"), step("b")];
     tree.render(nodes, "a");
 
@@ -73,6 +74,7 @@ describe("the tree pane", () => {
   it("does not restart a nested running row's animation on re-render", async () => {
     const tree = buildExecTree(vi.fn());
     host.appendChild(tree.root);
+    tree.attach(host);
     const nodes = [step("g", { kind: "sequence", children: [step("k1"), step("k2")] })];
     tree.render(nodes, "k1");
 
@@ -103,6 +105,7 @@ describe("the tree pane", () => {
   it("keeps focus on a row across a re-render", () => {
     const tree = buildExecTree(vi.fn());
     host.appendChild(tree.root);
+    tree.attach(host);
     const nodes = [step("a"), step("b"), step("c")];
     tree.render(nodes, "a");
 
@@ -118,6 +121,7 @@ describe("the tree pane", () => {
   it("still reorders when the plan order changes, and still adds and drops rows", () => {
     const tree = buildExecTree(vi.fn());
     host.appendChild(tree.root);
+    tree.attach(host);
     const paths = (): string[] =>
       [...host.querySelectorAll<HTMLElement>(".ev-tree > .ev-row")].map(
         (r) => r.dataset["path"] ?? "",
@@ -142,6 +146,7 @@ describe("the tree pane", () => {
   it("nests children in order under a container without re-seating the container", () => {
     const tree = buildExecTree(vi.fn());
     host.appendChild(tree.root);
+    tree.attach(host);
     const group = (kids: ExecNode[]): ExecNode => step("g", { kind: "sequence", children: kids });
     tree.render([group([step("k1"), step("k2")])], "k1");
 
@@ -170,6 +175,7 @@ describe("the timeline pane", () => {
   it("keeps focus on a lane across a re-render and across a tick", () => {
     const tl = buildExecTimeline(vi.fn());
     host.appendChild(tl.root);
+    tl.attach(host);
     tl.render(two(), "a", true);
 
     const lane = host.querySelector<HTMLElement>('.ev-tl-lane[data-path="b"]')!;
@@ -187,6 +193,7 @@ describe("the timeline pane", () => {
   it("reuses the same lane element while still updating its geometry and labels", () => {
     const tl = buildExecTimeline(vi.fn());
     host.appendChild(tl.root);
+    tl.attach(host);
     tl.render(two(), "a", true);
 
     const lane = host.querySelector<HTMLElement>('.ev-tl-lane[data-path="b"]')!;
@@ -211,6 +218,7 @@ describe("the timeline pane", () => {
   it("drops a lane the plan no longer describes", () => {
     const tl = buildExecTimeline(vi.fn());
     host.appendChild(tl.root);
+    tl.attach(host);
     tl.render([...two(), step("c")], "a", true);
     expect(host.querySelectorAll(".ev-tl-lane").length).toBe(3);
 

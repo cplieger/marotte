@@ -23,7 +23,8 @@ import { BUS_PAGE_RESUMED, BUS_RECONCILE, decodeEnvelope, emitBus } from "./bus.
 import { inventoryHeld } from "./git-prs-state.js";
 import { mcpState } from "./mcp-state.js";
 import { isMirrorKind } from "./mirror.js";
-import { peekRunState, refetchLiveRuns, rereadHeldRuns, runTurnHeldSeq } from "./run-store.js";
+import { refetchLiveRuns, rereadHeldRuns, runTurnHeldSeq } from "./run-store.js";
+import { runContentScoped } from "./run-content-scope.js";
 import { requestRunTurnRange } from "./run-turn-range.js";
 import { setSSEStatus } from "./send-state.js";
 import { fetchCatalog } from "./session-catalog.js";
@@ -181,10 +182,31 @@ function deliver(evt: ServerEvent): void {
     void runStampAction(evt.subject);
     return;
   }
+  const run = runContentOf(evt);
+  if (run !== "" && !runContentScoped(run)) {
+    // Its stamp is not observed either: nothing here holds what it would certify.
+    return;
+  }
   onMsg(evt);
   if (evt.subject !== undefined && projectionHeld(evt.subject)) {
     observeStamp(evt.subject);
   }
+}
+
+/** The frames carrying a run step's content, which reach only a page whose scope names the run. */
+const RUN_CONTENT: ReadonlySet<ServerEvent["type"]> = new Set([
+  "turn_opened",
+  "entry_opened",
+  "entry_delta",
+  "entry_sealed",
+  "entry_appended",
+  "turn_closed",
+  "tool_progress",
+]);
+
+/** The run whose step content `evt` carries, "" for a chat's frame or any other kind. */
+function runContentOf(evt: ServerEvent): string {
+  return RUN_CONTENT.has(evt.type) ? rawWorkflowID(evt.payload) : "";
 }
 
 /** Whether this client holds the projection a stamp certifies. A mirror observes its own
@@ -201,7 +223,7 @@ function projectionHeld(stamp: SubjectStamp): boolean {
       return chatID !== "" && get(chatID)?.residency === "loaded";
     }
     case "run_turn":
-      return peekRunState(runTurnWorkflow(stamp.ref)) !== undefined;
+      return runTurnHeldSeq(runTurnWorkflow(stamp.ref), runTurnID(stamp.ref)) !== undefined;
     case "forge_inventory":
       return inventoryHeld();
     default:

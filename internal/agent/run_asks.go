@@ -109,9 +109,13 @@ type askCell struct {
 	chatID     marotte.ChatID
 	lastMotion time.Time
 	reply      workflow.Inspect
+	// raw is reply as KAS sent it, which the reads served from the held read take apart.
+	raw json.RawMessage
 	// basis is the turn record reply is paired with, taken before reply's inspect was sent.
-	basis    askBasis
-	last     marotte.RunAsksPayload
+	basis askBasis
+	last  marotte.RunAsksPayload
+	// revision is the run read's revision over reply and the run log's extras (run_rev.go).
+	revision runRevision
 	turns    uint64
 	mu       sync.Mutex
 	dirty    bool
@@ -436,11 +440,12 @@ func (rs *Runs) republishLocked(ctx context.Context, c *askCell) askNotice {
 	return rs.publishLocked(ctx, c, wireAsks(asks), c.last.Reachable)
 }
 
-// askRead is one refresh's result: the reply and the asks of it.
+// askRead is one refresh's result: the reply and the asks of it, and the revision it made.
 type askRead struct {
 	raw  json.RawMessage
 	in   workflow.Inspect
 	asks []workflow.Ask
+	rev  revSnapshot
 }
 
 // readAsks is an explicit refresh, waiting for any query in flight: a verb's pre-send check or a run read. A failed
@@ -519,6 +524,7 @@ func (rs *Runs) refreshCell(ctx context.Context, c *askCell) (askRead, error) {
 	c.mu.Lock()
 	basis := c.basisLocked()
 	c.mu.Unlock()
+	turns := rs.turnsBefore(ctx, c.workflowID)
 	raw, err := rs.rawInspect(ctx, c.workflowID)
 	if workflowNotFound(err) {
 		rs.markGone(ctx, c)
@@ -542,7 +548,7 @@ func (rs *Runs) refreshCell(ctx context.Context, c *askCell) (askRead, error) {
 	}
 	rs.readSaid(ctx, c, in, basis)
 	c.mu.Lock()
-	c.reply, c.basis, c.readFailed = in, basis, false
+	c.reply, c.raw, c.basis, c.readFailed = in, raw, basis, false
 	asks := workflow.OpenAsks(in, c.runLogLocked(basis, rs.asks.epochNow()))
 	c.settleOnReadLocked(in, asks)
 	// Settling can clear marotte's own holds, which are part of this snapshot.
@@ -551,7 +557,7 @@ func (rs *Runs) refreshCell(ctx context.Context, c *askCell) (askRead, error) {
 	rs.armTimersLocked(c, asks)
 	c.mu.Unlock()
 	rs.sendNotices(ctx, c, n)
-	return askRead{raw: raw, in: in, asks: asks}, nil
+	return askRead{raw: raw, in: in, asks: asks, rev: rs.revise(ctx, c, &freshRead{raw: raw, in: in, turns: turns})}, nil
 }
 
 // settleOnReadLocked applies a read to marotte's own request state: a terminal run waits on
@@ -580,7 +586,7 @@ func (rs *Runs) markGone(ctx context.Context, c *askCell) {
 	c.clearPendingLocked()
 	stopTimer(c.requery)
 	stopTimer(c.quiet)
-	c.reply, c.readFailed = workflow.Inspect{}, false
+	c.reply, c.raw, c.readFailed = workflow.Inspect{}, nil, false
 	n := rs.publishLocked(ctx, c, nil, true)
 	c.mu.Unlock()
 	rs.sendNotices(ctx, c, n)

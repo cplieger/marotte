@@ -57,10 +57,6 @@ function selectedPath(): string {
   return shown.at(-1)?.path ?? "";
 }
 
-function click(path: string): void {
-  dock.querySelector<HTMLElement>(`.ev-row[data-path="${path}"] > .ev-row-main`)?.click();
-}
-
 describe("following the newest step", () => {
   it("shows the newest started step and switches when a newer one starts", () => {
     page.render(run([step("plan", "running", 0), step("build", "pending")]));
@@ -71,7 +67,7 @@ describe("following the newest step", () => {
 
   it("holds a pick until a newer step starts", () => {
     page.render(run([step("plan", "ok", 0), step("build", "running", 1), step("ship", "pending")]));
-    click("root/plan");
+    page.select("root/plan");
     expect(selectedPath()).toBe("root/plan");
     page.render(run([step("plan", "ok", 0), step("build", "running", 1), step("ship", "pending")]));
     expect(selectedPath()).toBe("root/plan");
@@ -81,7 +77,7 @@ describe("following the newest step", () => {
 
   it("ends a pick when an already-seen step starts again", () => {
     page.render(run([step("plan", "ok", 0), step("build", "running", 1)]));
-    click("root/plan");
+    page.select("root/plan");
     expect(selectedPath()).toBe("root/plan");
     page.render(run([step("plan", "ok", 0), step("build", "running", 5)]));
     expect(selectedPath()).toBe("root/build");
@@ -96,7 +92,7 @@ describe("following the newest step", () => {
         step("ship", "pending"),
       ]),
     );
-    click("root/plan");
+    page.select("root/plan");
     // The same start, its time re-read earlier.
     page.render(
       run([
@@ -129,8 +125,8 @@ describe("following the newest step", () => {
       ],
     };
     page.render(run([step("plan", "ok", 1), loop]));
-    click("root/plan");
-    click("root/loop");
+    page.select("root/plan");
+    page.select("root/loop");
     expect(selectedPath()).toBe("root/loop/b");
   });
 

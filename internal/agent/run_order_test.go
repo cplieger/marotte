@@ -1397,6 +1397,8 @@ func TestRunOrder_ACompactionKiroCLIRefusesWithNoTurnBesideItRunsOnce(t *testing
 		if calls.count() != 1 {
 			t.Errorf("compact calls = %d, want 1", calls.count())
 		}
+		// The toast is spawned after the next row's take (flushRunLocked).
+		waitFor(t, func() bool { return len(calls.toasts()) > 0 })
 		if got := calls.toasts(); !slices.Equal(got, []string{compactFailed}) {
 			t.Errorf("toasts = %v, want one %q", got, compactFailed)
 		}

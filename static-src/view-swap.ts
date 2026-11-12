@@ -78,6 +78,14 @@ function hide(v: HTMLElement): void {
   }
 }
 
+const hideListeners = new Map<string, () => void>();
+
+/** Run `onHide` each time the view with this id stops being the shown one, after the swap. One
+ *  listener per view; a later call replaces it. */
+export function onViewHidden(viewID: string, onHide: () => void): void {
+  hideListeners.set(viewID, onHide);
+}
+
 /** Show `target` alone among the `[data-tab-view]` views, parking the hidden ones (dom.ts `park`). Swaps, with the
  *  entry fade, only when `target` is not already the one shown: callers re-run this on every projection change. */
 export function showOnlyView(target: HTMLElement | null): void {
@@ -104,4 +112,9 @@ export function showOnlyView(target: HTMLElement | null): void {
     }
     return target;
   });
+  for (const v of shown) {
+    if (v !== target) {
+      hideListeners.get(v.id)?.();
+    }
+  }
 }

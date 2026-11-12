@@ -9,10 +9,12 @@ import { creditFigure, formatElapsed } from "../strings.js";
 import {
   miniBar,
   summaryProgress,
-  window as execWindow,
+  windowAt,
+  windowBounds,
   type ExecRun,
   type MiniSeg,
   type ProgressPhrase,
+  type WindowBounds,
 } from "./model.js";
 import { STATE_WORD } from "./status.js";
 import { buildAlertLine, wantsReader, type ExecAlert } from "./alert.js";
@@ -22,8 +24,10 @@ import { setText } from "../dom.js";
 export interface ExecSummaryView {
   /** `.ev-sum`. */
   readonly root: HTMLElement;
-  /** Paint from the model; text writes skip unchanged values, so the 1s tick is cheap. */
+  /** Paint from the model; text writes skip unchanged values. */
   paint(run: ExecRun): void;
+  /** Move the clock alone, from the last `paint`'s run: the 1s tick, whatever the run's size. */
+  tick(): void;
   /** A run with no model yet: the name alone, every other part empty. */
   paintPending(label: string): void;
   /** "<name>, <state>, <progress>" or "<name>: <alert sentence>", for the consumer's accessible name. */
@@ -53,6 +57,7 @@ export function buildExecSummary(opts: SummaryOpts = {}): ExecSummaryView {
   const line = buildAlertLine("span", "ev-alert-line");
   const root = el("span", { className: "ev-sum" }, label, state, progress.root, mini, clock);
   let described = "";
+  let bounds: WindowBounds | undefined;
   const shows = opts.shows ?? (() => true);
   const onScreen = opts.figure ?? creditFigure;
   const shown = (alert: ExecRun["alert"]): alert is ExecAlert => wantsReader(alert) && shows(alert);
@@ -92,6 +97,10 @@ export function buildExecSummary(opts: SummaryOpts = {}): ExecSummaryView {
     }
   };
 
+  const paintClock = (): void => {
+    setText(clock, bounds === undefined ? "" : formatElapsed(windowAt(bounds, Date.now()).span));
+  };
+
   return {
     root,
     paint(run) {
@@ -101,8 +110,8 @@ export function buildExecSummary(opts: SummaryOpts = {}): ExecSummaryView {
       const phrase = summaryProgress(run);
       progress.paint(phrase);
       paintMini(mini, miniBar(run));
-      const win = execWindow(run.nodes, run.live);
-      setText(clock, win === undefined ? "" : formatElapsed(win.span));
+      bounds = windowBounds(run.nodes, run.live);
+      paintClock();
       const billed = run.credits !== undefined && run.credits > 0 ? run.credits : undefined;
       const spent = billed === undefined ? "" : creditFigure(billed);
       paintCredits(billed === undefined ? "" : onScreen(billed));
@@ -114,7 +123,9 @@ export function buildExecSummary(opts: SummaryOpts = {}): ExecSummaryView {
               .filter((s) => s !== "")
               .join(", ");
     },
+    tick: paintClock,
     paintPending(name) {
+      bounds = undefined;
       setLabel(label, name);
       for (const part of [state, clock]) {
         setText(part, "");

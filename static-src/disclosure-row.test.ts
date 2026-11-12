@@ -1,6 +1,6 @@
 // The four ways a row click must not reach the control, the two it must, and the forwarded click that would loop.
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { wireRowToggle } from "./disclosure-row.js";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { slideBox, wireRowToggle } from "./disclosure-row.js";
 
 interface Harness {
   row: HTMLElement;
@@ -153,5 +153,47 @@ describe("wireRowToggle", () => {
 
     clickOn(h.plain);
     expect(h.hits()).toBe(1);
+  });
+});
+
+describe("slideBox with no motion", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  function box(): HTMLElement {
+    const b = document.createElement("div");
+    b.textContent = "content";
+    document.body.append(b);
+    built.push(b);
+    return b;
+  }
+
+  it("flips the state and reads no geometry when the caller asks for none", () => {
+    const b = box();
+    const rects = vi.spyOn(b, "getBoundingClientRect");
+    const clientRects = vi.spyOn(b, "getClientRects");
+    const applied: boolean[] = [];
+
+    slideBox(b, false, (o) => applied.push(o), { motion: false });
+
+    expect(applied).toEqual([false]);
+    expect(rects).not.toHaveBeenCalled();
+    expect(clientRects).not.toHaveBeenCalled();
+  });
+
+  it("reads no geometry under reduced motion", () => {
+    vi.stubGlobal("matchMedia", (q: string) => ({ matches: q.includes("reduce"), media: q }));
+    const b = box();
+    const rects = vi.spyOn(b, "getBoundingClientRect");
+    const clientRects = vi.spyOn(b, "getClientRects");
+    const applied: boolean[] = [];
+
+    slideBox(b, true, (o) => applied.push(o));
+
+    expect(applied).toEqual([true]);
+    expect(rects).not.toHaveBeenCalled();
+    expect(clientRects).not.toHaveBeenCalled();
   });
 });

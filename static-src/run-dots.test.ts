@@ -16,8 +16,8 @@ const m = {
   /** The run refs the projection holds, as `openRunRefs` answers them. Separate from `tabs`
    *  above, which is keyed by the readable TAB id the fake resolves. */
   runTabs: new Set<string>(),
-  /** One entry per `invalidateRun` call, in order, so the seed's bound is assertable. */
-  invalidated: [] as string[],
+  /** One entry per `drawRun` call, in order, so the seed's bound is assertable. */
+  drawn: [] as string[],
 };
 
 const tabsVersion = signal(0);
@@ -83,8 +83,8 @@ vi.mock("./run-store.js", () => ({
   }),
   // Recorded rather than resolved: a case drives the cell write itself, so the request and its
   // answer are separately assertable.
-  invalidateRun: vi.fn((id: string) => {
-    m.invalidated.push(id);
+  drawRun: vi.fn((id: string) => {
+    m.drawn.push(id);
   }),
 }));
 
@@ -113,7 +113,7 @@ beforeEach(() => {
   m.states.clear();
   m.names.clear();
   m.runTabs.clear();
-  m.invalidated.length = 0;
+  m.drawn.length = 0;
   if (!installed) {
     installRunDotSubscriber();
     installed = true;
@@ -361,7 +361,7 @@ describe("an open run tab seeds its own run state, with no activation", () => {
     m.runTabs.add("wf_resumed");
     tabsChanged();
 
-    expect(m.invalidated).toEqual(["wf_resumed"]);
+    expect(m.drawn).toEqual(["wf_resumed"]);
     // Nothing is claimed before the fetch answers, which is run-dots' own rule.
     expect(m.named).toEqual([]);
     expect(m.painted.at(-1)).toEqual({ id: "run:wf_resumed", status: "" });
@@ -385,12 +385,12 @@ describe("an open run tab seeds its own run state, with no activation", () => {
     m.tabs.add("run:wf_bounded");
     m.runTabs.add("wf_bounded");
     tabsChanged();
-    expect(m.invalidated).toEqual(["wf_bounded"]);
+    expect(m.drawn).toEqual(["wf_bounded"]);
 
     tabsChanged();
     tabsChanged();
     tabsChanged();
-    expect(m.invalidated).toHaveLength(1);
+    expect(m.drawn).toHaveLength(1);
   });
 });
 

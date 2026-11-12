@@ -16,6 +16,7 @@ import {
   _spawnWorkerForTest,
   _tabRevalidateForTest,
 } from "./sse-adapter.js";
+import { setRunContentScope } from "./run-content-scope.js";
 import { PROFILE_TAG_KEY } from "./sse-tag.js";
 import { createSSEHost } from "./sse-worker-host.js";
 import { setSessions } from "./store.js";
@@ -595,20 +596,29 @@ describe("a run's step turn is a subject of its own", () => {
     };
   }
 
-  it("observes the stamp while the run store holds that run", async () => {
-    mockPeekRunState.mockReturnValue({ id: "wf-1" });
+  beforeEach(() => {
+    setRunContentScope("wf-1", "");
+  });
+  afterEach(() => {
+    setRunContentScope("", "");
+  });
+
+  it("observes the stamp while the run's log holds that turn", async () => {
+    mockRunTurnHeldSeq.mockReturnValue(1);
     const conn = await connect();
     markHydrated();
     conn?.frame(runFrame("t-1", "5"));
     await until(() => seen.length === 1, "the frame to be delivered");
     expect(hasSubject("run_turn", "wf-1/t-1")).toBe(true);
-    // The WORKFLOW half is what the residency question is asked about, not the whole ref.
-    expect(mockPeekRunState).toHaveBeenCalledWith("wf-1");
+    // The ref splits into the run and the turn the residency question is asked about.
+    expect(mockRunTurnHeldSeq).toHaveBeenCalledWith("wf-1", "t-1");
   });
 
-  it("observes nothing for a run this client is not holding", async () => {
+  it("observes nothing for a turn this client is not holding", async () => {
     // Same rule as an evicted chat's window: the frame was applied to nothing, so recording its
-    // version would make the digest name a projection nobody holds.
+    // version would make the digest name a projection nobody holds. A scoped run's sibling step
+    // moves only its dock line, holding no turn.
+    mockPeekRunState.mockReturnValue({ id: "wf-1" });
     const conn = await connect();
     markHydrated();
     conn?.frame(runFrame("t-1", "5"));
@@ -665,6 +675,47 @@ describe("a run's step turn is a subject of its own", () => {
     expect(hasSubject("run_turn", "wf-1/t-1")).toBe(false);
     expect(mockRequestRunTurnRange).toHaveBeenCalledWith("wf-1", "t-1", 2);
     expect(mockLoadMessages).not.toHaveBeenCalled();
+  });
+});
+
+describe("a run's content reaches only the page that draws it", () => {
+  afterEach(() => {
+    setRunContentScope("", "");
+  });
+
+  it("delivers a run's step content while this page's scope names the run", async () => {
+    setRunContentScope("wf-1", "");
+    const conn = await connect();
+    markHydrated();
+
+    conn?.frame({
+      type: "entry_delta",
+      chat_id: "",
+      payload: { workflow_id: "wf-1", turn: "t-1", entry_id: "e1", lane: "", n: 1, delta: "x" },
+    });
+    await until(() => seen.length === 1, "the content frame");
+
+    expect(seen.map((e) => e.type)).toEqual(["entry_delta"]);
+  });
+
+  it("drops a run's step content while no view of this page shows the run, and keeps its lifecycle", async () => {
+    mockPeekRunState.mockReturnValue({ id: "wf-1" });
+    const conn = await connect();
+    markHydrated();
+
+    conn?.frame({
+      type: "entry_delta",
+      chat_id: "",
+      payload: { workflow_id: "wf-1", turn: "t-1", entry_id: "e1", lane: "", n: 1, delta: "x" },
+    });
+    conn?.frame({
+      type: "run_progress",
+      chat_id: "",
+      payload: { workflow_id: "wf-1", kind: "node_start", node_id: "build" },
+    });
+    await until(() => seen.some((e) => e.type === "run_progress"), "the lifecycle frame");
+
+    expect(seen.map((e) => e.type)).toEqual(["run_progress"]);
   });
 });
 

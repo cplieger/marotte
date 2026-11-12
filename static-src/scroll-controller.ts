@@ -142,6 +142,8 @@ export class ScrollController {
   private loadingMore = false;
   private onLoadMore: (() => void) | null = null;
   private pendingLoad: (() => void) | null = null;
+  /** A view's own door to its older content (`setPageIn`), which outranks `onLoadMore`. */
+  private pageIn: (() => boolean) | null = null;
 
   /** Mutations postponed while Reading, applied in arrival order on the return to Following. */
   private deferred: (() => void)[] = [];
@@ -1243,6 +1245,7 @@ export class ScrollController {
     this.rest = -1;
     this.onLoadMore = null;
     this.hasMoreMessages = false;
+    this.pageIn = null;
     this.disconnectView();
     this.setState("following");
     return taken;
@@ -1259,6 +1262,7 @@ export class ScrollController {
     this.rest = -1;
     this.topNear = false;
     this.edgeArmed = false;
+    this.pageIn = null;
     this.setLoadMore(null, false);
     this.setState("following");
   }
@@ -1452,8 +1456,34 @@ export class ScrollController {
   }
 
   private pokeTop(): void {
-    if (this.topNear && this.edgeArmed) {
+    if (!this.topNear) {
+      return;
+    }
+    if (this.pageIn !== null) {
+      this.seatOlder(this.pageIn);
+      return;
+    }
+    if (this.edgeArmed) {
       this.maybeLoadMore();
+    }
+  }
+
+  /** Seat one older slice through the view's door, holding the reader's text. A Following reader over content that
+   *  already overflows asked for nothing older; Reading re-asks (`setState`). */
+  private seatOlder(older: () => boolean): void {
+    if (this.state === "following" && this.scrollEl.scrollHeight > this.scrollEl.clientHeight) {
+      return;
+    }
+    const seat = { seated: false };
+    this.heldMutation(() => {
+      seat.seated = older();
+    });
+    // `topNear` is the delivery before the seat; re-observing asks for one measured after it, so the next slice
+    // waits for this one's layout instead of seating the whole history in one task.
+    const sentinel = this.topSentinel;
+    if (seat.seated && sentinel !== null) {
+      this.topObserver?.unobserve(sentinel);
+      this.topObserver?.observe(sentinel);
     }
   }
 
@@ -1662,6 +1692,20 @@ export class ScrollController {
     this.pokeTop();
   }
 
+  /** Give the attached view a door it seats older content through itself: `older` seats one slice in this task and
+   *  says whether it seated any. Asked whenever the history edge nears; null closes it. */
+  setPageIn(older: (() => boolean) | null): void {
+    this.pageIn = older;
+    this.pokeTop();
+  }
+
+  /** The client-space y above which content sits past the history edge's lead and then some, so unmounting it
+   *  asks the door for nothing back. */
+  keepsFrom(): number {
+    const top = this.scrollEl.getBoundingClientRect().top;
+    return top - 2 * NEAR_LEAD * this.scrollEl.clientHeight;
+  }
+
   /** Fetch until the scroller overflows. */
   fillViewport(): void {
     if (this.scrollEl.scrollHeight > this.scrollEl.clientHeight) {
@@ -1687,6 +1731,8 @@ export class ScrollController {
     this.resumeBtn().classList.toggle("hidden", next === "following");
     if (next === "following") {
       this.flushDeferred();
+    } else if (this.topNear && this.pageIn !== null) {
+      this.seatOlder(this.pageIn);
     }
     for (const cb of this.stateListeners) {
       cb(next);
@@ -1794,8 +1840,14 @@ function register<T>(list: T[], cb: T): () => void {
 export interface FollowScroller {
   /** Hand the scroller to a view with the state it was parked in, landing it at once. */
   attach(handle: ViewAttachHandle): void;
-  /** Take the scroller from the current view and return the state to park it with. */
+  /** Take the scroller from the current view and return the state to park it with; closes its page-in door. */
   detach(): ViewScrollState;
+  /** Whether the reader follows the live edge. */
+  following(): boolean;
+  /** `ScrollController.setPageIn` for the attached view. */
+  setPageIn(older: (() => boolean) | null): void;
+  /** `ScrollController.keepsFrom`. */
+  keepsFrom(): number;
 }
 
 /** Build a follower over `view` inside `scroller`. It never publishes `--scrollbar-w`, which the chat owns. */
@@ -1812,5 +1864,10 @@ export function createFollowScroller(
       c.applyPendingRestore();
     },
     detach: () => c.detach(),
+    following: () => c.readingState() === "following",
+    setPageIn: (older) => {
+      c.setPageIn(older);
+    },
+    keepsFrom: () => c.keepsFrom(),
   };
 }

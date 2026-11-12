@@ -696,8 +696,8 @@ func (s *revertScene) check(when string) {
 		s.rt.Fatalf("%s: HasMore is true over a page of every one of the %d surviving turns", when, len(surviving))
 	}
 	for id := range s.reverted {
-		if _, err := turnRange(s.log, id, 0); !errors.Is(err, ErrTurnNotInLog) {
-			s.rt.Fatalf("%s: TurnRange(%q) = %v, want ErrTurnNotInLog for a reverted turn", when, id, err)
+		if _, err := turnRange(s.log, id, 0); !errors.Is(err, errTurnNotInLog) {
+			s.rt.Fatalf("%s: TurnRange(%q) = %v, want errTurnNotInLog for a reverted turn", when, id, err)
 		}
 		if _, err := s.log.window(1, id, noByteBound); err == nil {
 			s.rt.Fatalf("%s: Window(1, %q) refused nothing, want the refusal the chat route renders as 400", when, id)

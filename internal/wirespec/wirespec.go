@@ -217,6 +217,7 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.RunStartedPayload](),
 	wiregen.TypeRef[marotte.RunProgressPayload](),
 	wiregen.TypeRef[marotte.RunFinishedPayload](),
+	wiregen.TypeRef[marotte.RunRevPayload](),
 	wiregen.TypeRef[marotte.NotificationPayload](),
 	// One step waiting on a person: run_asks's element and GET /api/runs/{id}'s `open_asks`. No
 	// `Payload` suffix, so the SSE-binding test exempts it.
@@ -229,6 +230,8 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.RunStepStart](),
 	// GET /api/runs/{id}/steps/{path}. No omitempty, so `state` is REQUIRED in TypeScript.
 	wiregen.TypeRef[marotte.RunStepTranscript](),
+	// GET /api/runs/{id}/steps/{path}/capture.
+	wiregen.TypeRef[marotte.RunStepCapture](),
 	wiregen.TypeRef[marotte.ToolJobChangedPayload](),
 	wiregen.TypeRef[marotte.ToolJobOutputPayload](),
 	wiregen.TypeRef[marotte.TerminalCreatedPayload](),
@@ -486,6 +489,7 @@ var wireEvents = []wiregen.Event{
 	{Name: "run_finished", Data: wiregen.TypeRef[marotte.RunFinishedPayload]()},
 	{Name: "live_run", Data: wiregen.TypeRef[marotte.LiveRunPayload]()},
 	{Name: "run_asks", Data: wiregen.TypeRef[marotte.RunAsksPayload]()},
+	{Name: "run_rev", Data: wiregen.TypeRef[marotte.RunRevPayload]()},
 	{Name: "safety_properties", Data: wiregen.TypeRef[marotte.SafetyPropertiesPayload]()},
 	{Name: "safety_status", Data: wiregen.TypeRef[marotte.SafetyStatusPayload]()},
 	{Name: "knowledge_indexing", Data: wiregen.TypeRef[marotte.KnowledgeIndexingPayload]()},

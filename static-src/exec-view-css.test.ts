@@ -146,6 +146,7 @@ describe("the tree's indent lines dots up under their parents", () => {
     pane.className = "ev-pane ev-pane-tree";
     pane.appendChild(tree.root);
     mount(pane);
+    tree.attach(pane);
     tree.render(
       [
         node("par", "parallel", [
@@ -1160,6 +1161,7 @@ describe("an included step's qualifier on the selected fill", () => {
   it("takes the selected muted ink on a selected tree row", () => {
     const tree = buildExecTree(vi.fn());
     mount(tree.root);
+    tree.attach(host);
     tree.render(nodes, "wf:advisor");
     const muted = tokenColor(tree.root, "--c-selected-muted-fg");
     expect(qualifierInk(tree.root, ".ev-row", "wf:advisor")).toBe(muted);
@@ -1171,6 +1173,7 @@ describe("an included step's qualifier on the selected fill", () => {
   it("takes the selected muted ink on a selected timeline lane", () => {
     const timeline = buildExecTimeline(vi.fn());
     mount(timeline.root);
+    timeline.attach(host);
     timeline.render(nodes, "wf:advisor", false);
     const muted = tokenColor(timeline.root, "--c-selected-muted-fg");
     expect(qualifierInk(timeline.root, ".ev-tl-lane", "wf:advisor")).toBe(muted);

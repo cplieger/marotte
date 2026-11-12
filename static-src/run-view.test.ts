@@ -35,6 +35,10 @@ interface RunInspectReply {
   };
   nodePlan?: unknown;
   step_ends?: Record<string, { outcome: string; failure_kind?: string; failure_reason?: string }>;
+  step_starts?: Record<
+    string,
+    { started_at: string; ended: boolean; turn?: string; tail?: string }
+  >;
 }
 
 /** What a door decided, which is all a door decides now: `owns` (does the × stop the run) and
@@ -297,6 +301,7 @@ import {
 // The REAL router: a zero-import leaf, so no mock, and taking the node from the PARSER rather than
 // a literal is what makes the fragment case below cover the
 import { parseRoute } from "./route-path.js";
+import { openDockPanel, openRunDockPanel } from "./__test-helpers__/exec-dock.js";
 import type { Entry } from "./types.js";
 
 /** Kept as a helper rather than inlined per case so a case reads as "this run offers these
@@ -330,6 +335,8 @@ async function paint(
     state?: { pauseReason?: string; pauseDetail?: { class?: string; code?: string } };
     /** The run read's `step_ends`, the server's grade of each step under KAS's record. */
     stepEnds?: RunInspectReply["step_ends"];
+    /** The run read's `step_starts`, each in-flight step's turn and printed line among them. */
+    stepStarts?: RunInspectReply["step_starts"];
   } = {},
 ): Promise<{ labels: string[]; refusals: string[]; tab: OpenedTab; body: HTMLElement }> {
   const id = opts.id ?? "wf_1";
@@ -349,6 +356,7 @@ async function paint(
     // store keeps the two apart for that reason.
     ...(opts.nodePlan === undefined ? {} : { nodePlan: opts.nodePlan }),
     ...(opts.stepEnds === undefined ? {} : { step_ends: opts.stepEnds }),
+    ...(opts.stepStarts === undefined ? {} : { step_starts: opts.stepStarts }),
   };
   m.reply.current = reply;
   m.controls.current =
@@ -486,7 +494,8 @@ beforeEach(() => {
   // Every other typed GET this graph makes answers as a failed fetch.
   vi.mocked(apiGetTyped).mockResolvedValue(null);
   // `showRun` paints the shown run's cached state at once, so a case must not inherit the last
-  // case's `wf_1`.
+  // case's `wf_1`. The view holds the run it shows, so it is pointed at no case's run first.
+  showRun("wf_none");
   forgetRun("wf_1");
 });
 
@@ -811,7 +820,8 @@ function resultKeys(body: HTMLElement): (string | null)[] {
   return [...body.querySelectorAll(".ev-r-item-key")].map((n) => n.textContent);
 }
 
-function selectRow(body: HTMLElement, path: string): void {
+async function selectRow(body: HTMLElement, path: string): Promise<void> {
+  await openRunDockPanel(body);
   body.querySelector<HTMLElement>(`.ev-row[data-path="${path}"] > .ev-row-main`)?.click();
 }
 
@@ -1110,13 +1120,6 @@ describe("the run dock", () => {
   });
 
   describe("a tab opened while parallel steps are printing", () => {
-    beforeEach(() => {
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    });
-    afterEach(() => {
-      vi.useRealTimers();
-    });
-
     const fan = (seats: readonly string[]): unknown => ({
       nodeId: "wf_1",
       type: "sequence",
@@ -1144,31 +1147,25 @@ describe("the run dock", () => {
       [...document.querySelectorAll("#run-exec-dock .ev-dock-tail")]
         .map((n) => n.textContent ?? "")
         .sort();
-    /** What `fetchStep`'s `finally` does with an answer: record the verdict, bump the version. */
-    const answer = async (path: string, state: "unavailable" | "ready"): Promise<void> => {
-      m.reads.set(path, { state });
-      stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
-      await flush();
-    };
+    const started = (lines: Record<string, string>): NonNullable<RunInspectReply["step_starts"]> =>
+      Object.fromEntries(
+        Object.entries(lines).map(([path, tail]) => [
+          path,
+          { started_at: "2026-11-10T10:00:00Z", ended: false, turn: `t-${path}`, tail },
+        ]),
+      );
 
-    it("gives every folded row the line its step printed before the tab opened", async () => {
+    it("gives every folded row the line the run read names, reading only the shown step", async () => {
       const seats = ["late-a", "late-b", "late-c"];
       const paths = seats.map((s) => `wf_1:fan:${s}`);
-      await paint(openRunView, "running", { root: fan(seats) });
-      expect([...m.requested].sort()).toEqual(paths);
-      expect(tails()).toEqual(["", "", ""]);
-
-      // Each read's answer, adopted into the run's log as `fetchStep` does; no live frame follows.
-      for (const path of paths) {
-        logStep("wf_1", path, `started ${path}\nlatest ${path}`, { live: true });
-        await answer(path, "ready");
-      }
-      expect(tails()).toEqual(paths.map((p) => `latest ${p}`));
-
-      vi.advanceTimersByTime(60_000);
-      invalidateRun("wf_1");
+      await paint(openRunView, "running", {
+        root: fan(seats),
+        stepStarts: started(Object.fromEntries(paths.map((p) => [p, `latest ${p}`]))),
+      });
       await flush();
-      expect(m.requested).toHaveLength(3);
+      expect(tails()).toEqual(paths.map((p) => `latest ${p}`));
+      // The shown step is the first seat, whose transcript the pane reads; its siblings read none.
+      expect(m.requested).toEqual(["wf_1:fan:late-a"]);
     });
 
     it("reads nothing for a sibling whose turn the log already holds", async () => {
@@ -1177,78 +1174,14 @@ describe("the run dock", () => {
       expect(m.requested).toEqual(["wf_1:fan:held-a"]);
     });
 
-    it("re-asks a sibling whose catch-up failed, three times at most", async () => {
-      await paint(openRunView, "running", { root: fan(["miss-a", "miss-b"]) });
-      // With no start recorded, the first seat is the shown one and settles its own read.
-      const [shown, sibling] = ["wf_1:fan:miss-a", "wf_1:fan:miss-b"];
-      expect(document.querySelector("#run-body .ev-d-title")?.textContent).toBe("miss-a");
-      expect(m.requested).toEqual([shown, sibling]);
-      await answer(shown, "ready");
-      await answer(sibling, "unavailable");
-      vi.advanceTimersByTime(999);
-      expect(m.requested).toHaveLength(2);
-      vi.advanceTimersByTime(1);
-      expect(m.requested).toEqual([shown, sibling, sibling]);
-      for (const delay of [2000, 4000, 8000, 16_000]) {
-        await answer(sibling, "unavailable");
-        vi.advanceTimersByTime(delay);
-      }
-      expect(m.requested).toEqual([shown, sibling, sibling, sibling, sibling]);
-    });
-
-    it("keeps re-asking a sibling after its own output arrives, until a read answers", async () => {
-      await paint(openRunView, "running", { root: fan(["moot-a", "moot-b"]) });
-      await answer("wf_1:fan:moot-a", "ready");
-      await answer("wf_1:fan:moot-b", "unavailable");
-      logStep("wf_1", "wf_1:fan:moot-b", "printed meanwhile", { live: true, attempt: 2 });
-      await flush();
-      expect(tails()).toEqual(["", "printed meanwhile"]);
-      vi.advanceTimersByTime(1000);
-      expect(m.requested.filter((p) => p === "wf_1:fan:moot-b")).toHaveLength(2);
-
-      await answer("wf_1:fan:moot-b", "ready");
-      vi.advanceTimersByTime(60_000);
-      expect(m.requested.filter((p) => p === "wf_1:fan:moot-b")).toHaveLength(2);
-    });
-
-    it("reads a sibling the reader picks after it printed over a failed catch-up", async () => {
-      await paint(openRunView, "running", { root: fan(["pick-a", "pick-b"]) });
-      await answer("wf_1:fan:pick-a", "ready");
-      await answer("wf_1:fan:pick-b", "unavailable");
-      logStep("wf_1", "wf_1:fan:pick-b", "printed meanwhile", { live: true, attempt: 2 });
-      await flush();
-      document
-        .querySelector<HTMLElement>('.ev-row[data-path="wf_1:fan:pick-b"] > .ev-row-main')
-        ?.click();
-      await flush();
-      expect(document.querySelector("#run-body .ev-d-title")?.textContent).toBe("pick-b");
-      expect(m.requested.filter((p) => p === "wf_1:fan:pick-b")).toHaveLength(2);
-    });
-
-    it("drops a sibling's pending re-ask when the tab shows another run", async () => {
-      await paint(openRunView, "running", { root: fan(["gone-a", "gone-b"]) });
-      await answer("wf_1:fan:gone-a", "ready");
-      await answer("wf_1:fan:gone-b", "unavailable");
-      await paint(openRunView, "completed", {
-        id: "wf_other",
-        root: { nodeId: "wf_other", type: "sequence", status: "completed", children: [] },
+    it("draws a held step's own line over the run read's", async () => {
+      logStep("wf_1", "wf_1:fan:mine-b", "printed here", { live: true });
+      await paint(openRunView, "running", {
+        root: fan(["mine-a", "mine-b"]),
+        stepStarts: started({ "wf_1:fan:mine-b": "read earlier" }),
       });
-      const asked = m.requested.length;
-      vi.advanceTimersByTime(60_000);
-      expect(m.requested).toHaveLength(asked);
-    });
-
-    it("drops a sibling's pending re-ask when the page is rebuilt", async () => {
-      await paint(openRunView, "running", { root: fan(["again-a", "again-b"]) });
-      await answer("wf_1:fan:again-a", "ready");
-      await answer("wf_1:fan:again-b", "unavailable");
-      // A fresh run body remounts the same run's page, which asks once afresh and is answered.
-      await paint(openRunView, "running", { root: fan(["again-a", "again-b"]) });
-      expect(m.requested.slice(2)).toEqual(["wf_1:fan:again-a", "wf_1:fan:again-b"]);
-      await answer("wf_1:fan:again-b", "ready");
-      const asked = m.requested.length;
-      vi.advanceTimersByTime(60_000);
-      expect(m.requested).toHaveLength(asked);
+      await flush();
+      expect(tails()).toEqual(["", "printed here"]);
     });
   });
 });
@@ -1268,7 +1201,7 @@ describe("run view step results", () => {
     expect(body.querySelector(".ev-r-text")?.textContent).toContain("built it");
     expect(body.querySelector(".ev-r-text")?.textContent).not.toContain("reviewed it");
 
-    selectRow(body, "wf_1:review");
+    await selectRow(body, "wf_1:review");
     expect(body.querySelector(".ev-d-title")?.textContent).toBe("review");
     expect(body.querySelector(".ev-r-text")?.textContent).toContain("reviewed it");
     expect(body.querySelector(".ev-r-text")?.textContent).not.toContain("built it");
@@ -1632,6 +1565,7 @@ describe("run view structure", () => {
 
   it("renders control-flow containers as rows, not as an indent", async () => {
     const { body } = await paint(openRunView, "running", { root: looping });
+    await openRunDockPanel(body);
     const kinds = [...body.querySelectorAll(".ev-row")].map((r) => r.getAttribute("data-kind"));
     // The repeat is a row of its own, and its two steps are rows beneath it.
     expect(kinds).toEqual(["repeat", "step", "step"]);
@@ -1646,6 +1580,7 @@ describe("run view structure", () => {
         { nodeId: "fix-loop", maxIterations: 5, stopCondition: "verify.output contains PASS" },
       ],
     });
+    await openRunDockPanel(body);
     const sub = body.querySelector('.ev-row[data-kind="repeat"] .ev-sub')?.textContent ?? "";
     expect(sub).toContain("up to 5 passes");
     expect(sub).toContain("verify.output contains PASS");
@@ -1666,6 +1601,7 @@ describe("run view structure", () => {
         ],
       },
     });
+    await openRunDockPanel(body);
     expect(body.querySelector('.ev-row[data-kind="repeat"]')?.getAttribute("data-state")).toBe(
       "fail",
     );
@@ -1703,6 +1639,7 @@ describe("run view structure", () => {
         ],
       },
     });
+    await openRunDockPanel(body, "timeline");
     const names = [...body.querySelectorAll(".ev-tl-name")].map((n) => n.textContent);
     expect(names).toEqual(["a", "b"]);
     // Overlapping steps overlap on screen, which is the whole point: `b` starts a quarter of the
@@ -1727,6 +1664,7 @@ describe("run view structure", () => {
         ],
       },
     });
+    await openRunDockPanel(body);
     const top = [...body.querySelectorAll<HTMLElement>(".ev-tree > .ev-row")];
     expect(top.map((r) => r.getAttribute("data-kind"))).toEqual(["repeat", "step"]);
     expect(top.map((r) => r.classList.contains("ev-group"))).toEqual([true, false]);
@@ -1757,6 +1695,7 @@ describe("run view structure", () => {
         ],
       },
     });
+    await openRunDockPanel(body);
     const row = (id: string): HTMLElement | null =>
       body.querySelector<HTMLElement>(`.ev-row[data-path$=":${id}"]`);
     const depthOf = (id: string): string => row(id)?.style.getPropertyValue("--ev-depth") ?? "";
@@ -1773,6 +1712,7 @@ describe("run view structure", () => {
   // change must not have given it one.
   it("leaves a step row non-collapsible", async () => {
     const { body } = await paint(openRunView, "running", { root: looping });
+    await openRunDockPanel(body);
     const steps = [...body.querySelectorAll<HTMLElement>('.ev-row[data-kind="step"]')];
     expect(steps).toHaveLength(2);
     for (const step of steps) {
@@ -1810,6 +1750,7 @@ describe("run view structure", () => {
 
   it("gives the top-level box a fold and a container inside it none", async () => {
     const { body } = await paint(openRunView, "running", { root: nested });
+    await openRunDockPanel(body);
     const row = (id: string): HTMLElement =>
       body.querySelector<HTMLElement>(`.ev-row[data-path$=":${id}"]`)!;
     const twistHidden = (id: string) =>
@@ -1829,6 +1770,7 @@ describe("run view structure", () => {
 
   it("still folds the box on its own twist, and the loop stays open under it", async () => {
     const { body } = await paint(openRunView, "running", { root: nested });
+    await openRunDockPanel(body);
     const box = body.querySelector<HTMLElement>('.ev-row[data-path$=":outer"]')!;
     const kidsOf = (row: HTMLElement): HTMLElement =>
       row.querySelector<HTMLElement>(":scope > .ev-kids")!;
@@ -1872,6 +1814,7 @@ describe("run view door focus", () => {
     };
 
   function selectedPath(body: HTMLElement): string {
+    openDockPanel(body);
     return body.querySelector<HTMLElement>(".ev-row.ev-selected")?.dataset["path"] ?? "";
   }
 
@@ -1906,6 +1849,7 @@ describe("run view door focus", () => {
 
     // The reader moves in the tree, and a frame lands meanwhile — which is the render that carries
     // no focus.
+    await openRunDockPanel(body);
     body.querySelector<HTMLElement>('.ev-row[data-path="wf_1:lint"] > .ev-row-main')?.click();
     expect(selectedPath(body)).toBe("wf_1:lint");
     await invalidated(two);
@@ -2238,7 +2182,7 @@ describe("run view step transcripts", () => {
         { nodeId: "handoff", type: "step", status: "completed", children: [] },
       ],
     };
-    await paint(openRunView, "running", {
+    const { body } = await paint(openRunView, "running", {
       root,
       stepEnds: {
         "wf_1:limited": {
@@ -2248,7 +2192,9 @@ describe("run view step transcripts", () => {
         },
       },
     });
+    await selectRow(body, "wf_1:limited");
     await painted("wf_1:limited");
+    await selectRow(body, "wf_1:handoff");
     await painted("wf_1:handoff");
 
     expect(m.paint.get("wf_1:limited")?.closes).toEqual([
@@ -2313,6 +2259,7 @@ describe("a step's recorded grade", () => {
   });
 
   function rowState(body: HTMLElement, path: string): string | null | undefined {
+    openDockPanel(body);
     return body.querySelector(`.ev-row[data-path="${path}"]`)?.getAttribute("data-state");
   }
 
@@ -2351,7 +2298,7 @@ describe("a step's recorded grade", () => {
   });
 
   it("the pane and the tree follow the run re-read after a missed refused-but-completed grade", async () => {
-    unhold = registerRunStateDemand((id) => id === "wf_1");
+    unhold = registerRunStateDemand((id) => id === "wf_1", "tree");
     logStep("wf_1", "wf_1:declined", "no", {
       close: { outcome: "refused", refusal: { category: "x" } },
     });
@@ -2371,11 +2318,12 @@ describe("a step's recorded grade", () => {
   });
 
   it("the pane and the tree follow the run re-read after a missed model-call-limit grade", async () => {
-    unhold = registerRunStateDemand((id) => id === "wf_1");
+    unhold = registerRunStateDemand((id) => id === "wf_1", "tree");
     logStep("wf_1", "wf_1:limited", "working", {
       close: { outcome: "completed", stop_reason_raw: "tool_use" },
     });
     const { body } = await paint(openRunView, "running", { root: root("completed"), stepEnds: {} });
+    await selectRow(body, "wf_1:limited");
     await until(() => m.paint.has("wf_1:limited"));
     expect(m.paint.get("wf_1:limited")?.closes).toEqual(["completed/"]);
     expect(rowState(body, "wf_1:limited")).toBe("ok");
@@ -2388,11 +2336,12 @@ describe("a step's recorded grade", () => {
   });
 
   it("a second re-read follows a grade the first did not carry yet", async () => {
-    unhold = registerRunStateDemand((id) => id === "wf_1");
+    unhold = registerRunStateDemand((id) => id === "wf_1", "tree");
     logStep("wf_1", "wf_1:limited", "working", {
       close: { outcome: "completed", stop_reason_raw: "tool_use" },
     });
     const { body } = await paint(openRunView, "running", { root: root("completed"), stepEnds: {} });
+    await selectRow(body, "wf_1:limited");
     await until(() => m.paint.has("wf_1:limited"));
 
     await rereadWith({});
@@ -2462,6 +2411,7 @@ describe("run view step reads", () => {
       m.requested.length = 0;
       // A fresh tab per status: the mocked request has no no-refetch gate, so a cached `live0`
       // painted on the second show would be asked for again.
+      showRun("wf_none");
       forgetRun("wf_1");
       await paint(openRunView, "running", { root: oneNamedStep(`live${String(i)}`, status) });
       expect(m.requested).toEqual([`wf_1:live${String(i)}`]);
@@ -2579,6 +2529,7 @@ describe("run view step reads", () => {
       expect(m.requested).toHaveLength(4);
       logStep("wf_1", "wf_1:back", "printed meanwhile", { live: true, attempt: 2 });
       const pick = async (path: string): Promise<void> => {
+        await openRunDockPanel(body);
         body.querySelector<HTMLElement>(`.ev-row[data-path="${path}"] > .ev-row-main`)?.click();
         for (let i = 0; i < 20; i++) {
           await Promise.resolve();
@@ -2650,6 +2601,7 @@ describe("run view step reads", () => {
       expect(m.requested).toEqual(["wf_1:left"]);
       await answer("wf_1:left", "unavailable");
       // A step that needs its own read, which its selection issues once.
+      await openRunDockPanel(body);
       body.querySelector<HTMLElement>('.ev-row[data-path="wf_1:next"] > .ev-row-main')?.click();
       for (let i = 0; i < 20; i++) {
         await Promise.resolve();
@@ -2670,6 +2622,7 @@ describe("run view step reads", () => {
 
     // The reader's own gesture. A row is an ordinary `treeitem` whose click selects it
     // (`exec-view/tree.ts`), so this is the real pin rather than a reach into state.
+    await openRunDockPanel(body);
     body.querySelector<HTMLElement>('.ev-row[data-path="wf_1:coder"] > .ev-row-main')?.click();
     await Promise.resolve();
     expect(m.requested).toEqual([]);
@@ -2688,9 +2641,9 @@ describe("run view step reads", () => {
 
     expect(body.querySelector<HTMLElement>(".ev-d-title")?.textContent).toBe("coder");
     // EXACTLY one, which is the other half: arming per repaint would re-ask on every frame of a
-    // live run, and `unavailable` is a verdict a repeat ask retries. `verify` is the dock row's own
-    // catch-up, now that it runs.
-    expect(m.requested).toEqual(["wf_1:coder", "wf_1:verify"]);
+    // live run, and `unavailable` is a verdict a repeat ask retries. `verify`'s dock row reads its
+    // line from the run read, not a transcript.
+    expect(m.requested).toEqual(["wf_1:coder"]);
   });
 
   // GATE 3, and the one that makes the log the SOURCE rather than a preference: the turn is already
@@ -2734,6 +2687,7 @@ describe("run view step reads", () => {
 
     // The root sequence is the run's own header rather than a row, so `wf_1:loop` is the container
     // on screen.
+    await openRunDockPanel(body);
     const head = body.querySelector<HTMLElement>('.ev-row[data-path="wf_1:loop"] > .ev-row-main');
     expect(head).not.toBeNull();
     head?.click();
@@ -2899,12 +2853,13 @@ describe("showRun and refreshRun", () => {
   });
 
   it("refreshRun reads the run, whose read carries its controls, unless a read of it is out", () => {
+    showRun("wf_refresh");
     refreshRun("wf_refresh");
     refreshRun("wf_refresh");
 
     const reads = vi
       .mocked(apiGetOrError)
-      .mock.calls.filter(([path]) => path === "/api/runs/wf_refresh");
+      .mock.calls.filter(([path]) => path.split("?")[0] === "/api/runs/wf_refresh");
     expect(reads).toHaveLength(1);
   });
 });
@@ -2959,7 +2914,7 @@ describe("the page's scroll position", () => {
     showRun(id);
     refreshRun(id);
     await vi.waitFor(() => {
-      expect(document.querySelector(`.ev-row[data-path*="${id}-step-0"]`)).not.toBeNull();
+      expect(document.getElementById("run-body")?.textContent).toContain(`${id}-step-`);
     });
   }
 
@@ -2971,7 +2926,7 @@ describe("the page's scroll position", () => {
       ]),
     );
     vi.mocked(apiGetOrError).mockImplementation((path: string) => {
-      const data = replies.get(path);
+      const data = replies.get(path.split("?")[0] ?? path);
       return Promise.resolve(
         data === undefined
           ? { ok: false, status: 0, data: null, error: "" }

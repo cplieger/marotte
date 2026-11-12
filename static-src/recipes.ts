@@ -1010,6 +1010,7 @@ function buildPlanPreview(launch: HTMLElement): PlanPreview {
   tree.root.setAttribute("aria-label", "Planned steps");
   // A tab stop, because no row is one and the box scrolls (WCAG 2.1.1).
   const steps = el("div", { className: "recipe-plan-steps", tabindex: "0" }, tree.root);
+  tree.attach(steps);
   return { region: el("div", { className: "recipe-plan" }, head, steps), head, tree, launch };
 }
 

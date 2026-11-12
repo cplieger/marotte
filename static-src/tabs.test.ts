@@ -167,6 +167,8 @@ import {
   openTab,
   openEditorView,
   openRunTab,
+  activateRestoredTab,
+  showUnshownTab,
   closeTab,
   activateTab,
   renameTab,
@@ -727,6 +729,90 @@ describe("closing the last tab", () => {
     expect(hasTab("chat", "held")).toBe(true);
     await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS);
     expect(onEmpty).not.toHaveBeenCalled();
+  });
+});
+
+describe("boot's one activation is the tab the URL names", () => {
+  let origin = "";
+
+  beforeEach(() => {
+    origin = location.pathname + location.search + location.hash;
+  });
+
+  afterEach(() => {
+    history.replaceState(null, "", origin);
+  });
+
+  /** The boot shape: a strip the server holds, this screen's remembered tab, a fresh projection
+   *  that has run no `onShow`, and the URL the page loaded at. */
+  async function bootAt(path: string, remembered: () => string): Promise<void> {
+    await openRunTab("wf-r", "run R", { owns: false });
+    await openChat("x");
+    const id = remembered();
+    _resetTabsSyncForTest();
+    _resetForTest();
+    const { setActiveView } = await import("./device-view.js");
+    setActiveView(id);
+    await listTabs();
+    openers.runShow.mockClear();
+    openers.chatShow.mockClear();
+    history.replaceState(null, "", path);
+  }
+
+  it("leaves a remembered run tab unshown when the URL names another chat", async () => {
+    await bootAt("/chat/other", () => tabIdFor("run", "wf-r"));
+    expect(getActiveTabId()).not.toBe("");
+    expect(getActiveTabId()).toBe(tabIdFor("run", "wf-r"));
+
+    activateRestoredTab();
+
+    expect(openers.runShow).not.toHaveBeenCalled();
+  });
+
+  it("shows the remembered chat when the URL names it", async () => {
+    await bootAt("/chat/x", () => chatID("x"));
+
+    activateRestoredTab();
+
+    expect(openers.chatShow.mock.calls).toEqual([["x"]]);
+  });
+
+  it("shows the remembered tab on the root URL", async () => {
+    await bootAt("/", () => tabIdFor("run", "wf-r"));
+    activateRestoredTab();
+
+    expect(openers.runShow).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the unshown remembered tab when the URL's route falls back to it", async () => {
+    await bootAt("/chat/other", () => tabIdFor("run", "wf-r"));
+    activateRestoredTab();
+
+    showUnshownTab();
+    tabsModule.flushActivationForTest();
+
+    expect(openers.runShow).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the unshown remembered tab when the reader clicks it", async () => {
+    await bootAt("/chat/other", () => tabIdFor("run", "wf-r"));
+    activateRestoredTab();
+
+    await activateTab(tabIdFor("run", "wf-r"));
+
+    expect(openers.runShow).toHaveBeenCalledTimes(1);
+  });
+
+  it("has no fallback left once the URL's route activated its own tab", async () => {
+    await bootAt("/chat/x", () => tabIdFor("run", "wf-r"));
+    activateRestoredTab();
+    await activateTab(chatID("x"));
+
+    showUnshownTab();
+    tabsModule.flushActivationForTest();
+
+    expect(openers.chatShow.mock.calls).toEqual([["x"]]);
+    expect(openers.runShow).not.toHaveBeenCalled();
   });
 });
 

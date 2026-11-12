@@ -60,7 +60,7 @@ func laneAlong(chain []visit, step []string) Lane {
 				f.before[seg] = true
 			}
 			out.forks = append(out.forks, f)
-		case "repeat":
+		case nodeTypeRepeat:
 			out.forks = append(out.forks, laneFork{prefix: a.path, own: own})
 		}
 	}

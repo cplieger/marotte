@@ -58,7 +58,7 @@ vi.mock("./api-client.js", async (importOriginal) => ({
   apiGetTyped: (await import("./__test-helpers__/tabs-server.js")).tabListRead(),
   apiGetTypedOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
   apiGetOrError: vi.fn((path: string) => {
-    const data = m.replies.get(path);
+    const data = m.replies.get(path.split("?")[0] ?? path);
     return Promise.resolve(
       data === undefined
         ? { ok: false, status: 404, data: null, error: "not found" }
@@ -82,6 +82,7 @@ import { openRunView, refreshRun, showRun } from "./run-view.js";
 import { forgetRun, noteRunChat } from "./run-store.js";
 
 import { installRunDotSubscriber } from "./run-dots.js";
+import { openDockPanel } from "./__test-helpers__/exec-dock.js";
 
 bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
 let dotsInstalled = false;
@@ -197,6 +198,10 @@ afterEach(() => {
 });
 
 function shown(): { head: string; title: string; rows: string[]; composer: string } {
+  const dock = document.getElementById("run-exec-dock");
+  if (dock?.querySelector(".ev-box-toggle") != null) {
+    openDockPanel(dock);
+  }
   return {
     composer: document.querySelector<HTMLTextAreaElement>("#run-composer-input")?.placeholder ?? "",
     head: document.querySelector("#run-exec-dock .ev-dock-head")?.textContent ?? "",

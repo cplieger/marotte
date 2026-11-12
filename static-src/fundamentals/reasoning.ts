@@ -37,8 +37,9 @@ export interface ReasoningView {
    *  posted after. Idempotent. */
   settle(): void;
   /** Settle, then COLLAPSE. What a successor arriving means: the trace is finished AND
-   *  no longer the newest element in its lane. Idempotent. */
-  seal(): void;
+   *  no longer the newest element in its lane. Idempotent. `motion: false` collapses it without
+   *  the slide, for a trace no reader saw open. */
+  seal(opts?: { readonly motion?: boolean }): void;
 }
 
 /** Build a reasoning block. `live` owns the pulse and label; `open` owns the disclosure and is
@@ -124,7 +125,7 @@ export function buildReasoning(initial: string, live: boolean, open: boolean): R
       showCount();
     },
     settle: settleNow,
-    seal(): void {
+    seal(opts): void {
       settleNow();
       if (collapsed) {
         return;
@@ -136,7 +137,7 @@ export function buildReasoning(initial: string, live: boolean, open: boolean): R
       }
       // Detached or in a parked view nobody sees the slide, and measuring would force that view's layout.
       const seen = root.isConnected && root.closest(".transcript-view:not(.is-active)") === null;
-      slideDetails(root, false, seen);
+      slideDetails(root, false, seen && opts?.motion !== false);
     },
   };
 }

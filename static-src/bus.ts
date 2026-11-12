@@ -10,6 +10,7 @@ import type {
   MCPStatusPayload,
   NotificationPayload,
   RunAsksPayload,
+  RunRevPayload,
   SettingsUpdatedPayload,
   SubjectStamp,
 } from "./wire/types.gen.js";
@@ -150,6 +151,8 @@ export interface SSEPayloads {
   // One run's steps waiting on a person, replaced whole per (epoch, seq). Keyed to the
   // launching chat, or `run:<workflowId>` when parentless.
   readonly run_asks: RunAsksPayload;
+  // A run read's new revision: a client holding the run reads what changed since its own.
+  readonly run_rev: RunRevPayload;
   // internal/notice's notification: the page shows it while its chat or run is off screen.
   readonly notification: NotificationPayload;
   // The agent engine's whole status, on every state change and every pending or busy change while a restart is

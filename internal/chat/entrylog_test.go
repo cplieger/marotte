@@ -789,21 +789,21 @@ func TestEntryLog_TurnRangeAnswersTheTailFromItsBound(t *testing.T) {
 	}
 }
 
-// A missing turn is the one caller-caused failure, so only it carries ErrTurnNotInLog; read and decode faults must
+// A missing turn is the one caller-caused failure, so only it carries errTurnNotInLog; read and decode faults must
 // reach the 500 arm, not tell the client a real turn does not exist.
 func TestEntryLog_AMissingTurnCarriesTheSentinel(t *testing.T) {
 	f := newLogFixture(t)
 	turn := f.prompt("hello")
 	f.closeTurn(turn, marotte.TurnOutcomeCompleted)
 
-	if _, err := turnRange(f.log, "t-nosuchturn", 0); !errors.Is(err, ErrTurnNotInLog) {
-		t.Errorf("TurnRange(unknown, 0) = %v, want ErrTurnNotInLog", err)
+	if _, err := turnRange(f.log, "t-nosuchturn", 0); !errors.Is(err, errTurnNotInLog) {
+		t.Errorf("TurnRange(unknown, 0) = %v, want errTurnNotInLog", err)
 	}
-	if _, err := turnRange(f.log, "t-nosuchturn", 3); !errors.Is(err, ErrTurnNotInLog) {
-		t.Errorf("TurnRange(unknown, from 3) = %v, want ErrTurnNotInLog", err)
+	if _, err := turnRange(f.log, "t-nosuchturn", 3); !errors.Is(err, errTurnNotInLog) {
+		t.Errorf("TurnRange(unknown, from 3) = %v, want errTurnNotInLog", err)
 	}
-	if _, _, err := f.log.TurnPage("t-nosuchturn", 0); !errors.Is(err, ErrTurnNotInLog) {
-		t.Errorf("TurnPage(unknown) = %v, want ErrTurnNotInLog", err)
+	if _, _, err := f.log.TurnPage("t-nosuchturn", 0); !errors.Is(err, errTurnNotInLog) {
+		t.Errorf("TurnPage(unknown) = %v, want errTurnNotInLog", err)
 	}
 	// The other direction, so a sentinel on every read fails.
 	if _, err := turnRange(f.log, turn, 0); err != nil {

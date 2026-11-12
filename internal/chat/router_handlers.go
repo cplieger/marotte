@@ -148,7 +148,7 @@ func (rt *router) handleTurnRange(w http.ResponseWriter, r *http.Request, chatID
 			return
 		}
 		// Only a missing turn is the caller's 404; an unreadable log is the server's fault.
-		if errors.Is(err, ErrTurnNotInLog) {
+		if errors.Is(err, errTurnNotInLog) {
 			httpreply.NotFound(w, "unknown turn")
 			return
 		}

@@ -20,11 +20,20 @@ interface Call {
   chatID?: string;
 }
 
-const m = vi.hoisted(() => ({ calls: [] as unknown[] }));
+const m = vi.hoisted(() => ({
+  calls: [] as unknown[],
+  windows: new Map<string, { from: number; to: number }>(),
+}));
 
 vi.mock("./messages-blocks.js", () => ({
+  // The window the stream asked of each render, which is what the real dispatcher reports back.
+  mountedWindow: vi.fn((key: string) => m.windows.get(key)),
+  mountHeadRange: vi.fn(),
+  dropHead: vi.fn(),
+  blockElement: vi.fn(() => undefined),
   buildDetachedBody: vi.fn(
-    (host: HTMLElement, turn: { id: string; body?: Entry[] }, chatID, lane, live) => {
+    (host: HTMLElement, turn: { id: string; body?: Entry[] }, chatID, lane, live, range) => {
+      m.windows.set(turn.id, range);
       m.calls.push({
         fn: "build",
         key: turn.id,
@@ -40,7 +49,8 @@ vi.mock("./messages-blocks.js", () => ({
     },
   ),
   updateDetachedBody: vi.fn(
-    (host: HTMLElement, turn: { id: string; body?: Entry[] }, chatID, lane, live) => {
+    (host: HTMLElement, turn: { id: string; body?: Entry[] }, chatID, lane, live, range) => {
+      m.windows.set(turn.id, range);
       m.calls.push({
         fn: "update",
         key: turn.id,
@@ -56,6 +66,7 @@ vi.mock("./messages-blocks.js", () => ({
     m.calls.push({ fn: "finalize", key, lane });
   }),
   disposeDetachedBody: vi.fn((key: string, lane: string) => {
+    m.windows.delete(key);
     m.calls.push({ fn: "dispose", key, lane });
   }),
   rebuildDetached: vi.fn((rebuild: () => void) => {

@@ -47,6 +47,8 @@ type runTurn struct {
 	turn *turnlog.Turn
 	// endWait is closed at the current KAS turn's turn_end, made only when a heal waits for it (runLog.askTurnEnd).
 	endWait chan struct{}
+	// tail is the newest line the turn's own lane printed (printedLine), nil until it prints; written by the sink.
+	tail atomic.Pointer[string]
 	// lastError is the newest model error KAS displayed in the step's current KAS turn, zero when none.
 	lastError marotte.EngineError
 	// rawStop is the last turn_end's stop reason, carried by the close.
@@ -95,6 +97,9 @@ func (s runSink) Append(ctx context.Context, e *marotte.Entry) error {
 	}
 	s.turn.seq.Store(e.Seq)
 	s.turn.answer.see(e)
+	if line := printedLine(e); line != "" {
+		s.turn.tail.Store(&line)
+	}
 	return nil
 }
 
@@ -110,6 +115,10 @@ type runRecord struct {
 	closes map[string]stepClose
 	// starts is each path's current attempt, nil until a read scans the log; every open and close then keeps it current.
 	starts map[string]stepAttempt
+	// turns is each path's turn ids in file order, nil until a read scans the log; every open then keeps it current.
+	turns map[string][]string
+	// paths is each step turn's path by turn id, kept with turns.
+	paths map[string]string
 	// noteLeases is, per path, the lease node_complete read for the close it sealed, until a trigger records that
 	// close's grade: closeNode is the only writer, gradeLocked the only reader.
 	noteLeases map[string]noteLease
@@ -241,93 +250,127 @@ func (r *runLog) turnHighWater(ctx context.Context, workflowID string) (uint64, 
 	return l.TurnHighWater(), nil
 }
 
+// stepReadHook runs between a turn read's snapshot and its decode; nil outside tests.
+var stepReadHook func()
+
+// openTail is a step turn's open tails and id as a read snapshots them; id is "" when the turn is not open.
+type openTail struct {
+	id      string
+	entries []marotte.OpenEntry
+}
+
+// stamps is the tail's run_turn stamp at seq newest, which comes from the served entries, never the record's counter:
+// that advances outside the lock. None when the turn is not open.
+func (o openTail) stamps(workflowID string, newest uint64) []marotte.SubjectStamp {
+	if o.id == "" {
+		return nil
+	}
+	return []marotte.SubjectStamp{{Kind: string(subject.KindRunTurn), Ref: workflowID + "/" + o.id, Version: turnVersion(o.id, newest)}}
+}
+
+// newestSeqOf is turn's newest seq among entries, 0 when none is its.
+func newestSeqOf(entries []marotte.Entry, turn string) uint64 {
+	for _, e := range slices.Backward(entries) {
+		if e.Turn == turn {
+			return e.Seq
+		}
+	}
+	return 0
+}
+
+// decodeTurns decodes a snapshot taken under the locks, holding neither.
+func decodeTurns(read *chat.TurnRead) ([]marotte.Entry, error) {
+	if stepReadHook != nil {
+		stepReadHook()
+	}
+	return read.Entries()
+}
+
 // stepTurns is one step path's transcript: its turns in file order, open tails, and one run_turn stamp per
-// open turn. The stamp's seq comes from the served entries, never the record's counter, which advances
-// outside the lock. found is false with no such turn.
+// open turn. found is false with no such turn.
 func (r *runLog) stepTurns(ctx context.Context, workflowID, nodePath string) (entries []marotte.Entry, open []marotte.OpenEntry, stamps []marotte.SubjectStamp, found bool, err error) {
+	read, tail, err := r.stepSnapshot(ctx, workflowID, nodePath, false)
+	if err != nil || read == nil {
+		return nil, nil, nil, false, err
+	}
+	if entries, err = decodeTurns(read); err != nil {
+		return nil, nil, nil, false, err
+	}
+	return entries, tail.entries, tail.stamps(workflowID, newestSeqOf(entries, tail.id)), true, nil
+}
+
+// stepSnapshot takes the read of a step path's turns (its newest only when newest) and its open tails, nil with no
+// such turn. The path's turn ids come from the record, so no other step's lines are read.
+func (r *runLog) stepSnapshot(ctx context.Context, workflowID, nodePath string, newest bool) (*chat.TurnRead, openTail, error) {
 	l, err := r.log(ctx, workflowID)
 	if err != nil || l == nil {
-		return nil, nil, nil, false, err
+		return nil, openTail{}, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	all, err := l.All()
-	if err != nil {
-		return nil, nil, nil, false, err
+	rec, ok := r.runs[workflowID]
+	if !ok || rec.removed {
+		return nil, openTail{}, nil
 	}
-	entries, newest := stepEntries(all, nodePath)
-	if len(newest) == 0 {
-		return nil, nil, nil, false, nil
+	if scanErr := scanStepFactsLocked(rec, l); scanErr != nil {
+		return nil, openTail{}, scanErr
 	}
-	if rec, ok := r.runs[workflowID]; ok {
-		if t := rec.open[nodePath]; t != nil {
-			open = t.turn.OpenEntries()
-			id := t.turn.ID()
-			stamps = append(stamps, marotte.SubjectStamp{Kind: string(subject.KindRunTurn), Ref: workflowID + "/" + id, Version: turnVersion(id, newest[id])})
-		}
+	turns := rec.turns[nodePath]
+	if newest && len(turns) > 0 {
+		turns = turns[len(turns)-1:]
 	}
-	return entries, open, stamps, true, nil
+	var tail openTail
+	if t := rec.open[nodePath]; t != nil {
+		tail = openTail{id: t.turn.ID(), entries: t.turn.OpenEntries()}
+	}
+	read, err := l.SnapshotTurns(turns, 0)
+	return read, tail, err
 }
 
 // turnRange is one step turn's tail from seq `from` inclusive (0 the whole turn), its open tails and its
-// stamp, over EntryLog.TurnPage like the chat's. found is false for no log or no such turn; err is an unreadable log (500).
+// stamp. found is false for no log or no such turn; err is an unreadable log (500).
 func (r *runLog) turnRange(ctx context.Context, workflowID, turn string, from uint64) (entries []marotte.Entry, open []marotte.OpenEntry, stamps []marotte.SubjectStamp, found bool, err error) {
 	l, err := r.log(ctx, workflowID)
 	if err != nil || l == nil {
 		return nil, nil, nil, false, err
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	entries, newestSeq, err := l.TurnPage(turn, from)
-	if err != nil {
-		// Only a missing turn is the caller's answer; an unreadable log is a 500.
-		if errors.Is(err, chat.ErrTurnNotInLog) {
-			return nil, nil, nil, false, nil
+	var tail openTail
+	if rec, ok := r.runs[workflowID]; ok {
+		for _, t := range rec.open {
+			if t.turn.ID() == turn {
+				tail = openTail{id: turn, entries: t.turn.OpenEntries()}
+			}
 		}
+	}
+	read, err := l.SnapshotTurns([]string{turn}, from)
+	r.mu.Unlock()
+	if err != nil || read == nil {
 		return nil, nil, nil, false, err
 	}
-	rec, ok := r.runs[workflowID]
-	if !ok {
-		return entries, nil, nil, true, nil
+	if entries, err = decodeTurns(read); err != nil {
+		return nil, nil, nil, false, err
 	}
-	for _, t := range rec.open {
-		if t.turn.ID() != turn {
-			continue
-		}
-		open = t.turn.OpenEntries()
-		stamps = append(stamps, marotte.SubjectStamp{
-			Kind: string(subject.KindRunTurn), Ref: workflowID + "/" + turn, Version: turnVersion(turn, newestSeq),
-		})
+	// The page speaks for its newest entry, or for the seq before from when empty.
+	newest := from - 1
+	if n := len(entries); n > 0 {
+		newest = entries[n-1].Seq
 	}
-	return entries, open, stamps, true, nil
+	return entries, tail.entries, tail.stamps(workflowID, newest), true, nil
 }
 
 // lastStepMessage is a step path's last words (lastWords) in its newest turn of the run's own record, "" when the
 // record holds none or cannot be read.
 func (r *runLog) lastStepMessage(ctx context.Context, workflowID, nodePath string) string {
-	l, err := r.log(ctx, workflowID)
-	if err != nil || l == nil {
+	read, _, err := r.stepSnapshot(ctx, workflowID, nodePath, true)
+	if err != nil || read == nil {
 		return ""
 	}
-	r.mu.Lock()
-	all, err := l.All()
-	r.mu.Unlock()
+	entries, err := decodeTurns(read)
 	if err != nil {
 		return ""
 	}
-	entries, _ := stepEntries(all, nodePath)
-	return lastWords(newestTurn(entries))
-}
-
-// newestTurn is the entries of the newest turn among a path's entries, which follow its turn_open:
-// a later turn of the path opens after it.
-func newestTurn(entries []marotte.Entry) []marotte.Entry {
-	for i, e := range slices.Backward(entries) {
-		if e.Kind == marotte.EntryKindTurnOpen {
-			return entries[i:]
-		}
-	}
-	return nil
+	return lastWords(entries)
 }
 
 // lastWords is a step turn's newest send_message message, else its trailing prose run: the step's own text
@@ -394,24 +437,6 @@ func sentMessage(e *marotte.Entry) string {
 		return ""
 	}
 	return strings.TrimSpace(in.Message)
-}
-
-func stepEntries(all []marotte.Entry, nodePath string) (entries []marotte.Entry, newest map[string]uint64) {
-	newest = make(map[string]uint64)
-	for i := range all {
-		e := &all[i]
-		if e.Kind == marotte.EntryKindTurnOpen {
-			var to marotte.EntryTurnOpen
-			if json.Unmarshal(e.Payload, &to) == nil && to.NodePath == nodePath {
-				newest[e.Turn] = e.Seq
-			}
-		}
-		if _, ok := newest[e.Turn]; ok {
-			entries = append(entries, *e)
-			newest[e.Turn] = e.Seq
-		}
-	}
-	return entries, newest
 }
 
 // steerSeverityWarning is the send_message severity that parks a run, on a steer row.
@@ -588,6 +613,8 @@ func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marot
 	rec.open[nodePath] = t
 	if rec.starts != nil {
 		noteAttemptOpen(rec.starts, nodePath, e.Ts)
+		rec.turns[nodePath] = append(rec.turns[nodePath], e.ID)
+		rec.paths[e.ID] = nodePath
 	}
 	return t.turn, e, nil
 }
@@ -976,6 +1003,9 @@ func (r *runLog) closeLocked(ctx context.Context, rec *runRecord, t *runTurn, c 
 	}
 	if rec.starts != nil {
 		noteAttemptClose(rec.starts, t.path, c.Outcome)
+		if line := t.tail.Load(); line != nil {
+			noteAttemptLine(rec.starts, t.path, *line)
+		}
 	}
 	return sealed, err
 }
@@ -1049,18 +1079,61 @@ func (r *runLog) gradeDueLocked(ctx context.Context, rec *runRecord, paths []str
 func stepEndsLocked(rec *runRecord, kas map[string]workflow.StepRecord) map[string]marotte.RunStepEnd {
 	ends := make(map[string]marotte.RunStepEnd)
 	for path, c := range rec.closes {
-		end, ok := c.end()
-		if !ok {
-			continue
+		if end, ok := stepEndLocked(rec, path, &c, kas); ok {
+			ends[path] = end
 		}
-		if end.Outcome == marotte.TurnOutcomeInterrupted {
-			st, known := kas[path]
-			// A grade is recorded only under a completed record, so a graded interruption was resumed.
-			end.Resumed = rec.starts[path].open || c.hasGrade || (known && st.Completed())
-		}
-		ends[path] = end
 	}
 	return ends
+}
+
+func stepEndLocked(rec *runRecord, path string, c *stepClose, kas map[string]workflow.StepRecord) (marotte.RunStepEnd, bool) {
+	end, ok := c.end()
+	if ok && end.Outcome == marotte.TurnOutcomeInterrupted {
+		st, known := kas[path]
+		// A grade is recorded only under a completed record, so a graded interruption was resumed.
+		end.Resumed = rec.starts[path].open || c.hasGrade || (known && st.Completed())
+	}
+	return end, ok
+}
+
+// stepRow is one step path's end and start rows, nil for a row the path has none of.
+type stepRow struct {
+	end   *marotte.RunStepEnd
+	start *marotte.RunStepStart
+	path  string
+}
+
+// stepRowOfTurn answers the rows of the path step turn turn ran on, as stepEnds and stepStarts answer them, recording
+// no grade; false when the log holds no step turn by that id.
+func (r *runLog) stepRowOfTurn(ctx context.Context, workflowID, turn string, kas map[string]workflow.StepRecord) (stepRow, bool, error) {
+	l, err := r.log(ctx, workflowID)
+	if err != nil || l == nil {
+		return stepRow{}, false, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.runs[workflowID]
+	if !ok || rec.removed {
+		return stepRow{}, false, nil
+	}
+	if err := scanStepFactsLocked(rec, l); err != nil {
+		return stepRow{}, false, err
+	}
+	path, ok := rec.paths[turn]
+	if !ok {
+		return stepRow{}, false, nil
+	}
+	row := stepRow{path: path}
+	if c, has := rec.closes[path]; has {
+		if end, ok := stepEndLocked(rec, path, &c, kas); ok {
+			row.end = &end
+		}
+	}
+	if a, has := rec.starts[path]; has {
+		start := stepStartLocked(rec, path, a)
+		row.start = &start
+	}
+	return row, true, nil
 }
 
 // dueGradeLocked is whether the path's newest close c needs a grade under KAS's record and a read may still be spent
@@ -1170,8 +1243,8 @@ type noteLease struct {
 	lease runlease.Lease
 }
 
-// scanStepFactsLocked fills the record's step closes and attempt starts from its log once per process, both in one
-// scan; every open and close keeps them current after. Caller holds runLog.mu.
+// scanStepFactsLocked fills the record's step closes, attempt starts and turn ids from its log once per process, in
+// one scan; every open and close keeps them current after. Caller holds runLog.mu.
 func scanStepFactsLocked(rec *runRecord, l *chat.EntryLog) error {
 	if rec.closes != nil {
 		return nil
@@ -1180,45 +1253,67 @@ func scanStepFactsLocked(rec *runRecord, l *chat.EntryLog) error {
 	if err != nil {
 		return err
 	}
-	rec.closes, rec.starts = scanStepFacts(all)
+	sc := scanStepFacts(all)
+	rec.closes, rec.starts, rec.turns, rec.paths = sc.closes, sc.starts, sc.turns, sc.paths
 	return nil
 }
 
 // scanStepFacts folds a log's turn_open paths, turn_close and step_graded entries in file order into each path's
-// newest close, under its grade, and its current attempt.
-func scanStepFacts(all []marotte.Entry) (closes map[string]stepClose, starts map[string]stepAttempt) {
-	closes = make(map[string]stepClose)
-	starts = make(map[string]stepAttempt)
-	paths := make(map[string]string)
-	for i := range all {
-		e := &all[i]
-		switch e.Kind {
-		case marotte.EntryKindTurnOpen:
-			var to marotte.EntryTurnOpen
-			if json.Unmarshal(e.Payload, &to) == nil && to.NodePath != "" {
-				paths[e.Turn] = to.NodePath
-				noteAttemptOpen(starts, to.NodePath, e.Ts)
-			}
-		case marotte.EntryKindTurnClose:
-			var tc marotte.EntryTurnClose
-			if path, ok := paths[e.Turn]; ok && json.Unmarshal(e.Payload, &tc) == nil {
-				closes[path] = stepCloseOf(&tc, e.Turn)
-				noteAttemptClose(starts, path, tc.Outcome)
-			}
-		case marotte.EntryKindStepGraded:
-			var g marotte.EntryStepGraded
-			path, ok := paths[e.Turn]
-			if c, has := closes[path]; ok && has && c.turn == e.Turn && json.Unmarshal(e.Payload, &g) == nil {
-				closes[path] = c.withGrade(&g)
-			}
-		}
+// newest close, under its grade, its current attempt, its turn ids and each turn's path.
+func scanStepFacts(all []marotte.Entry) *stepFactScan {
+	sc := &stepFactScan{
+		closes: make(map[string]stepClose),
+		starts: make(map[string]stepAttempt),
+		turns:  make(map[string][]string),
+		paths:  make(map[string]string),
 	}
-	return closes, starts
+	for i := range all {
+		sc.see(&all[i])
+	}
+	return sc
 }
 
-// stepAttempt is one path's current attempt: when its first turn opened, whether its newest turn is open, and
-// whether that turn's close was an interruption (a bridge death or a restart), which the path's next turn continues.
+// stepFactScan is scanStepFacts' fold, with each turn's path as its turn_open named it.
+type stepFactScan struct {
+	closes map[string]stepClose
+	starts map[string]stepAttempt
+	turns  map[string][]string
+	paths  map[string]string
+}
+
+func (sc *stepFactScan) see(e *marotte.Entry) {
+	switch e.Kind {
+	case marotte.EntryKindTurnOpen:
+		var to marotte.EntryTurnOpen
+		if json.Unmarshal(e.Payload, &to) == nil && to.NodePath != "" {
+			sc.paths[e.Turn] = to.NodePath
+			sc.turns[to.NodePath] = append(sc.turns[to.NodePath], e.Turn)
+			noteAttemptOpen(sc.starts, to.NodePath, e.Ts)
+		}
+	case marotte.EntryKindTurnClose:
+		var tc marotte.EntryTurnClose
+		if path, ok := sc.paths[e.Turn]; ok && json.Unmarshal(e.Payload, &tc) == nil {
+			sc.closes[path] = stepCloseOf(&tc, e.Turn)
+			noteAttemptClose(sc.starts, path, tc.Outcome)
+		}
+	case marotte.EntryKindText, marotte.EntryKindThinking, marotte.EntryKindToolCall:
+		if path, ok := sc.paths[e.Turn]; ok {
+			noteAttemptLine(sc.starts, path, printedLine(e))
+		}
+	case marotte.EntryKindStepGraded:
+		var g marotte.EntryStepGraded
+		path, ok := sc.paths[e.Turn]
+		if c, has := sc.closes[path]; ok && has && c.turn == e.Turn && json.Unmarshal(e.Payload, &g) == nil {
+			sc.closes[path] = c.withGrade(&g)
+		}
+	}
+}
+
+// stepAttempt is one path's current attempt: when its first turn opened, whether its newest turn is open, whether
+// that turn's close was an interruption (a bridge death or a restart), which the path's next turn continues, and the
+// newest line the attempt's sealed turns printed (an open turn's own is runTurn.tail).
 type stepAttempt struct {
+	tail        string
 	at          int64
 	open        bool
 	interrupted bool
@@ -1229,9 +1324,19 @@ type stepAttempt struct {
 func noteAttemptOpen(starts map[string]stepAttempt, path string, ts int64) {
 	a, ok := starts[path]
 	if !ok || (!a.open && !a.interrupted) {
-		a.at = ts
+		a.at, a.tail = ts, ""
 	}
 	a.open, a.interrupted = true, false
+	starts[path] = a
+}
+
+// noteAttemptLine records a line a path's attempt printed; "" and a path with no recorded open leave it alone.
+func noteAttemptLine(starts map[string]stepAttempt, path, line string) {
+	a, ok := starts[path]
+	if !ok || line == "" {
+		return
+	}
+	a.tail = line
 	starts[path] = a
 }
 
@@ -1263,12 +1368,67 @@ func (r *runLog) stepStarts(ctx context.Context, workflowID string) (map[string]
 	}
 	out := make(map[string]marotte.RunStepStart, len(rec.starts))
 	for path, a := range rec.starts {
-		out[path] = marotte.RunStepStart{
-			StartedAt: time.UnixMilli(a.at).UTC().Format(time.RFC3339Nano),
-			Ended:     !a.open && !a.interrupted,
-		}
+		out[path] = stepStartLocked(rec, path, a)
 	}
 	return out, nil
+}
+
+func stepStartLocked(rec *runRecord, path string, a stepAttempt) marotte.RunStepStart {
+	row := marotte.RunStepStart{
+		StartedAt: time.UnixMilli(a.at).UTC().Format(time.RFC3339Nano),
+		Ended:     !a.open && !a.interrupted,
+	}
+	if !row.Ended {
+		row.Turn, row.Tail = attemptTail(rec, path, a)
+	}
+	return row
+}
+
+// attemptTail is an in-flight attempt's newest turn and the newest line it printed: the open turn's own line, else
+// the line its sealed turns left.
+func attemptTail(rec *runRecord, path string, a stepAttempt) (turn, tail string) {
+	if turnIDs := rec.turns[path]; len(turnIDs) > 0 {
+		turn = turnIDs[len(turnIDs)-1]
+	}
+	tail = a.tail
+	if t := rec.open[path]; t != nil {
+		if line := t.tail.Load(); line != nil {
+			tail = *line
+		}
+	}
+	return turn, tail
+}
+
+// liveRows is the rows of starts whose step turn is open now, with that turn's line and streaming root-lane entry as
+// they stand: a revision holds its rows from the step's last turn edge. It walks the open turns, not starts.
+func (r *runLog) liveRows(workflowID string, starts map[string]marotte.RunStepStart) map[string]marotte.RunStepStart {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.runs[workflowID]
+	if !ok || rec.removed {
+		return nil
+	}
+	var out map[string]marotte.RunStepStart
+	for path, t := range rec.open {
+		row, ok := starts[path]
+		if !ok || row.Ended || row.Turn != t.turn.ID() {
+			continue
+		}
+		if line := t.tail.Load(); line != nil {
+			row.Tail = *line
+		}
+		for _, o := range t.turn.OpenEntries() {
+			if o.Lane == "" {
+				o.Text = dockText(o.Text)
+				row.Open = &o
+			}
+		}
+		if out == nil {
+			out = map[string]marotte.RunStepStart{}
+		}
+		out[path] = row
+	}
+	return out
 }
 
 // runOutcome maps KAS's status to `completed`, `failed`, `cancelled`, or `unknown` with the status as raw stop.

@@ -54,10 +54,13 @@ export function slideBox(
     closedHeight,
   }: { readonly motion?: boolean; readonly fade?: boolean; readonly closedHeight?: number } = {},
 ): void {
-  // Checked before the first geometry read, so a motionless flip forces no layout.
+  // Checked before the first geometry read, so a motionless flip forces no layout. A slide being cut still reads
+  // it before the cancel: that layout clamps a scrolling box's offset to the slide's height, and a flip without it
+  // leaves the box scrolled past its content.
   const still = !motion || matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const from = still ? 0 : box.getBoundingClientRect().height;
-  const scrollTop = still ? 0 : box.scrollTop;
+  const measured = !still || slides.has(box);
+  const from = measured ? box.getBoundingClientRect().height : 0;
+  const scrollTop = measured ? box.scrollTop : 0;
   let fromOpacity: string | undefined;
   if (fade && !still) {
     // A reversed slide fades on from where the one it replaces stood, not from an end.

@@ -48,6 +48,7 @@ afterEach(() => {
 function renderedGlyphs(): Map<ExecKind, string> {
   const tree = buildExecTree(vi.fn());
   host.appendChild(tree.root);
+  tree.attach(host);
   const kinds = Object.keys(KINDS) as ExecKind[];
   const nodes: ExecNode[] = kinds.map((kind) => ({
     path: kind,
@@ -82,6 +83,7 @@ describe("the exec tree's kind glyph", () => {
   it("redraws the glyph when a path's kind changes and keeps it when it does not", () => {
     const tree = buildExecTree(vi.fn());
     host.appendChild(tree.root);
+    tree.attach(host);
     const node = (kind: ExecKind): ExecNode => ({
       path: "n",
       label: "n",

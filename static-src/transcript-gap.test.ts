@@ -217,3 +217,35 @@ describe("one lost frame in a chat's entry stream", () => {
     expect(api.getTyped).toHaveBeenCalledTimes(1);
   });
 });
+
+// A read's answer can reflect frames still on their way, so a copy of a frame the turn already
+// holds arrives and must be a redelivery: no change, no read.
+describe("a frame the chat's turn already holds", () => {
+  it("folds a stream whose every frame arrives twice into the undropped fold, asking no read", () => {
+    for (const f of STREAM) {
+      apply("c", f);
+      apply("c", f);
+    }
+
+    expect(foldOf("c")).toEqual(foldOf("ref"));
+    expect(api.getTyped).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["entry_opened", 3],
+    ["entry_delta", 4],
+    ["entry_sealed", 5],
+  ])("changes nothing for a late %s of an entry it already sealed", (_kind, at) => {
+    for (const f of STREAM) {
+      apply("c", f);
+    }
+    const late = STREAM[at];
+    if (late === undefined) {
+      throw new Error("no such frame");
+    }
+    apply("c", late);
+
+    expect(foldOf("c")).toEqual(foldOf("ref"));
+    expect(api.getTyped).not.toHaveBeenCalled();
+  });
+});

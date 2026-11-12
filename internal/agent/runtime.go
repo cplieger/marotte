@@ -219,6 +219,8 @@ type bus struct {
 	ownStopped func(marotte.ChatID) bool
 	// askSettled hears that one of a chat session's asks settled (autoCompactor.askSettled).
 	askSettled func(marotte.ChatID)
+	// observe sees every event before it is published (Runs.noteRunEvent); it must not block.
+	observe func(*marotte.ServerEvent)
 	// runAsk hears each of a run's asks open and settle (Runs).
 	runAsk runAskListener
 	// searches is the running grep_search and file_search calls, ended by a turn cancel, a run's end or their session's.
@@ -593,6 +595,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	}
 	runs.servedModels = h.servedModels
 	runs.coord = h.coord
+	sseP.observe = runs.noteRunEvent
 	configP.engine = h.engine
 	configP.observe = h.observe
 	configP.broadcast = sseP.Broadcast

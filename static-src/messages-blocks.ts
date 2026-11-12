@@ -95,10 +95,10 @@ import { delegateStopWord } from "./delegate-stop.js";
 import { callRefused } from "./hook-fold.js";
 import { buildRunCard, type RunCardView, type RunDisclosure } from "./fundamentals/run-card.js";
 import {
-  invalidateRun,
+  drawRun,
   runGone,
   runPlan,
-  runState,
+  runStateAs,
   runStepEnds,
   forgetRun,
   registerRunStateDemand,
@@ -396,7 +396,7 @@ registerRunStateDemand((workflowID) => {
     }
   }
   return false;
-});
+}, "glance");
 
 // ---------------------------------------------------------------------------
 // Public API (called by messages.ts)
@@ -876,7 +876,7 @@ export function resetBlockRenders(): void {
 
 /**
  * Render one delegate's transcript into `host`. The real turn, with the delegate's uuid as the root lane, so its
- * entries render in the flow and a nested invocation renders as a card.
+ * entries render in the flow and a nested invocation renders as a card. `range` absent is the whole turn.
  */
 export function buildDetachedBody(
   host: HTMLElement,
@@ -884,19 +884,22 @@ export function buildDetachedBody(
   chatID: string,
   subtask: string,
   live: boolean,
+  range?: EntryRange,
 ): void {
-  buildBody(host, turn, chatID, live, true, subtask);
+  buildBody(host, turn, chatID, live, true, subtask, range);
 }
 
-/** Append newly-arrived entries and bring mounted ones up to the store's text. */
+/** Append newly-arrived entries up to `range`'s end (absent: the turn's) and bring mounted ones up to the store's
+ *  text. */
 export function updateDetachedBody(
   host: HTMLElement,
   turn: Turn,
   chatID: string,
   subtask: string,
   live: boolean,
+  range?: EntryRange,
 ): void {
-  updateBody(host, turn, chatID, live, true, subtask);
+  updateBody(host, turn, chatID, live, true, subtask, range);
 }
 
 /** `finalizeAssistantBody` for a detached render: flush streams and settle traces, folding nothing. */
@@ -1017,16 +1020,40 @@ function renderRange(
     sealLiveBubble(st);
   }
   st.window = { from: Math.min(st.window.from, from), to: Math.max(st.window.to, to) };
-  for (const [i, p] of placements.entries()) {
-    // Per placement: the window already claims the range, so one uncontained throw loses every later entry.
-    try {
-      place(st, p, live, idx);
-    } catch (err) {
-      failPlacement(st, p, err);
+  batchGroupRefresh(() => {
+    for (const [i, p] of placements.entries()) {
+      // Per placement: the window already claims the range, so one uncontained throw loses every later entry.
+      try {
+        place(st, p, live, idx);
+      } catch (err) {
+        failPlacement(st, p, err);
+      }
+      // Anything after this run in the range renders below it, so the caret and anchor leave it.
+      if (p.run >= 0 && tailAppend && i + 1 < placements.length) {
+        sealLiveBubble(st);
+      }
     }
-    // Anything after this run in the range renders below it, so the caret and anchor leave it.
-    if (p.run >= 0 && tailAppend && i + 1 < placements.length) {
-      sealLiveBubble(st);
+  });
+}
+
+/** The groups the running placement batch mounted cards into, or null outside one. */
+let staleGroups: Set<HTMLElement> | null = null;
+
+/** Run a batch of placements refreshing each touched group's header once at its end: a refresh re-folds the group
+ *  and re-places every stray of its container, so one per mounted card is quadratic in a turn's groups. */
+function batchGroupRefresh(place: () => void): void {
+  if (staleGroups !== null) {
+    place();
+    return;
+  }
+  const stale = new Set<HTMLElement>();
+  staleGroups = stale;
+  try {
+    place();
+  } finally {
+    staleGroups = null;
+    for (const group of stale) {
+      refreshGroupHeader(group);
     }
   }
 }
@@ -1712,7 +1739,7 @@ function runCardFor(st: TurnRender, workflowID: string, name: string, owner = fa
     releaseRunCard(st, workflowID, card);
   });
   // The card's first read; later ones arrive through the effect.
-  invalidateRun(workflowID);
+  drawRun(workflowID);
   armRunCard(st, workflowID, card);
   if (launch !== undefined) {
     card.setLaunch(launch.status, launch.output);
@@ -1866,7 +1893,7 @@ function armRunCard(st: TurnRender, workflowID: string, card: RunCardView): void
   const stop = effect(() => {
     // Two inputs on different clocks: `inspect` for step state, the dock for blocked asks. KAS leaves the run
     // `running` while a step waits on a person. The plan and step ends land before the state wakes this.
-    const state = runState(workflowID);
+    const state = runStateAs(workflowID, "glance");
     card.render(state, runPendingAsks(workflowID), {
       plan: runPlan(workflowID),
       ends: runStepEnds(workflowID),
@@ -2518,9 +2545,10 @@ function mountThinking(
   if (adopted === undefined) {
     appendEntry(st, container, view.root);
   }
-  // Head insertion never reaches `openReasoning`, which holds only trailing traces.
+  // Head insertion never reaches `openReasoning`, which holds only trailing traces. Only the open trace the reader
+  // watched stream slides shut; one mounted already followed collapses at once.
   if (followed) {
-    view.seal();
+    view.seal({ motion: adopted !== undefined });
   } else {
     st.openReasoning.set(container, view);
   }
@@ -2544,7 +2572,11 @@ function mountToolCard(
   stampEntry(st, card, seq);
   // Cards live in the group's collapsible body, not beside the header.
   placeInContainer(st, groupBody(group), card);
-  refreshGroupHeader(group);
+  if (staleGroups === null) {
+    refreshGroupHeader(group);
+  } else {
+    staleGroups.add(group);
+  }
   // This render's slot, in `st.disposers` rather than `pushLifetimeEffect`: a transcript card outlives turn end, and
   // park suspends it through the registry.
   pushDisposer(st, seq, () => {

@@ -5,16 +5,22 @@ import {
   counters,
   elapsed,
   failureOwner,
-  compactText,
   miniBar,
   progressPhrase,
   summaryProgress,
   window as execWindow,
   workNodes,
   type ExecNode,
+  type ProgressPhrase,
   type ProgressSource,
 } from "./model.js";
 import type { ExecState } from "./status.js";
+
+/** The phrase as one string, "↻15/50 › 2/4 · 1/4", so a case reads its parts in one comparison. */
+function compactText(p: ProgressPhrase): string {
+  const loop = p.pass === "" ? "" : `\u21bb${p.pass}${p.inner === "" ? "" : ` \u203a ${p.inner}`}`;
+  return [loop, p.steps].filter((s) => s !== "").join(" \u00b7 ");
+}
 
 function work(label: string, state: ExecState, over: Partial<ExecNode> = {}): ExecNode {
   return { path: label, label, kind: "step", state, children: [], ...over };

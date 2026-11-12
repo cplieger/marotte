@@ -185,6 +185,11 @@ export function runStepURL(workflowID: string, nodePath: string): string {
   return `/api/runs/${encodeURIComponent(workflowID)}/steps/${encodeURIComponent(nodePath)}`;
 }
 
+/** GET a step's whole captured output, which the run read carries only as its summary. */
+export function runStepCaptureURL(workflowID: string, nodePath: string): string {
+  return `${runStepURL(workflowID, nodePath)}/capture`;
+}
+
 interface StepAddress {
   workflowID: string;
   nodePath: string;

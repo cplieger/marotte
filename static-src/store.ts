@@ -32,6 +32,7 @@ import {
   type SteerFrame,
 } from "./steer-rows.js";
 import { callIDOfToolResult } from "./entry-ids.js";
+import { deltaIsRedelivery, openIsRedelivery, sealIsRedelivery } from "./open-tails.js";
 import { interactionFact } from "./interaction.js";
 import { severityOf } from "./turn-severity.js";
 import {
@@ -1176,7 +1177,7 @@ function holdsSteerEntry(s: Session, steerID: string): boolean {
 
 /** Store the open entry a lane is coalescing into, with the `n` it arrived with — the count of
  *  deltas already folded into `open.text`. One open entry per lane, so a second open in the same
- *  lane replaces the first. Mints the streaming signal, which is what a surface that is not the
+ *  lane replaces the first; one the turn already holds (`openIsRedelivery`) changes nothing. Mints the streaming signal, which is what a surface that is not the
  *  entry's own bubble follows. */
 export function openEntry(chatID: string, open: OpenEntry): void {
   const s = get(chatID);
@@ -1188,6 +1189,9 @@ export function openEntry(chatID: string, open: OpenEntry): void {
     markHole(chatID, open.turn);
     return;
   }
+  if (openIsRedelivery(state.entries, state.openEntries, open)) {
+    return;
+  }
   const lane = open.lane ?? "";
   stampActivity(chatID);
   state.openEntries.set(lane, { ...open, lane });
@@ -1197,8 +1201,8 @@ export function openEntry(chatID: string, open: OpenEntry): void {
 }
 
 /** Extend a lane's open entry by one delta. `n` is the running count AFTER the delta, so the
- *  only admissible value is `open.n + 1`; anything else, and any frame naming an entry this lane
- *  is not coalescing, is the same hole. */
+ *  only admissible value is `open.n + 1`; a delta the turn already holds (`deltaIsRedelivery`) is
+ *  dropped, and anything else is the same hole. */
 export function applyDelta(
   chatID: string,
   turn: string,
@@ -1217,6 +1221,9 @@ export function applyDelta(
     return;
   }
   const open = state.openEntries.get(lane);
+  if (deltaIsRedelivery(state.entries, open, entryID, n)) {
+    return;
+  }
   if (open?.id !== entryID || n !== open.n + 1) {
     markHole(chatID, turn, state.entries.length - 1);
     return;
@@ -1254,6 +1261,9 @@ export function sealEntry(
     return;
   }
   const open = state.openEntries.get(lane);
+  if (sealIsRedelivery(state.entries, entryID, seq)) {
+    return;
+  }
   if (open?.id !== entryID || n !== open.n) {
     markHole(chatID, turn, state.entries.length - 1);
     return;

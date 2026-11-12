@@ -151,7 +151,9 @@ const (
 	// version the lease store minted for it. Workspace-wide: no chat id.
 	EventLiveRun EventType = "live_run"
 	// EventRunAsks is one run's steps waiting on a person, replaced whole (RunAsksPayload).
-	EventRunAsks         EventType = "run_asks"
+	EventRunAsks EventType = "run_asks"
+	// EventRunRev is a run read's new revision (RunRevPayload).
+	EventRunRev          EventType = "run_rev"
 	EventForgesChanged   EventType = "forges_changed"
 	EventGovernanceState EventType = "governance_state"
 	EventHooksChanged    EventType = "hooks_changed"

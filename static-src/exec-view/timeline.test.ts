@@ -20,6 +20,7 @@ let view: ExecTimelineView;
 function mount(): ExecTimelineView {
   view = buildExecTimeline(() => undefined);
   document.body.append(view.root);
+  view.attach(document.body);
   return view;
 }
 

@@ -24,7 +24,7 @@ const {
   stepRead,
   stepTranscriptVersion,
 } = await import("./run-step-transcript.js");
-const { appendRunEntry, runTurnHoles, runTurns } = await import("./run-store.js");
+const { appendRunEntry, runStepHoles, runTurnSource } = await import("./run-store.js");
 
 /** The envelope `apiGetTypedOrError` answers with, structurally — `ApiResult` is private to
  *  `api-client.ts` and the consumer destructures rather than naming it. */
@@ -79,8 +79,7 @@ function tail(turn: string, body: string): OpenEntry {
 }
 
 function entryIDs(workflowID: string, turnID: string): string[] {
-  const found = runTurns(workflowID).find(([id]) => id === turnID);
-  return (found?.[1].entries ?? []).map((e) => e.id);
+  return (runTurnSource(workflowID).turns.get(turnID)?.entries ?? []).map((e) => e.id);
 }
 
 async function ask(workflowID: string, nodePath: string, answer: unknown): Promise<void> {
@@ -267,7 +266,7 @@ describe("run-step-transcript: adopting the answer into the run store", () => {
     const entries = [turnOpen("t1", "wf/a"), text("t1", 1, "one"), text("t1", 2, "two")];
     await ask("wf_adopt", "wf/a", ok({ entries }));
     expect(entryIDs("wf_adopt", "t1")).toEqual(["t1-open", "t1-1", "t1-2"]);
-    expect(runTurnHoles("wf_adopt")).toEqual([]);
+    expect(runStepHoles("wf_adopt", "wf/a")).toEqual([]);
   });
 
   // Seated BEFORE the sealed entries, an open tail lands on a turn the answer has not created yet,
@@ -278,9 +277,10 @@ describe("run-step-transcript: adopting the answer into the run store", () => {
       "wf/a",
       ok({ entries: [turnOpen("t1", "wf/a")], open_entries: [tail("t1", "still writing")] }),
     );
-    const found = runTurns("wf_tail").find(([id]) => id === "t1");
-    expect(found?.[1].openEntries.get("")?.text).toBe("still writing");
-    expect(runTurnHoles("wf_tail")).toEqual([]);
+    expect(runTurnSource("wf_tail").turns.get("t1")?.openEntries.get("")?.text).toBe(
+      "still writing",
+    );
+    expect(runStepHoles("wf_tail", "wf/a")).toEqual([]);
   });
 
   // The repair is a HOLE FILL rather than a rewrite: the prefix the store already holds is
@@ -295,15 +295,16 @@ describe("run-step-transcript: adopting the answer into the run store", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(entryIDs("wf_again", "t1")).toEqual(["t1-open", "t1-1", "t1-2"]);
-    expect(runTurnHoles("wf_again")).toEqual([]);
+    expect(runStepHoles("wf_again", "wf/a")).toEqual([]);
   });
 
   it("clears the hole its answer repairs", async () => {
     // An entry for a turn the store never opened is exactly the gap this GET exists to close.
     appendRunEntry("wf_hole", text("t1", 3, "orphan"));
-    expect(runTurnHoles("wf_hole")).toEqual(["t1"]);
     await ask("wf_hole", "wf/a", ok({ entries: [turnOpen("t1", "wf/a"), text("t1", 1, "one")] }));
-    expect(runTurnHoles("wf_hole")).toEqual([]);
+    // The turn is held now, so a hole left on it would be named here.
+    expect(runTurnSource("wf_hole").turn_order).toEqual(["t1"]);
+    expect(runStepHoles("wf_hole", "wf/a")).toEqual([]);
   });
 
   // A `ready` answer carrying nothing is its own fact — the step ran and wrote nothing — and the
@@ -311,7 +312,7 @@ describe("run-step-transcript: adopting the answer into the run store", () => {
   it("records `ready` for an answer that carries no entries", async () => {
     await ask("wf_empty", "wf/a", ok({ state: "ready", entries: [] }));
     expect(stepRead("wf_empty", "wf/a")?.state).toBe("ready");
-    expect(runTurns("wf_empty")).toEqual([]);
+    expect(runTurnSource("wf_empty").turn_order).toEqual([]);
   });
 });
 

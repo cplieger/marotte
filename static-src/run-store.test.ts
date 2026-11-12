@@ -80,6 +80,19 @@ vi.mock("./api-client.js", () => ({
 
 const store = await import("./run-store.js");
 
+/** The cases read whole trees, which only a tree reader's demand asks for; a run no reader holds
+ *  is read as its header. A case about releasing a run turns this off. */
+let holdTrees = true;
+store.registerRunStateDemand(() => holdTrees, "tree");
+
+/** `forgetRun` with the cases' own demand off for the call. */
+function forget(id: string): void {
+  const was = holdTrees;
+  holdTrees = false;
+  store.forgetRun(id);
+  holdTrees = was;
+}
+
 async function settle(): Promise<void> {
   for (const r of resolvers.splice(0)) {
     r();
@@ -99,8 +112,9 @@ beforeEach(() => {
   resolvers = [];
   failStatuses = [];
   liveRunsReply = null;
+  holdTrees = true;
   for (const id of ["r1", "r2", "r3", "r4"]) {
-    store.forgetRun(id);
+    forget(id);
   }
 });
 
@@ -207,7 +221,7 @@ describe("the reply's read position travels beside the state", () => {
     store.invalidateRun("rp");
     await settle();
     expect(store.peekRunState("rp")?.readPosition).toBe(want);
-    store.forgetRun("rp");
+    forget("rp");
   });
 
   // Only a read names a run's position: a retry's frames arrive before the run settles again.
@@ -226,13 +240,13 @@ describe("the reply's read position travels beside the state", () => {
       store.applyRunProgress({ workflow_id: "rp", node_path: ["rp", "build"], status: "running" }),
     ).toBe(true);
     expect(store.peekRunState("rp")?.readPosition).toBe(3);
-    store.forgetRun("rp");
+    forget("rp");
   });
 });
 
 describe("a step's credits", () => {
   afterEach(() => {
-    store.forgetRun("cr");
+    forget("cr");
   });
 
   it.each([
@@ -306,7 +320,7 @@ describe("the reply's auto_resume_stopped_at travels beside the state", () => {
     store.invalidateRun("ars");
     await settle();
     expect(store.peekRunState("ars")?.autoResumeStoppedAt).toBe(want);
-    store.forgetRun("ars");
+    forget("ars");
   });
 });
 
@@ -322,7 +336,7 @@ describe("the reply's silent_since travels beside the state", () => {
     store.invalidateRun("sil");
     await settle();
     expect(store.peekRunState("sil")?.silentSince).toBe(want);
-    store.forgetRun("sil");
+    forget("sil");
   });
 });
 
@@ -644,7 +658,7 @@ describe("runLabelOf", () => {
 
   it("drops the frame's label with the rest of the run", () => {
     store.noteRunLabel("r2", "sweep.yaml");
-    store.forgetRun("r2");
+    forget("r2");
     expect(store.runLabelOf("r2")).toBe("");
   });
 });
@@ -731,7 +745,7 @@ describe("the live-runs inventory", () => {
     // does not stop being live because nothing renders it — the row must survive for a chat nobody
     // is looking at.
     frameRunLive("wf-carded", "chat-carded", true);
-    store.forgetRun("wf-carded");
+    forget("wf-carded");
     expect(executingForChat("chat-carded")).toBe(true);
     frameRunGone("wf-carded");
   });
@@ -806,7 +820,7 @@ describe("the live-runs inventory", () => {
   // none at all, so its row kept the factory's placeholder until a reader opened the run view.
   it("resolves each live run's cell, and reports each to the painter", async () => {
     // The run tabs whose rows the label paints hold the two runs.
-    const unhold = store.registerRunStateDemand((id) => id === "r1" || id === "r2");
+    const unhold = store.registerRunStateDemand((id) => id === "r1" || id === "r2", "tree");
     onTestFinished(unhold);
     const reported: string[] = [];
     store.registerLiveRunObserver((id) => reported.push(id));
@@ -836,7 +850,7 @@ describe("the live-runs inventory", () => {
   // does not move, so an unchanged row has to seed it again.
   it("seeds the pairing again for a row a read lists unchanged", async () => {
     frameRunLive("wf-paired", "chat-paired", true);
-    store.forgetRun("wf-paired");
+    forget("wf-paired");
     expect(store.runChatID("wf-paired"), "the cache's bound took the pairing").toBe("");
     liveRunsReply = {
       runs: [{ workflow_id: "wf-paired", chat_id: "chat-paired", executing: true }],
@@ -1322,7 +1336,7 @@ describe("the run read carries the run's verbs", () => {
 
   it("forgets the verbs with the run", async () => {
     await readWith("r1", { workflowId: "r1", status: "paused" }, paused);
-    store.forgetRun("r1");
+    forget("r1");
     expect(store.runControls("r1")).toBeUndefined();
   });
 });
@@ -1491,7 +1505,7 @@ describe("the retry ladder behind a run read that produced nothing", () => {
     await settle();
     expect(store.runGone("r1")).toBe(true);
     stop();
-    store.forgetRun("r1");
+    forget("r1");
     expect(store.runGone("r1")).toBe(false);
   });
 
@@ -1513,25 +1527,28 @@ describe("the retry ladder behind a run read that produced nothing", () => {
     await settle();
     expect(fetches).toHaveLength(1);
 
-    store.forgetRun("r2");
+    forget("r2");
     await vi.advanceTimersByTimeAsync(60_000);
     expect(fetches).toHaveLength(1);
   });
 });
 
 describe("forgetRun asks the registered demands before it drops anything", () => {
+  beforeEach(() => {
+    holdTrees = false;
+  });
   const unregisters: (() => void)[] = [];
 
   function demand(fn: (workflowID: string) => boolean): void {
-    unregisters.push(store.registerRunStateDemand(fn));
+    unregisters.push(store.registerRunStateDemand(fn, "tree"));
   }
 
   afterEach(() => {
     for (const un of unregisters.splice(0)) {
       un();
     }
-    store.forgetRun("r1");
-    store.forgetRun("r2");
+    forget("r1");
+    forget("r2");
   });
 
   it("keeps the cell a demand claims, and asks it about the RUN", async () => {
@@ -1539,7 +1556,7 @@ describe("forgetRun asks the registered demands before it drops anything", () =>
     const claim = vi.fn(() => true);
     demand(claim);
 
-    store.forgetRun("r1");
+    forget("r1");
 
     expect(store.peekRunState("r1")?.status).toBe("running");
     expect(claim).toHaveBeenCalledWith("r1");
@@ -1550,8 +1567,8 @@ describe("forgetRun asks the registered demands before it drops anything", () =>
     await seedRun("r2", { workflowId: "r2", status: "running" });
     demand((id) => id === "r1");
 
-    store.forgetRun("r1");
-    store.forgetRun("r2");
+    forget("r1");
+    forget("r2");
 
     expect(store.peekRunState("r1")?.status, "claimed").toBe("running");
     expect(store.peekRunState("r2"), "unclaimed, so the cache is still bounded").toBeUndefined();
@@ -1559,13 +1576,13 @@ describe("forgetRun asks the registered demands before it drops anything", () =>
 
   it("drops the run once its demand unregisters", async () => {
     await seedRun("r1", { workflowId: "r1", status: "running" });
-    const un = store.registerRunStateDemand(() => true);
+    const un = store.registerRunStateDemand(() => true, "tree");
 
-    store.forgetRun("r1");
+    forget("r1");
     expect(store.peekRunState("r1")?.status).toBe("running");
 
     un();
-    store.forgetRun("r1");
+    forget("r1");
 
     expect(store.peekRunState("r1")).toBeUndefined();
   });
@@ -1661,15 +1678,18 @@ describe("a run's log orders its turns by the run's own ordinal", () => {
     store.openRunTurn("r-order", opened("t-second", 2));
     store.openRunTurn("r-order", opened("t-first", 1));
     store.openRunTurn("r-order", opened("t-third", 3));
-    expect(store.runTurns("r-order").map(([id]) => id)).toEqual(["t-first", "t-second", "t-third"]);
+    expect(store.runTurnSource("r-order").turn_order).toEqual(["t-first", "t-second", "t-third"]);
   });
 });
 
 describe("rereadHeldRuns re-reads every run a reader holds", () => {
+  beforeEach(() => {
+    holdTrees = false;
+  });
   const unregisters: (() => void)[] = [];
 
   function hold(...ids: string[]): void {
-    unregisters.push(store.registerRunStateDemand((id) => ids.includes(id)));
+    unregisters.push(store.registerRunStateDemand((id) => ids.includes(id), "tree"));
   }
 
   afterEach(async () => {
@@ -1678,7 +1698,7 @@ describe("rereadHeldRuns re-reads every run a reader holds", () => {
       un();
     }
     for (const id of ["wf_1", "wf_2", "wf_3"]) {
-      store.forgetRun(id);
+      forget(id);
       frameRunGone(id);
     }
   });
@@ -1702,7 +1722,7 @@ describe("rereadHeldRuns re-reads every run a reader holds", () => {
     await settle();
     expect(fetches).toEqual([]);
 
-    store.forgetRun("wf_1");
+    forget("wf_1");
     hold("wf_2");
     store.rereadHeldRuns();
     await settle();
@@ -1742,6 +1762,7 @@ describe("rereadHeldRuns re-reads every run a reader holds", () => {
   });
 
   it("readRunUnlessOut asks nothing while a read is out", async () => {
+    hold("wf_1");
     responses = [{ workflowId: "wf_1", status: "running" }];
     store.invalidateRun("wf_1");
     store.readRunUnlessOut("wf_1");

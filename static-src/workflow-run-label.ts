@@ -27,7 +27,7 @@ export function runLabelText(workflowID: string): string {
 const holds = new Map<string, number>();
 const watches = new WeakMap<HTMLElement, () => void>();
 
-registerRunStateDemand((workflowID) => holds.has(workflowID));
+registerRunStateDemand((workflowID) => holds.has(workflowID), "header");
 
 /**
  * Keep `note`'s run label equal to the run's name for as long as the note is mounted. The note reads the

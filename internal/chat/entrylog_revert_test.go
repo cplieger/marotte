@@ -77,8 +77,8 @@ func TestRevert_SkipRuleTakesTheWindowAndSparesTheCarrier(t *testing.T) {
 		if want := f.log.turns[b].n; count != want {
 			t.Errorf("%s: turn_count is %d, want the surviving high-water %d", when, count, want)
 		}
-		if _, err := turnRange(f.log, c, 0); !errors.Is(err, ErrTurnNotInLog) {
-			t.Errorf("%s: TurnRange(%q) = %v, want ErrTurnNotInLog", when, c, err)
+		if _, err := turnRange(f.log, c, 0); !errors.Is(err, errTurnNotInLog) {
+			t.Errorf("%s: TurnRange(%q) = %v, want errTurnNotInLog", when, c, err)
 		}
 		if _, err := f.log.window(10, c, noByteBound); err == nil {
 			t.Errorf("%s: Window(10, %q) returned no error, want the refusal the route renders as 400", when, c)
@@ -137,8 +137,8 @@ func TestRevert_CarrierSurvivesItsOwnWindow(t *testing.T) {
 		if open := f.log.openTurnsLocked(); len(open) != 0 {
 			t.Errorf("%s: openTurnsLocked() names %v, want none", when, open)
 		}
-		if _, err := turnRange(f.log, a, 0); !errors.Is(err, ErrTurnNotInLog) {
-			t.Errorf("%s: TurnRange(%q) = %v, want ErrTurnNotInLog", when, a, err)
+		if _, err := turnRange(f.log, a, 0); !errors.Is(err, errTurnNotInLog) {
+			t.Errorf("%s: TurnRange(%q) = %v, want errTurnNotInLog", when, a, err)
 		}
 	}
 	check("live")

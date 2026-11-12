@@ -86,6 +86,15 @@ type RunProgressPayload struct {
 	Credits float64 `json:"credits,omitempty"`
 }
 
+// RunRevPayload is the payload for type="run_rev": the run read moved to Rev, which a client
+// holding an earlier revision reads as GET /api/runs/{id}?since=<its rev>. Status is the run's
+// status at Rev.
+type RunRevPayload struct {
+	WorkflowID string `json:"workflow_id"`
+	Status     string `json:"status,omitempty"`
+	Rev        uint64 `json:"rev"`
+}
+
 // RunPlanOutcome is where a queued plan revision stands, in KAS's `steps_queued` words. Open on
 // the wire: an outcome KAS adds later reaches the run tab as its own word.
 type RunPlanOutcome string
@@ -182,6 +191,15 @@ type RunStepTranscript struct {
 	// the run store's lock with the entries it certifies; empty on a settled path and
 	// on the replay source, which no subject versions.
 	Subject []SubjectStamp `json:"subject"`
+}
+
+// RunStepCapture is GET /api/runs/{id}/steps/{path}/capture's reply: the whole captured output of
+// one node, which the run read carries only as its summary.
+type RunStepCapture struct {
+	// CapturedOutput is absent when the node captured nothing; "" is a capture of no text.
+	CapturedOutput *string `json:"captured_output,omitempty"`
+	WorkflowID     string  `json:"workflow_id"`
+	NodePath       string  `json:"node_path"`
 }
 
 // RunAsksPayload is the payload for type="run_asks": every step of one run waiting on a person, as
@@ -289,9 +307,17 @@ type RunStepEnd struct {
 // cannot say this. Ended is true once the attempt's newest turn closed for any reason but an interruption: a node KAS
 // shows in flight past an ended attempt is on a new one.
 type RunStepStart struct {
+	// Open is set on an attempt in flight whose turn's own lane is streaming an entry, as the entry stood when the
+	// read was written: the id and delta count its next entry_delta follows, and the end of its text from the newest
+	// finished line that prints, all the dock line reads of it.
+	Open *OpenEntry `json:"open,omitempty"`
 	// StartedAt is RFC 3339.
 	StartedAt string `json:"started_at"`
-	Ended     bool   `json:"ended"`
+	// Turn and Tail are set on an attempt in flight: its newest turn id and the newest line its own lane printed, the
+	// seed of the run tab's dock line for a step whose transcript the page does not hold.
+	Turn  string `json:"turn,omitempty"`
+	Tail  string `json:"tail,omitempty"`
+	Ended bool   `json:"ended"`
 }
 
 // RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step. Empty Text is a 400.
