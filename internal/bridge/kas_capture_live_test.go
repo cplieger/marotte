@@ -1062,12 +1062,38 @@ func liveKiroCLI(t *testing.T) (bin, pin string) {
 	if bin == "" {
 		t.Skip("MAROTTE_LIVE_KIRO_CLI names no kiro-cli binary")
 	}
-	if os.Getenv("KIRO_RUNTIME_DIR") != "" {
-		t.Fatal("unset KIRO_RUNTIME_DIR: a kiro-cli of another version started with it deletes the running engine's runtime")
-	}
 	pin = pinnedKiroCLI(t)
+	if dir := os.Getenv("KIRO_RUNTIME_DIR"); dir != "" {
+		if other := foreignRuntimes(dir, pin); len(other) > 0 {
+			t.Fatalf("KIRO_RUNTIME_DIR holds %v, which kiro-cli %s deletes at its start and a running engine may use: "+
+				"point it at a scratch folder or unset it", other, pin)
+		}
+	}
 	checkBinaryVersion(t, bin, pin)
 	return bin, pin
+}
+
+// runtimeEntryRe is a KIRO_RUNTIME_DIR entry's name, <version>-<16 hex>.
+var runtimeEntryRe = regexp.MustCompile(`^(.+)-[0-9a-f]{16}$`)
+
+// foreignRuntimes are dir's complete runtime entries of a kiro-cli version other than pin: a start of pin prunes
+// every one of them.
+func foreignRuntimes(dir, pin string) []string {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range ents {
+		m := runtimeEntryRe.FindStringSubmatch(e.Name())
+		if !e.IsDir() || m == nil || m[1] == pin {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, e.Name(), ".complete")); err == nil {
+			out = append(out, e.Name())
+		}
+	}
+	return out
 }
 
 func pinnedKiroCLI(t *testing.T) string {
