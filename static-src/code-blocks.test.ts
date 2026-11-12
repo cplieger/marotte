@@ -13,10 +13,10 @@ describe("isRunnableShell", () => {
     { name: "console lang accepted", lang: "console", text: "whoami", expected: true },
     { name: "terminal lang accepted", lang: "terminal", text: "date", expected: true },
     { name: "shell lang accepted", lang: "shell", text: "uname -a", expected: true },
-    // highlight.md "Languages": `ksh` is one of Shell's names.
+    // @cplieger/ui's highlight docs, "Languages": `ksh` is one of Shell's names.
     { name: "ksh lang accepted", lang: "ksh", text: "print hi", expected: true },
-    // highlight.md "Detection" decides what an untagged fence reads as; Run goes to one that reads as shell or as
-    // nothing.
+    // @cplieger/ui's highlight docs, "Detection", decide what an untagged fence reads as; Run goes to one that
+    // reads as shell or as nothing.
     { name: "untagged undetected text treated as shell", lang: "", text: "cd", expected: true },
     { name: "untagged $ prompt accepted", lang: "", text: "$ ls -la", expected: true },
     {
@@ -216,7 +216,7 @@ describe("Run on a rendered fence", () => {
     expect(blocks[1]?.querySelector('[aria-label="Run in shell"]')).toBeNull();
   });
 
-  // markdown.md: an untagged fence is labelled by detection, and plain when detection is unsure.
+  // @cplieger/ui's markdown docs: an untagged fence is labelled by detection, and plain when detection is unsure.
   it("is on an untagged fence only when its label names no other language", () => {
     setShellRunCallback(vi.fn());
     renderMarkdownInto(
@@ -242,7 +242,7 @@ describe("Run on a rendered fence", () => {
     ]);
   });
 
-  // highlight.md "Languages": `ksh` is one of Shell's names, so its bar says Shell.
+  // @cplieger/ui's highlight docs, "Languages": `ksh` is one of Shell's names, so its bar says Shell.
   it("is on a ksh fence, which the bar labels Shell", () => {
     setShellRunCallback(vi.fn());
     renderMarkdownInto(host, "```ksh\nprint hi\n```\n");
