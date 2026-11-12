@@ -88,6 +88,7 @@ const (
 	KeySpecPlanningAskFirst = "spec_planning_ask_first"
 	KeySteeringReminders    = "steering_reminders_enabled"
 	KeyWorkflowsEnabled     = "workflows_enabled"
+	KeyChatMessaging        = "chat_messaging_enabled"
 	KeyWorkValidation       = "work_validation"
 	KeyCloudFormationSafety = "cloudformation_safety_check"
 	KeyAutoRouting          = "auto_routing"
@@ -164,6 +165,7 @@ var KnownKeys = map[string]struct{}{
 	KeyTerminalCommandTimeoutMs: {},
 	KeyWorkValidation:           {},
 	KeyWorkflowsEnabled:         {},
+	KeyChatMessaging:            {},
 	KeyWorkflowLaunch:           {},
 	KeyGuardPayloadLinks:        {},
 	KeyKnowledgeEnabled:         {},

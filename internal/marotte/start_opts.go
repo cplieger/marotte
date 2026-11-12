@@ -148,7 +148,9 @@ type SessionFeatures struct {
 	// option; empty asserts nothing.
 	WorkflowLaunch string
 	// Workflows gives the agent its workflow tools; the zero value withholds them.
-	Workflows            bool
+	Workflows bool
+	// Messaging is KAS's sessionToolsMessaging switch; KAS delivers only between sessions that both have it on.
+	Messaging            bool
 	SpecAskClarification bool
 }
 

@@ -241,6 +241,25 @@ describe("setting locks", () => {
     expect(input.hasAttribute("aria-describedby")).toBe(false);
   });
 
+  it("keeps the row's own descriptions while it adds and drops the lock note", async () => {
+    const input = mountSwitch("flag-workflows", true);
+    input.setAttribute("aria-describedby", "flag-workflows-hint");
+    const { gov, bus } = await load();
+    gov.initGovernance();
+    bus.dispatch({ type: "governance_state", chat_id: "", payload: govState() });
+    expect(input.getAttribute("aria-describedby")).toBe("flag-workflows-hint");
+    const lock = { source: "administrator", reason: "Set by your organization", value: false };
+    bus.dispatch({
+      type: "governance_state",
+      chat_id: "",
+      payload: govState({ locks: { workflows_enabled: lock } }),
+    });
+    gov.paintSettingLocks();
+    expect(input.getAttribute("aria-describedby")).toBe("flag-workflows-hint flag-workflows-lock");
+    bus.dispatch({ type: "governance_state", chat_id: "", payload: govState() });
+    expect(input.getAttribute("aria-describedby")).toBe("flag-workflows-hint");
+  });
+
   it("re-applies the lock over a value a later load wrote", async () => {
     const input = mountSwitch("flag-content-collection", false);
     const { gov, bus } = await load();
