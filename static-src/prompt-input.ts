@@ -146,6 +146,10 @@ class PromptInputController {
   private staged: Staged = signal(false);
   private dictation: Dictation = NO_DICTATION;
   private midTurn: HTMLButtonElement | null = null;
+  /** The `pointerType` of the last pointer press on a slot button. */
+  private pressPointer = "";
+  /** Whether the press that started the current or last dictation was a finger's, which never moves focus. */
+  private fingerDictation = false;
   private readonly press = pressOwner((btn) => this.actOf(btn));
   /** Each chat whose send is in flight, by the token of that send. */
   private readonly held = new Map<string, object>();
@@ -356,6 +360,11 @@ class PromptInputController {
     }
   }
 
+  /** A click from a touch or pen press; a key's click has detail 0. */
+  private byFinger(e: MouseEvent): boolean {
+    return e.detail > 0 && (this.pressPointer === "touch" || this.pressPointer === "pen");
+  }
+
   /** The slot button `t` is, or null. */
   private slotOf(t: EventTarget | null): HTMLButtonElement | null {
     return t === $.sendBtn || t === this.midTurn ? (t as HTMLButtonElement) : null;
@@ -365,6 +374,7 @@ class PromptInputController {
   private wirePresses(buttons: readonly HTMLButtonElement[]): void {
     for (const on of buttons) {
       on.addEventListener("pointerdown", (e: PointerEvent) => {
+        this.pressPointer = e.pointerType;
         this.press({ k: "pointerdown", on, e });
       });
       for (const k of ["lostpointercapture", "pointercancel"] as const) {
@@ -411,9 +421,16 @@ class PromptInputController {
   }
 
   /** A session's end puts focus in the box from a slot button, whose face may now send or steer on the reader's next
-   *  Space, or from nowhere; focus the reader moved elsewhere on the page stays there. */
+   *  Space, or from nowhere; focus the reader moved elsewhere on the page stays there. A finger's session only takes
+   *  focus off a slot button, since focusing the box would raise the keyboard. */
   private focusAfterDictation(): void {
     const at = document.activeElement;
+    if (this.fingerDictation) {
+      if (this.slotOf(at) !== null) {
+        (at as HTMLElement).blur();
+      }
+      return;
+    }
     if (at === null || at === document.body || this.slotOf(at) !== null) {
       $.promptInput.focus();
     }
@@ -440,22 +457,25 @@ class PromptInputController {
 
   /** `start` and `stop` do nothing once the session is already in that state, so a run's later clicks cannot
    *  undo its first. */
-  private perform(act: Exclude<Act, "send">): void {
+  private perform(act: Exclude<Act, "send">, finger: boolean): void {
     const listening = this.dictation.listening.peek();
     switch (act) {
       case "cancel":
         if (this.state.kind === "streaming") {
           this.onCancel();
         }
-        // A press can take focus off the box, and dictated words land only in the focused box.
-        if (listening) {
+        // A press can take focus off the box, and a keyboard or mouse session's words land only in the focused box.
+        if (listening && !this.fingerDictation) {
           $.promptInput.focus();
         }
         return;
       case "start":
       case "stop":
         if (listening === (act === "stop")) {
-          this.dictation.toggle();
+          if (act === "start") {
+            this.fingerDictation = finger;
+          }
+          this.dictation.toggle({ finger });
         }
         return;
     }
@@ -562,7 +582,7 @@ class PromptInputController {
       e.preventDefault();
       e.stopPropagation();
       if (act !== null) {
-        this.perform(act);
+        this.perform(act, this.byFinger(e));
       }
     });
     midTurn.addEventListener("click", (e: MouseEvent) => {
@@ -570,7 +590,7 @@ class PromptInputController {
       if (act === "send") {
         this.sendComposer();
       } else if (act !== null) {
-        this.perform(act);
+        this.perform(act, this.byFinger(e));
       }
     });
 

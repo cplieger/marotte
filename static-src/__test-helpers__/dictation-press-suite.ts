@@ -15,6 +15,7 @@ import { fakeSpeech, settle } from "./fake-speech.js";
 import { useSteppableClock, waitForOnClock } from "./fake-clock.js";
 import { glyphMarkup, registryMarkup } from "./glyph.js";
 import { makeSession } from "./model.js";
+import { markDictationCloudNoted } from "../device-view.js";
 
 export interface PressSuite {
   /** A real press on the element `selector` names: a finger's tap or a mouse click. */
@@ -28,6 +29,10 @@ export interface PressSuite {
  *  (https://bugs.webkit.org/show_bug.cgi?id=321436). */
 const NO_RESULT_MS = 8000;
 
+/** Past every engine's multi-click window: a tap inside it is a double tap (`detail` 2), which the press owner
+ *  reads as the first tap's act again. */
+const MULTI_CLICK_MS = 700;
+
 /** Computed colours read mid-transition are neither face's. */
 async function transitionsDone(el: Element): Promise<void> {
   await Promise.all(
@@ -38,7 +43,19 @@ async function transitionsDone(el: Element): Promise<void> {
   );
 }
 
-export function dictationPressSuite({ press, finger }: PressSuite): void {
+export function dictationPressSuite({ press: pressNow, finger }: PressSuite): void {
+  let lastPress = -Infinity;
+  /** Each press a single one, as a reader's start and stop taps seconds apart are. */
+  async function press(selector: string): Promise<void> {
+    const wait = lastPress + MULTI_CLICK_MS - performance.now();
+    if (wait > 0) {
+      await new Promise((resolve) => {
+        setTimeout(resolve, wait);
+      });
+    }
+    await pressNow(selector);
+    lastPress = performance.now();
+  }
   const speech = fakeSpeech({ cloud: "Apple's speech service" });
   let dictation: Dictation;
   let sheet: HTMLStyleElement;
@@ -93,6 +110,8 @@ export function dictationPressSuite({ press, finger }: PressSuite): void {
   });
 
   beforeEach(async () => {
+    // The first session's cloud notice is not what these cases count.
+    markDictationCloudNoted();
     dictation.drop();
     setSendState({ kind: "idle" });
     input().value = "";
@@ -130,9 +149,13 @@ export function dictationPressSuite({ press, finger }: PressSuite): void {
         expect(document.activeElement, "the tap that starts dictation").not.toBe(input());
         speech.last().hear(["hello", false]);
         await press("#send-btn");
+        expect(dictation.listening.value, "the tap that stops it").toBe(false);
         speech.last().finish();
         await settle();
         expect(document.activeElement, "the tap that stops it").not.toBe(input());
+        // Its face is Send again, which the reader's next Space on a hardware keyboard would press.
+        expect(document.activeElement, "focus after the end").not.toBe(sendBtn());
+        expect(input().value, "the words, written with the box unfocused").toBe("hello");
       });
 
       it("lands the words of a session in WebKit's event order with the box unfocused, as hiding the keyboard leaves it", async () => {
@@ -145,6 +168,7 @@ export function dictationPressSuite({ press, finger }: PressSuite): void {
         await startDictating();
         expect(document.activeElement, "the click that starts dictation").toBe(input());
         await press("#send-btn");
+        expect(dictation.listening.value, "the click that stops it").toBe(false);
         speech.last().finish();
         await settle();
         expect(document.activeElement, "the click that stops it").toBe(input());
@@ -251,6 +275,7 @@ export function dictationPressSuite({ press, finger }: PressSuite): void {
       const rest = await restingFace();
       await startDictating();
       await press("#send-btn");
+      expect(dictation.listening.value, "the second press stops").toBe(false);
       speech.last().finish();
       await settle();
       const btn = sendBtn();

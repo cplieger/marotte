@@ -35,7 +35,6 @@ beforeEach(() => {
 
 afterEach(() => {
   box.remove();
-  document.documentElement.removeAttribute("data-pointer");
   resetToasts();
   vi.unstubAllGlobals();
   localStorage.clear();
@@ -74,8 +73,8 @@ function onDevice(): FakeSpeech {
 }
 
 /** Start dictating and let the engine open the microphone. */
-async function listen(speech: FakeSpeech, d: Dictation): Promise<void> {
-  d.toggle();
+async function listen(speech: FakeSpeech, d: Dictation, finger = false): Promise<void> {
+  d.toggle({ finger });
   await settle();
   speech.last().begin();
 }
@@ -264,15 +263,49 @@ describe("listening and results (rule 3)", () => {
     expect(box.value).toBe("hello");
   });
 
-  it("ends quietly when nobody spoke", async () => {
+  it("stops and says so when the engine heard nobody speak, staying available", async () => {
     const speech = onDevice();
     const d = createDictation(speech.platform, box);
     await listen(speech, d);
     speech.last().fail("no-speech");
+    expect(d.listening.value).toBe(false);
+    expect(speech.last().aborted).toBe(1);
+    speech.last().finish();
+    expect(d.ready.value).toBe(true);
+    const [text, ...rest] = toastTexts();
+    expect(rest).toEqual([]);
+    expect(text).toMatch(/^Dictation stopped: it heard no words\. Press Dictate to try again\./);
+  });
+
+  it("ends quietly on a silence after words", async () => {
+    const speech = onDevice();
+    const d = createDictation(speech.platform, box);
+    await listen(speech, d);
+    speech.last().hear(["hello", true]);
+    speech.last().fail("no-speech");
     speech.last().finish();
     expect(d.listening.value).toBe(false);
-    expect(d.ready.value).toBe(true);
+    expect(box.value).toBe("hello");
     expect(toastTexts()).toEqual([]);
+  });
+
+  it("says nothing about silence for a session stopped before the no-result limit", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const speech = onDevice();
+      const d = createDictation(speech.platform, box);
+      d.toggle();
+      await vi.advanceTimersByTimeAsync(0);
+      speech.last().begin();
+      speech.last().signal("audiostart");
+      await vi.advanceTimersByTimeAsync(3000);
+      d.toggle();
+      speech.last().finish();
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(toastTexts()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("ends on a network error after words arrived and says so, staying available", async () => {
@@ -412,88 +445,66 @@ describe("where the words go (rule 9)", () => {
     expect(box.value).toBe("before after");
   });
 
-  describe("under a finger", () => {
+  describe("from a finger's press", () => {
+    /** Focus where a finger's tap leaves it: on the pressed button in Chromium, nowhere in Safari. */
     function pressFrom(): HTMLButtonElement {
-      document.documentElement.setAttribute("data-pointer", "coarse");
       const btn = document.createElement("button");
       document.body.append(btn);
       btn.focus();
       return btn;
     }
 
-    it("keeps the keyboard away while listening, and one undo takes the session back", async () => {
+    it("leaves focus where it is and writes each hypothesis over the last at the caret", async () => {
       const btn = pressFrom();
       try {
         const speech = onDevice();
         const d = createDictation(speech.platform, box);
         box.value = "before after";
         box.setSelectionRange(7, 7);
-        await listen(speech, d);
-        expect(box.inputMode).toBe("none");
-        expect(document.activeElement).toBe(box);
+        await listen(speech, d, true);
+        expect(document.activeElement, "the press").toBe(btn);
         speech.last().hear(["hel", false]);
         speech.last().hear(["hello wor", false]);
         speech.last().hear(["hello world", true]);
         expect(box.value).toBe("before hello world after");
-        d.toggle();
+        expect(box.selectionStart, "the caret after the words").toBe(18);
+        d.toggle({ finger: true });
         speech.last().finish();
-        expect(document.activeElement, "focus stays in the box").toBe(box);
-        expect(box.hasAttribute("inputmode")).toBe(false);
+        expect(document.activeElement, "the stop").toBe(btn);
+        expect(d.listening.value).toBe(false);
+      } finally {
+        btn.remove();
+      }
+    });
+
+    it("keeps writing at its place when the reader then focuses the box", async () => {
+      const btn = pressFrom();
+      try {
+        const speech = onDevice();
+        const d = createDictation(speech.platform, box);
+        box.value = "note";
+        box.setSelectionRange(4, 4);
+        await listen(speech, d, true);
+        speech.last().hear(["hello", false]);
         box.focus();
-        document.execCommand("undo");
-        expect(box.value).toBe("before after");
+        speech.last().hear(["hello world", true]);
+        expect(box.value).toBe("note hello world");
+        expect(d.listening.value, "focusing is not an edit").toBe(true);
       } finally {
         btn.remove();
       }
     });
 
-    it("gives back the box's own inputmode when the browser ends the session", async () => {
-      const btn = pressFrom();
-      try {
-        box.setAttribute("inputmode", "text");
-        const speech = onDevice();
-        const d = createDictation(speech.platform, box);
-        await listen(speech, d);
-        speech.last().fail("no-speech");
-        speech.last().finish();
-        expect(box.getAttribute("inputmode")).toBe("text");
-        expect(document.activeElement).toBe(box);
-      } finally {
-        btn.remove();
-      }
-    });
-
-    it("hands the keyboard back at once when the reader taps the box, and leaves focus there", async () => {
-      const btn = pressFrom();
-      try {
-        const speech = onDevice();
-        const d = createDictation(speech.platform, box);
-        await listen(speech, d);
-        box.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-        expect(box.hasAttribute("inputmode")).toBe(false);
-        expect(d.listening.value, "a tap is not an edit").toBe(true);
-        d.stop();
-        expect(document.activeElement).toBe(box);
-      } finally {
-        btn.remove();
-      }
-    });
-
-    it("keeps the keyboard the reader took back through Stop and the end", async () => {
-      const btn = pressFrom();
-      try {
-        const speech = onDevice();
-        const d = createDictation(speech.platform, box);
-        await listen(speech, d);
-        box.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-        d.toggle();
-        expect(box.hasAttribute("inputmode")).toBe(false);
-        speech.last().finish();
-        expect(box.hasAttribute("inputmode")).toBe(false);
-        expect(document.activeElement).toBe(box);
-      } finally {
-        btn.remove();
-      }
+    it("stops listening when the reader edits the box, and never overwrites the edit", async () => {
+      const speech = onDevice();
+      const d = createDictation(speech.platform, box);
+      await listen(speech, d, true);
+      speech.last().hear(["hello", false]);
+      box.value = "hello there";
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+      speech.last().hear(["hello world", true]);
+      expect(box.value).toBe("hello there");
+      expect(d.listening.value).toBe(false);
     });
 
     it.each([
@@ -510,30 +521,17 @@ describe("where the words go (rule 9)", () => {
             install: () => Promise.resolve(false),
           }),
       ],
-    ])("leaves focus in the box after %s, with the keyboard given back", async (_, make) => {
+    ])("leaves focus where it is after %s", async (_, make) => {
       const btn = pressFrom();
       try {
         const d = createDictation(make().platform, box);
-        d.toggle();
+        d.toggle({ finger: true });
         await settle();
         expect(d.listening.value).toBe(false);
-        expect(document.activeElement).toBe(box);
-        expect(box.hasAttribute("inputmode")).toBe(false);
+        expect(document.activeElement).toBe(btn);
       } finally {
         btn.remove();
       }
-    });
-
-    it("keeps the box focused at the end when it was focused at the press", async () => {
-      document.documentElement.setAttribute("data-pointer", "coarse");
-      box.focus();
-      const speech = onDevice();
-      const d = createDictation(speech.platform, box);
-      await listen(speech, d);
-      expect(box.inputMode).toBe("none");
-      d.stop();
-      expect(document.activeElement).toBe(box);
-      expect(box.hasAttribute("inputmode")).toBe(false);
     });
   });
 
