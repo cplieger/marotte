@@ -13,7 +13,7 @@ const patternInputs = [
   { inputID: "knowledge-exclude-patterns", key: "knowledge_exclude_patterns" },
 ] as const;
 
-/** settings.ValidKnowledgeChunking's floor for the passage size, kiro-cli's own. */
+/** settings.validKnowledgeChunking's floor for the passage size, kiro-cli's own. */
 const MIN_CHUNK_SIZE = 64;
 
 /** The chunking two typed numbers ask for, the size raised to 64 words and the overlap kept from 0

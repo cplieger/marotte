@@ -245,7 +245,7 @@ func TestKnowledgeTuningMatchesTheBundle(t *testing.T) {
 			`\.overlap<` + jsIdent + `\.size\)`)
 		if !schemaRe.MatchString(b.src) {
 			t.Errorf("the knowledgeChunking schema %s is no longer {size >= 64, overlap >= 0, overlap < size}, which "+
-				"settings.ValidKnowledgeChunking mirrors", schema)
+				"settings.validKnowledgeChunking mirrors", schema)
 		}
 
 		ident := discoverOneAround(t, "knowledgeIndexType registry row", knowledgeIndexRowRe, `"knowledgeIndexType",`, b.src)

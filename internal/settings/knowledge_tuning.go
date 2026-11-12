@@ -19,14 +19,14 @@ const (
 // {size:512,overlap:128} with its size floor of 64. A value at its default is withheld.
 const (
 	DefaultKnowledgeMaxFiles     = 10000
-	DefaultKnowledgeChunkSize    = 512
-	DefaultKnowledgeChunkOverlap = 128
+	defaultKnowledgeChunkSize    = 512
+	defaultKnowledgeChunkOverlap = 128
 	minKnowledgeChunkSize        = 64
 )
 
 // DefaultKnowledgeChunking is the knowledge_chunking value config.json is silent about.
 func DefaultKnowledgeChunking() marotte.KnowledgeChunking {
-	return marotte.KnowledgeChunking{Size: DefaultKnowledgeChunkSize, Overlap: DefaultKnowledgeChunkOverlap}
+	return marotte.KnowledgeChunking{Size: defaultKnowledgeChunkSize, Overlap: defaultKnowledgeChunkOverlap}
 }
 
 // ValidKnowledgeIndexType reports whether v is unset ("") or one of KAS's two index types.
@@ -39,9 +39,9 @@ func ValidKnowledgeMaxFiles(n int) bool {
 	return n >= 1
 }
 
-// ValidKnowledgeChunking reports whether c is a chunking KAS builds rather than replacing with its default: a size of
+// validKnowledgeChunking reports whether c is a chunking KAS builds rather than replacing with its default: a size of
 // at least 64 words and an overlap from 0 to below the size.
-func ValidKnowledgeChunking(c marotte.KnowledgeChunking) bool {
+func validKnowledgeChunking(c marotte.KnowledgeChunking) bool {
 	return c.Size >= minKnowledgeChunkSize && c.Overlap >= 0 && c.Overlap < c.Size
 }
 
@@ -68,7 +68,7 @@ func decodeKnowledgeChunking(dst *marotte.KnowledgeChunking, raw json.RawMessage
 	if _, ok := members["overlap"]; !ok {
 		return fmt.Errorf("settings: %s has no overlap", KeyKnowledgeChunking)
 	}
-	return decodeChecked(dst, raw, KeyKnowledgeChunking, ValidKnowledgeChunking)
+	return decodeChecked(dst, raw, KeyKnowledgeChunking, validKnowledgeChunking)
 }
 
 // KnowledgeChunkingIn reads knowledge_chunking from d as the effective view does; ok is false for an absent or

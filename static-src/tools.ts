@@ -122,7 +122,7 @@ type ListEntry =
   | { kind: "apt"; pkg: AptPackage };
 
 /** Hears every inventory read: the inventory, or null when the read failed. */
-export type InventoryListener = (inv: Inventory | null) => void;
+type InventoryListener = (inv: Inventory | null) => void;
 
 // The rest — install, uninstall, disable and reconcile — come from a tool row, a tools.json save or
 // the boot, so they are the residual case in `pillOwns` and are never named here.

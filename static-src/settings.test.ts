@@ -1644,7 +1644,7 @@ describe("the knowledge index rows", () => {
     });
   });
 
-  // settings.ValidKnowledgeChunking: a size of at least 64 words, an overlap from 0 to below the size.
+  // settings.validKnowledgeChunking: a size of at least 64 words, an overlap from 0 to below the size.
   it.each([
     ["10", "8", { size: 64, overlap: 8 }],
     ["512", "512", { size: 512, overlap: 511 }],
