@@ -37,6 +37,7 @@ const (
 	turnBudget      = 5 * time.Minute
 	scrubWork       = "/work"
 	scrubHome       = "~/.kiro"
+	scrubTemp       = "/tmp/"
 	elicitServer    = "capture"
 	elicitAnswer    = "teal-7341"
 	notesBody       = "The release train leaves on Thursday.\nThe build cache lives in /var/cache/build.\nOwners rotate weekly.\n"
@@ -545,8 +546,10 @@ func (c *capture) write(sc scenario) error {
 	return os.WriteFile(filepath.Join(corpusDir, sc.name+".jsonl"), out, 0o644)
 }
 
+// scrub replaces the scratch paths. The temp root goes last: KAS truncates a long title inside the scratch path, so
+// a prefix of it survives the two longer replacements.
 func (c *capture) scrub(b []byte) []byte {
-	for _, r := range []struct{ from, to string }{{c.work, scrubWork}, {c.home, scrubHome}} {
+	for _, r := range []struct{ from, to string }{{c.work, scrubWork}, {c.home, scrubHome}, {filepath.Clean(os.TempDir()) + "/", scrubTemp}} {
 		b = bytes.ReplaceAll(b, []byte(r.from), []byte(r.to))
 		quoted, _ := json.Marshal(r.from)
 		b = bytes.ReplaceAll(b, quoted[1:len(quoted)-1], []byte(r.to))
