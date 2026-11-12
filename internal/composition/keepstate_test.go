@@ -382,7 +382,7 @@ func TestKeepRound_SettlesAPreviousBootsTurnAndTabFactsAndKeepsItsRunMarks(t *te
 	if err != nil {
 		t.Fatalf("Setup: open: %v", err)
 	}
-	if _, _, _, err := first.tabs.Close(t.Context(), owedTab.ID); err != nil {
+	if _, _, _, err := first.tabs.Close(t.Context(), owedTab.ID, nil, nil); err != nil {
 		t.Fatalf("Setup: close: %v", err)
 	}
 	if err := first.leases.Put(t.Context(), &runlease.Lease{

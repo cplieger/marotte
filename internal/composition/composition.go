@@ -90,6 +90,8 @@ type App struct {
 	stopTriggerRunner func()
 	// stopKASHeal stops the KAS MCP file heal loop and waits for its goroutine.
 	stopKASHeal func()
+	// stopRecentExpiry stops the Recently closed expiry runner and waits for its goroutine.
+	stopRecentExpiry func()
 	// stopToolsSteering waits for the boot's environment.md regeneration, which reads the tools engine.
 	stopToolsSteering func()
 	// stopKeepState stops the keep-state reconcile and waits: a round in flight reads KAS over the agent engine.
@@ -211,6 +213,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	chat.WithBroadcaster(h)(chatStore)
 	chat.WithEpoch(h.Epoch)(chatStore)
 	pruneTabs(ctx, tabStore, chatStore)
+	stopRecentExpiry := runBackground(appCtx, "recently closed expiry", h.Membership().RunRecentExpiry)
 	// Once at boot, so a Power installed from a shell before this start gets its
 	// servers with no tab open; the runtime renders it again on every lock change.
 	h.SyncPowers(ctx)
@@ -395,6 +398,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		stopTriggerLauncher:  stopTriggerLauncher,
 		stopTriggerRunner:    stopTriggerRunner,
 		stopKASHeal:          stopKASHeal,
+		stopRecentExpiry:     stopRecentExpiry,
 		stopToolsSteering:    stopToolsSteering,
 		stopKeepState:        stopKeepState,
 		stopSessionSweep:     stopSessionSweep,
@@ -434,6 +438,8 @@ func (a *App) Shutdown() {
 	callIfSet(a.stopForges)
 	callIfSet(a.stopGitScans)
 	callIfSet(a.stopKASHeal)
+	// Before the runtime's teardown: an expiry in flight emits through the runtime's hub.
+	callIfSet(a.stopRecentExpiry)
 	// Before the runtime's teardown: a sweep in flight launches its run through the runtime.
 	callIfSet(a.stopScheduleRunner)
 	// Before the runtime's teardown: a launch in flight runs through the runtime, and its cancels go to the
@@ -1062,7 +1068,7 @@ func pruneTabs(ctx context.Context, st *tabs.Store, chats *chat.Store) {
 		}
 		_, found, err := chats.Lookup(ctx, marotte.ChatID(t.Ref))
 		if err != nil {
-			slog.Warn("tab prune kept a chat tab whose record could not be read", "chat_id", logsafe.Field(t.Ref), "error", err)
+			slog.Warn("tab prune kept a chat whose record could not be read", "chat_id", logsafe.Field(t.Ref), "error", err)
 			return true
 		}
 		return found

@@ -2826,6 +2826,30 @@ export interface QueuedPrompt {
 }
 
 /**
+ * RecentClose is one chat whose last tab closed in the last tabs.RecentWindow, a row of the
+ * sidebar's Recently closed list. Field order is fieldalignment's.
+ */
+export interface RecentClose {
+  ref: string;
+  /**
+ * Name is the chat's name at the close, "" when its record could not be read: the client
+ * holds no header for a chat it just closed, so the row draws this.
+ */
+  name: string;
+  closed_at: number;
+  /** Pinned is the closed tab's flag; a top-level reopen restores it. */
+  pinned?: boolean;
+}
+
+/**
+ * RecentList is the whole Recently closed list, newest first. A frame carries it as an object so
+ * an emptied list ({"items":[]}) differs from an unchanged one (the key absent).
+ */
+export interface RecentList {
+  items: RecentClose[];
+}
+
+/**
  * Recipe is one launchable workflow definition, projected from
  * `_kiro/workflow/listRecipes` for GET /api/recipes.
  */
@@ -4079,9 +4103,9 @@ export interface SystemTool {
 }
 
 /**
- * TabList is the answer to GET /api/tabs: the open set in order plus the version it reflects,
- * captured together by tabs.Store.list so a stale set cannot pair with a fresh version. Tabs is
- * never omitted: an empty arrangement is a real state.
+ * TabList is the answer to GET /api/tabs: the open set in order, the Recently closed list and
+ * the version both reflect, captured together by tabs.Store.Snapshot so a stale set cannot pair
+ * with a fresh version. Tabs and Recent are never omitted: an empty list is a real state.
  */
 export interface TabList {
   /**
@@ -4090,6 +4114,7 @@ export interface TabList {
  */
   subject?: SubjectStamp;
   tabs: TabSubject[];
+  recent: RecentClose[];
   version: number;
 }
 
@@ -4167,6 +4192,11 @@ export interface TabsChangedPayload {
  * different facts the client branches on.
  */
   changed?: TabSubject;
+  /**
+ * Recent is the whole Recently closed list when this mutation changed it; absent means
+ * unchanged, which is a different fact from an emptied list.
+ */
+  recent?: RecentList;
   /**
  * OpID is the client-minted correlation id echoed back so a caller can match the frame
  * to its own dispatch; empty for a mutation no client asked for. Distinct from

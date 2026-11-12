@@ -8,30 +8,36 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// state is the ordered set and the version it describes, travelling together because they
-// are ONE fact, plus the releases closes still owe. An owed entry is never mutated in place.
+// state is the ordered set, the Recently closed list and the version they describe, travelling
+// together because they are ONE fact, plus the releases closes still owe. Owed and recent entries
+// are never mutated in place.
 type state struct {
 	tabs    []marotte.TabSubject
 	owed    []OwedRelease
+	recent  []marotte.RecentClose
 	version uint64
 }
 
-// mutate is the ONE write path, holding the package doc's lock ordering. apply reports whether
-// it CHANGED anything; false means no bump, no write, no publish. On error nothing is applied
-// and the version is 0, a value no state carries. A failed persist needs no rollback: the
-// clone was mutated, so the published state is untouched.
-func (s *Store) mutate(ctx context.Context, apply func(st *state) (bool, error)) (uint64, error) {
+// mutate is the ONE write path, holding the package doc's lock ordering. apply gets the clock's
+// Unix ms, read under writeMu so closes list in commit order, and reports whether it CHANGED
+// anything; false means no bump, no write, no publish. A change also drops the expired Recently
+// closed entries: every version is announced, so expiry may only ride a change (or ExpireRecent).
+// On error nothing is applied and the version is 0, a value no state carries. A failed persist
+// needs no rollback: the clone was mutated, so the published state is untouched.
+func (s *Store) mutate(ctx context.Context, apply func(st *state, now int64) (bool, error)) (uint64, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
+	now := s.now().UnixMilli()
 	next := s.snapshot()
-	changed, err := apply(&next)
+	changed, err := apply(&next, now)
 	if err != nil {
 		return 0, err
 	}
 	if !changed {
 		return next.version, nil
 	}
+	next.recent, _ = dropExpired(next.recent, now)
 	next.version++
 	if err := s.persist(ctx, &next); err != nil {
 		return 0, err
@@ -40,11 +46,11 @@ func (s *Store) mutate(ctx context.Context, apply func(st *state) (bool, error))
 	return next.version, nil
 }
 
-// snapshot clones the state under stateMu. Owed entries are never mutated in place, so their clone is shallow.
+// snapshot clones the state under stateMu. Owed and recent entries are never mutated in place, so their clones are shallow.
 func (s *Store) snapshot() state {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	return state{tabs: cloneTabs(s.tabs), owed: slices.Clone(s.owed), version: s.version}
+	return state{tabs: cloneTabs(s.tabs), owed: slices.Clone(s.owed), recent: slices.Clone(s.recent), version: s.version}
 }
 
 // cloneTabs copies tabs deeply: a caller's edit of a returned LaunchChats must not reach the published state.
@@ -60,20 +66,21 @@ func cloneTabs(tabs []marotte.TabSubject) []marotte.TabSubject {
 func (s *Store) publish(st *state) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	s.tabs, s.owed, s.version = st.tabs, st.owed, st.version
+	s.tabs, s.owed, s.recent, s.version = st.tabs, st.owed, st.recent, st.version
 }
 
 // Open adds a tab for spec, or returns the one already open for its (Kind, Ref). created is
 // false then, and nothing is emitted, so the caller resolves from the response. The id is
 // minted here; the position follows the client's insertSpec. A spec naming an unopened parent
-// is PROMOTED to top level, so use the returned subject. Returns ErrBadKind, ErrBadRef or
-// ErrTooMany; on any error nothing is applied and the version is 0.
+// is PROMOTED to top level, so use the returned subject. A chat listed as recently closed leaves
+// the list in the same version and, opened top level, gets its closed tab's Pinned back. Returns
+// ErrBadKind, ErrBadRef or ErrTooMany; on any error nothing is applied and the version is 0.
 func (s *Store) Open(ctx context.Context, spec marotte.OpenTab) (subject marotte.TabSubject, created bool, version uint64, err error) {
 	err = checkSubject(spec.Kind, spec.Ref)
 	if err != nil {
 		return marotte.TabSubject{}, false, 0, err
 	}
-	version, err = s.mutate(ctx, func(st *state) (bool, error) {
+	version, err = s.mutate(ctx, func(st *state, _ int64) (bool, error) {
 		if i := indexOfSubject(st.tabs, spec.Kind, spec.Ref); i >= 0 {
 			subject = st.tabs[i]
 			return false, nil
@@ -90,6 +97,10 @@ func (s *Store) Open(ctx context.Context, spec marotte.OpenTab) (subject marotte
 		}
 		if spec.Kind == marotte.TabKindChat {
 			subject.Bot = spec.Bot
+			var entry marotte.RecentClose
+			st.recent, entry, _ = takeRecent(st.recent, spec.Ref)
+			// A pinned sub-tab is a state the client refuses to create; insert promotes an unopened parent.
+			subject.Pinned = entry.Pinned && (spec.Parent == "" || indexOfID(st.tabs, spec.Parent) < 0)
 		}
 		if spec.Kind == marotte.TabKindRun && spec.Launch != nil {
 			subject.LaunchChats = slices.Clone(spec.Launch.Chats)
@@ -106,10 +117,12 @@ func (s *Store) Open(ctx context.Context, spec marotte.OpenTab) (subject marotte
 }
 
 // Close removes the tab and its descendants as ONE mutation and returns everything removed, with the keep-fact
-// releases the close owes, recorded in the same write (Owed lists them until Settle). An id not open yields an empty
-// slice and no error (two devices can close one tab), and bumps nothing. Its only error is a failed write.
-func (s *Store) Close(ctx context.Context, id string) (closed []marotte.TabSubject, owed []OwedRelease, version uint64, err error) {
-	version, err = s.mutate(ctx, func(st *state) (bool, error) {
+// releases the close owes, recorded in the same write (Owed lists them until Settle). Each chat whose last tab
+// closed goes to the head of the Recently closed list with its facts, unless unlisted names it. An id not open
+// yields an empty slice and no error (two devices can close one tab), and bumps nothing. Its only error is a
+// failed write.
+func (s *Store) Close(ctx context.Context, id string, unlisted []string, facts map[string]RecentFacts) (closed []marotte.TabSubject, owed []OwedRelease, version uint64, err error) {
+	version, err = s.mutate(ctx, func(st *state, now int64) (bool, error) {
 		doomed := closure(st.tabs, id)
 		if len(doomed) == 0 {
 			return false, nil
@@ -124,8 +137,9 @@ func (s *Store) Close(ctx context.Context, id string) (closed []marotte.TabSubje
 			_, gone := doomed[t.ID]
 			return gone
 		})
-		owed = owedFor(closed, st.tabs)
+		owed = owedFor(closed, st.tabs, now)
 		st.owed = appendOwed(st.owed, owed)
+		st.recent = listClosed(st.recent, closed, owed, unlisted, facts)
 		return true, nil
 	})
 	if err != nil {
@@ -139,7 +153,7 @@ func (s *Store) Close(ctx context.Context, id string) (closed []marotte.TabSubje
 // precondition (it would discard a valid drag after an unrelated pin). An unchanged order
 // bumps nothing. The pinned partition is the client's rendering rule, not applied here.
 func (s *Store) Reorder(ctx context.Context, ids []string) (uint64, error) {
-	return s.mutate(ctx, func(st *state) (bool, error) {
+	return s.mutate(ctx, func(st *state, _ int64) (bool, error) {
 		if len(ids) != len(st.tabs) {
 			return false, fmt.Errorf("%w: %d ids for %d open tabs", ErrOrderMismatch, len(ids), len(st.tabs))
 		}
@@ -171,7 +185,7 @@ func (s *Store) Reorder(ctx context.Context, ids []string) (uint64, error) {
 // SetPinned pins or unpins one tab, idempotent both ways. An id not open is not an error (a
 // pin racing a close). Its only error is a failed write.
 func (s *Store) SetPinned(ctx context.Context, id string, pinned bool) (uint64, error) {
-	return s.mutate(ctx, func(st *state) (bool, error) {
+	return s.mutate(ctx, func(st *state, _ int64) (bool, error) {
 		i := indexOfID(st.tabs, id)
 		if i < 0 || st.tabs[i].Pinned == pinned {
 			return false, nil
@@ -185,7 +199,7 @@ func (s *Store) SetPinned(ctx context.Context, id string, pinned bool) (uint64, 
 // value not past the stored one, or an id that is not open, changes nothing and bumps no version.
 // Nothing is applied on error.
 func (s *Store) SetSeen(ctx context.Context, id string, seen uint64) (uint64, error) {
-	return s.mutate(ctx, func(st *state) (bool, error) {
+	return s.mutate(ctx, func(st *state, _ int64) (bool, error) {
 		i := indexOfID(st.tabs, id)
 		if i < 0 || seen <= st.tabs[i].Seen {
 			return false, nil
@@ -204,7 +218,7 @@ func (s *Store) SetSeen(ctx context.Context, id string, seen uint64) (uint64, er
 // of its descendants; a parent that is not open is promoted to top level like
 // Open. Nothing is applied on error.
 func (s *Store) Reparent(ctx context.Context, id, parent string) (uint64, error) {
-	return s.mutate(ctx, func(st *state) (bool, error) {
+	return s.mutate(ctx, func(st *state, _ int64) (bool, error) {
 		i := indexOfID(st.tabs, id)
 		if i < 0 {
 			return false, fmt.Errorf("%w: %q", errNotOpen, id)
@@ -223,6 +237,7 @@ func (s *Store) Reparent(ctx context.Context, id, parent string) (uint64, error)
 }
 
 // List returns a copy of the set in order plus the version it reflects, from ONE critical section.
+// A reader that also needs the Recently closed list uses Snapshot.
 func (s *Store) List() (tabs []marotte.TabSubject, version uint64) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
@@ -249,13 +264,16 @@ func (s *Store) Subtree(id string) []marotte.TabSubject {
 
 // Prune is LOAD-TIME crash recovery, not the live integrity mechanism (the membership
 // coordinator's ordering is). It drops tabs whose subject no longer resolves (nil exists
-// resolves everything) and promotes tabs whose parent is absent, in one mutation.
+// resolves everything), promotes tabs whose parent is absent, and drops Recently closed entries
+// whose chat no longer resolves, in one mutation. dropped names the tabs only.
 func (s *Store) Prune(ctx context.Context, exists func(marotte.TabSubject) bool) ([]marotte.TabSubject, uint64, error) {
 	var dropped []marotte.TabSubject
-	version, err := s.mutate(ctx, func(st *state) (bool, error) {
+	version, err := s.mutate(ctx, func(st *state, _ int64) (bool, error) {
 		kept, gone := partitionByExistence(st.tabs, exists)
 		promoted := promoteOrphans(kept)
-		if len(gone) == 0 && promoted == 0 {
+		var forgot bool
+		st.recent, forgot = pruneRecent(st.recent, exists)
+		if len(gone) == 0 && promoted == 0 && !forgot {
 			return false, nil
 		}
 		dropped = gone

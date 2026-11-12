@@ -393,7 +393,7 @@ describe("response-first: the response beats the frame (response-adopted opens)"
 
     // The GET left before the open committed and answers the pre-commit empty set; the pending adopt
     // merges the row back until the watermark catches up.
-    tabServer.queueList({ tabs: [], version: 0 });
+    tabServer.queueList({ tabs: [], recent: [], version: 0 });
     await listTabs();
     expect(hasTab("chat", "c-1")).toBe(true);
     expect(await rowRefs()).toEqual(["c-1"]);
@@ -474,7 +474,7 @@ describe("a stale GET /api/tabs", () => {
 
     // The snapshot the in-flight GET was already carrying: the collection as it was
     // BEFORE that open committed.
-    tabServer.queueList({ tabs: [], version: versionBefore - 1 });
+    tabServer.queueList({ tabs: [], recent: [], version: versionBefore - 1 });
     await listTabs();
 
     expect(hasTab("chat", "c-old")).toBe(true);
@@ -491,7 +491,7 @@ describe("a stale GET /api/tabs", () => {
     expect.assertions(2);
     tabServer.setMode("event-first");
     await openTab({ kind: "chat", ref: "c-old" });
-    tabServer.queueList({ tabs: [], version: tabsVersion() + 5 });
+    tabServer.queueList({ tabs: [], recent: [], version: tabsVersion() + 5 });
     await listTabs();
     expect(hasTab("chat", "c-old")).toBe(false);
     expect(await rowRefs()).toEqual([]);

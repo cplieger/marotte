@@ -24,7 +24,7 @@ func TestClose_OwesTheTabReleaseOfEveryClosedChat(t *testing.T) {
 	mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindEditor, Ref: "/w/a.ts", Parent: parent.ID})
 	mustOpen(t, s, chatSpec("c-other"))
 
-	_, owed, version, err := s.Close(t.Context(), parent.ID)
+	_, owed, version, err := s.Close(t.Context(), parent.ID, nil, nil)
 	if err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -54,11 +54,11 @@ func TestSettle_RemovesOnlyTheNamedEntriesAndBumpsNoVersion(t *testing.T) {
 	s, dir := newTestStore(t)
 	a := mustOpen(t, s, chatSpec("c-a"))
 	b := mustOpen(t, s, chatSpec("c-b"))
-	_, owedA, _, err := s.Close(t.Context(), a.ID)
+	_, owedA, _, err := s.Close(t.Context(), a.ID, nil, nil)
 	if err != nil {
 		t.Fatalf("close a: %v", err)
 	}
-	if _, _, _, err := s.Close(t.Context(), b.ID); err != nil {
+	if _, _, _, err := s.Close(t.Context(), b.ID, nil, nil); err != nil {
 		t.Fatalf("close b: %v", err)
 	}
 	_, before := s.List()
@@ -140,7 +140,7 @@ func TestClose_OwesARunTabsReleaseOnEachOfItsHolders(t *testing.T) {
 		t.Fatalf("run tab after a restart = %+v, want its holders and LaunchResolved persisted", open)
 	}
 
-	_, owed, _, err := reopened.Close(t.Context(), parent.ID)
+	_, owed, _, err := reopened.Close(t.Context(), parent.ID, nil, nil)
 	if err != nil {
 		t.Fatalf("Close: %v", err)
 	}

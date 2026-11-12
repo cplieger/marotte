@@ -84,7 +84,7 @@ function subject(id: string, over: Partial<TabSubject> = {}): TabSubject {
 }
 
 function list(version: number, ...ids: string[]): TabList {
-  return { tabs: ids.map((id) => subject(id)), version };
+  return { tabs: ids.map((id) => subject(id)), recent: [], version };
 }
 
 /** Every path through it is either synchronous or a single awaited fetch, so one macrotask turn is
@@ -282,6 +282,36 @@ describe("a stale snapshot", () => {
     await listTabs();
     expect(t.ids).toEqual(["a"]);
     expect(tabsVersion()).toBe(1);
+  });
+});
+
+// --- The Recently closed list rides the same version ---
+
+describe("the recently closed list", () => {
+  const closed = { ref: "c-a", name: "Alpha", closed_at: 1_700_000_000_000 };
+
+  it("applies a frame carrying only the list, as the expiry runner sends it", async () => {
+    ingestTabsChanged({ changed: subject("a"), order: ["a"], version: 1 });
+    ingestTabsChanged({ recent: { items: [] }, version: 2 });
+    await settle();
+    expect(tabsVersion()).toBe(2);
+    expect(t.applied.map((a) => a.delta.recent)).toEqual([undefined, { items: [] }]);
+    expect(t.ids).toEqual(["a"]);
+  });
+
+  it("hands a close's list to the projection beside its removed ids", async () => {
+    ingestTabsChanged({ changed: subject("a"), order: ["a"], version: 1 });
+    ingestTabsChanged({ removed_ids: ["a"], recent: { items: [closed] }, version: 2 });
+    await settle();
+    expect(t.ids).toEqual([]);
+    expect(t.applied[1]?.delta.recent).toEqual({ items: [closed] });
+  });
+
+  it("adopts a snapshot that lists closed chats", async () => {
+    listing.answers.push({ tabs: [subject("b")], recent: [closed], version: 3 });
+    expect(await listTabs()).toBe(true);
+    expect(t.ids).toEqual(["b"]);
+    expect(tabsVersion()).toBe(3);
   });
 });
 

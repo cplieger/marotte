@@ -220,3 +220,19 @@ func TestPayloadExemptions_AreNotStale(t *testing.T) {
 		}
 	}
 }
+
+// TestRegistry_TheRecentlyClosedListIsRegistered pins the types GET /api/tabs and tabs_changed
+// carry the Recently closed list in, so the client gets a decoder for each.
+func TestRegistry_TheRecentlyClosedListIsRegistered(t *testing.T) {
+	types := Registry().Types
+	for _, want := range []wiregen.Type{
+		wiregen.TypeRef[marotte.RecentClose](),
+		wiregen.TypeRef[marotte.RecentList](),
+		wiregen.TypeRef[marotte.TabList](),
+		wiregen.TypeRef[marotte.TabsChangedPayload](),
+	} {
+		if !slices.Contains(types, want) {
+			t.Errorf("marotte.%s is not in wireTypes; the client would get no decoder for it", want.Name)
+		}
+	}
+}
