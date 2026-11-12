@@ -264,7 +264,7 @@ describe("the live rows", () => {
 
 describe("what wants the reader", () => {
   const QUESTION =
-    "Phase A fix: I've fixed every blocking finding except one, adv-claude-3, which needs your " +
+    "Phase A fix: I've fixed every blocking finding except one, adv-a-3, which needs your " +
     "decision. The problem: the suppression core matches a suppression comment by line, so a " +
     "comment above a multi-line declaration silences only its first line. Option A changes the " +
     "contract so a suppression covers the whole declaration. Option B keeps the line contract " +

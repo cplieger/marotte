@@ -67,7 +67,7 @@ describe("patchSettings debounce coalescing", () => {
     fetchSpy = vi.fn(committed);
     vi.stubGlobal("fetch", fetchSpy);
     // Reset the settings state so tests don't bleed state between each other. Without this,
-    // patchSettings({last_model: "claude"}) in test N+1 would be filtered out as a duplicate of
+    // patchSettings({last_model: "model-x"}) in test N+1 would be filtered out as a duplicate of
     // test N's value.
     __testResetTracking();
   });
@@ -80,7 +80,7 @@ describe("patchSettings debounce coalescing", () => {
   it("coalesces multiple rapid calls into a single PATCH with merged body", async () => {
     patchSettings({ notifications_enabled: true });
     patchSettings({ debug_logs: true });
-    patchSettings({ last_model: "claude" });
+    patchSettings({ last_model: "model-x" });
 
     // Advance past debounce.
     await vi.advanceTimersByTimeAsync(350);
@@ -92,21 +92,21 @@ describe("patchSettings debounce coalescing", () => {
     expect(JSON.parse(init.body as string)).toEqual({
       notifications_enabled: true,
       debug_logs: true,
-      last_model: "claude",
+      last_model: "model-x",
     });
   });
 
   it("last-writer-wins for same key across rapid calls", async () => {
-    patchSettings({ last_model: "gpt4" });
-    patchSettings({ last_model: "claude" });
-    patchSettings({ last_model: "gemini" });
+    patchSettings({ last_model: "model-e-4" });
+    patchSettings({ last_model: "model-x" });
+    patchSettings({ last_model: "model-f" });
 
     await vi.advanceTimersByTimeAsync(350);
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [, init] = fetchSpy.mock.calls[0]!;
     expect(JSON.parse(init.body as string)).toEqual({
-      last_model: "gemini",
+      last_model: "model-f",
     });
   });
 
@@ -175,7 +175,7 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("skips PATCH when the value matches the seeded server state (page-reload bootstrap case)", async () => {
-    adoptSettings(settingsPayload({ supervised_default: false, last_model: "claude" }));
+    adoptSettings(settingsPayload({ supervised_default: false, last_model: "model-x" }));
     // Simulate the bootstrap fire from onSelectionChange: same supervised_default value the server
     // already has.
     patchSettings({ supervised_default: false });
@@ -184,38 +184,38 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("PATCHes only the changed key when bootstrap and a real change overlap", async () => {
-    adoptSettings(settingsPayload({ supervised_default: false, last_model: "claude" }));
+    adoptSettings(settingsPayload({ supervised_default: false, last_model: "model-x" }));
     // supervised_default unchanged, last_model changed.
     patchSettings({ supervised_default: false });
-    patchSettings({ last_model: "gemini" });
+    patchSettings({ last_model: "model-f" });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string)).toEqual({
-      last_model: "gemini",
+      last_model: "model-f",
     });
   });
 
   it("the second identical patch in a session is also filtered", async () => {
-    patchSettings({ last_model: "claude" });
+    patchSettings({ last_model: "model-x" });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     fetchSpy.mockClear();
-    patchSettings({ last_model: "claude" });
+    patchSettings({ last_model: "model-x" });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("PATCHes again when the value changes back after a different value", async () => {
-    adoptSettings(settingsPayload({ last_model: "claude" }));
-    patchSettings({ last_model: "gemini" });
+    adoptSettings(settingsPayload({ last_model: "model-x" }));
+    patchSettings({ last_model: "model-f" });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     fetchSpy.mockClear();
-    // Round-tripping back to "claude" IS a change (current is "gemini").
-    patchSettings({ last_model: "claude" });
+    // Round-tripping back to "model-x" IS a change (current is "model-f").
+    patchSettings({ last_model: "model-x" });
     await vi.advanceTimersByTimeAsync(350);
     expect(JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string)).toEqual({
-      last_model: "claude",
+      last_model: "model-x",
     });
   });
 
@@ -246,7 +246,7 @@ describe("patchSettings no-op dedup", () => {
     vi.mocked(showSaved).mockImplementation(() => {
       throw new Error("indicator boom");
     });
-    const p = patchSettings({ last_model: "opus" });
+    const p = patchSettings({ last_model: "model-a" });
     await vi.advanceTimersByTimeAsync(350);
     // The promise should still resolve (resolvers fire in finally block).
     const result = await p;
@@ -274,7 +274,7 @@ describe("patchSettings unload flush", () => {
   });
 
   it("sends a still-debounced PATCH when the page is about to unload", async () => {
-    patchSettings({ last_model: "opus" });
+    patchSettings({ last_model: "model-a" });
     // Inside the 300ms debounce: nothing has gone out yet, so navigating away now is where a
     // setting gets silently lost.
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -284,12 +284,12 @@ describe("patchSettings unload flush", () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string)).toEqual({
-      last_model: "opus",
+      last_model: "model-a",
     });
   });
 
   it("sends nothing on unload when there is no pending write", async () => {
-    patchSettings({ last_model: "opus" });
+    patchSettings({ last_model: "model-a" });
     window.dispatchEvent(new Event("beforeunload"));
     await vi.advanceTimersByTimeAsync(0);
     fetchSpy.mockClear();
@@ -302,7 +302,7 @@ describe("patchSettings unload flush", () => {
   });
 
   it("does not fire a cancelled debounce after the tracking reset", async () => {
-    patchSettings({ last_model: "opus" });
+    patchSettings({ last_model: "model-a" });
     __testResetTracking();
     await vi.advanceTimersByTimeAsync(350);
     // A timer left running here would fire into whichever test came next.
@@ -329,7 +329,7 @@ describe("patchSettings failure handling", () => {
   it("shows the error indicator when the server rejects the write", async () => {
     const { showError } = await import("./save-indicator.js");
     fetchSpy.mockImplementation(() => Promise.resolve(new Response("nope", { status: 500 })));
-    patchSettings({ last_model: "opus" });
+    patchSettings({ last_model: "model-a" });
     // waitFor rather than a fixed advance: a real browser reads a failed response's body through a
     // stream, so the error path settles a macrotask or two after the debounce fires. The assertion
     // is unchanged; only the wait is event-driven instead of a guessed constant.
@@ -339,9 +339,9 @@ describe("patchSettings failure handling", () => {
   });
 
   it("re-sends a value the server rejected instead of filtering it as sent", async () => {
-    adoptSettings(settingsPayload({ last_model: "claude" }));
+    adoptSettings(settingsPayload({ last_model: "model-x" }));
     fetchSpy.mockImplementation(() => Promise.resolve(new Response("nope", { status: 500 })));
-    patchSettings({ last_model: "opus" });
+    patchSettings({ last_model: "model-a" });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
@@ -350,30 +350,30 @@ describe("patchSettings failure handling", () => {
     // never reaches the server.
     fetchSpy.mockClear();
     fetchSpy.mockImplementation(committed);
-    patchSettings({ last_model: "opus" });
+    patchSettings({ last_model: "model-a" });
     await vi.advanceTimersByTimeAsync(350);
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string)).toEqual({
-      last_model: "opus",
+      last_model: "model-a",
     });
   });
 
   it("keeps the first pre-patch value when a key is written twice before flushing", async () => {
-    adoptSettings(settingsPayload({ last_model: "claude" }));
+    adoptSettings(settingsPayload({ last_model: "model-x" }));
     fetchSpy.mockImplementation(() => Promise.resolve(new Response("nope", { status: 500 })));
     // Two writes coalesce into one PATCH; after its failure the state shows the value the server
-    // still holds ("claude"), not the intermediate one.
-    patchSettings({ last_model: "opus" });
-    patchSettings({ last_model: "sonnet" });
+    // still holds ("model-x"), not the intermediate one.
+    patchSettings({ last_model: "model-a" });
+    patchSettings({ last_model: "model-b" });
     await vi.advanceTimersByTimeAsync(350);
 
     fetchSpy.mockClear();
     fetchSpy.mockImplementation(committed);
-    patchSettings({ last_model: "claude" });
+    patchSettings({ last_model: "model-x" });
     await vi.advanceTimersByTimeAsync(350);
 
-    // "claude" is what the server has, so this is a no-op. Had the failure left "opus" shown, this
+    // "model-x" is what the server has, so this is a no-op. Had the failure left "model-a" shown, this
     // would PATCH.
     expect(fetchSpy).not.toHaveBeenCalled();
   });
@@ -444,7 +444,7 @@ describe("patchSettings saving indicator", () => {
 
   it("announces each call's own keys, so a later change still raises its slot", async () => {
     const { showSaving } = await import("./save-indicator.js");
-    patchSettings({ last_model: "opus" });
+    patchSettings({ last_model: "model-a" });
     patchSettings({ debug_logs: true });
     await vi.advanceTimersByTimeAsync(350);
     // Per call rather than per batch: the two keys have separate slots, and the second one is
@@ -457,14 +457,14 @@ describe("patchSettings saving indicator", () => {
   it("announces only the keys that survived the no-op filter", async () => {
     adoptSettings(settingsPayload({ debug_logs: true }));
     const { showSaving } = await import("./save-indicator.js");
-    patchSettings({ debug_logs: true, last_model: "opus" });
+    patchSettings({ debug_logs: true, last_model: "model-a" });
     await vi.advanceTimersByTimeAsync(350);
     expect(showSaving).toHaveBeenCalledExactlyOnceWith(["last_model"]);
   });
 
   it("reports the outcome against the keys the write carried", async () => {
     const { showSaved } = await import("./save-indicator.js");
-    patchSettings({ last_model: "opus", debug_logs: true });
+    patchSettings({ last_model: "model-a", debug_logs: true });
     await vi.advanceTimersByTimeAsync(350);
     await vi.waitFor(() => {
       expect(showSaved).toHaveBeenCalled();
@@ -484,7 +484,7 @@ describe("loadSettings", () => {
         // of EffectiveSettings is required, so a sparse body is a response the server cannot
         // produce and the decoder refuses.
         new Response(
-          JSON.stringify(settingsPayload({ last_model: "sonnet", chat_retention_days: 30 })),
+          JSON.stringify(settingsPayload({ last_model: "model-b", chat_retention_days: 30 })),
           {
             status: 200,
             headers: { "content-type": "application/json" },
@@ -502,7 +502,7 @@ describe("loadSettings", () => {
 
   it("returns the settings the server sent", async () => {
     await expect(loadSettings()).resolves.toEqual(
-      settingsPayload({ last_model: "sonnet", chat_retention_days: 30 }),
+      settingsPayload({ last_model: "model-b", chat_retention_days: 30 }),
     );
   });
 });

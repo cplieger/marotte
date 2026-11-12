@@ -39,7 +39,7 @@ func TestKiroDocsWireContract(t *testing.T) {
 		".kiro/steering/matched.md":          "---\ninclusion: fileMatch\nfileMatchPattern: \"internal/**/*.go\"\ndescription: Go layout\n---\n",
 		".kiro/steering/nested/deep.md":      "---\ndescription: Nested\n---\n",
 		".kiro/skills/review/SKILL.md":       "---\nname: review\ndescription: Review a change\ninclusion: manual\nsteering_override: true\n---\n",
-		".kiro/agents/twin.md":               "---\nname: twin\ndescription: >\n  Even-cycle twin of the\n  other reviewer.\nmodel: claude-opus-5\ntools: [read, write]\n---\n",
+		".kiro/agents/twin.md":               "---\nname: twin\ndescription: >\n  Even-cycle twin of the\n  other reviewer.\nmodel: model-a-5\ntools: [read, write]\n---\n",
 		".kiro/specs/search/design.md":       "# Search design\n\nProse.\n",
 		".kiro/specs/search/requirements.md": "# Search requirements\n",
 		".kiro/hooks/two.json": `{"version":"v1","hooks":[

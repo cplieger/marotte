@@ -945,7 +945,7 @@ function plantModelList(): void {
 
 function fillModelList(list: HTMLElement): void {
   const scroll = make("div", "pill-model-scroll", { role: "listbox", "aria-label": "Models" });
-  for (const [i, name] of ["Claude Opus", "Claude Sonnet", "Auto"].entries()) {
+  for (const [i, name] of ["Model A", "Model B", "Auto"].entries()) {
     const opt = make("div", i === 0 ? "pill-model-item active" : "pill-model-item", {
       role: "option",
       "aria-selected": i === 0 ? "true" : "false",

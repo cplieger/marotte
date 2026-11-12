@@ -62,7 +62,7 @@ func writeUnterminatedLog(rt *rapid.T, ctx context.Context, root string, h Entry
 		rt.Fatalf("open entry log: %v", err)
 	}
 	defer func() { _ = lg.Close() }()
-	if err := h.write(ctx, &marotte.Chat{ID: "c-abcdef01", Model: "opus"}); err != nil {
+	if err := h.write(ctx, &marotte.Chat{ID: "c-abcdef01", Model: "model-a"}); err != nil {
 		rt.Fatalf("write header: %v", err)
 	}
 
@@ -182,7 +182,7 @@ func checkEveryTurnIsClosed(rt *rapid.T, entries []marotte.Entry) {
 				rt.Fatalf("the synthesized closer of %s is (%q, %q), want (interrupted, unterminated)",
 					e.Turn, footer.Outcome, footer.StopReasonRaw)
 			}
-			if footer.Model != "opus" {
+			if footer.Model != "model-a" {
 				rt.Fatalf("the closer of %s stamped model %q, want the header's", e.Turn, footer.Model)
 			}
 		case marotte.EntryKindToolCall:

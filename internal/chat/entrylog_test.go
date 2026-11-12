@@ -310,7 +310,7 @@ func TestEntryLog_AReadErrorFailsTheOpenAndKeepsTheLog(t *testing.T) {
 // seq continues.
 func TestEntryLog_StoreOpenCloserClosesEveryOrphanedTurn(t *testing.T) {
 	f := newLogFixture(t)
-	if err := f.header.write(t.Context(), &marotte.Chat{ID: "c-abcdef01", Model: "opus"}); err != nil {
+	if err := f.header.write(t.Context(), &marotte.Chat{ID: "c-abcdef01", Model: "model-a"}); err != nil {
 		t.Fatalf("write header: %v", err)
 	}
 	first := f.prompt("one")
@@ -347,7 +347,7 @@ func TestEntryLog_StoreOpenCloserClosesEveryOrphanedTurn(t *testing.T) {
 		t.Errorf("outcome is %q, want interrupted", footer.Outcome)
 	case footer.StopReasonRaw != string(marotte.StopReasonUnterminated):
 		t.Errorf("stop_reason_raw is %q, want unterminated", footer.StopReasonRaw)
-	case footer.Model != "opus":
+	case footer.Model != "model-a":
 		t.Errorf("model is %q, want the header's", footer.Model)
 	case footer.Credits != 0:
 		t.Errorf("credits are %v, want absent: nothing metered them", footer.Credits)

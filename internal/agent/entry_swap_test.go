@@ -37,7 +37,7 @@ func newSwapFixture(t *testing.T) *swapFixture {
 	f := &swapFixture{t: t, log: lg, header: h, root: root}
 	// The record CreateChatAndOpen writes before any prompt.
 	if _, err := h.Update(t.Context(), func(c *marotte.Chat) bool {
-		c.ID, c.Name, c.Model = "c-abcdef01", "a chat", "opus"
+		c.ID, c.Name, c.Model = "c-abcdef01", "a chat", "model-a"
 		return true
 	}); err != nil {
 		t.Fatalf("write the initial header: %v", err)
@@ -81,7 +81,7 @@ func (f *swapFixture) append(turn string, kind marotte.EntryKind, id string, pay
 func (f *swapFixture) closeTurn(turn string, outcome marotte.TurnOutcome, raw marotte.StopReason) {
 	f.t.Helper()
 	f.append(turn, marotte.EntryKindTurnClose, turn+":close-live",
-		marotte.EntryTurnClose{Outcome: outcome, StopReasonRaw: string(raw), Model: "opus"})
+		marotte.EntryTurnClose{Outcome: outcome, StopReasonRaw: string(raw), Model: "model-a"})
 }
 
 // record is the log's account as the merge spine: the whole file plus the reverted set.

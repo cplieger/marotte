@@ -37,7 +37,7 @@
 
 .ev-tl-lane {
   display: grid;
-  /* 12rem holds an included step's whole id (`review/code-adversary-claude`, 28
+  /* 12rem holds an included step's whole id (`review/code-adversary-seat-a`, 28
      mono characters at `--fs-xs`); the 40% keeps a phone's track readable. */
   grid-template-columns: minmax(4rem, min(12rem, 40%)) minmax(0, 1fr) 3.5rem;
   align-items: center;
@@ -654,10 +654,10 @@
      `text-overflow: ellipsis` requires `overflow: hidden`, which makes the flex item's
      height its line box — and the mono stack's `normal` resolved to 16px at a 14px
      font, exactly the em box, so anything reaching below the baseline was cut. Measured
-     in the sidecar: a node labelled `review_gpt` rendered as `review gpt`, its
+     in the sidecar: a node labelled `review_b` rendered as `review b`, its
      underscore invisible. The sans-font sibling `.ev-name` escapes it only by accident
      (its `normal` is 22px at 16px), so this is not a rule that could be shared.
-     Underscores are common in a delegate's stage names (`review_gpt`, `perf_hotfix`)
+     Underscores are common in a delegate's stage names (`review_b`, `perf_hotfix`)
      and rare in a workflow's node ids, which is why the second consumer found it. */
   line-height: 1.4;
 }

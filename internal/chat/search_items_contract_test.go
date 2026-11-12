@@ -127,8 +127,8 @@ func searchItemsCases() []searchItemsCase {
 			itemsEntry("cf1", marotte.EntryKindCompactionFailed, "", marotte.EntryCompactionFailed{Reason: "too large"}),
 			itemsEntry("mr1", marotte.EntryKindModelRouted, "", marotte.EntryModelRouted{Message: "routed to a smaller model"}),
 			itemsEntry("sb1", marotte.EntryKindSafetyBlocked, "", marotte.EntrySafetyBlocked{Properties: []string{"bucket policy", "public access"}}),
-			itemsEntry("mf1", marotte.EntryKindModelFallback, "", marotte.EntryModelFallback{From: "opus-5", To: "sonnet-5", Trigger: "refusal"}),
-			itemsEntry("mf2", marotte.EntryKindModelFallback, "", marotte.EntryModelFallback{From: "opus-5", To: "sonnet-5", Trigger: "availability", Reason: "chainExhausted"}),
+			itemsEntry("mf1", marotte.EntryKindModelFallback, "", marotte.EntryModelFallback{From: "model-a-5", To: "model-b-5", Trigger: "refusal"}),
+			itemsEntry("mf2", marotte.EntryKindModelFallback, "", marotte.EntryModelFallback{From: "model-a-5", To: "model-b-5", Trigger: "availability", Reason: "chainExhausted"}),
 		}},
 		{Name: "a plan entry's status and priority are the card's wording", Body: []searchItemsEntry{
 			itemsEntry("p1", marotte.EntryKindPlan, "", marotte.EntryPlan{Entries: []marotte.PlanEntry{

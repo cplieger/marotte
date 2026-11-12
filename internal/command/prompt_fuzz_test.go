@@ -8,8 +8,8 @@ import (
 )
 
 func FuzzValidatePromptPayload(f *testing.F) {
-	f.Add([]byte(`{"text":"hello","message_id":"abc-123","model":"claude"}`))
-	f.Add([]byte(`{"text":"","message_id":"abc-123","model":"claude"}`))
+	f.Add([]byte(`{"text":"hello","message_id":"abc-123","model":"model-x"}`))
+	f.Add([]byte(`{"text":"","message_id":"abc-123","model":"model-x"}`))
 	f.Add([]byte(`{"text":"hi","message_id":"","model":"m"}`))
 	f.Add([]byte(`{"text":"hi","message_id":"../evil","model":"m"}`))
 	f.Add(make([]byte, 600000))

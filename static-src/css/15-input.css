@@ -1975,12 +1975,12 @@
 }
 
 /* The model and mode pills go icon-only where the fullest labelled row (mid-turn, task
-   list shown) stops fitting with the catalog's widest pills, "claude sonnet 5.5 · medium"
-   and "Semantic Reviewer": 632px mouse, 656px touch with the tier and Send's word, 498px
-   and 522px without; each threshold adds 8 to 10px (`button-size.test.ts` sweeps it). A
-   longer name, such as a custom agent's, ellipsises within its cap. A container query
-   cannot read `--pill-gap`, so the tier is a selector. The names stay in aria-label and
-   the tooltip (`status.ts`, `role-picker.ts`). */
+   list shown) stops fitting with the catalog's widest pills, a 17-character model name
+   with its "medium" tier and "Semantic Reviewer": 632px mouse, 656px touch with the tier
+   and Send's word, 498px and 522px without; each threshold adds 8 to 10px
+   (`button-size.test.ts` sweeps it). A longer name, such as a custom agent's, ellipsises
+   within its cap. A container query cannot read `--pill-gap`, so the tier is a selector.
+   The names stay in aria-label and the tooltip (`status.ts`, `role-picker.ts`). */
 @media (width > 48rem) and (height > 30rem) {
   @container pill-row (width < 40rem) {
     .pill-model > :is([id="ctx-model-pill"], .pill-model-effort),

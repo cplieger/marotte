@@ -41,7 +41,7 @@ const {
   mockLoadMessages,
   mockRequestTurnRange,
   mockListTabs,
-  mockRebuildLiveRuns,
+  mockRefetchLiveRuns,
   mockRereadHeldRuns,
   mockRunTurnHeldSeq,
   mockRequestRunTurnRange,
@@ -56,7 +56,7 @@ const {
   ),
   mockRequestTurnRange: vi.fn((_chatID: string, _turnID: string) => undefined),
   mockListTabs: vi.fn((_signal?: AbortSignal) => Promise.resolve(true)),
-  mockRebuildLiveRuns: vi.fn((_signal?: AbortSignal) => Promise.resolve()),
+  mockRefetchLiveRuns: vi.fn((_signal?: AbortSignal) => Promise.resolve()),
   mockRereadHeldRuns: vi.fn(),
   mockRunTurnHeldSeq: vi.fn((_id: string, _turn: string): number | undefined => undefined),
   mockRequestRunTurnRange: vi.fn((_id: string, _turn: string, _after?: number) => undefined),
@@ -72,7 +72,7 @@ vi.mock("./store-load.js", () => ({
 }));
 vi.mock("./tabs-sync.js", () => ({ listTabs: mockListTabs }));
 vi.mock("./run-store.js", () => ({
-  rebuildLiveRuns: mockRebuildLiveRuns,
+  refetchLiveRuns: mockRefetchLiveRuns,
   rereadHeldRuns: mockRereadHeldRuns,
   peekRunState: mockPeekRunState,
   runTurnHeldSeq: mockRunTurnHeldSeq,
@@ -204,7 +204,7 @@ beforeEach(() => {
   mockLoadMessages.mockResolvedValue(true);
   mockRequestTurnRange.mockReturnValue(undefined);
   mockListTabs.mockResolvedValue(true);
-  mockRebuildLiveRuns.mockResolvedValue(undefined);
+  mockRefetchLiveRuns.mockResolvedValue(undefined);
   mockRequestRunTurnRange.mockReturnValue(undefined);
   mockRunTurnHeldSeq.mockReturnValue(undefined);
   // No run held unless a case says so, which is what makes a `run_turn` stamp unheld.
@@ -527,7 +527,10 @@ describe("frames", () => {
   it("holds frames until markHydrated and releases them in arrival order", async () => {
     scripted.respond("/api/events/alive", () => new Response(null, { status: 204 }));
     const conn = await connect();
-    conn?.frame({ type: "connected", payload: { busy_stated: false, live_runs_stated: false } });
+    conn?.frame({
+      type: "connected",
+      payload: { busy_stated: false, live_runs_stated: false, live_runs_version: "0" },
+    });
     // `options` is required by the wire's own decoder, which runs here.
     conn?.frame({
       type: "permission_needed",
@@ -749,7 +752,7 @@ describe("revalidate", () => {
 
     expect(mockLoadList).toHaveBeenCalledWith(controller.signal);
     expect(mockListTabs).toHaveBeenCalledWith(controller.signal);
-    expect(mockRebuildLiveRuns).toHaveBeenCalledWith(controller.signal);
+    expect(mockRefetchLiveRuns).toHaveBeenCalledWith(controller.signal);
     expect(mockFetchCatalog).toHaveBeenCalledWith({ signal: controller.signal });
   });
 
@@ -1264,7 +1267,7 @@ describe("every revalidation re-reads the held runs once", () => {
     expect(mockRereadHeldRuns).toHaveBeenCalledTimes(1);
   });
 
-  it("a verdict naming the runs subject rebuilds the inventory and re-reads nothing more", async () => {
+  it("a verdict naming the runs subject reads the inventory and re-reads nothing more", async () => {
     observeStamp({ kind: "chats", ref: "", version: "1" });
     observeStamp({ kind: "runs", ref: "", version: "1" });
     scripted.respond(
@@ -1279,8 +1282,8 @@ describe("every revalidation re-reads the held runs once", () => {
     await _revalidateForTest(ctx({ signal: controller.signal }));
 
     expect(mockRereadHeldRuns).toHaveBeenCalledTimes(1);
-    expect(mockRebuildLiveRuns).toHaveBeenCalledTimes(1);
-    expect(mockRebuildLiveRuns.mock.calls[0]).toEqual([controller.signal]);
+    expect(mockRefetchLiveRuns).toHaveBeenCalledTimes(1);
+    expect(mockRefetchLiveRuns.mock.calls[0]).toEqual([controller.signal]);
   });
 
   it("a refused runs frame on the stream re-reads the held runs", async () => {
@@ -1288,16 +1291,82 @@ describe("every revalidation re-reads the held runs once", () => {
     observeStamp({ kind: "chat", ref: "X", version: "3" });
     const conn = await connectSettled();
     mockRereadHeldRuns.mockClear();
-    mockRebuildLiveRuns.mockClear();
+    mockRefetchLiveRuns.mockClear();
 
     conn?.frame({
       type: "subject_changed",
       chat_id: "",
       subject: { kind: "runs", ref: "", version: "2" },
     });
-    await until(() => mockRebuildLiveRuns.mock.calls.length === 1, "the inventory rebuild");
+    await until(() => mockRefetchLiveRuns.mock.calls.length === 1, "the inventory read");
 
     expect(mockRereadHeldRuns).toHaveBeenCalledTimes(1);
-    expect(mockRebuildLiveRuns).toHaveBeenCalledTimes(1);
+    expect(mockRefetchLiveRuns).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the MCP status subject re-reads the status inventory", () => {
+  // The server's `mcp_status` counter, increasing across the cases: the status mirror is module state that outlives
+  // a case, while each case starts with an empty version map.
+  let counter = 0;
+  function nextVersion(): string {
+    counter++;
+    return String(counter);
+  }
+
+  function statusReads(): ScriptedFetch["requests"] {
+    return scripted.requests.filter((r) => r.url === "/api/mcp/status");
+  }
+
+  function statusAnswer(version: string): Response {
+    return json({
+      servers: [],
+      subject: { kind: "mcp_status", ref: "", version, epoch: EPOCH_A },
+    });
+  }
+
+  function heldStatusVersion(): string | undefined {
+    return versionMap()
+      .snapshot()
+      .held.find((h) => h.kind === "mcp_status")?.version;
+  }
+
+  it("a verdict naming mcp_status reads the status and holds its version once applied", async () => {
+    observeStamp({ kind: "mcp_status", ref: "", version: nextVersion() });
+    const moved = nextVersion();
+    scripted.respond("/api/sync", digestAnswer([{ kind: "mcp_status", ref: "", version: moved }]));
+    scripted.respond("/api/mcp/status", () => statusAnswer(moved));
+
+    await _revalidateForTest(ctx());
+
+    expect(statusReads()).toHaveLength(1);
+    expect(heldStatusVersion()).toBe(moved);
+  });
+
+  it("a refused mcp_status frame reads the status, and the held version moves only with the read", async () => {
+    const held = nextVersion();
+    const moved = nextVersion();
+    observeStamp({ kind: "mcp_status", ref: "", version: held });
+    const conn = await connectSettled();
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    scripted.respond("/api/mcp/status", async () => {
+      await gate;
+      return statusAnswer(moved);
+    });
+
+    conn?.frame({
+      type: "subject_changed",
+      chat_id: "",
+      subject: { kind: "mcp_status", ref: "", version: moved },
+    });
+    await until(() => statusReads().length === 1, "the status read");
+    expect(heldStatusVersion(), "the frame's own stamp is not observed").toBe(held);
+
+    release();
+    await until(() => heldStatusVersion() === moved, "the read's stamp to be observed");
+    expect(statusReads()).toHaveLength(1);
   });
 });

@@ -53,7 +53,7 @@ func seedThinking(t *testing.T, store chatStore, id marotte.ChatID, choice, acti
 	t.Helper()
 	if _, err := store.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
 		c.Name = "a chat"
-		c.Model = "opus-5"
+		c.Model = "model-a-5"
 		c.Thinking = choice
 		c.ThinkingActive = active
 		return true
@@ -137,7 +137,7 @@ func TestCmdSetEffort_TurnsThinkingOnForADefaultOffModel(t *testing.T) {
 	seedThinking(t, store, "c1", "", "")
 	b := &configLog{recordingBridge: &recordingBridge{result: map[string]any{}, sessionID: "s"}}
 	host := idleHost(store, b, b)
-	host.thinkingDefaultOff = map[string]bool{"opus-5": true}
+	host.thinkingDefaultOff = map[string]bool{"model-a-5": true}
 
 	err := setEffort(t, host, "", "c1", "max")
 

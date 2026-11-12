@@ -285,8 +285,8 @@ var configWrites = []struct {
 	{key: settings.KeyMCPWaitForReady, value: true, reach: reachLive},
 	{key: settings.KeyOutputStyle, value: "proactive", reach: reachLive},
 	{key: settings.KeySupervisedDefault, value: true, reach: reachNewChat},
-	{key: settings.KeyLastModel, value: "claude-sonnet-4", reach: reachNewChat},
-	{key: settings.KeyLastEffortByModel, value: map[string]string{"claude-sonnet-4": "high"}, reach: reachNewChat},
+	{key: settings.KeyLastModel, value: "model-b-4", reach: reachNewChat},
+	{key: settings.KeyLastEffortByModel, value: map[string]string{"model-b-4": "high"}, reach: reachNewChat},
 	{key: settings.KeyScheduledAutoApprove, value: true, reach: reachNoChat},
 	// The trigger launcher reads both at each launch.
 	{key: "trigger_max_live_runs", value: 4, reach: reachNoChat},

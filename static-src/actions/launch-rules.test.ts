@@ -75,13 +75,18 @@ describe("saveLaunchRule", () => {
       source: "bundled://nightly",
       when: { clock: daily },
       enabled: true,
-      model: "opus",
+      model: "model-a",
     });
     expect(calls()).toEqual([
       {
         url: "/api/launch-rules/r1",
         method: "PUT",
-        body: { source: "bundled://nightly", enabled: true, model: "opus", when: { clock: daily } },
+        body: {
+          source: "bundled://nightly",
+          enabled: true,
+          model: "model-a",
+          when: { clock: daily },
+        },
       },
     ]);
 
@@ -226,7 +231,7 @@ describe("loadLaunchRules", () => {
         source: "bundled://nightly",
         name: "nightly",
         enabled: true,
-        model: "opus",
+        model: "model-a",
         inputs: { tag: "v1" },
         when: { clock: daily },
         next_run_at: "2026-11-06T02:00:00Z",

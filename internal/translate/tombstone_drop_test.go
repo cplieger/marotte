@@ -39,7 +39,7 @@ func headerWrites() map[string]lateWrite {
 				"configOptions": []map[string]any{{
 					"id":      "model",
 					"type":    "select",
-					"options": []map[string]any{{"name": "Opus", "value": "claude-opus-5"}},
+					"options": []map[string]any{{"name": "Model A", "value": "model-a-5"}},
 				}},
 			}), FrameAttribution{})
 		},

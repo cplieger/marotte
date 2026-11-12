@@ -12,9 +12,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// TestRoleKeeper_FollowsTheDesignTable pins every cell of design §7.1 "The role keeper": a missing or wrong cell lets a
+// TestRoleKeeper_FollowsItsTransitionTable pins every cell of the role keeper's table: a missing or wrong cell lets a
 // prompt out off the role, sends a set_mode beside running work, or never lets a prompt go again.
-func TestRoleKeeper_FollowsTheDesignTable(t *testing.T) {
+func TestRoleKeeper_FollowsItsTransitionTable(t *testing.T) {
 	const (
 		u = roleUnkept
 		n = roleOn
@@ -84,9 +84,9 @@ func keeperLife(t *testing.T, state roleState, sb *sharedBridge) (lc *chatLifecy
 	}
 }
 
-// TestRoleKeeper_CarriesOutItsRowsEffects pins the effects design §7.1 gives the table's rows: the claim from off
-// sends once on the keeper's session, a refusal marks that session for reload, a cut detaches it so no idle edge sends
-// on it again and marks it for reload, and an input naming another session is dropped.
+// TestRoleKeeper_CarriesOutItsRowsEffects pins the effects of the table's rows: the claim from off sends once on the
+// keeper's session, a refusal marks that session for reload, a cut detaches it so no idle edge sends on it again and
+// marks it for reload, and an input naming another session is dropped.
 func TestRoleKeeper_CarriesOutItsRowsEffects(t *testing.T) {
 	t.Run("off at an idle edge sends once on its session", func(t *testing.T) {
 		sb := &sharedBridge{}
@@ -326,7 +326,7 @@ func switchedBot(t *testing.T, br *fakeBridge, before func(h *Runtime), more ...
 	return h, cs
 }
 
-// TestBotRole_AHostedStepDefersTheReassertToItsEnd pins design §7.1's idle edge: a Bot whose turn left its role while
+// TestBotRole_AHostedStepDefersTheReassertToItsEnd pins the keeper's idle edge: a Bot whose turn left its role while
 // its session hosts a run step sends no set_mode (KAS would switch the profile under the step) and lets every
 // non-prompt door through; the step's end sends exactly one, and the next prompt goes after it.
 func TestBotRole_AHostedStepDefersTheReassertToItsEnd(t *testing.T) {
@@ -369,9 +369,9 @@ func TestBotRole_AHostedStepDefersTheReassertToItsEnd(t *testing.T) {
 	}
 }
 
-// TestBotRole_ANonPromptDoorOpensWhileTheRoleFailed pins design §7.1 rule "only prompt admission reads the keeper": a
-// Bot whose role KAS refused back, with a run step now held, still opens for a run verb or a step's answer, with no
-// set_mode and no second message, so the held step can finish.
+// TestBotRole_ANonPromptDoorOpensWhileTheRoleFailed pins that only prompt admission reads the keeper: a Bot whose role
+// KAS refused back, with a run step now held, still opens for a run verb or a step's answer, with no set_mode and no
+// second message, so the held step can finish.
 func TestBotRole_ANonPromptDoorOpensWhileTheRoleFailed(t *testing.T) {
 	br := reporting(marotte.BotRoleID, marotte.DefaultModeID, "kiro_spec", marotte.BotRoleID)
 	br.setCallErr(marotte.MethodSetMode, context.DeadlineExceeded)
@@ -392,7 +392,7 @@ func TestBotRole_ANonPromptDoorOpensWhileTheRoleFailed(t *testing.T) {
 	}
 }
 
-// TestBotRole_APromptWaitsWhileTheRoleIsReasserted pins design §7.1's gate: a prompt sent while the set_mode is in
+// TestBotRole_APromptWaitsWhileTheRoleIsReasserted pins the keeper's gate: a prompt sent while the set_mode is in
 // flight waits at the send gate and goes out only once KAS accepted the role; when KAS refuses, it is refused unsent
 // with the Bot's sentence.
 func TestBotRole_APromptWaitsWhileTheRoleIsReasserted(t *testing.T) {
@@ -449,7 +449,7 @@ func TestBotRole_APromptWaitsWhileTheRoleIsReasserted(t *testing.T) {
 	})
 }
 
-// TestBotRole_ASetModeTheSessionsCloseCutIsNoRefusal pins design §7.1's cut column: a re-assert whose session closed
+// TestBotRole_ASetModeTheSessionsCloseCutIsNoRefusal pins the keeper's cut column: a re-assert whose session closed
 // under it was never answered, so the keeper lets go of that session without failing it, and the chat hears nothing.
 func TestBotRole_ASetModeTheSessionsCloseCutIsNoRefusal(t *testing.T) {
 	br := reporting(marotte.BotRoleID, marotte.DefaultModeID, "kiro_spec", marotte.BotRoleID)
@@ -470,8 +470,8 @@ func TestBotRole_ASetModeTheSessionsCloseCutIsNoRefusal(t *testing.T) {
 	}
 }
 
-// TestBotRole_APromptWaitingOnACutReassertIsRefusedToBeSentAgain pins design §7.1's "cut with a prompt waiting" row:
-// a prompt waiting at the send gate while the set_mode is in flight, whose set_mode is then cut, is refused unsent with
+// TestBotRole_APromptWaitingOnACutReassertIsRefusedToBeSentAgain pins the keeper's "cut with a prompt waiting" row: a
+// prompt waiting at the send gate while the set_mode is in flight, whose set_mode is then cut, is refused unsent with
 // the sentence asking to send it again, with no mode_not_applied and no second set_mode.
 func TestBotRole_APromptWaitingOnACutReassertIsRefusedToBeSentAgain(t *testing.T) {
 	br := reporting(marotte.BotRoleID, marotte.DefaultModeID, "kiro_spec", marotte.BotRoleID)
@@ -505,7 +505,7 @@ func TestBotRole_APromptWaitingOnACutReassertIsRefusedToBeSentAgain(t *testing.T
 	}
 }
 
-// TestBotRole_AFailedRoleRefusesPromptsUntilADoorResetsIt pins design §7.1 "failed lasts until the next door reset":
+// TestBotRole_AFailedRoleRefusesPromptsUntilADoorResetsIt pins that a failed role lasts until the next door reset:
 // while a held config.json defers the reload the refusal marked, a prompt is refused unsent with the Bot's sentence and
 // no set_mode is retried; once config.json reads, the next prompt's door reloads the session and runs on the role.
 func TestBotRole_AFailedRoleRefusesPromptsUntilADoorResetsIt(t *testing.T) {

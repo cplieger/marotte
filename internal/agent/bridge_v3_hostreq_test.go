@@ -137,8 +137,8 @@ func TestEngineLane_AConsentURLAfterTheSignInsOwnIsShownEverywhere(t *testing.T)
 	if want := clock.now().Add(lazySignInTTL); !evt.Payload.ExpiresAt.Equal(want) {
 		t.Errorf("expires_at = %v, want %v", evt.Payload.ExpiresAt, want)
 	}
-	if n := len(eventsSince(h, before, marotte.EventMCPSignInOpen)); n != 0 {
-		t.Errorf("mcp_sign_in_open events since A = %d, want none: B is not linear's", n)
+	if n := len(eventsSince(h, before, marotte.EventMCPStatus)); n != 0 {
+		t.Errorf("mcp_status events since A = %d, want none: B is not linear's", n)
 	}
 }
 
@@ -216,8 +216,8 @@ func TestEngineLane_AConsentURLSeenAgainKeepsItsAttribution(t *testing.T) {
 	if n := len(eventsSince(h, before, marotte.EventOpenExternalURL)); n != 0 {
 		t.Errorf("open_external_url events since the first open = %d, want none", n)
 	}
-	if n := len(eventsSince(h, before, marotte.EventMCPSignInOpen)); n != 0 {
-		t.Errorf("mcp_sign_in_open events since the first open = %d, want none", n)
+	if n := len(eventsSince(h, before, marotte.EventMCPStatus)); n != 0 {
+		t.Errorf("mcp_status events since the first open = %d, want none", n)
 	}
 }
 

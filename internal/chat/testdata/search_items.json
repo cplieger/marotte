@@ -504,8 +504,8 @@
           "id": "mf1",
           "kind": "model_fallback",
           "payload": {
-            "from": "opus-5",
-            "to": "sonnet-5",
+            "from": "model-a-5",
+            "to": "model-b-5",
             "trigger": "refusal"
           }
         },
@@ -513,8 +513,8 @@
           "id": "mf2",
           "kind": "model_fallback",
           "payload": {
-            "from": "opus-5",
-            "to": "sonnet-5",
+            "from": "model-a-5",
+            "to": "model-b-5",
             "trigger": "availability",
             "reason": "chainExhausted"
           }
@@ -606,8 +606,8 @@
             "mf1"
           ],
           "texts": [
-            "opus-5",
-            "sonnet-5"
+            "model-a-5",
+            "model-b-5"
           ]
         },
         {
@@ -618,7 +618,7 @@
             "mf2"
           ],
           "texts": [
-            "opus-5"
+            "model-a-5"
           ]
         }
       ]

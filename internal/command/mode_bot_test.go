@@ -10,9 +10,8 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// TestCmdSetMode_ABotsRoleIsNeverSwitched pins design §4.1 set_mode: a Bot stays on its role and no other chat takes
-// it, refused 409 bot_mode before the live session is asked, so the record, the session and every pill keep the mode
-// they hold.
+// TestCmdSetMode_ABotsRoleIsNeverSwitched pins that a Bot stays on its role and no other chat takes it, refused 409
+// bot_mode before the live session is asked, so the record, the session and every pill keep the mode they hold.
 func TestCmdSetMode_ABotsRoleIsNeverSwitched(t *testing.T) {
 	cases := []struct {
 		name     string

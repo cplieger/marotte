@@ -18,7 +18,7 @@
      "type": "step",
      "status": "aborted",
      "agentName": "asker",
-     "modelId": "claude-sonnet-5.5",
+     "modelId": "model-b-5.5",
      "effortLevel": "high",
      "sessionId": "sess_4cd99833-1963-491f-a2b0-a3b26b5b6e85",
      "startedAt": "2026-11-01T09:58:42.815Z",
@@ -37,7 +37,7 @@
    "reflection": false
   },
   "memoryConfigSource": "legacy",
-  "parentModelId": "claude-sonnet-5.5",
+  "parentModelId": "model-b-5.5",
   "parentEffortLevel": "high",
   "planRevision": 0
  },
@@ -46,7 +46,7 @@
    "nodeId": "ask",
    "type": "step",
    "agentName": "asker",
-   "modelId": "claude-sonnet-5.5",
+   "modelId": "model-b-5.5",
    "effortLevel": "high"
   }
  ]

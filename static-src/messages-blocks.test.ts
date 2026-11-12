@@ -800,11 +800,15 @@ describe("an event kind renders a row at its own seq", () => {
   // KAS re-pins before it sends the notice, so the switch row's "not available" guess is folded
   // into the fallback row, on replay and on live arrival alike.
   const repin = (seq: number): Entry =>
-    sealed("t", seq, "model_switched", { from: "opus-5", to: "sonnet-5", reason: "unavailable" });
+    sealed("t", seq, "model_switched", {
+      from: "model-a-5",
+      to: "model-b-5",
+      reason: "unavailable",
+    });
   const fallback = (seq: number): Entry =>
     sealed("t", seq, "model_fallback", {
-      from: "opus-5",
-      to: "sonnet-5",
+      from: "model-a-5",
+      to: "model-b-5",
       scope: "session",
       trigger: "refusal",
     });
@@ -814,8 +818,8 @@ describe("an event kind renders a row at its own seq", () => {
       text("t", 1, "tried"),
       repin(2),
       sealed("t", 3, "model_fallback", {
-        from: "opus-5",
-        to: "sonnet-5",
+        from: "model-a-5",
+        to: "model-b-5",
         trigger: "refusal",
         subagent: true,
       }),

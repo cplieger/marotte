@@ -225,7 +225,7 @@ func TestNewSession_FailsClosedWhenTheBudgetExpiresInsideTheAppliers(t *testing.
 	b := NewEngine(stallingFake(t, dir, "session/set_config_option"), dir)
 
 	// A different model makes applyInitialModel call and stall; Supervised carries the applier that matters.
-	_, err := openSessionOn(t, b, &marotte.SessionOpts{Model: "claude-opus-5", Supervised: true})
+	_, err := openSessionOn(t, b, &marotte.SessionOpts{Model: "model-a-5", Supervised: true})
 
 	if err == nil {
 		t.Fatal("NewSession succeeded with a session whose appliers never landed; " +

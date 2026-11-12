@@ -1767,7 +1767,7 @@ describe("history: the per-row delete", () => {
 describe("history: the row's subtitle and time", () => {
   /** The facts `/api/sessions` states for the chat that owns the row. */
   const facts = {
-    model: "claude-opus-5",
+    model: "model-a-5",
     current_mode_id: "vibe",
     turn_count: 34,
     credits: 12.5,
@@ -1782,12 +1782,12 @@ describe("history: the row's subtitle and time", () => {
 
   it("states model, mode, turns and credits from the session row", async () => {
     await render({ sessions: [{ ...ownedRow, ...facts }], runs: [] });
-    expect(sub("s:sess_owned")).toBe("claude-opus-5 · Default · 34 turns · 12.50 cr");
+    expect(sub("s:sess_owned")).toBe("model-a-5 · Default · 34 turns · 12.50 cr");
   });
 
   it("states a sub-cent metered chat as under a cent, never as 0.00", async () => {
     await render({ sessions: [{ ...ownedRow, ...facts, credits: 0.004 }], runs: [] });
-    expect(sub("s:sess_owned")).toBe("claude-opus-5 · Default · 34 turns · <0.01 cr");
+    expect(sub("s:sess_owned")).toBe("model-a-5 · Default · 34 turns · <0.01 cr");
   });
 
   it("omits a zero credit total rather than printing 0.00", async () => {
@@ -1796,7 +1796,7 @@ describe("history: the row's subtitle and time", () => {
       sessions: [{ ...ownedRow, ...facts, turn_count: 1, credits: 0 }],
       runs: [],
     });
-    expect(sub("s:sess_owned")).toBe("claude-opus-5 · Default · 1 turn");
+    expect(sub("s:sess_owned")).toBe("model-a-5 · Default · 1 turn");
   });
 
   it("prefers the agent's own description to the facts", async () => {
@@ -1824,7 +1824,7 @@ describe("history: the row's subtitle and time", () => {
     hasTab.mockReturnValue(false);
     tabsVersion.value++;
     await vi.waitFor(() => {
-      expect(sub("s:sess_owned")).toBe("claude-opus-5 · Default · 34 turns · 12.50 cr");
+      expect(sub("s:sess_owned")).toBe("model-a-5 · Default · 34 turns · 12.50 cr");
     });
   });
 

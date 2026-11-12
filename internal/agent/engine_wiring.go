@@ -257,7 +257,7 @@ func (rt *Runtime) onEngineEnded(gen uint64) {
 	rt.runs.mutations.dropGeneration(gen)
 	rt.runs.askEngineEnded()
 	rt.runs.recipes.invalidate()
-	rt.mcpRegistry.clearAll(rt.lifecycle.shutdownCtx)
+	rt.mcpRegistry.clearAll()
 }
 
 // closeSession releases a session the registry let go of; bridge.Session.Release owns every outcome after it.

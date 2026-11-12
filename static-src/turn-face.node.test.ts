@@ -181,8 +181,8 @@ describe("turnLastMessage", () => {
   });
 
   const applied = sealed("model_fallback", {
-    from: "opus-5",
-    to: "sonnet-5",
+    from: "model-a-5",
+    to: "model-b-5",
     scope: "session",
     trigger: "refusal",
   });
@@ -199,9 +199,12 @@ describe("turnLastMessage", () => {
   });
 
   it.each([
-    ["no target", { from: "opus-5", trigger: "availability", reason: "noServedTarget" }],
-    ["neither a target nor a reason", { from: "opus-5", trigger: "refusal" }],
-    ["a target", { from: "opus-5", to: "sonnet-5", trigger: "refusal", reason: "chainExhausted" }],
+    ["no target", { from: "model-a-5", trigger: "availability", reason: "noServedTarget" }],
+    ["neither a target nor a reason", { from: "model-a-5", trigger: "refusal" }],
+    [
+      "a target",
+      { from: "model-a-5", to: "model-b-5", trigger: "refusal", reason: "chainExhausted" },
+    ],
   ])("stops at a declined fallback naming %s, after which nothing continues", (_, payload) => {
     const t = oneTurn([text("a-say", "a"), sealed("model_fallback", payload), text("b-say", "b")]);
     expect(turnLastMessage(t)).toEqual(["b"]);
@@ -211,7 +214,7 @@ describe("turnLastMessage", () => {
     const t = oneTurn([
       text("a-say", "before"),
       sealed("model_fallback", {
-        from: "opus-5",
+        from: "model-a-5",
         trigger: "refusal",
         reason: "chainExhausted",
         subagent: true,

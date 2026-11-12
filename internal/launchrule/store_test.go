@@ -1124,7 +1124,7 @@ func TestEditKeepsTheWaitOnlyForTheSameSlot(t *testing.T) {
 		"same spec":     {edit: func(*Rule) {}, keep: true},
 		"another hour":  {edit: func(r *Rule) { r.When.Clock.Hour = 5 }},
 		"disabled":      {edit: func(r *Rule) { r.Enabled = false }},
-		"another model": {edit: func(r *Rule) { r.Model = "opus" }, keep: true},
+		"another model": {edit: func(r *Rule) { r.Model = "model-a" }, keep: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			st := openStore(t, t.TempDir())

@@ -136,7 +136,7 @@ func TestSettingsWrite_StillMergesAReadableDocument(t *testing.T) {
 	}
 	s := &Server{agent: &fakeEngine{}, push: &testPush{}, configDir: dir}
 
-	req := httptest.NewRequest(http.MethodPatch, "/api/settings", bytes.NewReader([]byte(`{"last_model":"opus"}`)))
+	req := httptest.NewRequest(http.MethodPatch, "/api/settings", bytes.NewReader([]byte(`{"last_model":"model-a"}`)))
 	rec := httptest.NewRecorder()
 	s.handleSettingsWrite(rec, req)
 
@@ -147,8 +147,8 @@ func TestSettingsWrite_StillMergesAReadableDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read back %s: %v", path, err)
 	}
-	if string(got[settings.KeyLastModel]) != `"opus"` {
-		t.Errorf("%s = %s, want \"opus\"", settings.KeyLastModel, got[settings.KeyLastModel])
+	if string(got[settings.KeyLastModel]) != `"model-a"` {
+		t.Errorf("%s = %s, want \"model-a\"", settings.KeyLastModel, got[settings.KeyLastModel])
 	}
 	if string(got[settings.KeyTheme]) != `"dark"` {
 		t.Errorf("%s = %s, want \"dark\" (the merge dropped a key the request did not name)",

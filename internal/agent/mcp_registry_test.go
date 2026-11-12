@@ -8,13 +8,16 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/go/sse/v2"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/translate"
 )
 
@@ -133,15 +136,10 @@ func TestMCPRegistry_AFailureRecordsItsError(t *testing.T) {
 	if snap[0].Error != "connection refused" {
 		t.Errorf("error = %q", snap[0].Error)
 	}
-	types := extractTypes(t, bufferedSince(h, before))
-	found := false
-	for _, tp := range types {
-		if tp == "mcp_failed" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("mcp_failed event not emitted, got %v", types)
+	frames := mcpStatusFrames(t, h, before, "broken")
+	if len(frames) != 1 || frames[0].Payload.Status == nil || frames[0].Payload.Status.State != mcpStateFailed ||
+		frames[0].Payload.Status.Error != "connection refused" {
+		t.Errorf("mcp_status frames for broken = %+v, want one failed row with its error", frames)
 	}
 }
 
@@ -150,27 +148,26 @@ func TestMCPRegistry_ClearAllEmitsDisconnect(t *testing.T) {
 	reportMCP(t, h, "s1", connectedMCP("a", marotte.MCPSource{}), connectedMCP("b", marotte.MCPSource{}))
 
 	before := h.bus.fanout.Position().Head
-	h.mcpRegistry.clearAll(t.Context())
+	h.mcpRegistry.clearAll()
 
 	if len(h.mcpRegistry.snapshot()) != 0 {
 		t.Error("clearAll left entries in registry")
 	}
-	types := extractTypes(t, bufferedSince(h, before))
-	got := 0
-	for _, tp := range types {
-		if tp == "mcp_disconnected" {
-			got++
-		}
+	if rows, _ := servedMCPStatus(t, h); len(rows) != 0 {
+		t.Errorf("served rows after clearAll = %+v, want none", rows)
 	}
-	if got != 2 {
-		t.Errorf("got %d mcp_disconnected events, want 2 (types=%v)", got, types)
+	for _, name := range []string{"a", "b"} {
+		frames := mcpStatusFrames(t, h, before, name)
+		if len(frames) != 1 || frames[0].Payload.Status != nil {
+			t.Errorf("mcp_status frames for %s = %+v, want one announcing it gone", name, frames)
+		}
 	}
 }
 
 func TestMCPRegistry_ClearAllOnEmptyNoEvents(t *testing.T) {
 	h := newHubWithMCPConfig(t, nil)
 	before := h.bus.fanout.Position().Head
-	h.mcpRegistry.clearAll(t.Context())
+	h.mcpRegistry.clearAll()
 	if head := h.bus.fanout.Position().Head; head != before {
 		t.Error("clearAll on empty registry emitted events")
 	}
@@ -409,7 +406,7 @@ func TestMCPRegistry_StatusJSONCarriesOrigin(t *testing.T) {
 		t.Fatalf("body = %s, want both origins on the wire", raw)
 	}
 	var body struct {
-		Servers []statusServer `json:"servers"`
+		Servers []marotte.MCPServerStatus `json:"servers"`
 	}
 	if err := json.Unmarshal([]byte(raw), &body); err != nil {
 		t.Fatal(err)
@@ -430,7 +427,7 @@ func TestMCPStatus_CarriesProvenanceFields(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.mcpRegistry.handleStatus(rec, httptest.NewRequest(http.MethodGet, "/api/mcp/status", nil))
 	var body struct {
-		Servers []statusServer `json:"servers"`
+		Servers []marotte.MCPServerStatus `json:"servers"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
@@ -477,7 +474,7 @@ func TestMCPRegistry_OnChangeFiresOutsideLock(t *testing.T) {
 	reportMCP(t, h, "s1", connectedMCP("a", marotte.MCPSource{}))
 	reportMCP(t, h, "s1", oauthMCP("a", "url"))
 	reportMCP(t, h, "s1", failedMCP("a", marotte.MCPSource{}, "err"))
-	h.mcpRegistry.clearAll(t.Context())
+	h.mcpRegistry.clearAll()
 
 	// Debounced, so wait for at least one callback.
 	select {
@@ -574,7 +571,7 @@ func TestMCPRegistry_HandleStatusReturnsJSON(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	var body struct {
-		Servers []statusServer `json:"servers"`
+		Servers []marotte.MCPServerStatus `json:"servers"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatal(err)
@@ -594,8 +591,171 @@ func TestMCPRegistry_HandleStatusReturnsJSON(t *testing.T) {
 	}
 }
 
-// BenchmarkMCPRegistrySnapshot measures Snapshot, called on every SSE reconnect and session door.
-func BenchmarkMCPRegistrySnapshot(b *testing.B) {
+// servedMCPStatus is GET /api/mcp/status decoded to the rows by name and the stamp it carries.
+func servedMCPStatus(t testing.TB, h *Runtime) (map[string]marotte.MCPServerStatus, *marotte.SubjectStamp) {
+	t.Helper()
+	body := servedMCPBody(t, h)
+	rows := make(map[string]marotte.MCPServerStatus, len(body.Servers))
+	for _, s := range body.Servers {
+		rows[s.Name] = s
+	}
+	return rows, body.Subject
+}
+
+func servedMCPBody(t testing.TB, h *Runtime) marotte.MCPStatusResponse {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.mcpRegistry.handleStatus(rec, httptest.NewRequest(http.MethodGet, "/api/mcp/status", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/mcp/status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var body marotte.MCPStatusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode GET /api/mcp/status: %v", err)
+	}
+	return body
+}
+
+// snapshot is the projection the records give now, sorted by name: what the served rows equal once every write
+// committed.
+func (reg *mcpRegistry) snapshot() []mcpServerRuntime {
+	reg.mu.RLock()
+	defer reg.mu.RUnlock()
+	out := make([]mcpServerRuntime, 0, len(reg.servers))
+	for _, row := range reg.projectLocked() {
+		out = append(out, mcpServerRuntime(*row))
+	}
+	slices.SortFunc(out, func(a, b mcpServerRuntime) int { return strings.Compare(a.Name, b.Name) })
+	return out
+}
+
+// statusRowFrame is one mcp_status frame and the row it announces.
+type statusRowFrame struct {
+	Type    marotte.EventType        `json:"type"`
+	Payload marotte.MCPStatusPayload `json:"payload"`
+}
+
+// mcpStatusFrames is every mcp_status frame after sinceID that names server.
+func mcpStatusFrames(t *testing.T, h *Runtime, sinceID uint64, server string) []statusRowFrame {
+	t.Helper()
+	var out []statusRowFrame
+	for _, e := range eventsSince(h, sinceID, marotte.EventMCPStatus) {
+		var f statusRowFrame
+		if err := json.Unmarshal(e.Event.Data, &f); err != nil {
+			t.Fatalf("unmarshal mcp_status: %v", err)
+		}
+		if f.Type == marotte.EventMCPStatus && f.Payload.Server == server {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// mcpFramesFor is every frame after sinceID whose payload names server, with the stamp each carries.
+func mcpFramesFor(t *testing.T, h *Runtime, sinceID uint64, server string) []marotte.ServerEvent {
+	t.Helper()
+	var out []marotte.ServerEvent
+	for _, e := range bufferedSince(h, sinceID) {
+		var msg marotte.ServerEvent
+		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
+			t.Fatalf("unmarshal event: %v", err)
+		}
+		if p, ok := msg.Payload.(map[string]any); ok && p["server"] == server {
+			out = append(out, msg)
+		}
+	}
+	return out
+}
+
+func stampVersion(t *testing.T, s *marotte.SubjectStamp) uint64 {
+	t.Helper()
+	v, err := strconv.ParseUint(s.Version, 10, 64)
+	if err != nil {
+		t.Fatalf("stamp version %q is not a counter: %v", s.Version, err)
+	}
+	return v
+}
+
+// A client orders the MCP rows it copies by the `mcp_status` version: each row frame carries a version above the
+// last, and the inventory read carries the version of the last frame it already reflects.
+func TestMCPStatusFramesCarryIncreasingVersions(t *testing.T) {
+	h := newHubWithMCPConfig(t, nil)
+	before := h.bus.fanout.Position().Head
+
+	reportMCP(t, h, "s1", connectedMCP("s", marotte.MCPSource{}))
+	reportMCP(t, h, "s1", failedMCP("s", marotte.MCPSource{}, "boom"))
+
+	frames := mcpFramesFor(t, h, before, "s")
+	if len(frames) < 2 {
+		t.Fatalf("frames naming s = %d, want one per state change (2)", len(frames))
+	}
+	var last uint64
+	for i, f := range frames {
+		if f.Subject == nil || f.Subject.Kind != "mcp_status" {
+			t.Fatalf("frame %d (%s) subject = %+v, want an mcp_status stamp", i, f.Type, f.Subject)
+		}
+		v := stampVersion(t, f.Subject)
+		if v <= last {
+			t.Errorf("frame %d version %d, want above the previous frame's %d", i, v, last)
+		}
+		last = v
+	}
+	rows, stamp := servedMCPStatus(t, h)
+	if stamp == nil || stamp.Kind != "mcp_status" || stampVersion(t, stamp) != last {
+		t.Errorf("GET /api/mcp/status subject = %+v, want mcp_status at the last frame's version %d", stamp, last)
+	}
+	if rows["s"].State != mcpStateFailed {
+		t.Errorf("served row s = %+v, want failed", rows["s"])
+	}
+	states, err := h.resolveDigest(t.Context(), []sse.Held{held(subject.KindMCPStatus, "")})
+	if err != nil {
+		t.Fatalf("resolveDigest: %v", err)
+	}
+	if st := stateFor(t, states, subject.KindMCPStatus, ""); st.Status != sse.StatusCurrent || st.Version != stamp.Version {
+		t.Errorf("digest mcp_status = {%q %q}, want the served version %q", st.Version, st.Status, stamp.Version)
+	}
+}
+
+// The relay latch changes the served row, so it moves the version and announces the row: a client holding the
+// earlier version would otherwise refuse the read that shows it.
+func TestRelayLatchMovesTheStatusVersion(t *testing.T) {
+	h := newHubWithMCPConfig(t, nil)
+	reportMCP(t, h, "sess_a", oauthMCP("remote", "https://auth.example/passive"))
+	if _, err := h.mcpRegistry.claimSignIn(t.Context(), "remote"); err != nil {
+		t.Fatalf("claimSignIn: %v", err)
+	}
+	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: "https://auth.example/a?state=s", Server: "remote"}, false); shown.how != consentOnRow {
+		t.Fatalf("anchorConsentURL = %+v, want on the standing sign-in's row", shown)
+	}
+	rows, stamp := servedMCPStatus(t, h)
+	if stamp == nil || rows["remote"].State != mcpStateSigningIn || rows["remote"].Relayed {
+		t.Fatalf("before the relay: subject %+v, row %+v; want a stamped signing_in row not yet relayed", stamp, rows["remote"])
+	}
+	prev := stampVersion(t, stamp)
+	before := h.bus.fanout.Position().Head
+
+	if _, err := h.mcpRegistry.beginOAuthRelay(t.Context(), "s"); err != nil {
+		t.Fatalf("beginOAuthRelay: %v", err)
+	}
+
+	rows, stamp = servedMCPStatus(t, h)
+	if !rows["remote"].Relayed {
+		t.Errorf("served row after the relay = %+v, want relayed", rows["remote"])
+	}
+	if stamp == nil || stampVersion(t, stamp) <= prev {
+		t.Errorf("GET /api/mcp/status subject after the relay = %+v, want a version above %d", stamp, prev)
+	}
+	var announced bool
+	for _, f := range mcpFramesFor(t, h, before, "remote") {
+		announced = announced || f.Type == "mcp_status"
+	}
+	if !announced {
+		t.Error("the relay latch sent no mcp_status frame for remote")
+	}
+}
+
+// BenchmarkMCPRegistryStatus measures GET /api/mcp/status, read on every page load and reconcile.
+func BenchmarkMCPRegistryStatus(b *testing.B) {
 	for _, n := range []int{1, 5, 20} {
 		b.Run(fmt.Sprintf("servers=%d", n), func(b *testing.B) {
 			h := newHubWithMCPConfig(b, nil)
@@ -606,7 +766,7 @@ func BenchmarkMCPRegistrySnapshot(b *testing.B) {
 			reportMCP(b, h, "s1", servers...)
 			b.ResetTimer()
 			for b.Loop() {
-				_ = h.mcpRegistry.snapshot()
+				h.mcpRegistry.handleStatus(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/mcp/status", nil))
 			}
 		})
 	}
@@ -663,8 +823,11 @@ func TestMCPRegistry_UnionAcrossSessionViews(t *testing.T) {
 	if got := snapshotNames(h); !slices.Equal(got, []string{"github"}) {
 		t.Errorf("records after sess_b ended = %v, want [github]", got)
 	}
-	if got := filterTypes(extractTypes(t, bufferedSince(h, before)), string(marotte.EventMCPDisconnected)); len(got) != 1 {
-		t.Errorf("mcp_disconnected after sess_b ended = %d, want one, for linear", len(got))
+	if got := eventsSince(h, before, marotte.EventMCPStatus); len(got) != 1 {
+		t.Errorf("mcp_status frames after sess_b ended = %d, want one, for linear", len(got))
+	}
+	if frames := mcpStatusFrames(t, h, before, "linear"); len(frames) != 1 || frames[0].Payload.Status != nil {
+		t.Errorf("mcp_status frames for linear = %+v, want one announcing it gone", frames)
 	}
 }
 
@@ -725,8 +888,8 @@ func TestMCPRegistry_IdenticalFrameKeepsTheRelayLatch(t *testing.T) {
 	if row := rowOf(t, h, "remote"); row.State != mcpStateSigningIn || !row.Relayed {
 		t.Errorf("row after identical frames = %+v, want it still signing_in and relayed", row)
 	}
-	if got := filterTypes(extractTypes(t, bufferedSince(h, before)), string(marotte.EventMCPOAuthNeeded)); len(got) != 0 {
-		t.Errorf("mcp_oauth_needed after identical frames = %d, want none", len(got))
+	if got := mcpStatusFrames(t, h, before, "remote"); len(got) != 0 {
+		t.Errorf("mcp_status frames after identical frames = %+v, want none", got)
 	}
 }
 
@@ -885,7 +1048,7 @@ func TestMCPRegistry_AnEngineEndClearsThePool(t *testing.T) {
 	h := newHubWithMCPConfig(t, nil)
 	reportMCP(t, h, "sess_a", resourceMCP("docs", "d://x"))
 
-	h.mcpRegistry.clearAll(t.Context())
+	h.mcpRegistry.clearAll()
 
 	if got, want := poolBody(t, h, ""), `{"servers":[]}`; got != want {
 		t.Errorf("pool after clearAll = %s, want %s", got, want)
@@ -900,7 +1063,7 @@ func TestMCPRegistry_PoolChangesAreAnnounced(t *testing.T) {
 
 	reportMCP(t, h, "sess_a", resourceMCP("docs", "d://x"))
 	reportMCP(t, h, "sess_a", resourceMCP("docs", "d://x"))
-	h.mcpRegistry.clearAll(t.Context())
+	h.mcpRegistry.clearAll()
 
 	want := string(marotte.EventMCPPoolChanged)
 	if got := extractTypes(t, bufferedSince(h, before)); len(filterTypes(got, want)) != 2 {
@@ -919,7 +1082,7 @@ func filterTypes(types []string, want string) []string {
 }
 
 // A session where the server failed takes the row from one where it connected: the row reads failed with its error and
-// mcp_failed is sent, while "Connected integrations" still lists the server the connected session can use.
+// its failed row is announced, while "Connected integrations" still lists the server the connected session can use.
 func TestMCPRegistry_AFailedSessionTakesTheRowFromAConnectedOne(t *testing.T) {
 	h := newHubWithMCPConfig(t, enabledConfig("linear"))
 	reportMCP(t, h, "sess-a", connectedMCP("linear", marotte.MCPSource{}))
@@ -930,9 +1093,9 @@ func TestMCPRegistry_AFailedSessionTakesTheRowFromAConnectedOne(t *testing.T) {
 	if row.State != mcpStateFailed || row.Error != "spawn ENOENT" {
 		t.Errorf("row = {state %q, error %q}, want failed with the failed session's error", row.State, row.Error)
 	}
-	want := string(marotte.EventMCPFailed)
-	if got := extractTypes(t, bufferedSince(h, before)); len(filterTypes(got, want)) != 1 {
-		t.Errorf("events after sess-b failed = %v, want one %s", got, want)
+	if frames := mcpStatusFrames(t, h, before, "linear"); len(frames) != 1 || frames[0].Payload.Status == nil ||
+		frames[0].Payload.Status.State != mcpStateFailed {
+		t.Errorf("mcp_status frames after sess-b failed = %+v, want one failed row", frames)
 	}
 	if got := h.MCPSnapshot(); len(got) != 1 || got[0].Name != "linear" {
 		t.Errorf("MCPSnapshot = %+v, want linear, which sess-a has connected", got)

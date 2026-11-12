@@ -116,10 +116,10 @@ describe("entryRow: the subtitle region", () => {
     const row = entryRow({
       key: "k",
       title: "t",
-      sub: { kind: "line", text: "gpt-5 · Plan · 4 turns" },
+      sub: { kind: "line", text: "model-e-5 · Plan · 4 turns" },
     });
     const sub = row.querySelector(".entry-sub");
-    expect(sub?.textContent).toBe("gpt-5 · Plan · 4 turns");
+    expect(sub?.textContent).toBe("model-e-5 · Plan · 4 turns");
     expect(sub?.classList.contains("entry-sub-clamp")).toBe(false);
   });
 

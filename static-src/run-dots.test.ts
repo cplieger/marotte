@@ -75,7 +75,7 @@ vi.mock("./run-store.js", () => ({
   // The label, resolved by the store over the same cell. Untracked in production, which costs
   // nothing here: the status read above is already the subscription.
   runLabelOf: vi.fn((id: string) => m.states.get(id)?.displayName ?? ""),
-  // The store's seam for "this client now knows about this run", which the live-runs rebuild
+  // The store's seam for "this client now knows about this run", which the live-runs inventory
   // reports each row to. Recorded rather than inert: whether a consumer registers at all is the
   // half a store-side test cannot see.
   registerLiveRunObserver: vi.fn((fn: (workflowID: string) => void) => {
@@ -324,13 +324,13 @@ describe("a tracked run without a tab keeps its place and paints on arrival", ()
   });
 });
 
-// The live-runs rebuild is the THIRD door into "this client knows about this run", and it is the
+// The live-runs inventory is the THIRD door into "this client knows about this run", and it is the
 // only one a PAUSED run restored on boot reaches: such a run emits no frame at all and nothing
 // paints its view, so without a consumer on the store's seam its row keeps the factory's
 // placeholder and its dot stays blank for the life of the pause.
 
-describe("the live-runs rebuild reaches the dot, which a boot-restored run needs", () => {
-  it("registers with the store, so the rebuild has something to report to", () => {
+describe("the live-runs inventory reaches the dot, which a boot-restored run needs", () => {
+  it("registers with the store, so the inventory has something to report to", () => {
     expect(typeof observer).toBe("function");
   });
 

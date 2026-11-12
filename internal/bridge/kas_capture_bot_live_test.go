@@ -33,7 +33,7 @@ const (
 	captureBotGoalNext = "Answer questions about this workspace. Your codeword is " + botCodewordNext + "."
 )
 
-// botProbes are the approvals P2 compares between a Default chat and a Bot under each Permission profile: the
+// botProbes are the approvals runBotPolicy compares between a Default chat and a Bot under each Permission profile: the
 // default agent rules' reach (a workspace read, the read-only shell list, kiro.dev) and what lies past it. A web_fetch
 // target is a host name, as KAS's approval reads the tool's; 3.1.0's policy check asks for every web_fetch.
 var botProbes = []struct {
@@ -83,15 +83,23 @@ func (c *capture) writeMemory(rec *marotte.Chat, body string) error {
 	return os.WriteFile(file, []byte(body), 0o600)
 }
 
-// botDoor opens rec's session as marotte's Bot door does: the role on the door, then the memory file added as a
-// context file while memory is on, or removed on a load while it is off (internal/agent holdBotMemory).
+// botDoor opens rec's session as marotte's Bot door does: the role on the door, the Bot's directory among the
+// session's additional directories and granted to it while memory is on, then the memory file added as a context file,
+// or removed on a load while memory is off (internal/agent holdBotMemory).
 func (c *capture) botDoor(ctx context.Context, e *bridge.Engine, rec *marotte.Chat, sessionID string, presets []string) (*bridge.Session, int, error) {
 	o := botOpts(c.botRole(rec), presets)
 	o.SessionID = sessionID
+	var dirs []string
+	if rec.Bot.Memory {
+		dir, _ := bot.Dir(rec.ID, bot.Paths{KiroHome: c.home})
+		dirs = []string{dir}
+		o.AdditionalDirectories = dirs
+	}
 	s, lane, err := c.openSession(ctx, e, o)
 	if err != nil {
 		return nil, 0, err
 	}
+	c.grant(s.SessionID(), dirs...)
 	sub := marotte.SessionContextAdd
 	switch {
 	case !rec.Bot.Memory && sessionID == "":
@@ -140,6 +148,9 @@ func (c *capture) openSession(ctx context.Context, e *bridge.Engine, o *marotte.
 	}
 	if len(o.Presets) > 0 {
 		kiro["policyPreset"] = o.Presets
+	}
+	if len(o.AdditionalDirectories) > 0 {
+		params["additionalDirectories"] = o.AdditionalDirectories
 	}
 	params["_meta"] = map[string]any{"kiro": kiro}
 	req := c.out(lane, map[string]any{"method": method, "params": params})
@@ -230,8 +241,8 @@ func onRole(s *bridge.Session, step string) error {
 	return nil
 }
 
-// runBotRole is P1: the role on session/new, on a reopen, on a reopen after an edited role (goal changed, memory on
-// then off), and a reopen that sends no role. A regular chat opens first, the catalog baseline P1b compares with.
+// runBotRole captures the role on session/new, on a reopen, on a reopen after an edited role (goal changed, memory on
+// then off), and a reopen that sends no role. A regular chat opens first, the baseline whose modes never list the role.
 func runBotRole(ctx context.Context, c *capture) error {
 	e, err := c.startEngine(ctx, marotte.EngineFeatures{})
 	if err != nil {
@@ -334,7 +345,7 @@ func (c *capture) notFounds(lane int) int {
 	return n
 }
 
-// runBotPolicy is P2: under each Permission profile, the same approvals on a Default chat and on a Bot, then the
+// runBotPolicy: under each Permission profile, the same approvals on a Default chat and on a Bot, then the
 // memory write on the Bot; and each session's own list of its tools, sub-agents on.
 func runBotPolicy(ctx context.Context, c *capture) error {
 	e, err := c.startEngine(ctx, marotte.EngineFeatures{AutoDelegation: "on"})
@@ -425,7 +436,7 @@ func (c *capture) policyCheck(ctx context.Context, s *bridge.Session, lane int, 
 	return nil
 }
 
-// runBotMemory is P3 on the context-file path: a memory file added before it exists loads once written, an edit
+// runBotMemory covers the context-file path: a memory file added before it exists loads once written, an edit
 // reaches the next turn, a deleted file loads nothing and a recreated one loads again. Neither a regular session on the
 // same engine nor a fork of the Bot lists the file, and KAS writes the path only into the Bot session's own files.
 func runBotMemory(ctx context.Context, c *capture) error {

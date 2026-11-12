@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/go/sse/v2/ssetest"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -200,7 +201,7 @@ func TestConnect_CarriesEveryHeldLeaseAndStatesTheInventory(t *testing.T) {
 	}
 }
 
-// liveRunRows serves both doors, so the handshake and endpoint agree.
+// liveRunRowsStamped serves both doors, so the handshake and endpoint agree.
 func TestLiveRunRows_AnswersIdenticallyToTheEndpoint(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	store := rt.runs.leaseStore()
@@ -211,10 +212,10 @@ func TestLiveRunRows_AnswersIdenticallyToTheEndpoint(t *testing.T) {
 	}
 
 	fromHandshake := connectPayload(t, rt, "").LiveRuns
-	fromMethod := rt.runs.liveRunRows()
+	fromMethod, _ := rt.runs.liveRunRowsStamped()
 
 	if len(fromHandshake) != len(fromMethod) {
-		t.Fatalf("the handshake carries %d rows and liveRunRows answers %d",
+		t.Fatalf("the handshake carries %d rows and liveRunRowsStamped answers %d",
 			len(fromHandshake), len(fromMethod))
 	}
 	byID := map[string]marotte.LiveRun{}
@@ -231,6 +232,33 @@ func TestLiveRunRows_AnswersIdenticallyToTheEndpoint(t *testing.T) {
 			t.Errorf("run %q reads %+v on the handshake and %+v from the projection",
 				h.WorkflowID, h, m)
 		}
+	}
+}
+
+// The handshake's rows and its `runs` version come from one lease-store read, so a client that adopts them orders the
+// next live_run frame and inventory read against the version those rows are at.
+func TestConnect_LiveRunsVersionIsTheInventoryReadsVersion(t *testing.T) {
+	rt := newBudgetRuntime(t)
+	store := rt.runs.leaseStore()
+	if err := store.Put(t.Context(), &runlease.Lease{WorkflowID: "wf_a", ChatID: "c1", Recipe: "r", Origin: runlease.OriginManual}); err != nil {
+		t.Fatalf("put wf_a: %v", err)
+	}
+	if err := store.SetDeadline(t.Context(), "wf_a", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("arm wf_a: %v", err)
+	}
+
+	p := connectPayload(t, rt, "")
+	out := getLiveRuns(t, rt.runRoutes)
+
+	if out.Subject == nil || p.LiveRunsVersion != out.Subject.Version {
+		t.Errorf("connect live_runs_version = %q, GET /api/runs/live subject = %+v: want the same version",
+			p.LiveRunsVersion, out.Subject)
+	}
+	if p.LiveRunsVersion == subject.Unminted {
+		t.Errorf("live_runs_version = %q after two row changes, want a minted version", p.LiveRunsVersion)
+	}
+	if len(p.LiveRuns) != 1 || !p.LiveRuns[0].Executing {
+		t.Errorf("connect live_runs = %+v, want wf_a executing", p.LiveRuns)
 	}
 }
 

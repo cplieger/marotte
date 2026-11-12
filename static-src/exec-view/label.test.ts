@@ -11,11 +11,11 @@ afterEach(() => {
 describe("paintLabel", () => {
   it("writes the verbatim id, split into qualifier and leaf", () => {
     const target = document.createElement("span");
-    paintLabel(target, { label: "review/code-adversary-claude", qualifier: "review/" });
-    expect(target.textContent).toBe("review/code-adversary-claude");
+    paintLabel(target, { label: "review/code-adversary-a", qualifier: "review/" });
+    expect(target.textContent).toBe("review/code-adversary-a");
     expect(target.classList.contains("ev-qualified")).toBe(true);
     expect(target.querySelector(".ev-q")?.textContent).toBe("review/");
-    expect(target.querySelector(".ev-leaf")?.textContent).toBe("code-adversary-claude");
+    expect(target.querySelector(".ev-leaf")?.textContent).toBe("code-adversary-a");
   });
 
   it("writes plain text with no qualifier, or one that is not a strict prefix", () => {
@@ -52,7 +52,7 @@ describe("a qualified id in a bounded column", () => {
     target.className = "ev-tl-name";
     target.style.inlineSize = "12ch";
     document.body.append(target);
-    paintLabel(target, { label: "review/code-adversary-gpt", qualifier: "review/" });
+    paintLabel(target, { label: "review/code-adversary-b", qualifier: "review/" });
     const q = target.querySelector<HTMLElement>(".ev-q")!;
     const leaf = target.querySelector<HTMLElement>(".ev-leaf")!;
     // The qualifier is down to its floor while the leaf keeps most of the column.

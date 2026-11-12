@@ -205,7 +205,7 @@ describe("entryRenders", () => {
   });
 
   it("refuses a sub-agent's model_fallback, which mounts no row", () => {
-    const sub = { from: "opus-5", to: "sonnet-5", trigger: "refusal", subagent: true };
+    const sub = { from: "model-a-5", to: "model-b-5", trigger: "refusal", subagent: true };
     expect(entryRenders(entry(1, "model_fallback", sub), "", NO_FOLDS)).toBe(false);
     expect(
       entryRenders(entry(1, "model_fallback", { ...sub, subagent: false }), "", NO_FOLDS),
@@ -271,10 +271,10 @@ describe("turnFolds", () => {
   // KAS re-pins the model before it sends the fallback notice, so the guessed "not available"
   // switch row the re-pin wrote is the notice's to explain.
   describe("a model fallback folds the re-pin row it explains", () => {
-    const repin = (seq: number, to = "sonnet-5"): Entry =>
-      entry(seq, "model_switched", { from: "opus-5", to, reason: "unavailable" });
-    const fallback = (seq: number, to = "sonnet-5"): Entry =>
-      entry(seq, "model_fallback", { from: "opus-5", to, trigger: "refusal", scope: "session" });
+    const repin = (seq: number, to = "model-b-5"): Entry =>
+      entry(seq, "model_switched", { from: "model-a-5", to, reason: "unavailable" });
+    const fallback = (seq: number, to = "model-b-5"): Entry =>
+      entry(seq, "model_fallback", { from: "model-a-5", to, trigger: "refusal", scope: "session" });
 
     it("hides the switch row the next entry falls back from", () => {
       const t = turn("t1", [text(1), repin(2), fallback(3)]);
@@ -287,18 +287,18 @@ describe("turnFolds", () => {
     });
 
     it.each([
-      ["moved to another model", [repin(1), fallback(2, "haiku-5")]],
+      ["moved to another model", [repin(1), fallback(2, "model-c-5")]],
       ["was not the entry right before", [repin(1), text(2), fallback(3)]],
       [
         "named no reason",
-        [entry(1, "model_switched", { from: "opus-5", to: "sonnet-5" }), fallback(2)],
+        [entry(1, "model_switched", { from: "model-a-5", to: "model-b-5" }), fallback(2)],
       ],
       [
         "was declined, naming no model",
         [
           repin(1),
           entry(2, "model_fallback", {
-            from: "opus-5",
+            from: "model-a-5",
             trigger: "availability",
             reason: "chainExhausted",
           }),
@@ -309,8 +309,8 @@ describe("turnFolds", () => {
         [
           repin(1),
           entry(2, "model_fallback", {
-            from: "opus-5",
-            to: "sonnet-5",
+            from: "model-a-5",
+            to: "model-b-5",
             trigger: "availability",
             scope: "session",
             subagent: true,

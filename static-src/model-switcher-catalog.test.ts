@@ -107,7 +107,7 @@ describe("the model card with no models", () => {
     retried.calls = 0;
     (activeSession as unknown as { value: TestSession }).value = {
       id: "c1",
-      model: "opus-4.7",
+      model: "model-a-4.7",
       effort: "",
     };
   });
@@ -142,7 +142,7 @@ describe("the model card with no models", () => {
   });
 
   it("stops being a listbox when a re-read answers with no models", () => {
-    cachedModels = [model("opus-4.7")];
+    cachedModels = [model("model-a-4.7")];
     onExpand.fn?.();
     expect(scroller().getAttribute("role")).toBe("listbox");
 
@@ -157,7 +157,7 @@ describe("the model card with no models", () => {
   it("becomes a labelled listbox again once a catalog arrives", () => {
     notice = { text: "Loading models…", busy: true, retry: false };
     onExpand.fn?.();
-    cachedModels = [model("opus-4.7")];
+    cachedModels = [model("model-a-4.7")];
     notice = null;
     onExpand.fn?.();
 
@@ -197,7 +197,7 @@ describe("the model card with no models", () => {
     onExpand.fn?.();
     expect(retryBtn()).not.toBe(null);
 
-    cachedModels = [model("opus-4.7")];
+    cachedModels = [model("model-a-4.7")];
     notice = null;
     onExpand.fn?.();
 

@@ -100,9 +100,9 @@ describe("splitFrontMatter field parsing", () => {
 
   // Every agent spec uses `description: >`, and a per-line reader returns the indicator.
   it("folds a `>` block scalar into one line", () => {
-    const doc = "---\ndescription: >\n  First line\n  second line\nmodel: opus\n---\n";
+    const doc = "---\ndescription: >\n  First line\n  second line\nmodel: model-a\n---\n";
     expect(valueOf(doc, "description")).toBe("First line second line");
-    expect(valueOf(doc, "model")).toBe("opus");
+    expect(valueOf(doc, "model")).toBe("model-a");
   });
 
   it("folds a `|` block scalar and accepts chomping and indent indicators", () => {
@@ -123,14 +123,14 @@ describe("splitFrontMatter field parsing", () => {
   });
 
   it("reads a block sequence", () => {
-    const doc = "---\ntools:\n  - read\n  - write\nmodel: sonnet\n---\n";
+    const doc = "---\ntools:\n  - read\n  - write\nmodel: model-b\n---\n";
     expect(itemsOf(doc, "tools")).toEqual(["read", "write"]);
     // The sequence reader must hand the cursor back at the right line.
-    expect(valueOf(doc, "model")).toBe("sonnet");
+    expect(valueOf(doc, "model")).toBe("model-b");
   });
 
   it("keeps a declared key with no value rather than dropping it", () => {
-    const doc = "---\ntools:\nmodel: opus\n---\n";
+    const doc = "---\ntools:\nmodel: model-a\n---\n";
     expect(keys(doc)).toEqual(["tools", "model"]);
     expect(itemsOf(doc, "tools")).toEqual([]);
   });

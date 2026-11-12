@@ -87,7 +87,7 @@ function everyKind(turn: string): Entry[] {
       "plan",
       { entries: [{ content: "Write the failing test", priority: "high", status: "in_progress" }] },
     ],
-    ["model_switched", { from: "sonnet-5", to: "opus-5" }],
+    ["model_switched", { from: "model-b-5", to: "model-a-5" }],
     ["mode_switched", { from: "plan", to: "vibe", source: "user" }],
     ["context_reset", { cause: "empty_retry" }],
     ["compaction", { summary: "Kept the plan and the failing test." }],

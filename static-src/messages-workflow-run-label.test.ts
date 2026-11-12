@@ -208,12 +208,12 @@ describe("a step's message card", () => {
     const run = runID("card");
     names.set(run, "forge-f2-build");
     const c = "c-label-card";
-    const view = await paint(c, [stepUpdate(2, run, "P4-REVIEW-GPT")]);
+    const view = await paint(c, [stepUpdate(2, run, "P4-REVIEW-B")]);
 
     await vi.waitFor(() => {
       expect(runButtons(view).map((b) => b.textContent)).toEqual(["forge-f2-build"]);
     });
-    expect(view.querySelector(".steer-note-label")?.textContent).toBe("P4-REVIEW-GPT");
+    expect(view.querySelector(".steer-note-label")?.textContent).toBe("P4-REVIEW-B");
 
     runButtons(view)[0]?.click();
 
@@ -246,11 +246,11 @@ describe("a step's message card, to a screen reader", () => {
   it("names the run in the card's accessible name once the run's name arrives", async () => {
     const run = runID("aria");
     names.set(run, "forge-f2-build");
-    const view = await paint("c-label-aria", [stepUpdate(2, run, "P4-REVIEW-GPT")]);
+    const view = await paint("c-label-aria", [stepUpdate(2, run, "P4-REVIEW-B")]);
 
     await vi.waitFor(() => {
       expect(view.querySelector(".steer-note")?.getAttribute("aria-label")).toBe(
-        "forge-f2-build, P4-REVIEW-GPT: P4-REVIEW-GPT done",
+        "forge-f2-build, P4-REVIEW-B: P4-REVIEW-B done",
       );
     });
   });
@@ -262,7 +262,7 @@ describe("the grouped step updates box", () => {
     names.set(run, "forge-f2-build");
     const c = "c-label-box";
     const view = await paint(c, [
-      stepUpdate(2, run, "P4-REVIEW-GPT"),
+      stepUpdate(2, run, "P4-REVIEW-B"),
       stepUpdate(3, run, "P4-AGGREGATE"),
     ]);
 
@@ -369,7 +369,7 @@ describe("the run state a step card holds", () => {
   it("lets the run go when the last note is torn down", async () => {
     const run = runID("last");
     names.set(run, "forge-f2-build");
-    const view = await paint("c-hold-last", [stepUpdate(2, run, "P4-REVIEW-GPT")]);
+    const view = await paint("c-hold-last", [stepUpdate(2, run, "P4-REVIEW-B")]);
     await vi.waitFor(() => {
       expect(runButtons(view)).toHaveLength(1);
       expect(runStore.peekRunState(run)).toBeDefined();
@@ -385,7 +385,7 @@ describe("the run state a step card holds", () => {
     names.set(run, "forge-f2-build");
     const view = await paint("c-hold-card", [
       ...launched(2, run),
-      stepUpdate(4, run, "P4-REVIEW-GPT"),
+      stepUpdate(4, run, "P4-REVIEW-B"),
     ]);
     await vi.waitFor(() => {
       expect(runButtons(view).map((b) => b.textContent)).toEqual(["forge-f2-build"]);
@@ -401,7 +401,7 @@ describe("the run state a step card holds", () => {
     names.set(run, "forge-f2-build");
     const view = await paint("c-hold-kept", [
       ...launched(2, run),
-      stepUpdate(4, run, "P4-REVIEW-GPT"),
+      stepUpdate(4, run, "P4-REVIEW-B"),
     ]);
     await vi.waitFor(() => {
       expect(runButtons(view)).toHaveLength(1);
@@ -418,7 +418,7 @@ describe("the run state a step card holds", () => {
     const run = runID("two");
     names.set(run, "forge-f2-build");
     const view = await paint("c-hold-two", [
-      stepUpdate(2, run, "P4-REVIEW-GPT"),
+      stepUpdate(2, run, "P4-REVIEW-B"),
       stepUpdate(3, run, "P4-AGGREGATE"),
     ]);
     await vi.waitFor(() => {
@@ -446,7 +446,7 @@ describe("the run state a step card holds", () => {
       }
       gate.holding = true;
       gate.releases.length = 0;
-      await paint(`c-hold-late-${String(answers)}`, [stepUpdate(2, run, "P4-REVIEW-GPT")]);
+      await paint(`c-hold-late-${String(answers)}`, [stepUpdate(2, run, "P4-REVIEW-B")]);
       await vi.waitFor(() => {
         expect(gate.releases).toHaveLength(1);
       });
@@ -471,7 +471,7 @@ describe("the run state a step card holds", () => {
     names.set(run, "forge-f2-build");
     gate.holding = true;
     gate.releases.length = 0;
-    await paint("c-hold-late-event", [stepUpdate(2, run, "P4-REVIEW-GPT")]);
+    await paint("c-hold-late-event", [stepUpdate(2, run, "P4-REVIEW-B")]);
     await vi.waitFor(() => {
       expect(gate.releases).toHaveLength(1);
     });
@@ -513,13 +513,13 @@ describe("the run state a step card holds", () => {
     gate.holding = true;
     gate.releases.length = 0;
     const c = "c-hold-back-note";
-    await paint(c, [stepUpdate(2, run, "P4-REVIEW-GPT")]);
+    await paint(c, [stepUpdate(2, run, "P4-REVIEW-B")]);
     await vi.waitFor(() => {
       expect(gate.releases).toHaveLength(1);
     });
 
     messages.teardownAll();
-    const view = await paint(c, [stepUpdate(2, run, "P4-REVIEW-GPT")]);
+    const view = await paint(c, [stepUpdate(2, run, "P4-REVIEW-B")]);
     gate.holding = false;
     gate.releases[0]?.();
 
@@ -533,7 +533,7 @@ describe("the run state a step card holds", () => {
     names.set(run, "forge-f2-build");
     gate.holding = true;
     gate.releases.length = 0;
-    const view = await paint("c-hold-detached", [stepUpdate(2, run, "P4-REVIEW-GPT")]);
+    const view = await paint("c-hold-detached", [stepUpdate(2, run, "P4-REVIEW-B")]);
     await vi.waitFor(() => {
       expect(gate.releases).toHaveLength(1);
     });
@@ -622,7 +622,7 @@ describe("the run state a step card holds", () => {
     names.set(run, "forge-f2-build");
     const view = await paint("c-hold-once", [
       ...launched(2, run),
-      stepUpdate(4, run, "P4-REVIEW-GPT"),
+      stepUpdate(4, run, "P4-REVIEW-B"),
     ]);
     await vi.waitFor(() => {
       expect(runButtons(view).map((b) => b.textContent)).toEqual(["forge-f2-build"]);
@@ -641,7 +641,7 @@ describe("a step card redrawn when its message is taken up", () => {
     const c = "c-label-redraw";
     const view = await paint(
       c,
-      [stepUpdate(2, run, "P4-REVIEW-GPT")],
+      [stepUpdate(2, run, "P4-REVIEW-B")],
       [
         [
           "t2",
@@ -669,7 +669,7 @@ describe("a step card redrawn when its message is taken up", () => {
         "t2",
         1,
         "steer_delivered",
-        { steer_id: `wfmsg-${run}-P4-REVIEW-GPT`, kas_id: "notify-1", read_ts: SENT + 1000 },
+        { steer_id: `wfmsg-${run}-P4-REVIEW-B`, kas_id: "notify-1", read_ts: SENT + 1000 },
         "delivered-1",
       ),
     );
@@ -687,7 +687,7 @@ describe("a step card redrawn when its message is taken up", () => {
     const c = "c-label-owned";
     const view = await paint(
       c,
-      [stepUpdate(2, run, "P4-REVIEW-GPT")],
+      [stepUpdate(2, run, "P4-REVIEW-B")],
       [
         [
           "t2",
@@ -714,7 +714,7 @@ describe("a step card redrawn when its message is taken up", () => {
           n,
           "steer_delivered",
           {
-            steer_id: `wfmsg-${run}-P4-REVIEW-GPT`,
+            steer_id: `wfmsg-${run}-P4-REVIEW-B`,
             kas_id: `notify-${String(n)}`,
             read_ts: SENT + n,
           },

@@ -28,8 +28,8 @@ func seedBot(c *marotte.Chat) {
 	c.Bot = &marotte.Bot{Goal: "Answer the weekly questions.", StartedAt: 1}
 }
 
-// TestHandleModeUpdate_ABotStaysOnItsRole pins design §7.1: an agent's own switch never moves a Bot's record off
-// its role, so no pill flips and no mode_changed is sent; the door re-asserts the role at the turn's end.
+// TestHandleModeUpdate_ABotStaysOnItsRole pins that an agent's own switch never moves a Bot's record off its role, so
+// no pill flips and no mode_changed is sent; the door re-asserts the role at the turn's end.
 func TestHandleModeUpdate_ABotStaysOnItsRole(t *testing.T) {
 	tr, store, events := modeTranslator(t, seedBot)
 
@@ -107,8 +107,8 @@ func TestHandleAgentNotFound_ADraftShowsTheFallback(t *testing.T) {
 	}
 }
 
-// TestHandleAgentNotFound_ABotPersistsNoFallback pins design §7.1: KAS falling back from a role it could not load
-// leaves the Bot's record on the role, and the door's failure is the one message the user sees, not the fallback's.
+// TestHandleAgentNotFound_ABotPersistsNoFallback pins that KAS falling back from a role it could not load leaves the
+// Bot's record on the role, and the door's failure is the one message the user sees, not the fallback's.
 func TestHandleAgentNotFound_ABotPersistsNoFallback(t *testing.T) {
 	tr, store, events := modeTranslator(t, seedBot)
 

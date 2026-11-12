@@ -76,7 +76,8 @@ const { initRunBar, _resetRunBarForTest } = await import("./run-bar.js");
 const { initActions } = await import("./actions/boot.js");
 const { configureApi } = await import("@cplieger/reactive/actions");
 const toast = await import("./toast.js");
-const { noteRunLive, noteRunSettled, invalidateRun } = await import("./run-store.js");
+const { invalidateRun } = await import("./run-store.js");
+const { frameRunGone, frameRunLive } = await import("./__test-helpers__/live-runs.js");
 const { setSessions, setActive } = await import("./store.js");
 const { dropDecisions } = await import("./decision-dock.js");
 const { applyRunAsks, _resetRunAsksForTest } = await import("./run-asks.js");
@@ -210,7 +211,7 @@ beforeEach(() => {
 
 afterEach(() => {
   for (const id of runs.splice(0)) {
-    noteRunSettled(id);
+    frameRunGone(id);
   }
   for (const c of chats.splice(0)) {
     dropDecisions(c);
@@ -224,7 +225,7 @@ afterEach(() => {
 /** Record a live run so the afterEach can settle it, whatever the case did. */
 function live(runID: string, chat: string, executing = true): void {
   runs.push(runID);
-  noteRunLive(runID, chat, executing);
+  frameRunLive(runID, chat, executing);
 }
 
 describe("the run bar", () => {
@@ -561,7 +562,7 @@ describe("the run bar", () => {
     await activate(c);
     expect(bar.children.length).toBe(1);
 
-    noteRunSettled(id);
+    frameRunGone(id);
 
     expect(bar.children.length).toBe(0);
     expect(bar.classList.contains("hidden")).toBe(true);
@@ -1072,7 +1073,7 @@ describe("the run bar's fold motion", () => {
     expect(bar.querySelectorAll("li.run-bar-row")).toHaveLength(4);
     expect(heightSlides(), "an arrival").toHaveLength(0);
 
-    noteRunSettled(late);
+    frameRunGone(late);
     await new Promise((r) => setTimeout(r, 0));
     expect(bar.querySelectorAll("li.run-bar-row")).toHaveLength(3);
     expect(heightSlides(), "a departure").toHaveLength(0);
@@ -1160,7 +1161,7 @@ describe("the run bar's fold motion", () => {
     expect(toggle.getAttribute("aria-expanded"), "two runs start open").toBe("true");
     toggle.click();
     heightSlides()[0]?.pause();
-    noteRunSettled(runs.at(-1) ?? "");
+    frameRunGone(runs.at(-1) ?? "");
     await new Promise((r) => setTimeout(r, 0));
     expect(bar.querySelectorAll("li.run-bar-row")).toHaveLength(1);
     expect(fold.hidden).toBe(true);
@@ -1283,7 +1284,7 @@ describe("Pause all and Resume all", () => {
     expect(fold.contains(btn)).toBe(true);
     expect(bar.querySelector(".run-bar-all")).toBeNull();
 
-    noteRunSettled(b);
+    frameRunGone(b);
     await vi.waitFor(() => {
       expect(fold.hidden).toBe(true);
     });
@@ -1311,7 +1312,7 @@ describe("Pause all and Resume all", () => {
     toggle?.focus();
     expect(document.activeElement, "focused on the header").toBe(toggle);
 
-    noteRunSettled(b);
+    frameRunGone(b);
     await vi.waitFor(() => {
       expect(fold.hidden).toBe(true);
     });
@@ -1329,7 +1330,7 @@ describe("Pause all and Resume all", () => {
     btn?.focus();
     expect(document.activeElement, "focused on the header").toBe(btn);
 
-    noteRunSettled(b);
+    frameRunGone(b);
     await vi.waitFor(() => {
       expect(fold.hidden).toBe(true);
     });
@@ -1770,7 +1771,7 @@ describe("Pause all and Resume all", () => {
             expect(hit.bottom).toBeLessThanOrEqual(list.bottom + 0.5);
             expect(hit.left, "clear of the run's line").toBeGreaterThanOrEqual(open.right - 0.5);
             for (const id of runs.splice(0)) {
-              noteRunSettled(id);
+              frameRunGone(id);
             }
             await new Promise((r) => setTimeout(r, 0));
           }

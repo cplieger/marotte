@@ -34,7 +34,7 @@ function makeSession(id: string, extra?: Partial<Session>): Session {
   return {
     id,
     name: "test",
-    model: "claude-4",
+    model: "model-x-4",
     acp_session_id: "",
     current_mode_id: "",
     supervised_mode: false,
@@ -113,16 +113,16 @@ describe("chat.switch_model", () => {
   it("applies optimistic model change and sends via transport", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
     const { switchModel } = await import("./chat.js");
-    const r = await switchModel.dispatch({ chatID: "c1", model: "opus" });
+    const r = await switchModel.dispatch({ chatID: "c1", model: "model-a" });
     expect(r).toBe(true);
-    expect(get("c1")!.model).toBe("opus");
+    expect(get("c1")!.model).toBe("model-a");
   });
 
   it("rolls back model on failure", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 500, error: "fail" });
     const { switchModel } = await import("./chat.js");
-    await switchModel.dispatch({ chatID: "c1", model: "opus" });
-    expect(get("c1")!.model).toBe("claude-4");
+    await switchModel.dispatch({ chatID: "c1", model: "model-a" });
+    expect(get("c1")!.model).toBe("model-x-4");
   });
 
   it("sends the Off stop as the switch's effort and writes no tier for it", async () => {
@@ -130,14 +130,14 @@ describe("chat.switch_model", () => {
     const { switchModel } = await import("./chat.js");
     const before = get("c1")!.effort;
 
-    await switchModel.dispatch({ chatID: "c1", model: "opus", effort: "thinking:off" });
+    await switchModel.dispatch({ chatID: "c1", model: "model-a", effort: "thinking:off" });
 
     const [cmd] = mockSend.mock.calls.at(-1) ?? [];
     expect((cmd as { payload?: unknown }).payload).toEqual({
-      model: "opus",
+      model: "model-a",
       effort: "thinking:off",
     });
-    expect(get("c1")!.model).toBe("opus");
+    expect(get("c1")!.model).toBe("model-a");
     expect(get("c1")!.effort).toBe(before);
   });
 
@@ -148,13 +148,13 @@ describe("chat.switch_model", () => {
     setSessions([makeSession("c1", { effort: "medium", thinking_choice: "on", turn_open: true })]);
     const { switchModel } = await import("./chat.js");
 
-    await switchModel.dispatch({ chatID: "c1", model: "claude-4", effort: "thinking:off" });
+    await switchModel.dispatch({ chatID: "c1", model: "model-x-4", effort: "thinking:off" });
     expect(get("c1")!.thinking_choice).toBe("off");
 
-    await switchModel.dispatch({ chatID: "c1", model: "claude-4", effort: "high" });
+    await switchModel.dispatch({ chatID: "c1", model: "model-x-4", effort: "high" });
     expect(get("c1")!.effort).toBe("high");
     expect(get("c1")!.thinking_choice, "a tier turns thinking on").toBe("on");
-    expect(get("c1")!.model).toBe("claude-4");
+    expect(get("c1")!.model).toBe("model-x-4");
   });
 
   // A chat that never chose reads the target's catalog default, as the server does.
@@ -163,8 +163,8 @@ describe("chat.switch_model", () => {
     const { setPickerModels } = await import("../picker.js");
     setPickerModels([
       {
-        model_id: "opus",
-        model_name: "Opus",
+        model_id: "model-a",
+        model_name: "Model A",
         thinking_toggleable: true,
         thinking_default_off: true,
       },
@@ -172,7 +172,7 @@ describe("chat.switch_model", () => {
     onTestFinished(() => setPickerModels([]));
     const { switchModel } = await import("./chat.js");
 
-    await switchModel.dispatch({ chatID: "c1", model: "opus", effort: "high" });
+    await switchModel.dispatch({ chatID: "c1", model: "model-a", effort: "high" });
 
     expect(get("c1")!.thinking_choice).toBe("on");
     expect(get("c1")!.effort).toBe("high");
@@ -185,7 +185,7 @@ describe("chat.switch_model", () => {
     setSessions([makeSession("c1", { effort: "medium", thinking_choice: "on" })]);
     const { switchModel } = await import("./chat.js");
 
-    await switchModel.dispatch({ chatID: "c1", model: "claude-4", effort: "thinking:off" });
+    await switchModel.dispatch({ chatID: "c1", model: "model-x-4", effort: "thinking:off" });
 
     const types = mockSend.mock.calls.map((c) => (c[0] as { type?: string }).type);
     expect(types.length).toBeGreaterThan(0);
@@ -203,15 +203,15 @@ describe("chat.switch_model", () => {
     const { switchModel } = await import("./chat.js");
     const { IDEMPOTENCY_COMMAND_FIELD } = await import("./index.js");
 
-    const outcome = await switchModel.dispatch({ chatID: "c1", model: "opus", effort: "high" })
+    const outcome = await switchModel.dispatch({ chatID: "c1", model: "model-a", effort: "high" })
       .outcome;
 
     expect(outcome).toEqual({ status: "success", value: true, attempts: 2 });
     const [first, second] = mockSend.mock.calls.map((c) => c[0] as Record<string, unknown>);
     expect(typeof first?.[IDEMPOTENCY_COMMAND_FIELD]).toBe("string");
     expect(second?.[IDEMPOTENCY_COMMAND_FIELD]).toBe(first?.[IDEMPOTENCY_COMMAND_FIELD]);
-    expect(second?.["payload"]).toEqual({ model: "opus", effort: "high" });
-    expect(get("c1")!.model).toBe("opus");
+    expect(second?.["payload"]).toEqual({ model: "model-a", effort: "high" });
+    expect(get("c1")!.model).toBe("model-a");
     expect(get("c1")!.effort).toBe("high");
   });
 });
@@ -357,7 +357,7 @@ describe("chat.create", () => {
   const header = {
     id: "c-minted",
     name: "New conversation",
-    model: "claude-opus-5",
+    model: "model-a-5",
     usage: {
       context_pct: 0,
       context_size: 0,
@@ -374,12 +374,12 @@ describe("chat.create", () => {
   it("sends create_chat with the op id and NO chat id", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, chat: header } });
     const { createChat } = await import("./chat.js");
-    await createChat.dispatch({ opID: "op-1", model: "claude-opus-5" });
+    await createChat.dispatch({ opID: "op-1", model: "model-a-5" });
 
     const sent = mockSend.mock.calls.at(-1)?.[0] as { chat_id?: string; payload: unknown };
     expect(sent).toMatchObject({
       type: "create_chat",
-      payload: { op_id: "op-1", model: "claude-opus-5" },
+      payload: { op_id: "op-1", model: "model-a-5" },
     });
     expect(sent.chat_id).toBeUndefined();
   });
@@ -418,7 +418,7 @@ describe("chat.create", () => {
     const got = await createChat.dispatch({ opID: "op-1" });
 
     expect(got?.chat.id).toBe("c-minted");
-    expect(got?.chat.model).toBe("claude-opus-5");
+    expect(got?.chat.model).toBe("model-a-5");
     // The subject and committed version reach the caller, which the adoption path paints from.
     expect(got?.subject?.id).toBe("tb_1");
     expect(got?.version).toBe(7);

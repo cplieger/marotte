@@ -38,7 +38,7 @@ describe("the kiro-docs reply shared with the Go implementation", () => {
       file_match: "internal/**/*.go",
     });
     const agent = byPath("agents/twin.md");
-    expect(agent).toMatchObject({ model: "claude-opus-5", tools: ["read", "write"] });
+    expect(agent).toMatchObject({ model: "model-a-5", tools: ["read", "write"] });
     expect(agent?.inclusion).toBeUndefined();
     expect(byPath("specs/search/design.md")).toMatchObject({
       name: "Search design",

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"iter"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/ids"
@@ -64,6 +67,8 @@ func TestCaptureKASCorpus(t *testing.T) {
 		{name: "bot_role", about: "A regular chat's session/new; a Bot's session/new on its role and a prompt; reopens through the Bot door with the same role, with an edited role (goal changed, memory on as a context file, a prompt), with memory off (the file removed), and with no role, then session/set_mode to the role.", run: runBotRole},
 		{name: "bot_policy", about: "Under each Permission profile, _kiro/policy/check on a Default chat and on a Bot for the same probes, then the Bot's memory write; under Trusted, each session lists its own tools with sub-agents on.", run: runBotPolicy},
 		{name: "bot_memory", about: "A Bot whose memory file is a context file added before the file exists: a prompt, the file written, a prompt, an edit, a prompt, the file deleted and its listing, the file recreated, a prompt; then a regular session's context and a prompt, and a fork of the Bot loaded and its context.", run: runBotMemory},
+		{name: "bot_memory_write", about: "A Bot with memory on and its directory in additionalDirectories writes its memory file in a turn; reopens with memory off (no directory) and on again, a prompt; then a regular session asked to write the same file, which the client refuses.", run: runBotMemoryWrite},
+		{name: "bot_tangent", about: "A Bot with memory on and a prompt; a tangent forked from it on the default mode, loaded as a regular chat, asked to read the Bot's memory file, which the client refuses.", run: runBotTangent},
 	} {
 		t.Run(sc.name, func(t *testing.T) { captureScenario(t, &env, sc) })
 	}
@@ -117,6 +122,9 @@ type capture struct {
 	home    string
 	reached map[int]uint64
 	cutoff  map[int]uint64
+	// grants are the directories past the workspace a session's file requests reach, as marotte grants a Bot's own
+	// directory to the sessions of its chain alone.
+	grants map[marotte.SessionID][]string
 	// onFrame is the scenario's hook, run on the pump goroutine after the frame is recorded.
 	onFrame func(s *bridge.Session, msg *marotte.RPCResponse)
 	cond    *sync.Cond
@@ -137,6 +145,7 @@ func newCapture(t *testing.T, env *captureEnv) *capture {
 		home:    t.TempDir(),
 		reached: map[int]uint64{},
 		cutoff:  map[int]uint64{},
+		grants:  map[marotte.SessionID][]string{},
 	}
 	c.cond = sync.NewCond(&c.mu)
 	t.Setenv("KIRO_HOME", c.home)
@@ -374,8 +383,10 @@ func (c *capture) answer(s *bridge.Session, lane int, msg *marotte.RPCResponse) 
 
 func (c *capture) resolve(msg *marotte.RPCResponse) (any, error) {
 	var p struct {
-		Path    string `json:"path"`
-		Options []struct {
+		SessionID marotte.SessionID `json:"sessionId"`
+		Path      string            `json:"path"`
+		Content   string            `json:"content"`
+		Options   []struct {
 			OptionID string `json:"optionId"`
 			Kind     string `json:"kind"`
 		} `json:"options"`
@@ -390,13 +401,18 @@ func (c *capture) resolve(msg *marotte.RPCResponse) (any, error) {
 		}
 		return nil, errors.New("no allow_once option offered")
 	case marotte.MethodFSRead:
-		data, err := c.readScratch(p.Path)
+		data, err := c.readScratch(p.SessionID, p.Path)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"content": string(data)}, nil
+	case marotte.MethodFSWrite:
+		if err := c.writeScratch(p.SessionID, p.Path, p.Content); err != nil {
+			return nil, err
+		}
+		return map[string]any{}, nil
 	case "_kiro/fs/stat":
-		info, err := c.statScratch(p.Path)
+		info, err := c.statScratch(p.SessionID, p.Path)
 		if err != nil {
 			return nil, err
 		}
@@ -406,7 +422,7 @@ func (c *capture) resolve(msg *marotte.RPCResponse) (any, error) {
 		}
 		return map[string]any{"type": kind, "size": info.Size()}, nil
 	case "_kiro/fs/read_directory":
-		return c.listScratch(p.Path)
+		return c.listScratch(p.SessionID, p.Path)
 	case "_kiro/search/text_search", "_kiro/search/find_files":
 		return c.search(msg)
 	case marotte.MethodElicitationCreate:
@@ -418,17 +434,30 @@ func (c *capture) resolve(msg *marotte.RPCResponse) (any, error) {
 	return nil, &marotte.RPCError{Code: -32601, Message: "method not found: " + msg.Method}
 }
 
-func (c *capture) scratchRoot(path string) (*os.Root, string, error) {
-	rel, err := filepath.Rel(c.work, path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
-		return nil, "", fmt.Errorf("%s is outside the capture workspace", path)
-	}
-	root, err := os.OpenRoot(c.work)
-	return root, rel, err
+// grant sets the directories past the workspace session's file requests reach; none takes them away.
+func (c *capture) grant(session marotte.SessionID, dirs ...string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.grants[session] = dirs
 }
 
-func (c *capture) readScratch(path string) ([]byte, error) {
-	root, rel, err := c.scratchRoot(path)
+// scratchRoot opens the root holding path for session's request: the workspace, or a directory granted to it.
+func (c *capture) scratchRoot(session marotte.SessionID, path string) (*os.Root, string, error) {
+	c.mu.Lock()
+	dirs := append([]string{c.work}, c.grants[session]...)
+	c.mu.Unlock()
+	for _, dir := range dirs {
+		rel, err := filepath.Rel(dir, path)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+			root, err := os.OpenRoot(dir)
+			return root, rel, err
+		}
+	}
+	return nil, "", fmt.Errorf("%s is outside the capture workspace", path)
+}
+
+func (c *capture) readScratch(session marotte.SessionID, path string) ([]byte, error) {
+	root, rel, err := c.scratchRoot(session, path)
 	if err != nil {
 		return nil, err
 	}
@@ -436,8 +465,17 @@ func (c *capture) readScratch(path string) ([]byte, error) {
 	return root.ReadFile(rel)
 }
 
-func (c *capture) statScratch(path string) (os.FileInfo, error) {
-	root, rel, err := c.scratchRoot(path)
+func (c *capture) writeScratch(session marotte.SessionID, path, content string) error {
+	root, rel, err := c.scratchRoot(session, path)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.WriteFile(rel, []byte(content), 0o600)
+}
+
+func (c *capture) statScratch(session marotte.SessionID, path string) (os.FileInfo, error) {
+	root, rel, err := c.scratchRoot(session, path)
 	if err != nil {
 		return nil, err
 	}
@@ -445,8 +483,8 @@ func (c *capture) statScratch(path string) (os.FileInfo, error) {
 	return root.Stat(rel)
 }
 
-func (c *capture) listScratch(path string) (any, error) {
-	root, rel, err := c.scratchRoot(path)
+func (c *capture) listScratch(session marotte.SessionID, path string) (any, error) {
+	root, rel, err := c.scratchRoot(session, path)
 	if err != nil {
 		return nil, err
 	}
@@ -471,7 +509,8 @@ func (c *capture) listScratch(path string) (any, error) {
 	return map[string]any{"entries": entries}, nil
 }
 
-// write scrubs the scratch paths, refuses a capture that would leak, and writes the corpus file.
+// write scrubs the scratch paths and the model catalog, refuses a capture that would leak, and writes the
+// corpus file.
 func (c *capture) write(sc scenario) error {
 	c.mu.Lock()
 	lines := slices.Clone(c.lines)
@@ -488,7 +527,10 @@ func (c *capture) write(sc scenario) error {
 		buf.Write(raw)
 		buf.WriteByte('\n')
 	}
-	out := c.scrub(buf.Bytes())
+	out, err := scrubModels(c.scrub(buf.Bytes()))
+	if err != nil {
+		return err
+	}
 	for _, bad := range forbiddenInCapture {
 		if i := bytes.Index(out, []byte(bad)); i >= 0 {
 			return fmt.Errorf("capture holds %q near %q", bad, excerpt(out, i))
@@ -510,6 +552,201 @@ func (c *capture) scrub(b []byte) []byte {
 		b = bytes.ReplaceAll(b, quoted[1:len(quoted)-1], []byte(r.to))
 	}
 	return b
+}
+
+var (
+	// modelTagRe is one bracketed tag in a model description; modeltext.Hidden reads [Deprecated]
+	// and [Legacy] from these, so the scrub keeps every tag.
+	modelTagRe = regexp.MustCompile(`\[[^\]]*\]`)
+	// modelStemRe is a word of an id or display name: digits and punctuation split it, and a run of
+	// one or two letters (k3, m2.5, 1m) is a version, not a name.
+	modelStemRe  = regexp.MustCompile(`\pL{3,}`)
+	wordRe       = regexp.MustCompile(`\pL+`)
+	jsonStringRe = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
+	// genericModelWords are catalog words ordinary prose also uses ("check next"); refusing them
+	// would refuse a capture for plain prose.
+	genericModelWords = []string{
+		"auto", "beta", "coder", "deprecated", "experimental", "internal", "latest", "legacy", "max",
+		"mini", "model", "next", "preview", "pro", "thinking",
+	}
+)
+
+type modelOption struct{ value, name, desc string }
+
+// scrubModels replaces each model the catalog offers, other than Auto, with a placeholder in order of
+// first appearance (model-a, "Model A"): every JSON string equal to an option's id, name or
+// description becomes the placeholder id, name, or the description's bracketed tags plus the name.
+// Upstream retires model ids, and the corpus is public. It refuses a capture that still names an
+// offered model.
+func scrubModels(b []byte) ([]byte, error) {
+	var opts []modelOption
+	for line := range bytes.Lines(b) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var v any
+		if err := json.Unmarshal(line, &v); err != nil {
+			return nil, fmt.Errorf("decode capture line: %w", err)
+		}
+		collectModelOptions(v, &opts)
+	}
+	placeholder := map[string]string{}
+	placeholders := map[string]bool{}
+	replace := map[string]string{}
+	set := func(from, to string) {
+		// An empty old string would turn every empty JSON string in the capture into a model name.
+		if _, taken := replace[from]; from != "" && !taken {
+			replace[from] = to
+		}
+	}
+	for _, o := range opts {
+		if _, ok := placeholder[o.value]; !ok {
+			placeholder[o.value] = "model-" + modelLetters(len(placeholder))
+		}
+		// Ids are set before any name or description: a catalog may name a model by its id.
+		set(o.value, placeholder[o.value])
+	}
+	for _, o := range opts {
+		id := placeholder[o.value]
+		name := "Model " + strings.ToUpper(id[len("model-"):])
+		placeholders[id], placeholders[strings.ToLower(name)] = true, true
+		set(o.desc, strings.Join(append(modelTagRe.FindAllString(o.desc, -1), name), " "))
+		set(o.name, name)
+	}
+	out := jsonStringRe.ReplaceAllFunc(b, func(tok []byte) []byte {
+		var s string
+		if json.Unmarshal(tok, &s) != nil {
+			return tok
+		}
+		if to, ok := replace[s]; ok {
+			return []byte(quoteJSON(to))
+		}
+		return tok
+	})
+	return out, refuseModelMentions(out, opts, placeholders)
+}
+
+// refuseModelMentions errors when a decoded string in b holds an offered model's id, display name,
+// a word of either, or a vendor word from its description, in any case and with no letter right
+// before or after it, unless that text is itself a placeholder or a generic word.
+func refuseModelMentions(b []byte, opts []modelOption, placeholders map[string]bool) error {
+	seen := map[string]bool{}
+	var words []string
+	add := func(s string) {
+		l := strings.ToLower(s)
+		if l == "" || seen[l] || placeholders[l] || slices.Contains(genericModelWords, l) {
+			return
+		}
+		seen[l] = true
+		words = append(words, regexp.QuoteMeta(l))
+	}
+	for _, o := range opts {
+		add(o.value)
+		add(o.name)
+		for _, s := range modelStemRe.FindAllString(o.value+" "+o.name, -1) {
+			add(s)
+		}
+		for _, s := range wordRe.FindAllString(o.desc, -1) {
+			if isVendorWord(s) {
+				add(s)
+			}
+		}
+	}
+	if len(words) == 0 {
+		return nil
+	}
+	re := regexp.MustCompile(`(?i)(?:^|\PL)(` + strings.Join(words, "|") + `)(?:$|\PL)`)
+	for line := range bytes.Lines(b) {
+		var v any
+		if json.Unmarshal(line, &v) != nil {
+			continue
+		}
+		for s := range jsonStrings(v) {
+			if m := re.FindStringSubmatchIndex(s); m != nil {
+				return fmt.Errorf("capture still names an offered model near %q", excerpt([]byte(s), m[2]))
+			}
+		}
+	}
+	return nil
+}
+
+// isVendorWord reports a description word spelled in mixed case after its first letter (eCorp,
+// QuillSoft), the shape of a vendor name; title-case and all-caps description words are ordinary prose.
+func isVendorWord(w string) bool {
+	r := []rune(w)
+	return len(r) >= 3 && slices.ContainsFunc(r[1:], unicode.IsUpper) && slices.ContainsFunc(r, unicode.IsLower)
+}
+
+// jsonStrings yields every key and string value under v. The check reads decoded strings so a JSON
+// escape such as \n before a word does not hide its word boundary.
+func jsonStrings(v any) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		var walk func(any) bool
+		walk = func(v any) bool {
+			switch t := v.(type) {
+			case string:
+				return yield(t)
+			case map[string]any:
+				for k, child := range t {
+					if !yield(k) || !walk(child) {
+						return false
+					}
+				}
+			case []any:
+				for _, child := range t {
+					if !walk(child) {
+						return false
+					}
+				}
+			}
+			return true
+		}
+		walk(v)
+	}
+}
+
+// collectModelOptions appends the options of every model select under v, once per distinct option.
+func collectModelOptions(v any, opts *[]modelOption) {
+	switch t := v.(type) {
+	case map[string]any:
+		if list, ok := t["options"].([]any); ok && t["id"] == "model" {
+			for _, item := range list {
+				m, _ := item.(map[string]any)
+				o := modelOption{}
+				o.value, _ = m["value"].(string)
+				o.name, _ = m["name"].(string)
+				o.desc, _ = m["description"].(string)
+				if o.value != "" && o.value != marotte.ModelAuto && !slices.Contains(*opts, o) {
+					*opts = append(*opts, o)
+				}
+			}
+		}
+		for _, k := range slices.Sorted(maps.Keys(t)) {
+			collectModelOptions(t[k], opts)
+		}
+	case []any:
+		for _, child := range t {
+			collectModelOptions(child, opts)
+		}
+	}
+}
+
+// modelLetters is i in bijective base 26: a to z, then aa.
+func modelLetters(i int) string {
+	s := ""
+	for i++; i > 0; i = (i - 1) / 26 {
+		s = string(rune('a'+(i-1)%26)) + s
+	}
+	return s
+}
+
+// quoteJSON is s as a JSON string without HTML escaping, the form KAS writes.
+func quoteJSON(s string) string {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(s)
+	return strings.TrimSuffix(buf.String(), "\n")
 }
 
 func excerpt(b []byte, i int) string {

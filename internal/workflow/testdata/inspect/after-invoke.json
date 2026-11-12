@@ -17,7 +17,7 @@
      "type": "step",
      "status": "pending",
      "agentName": "asker",
-     "modelId": "claude-sonnet-5.5",
+     "modelId": "model-b-5.5",
      "effortLevel": "high"
     }
    ]
@@ -33,7 +33,7 @@
   },
   "memoryConfigSource": "legacy",
   "backgroundExecution": false,
-  "parentModelId": "claude-sonnet-5.5",
+  "parentModelId": "model-b-5.5",
   "parentEffortLevel": "high"
  },
  "nodePlan": [
@@ -41,7 +41,7 @@
    "nodeId": "ask",
    "type": "step",
    "agentName": "asker",
-   "modelId": "claude-sonnet-5.5",
+   "modelId": "model-b-5.5",
    "effortLevel": "high"
   }
  ]
