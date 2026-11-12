@@ -254,6 +254,7 @@ var wireTypes = []wiregen.Type{
 	// GET /api/settings. No omitempty, so the client holds no defaults of its own.
 	wiregen.TypeRef[marotte.KiroDefault](),
 	wiregen.TypeRef[marotte.PctRange](),
+	wiregen.TypeRef[marotte.KnowledgeChunking](),
 	wiregen.TypeRef[marotte.EffectiveSettings](),
 	wiregen.TypeRef[forges.ForgeError](),
 	wiregen.TypeRef[forges.ConfiguredForge](),

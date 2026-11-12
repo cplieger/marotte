@@ -390,12 +390,17 @@ describe("a11y: the agent engine controls", () => {
       paintEngineRows(null);
       const hints = [...host.querySelectorAll(".engine-restart-hint")];
       // One per engine-wide row; a control id the markup lost would leave its row without one.
-      expect(hints).toHaveLength(10);
+      expect(hints).toHaveLength(16);
       for (const hint of hints) {
         expect(hint.textContent).toContain("Applies after the agent engine restarts.");
         const control = host.querySelector(`[aria-describedby~="${hint.id}"]`);
         expect(control, `#${hint.id} describes its control`).not.toBeNull();
         expect(hint.closest(".section-option")).toBe(control?.closest(".section-option"));
+        // A row with two boxes for one setting, the passage size and overlap, describes both.
+        for (const box of hint.closest(".section-option")?.querySelectorAll("input, select") ??
+          []) {
+          expect(box.getAttribute("aria-describedby")?.split(" "), `#${box.id}`).toContain(hint.id);
+        }
       }
     } finally {
       document.body.removeChild(host);

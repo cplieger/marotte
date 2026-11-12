@@ -3,9 +3,11 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/cplieger/marotte/internal/bot"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -21,39 +23,44 @@ const (
 	reasonModelFallback     = marotte.EngineReason(settings.KeyModelFallback)
 	reasonAutoRouting       = marotte.EngineReason(settings.KeyAutoRouting)
 	reasonAutoDelegation    = marotte.EngineReason(settings.KeyAutoDelegation)
+	reasonDeliveryLimit     = marotte.EngineReason(settings.KeyChatMessageDeliveryLimit)
+	reasonKnowledgeIndex    = marotte.EngineReason(settings.KeyKnowledgeIndexType)
+	reasonKnowledgeInclude  = marotte.EngineReason(settings.KeyKnowledgeIncludePatterns)
+	reasonKnowledgeExclude  = marotte.EngineReason(settings.KeyKnowledgeExcludePatterns)
+	reasonKnowledgeMaxFiles = marotte.EngineReason(settings.KeyKnowledgeMaxFiles)
+	reasonKnowledgeChunking = marotte.EngineReason(settings.KeyKnowledgeChunking)
 	reasonHeap              = marotte.EngineReason(settings.KeyEngineHeapMiB)
 	reasonDebugLogs         = marotte.EngineReason(settings.KeyDebugLogs)
 	reasonHighThroughput    = marotte.EngineReason(settings.KeyHighThroughput)
 	reasonTelemetry         = marotte.EngineReason(kiroTelemetryKey)
 )
 
-// engineReasonLabel is the user's name for what a restart applies.
+// engineReasonLabels are the user's names for what a restart applies.
+var engineReasonLabels = map[marotte.EngineReason]string{
+	reasonKnowledge:                    "Knowledge",
+	reasonSteeringReminders:            "Steering reminders",
+	reasonCloudFormation:               "CloudFormation safety check",
+	reasonModelFallback:                "Model fallback",
+	reasonAutoRouting:                  "Auto routing",
+	reasonAutoDelegation:               "Auto delegation",
+	reasonDeliveryLimit:                "Messages per exchange",
+	reasonKnowledgeIndex:               "Knowledge index type",
+	reasonKnowledgeInclude:             "Knowledge files to include",
+	reasonKnowledgeExclude:             "Knowledge files to skip",
+	reasonKnowledgeMaxFiles:            "Knowledge file limit",
+	reasonKnowledgeChunking:            "Knowledge passage size",
+	reasonHeap:                         "Agent engine memory limit",
+	reasonDebugLogs:                    "Debug logs",
+	reasonHighThroughput:               "High throughput optimizations",
+	reasonTelemetry:                    "Usage telemetry",
+	marotte.EngineReasonKiroCLIVersion: "the new kiro-cli version",
+	marotte.EngineReasonAccountSwitch:  "the new Kiro account",
+}
+
+// engineReasonLabel is r's label, or r itself when it has none.
 func engineReasonLabel(r marotte.EngineReason) string {
-	switch r {
-	case reasonKnowledge:
-		return "Knowledge"
-	case reasonSteeringReminders:
-		return "Steering reminders"
-	case reasonCloudFormation:
-		return "CloudFormation safety check"
-	case reasonModelFallback:
-		return "Model fallback"
-	case reasonAutoRouting:
-		return "Auto routing"
-	case reasonAutoDelegation:
-		return "Auto delegation"
-	case reasonHeap:
-		return "Agent engine memory limit"
-	case reasonDebugLogs:
-		return "Debug logs"
-	case reasonHighThroughput:
-		return "High throughput optimizations"
-	case reasonTelemetry:
-		return "Usage telemetry"
-	case marotte.EngineReasonKiroCLIVersion:
-		return "the new kiro-cli version"
-	case marotte.EngineReasonAccountSwitch:
-		return "the new Kiro account"
+	if label, ok := engineReasonLabels[r]; ok {
+		return label
 	}
 	return string(r)
 }
@@ -100,6 +107,7 @@ func (rt *Runtime) resolveEngine(ctx context.Context, path string) engineSpec {
 	doc, src := rt.configDocument(ctx)
 	e := doc.engine
 	telemetryOff := rt.lifecycle.telemetryDisabled(rt.config.GovernanceLocks)
+	k := e.features.Knowledge
 	opts := &marotte.EngineOpts{
 		Lifetime:          rt.lifecycle.shutdownCtx,
 		Background:        rt.lifecycle.goUnlessDraining,
@@ -120,10 +128,16 @@ func (rt *Runtime) resolveEngine(ctx context.Context, path string) engineSpec {
 	fp := map[marotte.EngineReason]string{
 		reasonKnowledge:                    strconv.FormatBool(e.knowledge),
 		reasonSteeringReminders:            strconv.FormatBool(e.features.SteeringReminders),
-		reasonCloudFormation:               e.features.InfraSafetyMonitor,
+		reasonCloudFormation:               e.features.InfraSafety,
 		reasonModelFallback:                strconv.FormatBool(e.features.ModelFallback),
 		reasonAutoRouting:                  e.features.AutoRouting,
 		reasonAutoDelegation:               e.features.AutoDelegation,
+		reasonDeliveryLimit:                strconv.Itoa(e.features.MessageDeliveryLimit),
+		reasonKnowledgeIndex:               k.IndexType,
+		reasonKnowledgeInclude:             strings.Join(k.IncludePatterns, "\x00"),
+		reasonKnowledgeExclude:             strings.Join(k.ExcludePatterns, "\x00"),
+		reasonKnowledgeMaxFiles:            strconv.Itoa(k.MaxFiles),
+		reasonKnowledgeChunking:            fmt.Sprintf("%d/%d", k.Chunking.Size, k.Chunking.Overlap),
 		reasonHeap:                         strconv.Itoa(e.heapMiB),
 		reasonDebugLogs:                    strconv.FormatBool(e.debugLogs),
 		reasonHighThroughput:               strconv.FormatBool(e.throughput),

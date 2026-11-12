@@ -3,6 +3,7 @@
 import { patchSettings, settingsAsShown } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
 import { maybeEl } from "./dom.js";
+import { splitGlobList } from "./glob-list.js";
 import { apiGet } from "./api-client.js";
 import { buildChip } from "./chip.js";
 import { wireAddForm } from "./add-form.js";
@@ -237,13 +238,6 @@ const NATIVE_SCOPE_LABEL: Record<string, string> = {
   agent: "Agent, default mode, read-only",
   session: "Session, runtime, read-only",
 };
-
-function splitGlobs(raw: string): string[] {
-  return raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s !== "");
-}
 
 /** The Custom profile's id, and the one id the client must know by name: it is the state the
  *  table becomes editable in, which is a UI fact rather than a policy one. Every other profile
@@ -838,8 +832,8 @@ class NativePolicyController {
       "user" | "workspace";
     const capability = maybeEl<HTMLSelectElement>("native-rule-capability")?.value ?? "";
     const effect = maybeEl<HTMLSelectElement>("native-rule-effect")?.value ?? "ask";
-    const match = splitGlobs(maybeEl<HTMLInputElement>("native-rule-match")?.value ?? "");
-    const exclude = splitGlobs(maybeEl<HTMLInputElement>("native-rule-exclude")?.value ?? "");
+    const match = splitGlobList(maybeEl<HTMLInputElement>("native-rule-match")?.value ?? "");
+    const exclude = splitGlobList(maybeEl<HTMLInputElement>("native-rule-exclude")?.value ?? "");
     this.addRow?.setError(null);
     const res = await editNativeRule.dispatch({
       op: "add",

@@ -5,6 +5,7 @@ import type * as Confirm from "./confirm.js";
 import type { Confirmation } from "./confirm.js";
 import type * as SettingsActions from "./actions/settings.js";
 import type { EngineBusy, EngineStatus } from "./wire/types.gen.js";
+import indexHtml from "../static/index.html?raw";
 
 vi.mock("./banner-stack.js", async (importOriginal) => ({
   ...(await importOriginal<typeof BannerStack>()),
@@ -341,6 +342,31 @@ describe("restart reasons", () => {
     expect(reasonRow("kiro_cli_version")).toBeNull();
     // An inherited name must not read as a row.
     expect(reasonRow("constructor")).toBeNull();
+  });
+
+  // internal/agent/engine_opts.go's reason* constants that name a Settings key.
+  it.each([
+    "knowledge_enabled",
+    "knowledge_index_type",
+    "knowledge_include_patterns",
+    "knowledge_exclude_patterns",
+    "knowledge_max_files",
+    "knowledge_chunking",
+    "steering_reminders_enabled",
+    "cloudformation_safety_check",
+    "model_fallback_enabled",
+    "auto_routing",
+    "auto_delegation",
+    "chat_message_delivery_limit",
+    "engine_heap_mib",
+    "debug_logs",
+    "high_throughput_optimizations",
+    "telemetry.enabled",
+  ])("map the server's %s reason to a control the shipped page has", (key) => {
+    const page = new DOMParser().parseFromString(indexHtml, "text/html");
+    const row = reasonRow(key);
+    expect(row, `${key} has a row`).not.toBeNull();
+    expect(page.getElementById(row!.controlID), `#${row!.controlID} in index.html`).not.toBeNull();
   });
 
   it("render an account switch as the account sentence alone", () => {

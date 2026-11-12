@@ -609,6 +609,62 @@ func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
 	}
 }
 
+// With the switch on, the CloudFormation check's enforce ask is still refused: it holds a change that breaks one of
+// the account's safety rules, and "Allow anyway" with nobody watching would undo the block. The params are KAS's
+// requestSafetyOverridePermission shape (toolCall {toolCallId "safety-override-<uuid>", status, title}, no _meta).
+func TestAnswerUnattended_RefusesTheCloudFormationBlock(t *testing.T) {
+	dir := t.TempDir()
+	body, err := json.Marshal(map[string]any{settings.KeyScheduledAutoApprove: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
+	chatID := runChatID("wf_infra")
+	h.bridge.mgr.insert(chatID, testBridge(br, bridgeReady))
+	st, _, err := launchrule.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("launchrule.NewStore: %v", err)
+	}
+	entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+	h.runs.launchRules = st
+	l := scheduledLease(entry.ID, "wf_infra")
+	if rErr := st.RecordStart(t.Context(), ruleRun(l)); rErr != nil {
+		t.Fatalf("RecordStart: %v", rErr)
+	}
+	id := int64(4244)
+	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+		marotte.PermissionNeededPayload{RequestID: id}), br)
+
+	h.runs.answerUnattended(chatID, br, id, l, false, askName{}, []byte(`{"sessionId":"sess_1",
+		"toolCall":{"toolCallId":"safety-override-7b0f2c1e-9a4d-4c55-8f1e-2d6b3a9c0e11","status":"pending","title":"Deleting a stateful resource"},
+		"options":[{"optionId":"reject","name":"Keep blocked","kind":"reject_once"},{"optionId":"accept","name":"Allow anyway","kind":"allow_once"}]}`))
+
+	select {
+	case <-br.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the floor answered nothing")
+	}
+	br.respMu.Lock()
+	got := br.response
+	br.respMu.Unlock()
+	outcome, ok := got.result.(*marotte.PermissionOutcome)
+	if !ok {
+		t.Fatalf("answered with %T (%v), want a permission outcome", got.result, got.result)
+	}
+	if outcome.Outcome.OptionID != "reject" {
+		t.Errorf("optionId = %q, want %q: a CloudFormation block was allowed with nobody watching",
+			outcome.Outcome.OptionID, "reject")
+	}
+	const wantReason = "Kiro's CloudFormation check blocked a change that breaks one of your account's safety rules, " +
+		"and nobody was watching. Make the change in a chat to decide"
+	if rows := st.Clocks(); len(rows) != 1 || rows[0].LastStatus != launchrule.StatusFailed || rows[0].LastReason != wantReason {
+		t.Errorf("schedule rows = %+v, want one failed row reading %q", rows, wantReason)
+	}
+}
+
 // TestAnswerUnattended_ADenialFailsTheScheduleRow pins that the row reads as a failure naming the tool.
 func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())

@@ -375,6 +375,9 @@ class PromptInputController {
       on.addEventListener("contextmenu", (e: MouseEvent) => {
         this.press({ k: "contextmenu", e });
       });
+      on.addEventListener("blur", () => {
+        this.press({ k: "blur" });
+      });
       on.addEventListener("keydown", (e: KeyboardEvent) => {
         this.escapeStops(e);
       });

@@ -655,6 +655,22 @@ const spaceUpOffTheButton: readonly Step[] = [
   { k: "click", slot: "main", detail: 0 },
 ];
 
+/** Space held on the microphone while a click on it starts dictation and typing ends it, so focus leaves for the box,
+ *  then comes back before the key up, which a button that lost focus mid-press never clicks; then a `click()` on the
+ *  Send face. */
+const spaceUpBackOnTheButton: readonly Step[] = [
+  {
+    k: "gesture",
+    slot: "main",
+    input: "space",
+    count: 2,
+    end: "click",
+    gaps: [[{ k: "type", text: "words" }], [], [{ k: "focusButton", slot: "main" }], [], [], []],
+    inner: "pointer",
+  },
+  { k: "click", slot: "main", detail: 0 },
+];
+
 /** Dictation started from a focused Send, then the browser ends it and the reader types a Space. */
 const endFromFocusedButton: readonly Step[] = [
   { k: "focusButton", slot: "main" },
@@ -720,6 +736,7 @@ describe("a press on the composer's buttons (rule 3)", () => {
           [false, spaceThenHeldEnter],
           [false, enterInsideMouseOnStop],
           [false, spaceUpOffTheButton],
+          [false, spaceUpBackOnTheButton],
           [true, endFromFocusedButton],
           [false, endFromFocusedButton],
         ],

@@ -2922,8 +2922,12 @@ export async function toggleSettingsView(tab: SettingsTab = "general"): Promise<
 /** Open Settings on the given sub-tab (default: General). NEVER closes it, which
  *  is why it exists beside the toggle: navigation, routing and a link out of a
  *  modal express an intent to OPEN, and a toggle would dismiss the panel it was
- *  pointing at. */
+ *  pointing at. The panel store moves first, as in route-apply.ts, so the tab's refresh loads the
+ *  named panel; a route correction alone leaves the shown panel where it was. */
 export async function openSettingsView(tab: SettingsTab = "general"): Promise<void> {
+  // Lazy for the same reason as tab-materialize.ts: settings-tabs.ts imports this module.
+  const { forceSettingsTab } = await import("./settings-tabs.js");
+  forceSettingsTab(tab);
   await openTab({ kind: "settings" });
   setSettingsTab(tab);
 }
@@ -2940,8 +2944,10 @@ export async function toggleGitView(tab: GitTab = "changes"): Promise<void> {
 }
 
 /** Open the git view on the given sub-tab (default: Changes). NEVER closes it;
- *  the twin of openSettingsView, for the same reason. */
+ *  the twin of openSettingsView, for the same reasons. */
 export async function openGitView(tab: GitTab = "changes"): Promise<void> {
+  const { forceGitTab } = await import("./git-tabs.js");
+  forceGitTab(tab);
   await openTab({ kind: "git" });
   setGitTab(tab);
 }

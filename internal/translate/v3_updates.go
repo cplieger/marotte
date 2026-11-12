@@ -452,6 +452,8 @@ var knownSessionInfoKinds = map[string]struct{}{
 	"focus_update":        {},
 	"recap":               {},
 	"repositories_update": {},
+	// Search other chats' index progress (broadcastIndexPassProgress); marotte draws no index state.
+	"session_index_update": {},
 }
 
 // logUnconsumedInfoKind reports a session_info_update nothing in the cascade consumed: a

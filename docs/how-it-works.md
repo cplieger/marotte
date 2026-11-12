@@ -43,7 +43,7 @@ To repair an install by hand, fix `kiro-cli-versions` in the tools folder (by de
 
 ## Language servers and code intelligence
 
-Turning on a language server in **Settings** also turns on kiro-cli code intelligence for the workspace, in live chats too. The first activation saves the detected languages to `/workspace/.kiro/settings/lsp.json`. After you add a language to the workspace, delete that file, and marotte writes it again on the next start.
+Turning on a language server in **Settings** also turns on kiro-cli code intelligence for the workspace, in live chats too. marotte always tells kiro-cli that code intelligence is allowed, so an installed, enabled language server is what turns it on, and **Code intelligence** under **Agent capabilities** shows the languages it covers. The first activation saves the detected languages to `/workspace/.kiro/settings/lsp.json`. After you add a language to the workspace, delete that file, and marotte writes it again on the next start.
 
 ## Leftover processes
 

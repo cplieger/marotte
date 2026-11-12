@@ -1,6 +1,7 @@
 package kascap
 
 import (
+	"cmp"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -36,18 +37,29 @@ var engineMatrix = []struct {
 	// (isSettingEnabled).
 	{"knowledge on", EngineSpawn{Knowledge: true}},
 	{"steering reminders on", EngineSpawn{SteeringReminders: true}},
-	{"safety check on", EngineSpawn{InfraSafetyMonitor: "on"}},
-	{"safety check off", EngineSpawn{InfraSafetyMonitor: "off"}},
+	{"safety check on", EngineSpawn{InfraSafety: "on"}},
+	{"safety check off", EngineSpawn{InfraSafety: "off"}},
+	{"safety check enforce", EngineSpawn{InfraSafety: "enforce"}},
 	{"auto routing and smart helpers on", EngineSpawn{AutoRouting: "on", AutoDelegation: "on"}},
 	{"auto routing and smart helpers off", EngineSpawn{AutoRouting: "off", AutoDelegation: "off"}},
 	{"shell timeout set", EngineSpawn{TerminalCommandTimeoutMs: 300000}},
 	{"model fallback on", EngineSpawn{ModelFallback: true}},
+	{"message delivery limit set", EngineSpawn{MessageDeliveryLimit: 12}},
+	// The knowledge index config rides settings.knowledge in either state of the switch.
+	{"knowledge tuning set, knowledge off", EngineSpawn{KnowledgeTuning: marotte.KnowledgeTuning{
+		IndexType: "fast", IncludePatterns: []string{"**/*.md"}, ExcludePatterns: []string{"drafts/**"},
+		MaxFiles: 200, Chunking: marotte.KnowledgeChunking{Size: 256, Overlap: 32},
+	}}},
 	{"telemetry off", EngineSpawn{DisableTelemetry: true}},
 	{"every gate on", EngineSpawn{
-		SecretStorage: true, Knowledge: true, InfraSafetyMonitor: "on",
+		SecretStorage: true, Knowledge: true, InfraSafety: "enforce",
 		AutoRouting: "on", AutoDelegation: "on",
 		TerminalCommandTimeoutMs: 300000, SteeringReminders: true,
-		DisableTelemetry: true, ModelFallback: true,
+		DisableTelemetry: true, ModelFallback: true, MessageDeliveryLimit: 12,
+		KnowledgeTuning: marotte.KnowledgeTuning{
+			IndexType: "fast", IncludePatterns: []string{"**/*.md"}, ExcludePatterns: []string{"drafts/**"},
+			MaxFiles: 200, Chunking: marotte.KnowledgeChunking{Size: 256, Overlap: 32},
+		},
 	}},
 }
 
@@ -70,7 +82,9 @@ var sessionMatrix = []struct {
 	{"work validation on", SessionSpawn{WorkValidation: "on"}},
 	{"work validation off", SessionSpawn{WorkValidation: "off"}},
 	{"workflows on", SessionSpawn{Workflows: true}},
+	{"workflows on, planning effort high", SessionSpawn{Workflows: true, WorkflowCreatorEffort: "high"}},
 	{"messages between chats on", SessionSpawn{Messaging: true}},
+	{"search other chats on", SessionSpawn{Awareness: true}},
 	{"a chat session", SessionSpawn{ProfileAgentTurns: true}},
 	{"a Bot's chat session", SessionSpawn{ProfileAgentTurns: true, CustomAgents: []marotte.ClientCustomAgent{probeAgent}}},
 	{"every gate on", SessionSpawn{
@@ -78,8 +92,8 @@ var sessionMatrix = []struct {
 		Presets:           []string{"read-workspace"},
 		MemoryMode:        "read_write", MemoryReflection: true,
 		DisableAutoCompaction: true, SpecPlan: "full", SpecAskClarification: true,
-		WorkValidation: "on", Workflows: true, Messaging: true, ProfileAgentTurns: true,
-		CustomAgents: []marotte.ClientCustomAgent{probeAgent},
+		WorkValidation: "on", Workflows: true, WorkflowCreatorEffort: "max", Messaging: true, Awareness: true,
+		ProfileAgentTurns: true, CustomAgents: []marotte.ClientCustomAgent{probeAgent},
 	}},
 }
 
@@ -280,10 +294,16 @@ func TestMemoryRow_FailsClosedAndNeverVetoes(t *testing.T) {
 const classifierEnv = "KIRO_TRUST_CLASSIFIER_MODE=enforce"
 
 // TestChildEnv_PinsNoArmByDefault pins that a zero EngineSpawn writes no KIRO_FEATURE_* or KIRO_DISABLE_*
-// variable, so every arm follows the experiment ramp unless a Settings control decides it.
+// variable beyond the model fallback pair, which its switch decides in both positions, so every other arm
+// follows the experiment ramp unless a Settings control decides it.
 func TestChildEnv_PinsNoArmByDefault(t *testing.T) {
-	if got := ChildEnv(&EngineSpawn{}); !reflect.DeepEqual(got, []string{classifierEnv}) {
-		t.Errorf("ChildEnv(&EngineSpawn{}) = %q, want only %q", got, classifierEnv)
+	want := []string{
+		"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=false",
+		"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=false",
+		classifierEnv,
+	}
+	if got := ChildEnv(&EngineSpawn{}); !reflect.DeepEqual(got, want) {
+		t.Errorf("ChildEnv(&EngineSpawn{}) = %q, want %q", got, want)
 	}
 	for _, tc := range engineMatrix {
 		for _, kv := range ChildEnv(&tc.spawn) {
@@ -325,25 +345,33 @@ func TestChildEnv_AutoModelChoicesFollowTheirSwitches(t *testing.T) {
 		choice string
 		want   []string
 	}{
-		{"", []string{classifierEnv}},
+		{"", []string{
+			"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=true",
+			"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=true",
+			classifierEnv,
+		}},
 		{"on", []string{
 			`KIRO_FEATURE_CASCADE_CONFIG={"cascadeClientNotificationEnabled":true,"cascadeEnabled":true}`,
 			`KIRO_FEATURE_DYNAMIC_DELEGATION_CONFIG={"delegationEnabled":true}`,
+			"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=true",
+			"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=true",
 			classifierEnv,
 		}},
 		{"off", []string{
 			`KIRO_FEATURE_CASCADE_CONFIG={"cascadeEnabled":false}`,
 			`KIRO_FEATURE_DYNAMIC_DELEGATION_CONFIG={"delegationEnabled":false}`,
+			"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=true",
+			"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=true",
 			classifierEnv,
 		}},
 	} {
-		got := ChildEnv(&EngineSpawn{AutoRouting: tc.choice, AutoDelegation: tc.choice})
+		got := ChildEnv(&EngineSpawn{AutoRouting: tc.choice, AutoDelegation: tc.choice, ModelFallback: true})
 		if !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("ChildEnv(AutoRouting=AutoDelegation=%q) = %q, want %q", tc.choice, got, tc.want)
 		}
 	}
-	if got := ChildEnv(&EngineSpawn{AutoRouting: "on"}); len(got) != 2 || got[0] != `KIRO_FEATURE_CASCADE_CONFIG={"cascadeClientNotificationEnabled":true,"cascadeEnabled":true}` {
-		t.Errorf("ChildEnv(AutoRouting=on alone) = %q, want the cascade arm and the classifier gate", got)
+	if got := ChildEnv(&EngineSpawn{AutoRouting: "on", ModelFallback: true}); len(got) != 4 || got[0] != `KIRO_FEATURE_CASCADE_CONFIG={"cascadeClientNotificationEnabled":true,"cascadeEnabled":true}` {
+		t.Errorf("ChildEnv(AutoRouting=on alone) = %q, want the cascade arm, the fallback pair and the classifier gate", got)
 	}
 	for _, tc := range sessionMatrix {
 		if settings, _ := SessionMeta(&tc.spawn)[settingsKey].(map[string]any); settings["cascade"] != nil {
@@ -352,14 +380,18 @@ func TestChildEnv_AutoModelChoicesFollowTheirSwitches(t *testing.T) {
 	}
 }
 
-// TestChildEnv_ModelFallbackSendsBothFlagsOnlyWhenOn pins that off writes neither flag: an explicit
-// false would override KAS's default and any server-side ramp.
-func TestChildEnv_ModelFallbackSendsBothFlagsOnlyWhenOn(t *testing.T) {
+// TestChildEnv_ModelFallbackWritesBothFlagsEitherWay pins that the switch decides both flags in
+// both positions: kiro-cli 3.2.0 defaults them on, so an off that wrote nothing would leave fallback live.
+func TestChildEnv_ModelFallbackWritesBothFlagsEitherWay(t *testing.T) {
 	for _, tc := range []struct {
 		want []string
 		on   bool
 	}{
-		{on: false, want: []string{classifierEnv}},
+		{on: false, want: []string{
+			"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=false",
+			"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=false",
+			classifierEnv,
+		}},
 		{on: true, want: []string{
 			"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=true",
 			"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=true",
@@ -413,21 +445,133 @@ func TestSessionDoor_WorkflowsFollowsTheSetting(t *testing.T) {
 	}
 }
 
-// TestSessionDoor_MessagingFollowsTheSetting pins settings.sessionTools.messaging in both states, the shape KAS's
-// session-tools reader takes (`keys:["sessionTools"]`, then `.messaging.enabled` as a boolean): on load a stated
-// false clears the persisted sessionMessagingEnabled, so off is sent too.
-func TestSessionDoor_MessagingFollowsTheSetting(t *testing.T) {
-	for _, on := range []bool{false, true} {
-		settings, _ := SessionMeta(&SessionSpawn{Messaging: on})[settingsKey].(map[string]any)
-		want := map[string]any{"messaging": map[string]any{"enabled": on}}
-		if got := settings["sessionTools"]; !reflect.DeepEqual(got, want) {
-			t.Errorf("SessionMeta(Messaging=%v) sessionTools = %#v, want %#v", on, got, want)
+// TestSessionDoor_WithholdsSteeringSupervisor pins that no session carries
+// steeringSupervisor, so kiro-cli resolves it from the AB_STEERING_SUPERVISOR
+// experiment (or a resumed chat's persisted record), as it does for its own TUI.
+func TestSessionDoor_WithholdsSteeringSupervisor(t *testing.T) {
+	for _, tc := range sessionMatrix {
+		settings, _ := SessionMeta(&tc.spawn)[settingsKey].(map[string]any)
+		if got, present := settings["steeringSupervisor"]; present {
+			t.Errorf("%s: SessionMeta carries steeringSupervisor = %#v; it is withheld so kiro-cli's value applies", tc.name, got)
+		}
+	}
+	for _, tc := range engineMatrix {
+		connection, _ := Capabilities(&tc.spawn)[settingsKey].(map[string]any)
+		if _, present := connection["steeringSupervisor"]; present {
+			t.Errorf("%s: Capabilities carries steeringSupervisor", tc.name)
+		}
+	}
+}
+
+// TestSessionDoor_SessionToolsFollowTheSettings pins settings.sessionTools.messaging and .awareness in every state,
+// the shape KAS's session-tools reader takes (`keys:["sessionTools"]`, then `.<switch>.enabled` as a boolean): on
+// load a stated false clears the persisted sessionMessagingEnabled or sessionAwarenessEnabled, so off is sent too.
+func TestSessionDoor_SessionToolsFollowTheSettings(t *testing.T) {
+	for _, messaging := range []bool{false, true} {
+		for _, awareness := range []bool{false, true} {
+			settings, _ := SessionMeta(&SessionSpawn{Messaging: messaging, Awareness: awareness})[settingsKey].(map[string]any)
+			want := map[string]any{
+				"messaging": map[string]any{"enabled": messaging},
+				"awareness": map[string]any{"enabled": awareness},
+			}
+			if got := settings["sessionTools"]; !reflect.DeepEqual(got, want) {
+				t.Errorf("SessionMeta(Messaging=%v, Awareness=%v) sessionTools = %#v, want %#v", messaging, awareness, got, want)
+			}
 		}
 	}
 	for _, tc := range engineMatrix {
 		connection, _ := Capabilities(&tc.spawn)[settingsKey].(map[string]any)
 		if _, present := connection["sessionTools"]; present {
 			t.Errorf("%s: Capabilities carries sessionTools; KAS reads it on session/new and session/load only", tc.name)
+		}
+	}
+}
+
+// TestSessionDoor_CreatorEffortRidesWorkflowsWhenStated pins settings.workflows.creatorEffort: stated only with
+// workflows on and an effort chosen, since KAS reads a workflows object without the member as no effort.
+func TestSessionDoor_CreatorEffortRidesWorkflowsWhenStated(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		spawn SessionSpawn
+		want  map[string]any
+	}{
+		{"unset", SessionSpawn{Workflows: true}, map[string]any{"enabled": true}},
+		{"stated", SessionSpawn{Workflows: true, WorkflowCreatorEffort: "xhigh"}, map[string]any{"enabled": true, "creatorEffort": "xhigh"}},
+		{"workflows off", SessionSpawn{WorkflowCreatorEffort: "xhigh"}, map[string]any{"enabled": false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			settings, _ := SessionMeta(&tc.spawn)[settingsKey].(map[string]any)
+			if got := settings["workflows"]; !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("workflows = %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestInitialize_CloudFormationChoiceDrivesMonitorAndEnforce pins the CloudFormation check's four choices on the
+// initialize settings: enforce turns both keys on, and every other choice withholds infraSafetyEnforce, which KAS
+// reads as off, so the value stays kiro-cli's.
+func TestInitialize_CloudFormationChoiceDrivesMonitorAndEnforce(t *testing.T) {
+	on, off := map[string]any{"enabled": true}, map[string]any{"enabled": false}
+	for _, tc := range []struct {
+		choice           string
+		monitor, enforce any
+	}{
+		{"", nil, nil},
+		{"on", on, nil},
+		{"off", off, nil},
+		{"enforce", on, on},
+	} {
+		t.Run("choice "+cmp.Or(tc.choice, "unset"), func(t *testing.T) {
+			settings, _ := Capabilities(&EngineSpawn{InfraSafety: tc.choice})[settingsKey].(map[string]any)
+			for key, want := range map[string]any{"infraSafetyMonitor": tc.monitor, "infraSafetyEnforce": tc.enforce} {
+				got, present := settings[key]
+				if want == nil && present {
+					t.Errorf("%s = %#v, want the key withheld", key, got)
+				}
+				if want != nil && !reflect.DeepEqual(got, want) {
+					t.Errorf("%s = %#v, want %#v", key, got, want)
+				}
+			}
+		})
+	}
+}
+
+// TestInitialize_KnowledgeTuningMembers pins settings.knowledge's index members under KAS's names: each stated
+// member rides beside enabled whatever its value, an overlap of 0 included, and an unset member is withheld.
+func TestInitialize_KnowledgeTuningMembers(t *testing.T) {
+	settings, _ := Capabilities(&EngineSpawn{Knowledge: true})[settingsKey].(map[string]any)
+	if got, want := settings["knowledge"], map[string]any{"enabled": true}; !reflect.DeepEqual(got, want) {
+		t.Errorf("unset tuning: knowledge = %#v, want %#v", got, want)
+	}
+	settings, _ = Capabilities(&EngineSpawn{KnowledgeTuning: marotte.KnowledgeTuning{
+		IndexType: "best", IncludePatterns: []string{"**/*.md"}, ExcludePatterns: []string{"a/**", "b/**"},
+		MaxFiles: 9, Chunking: marotte.KnowledgeChunking{Size: 64},
+	}})[settingsKey].(map[string]any)
+	want := map[string]any{
+		"enabled": false, "indexType": "best", "includePatterns": []string{"**/*.md"},
+		"excludePatterns": []string{"a/**", "b/**"}, "maxFiles": 9, "chunkSize": 64, "chunkOverlap": 0,
+	}
+	if got := settings["knowledge"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("knowledge = %#v, want %#v", got, want)
+	}
+}
+
+// TestInitialize_DeliveryLimitOnlyWhenSet pins settings.sendMessage.deliveryLimit on initialize: withheld at zero,
+// where kiro-cli's own default applies, and never on a session door, which KAS does not read it from.
+func TestInitialize_DeliveryLimitOnlyWhenSet(t *testing.T) {
+	settings, _ := Capabilities(&EngineSpawn{})[settingsKey].(map[string]any)
+	if got, present := settings["sendMessage"]; present {
+		t.Errorf("an unset limit sent sendMessage = %#v", got)
+	}
+	settings, _ = Capabilities(&EngineSpawn{MessageDeliveryLimit: 7})[settingsKey].(map[string]any)
+	if got, want := settings["sendMessage"], map[string]any{"deliveryLimit": 7}; !reflect.DeepEqual(got, want) {
+		t.Errorf("sendMessage = %#v, want %#v", got, want)
+	}
+	for _, tc := range sessionMatrix {
+		session, _ := SessionMeta(&tc.spawn)[settingsKey].(map[string]any)
+		if _, present := session["sendMessage"]; present {
+			t.Errorf("%s: SessionMeta carries sendMessage", tc.name)
 		}
 	}
 }

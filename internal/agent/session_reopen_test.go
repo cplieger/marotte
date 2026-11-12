@@ -263,18 +263,30 @@ var configWrites = []struct {
 	{key: settings.KeySecurityProfile, value: policyfile.ProfileTrusted, reach: reachReopen},
 	{key: settings.KeyWorkflowsEnabled, value: false, reach: reachReopen},
 	{key: settings.KeyChatMessaging, value: true, reach: reachReopen},
+	{key: settings.KeyChatAwareness, value: true, reach: reachReopen},
+	// Saving kiro-cli's own 50 changes nothing: TestEngineFeatures_MessageDeliveryLimitWithholdsTheDefault.
+	{key: settings.KeyChatMessageDeliveryLimit, value: 12, reach: reachEngine},
 	// Read only while workflows are on: TestWorkflowLaunch_ReopensOnlyWhileWorkflowsAreOn.
 	{key: settings.KeyWorkflowLaunch, value: marotte.WorkflowLaunchDelegateAll, reach: reachReopen},
+	// Read only while workflows are on, like Workflow use (TestSessionFeatures_CreatorEffortOnlyWithWorkflows).
+	{key: settings.KeyWorkflowCreatorEffort, value: "high", reach: reachReopen},
 	{key: settings.KeySpecPlanning, value: settings.SpecPlanningQuick, reach: reachReopen},
 	// Read only while planning is on: TestSpecPlanningAskFirst_ReopensOnlyWhilePlanningIsOn.
 	{key: settings.KeySpecPlanningAskFirst, value: true, reach: reachNoChat},
 	{key: settings.KeyWorkValidation, value: settings.FeatureOff, reach: reachReopen},
 	{key: settings.KeySteeringReminders, value: true, reach: reachEngine},
 	{key: settings.KeyCloudFormationSafety, value: settings.FeatureOn, reach: reachEngine},
+	{key: settings.KeyCloudFormationSafety, from: settings.FeatureOn, value: settings.FeatureEnforce, reach: reachEngine},
 	{key: settings.KeyAutoRouting, value: settings.FeatureOff, reach: reachEngine},
 	{key: settings.KeyAutoDelegation, value: settings.FeatureOff, reach: reachEngine},
-	{key: settings.KeyModelFallback, value: true, reach: reachEngine},
+	{key: settings.KeyModelFallback, value: false, reach: reachEngine},
 	{key: settings.KeyKnowledgeEnabled, value: false, reach: reachEngine},
+	// Saving a kiro-cli default changes nothing: TestEngineFeatures_KnowledgeTuningWithholdsDefaultsAndInvalid.
+	{key: settings.KeyKnowledgeIndexType, value: settings.KnowledgeIndexFast, reach: reachEngine},
+	{key: settings.KeyKnowledgeIncludePatterns, value: []string{"**/*.md"}, reach: reachEngine},
+	{key: settings.KeyKnowledgeExcludePatterns, value: []string{"drafts/**"}, reach: reachEngine},
+	{key: settings.KeyKnowledgeMaxFiles, value: 200, reach: reachEngine},
+	{key: settings.KeyKnowledgeChunking, value: map[string]int{"size": 256, "overlap": 32}, reach: reachEngine},
 	// marotte's compactor reads both at each trigger; every chat door turns KAS's own compaction off.
 	{key: settings.KeyAutoCompactionEnabled, value: false, reach: reachLive},
 	{key: settings.KeyAutoCompactPct, value: 60, reach: reachLive},

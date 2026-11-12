@@ -44,6 +44,13 @@ const VALUE_CONTROLS = [
   "spec-planning",
   "output-style",
   "workflow-launch",
+  "workflow-creator-effort",
+  "chat-message-delivery-limit",
+  "knowledge-index-type",
+  "knowledge-include-patterns",
+  "knowledge-exclude-patterns",
+  "knowledge-max-files",
+  "knowledge-chunk-size",
   "shell-command-timeout",
   "trigger-max-live-runs",
   "trigger-max-launches-per-hour",
@@ -90,6 +97,8 @@ describe("Settings > General value rows at desktop width", () => {
       "spec-planning",
       "output-style",
       "shell-command-timeout",
+      "knowledge-include-patterns",
+      "knowledge-chunk-overlap",
     ]) {
       const hint = control(id).closest(".section-field")?.querySelector(".section-hint");
       expect(hint, `#${id} has a hint`).not.toBeNull();
@@ -97,6 +106,21 @@ describe("Settings > General value rows at desktop width", () => {
         control(id).getBoundingClientRect().bottom,
       );
     }
+  });
+});
+
+describe("the knowledge passage size row", () => {
+  it("puts the overlap box on the size box's line, after its own label", () => {
+    const size = control("knowledge-chunk-size").getBoundingClientRect();
+    const label = host
+      .querySelector('label[for="knowledge-chunk-overlap"]')
+      ?.getBoundingClientRect();
+    const overlap = control("knowledge-chunk-overlap").getBoundingClientRect();
+    expect(label, "the overlap box has a label").toBeDefined();
+    expect(label!.left).toBeGreaterThan(size.right);
+    expect(overlap.left).toBeGreaterThan(label!.right);
+    expect(overlap.top).toBeLessThan(size.bottom);
+    expect(overlap.bottom).toBeGreaterThan(size.top);
   });
 });
 
@@ -146,32 +170,55 @@ describe("the unattended runs section", () => {
   });
 });
 
-describe("the triggered-run caps", () => {
-  it("edits the trigger live and hourly caps", () => {
+describe("the count rows", () => {
+  it("edits the trigger caps and the chat message delivery limit within their bounds", () => {
     initGeneralPanelControls();
     applyGeneralPanel(
-      settingsPayload({ trigger_max_live_runs: 4, trigger_max_launches_per_hour: 9 }),
+      settingsPayload({
+        trigger_max_live_runs: 4,
+        trigger_max_launches_per_hour: 9,
+        chat_message_delivery_limit: 70,
+      }),
     );
+    // Bounds: settings.validTriggerCap (1 to 100) and kiro-cli's sendMessageDeliveryLimit (1 to 500).
     const cases = [
-      ["trigger-max-live-runs", "trigger_max_live_runs", "4"],
-      ["trigger-max-launches-per-hour", "trigger_max_launches_per_hour", "9"],
+      ["trigger-max-live-runs", "trigger_max_live_runs", "4", 100],
+      ["trigger-max-launches-per-hour", "trigger_max_launches_per_hour", "9", 100],
+      ["chat-message-delivery-limit", "chat_message_delivery_limit", "70", 500],
     ] as const;
-    for (const [id, key, stored] of cases) {
+    for (const [id, key, stored, max] of cases) {
       const input = control(id) as HTMLInputElement;
       expect(input.type).toBe("number");
-      expect([input.min, input.max]).toEqual(["1", "100"]);
-      expect(input.value, `#${id} paints the stored cap`).toBe(stored);
+      expect([input.min, input.max]).toEqual(["1", String(max)]);
+      expect(input.value, `#${id} paints the stored value`).toBe(stored);
       input.value = "7";
       input.dispatchEvent(new Event("change"));
       expect(patchSettings).toHaveBeenLastCalledWith({ [key]: 7 });
-      input.value = "500";
+      input.value = "9000";
       input.dispatchEvent(new Event("change"));
-      expect(patchSettings).toHaveBeenLastCalledWith({ [key]: 100 });
-      expect(input.value).toBe("100");
+      expect(patchSettings).toHaveBeenLastCalledWith({ [key]: max });
+      expect(input.value).toBe(String(max));
+      input.value = "0";
+      input.dispatchEvent(new Event("change"));
+      expect(patchSettings).toHaveBeenLastCalledWith({ [key]: 1 });
       vi.mocked(patchSettings).mockClear();
       input.value = "";
       input.dispatchEvent(new Event("change"));
       expect(patchSettings, "an emptied box sends nothing").not.toHaveBeenCalled();
     }
+  });
+
+  it("edits the knowledge file limit from 1 up, with no upper bound", () => {
+    initGeneralPanelControls();
+    applyGeneralPanel(settingsPayload({ knowledge_max_files: 2500 }));
+    const input = control("knowledge-max-files") as HTMLInputElement;
+    expect([input.type, input.min, input.max]).toEqual(["number", "1", ""]);
+    expect(input.value).toBe("2500");
+    input.value = "250000";
+    input.dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenLastCalledWith({ knowledge_max_files: 250000 });
+    input.value = "0";
+    input.dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenLastCalledWith({ knowledge_max_files: 1 });
   });
 });

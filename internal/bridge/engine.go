@@ -332,7 +332,7 @@ func (e *Engine) Start(ctx context.Context, o *marotte.EngineOpts) error {
 	e.debugLogs = o.DebugLogs
 	e.highThroughput = o.HighThroughput
 	e.spawn = kascap.EngineSpawn{
-		InfraSafetyMonitor:       o.Features.InfraSafetyMonitor,
+		InfraSafety:              o.Features.InfraSafety,
 		AutoRouting:              o.Features.AutoRouting,
 		AutoDelegation:           o.Features.AutoDelegation,
 		TerminalCommandTimeoutMs: o.Features.TerminalCommandTimeoutMs,
@@ -341,6 +341,8 @@ func (e *Engine) Start(ctx context.Context, o *marotte.EngineOpts) error {
 		SteeringReminders:        o.Features.SteeringReminders,
 		DisableTelemetry:         o.DisableTelemetry,
 		ModelFallback:            o.Features.ModelFallback,
+		MessageDeliveryLimit:     o.Features.MessageDeliveryLimit,
+		KnowledgeTuning:          o.Features.Knowledge,
 	}
 	if err := e.startProcess(); err != nil {
 		return err

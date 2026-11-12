@@ -629,9 +629,72 @@
                   <p class="section-hint">Lets the agent search the folders you have indexed in Custom instructions. On by default, and turning it off keeps the indexes.</p>
                 </div>
               </div>
+              <div class="section-option section-option-fixed">
+                <div class="section-field">
+                  <div class="section-title-status-row">
+                    <label class="section-option-label" for="knowledge-index-type">Knowledge index type</label>
+                    <span class="settings-save-status hidden" data-save-status="knowledge_index_type" aria-live="polite"></span>
+                  </div>
+                  <select id="knowledge-index-type" class="rf-select" aria-describedby="knowledge-index-type-hint">
+                    <option value="" selected>Default</option>
+                    <option value="best">Best</option>
+                    <option value="fast">Fast</option>
+                  </select>
+                  <p class="section-hint" id="knowledge-index-type-hint">Best finds passages by meaning; Fast matches words only and indexes faster. Default follows Kiro, which uses Best, and a knowledge base keeps the type it was added with.</p>
+                </div>
+              </div>
+              <div class="section-option section-option-fixed">
+                <div class="section-field">
+                  <div class="section-title-status-row">
+                    <label class="section-option-label" for="knowledge-include-patterns">Knowledge files to include</label>
+                    <span class="settings-save-status hidden" data-save-status="knowledge_include_patterns" aria-live="polite"></span>
+                  </div>
+                  <input type="text" id="knowledge-include-patterns" class="rf-input rf-mono rf-glob-list" autocomplete="off" spellcheck="false" placeholder="docs/**, **/*.md" aria-describedby="knowledge-include-patterns-hint">
+                  <p class="section-hint" id="knowledge-include-patterns-hint">Indexes only the files whose path in the folder matches one of these patterns, separated by commas. Empty, the default, indexes every file Kiro can read, and a knowledge base keeps the patterns it was added with.</p>
+                </div>
+              </div>
+              <div class="section-option section-option-fixed">
+                <div class="section-field">
+                  <div class="section-title-status-row">
+                    <label class="section-option-label" for="knowledge-exclude-patterns">Knowledge files to skip</label>
+                    <span class="settings-save-status hidden" data-save-status="knowledge_exclude_patterns" aria-live="polite"></span>
+                  </div>
+                  <input type="text" id="knowledge-exclude-patterns" class="rf-input rf-mono rf-glob-list" autocomplete="off" spellcheck="false" placeholder="**/test/**" aria-describedby="knowledge-exclude-patterns-hint">
+                  <p class="section-hint" id="knowledge-exclude-patterns-hint">Leaves out the files whose path in the folder matches one of these patterns, separated by commas. Hidden folders and folders such as node_modules and build are always left out, and a knowledge base keeps the patterns it was added with.</p>
+                </div>
+              </div>
+              <div class="section-option section-option-fixed">
+                <div class="section-field">
+                  <div class="section-title-status-row">
+                    <label class="section-option-label" for="knowledge-max-files">Knowledge file limit</label>
+                    <span class="settings-save-status hidden" data-save-status="knowledge_max_files" aria-live="polite"></span>
+                  </div>
+                  <input type="number" id="knowledge-max-files" class="rf-input rf-number" autocomplete="off" min="1" step="1" inputmode="numeric" placeholder="10000" aria-describedby="knowledge-max-files-hint">
+                  <p class="section-hint" id="knowledge-max-files-hint">The most files Kiro indexes from one folder when you add or reindex a knowledge base; it skips the rest. 10000 by default; raise it for a larger folder.</p>
+                </div>
+              </div>
+              <div class="section-option section-option-fixed">
+                <div class="section-field">
+                  <div class="section-title-status-row">
+                    <label class="section-option-label" for="knowledge-chunk-size">Knowledge passage size</label>
+                    <span class="settings-save-status hidden" data-save-status="knowledge_chunking" aria-live="polite"></span>
+                  </div>
+                  <input type="number" id="knowledge-chunk-size" class="rf-input rf-number" autocomplete="off" min="64" step="1" inputmode="numeric" placeholder="512" aria-describedby="knowledge-chunking-hint">
+                  <label class="section-option-label" for="knowledge-chunk-overlap">Overlap</label>
+                  <input type="number" id="knowledge-chunk-overlap" class="rf-input rf-number" autocomplete="off" min="0" step="1" inputmode="numeric" placeholder="128" aria-describedby="knowledge-chunking-hint">
+                  <p class="section-hint" id="knowledge-chunking-hint">When you add or reindex a knowledge base, Kiro splits each file into passages of this many words, each starting with the last Overlap words of the one before. 512 and 128 by default; smaller passages make each search result shorter.</p>
+                </div>
+              </div>
+              <div class="section-option section-option-fixed">
+                <div class="section-field">
+                  <span class="section-option-label">Code intelligence</span>
+                  <button type="button" id="code-intel-action" class="btn-small" aria-describedby="code-intel-hint">Install</button>
+                  <p class="section-hint" id="code-intel-hint"><span id="code-intel-status" aria-live="polite">Checking the installed language servers.</span> A language server gives the agent navigation, rename and error checking for its language, in open chats too.</p>
+                </div>
+              </div>
               <div class="section-option">
                 <label class="toggle">
-                  <input type="checkbox" id="flag-model-fallback" aria-label="Model fallback" aria-describedby="flag-model-fallback-hint">
+                  <input type="checkbox" id="flag-model-fallback" checked aria-label="Model fallback" aria-describedby="flag-model-fallback-hint">
                   <span class="toggle-slider"></span>
                 </label>
                 <div>
@@ -639,7 +702,7 @@
                     <span class="section-option-label">Model fallback</span>
                     <span class="settings-save-status hidden" data-save-status="model_fallback_enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint" id="flag-model-fallback-hint">When a model declines a request or is unavailable, Kiro retries the turn on another model from its fallback chain, and the chat may move to that model unless you picked one. Marotte does not turn on retries for a request declined while the model is Auto. Off by default, as in Kiro.</p>
+                  <p class="section-hint" id="flag-model-fallback-hint">When a model declines a request or is unavailable, Kiro retries the turn on another model from its fallback chain, and the chat may move to that model unless you picked one. On by default, as in Kiro.</p>
                 </div>
               </div>
               <div class="section-option section-option-fixed">
@@ -765,17 +828,19 @@
                   <p class="section-hint" id="auto-delegation-hint">In a chat on Auto, Kiro may run a helper agent or workflow step on a cheaper or stronger Auto model to suit its task. Default follows Kiro; choose Off to stop it.</p>
                 </div>
               </div>
-              <div class="section-option">
-                <label class="toggle">
-                  <input type="checkbox" id="flag-cloudformation-safety" aria-label="AWS CloudFormation safety check">
-                  <span class="toggle-slider"></span>
-                </label>
+              <div class="section-option section-option-fixed">
                 <div>
                   <div class="section-title-status-row">
-                    <span class="section-option-label">AWS CloudFormation safety check</span>
+                    <label class="section-option-label" for="cloudformation-safety">AWS CloudFormation safety check</label>
                     <span class="settings-save-status hidden" data-save-status="cloudformation_safety_check" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">When the agent edits a CloudFormation template or runs a CDK deploy or destroy, Kiro warns you if the change breaks one of your account's safety rules, but never blocks it. Off by default. The check sends the template and recent chat to Kiro's service.</p>
+                  <select id="cloudformation-safety" class="rf-select" aria-describedby="cloudformation-safety-hint">
+                    <option value="" selected>Default</option>
+                    <option value="on">Warn</option>
+                    <option value="enforce">Block until you allow</option>
+                    <option value="off">Off</option>
+                  </select>
+                  <p class="section-hint" id="cloudformation-safety-hint">When the agent edits a CloudFormation template or runs a CDK deploy or destroy, Kiro checks the change against your account's safety rules. Warn tells you when it breaks one; Block until you allow also stops the change until you choose, and a scheduled or triggered run keeps it blocked. Default follows Kiro. The check sends the template and recent chat to Kiro's service.</p>
                 </div>
               </div>
               <div class="section-option">
@@ -803,6 +868,23 @@
                     <option value="delegate-all">As much as possible</option>
                   </select>
                   <p class="section-hint" id="workflow-launch-hint">When the agent starts a workflow on its own. Only when asked: it does the work in the chat unless you ask for a workflow. Only for large tasks: it starts one for multi-step work or work that would fill the chat's context. As much as possible: it hands reading code, writing it, testing and review to workflows. Chats started on an older kiro-cli keep handing all work to workflows. Only when asked by default.</p>
+                </div>
+              </div>
+              <div class="section-option section-option-fixed" id="workflow-creator-effort-row">
+                <div class="section-field">
+                  <div class="section-title-status-row">
+                    <label class="section-option-label" for="workflow-creator-effort">Workflow planning effort</label>
+                    <span class="settings-save-status hidden" data-save-status="workflow_creator_effort" aria-live="polite"></span>
+                  </div>
+                  <select id="workflow-creator-effort" class="rf-select" aria-describedby="workflow-creator-effort-hint">
+                    <option value="" selected>Default</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="xhigh">X-high</option>
+                    <option value="max">Max</option>
+                  </select>
+                  <p class="section-hint" id="workflow-creator-effort-hint">How much reasoning Kiro spends planning a workflow the agent starts from a description rather than a saved workflow. Default lets Kiro decide; raise it if those workflows miss steps.</p>
                 </div>
               </div>
               <div class="section-option section-option-fixed">
@@ -836,6 +918,29 @@
                     <span class="settings-save-status hidden" data-save-status="chat_messaging_enabled" aria-live="polite"></span>
                   </div>
                   <p class="section-hint" id="flag-chat-messaging-hint">On: the agent in one chat can message another chat, for example to say an API changed, and that chat's agent replies; sending needs Workflows on and a mode other than Plan, Autonomous, Spec, Quick Spec or Bug Fix. Turn it on when your chats work on related tasks; off by default.</p>
+                </div>
+              </div>
+              <div class="section-option section-option-fixed" id="chat-message-limit-row">
+                <div class="section-field">
+                  <div class="section-title-status-row">
+                    <label class="section-option-label" for="chat-message-delivery-limit">Messages per exchange</label>
+                    <span class="settings-save-status hidden" data-save-status="chat_message_delivery_limit" aria-live="polite"></span>
+                  </div>
+                  <input type="number" id="chat-message-delivery-limit" class="rf-input rf-number" autocomplete="off" min="1" max="500" step="1" inputmode="numeric" placeholder="50" aria-describedby="chat-message-delivery-limit-hint">
+                  <p class="section-hint" id="chat-message-delivery-limit-hint">How many messages two chats' agents can pass back and forth in one exchange before Kiro stops delivering them, from 1 to 500. It keeps two agents from replying to each other forever. 50 by default.</p>
+                </div>
+              </div>
+              <div class="section-option">
+                <label class="toggle">
+                  <input type="checkbox" id="flag-chat-awareness" aria-label="Search other chats" aria-describedby="flag-chat-awareness-hint">
+                  <span class="toggle-slider"></span>
+                </label>
+                <div>
+                  <div class="section-title-status-row">
+                    <span class="section-option-label">Search other chats</span>
+                    <span class="settings-save-status hidden" data-save-status="chat_awareness_enabled" aria-live="polite"></span>
+                  </div>
+                  <p class="section-hint" id="flag-chat-awareness-hint">On: the agent can browse and search your other chats by branch, file or topic, and read what each one decided, changed and produced, to build on earlier work or find a chat to message. Off by default.</p>
                 </div>
               </div>
               <div class="section-option section-option-fixed">
@@ -1005,6 +1110,10 @@
                 </button>
               </div>
               <p id="tool-catalog-meta" class="section-hint hidden" aria-live="polite"></p>
+              <div id="tools-lsp-filter" class="section-option hidden">
+                <button type="button" id="tools-lsp-filter-clear" class="btn btn-small">Show all tools</button>
+                <p class="section-hint">Showing language servers only. Installing one gives the agent code intelligence for its language.</p>
+              </div>
               <div id="tool-update-output" class="rolling-output hidden" role="log" aria-live="polite" aria-label="Tool install output"></div>
               <div id="tools-list" class="list-container"><div class="skeleton-list-row"></div><div class="skeleton-list-row"></div><div class="skeleton-list-row"></div></div>
             </div>
