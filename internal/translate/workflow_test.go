@@ -428,6 +428,22 @@ func TestStepAttribution_SlashBearingNodeIDsKeyDistinctTurns(t *testing.T) {
 	}
 }
 
+// A content frame's attribution names its step's node the way that step's asks do (the meta's node id, else the
+// registry's), so a turn the frame opens can hold those asks.
+func TestStepAttribution_CarriesTheNodeIDTheStepsAsksName(t *testing.T) {
+	t.Parallel()
+	var events []marotte.ServerEvent
+	tr := New(rolesOf(capturing(&events)))
+	tr.RecordStepSession("sess_reg", "wf_1", "build", `wf_1:build`)
+
+	meta := tr.StepAttribution("wf_1", "sess_meta",
+		&ACPWorkflowMeta{WorkflowID: "wf_1", NodeID: "review", NodePath: []string{"wf_1", "review"}})
+	reg := tr.StepAttribution("wf_1", "sess_reg", nil)
+	if meta.NodeID != "review" || reg.NodeID != "build" {
+		t.Errorf("StepAttribution node ids = %q (meta) and %q (registry), want review and build", meta.NodeID, reg.NodeID)
+	}
+}
+
 // TestRunComplete_LeavesTheStepSessionsToItsCaller pins that this handler forgets nothing:
 // the status can be `paused`, and the terminal gate is agent.observeComplete's.
 func TestRunComplete_LeavesTheStepSessionsToItsCaller(t *testing.T) {

@@ -286,14 +286,15 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
       row.btn.dataset["kind"] = n.kind;
     }
     paintLabel(row.label, n);
-    setText(row.tail, n.tail ?? "");
+    // The silence outranks the tail: the newest line is an hour old once it shows.
+    setText(row.tail, n.silence ?? n.tail ?? "");
     const ms = elapsed(n.start, n.end);
     const time = ms > 0 ? formatElapsed(ms) : "";
     setText(row.dur, time);
     setAttr(
       row.btn,
       "aria-label",
-      [n.label, STATE_WORD[n.state], time].filter((s) => s !== "").join(", "),
+      [n.label, STATE_WORD[n.state], n.silence ?? "", time].filter((s) => s !== "").join(", "),
     );
     if (shown) {
       row.btn.setAttribute("aria-current", "true");

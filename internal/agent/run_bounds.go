@@ -1,10 +1,9 @@
 package agent
 
-// Run bounds: one deadline per run, the per-step turn cap, and the recorded reason. The idle window,
-// the absolute backstop and a scheduled run's next slot all feed the lease's one deadline
-// (runlease.NextDeadline), re-stamped on start, parked on pause and rolled forward on progress,
-// so it bounds executing and stalled time, not wall time; a scheduled run's slot alone stays armed
-// through a pause (parkDeadline). Zero is unbounded.
+// Run bounds: one deadline per run, the per-step turn cap, and the recorded reason. The idle window
+// and a scheduled run's next slot feed the lease's one deadline (runlease.NextDeadline), re-stamped
+// on start, parked on pause and rolled forward on progress, so it bounds stalled time, not wall
+// time; a scheduled run's slot alone stays armed through a pause (parkDeadline). Zero is unbounded.
 
 import (
 	"cmp"
@@ -28,21 +27,22 @@ import (
 // which retries silently.
 const runIdleWindow = 15 * time.Minute
 
-// runBackstop is the absolute executing-time budget, for a runaway loop that refills the idle
-// window forever. 36 hours is observed (recipes have run for eight). A constant: a raisable
-// backstop is none.
-const runBackstop = 36 * time.Hour
+// runSilenceBound is how long an open step turn may send no frame at all before the idle window's expiry acts on
+// it: a chat-launched run is flagged and keeps running, a parentless one is stopped as stalled.
+// runTurn.countsTowardSilence owns which turn counts. A hung compaction leaves the turn open with nothing to say
+// (docs/known-upstream-issues.md).
+const runSilenceBound = time.Hour
 
 // refillGranularity is the smallest move a refill writes: each is a fsynced rewrite of runs.json. It
 // makes the stall tolerance [runIdleWindow - refillGranularity, runIdleWindow]; Store.SetDeadline stays exact.
 const refillGranularity = time.Minute
 
 // minRunBudget is the smallest executing budget the slot may yield, internal/launchrule's
-// minMinuteInterval: change them together. It must not lift the backstop.
+// minMinuteInterval: change them together.
 const minRunBudget = 5 * time.Minute
 
 // The abnormal terminations a run's row reports; a user cancel records nothing. Each needs a sentence
-// in static-src/history.ts END_REASON_TEXT. Stalled is the idle window's verdict; overran is the slot or the backstop.
+// in static-src/history.ts END_REASON_TEXT. Stalled is the idle window's verdict; overran is the slot.
 const (
 	runEndOverran  = "overran"
 	runEndStalled  = "stalled"
@@ -54,12 +54,7 @@ const (
 // logMsgRunOrphaned is a constant so the restart cancel is greppable as one line.
 const logMsgRunOrphaned = "run was orphaned by a restart; cancelling so its recipe is idle again"
 
-// logMsgRunStalled and logMsgRunBackstop are split because an operator acts differently: one stopped
-// producing, the other worked its whole budget.
-const (
-	logMsgRunStalled  = "run made no progress inside its idle window; cancelling"
-	logMsgRunBackstop = "run spent its absolute executing-time backstop; cancelling"
-)
+const logMsgRunStalled = "run made no progress inside its idle window; cancelling"
 
 // logMsgRunYieldedToSlot is logged at INFO when a manual run yields to its recipe's next slot: the
 // bound working, kept apart from logMsgRunOverran, which reports a schedule failing.
@@ -88,17 +83,15 @@ type runBoundsState struct {
 	healWriteFailed map[string]struct{}
 	// cancelRetries counts refused-cancel retries since the last progress, separate from heals so neither starves the other.
 	cancelRetries map[string]int
-	// confirmed names triggered runs whose run_start this life reached the confirmer. Cleared with executed, so a
+	// confirmed names triggered runs whose run_start this life reached the confirmer. Cleared with arms, so a
 	// retry's run_start is handed over again.
 	confirmed map[string]struct{}
-	// armedAt is when each bounded run's current executing stretch began, mirroring Bounded(). The
-	// backstop's anchor, not Lease.StartedAt, which is wall time.
-	armedAt map[string]time.Time
-	// executed is executing time banked across completed stretches, so a parked run spends no backstop.
-	// In memory: a restart grants a fresh backstop.
-	executed map[string]time.Duration
 	// arms is each run's latest armDeadline: a park decided before it must not undo it.
 	arms map[string]runArm
+	// lastFrame is when an armed run last sent a frame, or was armed (noteFrame); its silence is measured from it.
+	lastFrame map[string]time.Time
+	// silent names the flagged runs, with the lastFrame their silence began at; the next frame clears it.
+	silent map[string]time.Time
 	// lives numbers each run marotte leases or retries under a workflow id, which Retry reuses; dropped on release.
 	lives map[string]uint64
 	// reasons maps a workflow id to why it stopped; order is its FIFO eviction queue.
@@ -139,8 +132,6 @@ func (rs *Runs) stampDeadline(
 	err := store.SetDeadline(ctx, workflowID, deadline)
 	if errors.Is(err, runlease.ErrNotFound) {
 		// The lease went away mid-transaction: nothing to bound.
-		delete(rs.bounds.armedAt, workflowID)
-		delete(rs.bounds.executed, workflowID)
 		delete(rs.bounds.arms, workflowID)
 		return false
 	}
@@ -154,16 +145,8 @@ func (rs *Runs) stampDeadline(
 	return true
 }
 
-// runBoundsLocked composes NextDeadline's three inputs. stretchStart fixes the backstop instant for
-// the whole stretch, so a refill recomputes the same value. Caller holds mu.
-func (rs *Runs) runBoundsLocked(l *runlease.Lease, stretchStart time.Time) runlease.Bounds {
-	return runlease.Bounds{
-		SlotAt: l.SlotAt,
-		// The floor must not lift this: NextDeadline clamps on it last, so a spent budget fires at once.
-		BackstopAt: stretchStart.Add(runBackstop - rs.bounds.executed[l.WorkflowID]),
-		Idle:       runIdleWindow,
-		Floor:      minRunBudget,
-	}
+func runBounds(l *runlease.Lease) runlease.Bounds {
+	return runlease.Bounds{SlotAt: l.SlotAt, Idle: runIdleWindow, Floor: minRunBudget}
 }
 
 // Idempotent: `run_start` re-fires on resume, so the earliest arm wins. Every call on a leased run is
@@ -174,21 +157,22 @@ func (rs *Runs) armDeadline(ctx context.Context, workflowID string) {
 		if l.Bounded() {
 			return time.Time{}, false
 		}
-		if rs.bounds.armedAt == nil {
-			rs.bounds.armedAt = map[string]time.Time{}
-		}
-		rs.bounds.armedAt[workflowID] = now
-		return runlease.NextDeadline(now, rs.runBoundsLocked(&l, now)), true
+		return runlease.NextDeadline(now, runBounds(&l)), true
 	})
 }
 
-// numberArmLocked numbers an arm, so a park decided before it does not undo it. Caller holds mu.
+// numberArmLocked numbers an arm, so a park decided before it does not undo it, and restarts the run's silence: a
+// pause is not silence. Caller holds mu.
 func (rs *Runs) numberArmLocked(workflowID string) {
 	if rs.bounds.arms == nil {
 		rs.bounds.arms = map[string]runArm{}
 	}
 	rs.bounds.armSeq++
 	rs.bounds.arms[workflowID] = runArm{seq: rs.bounds.armSeq}
+	if rs.bounds.lastFrame == nil {
+		rs.bounds.lastFrame = map[string]time.Time{}
+	}
+	rs.bounds.lastFrame[workflowID] = time.Now()
 }
 
 // beginLife numbers a new run of workflowID (a lease grant, a retry), so a cancel re-attempt decided for an earlier
@@ -223,20 +207,14 @@ func (rs *Runs) lastArmSeq(workflowID string) uint64 {
 	return rs.bounds.arms[workflowID].seq
 }
 
-// refillDeadline rolls a bounded run's deadline forward on progress, reporting whether it stamped.
-// A parked run is not refillable. Throttled at refillGranularity while the deadline is ahead, which
-// also stops it moving earlier.
-func (rs *Runs) refillDeadline(ctx context.Context, workflowID string) bool {
-	return rs.stampDeadline(ctx, workflowID, func(l runlease.Lease, now time.Time) (time.Time, bool) {
+// refillDeadline rolls a bounded run's deadline forward on progress. A parked run is not refillable.
+// Throttled at refillGranularity while the deadline is ahead, which also stops it moving earlier.
+func (rs *Runs) refillDeadline(ctx context.Context, workflowID string) {
+	rs.stampDeadline(ctx, workflowID, func(l runlease.Lease, now time.Time) (time.Time, bool) {
 		if !l.Bounded() {
 			return time.Time{}, false
 		}
-		// A stretch this process did not arm: treat it as starting now and claim none of the backstop.
-		start, armed := rs.bounds.armedAt[workflowID]
-		if !armed {
-			start = now
-		}
-		next := runlease.NextDeadline(now, rs.runBoundsLocked(&l, start))
+		next := runlease.NextDeadline(now, runBounds(&l))
 		if l.Deadline.After(now) && !next.After(l.Deadline.Add(refillGranularity)) {
 			return time.Time{}, false
 		}
@@ -245,8 +223,11 @@ func (rs *Runs) refillDeadline(ctx context.Context, workflowID string) bool {
 }
 
 // RunMadeProgress rolls a run's idle window forward and, at most once per chat.RunMarkRefresh, its keep marks.
-// Satisfies translate.runBoundsAccess. Called per tool-call frame, so the pre-checks keep it two map reads.
+// Satisfies translate.runBoundsAccess. Called per step frame, so it stays a few locked map operations.
 func (rs *Runs) RunMadeProgress(workflowID string) {
+	if rs.noteFrame(workflowID) {
+		rs.announceSilence(workflowID)
+	}
 	refresh := rs.marks.due(workflowID, time.Now())
 	if !refresh && !rs.bounded(workflowID) {
 		return
@@ -359,8 +340,6 @@ func (rs *Runs) disarmUnless(ctx context.Context, workflowID string, keep func(l
 	if keep != nil && keep(l) {
 		return false
 	}
-	// Bank the stretch before the park, the only moment it is knowable.
-	rs.bankExecutedLocked(workflowID)
 	if err := store.SetDeadline(ctx, workflowID, time.Time{}); err != nil {
 		slog.Warn("could not park a run's deadline", "workflow_id", workflowID, "error", err)
 	}
@@ -368,27 +347,14 @@ func (rs *Runs) disarmUnless(ctx context.Context, workflowID string, keep func(l
 	return true
 }
 
-// The delete keeps two parks from double-charging. Caller holds mu.
-func (rs *Runs) bankExecutedLocked(workflowID string) {
-	start, armed := rs.bounds.armedAt[workflowID]
-	if !armed {
-		return
-	}
-	if rs.bounds.executed == nil {
-		rs.bounds.executed = map[string]time.Duration{}
-	}
-	rs.bounds.executed[workflowID] += time.Since(start)
-	delete(rs.bounds.armedAt, workflowID)
-}
-
-// clearExecuted drops a run's backstop and arm accounting for good, so a reused workflow id starts fresh.
-func (rs *Runs) clearExecuted(workflowID string) {
+// clearArms drops a run's arm and silence accounting for good, so a reused workflow id starts fresh.
+func (rs *Runs) clearArms(workflowID string) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	delete(rs.bounds.armedAt, workflowID)
-	delete(rs.bounds.executed, workflowID)
 	delete(rs.bounds.arms, workflowID)
 	delete(rs.bounds.confirmed, workflowID)
+	delete(rs.bounds.lastFrame, workflowID)
+	delete(rs.bounds.silent, workflowID)
 }
 
 // bounded reports whether marotte believes the run is executing under its deadline. Its readers must not clear it.
@@ -487,7 +453,7 @@ func (rs *Runs) readsTerminal(ctx context.Context, workflowID string) bool {
 var runEndNoteText = map[string]string{
 	runEndStalled: "was stopped: no activity and no live shell for " +
 		strconv.Itoa(int(runIdleWindow.Minutes())) + " minutes",
-	runEndOverran: "was stopped: it ran past its time limit",
+	runEndOverran: "was stopped: its recipe's next scheduled slot came due",
 }
 
 // runEndNoteID is the note's steer id in KAS's notify- shape (agent origin), distinct per stop.
@@ -590,7 +556,7 @@ func (rs *Runs) forgetBounds(ctx context.Context, workflowID string) {
 	rs.releaseTermination(workflowID)
 	rs.clearHeals(workflowID)
 	rs.clearCancelRetries(workflowID)
-	rs.clearExecuted(workflowID)
+	rs.clearArms(workflowID)
 	// The run's request-shaped asks live in the decision tracker; its step asks ended with the lease.
 	rs.clearRunPerms(ctx, workflowID)
 }
@@ -694,7 +660,7 @@ func (rs *Runs) restartLife(ctx context.Context, workflowID string) {
 	rs.disarmDeadline(ctx, workflowID)
 	rs.clearHeals(workflowID)
 	rs.endAutoResumeStop(ctx, workflowID)
-	rs.clearExecuted(workflowID)
+	rs.clearArms(workflowID)
 	rs.beginLife(workflowID)
 }
 
@@ -738,13 +704,15 @@ func (rs *Runs) endReason(workflowID string) string {
 
 // cancelExpired stops a run whose deadline (armedFor) ran out and, once the cancel lands, records why.
 // The slot test is "not after the deadline" because the floor can push the deadline past SlotAt. Only
-// the idle window consults idleVerdict.
+// the idle window consults idleExpiry.
 func (rs *Runs) cancelExpired(workflowID string, armedFor time.Time) {
 	l, held := rs.lease(workflowID)
 	slotRanOut := held && !l.SlotAt.IsZero() && !l.SlotAt.After(armedFor)
-	backstopSpent := rs.backstopSpent(workflowID)
-	if held && !slotRanOut && !backstopSpent && rs.idleExpiryHandled(workflowID, armedFor) {
-		return
+	expiry := expiryStalled
+	if held && !slotRanOut {
+		if expiry = rs.idleExpiry(workflowID, armedFor); expiry == expiryHandled {
+			return
+		}
 	}
 	if !rs.claimExpiredDeadline(workflowID, armedFor) {
 		return
@@ -757,10 +725,10 @@ func (rs *Runs) cancelExpired(workflowID string, armedFor time.Time) {
 	case slotRanOut:
 		slog.Info(logMsgRunYieldedToSlot, "workflow_id", workflowID, "recipe", l.Recipe,
 			"slot_at", l.SlotAt)
-	case backstopSpent:
-		rowReason, counted = reasonBackstop, obs.RunBackstop
-		slog.Error(logMsgRunBackstop, "workflow_id", workflowID,
-			"backstop", runBackstop.String(), "recipe", l.Recipe)
+	case expiry == expirySilent:
+		reason, rowReason, counted = runEndStalled, reasonSilent, obs.RunStalled
+		slog.Error(logMsgRunStalled, "workflow_id", workflowID,
+			"silence_bound", runSilenceBound.String(), "recipe", l.Recipe)
 	default:
 		reason, rowReason, counted = runEndStalled, reasonStalled, obs.RunStalled
 		slog.Error(logMsgRunStalled, "workflow_id", workflowID,
@@ -776,36 +744,38 @@ func (rs *Runs) cancelExpired(workflowID string, armedFor time.Time) {
 	rs.recordScheduleOutcome(ctx, ruleRun(&l), launchrule.Outcome{Status: launchrule.StatusFailed, Reason: rowReason})
 }
 
-// backstopSpent reports whether the absolute budget is gone now, counting the open stretch: the
-// backstop fires mid-stretch, so `executed` alone reads every expiry as a stall.
-func (rs *Runs) backstopSpent(workflowID string) bool {
-	rs.mu.Lock()
-	defer rs.mu.Unlock()
-	spent := rs.bounds.executed[workflowID]
-	if start, armed := rs.bounds.armedAt[workflowID]; armed {
-		spent += time.Since(start)
-	}
-	return spent >= runBackstop
-}
+// expiryOutcome is what an expired idle window did: refilled or parked the run, or left cancelExpired to stop it.
+type expiryOutcome int
 
-// idleExpiryHandled applies idleVerdict to an expired idle window, true when it refilled or parked the
-// run; false leaves cancelExpired to stop it as stalled. A park refused for an arm since the verdict
-// refills instead: the timer that fired was the run's only one.
-func (rs *Runs) idleExpiryHandled(workflowID string, armedFor time.Time) bool {
+const (
+	expiryStalled expiryOutcome = iota
+	// expirySilent is a stop for a step's hour of silence (actOnSilence), which the row names apart from a stall.
+	expirySilent
+	expiryHandled
+)
+
+// idleExpiry applies idleVerdict to an expired idle window. A park refused for an arm since the verdict refills
+// instead: the timer that fired was the run's only one.
+func (rs *Runs) idleExpiry(workflowID string, armedFor time.Time) expiryOutcome {
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
 	seq := rs.lastArmSeq(workflowID)
 	switch rs.idleVerdict(ctx, workflowID) {
 	case idleWorking:
-		return rs.refillDeadline(ctx, workflowID)
+		if rs.actOnSilence(ctx, workflowID) {
+			return expirySilent
+		}
+		if rs.refillWorking(ctx, workflowID) {
+			return expiryHandled
+		}
 	case idleParked:
 		if !rs.parkExpired(ctx, workflowID, armedFor, seq) {
 			rs.refillDeadline(ctx, workflowID)
 		}
-		return true
+		return expiryHandled
 	case idleStalled:
 	}
-	return false
+	return expiryStalled
 }
 
 // idleVerdict is what an expired idle window means for a run.
@@ -817,14 +787,13 @@ const (
 	idleParked
 )
 
-// idleVerdict reads an expired idle window. An open step turn is working: KAS has the step in flight
-// and owns in-turn liveness (stream idle watchdog, stall retries), and neither a KAS-side tool nor a
-// model reasoning silently sends a frame; the backstop bounds a runaway. A run its chat resumes that KAS reports
-// paused is parked: KAS reconciles a dead owner's run to paused on its next read and emits no frame, so its pause
-// never reached observePaused.
-// Anything else, an unreadable run and a parentless orphan included, is stalled.
+// idleVerdict reads an expired idle window. A run with open work (runLog.hasOpenWork) is working: a KAS-side tool or a
+// model reasoning silently sends no frame, and actOnSilence bounds how long a step may stay silent. A run its chat
+// resumes that KAS reports paused is parked: KAS reconciles a dead owner's run to paused on its next read and emits no
+// frame, so its pause never reached observePaused. Anything else, an unreadable run, a parentless orphan and a
+// container open with no child included, is stalled.
 func (rs *Runs) idleVerdict(ctx context.Context, workflowID string) idleVerdict {
-	if rs.log != nil && rs.log.hasOpen(workflowID) {
+	if rs.log != nil && rs.log.hasOpenWork(workflowID) {
 		return idleWorking
 	}
 	if !rs.chatResumes(workflowID) {

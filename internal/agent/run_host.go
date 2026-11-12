@@ -84,7 +84,7 @@ func (rs *Runs) launch(
 	return rs.launchAs(ctx, source, inputs, defaults, manualLaunch())
 }
 
-// LaunchScheduled launches an unattended run for a schedule. slotAt is its next slot; zero leaves the idle window and backstop.
+// LaunchScheduled launches an unattended run for a schedule. slotAt is its next slot; zero leaves the idle window.
 // Only the inputs the recipe declares are sent; the caller's map is not modified. The sign-in gate's refusal wraps
 // schedule.ErrNoRunCanStart; an engine that did not answer before the run was created, or a model list too unreadable
 // to check the recipe's step picks against, wraps schedule.ErrEngineBusy.

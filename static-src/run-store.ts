@@ -102,6 +102,9 @@ export interface RunState {
   /** marotte's, from the reply's `auto_resume_stopped_at`: when marotte stopped resuming this paused
    *  run on its own. KAS's own state never says so, since marotte writes no pause for it. */
   autoResumeStoppedAt?: string;
+  /** marotte's, from the reply's `silent_since`: since when the running run's open step turns have sent nothing,
+   *  set once that silence passed an hour and cleared by the next frame. */
+  silentSince?: string;
 }
 
 /** The reasons marotte pauses a run with (internal/agent/run_gate.go, pinned by
@@ -263,6 +266,8 @@ interface RawRunInspect extends Omit<RunInspect, "state"> {
   read_position?: unknown;
   /** marotte's own key beside KAS's reply: when marotte stopped resuming the run on its own. */
   auto_resume_stopped_at?: unknown;
+  /** marotte's own key beside KAS's reply: since when the run's open step turns have sent nothing, past an hour. */
+  silent_since?: unknown;
   /** marotte's own key beside KAS's reply: the run's display name, "" when nothing names it. */
   display_name?: unknown;
   /** marotte's own key beside KAS's reply: what may be done to the run, decided from this read's state. */
@@ -868,6 +873,9 @@ async function fetchRun(workflowID: string): Promise<void> {
       state.readPosition = readPositionOf(d.read_position);
       if (typeof d.auto_resume_stopped_at === "string" && d.auto_resume_stopped_at !== "") {
         state.autoResumeStoppedAt = d.auto_resume_stopped_at;
+      }
+      if (typeof d.silent_since === "string" && d.silent_since !== "") {
+        state.silentSince = d.silent_since;
       }
       if (typeof d.display_name === "string" && d.display_name !== "") {
         state.displayName = d.display_name;

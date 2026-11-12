@@ -257,6 +257,20 @@ func DecisionRunID(payload any) string {
 	}
 }
 
+// DecisionNodeID is the workflow node a *_needed payload's ask came from, "" for any other payload or one of no run.
+func DecisionNodeID(payload any) string {
+	switch p := payload.(type) {
+	case PermissionNeededPayload:
+		return p.NodeID
+	case ElicitationNeededPayload:
+		return p.NodeID
+	case UserInputNeededPayload:
+		return p.NodeID
+	default:
+		return ""
+	}
+}
+
 // DecisionRequestID is the ask id a *_needed payload carries, 0 for any other payload.
 func DecisionRequestID(payload any) int64 {
 	switch p := payload.(type) {

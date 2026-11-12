@@ -772,6 +772,7 @@
 
 /* Neutral: an engine end interrupted the step, or a person or its parent ended it; neither is the step's failure. */
 .ev-d-interrupted,
+.ev-d-silent,
 .ev-d-by-hand {
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r);
@@ -782,6 +783,7 @@
 }
 
 .ev-d-interrupted[hidden],
+.ev-d-silent[hidden],
 .ev-d-by-hand[hidden] {
   display: none;
 }
