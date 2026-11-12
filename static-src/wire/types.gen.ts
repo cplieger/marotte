@@ -877,12 +877,13 @@ export interface EffectiveSettings {
  * SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
  * unattended run's permission ask at its deadline and is fail-closed by
  * decision. DebugLogs raises the log level. All three default off.
- * SpecPlanningAskFirst and SteeringReminders default off, matching kiro-cli.
+ * SpecPlanningAskFirst, SteeringReminders and ChatMessaging default off, matching kiro-cli.
  * WorkflowsEnabled defaults ON (user's choice, where the TUI's default is off).
  */
   spec_planning_ask_first: boolean;
   steering_reminders_enabled: boolean;
   workflows_enabled: boolean;
+  chat_messaging_enabled: boolean;
   supervised_default: boolean;
   scheduled_auto_approve: boolean;
   debug_logs: boolean;

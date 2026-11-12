@@ -67,6 +67,28 @@ func TestFeatures_WorkflowsFollowsTheToggle(t *testing.T) {
 	}
 }
 
+// Messages between chats is off unless the user turns it on, kiro-cli's own sessionToolsMessaging default.
+func TestFeatures_MessagingFollowsTheToggle(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"absent", `{}`, false},
+		{"on", `{"chat_messaging_enabled": true}`, true},
+		{"off", `{"chat_messaging_enabled": false}`, false},
+		{"invalid", `{"chat_messaging_enabled": "on"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeAgentSettings(t, dir, tc.body)
+			if got := sessionFeatures(docAt(t, dir)).Messaging; got != tc.want {
+				t.Errorf("sessionFeatures(%s).Messaging = %v, want %v", tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSessionFeatures_WorkflowLaunchFollowsTheSetting(t *testing.T) {
 	for _, tc := range []struct {
 		name string
