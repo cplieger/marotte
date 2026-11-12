@@ -497,6 +497,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	sseP.chatStatus.versions = h.versions
 	runs.asks.versions = h.versions
 	runs.asks.epoch = h.Epoch
+	runs.leaseStore().BindInventory(h.versions, sseP.announceLiveRun)
 	// After the options, so the leases are the durable store's: the first pending_snapshot names every run.
 	runs.asks.seed(runs.leaseStore().List())
 	h.catalog.versions = h.versions

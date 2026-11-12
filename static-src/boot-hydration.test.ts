@@ -114,7 +114,10 @@ describe("the adapter holds frames until the chat store is hydrated", () => {
   it("delivers nothing before markHydrated, then everything in arrival order", async () => {
     boot();
     const conn = await opened();
-    conn.frame({ type: "connected", payload: { busy_stated: false, live_runs_stated: false } });
+    conn.frame({
+      type: "connected",
+      payload: { busy_stated: false, live_runs_stated: false, live_runs_version: "0" },
+    });
     conn.frame({ type: "pending_snapshot", payload: { items: [] } });
     conn.frame({
       type: "permission_needed",

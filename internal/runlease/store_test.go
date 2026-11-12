@@ -5,10 +5,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/cplieger/marotte/internal/subject"
 )
 
 // TestStore_RoundTripsALeaseAcrossARestart pins lease durability: a run outlives the process.
@@ -520,54 +523,133 @@ func TestStore_WritesA0600File(t *testing.T) {
 	}
 }
 
-// TestStore_ListStampedPairsTheSetWithItsVersion pins that a changing mutation moves the
-// version, a no-op leaves it, and ListStamped reads both in one critical section.
-func TestStore_ListStampedPairsTheSetWithItsVersion(t *testing.T) {
+// announcement is one row change Publish's announcer was handed.
+type announcement struct {
+	version string
+	row     Row
+	live    bool
+}
+
+// publishTo binds s to a fresh registry and returns the announcements it records.
+func publishTo(s *Store) *[]announcement {
+	got := &[]announcement{}
+	s.BindInventory(&subject.Versions{}, func(row Row, live bool, version string) {
+		*got = append(*got, announcement{row: row, live: live, version: version})
+	})
+	return got
+}
+
+// TestStoreAnnouncesEachRowChange pins the `runs` version as a count of row changes: each one
+// mints a strictly greater version and announces its row, a mutation that leaves the row as it
+// was mints nothing, and ListStamped serves the last announced version.
+func TestStoreAnnouncesEachRowChange(t *testing.T) {
 	s := NewMemory()
-	if got, version := s.ListStamped(); len(got) != 0 || version != "0" {
-		t.Fatalf("fresh ListStamped = (%d leases, %q), want (0, \"0\")", len(got), version)
+	got := publishTo(s)
+	if leases, version := s.ListStamped(); len(leases) != 0 || version != subject.Unminted {
+		t.Fatalf("fresh ListStamped = (%d leases, %q), want (0, %q)", len(leases), version, subject.Unminted)
 	}
 	ctx := t.Context()
-	lease := Lease{WorkflowID: "wf_1", Origin: OriginManual, StartedAt: time.Now()}
-	if err := s.Put(ctx, &lease); err != nil {
-		t.Fatalf("Put: %v", err)
+	armed := time.Now().Add(time.Hour)
+	steps := []struct {
+		do   func() error
+		want *announcement
+		name string
+	}{
+		{name: "Put", do: func() error {
+			return s.Put(ctx, &Lease{WorkflowID: "wf_1", ChatID: "c1", Origin: OriginManual, StartedAt: time.Now()})
+		}, want: &announcement{row: Row{WorkflowID: "wf_1", ChatID: "c1"}, live: true}},
+		{name: "an unchanged Put", do: func() error {
+			return s.Put(ctx, &Lease{WorkflowID: "wf_1", ChatID: "c1", Origin: OriginManual, Recipe: "r"})
+		}},
+		{
+			name: "SetDeadline arms", do: func() error { return s.SetDeadline(ctx, "wf_1", armed) },
+			want: &announcement{row: Row{WorkflowID: "wf_1", ChatID: "c1", Executing: true}, live: true},
+		},
+		{name: "a refill", do: func() error { return s.SetDeadline(ctx, "wf_1", armed.Add(time.Minute)) }},
+		{name: "SetKeepChats", do: func() error { return s.SetKeepChats(ctx, "wf_1", []string{"c2"}) }},
+		{name: "SetParentSessionID", do: func() error { return s.SetParentSessionID(ctx, "wf_1", "sess") }},
+		{
+			name: "SetDeadline parks", do: func() error { return s.SetDeadline(ctx, "wf_1", time.Time{}) },
+			want: &announcement{row: Row{WorkflowID: "wf_1", ChatID: "c1"}, live: true},
+		},
+		{
+			name: "Release", do: func() error { return s.Release(ctx, "wf_1") },
+			want: &announcement{row: Row{WorkflowID: "wf_1", ChatID: "c1"}, live: false},
+		},
+		{name: "releasing a released lease", do: func() error { return s.Release(ctx, "wf_1") }},
 	}
-	got, afterPut := s.ListStamped()
-	if len(got) != 1 || afterPut != "1" {
-		t.Fatalf("after Put: ListStamped = (%d leases, %q), want (1, \"1\")", len(got), afterPut)
+	last := subject.Unminted
+	for _, step := range steps {
+		before := len(*got)
+		if err := step.do(); err != nil {
+			t.Fatalf("%s: %v", step.name, err)
+		}
+		switch added := (*got)[before:]; {
+		case step.want == nil && len(added) != 0:
+			t.Errorf("%s moved no row but announced %+v", step.name, added)
+		case step.want != nil && len(added) != 1:
+			t.Fatalf("%s: %d announcements, want 1", step.name, len(added))
+		case step.want != nil:
+			a := added[0]
+			if a.row != step.want.row || a.live != step.want.live {
+				t.Errorf("%s announced %+v live=%v, want %+v live=%v", step.name, a.row, a.live, step.want.row, step.want.live)
+			}
+			if !versionAbove(a.version, last) {
+				t.Errorf("%s announced version %q, not above %q", step.name, a.version, last)
+			}
+			last = a.version
+		}
+		if _, v := s.ListStamped(); v != last {
+			t.Errorf("after %s: ListStamped version = %q, want the last announced %q", step.name, v, last)
+		}
 	}
-	deadline := time.Now().Add(time.Hour)
-	if err := s.SetDeadline(ctx, "wf_1", deadline); err != nil {
-		t.Fatalf("SetDeadline: %v", err)
+}
+
+// A failed persist keeps the in-memory change, so the change is announced and served at its
+// version: a reader holding that version is never refused the row it was told about.
+func TestStoreAnnouncesARowChangeWhosePersistFailed(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "leases")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
 	}
-	if _, v := s.ListStamped(); v != "2" {
-		t.Errorf("after SetDeadline: version = %q, want \"2\"", v)
+	s, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
 	}
-	if err := s.SetDeadline(ctx, "wf_1", deadline); err != nil {
-		t.Fatalf("SetDeadline repeat: %v", err)
+	got := publishTo(s)
+	// A regular file where the directory was makes every write fail, as root too.
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
 	}
-	if _, v := s.ListStamped(); v != "2" {
-		t.Errorf("after an unchanged SetDeadline: version = %q, want \"2\" (nothing moved)", v)
+	if err := os.WriteFile(dir, nil, 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if err := s.SetKeepChats(ctx, "wf_1", []string{"c1"}); err != nil {
-		t.Fatalf("SetKeepChats: %v", err)
+	ctx := t.Context()
+
+	if err := s.Put(ctx, &Lease{WorkflowID: "wf_1", Origin: OriginManual}); err == nil {
+		t.Fatal("Put persisted into a regular file; the failed-persist arm is untested")
 	}
-	if _, v := s.ListStamped(); v != "3" {
-		t.Errorf("after SetKeepChats: version = %q, want \"3\"", v)
+	leases, v := s.ListStamped()
+	if len(*got) != 1 || !(*got)[0].live || len(leases) != 1 || v != (*got)[0].version {
+		t.Fatalf("after a failed Put: announced %+v, ListStamped (%d leases, %q); want one live announcement served at its version",
+			*got, len(leases), v)
 	}
-	if err := s.Release(ctx, "wf_1"); err != nil {
-		t.Fatalf("Release: %v", err)
+
+	if err := s.Release(ctx, "wf_1"); err == nil {
+		t.Fatal("Release persisted into a regular file")
 	}
-	got, afterRelease := s.ListStamped()
-	if len(got) != 0 || afterRelease != "4" {
-		t.Errorf("after Release: ListStamped = (%d leases, %q), want (0, \"4\")", len(got), afterRelease)
+	leases, v = s.ListStamped()
+	if len(*got) != 2 || (*got)[1].live || len(leases) != 0 || v != (*got)[1].version {
+		t.Errorf("after a failed Release: announced %+v, ListStamped (%d leases, %q); want a gone announcement served at its version",
+			*got, len(leases), v)
 	}
-	if err := s.Release(ctx, "wf_1"); err != nil {
-		t.Fatalf("Release repeat: %v", err)
-	}
-	if _, v := s.ListStamped(); v != "4" {
-		t.Errorf("after releasing a released lease: version = %q, want \"4\" (nothing moved)", v)
-	}
+}
+
+// versionAbove compares two decimal `runs` versions.
+func versionAbove(a, b string) bool {
+	x, errA := strconv.ParseUint(a, 10, 64)
+	y, errB := strconv.ParseUint(b, 10, 64)
+	return errA == nil && errB == nil && x > y
 }
 
 // The parent session survives a restart: after one, it is the only host marotte reads the run's

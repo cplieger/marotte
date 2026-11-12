@@ -58,6 +58,7 @@ import type {
   RunStartedPayload,
   RunProgressPayload,
   RunFinishedPayload,
+  LiveRunPayload,
 } from "./types.js";
 
 // --- Typed SSE surface ---
@@ -151,6 +152,8 @@ export interface SSEPayloads {
   readonly run_started: RunStartedPayload;
   readonly run_progress: RunProgressPayload;
   readonly run_finished: RunFinishedPayload;
+  // One row change of the live-runs inventory, stamped `runs`. Workspace-global.
+  readonly live_run: LiveRunPayload;
   // One run's steps waiting on a person, replaced whole per (epoch, seq). Keyed to the
   // launching chat, or `run:<workflowId>` when parentless.
   readonly run_asks: RunAsksPayload;

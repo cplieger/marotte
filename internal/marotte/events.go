@@ -23,9 +23,11 @@ type ServerEvent struct {
 }
 
 // SubjectStamp names one digest subject at one version. Kind and Ref spell the
-// subject the way internal/subject does; Version is opaque to the client and
-// compared by equality only. Epoch is filled by REST responses alone, so a
-// response issued under a previous hub epoch is refused by the client's map.
+// subject the way internal/subject does; Version is opaque decimal, compared by
+// equality, except a subject a client mirror holds (`runs`), which is minted by
+// subject.Versions.BumpCounter so its versions strictly increase within an epoch and
+// the mirror orders them as numbers. Epoch is filled by REST responses alone, so a
+// response issued under a previous hub epoch is refused by the client.
 type SubjectStamp struct {
 	Kind    string `json:"kind"`
 	Ref     string `json:"ref"`
@@ -146,6 +148,9 @@ const (
 	EventRunStarted  EventType = "run_started"
 	EventRunProgress EventType = "run_progress"
 	EventRunFinished EventType = "run_finished"
+	// EventLiveRun is one row change of the live-runs inventory, stamped with the `runs`
+	// version the lease store minted for it. Workspace-wide: no chat id.
+	EventLiveRun EventType = "live_run"
 	// EventRunAsks is one run's steps waiting on a person, replaced whole (RunAsksPayload).
 	EventRunAsks         EventType = "run_asks"
 	EventForgesChanged   EventType = "forges_changed"

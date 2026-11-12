@@ -527,7 +527,10 @@ describe("frames", () => {
   it("holds frames until markHydrated and releases them in arrival order", async () => {
     scripted.respond("/api/events/alive", () => new Response(null, { status: 204 }));
     const conn = await connect();
-    conn?.frame({ type: "connected", payload: { busy_stated: false, live_runs_stated: false } });
+    conn?.frame({
+      type: "connected",
+      payload: { busy_stated: false, live_runs_stated: false, live_runs_version: "0" },
+    });
     // `options` is required by the wire's own decoder, which runs here.
     conn?.frame({
       type: "permission_needed",

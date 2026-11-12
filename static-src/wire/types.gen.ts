@@ -571,6 +571,11 @@ export interface ConnectedPayload {
  */
   workspace?: string;
   /**
+ * LiveRunsVersion is the `runs` version LiveRuns was read at, from the same lease-store
+ * read, stated even when the list is withheld.
+ */
+  live_runs_version: string;
+  /**
  * Floor and Head are the replay ring's bounds, present ONLY on a legacy connect
  * (a client that sent no SSE-Wire header): the v2 bundle reads them as numbers
  * to detect a gap, and a v3 client gets the same facts from the library's hello.
@@ -603,13 +608,10 @@ export interface ConnectedPayload {
  */
   busy_stated: boolean;
   /**
- * LiveRunsStated says whether LiveRuns is the COMPLETE inventory. False only when
- * the lease store holds more than maxConnectLiveRuns rows, in which case the list
- * is WITHHELD and the client falls back to its own GET /api/runs/live.
- * //
- * It exists because the client CLEARS its inventory before repopulating it, so a
- * truncated list would silently drop runs — and an empty LiveRuns is otherwise
- * indistinguishable from "no runs are live". No omitempty, for BusyStated's reason.
+ * LiveRunsStated says whether LiveRuns is the COMPLETE inventory. False only when the
+ * lease store holds more than maxConnectLiveRuns rows: the list is WITHHELD and the client
+ * reads GET /api/runs/live. A truncated list would drop runs from a client that adopts it
+ * whole, and an empty one reads as "no runs are live". No omitempty, for BusyStated's reason.
  */
   live_runs_stated: boolean;
 }
@@ -2123,8 +2125,19 @@ export interface LiveRun {
  * Executing reports whether THIS PROCESS holds a deadline for the run (runlease.Lease.Deadline),
  * not KAS's status, which would cost a `_kiro/workflow/list` call on every client connect. It can
  * read false while KAS says running (a lease read back from disk is parked; `set_step_status`
- * advances a step without re-arming); the client corrects itself on the run's next progress frame.
+ * advances a step without re-arming) until marotte arms the run again.
  */
+  executing: boolean;
+}
+
+/**
+ * LiveRunPayload is the payload for type="live_run": one LiveRun row changed. Live false
+ * means the run left the inventory: ChatID is the chat it was under, Executing false.
+ */
+export interface LiveRunPayload {
+  workflow_id: string;
+  chat_id: string;
+  live: boolean;
   executing: boolean;
 }
 
@@ -3973,9 +3986,11 @@ export interface SteeringIssuesResponse {
 
 /**
  * SubjectStamp names one digest subject at one version. Kind and Ref spell the
- * subject the way internal/subject does; Version is opaque to the client and
- * compared by equality only. Epoch is filled by REST responses alone, so a
- * response issued under a previous hub epoch is refused by the client's map.
+ * subject the way internal/subject does; Version is opaque decimal, compared by
+ * equality, except a subject a client mirror holds (`runs`), which is minted by
+ * subject.Versions.BumpCounter so its versions strictly increase within an epoch and
+ * the mirror orders them as numbers. Epoch is filled by REST responses alone, so a
+ * response issued under a previous hub epoch is refused by the client.
  */
 export interface SubjectStamp {
   kind: string;

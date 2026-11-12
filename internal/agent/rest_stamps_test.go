@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/cplieger/go/sse/v2"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -61,6 +62,60 @@ func TestLiveRunsStampIsTheDigestVersion(t *testing.T) {
 	}
 	if digest.Version == subject.Unminted {
 		t.Errorf("digest runs version = %q after a lease was granted, want a minted version", digest.Version)
+	}
+}
+
+// Each lease row change reaches every page as one workspace-wide live_run frame stamped `runs` at a strictly greater
+// version, and the inventory read serves the version of the last frame it reflects.
+func TestLeaseRowChangesBroadcastStampedLiveRunFrames(t *testing.T) {
+	h, _, _ := newTestHub()
+	store := h.runs.leaseStore()
+	before := h.bus.fanout.Position().Head
+	ctx := t.Context()
+	if err := store.Put(ctx, &runlease.Lease{WorkflowID: "wf1", ChatID: "c1", Origin: runlease.OriginAgent}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := store.SetDeadline(ctx, "wf1", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("SetDeadline: %v", err)
+	}
+	if err := store.Release(ctx, "wf1"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	want := []marotte.LiveRunPayload{
+		{WorkflowID: "wf1", ChatID: "c1", Live: true},
+		{WorkflowID: "wf1", ChatID: "c1", Live: true, Executing: true},
+		{WorkflowID: "wf1", ChatID: "c1"},
+	}
+	frames := eventsSince(h, before, marotte.EventLiveRun)
+	if len(frames) != len(want) {
+		t.Fatalf("live_run frames = %d, want one per row change (%d)", len(frames), len(want))
+	}
+	var last uint64
+	for i, e := range frames {
+		var msg struct {
+			Subject *marotte.SubjectStamp  `json:"subject"`
+			ChatID  string                 `json:"chat_id"`
+			Payload marotte.LiveRunPayload `json:"payload"`
+		}
+		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
+			t.Fatalf("decode frame %d: %v", i, err)
+		}
+		if msg.Payload != want[i] || msg.ChatID != "" || e.Event.Topic != "" {
+			t.Errorf("frame %d = %+v on chat %q topic %q, want %+v workspace-wide", i, msg.Payload, msg.ChatID, e.Event.Topic, want[i])
+		}
+		if msg.Subject == nil || msg.Subject.Kind != string(subject.KindRuns) {
+			t.Fatalf("frame %d subject = %+v, want a runs stamp", i, msg.Subject)
+		}
+		v := stampVersion(t, msg.Subject)
+		if v <= last {
+			t.Errorf("frame %d version %d, want above the previous frame's %d", i, v, last)
+		}
+		last = v
+	}
+	out := getLiveRuns(t, h.runRoutes)
+	if out.Subject == nil || stampVersion(t, out.Subject) != last {
+		t.Errorf("GET /api/runs/live subject = %+v, want the last frame's version %d", out.Subject, last)
 	}
 }
 

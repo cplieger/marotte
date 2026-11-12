@@ -115,6 +115,7 @@ export type {
   RunStartedPayload,
   RunProgressPayload,
   RunFinishedPayload,
+  LiveRunPayload,
   Recipe,
   RecipesResponse,
   RunLaunchRequest,

@@ -199,6 +199,7 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.SessionListResponse](),
 	wiregen.TypeRef[marotte.LiveRun](),
 	wiregen.TypeRef[marotte.LiveRunsResponse](),
+	wiregen.TypeRef[marotte.LiveRunPayload](),
 	// REST replies; no `Payload` suffix, so the SSE-binding test exempts them.
 	wiregen.TypeRef[marotte.RunControlsResponse](),
 	wiregen.TypeRef[marotte.RunRetriedResponse](),
@@ -487,6 +488,7 @@ var wireEvents = []wiregen.Event{
 	{Name: "run_started", Data: wiregen.TypeRef[marotte.RunStartedPayload]()},
 	{Name: "run_progress", Data: wiregen.TypeRef[marotte.RunProgressPayload]()},
 	{Name: "run_finished", Data: wiregen.TypeRef[marotte.RunFinishedPayload]()},
+	{Name: "live_run", Data: wiregen.TypeRef[marotte.LiveRunPayload]()},
 	{Name: "run_asks", Data: wiregen.TypeRef[marotte.RunAsksPayload]()},
 	{Name: "safety_properties", Data: wiregen.TypeRef[marotte.SafetyPropertiesPayload]()},
 	{Name: "safety_status", Data: wiregen.TypeRef[marotte.SafetyStatusPayload]()},

@@ -83,7 +83,10 @@ func TestRunDispatch_LifecycleGoesWorkspaceGlobal(t *testing.T) {
 	h.dispatch(t.Context(), "run:wf_1", h.originOf("run:wf_1"),
 		runNotif("_kiro/workflow/run_start", map[string]any{"workflowId": "wf_1", "workflowName": "publish"}))
 
-	events := bufferedEventsSince(h, before)
+	// The lease the start grants is the inventory's, announced by live_run frames of its own.
+	events := slices.DeleteFunc(bufferedEventsSince(h, before), func(e bufferedEvent) bool {
+		return e.Type == string(marotte.EventLiveRun)
+	})
 	if len(events) != 1 {
 		t.Fatalf("got %d events, want 1: %+v", len(events), events)
 	}

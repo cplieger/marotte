@@ -352,6 +352,7 @@ function fireConnected(over: Record<string, unknown> = {}): void {
     busy_stated: true,
     live_runs_stated: true,
     live_runs: [],
+    live_runs_version: "0",
     ...over,
   });
 }
