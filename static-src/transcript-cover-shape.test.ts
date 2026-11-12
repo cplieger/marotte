@@ -272,4 +272,108 @@ describe("the skeleton under reduced motion", () => {
     cover.dropCover();
     expect(node.hidden, "the lift ran a fade").toBe(true);
   });
+
+  it("lifts over a landing of tool groups and a notice that moves nothing after it", async () => {
+    await page.viewport(1440, 900);
+    document.documentElement.setAttribute("data-pointer", "fine");
+    const from = makeSession({ id: `cs-${String(++seq)}`, name: "from" });
+    proseTurn(from, 1, 4);
+    const to = makeSession({ id: `cs-${String(++seq)}`, name: "to" });
+    // Turns on the server, none in the store yet.
+    to.turn_count = 2;
+    store.setSessions([from, to]);
+    store.setActive(from.id);
+    store.setPainted(from.id);
+    store.bumpMessages(from.id, "load");
+    await frames(3);
+
+    // A switch to a chat with nothing in the store: the cover shows, then the page lands under it.
+    cover.holdCover(to.id);
+    store.setActive(to.id);
+    store.setPainted(to.id);
+    store.bumpMessages(to.id, "load");
+    await new Promise((r) => setTimeout(r, PAST_DELAY_MS));
+    shownCover();
+    toolTurn(to, 1, false);
+    toolTurn(to, 2, true);
+    to.residency = "loaded";
+    store.bumpMessages(to.id, "load");
+
+    const boxes = (): Map<Element, number> => {
+      const view = messages.activeTranscriptView();
+      const port = rect(document.getElementById("messages-wrap") as HTMLElement);
+      const out = new Map<Element, number>();
+      for (const b of view?.querySelectorAll(".turn, .tool-group, .msg-row, .turn-notice") ?? []) {
+        const r = rect(b);
+        if (r.height > 0 && r.bottom > port.top && r.top < port.bottom) {
+          out.set(b, r.top);
+        }
+      }
+      return out;
+    };
+    const coverEl = document.getElementById("transcript-cover") as HTMLElement;
+    let first: Map<Element, number> | null = null;
+    let moved = 0;
+    for (let i = 0; i < 40; i++) {
+      await frames(1);
+      if (!coverEl.hidden) {
+        continue;
+      }
+      const now = boxes();
+      if (first === null) {
+        first = now;
+        continue;
+      }
+      for (const [b, top] of first) {
+        const at = now.get(b);
+        if (at !== undefined) {
+          moved = Math.max(moved, Math.abs(at - top));
+        }
+      }
+    }
+    expect(first?.size ?? 0, "the premise: the landing shows boxes once lifted").toBeGreaterThan(3);
+    expect(moved, "a box of the landing moved after the lift").toBeLessThan(1);
+  });
 });
+
+/** A turn of tool groups between reply paragraphs, closed by a failure when `failed`. */
+function toolTurn(s: Session, n: number, failed: boolean): void {
+  const t = `${s.id}-t${String(n)}`;
+  const entries: Entry[] = [
+    sealed(t, 0, "turn_open", { prompt: { id: `${t}-p`, text: "fix it" }, source: "prompt", n }),
+  ];
+  let at = 1;
+  for (let g = 0; g < 8; g++) {
+    entries.push(sealed(t, at++, "text", { text: `step ${String(g)}: looking at the next file` }));
+    for (let c = 0; c <= g % 3; c++) {
+      const id = `${t}-c${String(g)}-${String(c)}`;
+      entries.push({
+        ...sealed(t, at++, "tool_call", {
+          id,
+          title: `run check ${String(g)}.${String(c)}`,
+          kind: "execute",
+          status: "in_progress",
+          ts: at,
+        }),
+        id,
+      });
+      entries.push({
+        ...sealed(t, at++, "tool_result", { status: "completed" }),
+        id: `${id}:result`,
+      });
+    }
+  }
+  entries.push(
+    sealed(
+      t,
+      at,
+      "turn_close",
+      failed
+        ? { outcome: "failed", failure_reason: "ACP bridge exited" }
+        : { outcome: "completed" },
+    ),
+  );
+  s.turns.set(t, { entries, openEntries: new Map() });
+  s.turn_order.push(t);
+  s.turn_count = s.turn_order.length;
+}

@@ -153,6 +153,14 @@ async function nextFrame(): Promise<void> {
   await new Promise((r) => requestAnimationFrame(() => r(undefined)));
 }
 
+/** Until the near observer has reported every transcript box inserted so far: a shown cover lifts
+ *  no sooner. */
+async function nearSettled(): Promise<void> {
+  await new Promise<void>((r) => {
+    scroll.whenNearSettled(r);
+  });
+}
+
 /** Past the held cover's show window: the switch has swapped to the chat's empty view under the
  *  shown cover, so a fetch answering later in a task paints with no chat switch, after the
  *  attach's settle frames have run out. */
@@ -364,9 +372,9 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
     await yields.releaseAll();
   });
 
-  it("lifts by the first frame when a cold chat's answer lands with its owed bodies out of view", async () => {
-    // The answer's paint is no chat switch, so no restore lands the scroller: the first frame's check
-    // reads it at top 0, on the oldest turn's spacer, ahead of the owner's follow write.
+  it("lifts by the first frame after the near marks when a cold chat's answer lands with its owed bodies out of view", async () => {
+    // The answer's paint is no chat switch, so no restore lands the scroller: the paint task leaves
+    // it at top 0, on the oldest turn's spacer, ahead of the owner's follow write.
     const yields = holdYields();
     const b = freshID("cr-b");
     const older = `${b}-old`;
@@ -401,6 +409,7 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
     expect(blankInView(), "the premise: the scroller still shows the oldest turn's spacer").toBe(
       true,
     );
+    await nearSettled();
     await nextFrame();
     expect(built(older, 200), "the premise: the older body is still owed").toBe(false);
     expect(blankInView(), "the premise: its rows are out of view").toBe(false);
@@ -408,7 +417,7 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
     await yields.releaseAll();
   });
 
-  it("renders a cold chat's built answer at the reader's landing in the first frame after the lift", async () => {
+  it("renders a cold chat's built answer at the reader's landing, its boxes sized, in the first frame after the lift", async () => {
     const b = freshID("cr-b");
     await switchUnderCover([evicted(b)], b);
     await pastCoverWindow();
@@ -437,11 +446,22 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
     expect(scroll.readingState(), "the premise: the reader lands on the live edge").toBe(
       "following",
     );
-    expect(coverUp(), "the premise: the answer's paint lifts the cover in its task").toBe(false);
     expect(
       scroll.getScrollEl().scrollTop,
       "the premise: the paint left the scroller unlanded",
     ).toBe(0);
+    const unmarked = (): number =>
+      [...document.querySelectorAll("#messages .transcript-view.is-active .msg-row")].filter(
+        (r) => {
+          const box = r.getBoundingClientRect();
+          const port = scroll.getScrollEl().getBoundingClientRect();
+          return box.bottom > port.top && box.top < port.bottom && !r.hasAttribute("data-near");
+        },
+      ).length;
+    expect(coverUp(), "the cover lifted before the near observer marked the landing").toBe(true);
+    await nearSettled();
+    expect(coverUp(), "the cover outlived the near marks with nothing owed").toBe(false);
+    expect(unmarked(), "a row in view lifts unmarked, at its intrinsic size").toBe(0);
     // A task posted from the frame's rAF runs after that frame rendered.
     const rendered = await new Promise<{ top: number; end: number; up: boolean }>((resolve) => {
       requestAnimationFrame(() => {

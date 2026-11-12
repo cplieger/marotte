@@ -32,6 +32,7 @@ import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import {
   coverContentPainted,
   coverHeld,
+  coverShown,
   registerTranscriptOwner,
   releaseCover,
   swapDeferred,
@@ -63,6 +64,7 @@ import {
   onContentResize,
   readingLineOffset,
   applyPendingRestore,
+  whenNearSettled,
 } from "./scroll.js";
 import type { ViewScrollState } from "./scroll-controller.js";
 import {
@@ -1284,13 +1286,30 @@ let coverOwed = "";
 let coverCheckFrame = 0;
 
 /**
- * Lift `chatID`'s cover now, or, while it holds bodies this pass could only start, from the first
- * frame once no unbuilt row shows where the reader lands. In the frame, so the paint task forces no
- * layout read of its own. A release in the task needs no landing read: the scroll owner's follow
- * write runs in the next frame before it renders.
+ * Lift `chatID`'s cover now (once the near observer has sized the landing's boxes, while the cover
+ * shows), or, while it holds bodies this pass could only start, from the first frame once no
+ * unbuilt row shows where the reader lands. In the frame, so the paint task forces no layout read
+ * of its own. A release in the task needs no landing read: the scroll owner's follow write runs in
+ * the next frame before it renders.
  */
 function releaseCoverOverBuiltRows(chatID: string): void {
   coverOwed = "";
+  const gen = ++coverReleaseGen;
+  if (!coverShown() || !coverHeld(chatID)) {
+    liftOverBuiltRows(chatID);
+    return;
+  }
+  // An unreported box lays out at its intrinsic size and grows a frame after the lift.
+  whenNearSettled(() => {
+    if (gen === coverReleaseGen && getPaintedId() === chatID) {
+      liftOverBuiltRows(chatID);
+    }
+  });
+}
+
+let coverReleaseGen = 0;
+
+function liftOverBuiltRows(chatID: string): void {
   if (!paintedOwesBuild() || !coverHeld(chatID)) {
     releaseCover(chatID);
     return;

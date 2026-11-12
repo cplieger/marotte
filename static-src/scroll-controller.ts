@@ -183,6 +183,10 @@ export class ScrollController {
   /** The scroll position the near band was last known to match (NaN = none). */
   private nearTop = Number.NaN;
   private nearQueued = false;
+  /** Boxes observed whose first near notification has not come: until it does, a box in the band is
+   *  laid out at its intrinsic size. */
+  private nearUnseen = new Set<Element>();
+  private nearSettledWaiters: (() => void)[] = [];
   private observedChildren = new Set<Element>();
 
   private topSentinel: HTMLElement | null = null;
@@ -1304,6 +1308,29 @@ export class ScrollController {
     this.nearObserver?.disconnect();
     this.nearTargets.clear();
     this.nearTop = Number.NaN;
+    this.nearUnseen.clear();
+    this.flushNearSettled();
+  }
+
+  /** Run `cb` once every box observed so far, the current task's insertions included, has had its
+   *  first near notification, so the frame after it lays each box out at its real size. */
+  whenNearSettled(cb: () => void): void {
+    // After the content observer's microtask, which a mutation earlier in the task queued first.
+    queueMicrotask(() => {
+      if (this.nearUnseen.size === 0) {
+        cb();
+      } else {
+        this.nearSettledWaiters.push(cb);
+      }
+    });
+  }
+
+  private flushNearSettled(): void {
+    const waiters = this.nearSettledWaiters;
+    this.nearSettledWaiters = [];
+    for (const cb of waiters) {
+      cb();
+    }
   }
 
   /** Build the near observer for the scrollport's current height, if its lead changed: a rootMargin is fixed for an
@@ -1325,6 +1352,7 @@ export class ScrollController {
     this.nearObserver = observer;
     for (const box of this.nearTargets) {
       observer.observe(box);
+      this.nearUnseen.add(box);
     }
   }
 
@@ -1334,6 +1362,7 @@ export class ScrollController {
     this.nearTop = this.scrollEl.scrollTop;
     for (const entry of entries) {
       entry.target.toggleAttribute("data-near", entry.isIntersecting);
+      this.nearUnseen.delete(entry.target);
       if (!entry.isIntersecting) {
         this.floorStale = true;
       }
@@ -1341,6 +1370,9 @@ export class ScrollController {
     this.holdFloor();
     this.correct();
     this.floorAfter(true);
+    if (this.nearUnseen.size === 0) {
+      this.flushNearSettled();
+    }
   }
 
   /** In a microtask, so the marks' layout lands after the write's own measurements and before the frame's resize loop. */
@@ -1499,6 +1531,7 @@ export class ScrollController {
           forEachSkippable(node, (box) => {
             observer.unobserve(box);
             this.nearTargets.delete(box);
+            this.nearUnseen.delete(box);
           });
         }
       }
@@ -1507,6 +1540,9 @@ export class ScrollController {
           this.observeNear(node);
         }
       }
+    }
+    if (this.nearUnseen.size === 0) {
+      this.flushNearSettled();
     }
   }
 
@@ -1518,6 +1554,7 @@ export class ScrollController {
     forEachSkippable(root, (box) => {
       observer.observe(box);
       this.nearTargets.add(box);
+      this.nearUnseen.add(box);
     });
   }
 
