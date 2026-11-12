@@ -1391,8 +1391,9 @@ func TestRunOrder_ACompactionKiroCLIRefusesWithNoTurnBesideItRunsOnce(t *testing
 		}
 		queueDuring(t, h, "m-q1")
 		open(0)
-		// m-q1's turn stays open at its gate: its own end would read the point again.
-		waitFor(t, func() bool { return slices.Contains(promptIDs(t, cs, "c1"), "m-q1") })
+		// m-q1's turn stays open at its gate: its own end would read the point again. The toast is spawned after
+		// m-q1 starts, so it is waited for too.
+		waitFor(t, func() bool { return slices.Contains(promptIDs(t, cs, "c1"), "m-q1") && len(calls.toasts()) > 0 })
 		if calls.count() != 1 {
 			t.Errorf("compact calls = %d, want 1", calls.count())
 		}

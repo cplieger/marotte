@@ -1,7 +1,7 @@
 package marotte
 
-// MCP runtime types: the event payloads broadcast to clients when kiro-cli
-// reports MCP server state via its _kiro.dev/mcp/* notifications.
+// MCP runtime types: the status rows and event payloads marotte derives from
+// kiro-cli's _kiro/mcp/status reports.
 //
 // The persisted config types live in internal/mcp.
 
@@ -49,14 +49,44 @@ type MCPSource struct {
 
 // --- SSE payloads ---
 //
-// The runtime emits one event per MCP state transition. Payloads are
-// globally scoped (no chat_id) because MCP state is shared across all
+// Payloads are globally scoped (no chat_id) because MCP state is shared across all
 // chats within the same container.
 
-// MCPConnectedPayload is the payload for type="mcp_connected", emitted
-// when kiro-cli reports _kiro.dev/mcp/server_initialized.
-type MCPConnectedPayload struct {
-	Server string `json:"server"`
+// MCPServerStatus is one server's row of GET /api/mcp/status and of an mcp_status frame.
+type MCPServerStatus struct {
+	Name  string         `json:"name"`
+	State MCPServerState `json:"state"`
+	// Origin is never omitted: the client attributes a status to marotte's row only on "user".
+	Origin      Origin `json:"origin"`
+	OriginRoot  string `json:"origin_root,omitempty"`
+	OriginPower string `json:"origin_power,omitempty"`
+	// OAuthURL is the standing Sign in's consent URL, set only while signing_in.
+	OAuthURL string `json:"oauth_url,omitempty"`
+	// Error is the server's failure, or why kiro-cli refused the last Sign in while it waits for one.
+	Error string `json:"error,omitempty"`
+	// Tools is the connected server's tool names, for the per-tool deny editor's suggestions.
+	Tools             []string                  `json:"tools,omitempty"`
+	Prompts           []MCPPromptInfo           `json:"prompts,omitempty"`
+	Resources         []MCPResourceInfo         `json:"resources,omitempty"`
+	ResourceTemplates []MCPResourceTemplateInfo `json:"resource_templates,omitempty"`
+	// Relayed stops a reload or second device offering the paste box for a spent code.
+	Relayed bool `json:"relayed,omitempty"`
+	// Shadows keeps the client from putting this status on marotte's config row.
+	Shadows bool `json:"shadows,omitempty"`
+}
+
+// MCPStatusPayload is the payload for type="mcp_status": Server's row changed, stamped with the
+// `mcp_status` version. A nil Status means the server left the status inventory.
+type MCPStatusPayload struct {
+	Status *MCPServerStatus `json:"status,omitempty"`
+	Server string           `json:"server"`
+}
+
+// MCPStatusResponse is GET /api/mcp/status's reply, sorted by server name.
+type MCPStatusResponse struct {
+	// Subject is the `mcp_status` digest stamp with the hub epoch, read with the rows.
+	Subject *SubjectStamp     `json:"subject,omitempty"`
+	Servers []MCPServerStatus `json:"servers"`
 }
 
 // MCPPrewarmState is the phase of a prewarm install, for the servers one frame names.
@@ -76,37 +106,6 @@ type MCPPrewarmPayload struct {
 	Package   string          `json:"package"`
 	State     MCPPrewarmState `json:"state"`
 	ServerIDs []string        `json:"server_ids"`
-}
-
-// MCPOAuthPayload is the payload for type="mcp_oauth_needed", emitted when kiro-cli reports a server failed for
-// want of sign-in, and again when a Sign in kiro-cli refused leaves it waiting. It carries no URL: the user starts a
-// sign-in from the server's row.
-type MCPOAuthPayload struct {
-	Server string `json:"server"`
-	// Error is why kiro-cli refused the last Sign in, absent when none was refused.
-	Error string `json:"error,omitempty"`
-}
-
-// MCPSignInOpenPayload is the payload for type="mcp_sign_in_open": kiro-cli opened URL, the consent page of the
-// sign-in the user started on Server's row.
-type MCPSignInOpenPayload struct {
-	Server string `json:"server"`
-	URL    string `json:"url"`
-}
-
-// MCPFailedPayload is the payload for type="mcp_failed", emitted
-// when kiro-cli reports _kiro.dev/mcp/server_init_failure.
-type MCPFailedPayload struct {
-	Server string `json:"server"`
-	Error  string `json:"error"`
-}
-
-// MCPDisconnectedPayload is the payload for type="mcp_disconnected".
-// Emitted per server when the agent engine ends: kiro-cli's MCP subprocesses
-// shut down with it, so no configured server is currently live.
-// Clients use this to clear their runtime-state map.
-type MCPDisconnectedPayload struct {
-	Server string `json:"server"`
 }
 
 // MCPSnapshotServer is one entry in a runtime-to-steering MCP registry

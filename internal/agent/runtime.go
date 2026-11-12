@@ -497,6 +497,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	sseP.chatStatus.versions = h.versions
 	runs.asks.versions = h.versions
 	runs.asks.epoch = h.Epoch
+	runs.leaseStore().BindInventory(h.versions, sseP.announceLiveRun)
 	// After the options, so the leases are the durable store's: the first pending_snapshot names every run.
 	runs.asks.seed(runs.leaseStore().List())
 	h.catalog.versions = h.versions
@@ -525,7 +526,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		sseP.Broadcast(c, marotte.NewEvent(marotte.EventConfigStandingChanged, "", marotte.ConfigStandingChangedPayload{}))
 	})
 	h.runRoutes = &runRoutes{runs: runs, epoch: h.Epoch}
-	h.mcpRegistry = newMCPRegistry(h.engine, sseP, lc, h.mcpConfig, func(c marotte.ChatID) (marotte.SessionID, bool) {
+	h.mcpRegistry = newMCPRegistry(h.engine, sseP, lc, h.mcpConfig, mcpStamps{versions: h.versions, epoch: h.Epoch}, func(c marotte.ChatID) (marotte.SessionID, bool) {
 		if b := bridgeP.mgr.get(c); b != nil {
 			return b.SessionID(), true
 		}

@@ -19,6 +19,7 @@ import { initClockSetting } from "./clock-setting.js";
 import { initPageTitleFit } from "./page-title.js";
 import { initRolePicker } from "./role-picker.js";
 import * as sse from "./sse-adapter.js";
+import { installMirrors } from "./mirror.js";
 import { initUI, renderIdentity } from "./settings.js";
 import { initPostAuth, onTransportStatus, startBoot } from "./boot.js";
 import { resolveIdentity } from "./identity.js";
@@ -224,6 +225,7 @@ function init(): void {
   onBus(BUS_RECONCILE, ({ signal }) => {
     void listTabs(signal);
   });
+  installMirrors();
 
   sse.init((evt: ServerEvent) => {
     dispatch(evt);
@@ -246,8 +248,9 @@ function init(): void {
   // The one predicate both out-of-page cue paths ask, injected because `chat-settled.ts`'s
   // stores reach back into the tab projection. Before initAttention, for its first pass.
   setChatSettledProbe(chatSettled);
-  // The other half: an agent-finished cue withheld while a run the turn launched is
-  // still going is released here, when the last outstanding thing for that chat ends.
+  // The other half: a cue parked on an open turn or a pending ask is released here once both
+  // end. A live run never parks it: the server withholds agent_finished while the chat holds a
+  // lease.
   installDeferredCueSubscriber();
 
   // A notification is silent only while its own chat or run is the tab on screen.

@@ -160,6 +160,18 @@ func (l *Lease) check() error {
 // Bounded reports whether marotte believes the run to be EXECUTING under a deadline it set.
 func (l *Lease) Bounded() bool { return !l.Deadline.IsZero() }
 
+// Row is one lease as the live-runs inventory shows it.
+type Row struct {
+	WorkflowID string
+	ChatID     string
+	Executing  bool
+}
+
+// Row projects the lease onto its inventory row; every reader of the inventory projects through it.
+func (l *Lease) Row() Row {
+	return Row{WorkflowID: l.WorkflowID, ChatID: l.ChatID, Executing: l.Bounded()}
+}
+
 // Bounds is the input set NextDeadline composes. A struct, so two same-typed durations
 // cannot be transposed. Field order is govet fieldalignment's.
 type Bounds struct {

@@ -1,5 +1,5 @@
-// "Is everything this chat started actually over?": the three reasons a cue must wait, plus
-// the property `agent-finished-cue.ts` releases on, that every read is TRACKED. The dock is
+// "Is everything this chat started actually over?": the three terms of `chatSettled`, the two of
+// `noticeSettled`, and the property both release on, that every read is TRACKED. The dock is
 // mocked with a real signal behind it, so a predicate that stopped subscribing fails.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -34,9 +34,9 @@ function setPending(chatID: string, on: boolean): void {
   pendingVersion.value = pendingVersion.peek() + 1;
 }
 
-const { chatOutstanding, chatSettled } = await import("./chat-settled.js");
+const { chatOutstanding, chatSettled, noticeSettled } = await import("./chat-settled.js");
 const store = await import("./store.js");
-const runStore = await import("./run-store.js");
+const { frameRunGone, frameRunLive } = await import("./__test-helpers__/live-runs.js");
 
 // `provisional` unset and `turn_open` absent: a provisional row reads as LIVE.
 function makeSession(id: string): Session {
@@ -68,7 +68,7 @@ const runIDs = ["wf-a", "wf-b", "wf-parentless"];
 
 beforeEach(() => {
   for (const id of runIDs) {
-    runStore.noteRunSettled(id);
+    frameRunGone(id);
   }
   pendingChats.clear();
   store.setSessions([makeSession("c1"), makeSession("c2")]);
@@ -80,14 +80,14 @@ describe("chatSettled", () => {
   });
 
   it("is false while a run this chat launched is EXECUTING", () => {
-    runStore.noteRunLive("wf-a", "c1", true);
+    frameRunLive("wf-a", "c1", true);
     expect(chatSettled("c1")).toBe(false);
   });
 
   // A parked run's `executing` is false, so reading that would call a chat waiting on a person
   // finished.
   it("is false while a run this chat launched is PARKED", () => {
-    runStore.noteRunLive("wf-a", "c1", false);
+    frameRunLive("wf-a", "c1", false);
     expect(chatSettled("c1")).toBe(false);
   });
 
@@ -110,21 +110,21 @@ describe("chatSettled", () => {
   });
 
   it("becomes true once the run terminates", () => {
-    runStore.noteRunLive("wf-a", "c1", true);
+    frameRunLive("wf-a", "c1", true);
     expect(chatSettled("c1")).toBe(false);
-    runStore.noteRunSettled("wf-a");
+    frameRunGone("wf-a");
     expect(chatSettled("c1")).toBe(true);
   });
 
   it("is unmoved by another chat's live run", () => {
-    runStore.noteRunLive("wf-b", "c2", true);
+    frameRunLive("wf-b", "c2", true);
     expect(chatSettled("c1")).toBe(true);
     expect(chatSettled("c2")).toBe(false);
   });
 
   // A parentless run names no chat and holds nobody's cue.
   it("is unmoved by a PARENTLESS run", () => {
-    runStore.noteRunLive("wf-parentless", "", true);
+    frameRunLive("wf-parentless", "", true);
     expect(chatSettled("c1")).toBe(true);
   });
 
@@ -141,8 +141,8 @@ describe("chatSettled", () => {
 
 describe("chatOutstanding names the reason", () => {
   it("reports each term independently", () => {
-    runStore.noteRunLive("wf-a", "c1", true);
-    runStore.noteRunLive("wf-b", "c1", false);
+    frameRunLive("wf-a", "c1", true);
+    frameRunLive("wf-b", "c1", false);
     setPending("c1", true);
     store.setTurnOpen("c1", true);
 
@@ -150,7 +150,7 @@ describe("chatOutstanding names the reason", () => {
   });
 
   it("reports a run-only hold as a run-only hold", () => {
-    runStore.noteRunLive("wf-a", "c1", true);
+    frameRunLive("wf-a", "c1", true);
     expect(chatOutstanding("c1")).toEqual({ turn: false, runs: 1, asks: false });
   });
 
@@ -174,10 +174,10 @@ describe("every term is a tracked read", () => {
     const w = watch("c1");
     expect(w.settled).toEqual([true]);
 
-    runStore.noteRunLive("wf-a", "c1", true);
+    frameRunLive("wf-a", "c1", true);
     expect(w.settled.at(-1)).toBe(false);
 
-    runStore.noteRunSettled("wf-a");
+    frameRunGone("wf-a");
     expect(w.settled.at(-1)).toBe(true);
     w.dispose();
   });
@@ -204,8 +204,44 @@ describe("every term is a tracked read", () => {
   it("subscribes even for a chat with nothing to read", () => {
     const w = watch("");
     const before = w.settled.length;
-    runStore.noteRunLive("wf-a", "c1", true);
+    frameRunLive("wf-a", "c1", true);
     expect(w.settled.length).toBeGreaterThan(before);
     w.dispose();
+  });
+});
+
+// The server withholds `agent_finished` for a live run, so the notice's own predicate leaves the
+// runs out and keeps the two holds it does not wait for.
+describe("noticeSettled", () => {
+  it("is true while a run this chat launched is live, executing or parked", () => {
+    frameRunLive("wf-a", "c1", true);
+    frameRunLive("wf-b", "c1", false);
+    expect(noticeSettled("c1")).toBe(true);
+    expect(chatSettled("c1")).toBe(false);
+  });
+
+  it("is false while the chat's own turn is live", () => {
+    store.setTurnOpen("c1", true);
+    expect(noticeSettled("c1")).toBe(false);
+  });
+
+  it("is false while a decision sits in this chat's dock queue", () => {
+    setPending("c1", true);
+    expect(noticeSettled("c1")).toBe(false);
+  });
+
+  it("re-runs when the turn or the ask moves", () => {
+    const seen: boolean[] = [];
+    const dispose = effect(() => {
+      seen.push(noticeSettled("c1"));
+    });
+    store.setTurnOpen("c1", true);
+    expect(seen.at(-1)).toBe(false);
+    store.setTurnOpen("c1", false);
+    setPending("c1", true);
+    expect(seen.at(-1)).toBe(false);
+    setPending("c1", false);
+    expect(seen.at(-1)).toBe(true);
+    dispose();
   });
 });

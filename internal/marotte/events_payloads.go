@@ -22,6 +22,9 @@ type ConnectedPayload struct {
 	// client cannot derive it: ACP-supplied paths arrive workspace-RELATIVE while the
 	// /api/file* surface is container-ABSOLUTE, and opening a changed file rejoins them.
 	Workspace string `json:"workspace,omitempty"`
+	// LiveRunsVersion is the `runs` version LiveRuns was read at, from the same lease-store
+	// read, stated even when the list is withheld.
+	LiveRunsVersion string `json:"live_runs_version"`
 	// Floor and Head are the replay ring's bounds, present ONLY on a legacy connect
 	// (a client that sent no SSE-Wire header): the v2 bundle reads them as numbers
 	// to detect a gap, and a v3 client gets the same facts from the library's hello.
@@ -46,13 +49,10 @@ type ConnectedPayload struct {
 	// and an absent marker can never read as "stated": a withheld list is withheld
 	// WHOLE rather than truncated, so a reader has to be told which it holds.
 	BusyStated bool `json:"busy_stated"`
-	// LiveRunsStated says whether LiveRuns is the COMPLETE inventory. False only when
-	// the lease store holds more than maxConnectLiveRuns rows, in which case the list
-	// is WITHHELD and the client falls back to its own GET /api/runs/live.
-	//
-	// It exists because the client CLEARS its inventory before repopulating it, so a
-	// truncated list would silently drop runs — and an empty LiveRuns is otherwise
-	// indistinguishable from "no runs are live". No omitempty, for BusyStated's reason.
+	// LiveRunsStated says whether LiveRuns is the COMPLETE inventory. False only when the
+	// lease store holds more than maxConnectLiveRuns rows: the list is WITHHELD and the client
+	// reads GET /api/runs/live. A truncated list would drop runs from a client that adopts it
+	// whole, and an empty one reads as "no runs are live". No omitempty, for BusyStated's reason.
 	LiveRunsStated bool `json:"live_runs_stated"`
 }
 

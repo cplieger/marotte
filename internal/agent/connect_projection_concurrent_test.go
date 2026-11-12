@@ -95,7 +95,8 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 						}
 					}
 				}
-				for _, r := range rt.runs.liveRunRows() {
+				rows, _ := rt.runs.liveRunRowsStamped()
+				for _, r := range rows {
 					if !knownRun[r.WorkflowID] {
 						select {
 						case badRun <- r.WorkflowID:
@@ -128,7 +129,7 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 	}
 	select {
 	case id := <-badRun:
-		t.Errorf("liveRunRows reported run %q, which no fixture minted", id)
+		t.Errorf("liveRunRowsStamped reported run %q, which no fixture minted", id)
 	default:
 	}
 }

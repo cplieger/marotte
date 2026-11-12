@@ -426,8 +426,17 @@ type LiveRun struct {
 	// Executing reports whether THIS PROCESS holds a deadline for the run (runlease.Lease.Deadline),
 	// not KAS's status, which would cost a `_kiro/workflow/list` call on every client connect. It can
 	// read false while KAS says running (a lease read back from disk is parked; `set_step_status`
-	// advances a step without re-arming); the client corrects itself on the run's next progress frame.
+	// advances a step without re-arming) until marotte arms the run again.
 	Executing bool `json:"executing"`
+}
+
+// LiveRunPayload is the payload for type="live_run": one LiveRun row changed. Live false
+// means the run left the inventory: ChatID is the chat it was under, Executing false.
+type LiveRunPayload struct {
+	WorkflowID string `json:"workflow_id"`
+	ChatID     string `json:"chat_id"`
+	Live       bool   `json:"live"`
+	Executing  bool   `json:"executing"`
 }
 
 // LiveRunsResponse is GET /api/runs/live's reply.

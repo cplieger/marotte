@@ -18,6 +18,7 @@ import (
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/translate"
 )
 
@@ -59,7 +60,7 @@ type consentShowing int
 
 const (
 	consentRefused consentShowing = iota // a new unattributed URL with no page connected: nothing is kept
-	consentOnRow                         // attributed: the row and mcp_sign_in_open are published
+	consentOnRow                         // attributed: the row is published signing_in with it
 	consentSeen                          // its state is already anchored: nothing new is shown
 	consentBanner                        // unattributed with a page connected: shown on every page
 )
@@ -93,7 +94,7 @@ type mcpServerRuntime struct {
 	Prompts           []marotte.MCPPromptInfo
 	Resources         []marotte.MCPResourceInfo
 	ResourceTemplates []marotte.MCPResourceTemplateInfo
-	// Relayed is the row's anchor's relay latch, filled by snapshot; a stored record never holds it.
+	// Relayed is the row's anchor's relay latch, filled by projectLocked; a stored record never holds it.
 	Relayed bool
 	Shadows bool
 }
@@ -124,6 +125,10 @@ type mcpRegistry struct {
 	engine *engineOwner
 	// bus publishes the MCP lifecycle events.
 	bus *bus
+	// versions mints the `mcp_status` version commitLocked stamps rows with.
+	versions *subject.Versions
+	// epoch is the hub epoch GET /api/mcp/status stamps.
+	epoch func() string
 	// lifetime supplies the done channel the debounce loop exits on.
 	lifetime *lifetime
 	// sessionOf names the session a chat's live bridge serves.
@@ -132,6 +137,8 @@ type mcpRegistry struct {
 	setGovernance func(context.Context, *marotte.GovernanceMCPRegistry)
 	// servers is derived from views (deriveLocked), never written on its own.
 	servers map[string]*mcpServerRuntime
+	// rows is the last committed projection, the one GET /api/mcp/status serves and mcp_status announced.
+	rows map[string]*marotte.MCPServerStatus
 	// onChange is installed later by SetMCPOnChange.
 	onChange func() `wiring:"optional"`
 	// notifyCh coalesces onChange signals within the debounce window (capacity 1).
@@ -153,17 +160,21 @@ type mcpRegistry struct {
 var _ consentAnchorer = (*mcpRegistry)(nil)
 
 func newMCPRegistry(engine *engineOwner, b *bus, lt *lifetime, cfg mcpNameSets,
+	stamps mcpStamps,
 	sessionOf func(marotte.ChatID) (marotte.SessionID, bool),
 	setGovernance func(context.Context, *marotte.GovernanceMCPRegistry),
 ) *mcpRegistry {
 	return &mcpRegistry{
 		engine:        engine,
 		bus:           b,
+		versions:      stamps.versions,
+		epoch:         stamps.epoch,
 		lifetime:      lt,
 		config:        cfg,
 		sessionOf:     sessionOf,
 		setGovernance: setGovernance,
 		servers:       make(map[string]*mcpServerRuntime),
+		rows:          make(map[string]*marotte.MCPServerStatus),
 		launchResets:  make(map[string]int),
 		notifyCh:      make(chan struct{}, 1),
 		now:           time.Now,
@@ -181,21 +192,61 @@ func (reg *mcpRegistry) setOnChange(fn func()) {
 	}
 }
 
-// snapshot returns a deep copy of the registry, sorted by server name.
-func (reg *mcpRegistry) snapshot() []mcpServerRuntime {
-	reg.mu.RLock()
-	defer reg.mu.RUnlock()
+// mcpStamps is what the registry stamps its status rows with: the shared subject registry and the hub epoch.
+type mcpStamps struct {
+	versions *subject.Versions
+	epoch    func() string
+}
+
+// projectLocked is the status inventory the records give now: each record with its attributed anchor's relay latch.
+// The read lock suffices.
+func (reg *mcpRegistry) projectLocked() map[string]*marotte.MCPServerStatus {
 	anchors := reg.consentAnchorsLocked()
-	out := make([]mcpServerRuntime, 0, len(reg.servers))
-	for _, v := range reg.servers {
-		row := *v
+	out := make(map[string]*marotte.MCPServerStatus, len(reg.servers))
+	for name, v := range reg.servers {
+		row := marotte.MCPServerStatus(*v)
 		if a := anchors[row.Name]; a != nil && row.State == mcpStateSigningIn && row.OAuthURL == a.authURL {
 			row.Relayed = a.relayed
 		}
-		out = append(out, row)
+		out[name] = &row
 	}
-	slices.SortFunc(out, func(a, b mcpServerRuntime) int { return cmp.Compare(a.Name, b.Name) })
 	return out
+}
+
+// commitLocked makes the projection the served rows. When any row changed it mints `mcp_status` once and broadcasts
+// one stamped mcp_status frame per changed or removed server before it returns, so frames go out in version order
+// and the GET never serves a version whose frames are not sent. Every write that can move the projection calls it
+// before releasing the write lock; a call that finds no change sends nothing. A committed row is never written again,
+// so a frame shares it.
+func (reg *mcpRegistry) commitLocked() {
+	next := reg.projectLocked()
+	var changed []string
+	for name, row := range next {
+		if old, ok := reg.rows[name]; !ok || !sameStatus(old, row) {
+			changed = append(changed, name)
+		}
+	}
+	for name := range reg.rows {
+		if _, ok := next[name]; !ok {
+			changed = append(changed, name)
+		}
+	}
+	reg.rows = next
+	if len(changed) == 0 {
+		return
+	}
+	slices.Sort(changed)
+	stamp := marotte.NewSubjectStamp(string(subject.KindMCPStatus), "", reg.versions.BumpCounter(subject.KindMCPStatus, ""))
+	for _, name := range changed {
+		ev := marotte.NewEvent(marotte.EventMCPStatus, "", marotte.MCPStatusPayload{Server: name, Status: next[name]})
+		ev.Subject = stamp
+		reg.bus.Broadcast(context.Background(), ev)
+	}
+}
+
+func sameStatus(a, b *marotte.MCPServerStatus) bool {
+	ra, rb := mcpServerRuntime(*a), mcpServerRuntime(*b)
+	return sameRecord(&ra, &rb)
 }
 
 // RegisterRoutes wires the status view and the live-control routes (mcp_control.go); these exact
@@ -383,13 +434,12 @@ func settleConnecting(next, prev []translate.MCPServerReport) []translate.MCPSer
 // mcpDerived is what a re-derive changed, published outside the lock.
 type mcpDerived struct {
 	registry  *marotte.GovernanceMCPRegistry
-	events    []marotte.ServerEvent
 	changed   bool
 	poolMoved bool
 	anyView   bool
 }
 
-// deriveLocked rebuilds servers from views. Only a changed record raises an event.
+// deriveLocked rebuilds servers from views and commits the projection.
 func (reg *mcpRegistry) deriveLocked(configured map[string]struct{}) mcpDerived {
 	d := mcpDerived{anyView: len(reg.views) > 0, registry: unionRegistry(reg.views)}
 	next := make(map[string]*mcpServerRuntime, len(reg.servers))
@@ -403,16 +453,16 @@ func (reg *mcpRegistry) deriveLocked(configured map[string]struct{}) mcpDerived 
 	}
 	for name := range reg.servers {
 		if _, ok := next[name]; !ok {
-			ev := marotte.NewEvent(marotte.EventMCPDisconnected, "", marotte.MCPDisconnectedPayload{Server: name})
-			d.change(&ev)
+			d.changed = true
 		}
 	}
 	reg.servers = next
+	reg.commitLocked()
 	return d
 }
 
 // consentAnchorsLocked is, per server, the unexpired anchor attributed to its standing unexpired Sign in. It never
-// writes reg.anchors: snapshot calls it under the read lock.
+// writes reg.anchors: projectLocked runs under the read lock.
 func (reg *mcpRegistry) consentAnchorsLocked() map[string]*signInAnchor {
 	now := reg.now()
 	var out map[string]*signInAnchor
@@ -462,62 +512,23 @@ func (reg *mcpRegistry) deriveServerLocked(d *mcpDerived, next map[string]*mcpSe
 	if rec.State == mcpStateConnected {
 		delete(reg.launchResets, s.Name)
 	}
-	old := reg.servers[s.Name]
 	next[s.Name] = rec
-	if old != nil && old.State == rec.State && old.OAuthURL == rec.OAuthURL {
-		if !sameRecord(old, rec) {
-			d.change(inPlaceEvent(old, rec))
-		}
-		return
+	if old := reg.servers[s.Name]; old == nil || !sameRecord(old, rec) {
+		d.changed = true
 	}
-	d.change(stateEvent(rec))
 }
 
 // then folds a later derive's outcome into d, so one publish carries both.
 func (d *mcpDerived) then(n mcpDerived) {
-	d.events = append(d.events, n.events...)
 	d.changed = d.changed || n.changed
 	d.poolMoved = d.poolMoved || n.poolMoved
 	d.anyView, d.registry = n.anyView, n.registry
 }
 
-func (d *mcpDerived) change(ev *marotte.ServerEvent) {
-	d.changed = true
-	if ev != nil {
-		d.events = append(d.events, *ev)
-	}
-}
-
-// stateEvent is the SSE event announcing rec; a disabled server has none, and anchorConsentURL's mcp_sign_in_open
-// announces a signing_in one.
-func stateEvent(rec *mcpServerRuntime) *marotte.ServerEvent {
-	var ev marotte.ServerEvent
-	switch rec.State {
-	case mcpStateConnected:
-		ev = marotte.NewEvent(marotte.EventMCPConnected, "", marotte.MCPConnectedPayload{Server: rec.Name})
-	case mcpStateOAuth:
-		ev = marotte.NewEvent(marotte.EventMCPOAuthNeeded, "", marotte.MCPOAuthPayload{Server: rec.Name, Error: rec.Error})
-	case mcpStateFailed:
-		ev = marotte.NewEvent(marotte.EventMCPFailed, "", marotte.MCPFailedPayload{Server: rec.Name, Error: rec.Error})
-	default:
-		return nil
-	}
-	return &ev
-}
-
-// inPlaceEvent announces old updated to next; a needs_auth record only when its sign-in error moved, the one field
-// its client handler takes.
-func inPlaceEvent(old, next *mcpServerRuntime) *marotte.ServerEvent {
-	if next.State == mcpStateOAuth && old.Error == next.Error {
-		return nil
-	}
-	return stateEvent(next)
-}
-
 func sameRecord(a, b *mcpServerRuntime) bool {
 	return a.Name == b.Name && a.State == b.State && a.Origin == b.Origin && a.OriginRoot == b.OriginRoot &&
 		a.OriginPower == b.OriginPower && a.OAuthURL == b.OAuthURL && a.Error == b.Error && a.Shadows == b.Shadows &&
-		slices.Equal(a.Tools, b.Tools) && slices.Equal(a.Prompts, b.Prompts) &&
+		a.Relayed == b.Relayed && slices.Equal(a.Tools, b.Tools) && slices.Equal(a.Prompts, b.Prompts) &&
 		slices.Equal(a.Resources, b.Resources) && slices.Equal(a.ResourceTemplates, b.ResourceTemplates)
 }
 
@@ -547,12 +558,9 @@ func (reg *mcpRegistry) recordFor(s *translate.MCPServerReport, configured map[s
 	return rec, true
 }
 
-// publish broadcasts a derive's events and pushes the views' registry union; with no view left the last union
-// stands, since closing chats does not change the organization's registry.
+// publish signals a derive's pool move and record change and pushes the views' registry union; with no view left the
+// last union stands, since closing chats does not change the organization's registry. The rows went out at commit.
 func (reg *mcpRegistry) publish(ctx context.Context, d mcpDerived) {
-	for _, ev := range d.events {
-		reg.bus.Broadcast(ctx, ev)
-	}
 	if d.poolMoved {
 		reg.poolChanged()
 	}
@@ -697,7 +705,6 @@ func (reg *mcpRegistry) anchorConsentURL(ctx context.Context, req consentRequest
 		d := reg.deriveLocked(configured)
 		reg.mu.Unlock()
 		reg.publish(ctx, d)
-		reg.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventMCPSignInOpen, "", marotte.MCPSignInOpenPayload{Server: standing.server, URL: authURL}))
 		return consentShown{how: consentOnRow, server: standing.server}
 	}
 	if !pageConnected {
@@ -740,6 +747,10 @@ func (reg *mcpRegistry) endLazySignIn(ctx context.Context, flowID, server string
 	n := len(reg.anchors)
 	reg.anchors = slices.DeleteFunc(reg.anchors, func(a *signInAnchor) bool { return a.flowID == flowID })
 	ended := len(reg.anchors) < n
+	if ended {
+		// An attributed anchor carries the flow id it was opened with: dropping it ends the row's relay overlay.
+		reg.commitLocked()
+	}
 	reg.mu.Unlock()
 	if !ended {
 		return
@@ -818,6 +829,7 @@ func (reg *mcpRegistry) reserveRelayLocked(pastedState string) (oauthAttempt, er
 			return oauthAttempt{}, errRelayAlreadyDone
 		}
 		a.relayed = true
+		reg.commitLocked()
 		return oauthAttempt{anchor: a}, nil
 	}
 	return oauthAttempt{}, errRelayStateDrift
@@ -829,33 +841,27 @@ func (reg *mcpRegistry) releaseOAuthRelay(a oauthAttempt) {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 	a.anchor.relayed = false
+	reg.commitLocked()
 }
 
-// clearAll wipes every view (and so every sign-in), record and anchor and broadcasts mcp_disconnected per
-// server when the engine ends: MCP subprocesses live inside kiro-cli.
-func (reg *mcpRegistry) clearAll(ctx context.Context) {
+// clearAll wipes every view (and so every sign-in), record and anchor when the engine ends, MCP subprocesses living
+// inside kiro-cli; its commit announces each wiped server gone.
+func (reg *mcpRegistry) clearAll() {
 	reg.mu.Lock()
-	prev := reg.servers
+	had := len(reg.servers) > 0
 	reg.servers = make(map[string]*mcpServerRuntime)
 	reg.launchResets = make(map[string]int)
 	hadPool := slices.ContainsFunc(reg.views, func(v mcpView) bool { return len(viewPool(v.servers)) > 0 })
 	reg.views = nil
 	reg.anchors = nil
+	reg.commitLocked()
 	reg.mu.Unlock()
 	if hadPool {
 		reg.poolChanged()
 	}
-
-	if len(prev) == 0 {
-		return
+	if had {
+		reg.signalChange()
 	}
-	for name := range prev {
-		if ctx.Err() != nil {
-			break
-		}
-		reg.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventMCPDisconnected, "", marotte.MCPDisconnectedPayload{Server: name}))
-	}
-	reg.signalChange()
 }
 
 type mcpProvenance struct {
@@ -910,39 +916,26 @@ func (reg *mcpRegistry) originFor(name string, src marotte.MCPSource, configured
 	return p
 }
 
-// Field order must match that struct: handleStatus converts directly, so a reorder is a compile
-// error, not a silent swap.
-type statusServer struct {
-	Name  string                 `json:"name"`
-	State marotte.MCPServerState `json:"state"`
-	// Origin is never omitted: the client attributes a status to marotte's row only on "user".
-	Origin      marotte.Origin `json:"origin"`
-	OriginRoot  string         `json:"origin_root,omitempty"`
-	OriginPower string         `json:"origin_power,omitempty"`
-	OAuthURL    string         `json:"oauth_url,omitempty"`
-	Error       string         `json:"error,omitempty"`
-	// Tools is the connected server's tool names, for the per-tool deny editor's suggestions.
-	Tools             []string                          `json:"tools,omitempty"`
-	Prompts           []marotte.MCPPromptInfo           `json:"prompts,omitempty"`
-	Resources         []marotte.MCPResourceInfo         `json:"resources,omitempty"`
-	ResourceTemplates []marotte.MCPResourceTemplateInfo `json:"resource_templates,omitempty"`
-	// Relayed stops a reload or second device offering the paste box for a spent code.
-	Relayed bool `json:"relayed,omitempty"`
-	// Shadows keeps the client from putting this status on marotte's config row.
-	Shadows bool `json:"shadows,omitempty"`
-}
-
-type mcpStatusResponse struct {
-	Servers []statusServer `json:"servers"`
-}
-
+// handleStatus serves GET /api/mcp/status: the committed rows and the `mcp_status` version they were committed at.
 func (reg *mcpRegistry) handleStatus(w http.ResponseWriter, _ *http.Request) {
-	snap := reg.snapshot()
-	out := make([]statusServer, len(snap))
-	for i := range snap {
-		out[i] = statusServer(snap[i])
+	rows, version := reg.statusRowsStamped()
+	stamp := marotte.NewSubjectStamp(string(subject.KindMCPStatus), "", version)
+	stamp.Epoch = reg.epoch()
+	httpserver.WriteJSON(w, marotte.MCPStatusResponse{Servers: rows, Subject: stamp})
+}
+
+// statusRowsStamped is the committed rows, sorted by name, and their version, read under one lock: a commit mints
+// under the write lock, so the pair is never torn.
+func (reg *mcpRegistry) statusRowsStamped() (rows []marotte.MCPServerStatus, version string) {
+	reg.mu.RLock()
+	rows = make([]marotte.MCPServerStatus, 0, len(reg.rows))
+	for _, row := range reg.rows {
+		rows = append(rows, *row)
 	}
-	httpserver.WriteJSON(w, mcpStatusResponse{Servers: out})
+	version, _ = reg.versions.Current(subject.KindMCPStatus, "")
+	reg.mu.RUnlock()
+	slices.SortFunc(rows, func(a, b marotte.MCPServerStatus) int { return cmp.Compare(a.Name, b.Name) })
+	return rows, version
 }
 
 // startNotifier runs the one goroutine that drains notifyCh and calls onChange after a short
