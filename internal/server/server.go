@@ -453,8 +453,8 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []htt
 			httpserver.WithSkipPaths("/api/events"),
 			// The shell PTY is silenced by RESPONSE, not path, so every handshake refusal keeps its line.
 			httpserver.WithSkipUpgrades(true),
-			// A prober and a scraper call these every 15 to 60s, so a served request logs at
-			// Debug and only a refused or failing one is surfaced.
+			// A prober and a scraper call these every 15 to 60s, so their access lines log at Debug
+			// whatever the status; a refused one surfaces through its gate's own Warn.
 			httpserver.WithProbeLogLevel(healthzPath, metricsPath),
 			httpserver.WithClientIPFunc(s.clientIP),
 			// A preview path carries a 12h bearer token, so it logs as the route template.

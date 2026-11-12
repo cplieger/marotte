@@ -70,8 +70,9 @@ func TestMetricsRoute_RefusesAWriteMethod(t *testing.T) {
 	}
 }
 
-// A scrape every 15 to 60 seconds at INFO would bury the access log, so a
-// served scrape logs at DEBUG and a refused one still surfaces.
+// A scrape every 15 to 60 seconds at INFO would bury the access log, so its
+// access line logs at DEBUG and a refused one still surfaces through the host
+// gate's Warn.
 func TestMetricsRoute_LogsAtProbeLevel(t *testing.T) {
 	logs := captureLogs(t)
 	h := metricsStack(t)
@@ -88,9 +89,12 @@ func TestMetricsRoute_LogsAtProbeLevel(t *testing.T) {
 	t.Run("refused", func(t *testing.T) {
 		logs.Reset()
 		scrapeMetrics(h, http.MethodGet, "scraper.elsewhere")
-		line := accessLine(t, logs.String())
-		if !strings.Contains(line, "level=WARN") {
-			t.Errorf("a refused scrape logged %q, want level=WARN", line)
+		out := logs.String()
+		if line := accessLine(t, out); !strings.Contains(line, "level=DEBUG") {
+			t.Errorf("a refused scrape's access line is %q, want level=DEBUG", line)
+		}
+		if !strings.Contains(out, `level=WARN msg="httpserver: host not allowed"`) {
+			t.Errorf("a refused scrape logged no host-gate Warn; log:\n%s", out)
 		}
 	})
 }
