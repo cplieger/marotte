@@ -44,15 +44,26 @@ class FakeRecognizer extends EventTarget implements SpeechRecognizer {
 
   /** The engine's whole result list so far, as a `result` event carries it. */
   hear(...results: readonly Heard[]): void {
+    this.hearFrom(0, ...results);
+  }
+
+  /** `hear` with the list's first changed entry at `resultIndex`, as WebKit sets it: the count of earlier finals
+   *  (WebCore SpeechRecognition::didReceiveResult). */
+  hearFrom(resultIndex: number, ...results: readonly Heard[]): void {
     const list = results.map(([transcript, isFinal]) => {
       const alt = { transcript, confidence: 0.9 };
       return Object.assign([alt], { isFinal, item: () => alt });
     });
     const e = Object.assign(new Event("result"), {
-      resultIndex: 0,
+      resultIndex,
       results: Object.assign(list, { item: (i: number) => list[i] }),
     });
     this.dispatchEvent(e);
+  }
+
+  /** One of the engine's argument-free lifecycle events (`audiostart`, `speechstart`, `speechend`, `audioend`). */
+  signal(type: "audiostart" | "speechstart" | "speechend" | "audioend"): void {
+    this.dispatchEvent(new Event(type));
   }
 
   fail(code: string): void {
