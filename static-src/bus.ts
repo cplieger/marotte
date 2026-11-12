@@ -11,6 +11,7 @@ import type {
   NotificationPayload,
   RunAsksPayload,
   SettingsUpdatedPayload,
+  SubjectStamp,
 } from "./wire/types.gen.js";
 import type {
   ServerEvent,
@@ -160,7 +161,7 @@ export interface SSEPayloads {
 
 export type SSEHandler<K extends keyof SSEPayloads> = SSEPayloads[K] extends undefined
   ? (chatID: string) => void
-  : (chatID: string, payload: SSEPayloads[K]) => void;
+  : (chatID: string, payload: SSEPayloads[K], subject: SubjectStamp | undefined) => void;
 
 type AnyHandler = (...args: unknown[]) => void;
 
@@ -220,7 +221,7 @@ export function dispatch(evt: ServerEvent): void {
   const chatID = evt.chat_id ?? "";
   for (const fn of fns) {
     try {
-      fn(chatID, evt.payload);
+      fn(chatID, evt.payload, evt.subject);
     } catch (e) {
       console.error(`[bus] SSE handler error for "${evt.type}":`, e);
     }

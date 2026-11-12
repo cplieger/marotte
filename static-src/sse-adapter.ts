@@ -22,7 +22,7 @@ import { registerCleanup } from "./actions/index.js";
 import { BUS_PAGE_RESUMED, BUS_RECONCILE, decodeEnvelope, emitBus } from "./bus.js";
 import { inventoryHeld } from "./git-prs-state.js";
 import { isMirrorKind } from "./mirror.js";
-import { peekRunState, rebuildLiveRuns, rereadHeldRuns, runTurnHeldSeq } from "./run-store.js";
+import { peekRunState, refetchLiveRuns, rereadHeldRuns, runTurnHeldSeq } from "./run-store.js";
 import { requestRunTurnRange } from "./run-turn-range.js";
 import { setSSEStatus } from "./send-state.js";
 import { fetchCatalog } from "./session-catalog.js";
@@ -344,7 +344,7 @@ function runStampAction(stamp: SubjectStamp | undefined, signal?: AbortSignal): 
       return Promise.resolve(false);
     }
     case "runs":
-      return rebuildLiveRuns(signal).then(() => false);
+      return refetchLiveRuns(signal).then(() => false);
     case "catalog":
       return fetchCatalog(signal === undefined ? {} : { signal }).then(() => false);
     case "forge_inventory":

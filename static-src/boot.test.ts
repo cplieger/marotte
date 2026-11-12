@@ -114,7 +114,7 @@ const m = vi.hoisted(() => {
     initStatusVersions: vi.fn(),
     loadVersions: vi.fn(),
     fetchCatalog: vi.fn(),
-    rebuildLiveRuns: vi.fn(),
+    refetchLiveRuns: vi.fn(),
     registerEvictionExemption: vi.fn(),
     // Typed, because the case below reads a registered predicate back OFF the mock and
     // calls it: one of the two is an arrow with no identity to compare against.
@@ -210,7 +210,7 @@ vi.mock("./versions.js", () => ({ loadVersions: m.loadVersions }));
 vi.mock("./retention.js", () => ({ adoptRetention: m.adoptRetention }));
 // Present so re-adding a boot call to it fails the assertion, not the LINK.
 vi.mock("./run-store.js", () => ({
-  rebuildLiveRuns: m.rebuildLiveRuns,
+  refetchLiveRuns: m.refetchLiveRuns,
   registerRunStateDemand: m.registerRunStateDemand,
   registerRunTurnRepair: m.registerRunTurnRepair,
   registerRunLogObserver: m.registerRunLogObserver,
@@ -1070,7 +1070,7 @@ describe("a boot inside a reload loop", () => {
     expect(m.initRuntimeHealth).toHaveBeenCalledTimes(1);
     expect(m.initEngineStatus).toHaveBeenCalledTimes(1);
     // The live-runs inventory is not fetched: the `connected` handshake states it.
-    expect(m.rebuildLiveRuns).not.toHaveBeenCalled();
+    expect(m.refetchLiveRuns).not.toHaveBeenCalled();
   });
 
   it("withholds nothing on an ordinary boot, and arms the stability clear", async () => {
@@ -1086,7 +1086,7 @@ describe("a boot inside a reload loop", () => {
     expect(m.loadVersions).toHaveBeenCalledTimes(1);
     // No boot fetch in any mode: `adoptConnectRuns` reads the handshake, and the gap door
     // is the one place a per-run refetch is wanted.
-    expect(m.rebuildLiveRuns).not.toHaveBeenCalled();
+    expect(m.refetchLiveRuns).not.toHaveBeenCalled();
     // A page that stays up costs the next boot nothing, and only this call arms it.
     expect(m.noteBootAlive).toHaveBeenCalledTimes(1);
   });

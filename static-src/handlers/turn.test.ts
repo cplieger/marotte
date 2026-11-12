@@ -18,7 +18,7 @@ import {
   setAgentStatus,
   tabStatusFor,
 } from "../store.js";
-import { noteRunLive, noteRunSettled } from "../run-store.js";
+import { frameRunGone, frameRunLive } from "../__test-helpers__/live-runs.js";
 import type { Session } from "../types.js";
 import type { Entry, EntryTurnClose, NotificationPayload, TurnOutcome } from "../wire/types.gen.js";
 import type * as ApiClient from "../api-client.js";
@@ -823,7 +823,7 @@ describe("the notification waits for the work, not just the turn", () => {
   afterEach(() => {
     notifyGate.agentFinished = false;
     for (const id of liveRunsSeeded) {
-      noteRunSettled(id);
+      frameRunGone(id);
     }
     liveRunsSeeded.length = 0;
   });
@@ -831,7 +831,7 @@ describe("the notification waits for the work, not just the turn", () => {
   const liveRunsSeeded: string[] = [];
   function seedLiveRun(workflowID: string, chatID: string, executing = true): void {
     liveRunsSeeded.push(workflowID);
-    noteRunLive(workflowID, chatID, executing);
+    frameRunLive(workflowID, chatID, executing);
   }
 
   /** A settled chat with one closed turn and the server's notification about it. */

@@ -23,7 +23,7 @@ vi.mock("./tabs-sync.js", () => ({ listTabs: vi.fn() }));
 // Browser Mode links ESM for real, so every imported name must exist. Each reader answers
 // the EMPTY value, so no assertion passes on a live run production did not supply.
 vi.mock("./run-store.js", () => ({
-  rebuildLiveRuns: vi.fn(),
+  refetchLiveRuns: vi.fn(),
   // The adapter's `run_turn` arm asks past what this client holds, so the name has to exist
   // on the mock or the module graph does not link (a mock is linked, not read off an object).
   runTurnHeldSeq: vi.fn(() => undefined),
@@ -31,8 +31,7 @@ vi.mock("./run-store.js", () => ({
   invalidateRun: vi.fn(),
   rereadHeldRuns: vi.fn(),
   forgetRun: vi.fn(),
-  noteRunLive: vi.fn(),
-  noteRunSettled: vi.fn(),
+  applyLiveRunFrame: vi.fn(),
   openRunTurn: vi.fn(),
   openRunEntry: vi.fn(),
   appendRunEntry: vi.fn(),

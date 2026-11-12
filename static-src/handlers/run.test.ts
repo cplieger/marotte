@@ -12,8 +12,7 @@ vi.mock("../run-store.js", () => ({
   noteRunChat: vi.fn(),
   noteRunLabel: vi.fn(),
   noteRunResumed: vi.fn(),
-  noteRunLive: vi.fn(),
-  noteRunSettled: vi.fn(),
+  applyLiveRunFrame: vi.fn(),
   hasLiveRunForChat: vi.fn(() => false),
   runLabelOf: vi.fn(() => ""),
   runChatID: vi.fn(() => ""),
@@ -57,8 +56,7 @@ import {
   noteRunChat,
   noteRunLabel,
   noteRunResumed,
-  noteRunLive,
-  noteRunSettled,
+  applyLiveRunFrame,
   hasLiveRunForChat,
   openRunEntry,
   openRunTurn,
@@ -78,8 +76,7 @@ const applyProgress = vi.mocked(applyRunProgress);
 const noteChat = vi.mocked(noteRunChat);
 const noteLabel = vi.mocked(noteRunLabel);
 const noteResumed = vi.mocked(noteRunResumed);
-const noteLive = vi.mocked(noteRunLive);
-const noteSettled = vi.mocked(noteRunSettled);
+const liveRunFrame = vi.mocked(applyLiveRunFrame);
 const track = vi.mocked(trackRun);
 const toastInfo = vi.mocked(info);
 const toastEnd = vi.mocked(jumpToast);
@@ -111,8 +108,7 @@ onBus(BUS_RUNS_CHANGED, () => {
 beforeEach(() => {
   invalidate.mockClear();
   noteChat.mockClear();
-  noteLive.mockClear();
-  noteSettled.mockClear();
+  liveRunFrame.mockClear();
   track.mockClear();
   toastInfo.mockClear();
   toastEnd.mockClear();
@@ -152,6 +148,7 @@ const _keys: readonly (keyof SSEPayloads)[] = [
   "run_started",
   "run_progress",
   "run_finished",
+  "live_run",
   "run_asks",
   "turn_opened",
   "entry_opened",
@@ -278,47 +275,24 @@ describe("run SSE handlers", () => {
     expect(invalidate).toHaveBeenCalledWith("wf_other");
   });
 
-  // The live-runs inventory exempts a chat with a run in flight from eviction. Both events carry the
-  // chat (run_started is not replayed mid-run) and both say EXECUTING: a start fires on launch and
-  // every resume, a node-level progress frame is a step moving.
-  it("records the run LIVE and EXECUTING with its chat, on start and on progress", () => {
+  // The lease store owns the inventory: its `live_run` frame reaches the store with the envelope's
+  // stamp, which is what orders it against an inventory read.
+  it("hands a live_run frame and its stamp to the inventory", () => {
+    const payload = { workflow_id: "wf_live", chat_id: "c1", live: true, executing: true };
+    const subject = { kind: "runs", ref: "", version: "12" };
+    dispatch({ type: "live_run", chat_id: "", payload, subject });
+    expect(liveRunFrame).toHaveBeenCalledExactlyOnceWith(payload, subject);
+  });
+
+  it("writes the inventory from no lifecycle frame, an ending or a pause included", () => {
     send("run_started", { workflow_id: "wf_live", name: "publish" });
-    expect(noteLive).toHaveBeenCalledWith("wf_live", "c1", true);
-    send("run_progress", { workflow_id: "wf_live", kind: "node_start" });
-    expect(noteLive).toHaveBeenLastCalledWith("wf_live", "c1", true);
-    expect(noteLive).toHaveBeenCalledTimes(2);
-    expect(noteSettled).not.toHaveBeenCalled();
-  });
-
-  // A RUN-LEVEL pause folds into run_progress: live but not executing, or a parked run keeps its
-  // chat's window resident for hours.
-  it("records a run-level pause as live but NOT executing", () => {
-    send("run_progress", { workflow_id: "wf_live", kind: "paused" });
-    expect(noteLive).toHaveBeenCalledWith("wf_live", "c1", false);
-    expect(noteSettled).not.toHaveBeenCalled();
-  });
-
-  // Its counterpart, and the reason the gate is the run-level kind rather than any
-  // pause: a node-level pause is one step waiting inside a run that is still going.
-  it("records a NODE-level pause as still executing", () => {
-    send("run_progress", { workflow_id: "wf_live", kind: "node_paused" });
-    expect(noteLive).toHaveBeenCalledWith("wf_live", "c1", true);
-  });
-
-  it("settles the run on every terminal finish, recognised or not", () => {
-    for (const status of ["completed", "failed", "aborted", "cancelled", "exploded"]) {
-      noteSettled.mockClear();
-      send("run_finished", { workflow_id: "wf_end", status });
-      expect(noteSettled, status).toHaveBeenCalledWith("wf_end");
+    for (const kind of ["node_start", "node_paused", "paused"]) {
+      send("run_progress", { workflow_id: "wf_live", kind });
     }
-  });
-
-  it("keeps a PAUSED run live but stops calling it executing", () => {
-    // Presence means non-terminal, so the row and dot stay; the eviction exemption lapses, since a
-    // policy stop (`onMaxIterations`) writes nothing more.
-    send("run_finished", { workflow_id: "wf_pause", status: "paused" });
-    expect(noteSettled).not.toHaveBeenCalled();
-    expect(noteLive).toHaveBeenCalledWith("wf_pause", "c1", false);
+    for (const status of ["paused", "completed", "failed", "aborted", "cancelled", "exploded"]) {
+      send("run_finished", { workflow_id: "wf_live", status });
+    }
+    expect(liveRunFrame).not.toHaveBeenCalled();
   });
 
   // A parked run's mark can only say `waiting` through this frame's ONE re-read (an executing run
@@ -369,8 +343,8 @@ describe("run SSE handlers", () => {
     });
 
     it("leaves a SIBLING run's orphan alone while that run is still executing", () => {
-      // A sibling run's orphan also has an empty runID; `noteRunSettled` already ran for THIS run, so the
-      // predicate answers about siblings only.
+      // A sibling run's orphan also has an empty runID; the server's `live_run` removal already took
+      // THIS run out, so the predicate answers about siblings only.
       siblingRunLive.mockReturnValue(true);
       send("run_finished", { workflow_id: "wf_orphan", status: "completed" }, "c-parent");
       expect(sweepOrphans).not.toHaveBeenCalled();

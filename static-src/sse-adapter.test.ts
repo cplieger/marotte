@@ -41,7 +41,7 @@ const {
   mockLoadMessages,
   mockRequestTurnRange,
   mockListTabs,
-  mockRebuildLiveRuns,
+  mockRefetchLiveRuns,
   mockRereadHeldRuns,
   mockRunTurnHeldSeq,
   mockRequestRunTurnRange,
@@ -56,7 +56,7 @@ const {
   ),
   mockRequestTurnRange: vi.fn((_chatID: string, _turnID: string) => undefined),
   mockListTabs: vi.fn((_signal?: AbortSignal) => Promise.resolve(true)),
-  mockRebuildLiveRuns: vi.fn((_signal?: AbortSignal) => Promise.resolve()),
+  mockRefetchLiveRuns: vi.fn((_signal?: AbortSignal) => Promise.resolve()),
   mockRereadHeldRuns: vi.fn(),
   mockRunTurnHeldSeq: vi.fn((_id: string, _turn: string): number | undefined => undefined),
   mockRequestRunTurnRange: vi.fn((_id: string, _turn: string, _after?: number) => undefined),
@@ -72,7 +72,7 @@ vi.mock("./store-load.js", () => ({
 }));
 vi.mock("./tabs-sync.js", () => ({ listTabs: mockListTabs }));
 vi.mock("./run-store.js", () => ({
-  rebuildLiveRuns: mockRebuildLiveRuns,
+  refetchLiveRuns: mockRefetchLiveRuns,
   rereadHeldRuns: mockRereadHeldRuns,
   peekRunState: mockPeekRunState,
   runTurnHeldSeq: mockRunTurnHeldSeq,
@@ -204,7 +204,7 @@ beforeEach(() => {
   mockLoadMessages.mockResolvedValue(true);
   mockRequestTurnRange.mockReturnValue(undefined);
   mockListTabs.mockResolvedValue(true);
-  mockRebuildLiveRuns.mockResolvedValue(undefined);
+  mockRefetchLiveRuns.mockResolvedValue(undefined);
   mockRequestRunTurnRange.mockReturnValue(undefined);
   mockRunTurnHeldSeq.mockReturnValue(undefined);
   // No run held unless a case says so, which is what makes a `run_turn` stamp unheld.
@@ -752,7 +752,7 @@ describe("revalidate", () => {
 
     expect(mockLoadList).toHaveBeenCalledWith(controller.signal);
     expect(mockListTabs).toHaveBeenCalledWith(controller.signal);
-    expect(mockRebuildLiveRuns).toHaveBeenCalledWith(controller.signal);
+    expect(mockRefetchLiveRuns).toHaveBeenCalledWith(controller.signal);
     expect(mockFetchCatalog).toHaveBeenCalledWith({ signal: controller.signal });
   });
 
@@ -1267,7 +1267,7 @@ describe("every revalidation re-reads the held runs once", () => {
     expect(mockRereadHeldRuns).toHaveBeenCalledTimes(1);
   });
 
-  it("a verdict naming the runs subject rebuilds the inventory and re-reads nothing more", async () => {
+  it("a verdict naming the runs subject reads the inventory and re-reads nothing more", async () => {
     observeStamp({ kind: "chats", ref: "", version: "1" });
     observeStamp({ kind: "runs", ref: "", version: "1" });
     scripted.respond(
@@ -1282,8 +1282,8 @@ describe("every revalidation re-reads the held runs once", () => {
     await _revalidateForTest(ctx({ signal: controller.signal }));
 
     expect(mockRereadHeldRuns).toHaveBeenCalledTimes(1);
-    expect(mockRebuildLiveRuns).toHaveBeenCalledTimes(1);
-    expect(mockRebuildLiveRuns.mock.calls[0]).toEqual([controller.signal]);
+    expect(mockRefetchLiveRuns).toHaveBeenCalledTimes(1);
+    expect(mockRefetchLiveRuns.mock.calls[0]).toEqual([controller.signal]);
   });
 
   it("a refused runs frame on the stream re-reads the held runs", async () => {
@@ -1291,17 +1291,17 @@ describe("every revalidation re-reads the held runs once", () => {
     observeStamp({ kind: "chat", ref: "X", version: "3" });
     const conn = await connectSettled();
     mockRereadHeldRuns.mockClear();
-    mockRebuildLiveRuns.mockClear();
+    mockRefetchLiveRuns.mockClear();
 
     conn?.frame({
       type: "subject_changed",
       chat_id: "",
       subject: { kind: "runs", ref: "", version: "2" },
     });
-    await until(() => mockRebuildLiveRuns.mock.calls.length === 1, "the inventory rebuild");
+    await until(() => mockRefetchLiveRuns.mock.calls.length === 1, "the inventory read");
 
     expect(mockRereadHeldRuns).toHaveBeenCalledTimes(1);
-    expect(mockRebuildLiveRuns).toHaveBeenCalledTimes(1);
+    expect(mockRefetchLiveRuns).toHaveBeenCalledTimes(1);
   });
 });
 

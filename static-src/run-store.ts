@@ -1,8 +1,9 @@
 // The one owner of a workflow run's state: refetched on invalidation, cached as read but for each
 // node's start (`attemptStart`), never accumulated from an SSE payload.
 
-import { signal, touch, type Signal } from "@cplieger/reactive";
+import { signal, touch, untracked, type Signal } from "@cplieger/reactive";
 import { apiGetOrError, apiGetTyped } from "./api-client.js";
+import { createMirror } from "./mirror.js";
 import { nodePathKey, nodePathSegment } from "./run-node-key.js";
 import { forgetSubject, observeStamp } from "./subject-versions.js";
 import { turnOpenOf } from "./turns.js";
@@ -16,10 +17,12 @@ import {
 import type {
   ConnectedPayload,
   LiveRun,
+  LiveRunPayload,
   RunControlsResponse,
   RunPlanUpdate,
   RunStepEnd,
   RunStepStart,
+  SubjectStamp,
 } from "./wire/types.gen.js";
 import {
   classifyRunNodeStatus,
@@ -1118,54 +1121,88 @@ interface LiveRunEntry extends LiveRunRow {
   readonly id: string;
 }
 
-const liveRunChats = new Map<string, LiveRunRow>();
-
-/** Bumped by every writer of the map above, so a reactive reader can subscribe to the inventory
- *  CHANGING. A plain `Map` is not a signal, so a `computed` over it would track nothing and
- *  never re-evaluate. */
-const liveRunsVersion = signal(0);
-
-/** `peek()` on the write is the idiom `run-dots.ts` records: a `+ 1` off `.value` subscribes the
- *  writing effect to the signal it is about to write, which the reactive layer refuses with
- *  `Cycle detected`. */
-function bumpLiveRuns(): void {
-  liveRunsVersion.value = liveRunsVersion.peek() + 1;
+function liveRunRows(runs: readonly LiveRun[]): Map<string, LiveRunRow> {
+  const rows = new Map<string, LiveRunRow>();
+  for (const r of runs) {
+    if (r.workflow_id !== "") {
+      rows.set(r.workflow_id, { chat: r.chat_id, executing: r.executing });
+    }
+  }
+  return rows;
 }
 
-/** Record a run as live, saying whether it is executing. Parentless runs ("" chat) are tracked
- *  too: they exempt no chat, but their presence mirrors the server's inventory, which is what
- *  the dot painter reads. */
-export function noteRunLive(workflowID: string, chatID: string, executing: boolean): void {
-  if (workflowID === "") {
+/** Externally-owned "this client now knows about this run", REGISTERED rather than imported
+ *  because `run-dots.ts` imports this module and the reverse edge would close a cycle.
+ *  Unregistered, the inventory seeds state and repaints nothing. */
+let noteRunKnown: ((workflowID: string) => void) | null = null;
+
+/** Register the observer the inventory reports each run that joined or moved to. Last wins. */
+export function registerLiveRunObserver(fn: (workflowID: string) => void): void {
+  noteRunKnown = fn;
+}
+
+/** Read each listed run a reader holds that has no state yet. Over every row a read left, not only
+ *  the moved ones: a held read that failed is retried by the next inventory read. A run with state
+ *  is kept current by its frames and by `rereadHeldRuns`. */
+function readHeldUnread(): void {
+  for (const [id] of untracked(() => liveRuns.entries())) {
+    if (!cells.has(id) && runStateDemanded(id)) {
+      readRunUnlessOut(id);
+    }
+  }
+}
+
+/** The lease store's inventory, ordered by the `runs` version: its `live_run` frames, the connect
+ *  frame and `GET /api/runs/live` are the only writers. */
+const liveRuns = createMirror<string, LiveRunRow>({
+  kind: "runs",
+  async fetch(signal) {
+    const d = await apiGetTyped("/api/runs/live", decodeLiveRunsResponse, signal);
+    if (d?.subject === undefined) {
+      return null;
+    }
+    return { rows: liveRunRows(d.runs), stamp: d.subject };
+  },
+  onChange(changes) {
+    for (const c of changes) {
+      if (c.next !== undefined) {
+        noteRunChat(c.key, c.next.chat);
+        noteRunKnown?.(c.key);
+      }
+    }
+  },
+  onFetched: readHeldUnread,
+});
+
+/** Apply one `live_run` frame. */
+export function applyLiveRunFrame(p: LiveRunPayload, stamp: SubjectStamp | undefined): void {
+  if (p.workflow_id === "") {
     return;
   }
-  liveRunChats.set(workflowID, { chat: chatID, executing });
-  bumpLiveRuns();
-}
-
-/** Drop a run that reached a terminal status. */
-export function noteRunSettled(workflowID: string): void {
-  liveRunChats.delete(workflowID);
-  bumpLiveRuns();
+  const row = p.live ? { chat: p.chat_id, executing: p.executing } : undefined;
+  liveRuns.applyFrame(p.workflow_id, row, stamp);
 }
 
 /** Whether this chat has ANY live run, parked ones included — a parked run's ask is precisely
  *  the one that must survive, so narrowing this to `executing` would strand it. Its consumer is
- *  the ask sweep in `handlers/run.ts`. */
+ *  the ask sweep in `handlers/run.ts`; untracked, as that sweep runs inside a frame handler. */
 export function hasLiveRunForChat(chatID: string): boolean {
-  return anyRunForChat(chatID, () => true);
+  if (chatID === "") {
+    return false;
+  }
+  return untracked(() => liveRuns.entries()).some(([, r]) => r.chat === chatID);
 }
 
 /** The live runs this chat launched, in the order they were recorded. Parked runs are INCLUDED
  *  like `hasLiveRunForChat`; parentless ones are EXCLUDED, their own tab dot already surfacing
  *  them (`run-dots.ts`). */
 export function liveRunsForChat(chatID: string): LiveRunEntry[] {
-  touch(liveRunsVersion);
+  const entries = liveRuns.entries();
   if (chatID === "") {
     return [];
   }
   const out: LiveRunEntry[] = [];
-  for (const [id, r] of liveRunChats) {
+  for (const [id, r] of entries) {
     if (r.chat === chatID) {
       out.push({ id, ...r });
     }
@@ -1178,7 +1215,7 @@ export function liveRunsForChat(chatID: string): LiveRunEntry[] {
  *  effect of its own — sometimes inside another module's — so a tracked read there would hand
  *  that effect a dependency on the whole inventory. */
 export function peekLiveRun(workflowID: string): LiveRunRow | undefined {
-  return liveRunChats.get(workflowID);
+  return liveRuns.get(workflowID);
 }
 
 /** The ids alone, for a caller that asks only how many or which. */
@@ -1186,70 +1223,20 @@ export function liveRunIDsForChat(chatID: string): string[] {
   return liveRunsForChat(chatID).map((r) => r.id);
 }
 
-/** Not an index: the single-run rule bounds live runs to a handful, and a second map keyed by chat
- *  would be one more thing the rebuild could leave inconsistent. */
-function anyRunForChat(chatID: string, pass: (r: LiveRunRow) => boolean): boolean {
-  if (chatID === "") {
-    return false;
-  }
-  for (const r of liveRunChats.values()) {
-    if (r.chat === chatID && pass(r)) {
-      return true;
-    }
-  }
-  return false;
+/** Read the inventory again. A failed read keeps what the mirror holds: a stale exemption costs
+ *  memory, a wrongly-evicted live chat costs correctness, and the next gap or verdict retries. */
+export function refetchLiveRuns(signal?: AbortSignal): Promise<void> {
+  return liveRuns.refetch(signal);
 }
 
-/** Externally-owned "this client now knows about this run", REGISTERED rather than imported
- *  because `run-dots.ts` imports this module and the reverse edge would close a cycle.
- *  Unregistered, the rebuild seeds state and repaints nothing. */
-let noteRunKnown: ((workflowID: string) => void) | null = null;
-
-/** Register the observer the rebuild reports each live run to. Last wins. */
-export function registerLiveRunObserver(fn: (workflowID: string) => void): void {
-  noteRunKnown = fn;
-}
-
-/** Rebuild the inventory from the server. A FAILED fetch keeps the event-fed state: a stale
- *  exemption costs memory, a wrongly-evicted live chat costs correctness, and the next gap or
- *  boot retries. */
-export async function rebuildLiveRuns(signal?: AbortSignal): Promise<void> {
-  const d = await apiGetTyped("/api/runs/live", decodeLiveRunsResponse, signal);
-  if (d === null) {
-    return;
-  }
-  adoptLiveRuns(d.runs, true);
-  // AFTER the adoption: the `runs` digest stamp certifies the inventory now held.
-  observeStamp(d.subject);
-}
-
-/** Adopt an inventory somebody else already read. `readHeld` reads each live run a reader holds that
- *  has no state yet; a run with state is kept current by its frames and by `rereadHeldRuns`. */
-function adoptLiveRuns(rows: readonly LiveRun[], readHeld: boolean): void {
-  liveRunChats.clear();
-  for (const r of rows) {
-    if (r.workflow_id !== "") {
-      liveRunChats.set(r.workflow_id, { chat: r.chat_id, executing: r.executing });
-      noteRunChat(r.workflow_id, r.chat_id);
-      noteRunKnown?.(r.workflow_id);
-      // After the `liveRunChats` write: a chat tab's demand reads it to hold this run.
-      if (readHeld && !cells.has(r.workflow_id) && runStateDemanded(r.workflow_id)) {
-        readRunUnlessOut(r.workflow_id);
-      }
-    }
-  }
-  // ONE bump for the whole adoption rather than one per row.
-  bumpLiveRuns();
-}
-
-/** Take the inventory off the connect handshake, and fall back to the fetch when the frame does
+/** Take the inventory off the connect handshake, and fall back to the read when the frame does
  *  not state one. */
 export function adoptConnectRuns(p: ConnectedPayload): void {
   if (!p.live_runs_stated) {
-    void rebuildLiveRuns();
+    void refetchLiveRuns();
     return;
   }
-  adoptLiveRuns(p.live_runs ?? [], false);
+  liveRuns.adopt(liveRunRows(p.live_runs ?? []), p.live_runs_version);
 }
 
 // A run owns its record, so its steps' entries arrive as the six entry events with an EMPTY chat id

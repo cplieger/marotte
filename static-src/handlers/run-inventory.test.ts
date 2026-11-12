@@ -4,12 +4,20 @@
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import type { LiveRunsResponse } from "../wire/types.gen.js";
+import type * as ApiClient from "../api-client.js";
+import type * as DecisionDock from "../decision-dock.js";
+import type * as NoticeSubject from "../notice-subject.js";
+import type * as Notify from "../notify.js";
+import type * as RunDots from "../run-dots.js";
+import type * as Store from "../store.js";
+import type * as Toast from "../toast.js";
 
 // The inventory read is held open by the test, so a frame can land while it is in flight.
 const live = vi.hoisted(() => ({
   pending: [] as ((reply: LiveRunsResponse | null) => void)[],
 }));
-vi.mock("../api-client.js", () => ({
+vi.mock("../api-client.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ApiClient>()),
   apiGetTyped: vi.fn(
     (path: string) =>
       new Promise((resolve) => {
@@ -23,22 +31,38 @@ vi.mock("../api-client.js", () => ({
   // A run read the server can describe no further, which skips the retry ladder.
   apiGetOrError: vi.fn(async () => ({ ok: false, status: 404, data: null, error: "" })),
 }));
-vi.mock("../store.js", () => ({ isBusy: vi.fn(() => false) }));
-vi.mock("../run-dots.js", () => ({ trackRun: vi.fn() }));
-vi.mock("../toast.js", () => ({ info: vi.fn(), jumpToast: vi.fn() }));
-vi.mock("../notice-subject.js", () => ({ runEndJump: vi.fn(() => undefined) }));
-vi.mock("../decision-dock.js", () => ({
+vi.mock("../store.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Store>()),
+  isBusy: vi.fn(() => false),
+}));
+vi.mock("../run-dots.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof RunDots>()),
+  trackRun: vi.fn(),
+}));
+vi.mock("../toast.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Toast>()),
+  info: vi.fn(),
+  jumpToast: vi.fn(),
+}));
+vi.mock("../notice-subject.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof NoticeSubject>()),
+  runEndJump: vi.fn(() => undefined),
+}));
+// The sweep is asserted through the dock, the seam `run.test.ts` uses, so no ask needs seeding.
+vi.mock("../decision-dock.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof DecisionDock>()),
   dropRunRequests: vi.fn(),
   dropTurnDecisions: vi.fn(),
 }));
-vi.mock("../notify.js", () => ({
+vi.mock("../notify.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Notify>()),
   notifyOffScreen: vi.fn(),
   closeRunAsksExcept: vi.fn(() => Promise.resolve()),
 }));
 
 import "./run.js";
 import { dispatch } from "../bus.js";
-import { hasLiveRunForChat, liveRunIDsForChat, rebuildLiveRuns } from "../run-store.js";
+import { hasLiveRunForChat, liveRunIDsForChat, refetchLiveRuns } from "../run-store.js";
 import { dropTurnDecisions } from "../decision-dock.js";
 
 const sweepOrphans = vi.mocked(dropTurnDecisions);
@@ -55,13 +79,24 @@ function send(type: "run_started" | "run_finished", payload: Record<string, unkn
   dispatch({ type, chat_id: "c1", payload });
 }
 
+/** The lease store's row frame, workspace-wide, at the next `runs` version. */
+function liveRun(id: string, live: boolean): void {
+  dispatch({
+    type: "live_run",
+    chat_id: "",
+    payload: { workflow_id: id, chat_id: live ? "c1" : "", live, executing: live },
+    subject: { kind: "runs", ref: "", version: nextVersion() },
+  });
+}
+
+// The server grants the lease before it broadcasts the start, and releases it before the end.
 function start(id: string): void {
-  nextVersion();
+  liveRun(id, true);
   send("run_started", { workflow_id: id, name: id });
 }
 
 function finish(id: string): void {
-  nextVersion();
+  liveRun(id, false);
   send("run_finished", { workflow_id: id, status: "completed", name: id });
 }
 
@@ -80,7 +115,7 @@ function answerRead(ids: readonly string[], version: string): void {
 beforeEach(async () => {
   live.pending.length = 0;
   // The server's inventory is empty between cases.
-  const read = rebuildLiveRuns();
+  const read = refetchLiveRuns();
   answerRead([], nextVersion());
   await read;
   sweepOrphans.mockClear();
@@ -91,7 +126,7 @@ describe("a run's end and an inventory read in flight", () => {
     start("wf_a");
     expect(hasLiveRunForChat("c1"), "the start put the run in the inventory").toBe(true);
 
-    const read = rebuildLiveRuns();
+    const read = refetchLiveRuns();
     // The server answered the read before the run ended, so the answer still lists it.
     const readAt = String(runsVersion);
     finish("wf_a");
@@ -108,7 +143,7 @@ describe("a run's end and an inventory read in flight", () => {
   it("a sibling run's end sweeps the chat's orphan asks after a late read", async () => {
     start("wf_a");
     start("wf_b");
-    const read = rebuildLiveRuns();
+    const read = refetchLiveRuns();
     const readAt = String(runsVersion);
     finish("wf_a");
     answerRead(["wf_a", "wf_b"], readAt);
