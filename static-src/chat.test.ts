@@ -170,7 +170,6 @@ vi.mock("./transcript-cover.js", () => ({
   dropCover: vi.fn(),
   holdCover: vi.fn(),
   releaseCover: vi.fn(),
-  releaseCoverExceptFor: vi.fn(),
   moveFocusOffTranscript: vi.fn(),
 }));
 vi.mock("./attachments.js", () => ({

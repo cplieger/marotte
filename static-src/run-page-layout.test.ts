@@ -147,7 +147,7 @@ describe("the run page claims its height", () => {
   // The transcript is the OTHER side of that contract, and it is what makes the token assertion
   // above mean "the chat's column" rather than "some token both pages happen to share".
   it("measures the exec pages at the transcript's own token", () => {
-    expect(decls(loadCSS("13-messages.css"), ".transcript-view")).toMatch(
+    expect(decls(loadCSS("13-messages.css"), ".transcript-view,\n.transcript-cover-body")).toMatch(
       /max-width:\s*var\(--content-max-w\)/,
     );
   });

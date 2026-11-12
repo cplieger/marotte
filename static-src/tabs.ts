@@ -63,14 +63,15 @@ import {
 import {
   coverHeld,
   dropCover,
+  dropParkReads,
   hideTranscript,
   holdCover,
   moveFocusOffTranscript,
   releaseCover,
-  releaseCoverExceptFor,
   showTranscript,
   takeParkReads,
   transcriptHidden,
+  transcriptPainted,
 } from "./transcript-cover.js";
 import { afterNextPaint } from "./next-paint.js";
 import { ActionError, retryNetwork, type ActionErrorLike } from "./actions/index.js";
@@ -703,10 +704,6 @@ function reselectAfterRemoval(): void {
   }
 }
 
-function hasResidentTurns(chatID: string): boolean {
-  return (get(chatID)?.turn_order.length ?? 0) > 0;
-}
-
 interface ActivationOpts {
   readonly quiet: boolean;
   /** Start a fresh activation of the tab already active (a Retry after a failed load). */
@@ -731,6 +728,7 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
   }
   internal.unshown = "";
   const ref = row.subject.kind === "chat" ? row.subject.ref : "";
+  dropParkReads();
   if (ref !== "" && ref !== getPaintedId()) {
     takeParkReads();
   }
@@ -749,16 +747,12 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
       // Its page is local and loads nothing, so it shows in this task and a cover would only flash.
       dropCover();
       now = true;
-    } else if (
-      ref !== getPaintedId() ||
-      (opts.again === true && !hasResidentTurns(ref)) ||
-      !viewLaidOut(row)
-    ) {
-      // A painted chat coming back from another view kind is covered too: its transcript stays out
-      // of layout until the activation, and the cover is what this frame shows in its place.
+    } else if (!transcriptPainted(ref)) {
       holdCover(ref);
     } else {
-      releaseCoverExceptFor(ref);
+      // A parked or mounted view shows its own turns: the outgoing view stays on screen until the
+      // activation swaps them, and a cover an earlier switch held would only hide them.
+      dropCover();
     }
   } else {
     reselectPaintedChat();
@@ -796,15 +790,16 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
     runActivation(gen);
   } else {
     afterNextPaint(() => {
-      runActivation(gen);
+      runActivation(gen, true);
     });
   }
   return record;
 }
 
 /** The ACTIVATION half, in its own task: show the view and start its refresh, only while `gen` is
- *  the newest. A superseded target runs nothing: no `onShow`, no fetch, no paint. */
-function runActivation(gen: number): void {
+ *  the newest. A superseded target runs nothing: no `onShow`, no fetch, no paint. `deferred` is a
+ *  run after the gesture's frame, whose layout is clean. */
+function runActivation(gen: number, deferred = false): void {
   const record = recordOf(gen);
   if (record === undefined || record.ran) {
     return;
@@ -814,6 +809,11 @@ function runActivation(gen: number): void {
   if (row === undefined) {
     record.resolveDone();
     return;
+  }
+  const target = row.subject.kind === "chat" ? row.subject.ref : "";
+  if (deferred && target !== "" && target !== getPaintedId() && !coverHeld()) {
+    // Uncovered, the outgoing transcript stayed in reach through that frame.
+    takeParkReads();
   }
   try {
     // First: a chat's restore writes the scroll offset, which a scroller with no box cannot take.

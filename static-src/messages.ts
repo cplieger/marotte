@@ -29,7 +29,12 @@ import { releaseClampsIn } from "./clamp-text.js";
 import { releaseMarkdownIn } from "./markdown.js";
 import { effect, el, touch } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
-import { coverHeld, registerParkReads, releaseCover } from "./transcript-cover.js";
+import {
+  coverContentPainted,
+  coverHeld,
+  registerTranscriptOwner,
+  releaseCover,
+} from "./transcript-cover.js";
 import { $ } from "./dom.js";
 import {
   followTargetChanged,
@@ -618,11 +623,12 @@ export function mountChatView(): void {
   }
   mounted = true;
   initFollowModel();
-  registerParkReads({
+  registerTranscriptOwner({
     take: takeParkReads,
     drop: () => {
       parkReads = null;
     },
+    painted: (chatID) => views.has(chatID) && (get(chatID)?.turn_order.length ?? 0) > 0,
   });
   // In the positioned outer wrapper, not the scroller, so it does not scroll away with the content.
   mountTurnRail($.messagesWrapOuter);
@@ -1270,6 +1276,7 @@ function releaseCoverOverBuiltRows(chatID: string): void {
     releaseCover(chatID);
     return;
   }
+  coverContentPainted(chatID);
   cancelAnimationFrame(coverCheckFrame);
   coverCheckFrame = requestAnimationFrame(() => {
     coverCheckFrame = 0;

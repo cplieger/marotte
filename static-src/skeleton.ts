@@ -62,13 +62,30 @@ interface SkeletonTurnShape {
   readonly reply: readonly string[];
 }
 
-/** The transcript's placeholder shape: three cards, newest last, each a short request over a
- *  longer reply — the real distribution. */
-const CHAT_SKELETON: readonly SkeletonTurnShape[] = [
-  { prompt: ["68%"], reply: ["94%", "88%", "52%"] },
-  { prompt: ["46%"], reply: ["91%", "73%"] },
-  { prompt: ["82%", "37%"], reply: ["96%", "89%", "84%", "41%"] },
+/** The paragraphs a placeholder reply cycles through, a blank line between two. */
+const REPLY_PARAGRAPHS: readonly (readonly string[])[] = [
+  ["94%", "88%", "91%", "52%"],
+  ["96%", "89%", "73%"],
+  ["92%", "95%", "84%", "90%", "41%"],
 ];
+
+/** Enough lines to fill a 2160px chat area; the cover shows only the whole lines that fit
+ *  (13-messages.css). */
+const REPLY_LINES = 96;
+
+function replyLines(): string[] {
+  const out: string[] = [];
+  for (let p = 0; out.length < REPLY_LINES; p++) {
+    if (out.length > 0) {
+      out.push("");
+    }
+    out.push(...(REPLY_PARAGRAPHS[p % REPLY_PARAGRAPHS.length] ?? []));
+  }
+  return out.slice(0, REPLY_LINES);
+}
+
+/** The transcript's placeholder shape: the one turn a chat opens on, scrolled to its newest. */
+const CHAT_SKELETON: SkeletonTurnShape = { prompt: ["68%"], reply: replyLines() };
 
 /** The transcript's own card shape, two cards deep: the reader sees the top edge of the incoming
  *  page and nothing more, and `scroll.ts` corrects the reader's drift again AFTER this comes down,
@@ -110,16 +127,16 @@ function skeletonTurnCard(shape: SkeletonTurnShape): HTMLDivElement {
   return card;
 }
 
-/** The transcript's placeholder, the transcript cover's content: N turn cards inside a
- *  `display: contents` wrap. */
+/** The transcript's placeholder, the transcript cover's content: one turn card, ending in the
+ *  real footer band, inside a `display: contents` wrap. */
 export function chatSkeleton(): HTMLDivElement {
   const wrap = el("div", {
     className: "skeleton-rows",
     "aria-hidden": "true",
   }) as HTMLDivElement;
-  for (const shape of CHAT_SKELETON) {
-    wrap.appendChild(skeletonTurnCard(shape));
-  }
+  const card = skeletonTurnCard(CHAT_SKELETON);
+  card.appendChild(el("div", { className: "turn-footer" }));
+  wrap.appendChild(card);
   return wrap;
 }
 

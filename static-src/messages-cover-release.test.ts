@@ -108,9 +108,9 @@ function evicted(id: string): Session {
   return { ...makeSession({ id, name: id }), turn_count: 4, has_more: true };
 }
 
+/** The cover is held, shown or still inside its show window. */
 function coverUp(): boolean {
-  const c = document.getElementById("transcript-cover");
-  return c !== null && !c.hidden && c.getAttribute("data-state") !== "released";
+  return cover.coverHeld();
 }
 
 /** Whether a spacer standing for unbuilt rows shows inside the scrollport. */
@@ -232,11 +232,12 @@ function watchLift(newest: [string, number], older: [string, number]): Promise<A
         olderBuilt: built(...older),
       });
     });
-    const node = document.getElementById("transcript-cover");
+    // The release clears the transcript's busy mark, shown cover or not.
+    const node = document.getElementById("messages-wrap");
     if (node === null) {
-      throw new Error("no cover");
+      throw new Error("no scroller");
     }
-    mo.observe(node, { attributes: true, attributeFilter: ["data-state", "hidden"] });
+    mo.observe(node, { attributes: true, attributeFilter: ["aria-busy"] });
   });
 }
 
@@ -529,6 +530,23 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
       await flushed();
       await yields.releaseAll();
       expect(coverUp(), "B's builds released the cover held for C").toBe(true);
+    });
+  });
+
+  it("never shows the skeleton over a landing whose rows are painted and still building", async () => {
+    await withPortHeight(2400, async () => {
+      const yields = holdYields();
+      const b = freshID("cr-b");
+      await switchUnderCover(
+        [chat(b, [heavyTurn(`${b}-old`, 300, 1, "failed"), heavyTurn(`${b}-new`, 2, 2)])],
+        b,
+      );
+      await nextFrame();
+      expect(cover.coverHeld(b), "the premise: B's cover waits on its body in view").toBe(true);
+      await new Promise((r) => setTimeout(r, 320));
+      const node = document.getElementById("transcript-cover");
+      expect(node?.hidden, "the skeleton showed over B's painted rows").toBe(true);
+      await yields.releaseAll();
     });
   });
 });

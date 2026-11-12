@@ -1,7 +1,7 @@
 // A burst of real clicks, each pressed while the previous target's view is still being shown and
-// released after it. No uncovered frame shows a tab other than the active one, and once a click is
-// sent the tab it leaves shows uncovered for no more than `STALE_MS`, even while that tab's stream
-// repaints it. That bound is Chromium's, with its real `isInputPending`: the browser project runs
+// released after it. No frame shows a tab other than the active one without the switch holding the
+// cover, and once a click is sent the tab it leaves shows unheld for no more than `STALE_MS`, even
+// while that tab's stream repaints it. That bound is Chromium's, with its real `isInputPending`: the browser project runs
 // only Chromium. Real tabs.ts and transcript-cover.ts against the fake tab server.
 import { describe, it, expect, vi } from "vitest";
 import type * as TabsDrag from "./tabs-drag.js";
@@ -79,9 +79,9 @@ installSwitchSuite();
 const SHOW_MS = 300;
 const GAP_MS = 200;
 const HOLD_MS = 200;
-/** A sent click dispatches in the task after the paint that freed the main thread, and the frame
- *  after it is covered: a few frames of input latency. Main-thread work while the tab it leaves
- *  shows uncovered, such as a view's show, runs past it. */
+/** A sent click dispatches in the task after the paint that freed the main thread, and holds the
+ *  cover from there: a few frames of input latency. Main-thread work while the tab it leaves
+ *  shows unheld, such as a view's show, runs past it. */
 const STALE_MS = 100;
 
 /** Hold the main thread, as a heavy chat's show does. */
@@ -150,7 +150,7 @@ function recordReleases(refs: readonly string[]): { readonly sent: Sent[]; stop(
   };
 }
 
-/** Milliseconds each chat showed uncovered while a click for another tab had been sent. A frame
+/** Milliseconds each chat showed unheld while a click for another tab had been sent. A frame
  *  stays on screen until the next one, and the tab requested at an instant is the last one sent. */
 function staleWindows(samples: readonly Sample[], sent: readonly Sent[]): Record<string, number> {
   const out: Record<string, number> = {};
@@ -232,7 +232,7 @@ describe("a burst of real clicks queued behind each show", () => {
       "a release went unrecorded",
     ).toEqual(refs);
     const leaked = frames.samples.filter((s) => !s.up && ids[s.painted] !== s.active);
-    expect(leaked, "frames showing a superseded tab's content uncovered").toEqual([]);
+    expect(leaked, "frames showing a superseded tab's content unheld").toEqual([]);
     expect(
       frames.samples.some((s) => s.up),
       "no frame showed the cover",
@@ -240,7 +240,7 @@ describe("a burst of real clicks queued behind each show", () => {
     const stale = Object.entries(staleWindows(frames.samples, releases.sent)).filter(
       ([, ms]) => ms > STALE_MS,
     );
-    expect(stale, "ms a tab showed uncovered after a click left it").toEqual([]);
+    expect(stale, "ms a tab showed unheld after a click left it").toEqual([]);
     expect(getActiveTabId()).toBe(ids["d"]);
     expect(fx.notices).toEqual([]);
   });
