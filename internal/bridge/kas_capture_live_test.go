@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"iter"
 	"maps"
 	"os"
 	"os/exec"
@@ -555,14 +556,20 @@ func (c *capture) scrub(b []byte) []byte {
 	return b
 }
 
-// modelTagsRe is a model description's leading tags, such as "[Internal]", which the bridge reads.
-var modelTagsRe = regexp.MustCompile(`^(?:\[[^\]]*\]\s*)*`)
+var (
+	// modelTagRe is one bracketed tag in a model description; modeltext.Hidden reads [Deprecated]
+	// and [Legacy] from these, so the scrub keeps every tag.
+	modelTagRe = regexp.MustCompile(`\[[^\]]*\]`)
+	// modelFamilyRe is an id's leading letters, the family word prose uses for the model.
+	modelFamilyRe = regexp.MustCompile(`^[A-Za-z]{3,}`)
+)
 
 type modelOption struct{ value, name, desc string }
 
 // scrubModels replaces each model the catalog offers, other than Auto, with a placeholder in order of
-// first appearance (model-a, "Model A"), keeping each description's leading tags. Upstream retires
-// model ids, and the corpus is public. It refuses a capture that still holds an offered id or name.
+// first appearance (model-a, "Model A"), keeping each description's bracketed tags. Upstream retires
+// model ids, and the corpus is public. It refuses a capture that still holds an offered id, display
+// name or family word in any case.
 func scrubModels(b []byte) ([]byte, error) {
 	var opts []modelOption
 	for line := range bytes.Lines(b) {
@@ -576,6 +583,7 @@ func scrubModels(b []byte) ([]byte, error) {
 		collectModelOptions(v, &opts)
 	}
 	placeholder := map[string]string{}
+	placeholders := map[string]bool{}
 	var pairs []string
 	for _, o := range opts {
 		id, ok := placeholder[o.value]
@@ -584,18 +592,75 @@ func scrubModels(b []byte) ([]byte, error) {
 			placeholder[o.value] = id
 		}
 		name := "Model " + strings.ToUpper(id[len("model-"):])
-		pairs = append(pairs, quoteJSON(o.desc), quoteJSON(modelTagsRe.FindString(o.desc)+name),
-			quoteJSON(o.name), quoteJSON(name), quoteJSON(o.value), quoteJSON(id))
+		placeholders[id], placeholders[strings.ToLower(name)] = true, true
+		// An empty old string would turn every empty JSON string in the capture into a model name.
+		if o.desc != "" {
+			pairs = append(pairs, quoteJSON(o.desc), quoteJSON(strings.Join(append(modelTagRe.FindAllString(o.desc, -1), name), " ")))
+		}
+		if o.name != "" {
+			pairs = append(pairs, quoteJSON(o.name), quoteJSON(name))
+		}
+		pairs = append(pairs, quoteJSON(o.value), quoteJSON(id))
 	}
 	out := []byte(strings.NewReplacer(pairs...).Replace(string(b)))
+	return out, refuseModelMentions(out, opts, placeholders)
+}
+
+// refuseModelMentions errors when a string in b names an offered model as a whole word, by id, display
+// name or family word in any case, unless that word is itself a placeholder.
+func refuseModelMentions(b []byte, opts []modelOption, placeholders map[string]bool) error {
+	var words []string
 	for _, o := range opts {
-		for _, s := range []string{o.value, o.name} {
-			if i := bytes.Index(out, []byte(s)); i >= 0 {
-				return nil, fmt.Errorf("capture still names an offered model near %q", excerpt(out, i))
+		for _, s := range []string{o.value, o.name, modelFamilyRe.FindString(o.value)} {
+			if l := strings.ToLower(s); l != "" && l != "model" && l != marotte.ModelAuto && !placeholders[l] {
+				words = append(words, regexp.QuoteMeta(s))
 			}
 		}
 	}
-	return out, nil
+	if len(words) == 0 {
+		return nil
+	}
+	re := regexp.MustCompile(`(?i)(?:^|[^\pL\pN])(` + strings.Join(words, "|") + `)(?:$|[^\pL\pN])`)
+	for line := range bytes.Lines(b) {
+		var v any
+		if json.Unmarshal(line, &v) != nil {
+			continue
+		}
+		for s := range jsonStrings(v) {
+			if m := re.FindStringSubmatchIndex(s); m != nil {
+				return fmt.Errorf("capture still names an offered model near %q", excerpt([]byte(s), m[2]))
+			}
+		}
+	}
+	return nil
+}
+
+// jsonStrings yields every key and string value under v. The check reads decoded strings so a JSON
+// escape such as \n before a word does not hide its word boundary.
+func jsonStrings(v any) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		var walk func(any) bool
+		walk = func(v any) bool {
+			switch t := v.(type) {
+			case string:
+				return yield(t)
+			case map[string]any:
+				for k, child := range t {
+					if !yield(k) || !walk(child) {
+						return false
+					}
+				}
+			case []any:
+				for _, child := range t {
+					if !walk(child) {
+						return false
+					}
+				}
+			}
+			return true
+		}
+		walk(v)
+	}
 }
 
 // collectModelOptions appends the options of every model select under v, once per distinct option.

@@ -46,8 +46,8 @@ const TOOLBAR = [
 /** Icon-only by construction, so square at the reference; the context pie carries its percentage. */
 const SQUARE = ["chat-options-btn", "task-list-pill", "midturn-send-btn", "scroll-bottom"];
 
-/** The widest pills kiro-cli's catalog renders: a stand-in name as long as its widest model's, with its widest tier
- *  label, and its widest built-in mode. The fit thresholds in `15-input.css` are decided on them. */
+/** The widest pills kiro-cli's catalog renders: a stand-in with as many characters as its widest model's name,
+ *  with its widest tier label, and its widest built-in mode. The fit thresholds in `15-input.css` are decided on them. */
 const MODEL_ID = "model-charlie-5.5";
 const MODEL = "model charlie 5.5";
 const EFFORT = "medium";
