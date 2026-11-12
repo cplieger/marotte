@@ -532,7 +532,11 @@ func (c *capture) write(sc scenario) error {
 	if err != nil {
 		return err
 	}
-	for _, bad := range forbiddenInCapture {
+	forbidden := forbiddenInCapture
+	if top, ok := tempRootTop(os.TempDir()); ok {
+		forbidden = append(slices.Clone(forbidden), top)
+	}
+	for _, bad := range forbidden {
 		if i := bytes.Index(out, []byte(bad)); i >= 0 {
 			return fmt.Errorf("capture holds %q near %q", bad, excerpt(out, i))
 		}
@@ -544,6 +548,16 @@ func (c *capture) write(sc scenario) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(corpusDir, sc.name+".jsonl"), out, 0o644)
+}
+
+// tempRootTop is the top directory of the temp root dir, such as "/data/", which a scratch path KAS cut inside the
+// temp root leaves behind once scrub cannot match it whole. A temp root under /tmp has none: scrubTemp is /tmp/.
+func tempRootTop(dir string) (string, bool) {
+	first, _, _ := strings.Cut(strings.TrimPrefix(filepath.Clean(dir), "/"), "/")
+	if first == "" || "/"+first+"/" == scrubTemp {
+		return "", false
+	}
+	return "/" + first + "/", true
 }
 
 // scrub replaces the scratch paths. The temp root goes last: KAS truncates a long title inside the scratch path, so

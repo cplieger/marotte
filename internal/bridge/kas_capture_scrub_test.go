@@ -161,3 +161,22 @@ func TestScrubModels_corpusIsScrubbed(t *testing.T) {
 		})
 	}
 }
+
+// A title KAS cuts inside the temp root keeps a prefix no scrub replacement matches, so the capture refuses the temp
+// root's top directory; a temp root under /tmp is what scrub writes, so it adds nothing to refuse.
+func TestTempRootTop_NamesTheDirectoryACutPathLeaks(t *testing.T) {
+	for _, tc := range []struct {
+		dir, want string
+		ok        bool
+	}{
+		{dir: "/data/heavy-tmp", want: "/data/", ok: true},
+		{dir: "/var/folders/xy/T/", want: "/var/", ok: true},
+		{dir: "/tmp", ok: false},
+		{dir: "/tmp/build-1", ok: false},
+		{dir: "/", ok: false},
+	} {
+		if got, ok := tempRootTop(tc.dir); got != tc.want || ok != tc.ok {
+			t.Errorf("tempRootTop(%q) = %q, %v, want %q, %v", tc.dir, got, ok, tc.want, tc.ok)
+		}
+	}
+}
