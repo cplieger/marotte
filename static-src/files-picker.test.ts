@@ -68,6 +68,11 @@ beforeEach(() => {
 });
 
 describe("the file picker's listing", () => {
+  // The title labels the dialog (legacy-ui/modal's `-title` lookup), so it is what a screen reader announces.
+  it("is titled for attaching, the job both of its doors open it for", () => {
+    expect(byId("filepicker-modal-title").textContent).toBe("Attach files");
+  });
+
   it("opens at the uploads folder when no folder is named, with the way up offered", async () => {
     answers.set(UPLOADS_DIR, listing("pasted.txt"));
     openFilePicker();
