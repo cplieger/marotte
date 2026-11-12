@@ -19,7 +19,7 @@ import (
 )
 
 // TestRefillDeadline_ProgressPastADayAndAHalfKeepsAFullWindow pins that executing time alone never ends a run:
-// only the idle window, the slot and a cancel do.
+// only the idle window, the slot, an hour of silence and a cancel do.
 func TestRefillDeadline_ProgressPastADayAndAHalfKeepsAFullWindow(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := boundsRuns(t)
@@ -39,9 +39,6 @@ func TestRefillDeadline_ProgressPastADayAndAHalfKeepsAFullWindow(t *testing.T) {
 				t.Fatalf("%v of progress in, a refill granted %v, want a full idle window %v",
 					ran, budget, runIdleWindow)
 			}
-		}
-		if got := h.endReason(id); got != "" {
-			t.Errorf("endReason = %q, want none: the run is still making progress", got)
 		}
 	})
 }

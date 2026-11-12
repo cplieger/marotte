@@ -72,6 +72,11 @@ var reasonStalled = "made no progress and had no live shell for " +
 	strconv.Itoa(int(runIdleWindow.Minutes())) + " minutes, so it was cancelled. " +
 	"Open the run to see the step it stopped in"
 
+// reasonSilent is the row's text for a parentless run whose open step turn sent nothing past runSilenceBound.
+var reasonSilent = "had a step that sent nothing for " +
+	strconv.Itoa(int(runSilenceBound.Minutes())) + " minutes, so it was cancelled. " +
+	"Open the run to see the step it stopped in"
+
 // reasonCancelRefused is the row's text once retryTermination gives up on a stop marotte decided.
 var reasonCancelRefused = "reached a limit that stops it, but kiro-cli refused the cancel " +
 	strconv.Itoa(1+maxCancelRetries) + " times, so it may still be running. Cancel it from its run page"

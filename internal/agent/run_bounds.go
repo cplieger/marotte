@@ -27,6 +27,11 @@ import (
 // which retries silently.
 const runIdleWindow = 15 * time.Minute
 
+// runSilenceBound is how long an open step turn may send no frame at all before the idle window's expiry acts on
+// it: a chat-launched run is flagged (flagSilent) and keeps running, a parentless one is stopped as stalled. A
+// hung compaction leaves the turn open with nothing to say (docs/known-upstream-issues.md).
+const runSilenceBound = time.Hour
+
 // refillGranularity is the smallest move a refill writes: each is a fsynced rewrite of runs.json. It
 // makes the stall tolerance [runIdleWindow - refillGranularity, runIdleWindow]; Store.SetDeadline stays exact.
 const refillGranularity = time.Minute
@@ -82,6 +87,10 @@ type runBoundsState struct {
 	confirmed map[string]struct{}
 	// arms is each run's latest armDeadline: a park decided before it must not undo it.
 	arms map[string]runArm
+	// lastFrame is when an armed run last sent a frame, or was armed (noteFrame); its silence is measured from it.
+	lastFrame map[string]time.Time
+	// silent names the flagged runs, with the lastFrame their silence began at; the next frame clears it.
+	silent map[string]time.Time
 	// lives numbers each run marotte leases or retries under a workflow id, which Retry reuses; dropped on release.
 	lives map[string]uint64
 	// reasons maps a workflow id to why it stopped; order is its FIFO eviction queue.
@@ -151,13 +160,18 @@ func (rs *Runs) armDeadline(ctx context.Context, workflowID string) {
 	})
 }
 
-// numberArmLocked numbers an arm, so a park decided before it does not undo it. Caller holds mu.
+// numberArmLocked numbers an arm, so a park decided before it does not undo it, and restarts the run's silence: a
+// pause is not silence. Caller holds mu.
 func (rs *Runs) numberArmLocked(workflowID string) {
 	if rs.bounds.arms == nil {
 		rs.bounds.arms = map[string]runArm{}
 	}
 	rs.bounds.armSeq++
 	rs.bounds.arms[workflowID] = runArm{seq: rs.bounds.armSeq}
+	if rs.bounds.lastFrame == nil {
+		rs.bounds.lastFrame = map[string]time.Time{}
+	}
+	rs.bounds.lastFrame[workflowID] = time.Now()
 }
 
 // beginLife numbers a new run of workflowID (a lease grant, a retry), so a cancel re-attempt decided for an earlier
@@ -192,11 +206,10 @@ func (rs *Runs) lastArmSeq(workflowID string) uint64 {
 	return rs.bounds.arms[workflowID].seq
 }
 
-// refillDeadline rolls a bounded run's deadline forward on progress, reporting whether it stamped.
-// A parked run is not refillable. Throttled at refillGranularity while the deadline is ahead, which
-// also stops it moving earlier.
-func (rs *Runs) refillDeadline(ctx context.Context, workflowID string) bool {
-	return rs.stampDeadline(ctx, workflowID, func(l runlease.Lease, now time.Time) (time.Time, bool) {
+// refillDeadline rolls a bounded run's deadline forward on progress. A parked run is not refillable.
+// Throttled at refillGranularity while the deadline is ahead, which also stops it moving earlier.
+func (rs *Runs) refillDeadline(ctx context.Context, workflowID string) {
+	rs.stampDeadline(ctx, workflowID, func(l runlease.Lease, now time.Time) (time.Time, bool) {
 		if !l.Bounded() {
 			return time.Time{}, false
 		}
@@ -211,6 +224,9 @@ func (rs *Runs) refillDeadline(ctx context.Context, workflowID string) bool {
 // RunMadeProgress rolls a run's idle window forward and, at most once per chat.RunMarkRefresh, its keep marks.
 // Satisfies translate.runBoundsAccess. Called per tool-call frame, so the pre-checks keep it two map reads.
 func (rs *Runs) RunMadeProgress(workflowID string) {
+	if rs.noteFrame(workflowID) {
+		rs.announceSilence(workflowID)
+	}
 	refresh := rs.marks.due(workflowID, time.Now())
 	if !refresh && !rs.bounded(workflowID) {
 		return
@@ -330,12 +346,14 @@ func (rs *Runs) disarmUnless(ctx context.Context, workflowID string, keep func(l
 	return true
 }
 
-// clearArms drops a run's arm accounting for good, so a reused workflow id starts fresh.
+// clearArms drops a run's arm and silence accounting for good, so a reused workflow id starts fresh.
 func (rs *Runs) clearArms(workflowID string) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	delete(rs.bounds.arms, workflowID)
 	delete(rs.bounds.confirmed, workflowID)
+	delete(rs.bounds.lastFrame, workflowID)
+	delete(rs.bounds.silent, workflowID)
 }
 
 // bounded reports whether marotte believes the run is executing under its deadline. Its readers must not clear it.
@@ -703,6 +721,10 @@ func (rs *Runs) cancelExpired(workflowID string, armedFor time.Time) {
 	case slotRanOut:
 		slog.Info(logMsgRunYieldedToSlot, "workflow_id", workflowID, "recipe", l.Recipe,
 			"slot_at", l.SlotAt)
+	case rs.log != nil && rs.log.hasOpen(workflowID):
+		reason, rowReason, counted = runEndStalled, reasonSilent, obs.RunStalled
+		slog.Error(logMsgRunStalled, "workflow_id", workflowID,
+			"silence_bound", runSilenceBound.String(), "recipe", l.Recipe)
 	default:
 		reason, rowReason, counted = runEndStalled, reasonStalled, obs.RunStalled
 		slog.Error(logMsgRunStalled, "workflow_id", workflowID,
@@ -727,7 +749,13 @@ func (rs *Runs) idleExpiryHandled(workflowID string, armedFor time.Time) bool {
 	seq := rs.lastArmSeq(workflowID)
 	switch rs.idleVerdict(ctx, workflowID) {
 	case idleWorking:
-		return rs.refillDeadline(ctx, workflowID)
+		if rs.silentFor(workflowID) >= runSilenceBound {
+			if !rs.chatResumes(workflowID) {
+				return false
+			}
+			rs.flagSilent(ctx, workflowID)
+		}
+		return rs.refillWorking(ctx, workflowID)
 	case idleParked:
 		if !rs.parkExpired(ctx, workflowID, armedFor, seq) {
 			rs.refillDeadline(ctx, workflowID)
@@ -747,9 +775,9 @@ const (
 	idleParked
 )
 
-// idleVerdict reads an expired idle window. An open step turn is working: KAS has the step in flight
-// and owns in-turn liveness (stream idle watchdog, stall retries), and neither a KAS-side tool nor a
-// model reasoning silently sends a frame. A run its chat resumes that KAS reports
+// idleVerdict reads an expired idle window. An open step turn is working: a KAS-side tool or a model reasoning
+// silently sends no frame, and idleExpiryHandled bounds how long it may stay silent (runSilenceBound). A run its
+// chat resumes that KAS reports
 // paused is parked: KAS reconciles a dead owner's run to paused on its next read and emits no frame, so its pause
 // never reached observePaused.
 // Anything else, an unreadable run and a parentless orphan included, is stalled.

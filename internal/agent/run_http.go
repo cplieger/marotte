@@ -77,6 +77,7 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	if l, held := rr.runs.lease(id); held {
 		extras.autoResumeStoppedAt = l.AutoResumeStoppedAt
 	}
+	extras.silentSince = rr.runs.silentSince(id)
 	if head, hErr := headOf(raw); hErr == nil && head.Status != "" {
 		c := rr.runs.controls(id, &head)
 		extras.controls = &c
@@ -153,6 +154,7 @@ func (rs *Runs) lastAsks(c *askCell) []marotte.RunAsk {
 // runExtras are marotte's top-level keys on GET /api/runs/{id}.
 type runExtras struct {
 	autoResumeStoppedAt time.Time
+	silentSince         time.Time
 	ends                map[string]marotte.RunStepEnd
 	starts              map[string]marotte.RunStepStart
 	plan                *marotte.RunPlanUpdate
@@ -215,8 +217,9 @@ func (rs *Runs) RunReadBound(ctx context.Context, workflowID string) (uint64, er
 // null because an agent could not tell "none" from "unsupported", `asks_reachable`, false when
 // `open_asks` is not a statement that nothing waits, `read_position` (runReadPosition), `display_name`
 // (Runs.runName, "" when nothing names the run), `plan_update` when servedPlan answers one, `controls`
-// (Runs.controls) when the reply's state carries a status, and `auto_resume_stopped_at` when marotte stopped
-// resuming the run on its own (runlease.Lease.AutoResumeStoppedAt).
+// (Runs.controls) when the reply's state carries a status, `auto_resume_stopped_at` when marotte stopped
+// resuming the run on its own (runlease.Lease.AutoResumeStoppedAt), and `silent_since` when a step's open turn
+// has sent nothing past runSilenceBound (Runs.silentSince).
 func withRunExtras(raw json.RawMessage, x *runExtras) (json.RawMessage, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
@@ -279,6 +282,11 @@ func withOptionalExtras(obj map[string]json.RawMessage, x *runExtras) (err error
 	}
 	if !x.autoResumeStoppedAt.IsZero() {
 		if obj["auto_resume_stopped_at"], err = json.Marshal(x.autoResumeStoppedAt.UTC()); err != nil {
+			return err
+		}
+	}
+	if !x.silentSince.IsZero() {
+		if obj["silent_since"], err = json.Marshal(x.silentSince.UTC()); err != nil {
 			return err
 		}
 	}

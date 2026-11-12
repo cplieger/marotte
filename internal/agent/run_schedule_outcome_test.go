@@ -267,6 +267,27 @@ func TestScheduledRun_AStallSaysWhyOnTheRow(t *testing.T) {
 	}
 }
 
+// TestScheduledRun_ASilentStepSaysWhyOnTheRow pins that a scheduled run stopped for an hour of silence on an open step
+// says so on its row, not the idle window's 15 minutes.
+func TestScheduledRun_ASilentStepSaysWhyOnTheRow(t *testing.T) {
+	h, br, st, entry := scheduledHub(t)
+	const id = "wf_1"
+	launchScheduled(t, h, br, &entry, id)
+	h.runs.log = newRunLog(t.TempDir())
+	openStep(t, h, id, []string{id, "a"}, "step-session-a")
+	h.runs.armDeadline(t.Context(), id)
+	stageSilence(h.runs, id, runSilenceBound)
+	l, _ := h.runs.lease(id)
+
+	h.runs.cancelExpired(id, l.Deadline)
+
+	row := onlyRow(t, st)
+	if row.LastStatus != launchrule.StatusFailed || !strings.Contains(row.LastReason, "sent nothing for 60 minutes") {
+		t.Errorf("a silent scheduled run left the row reading (%q, %q), want failed naming its 60 silent minutes",
+			row.LastStatus, row.LastReason)
+	}
+}
+
 // TestScheduledRun_ABoundStopRecordsOnlyOnceItsCancelLands pins that a refused cancel leaves the row reading
 // started while the run still runs, and the retry that lands writes the bound's reason.
 func TestScheduledRun_ABoundStopRecordsOnlyOnceItsCancelLands(t *testing.T) {

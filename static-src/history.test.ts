@@ -845,7 +845,7 @@ describe("history: an overrun reads differently from a cancel", () => {
       runs: [{ ...runRow, status: "running", end_reason: "stalled" }],
     });
     const row = rowOf("r:wf_1");
-    expect(sub(row)).toBe("stopped: no activity and no live shell within its idle window");
+    expect(sub(row)).toBe("stopped: it showed no activity for too long");
     expect(openName(row)).toBe("Open feature-pipeline, aborted");
   });
 

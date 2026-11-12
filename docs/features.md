@@ -123,6 +123,8 @@ A steering doc or agent that kiro-cli loaded but does not use carries a badge na
 
 A rule whose workflow file is gone stays on the **Workflows** panel, marked "Its workflow file is gone, so this rule cannot run.", with a **Delete rule** button.
 
+A workflow run has no limit on how long it runs. marotte stops a run that shows no activity for 15 minutes while none of its steps is running, and a scheduled run still going when its schedule's next run time comes. A step that is running but shows no activity for an hour, which happens when kiro-cli hangs inside it, is marked "No activity for 1 hour" on the run's card and tab, and a notification comes under the workflow run switch, once per silence. The run keeps running, because a long command looks the same. **Cancel** stops it, and pausing it interrupts the step, whose header then offers **Mark step failed**. The mark goes away when the step shows activity again. A run no chat started, from **Run**, a schedule or an event rule, has nobody to tell, so after the hour marotte stops it as it stops a run with no activity. A watch step with no idle timeout waits for as long as its condition does not happen: give it an idle timeout, or cancel the run.
+
 If the agent engine is too busy to start a scheduled run, marotte tries again, waiting longer each time, up to 8 minutes between tries. Meanwhile the schedule's row says the run is waiting on the agent engine. If the schedule's next run time comes first, the row records the missed run as skipped because the engine was busy, and the next run starts on time.
 
 A workflow step's file tools reach the same folders as a chat's: `/workspace`, `/uploads` for reading, and the [additional directories](configuration.md#folders-the-agent-can-use-beyond-workspace) you grant. A step can also read the edit snapshot kiro-cli writes for its own run when a workflow is edited mid-run. A step that reads any other path, such as another file under `/config/home/.kiro/sessions`, fails with `path escapes workspace`, so write that step to read the file with a shell command.
@@ -153,7 +155,7 @@ Index a subfolder, not a repository root, so the index skips code and assets. In
 
 ## Notifications
 
-marotte can be installed as an app from the browser. It then sends notifications when a turn finishes, a pull request's checks settle, a workflow run ends or stays paused because marotte stopped resuming it, a scheduled or triggered run cannot start, or the agent needs permission, even with the tab closed. Browsers allow this only over HTTPS or on `localhost`.
+marotte can be installed as an app from the browser. It then sends notifications when a turn finishes, a pull request's checks settle, a workflow run ends or stays paused because marotte stopped resuming it, a step of a running workflow shows no activity for an hour, a scheduled or triggered run cannot start, or the agent needs permission, even with the tab closed. Browsers allow this only over HTTPS or on `localhost`.
 
 The turn, pull request and workflow run notifications each have a switch on the **General** tab in **Settings**. Turns and workflow runs are on by default. Pull requests are off by default, because the forge already shows their checks. Pull request notifications work on GitHub, GitLab, Gitea, Forgejo and Codeberg, once the pull request's CI reports a result. The permission notice has no switch, because nothing else tells you off-screen that a turn is waiting on you.
 

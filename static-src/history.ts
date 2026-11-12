@@ -169,7 +169,7 @@ type RunVerdict = "completed" | "failed" | "aborted";
  */
 const END_REASON_TEXT: Readonly<Record<string, string>> = {
   overran: "stopped: its recipe's next scheduled slot came due",
-  stalled: "stopped: no activity and no live shell within its idle window",
+  stalled: "stopped: it showed no activity for too long",
   orphaned: "stopped: the server restarted while it was running",
   unattended: "stopped: it paused with nobody to resume it",
 };

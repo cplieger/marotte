@@ -450,6 +450,8 @@ interface FoldContext {
   plans: Map<string, PlanEntry>;
   asked: AskedSteps;
   run: ClassifiedRunStatus;
+  /** Whether the server flagged the running run's open step turns silent (`silent_since`). */
+  silent: boolean;
   ends: StepEnds;
   /** How many paused steps of the whole tree carry each node id. */
   pausedIDs: ReadonlyMap<string, number>;
@@ -638,6 +640,9 @@ function toNode(
   if (view?.interruption !== undefined) {
     out.interruption = view.interruption;
   }
+  if (work && ctx.silent && state === "running") {
+    out.silence = SILENT_STEP_TEXT;
+  }
   if (view?.endedByHand === true) {
     out.endedByHand = true;
   }
@@ -667,6 +672,10 @@ function toNode(
   }
   return out;
 }
+
+/** A flagged step's line: the server flags a run once its open step turns sent nothing for an hour
+ *  (internal/agent/run_silence.go), and the run keeps running. */
+export const SILENT_STEP_TEXT = "No activity for 1 hour";
 
 /** The run's alert, and the five things that put it in front of a person. */
 function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): ExecRun["alert"] {
@@ -795,6 +804,7 @@ export function runToExec(
     plans: indexPlan(plan),
     asked: askedSteps(root, asks),
     run: state.status ?? "unknown",
+    silent: state.status === "running" && state.silentSince !== undefined,
     ends,
     pausedIDs: countPausedSteps(root),
   };
