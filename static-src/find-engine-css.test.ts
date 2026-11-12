@@ -3,7 +3,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { FindEngine } from "./find-engine.js";
-import type * as ModFindInChat from "./find-in-chat.js";
 
 // Imports find-in-chat.ts with its own suite's mock set (scroll.ts self-initialises against DOM not built here).
 vi.mock("./scroll.js", () => ({
@@ -18,6 +17,10 @@ vi.mock("./subagent-view.js", () => ({ openSubagentView: vi.fn() }));
 vi.mock("./messages-blocks.js", () => ({
   blockElement: vi.fn(),
 }));
+
+// At collection, not in a hook: the first import of find-in-chat's graph in this file's frame is a cold transform
+// whose time follows the suite's load, and a hook's 5s bound does not cover it.
+const { handleFindHotkey } = await import("./find-in-chat.js");
 
 let styleEl: HTMLStyleElement;
 let host: HTMLElement;
@@ -117,13 +120,10 @@ describe("the walker under the shipped stylesheet", () => {
 // The note is the bar's second line, mounted always as an aria-live region; its zero-height treatment keeps the bar
 // one row.
 
-let bootSeq = 0;
-
 describe("the transcript find bar under the shipped stylesheet", () => {
   let fixture: HTMLElement;
 
   beforeEach(async () => {
-    bootSeq++;
     fixture = document.createElement("div");
     fixture.innerHTML =
       `<div id="chat-view" data-tab-view>` +
@@ -134,12 +134,7 @@ describe("the transcript find bar under the shipped stylesheet", () => {
       `<textarea id="prompt-input"></textarea>` +
       `</div>`;
     document.body.appendChild(fixture);
-    const mod = (await import(
-      /* @vite-ignore */ `./find-in-chat.ts?css-boot=${bootSeq}`
-    )) as typeof ModFindInChat;
-    mod.handleFindHotkey(
-      new KeyboardEvent("keydown", { key: "f", ctrlKey: true, cancelable: true }),
-    );
+    handleFindHotkey(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, cancelable: true }));
     await rendered();
   });
 
