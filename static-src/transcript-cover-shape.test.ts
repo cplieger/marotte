@@ -185,6 +185,11 @@ describe("the skeleton is the latest turn's shape", () => {
           0,
         );
         expect(rect(head).top, "the prompt band leads the card").toBeCloseTo(k.top + 1, 0);
+        // The newest turn shows no fold toggle, so its one-line prompt band is the head row's text.
+        expect(rect(head).height, "prompt band height").toBeCloseTo(
+          rect(part(real, ".turn-header")).height,
+          0,
+        );
 
         // The real surfaces' own fills, so the swap changes no colour under the reader.
         for (const [a, b, what] of [

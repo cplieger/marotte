@@ -73,7 +73,10 @@ describe("the rebuilt transcript placeholder", () => {
       // The head row's two chrome bars must state a width: neither `.turn-n` nor `.turn-ts`
       // declares a box, so a bar there with no width has none.
       const headRow = chain(card, [".turn-header", ".turn-head-row"]);
-      expect(headRow.querySelector(":scope > .turn-fold-toggle")).not.toBeNull();
+      expect(
+        headRow.querySelector(":scope > .turn-fold-toggle"),
+        "the newest turn offers no fold toggle",
+      ).toBeNull();
       // The values are MEASURED on the real cells (see `skeletonTurnCard`), and the two differ by
       // more than a character count because `.turn-n` is mono while `.turn-ts` inherits the head
       // row's `system-ui`.
@@ -164,7 +167,11 @@ describe("the rebuilt transcript placeholder", () => {
     expect(wrap.style.paddingBlock).toBe("");
     expect(wrap.getAttribute("style")).toBeNull();
     for (const card of cards(wrap)) {
-      chain(card, [".turn-header", ".turn-head-row"]);
+      const headRow = chain(card, [".turn-header", ".turn-head-row"]);
+      expect(
+        headRow.querySelector(":scope > .turn-fold-toggle"),
+        "an older turn folds",
+      ).not.toBeNull();
       chain(card, [".turn-body", ".msg-row", ".message.assistant"]);
     }
   });
@@ -273,7 +280,7 @@ describe("the placeholder card is not a pointer target", () => {
 
     const view = document.createElement("div");
     view.className = "transcript-view is-active";
-    view.appendChild(chatSkeleton());
+    view.appendChild(loadMoreSkeleton());
     stage.appendChild(view);
 
     const card = cards(view)[0] as HTMLElement;

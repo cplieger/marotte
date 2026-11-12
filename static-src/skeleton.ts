@@ -56,10 +56,12 @@ function skeletonText(opts: {
   return wrap;
 }
 
-/** One placeholder turn: a short request over a longer reply, as bar widths. */
+/** One placeholder turn: a short request over a longer reply, as bar widths. `fold` reserves the
+ *  head row's fold toggle, which the newest turn never shows (messages.ts fold plan). */
 interface SkeletonTurnShape {
   readonly prompt: readonly string[];
   readonly reply: readonly string[];
+  readonly fold: boolean;
 }
 
 /** The paragraphs a placeholder reply cycles through, a blank line between two. */
@@ -85,14 +87,14 @@ function replyLines(): string[] {
 }
 
 /** The transcript's placeholder shape: the one turn a chat opens on, scrolled to its newest. */
-const CHAT_SKELETON: SkeletonTurnShape = { prompt: ["68%"], reply: replyLines() };
+const CHAT_SKELETON: SkeletonTurnShape = { prompt: ["68%"], reply: replyLines(), fold: false };
 
 /** The transcript's own card shape, two cards deep: the reader sees the top edge of the incoming
  *  page and nothing more, and `scroll.ts` corrects the reader's drift again AFTER this comes down,
  *  so its height is not a term in that arithmetic. */
 const LOAD_MORE_SKELETON: readonly SkeletonTurnShape[] = [
-  { prompt: ["54%"], reply: ["92%", "61%"] },
-  { prompt: ["73%"], reply: ["95%", "87%", "48%"] },
+  { prompt: ["54%"], reply: ["92%", "61%"], fold: true },
+  { prompt: ["73%"], reply: ["95%", "87%", "48%"], fold: true },
 ];
 
 /** COMPOSITE — one placeholder turn card, assembled from TEXT BLOCK twice inside the real
@@ -106,11 +108,10 @@ const LOAD_MORE_SKELETON: readonly SkeletonTurnShape[] = [
 function skeletonTurnCard(shape: SkeletonTurnShape): HTMLDivElement {
   const card = el("div", { className: "turn turn-skel" }) as HTMLDivElement;
   const headRow = el("div", { className: "turn-head-row" });
-  headRow.append(
-    el("div", { className: "turn-fold-toggle" }),
-    skelBar("skeleton-line", "1rem"),
-    skelBar("skeleton-line", "1.875rem"),
-  );
+  if (shape.fold) {
+    headRow.appendChild(el("div", { className: "turn-fold-toggle" }));
+  }
+  headRow.append(skelBar("skeleton-line", "1rem"), skelBar("skeleton-line", "1.875rem"));
   const reqText = el("div", { className: "turn-req-text" });
   reqText.appendChild(skeletonText({ widths: shape.prompt }));
   const req = el("div", { className: "turn-req" });
