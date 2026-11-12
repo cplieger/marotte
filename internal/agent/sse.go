@@ -91,12 +91,7 @@ func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 	client := "v3"
 	if legacy {
 		client = "legacy"
-		rt.bus.legacyConnects.Add(1)
-	} else {
-		rt.bus.v3Connects.Add(1)
 	}
-	slog.Info("SSE connected", "client", client,
-		"last_event_id", logsafe.Field(r.Header.Get("Last-Event-ID")))
 
 	// A reconnect brings the server's own live settings, notification toggles included, up to a hand edit made while
 	// the stream was down.
@@ -104,14 +99,27 @@ func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 		rt.syncProcessLive(r.Context())
 	}
 
+	// Counted and logged in the hook, which runs only for a connection Serve accepts: a refused
+	// SSE-Topics, the cap and a missing flusher answer before it.
+	connected := false
 	rt.bus.fanout.Serve(armedWriter(&rt.bus.closeAfter, w), r,
 		sse.WithRequestScope(principalOf(r)),
 		sse.WithClientTag(tag),
 		sse.WithOnConnect(func(sw *sse.Writer, h sse.Hello) error {
+			connected = true
+			if legacy {
+				rt.bus.legacyConnects.Add(1)
+			} else {
+				rt.bus.v3Connects.Add(1)
+			}
+			slog.Info("SSE connected", "client", client,
+				"last_event_id", logsafe.Field(r.Header.Get("Last-Event-ID")))
 			return rt.streamInitialState(sw, &h, legacy)
 		}),
 	)
-	slog.Info("SSE disconnected", "client", client)
+	if connected {
+		slog.Info("SSE disconnected", "client", client)
+	}
 }
 
 // The connect payload's two list bounds, policy numbers: exceeding one is the defect, never the constant.

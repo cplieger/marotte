@@ -3,9 +3,9 @@
 // the stream for the run's topic, and the run handlers route the scoped run's frames between the
 // shown step's log and the dock's tail cells.
 
-/** What asking the stream for a run's topic came to: `owed` when the ask was lost with the link or
- *  the stream and must be made again, `superseded` when a later ask replaced it. */
-export type ScopeOutcome = "covered" | "owed" | "superseded";
+/** What asking the stream for a run's topic came to: `owed` when the ask was lost and must be made
+ *  again. */
+export type ScopeOutcome = "covered" | "owed";
 
 type Presenter = (run: string) => Promise<ScopeOutcome>;
 
@@ -42,7 +42,7 @@ function ask(c: Cover): void {
       c.owed = true;
       return;
     }
-    c.settle(outcome === "covered");
+    c.settle(true);
   });
 }
 

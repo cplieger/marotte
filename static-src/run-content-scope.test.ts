@@ -121,14 +121,6 @@ describe("scopeReady", () => {
     stream.answer(2, "covered");
     expect(await settledAs(second)).toBe(true);
   });
-
-  it("answers false when a later ask superseded the run's", async () => {
-    const stream = scriptedStream();
-    setRunContentScope(R, "");
-    const ready = scopeReady(R);
-    stream.answer(0, "superseded");
-    expect(await settledAs(ready)).toBe(false);
-  });
 });
 
 describe("an ask lost with the link", () => {

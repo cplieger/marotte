@@ -9,7 +9,6 @@ import {
   type LifecycleEvent,
   type Removed,
   type RevalidateContext,
-  ScopeError,
   type SharedWorkerLike,
   type TabAttachment,
   type TabFallback,
@@ -112,7 +111,8 @@ function onLifecycle(ev: LifecycleEvent): void {
     case "scope_refused":
     case "deliver_failed":
     case "auth_lost":
-      // The profile now draws every run's content, a tab's predicate threw, or the stream stopped.
+      // The stream fell back to every run's frames (each tab's predicate still drops a run it does
+      // not show), a tab's predicate threw, or the stream stopped.
       console.warn("[sse]", JSON.stringify(ev));
       return;
     default:
@@ -565,7 +565,8 @@ export function init(msg: MsgHandler, status: StatusHandler): void {
 }
 
 /** Ask the stream to deliver `run`'s topic to this tab ("" for broadcasts only). Never rejects:
- *  a lost ask answers `owed`, and before `init` there is no stream to ask yet. */
+ *  a rejected ask answers `owed` (a `superseded` one is only ever an ask `run-content-scope.ts`
+ *  has already replaced), and before `init` there is no stream to ask yet. */
 export function setPageScope(run: string): Promise<ScopeOutcome> {
   if (attachment === null) {
     return Promise.resolve("owed");
@@ -573,8 +574,7 @@ export function setPageScope(run: string): Promise<ScopeOutcome> {
   // An older host answers null and delivers everything, which covers the run too.
   return attachment.setScope(runScopeOf(run)).then(
     (): ScopeOutcome => "covered",
-    (e: unknown): ScopeOutcome =>
-      e instanceof ScopeError && e.failure === "superseded" ? "superseded" : "owed",
+    (): ScopeOutcome => "owed",
   );
 }
 setScopePresenter(setPageScope);

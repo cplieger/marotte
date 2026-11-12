@@ -178,6 +178,9 @@ func TestHandleSSE_AScopeOutsideTheTopicGrammarIs400(t *testing.T) {
 			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"code":"sse_scope"`) {
 				t.Errorf("SSE-Topics %s = %d %s, want 400 sse_scope", topics, rec.Code, rec.Body.String())
 			}
+			if legacy, v3 := h.SSEConnects(); legacy != 0 || v3 != 0 {
+				t.Errorf("a refused connect counted as (legacy %d, v3 %d) connects, want none", legacy, v3)
+			}
 		})
 	}
 }

@@ -15,8 +15,7 @@ import (
 // entryScope names the log a frame's entries belong to: a chat's, addressed by
 // the envelope's chat id, or a RUN's, addressed by an empty chat id plus the
 // workflow id on every payload so the client routes to the run store with no
-// lookup. A run's frames publish on its run topic, so only a tab showing the run
-// receives them.
+// lookup. A run's frames publish on marotte.RunTopic(runID).
 type entryScope struct {
 	chatID marotte.ChatID
 	runID  string

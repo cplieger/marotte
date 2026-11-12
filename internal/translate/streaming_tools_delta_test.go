@@ -203,6 +203,35 @@ func toolCallDeltas(t *testing.T, events *[]marotte.ServerEvent) []marotte.ToolP
 	return out
 }
 
+// TestToolCallDelta_AChatCallsDeltaCarriesTheRunItLaunched pins that a chat call's in-flight
+// update publishes the workflow id it adopted, on the broadcast topic: the launch card adopts
+// its run from that late attachment.
+func TestToolCallDelta_AChatCallsDeltaCarriesTheRunItLaunched(t *testing.T) {
+	tr, _, _, events, chatID := primeToolCall(t)
+
+	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+		"toolCallId": "tc-1",
+		"status":     "in_progress",
+		"rawOutput":  map[string]any{"workflowId": "wf_9", "status": "running"},
+	}), FrameAttribution{})
+
+	var frames []marotte.ServerEvent
+	for _, e := range *events {
+		if e.Type == marotte.EventToolProgress {
+			frames = append(frames, e)
+		}
+	}
+	if len(frames) != 1 {
+		t.Fatalf("got %d tool_progress frames, want 1", len(frames))
+	}
+	if frames[0].Topic != "" {
+		t.Errorf("a chat call's tool_progress publishes on %q, want the broadcast topic", frames[0].Topic)
+	}
+	if p, _ := frames[0].Payload.(marotte.ToolProgressPayload); p.WorkflowID != "wf_9" {
+		t.Errorf("tool_progress workflow_id = %q, want the launched run %q", p.WorkflowID, "wf_9")
+	}
+}
+
 // TestToolCallDelta_ARunStepPublishesNoDelta pins that a run step's in-flight update reaches no tool_progress
 // frame: the run tab reads a step's tool call from its log, and the run topic carries only the log's frames.
 func TestToolCallDelta_ARunStepPublishesNoDelta(t *testing.T) {
