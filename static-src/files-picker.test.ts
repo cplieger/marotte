@@ -29,6 +29,7 @@ import type * as Upload from "./upload.js";
 import { apiGetOrError } from "./api-client.js";
 import { uploadFiles } from "./upload.js";
 import { initFilePicker, openFilePicker } from "./files-picker.js";
+import { UPLOADS_DIR } from "./upload-policy.js";
 
 /** Per-path answers; an unlisted path answers an empty listing. */
 const answers = new Map<string, unknown>();
@@ -67,9 +68,58 @@ beforeEach(() => {
 });
 
 describe("the file picker's listing", () => {
+  it("opens at the uploads folder when no folder is named, with the way up offered", async () => {
+    answers.set(UPLOADS_DIR, listing("pasted.txt"));
+    openFilePicker();
+    expect(byId<HTMLInputElement>("filepicker-path").value).toBe(UPLOADS_DIR);
+    await vi.waitFor(() => {
+      expect(list().querySelector('input[aria-label="Select pasted.txt"]')).not.toBeNull();
+    });
+    const up = [...list().querySelectorAll(".fb-name")].find((n) => n.textContent === "..");
+    if (!(up instanceof HTMLElement)) {
+      throw new Error("no way up from the uploads folder");
+    }
+    answers.set("/", listing("elsewhere.txt"));
+    up.click();
+    await vi.waitFor(() => {
+      expect(list().querySelector('input[aria-label="Select elsewhere.txt"]')).not.toBeNull();
+    });
+    expect(byId<HTMLInputElement>("filepicker-path").value).toBe("/");
+  });
+
+  it("offers the root beside Retry when a folder off the root fails", async () => {
+    answers.set("/a/gone", { ok: false, status: 404, data: null, error: "not found" });
+    answers.set("/", listing("top.txt"));
+    openFilePicker("/a/gone");
+    const toRoot = await vi.waitFor(() => {
+      const btn = [...list().querySelectorAll("button")].find(
+        (b) => b.textContent === "Go to root",
+      );
+      if (btn === undefined) {
+        throw new Error("no Go to root button");
+      }
+      return btn;
+    });
+    toRoot.click();
+    await vi.waitFor(() => {
+      expect(list().querySelector('input[aria-label="Select top.txt"]')).not.toBeNull();
+    });
+    expect(byId<HTMLInputElement>("filepicker-path").value).toBe("/");
+  });
+
+  it("offers no Go to root when the root itself fails", async () => {
+    answers.set("/", { ok: false, status: 500, data: null, error: "boom" });
+    openFilePicker("/");
+    await vi.waitFor(() => {
+      expect(list().querySelector(".fb-notice")?.textContent).toContain("boom");
+    });
+    const labels = [...list().querySelectorAll("button")].map((b) => b.textContent);
+    expect(labels).toEqual(["Retry"]);
+  });
+
   it("shows a failure in the server's own words, as a notice and not a row", async () => {
     answers.set("/a/gone", { ok: false, status: 404, data: null, error: "not found" });
-    openFilePicker(undefined, "/a/gone");
+    openFilePicker("/a/gone");
     await vi.waitFor(() => {
       expect(list().querySelector(".fb-notice")?.textContent).toContain("not found");
     });
@@ -78,7 +128,7 @@ describe("the file picker's listing", () => {
 
   it("swaps a failure for the loading rows the moment Retry is pressed, until the answer", async () => {
     answers.set("/a/gone", { ok: false, status: 404, data: null, error: "not found" });
-    openFilePicker(undefined, "/a/gone");
+    openFilePicker("/a/gone");
     await vi.waitFor(() => {
       expect(list().querySelector(".fb-notice")).not.toBeNull();
     });
@@ -116,7 +166,7 @@ describe("the file picker's listing", () => {
       code: "not_a_directory",
     });
     answers.set("/a", listing("note.txt", "other.txt"));
-    openFilePicker(undefined, "/a");
+    openFilePicker("/a");
     await vi.waitFor(() => {
       expect(list().querySelector('input[aria-label="Select note.txt"]')).not.toBeNull();
     });
@@ -138,7 +188,7 @@ describe("the file picker's listing", () => {
   });
 
   it("says an empty mounts listing is empty, as a notice and not a row", async () => {
-    openFilePicker(undefined, "/");
+    openFilePicker("/");
     await vi.waitFor(() => {
       expect(list().querySelector(".fb-notice")?.textContent).toBe("Empty");
     });
@@ -159,7 +209,7 @@ describe("the Upload button", () => {
   });
 
   it("opens the dialog on an input in the document and uploads what it picks to the open folder", async () => {
-    openFilePicker(undefined, "/a");
+    openFilePicker("/a");
     const file = new File(["x"], "note.txt");
     let connected: boolean | null = null;
     const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(function (
@@ -190,7 +240,7 @@ describe("the Upload button", () => {
     const modal = byId<HTMLDivElement>("filepicker-modal");
     const onClose = vi.fn();
     real.onModalClose(modal, onClose);
-    openFilePicker(undefined, "/a");
+    openFilePicker("/a");
     real.openModal(modal);
     const dlg = modal.closest("dialog");
     const opened: HTMLInputElement[] = [];

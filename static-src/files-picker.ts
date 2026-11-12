@@ -20,7 +20,7 @@ import { fetchDir, type FetchDirOpts } from "./files-fetch.js";
 import { attachPathsToActiveChat } from "./chat.js";
 import { byId } from "./dom.js";
 import { upload } from "./actions/files.js";
-import { screenUploads } from "./upload-policy.js";
+import { screenUploads, UPLOADS_DIR } from "./upload-policy.js";
 import { openFileDialog } from "./file-dialog.js";
 import * as toast from "./toast.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
@@ -43,15 +43,13 @@ export function setOnUploadComplete(fn: () => void): void {
   onUploadComplete = fn;
 }
 
-export function openFilePicker(preUploadFiles?: FileList, startPath = FB_ROOT): void {
+/** Opens at the uploads folder unless told otherwise: it holds what the composer pasted or dropped. */
+export function openFilePicker(startPath = UPLOADS_DIR): void {
   currentPath = normalizeDirPath(startPath);
   selected.clear();
   loadDir();
   syncAttachBtn();
   openModal(byId<HTMLDivElement>("filepicker-modal"));
-  if (preUploadFiles !== undefined && preUploadFiles.length > 0) {
-    performUpload(preUploadFiles);
-  }
 }
 
 export function initFilePicker(): void {
@@ -80,12 +78,7 @@ export function initFilePicker(): void {
 
   const pathEl = byId<HTMLInputElement>("filepicker-path");
   initEditablePath(pathEl, {
-    onNavigate: (target) => {
-      currentPath = target;
-      selected.clear();
-      loadDir();
-      syncAttachBtn();
-    },
+    onNavigate: navigateTo,
     getCurrentPath: () => currentPath,
   });
 }
@@ -155,7 +148,7 @@ function loadDir(): void {
 
     if (d.kind === "error") {
       reconcile(list, [], { key: () => "", mount: () => el("div") });
-      list.appendChild(listNotice(d.message, [{ label: "Retry", run: loadDir }]));
+      list.appendChild(listNotice(d.message, errorActions()));
       return;
     }
 
@@ -187,15 +180,33 @@ function loadDir(): void {
   });
 }
 
+/** Off the root an error clears the ".." row, so the root is offered beside Retry. */
+function errorActions(): { label: string; run: () => void }[] {
+  const actions = [{ label: "Retry", run: loadDir }];
+  if (currentPath !== FB_ROOT) {
+    actions.push({
+      label: "Go to root",
+      run: () => {
+        navigateTo(FB_ROOT);
+      },
+    });
+  }
+  return actions;
+}
+
+function navigateTo(path: string): void {
+  currentPath = path;
+  selected.clear();
+  loadDir();
+  syncAttachBtn();
+}
+
 function upRow(): HTMLDivElement {
   const icon = el("span", { className: "fb-icon" }, iconEl(FILE_ICONS["folder"] ?? ""));
 
   const nameSpan = el("span", { className: `${FB_NAME} ${FB_NAME_LINK}` }, "..");
   nameSpan.addEventListener("click", () => {
-    currentPath = parentPath(currentPath);
-    selected.clear();
-    loadDir();
-    syncAttachBtn();
+    navigateTo(parentPath(currentPath));
   });
 
   return el("div", { className: FB_ROW }, icon, nameSpan) as HTMLDivElement;
@@ -226,10 +237,7 @@ function entryRow(name: string, isDir: boolean): HTMLDivElement {
   const label = el("span", { className: `${FB_NAME} ${FB_NAME_LINK}` }, name);
   label.addEventListener("click", () => {
     if (isDir) {
-      currentPath = joinPath(currentPath, name);
-      selected.clear();
-      loadDir();
-      syncAttachBtn();
+      navigateTo(joinPath(currentPath, name));
     } else {
       check.checked = !check.checked;
       if (check.checked) {
