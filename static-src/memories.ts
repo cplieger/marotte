@@ -401,9 +401,7 @@ function cloudStrip(): HTMLElement {
     { className: "memories-cloud" },
     el("span", { className: "memories-cloud-status" }, `Cloud sync: ${syncWords(s)}`),
     cloudSwitch(s.account, locked),
-    locked
-      ? el("span", { className: "memories-cloud-hint" }, `Locked by ${s.lockedBy}`)
-      : el("span"),
+    locked ? el("span", { className: "memories-cloud-hint" }, `Locked by ${s.lockedBy}`) : null,
   );
 }
 
