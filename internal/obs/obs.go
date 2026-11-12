@@ -51,8 +51,6 @@ const (
 	RunNeedsApproval = "needs_approval"
 	// RunOverran is a scheduled run still going when its next slot came due.
 	RunOverran = "overran"
-	// RunBackstop is a run that spent its absolute executing-time budget.
-	RunBackstop = "backstop"
 	// RunStalled is a run that made no progress inside its idle window.
 	RunStalled = "stalled"
 	// RunPaused is a run left paused with nobody to resume it.
@@ -64,7 +62,7 @@ const (
 )
 
 var unattendedRunFailureReasons = []string{
-	RunNeedsApproval, RunOverran, RunBackstop, RunStalled, RunPaused, RunOrphaned, RunCancelGivenUp,
+	RunNeedsApproval, RunOverran, RunStalled, RunPaused, RunOrphaned, RunCancelGivenUp,
 }
 
 // The events that leave a schedule slot with no run.

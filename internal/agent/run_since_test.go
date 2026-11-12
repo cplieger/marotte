@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/translate"
@@ -284,5 +285,43 @@ func TestHandleRun_SinceNamesARemovedNode(t *testing.T) {
 		return n.Path == workflow.PathKey([]string{"root"})
 	}) {
 		t.Errorf("records = %v, want the removed nodes' parent", got.Nodes)
+	}
+}
+
+// The silence flag is part of the run read, so setting it and clearing it each move the revision,
+// and ?since and the glance carry the flag as it then stands.
+func TestHandleRun_TheSilenceFlagMovesTheRevision(t *testing.T) {
+	h, br, deadline := silentStep(t, agentLaunch(), time.Hour)
+	br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, silentRunID, marotte.RunStatusRunning, ""))
+	silentAt := func(query string) (uint64, string) {
+		t.Helper()
+		got, body := getRunAt(t, h, query)
+		var reply struct {
+			SilentSince string `json:"silent_since"`
+		}
+		if err := json.Unmarshal([]byte(body), &reply); err != nil {
+			t.Fatalf("decoding: %v", err)
+		}
+		return got.Rev, reply.SilentSince
+	}
+	rev := revOf(t, h)
+
+	h.runs.cancelExpired(silentRunID, deadline)
+	joinInflight(t, h)
+	flagged, since := silentAt("since=" + strconv.FormatUint(rev, 10))
+	if flagged <= rev || since == "" {
+		t.Errorf("?since after the flag = rev %d with silent_since %q, want past %d and the flag", flagged, since, rev)
+	}
+	if _, since := silentAt("view=glance"); since == "" {
+		t.Error("the glance after the flag carries no silent_since")
+	}
+
+	h.runs.RunMadeProgress(silentRunID)
+	joinInflight(t, h)
+	if cleared, since := silentAt("since=" + strconv.FormatUint(flagged, 10)); cleared <= flagged || since != "" {
+		t.Errorf("?since after a frame = rev %d with silent_since %q, want past %d and no flag", cleared, since, flagged)
+	}
+	if _, since := silentAt("view=glance"); since != "" {
+		t.Errorf("the glance after a frame still carries silent_since = %q", since)
 	}
 }

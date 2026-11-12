@@ -212,7 +212,7 @@ type runBroadcaster interface {
 	Broadcast(ctx context.Context, evt marotte.ServerEvent)
 }
 
-// runPermClaimer is the decision tracker as the run surface uses it: claim, and drop a run's decisions.
+// runPermClaimer is the decision tracker as the run surface uses it: claim, drop and look up a run's decisions.
 // Run-scoped because a step's ask is keyed to the launching chat.
 type runPermClaimer interface {
 	TakePendingPermOn(origin acpResponder, acpID int64, settledBy marotte.SettledBy) (command.AskReply, bool)

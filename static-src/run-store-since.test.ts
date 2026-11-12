@@ -297,6 +297,23 @@ describe("a held run's tree moves by what changed", () => {
     expect(m.urls).toEqual([`/api/runs/${WF}?since=7`]);
     expect(runStepEnds(WF).get(build)?.outcome).toBe("failed");
   });
+
+  it("takes the silence flag from each answer of what changed", async () => {
+    m.answers.push(() => lanes());
+    invalidateRun(WF);
+    await flush();
+    const since = "2026-11-12T10:00:00Z";
+
+    m.answers.push(() => ({ workflowId: WF, rev: 8, nodes: [], removed: [], silent_since: since }));
+    send("run_rev", { workflow_id: WF, rev: 8 });
+    await flush();
+    expect(runState(WF)?.silentSince).toBe(since);
+
+    m.answers.push(() => ({ workflowId: WF, rev: 9, nodes: [], removed: [] }));
+    send("run_rev", { workflow_id: WF, rev: 9 });
+    await flush();
+    expect(runState(WF)?.silentSince).toBeUndefined();
+  });
 });
 
 describe("a run tab's dot", () => {
@@ -439,5 +456,29 @@ describe("a run read in the shape its readers draw", () => {
     expect(m.urls).toEqual([`/api/runs/${id}?view=glance`, `/api/runs/${id}?view=glance`]);
     expect(runStateAs(id, "glance")).toBeDefined();
     expect(runStateAs(id, "tree")).toBeUndefined();
+  });
+
+  it("sets and clears a run tab's silence flag from its glances alone", async () => {
+    const id = "wf_silent_tab";
+    const since = "2026-11-12T10:00:00Z";
+    let rev = 5;
+    let silent = false;
+    registerRunStateDemand((w) => w === id, "glance");
+    m.route = () => ({ ...tree(id, rev), ...(silent ? { silent_since: since } : {}) });
+    invalidateRun(id);
+    await flush();
+
+    rev = 6;
+    silent = true;
+    send("run_rev", { workflow_id: id, rev });
+    await flush();
+    expect(runStateAs(id, "glance")?.silentSince).toBe(since);
+
+    rev = 7;
+    silent = false;
+    send("run_rev", { workflow_id: id, rev });
+    await flush();
+    expect(runStateAs(id, "glance")?.silentSince).toBeUndefined();
+    expect(m.urls.every((u) => u === `/api/runs/${id}?view=glance`)).toBe(true);
   });
 });

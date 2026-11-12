@@ -299,6 +299,9 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
 
   const rowParts = new WeakMap<HTMLElement, LiveRow>();
   let tails: ReadonlyMap<string, string> = new Map();
+  // The silence outranks the tail: the newest line is an hour old once it shows.
+  const tailOf = (path: string, n: ExecNode | undefined): string =>
+    n?.silence ?? tails.get(path) ?? "";
   let shownPaths: readonly string[] = [];
   const buildRow = (path: string): LiveRow => {
     const mark = el("span", { className: "ev-state", "aria-hidden": "true" });
@@ -343,7 +346,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
       row.btn.dataset["kind"] = n.kind;
     }
     paintLabel(row.label, n);
-    setText(row.tail, tails.get(n.path) ?? "");
+    setText(row.tail, tailOf(n.path, n));
     row.node = n;
     paintTime(row, n);
     setAttr(row.btn, "aria-current", shown ? "true" : null);
@@ -355,7 +358,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
     setAttr(
       row.btn,
       "aria-label",
-      [n.label, STATE_WORD[n.state], time].filter((s) => s !== "").join(", "),
+      [n.label, STATE_WORD[n.state], n.silence ?? "", time].filter((s) => s !== "").join(", "),
     );
   };
 
@@ -495,7 +498,7 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
       for (const rowRoot of rows.children) {
         const row = rowParts.get(rowRoot as HTMLElement);
         if (row !== undefined) {
-          setText(row.tail, tails.get(row.path) ?? "");
+          setText(row.tail, tailOf(row.path, row.node));
         }
       }
     },

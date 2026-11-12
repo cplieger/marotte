@@ -179,6 +179,11 @@ func AutoResumeStopped(t Target, throttled bool) marotte.NotificationPayload {
 	return build(marotte.PushKindRunOutcome, t, "Workflow paused", "marotte stopped resuming it after repeated "+cause)
 }
 
+// StepSilent is a chat-launched run whose open step turn has sent nothing for an hour; the run keeps running.
+func StepSilent(t Target) marotte.NotificationPayload {
+	return build(marotte.PushKindRunOutcome, t, "No activity for 1 hour", "a step is still running")
+}
+
 // RunNotStarted is a launch rule's slot or event that started no run, with the reason its row records.
 func RunNotStarted(t Target, reason string) marotte.NotificationPayload {
 	return build(marotte.PushKindRunOutcome, t, "Workflow did not start", reason)

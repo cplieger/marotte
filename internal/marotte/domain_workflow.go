@@ -10,9 +10,9 @@ package marotte
 import "encoding/json"
 
 // RunProgressKind is the KAS lifecycle kind behind a run_progress event: seven of
-// KAS's nine. The other two are their own events, because one inserts a row and
-// the other is terminal and fires a push, while every kind between them carries
-// the same instruction — refetch.
+// KAS's nine, plus marotte's own `silence`. The other two are their own events,
+// because one inserts a row and the other is terminal and fires a push, while every
+// kind between them carries the same instruction — refetch.
 type RunProgressKind string
 
 // The seven progress kinds, spelled as KAS's method suffixes so one string greps
@@ -25,6 +25,8 @@ const (
 	RunProgressWatchPoll     RunProgressKind = "watch_poll"
 	RunProgressPaused        RunProgressKind = "paused"
 	RunProgressStepsQueued   RunProgressKind = "steps_queued"
+	// RunProgressSilence is marotte's: a step's silence flag was set or cleared (the run read's `silent_since`).
+	RunProgressSilence RunProgressKind = "silence"
 )
 
 // RunStartedPayload is the payload for type="run_started": a run began on this chat. Name is its display label, for a

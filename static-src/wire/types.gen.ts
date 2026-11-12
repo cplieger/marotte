@@ -78,7 +78,7 @@ export type RunEntryState = "pending" | "paused" | "held" | "starting" | "runnin
 
 export type RunNodeStatus = "pending" | "running" | "paused" | "completed" | "failed" | "aborted" | "skipped";
 
-export type RunProgressKind = "node_start" | "node_complete" | "node_paused" | "loop_iteration" | "watch_poll" | "paused" | "steps_queued";
+export type RunProgressKind = "node_start" | "node_complete" | "node_paused" | "loop_iteration" | "watch_poll" | "paused" | "steps_queued" | "silence";
 
 export type RunStandingKind = "step" | "watch" | "pass_limit";
 

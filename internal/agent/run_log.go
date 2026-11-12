@@ -57,6 +57,12 @@ type runTurn struct {
 	// top is the run's top-level step this one sits under ("" when unknown), held because path is never
 	// split back (workflow.PathKey).
 	top string
+	// nodeType is KAS's node type; a container's turn holds neither the idle window nor the silence (containerNode).
+	nodeType string
+	// nodeID is the node's own id, which a step's asks name it by.
+	nodeID string
+	// asks holds the ids of the step's open asks (countsTowardSilence).
+	asks map[int64]struct{}
 	// answer folds the step's current KAS turn: the sink feeds it, and a turn_start resets it.
 	answer answerFold
 	// ownEnd is whether the step's newest edge is its own turn's turn_end, with no turn_start or node_paused after.
@@ -64,6 +70,9 @@ type runTurn struct {
 	// parked is whether KAS paused the node with no node_start since: a turn a steer runs on a parked node does not
 	// resume it, so its end is not the step's.
 	parked bool
+	// parkedTurn is whether a KAS turn runs on the parked node, a wake or a refused steer's (kirodotdev/Kiro#11863):
+	// model work nobody waits on, so it counts toward silence.
+	parkedTurn bool
 	// errStop is whether the step's current KAS turn ended `error`. Unlike ownEnd it outlives the node_paused that
 	// follows the failing turn_end, which the throttled-ask heal reads (runLog.transientFailure).
 	errStop bool
@@ -522,6 +531,23 @@ func (r *runLog) hasOpen(workflowID string) bool {
 	return ok && len(rec.open) > 0
 }
 
+// hasOpenWork reports whether an open turn of the run is not a container's: a container's frames come from its
+// children, so one open with no child open is an orchestration stall.
+func (r *runLog) hasOpenWork(workflowID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.runs[workflowID]
+	if !ok {
+		return false
+	}
+	for _, t := range rec.open {
+		if !containerNode(t.nodeType) {
+			return true
+		}
+	}
+	return false
+}
+
 // openTops answers, in node path order, the top-level step each of the run's open step turns sits
 // under, skipping a turn whose opening frame carried no path.
 func (r *runLog) openTops(workflowID string) []string {
@@ -556,9 +582,15 @@ func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marot
 	}
 	if t := rec.open[nodePath]; t != nil {
 		// KAS sends node_start twice per step, and again when it resumes a parked one; each continues this turn.
-		t.parked = false
+		t.parked, t.parkedTurn = false, false
 		if t.top == "" {
 			t.top = topStepOf(step)
+		}
+		if t.nodeType == "" {
+			t.nodeType = step.NodeType
+		}
+		if t.nodeID == "" {
+			t.nodeID = nodeIDOf(step)
 		}
 		return t.turn, nil, nil
 	}
@@ -573,7 +605,7 @@ func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marot
 		return nil, nil, err
 	}
 	delete(rec.staged, nodePath)
-	t := &runTurn{path: nodePath, top: topStepOf(step)}
+	t := &runTurn{path: nodePath, top: topStepOf(step), nodeType: step.NodeType, nodeID: nodeIDOf(step)}
 	t.turn = turnlog.Open(e.ID, runSink{log: rec.log, turn: t})
 	if r.steps != nil {
 		r.steps.holdStep(rec.host, e.ID)
@@ -677,6 +709,7 @@ func (r *runLog) stopReason(workflowID, nodePath string, raw marotte.StopReason)
 	}
 	t.rawStop = raw
 	t.ownEnd = true
+	t.parkedTurn = false
 	t.errStop = raw == marotte.StopReasonError
 	t.ended = true
 	if t.endWait != nil {
@@ -761,6 +794,7 @@ func (r *runLog) turnStarted(workflowID, nodePath string) bool {
 	t.ownEnd = false
 	t.errStop = false
 	t.ended = false
+	t.parkedTurn = t.parked
 	t.asked, t.answered = false, false
 	t.lastError = marotte.EngineError{}
 	t.answer.reset()
@@ -772,7 +806,7 @@ func (r *runLog) paused(workflowID, nodePath string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if t := r.openLocked(workflowID, nodePath); t != nil {
-		t.ownEnd, t.parked = false, true
+		t.ownEnd, t.parked, t.parkedTurn = false, true, false
 	}
 }
 

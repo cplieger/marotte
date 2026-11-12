@@ -82,6 +82,13 @@ func (rt *Runtime) initDispatch() {
 		rt.chatHandlers[method] = rt.runs.asksOnFrame(rt.chatHandlers[method])
 	}
 	rt.chatHandlers[methodWFWatchPoll] = rt.runs.asksOnMotion(rt.chatHandlers[methodWFWatchPoll])
+	// Every workflow frame is the run's activity, which its silence is measured from (run_silence.go).
+	for _, method := range []string{
+		methodWFRunStart, methodWFRunComplete, methodWFNodeStart, methodWFNodeComplete,
+		methodWFNodePaused, methodWFPaused, methodWFLoopIteration, methodWFStepsQueued, methodWFWatchPoll,
+	} {
+		rt.chatHandlers[method] = rt.runs.framed(rt.chatHandlers[method])
+	}
 	// Recognised and ignored, kept out of the Debug log.
 	rt.noopMethods = map[string]struct{}{
 		methodV3SessionsChanged:    {},

@@ -45,10 +45,11 @@ const (
 	slotEnd
 	slotStart
 	slotPlan
+	slotSilence
 )
 
 // revSlot is one diffed unit: a head member by name, a node, step end or step start by PathKey,
-// or the node plan.
+// the node plan, or the run's silence flag (Runs.silentSince).
 type revSlot struct {
 	key  string
 	kind slotKind
@@ -145,6 +146,9 @@ func (rs *Runs) revise(ctx context.Context, c *askCell, fresh *freshRead) revSna
 	kas := kasSteps(fresh.in)
 	ends, starts := rs.revisedExtras(ctx, c.workflowID, kas, rv)
 	extraSlots(next, ends, starts)
+	if since := rs.silentSince(c.workflowID); !since.IsZero() {
+		next[revSlot{kind: slotSilence}] = []byte(since.UTC().Format(time.RFC3339Nano))
+	}
 	first := rv.rev == 0
 	changed := changedSlots(rv.values, next, rv.nodes, ix.Nodes)
 	rv.values, rv.nodes, rv.head, rv.ends, rv.starts = next, ix.Nodes, ix.Head, ends, starts
@@ -505,6 +509,8 @@ func (a *sinceAnswer) add(rv *runRevision, s revSlot) {
 		}
 	case slotPlan:
 		a.body.NodePlan = cmpOrNull(rv.values[s])
+	case slotSilence:
+		// heldExtras writes silent_since on every answer.
 	}
 }
 
@@ -546,6 +552,7 @@ func (rs *Runs) heldExtras(c *askCell, rv *runRevision) *runExtras {
 	if l, held := rs.lease(id); held {
 		x.autoResumeStoppedAt = l.AutoResumeStoppedAt
 	}
+	x.silentSince = rs.silentSince(id)
 	head, err := headOf(rv.headDocLocked(id))
 	if err == nil && head.Status != "" {
 		ctl := rs.controls(id, &head)

@@ -89,6 +89,7 @@ func (rs *Runs) wholeRead(ctx context.Context, id string) (raw json.RawMessage, 
 	if l, held := rs.lease(id); held {
 		extras.autoResumeStoppedAt = l.AutoResumeStoppedAt
 	}
+	extras.silentSince = rs.silentSince(id)
 	if head, hErr := headOf(raw); hErr == nil && head.Status != "" {
 		ctl := rs.controls(id, &head)
 		extras.controls = &ctl
@@ -195,6 +196,7 @@ func (rs *Runs) lastAsks(c *askCell) []marotte.RunAsk {
 // runExtras are marotte's top-level keys on GET /api/runs/{id}.
 type runExtras struct {
 	autoResumeStoppedAt time.Time
+	silentSince         time.Time
 	ends                map[string]marotte.RunStepEnd
 	starts              map[string]marotte.RunStepStart
 	plan                *marotte.RunPlanUpdate
@@ -262,8 +264,9 @@ func (rs *Runs) RunReadBound(ctx context.Context, workflowID string) (uint64, er
 // `open_asks` is not a statement that nothing waits, `read_position` (runReadPosition), `display_name`
 // (Runs.runName, "" when nothing names the run), `plan_update` when servedPlan answers one, `controls`
 // (Runs.controls) when the reply's state carries a status, `auto_resume_stopped_at` when marotte stopped
-// resuming the run on its own (runlease.Lease.AutoResumeStoppedAt), and `rev` when a revision describes the read
-// (run_rev.go). A reply that is not one JSON object (null aside) is an error.
+// resuming the run on its own (runlease.Lease.AutoResumeStoppedAt), `silent_since` when a step's open turn has sent
+// nothing past runSilenceBound (Runs.silentSince), and `rev` when a revision describes the read (run_rev.go). A reply
+// that is not one JSON object (null aside) is an error.
 func withRunExtras(raw json.RawMessage, x *runExtras) (json.RawMessage, error) {
 	body := bytes.TrimSpace(raw)
 	if len(body) == 0 || bytes.Equal(body, []byte("null")) {
@@ -327,6 +330,9 @@ func (x *runExtras) keys() []extraKey {
 	}
 	if !x.autoResumeStoppedAt.IsZero() {
 		keys = append(keys, extraKey{name: "auto_resume_stopped_at", v: x.autoResumeStoppedAt.UTC()})
+	}
+	if !x.silentSince.IsZero() {
+		keys = append(keys, extraKey{name: "silent_since", v: x.silentSince.UTC()})
 	}
 	return keys
 }

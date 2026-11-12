@@ -36,6 +36,8 @@ type FrameAttribution struct {
 	// turn (a parallel node is several open turns). Set with Step.
 	RunID    string
 	NodePath string
+	// NodeID is the step's node id, which its asks name it by.
+	NodeID string
 	// Step reports a workflow STEP session owns the frame: its content is the run log's and
 	// its metering never reaches the chat's own accounting.
 	Step bool
@@ -76,14 +78,15 @@ func (t *Translator) StepAttribution(runID, sessionID string, wf *ACPWorkflowMet
 // is cold after a restart.
 func (t *Translator) placeStep(attr *FrameAttribution, wf *ACPWorkflowMeta) {
 	if wf != nil && wf.WorkflowID != "" {
-		attr.NodePath = runNodePath(wf)
+		attr.NodePath, attr.NodeID = runNodePath(wf), wf.NodeID
 		return
 	}
-	attr.NodePath = t.steps.refFor(attr.SessionID).NodePath
+	ref := t.steps.refFor(attr.SessionID)
+	attr.NodePath, attr.NodeID = ref.NodePath, ref.NodeID
 }
 
 func runStepOf(attr *FrameAttribution) *RunStep {
-	return &RunStep{RunID: attr.RunID, NodePath: attr.NodePath, SessionID: attr.SessionID}
+	return &RunStep{RunID: attr.RunID, NodePath: attr.NodePath, SessionID: attr.SessionID, NodeID: attr.NodeID}
 }
 
 // runNodePath is the step's run-log turn key. The PATH, because a repeat's iterations share

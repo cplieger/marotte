@@ -176,7 +176,7 @@ func (rs *Runs) manualSlot(source string) time.Time {
 		}
 		next, err := schedule.NextRunFrom(*e.When.Clock, e.Anchor, now)
 		if err != nil {
-			// No slot, not a failure: the window and backstop still bound it.
+			// No slot, not a failure: the idle window still bounds it.
 			slog.Warn("schedule cannot name its next slot, so a manual run of its recipe "+
 				"is bounded by its idle window alone", "schedule_id", e.ID, "error", err)
 			continue
