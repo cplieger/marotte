@@ -1,58 +1,24 @@
-// ---------------------------------------------------------------------------
-// The editor's rendered-markdown read surface.
-//
-// Every document on /docs opens in the editor, and the whole `.kiro` inventory
-// is markdown with YAML front-matter, so the primary reading surface for every
-// steering doc, skill and agent spec was raw source. The edit toggle still shows
-// the source; only the READ state renders.
-//
-// # Nodes, never innerHTML
-//
-// A string render of the parser's output would be safe to re-parse today — the
-// renderer's emittable tag set is fixed and namespace-flat, so no `svg`, `math`,
-// `template` or `noscript` can be produced and an innerHTML round trip is an
-// equivalent tree. It is still the wrong call. The property the transcript's
-// renderer earns its keep with is architectural and grep-checkable — NO renderer
-// output ever passes through an HTML parser, pinned by markdown.test.ts's
-// fast-check properties over `<script`, `javascript:` and `on*` — and one
-// `host.innerHTML = <that string>` here reintroduces exactly one parse step
-// with no failing test behind it. CSP does not block innerHTML either (there is
-// no trusted-types directive), so the invariant is the only thing standing
-// between the next parser change and an injection; `script-src 'self' <hash>`
-// and `object-src 'none'` are containment, not permission.
-//
-// `renderMarkdownInto(host, md)` builds the DOM directly, which is what the
-// transcript's replay path already uses, and it gets code-block highlighting and
-// path linkification for free through its own onBlockComplete hook.
-//
-// # The prose skin is the transcript's, not a copy
-//
-// The container carries `.message.assistant` on purpose. Despite the name that
-// element is not a chat bubble — text-bubble.ts says so in as many words — it is
-// the app's ONE rendered-markdown prose container, and its ~40rem cap is the
-// reading measure where reading speed peaks, which is exactly what a reader of a
-// steering document wants. The alternative was a second copy of ~180 lines of
-// prose CSS in 20-editor.css, drifting from the first.
-// ---------------------------------------------------------------------------
+// The editor's rendered-markdown read surface: every /docs document opens in the editor, and the `.kiro` inventory is
+// markdown with YAML front-matter, so the read state renders it; the edit toggle shows the source. The DOM is built
+// by markdown.ts as nodes, never through innerHTML. The prose container carries `.message.assistant`, the app's one
+// rendered-markdown skin and its reading measure, rather than a second copy of the prose CSS.
 
 import { el } from "@cplieger/reactive";
-import { renderMarkdownInto } from "./markdown.js";
-import { releaseScrollableTablesIn } from "./table-scroll.js";
+import { releaseMarkdownIn, renderMarkdownInto } from "./markdown.js";
 import { splitFrontMatter, type FrontMatterField } from "./front-matter.js";
 
-/** Render a markdown document into `host`: its front-matter as a metadata block,
- *  then its body as markdown. Replaces whatever `host` held. */
-export function renderMarkdownDoc(host: HTMLElement, text: string): void {
+/** Render a markdown document into `host`: its front-matter as a metadata block, then its body as markdown, `#` as
+ *  `h<headingLevel>`. Replaces whatever `host` held. */
+export function renderMarkdownDoc(host: HTMLElement, text: string, headingLevel: 2 | 3 = 2): void {
   const doc = splitFrontMatter(text);
   const children: HTMLElement[] = [];
   if (doc.present && doc.fields.length > 0) {
     children.push(frontMatterBlock(doc.fields));
   }
   const prose = el("div", { className: "message assistant" });
-  renderMarkdownInto(prose, doc.body);
+  renderMarkdownInto(prose, doc.body, { headingLevel, wholeFile: true });
   children.push(prose);
-  // The tables of the render being replaced are let go of before their DOM is discarded.
-  releaseScrollableTablesIn(host);
+  releaseMarkdownIn(host);
   host.replaceChildren(...children);
 }
 

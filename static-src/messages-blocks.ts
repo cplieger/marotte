@@ -35,7 +35,7 @@ import { steerAckID, toolResultID } from "./entry-ids.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { effect, el } from "@cplieger/reactive";
 import { KEY_ATTR as RECONCILE_KEY } from "./reconcile.js";
-import { releaseScrollableTablesIn } from "./table-scroll.js";
+import { releaseMarkdownIn } from "./markdown.js";
 import {
   chatTurnLive,
   delegateStatusFor,
@@ -934,7 +934,7 @@ export function rebuildDetached(rebuild: () => void): void {
 /** Run and clear every cleanup this render owns; idempotent, since both dispose paths can reach it. */
 function disposeAll(st: TurnRender): void {
   // Every caller discards `bodyEl`'s content next (a rebuild's wipe, a removed card, a dropped lane box).
-  releaseScrollableTablesIn(st.bodyEl);
+  releaseMarkdownIn(st.bodyEl);
   releaseOpenTail(st);
   pruneContainers(st);
   for (const key of [...st.disposers.keys()]) {
@@ -1388,7 +1388,7 @@ function dropEntry(st: TurnRender, seq: number): { runID: string; card: RunCardV
       st.topLiveEl = null;
     }
     forgetSubagentCard(st, el);
-    releaseScrollableTablesIn(el);
+    releaseMarkdownIn(el);
     el.remove();
   }
   st.entryText.delete(seq);

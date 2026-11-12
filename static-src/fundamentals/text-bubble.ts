@@ -3,8 +3,12 @@
 // `.message.assistant` is the prose container (~40rem measure).
 
 import { el } from "@cplieger/reactive";
-import { createMarkdownStream, renderMarkdownInto, type MarkdownStream } from "../markdown.js";
-import { releaseScrollableTablesIn } from "../table-scroll.js";
+import {
+  createMarkdownStream,
+  releaseMarkdownIn,
+  renderMarkdownInto,
+  type MarkdownStream,
+} from "../markdown.js";
 import { createReveal, type Reveal } from "../reveal.js";
 
 /** A mounted assistant text bubble plus its streaming handle. */
@@ -69,16 +73,16 @@ export function buildAssistantBubble(
     text += delta;
     setBlank(false);
     if (stream !== null) {
-      stream.writeDelta(delta);
+      stream.write(delta);
       return;
     }
     const wasRendered = root.firstChild !== null;
-    releaseScrollableTablesIn(root);
+    releaseMarkdownIn(root);
     root.replaceChildren();
     // Flush interval 0 on the live path: the reveal already regulates
     // cadence, so the stream's own buffering would re-lump what it spread.
     stream = createMarkdownStream(root, live ? { flushIntervalMs: 0 } : {});
-    stream.writeDelta(text);
+    stream.write(text);
     if (wasRendered) {
       stream.flush();
     }

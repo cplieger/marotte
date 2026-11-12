@@ -7,7 +7,7 @@ import { el } from "@cplieger/reactive";
 import { attachClamp, releaseClampsIn } from "../clamp-text.js";
 import { ICON_TAB_RUN } from "../icons.js";
 import { buildAssistantBubble } from "../fundamentals/text-bubble.js";
-import { releaseScrollableTablesIn } from "../table-scroll.js";
+import { releaseMarkdownIn } from "../markdown.js";
 import { currentWork, isWork, newestStarted, type ExecNode, type ExecRun } from "./model.js";
 import { settled } from "./status.js";
 import { attentionStep, buildExecTree, focusStep, nodeAt, type ExecTreeView } from "./tree.js";
@@ -242,7 +242,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
       results.hidden = true;
       delete resultsBody.dataset["sig"];
       releaseClampsIn(resultsBody);
-      releaseScrollableTablesIn(resultsBody);
+      releaseMarkdownIn(resultsBody);
       resultsBody.replaceChildren();
       return;
     }
@@ -254,7 +254,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     }
     resultsBody.dataset["sig"] = sig;
     releaseClampsIn(resultsBody);
-    releaseScrollableTablesIn(resultsBody);
+    releaseMarkdownIn(resultsBody);
     resultsBody.replaceChildren(...[...merged].map(([key, value]) => resultItem(key, value)));
   }
 
@@ -376,7 +376,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     dispose() {
       setClock(false);
       dock.dispose();
-      releaseScrollableTablesIn(root);
+      releaseMarkdownIn(root);
     },
   };
 }

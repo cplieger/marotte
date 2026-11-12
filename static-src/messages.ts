@@ -26,7 +26,7 @@ import { bodyMemo } from "./body-memo.js";
 import { workspaceRoot } from "./workspace.js";
 import { buildEvent } from "./messages-events.js";
 import { releaseClampsIn } from "./clamp-text.js";
-import { releaseScrollableTablesIn } from "./table-scroll.js";
+import { releaseMarkdownIn } from "./markdown.js";
 import { effect, el, touch } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import { coverHeld, registerParkReads, releaseCover } from "./transcript-cover.js";
@@ -413,7 +413,7 @@ export function disposeChatView(chatID: string): void {
   }
   // Every clamp in the view in one sweep; `parkView` deliberately keeps its clamps and re-measures on unpark.
   releaseClampsIn(view.el);
-  releaseScrollableTablesIn(view.el);
+  releaseMarkdownIn(view.el);
   releaseFooterFitsIn(view.el);
   // After the row disposal, which records one last height per entry. Heights are keyed `(turnID, seq)`, and the cache
   // survives unmounts, so the view's dispose is where they stop meaning anything.
@@ -470,7 +470,7 @@ function rebuildTurnBody(session: Session, t: Turn, body: HTMLElement): void {
   disposeAssistantBody(t.id);
   clearTurnSigs(t.id);
   releaseClampsIn(body);
-  releaseScrollableTablesIn(body);
+  releaseMarkdownIn(body);
   heldMutation(() => {
     body.replaceChildren();
     buildAssistantBody(body, t, session.id, turnIsLive(t), want);
@@ -1754,7 +1754,7 @@ const turnSpec: ReconcileSpec<Turn> = {
     disposeTurnBody(key);
     // A rewind truncation drops a card while its view lives, so `disposeChatView` never runs for it.
     releaseClampsIn(card);
-    releaseScrollableTablesIn(card);
+    releaseMarkdownIn(card);
     releaseFooterFitsIn(card);
   },
 };
@@ -2146,7 +2146,7 @@ function disposeTurnFace(card: HTMLElement): void {
   turnFaces.delete(card);
   const face = card.querySelector<HTMLElement>(":scope > .turn-face");
   if (face !== null) {
-    releaseScrollableTablesIn(face);
+    releaseMarkdownIn(face);
     face.remove();
   }
 }
@@ -2409,7 +2409,7 @@ function unmountTurnBody(card: HTMLElement): void {
   }
   // The header's clamp stays with the card.
   releaseClampsIn(body);
-  releaseScrollableTablesIn(body);
+  releaseMarkdownIn(body);
   // The tail spacer is the body's sibling, so it leaves with it.
   for (const space of card.querySelectorAll<HTMLElement>(":scope > .turn-space")) {
     space.remove();
