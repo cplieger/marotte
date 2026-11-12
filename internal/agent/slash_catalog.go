@@ -20,22 +20,35 @@ var (
 // slashCatalog is the workspace slash menu, held once: every session runs on one engine in one cwd, and the kinds do
 // not depend on mode.
 type slashCatalog struct {
-	cmds []marotte.SlashCommand
-	mu   sync.Mutex
-	// ready is set by the first list KAS sent; that list may be empty.
-	ready bool
+	// seeded closes on the first list KAS sent, which may be empty.
+	seeded chan struct{}
+	cmds   []marotte.SlashCommand
+	mu     sync.Mutex
 }
 
-// Set replaces the list with a session frame's and marks it ready.
+func newSlashCatalog() *slashCatalog { return &slashCatalog{seeded: make(chan struct{})} }
+
+// Set replaces the list with a session frame's and marks it seeded.
 func (c *slashCatalog) Set(cmds []marotte.SlashCommand) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.ready && slashCommandsEqual(c.cmds, cmds) {
+	if isClosed(c.seeded) && slashCommandsEqual(c.cmds, cmds) {
 		return false
 	}
-	c.ready = true
+	if !isClosed(c.seeded) {
+		close(c.seeded)
+	}
 	c.cmds = slices.Clone(cmds)
 	return true
+}
+
+func isClosed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
 }
 
 func slashCommandsEqual(a, b []marotte.SlashCommand) bool {
@@ -58,18 +71,25 @@ func (c *slashCatalog) snapshot() (cmds []marotte.SlashCommand, ready bool) {
 	defer c.mu.Unlock()
 	out := make([]marotte.SlashCommand, len(c.cmds))
 	copy(out, c.cmds)
-	return out, c.ready
+	return out, isClosed(c.seeded)
 }
 
 type steeringIssues struct {
 	issues map[string][]marotte.SteeringIssue
+	// seeded closes on the first document list KAS sent.
+	seeded chan struct{}
 	mu     sync.Mutex
 }
 
-// Set replaces the map, reporting whether it changed.
+func newSteeringIssues() *steeringIssues { return &steeringIssues{seeded: make(chan struct{})} }
+
+// Set replaces the map, reporting whether it changed, and marks it seeded.
 func (s *steeringIssues) Set(issues map[string][]marotte.SteeringIssue) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !isClosed(s.seeded) {
+		close(s.seeded)
+	}
 	if maps.EqualFunc(s.issues, issues, steeringIssuesEqual) {
 		return false
 	}

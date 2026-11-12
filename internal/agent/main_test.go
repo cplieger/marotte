@@ -12,6 +12,7 @@ import (
 func TestMain(m *testing.M) {
 	healBaseDelay = time.Hour
 	governanceWarmTimeout = 100 * time.Millisecond
+	bootSeedTimeout = 100 * time.Millisecond
 	root, err := os.MkdirTemp("", "marotte-agent-chats-")
 	if err != nil {
 		panic("test chat root: " + err.Error())

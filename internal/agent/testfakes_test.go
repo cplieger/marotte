@@ -145,6 +145,8 @@ type fakeBridge struct {
 	account *fakeAccount
 	// noGovernance withholds the governance frame an observer's door delivers, leaving the cache cold.
 	noGovernance bool
+	// noDoorSeeds withholds the slash menu and steering documents an observer's door delivers.
+	noDoorSeeds bool
 }
 
 // ungovernedAccount is KAS 2.37.1's profile for an ungoverned account: MCP, web tools, autonomous agents and content
@@ -169,6 +171,21 @@ func governanceFrame(sid string, p marotte.GovernanceStatePayload) *marotte.RPCR
 		},
 	})
 	return &marotte.RPCResponse{JSONRPC: "2.0", Method: methodV3Governance, Params: params}
+}
+
+// doorSeedFrames are the slash menu and steering document list KAS sends at every session/new: one builtin command,
+// which the menu leaves out, and no documents.
+func doorSeedFrames(sid string) []*marotte.RPCResponse {
+	commands, _ := json.Marshal(map[string]any{"sessionId": sid, "update": map[string]any{
+		"sessionUpdate": "available_commands_update", "availableCommands": []any{map[string]any{
+			"name": "clear", "description": "Clear the conversation", "_meta": map[string]any{"kiro": map[string]any{"type": "builtin"}},
+		}},
+	}})
+	documents, _ := json.Marshal(map[string]any{"sessionId": sid, "status": "success", "documents": []any{}})
+	return []*marotte.RPCResponse{
+		{JSONRPC: "2.0", Method: marotte.MethodSessionUpdate, Params: commands},
+		{JSONRPC: "2.0", Method: methodV3SteeringDocs, Params: documents},
+	}
 }
 
 // fakeAccount is the account profile the fake engine reports at every door, ungovernedAccount until set.
@@ -251,10 +268,16 @@ func (b *fakeBridge) door(ctx context.Context, so *marotte.SessionOpts, eo *maro
 	notifs := b.notifsOnStart
 	keep := len(notifs) - min(b.withholdReplay, len(notifs))
 	governance := !load && so.Role == marotte.SessionRoleObserver && !b.noGovernance
+	seeds := !load && so.Role == marotte.SessionRoleObserver && !b.noDoorSeeds
 	sid, account := b.sessionID, b.account
 	b.mu.Unlock()
 	if governance {
 		b.deliver(governanceFrame(sid, account.current()))
+	}
+	if seeds {
+		for _, f := range doorSeedFrames(sid) {
+			b.deliver(f)
+		}
 	}
 	if !load {
 		return nil
