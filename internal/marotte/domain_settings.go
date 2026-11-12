@@ -132,12 +132,11 @@ type EffectiveSettings struct {
 	// SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
 	// unattended run's permission ask at its deadline and is fail-closed by
 	// decision. DebugLogs raises the log level. All three default off.
-	// SpecPlanningAskFirst and SteeringReminders default off, matching kiro-cli.
+	// SpecPlanningAskFirst, SteeringReminders and ChatMessaging default off, matching kiro-cli.
 	// WorkflowsEnabled defaults ON (user's choice, where the TUI's default is off).
 	SpecPlanningAskFirst bool `json:"spec_planning_ask_first"`
 	SteeringReminders    bool `json:"steering_reminders_enabled"`
 	WorkflowsEnabled     bool `json:"workflows_enabled"`
-	// ChatMessaging is kiro-cli's sessionToolsMessaging switch for every chat, default off.
 	ChatMessaging        bool `json:"chat_messaging_enabled"`
 	SupervisedDefault    bool `json:"supervised_default"`
 	ScheduledAutoApprove bool `json:"scheduled_auto_approve"`

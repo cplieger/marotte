@@ -28,6 +28,8 @@ const (
 
 	// Every anchor is built from it because the bundle's identifiers are mangled.
 	jsIdent = `[A-Za-z_$][A-Za-z0-9_$]*`
+	// identStart opens an anchor on a mangled name: RE2's \b is ASCII, so it misses `$x` and matches inside it.
+	identStart = `(?:^|[^A-Za-z0-9_$])`
 )
 
 var (
@@ -482,7 +484,7 @@ of parameters. Re-read the pattern rather than regenerating the fixture.`,
 	bindRe := regexp.MustCompile(`(` + jsIdent + `)\s*=\s*` +
 		regexp.QuoteMeta(param) + `\??\._meta\?\.kiro`)
 	local := discoverOne(t, "the top-level _meta.kiro local in "+name, bindRe, body)
-	return keysIn(regexp.MustCompile(`\b`+regexp.QuoteMeta(local)+`\??\.(`+jsIdent+`)`), body)
+	return keysIn(regexp.MustCompile(identStart+regexp.QuoteMeta(local)+`\??\.(`+jsIdent+`)`), body)
 }
 
 // initScopeKeys returns the keys read off every local the agent server binds to
@@ -497,7 +499,7 @@ func initScopeKeys(t *testing.T, src string) []string {
 		if scope == "" {
 			t.Fatalf("the _meta.kiro binding at byte %d has no enclosing block within %d bytes", m[0], bindingScopeReach)
 		}
-		keys = append(keys, keysIn(regexp.MustCompile(`\b`+regexp.QuoteMeta(local)+`\??\.(`+jsIdent+`)`), scope)...)
+		keys = append(keys, keysIn(regexp.MustCompile(identStart+regexp.QuoteMeta(local)+`\??\.(`+jsIdent+`)`), scope)...)
 	}
 	slices.Sort(keys)
 	return slices.Compact(keys)
@@ -525,12 +527,12 @@ func readSettingKeys(t *testing.T, src string) []string {
 
 	direct := requireNonEmpty(t, "isSettingEnabled calls", slices.Concat(
 		keysIn(settingEnabledRe, src),
-		keysAround(regexp.MustCompile(`\b`+regexp.QuoteMeta(settingFn)+
+		keysAround(regexp.MustCompile(identStart+regexp.QuoteMeta(settingFn)+
 			`\([^,()]*,\s*["'](`+jsIdent+`)["']\)`), settingFn+"(", src),
 	))
 	features := requireNonEmpty(t, "isFeatureEnabled calls", slices.Concat(
 		keysIn(featureEnabledRe, src),
-		keysAround(regexp.MustCompile(`\b`+regexp.QuoteMeta(featureFn)+
+		keysAround(regexp.MustCompile(identStart+regexp.QuoteMeta(featureFn)+
 			`\(["'](`+jsIdent+`)["']\)`), featureFn+"(", src),
 	))
 	resolved := requireNonEmpty(t, "settings resolvers", keysAround(settingResolverRe, ".data.", src))
@@ -549,7 +551,7 @@ func wireFactoryKeys(t *testing.T, src string) []string {
 	t.Helper()
 	var keys []string
 	for _, fn := range requireNonEmpty(t, "wire-reader factories", wireFactories(src)) {
-		keys = append(keys, keysAround(regexp.MustCompile(`\b`+regexp.QuoteMeta(fn)+`\("(`+jsIdent+`)"`), fn+"(", src)...)
+		keys = append(keys, keysAround(regexp.MustCompile(identStart+regexp.QuoteMeta(fn)+`\("(`+jsIdent+`)"`), fn+"(", src)...)
 	}
 	slices.Sort(keys)
 	return slices.Compact(keys)
@@ -570,7 +572,7 @@ func wireFactories(src string) []string {
 func computedResolverKeys(t *testing.T, src string) []string {
 	t.Helper()
 	fn := discoverOne(t, "the computed-member settings resolver", settingComputedFnRe, src)
-	return keysAround(regexp.MustCompile(`\b`+regexp.QuoteMeta(fn)+`\([^,()]*,\s*["'](`+jsIdent+`)["']`), fn+"(", src)
+	return keysAround(regexp.MustCompile(identStart+regexp.QuoteMeta(fn)+`\([^,()]*,\s*["'](`+jsIdent+`)["']`), fn+"(", src)
 }
 
 // A withheld row counts as declared: recording a deliberate omission is the table's job.
