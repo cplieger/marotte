@@ -32,7 +32,6 @@ interface MemorySync {
   readonly reason: string;
   readonly pending: number;
   readonly account: boolean;
-  readonly device: boolean;
   /** The layer's name when a lock fixes the choice, "" otherwise. */
   readonly lockedBy: string;
 }
@@ -95,7 +94,6 @@ function decodeMemorySync(v: unknown): MemorySync {
     reason: optStr(status, "reason") ?? "",
     pending: typeof status["pending"] === "number" ? status["pending"] : 0,
     account: choice["account"] === true,
-    device: choice["device"] === true,
     lockedBy: lock === undefined ? "" : (optStr(lock, "name") ?? optStr(lock, "layer") ?? ""),
   };
 }
@@ -383,8 +381,7 @@ function headStrip(): HTMLElement {
   );
 }
 
-/** The Cloud sync line and its two switches, the pair kiro-cli's terminal UI offers. A device that syncs implies the
- *  account does, so the device switch waits for the account's. */
+/** The Cloud sync line and its switch for the account's choice, the one scope kiro-cli lets a client write. */
 function cloudStrip(): HTMLElement {
   if (cloud === "loading" || cloud === "failed") {
     return el(
@@ -399,46 +396,36 @@ function cloudStrip(): HTMLElement {
   }
   const s = cloud;
   const locked = s.lockedBy !== "";
-  const account = cloudSwitch("Sync my memories across devices", s.account, locked, "account");
-  const device = cloudSwitch("Sync on this device", s.device, locked || !s.account, "device");
   return el(
     "div",
     { className: "memories-cloud" },
     el("span", { className: "memories-cloud-status" }, `Cloud sync: ${syncWords(s)}`),
-    account,
-    device,
+    cloudSwitch(s.account, locked),
     locked
       ? el("span", { className: "memories-cloud-hint" }, `Locked by ${s.lockedBy}`)
-      : s.account
-        ? el("span")
-        : el(
-            "span",
-            { className: "memories-cloud-hint" },
-            "Turn on account sync to sync this device",
-          ),
+      : el("span"),
   );
 }
 
-function cloudSwitch(
-  label: string,
-  on: boolean,
-  disabled: boolean,
-  scope: "account" | "device",
-): HTMLElement {
+function cloudSwitch(on: boolean, disabled: boolean): HTMLElement {
   const box = el("input", {
     type: "checkbox",
     className: "memories-cloud-switch",
-    "data-scope": scope,
     disabled,
   }) as HTMLInputElement;
   box.checked = on;
   box.addEventListener("change", () => {
     box.disabled = true;
-    void setMemorySync.dispatch({ scope, on: box.checked }).finally(() => {
+    void setMemorySync.dispatch({ on: box.checked }).finally(() => {
       void refreshCloud();
     });
   });
-  return el("label", { className: "memories-cloud-toggle" }, box, label);
+  return el(
+    "label",
+    { className: "memories-cloud-toggle" },
+    box,
+    "Sync my memories across devices",
+  );
 }
 
 interface Section {
