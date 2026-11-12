@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -95,8 +96,8 @@ func (f *botGrantFixture) write(t *testing.T, chatID marotte.ChatID, session, pa
 	return err
 }
 
-// TestBotMemoryGrant_TheBotsOwnSessionsReadAndWriteItsDirectory pins design §7.2 "Writing it": a session in the Bot's
-// chain, current or prior, reaches its directory through every marotte file verb.
+// TestBotMemoryGrant_TheBotsOwnSessionsReadAndWriteItsDirectory pins that a session in the Bot's chain, current or
+// prior, reaches its directory through every marotte file verb.
 func TestBotMemoryGrant_TheBotsOwnSessionsReadAndWriteItsDirectory(t *testing.T) {
 	for _, session := range []string{"sess_bot", "sess_bot_old"} {
 		t.Run("a read from "+session, func(t *testing.T) {
@@ -162,8 +163,8 @@ func TestBotMemoryGrant_TheBotsOwnSessionsReadAndWriteItsDirectory(t *testing.T)
 	})
 }
 
-// TestBotMemoryGrant_NoOtherSessionReachesTheDirectory pins design §7.2 "Who reads it" and §11: only a session in the
-// started Bot's chain, with memory on, reaches the directory; every other request, read or write, is refused.
+// TestBotMemoryGrant_NoOtherSessionReachesTheDirectory pins that only a session in the started Bot's chain, with memory
+// on, reaches the directory; every other request, read or write, is refused.
 func TestBotMemoryGrant_NoOtherSessionReachesTheDirectory(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -243,8 +244,37 @@ func TestBotMemoryGrant_NoOtherSessionReachesTheDirectory(t *testing.T) {
 	})
 }
 
-// TestBotMemoryGrant_ALinkAtTheDirectoryOrTheFileIsRefused pins design §11's second bullet: a Bot pointed at another
-// tree, by a link at its directory, at the bots directory above it or at the file, reaches nothing.
+// TestBotMemoryGrant_ARoutingIdNamingNoChatIsRefusedQuietly pins that a request routed on an id no chat can hold (a
+// parentless run's, the observer pass's) is refused without reading the chat store, so no false chat-store error is
+// logged for an expected refusal.
+func TestBotMemoryGrant_ARoutingIdNamingNoChatIsRefusedQuietly(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		chatID marotte.ChatID
+	}{
+		{"a parentless run", runChatPrefix + "wf_bot"},
+		{"the observer pass", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBotGrantFixture(t)
+			logs := captureLogs(t)
+			if got, err := f.read(t, tc.chatID, "sess_step", f.file); err == nil {
+				t.Errorf("read of c1's memory file = %q, want refused", got)
+			}
+			if err := f.write(t, tc.chatID, "sess_step", f.file, "planted"); err == nil {
+				t.Error("write of c1's memory file = nil, want refused")
+			}
+			for line := range strings.Lines(logs.String()) {
+				if strings.Contains(line, `"level":"ERROR"`) {
+					t.Errorf("an expected refusal logged an error: %s", line)
+				}
+			}
+		})
+	}
+}
+
+// TestBotMemoryGrant_ALinkAtTheDirectoryOrTheFileIsRefused pins that a Bot pointed at another tree, by a link at its
+// directory, at the bots directory above it or at the file, reaches nothing.
 func TestBotMemoryGrant_ALinkAtTheDirectoryOrTheFileIsRefused(t *testing.T) {
 	plantOutside := func(t *testing.T) string {
 		t.Helper()

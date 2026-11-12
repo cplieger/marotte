@@ -14,8 +14,8 @@ import (
 	"github.com/cplieger/marotte/internal/rpcerr"
 )
 
-// botRoleMessage is the Bot's own mode_not_applied text (design §7.1 "Holding the mode"): its pill has no mode menu,
-// so "pick the mode again" is advice a Bot cannot follow.
+// botRoleMessage is the Bot's own mode_not_applied text: its pill has no mode menu, so "pick the mode again" is advice
+// a Bot cannot follow.
 const botRoleMessage = "This Bot's role did not load. Its next message retries."
 
 // botRuntime is a runtime whose chat sessions are bridges, in open order, then fresh fakes. HOME is a test directory,
@@ -157,7 +157,7 @@ func TestPersistNewSessionMetadata_HoldsTheBotRole(t *testing.T) {
 	}
 }
 
-// TestBotDoor_ReassertsTheRoleOnAMismatch pins design §7.1: a Bot's session reported in another mode is sent one
+// TestBotDoor_ReassertsTheRoleOnAMismatch pins that a Bot's session reported in another mode is sent one
 // session/set_mode to the role before it serves, on both doors, and one reported on the role is sent none.
 func TestBotDoor_ReassertsTheRoleOnAMismatch(t *testing.T) {
 	for _, door := range doors {
@@ -344,9 +344,9 @@ func modeUpdateOnPrompt(b *fakeBridge, modes ...string) {
 	})
 }
 
-// TestBotTurn_AnAgentSwitchOffTheRoleIsReassertedOnceIdle pins design §7.1's role keeper: a current_mode_update that
-// moves a Bot off its role is undone with one session/set_mode once its session is idle, and none is sent when the
-// session ends the turn back on the role; a regular chat's switch is its own.
+// TestBotTurn_AnAgentSwitchOffTheRoleIsReassertedOnceIdle pins the role keeper: a current_mode_update that moves a Bot
+// off its role is undone with one session/set_mode once its session is idle, and none is sent when the session ends the
+// turn back on the role; a regular chat's switch is its own.
 func TestBotTurn_AnAgentSwitchOffTheRoleIsReassertedOnceIdle(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -383,9 +383,9 @@ func TestBotTurn_AnAgentSwitchOffTheRoleIsReassertedOnceIdle(t *testing.T) {
 	}
 }
 
-// TestBotTurn_AFailedReassertReloadsTheSessionAtTheNextMessage pins design §7.1 "A Bot never runs a turn without its
-// role": a re-assert KAS refuses marks the resident session for reload, so the chat's next door closes it and reloads
-// through session/load, whose hold restores the role or fails the open with the Bot's message.
+// TestBotTurn_AFailedReassertReloadsTheSessionAtTheNextMessage pins that a Bot never runs a turn without its role: a
+// re-assert KAS refuses marks the resident session for reload, so the chat's next door closes it and reloads through
+// session/load, whose hold restores the role or fails the open with the Bot's message.
 func TestBotTurn_AFailedReassertReloadsTheSessionAtTheNextMessage(t *testing.T) {
 	switched := func(t *testing.T, reload *fakeBridge) (*Runtime, *testChatStore, *fakeBridge) {
 		t.Helper()
@@ -625,9 +625,10 @@ func catalogVersion(h *Runtime) string {
 	return stamp.Version
 }
 
-// TestBotSession_TheRoleNeverReachesTheWorkspaceCatalog pins design §7.4 (P1b) through both writers, fed the modes
-// KAS 3.1.0 reported in the bot_role capture: a Bot's session/new and its session/load list the role, and every chat's
-// pill still lists no marotte-bot, and the catalog version a regular chat's open set does not move.
+// TestBotSession_TheRoleNeverReachesTheWorkspaceCatalog pins that the role never reaches the workspace catalog through
+// either writer, fed the modes KAS 3.1.0 reported in the bot_role capture: a Bot's session/new and its session/load
+// list the role, and every chat's pill still lists no marotte-bot, and the catalog version a regular chat's open set
+// does not move.
 func TestBotSession_TheRoleNeverReachesTheWorkspaceCatalog(t *testing.T) {
 	reports := capturedReports(t)
 	for i, door := range doors {

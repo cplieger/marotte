@@ -16,7 +16,7 @@ const botsDir = "bots"
 
 const memoryName = "memory.md"
 
-// memoryStartingText is a new memory file's text (design §7.2 "Starting text").
+// memoryStartingText is a new memory file's text.
 const memoryStartingText = "# Memory\n\nYour notes for future turns. Keep this file under 40,000 characters.\n"
 
 var errLinked = errors.New("not a directory or regular file of its own (a link or another kind of file)")

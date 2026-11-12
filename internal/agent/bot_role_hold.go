@@ -131,10 +131,10 @@ func botPaths() bot.Paths {
 	return bot.Paths{KiroHome: workspace.KiroHome()}
 }
 
-// holdBotMemory makes a Bot's just-opened session load its memory file as a context file while memory is on, made
-// first where it is missing, and drop it on a load while memory is off: KAS keeps a session's context files across
-// loads, and a new session has none. A call is tried twice; a file that cannot be made or a failed add warns in the
-// chat, and the open goes on either way.
+// holdBotMemory makes a Bot's just-opened session load its memory file as a context file while memory is on, made first
+// where it is missing, and drop it on a load while memory is off or the file is refused: KAS keeps a session's context
+// files across loads, and a new session has none. A call is tried twice; a file that cannot be made or a failed add
+// warns in the chat, and the open goes on either way.
 func (bc *bridgeCoordinator) holdBotMemory(ctx context.Context, rec *marotte.Chat, session engineSession, loaded bool) {
 	chatID := marotte.ChatID(rec.ID)
 	file, ok := bot.MemoryFile(rec, botPaths())
@@ -155,7 +155,10 @@ func (bc *bridgeCoordinator) holdBotMemory(ctx context.Context, rec *marotte.Cha
 		// KAS would load whatever a refused link points at.
 		if err := bot.EnsureMemory(rec, botPaths()); err != nil {
 			bc.warnBotMemory(ctx, chatID, err)
-			return
+			if !loaded {
+				return
+			}
+			params.Subcommand, params.Force = marotte.SessionContextRemove, false
 		}
 	}
 	err := callSessionContext(ctx, session, &params)
@@ -165,7 +168,7 @@ func (bc *bridgeCoordinator) holdBotMemory(ctx context.Context, rec *marotte.Cha
 	switch {
 	case err == nil:
 	case params.Subcommand == marotte.SessionContextRemove:
-		slog.Warn("a Bot's session kept its memory file after memory was turned off", "chat_id", chatID, "error", err)
+		slog.Warn("a Bot's session kept a memory file marotte asked it to drop", "chat_id", chatID, "error", err)
 	default:
 		bc.warnBotMemory(ctx, chatID, err)
 	}

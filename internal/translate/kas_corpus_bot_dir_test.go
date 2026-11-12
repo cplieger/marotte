@@ -85,10 +85,10 @@ func doorsOf(t *testing.T, lines []kasLine) []capturedDoor {
 	return out
 }
 
-// TestKASCorpus_ABotWritesItsMemoryThroughTheClient pins P4 (design §15) on the live answer: a Bot whose directory is
-// among its session's additional directories has its memory write sent to the client as fs/write_text_file for the
-// file's path; a load with the directory dropped and one with it back each find the session on the role; and a
-// regular session asked to write the same path still sends its requests to the client, which is all that refuses it.
+// TestKASCorpus_ABotWritesItsMemoryThroughTheClient pins KAS's recorded answer: a Bot whose directory is among its
+// session's additional directories has its memory write sent to the client as fs/write_text_file for the file's path; a
+// load with the directory dropped and one with it back each find the session on the role; and a regular session asked
+// to write the same path still sends its requests to the client, which is all that refuses it.
 func TestKASCorpus_ABotWritesItsMemoryThroughTheClient(t *testing.T) {
 	lines := loadKASLines(t, "bot_memory_write")
 	doors := doorsOf(t, lines)
@@ -138,10 +138,10 @@ func TestKASCorpus_ABotWritesItsMemoryThroughTheClient(t *testing.T) {
 	}
 }
 
-// TestKASCorpus_ATangentOfABotLoadsOnTheDefaultMode pins P5 (design §15, §9.4) on the live answer: the fork names
-// the default mode beside createdReason; the tangent's first load reports that mode with no role among its modes,
-// though the fork's own reply lists the role; no not_found reaches the tangent; and its read of the Bot's memory
-// file goes to the client, which refuses it.
+// TestKASCorpus_ATangentOfABotLoadsOnTheDefaultMode pins KAS's recorded answer: the fork names the default mode beside
+// createdReason; the tangent's first load reports that mode with no role among its modes, though the fork's own reply
+// lists the role; no not_found reaches the tangent; and its read of the Bot's memory file goes to the client, which
+// refuses it.
 func TestKASCorpus_ATangentOfABotLoadsOnTheDefaultMode(t *testing.T) {
 	lines := loadKASLines(t, "bot_tangent")
 	fork := slices.IndexFunc(lines, func(l kasLine) bool { return l.Dir == "out" && l.Frame.Method == marotte.MethodSessionFork })
@@ -167,7 +167,8 @@ func TestKASCorpus_ATangentOfABotLoadsOnTheDefaultMode(t *testing.T) {
 		t.Fatalf("session/fork answered %s (%v)", lines[fork+reply].Frame.Result, err)
 	}
 	if !listsMode(forked.Modes.AvailableModes, marotte.BotRoleID) {
-		t.Error("the fork's reply lists no role: KAS no longer builds it from the parent's registry, so §9.4's caveat is stale")
+		t.Error("the fork's reply lists no role: KAS no longer builds it from the parent's registry, " +
+			"so the caveat that a fork's reply lists the Bot's role is stale")
 	}
 
 	doors := doorsOf(t, lines)

@@ -36,8 +36,8 @@ const (
 func (in roleInput) resets() bool  { return in == roleResetBot || in == roleResetOther }
 func (in roleInput) reports() bool { return in == roleReportRole || in == roleReportOther }
 
-// roleTransitions is the whole table (design §7.1 "The role keeper"). Every row lists every input: an omitted cell
-// reads as roleUnkept, which would let a prompt go out off the role.
+// roleTransitions is the role keeper's whole table. Every row lists every input: an omitted cell reads as roleUnkept,
+// which would let a prompt go out off the role.
 var roleTransitions = [nRoleStates][nRoleInputs]roleState{
 	roleUnkept: {
 		roleResetBot: roleOff, roleResetOther: roleUnkept, roleReportRole: roleUnkept, roleReportOther: roleUnkept,

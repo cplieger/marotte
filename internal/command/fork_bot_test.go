@@ -38,9 +38,9 @@ func forkFrom(t *testing.T, bot *marotte.Bot) (map[string]any, *marotte.Chat) {
 	return forkKiroMeta(t, br), c
 }
 
-// TestCmdForkChat_ABotsTangentStartsOnTheDefaultMode pins design §9.4: a tangent from a Bot is a regular chat, so
-// KAS persists the fork on the default mode (modeId beside createdReason) and the record names it, never the role
-// the tangent's session cannot load.
+// TestCmdForkChat_ABotsTangentStartsOnTheDefaultMode pins that a tangent from a Bot is a regular chat, so KAS persists
+// the fork on the default mode (modeId beside createdReason) and the record names it, never the role the tangent's
+// session cannot load.
 func TestCmdForkChat_ABotsTangentStartsOnTheDefaultMode(t *testing.T) {
 	kiro, c := forkFrom(t, &marotte.Bot{Goal: "Answer the weekly questions.", StartedAt: 1, Memory: true})
 

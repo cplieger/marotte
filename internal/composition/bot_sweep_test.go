@@ -47,8 +47,8 @@ func botDirExists(t *testing.T, paths bot.Paths, id string) bool {
 	return err == nil
 }
 
-// TestSweepBotDirs_RemovesTheDirectoryOfAChatWithNoRecord pins design §8.6 "Boot sweep" against the real chat store:
-// the directory of a chat with no record goes, the one with a record stays.
+// TestSweepBotDirs_RemovesTheDirectoryOfAChatWithNoRecord pins against the real chat store that the directory of a chat
+// with no record goes, the one with a record stays.
 func TestSweepBotDirs_RemovesTheDirectoryOfAChatWithNoRecord(t *testing.T) {
 	chats, _, paths := botSweepFixture(t)
 
@@ -62,8 +62,8 @@ func TestSweepBotDirs_RemovesTheDirectoryOfAChatWithNoRecord(t *testing.T) {
 	}
 }
 
-// TestSweepBotDirs_AnUnreadRecordRemovesNothing pins design §8.6: a chat record that exists and could not be read makes
-// the scan incomplete, and an incomplete scan removes no directory.
+// TestSweepBotDirs_AnUnreadRecordRemovesNothing pins that a chat record that exists and could not be read makes the
+// scan incomplete, and an incomplete scan removes no directory.
 func TestSweepBotDirs_AnUnreadRecordRemovesNothing(t *testing.T) {
 	chats, chatsDir, paths := botSweepFixture(t)
 	if err := os.MkdirAll(filepath.Join(chatsDir, "c-unread"), 0o700); err != nil {

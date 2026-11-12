@@ -83,9 +83,9 @@ func listsMode(modes []marotte.SessionMode, id string) bool {
 	return slices.ContainsFunc(modes, func(m marotte.SessionMode) bool { return m.ID == id })
 }
 
-// TestKASCorpus_BotRoleHoldsOnEveryDoor pins P1 (design §15) on the live answer: every door that sends the role
-// reports the role, with no session/set_mode needed; a regular chat's modes never list it; and a session/set_mode to
-// a role the session does not hold is answered {} after a not_found for it, which is the refusal the door reads.
+// TestKASCorpus_BotRoleHoldsOnEveryDoor pins KAS's recorded answer: every door that sends the role reports the role,
+// with no session/set_mode needed; a regular chat's modes never list it; and a session/set_mode to a role the session
+// does not hold is answered {} after a not_found for it, which is the refusal the door reads.
 func TestKASCorpus_BotRoleHoldsOnEveryDoor(t *testing.T) {
 	lines := loadKASLines(t, "bot_role")
 	var withRole, withoutRole, sets int

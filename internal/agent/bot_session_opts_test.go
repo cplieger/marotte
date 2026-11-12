@@ -145,9 +145,9 @@ func TestChatSessionOpts_ARoleRecordThatIsNoStartedBotAsksForTheDefaultMode(t *t
 	}
 }
 
-// TestChatSessionOpts_AStartedBotWithMemoryListsItsDirectory pins design §7.2 "Writing it": the door lists the Bot's
-// directory in the session's additionalDirectories after the granted ones, so KAS treats the memory file as in a root,
-// and no other chat's door lists it.
+// TestChatSessionOpts_AStartedBotWithMemoryListsItsDirectory pins that the door lists the Bot's directory in the
+// session's additionalDirectories after the granted ones, so KAS treats the memory file as in a root, and no other
+// chat's door lists it.
 func TestChatSessionOpts_AStartedBotWithMemoryListsItsDirectory(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

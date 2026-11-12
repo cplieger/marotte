@@ -23,10 +23,10 @@ type Records struct {
 	Complete bool
 }
 
-// SweepDirs removes each Bot directory under KiroHome whose chat has no record, a delete cut between the record and
-// the directory (design §8.6), and returns the removed ids. It lists bots/ before calling records: a Bot's record is
-// written before its directory, so a directory made after the listing is not judged. Only a real directory named by a
-// chat id is a Bot's; anything else under bots/ is left alone. With no Bot directory to judge, records is not called.
+// SweepDirs removes each Bot directory under KiroHome whose chat has no record, a delete cut between the record and the
+// directory, and returns the removed ids. It lists bots/ before calling records: a Bot's record is written before its
+// directory, so a directory made after the listing is not judged. Only a real directory named by a chat id is a Bot's;
+// anything else under bots/ is left alone. With no Bot directory to judge, records is not called.
 func SweepDirs(ctx context.Context, paths Paths, records func(context.Context) Records) ([]string, error) {
 	if !filepath.IsAbs(paths.KiroHome) {
 		return nil, fmt.Errorf("KIRO_HOME %q is not absolute", paths.KiroHome)

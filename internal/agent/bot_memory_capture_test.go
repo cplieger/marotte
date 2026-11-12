@@ -71,9 +71,9 @@ func (f *botGrantFixture) replay(t *testing.T, chatID marotte.ChatID, session st
 	return err
 }
 
-// TestBotMemoryGrant_TheCapturedMemoryWriteIsAdmittedForTheBotAlone pins P4 (design §15) on the bot_memory_write
-// capture: the reads and the fs/write_text_file KAS 3.2.0 sent for a Bot's memory write are admitted for the Bot's
-// own session and land the written content, and the same requests from a regular chat's session are each refused.
+// TestBotMemoryGrant_TheCapturedMemoryWriteIsAdmittedForTheBotAlone pins the bot_memory_write capture: the reads and
+// the fs/write_text_file KAS 3.2.0 sent for a Bot's memory write are admitted for the Bot's own session and land the
+// written content, and the same requests from a regular chat's session are each refused.
 func TestBotMemoryGrant_TheCapturedMemoryWriteIsAdmittedForTheBotAlone(t *testing.T) {
 	reqs := capturedFSRequests(t, "bot_memory_write", 0)
 	var written string

@@ -66,8 +66,8 @@ func TestChat_ARegularChatCarriesNoBot(t *testing.T) {
 	}
 }
 
-// TestChatHeader_StatesTheBotsState pins design.md §3.2's state rule: "closed" while closed_at is set, whatever else
-// holds, else "draft" before the first start, "paused" while paused, otherwise "active".
+// TestChatHeader_StatesTheBotsState pins the Bot's state rule: "closed" while closed_at is set, whatever else holds,
+// else "draft" before the first start, "paused" while paused, otherwise "active".
 func TestChatHeader_StatesTheBotsState(t *testing.T) {
 	cases := []struct {
 		name string

@@ -11,6 +11,7 @@ import (
 
 	"github.com/cplieger/go/pathinside"
 	"github.com/cplieger/marotte/internal/bot"
+	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -36,8 +37,8 @@ func (in *inbound) confineFor(
 }
 
 // confineBotDir confines an absolute p to the Bot's own directory when chatID is a started Bot with memory on and
-// sessionID is in its session chain. The grant is keyed on the request's session, not the routing: a step of a run
-// the Bot launched routes here under its own session id, and KAS gave it the Bot's directory as a root (design §11).
+// sessionID is in its session chain. The grant is keyed on the request's session, not the routing: a step of a run the
+// Bot launched routes here under its own session id, and KAS gives a step session the launching session's roots.
 func (in *inbound) confineBotDir(
 	ctx context.Context, chatID marotte.ChatID, sessionID marotte.SessionID, p string, access fsAccess,
 ) (fsTarget, bool) {
@@ -60,8 +61,12 @@ func (in *inbound) confineBotDir(
 	return fsTarget{root: root, rel: rel, opened: true}, true
 }
 
-// botDirFor is the directory of chatID's Bot when it is started, keeps a memory and holds sessionID in its chain.
+// botDirFor is the directory of chatID's Bot when it is started, keeps a memory and holds sessionID in its chain. An id
+// no chat can hold (a parentless run's routing, the observer pass's "") is refused before the store logs it invalid.
 func (in *inbound) botDirFor(ctx context.Context, chatID marotte.ChatID, sessionID marotte.SessionID) (string, bool) {
+	if !ids.ValidChatID(string(chatID)) {
+		return "", false
+	}
 	rec, ok := in.coord.chatStore.Get(ctx, chatID)
 	if !ok || !rec.IsStartedBot() || !rec.Bot.Memory || !slices.Contains(rec.SessionChain(), string(sessionID)) {
 		return "", false

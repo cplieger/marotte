@@ -12,7 +12,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// startingMemory is design §7.2 "Starting text".
+// startingMemory is the text a new memory file starts with.
 const startingMemory = "# Memory\n\nYour notes for future turns. Keep this file under 40,000 characters.\n"
 
 // homePaths is testPaths with KiroHome created, as kiro-cli and marotte's boot steering leave it.
@@ -53,8 +53,8 @@ func perm(t *testing.T, path string) fs.FileMode {
 	return fi.Mode().Perm()
 }
 
-// TestEnsureMemory_CreatesTheDirectoryAndTheStartingFile pins design §3.4 and §7.2 "Starting text": turning memory on
-// makes <KiroHome>/bots/<chat id>/ at 0700 holding memory.md at 0600 with the starting text.
+// TestEnsureMemory_CreatesTheDirectoryAndTheStartingFile pins that turning memory on makes <KiroHome>/bots/<chat id>/
+// at 0700 holding memory.md at 0600 with the starting text.
 func TestEnsureMemory_CreatesTheDirectoryAndTheStartingFile(t *testing.T) {
 	paths := homePaths(t)
 	if err := EnsureMemory(startedBot(true, ""), paths); err != nil {
@@ -75,8 +75,8 @@ func TestEnsureMemory_CreatesTheDirectoryAndTheStartingFile(t *testing.T) {
 	}
 }
 
-// TestEnsureMemory_KeepsAFileThatExists pins design §7.2 "Memory off": the notes outlive memory turned off, so turning
-// it on again restores them rather than the starting text.
+// TestEnsureMemory_KeepsAFileThatExists pins that the notes outlive memory turned off, so turning it on again restores
+// them rather than the starting text.
 func TestEnsureMemory_KeepsAFileThatExists(t *testing.T) {
 	paths := homePaths(t)
 	writeFile(t, memoryFile(paths), "- the backlog is at seven\n")
@@ -88,8 +88,8 @@ func TestEnsureMemory_KeepsAFileThatExists(t *testing.T) {
 	}
 }
 
-// TestEnsureMemory_RefusesALink pins design §3.4: nothing but the Bot's own directory and file is written, so a link at
-// bots/, at the Bot's directory or at its file is refused and its target is left as it was.
+// TestEnsureMemory_RefusesALink pins that nothing but the Bot's own directory and file is written, so a link at bots/,
+// at the Bot's directory or at its file is refused and its target is left as it was.
 func TestEnsureMemory_RefusesALink(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -137,8 +137,8 @@ func TestEnsureMemory_RefusesALink(t *testing.T) {
 	}
 }
 
-// TestEnsureMemory_RefusesAPathItCannotName pins design §7.2: an id that is not one folder name, or a relative
-// KiroHome, names no file, so nothing is written.
+// TestEnsureMemory_RefusesAPathItCannotName pins that an id that is not one folder name, or a relative KiroHome, names
+// no file, so nothing is written.
 func TestEnsureMemory_RefusesAPathItCannotName(t *testing.T) {
 	paths := homePaths(t)
 	rec := startedBot(true, "")
@@ -183,9 +183,9 @@ func exists(t *testing.T, path string) bool {
 	return err == nil
 }
 
-// TestSweepDirs_RemovesADirectoryWhoseChatHasNoRecord pins design §8.6 "Boot sweep": after a complete chat scan, a Bot
-// directory whose chat has no record is removed, so a delete interrupted between the record and the directory heals;
-// every directory with a record stays.
+// TestSweepDirs_RemovesADirectoryWhoseChatHasNoRecord pins that after a complete chat scan, a Bot directory whose chat
+// has no record is removed, so a delete interrupted between the record and the directory heals; every directory with a
+// record stays.
 func TestSweepDirs_RemovesADirectoryWhoseChatHasNoRecord(t *testing.T) {
 	paths := sweepFixture(t, "c-kept", "c-gone")
 	removed, err := SweepDirs(t.Context(), paths, recordsOf(true, "c-kept", "c-other"))
@@ -204,8 +204,8 @@ func TestSweepDirs_RemovesADirectoryWhoseChatHasNoRecord(t *testing.T) {
 	}
 }
 
-// TestSweepDirs_AnIncompleteScanRemovesNothing pins design §8.6: a record the scan could not read may exist, so an
-// incomplete scan removes no directory and says why.
+// TestSweepDirs_AnIncompleteScanRemovesNothing pins that a record the scan could not read may exist, so an incomplete
+// scan removes no directory and says why.
 func TestSweepDirs_AnIncompleteScanRemovesNothing(t *testing.T) {
 	paths := sweepFixture(t, "c-unread")
 	removed, err := SweepDirs(t.Context(), paths, recordsOf(false))
@@ -220,8 +220,8 @@ func TestSweepDirs_AnIncompleteScanRemovesNothing(t *testing.T) {
 	}
 }
 
-// TestSweepDirs_LeavesWhatIsNoBotDirectory pins design §3.4 and §8.6: only a real directory named by a chat id is a
-// Bot's, so a name that is not a chat id, a plain file and a link (and its target) are left alone.
+// TestSweepDirs_LeavesWhatIsNoBotDirectory pins that only a real directory named by a chat id is a Bot's, so a name
+// that is not a chat id, a plain file and a link (and its target) are left alone.
 func TestSweepDirs_LeavesWhatIsNoBotDirectory(t *testing.T) {
 	paths := sweepFixture(t)
 	bots := filepath.Join(paths.KiroHome, "bots")
@@ -268,8 +268,8 @@ func TestSweepDirs_ALinkedBotsDirectoryIsNotSwept(t *testing.T) {
 	}
 }
 
-// TestSweepDirs_ListsBeforeTheScan pins design §8.6: a Bot's record is written before its directory, so a directory
-// listed before the scan began has a record the scan reads; one made while the scan runs is not listed and stays.
+// TestSweepDirs_ListsBeforeTheScan pins that a Bot's record is written before its directory, so a directory listed
+// before the scan began has a record the scan reads; one made while the scan runs is not listed and stays.
 func TestSweepDirs_ListsBeforeTheScan(t *testing.T) {
 	paths := sweepFixture(t, "c-kept")
 	created := filepath.Join(paths.KiroHome, "bots", "c-new", "memory.md")
@@ -325,8 +325,8 @@ func TestSweepDirs_NoBotDirectoryIsNothingToDo(t *testing.T) {
 	}
 }
 
-// TestDir_IsTheBotsOwnDirectoryUnderKiroHome pins design §3.4: a Bot's directory is <KiroHome>/bots/<chat id>, named
-// by a server-minted id that passes ids.ValidChatID, under an absolute KiroHome.
+// TestDir_IsTheBotsOwnDirectoryUnderKiroHome pins that a Bot's directory is <KiroHome>/bots/<chat id>, named by a
+// server-minted id that passes ids.ValidChatID, under an absolute KiroHome.
 func TestDir_IsTheBotsOwnDirectoryUnderKiroHome(t *testing.T) {
 	paths := testPaths(t)
 	if got, ok := Dir(testChatID, paths); !ok || got != filepath.Join(paths.KiroHome, "bots", testChatID) {
