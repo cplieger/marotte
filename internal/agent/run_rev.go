@@ -419,8 +419,8 @@ type sinceBody struct {
 }
 
 // sinceRead answers GET /api/runs/{id}?since=<from> from the cell's held revision, which every
-// fresh read and step frame has already moved; false when the run has no revision holding from,
-// which a whole read answers.
+// fresh read and step frame has already moved, plus each open step turn's row (runLog.liveRows);
+// false when the run has no revision holding from, which a whole read answers.
 func (rs *Runs) sinceRead(workflowID string, from uint64) (out json.RawMessage, ok bool, err error) {
 	c := rs.asks.get(workflowID)
 	if c == nil || c.transient {
@@ -439,6 +439,9 @@ func (rs *Runs) sinceRead(workflowID string, from uint64) (out json.RawMessage, 
 	a := newSinceAnswer(workflowID)
 	for s := range changed {
 		a.add(rv, s)
+	}
+	if rs.log != nil {
+		maps.Copy(a.starts, rs.log.liveRows(workflowID, rv.starts))
 	}
 	raw, err := json.Marshal(a.bodyOf(rv))
 	if err != nil {

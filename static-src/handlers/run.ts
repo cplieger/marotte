@@ -165,7 +165,7 @@ onSSE("run_finished", (chatID, p) => {
 
 /** Where a frame of `turnID` goes: the log for a turn it holds or one of the shown step's, the tail
  *  cell for another step's turn, nowhere for a turn no read or `turn_opened` named, which the next
- *  run read maps. */
+ *  run read maps (its deltas wait for that read in `tailDelta`). */
 function routeOf(runID: string, turnID: string): "log" | "tail" | "none" {
   if (runTurnHeldSeq(runID, turnID) !== undefined) {
     return "log";
@@ -225,9 +225,8 @@ onSSE("entry_delta", (_chatID, p) => {
       applyRunDelta(runID, p.turn, p.entry_id, p.lane, p.n, p.delta);
       return;
     case "tail":
-      tailDelta(runID, p.turn, p.entry_id, p.lane, p.n, p.delta);
-      return;
     case "none":
+      tailDelta(runID, p.turn, p.entry_id, p.lane, p.n, p.delta);
       return;
   }
 });

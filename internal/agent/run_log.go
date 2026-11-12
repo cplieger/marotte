@@ -1365,6 +1365,38 @@ func attemptTail(rec *runRecord, path string, a stepAttempt) (turn, tail string)
 	return turn, tail
 }
 
+// liveRows is the rows of starts whose step turn is open now, with that turn's line and streaming root-lane entry as
+// they stand: a revision holds its rows from the step's last turn edge. It walks the open turns, not starts.
+func (r *runLog) liveRows(workflowID string, starts map[string]marotte.RunStepStart) map[string]marotte.RunStepStart {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.runs[workflowID]
+	if !ok || rec.removed {
+		return nil
+	}
+	var out map[string]marotte.RunStepStart
+	for path, t := range rec.open {
+		row, ok := starts[path]
+		if !ok || row.Ended || row.Turn != t.turn.ID() {
+			continue
+		}
+		if line := t.tail.Load(); line != nil {
+			row.Tail = *line
+		}
+		for _, o := range t.turn.OpenEntries() {
+			if o.Lane == "" {
+				o.Text = dockText(o.Text)
+				row.Open = &o
+			}
+		}
+		if out == nil {
+			out = map[string]marotte.RunStepStart{}
+		}
+		out[path] = row
+	}
+	return out
+}
+
 // runOutcome maps KAS's status to `completed`, `failed`, `cancelled`, or `unknown` with the status as raw stop.
 func runOutcome(status string) marotte.TurnConclusion {
 	c := marotte.TurnConclusion{RawStop: marotte.StopReason(status), Known: true}

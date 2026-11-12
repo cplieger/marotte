@@ -309,9 +309,13 @@ type RunStepStart struct {
 	StartedAt string `json:"started_at"`
 	// Turn and Tail are set on an attempt in flight: its newest turn id and the newest line its own lane printed, the
 	// seed of the run tab's dock line for a step whose transcript the page does not hold.
-	Turn  string `json:"turn,omitempty"`
-	Tail  string `json:"tail,omitempty"`
-	Ended bool   `json:"ended"`
+	Turn string `json:"turn,omitempty"`
+	Tail string `json:"tail,omitempty"`
+	// Open is set on an attempt in flight whose turn's own lane is streaming an entry, as the entry stood when the
+	// read was written: the id and delta count its next entry_delta follows, and the end of its text from the newest
+	// finished line that prints, all the dock line reads of it.
+	Open  *OpenEntry `json:"open,omitempty"`
+	Ended bool       `json:"ended"`
 }
 
 // RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step. Empty Text is a 400.

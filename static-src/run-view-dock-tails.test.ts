@@ -62,16 +62,15 @@ import { showOnlyView } from "./view-swap.js";
 
 const WF = "wf_tails";
 const A = `${WF}:a`;
-const B = `${WF}:b`;
 
-function runRead(): unknown {
+function runRead(wf = WF): unknown {
   return {
-    workflowId: WF,
+    workflowId: wf,
     state: {
-      workflowId: WF,
+      workflowId: wf,
       status: "running",
       root: {
-        nodeId: WF,
+        nodeId: wf,
         type: "sequence",
         status: "running",
         children: [
@@ -81,8 +80,18 @@ function runRead(): unknown {
       },
     },
     step_starts: {
-      [A]: { started_at: "2026-11-10T10:00:00Z", ended: false, turn: "t-a", tail: "a was here" },
-      [B]: { started_at: "2026-11-10T10:01:00Z", ended: false, turn: "t-b", tail: "b says" },
+      [`${wf}:a`]: {
+        started_at: "2026-11-10T10:00:00Z",
+        ended: false,
+        turn: "t-a",
+        tail: "a was here",
+      },
+      [`${wf}:b`]: {
+        started_at: "2026-11-10T10:01:00Z",
+        ended: false,
+        turn: "t-b",
+        tail: "b says",
+      },
     },
   };
 }
@@ -172,6 +181,83 @@ describe("an in-flight step the pane does not show", () => {
     expect(
       [...runView.querySelectorAll<HTMLElement>(".ev-d-body")].map((h) => h.dataset["path"]),
     ).not.toContain(A);
+  });
+});
+
+// Each case reads a run of its own: a shown run's tail cells outlive `forgetRun`.
+function readWithOpenEntry(wf: string): unknown {
+  const read = runRead(wf) as { step_starts: Record<string, Record<string, unknown>> };
+  const row = read.step_starts[`${wf}:a`];
+  if (row !== undefined) {
+    row["open"] = {
+      turn: "t-a",
+      id: "t-a-9",
+      lane: "",
+      kind: "text",
+      text: "## Plan\n- first point\nsecond",
+      n: 3,
+    };
+  }
+  return read;
+}
+
+function delta(wf: string, n: number, text: string): void {
+  dispatch({
+    type: "entry_delta",
+    chat_id: "",
+    payload: { workflow_id: wf, turn: "t-a", entry_id: "t-a-9", lane: "", n, delta: text },
+  } as never);
+}
+
+describe("an in-flight step whose entry opened before the run read", () => {
+  it("follows that entry from the read's row through its deltas and its seal", async () => {
+    const wf = "wf_tails_mid";
+    vi.mocked(apiGetOrError).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: readWithOpenEntry(wf),
+      error: "",
+    });
+    showOnlyView(runView);
+    showRun(wf);
+    refreshRun(wf);
+    await flush();
+    expect(dockTail("a")).toBe("second");
+
+    delta(wf, 4, " half\nthird");
+    delta(wf, 5, " line");
+    await flush();
+    expect(dockTail("a")).toBe("third line");
+
+    dispatch({
+      type: "entry_sealed",
+      chat_id: "",
+      payload: { workflow_id: wf, turn: "t-a", entry_id: "t-a-9", lane: "", seq: 7, ts: 7, n: 5 },
+    } as never);
+    await flush();
+    expect(dockTail("a")).toBe("third line");
+  });
+
+  it("applies the deltas that arrived while the read was out", async () => {
+    const wf = "wf_tails_early";
+    let land: (v: unknown) => void = () => undefined;
+    const out = new Promise((resolve) => {
+      land = resolve;
+    });
+    vi.mocked(apiGetOrError).mockReturnValue(out as never);
+    showOnlyView(runView);
+    showRun(wf);
+    refreshRun(wf);
+    await flush();
+    delta(wf, 3, "held by the read already");
+    delta(wf, 4, " half\nthird");
+    land({ ok: true, status: 200, data: readWithOpenEntry(wf), error: "" });
+    await flush();
+    expect(dockTail("a")).toBe("third");
+
+    delta(wf, 5, " line");
+    await flush();
+    expect(dockTail("a")).toBe("third line");
   });
 });
 

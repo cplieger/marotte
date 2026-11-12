@@ -104,10 +104,22 @@ interface TailCell {
   live: boolean;
 }
 
+/** Root-lane deltas of an entry a turn's cell has not seen open, by `n`, until a read's row opens it. */
+interface EarlyDeltas {
+  readonly id: string;
+  readonly deltas: Map<number, string>;
+}
+
+/** Bounds what a turn no read names, or an entry no read opens, can hold. */
+const EARLY_DELTAS = 256;
+const EARLY_TURNS = 8;
+
 interface RunTails {
   /** Each step turn a read or a `turn_opened` named, by turn id, to its node path. */
   readonly paths: Map<string, string>;
   readonly cells: Map<string, TailCell>;
+  /** By turn id: a read written mid-entry lands after the deltas sent after it. */
+  readonly early: Map<string, EarlyDeltas>;
 }
 
 const tails = new Map<string, RunTails>();
@@ -115,7 +127,7 @@ const tails = new Map<string, RunTails>();
 function runTails(workflowID: string): RunTails {
   let t = tails.get(workflowID);
   if (t === undefined) {
-    t = { paths: new Map(), cells: new Map() };
+    t = { paths: new Map(), cells: new Map(), early: new Map() };
     tails.set(workflowID, t);
   }
   return t;
@@ -150,7 +162,8 @@ export function noteStepTurn(workflowID: string, turnID: string, path: string): 
 }
 
 /** Seed each in-flight step's cell from a run read's rows, unless a frame has moved it since the
- *  run entered scope. */
+ *  run entered scope. A row's streaming entry opens a cell that holds none, and the deltas that
+ *  arrived before the read landed follow it. */
 export function seedStepTails(
   workflowID: string,
   starts: Iterable<readonly [string, RunStepStart]>,
@@ -162,8 +175,19 @@ export function seedStepTails(
     const t = runTails(workflowID);
     t.paths.set(row.turn, path);
     const c = cellAt(t, path);
+    const open = row.open?.turn === row.turn && (row.open.lane ?? "") === "" ? row.open : undefined;
     if (!c.live) {
-      c.line.value = row.tail ?? "";
+      c.line.value = (open === undefined ? "" : lastLine(open.text)) || (row.tail ?? "");
+    }
+    if (open !== undefined && (!c.live || c.open === undefined)) {
+      c.open = { id: open.id, n: open.n, text: open.text };
+      const early = t.early.get(row.turn);
+      if (early?.id === open.id) {
+        t.early.delete(row.turn);
+        for (let n = open.n + 1; early.deltas.has(n); n++) {
+          applyDelta(c, n, early.deltas.get(n) ?? "");
+        }
+      }
     }
   }
 }
@@ -176,11 +200,13 @@ export function tailOpened(workflowID: string, open: OpenEntry): void {
   }
   c.open = { id: open.id, n: open.n, text: open.text };
   c.live = true;
+  tails.get(workflowID)?.early.delete(open.turn);
   moveLine(c, open.text, 0);
 }
 
-/** A delta on such a turn's root-lane entry. One that does not follow the held entry is dropped:
- *  the line catches up at the next entry or read. */
+/** A delta on a root-lane entry of such a turn, or of a turn no read has named yet. One for an
+ *  entry the cell does not hold waits for a read's row to open it; one that does not follow the
+ *  held entry is dropped, and the line catches up at the next entry or read. */
 export function tailDelta(
   workflowID: string,
   turnID: string,
@@ -189,21 +215,55 @@ export function tailDelta(
   n: number,
   delta: string,
 ): void {
-  const c = cellOf(workflowID, turnID);
-  if (c === undefined || lane !== "" || c.open?.id !== entryID || n !== c.open.n + 1) {
+  if (lane !== "") {
     return;
   }
-  const from = c.open.text.length;
-  c.open = { id: entryID, n, text: c.open.text + delta };
+  const c = cellOf(workflowID, turnID);
+  if (c?.open?.id === entryID) {
+    if (n === c.open.n + 1) {
+      applyDelta(c, n, delta);
+    }
+    return;
+  }
+  holdEarly(runTails(workflowID), turnID, entryID, n, delta);
+}
+
+function holdEarly(t: RunTails, turnID: string, entryID: string, n: number, delta: string): void {
+  let early = t.early.get(turnID);
+  if (early?.id !== entryID) {
+    t.early.delete(turnID);
+    early = { id: entryID, deltas: new Map() };
+    t.early.set(turnID, early);
+    for (const old of t.early.keys()) {
+      if (t.early.size <= EARLY_TURNS) {
+        break;
+      }
+      t.early.delete(old);
+    }
+  }
+  if (early.deltas.size < EARLY_DELTAS) {
+    early.deltas.set(n, delta);
+  }
+}
+
+function applyDelta(c: TailCell, n: number, delta: string): void {
+  const open = c.open;
+  if (open === undefined) {
+    return;
+  }
+  const from = open.text.length;
+  c.open = { id: open.id, n, text: open.text + delta };
   c.live = true;
   moveLine(c, c.open.text, from);
 }
 
-/** Such a turn's root-lane entry sealed: the line it printed stands. */
+/** Such a turn's root-lane entry sealed: the line it printed stands, over a read written before
+ *  the seal. */
 export function tailSealed(workflowID: string, turnID: string, entryID: string): void {
   const c = cellOf(workflowID, turnID);
   if (c?.open?.id === entryID) {
     c.open = undefined;
+    c.live = true;
   }
 }
 
@@ -235,7 +295,9 @@ export function stepTail(workflowID: string, path: string): string {
 
 /** The run left this page's scope: its frames stop arriving, so the next read seeds its cells. */
 export function leaveStepTails(workflowID: string): void {
-  for (const c of tails.get(workflowID)?.cells.values() ?? []) {
+  const t = tails.get(workflowID);
+  t?.early.clear();
+  for (const c of t?.cells.values() ?? []) {
     c.open = undefined;
     c.live = false;
   }

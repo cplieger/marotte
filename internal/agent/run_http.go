@@ -50,6 +50,7 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 		writeInspectErr(w, id, err)
 		return
 	}
+	extras.starts = rr.runs.withLiveRows(id, extras.starts)
 	out, err := withRunExtras(raw, extras)
 	if err != nil {
 		slog.Warn("workflow inspect: the reply could not carry the run's open asks, step ends, step starts, plan update and controls",

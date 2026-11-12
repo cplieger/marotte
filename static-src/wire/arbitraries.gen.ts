@@ -2408,6 +2408,7 @@ const arbModel = fc.letrec<{
       started_at: fc.string(),
       turn: fc.string(),
       tail: fc.string(),
+      open: tie("OpenEntry"),
       ended: fc.boolean(),
     },
     { requiredKeys: ["started_at", "ended"] },

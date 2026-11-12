@@ -20,8 +20,8 @@ var tailStructureOnly = regexp.MustCompile("^(?:(?:`{3,}|~{3,})[^`]*|\\|?(?:\\s*
 var tailBlockMarkers = regexp.MustCompile(`^(?:#{1,6}\s+|>\s?|[-*+]\s+|\d{1,9}[.)]\s+)+`)
 
 // printedLine is the line a step's dock row shows for one sealed entry of its own lane, "" when the entry prints
-// nothing there. The client's twin, for the streaming entry the server never holds, is run-step-tail.ts
-// lastPrintedLine: both must cut a line the same way.
+// nothing there. The client's twin, which also reads a streaming entry, is run-step-tail.ts lastPrintedLine: both
+// must cut a line the same way.
 func printedLine(e *marotte.Entry) string {
 	if e.Lane != "" {
 		return ""
@@ -48,6 +48,20 @@ func printedLine(e *marotte.Entry) string {
 	default:
 		return ""
 	}
+}
+
+// dockText is the end of a streaming text that lastProseLine reads the same as the whole, whatever is appended to it:
+// its unfinished last line and every line back to the newest finished line that prints.
+func dockText(text string) string {
+	end := strings.LastIndexByte(text, '\n')
+	for end > 0 {
+		start := strings.LastIndexByte(text[:end], '\n') + 1
+		if lastProseLine(text[start:end]) != "" {
+			return text[start:]
+		}
+		end = start - 1
+	}
+	return text
 }
 
 // lastProseLine is the last line of text that reads as prose, its markdown block markers dropped and cut to

@@ -7,6 +7,7 @@ import (
 	"maps"
 
 	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -34,7 +35,7 @@ func (rs *Runs) glanceRead(ctx context.Context, id string) (json.RawMessage, err
 			"workflow_id", logsafe.Field(id), "error", err)
 		return withRunExtras(raw, x)
 	}
-	x.ends, x.starts = keptRows(x.ends, paths), keptRows(x.starts, paths)
+	x.ends, x.starts = keptRows(x.ends, paths), rs.withLiveRows(id, keptRows(x.starts, paths))
 	out, err := withRunExtras(doc, x)
 	if err != nil {
 		slog.Warn("workflow inspect: the run's glance could not carry its extras",
@@ -85,6 +86,20 @@ func (rs *Runs) glanceOf(id string, raw json.RawMessage, x *runExtras) (doc json
 		c.revision.mu.Unlock()
 	}
 	return doc, paths, nil
+}
+
+// withLiveRows is starts with runLog.liveRows over it, never writing starts, which a revision may hold.
+func (rs *Runs) withLiveRows(id string, starts map[string]marotte.RunStepStart) map[string]marotte.RunStepStart {
+	if rs.log == nil {
+		return starts
+	}
+	live := rs.log.liveRows(id, starts)
+	if len(live) == 0 {
+		return starts
+	}
+	out := maps.Clone(starts)
+	maps.Copy(out, live)
+	return out
 }
 
 // keptRows is rows for the paths a glance keeps.
