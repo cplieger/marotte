@@ -86,6 +86,12 @@ A message another service sends through the [notify route](configuration.md#waki
 
 Reported as [kirodotdev/Kiro#12325](https://github.com/kirodotdev/Kiro/issues/12325), open. kiro-cli offers no way to name a message's sender. The chat shows "Sent by" and the caller's `source` on the message, but the agent does not read the `source`. Until kiro-cli supports a sender label, start the message's text by naming the service that sent it.
 
+### A saved prompt shows as the command you typed
+
+When you send a saved prompt, such as `/chat-extract`, your message in the chat shows the command you typed, not the prompt's text that the agent received. A reload shows the same.
+
+Reported as [kirodotdev/Kiro#12398](https://github.com/kirodotdev/Kiro/issues/12398), open. kiro-cli sends the prompt's text to the model but reports only the typed command to marotte, live and on reload. marotte has no workaround, because it shows what kiro-cli reports rather than reading the prompt file itself. To see what the agent received, open the prompt on the `/docs` page.
+
 ## Skills
 
 ### A skill with a long description or an underscore in its name never loads

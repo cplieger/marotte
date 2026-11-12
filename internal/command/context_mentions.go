@@ -57,7 +57,7 @@ var (
 
 // mentionRe is the token grammar, identical to TOKEN_RE in
 // static-src/context-mentions.ts: a query holds no `]` and no line break, so the
-// client's mid-turn hold and this resolver agree on what is a token, and a
+// client's steer refusal and this resolver agree on what is a token, and a
 // failure reason naming the token stays one line.
 var mentionRe = regexp.MustCompile(`#\[\[([a-z]+):([^\]\r\n]*)\]\]`)
 

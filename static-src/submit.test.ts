@@ -374,9 +374,21 @@ describe("prompt-only text", () => {
     expect(await submitPrompt("c1", "@review")).toBe("held");
     expect(mockChatNotice).toHaveBeenCalledWith(
       "c1",
-      "That command runs as a new turn. Send it when the agent is idle.",
+      "A steer cannot run that command. Send it when the turn ends, or turn on Queue messages in Chat options.",
     );
     expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "@review");
+  });
+
+  it("says a steer cannot carry a context reference when the server refuses it 409 prompt_only", async () => {
+    resetStore("c1");
+    mockSendPromptTo.mockResolvedValue("prompt_only");
+
+    expect(await submitPrompt("c1", "see #[[file:a.ts]]")).toBe("held");
+    expect(mockSendPromptTo.mock.calls[0]?.[2]).toMatchObject({ promptOnly: true });
+    expect(mockChatNotice).toHaveBeenCalledWith(
+      "c1",
+      "A steer cannot carry context references. Send it when the turn ends, or turn on Queue messages in Chat options.",
+    );
   });
 });
 

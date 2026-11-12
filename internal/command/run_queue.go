@@ -60,8 +60,8 @@ var (
 	ErrSubmitNoTurn = errors.New("nothing is running to queue behind, so send this as a prompt instead")
 	// ErrSubmitTooBig refuses a row past the draft cap behind a running turn.
 	ErrSubmitTooBig = errors.New("a message queued behind a running turn is capped at the draft size")
-	// ErrSubmitPromptOnly refuses prompt-only text that would be steered or wait behind a running turn.
-	ErrSubmitPromptOnly = errors.New("this message only works as a prompt; send it once the turn ends")
+	// ErrSubmitPromptOnly refuses prompt-only text that would be steered.
+	ErrSubmitPromptOnly = errors.New("a steer cannot carry this message; send it once the turn ends, or queue it")
 	// errSubmitFull refuses a row past the queue's row count or encoded size.
 	errSubmitFull = errors.New("this chat already holds the most follow-ups it can queue; wait for one to send, then try again")
 	// ErrSubmitStarting refuses a submission whose life a held close kept from starting within AdmissionWait.

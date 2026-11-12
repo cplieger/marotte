@@ -183,13 +183,13 @@ interface LabelledSend {
 
 /** Why `text` can only be sent as a prompt, or null. A saved prompt, a steering command and a
  *  context reference are resolved only by a new turn, so the POST says so (`prompt_only`) and the
- *  server refuses to steer it or hold it behind a running turn. */
+ *  server refuses to steer it; a queued row is its own turn, so it may queue. */
 function promptOnlyReason(text: string): string | null {
   if (invokesCatalogCommand(text)) {
-    return "That command runs as a new turn. Send it when the agent is idle.";
+    return "A steer cannot run that command. Send it when the turn ends, or turn on Queue messages in Chat options.";
   }
   if (carriesContextMention(text)) {
-    return "Context references are added to a new turn. Send it when the agent is idle.";
+    return "A steer cannot carry context references. Send it when the turn ends, or turn on Queue messages in Chat options.";
   }
   return null;
 }
@@ -211,7 +211,7 @@ async function post(send: Send): Promise<SubmitResult> {
       settled(send);
       return result;
     case "prompt_only":
-      // The chat is busy and the text needs a turn of its own: it stays in the composer.
+      // The send would steer and the text needs a turn of its own: it stays in the composer.
       chatNotice(chatID, reason ?? PROMPT_ONLY_NOTICE);
       recordFailure(send);
       return "held";
@@ -242,7 +242,8 @@ async function post(send: Send): Promise<SubmitResult> {
 }
 
 /** The notice for a `prompt_only` refusal of text this page did not class as prompt-only. */
-const PROMPT_ONLY_NOTICE = "That message runs as a new turn. Send it when the agent is idle.";
+const PROMPT_ONLY_NOTICE =
+  "A steer cannot carry that message. Send it when the turn ends, or turn on Queue messages in Chat options.";
 
 /** What rides a prompt or a queued row beside its text: a typed send's attachments, a labelled
  *  send's label. */
