@@ -1039,7 +1039,7 @@ describe("MRU activation history", () => {
       .subjects()
       .map((s) => ({ ...s }))
       .concat([{ id: doomedTab, kind: "chat", ref: "x", parent: "", pinned: false, owns: true }]);
-    tabServer.queueList({ tabs: held, version: tabServer.version() + 1 });
+    tabServer.queueList({ tabs: held, recent: [], version: tabServer.version() + 1 });
     await listTabs();
     expect(hasTab("chat", "x")).toBe(true);
 
@@ -1153,6 +1153,7 @@ describe("a resync that drops the active tab", () => {
   async function resyncWithout(...gone: readonly string[]): Promise<void> {
     tabServer.queueList({
       tabs: tabServer.subjects().filter((s) => !gone.includes(s.id)),
+      recent: [],
       version: tabServer.version() + 1,
     });
     await listTabs();
@@ -3271,7 +3272,7 @@ describe("optimistic close: timeout, verifying, and authoritative settlement", (
       .subjects()
       .map((s) => ({ ...s }))
       .concat([{ id: doomedTab, kind: "chat", ref: "a", parent: "", pinned: false, owns: true }]);
-    tabServer.queueList({ tabs: held, version: tabServer.version() + 1 });
+    tabServer.queueList({ tabs: held, recent: [], version: tabServer.version() + 1 });
     await listTabs();
 
     expect(hasTab("chat", "a")).toBe(true);
@@ -3294,7 +3295,7 @@ describe("optimistic close: timeout, verifying, and authoritative settlement", (
         .subjects()
         .map((s) => ({ ...s }))
         .concat([{ id: doomedTab, kind: "chat", ref: "a", parent: "", pinned: false, owns: true }]);
-      tabServer.queueList({ tabs: held, version: tabServer.version() + 1 });
+      tabServer.queueList({ tabs: held, recent: [], version: tabServer.version() + 1 });
       const listsBefore = tabServer.listCalls();
 
       await vi.advanceTimersByTimeAsync(5_000 + 1_000);
@@ -3657,6 +3658,7 @@ describe("a drop is shown before the server confirms it", () => {
     await threeChatsHeld();
     const before = {
       tabs: tabServer.subjects().map((s) => ({ ...s })),
+      recent: [],
       version: tabServer.version(),
     };
     commitDrop?.([chatID("c"), chatID("a"), chatID("b")]);

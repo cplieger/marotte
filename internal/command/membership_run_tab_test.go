@@ -353,7 +353,7 @@ func closedSuppliedParent(t *testing.T, mem *Membership, st *tabs.Store, store *
 	if err != nil {
 		t.Fatalf("open the launching chat's tab: %v", err)
 	}
-	if _, _, _, err := st.Close(t.Context(), seen.Subject.ID); err != nil {
+	if _, _, _, err := st.Close(t.Context(), seen.Subject.ID, nil, nil); err != nil {
 		t.Fatalf("close it elsewhere: %v", err)
 	}
 	return seen.Subject.ID

@@ -38,7 +38,7 @@ type flakyTabs struct {
 
 var errCloseFailed = errors.New("simulated tabs.json write failure")
 
-func (f *flakyTabs) Close(ctx context.Context, id string) ([]marotte.TabSubject, []tabs.OwedRelease, uint64, error) {
+func (f *flakyTabs) Close(ctx context.Context, id string, unlisted []string, facts map[string]tabs.RecentFacts) ([]marotte.TabSubject, []tabs.OwedRelease, uint64, error) {
 	f.mu.Lock()
 	hook, fail := f.beforeClose, f.failCloses > 0
 	if fail {
@@ -51,7 +51,7 @@ func (f *flakyTabs) Close(ctx context.Context, id string) ([]marotte.TabSubject,
 	if fail {
 		return nil, nil, 0, errCloseFailed
 	}
-	return f.Store.Close(ctx, id)
+	return f.Store.Close(ctx, id, unlisted, facts)
 }
 
 func newFlakyMembership(t *testing.T, chats chatStore) (*Membership, *flakyTabs, *tabBus) {

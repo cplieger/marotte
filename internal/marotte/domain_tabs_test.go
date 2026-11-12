@@ -132,6 +132,114 @@ func TestTabSubject_ZeroValueEncodesEveryField(t *testing.T) {
 	}
 }
 
+// TestRecentClose_WireKeys pins the Recently closed row's keys: the client draws the name and
+// sorts by closed_at, and a pinned entry is the one a reopen returns to the Pinned section.
+func TestRecentClose_WireKeys(t *testing.T) {
+	cases := []struct {
+		desc  string
+		entry marotte.RecentClose
+		want  string
+	}{
+		{
+			desc:  "a pinned chat with its name",
+			entry: marotte.RecentClose{Ref: "c-1", Name: "Alpha", ClosedAt: 1700000000000, Pinned: true},
+			want:  `{"ref":"c-1","name":"Alpha","closed_at":1700000000000,"pinned":true}`,
+		},
+		{
+			desc:  "an unpinned chat whose record could not be read",
+			entry: marotte.RecentClose{Ref: "c-2", ClosedAt: 1},
+			want:  `{"ref":"c-2","name":"","closed_at":1}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(strings.ReplaceAll(tc.desc, " ", "-"), func(t *testing.T) {
+			data, err := json.Marshal(tc.entry)
+			if err != nil {
+				t.Fatalf("Marshal(%+v): %v", tc.entry, err)
+			}
+			if got := string(data); got != tc.want {
+				t.Errorf("Marshal(%s) = %s, want %s", tc.desc, got, tc.want)
+			}
+		})
+	}
+}
+
+// wireKeys marshals v and returns its top-level keys with their raw values, so a test reads a key
+// by name whatever order the struct declares its fields in.
+func wireKeys(t *testing.T, v any) map[string]string {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("Marshal(%+v): %v", v, err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("Unmarshal(%s): %v", data, err)
+	}
+	out := make(map[string]string, len(raw))
+	for k, val := range raw {
+		out[k] = string(val)
+	}
+	return out
+}
+
+// TestTabsChangedPayload_RecentIsAbsentWhenUnchangedAndAnObjectWhenEmptied pins the frame's
+// three states: no key means the list did not change, which is a different fact from a list
+// that emptied, so an emptied list is sent as {"items":[]} and never as null or an omission.
+func TestTabsChangedPayload_RecentIsAbsentWhenUnchangedAndAnObjectWhenEmptied(t *testing.T) {
+	cases := []struct {
+		desc       string
+		payload    marotte.TabsChangedPayload
+		wantRecent string // "" means the key is absent
+	}{
+		{
+			desc:    "a reorder, which leaves the list alone",
+			payload: marotte.TabsChangedPayload{Order: []string{"t1"}, Version: 3},
+		},
+		{
+			desc:       "a reopen that emptied the list",
+			payload:    marotte.TabsChangedPayload{Recent: &marotte.RecentList{Items: []marotte.RecentClose{}}, Version: 4},
+			wantRecent: `{"items":[]}`,
+		},
+		{
+			desc: "a close that listed a chat",
+			payload: marotte.TabsChangedPayload{
+				RemovedIDs: []string{"t1"},
+				Recent:     &marotte.RecentList{Items: []marotte.RecentClose{{Ref: "c-1", Name: "Alpha", ClosedAt: 5}}},
+				Version:    5,
+			},
+			wantRecent: `{"items":[{"ref":"c-1","name":"Alpha","closed_at":5}]}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(strings.ReplaceAll(tc.desc, " ", "-"), func(t *testing.T) {
+			got, present := wireKeys(t, tc.payload)["recent"]
+			if tc.wantRecent == "" {
+				if present {
+					t.Errorf("%s: recent = %s, want the key absent", tc.desc, got)
+				}
+				return
+			}
+			if got != tc.wantRecent {
+				t.Errorf("%s: recent = %q, want %s", tc.desc, got, tc.wantRecent)
+			}
+		})
+	}
+}
+
+// TestTabList_RecentIsNeverOmitted pins the GET /api/tabs key: the generated decoder expects an
+// array, so an empty list is [] on the wire.
+func TestTabList_RecentIsNeverOmitted(t *testing.T) {
+	keys := wireKeys(t, marotte.TabList{Tabs: []marotte.TabSubject{}, Recent: []marotte.RecentClose{}})
+	if got, ok := keys["recent"]; !ok || got != "[]" {
+		t.Errorf("recent = %q (present %v), want []", got, ok)
+	}
+	full := wireKeys(t, marotte.TabList{Recent: []marotte.RecentClose{{Ref: "c-1", Name: "Alpha", ClosedAt: 9, Pinned: true}}})
+	if want := `[{"ref":"c-1","name":"Alpha","closed_at":9,"pinned":true}]`; full["recent"] != want {
+		t.Errorf("recent = %s, want %s", full["recent"], want)
+	}
+}
+
 // TestOpenTab_WireKeys covers the command payload's half. Here the optional fields
 // ARE omitted, because the spec is what a client ASKS for: a chat open naming a
 // parent it does not have would otherwise send parent:"" and read as a deliberate

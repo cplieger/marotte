@@ -201,9 +201,15 @@ func (*fixedTabs) Open(context.Context, marotte.OpenTab) (marotte.TabSubject, bo
 	return marotte.TabSubject{}, false, 0, errors.New("not staged")
 }
 
-func (f *fixedTabs) Close(context.Context, string) ([]marotte.TabSubject, []tabs.OwedRelease, uint64, error) {
+func (f *fixedTabs) Close(context.Context, string, []string, map[string]tabs.RecentFacts) ([]marotte.TabSubject, []tabs.OwedRelease, uint64, error) {
 	return f.closed, nil, 3, nil
 }
+
+func (*fixedTabs) Forget(context.Context, string) (uint64, error) { return 2, nil }
+
+func (*fixedTabs) ExpireRecent(context.Context, time.Time) (uint64, error) { return 2, nil }
+
+func (*fixedTabs) Recent() []marotte.RecentClose { return nil }
 
 func (*fixedTabs) Owed() []tabs.OwedRelease { return nil }
 
@@ -412,8 +418,8 @@ type cancelOnCommitTabs struct {
 	cancel context.CancelFunc
 }
 
-func (c *cancelOnCommitTabs) Close(ctx context.Context, id string) ([]marotte.TabSubject, []tabs.OwedRelease, uint64, error) {
-	closed, owed, v, err := c.Store.Close(ctx, id)
+func (c *cancelOnCommitTabs) Close(ctx context.Context, id string, unlisted []string, facts map[string]tabs.RecentFacts) ([]marotte.TabSubject, []tabs.OwedRelease, uint64, error) {
+	closed, owed, v, err := c.Store.Close(ctx, id, unlisted, facts)
 	c.cancel()
 	return closed, owed, v, err
 }

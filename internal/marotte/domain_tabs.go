@@ -134,13 +134,32 @@ type RunLaunch struct {
 	Chats []string `json:"chats,omitempty"`
 }
 
-// TabList is the answer to GET /api/tabs: the open set in order plus the version it reflects,
-// captured together by tabs.Store.list so a stale set cannot pair with a fresh version. Tabs is
-// never omitted: an empty arrangement is a real state.
+// RecentClose is one chat whose last tab closed in the last tabs.RecentWindow, a row of the
+// sidebar's Recently closed list. Field order is fieldalignment's.
+type RecentClose struct {
+	Ref string `json:"ref"`
+	// Name is the chat's name at the close, "" when its record could not be read: the client
+	// holds no header for a chat it just closed, so the row draws this.
+	Name     string `json:"name"`
+	ClosedAt int64  `json:"closed_at"`
+	// Pinned is the closed tab's flag; a top-level reopen restores it.
+	Pinned bool `json:"pinned,omitempty"`
+}
+
+// RecentList is the whole Recently closed list, newest first. A frame carries it as an object so
+// an emptied list ({"items":[]}) differs from an unchanged one (the key absent).
+type RecentList struct {
+	Items []RecentClose `json:"items"`
+}
+
+// TabList is the answer to GET /api/tabs: the open set in order, the Recently closed list and
+// the version both reflect, captured together by tabs.Store.Snapshot so a stale set cannot pair
+// with a fresh version. Tabs and Recent are never omitted: an empty list is a real state.
 type TabList struct {
 	// Subject is the `tabs` digest stamp with the hub epoch: the same Version
 	// as below, spelled the way the client's version map reads it.
 	Subject *SubjectStamp `json:"subject,omitempty"`
 	Tabs    []TabSubject  `json:"tabs"`
+	Recent  []RecentClose `json:"recent"`
 	Version uint64        `json:"version"`
 }

@@ -831,6 +831,9 @@ type TabsChangedPayload struct {
 	// reorder. A pointer because "no tab changed" and "a zero-valued tab changed" are
 	// different facts the client branches on.
 	Changed *TabSubject `json:"changed,omitempty"`
+	// Recent is the whole Recently closed list when this mutation changed it; absent means
+	// unchanged, which is a different fact from an emptied list.
+	Recent *RecentList `json:"recent,omitempty"`
 	// OpID is the client-minted correlation id echoed back so a caller can match the frame
 	// to its own dispatch; empty for a mutation no client asked for. Distinct from
 	// Idempotency-Key: this has no TTL, no cache and no 409 branch.

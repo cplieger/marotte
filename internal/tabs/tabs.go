@@ -27,6 +27,7 @@ import (
 	"slices"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/asidefile"
@@ -85,12 +86,13 @@ var (
 	ErrCycle = errors.New("a tab cannot be its own ancestor")
 )
 
-// file is the on-disk document: the tabs and the version they carry. No format version: an
-// unreadable document already warns and starts empty.
+// file is the on-disk document: the tabs, the Recently closed list and the version they carry. No
+// format version: an unreadable document already warns and starts empty.
 type file struct {
-	Tabs    []marotte.TabSubject `json:"tabs"`
-	Owed    []OwedRelease        `json:"owed,omitempty"`
-	Version uint64               `json:"version"`
+	Tabs    []marotte.TabSubject  `json:"tabs"`
+	Owed    []OwedRelease         `json:"owed,omitempty"`
+	Recent  []marotte.RecentClose `json:"recent,omitempty"`
+	Version uint64                `json:"version"`
 }
 
 // Store is the open-tab set, safe for concurrent use. The ZERO VALUE IS NOT USABLE; construct
@@ -98,14 +100,17 @@ type file struct {
 // The caller must hand version N's event to its hub before starting the mutation that makes
 // N+1 (the membership coordinator's lock does); a slip costs a client re-list, not a tab.
 type Store struct {
-	// path, unread and refuseWrites are immutable after construction, so they are read without a lock.
-	path    string
+	// path, now, unread and refuseWrites are immutable after construction, so they are read without a lock.
+	path string
+	// now is time.Now outside tests, which set it before the first mutation.
+	now     func() time.Time
 	unread  string
-	tabs    []marotte.TabSubject // guarded by stateMu
-	owed    []OwedRelease        // guarded by stateMu
-	version uint64               // guarded by stateMu
-	stateMu sync.Mutex           // guards tabs and version; held briefly, NEVER across I/O
-	writeMu sync.Mutex           // serialises mutate-and-persist; the I/O lock
+	tabs    []marotte.TabSubject  // guarded by stateMu
+	owed    []OwedRelease         // guarded by stateMu
+	recent  []marotte.RecentClose // guarded by stateMu
+	version uint64                // guarded by stateMu
+	stateMu sync.Mutex            // guards tabs, owed, recent and version; held briefly, NEVER across I/O
+	writeMu sync.Mutex            // serialises mutate-and-persist; the I/O lock
 	// refuseWrites makes persist fail with errWriteRefused (see keepAside and findAside).
 	refuseWrites bool
 }
@@ -114,7 +119,7 @@ type Store struct {
 // diagnostic (warn and continue, invariant 6). An arrangement it cannot read is moved aside and the
 // store starts empty with Unread set; see Unread for when writes are then refused.
 func NewStore(dir string) (*Store, error) {
-	s := &Store{path: filepath.Join(dir, fileName)}
+	s := &Store{path: filepath.Join(dir, fileName), now: time.Now}
 	if err := s.load(); err != nil {
 		err = s.keepAside(err)
 		return s, err
@@ -143,6 +148,7 @@ func (s *Store) load() error {
 	}
 	s.tabs = sanitize(doc.Tabs)
 	s.owed = sanitizeOwed(doc.Owed)
+	s.recent = sanitizeRecent(doc.Recent, s.tabs, s.now().UnixMilli())
 	// The version is adopted as read even when sanitize dropped an entry: no event is emitted at
 	// load, and the list endpoint returns the sanitized set with its version.
 	s.version = doc.Version
@@ -234,7 +240,7 @@ func (s *Store) persist(ctx context.Context, st *state) error {
 	if s.refuseWrites {
 		return fmt.Errorf("%w: %s", errWriteRefused, s.unread)
 	}
-	data, err := json.MarshalIndent(file{Tabs: st.tabs, Owed: st.owed, Version: st.version}, "", "  ")
+	data, err := json.MarshalIndent(file{Tabs: st.tabs, Owed: st.owed, Recent: st.recent, Version: st.version}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode tabs: %w", err)
 	}
