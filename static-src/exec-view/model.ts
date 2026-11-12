@@ -409,13 +409,6 @@ function progressOf(run: ProgressSource, withSteps: boolean): ProgressPhrase {
 /** The repeat glyph's text stand-in, for a surface that compares or prints the phrase as text. */
 const REPEAT_MARK = "\u21bb";
 
-/** The phrase as one compact string, "↻15/50 › 2/4 · 1/4"; "" for a plan with no work. */
-export function compactText(p: ProgressPhrase): string {
-  const loop =
-    p.pass === "" ? "" : `${REPEAT_MARK}${p.pass}${p.inner === "" ? "" : ` \u203a ${p.inner}`}`;
-  return [loop, p.steps].filter((s) => s !== "").join(" \u00b7 ");
-}
-
 /** Where the run stands, as every run surface words it, in parts: the outermost loop's pass and an
  *  inner loop past its first pass when the whole run stands in them, then the step count
  *  (`counters` decides between the in-flight position and how many are done). */

@@ -104,6 +104,17 @@ func TestHandleRun_SinceAnswersTheChangedStepAndItsContainers(t *testing.T) {
 	if !slices.Equal(paths, want) {
 		t.Errorf("records = %v, want the step and its two containers %v", paths, want)
 	}
+	for _, n := range got.Nodes {
+		if n.Path != workflow.PathKey([]string{"root", "lane-a", "build"}) {
+			continue
+		}
+		var node struct {
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal(n.Node, &node); err != nil || node.Status != "completed" {
+			t.Errorf("the step's record = %s (%v), want its new status completed", n.Node, err)
+		}
+	}
 }
 
 // A grade marotte records is part of the run read, so it moves the revision even when KAS's

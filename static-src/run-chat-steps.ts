@@ -44,7 +44,7 @@ export interface RunStepPaint {
 type StepHostFor = (nodePath: string) => HTMLElement;
 
 /** The pane's scroller as the window reads it (`scroll-controller.ts` `FollowScroller`). */
-export interface StepScroller {
+interface StepScroller {
   following(): boolean;
   setPageIn(older: (() => boolean) | null): void;
   keepsFrom(): number;

@@ -163,6 +163,9 @@ func TestHandleRun_AnInFlightStepsRowCarriesItsStreamingEntry(t *testing.T) {
 		if row.Open == nil {
 			t.Fatalf("?%s: the row carries no open entry: %+v", query, row)
 		}
+		if row.Turn != turn.ID() {
+			t.Errorf("?%s: turn = %q, want the attempt's newest turn %s", query, row.Turn, turn.ID())
+		}
 		if row.Open.Turn != turn.ID() || row.Open.Lane != "" || row.Open.N != 2 {
 			t.Errorf("?%s: open = %+v, want turn %s's root-lane entry after 2 deltas", query, row.Open, turn.ID())
 		}

@@ -305,6 +305,8 @@ func TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat(t *testing.T) {
 		"workflowId": "wf_manual", "workflowName": "nightly",
 	}))
 	awaitCalls(t, br, methodKiroWorkflowInspect, 2, "each run start asks for its run's name")
+	// The run_started frames also schedule their runs' cell reads.
+	h.lifecycle.inflight.Wait()
 	calls := len(br.callLog())
 
 	out := getLiveRuns(t, h.runRoutes)

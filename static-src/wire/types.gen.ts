@@ -3393,6 +3393,12 @@ export interface RunStepMessageResponse {
  * shows in flight past an ended attempt is on a new one.
  */
 export interface RunStepStart {
+  /**
+ * Open is set on an attempt in flight whose turn's own lane is streaming an entry, as the entry stood when the
+ * read was written: the id and delta count its next entry_delta follows, and the end of its text from the newest
+ * finished line that prints, all the dock line reads of it.
+ */
+  open?: OpenEntry;
   /** StartedAt is RFC 3339. */
   started_at: string;
   /**
@@ -3401,12 +3407,6 @@ export interface RunStepStart {
  */
   turn?: string;
   tail?: string;
-  /**
- * Open is set on an attempt in flight whose turn's own lane is streaming an entry, as the entry stood when the
- * read was written: the id and delta count its next entry_delta follows, and the end of its text from the newest
- * finished line that prints, all the dock line reads of it.
- */
-  open?: OpenEntry;
   ended: boolean;
 }
 

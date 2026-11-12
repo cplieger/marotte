@@ -53,11 +53,11 @@ func TestGlanceRead(t *testing.T) {
 						Children []struct {
 							NodeID        string                    `json:"nodeId"`
 							Children      []struct{ NodeID string } `json:"children"`
-							EarlierPasses *EarlierPasses            `json:"earlierPasses"`
+							EarlierPasses *earlierPasses            `json:"earlierPasses"`
 							Credits       json.RawMessage           `json:"credits"`
 						} `json:"children"`
 					} `json:"children"`
-					EarlierPasses *EarlierPasses `json:"earlierPasses"`
+					EarlierPasses *earlierPasses `json:"earlierPasses"`
 				} `json:"children"`
 			} `json:"root"`
 		} `json:"state"`
@@ -79,7 +79,7 @@ func TestGlanceRead(t *testing.T) {
 	if len(lane.Children) != 1 || lane.Children[0].NodeID != "lane#2" {
 		t.Fatalf("the lane's passes = %+v, want only lane#2", lane.Children)
 	}
-	want := EarlierPasses{
+	want := earlierPasses{
 		Count:   2,
 		Credits: 3.5,
 		From:    ms(t, "2026-01-01T09:30:00Z"),
@@ -95,7 +95,7 @@ func TestGlanceRead(t *testing.T) {
 	if len(inner[1].Children) != 1 || inner[1].Children[0].NodeID != "review#1" {
 		t.Errorf("the inner repeat kept %+v, want only review#1", inner[1].Children)
 	}
-	if p := inner[1].EarlierPasses; p == nil || *p != (EarlierPasses{Count: 1}) {
+	if p := inner[1].EarlierPasses; p == nil || *p != (earlierPasses{Count: 1}) {
 		t.Errorf("the inner repeat's earlierPasses = %+v, want one pass with no work", p)
 	}
 	if string(inner[0].Credits) != `[{"usage":4}]` {
@@ -131,7 +131,7 @@ func TestGlanceRead_AFoldedStepWithNoEndKeepsTheWindowOpen(t *testing.T) {
 	var doc struct {
 		State struct {
 			Root struct {
-				EarlierPasses EarlierPasses `json:"earlierPasses"`
+				EarlierPasses earlierPasses `json:"earlierPasses"`
 			} `json:"root"`
 		} `json:"state"`
 	}

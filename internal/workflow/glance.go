@@ -11,10 +11,10 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// EarlierPasses is what a glance keeps of a repeat's passes before its latest: how many, their
+// earlierPasses is what a glance keeps of a repeat's passes before its latest: how many, their
 // credits, and the window of their work nodes in Unix milliseconds (From 0 when none started).
 // Open is a started work node with no end.
-type EarlierPasses struct {
+type earlierPasses struct {
 	Count   int     `json:"count"`
 	Credits float64 `json:"credits,omitempty"`
 	From    int64   `json:"from,omitempty"`
@@ -115,7 +115,7 @@ func (g *glancer) node(n *indexNode, trail []string, parentType string) {
 }
 
 // fold is the children a glance keeps of n at path, and a repeat's fold of the passes it leaves out.
-func (g *glancer) fold(n *indexNode, path []string) (kept []*indexNode, earlier *EarlierPasses) {
+func (g *glancer) fold(n *indexNode, path []string) (kept []*indexNode, earlier *earlierPasses) {
 	if n.kind != nodeTypeRepeat || len(n.children) < 2 {
 		return n.children, nil
 	}
@@ -210,8 +210,8 @@ func (w *passWindow) addWork(f *foldedNode, key string) {
 	}
 }
 
-func (w *passWindow) summary(count int) *EarlierPasses {
-	return &EarlierPasses{Count: count, Credits: w.credits, From: w.from, To: w.to, Open: w.open}
+func (w *passWindow) summary(count int) *earlierPasses {
+	return &earlierPasses{Count: count, Credits: w.credits, From: w.from, To: w.to, Open: w.open}
 }
 
 // nodeInFlight is the run store's nodeInFlight: every status but a settled one, an unknown one

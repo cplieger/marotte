@@ -525,7 +525,7 @@ const bodies = new Map<string, "glance" | "tree">();
 /** What a reader draws of a run, narrowest first: its header (status, name, controls, asks), its
  *  glance (each repeat through its latest pass, which a run card and the run bar draw) or its
  *  whole tree (the run tab). Each is read in its own form of `GET /api/runs/{id}`. */
-export type RunShape = "header" | "glance" | "tree";
+type RunShape = "header" | "glance" | "tree";
 
 const SHAPE_RANK: Readonly<Record<RunShape, number>> = { header: 0, glance: 1, tree: 2 };
 

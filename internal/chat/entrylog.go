@@ -406,7 +406,7 @@ func (l *EntryLog) Revert(ctx context.Context, from string, cause marotte.TurnRe
 func (l *EntryLog) appendRevertLocked(ctx context.Context, from string, cause marotte.TurnRevertCause, kasMessageID string) (record *marotte.Entry, minted []*marotte.Entry, err error) {
 	st := l.turns[from]
 	if st == nil || st.reverted {
-		return nil, nil, fmt.Errorf("%w: %q", ErrTurnNotInLog, from)
+		return nil, nil, fmt.Errorf("%w: %q", errTurnNotInLog, from)
 	}
 	window, through := l.revertWindowLocked(from)
 	carrier, held := l.newestSurvivingLocked(window)
@@ -1596,15 +1596,15 @@ func (l *EntryLog) unadoptedSessionLocked() string {
 	return s
 }
 
-// ErrTurnNotInLog is the one TurnPage failure a caller can cause: an id with no turn here. Other errors mean the log
+// errTurnNotInLog is the one TurnPage failure a caller can cause: an id with no turn here. Other errors mean the log
 // is unreadable, a 500.
-var ErrTurnNotInLog = errors.New("chat: turn is not in this log")
+var errTurnNotInLog = errors.New("chat: turn is not in this log")
 
 // turnRangeLocked returns turn's entries from seq from inclusive, in seq order; from == 0 is the whole turn. The
 // wire's exclusive ?after= is translated at the door. A reverted turn returns the sentinel like an absent one.
 func (l *EntryLog) turnRangeLocked(turn string, from uint64) ([]marotte.Entry, error) {
 	if st := l.turns[turn]; st == nil || st.reverted {
-		return nil, fmt.Errorf("%w: %q", ErrTurnNotInLog, turn)
+		return nil, fmt.Errorf("%w: %q", errTurnNotInLog, turn)
 	}
 	entries, err := l.readSurvivingLocked([]string{turn})
 	if err != nil {
