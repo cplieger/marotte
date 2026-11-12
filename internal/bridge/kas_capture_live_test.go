@@ -40,7 +40,8 @@ const (
 	scrubTemp       = "/tmp/"
 	elicitServer    = "capture"
 	elicitAnswer    = "teal-7341"
-	notesBody       = "The release train leaves on Thursday.\nThe build cache lives in /var/cache/build.\nOwners rotate weekly.\n"
+	notesPath       = "/var/cache/build"
+	notesBody       = "The release train leaves on Thursday.\nThe build cache lives in " + notesPath + ".\nOwners rotate weekly.\n"
 )
 
 var (
@@ -528,26 +529,40 @@ func (c *capture) write(sc scenario) error {
 		buf.Write(raw)
 		buf.WriteByte('\n')
 	}
-	out, err := scrubModels(c.scrub(buf.Bytes()))
+	out, err := publishable(c.scrub(buf.Bytes()), os.TempDir())
 	if err != nil {
-		return err
-	}
-	forbidden := forbiddenInCapture
-	if top, ok := tempRootTop(os.TempDir()); ok {
-		forbidden = append(slices.Clone(forbidden), top)
-	}
-	for _, bad := range forbidden {
-		if i := bytes.Index(out, []byte(bad)); i >= 0 {
-			return fmt.Errorf("capture holds %q near %q", bad, excerpt(out, i))
-		}
-	}
-	if m := emailRe.Find(out); m != nil {
-		return fmt.Errorf("capture holds an email address %q", m)
+		return fmt.Errorf("capture %w", err)
 	}
 	if err := os.MkdirAll(corpusDir, 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(corpusDir, sc.name+".jsonl"), out, 0o644)
+}
+
+// publishable scrubs the model catalog from out, already scrubbed of scratch paths, and refuses bytes that would
+// publish the host's layout, a credential or an email address. Every writer of a committed fixture calls it: marotte
+// is public. tempDir is the temp root whose top directory a cut scratch path leaves behind; notesPath, which
+// notesBody plants, sits under /var on purpose and is not one.
+func publishable(out []byte, tempDir string) ([]byte, error) {
+	out, err := scrubModels(out)
+	if err != nil {
+		return nil, err
+	}
+	for _, bad := range forbiddenInCapture {
+		if i := bytes.Index(out, []byte(bad)); i >= 0 {
+			return nil, fmt.Errorf("holds %q near %q", bad, excerpt(out, i))
+		}
+	}
+	if top, ok := tempRootTop(tempDir); ok {
+		rest := bytes.ReplaceAll(out, []byte(notesPath), nil)
+		if i := bytes.Index(rest, []byte(top)); i >= 0 {
+			return nil, fmt.Errorf("holds %q near %q", top, excerpt(rest, i))
+		}
+	}
+	if m := emailRe.Find(out); m != nil {
+		return nil, fmt.Errorf("holds an email address %q", m)
+	}
+	return out, nil
 }
 
 // tempRootTop is the top directory of the temp root dir, such as "/data/", which a scratch path KAS cut inside the

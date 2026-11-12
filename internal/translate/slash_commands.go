@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -123,9 +124,10 @@ func (t *Translator) HandleAvailableCommandsUpdate(ctx context.Context, _ marott
 	}
 }
 
-// A document carries its content too; it is not decoded.
+// A document carries its content too; it is not decoded. Error is a failed frame's message.
 type kasSteeringDocuments struct {
 	Status    string `json:"status"`
+	Error     string `json:"error"`
 	Documents []struct {
 		URI  string `json:"uri"`
 		Meta struct {
@@ -181,6 +183,12 @@ func (t *Translator) HandleSteeringDocuments(ctx context.Context, _ marotte.Chat
 	t.steeringIssues.Seen()
 	issues, ok := readSteeringIssues(msg.Params)
 	if !ok {
+		// A failed read leaves the issues unknown, which the page would otherwise show as none.
+		var p kasSteeringDocuments
+		if json.Unmarshal(msg.Params, &p) == nil && p.Status == "failed" {
+			slog.Warn("steering documents read failed", "error", logsafe.Field(p.Error))
+			return
+		}
 		slog.Debug("steering documents_changed: not a success frame")
 		return
 	}

@@ -180,3 +180,15 @@ func TestTempRootTop_NamesTheDirectoryACutPathLeaks(t *testing.T) {
 		}
 	}
 }
+
+// On a temp root under /var the guard refuses a cut scratch path there, but not the /var path notesBody plants on
+// purpose, which the steer and delegate corpora quote.
+func TestPublishable_TempRootUnderVar(t *testing.T) {
+	const tempDir = "/var/folders/xy/T/"
+	if _, err := publishable([]byte(`{"text":"The build cache lives in `+notesPath+`."}`+"\n"), tempDir); err != nil {
+		t.Errorf("publishable(planted notes path) = %v, want nil", err)
+	}
+	if _, err := publishable([]byte(`{"title":"/var/folders/x"}`+"\n"), tempDir); err == nil || !strings.Contains(err.Error(), `"/var/"`) {
+		t.Errorf("publishable(cut scratch path) = %v, want it refused for /var/", err)
+	}
+}

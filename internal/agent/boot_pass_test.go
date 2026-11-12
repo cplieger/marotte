@@ -109,6 +109,9 @@ func TestBootPass_ClosesOnAFailedSteeringFrame(t *testing.T) {
 	if out := logs.String(); strings.Contains(out, "no steering documents") {
 		t.Errorf("logs = %s, want no WARN for steering documents KAS answered", out)
 	}
+	if out := logs.String(); !strings.Contains(out, `"msg":"steering documents read failed"`) || !strings.Contains(out, "EACCES: permission denied") {
+		t.Errorf("logs = %s, want a WARN naming the failed read's error", out)
+	}
 	if got := h.steeringIssues.snapshot(); len(got) != 0 {
 		t.Errorf("steering issues = %+v, want none from a failed frame", got)
 	}

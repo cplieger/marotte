@@ -125,13 +125,11 @@ func putMemorySync(h *Runtime, body string) *httptest.ResponseRecorder {
 	return rec
 }
 
-// kiro-cli 3.2.1 grants a client memorySync at user-synced only, so every PUT writes there, a body still naming the
-// device scope of earlier builds included.
+// kiro-cli 3.2.1 grants a client memorySync at user-synced only, so every PUT writes there.
 func TestMemorySyncPutWritesTheAccountLayer(t *testing.T) {
 	for _, tc := range []struct{ body, value string }{
 		{`{"on":true}`, "on"},
 		{`{"on":false}`, "off"},
-		{`{"scope":"device","on":true}`, "on"},
 	} {
 		t.Run(tc.body, func(t *testing.T) {
 			h, _, br := newTestHub()
@@ -150,6 +148,22 @@ func TestMemorySyncPutWritesTheAccountLayer(t *testing.T) {
 			}
 			awaitEventCount(t, h, marotte.EventMemorySyncChanged, before+1)
 		})
+	}
+}
+
+// A PUT naming a scope comes from a page that offered a per-device switch; KAS grants no such layer, and writing the
+// account's instead would flip a choice the click did not name.
+func TestMemorySyncPutRefusesAScope(t *testing.T) {
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+
+	rec := putMemorySync(h, `{"scope":"device","on":false}`)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("PUT = %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	if br.called(methodKiroConfigurationSet) {
+		t.Errorf("PUT with a scope called %s, want no write", methodKiroConfigurationSet)
 	}
 }
 

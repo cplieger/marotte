@@ -83,7 +83,7 @@ type steeringIssues struct {
 
 func newSteeringIssues() *steeringIssues { return &steeringIssues{seeded: make(chan struct{})} }
 
-// Seen marks the map seeded.
+// Seen closes seeded: KAS answered the steering read. It leaves the map as it is.
 func (s *steeringIssues) Seen() {
 	s.mu.Lock()
 	defer s.mu.Unlock()

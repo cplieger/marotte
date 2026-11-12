@@ -68,8 +68,10 @@ type memorySyncResponse struct {
 	Choice memorySyncChoice `json:"choice"`
 }
 
+// Scope is decoded only to refuse it: a page that still names a layer must not have its write land at the account's.
 type memorySyncUpdateReq struct {
-	On bool `json:"on"`
+	Scope string `json:"scope"`
+	On    bool   `json:"on"`
 }
 
 // kasSetting is one composed setting row of a configuration view.
@@ -179,6 +181,10 @@ func (st *Settings) handleMemorySync(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		var body memorySyncUpdateReq
 		if !httpreply.DecodeJSON(w, r, &body) {
+			return
+		}
+		if body.Scope != "" {
+			httpreply.BadRequest(w, "memory sync takes {on} only")
 			return
 		}
 		value := "off"
