@@ -566,8 +566,8 @@ var (
 	modelStemRe  = regexp.MustCompile(`\pL{3,}`)
 	wordRe       = regexp.MustCompile(`\pL+`)
 	jsonStringRe = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
-	// genericModelWords are catalog words ordinary prose uses ("check next"); refusing them would
-	// refuse every capture.
+	// genericModelWords are catalog words ordinary prose also uses ("check next"); refusing them
+	// would refuse a capture for plain prose.
 	genericModelWords = []string{
 		"auto", "beta", "coder", "deprecated", "experimental", "internal", "latest", "legacy", "max",
 		"mini", "model", "next", "preview", "pro", "thinking",
