@@ -65,7 +65,8 @@ func TestChatMessaging_APeerMessageBetweenOpenChatsIsDelivered(t *testing.T) {
 		"sessionId": string(receiver), "callerSessionId": string(sender), "message": "the schema moved",
 		"severity": "info", "sender": "peer", "notifyId": "notify-p1", "deliveryCount": 1,
 	}))
-	joinInflight(t, h)
+	// Each open chat's forward loop is inflight work until its session closes, so the rows are awaited by their effect.
+	waitFor(t, func() bool { return len(peerRowsOf(t, cs, "c1")) > 0 && len(peerRowsOf(t, cs, "c2")) > 0 })
 
 	got, sent := peerRowsOf(t, cs, "c1"), peerRowsOf(t, cs, "c2")
 	if len(got) != 1 || got[0].Chat != "c2" || got[0].Text != "the schema moved" {

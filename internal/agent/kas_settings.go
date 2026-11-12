@@ -50,6 +50,7 @@ func sessionFeatures(d settings.Document) marotte.SessionFeatures {
 			f.WorkflowLaunch = settings.DefaultWorkflowLaunch
 		}
 	}
+	f.Messaging = settingBool(d, settings.KeyChatMessaging)
 	f.WorkValidation = settingString(d, settings.KeyWorkValidation, settings.ValidFeatureChoice)
 	return f
 }

@@ -137,6 +137,8 @@ type EffectiveSettings struct {
 	SpecPlanningAskFirst bool `json:"spec_planning_ask_first"`
 	SteeringReminders    bool `json:"steering_reminders_enabled"`
 	WorkflowsEnabled     bool `json:"workflows_enabled"`
+	// ChatMessaging lets a chat's agent message another open chat (kiro-cli's sessionToolsMessaging), default off.
+	ChatMessaging        bool `json:"chat_messaging_enabled"`
 	SupervisedDefault    bool `json:"supervised_default"`
 	ScheduledAutoApprove bool `json:"scheduled_auto_approve"`
 	DebugLogs            bool `json:"debug_logs"`

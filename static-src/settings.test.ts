@@ -519,7 +519,7 @@ describe("the Messages between chats switch", () => {
 
     expect(patchSettings).toHaveBeenLastCalledWith(
       { chat_messaging_enabled: true },
-      { el: box, key: "chat_messaging_enabled", on: false },
+      { el: box, key: "chat_messaging_enabled", on: true },
     );
   });
 });

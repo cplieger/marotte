@@ -134,6 +134,8 @@ type SessionSpawn struct {
 	SpecAskClarification  bool
 	// Workflows gives the agent its workflow tools; value-gated, always sent on both session doors.
 	Workflows bool
+	// Messaging turns on KAS's peer send_message for this session; value-gated, always sent on both session doors.
+	Messaging bool
 	// ProfileAgentTurns is whether the session's turns render in a chat's turn footer, so the turns KAS starts on
 	// its own ask for a chat prompt's profiling. A run host's and an observer's turns render nowhere.
 	ProfileAgentTurns bool
