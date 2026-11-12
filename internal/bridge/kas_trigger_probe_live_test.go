@@ -75,18 +75,10 @@ func TestProbeMissingInput(t *testing.T) {
 
 func newProbe(t *testing.T) (*probe, context.Context) {
 	t.Helper()
-	bin := os.Getenv("MAROTTE_LIVE_KIRO_CLI")
-	if bin == "" {
-		t.Skip("MAROTTE_LIVE_KIRO_CLI names no kiro-cli binary")
-	}
 	if !*kasTriggerProbe {
 		t.Skip("-kas-trigger-probe not set: the probe rewrites testdata")
 	}
-	if os.Getenv("KIRO_RUNTIME_DIR") != "" {
-		t.Fatal("unset KIRO_RUNTIME_DIR: a kiro-cli of another version started with it deletes the running engine's runtime")
-	}
-	pin := pinnedKiroCLI(t)
-	checkBinaryVersion(t, bin, pin)
+	bin, pin := liveKiroCLI(t)
 	c := newCapture(t, &captureEnv{cli: bin, kiroCLI: pin})
 	p := &probe{c: c, t: t, owner: map[string]marotte.SessionID{}}
 	if err := os.MkdirAll(filepath.Join(c.work, ".kiro", "workflows"), 0o755); err != nil {

@@ -54,15 +54,10 @@ func (c *capture) search(msg *marotte.RPCResponse) (any, error) {
 // client once marotte advertises textSearch and findFiles, and that KAS logs no rg fallback. It
 // spends model credits, so it needs MAROTTE_LIVE_KIRO_CLI and -kas-search.
 func TestKASSendsSearchToTheClient(t *testing.T) {
-	bin := os.Getenv("MAROTTE_LIVE_KIRO_CLI")
-	if bin == "" {
-		t.Skip("MAROTTE_LIVE_KIRO_CLI names no kiro-cli binary")
-	}
 	if !*kasSearch {
 		t.Skip("-kas-search not set: the test spends credits")
 	}
-	pin := pinnedKiroCLI(t)
-	checkBinaryVersion(t, bin, pin)
+	bin, pin := liveKiroCLI(t)
 	c := newCapture(t, &captureEnv{cli: bin, kiroCLI: pin})
 	ctx, cancel := context.WithTimeout(t.Context(), 2*turnBudget)
 	defer cancel()

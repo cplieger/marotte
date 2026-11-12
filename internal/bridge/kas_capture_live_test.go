@@ -51,16 +51,11 @@ var (
 // It spends model credits, so it needs both MAROTTE_LIVE_KIRO_CLI (a signed-in kiro-cli of the
 // entrypoint's pinned version) and -kas-capture.
 func TestCaptureKASCorpus(t *testing.T) {
-	bin := os.Getenv("MAROTTE_LIVE_KIRO_CLI")
-	if bin == "" {
-		t.Skip("MAROTTE_LIVE_KIRO_CLI names no kiro-cli binary")
-	}
 	if !*kasCapture {
 		t.Skip("-kas-capture not set: the capture spends credits and rewrites testdata")
 	}
-	pin := pinnedKiroCLI(t)
-	checkBinaryVersion(t, bin, pin)
-	env := captureEnv{cli: bin, kiroCLI: pin, kas: kasVersion(t, pin), elicitBin: buildElicitServer(t)}
+	bin, pin := liveKiroCLI(t)
+	env := captureEnv{cli: bin, kiroCLI: pin, elicitBin: buildElicitServer(t)}
 	for _, sc := range []scenario{
 		{name: "steer", about: "A prompt that reads a file through fs/read_text_file, steered on its first tool call; then session/close and a same-id session/load on the same engine.", run: runSteer},
 		{name: "compact", about: "Two one-word turns, _kiro/session/compact, a third turn; then a fresh engine and a session/load of the same id.", run: runCompact},
@@ -93,6 +88,8 @@ func captureScenario(t *testing.T, env *captureEnv, sc scenario) {
 		cancel()
 		c.shutdown()
 		if err == nil {
+			// kiro-cli unpacks its runtime at its first engine start, so the version is read after one ran.
+			env.kas = kasVersion(t, env.kiroCLI)
 			err = c.write(sc)
 		}
 		if err == nil {
@@ -820,6 +817,22 @@ func (c *capture) awaitFrameMentioning(lane int, needle string, budget time.Dura
 	return fmt.Errorf("no frame mentioned %q within %s", needle, budget)
 }
 
+// liveKiroCLI is the kiro-cli MAROTTE_LIVE_KIRO_CLI names and the entrypoint pin it must report. It skips when
+// the variable is unset, so a caller checks its own opt-in flag first.
+func liveKiroCLI(t *testing.T) (bin, pin string) {
+	t.Helper()
+	bin = os.Getenv("MAROTTE_LIVE_KIRO_CLI")
+	if bin == "" {
+		t.Skip("MAROTTE_LIVE_KIRO_CLI names no kiro-cli binary")
+	}
+	if os.Getenv("KIRO_RUNTIME_DIR") != "" {
+		t.Fatal("unset KIRO_RUNTIME_DIR: a kiro-cli of another version started with it deletes the running engine's runtime")
+	}
+	pin = pinnedKiroCLI(t)
+	checkBinaryVersion(t, bin, pin)
+	return bin, pin
+}
+
 func pinnedKiroCLI(t *testing.T) string {
 	t.Helper()
 	raw, err := os.ReadFile("../../entrypoint.sh")
@@ -850,7 +863,7 @@ func kasVersion(t *testing.T, pin string) string {
 	t.Helper()
 	server := workspace.KASLookupFromEnv().Find(pin).Server
 	if server == "" {
-		t.Fatalf("no unpacked agent runtime for kiro-cli %s: run it once first", pin)
+		t.Fatalf("no unpacked agent runtime for kiro-cli %s after an engine start", pin)
 	}
 	pkgJSON := filepath.Join(filepath.Dir(server), "..", "..", "package.json")
 	raw, err := os.ReadFile(pkgJSON)
