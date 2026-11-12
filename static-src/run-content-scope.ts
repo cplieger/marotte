@@ -13,24 +13,42 @@ type Presenter = (run: string) => Promise<ScopeOutcome>;
 let present: Presenter = () => Promise.resolve("covered");
 
 /** One run's stay in the scope: `ready` settles true once the stream delivers its topic, false
- *  when the run leaves first. */
+ *  when the run leaves first. `answered` is set once the first ask came back, delivered or lost,
+ *  or the run left, and `waiting` holds what runs then. */
 interface Cover {
   readonly run: string;
   readonly ready: Promise<boolean>;
   readonly settle: (covered: boolean) => void;
   owed: boolean;
+  answered: boolean;
+  readonly waiting: (() => void)[];
 }
 
 let scope: { readonly run: string; readonly step: string } = { run: "", step: "" };
 let cover: Cover = newCover("");
 cover.settle(true);
+answer(cover);
 
 function newCover(run: string): Cover {
   let settle: (covered: boolean) => void = () => undefined;
   const ready = new Promise<boolean>((resolve) => {
     settle = resolve;
   });
-  return { run, ready, settle, owed: false };
+  return { run, ready, settle, owed: false, answered: false, waiting: [] };
+}
+
+function answer(c: Cover): void {
+  if (c.answered) {
+    return;
+  }
+  c.answered = true;
+  const waiting = c.waiting.splice(0);
+  // Queued behind what `settle` woke on `ready`, so a re-read there sees no read out of these.
+  queueMicrotask(() => {
+    for (const fn of waiting) {
+      fn();
+    }
+  });
 }
 
 function ask(c: Cover): void {
@@ -40,9 +58,10 @@ function ask(c: Cover): void {
     }
     if (outcome === "owed") {
       c.owed = true;
-      return;
+    } else {
+      c.settle(true);
     }
-    c.settle(true);
+    answer(c);
   });
 }
 
@@ -59,6 +78,7 @@ export function setRunContentScope(run: string, step: string): string {
   scope = { run, step: run === "" ? "" : step };
   if (before !== run) {
     cover.settle(false);
+    answer(cover);
     cover = newCover(run);
     ask(cover);
   }
@@ -80,6 +100,23 @@ export function scopedStep(workflowID: string): string {
  *  keeps it waiting until `rescopeOwed` asks again. */
 export function scopeReady(workflowID: string): Promise<boolean> {
   return runContentScoped(workflowID) ? cover.ready : Promise.resolve(false);
+}
+
+/** Run `read` once the stream answered the ask for `workflowID`'s topic, and only while the run
+ *  is still scoped; at once when no ask for it is waiting. A read started after a delivered ask
+ *  misses no frame, and one after a lost ask is held when `scopeReady` settles, so it is read
+ *  again then and only then. */
+export function afterScopeAnswer(workflowID: string, read: () => void): void {
+  if (!runContentScoped(workflowID) || cover.answered) {
+    read();
+    return;
+  }
+  const c = cover;
+  c.waiting.push(() => {
+    if (cover === c) {
+      read();
+    }
+  });
 }
 
 /** Ask again for the scoped run's topic when the last ask was lost. The adapter calls it each time

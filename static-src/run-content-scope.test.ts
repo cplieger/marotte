@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  afterScopeAnswer,
   rescopeOwed,
   runContentScoped,
   scopeReady,
@@ -120,6 +121,46 @@ describe("scopeReady", () => {
     expect(await settledAs(second)).toBe("pending");
     stream.answer(2, "covered");
     expect(await settledAs(second)).toBe(true);
+  });
+});
+
+describe("afterScopeAnswer", () => {
+  it("holds a read until the stream answers the run's ask, delivered or lost", async () => {
+    const stream = scriptedStream();
+    const reads: string[] = [];
+    setRunContentScope(R, "");
+    afterScopeAnswer(R, () => reads.push("delivered"));
+    await settledAs(scopeReady(R));
+    expect(reads).toEqual([]);
+    stream.answer(0, "covered");
+    await settledAs(scopeReady(R));
+    expect(reads).toEqual(["delivered"]);
+
+    setRunContentScope(S, "");
+    afterScopeAnswer(S, () => reads.push("lost"));
+    stream.answer(1, "owed");
+    await settledAs(Promise.resolve(true));
+    expect(reads).toEqual(["delivered", "lost"]);
+  });
+
+  it("reads at once for a run not scoped or already answered, and drops a read whose run left", async () => {
+    const stream = scriptedStream();
+    const reads: string[] = [];
+    afterScopeAnswer(S, () => reads.push("unscoped"));
+    expect(reads).toEqual(["unscoped"]);
+
+    setRunContentScope(R, "");
+    afterScopeAnswer(R, () => reads.push("left"));
+    setRunContentScope("", "");
+    stream.answer(0, "covered");
+    await settledAs(Promise.resolve(true));
+    expect(reads).toEqual(["unscoped"]);
+
+    setRunContentScope(R, "");
+    stream.answer(2, "covered");
+    await settledAs(scopeReady(R));
+    afterScopeAnswer(R, () => reads.push("answered"));
+    expect(reads).toEqual(["unscoped", "answered"]);
   });
 });
 

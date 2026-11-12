@@ -36,7 +36,7 @@ import { inFlight, neverRan, settled } from "./exec-view/status.js";
 import { flatten, workNodes, type ExecNode } from "./exec-view/model.js";
 import { runToExec, type ExecFoldMemo, type StepEnds } from "./run-exec-source.js";
 import { lastPrintedLine, leaveStepTails, stepTail } from "./run-step-tail.js";
-import { scopeReady, setRunContentScope } from "./run-content-scope.js";
+import { afterScopeAnswer, scopeReady, setRunContentScope } from "./run-content-scope.js";
 import type { RunStepPaint, RunStepStream } from "./run-chat-steps.js";
 import {
   clearStepTranscripts,
@@ -195,8 +195,12 @@ export function showRun(workflowID: string): void {
 
 /** Refetch this run's state and its controls. A run tab's `refresh`. */
 export function refreshRun(workflowID: string): void {
-  // The wake and the reconcile run this right after the revalidation's own read of the run.
-  readRunUnlessOut(workflowID);
+  // The wake and the reconcile run this right after the revalidation's own read of the run. A run
+  // entering the scope is read once its ask answers, since a read out when the stream delivers the
+  // run is read again (`publishScope`).
+  afterScopeAnswer(workflowID, () => {
+    readRunUnlessOut(workflowID);
+  });
   // NO chat refresh: a step's entries are the RUN's, so a chat's window cannot move this pane. The
   // step transcript's refresh is the step GET, armed by `armStepRead`.
 }

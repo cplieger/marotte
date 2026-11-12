@@ -56,7 +56,7 @@ import "./handlers/run.js";
 import { dispatch } from "./bus.js";
 import { apiGetOrError, apiGetTyped, apiGetTypedOrError } from "./api-client.js";
 import { refreshRun, showRun } from "./run-view.js";
-import { appendRunEntry, forgetRun, openRunTurn } from "./run-store.js";
+import { appendRunEntry, forgetRun, openRunTurn, readRunUnlessOut } from "./run-store.js";
 import { hasSubject } from "./subject-versions.js";
 import { showOnlyView } from "./view-swap.js";
 import { rescopeOwed, setScopePresenter, type ScopeOutcome } from "./run-content-scope.js";
@@ -493,12 +493,31 @@ describe("a run tab's reads wait for the stream to deliver its run", () => {
     return read;
   }
 
+  it("reads a run its tab opens once, after the stream answered the tab's ask", async () => {
+    const wf = "wf_scope_open_once";
+    const reads = heldRunReads(wf);
+    showOnlyView(runView);
+    showRun(wf);
+    refreshRun(wf);
+    await flush();
+    expect(reads.urls).toEqual([]);
+
+    asks[0]?.answer("covered");
+    await flush();
+    expect(reads.urls).toHaveLength(1);
+    reads.land(readWithOpenEntry(wf));
+    await flush();
+    expect(reads.urls).toHaveLength(1);
+    expect(dockTail("a")).toBe("second");
+  });
+
   it("reads a run answered before its ask again, so a sibling step's line follows its deltas", async () => {
     const wf = "wf_scope_tail_before";
     const reads = heldRunReads(wf);
     showOnlyView(runView);
     showRun(wf);
-    refreshRun(wf);
+    // A read another reader started (a frame, a run card) while the tab's ask waits.
+    readRunUnlessOut(wf);
     await flush();
     reads.land(readWithOpenEntry(wf));
     await flush();
@@ -525,7 +544,8 @@ describe("a run tab's reads wait for the stream to deliver its run", () => {
     const reads = heldRunReads(wf);
     showOnlyView(runView);
     showRun(wf);
-    refreshRun(wf);
+    // A read another reader started (a frame, a run card) while the tab's ask waits.
+    readRunUnlessOut(wf);
     await flush();
     reads.land({ ...(readWithOpenEntry(wf) as object), rev: 7 });
     await flush();
@@ -546,7 +566,8 @@ describe("a run tab's reads wait for the stream to deliver its run", () => {
     const reads = heldRunReads(wf);
     showOnlyView(runView);
     showRun(wf);
-    refreshRun(wf);
+    // A read another reader started (a frame, a run card) while the tab's ask waits.
+    readRunUnlessOut(wf);
     await flush();
     reads.land(readWithOpenEntry(wf));
     await flush();
@@ -577,7 +598,8 @@ describe("a run tab's reads wait for the stream to deliver its run", () => {
     const reads = heldRunReads(wf);
     showOnlyView(runView);
     showRun(wf);
-    refreshRun(wf);
+    // A read another reader started (a frame, a run card) while the tab's ask waits.
+    readRunUnlessOut(wf);
     await flush();
     asks[0]?.answer("covered");
     await flush();
