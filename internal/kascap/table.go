@@ -439,6 +439,12 @@ var table = []decl{
 		send:     false,
 	},
 	{
+		key:      "approveForMeOption",
+		door:     doorConnection,
+		resolver: resolverCapability,
+		send:     false,
+	},
+	{
 		key:      "c2s",
 		door:     doorConnection,
 		resolver: resolverSetting,
