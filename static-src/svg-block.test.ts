@@ -241,7 +241,7 @@ describe("a fence that streams in over several deltas", () => {
     r.write("main\n```\n");
     r.end();
     expect(host.querySelector(".cp-code > pre")).not.toBeNull();
-    // markdown.md "The code block": the label is the language's name.
+    // @cplieger/ui's markdown docs, "The code block": the label is the language's name.
     expect(host.querySelector('[data-part="lang"]')?.textContent).toBe("Go");
     expect(host.querySelector("figure")).toBeNull();
   });

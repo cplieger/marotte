@@ -74,8 +74,9 @@ describe("a rendered host", () => {
     expect(host.textContent).toBe(big);
   });
 
-  // markdown.md "Options": the library reads 1 MiB by default; a whole file's view shows all the
-  // server sent, since the server holds a file over the viewer's cap back as `large`.
+  // @cplieger/ui's markdown docs, "Options": the library reads 1 MiB by default; a whole file's
+  // view shows all the server sent, since the server holds a file over the viewer's cap back as
+  // `large`.
   it("cuts a chat answer at 1 MiB and renders a whole file uncut", () => {
     const text = `${"word ".repeat(300_000)}end\n`;
     const chat = rendered(text);
@@ -103,7 +104,7 @@ describe("a code block while it streams", () => {
     const block = host.querySelector(".cp-code");
     expect(block).not.toBeNull();
     expect(block?.hasAttribute("data-code-state")).toBe(false);
-    // markdown.md "The code block": the label is the language's name.
+    // @cplieger/ui's markdown docs, "The code block": the label is the language's name.
     expect(block?.querySelector('[data-part="lang"]')?.textContent).toBe("Go");
   });
 
@@ -509,7 +510,8 @@ describe("links to served files", () => {
     expect(taken).toEqual([false]);
   });
 
-  // markdown.md "Safety": every http(s) link opens a new tab, with rel="noopener noreferrer nofollow".
+  // @cplieger/ui's markdown docs, "Safety": every http(s) link opens a new tab, with
+  // rel="noopener noreferrer nofollow".
   it("keeps an external link in a new browser tab", () => {
     const link = render("[site](https://example.com/a)");
     expect(link.getAttribute("href")).toBe("https://example.com/a");
@@ -526,8 +528,8 @@ describe("links to served files", () => {
     expect(link.getAttribute("target")).toBe("_blank");
   });
 
-  // markdown.md "Safety": a relative destination with a `.` or `..` segment is refused, so the link's
-  // words are plain text and nothing climbs out of a root.
+  // @cplieger/ui's markdown docs, "Safety": a relative destination with a `.` or `..` segment is
+  // refused, so the link's words are plain text and nothing climbs out of a root.
   it.each(["/workspace/../config/mcp.json", "/uploads/./../config/x.json", "/workspace/./a.md"])(
     "gives %s no destination at all",
     (dest) => {

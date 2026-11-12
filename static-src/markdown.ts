@@ -53,14 +53,14 @@ const WHOLE_FILE_BYTES = Number.MAX_SAFE_INTEGER;
 
 type HeadingLevel = 1 | 2 | 3 | 4 | 5 | 6;
 
-export interface RenderOpts {
+interface RenderOpts {
   /** The element `#` renders as: 2 under the page's title bar, 3 under a page's own `h2`. Default 2. */
   readonly headingLevel?: HeadingLevel;
   /** A whole file's view renders all of it rather than the library's first 1 MiB. */
   readonly wholeFile?: boolean;
 }
 
-export interface StreamOpts extends RenderOpts {
+interface StreamOpts extends RenderOpts {
   /** Milliseconds a write waits before it is parsed (the library's default when absent); `0` parses on write, which
    *  a caller pacing its own writes (`reveal.ts`) wants, or the buffer re-lumps what it spread. */
   readonly flushIntervalMs?: number;

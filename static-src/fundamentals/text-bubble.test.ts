@@ -145,7 +145,7 @@ describe("buildAssistantBubble", { timeout: testTimeoutFor(REVEAL_BUDGET_MS) }, 
     b.setText("```js\nconst x = 1;\n```\n");
     b.finishNow();
     const block = b.root.querySelector(".cp-code");
-    // markdown.md "The code block": the label is the language's name.
+    // @cplieger/ui's markdown docs, "The code block": the label is the language's name.
     expect(block?.querySelector('[data-part="lang"]')?.textContent).toBe("JavaScript");
     expect(block?.getAttribute("data-code-state")).toBe("final");
     expect(block?.querySelector('pre > code [data-token="keyword"]')?.textContent).toBe("const");

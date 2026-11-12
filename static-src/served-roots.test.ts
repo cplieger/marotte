@@ -104,7 +104,7 @@ describe("under a / work dir", () => {
     );
   });
 
-  // markdown.md "Safety": the gate reads `//host/x` as https:.
+  // @cplieger/ui's markdown docs, "Safety": the gate reads `//host/x` as https:.
   it("leaves a protocol-relative link pointing off-site", () => {
     setWorkspaceRoot("/");
     expect(href("[doc](//example.com/docs/a.md)")).toBe("https://example.com/docs/a.md");

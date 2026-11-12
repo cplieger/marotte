@@ -1,6 +1,6 @@
-// A code block's bar buttons (Run, and a diagram's source, download and expand controls) join the library's Copy
-// as one family (markdown.md "The code block"): the same box, nothing painted at rest, and none of them
-// overflowing the bar.
+// A code block's bar buttons (Run, and a diagram's source, download and expand controls) join the
+// library's Copy as one family (@cplieger/ui's markdown docs, "The code block"): the same box,
+// nothing painted at rest, and none of them overflowing the bar.
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";

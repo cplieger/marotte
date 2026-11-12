@@ -163,7 +163,7 @@ describe("the footer's ledger keeps ONE radius on every corner", () => {
 });
 
 describe("a box with a header at its top has ONE radius owner", () => {
-  // web.md "Cascade and layout": a nested corner is concentric at inner = outer - border - inset.
+  // A nested corner is concentric: inner radius = outer radius - border - inset.
   it("squares a code block's pre under its bar and rounds it concentric below", () => {
     const msg = document.createElement("div");
     msg.className = "message assistant";

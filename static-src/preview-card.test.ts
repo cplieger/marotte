@@ -132,7 +132,7 @@ describe("the markdown renderer", () => {
     expect(host.querySelector(".preview-card")).toBeNull();
   });
 
-  // markdown.md "Safety": a refused destination gets no href, and no card.
+  // @cplieger/ui's markdown docs, "Safety": a refused destination gets no href, and no card.
   it("still neutralises an unsafe href", () => {
     const host = render("[x](javascript:alert(1))");
     expect(host.querySelector("a")?.hasAttribute("href")).toBe(false);
