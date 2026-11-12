@@ -72,9 +72,9 @@ func TestNameSearch_ReadsNoFileContents(t *testing.T) {
 	}
 
 	v := newNameVisitor(mustQuery(t, "needle"))
-	walk := newSearchWalk(t.Context(), v, modeNames)
+	walk := newSearchWalk(t.Context(), v, budgetFor(modeNames, false))
 	walk.ignoreRules = true
-	grew := allocatedBy(func() { walk.addRoot(loc{m: &h.mounts[0], abs: dir}) })
+	grew := allocatedBy(func() { walk.walkRoots([]loc{{m: &h.mounts[0], abs: dir}}) })
 	if bound := uint64(256 << 10); grew > bound {
 		t.Errorf("a names walk over %d large files allocated %d bytes, want under %d: it read them", searchWorkers, grew, bound)
 	}
@@ -239,10 +239,10 @@ func TestNameSearch_EntryBudgetStopsAndSaysSo(t *testing.T) {
 		truncated bool
 	}{{spent: maxNameSearchEntries - 2, wantRows: 2, truncated: false}, {spent: maxNameSearchEntries - 1, wantRows: 0, truncated: true}} {
 		v := newNameVisitor(mustQuery(t, "needle"))
-		walk := newSearchWalk(t.Context(), v, modeNames)
+		walk := newSearchWalk(t.Context(), v, budgetFor(modeNames, false))
 		walk.ignoreRules = true
 		walk.entries = tc.spent
-		walk.addRoot(loc{m: &h.mounts[0], abs: dir})
+		walk.walkRoots([]loc{{m: &h.mounts[0], abs: dir}})
 		res := v.result(walk.truncated)
 		if len(res.Matches) != tc.wantRows || res.Truncated != tc.truncated {
 			t.Errorf("with %d entries spent: rows = %d truncated = %v, want %d and %v",
@@ -268,7 +268,7 @@ func TestSearch_NamesEntryBudgetDoesNotBoundContentsMode(t *testing.T) {
 			writeTree(t, dir, map[string]string{"a.txt": "needle\n"})
 			walk, v := contentWalk(t.Context(), "needle", false)
 			walk.entries = tc.spent
-			walk.addRoot(loc{m: &h.mounts[0], abs: dir})
+			walk.walkRoots([]loc{{m: &h.mounts[0], abs: dir}})
 			if v.matched != tc.wantMatched || walk.truncated != tc.wantTruncated {
 				t.Errorf("with %d entries spent: matched = %d truncated = %v, want %d and %v",
 					tc.spent, v.matched, walk.truncated, tc.wantMatched, tc.wantTruncated)
@@ -315,8 +315,8 @@ func TestSearch_NamesDeadlineDoesNotBoundContentsMode(t *testing.T) {
 	if res.Truncated || len(res.Matches) != 1 {
 		t.Errorf("contents search = %+v, want one complete match: the names deadline must not reach it", res)
 	}
-	if saved >= deadlineFor(modeContents) {
-		t.Errorf("names deadline %v is not shorter than contents %v", saved, deadlineFor(modeContents))
+	if saved >= budgetFor(modeContents, false).deadline {
+		t.Errorf("names deadline %v is not shorter than contents %v", saved, budgetFor(modeContents, false).deadline)
 	}
 }
 
@@ -464,10 +464,10 @@ func TestNameSearch_DirectoryBudgetIsNamesModes(t *testing.T) {
 			}
 
 			v := newNameVisitor(mustQuery(t, "needle"))
-			walk := newSearchWalk(t.Context(), v, modeNames)
+			walk := newSearchWalk(t.Context(), v, budgetFor(modeNames, false))
 			walk.ignoreRules = true
 			walk.dirs = tc.dirs
-			if got := walk.walk(&walkDir{f: f, abs: dir, pruneGit: true}); got != tc.wantWalked {
+			if got := walk.walkDirs([]*walkDir{{f: f, abs: dir, pruneGit: true}}); got != tc.wantWalked {
 				t.Errorf("names walk() with dirs=%d = %v, want %v", tc.dirs, got, tc.wantWalked)
 			}
 			res := v.result(walk.truncated)

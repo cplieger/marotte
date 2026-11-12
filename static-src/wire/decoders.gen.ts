@@ -1854,6 +1854,7 @@ export const decodeFileSearchResult: Decoder<FileSearchResult> = (v) => {
     matched: reqNum(o, "matched", "$.file_search_result"),
     truncated: reqBool(o, "truncated", "$.file_search_result"),
     root_ignored: reqBool(o, "root_ignored", "$.file_search_result"),
+    can_search_deeper: reqBool(o, "can_search_deeper", "$.file_search_result"),
   };
   return out;
 };

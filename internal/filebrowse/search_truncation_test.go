@@ -250,7 +250,7 @@ func TestWalkDir_ReadDirFailureMarksTruncated(t *testing.T) {
 	}
 
 	walk, v := contentWalk(t.Context(), "needle", false)
-	if !walk.walk(&walkDir{f: f, abs: dir, pruneGit: true}) {
+	if !walk.walkDirs([]*walkDir{{f: f, abs: dir, pruneGit: true}}) {
 		t.Error("walk returned false (stop the whole scan) on one unenumerable directory; the other roots must still answer")
 	}
 	if !v.result(walk.truncated).Truncated {
@@ -271,7 +271,7 @@ func TestWalkDir_EndOfDirectoryIsNotTruncation(t *testing.T) {
 	}
 
 	walk, v := contentWalk(t.Context(), "needle", false)
-	if !walk.walk(&walkDir{f: f, abs: dir, pruneGit: true}) {
+	if !walk.walkDirs([]*walkDir{{f: f, abs: dir, pruneGit: true}}) {
 		t.Fatal("walk stopped the scan on an ordinary directory")
 	}
 	res := v.result(walk.truncated)

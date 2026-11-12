@@ -106,10 +106,10 @@ func TestSearch_FindsMatchRecursively(t *testing.T) {
 	res := decodeSearch(t, searchReq(t, h, map[string]string{"mode": "contents", "path": prefix, "q": "needle"}))
 
 	want := []string{
-		filepath.Join(dir, "a/b/c/d/e/far.conf"),
-		filepath.Join(dir, "a/b/c/deeper.txt"),
 		filepath.Join(dir, "a/b/case.txt"),
 		filepath.Join(dir, "a/b/deep.go"),
+		filepath.Join(dir, "a/b/c/deeper.txt"),
+		filepath.Join(dir, "a/b/c/d/e/far.conf"),
 	}
 	got := matchPaths(res)
 	if len(got) != len(want) {
@@ -134,7 +134,7 @@ func TestSearch_FindsMatchRecursively(t *testing.T) {
 			t.Errorf("%s: line = %d, want >= 1", m.Path, m.Line)
 		}
 	}
-	deeper := res.Matches[1]
+	deeper := res.Matches[2]
 	if deeper.Line != 2 || deeper.Excerpt != "second needle line" {
 		t.Errorf("deeper.txt hit = line %d %q, want line 2 %q",
 			deeper.Line, deeper.Excerpt, "second needle line")
@@ -823,7 +823,7 @@ func pinGolden(t *testing.T, path string, v any, regen, consumer string) {
 // contentWalk is a contents-mode walk over needle, driven below the handler.
 func contentWalk(ctx context.Context, needle string, caseSensitive bool) (*searchWalk, *contentVisitor) {
 	v := newContentVisitor(ctx, needle, caseSensitive)
-	walk := newSearchWalk(ctx, v, modeContents)
+	walk := newSearchWalk(ctx, v, budgetFor(modeContents, false))
 	walk.ignoreRules = true
 	walk.caseSensitive = caseSensitive
 	return walk, v
@@ -1008,7 +1008,7 @@ func TestSearch_SwappedNameIsNotReadAfterAdmission(t *testing.T) {
 			"chats/c1.json": `{"messages":"` + secret + `"}`,
 			"pub/notes.txt": "needle in a browsable file\n",
 		})
-		d := &walkDir{f: searchDirAt(t, h, "/config"), abs: "/config", pruneGit: true}
+		root := &walkDir{f: searchDirAt(t, h, "/config"), abs: "/config", pruneGit: true}
 
 		pub := filepath.Join(backing, "pub")
 		if err := os.Rename(pub, pub+".moved"); err != nil {
@@ -1019,11 +1019,15 @@ func TestSearch_SwappedNameIsNotReadAfterAdmission(t *testing.T) {
 		}
 
 		walk, v := contentWalk(t.Context(), "needle", false)
-		if !walk.descend(d, &walkEntry{name: "pub", abs: "/config/pub", srel: "pub"}) {
+		queued := &walkDir{parent: root, name: "pub", abs: "/config/pub", srel: "pub", depth: 1, pruneGit: true}
+		if !walk.drain(&dirCursor{}, []*walkDir{queued}) {
 			t.Error("a refused descent must skip the entry, not stop the whole scan")
 		}
 		if len(v.rows) != 0 {
 			t.Fatalf("walked into a swapped ancestor and produced %+v", v.rows)
+		}
+		if walk.truncated {
+			t.Error("truncated = true: a refused swap is the guarantee, not a loss")
 		}
 	})
 
@@ -1073,7 +1077,7 @@ func TestSearch_HugeDirectoryIsNotReadBeforeCancellationIsChecked(t *testing.T) 
 	cancel()
 	walk, v := contentWalk(ctx, "needle", false)
 
-	grew := allocatedBy(func() { walk.addRoot(loc{m: &h.mounts[0], abs: dir}) })
+	grew := allocatedBy(func() { walk.walkRoots([]loc{{m: &h.mounts[0], abs: dir}}) })
 
 	const bound = 256 << 10
 	if grew > bound {
@@ -1099,7 +1103,7 @@ func TestSearch_BinaryIsRejectedBeforeItsBytesAreRead(t *testing.T) {
 	}
 
 	walk, v := contentWalk(t.Context(), "needle", false)
-	grew := allocatedBy(func() { walk.addRoot(loc{m: &h.mounts[0], abs: dir}) })
+	grew := allocatedBy(func() { walk.walkRoots([]loc{{m: &h.mounts[0], abs: dir}}) })
 
 	if v.files != searchWorkers {
 		t.Fatalf("files = %d, want %d (every binary is opened and counted)", v.files, searchWorkers)
@@ -1123,7 +1127,7 @@ func TestSearch_TextFileIsReadIntoOneBuffer(t *testing.T) {
 	writeTree(t, dir, map[string]string{"big.txt": atCeiling()})
 
 	walk, v := contentWalk(t.Context(), "needle", true)
-	grew := allocatedBy(func() { walk.addRoot(loc{m: &h.mounts[0], abs: dir}) })
+	grew := allocatedBy(func() { walk.walkRoots([]loc{{m: &h.mounts[0], abs: dir}}) })
 
 	if v.files != 1 || v.matched != 1 {
 		t.Fatalf("files = %d, matched = %d, want 1 and 1 (the file was read to its last line)", v.files, v.matched)
@@ -1177,7 +1181,7 @@ func TestWalkDir_DirectoryBudgetIsInclusive(t *testing.T) {
 
 			walk, v := contentWalk(t.Context(), "needle", false)
 			walk.dirs = tc.dirs
-			if got := walk.walk(&walkDir{f: f, abs: dir, pruneGit: true}); got != tc.wantWalked {
+			if got := walk.walkDirs([]*walkDir{{f: f, abs: dir, pruneGit: true}}); got != tc.wantWalked {
 				t.Errorf("walk() with dirs=%d = %v, want %v", tc.dirs, got, tc.wantWalked)
 			}
 			res := v.result(walk.truncated)
@@ -1228,7 +1232,9 @@ func TestContentSearch_FilterGatesBeforeRead(t *testing.T) {
 	}
 }
 
-func TestContentSearch_CutIsAPathOrderPrefix(t *testing.T) {
+// The reply is cut in level order: every match of a level, each directory's in path order, before
+// any match below it. The cut lands inside the deeper folder once both top-level files are in.
+func TestContentSearch_CutIsALevelOrderPrefix(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	tree := map[string]string{
 		"a.txt": strings.Repeat("needle\n", 5),
@@ -1244,23 +1250,26 @@ func TestContentSearch_CutIsAPathOrderPrefix(t *testing.T) {
 	if len(res.Matches) != maxSearchMatches {
 		t.Fatalf("matches = %d, want the cap %d", len(res.Matches), maxSearchMatches)
 	}
-	first, sixth, last := res.Matches[0], res.Matches[5], res.Matches[maxSearchMatches-1]
+	first, sixth, firstDeep, last := res.Matches[0], res.Matches[5], res.Matches[25], res.Matches[maxSearchMatches-1]
 	if first.Path != filepath.Join(dir, "a.txt") || first.Line != 1 {
-		t.Errorf("row 0 = %s:%d, want a.txt:1 (a.txt sorts before the a/ folder)", first.Path, first.Line)
+		t.Errorf("row 0 = %s:%d, want a.txt:1", first.Path, first.Line)
 	}
-	if sixth.Path != filepath.Join(dir, "a/f00.txt") || sixth.Line != 1 {
-		t.Errorf("row 5 = %s:%d, want a/f00.txt:1", sixth.Path, sixth.Line)
+	if sixth.Path != filepath.Join(dir, "b.txt") || sixth.Line != 1 {
+		t.Errorf("row 5 = %s:%d, want b.txt:1 (the top level before the a/ folder)", sixth.Path, sixth.Line)
 	}
-	if last.Path != filepath.Join(dir, "a/f09.txt") || last.Line != 15 {
-		t.Errorf("row 199 = %s:%d, want a/f09.txt:15", last.Path, last.Line)
+	if firstDeep.Path != filepath.Join(dir, "a/f00.txt") || firstDeep.Line != 1 {
+		t.Errorf("row 25 = %s:%d, want a/f00.txt:1", firstDeep.Path, firstDeep.Line)
 	}
-	if !slices.IsSortedFunc(res.Matches, func(a, b FileMatch) int {
+	if last.Path != filepath.Join(dir, "a/f08.txt") || last.Line != 15 {
+		t.Errorf("row 199 = %s:%d, want a/f08.txt:15", last.Path, last.Line)
+	}
+	if !slices.IsSortedFunc(res.Matches[25:], func(a, b FileMatch) int {
 		return cmp.Or(strings.Compare(a.Path, b.Path), cmp.Compare(a.Line, b.Line))
 	}) {
-		t.Error("rows are not in path order")
+		t.Error("the a/ folder's rows are not in path order")
 	}
-	if res.Matched != 5+15*maxFileMatches || !res.Truncated {
-		t.Errorf("matched = %d truncated = %v, want %d and true: b.txt was never reached", res.Matched, res.Truncated, 5+15*maxFileMatches)
+	if res.Matched != 5+16*maxFileMatches || res.Truncated {
+		t.Errorf("matched = %d truncated = %v, want %d and false: every file was read, the reply was only cut", res.Matched, res.Truncated, 5+16*maxFileMatches)
 	}
 }
 

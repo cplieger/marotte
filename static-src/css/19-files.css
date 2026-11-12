@@ -831,6 +831,14 @@
   /* Reserved height so the note landing does not shift the results under the
      reader's cursor between keystrokes. */
   min-height: 1.25rem;
+
+  /* Shares its row with Search deeper, which keeps its own width. */
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.fb-search-deeper {
+  flex: none;
 }
 
 /* No intrinsic-size override: a hit row's extra spans are single-line and share
