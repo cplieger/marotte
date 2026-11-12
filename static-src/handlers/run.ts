@@ -235,7 +235,7 @@ onSSE("entry_sealed", (_chatID, p) => {
       sealRunEntry(runID, p.turn, p.entry_id, p.lane, p.seq, p.ts, p.n);
       return;
     case "tail":
-      tailSealed(runID, p.turn, p.entry_id);
+      tailSealed(runID, p.turn, p.entry_id, p.n);
       return;
     case "none":
       return;

@@ -99,8 +99,8 @@ interface TailCell {
   readonly line: Signal<string>;
   /** The root lane's streaming entry, whose text the line reads while it grows. */
   open: { id: string; n: number; text: string } | undefined;
-  /** Moved by a frame since the run entered this page's scope, so a read's older seed does not
-   *  overwrite it. */
+  /** The line was moved by a frame since the run entered this page's scope, so a read's older
+   *  seed does not overwrite it. */
   live: boolean;
 }
 
@@ -111,7 +111,8 @@ interface EarlyDeltas {
   readonly deltas: Map<number, string>;
 }
 
-/** Bounds what a turn no read names, or an entry no read opens, can hold. */
+/** Bounds one turn's parked deltas, and how many turns no read names park; a named turn's parking
+ *  is bounded by the run's own turns, so a wide run's gapped steps never evict each other. */
 const EARLY_DELTAS = 256;
 const EARLY_TURNS = 8;
 
@@ -162,9 +163,9 @@ export function noteStepTurn(workflowID: string, turnID: string, path: string): 
   cellAt(t, path).open = undefined;
 }
 
-/** Seed each in-flight step's cell from a run read's rows, unless a frame has moved it since the
- *  run entered scope. A row's streaming entry opens a cell that holds none, or moves one holding
- *  that entry at an earlier delta, and the deltas that arrived past the row follow it. */
+/** Seed each in-flight step's cell from a run read's rows: a cell no frame has moved since the run
+ *  entered scope takes the row, and a cell holding the row's streaming entry at an earlier delta
+ *  moves to it; the held deltas past the row follow. */
 export function seedStepTails(
   workflowID: string,
   starts: Iterable<readonly [string, RunStepStart]>,
@@ -222,6 +223,11 @@ export function tailDelta(
     return;
   }
   const t = runTails(workflowID);
+  if (c?.open?.id === entryID && n === c.open.n + 1) {
+    applyDelta(c, n, delta);
+    followEarly(t, turnID, c);
+    return;
+  }
   holdEarly(t, turnID, entryID, n, delta);
   if (c?.open?.id === entryID) {
     followEarly(t, turnID, c);
@@ -254,16 +260,19 @@ function holdEarly(t: RunTails, turnID: string, entryID: string, n: number, delt
     t.early.delete(turnID);
     early = { id: entryID, deltas: new Map() };
     t.early.set(turnID, early);
-    for (const old of t.early.keys()) {
-      if (t.early.size <= EARLY_TURNS) {
-        break;
-      }
+    const unnamed = [...t.early.keys()].filter((turn) => !t.paths.has(turn));
+    for (const old of unnamed.slice(0, Math.max(0, unnamed.length - EARLY_TURNS))) {
       t.early.delete(old);
     }
   }
-  if (early.deltas.size < EARLY_DELTAS) {
-    early.deltas.set(n, delta);
+  // A row reaches the newest deltas, which arrived after the read was written, so the oldest go.
+  if (early.deltas.size >= EARLY_DELTAS) {
+    const oldest = early.deltas.keys().next();
+    if (oldest.done !== true) {
+      early.deltas.delete(oldest.value);
+    }
   }
+  early.deltas.set(n, delta);
 }
 
 function applyDelta(c: TailCell, n: number, delta: string): void {
@@ -277,13 +286,14 @@ function applyDelta(c: TailCell, n: number, delta: string): void {
   moveLine(c, c.open.text, from);
 }
 
-/** Such a turn's root-lane entry sealed: the line it printed stands, over a read written before
- *  the seal. */
-export function tailSealed(workflowID: string, turnID: string, entryID: string): void {
+/** Such a turn's root-lane entry sealed after `n` deltas: the line it printed stands over a read
+ *  written before the seal, unless deltas the cell never applied leave it behind, when the next
+ *  read's row sets it. */
+export function tailSealed(workflowID: string, turnID: string, entryID: string, n: number): void {
   const c = cellOf(workflowID, turnID);
   if (c?.open?.id === entryID) {
+    c.live = c.open.n >= n;
     c.open = undefined;
-    c.live = true;
     const t = tails.get(workflowID);
     if (t?.early.get(turnID)?.id === entryID) {
       t.early.delete(turnID);

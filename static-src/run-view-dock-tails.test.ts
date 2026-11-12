@@ -520,6 +520,58 @@ describe("a run tab's reads wait for the stream to deliver its run", () => {
     expect(dockTail("a")).toBe("third lines");
   });
 
+  it("reads a run holding a revision again, so a sibling step's line follows its deltas", async () => {
+    const wf = "wf_scope_tail_rev";
+    const reads = heldRunReads(wf);
+    showOnlyView(runView);
+    showRun(wf);
+    refreshRun(wf);
+    await flush();
+    reads.land({ ...(readWithOpenEntry(wf) as object), rev: 7 });
+    await flush();
+    expect(dockTail("a")).toBe("second");
+
+    asks[0]?.answer("covered");
+    await flush();
+    expect(reads.urls).toHaveLength(2);
+    delta(wf, 5, " line");
+    await flush();
+    reads.land({ ...(readAfterLostDelta(wf) as object), rev: 8 });
+    await flush();
+    expect(dockTail("a")).toBe("third line");
+  });
+
+  it("takes the line a sibling's entry sealed with from the read after the seal", async () => {
+    const wf = "wf_scope_tail_sealed";
+    const reads = heldRunReads(wf);
+    showOnlyView(runView);
+    showRun(wf);
+    refreshRun(wf);
+    await flush();
+    reads.land(readWithOpenEntry(wf));
+    await flush();
+    expect(dockTail("a")).toBe("second");
+
+    // Delta 4 is published before the scope delivers the run, so it never arrives.
+    asks[0]?.answer("covered");
+    await flush();
+    delta(wf, 5, " line");
+    dispatch({
+      type: "entry_sealed",
+      chat_id: "",
+      payload: { workflow_id: wf, turn: "t-a", entry_id: "t-a-9", lane: "", seq: 7, ts: 7, n: 5 },
+    } as never);
+    await flush();
+    const sealed = runRead(wf) as { step_starts: Record<string, { tail: string }> };
+    const row = sealed.step_starts[`${wf}:a`];
+    if (row !== undefined) {
+      row.tail = "third line";
+    }
+    reads.land(sealed);
+    await flush();
+    expect(dockTail("a")).toBe("third line");
+  });
+
   it("reads a run whose read is out when its ask is answered again, after that read lands", async () => {
     const wf = "wf_scope_tail_out";
     const reads = heldRunReads(wf);

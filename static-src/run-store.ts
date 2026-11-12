@@ -1131,9 +1131,9 @@ export function rereadHeldRuns(): void {
   }
 }
 
-/** Read a run again when a read of it is held or out, coalesced as `invalidateRun`: what changed
- *  since its held revision, to which the server adds every open step's row, else the whole run. A
- *  run nothing holds or reads is left to its reader's first read. */
+/** Read a run again when a read of it is held or out, as `reviseRun` (a held revision) or
+ *  `invalidateRun` (none), each coalesced with a read out. A run nothing holds or reads is left to
+ *  its reader's first read. */
 export function rereadRun(workflowID: string): void {
   if (runRevHeld(workflowID)) {
     reviseRun(workflowID);

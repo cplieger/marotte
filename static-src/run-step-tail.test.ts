@@ -1,7 +1,13 @@
 // The newest line a step printed, read for the run tab's folded Steps row.
 import { describe, expect, it } from "vitest";
-import { lastPrintedLine } from "./run-step-tail.js";
-import type { Entry, OpenEntry } from "./wire/types.gen.js";
+import {
+  forgetStepTails,
+  lastPrintedLine,
+  seedStepTails,
+  stepTail,
+  tailDelta,
+} from "./run-step-tail.js";
+import type { Entry, OpenEntry, RunStepStart } from "./wire/types.gen.js";
 import type { TurnState } from "./types.js";
 
 function entry(seq: number, kind: Entry["kind"], payload: unknown, lane = ""): Entry {
@@ -92,5 +98,54 @@ describe("lastPrintedLine", () => {
     for (const [text, line] of cases) {
       expect(lineOf(turn([entry(1, "text", { text })])), text).toBe(line);
     }
+  });
+});
+
+/** A run read's row for step `path`'s turn `t-<path>`, its root lane streaming `e-<path>` at `n`. */
+function row(path: string, n: number, text: string): readonly [string, RunStepStart] {
+  const turn = `t-${path}`;
+  return [
+    path,
+    {
+      started_at: "2026-11-10T10:00:00Z",
+      ended: false,
+      turn,
+      open: { turn, id: `e-${path}`, lane: "", kind: "text", text, n },
+    },
+  ];
+}
+
+function deltaOf(wf: string, path: string, n: number, text: string): void {
+  tailDelta(wf, `t-${path}`, `e-${path}`, "", n, text);
+}
+
+describe("a tail cell whose seeding read predates its frames", () => {
+  it("keeps every gapped step's parked deltas while another step streams in order", () => {
+    const wf = "wf_cell_wide";
+    const gapped = Array.from({ length: 10 }, (_, i) => `s${String(i)}`);
+    seedStepTails(wf, [...gapped.map((p) => row(p, 3, "a")), row("s10", 0, "")]);
+    for (const p of gapped) {
+      deltaOf(wf, p, 5, "c");
+    }
+    deltaOf(wf, "s10", 1, "x");
+    seedStepTails(
+      wf,
+      gapped.map((p) => row(p, 4, "ab")),
+    );
+    expect(gapped.map((p) => stepTail(wf, p))).toEqual(gapped.map(() => "abc"));
+    expect(stepTail(wf, "s10")).toBe("x");
+    forgetStepTails(wf);
+  });
+
+  it("follows the deltas past a later row when more arrived than a cell parks", () => {
+    const wf = "wf_cell_long";
+    seedStepTails(wf, [row("s", 1, "w1")]);
+    for (let n = 100; n <= 400; n++) {
+      deltaOf(wf, "s", n, `\nw${String(n)}`);
+    }
+    seedStepTails(wf, [row("s", 150, "w150")]);
+    deltaOf(wf, "s", 401, "\nw401");
+    expect(stepTail(wf, "s")).toBe("w401");
+    forgetStepTails(wf);
   });
 });
