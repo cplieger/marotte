@@ -58,7 +58,7 @@ func (rs *Runs) askOpened(workflowID, nodeID string, askID int64) {
 func (rs *Runs) askSettled(workflowID, nodeID string, askID int64) {
 	rs.askSeen(workflowID)
 	if rs.log != nil {
-		rs.log.askClosed(workflowID, nodeID, askID, time.Now())
+		rs.log.askClosed(workflowID, nodeID, askID)
 	}
 }
 
@@ -77,9 +77,9 @@ func containerNode(nodeType string) bool {
 	return false
 }
 
-// silenceCandidate reports whether a step of the run counts toward its silence at now (countsTowardSilence). It is the
-// one place that decides, reading the whole tree under one hold of mu.
-func (r *runLog) silenceCandidate(workflowID string, now time.Time) bool {
+// silenceCandidate reports whether a step of the run counts toward its silence (countsTowardSilence). It is the one
+// place that decides, reading the whole tree under one hold of mu.
+func (r *runLog) silenceCandidate(workflowID string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec, ok := r.runs[workflowID]
@@ -87,7 +87,7 @@ func (r *runLog) silenceCandidate(workflowID string, now time.Time) bool {
 		return false
 	}
 	for _, t := range rec.open {
-		if t.countsTowardSilence(now) {
+		if t.countsTowardSilence() {
 			return true
 		}
 	}
@@ -95,14 +95,11 @@ func (r *runLog) silenceCandidate(workflowID string, now time.Time) bool {
 }
 
 // countsTowardSilence is whether the open turn is a step that may be hung: not a container (its children count), not
-// a watch (its own idleTimeoutSec bounds it), not parked by KAS (node_paused; a person or a heal resumes it), with
-// no ask open and none settled less than an idle window ago (a person is its bound, and an answer is not silence).
-// An untyped turn is a step's.
-func (t *runTurn) countsTowardSilence(now time.Time) bool {
-	if containerNode(t.nodeType) || t.nodeType == "watch" || t.parked || len(t.asks) > 0 {
-		return false
-	}
-	return now.Sub(t.askClosed) >= runIdleWindow
+// a watch (its own idleTimeoutSec bounds it), not parked by KAS with no turn running on it (a person or a heal resumes
+// it), with no ask open (a person is its bound). An untyped turn is a step's. An answer is not read as silence because
+// askSettled stamps the run's clock.
+func (t *runTurn) countsTowardSilence() bool {
+	return !containerNode(t.nodeType) && t.nodeType != "watch" && (!t.parked || t.parkedTurn) && len(t.asks) == 0
 }
 
 // askOpened files an open ask on each of the run's open turns of node nodeID.
@@ -117,15 +114,12 @@ func (r *runLog) askOpened(workflowID, nodeID string, askID int64) {
 	}
 }
 
-// askClosed settles an ask on the run's open turns of node nodeID at at.
-func (r *runLog) askClosed(workflowID, nodeID string, askID int64, at time.Time) {
+// askClosed settles an ask on the run's open turns of node nodeID.
+func (r *runLog) askClosed(workflowID, nodeID string, askID int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, t := range r.nodeTurnsLocked(workflowID, nodeID) {
-		if _, open := t.asks[askID]; open {
-			delete(t.asks, askID)
-			t.askClosed = at
-		}
+		delete(t.asks, askID)
 	}
 }
 
@@ -143,10 +137,11 @@ func (r *runLog) nodeTurnsLocked(workflowID, nodeID string) []*runTurn {
 	return out
 }
 
-// nodeIDOf is the step's node id, the last segment of its path; "" when the opening frame carried none.
+// nodeIDOf is the step's node id, else the last segment of its path (KAS ends a step's path with its id); "" when the
+// opening frame carried neither.
 func nodeIDOf(step *translate.RunStep) string {
-	if len(step.Path) == 0 {
-		return ""
+	if step.NodeID != "" || len(step.Path) == 0 {
+		return step.NodeID
 	}
 	return step.Path[len(step.Path)-1]
 }
@@ -164,7 +159,7 @@ func (rs *Runs) silentSince(workflowID string) time.Time {
 // looks the same. A paused run is not silent, whose stale timer may still fire. The tree is read before the clock,
 // which is re-read under mu with the lease: a frame landing after the tree was read stamps the clock first.
 func (rs *Runs) actOnSilence(ctx context.Context, workflowID string) (stop bool) {
-	if rs.log == nil || !rs.log.silenceCandidate(workflowID, time.Now()) {
+	if rs.log == nil || !rs.log.silenceCandidate(workflowID) {
 		return false
 	}
 	parented := rs.chatResumes(workflowID)

@@ -2015,6 +2015,26 @@ describe("a silent step", () => {
     ]);
   });
 
+  it("marks a running step of a flagged run but not the running watch beside it", () => {
+    const run = runToExec(
+      stateWith(
+        {
+          nodeId: "wf_1",
+          type: "sequence",
+          status: "running",
+          children: [
+            step("build", "running"),
+            { nodeId: "mail", type: "watch", status: "running", children: [] },
+          ],
+        },
+        { status: "running", silentSince: "2026-11-12T00:00:00Z" },
+      ),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.nodes.map((n) => n.silence)).toEqual(["No activity for 1 hour", undefined]);
+  });
+
   it("marks nothing on a run with no flag", () => {
     const run = runToExec(silentTree("running", {}), undefined, NO_ASKS);
     expect(run.nodes.map((n) => n.silence)).toEqual([undefined, undefined, undefined]);

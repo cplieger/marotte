@@ -640,7 +640,8 @@ function toNode(
   if (view?.interruption !== undefined) {
     out.interruption = view.interruption;
   }
-  if (work && ctx.silent && state === "running") {
+  // A watch's own idleTimeoutSec bounds it, so the server never counts it toward the run's silence.
+  if (kind === "step" && ctx.silent && state === "running") {
     out.silence = SILENT_STEP_TEXT;
   }
   if (view?.endedByHand === true) {

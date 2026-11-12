@@ -57,11 +57,10 @@ type runTurn struct {
 	top string
 	// nodeType is KAS's node type; a container's turn holds neither the idle window nor the silence (containerNode).
 	nodeType string
-	// nodeID is the node's own id, the last path segment, which a step's asks name it by.
+	// nodeID is the node's own id, which a step's asks name it by.
 	nodeID string
-	// asks holds the ids of the step's open asks, and askClosed when the last of them settled (countsTowardSilence).
-	asks      map[int64]struct{}
-	askClosed time.Time
+	// asks holds the ids of the step's open asks (countsTowardSilence).
+	asks map[int64]struct{}
 	// answer folds the step's current KAS turn: the sink feeds it, and a turn_start resets it.
 	answer answerFold
 	// ownEnd is whether the step's newest edge is its own turn's turn_end, with no turn_start or node_paused after.
@@ -69,6 +68,9 @@ type runTurn struct {
 	// parked is whether KAS paused the node with no node_start since: a turn a steer runs on a parked node does not
 	// resume it, so its end is not the step's.
 	parked bool
+	// parkedTurn is whether a KAS turn runs on the parked node, a wake or a refused steer's (kirodotdev/Kiro#11863):
+	// model work nobody waits on, so it counts toward silence.
+	parkedTurn bool
 	// errStop is whether the step's current KAS turn ended `error`. Unlike ownEnd it outlives the node_paused that
 	// follows the failing turn_end, which the throttled-ask heal reads (runLog.transientFailure).
 	errStop bool
@@ -555,7 +557,7 @@ func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marot
 	}
 	if t := rec.open[nodePath]; t != nil {
 		// KAS sends node_start twice per step, and again when it resumes a parked one; each continues this turn.
-		t.parked = false
+		t.parked, t.parkedTurn = false, false
 		if t.top == "" {
 			t.top = topStepOf(step)
 		}
@@ -680,6 +682,7 @@ func (r *runLog) stopReason(workflowID, nodePath string, raw marotte.StopReason)
 	}
 	t.rawStop = raw
 	t.ownEnd = true
+	t.parkedTurn = false
 	t.errStop = raw == marotte.StopReasonError
 	t.ended = true
 	if t.endWait != nil {
@@ -764,6 +767,7 @@ func (r *runLog) turnStarted(workflowID, nodePath string) bool {
 	t.ownEnd = false
 	t.errStop = false
 	t.ended = false
+	t.parkedTurn = t.parked
 	t.asked, t.answered = false, false
 	t.lastError = marotte.EngineError{}
 	t.answer.reset()
@@ -775,7 +779,7 @@ func (r *runLog) paused(workflowID, nodePath string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if t := r.openLocked(workflowID, nodePath); t != nil {
-		t.ownEnd, t.parked = false, true
+		t.ownEnd, t.parked, t.parkedTurn = false, true, false
 	}
 }
 

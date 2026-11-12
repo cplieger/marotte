@@ -11,6 +11,8 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 const silentRunID = "wf_1"
@@ -413,9 +415,10 @@ const (
 	verdictStalled
 )
 
-// The run is silent only when a step that is running, open, asks nobody, is no watch and was not just answered sent
-// nothing for an hour; any frame from any node restarts the count.
+// The run is silent only when a step that is running, open, asks nobody and is no watch sent nothing for an hour; any
+// frame from any node, an answer included, restarts the count.
 func TestSilence_OnePredicateOverTheRunTree(t *testing.T) {
+	var answered marotte.ServerEvent
 	for _, tc := range []struct {
 		arrange func(r runTree)
 		// then runs after the silence is staged.
@@ -440,10 +443,20 @@ func TestSilence_OnePredicateOverTheRunTree(t *testing.T) {
 			},
 		},
 		{
-			name: "an ask answered a minute ago", quiet: 2 * time.Hour, verdict: verdictKept,
+			name: "an ask answered after two hours open", quiet: 2 * time.Hour, verdict: verdictKept,
 			arrange: func(r runTree) {
 				r.start(stepNodeType, "a")
-				r.answer(r.ask(marotte.EventPermissionNeeded, "a"))
+				answered = r.ask(marotte.EventPermissionNeeded, "a")
+			},
+			then: func(r runTree) { r.answer(answered) },
+		},
+		{
+			name: "an ask on a step whose content frame opened its turn", quiet: 2 * time.Hour, verdict: verdictKept,
+			arrange: func(r runTree) {
+				r.h.runs.RunFoldTarget(r.t.Context(), &translate.RunStep{
+					RunID: r.id, NodePath: workflow.PathKey([]string{r.id, "a"}), SessionID: "sess_a", NodeID: "a",
+				}, runChatID(r.id))
+				r.ask(marotte.EventPermissionNeeded, "a")
 			},
 		},
 		{
@@ -466,6 +479,27 @@ func TestSilence_OnePredicateOverTheRunTree(t *testing.T) {
 			arrange: func(r runTree) {
 				r.start(stepNodeType, "a")
 				r.park("a")
+			},
+		},
+		{
+			name: "a turn running on a parked step", quiet: 2 * time.Hour, verdict: verdictSilent,
+			arrange: func(r runTree) {
+				r.start("parallel", "p")
+				r.start(stepNodeType, "p", "a")
+				r.park("p", "a")
+				r.h.runs.RunTurnStart(r.id, workflow.PathKey([]string{r.id, "p", "a"}))
+			},
+		},
+		{
+			name: "a parked step whose wake turn ended", quiet: 2 * time.Hour, verdict: verdictKept,
+			arrange: func(r runTree) {
+				r.start("parallel", "p")
+				r.start(stepNodeType, "p", "a")
+				r.start("watch", "p", "mail")
+				r.park("p", "a")
+				key := workflow.PathKey([]string{r.id, "p", "a"})
+				r.h.runs.RunTurnStart(r.id, key)
+				r.h.runs.RunStopReason(r.id, key, marotte.StopReasonEndTurn)
 			},
 		},
 		{
