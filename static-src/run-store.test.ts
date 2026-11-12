@@ -36,6 +36,7 @@ let replyExtra: Record<string, unknown> = {};
 let failStatuses: number[] = [];
 let liveRunsReply: {
   runs: { workflow_id: string; chat_id: string; executing: boolean }[];
+  subject?: { kind: string; ref: string; version: string };
 } | null = null;
 
 vi.mock("./api-client.js", () => ({
@@ -1752,5 +1753,29 @@ describe("rereadHeldRuns re-reads every run a reader holds", () => {
     await store.rebuildLiveRuns();
 
     expect(fetches.filter((p) => p !== "/api/runs/live")).toEqual(["/api/runs/wf_2"]);
+  });
+
+  it("an inventory read that lists a held run unchanged reads it when it has no state", async () => {
+    liveRunsReply = {
+      runs: [{ workflow_id: "wf_1", chat_id: "", executing: true }],
+      subject: { kind: "runs", ref: "", version: "1" },
+    };
+    await store.rebuildLiveRuns();
+    expect(fetches, "nobody holds the run yet").toEqual(["/api/runs/live"]);
+
+    hold("wf_1");
+    fetches.length = 0;
+    liveRunsReply = {
+      runs: [
+        { workflow_id: "wf_1", chat_id: "", executing: true },
+        { workflow_id: "wf_2", chat_id: "", executing: true },
+      ],
+      subject: { kind: "runs", ref: "", version: "2" },
+    };
+    responses = [{ workflowId: "wf_1", status: "running" }];
+
+    await store.rebuildLiveRuns();
+
+    expect(fetches.filter((p) => p !== "/api/runs/live")).toEqual(["/api/runs/wf_1"]);
   });
 });

@@ -1301,3 +1301,58 @@ describe("every revalidation re-reads the held runs once", () => {
     expect(mockRebuildLiveRuns).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("the MCP status subject re-reads the status inventory", () => {
+  function statusReads(): ScriptedFetch["requests"] {
+    return scripted.requests.filter((r) => r.url === "/api/mcp/status");
+  }
+
+  function statusAnswer(version: string): Response {
+    return json({
+      servers: [],
+      subject: { kind: "mcp_status", ref: "", version, epoch: EPOCH_A },
+    });
+  }
+
+  function heldStatusVersion(): string | undefined {
+    return versionMap()
+      .snapshot()
+      .held.find((h) => h.kind === "mcp_status")?.version;
+  }
+
+  it("a verdict naming mcp_status reads the status and holds its version once applied", async () => {
+    observeStamp({ kind: "mcp_status", ref: "", version: "1" });
+    scripted.respond("/api/sync", digestAnswer([{ kind: "mcp_status", ref: "", version: "2" }]));
+    scripted.respond("/api/mcp/status", () => statusAnswer("2"));
+
+    await _revalidateForTest(ctx());
+
+    expect(statusReads()).toHaveLength(1);
+    expect(heldStatusVersion()).toBe("2");
+  });
+
+  it("a refused mcp_status frame reads the status, and the held version moves only with the read", async () => {
+    observeStamp({ kind: "mcp_status", ref: "", version: "1" });
+    const conn = await connectSettled();
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    scripted.respond("/api/mcp/status", async () => {
+      await gate;
+      return statusAnswer("2");
+    });
+
+    conn?.frame({
+      type: "subject_changed",
+      chat_id: "",
+      subject: { kind: "mcp_status", ref: "", version: "2" },
+    });
+    await until(() => statusReads().length === 1, "the status read");
+    expect(heldStatusVersion(), "the frame's own stamp is not observed").toBe("1");
+
+    release();
+    await until(() => heldStatusVersion() === "2", "the read's stamp to be observed");
+    expect(statusReads()).toHaveLength(1);
+  });
+});
