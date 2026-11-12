@@ -496,7 +496,7 @@ func BenchmarkHandleCommand(b *testing.B) {
 		},
 		"create_chat": {
 			Type: marotte.CmdCreateChat, ChatID: "c-bench-new",
-			Payload: json.RawMessage(`{"name":"bench","model":"gpt-4"}`),
+			Payload: json.RawMessage(`{"name":"bench","model":"model-e-4"}`),
 		},
 		"cancel": {
 			Type: marotte.CmdCancel, ChatID: "c-bench",
@@ -526,7 +526,7 @@ func BenchmarkHandleCommand(b *testing.B) {
 		h, _, _ := newTestHub()
 		cmd := marotte.ClientCommand{
 			Type: marotte.CmdCreateChat, ChatID: "c-cached",
-			Payload: json.RawMessage(`{"name":"cached","model":"gpt-4"}`),
+			Payload: json.RawMessage(`{"name":"cached","model":"model-e-4"}`),
 		}
 		body, _ := json.Marshal(cmd)
 		req := httptest.NewRequest(http.MethodPost, "/api/command", strings.NewReader(string(body)))

@@ -14,7 +14,7 @@ func TestChatHeader_CarriesNoWorkspaceCatalog(t *testing.T) {
 	c := &Chat{
 		ID:            "c1",
 		Name:          "Hello",
-		Model:         "claude",
+		Model:         "model-x",
 		CurrentModeID: "plan",
 		EffortLevels:  []SessionEffortLevel{{ID: "high", Name: "High"}},
 	}

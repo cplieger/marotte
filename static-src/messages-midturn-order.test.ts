@@ -203,9 +203,9 @@ const STEP_MESSAGE: Entry = sealed(
   1,
   "steer",
   {
-    text: "Task 12 round 3, Claude seat: APPROVE.",
+    text: "Task 12 round 3, seat A: APPROVE.",
     origin: "step",
-    step: "review-claude",
+    step: "review-a",
     produced_ts: 5,
   },
   "wfmsg-1",

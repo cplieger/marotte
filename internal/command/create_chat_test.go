@@ -58,7 +58,7 @@ func TestCmdCreateChat_MintsAndReturns(t *testing.T) {
 	host := newTestHost(t, store)
 
 	body, err := cmdCreateChat(t.Context(), newTestMembership(t, host),
-		createReq(t, "", marotte.CreateChatCommand{OpID: "op-1", Name: "Tangent notes", Model: "claude-opus-5"}))
+		createReq(t, "", marotte.CreateChatCommand{OpID: "op-1", Name: "Tangent notes", Model: "model-a-5"}))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", statusOf(err), errText(err))
@@ -71,7 +71,7 @@ func TestCmdCreateChat_MintsAndReturns(t *testing.T) {
 	if !ok {
 		t.Fatalf("the returned chat %q is not in the store", id)
 	}
-	if c.Name != "Tangent notes" || c.Model != "claude-opus-5" {
+	if c.Name != "Tangent notes" || c.Model != "model-a-5" {
 		t.Errorf("stored chat = {name:%q model:%q}, want the payload's name and model", c.Name, c.Model)
 	}
 }

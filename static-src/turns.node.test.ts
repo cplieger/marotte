@@ -770,8 +770,8 @@ describe("turnLedger", () => {
 
   describe("models", () => {
     it("names the model that finished the turn", () => {
-      const led = turnLedger(oneTurn([closeEntry("t1", 1, { model: "sonnet-4" })]));
-      expect(led.models).toEqual(["sonnet-4"]);
+      const led = turnLedger(oneTurn([closeEntry("t1", 1, { model: "model-b-4" })]));
+      expect(led.models).toEqual(["model-b-4"]);
     });
 
     it("carries every model in emission order, from the switch entries", () => {
@@ -779,22 +779,22 @@ describe("turnLedger", () => {
       // is legible solely from the entries it appended.
       const led = turnLedger(
         oneTurn([
-          sealed("t1", 1, "model_switched", { from: "sonnet-4", to: "opus-5" }),
-          closeEntry("t1", 2, { model: "opus-5" }),
+          sealed("t1", 1, "model_switched", { from: "model-b-4", to: "model-a-5" }),
+          closeEntry("t1", 2, { model: "model-a-5" }),
         ]),
       );
-      expect(led.models).toEqual(["sonnet-4", "opus-5"]);
+      expect(led.models).toEqual(["model-b-4", "model-a-5"]);
     });
 
     it("does not repeat a model named more than once", () => {
       const led = turnLedger(
         oneTurn([
-          sealed("t1", 1, "model_switched", { from: "sonnet-4", to: "opus-5" }),
-          sealed("t1", 2, "model_switched", { from: "opus-5", to: "sonnet-4" }),
-          closeEntry("t1", 3, { model: "sonnet-4" }),
+          sealed("t1", 1, "model_switched", { from: "model-b-4", to: "model-a-5" }),
+          sealed("t1", 2, "model_switched", { from: "model-a-5", to: "model-b-4" }),
+          closeEntry("t1", 3, { model: "model-b-4" }),
         ]),
       );
-      expect(led.models).toEqual(["sonnet-4", "opus-5"]);
+      expect(led.models).toEqual(["model-b-4", "model-a-5"]);
     });
 
     it('reports no model at all rather than "unknown"', () => {

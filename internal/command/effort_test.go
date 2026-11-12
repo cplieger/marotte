@@ -110,9 +110,9 @@ func effortSeeds(t *testing.T, dir string) map[string]string {
 // they were told it did not apply and the app had already remembered it.
 func TestCmdSetEffort_ARefusedSwitchWritesNoSeed(t *testing.T) {
 	dir := t.TempDir()
-	writeConfig(t, dir, `{"last_effort_by_model":{"opus-5":"low"}}`)
+	writeConfig(t, dir, `{"last_effort_by_model":{"model-a-5":"low"}}`)
 	store := testsupport.NewInMemoryChatStore()
-	seedChatOnModel(t, store, "c1", "opus-5")
+	seedChatOnModel(t, store, "c1", "model-a-5")
 	b := &recordingBridge{callErr: errors.New("no such config option"), sessionID: "s"}
 	host := newBridgeHost(store, b)
 	bus := &recordingBus{}
@@ -123,8 +123,8 @@ func TestCmdSetEffort_ARefusedSwitchWritesNoSeed(t *testing.T) {
 	if statusOf(err) != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502", statusOf(err))
 	}
-	if got := effortSeeds(t, dir)["opus-5"]; got != "low" {
-		t.Errorf("seed for opus-5 = %q, want %q; a refused level was remembered as a preference", got, "low")
+	if got := effortSeeds(t, dir)["model-a-5"]; got != "low" {
+		t.Errorf("seed for model-a-5 = %q, want %q; a refused level was remembered as a preference", got, "low")
 	}
 	if n := bus.countOf(marotte.EventSettingsUpdated); n != 0 {
 		t.Errorf("settings_updated broadcasts = %d, want 0 after a refusal", n)
@@ -136,9 +136,9 @@ func TestCmdSetEffort_ARefusedSwitchWritesNoSeed(t *testing.T) {
 // model's remembered level.
 func TestCmdSetEffort_SeedsOnlyThePickedModel(t *testing.T) {
 	dir := t.TempDir()
-	writeConfig(t, dir, `{"theme":"dark","last_effort_by_model":{"opus-5":"low","gpt-luna":"high"}}`)
+	writeConfig(t, dir, `{"theme":"dark","last_effort_by_model":{"model-a-5":"low","model-e-mini":"high"}}`)
 	store := testsupport.NewInMemoryChatStore()
-	seedChatOnModel(t, store, "c1", "opus-5")
+	seedChatOnModel(t, store, "c1", "model-a-5")
 	host := newBridgeHost(store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
 	bus := &recordingBus{}
 
@@ -149,7 +149,7 @@ func TestCmdSetEffort_SeedsOnlyThePickedModel(t *testing.T) {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
 	got := effortSeeds(t, dir)
-	want := map[string]string{"opus-5": "max", "gpt-luna": "high"}
+	want := map[string]string{"model-a-5": "max", "model-e-mini": "high"}
 	if !maps.Equal(got, want) {
 		t.Errorf("last_effort_by_model = %v, want %v", got, want)
 	}
@@ -165,11 +165,11 @@ func TestCmdSetEffort_SeedsOnlyThePickedModel(t *testing.T) {
 // would be a remembered value no surface can show.
 func TestCmdSetEffort_ATierTheListedModelLacksRecordsNoSeed(t *testing.T) {
 	dir := t.TempDir()
-	writeConfig(t, dir, `{"last_effort_by_model":{"sonnet":"high"}}`)
+	writeConfig(t, dir, `{"last_effort_by_model":{"model-b":"high"}}`)
 	store := testsupport.NewInMemoryChatStore()
-	seedChatOnModel(t, store, "c1", "sonnet")
+	seedChatOnModel(t, store, "c1", "model-b")
 	deps := newBenchDeps()
-	deps.tiers = map[string][]string{"sonnet": {"low", "medium", "high"}}
+	deps.tiers = map[string][]string{"model-b": {"low", "medium", "high"}}
 	host := &noBridgeDeps{storeDeps: &storeDeps{benchDeps: deps, store: store}}
 	bus := &recordingBus{}
 
@@ -179,7 +179,7 @@ func TestCmdSetEffort_ATierTheListedModelLacksRecordsNoSeed(t *testing.T) {
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
-	if got, want := effortSeeds(t, dir), map[string]string{"sonnet": "high"}; !maps.Equal(got, want) {
+	if got, want := effortSeeds(t, dir), map[string]string{"model-b": "high"}; !maps.Equal(got, want) {
 		t.Errorf("last_effort_by_model = %v, want %v kept", got, want)
 	}
 	if n := bus.countOf(marotte.EventSettingsUpdated); n != 0 {
@@ -353,7 +353,7 @@ func TestCmdSetEffort_RejectsAMalformedLevel(t *testing.T) {
 }
 
 func TestCmdSetEffort_AcceptsATierOutsideTheConstants(t *testing.T) {
-	// The tier catalog is upstream-owned: an unknown but well-formed tier (gpt-luna's "none")
+	// The tier catalog is upstream-owned: an unknown but well-formed tier (one model's "none")
 	// flows, and KAS stays the authority.
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
@@ -379,7 +379,7 @@ func TestCmdSetEffort_AcceptsATierOutsideTheConstants(t *testing.T) {
 // the model is what makes the row addressable at all.
 func TestCmdSetEffort_AnAcceptedTierRecordsOneRow(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	seedChatOnModel(t, store, "c1", "opus-5")
+	seedChatOnModel(t, store, "c1", "model-a-5")
 	host := effortHost(t, store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
 
 	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, keylock.New(cmp.Compare[marotte.ChatID]), effortReq(t, "c1", "max"))
@@ -387,7 +387,7 @@ func TestCmdSetEffort_AnAcceptedTierRecordsOneRow(t *testing.T) {
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
-	want := []effortRecord{{chatID: "c1", model: "opus-5", level: marotte.EffortMax}}
+	want := []effortRecord{{chatID: "c1", model: "model-a-5", level: marotte.EffortMax}}
 	if !slices.Equal(host.effortRecords, want) {
 		t.Errorf("recorder calls = %v, want %v", host.effortRecords, want)
 	}
@@ -397,7 +397,7 @@ func TestCmdSetEffort_AnAcceptedTierRecordsOneRow(t *testing.T) {
 // keeps it off the chat record and out of the per-model seed.
 func TestCmdSetEffort_ARefusedSwitchRecordsNoRow(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	seedChatOnModel(t, store, "c1", "opus-5")
+	seedChatOnModel(t, store, "c1", "model-a-5")
 	host := effortHost(t, store, &recordingBridge{callErr: errors.New("no such config option"), sessionID: "s"})
 
 	_, err := cmdSetEffort(t.Context(), host, host, host, Workspace{}, host, keylock.New(cmp.Compare[marotte.ChatID]), effortReq(t, "c1", "max"))
@@ -416,7 +416,7 @@ func TestCmdSetEffort_ARefusedSwitchRecordsNoRow(t *testing.T) {
 // transcript with rows nothing happened for.
 func TestCmdSetEffort_ARepeatOfTheHeldTierRecordsNoSecondRow(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	seedChatOnModel(t, store, "c1", "opus-5")
+	seedChatOnModel(t, store, "c1", "model-a-5")
 	host := effortHost(t, store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
 
 	for range 2 {

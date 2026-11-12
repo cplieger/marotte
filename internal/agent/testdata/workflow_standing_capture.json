@@ -582,17 +582,17 @@
         "type": "parallel",
         "branches": [
          {
-          "nodeId": "review-fable",
+          "nodeId": "review-c",
           "type": "step",
           "agentName": "semantic_reviewer",
-          "modelId": "claude-fable-5",
+          "modelId": "model-d-5",
           "effortLevel": "xhigh"
          },
          {
-          "nodeId": "review-gpt",
+          "nodeId": "review-b",
           "type": "step",
           "agentName": "semantic_reviewer",
-          "modelId": "gpt-5.6-sol",
+          "modelId": "model-e-5.6",
           "effortLevel": "xhigh"
          }
         ]
@@ -821,17 +821,17 @@
       "type": "parallel",
       "branches": [
        {
-        "nodeId": "review-opus",
+        "nodeId": "review-a",
         "type": "step",
         "agentName": "semantic_reviewer",
-        "modelId": "claude-opus-5",
+        "modelId": "model-a-5",
         "effortLevel": "xhigh"
        },
        {
-        "nodeId": "review-gpt",
+        "nodeId": "review-b",
         "type": "step",
         "agentName": "semantic_reviewer",
-        "modelId": "gpt-5.6-sol",
+        "modelId": "model-e-5.6",
         "effortLevel": "xhigh"
        }
       ]
@@ -840,7 +840,7 @@
       "nodeId": "aggregate",
       "type": "step",
       "agentName": "wf-coder",
-      "modelId": "claude-opus-5",
+      "modelId": "model-a-5",
       "effortLevel": "xhigh"
      }
     ],

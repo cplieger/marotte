@@ -28,7 +28,7 @@ function session(id: string, over: Partial<Session> = {}): Session {
     ...makeSession({
       id,
       name: id,
-      model: "claude-opus-5",
+      model: "model-a-5",
       effort: "",
       effort_levels: [],
       usage: {
@@ -57,37 +57,30 @@ async function paint(s: Session): Promise<void> {
 
 describe("the model pill's pending badge", () => {
   it("marks the button while the header carries a pending pick", async () => {
-    await paint(session("c-pending", { pending_model: "claude-sonnet-5" }));
+    await paint(session("c-pending", { pending_model: "model-b-5" }));
 
     expect($.switchModelBtn.classList.contains("pending")).toBe(true);
     // The tooltip is the accessible name, because an icon-only pill shows no model name to hover for.
-    const name =
-      "Switch model, currently claude opus 5, switching to claude sonnet 5 after this turn";
+    const name = "Switch model, currently model a 5, switching to model b 5 after this turn";
     expect($.switchModelBtn.getAttribute("data-tooltip")).toBe(name);
     expect($.switchModelBtn.getAttribute("aria-label")).toBe(name);
   });
 
   it("clears the badge when a header arrives with the field empty", async () => {
-    await paint(session("c-applied", { pending_model: "claude-sonnet-5" }));
+    await paint(session("c-applied", { pending_model: "model-b-5" }));
     expect($.switchModelBtn.classList.contains("pending")).toBe(true);
 
-    await paint(session("c-applied", { model: "claude-sonnet-5", pending_model: "" }));
+    await paint(session("c-applied", { model: "model-b-5", pending_model: "" }));
 
     expect($.switchModelBtn.classList.contains("pending")).toBe(false);
-    expect($.switchModelBtn.getAttribute("data-tooltip")).toBe(
-      "Switch model, currently claude sonnet 5",
-    );
-    expect($.switchModelBtn.getAttribute("aria-label")).toBe(
-      "Switch model, currently claude sonnet 5",
-    );
+    expect($.switchModelBtn.getAttribute("data-tooltip")).toBe("Switch model, currently model b 5");
+    expect($.switchModelBtn.getAttribute("aria-label")).toBe("Switch model, currently model b 5");
   });
 
   it("marks nothing when the header carries no field at all", async () => {
     await paint(session("c-none"));
 
     expect($.switchModelBtn.classList.contains("pending")).toBe(false);
-    expect($.switchModelBtn.getAttribute("data-tooltip")).toBe(
-      "Switch model, currently claude opus 5",
-    );
+    expect($.switchModelBtn.getAttribute("data-tooltip")).toBe("Switch model, currently model a 5");
   });
 });

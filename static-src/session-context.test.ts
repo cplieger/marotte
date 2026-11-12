@@ -23,20 +23,20 @@ describe("the last model a new chat opens with", () => {
   });
 
   it("remembers a pick and hands it to the settings writer", () => {
-    setLastModel("claude-opus-4.6");
+    setLastModel("model-a-4.6");
     expect(patchSettings).toHaveBeenCalledTimes(1);
-    expect(patchSettings).toHaveBeenCalledWith({ last_model: "claude-opus-4.6" });
-    expect(getLastModel()).toBe("claude-opus-4.6");
+    expect(patchSettings).toHaveBeenCalledWith({ last_model: "model-a-4.6" });
+    expect(getLastModel()).toBe("model-a-4.6");
   });
 
   it("hands every pick to the settings writer, which alone decides one changes nothing", () => {
-    setLastModel("claude-opus-4.6");
-    restoreLastModel("gpt-5");
-    setLastModel("gpt-5");
+    setLastModel("model-a-4.6");
+    restoreLastModel("model-e-5");
+    setLastModel("model-e-5");
 
-    expect(patchSettings).toHaveBeenNthCalledWith(1, { last_model: "claude-opus-4.6" });
-    expect(patchSettings).toHaveBeenNthCalledWith(2, { last_model: "gpt-5" });
-    expect(getLastModel()).toBe("gpt-5");
+    expect(patchSettings).toHaveBeenNthCalledWith(1, { last_model: "model-a-4.6" });
+    expect(patchSettings).toHaveBeenNthCalledWith(2, { last_model: "model-e-5" });
+    expect(getLastModel()).toBe("model-e-5");
   });
 
   it("restoreLastModel updates the cache without patching", () => {
@@ -56,8 +56,8 @@ describe("the effort seed — the level a new chat opens on, per model", () => {
   });
 
   it("answers the level adopted for that model", () => {
-    restoreLastEffort({ "claude-opus-5": "max" });
-    expect(getLastEffortFor("claude-opus-5")).toBe("max");
+    restoreLastEffort({ "model-a-5": "max" });
+    expect(getLastEffortFor("model-a-5")).toBe("max");
   });
 
   it("keeps one level per model, so a pick on one retracts none of the others", () => {
@@ -71,8 +71,8 @@ describe("the effort seed — the level a new chat opens on, per model", () => {
   });
 
   it("answers only for a model that has an entry", () => {
-    restoreLastEffort({ "claude-opus-5": "max" });
-    expect(getLastEffortFor("gpt-luna")).toBe("");
+    restoreLastEffort({ "model-a-5": "max" });
+    expect(getLastEffortFor("model-e-mini")).toBe("");
     expect(getLastEffortFor("")).toBe("");
   });
 

@@ -98,7 +98,7 @@ const POPUPS: readonly Popup[] = [
     rows: () => {
       const scroll = el("div", "pill-model-scroll");
       const item = el("button", "pill-model-item");
-      item.append(span("", "claude-opus-5"), span("pill-model-meta", "5x"));
+      item.append(span("", "model-a-5"), span("pill-model-meta", "5x"));
       scroll.append(item);
       const effort = el("div", "effort-row");
       const track = el("div", "effort-track");

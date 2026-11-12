@@ -198,10 +198,10 @@ describe("the effort section", () => {
   });
 
   it("marks the tier the session reports running at when the chat chose none", () => {
-    cachedModels = [model("opus-4.7")];
+    cachedModels = [model("model-a-4.7")];
     setSession({
       id: "c1",
-      model: "opus-4.7",
+      model: "model-a-4.7",
       effort: "",
       effort_active: "xhigh",
       effort_levels: fiveTiers(),
@@ -211,10 +211,10 @@ describe("the effort section", () => {
   });
 
   it("marks the chat's own choice over the level the session reports", () => {
-    cachedModels = [model("opus-4.7")];
+    cachedModels = [model("model-a-4.7")];
     setSession({
       id: "c1",
-      model: "opus-4.7",
+      model: "model-a-4.7",
       effort: "low",
       effort_active: "xhigh",
       effort_levels: fiveTiers(),
@@ -224,10 +224,10 @@ describe("the effort section", () => {
   });
 
   it("renders the tiers the session offers, not a fixed five", async () => {
-    cachedModels = [model("sonnet-5")];
+    cachedModels = [model("model-b-5")];
     setSession({
       id: "c1",
-      model: "sonnet-5",
+      model: "model-b-5",
       effort: "",
       effort_active: "medium",
       effort_levels: [{ id: "low" }, { id: "medium" }, { id: "high" }, { id: "max" }],
@@ -239,10 +239,10 @@ describe("the effort section", () => {
   });
 
   it("rebuilds the tiers when the session's vocabulary changes", async () => {
-    cachedModels = [model("opus-4.7"), model("sonnet-5")];
+    cachedModels = [model("model-a-4.7"), model("model-b-5")];
     setSession({
       id: "c1",
-      model: "opus-4.7",
+      model: "model-a-4.7",
       effort: "",
       effort_active: "xhigh",
       effort_levels: fiveTiers(),
@@ -251,7 +251,7 @@ describe("the effort section", () => {
 
     setSession({
       id: "c1",
-      model: "sonnet-5",
+      model: "model-b-5",
       effort: "",
       effort_active: "medium",
       effort_levels: [{ id: "low" }, { id: "medium" }, { id: "high" }, { id: "max" }],
@@ -263,8 +263,8 @@ describe("the effort section", () => {
   });
 
   it("uses the current model's own catalog tiers when no session catalog exists", async () => {
-    cachedModels = [model("opus-4.7", "high", false, ["low", "high"])];
-    setSession({ id: "c1", model: "opus-4.7", effort: "" });
+    cachedModels = [model("model-a-4.7", "high", false, ["low", "high"])];
+    setSession({ id: "c1", model: "model-a-4.7", effort: "" });
 
     expect(tierCount()).toBe(2);
     await expect(tierEnds()).resolves.toEqual(["low", "high"]);
@@ -273,10 +273,10 @@ describe("the effort section", () => {
 
   it("offers a bridgeless chat on a model with fewer tiers that model's tiers", async () => {
     cachedModels = [
-      model("opus-5", "high", false, FIVE),
-      model("sonnet-5", "medium", false, ["low", "medium", "high"]),
+      model("model-a-5", "high", false, FIVE),
+      model("model-b-5", "medium", false, ["low", "medium", "high"]),
     ];
-    setSession({ id: "c1", model: "sonnet-5", effort: "" });
+    setSession({ id: "c1", model: "model-b-5", effort: "" });
 
     expect(tierCount()).toBe(3);
     await expect(tierEnds()).resolves.toEqual(["low", "high"]);
@@ -302,10 +302,10 @@ describe("the effort section", () => {
   });
 
   it("labels a tier by the catalog's name, else the house table", async () => {
-    cachedModels = [model("opus-4.7")];
+    cachedModels = [model("model-a-4.7")];
     setSession({
       id: "c1",
-      model: "opus-4.7",
+      model: "model-a-4.7",
       effort: "",
       effort_active: "xhigh",
       effort_levels: [{ id: "low", name: "Low effort" }, { id: "xhigh" }],
@@ -319,10 +319,10 @@ describe("the effort section", () => {
   });
 
   it("dispatches the tier a keyboard step names", async () => {
-    cachedModels = [model("opus-4.7")];
+    cachedModels = [model("model-a-4.7")];
     setSession({
       id: "c1",
-      model: "opus-4.7",
+      model: "model-a-4.7",
       effort: "",
       effort_active: "medium",
       effort_levels: [{ id: "low" }, { id: "medium" }],
@@ -340,10 +340,10 @@ describe("the effort section", () => {
   });
 
   it("steps one tier at a time, clamps at both ends and sends only where it stopped", async () => {
-    cachedModels = [model("opus-4.7")];
+    cachedModels = [model("model-a-4.7")];
     setSession({
       id: "c1",
-      model: "opus-4.7",
+      model: "model-a-4.7",
       effort: "",
       effort_active: "low",
       effort_levels: fiveTiers(),
@@ -364,11 +364,11 @@ describe("the effort section", () => {
   });
 
   it("does not mark a chosen level the current model does not offer", () => {
-    cachedModels = [model("sonnet-5", "medium")];
+    cachedModels = [model("model-b-5", "medium")];
     setSession({
       id: "c1",
       effort: "max",
-      model: "sonnet-5",
+      model: "model-b-5",
       effort_active: "high",
       effort_levels: [{ id: "low" }, { id: "medium" }, { id: "high" }],
     });
@@ -377,11 +377,11 @@ describe("the effort section", () => {
   });
 
   it("still marks a chosen level the model does offer", () => {
-    cachedModels = [model("opus-5", "high")];
+    cachedModels = [model("model-a-5", "high")];
     setSession({
       id: "c1",
       effort: "max",
-      model: "opus-5",
+      model: "model-a-5",
       effort_active: "high",
       effort_levels: fiveTiers(),
     });
@@ -390,27 +390,27 @@ describe("the effort section", () => {
   });
 
   it("opens a new chat on the level the user last picked, under the same model", () => {
-    lastEffortByModel = { "opus-5": "max" };
-    cachedModels = [model("opus-5", "high", false, FIVE)];
-    setSession({ id: "c1", model: "opus-5", effort: "" });
+    lastEffortByModel = { "model-a-5": "max" };
+    cachedModels = [model("model-a-5", "high", false, FIVE)];
+    setSession({ id: "c1", model: "model-a-5", effort: "" });
 
     expect(markedTier()).toBe("max");
   });
 
   it("a level picked under ANOTHER model yields the current model's default", () => {
-    lastEffortByModel = { "opus-5": "max" };
-    cachedModels = [model("gpt-luna", "medium")];
-    setSession({ id: "c1", model: "gpt-luna", effort: "", effort_levels: fiveTiers() });
+    lastEffortByModel = { "model-a-5": "max" };
+    cachedModels = [model("model-e-mini", "medium")];
+    setSession({ id: "c1", model: "model-e-mini", effort: "", effort_levels: fiveTiers() });
 
     expect(markedTier()).toBe("medium");
   });
 
   it("ignores a remembered level the current model does not offer", () => {
-    lastEffortByModel = { "sonnet-5": "max" };
-    cachedModels = [model("sonnet-5", "medium")];
+    lastEffortByModel = { "model-b-5": "max" };
+    cachedModels = [model("model-b-5", "medium")];
     setSession({
       id: "c1",
-      model: "sonnet-5",
+      model: "model-b-5",
       effort: "",
       effort_levels: [{ id: "low" }, { id: "medium" }, { id: "high" }],
     });
@@ -419,11 +419,11 @@ describe("the effort section", () => {
   });
 
   it("marks the level the session reports over the remembered pick", () => {
-    lastEffortByModel = { "opus-5": "low" };
-    cachedModels = [model("opus-5", "high")];
+    lastEffortByModel = { "model-a-5": "low" };
+    cachedModels = [model("model-a-5", "high")];
     setSession({
       id: "c1",
-      model: "opus-5",
+      model: "model-a-5",
       effort: "",
       effort_active: "xhigh",
       effort_levels: fiveTiers(),
@@ -433,10 +433,10 @@ describe("the effort section", () => {
   });
 
   it("sends nothing when the pick is the level this chat already chose", async () => {
-    cachedModels = [model("opus-5")];
+    cachedModels = [model("model-a-5")];
     setSession({
       id: "c1",
-      model: "opus-5",
+      model: "model-a-5",
       effort: "low",
       effort_active: "low",
       effort_levels: fiveTiers(),
@@ -450,8 +450,8 @@ describe("the effort section", () => {
   });
 
   it("still sends when the pick is the marked tier but not this chat's choice", async () => {
-    cachedModels = [model("opus-5", "max")];
-    setSession({ id: "c1", model: "opus-5", effort: "", effort_levels: fiveTiers() });
+    cachedModels = [model("model-a-5", "max")];
+    setSession({ id: "c1", model: "model-a-5", effort: "", effort_levels: fiveTiers() });
     effortDispatch.mockClear();
     expect(markedTier()).toBe("max");
 
@@ -480,26 +480,26 @@ describe("the effort slider's thinking Off stop", () => {
   });
 
   it("leads the range with Off on a model whose thinking can be turned off", async () => {
-    cachedModels = [model("opus-5", "high", true)];
-    setSession({ id: "c1", model: "opus-5", effort: "high", effort_levels: fiveTiers() });
+    cachedModels = [model("model-a-5", "high", true)];
+    setSession({ id: "c1", model: "model-a-5", effort: "high", effort_levels: fiveTiers() });
 
     expect(tierCount()).toBe(6);
     expect(await tierEnds()).toEqual(["thinking:off", "max"]);
   });
 
   it("offers no Off stop on a model whose thinking cannot be turned off", async () => {
-    cachedModels = [model("opus-5", "high")];
-    setSession({ id: "c1", model: "opus-5", effort: "high", effort_levels: fiveTiers() });
+    cachedModels = [model("model-a-5", "high")];
+    setSession({ id: "c1", model: "model-a-5", effort: "high", effort_levels: fiveTiers() });
 
     expect(tierCount()).toBe(5);
     expect((await tierEnds())[0]).toBe("low");
   });
 
   it("sits on Off when the session reports thinking off", () => {
-    cachedModels = [model("opus-5", "high", true)];
+    cachedModels = [model("model-a-5", "high", true)];
     setSession({
       id: "c1",
-      model: "opus-5",
+      model: "model-a-5",
       effort: "high",
       effort_levels: fiveTiers(),
       thinking_active: "off",
@@ -510,17 +510,17 @@ describe("the effort slider's thinking Off stop", () => {
   });
 
   it("sits on Off for a default-off model the chat never chose", () => {
-    cachedModels = [{ ...model("opus-5", "high", true), thinking_default_off: true }];
-    setSession({ id: "c1", model: "opus-5", effort: "high", effort_levels: fiveTiers() });
+    cachedModels = [{ ...model("model-a-5", "high", true), thinking_default_off: true }];
+    setSession({ id: "c1", model: "model-a-5", effort: "high", effort_levels: fiveTiers() });
 
     expect(markedTier()).toBe("thinking:off");
   });
 
   it("trusts the session's report over the chat's own choice", () => {
-    cachedModels = [model("opus-5", "high", true)];
+    cachedModels = [model("model-a-5", "high", true)];
     setSession({
       id: "c1",
-      model: "opus-5",
+      model: "model-a-5",
       effort: "high",
       effort_levels: fiveTiers(),
       thinking_choice: "off",
@@ -531,10 +531,10 @@ describe("the effort slider's thinking Off stop", () => {
   });
 
   it("sends set_thinking, not set_effort, when the reader picks Off", async () => {
-    cachedModels = [model("opus-5", "high", true)];
+    cachedModels = [model("model-a-5", "high", true)];
     setSession({
       id: "c1",
-      model: "opus-5",
+      model: "model-a-5",
       effort: "low",
       effort_levels: fiveTiers(),
       thinking_active: "on",
@@ -548,10 +548,10 @@ describe("the effort slider's thinking Off stop", () => {
   });
 
   it("sends nothing when Off is picked while thinking is already off", async () => {
-    cachedModels = [model("opus-5", "high", true)];
+    cachedModels = [model("model-a-5", "high", true)];
     setSession({
       id: "c1",
-      model: "opus-5",
+      model: "model-a-5",
       effort: "low",
       effort_levels: fiveTiers(),
       thinking_active: "off",
@@ -564,10 +564,10 @@ describe("the effort slider's thinking Off stop", () => {
   });
 
   it("still sends the chat's own tier while thinking is off, because that turns it back on", async () => {
-    cachedModels = [model("opus-5", "high", true)];
+    cachedModels = [model("model-a-5", "high", true)];
     setSession({
       id: "c1",
-      model: "opus-5",
+      model: "model-a-5",
       effort: "low",
       effort_levels: fiveTiers(),
       thinking_active: "off",

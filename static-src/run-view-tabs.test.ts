@@ -125,9 +125,9 @@ function seedRuns(): void {
         status: "running",
         children: [
           step("advisor", "completed"),
-          step("code-claude", "completed"),
-          step("adversary-claude", "running"),
-          step("adversary-grok", "running"),
+          step("code-a", "completed"),
+          step("adversary-a", "running"),
+          step("adversary-b", "running"),
         ],
       },
     ]),
@@ -214,7 +214,7 @@ const SHOWS = {
   [SEATS]: {
     name: "review-seats-r2",
     status: "running",
-    steps: ["seats", "advisor", "code-claude", "adversary-claude", "adversary-grok"],
+    steps: ["seats", "advisor", "code-a", "adversary-a", "adversary-b"],
   },
   [OTHER]: { name: "subflux-build", status: "running", steps: ["implement", "verify"] },
 };

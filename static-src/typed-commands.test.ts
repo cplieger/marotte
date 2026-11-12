@@ -517,7 +517,7 @@ describe("handleTypedCommand inspect verbs", () => {
       fn.mockClear();
     }
     owners.models = [
-      { model_id: "claude-sonnet-4.5", model_name: "Claude Sonnet 4.5" },
+      { model_id: "model-b-4.5", model_name: "Model B 4.5" },
       { model_id: "auto", model_name: "Auto" },
     ];
     seed(false);
@@ -572,12 +572,12 @@ describe("handleTypedCommand inspect verbs", () => {
   });
 
   it("picks a listed model on /model <id>, matching the id in any case", async () => {
-    expect(handleTypedCommand("c1", "/model  Claude-Sonnet-4.5 ")).toBe(true);
+    expect(handleTypedCommand("c1", "/model  Model-B-4.5 ")).toBe(true);
     await vi.waitFor(() => {
-      expect(owners.pickModel).toHaveBeenCalledWith("claude-sonnet-4.5", "c1");
+      expect(owners.pickModel).toHaveBeenCalledWith("model-b-4.5", "c1");
     });
     expect(owners.openModelCard).not.toHaveBeenCalled();
-    expect(toasts).toEqual(["Model set to claude-sonnet-4.5."]);
+    expect(toasts).toEqual(["Model set to model-b-4.5."]);
   });
 
   it("says a mid-turn /model <id> applies when the turn ends", async () => {
@@ -590,16 +590,16 @@ describe("handleTypedCommand inspect verbs", () => {
   });
 
   it("leaves /model <unlisted> to its refusal, which names the id and keeps the text", () => {
-    expect(handleTypedCommand("c1", "/model gpt-9")).toBe(false);
+    expect(handleTypedCommand("c1", "/model model-e-9")).toBe(false);
     expect(owners.pickModel).not.toHaveBeenCalled();
-    expect(terminalCommandRefusal("/model gpt-9")).toEqual({
-      notice: "No model named gpt-9 is in the model list, so this was not sent to the agent.",
+    expect(terminalCommandRefusal("/model model-e-9")).toEqual({
+      notice: "No model named model-e-9 is in the model list, so this was not sent to the agent.",
       keepText: true,
     });
   });
 
   it("does not match a model name, only its id", () => {
-    expect(handleTypedCommand("c1", "/model Claude Sonnet 4.5")).toBe(false);
+    expect(handleTypedCommand("c1", "/model Model B 4.5")).toBe(false);
     expect(owners.pickModel).not.toHaveBeenCalled();
   });
 

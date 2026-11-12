@@ -117,7 +117,7 @@ const FULL: TurnSummaryData = {
   delegateCount: 2,
   delegateMs: 9000,
   credits: 1.5,
-  models: ["claude-opus-4.5", "claude-sonnet-4.5"],
+  models: ["model-alpha-4.5", "model-charlie-4.5"],
   steering: ["file:///workspace/.kiro/steering/web.md", LONG_STEER],
   contextBreakdown: {
     total_chars: 141_883,

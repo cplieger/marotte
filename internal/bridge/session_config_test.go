@@ -53,7 +53,7 @@ func TestNewSession_AppliesRequestedModelAndEffort(t *testing.T) {
 	scriptPath := configOptionFake(t, logPath)
 
 	b := NewEngine(scriptPath, dir)
-	sess, err := openSessionOn(t, b, &marotte.SessionOpts{Model: "claude-opus-5", Effort: "high"})
+	sess, err := openSessionOn(t, b, &marotte.SessionOpts{Model: "model-a-5", Effort: "high"})
 	if err != nil {
 		t.Fatalf("open session: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestNewSession_AppliesRequestedModelAndEffort(t *testing.T) {
 	wants := []string{
 		`"method":"session/set_config_option"`,
 		`"configId":"model"`,
-		`"value":"claude-opus-5"`,
+		`"value":"model-a-5"`,
 		`"configId":"effortLevel"`,
 		`"value":"high"`,
 	}
@@ -78,8 +78,8 @@ func TestNewSession_AppliesRequestedModelAndEffort(t *testing.T) {
 	}
 
 	// The session reports the model it selected; the chat header reads it.
-	if id := sess.ModelID(); id != "claude-opus-5" {
-		t.Errorf("ModelID() = %q, want claude-opus-5", id)
+	if id := sess.ModelID(); id != "model-a-5" {
+		t.Errorf("ModelID() = %q, want model-a-5", id)
 	}
 }
 
@@ -231,7 +231,7 @@ func TestNewSession_SendsModeAtTheDoor(t *testing.T) {
 
 	b := NewEngine(scriptPath, dir)
 	t.Cleanup(b.Stop)
-	if _, err := openSessionOn(t, b, &marotte.SessionOpts{Mode: "spec", Model: "claude-opus-5"}); err != nil {
+	if _, err := openSessionOn(t, b, &marotte.SessionOpts{Mode: "spec", Model: "model-a-5"}); err != nil {
 		t.Fatalf("open session: %v", err)
 	}
 
@@ -246,8 +246,8 @@ func TestNewSession_SendsModeAtTheDoor(t *testing.T) {
 	if kiro["modeId"] != "spec" {
 		t.Errorf("session/new _meta.kiro.modeId = %v, want spec", kiro["modeId"])
 	}
-	if kiro["modelId"] != "claude-opus-5" {
-		t.Errorf("session/new _meta.kiro.modelId = %v, want claude-opus-5 beside the mode", kiro["modelId"])
+	if kiro["modelId"] != "model-a-5" {
+		t.Errorf("session/new _meta.kiro.modelId = %v, want model-a-5 beside the mode", kiro["modelId"])
 	}
 	if _, ok := kiro["settings"].(map[string]any); !ok {
 		t.Errorf("session/new _meta.kiro lost the session door's settings beside the mode: %v", kiro)
@@ -299,7 +299,7 @@ func TestNewSession_SuccessfulConfigCallsStayQuiet(t *testing.T) {
 
 	b := NewEngine(scriptPath, dir)
 	opts := &marotte.SessionOpts{
-		Model:  "claude-opus-5",
+		Model:  "model-a-5",
 		Effort: "high",
 		Mode:   "spec",
 	}

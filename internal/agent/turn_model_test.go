@@ -55,7 +55,7 @@ func TestTurnModel_StampedOnThePersistedCloseAndOnTheSSE(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
-		c.Model = "sonnet-4"
+		c.Model = "model-b-4"
 		return true
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
@@ -66,12 +66,12 @@ func TestTurnModel_StampedOnThePersistedCloseAndOnTheSSE(t *testing.T) {
 	endTurn(t, h, "c1", id)
 
 	// Persisted: turn_closed is not replayed, so a live-only value would vanish on reload.
-	if got := closeModel(t, cs, "c1"); got != "sonnet-4" {
-		t.Errorf("persisted turn_close.model = %q, want %q", got, "sonnet-4")
+	if got := closeModel(t, cs, "c1"); got != "model-b-4" {
+		t.Errorf("persisted turn_close.model = %q, want %q", got, "model-b-4")
 	}
 	model, present := turnClosedModel(t, h)
-	if !present || model != "sonnet-4" {
-		t.Errorf("turn_closed model = %q (present=%v), want %q", model, present, "sonnet-4")
+	if !present || model != "model-b-4" {
+		t.Errorf("turn_closed model = %q (present=%v), want %q", model, present, "model-b-4")
 	}
 }
 
@@ -105,7 +105,7 @@ func TestTurnModel_LatchedAtTurnStartNotAtTurnEnd(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
-		c.Model = "sonnet-4"
+		c.Model = "model-b-4"
 		return true
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
@@ -114,7 +114,7 @@ func TestTurnModel_LatchedAtTurnStartNotAtTurnEnd(t *testing.T) {
 	id, _ := h.stagePromptTurn(t, "c1")
 	h.translateACPEvent("c1", h.originOf("c1"), newChunkMsg("half an answer"))
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Model = "opus-4"
+		c.Model = "model-a-4"
 		return true
 	}); err != nil {
 		t.Fatalf("switch model: %v", err)
@@ -122,9 +122,9 @@ func TestTurnModel_LatchedAtTurnStartNotAtTurnEnd(t *testing.T) {
 	h.translateACPEvent("c1", h.originOf("c1"), newChunkMsg(" continued"))
 	endTurn(t, h, "c1", id)
 
-	if got := closeModel(t, cs, "c1"); got != "sonnet-4" {
+	if got := closeModel(t, cs, "c1"); got != "model-b-4" {
 		t.Errorf("turn_close.model = %q, want %q — the model that was running when the "+
-			"turn started, not the one current when it ended", got, "sonnet-4")
+			"turn started, not the one current when it ended", got, "model-b-4")
 	}
 }
 
@@ -133,10 +133,10 @@ func TestTurnModel_LatchedAtTurnStartNotAtTurnEnd(t *testing.T) {
 func TestTurnModel_SwitchBeforeTheFirstFrameKeepsTheDispatchedModel(t *testing.T) {
 	h, cs, br := newTestHub()
 	// The session door writes the session's model back onto the chat, so the fixture must agree with the seeded model.
-	br.modelID = "sonnet-4"
+	br.modelID = "model-b-4"
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
-		c.Model = "sonnet-4"
+		c.Model = "model-b-4"
 		return true
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
@@ -156,11 +156,11 @@ func TestTurnModel_SwitchBeforeTheFirstFrameKeepsTheDispatchedModel(t *testing.T
 
 	if rec := postCmd(t, h, marotte.ClientCommand{
 		Type: marotte.CmdSwitchModel, ChatID: "c1",
-		Payload: json.RawMessage(`{"model":"opus-4"}`),
+		Payload: json.RawMessage(`{"model":"model-a-4"}`),
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("switch_model = %d, body %s", rec.Code, rec.Body.String())
 	}
-	if c, _ := cs.Get(t.Context(), "c1"); c.PendingModel != "opus-4" || c.Model != "sonnet-4" {
+	if c, _ := cs.Get(t.Context(), "c1"); c.PendingModel != "model-a-4" || c.Model != "model-b-4" {
 		t.Fatalf("setup: chat = {Model %q, PendingModel %q}, want the pick parked as pending over the dispatched model",
 			c.Model, c.PendingModel)
 	}
@@ -174,10 +174,10 @@ func TestTurnModel_SwitchBeforeTheFirstFrameKeepsTheDispatchedModel(t *testing.T
 	for {
 		closes := closesOf(t, logOf(t, cs, "c1"))
 		if len(closes) > 0 {
-			if got := closes[0].Model; got != "sonnet-4" {
+			if got := closes[0].Model; got != "model-b-4" {
 				t.Errorf("turn_close.model = %q, want %q — the model the prompt was DISPATCHED "+
 					"under, not the one a switch parked before the first frame",
-					got, "sonnet-4")
+					got, "model-b-4")
 			}
 			return
 		}
@@ -208,7 +208,7 @@ func TestTurnModel_AbandonedTurnCarriesItToo(t *testing.T) {
 	h, cs, _ := newTestHub()
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
-		c.Model = "sonnet-4"
+		c.Model = "model-b-4"
 		return true
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
@@ -218,7 +218,7 @@ func TestTurnModel_AbandonedTurnCarriesItToo(t *testing.T) {
 	h.translateACPEvent("c1", h.originOf("c1"), newChunkMsg("the model got this far"))
 	h.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, "the pipe died", "", 0)
 
-	if got := closeModel(t, cs, "c1"); got != "sonnet-4" {
-		t.Errorf("abandoned turn_close.model = %q, want %q", got, "sonnet-4")
+	if got := closeModel(t, cs, "c1"); got != "model-b-4" {
+		t.Errorf("abandoned turn_close.model = %q, want %q", got, "model-b-4")
 	}
 }

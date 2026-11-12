@@ -212,7 +212,7 @@ describe("a step row under the same pressure", () => {
 function factSteps(): RunState {
   const ran = step("review", "completed", STARTED);
   ran.agentName = "code-reviewer";
-  ran.modelId = "claude-opus-5.5";
+  ran.modelId = "model-alpha-5.5";
   return {
     workflowId: "wf_1",
     displayName: LONG_LABEL,

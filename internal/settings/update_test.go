@@ -122,7 +122,7 @@ func TestUpdate_ReadsABOMPrefixedDocument(t *testing.T) {
 	dir := t.TempDir()
 	writeConfig(t, dir, "\uFEFF{\"theme\":\"dark\",\"x\":1}")
 
-	if _, err := Update(t.Context(), dir, setKey(KeyLastModel, "opus"), nil); err != nil {
+	if _, err := Update(t.Context(), dir, setKey(KeyLastModel, "model-a"), nil); err != nil {
 		t.Fatalf("Update over a BOM-prefixed document: %v", err)
 	}
 
@@ -134,7 +134,7 @@ func TestUpdate_ReadsABOMPrefixedDocument(t *testing.T) {
 		t.Errorf("rewritten config.json starts %q, want '{' with no byte order mark", data[:min(len(data), 4)])
 	}
 	doc := readConfig(t, dir)
-	for key, want := range map[string]string{KeyTheme: `"dark"`, "x": `1`, KeyLastModel: `"opus"`} {
+	for key, want := range map[string]string{KeyTheme: `"dark"`, "x": `1`, KeyLastModel: `"model-a"`} {
 		if got := string(doc[key]); got != want {
 			t.Errorf("%s = %s, want %s", key, got, want)
 		}
@@ -190,15 +190,15 @@ func TestUpdate_ReturnsTheMergedDocument(t *testing.T) {
 	dir := t.TempDir()
 	writeConfig(t, dir, `{"theme":"dark"}`)
 
-	merged, err := Update(t.Context(), dir, setKey(KeyLastModel, "opus"), nil)
+	merged, err := Update(t.Context(), dir, setKey(KeyLastModel, "model-a"), nil)
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	if got := string(merged[KeyTheme]); got != `"dark"` {
 		t.Errorf("merged theme = %s, want the stored value \"dark\"", got)
 	}
-	if got := string(merged[KeyLastModel]); got != `"opus"` {
-		t.Errorf("merged last_model = %s, want \"opus\"", got)
+	if got := string(merged[KeyLastModel]); got != `"model-a"` {
+		t.Errorf("merged last_model = %s, want \"model-a\"", got)
 	}
 }
 
@@ -270,7 +270,7 @@ func TestUpdate_SizeCapIsInclusive(t *testing.T) {
 			const doc = `{"theme":"dark"}`
 			writeConfig(t, dir, doc+spaces(tt.size-len(doc)))
 
-			_, err := Update(t.Context(), dir, setKey(KeyLastModel, "opus"), nil)
+			_, err := Update(t.Context(), dir, setKey(KeyLastModel, "model-a"), nil)
 
 			if tt.wantErr {
 				if !errors.Is(err, ErrUnreadable) {

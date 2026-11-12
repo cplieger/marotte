@@ -134,7 +134,7 @@ describe("runToExec decides work by kind and fills an unexpanded container from 
       type: "repeat",
       maxIterations: 3,
       steps: [
-        { nodeId: "code", type: "step", agentName: "wf-coder", modelId: "claude-opus-5.5" },
+        { nodeId: "code", type: "step", agentName: "wf-coder", modelId: "model-a-5.5" },
         {
           nodeId: "reviews",
           type: "parallel",
@@ -195,7 +195,7 @@ describe("runToExec decides work by kind and fills an unexpanded container from 
       nodeId: "code",
       type: "step",
       agentName: "wf-coder",
-      modelId: "claude-opus-5.5",
+      modelId: "model-a-5.5",
       effortLevel: "high",
     };
     const unstarted = { nodeId: "wf_1", type: "sequence", status: "running", children: [] };
@@ -215,7 +215,7 @@ describe("runToExec decides work by kind and fills an unexpanded container from 
       );
       expect(code?.state, name).toBe("pending");
       const facts = new Map((code?.facts ?? []).map((f) => [f.label, f.value]));
-      expect(facts.get("Model"), name).toBe("claude-opus-5.5");
+      expect(facts.get("Model"), name).toBe("model-a-5.5");
       expect(facts.get("Effort"), name).toBe("high");
     }
   });
@@ -654,7 +654,7 @@ describe("runToExec reads what nothing read before", () => {
       stateWith(
         step("a", "completed", {
           agentName: "wf-coder",
-          modelId: "claude-opus-5",
+          modelId: "model-a-5",
           effortLevel: "max",
           completionSignal: "success",
           sessionId: "sess_1",
@@ -1493,8 +1493,8 @@ describe("runToExec shows where an included group came from", () => {
           nodeId: "review/seats",
           type: "parallel",
           branches: [
-            seat("advisor", "advisor", "gpt-5.6-sol"),
-            seat("code-adversary-claude", "code-adversary-claude", "claude-opus-5.5"),
+            seat("advisor", "advisor", "model-e-5.6"),
+            seat("code-adversary-a", "code-adversary-a", "model-a-5.5"),
           ],
         },
       ],
@@ -1519,7 +1519,7 @@ describe("runToExec shows where an included group came from", () => {
         status: "running",
         children: [
           step("review/advisor", "running", { agentName: "advisor" }),
-          step("review/code-adversary-claude", "running"),
+          step("review/code-adversary-a", "running"),
         ],
       },
     ],
@@ -1546,7 +1546,7 @@ describe("runToExec shows where an included group came from", () => {
 
   it("qualifies every id inside with the include's prefix, keeping the label verbatim", () => {
     const nodes = fold(plan);
-    for (const label of ["review/seats", "review/advisor", "review/code-adversary-claude"]) {
+    for (const label of ["review/seats", "review/advisor", "review/code-adversary-a"]) {
       expect(byLabel(nodes, label).qualifier, label).toBe("review/");
     }
     expect(byLabel(nodes, "implement").qualifier).toBeUndefined();
@@ -1563,7 +1563,7 @@ describe("runToExec shows where an included group came from", () => {
   it("shows the same before the include has started, from its plan", () => {
     const nodes = fold(plan, { nodeId: "review", type: "sequence", status: "pending" });
     expect(byLabel(nodes, "review").subtitle).toBe("from review-seats");
-    expect(byLabel(nodes, "review/code-adversary-claude").qualifier).toBe("review/");
+    expect(byLabel(nodes, "review/code-adversary-a").qualifier).toBe("review/");
   });
 
   it("reads nothing from an includedFrom it cannot trust", () => {

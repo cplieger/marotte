@@ -30,7 +30,7 @@ func TestLaunchClassTable(t *testing.T) {
 	t.Run("a refused pick is blocked", func(t *testing.T) {
 		h, _, _ := runDefaultsHub(t)
 		h.runs.confirmer = &fakeConfirmer{}
-		_, err := launchTriggered(t, h, nil, marotte.RunDefaults{Model: "gpt-9"})
+		_, err := launchTriggered(t, h, nil, marotte.RunDefaults{Model: "model-e-9"})
 		if r, b := classes(err); r || !b || !errors.Is(err, errDefaultsRefused) {
 			t.Errorf("LaunchTriggered error = %v, want errDefaultsRefused marked blocked", err)
 		}
@@ -40,7 +40,7 @@ func TestLaunchClassTable(t *testing.T) {
 		t.Cleanup(func() { shutdownHub(t, h) })
 		h.runs.confirmer = &fakeConfirmer{}
 		launchableRecipe(br, "wf_1")
-		_, err := launchTriggered(t, h, nil, marotte.RunDefaults{Model: "opus"})
+		_, err := launchTriggered(t, h, nil, marotte.RunDefaults{Model: "model-a"})
 		if r, b := classes(err); !r || b || !errors.Is(err, errDefaultsUncheckable) {
 			t.Errorf("LaunchTriggered error = %v, want errDefaultsUncheckable marked retryable", err)
 		}

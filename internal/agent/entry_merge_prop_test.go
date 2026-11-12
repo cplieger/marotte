@@ -372,7 +372,7 @@ func assertPairedTurn(rt *rapid.T, i int, p turnPlan, rec recordTurn, got merged
 			rt.Fatalf("plan %d: placeholder closer replaced by %+v with no turn_end on the replay", i, closer)
 		}
 	}
-	if closer.Model != "opus" {
+	if closer.Model != "model-a" {
 		rt.Fatalf("plan %d: closer model = %q, want the record's — the replay carries none", i, closer.Model)
 	}
 	assertLostSteer(rt, i, p, got)

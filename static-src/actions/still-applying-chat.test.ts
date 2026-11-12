@@ -80,7 +80,7 @@ const cases: { what: string; run: () => Promise<unknown>; still: string; failed:
   },
   {
     what: "a model switch",
-    run: () => switchModel.dispatch({ chatID: "c1", model: "claude-opus-5" }),
+    run: () => switchModel.dispatch({ chatID: "c1", model: "model-a-5" }),
     still: "Still switching model; the chat updates when it lands",
     failed: "Could not switch model: kiro-cli refused",
   },

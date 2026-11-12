@@ -71,7 +71,7 @@ function makeSession(id: string): Session {
   return {
     id,
     name: "test",
-    model: "claude",
+    model: "model-x",
     acp_session_id: "",
     current_mode_id: "",
     supervised_mode: false,

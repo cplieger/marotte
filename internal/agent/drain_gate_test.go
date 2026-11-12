@@ -135,7 +135,7 @@ func TestTurnClose_OnceShutdownBeganLeavesAParkedModelPickParked(t *testing.T) {
 	defer shutdownHub(t, h)
 	turnID, _ := h.stagePromptTurn(t, "c1")
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Model, c.PendingModel = "opus-5", "sonnet-5"
+		c.Model, c.PendingModel = "model-a-5", "model-b-5"
 		return true
 	})
 	beginDraining(h)
@@ -147,8 +147,8 @@ func TestTurnClose_OnceShutdownBeganLeavesAParkedModelPickParked(t *testing.T) {
 
 	// A pipeline started off inflight would land within this window.
 	for deadline := time.Now().Add(300 * time.Millisecond); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-		if c, _ := cs.Get(t.Context(), "c1"); c.Model != "opus-5" || c.PendingModel != "sonnet-5" {
-			t.Fatalf("header = {Model %q, PendingModel %q} after a close once Shutdown began, want {opus-5, sonnet-5}: "+
+		if c, _ := cs.Get(t.Context(), "c1"); c.Model != "model-a-5" || c.PendingModel != "model-b-5" {
+			t.Fatalf("header = {Model %q, PendingModel %q} after a close once Shutdown began, want {model-a-5, model-b-5}: "+
 				"the pick lands at the next spawn", c.Model, c.PendingModel)
 		}
 	}

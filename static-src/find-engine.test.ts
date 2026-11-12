@@ -184,10 +184,10 @@ describe("UI chrome", () => {
 
   it("does not join the text either side of a label it skips", () => {
     const host = mount(
-      `<div class="boundary-label">opus-5<span data-vk-chrome> retried on </span>sonnet-5</div>`,
+      `<div class="boundary-label">model-a-5<span data-vk-chrome> retried on </span>model-b-5</div>`,
     );
-    expect(new FindEngine(host).search("5sonnet")).toBe(0);
-    expect(new FindEngine(host).search("sonnet-5")).toBe(1);
+    expect(new FindEngine(host).search("5model-b")).toBe(0);
+    expect(new FindEngine(host).search("model-b-5")).toBe(1);
   });
 
   it("marks the MCP server name in the badge", () => {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -509,7 +510,8 @@ func (c *capture) listScratch(session marotte.SessionID, path string) (any, erro
 	return map[string]any{"entries": entries}, nil
 }
 
-// write scrubs the scratch paths, refuses a capture that would leak, and writes the corpus file.
+// write scrubs the scratch paths and the model catalog, refuses a capture that would leak, and writes the
+// corpus file.
 func (c *capture) write(sc scenario) error {
 	c.mu.Lock()
 	lines := slices.Clone(c.lines)
@@ -526,7 +528,10 @@ func (c *capture) write(sc scenario) error {
 		buf.Write(raw)
 		buf.WriteByte('\n')
 	}
-	out := c.scrub(buf.Bytes())
+	out, err := scrubModels(c.scrub(buf.Bytes()))
+	if err != nil {
+		return err
+	}
 	for _, bad := range forbiddenInCapture {
 		if i := bytes.Index(out, []byte(bad)); i >= 0 {
 			return fmt.Errorf("capture holds %q near %q", bad, excerpt(out, i))
@@ -548,6 +553,93 @@ func (c *capture) scrub(b []byte) []byte {
 		b = bytes.ReplaceAll(b, quoted[1:len(quoted)-1], []byte(r.to))
 	}
 	return b
+}
+
+// modelTagsRe is a model description's leading tags, such as "[Internal]", which the bridge reads.
+var modelTagsRe = regexp.MustCompile(`^(?:\[[^\]]*\]\s*)*`)
+
+type modelOption struct{ value, name, desc string }
+
+// scrubModels replaces each model the catalog offers, other than Auto, with a placeholder in order of
+// first appearance (model-a, "Model A"), keeping each description's leading tags. Upstream retires
+// model ids, and the corpus is public. It refuses a capture that still holds an offered id or name.
+func scrubModels(b []byte) ([]byte, error) {
+	var opts []modelOption
+	for line := range bytes.Lines(b) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var v any
+		if err := json.Unmarshal(line, &v); err != nil {
+			return nil, fmt.Errorf("decode capture line: %w", err)
+		}
+		collectModelOptions(v, &opts)
+	}
+	placeholder := map[string]string{}
+	var pairs []string
+	for _, o := range opts {
+		id, ok := placeholder[o.value]
+		if !ok {
+			id = "model-" + modelLetters(len(placeholder))
+			placeholder[o.value] = id
+		}
+		name := "Model " + strings.ToUpper(id[len("model-"):])
+		pairs = append(pairs, quoteJSON(o.desc), quoteJSON(modelTagsRe.FindString(o.desc)+name),
+			quoteJSON(o.name), quoteJSON(name), quoteJSON(o.value), quoteJSON(id))
+	}
+	out := []byte(strings.NewReplacer(pairs...).Replace(string(b)))
+	for _, o := range opts {
+		for _, s := range []string{o.value, o.name} {
+			if i := bytes.Index(out, []byte(s)); i >= 0 {
+				return nil, fmt.Errorf("capture still names an offered model near %q", excerpt(out, i))
+			}
+		}
+	}
+	return out, nil
+}
+
+// collectModelOptions appends the options of every model select under v, once per distinct option.
+func collectModelOptions(v any, opts *[]modelOption) {
+	switch t := v.(type) {
+	case map[string]any:
+		if list, ok := t["options"].([]any); ok && t["id"] == "model" {
+			for _, item := range list {
+				m, _ := item.(map[string]any)
+				o := modelOption{}
+				o.value, _ = m["value"].(string)
+				o.name, _ = m["name"].(string)
+				o.desc, _ = m["description"].(string)
+				if o.value != "" && o.value != marotte.ModelAuto && !slices.Contains(*opts, o) {
+					*opts = append(*opts, o)
+				}
+			}
+		}
+		for _, k := range slices.Sorted(maps.Keys(t)) {
+			collectModelOptions(t[k], opts)
+		}
+	case []any:
+		for _, child := range t {
+			collectModelOptions(child, opts)
+		}
+	}
+}
+
+// modelLetters is i in bijective base 26: a to z, then aa.
+func modelLetters(i int) string {
+	s := ""
+	for i++; i > 0; i = (i - 1) / 26 {
+		s = string(rune('a'+(i-1)%26)) + s
+	}
+	return s
+}
+
+// quoteJSON is s as a JSON string without HTML escaping, the form KAS writes.
+func quoteJSON(s string) string {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(s)
+	return strings.TrimSuffix(buf.String(), "\n")
 }
 
 func excerpt(b []byte, i int) string {

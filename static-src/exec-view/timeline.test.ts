@@ -54,8 +54,8 @@ describe("the timeline's loop passes", () => {
       "lane:wait",
       "head:pass 1 1h 46m",
       "lane:build",
-      "lane:review-claude",
-      "lane:review-gpt",
+      "lane:review-a",
+      "lane:review-b",
       "lane:aggregate",
     ]);
     expect(all.at(-1)).toBe("lane:land");
