@@ -522,6 +522,19 @@ describe("unconfiguredNames after a status fetch", () => {
     expect(unconfiguredNames.value).toEqual(["mine"]);
   });
 
+  it("a config read that lands after the status updates the foreign list", async () => {
+    // The two reads are independent, so the status can land first, while the config still holds the name.
+    servers.setAll([configured("Z")]);
+    statusResponse.servers = [{ name: "Z", state: "connected", origin: "power" }];
+    mcpState.refetchStatus();
+    await settle();
+    expect(unconfiguredNames.value).toEqual([]);
+
+    servers.setAll([]);
+
+    expect(unconfiguredNames.value).toEqual(["Z"]);
+  });
+
   it("empties the list once the foreign server stops being reported", async () => {
     statusResponse.servers = [{ name: "gone-later", state: "connected", origin: "power" }];
     mcpState.refetchStatus();

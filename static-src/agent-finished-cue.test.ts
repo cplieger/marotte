@@ -270,6 +270,19 @@ describe("the deferral cannot double-fire or fire wrongly", () => {
   });
 });
 
+// The server withholds `agent_finished` while the chat holds a live run and sends the run's own notice
+// when it ends, so a notice that does arrive is not parked behind the client's copy of the runs.
+describe("a live run does not park a notice the server sent", () => {
+  it("an agent_finished notice is raised while the chat has a live run", () => {
+    runStore.noteRunLive("wf-a", "c1", true);
+
+    cue.deliverNotification("c1", finished("Agent finished"));
+
+    expect(notify.raised).toEqual(["Agent finished"]);
+    expect(cue.hasDeferredCue("c1")).toBe(false);
+  });
+});
+
 // The release effect must read a signal BEFORE any chat is parked, or it read nothing and
 // never runs again; the first park has to wake it.
 describe("the subscriber wakes on the FIRST park", () => {

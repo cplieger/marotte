@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/cplieger/go/sse/v2"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/subject"
@@ -37,6 +38,29 @@ func TestLiveRuns_SubjectIsTheLeaseStoresVersionWithTheEpoch(t *testing.T) {
 	}
 	if version == "0" || h.Epoch() == "" {
 		t.Errorf("version %q / epoch %q: the assertion above is vacuous", version, h.Epoch())
+	}
+}
+
+// The `runs` subject has one version source: a wake's digest answers the version the inventory read carries,
+// so a client holding that read is told nothing changed.
+func TestLiveRunsStampIsTheDigestVersion(t *testing.T) {
+	h, _, _ := newTestHub()
+	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{WorkflowID: "wf1", ChatID: "c1", Origin: runlease.OriginAgent}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	out := getLiveRuns(t, h.runRoutes)
+	states, err := h.resolveDigest(t.Context(), []sse.Held{held(subject.KindRuns, "")})
+	if err != nil {
+		t.Fatalf("resolveDigest: %v", err)
+	}
+
+	digest := stateFor(t, states, subject.KindRuns, "")
+	if out.Subject == nil || out.Subject.Version != digest.Version {
+		t.Errorf("GET /api/runs/live subject = %+v, digest runs version = %q: want the same version", out.Subject, digest.Version)
+	}
+	if digest.Version == subject.Unminted {
+		t.Errorf("digest runs version = %q after a lease was granted, want a minted version", digest.Version)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -591,6 +592,130 @@ func TestMCPRegistry_HandleStatusReturnsJSON(t *testing.T) {
 	}
 	if body.Servers[1].Name != "github" || body.Servers[1].State != "connected" {
 		t.Errorf("body[1] = %+v", body.Servers[1])
+	}
+}
+
+// servedMCPStatus is GET /api/mcp/status decoded to the rows by name and the stamp it carries.
+func servedMCPStatus(t *testing.T, h *Runtime) (map[string]servedMCPRow, *marotte.SubjectStamp) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.mcpRegistry.handleStatus(rec, httptest.NewRequest(http.MethodGet, "/api/mcp/status", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/mcp/status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Subject *marotte.SubjectStamp `json:"subject"`
+		Servers []servedMCPRow        `json:"servers"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode GET /api/mcp/status: %v", err)
+	}
+	rows := make(map[string]servedMCPRow, len(body.Servers))
+	for _, s := range body.Servers {
+		rows[s.Name] = s
+	}
+	return rows, body.Subject
+}
+
+type servedMCPRow struct {
+	Name    string `json:"name"`
+	State   string `json:"state"`
+	Relayed bool   `json:"relayed"`
+}
+
+// mcpFramesFor is every frame after sinceID whose payload names server, with the stamp each carries.
+func mcpFramesFor(t *testing.T, h *Runtime, sinceID uint64, server string) []marotte.ServerEvent {
+	t.Helper()
+	var out []marotte.ServerEvent
+	for _, e := range bufferedSince(h, sinceID) {
+		var msg marotte.ServerEvent
+		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
+			t.Fatalf("unmarshal event: %v", err)
+		}
+		if p, ok := msg.Payload.(map[string]any); ok && p["server"] == server {
+			out = append(out, msg)
+		}
+	}
+	return out
+}
+
+func stampVersion(t *testing.T, s *marotte.SubjectStamp) uint64 {
+	t.Helper()
+	v, err := strconv.ParseUint(s.Version, 10, 64)
+	if err != nil {
+		t.Fatalf("stamp version %q is not a counter: %v", s.Version, err)
+	}
+	return v
+}
+
+// A client orders the MCP rows it copies by the `mcp_status` version: each row frame carries a version above the
+// last, and the inventory read carries the version of the last frame it already reflects.
+func TestMCPStatusFramesCarryIncreasingVersions(t *testing.T) {
+	h := newHubWithMCPConfig(t, nil)
+	before := h.bus.fanout.Position().Head
+
+	reportMCP(t, h, "s1", connectedMCP("s", marotte.MCPSource{}))
+	reportMCP(t, h, "s1", failedMCP("s", marotte.MCPSource{}, "boom"))
+
+	frames := mcpFramesFor(t, h, before, "s")
+	if len(frames) < 2 {
+		t.Fatalf("frames naming s = %d, want one per state change (2)", len(frames))
+	}
+	var last uint64
+	for i, f := range frames {
+		if f.Subject == nil || f.Subject.Kind != "mcp_status" {
+			t.Fatalf("frame %d (%s) subject = %+v, want an mcp_status stamp", i, f.Type, f.Subject)
+		}
+		v := stampVersion(t, f.Subject)
+		if v <= last {
+			t.Errorf("frame %d version %d, want above the previous frame's %d", i, v, last)
+		}
+		last = v
+	}
+	rows, stamp := servedMCPStatus(t, h)
+	if stamp == nil || stamp.Kind != "mcp_status" || stampVersion(t, stamp) != last {
+		t.Errorf("GET /api/mcp/status subject = %+v, want mcp_status at the last frame's version %d", stamp, last)
+	}
+	if rows["s"].State != "failed" {
+		t.Errorf("served row s = %+v, want failed", rows["s"])
+	}
+}
+
+// The relay latch changes the served row, so it moves the version and announces the row: a client holding the
+// earlier version would otherwise refuse the read that shows it.
+func TestRelayLatchMovesTheStatusVersion(t *testing.T) {
+	h := newHubWithMCPConfig(t, nil)
+	reportMCP(t, h, "sess_a", oauthMCP("remote", "https://auth.example/passive"))
+	if _, err := h.mcpRegistry.claimSignIn(t.Context(), "remote"); err != nil {
+		t.Fatalf("claimSignIn: %v", err)
+	}
+	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: "https://auth.example/a?state=s", Server: "remote"}, false); shown.how != consentOnRow {
+		t.Fatalf("anchorConsentURL = %+v, want on the standing sign-in's row", shown)
+	}
+	rows, stamp := servedMCPStatus(t, h)
+	if stamp == nil || rows["remote"].State != string(mcpStateSigningIn) || rows["remote"].Relayed {
+		t.Fatalf("before the relay: subject %+v, row %+v; want a stamped signing_in row not yet relayed", stamp, rows["remote"])
+	}
+	prev := stampVersion(t, stamp)
+	before := h.bus.fanout.Position().Head
+
+	if _, err := h.mcpRegistry.beginOAuthRelay(t.Context(), "s"); err != nil {
+		t.Fatalf("beginOAuthRelay: %v", err)
+	}
+
+	rows, stamp = servedMCPStatus(t, h)
+	if !rows["remote"].Relayed {
+		t.Errorf("served row after the relay = %+v, want relayed", rows["remote"])
+	}
+	if stamp == nil || stampVersion(t, stamp) <= prev {
+		t.Errorf("GET /api/mcp/status subject after the relay = %+v, want a version above %d", stamp, prev)
+	}
+	var announced bool
+	for _, f := range mcpFramesFor(t, h, before, "remote") {
+		announced = announced || f.Type == "mcp_status"
+	}
+	if !announced {
+		t.Error("the relay latch sent no mcp_status frame for remote")
 	}
 }
 
