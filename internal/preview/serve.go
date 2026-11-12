@@ -12,17 +12,22 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// ServeHTTP answers /preview/<token>/<rel>. The preview header set goes on
-// first, so every response, a refusal included, is sandboxed and framable only
-// by marotte itself.
+// ServeHTTP answers /preview/<token>/<rel> and its tab form under TabPathPrefix.
+// The preview header set goes on first, so every response, a refusal included,
+// is sandboxed under its route's policy.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	escaped := r.URL.EscapedPath()
+	prefix, tab := PathPrefix, strings.HasPrefix(escaped, TabPathPrefix)
+	if tab {
+		prefix = TabPathPrefix
+	}
 	hostOK := len(r.Host) <= maxHostBytes && hostPattern.MatchString(r.Host)
-	tok, rel, perr := splitServePath(r.URL.EscapedPath())
+	tok, rel, perr := splitServePath(escaped, prefix)
 	src := ""
 	if hostOK && len(tok) <= tokenMaxLen && tokenPattern.MatchString(tok) {
-		src = "http://" + r.Host + PathPrefix + tok + "/"
+		src = "http://" + r.Host + prefix + tok + "/"
 	}
-	setPreviewHeaders(w.Header(), src, r.Header.Get("Sec-Fetch-Dest") == "document")
+	setPreviewHeaders(w.Header(), src, tab)
 
 	folder, ok := h.admit(w, r, hostOK, tok, rel, perr)
 	if !ok {
@@ -120,13 +125,16 @@ func servePage(w http.ResponseWriter, r *http.Request, f *os.File) {
 // httpserver.SecurityHeaders sets before the handler and documents as overridable.
 // src is the granted folder as a CSP source, or "" when the request named none
 // worth trusting, in which case every list that would hold only it is 'none'.
-// topLevel is a top-level document navigation (Open in browser's tab), the one
-// request whose sandbox allows downloads; the frame cannot make one, since it
-// may neither navigate its top nor open a popup.
-func setPreviewHeaders(h http.Header, src string, topLevel bool) {
-	h.Set("Content-Security-Policy", previewCSP(src, topLevel))
-	h.Set("Vary", "Sec-Fetch-Dest")
-	h.Set("X-Frame-Options", "SAMEORIGIN")
+// tab is the tab route, whose page may download and renders only top-level, so
+// the Preview frame cannot navigate itself into a frame that downloads. The route
+// alone decides: browsers send no Fetch Metadata to plain HTTP off localhost.
+func setPreviewHeaders(h http.Header, src string, tab bool) {
+	h.Set("Content-Security-Policy", previewCSP(src, tab))
+	if tab {
+		h.Set("X-Frame-Options", "DENY")
+	} else {
+		h.Set("X-Frame-Options", "SAMEORIGIN")
+	}
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Cache-Control", "no-store")
 	// The sandboxed document's origin is opaque, so its module scripts, fonts and
@@ -138,7 +146,7 @@ func setPreviewHeaders(h http.Header, src string, topLevel bool) {
 
 // previewCSP never grants allow-same-origin: the opaque origin keeps a page,
 // framed or in its own tab, out of marotte's cookies, storage and API.
-func previewCSP(src string, topLevel bool) string {
+func previewCSP(src string, tab bool) string {
 	list := func(srcs ...string) string {
 		var kept []string
 		for _, s := range srcs {
@@ -151,9 +159,9 @@ func previewCSP(src string, topLevel bool) string {
 		}
 		return strings.Join(kept, " ")
 	}
-	sandbox := "sandbox allow-scripts allow-forms allow-modals"
-	if topLevel {
-		sandbox += " allow-downloads"
+	sandbox, ancestors := "sandbox allow-scripts allow-forms allow-modals", "'self'"
+	if tab {
+		sandbox, ancestors = sandbox+" allow-downloads", "'none'"
 	}
 	return sandbox + "; default-src 'none'" +
 		"; script-src " + list(src, "https:", "'unsafe-inline'", "'unsafe-eval'", "'wasm-unsafe-eval'", "blob:") +
@@ -166,5 +174,5 @@ func previewCSP(src string, topLevel bool) string {
 		"; manifest-src 'none'; object-src 'none'; frame-src 'none'" +
 		"; base-uri " + list(src) +
 		"; form-action " + list(src) +
-		"; frame-ancestors 'self'"
+		"; frame-ancestors " + ancestors
 }

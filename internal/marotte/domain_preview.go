@@ -36,7 +36,8 @@ type PreviewHint struct {
 }
 
 // PreviewGrant is a capability to read one folder through /preview/. URL is the
-// entry page and is used verbatim as the iframe src; Epoch changes when the
+// entry page and is used verbatim as the iframe src; TabURL is the same page on
+// the route for a top-level tab, which may download; Epoch changes when the
 // server restarts, which invalidates every grant it minted. Hint is absent when
 // the page states no size. Stamp is the folder's PreviewStamp.Stamp read before
 // the grant was minted, so it is never newer than the document URL serves.
@@ -44,6 +45,7 @@ type PreviewGrant struct {
 	ExpiresAt time.Time    `json:"expires_at"`
 	Hint      *PreviewHint `json:"hint,omitempty"`
 	URL       string       `json:"url"`
+	TabURL    string       `json:"tab_url"`
 	Base      string       `json:"base"`
 	Epoch     string       `json:"epoch"`
 	Stamp     string       `json:"stamp"`

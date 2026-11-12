@@ -57,22 +57,29 @@ func TestRelBeneath(t *testing.T) {
 }
 
 func TestSplitServePath(t *testing.T) {
-	tok, rel, err := splitServePath("/preview/T/sub/a%252fb.html")
+	tok, rel, err := splitServePath("/preview/T/sub/a%252fb.html", PathPrefix)
 	if err != nil || tok != "T" || len(rel) != 2 || rel[0] != "sub" || rel[1] != "a%2fb.html" {
 		t.Errorf("splitServePath(escaped name) = %q %q %v, want T [sub a%%2fb.html] nil", tok, rel, err)
 	}
-	_, rel, err = splitServePath("/preview/T/")
+	_, rel, err = splitServePath("/preview/T/", PathPrefix)
 	if err != nil || len(rel) != 1 || rel[0] != "" {
 		t.Errorf("splitServePath(trailing slash) = %q %v, want one empty trailing segment", rel, err)
+	}
+	tok, rel, err = splitServePath("/preview/tab/T/sub/a.html", TabPathPrefix)
+	if err != nil || tok != "T" || len(rel) != 2 || rel[0] != "sub" || rel[1] != "a.html" {
+		t.Errorf("splitServePath(tab route) = %q %q %v, want T [sub a.html] nil", tok, rel, err)
 	}
 	for _, p := range []string{
 		"/preview/T/..", "/preview/T/.", "/preview/T/%2e%2e", "/preview/T/a%2fb",
 		"/preview/T/a%2Fb", "/preview/T/%5c", "/preview/T/%5C", `/preview/T/a\b`, "/preview/T/%00",
 		"/preview/T//x", "/preview/T/%zz", "/other/T/x",
 	} {
-		if _, _, err := splitServePath(p); !errors.Is(err, errNonCanonical) {
+		if _, _, err := splitServePath(p, PathPrefix); !errors.Is(err, errNonCanonical) {
 			t.Errorf("splitServePath(%q) = %v, want errNonCanonical", p, err)
 		}
+	}
+	if _, _, err := splitServePath("/preview/T/x", TabPathPrefix); !errors.Is(err, errNonCanonical) {
+		t.Errorf("splitServePath(frame path, tab prefix) = %v, want errNonCanonical", err)
 	}
 }
 

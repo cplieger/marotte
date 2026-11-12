@@ -1998,11 +1998,12 @@ const arbModel = fc.letrec<{
       expires_at: fc.string(),
       hint: tie("PreviewHint"),
       url: fc.string(),
+      tab_url: fc.string(),
       base: fc.string(),
       epoch: fc.string(),
       stamp: fc.string(),
     },
-    { requiredKeys: ["expires_at", "url", "base", "epoch", "stamp"] },
+    { requiredKeys: ["expires_at", "url", "tab_url", "base", "epoch", "stamp"] },
   ),
   PreviewGrantRequest: fc.record(
     {

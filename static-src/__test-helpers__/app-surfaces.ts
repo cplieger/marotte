@@ -1684,7 +1684,7 @@ export const SURFACES: readonly Surface[] = [
     setup: () => {
       show("web-view");
       q("#web-path").textContent = "/preview/index.html";
-      q("#web-open-btn").setAttribute("href", "/preview/tok/index.html");
+      q("#web-open-btn").setAttribute("href", "/preview/tab/tok/index.html");
     },
     controls: ["#web-reload-btn", "#web-open-btn", "#web-edit-btn"],
   },

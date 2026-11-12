@@ -3145,6 +3145,7 @@ export const decodePreviewGrant: Decoder<PreviewGrant> = (v) => {
   const out: PreviewGrant = {
     expires_at: reqStr(o, "expires_at", "$.preview_grant"),
     url: reqStr(o, "url", "$.preview_grant"),
+    tab_url: reqStr(o, "tab_url", "$.preview_grant"),
     base: reqStr(o, "base", "$.preview_grant"),
     epoch: reqStr(o, "epoch", "$.preview_grant"),
     stamp: reqStr(o, "stamp", "$.preview_grant"),

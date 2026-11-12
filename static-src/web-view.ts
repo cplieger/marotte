@@ -48,8 +48,8 @@ interface WebTab {
   status: TabStatus;
   hint: PreviewHint | undefined;
   epoch: string;
-  /** The grant URL last mounted, "" while there is none; an in-frame navigation does not move it. */
-  url: string;
+  /** The tab URL of the grant last mounted, "" while there is none; an in-frame navigation does not move it. */
+  tabURL: string;
   /** Bumped by every load and unload, so a grant that lands late is dropped. */
   loadSeq: number;
   /** The stamp the grant for the document on screen was minted at, and a
@@ -149,7 +149,7 @@ function createTab(path: string): WebTab {
     status: "idle",
     hint: undefined,
     epoch: "",
-    url: "",
+    tabURL: "",
     loadSeq: 0,
     baseline: "",
     pending: undefined,
@@ -186,7 +186,7 @@ function unload(tab: WebTab): void {
   tab.loadSeq++;
   tab.frame = null;
   tab.status = "idle";
-  tab.url = "";
+  tab.tabURL = "";
   tab.baseline = "";
   tab.pending = undefined;
   tab.wrapper.replaceChildren();
@@ -315,7 +315,7 @@ async function load(tab: WebTab): Promise<void> {
     paintRadios(tab);
   }
   mountFrame(tab, grant.url);
-  tab.url = grant.url;
+  tab.tabURL = grant.tab_url;
   if (shown) {
     paintOpen(tab);
   }
@@ -363,7 +363,7 @@ function enforceMountCap(incoming: WebTab): void {
 function showError(tab: WebTab, message: string): void {
   tab.frame = null;
   tab.status = "error";
-  tab.url = "";
+  tab.tabURL = "";
   if (shownPath === tab.path) {
     paintOpen(tab);
   }
@@ -421,17 +421,17 @@ function paintPath(tab: WebTab): void {
   path.dataset["tooltip"] = tab.path;
 }
 
-/** internal/preview setPreviewHeaders owns which request may download. */
+/** internal/preview setPreviewHeaders owns which route may download. */
 function paintOpen(tab: WebTab): void {
   const open = $.webOpenBtn;
-  if (tab.url === "") {
+  if (tab.tabURL === "") {
     open.removeAttribute("href");
     open.removeAttribute("target");
     open.removeAttribute("rel");
     open.setAttribute("aria-disabled", "true");
     return;
   }
-  open.setAttribute("href", tab.url);
+  open.setAttribute("href", tab.tabURL);
   open.target = "_blank";
   open.rel = "noopener noreferrer";
   open.removeAttribute("aria-disabled");

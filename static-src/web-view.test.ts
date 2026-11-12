@@ -44,6 +44,7 @@ vi.mock("./actions/preview.js", async (importOriginal) => ({
         kind: "granted",
         grant: {
           url: `/preview/tok${String(grants.n)}/${encodeURIComponent(name)}`,
+          tab_url: `/preview/tab/tok${String(grants.n)}/${encodeURIComponent(name)}`,
           base: `/preview/tok${String(grants.n)}/`,
           expires_at: "2026-10-03T12:00:00Z",
           epoch: grants.epoch,
@@ -303,10 +304,10 @@ describe("Open in browser", () => {
   const open = (): HTMLAnchorElement =>
     document.getElementById("web-open-btn") as HTMLAnchorElement;
 
-  it("links the shown page's grant in a new top-level tab with no opener and no referrer", async () => {
+  it("links the shown page's tab URL in a new top-level tab with no opener and no referrer", async () => {
     showWebTab("/workspace/demo/my page.html");
     await flush();
-    expect(open().getAttribute("href")).toBe("/preview/tok1/my%20page.html");
+    expect(open().getAttribute("href")).toBe("/preview/tab/tok1/my%20page.html");
     expect(open().target).toBe("_blank");
     expect(open().rel).toBe("noopener noreferrer");
     expect(open().hasAttribute("aria-disabled")).toBe(false);
@@ -333,7 +334,7 @@ describe("Open in browser", () => {
     expect(open().getAttribute("aria-disabled")).toBe("true");
     grants.held.shift()?.();
     await flush();
-    expect(open().getAttribute("href")).toBe("/preview/tok1/index.html");
+    expect(open().getAttribute("href")).toBe("/preview/tab/tok1/index.html");
     expect(open().target).toBe("_blank");
     expect(open().rel).toBe("noopener noreferrer");
     expect(open().hasAttribute("aria-disabled")).toBe(false);
@@ -356,12 +357,12 @@ describe("Open in browser", () => {
     await flush();
     document.getElementById("web-reload-btn")!.click();
     await flush();
-    expect(open().getAttribute("href")).toBe("/preview/tok2/index.html");
+    expect(open().getAttribute("href")).toBe("/preview/tab/tok2/index.html");
     showWebTab("/workspace/b/index.html");
     await flush();
-    expect(open().getAttribute("href")).toBe("/preview/tok3/index.html");
+    expect(open().getAttribute("href")).toBe("/preview/tab/tok3/index.html");
     showWebTab("/workspace/a/index.html");
-    expect(open().getAttribute("href")).toBe("/preview/tok2/index.html");
+    expect(open().getAttribute("href")).toBe("/preview/tab/tok2/index.html");
   });
 
   it("keeps a hidden tab's late grant off the shown tab's link", async () => {
@@ -373,7 +374,7 @@ describe("Open in browser", () => {
     await flush();
     grants.held.shift()?.();
     await flush();
-    expect(open().getAttribute("href")).toBe("/preview/tok2/index.html");
+    expect(open().getAttribute("href")).toBe("/preview/tab/tok2/index.html");
   });
 
   it("draws its glyph from the icon registry", () => {

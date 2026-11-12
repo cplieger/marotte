@@ -39,7 +39,7 @@ var (
 )
 
 // Handler serves the preview routes: the sandboxed file route under PathPrefix
-// and the grant and stamp endpoints the client mints and polls with.
+// (and its tab form) and the grant and stamp endpoints the client mints and polls with.
 type Handler struct {
 	signer  *Signer
 	log     *slog.Logger
@@ -219,9 +219,11 @@ func (h *Handler) Grant(p string, exp time.Time) (marotte.PreviewGrant, error) {
 	if err != nil {
 		return marotte.PreviewGrant{}, err
 	}
-	base := PathPrefix + h.signer.mint(pg.folder, exp) + "/"
+	tok := h.signer.mint(pg.folder, exp)
+	base := PathPrefix + tok + "/"
 	return marotte.PreviewGrant{
 		URL:       base + url.PathEscape(pg.name),
+		TabURL:    TabPathPrefix + tok + "/" + url.PathEscape(pg.name),
 		Base:      base,
 		ExpiresAt: exp.UTC(),
 		Epoch:     h.signer.currentEpoch(),
