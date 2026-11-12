@@ -21,6 +21,8 @@ interface HelloFields {
   verdict: string;
   keepalive_ms: number;
   keepalive_event: string;
+  /** Present on a connection the scope endpoint can rescope. */
+  conn?: string;
 }
 
 interface ScriptedRequest {

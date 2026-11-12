@@ -23,6 +23,7 @@ import { BUS_PAGE_RESUMED, BUS_RECONCILE, decodeEnvelope, emitBus } from "./bus.
 import { inventoryHeld } from "./git-prs-state.js";
 import { mcpState } from "./mcp-state.js";
 import { isMirrorKind } from "./mirror.js";
+import { rawWorkflowID } from "./run-content-frame.js";
 import { refetchLiveRuns, rereadHeldRuns, runTurnHeldSeq } from "./run-store.js";
 import { runContentScoped } from "./run-content-scope.js";
 import { requestRunTurnRange } from "./run-turn-range.js";
@@ -275,17 +276,6 @@ function rawTurnID(payload: unknown): string {
     }
   }
   return "";
-}
-
-/** The workflow id an entry frame carries, read off the RAW payload because nothing decoded. It
- *  sits beside `turn` on every run-scoped entry frame, which is the same field
- *  `handlers/entries.ts` routes on, and is absent on a chat's. */
-function rawWorkflowID(payload: unknown): string {
-  if (typeof payload !== "object" || payload === null) {
-    return "";
-  }
-  const id = (payload as Record<string, unknown>)["workflow_id"];
-  return typeof id === "string" ? id : "";
 }
 
 /** Ask for the turn an undecodable frame named, on whichever log holds it: a chat's frame

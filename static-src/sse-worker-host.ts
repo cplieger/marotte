@@ -1,11 +1,12 @@
 // The profile's stream owner, hosted in the SharedWorker: `@cplieger/sse`'s `createWorkerHost`
-// around marotte's two routes, plus the two decisions that are marotte's own. `sse-worker.ts` is
+// around marotte's routes, plus the three decisions that are marotte's own. `sse-worker.ts` is
 // the classic-script entry that wires `onconnect`.
 
 import {
   type Changed,
   type DigestClient,
   type DigestVerdict,
+  type Frame,
   type HostStream,
   type LifecycleEvent,
   type RevalidateContext,
@@ -16,6 +17,8 @@ import {
   createVersionMap,
   createWorkerHost,
 } from "@cplieger/sse";
+
+import { runContentOf, runTopic } from "./run-content-frame.js";
 
 /** The digest's own budget, matching the server's `RouteTimeout` on `POST /api/sync`. */
 const DIGEST_TIMEOUT_MS = 10_000;
@@ -70,6 +73,19 @@ function reconnectForAttach(ev: LifecycleEvent, stream: HostStream): void {
   }
 }
 
+/** Whether a tab scoped to `scope` draws `frame`: a run's log only when the scope holds its run,
+ *  everything else (every broadcast, and a frame no run can be read off) always. */
+function deliverToTab(frame: Frame, scope: ReadonlySet<string>): boolean {
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(frame.data);
+  } catch {
+    return true;
+  }
+  const run = runContentOf(envelope);
+  return run === "" || scope.has(runTopic(run));
+}
+
 /** Build the host over marotte's routes. */
 export function createSSEHost(): WorkerHost {
   const versions = createVersionMap();
@@ -79,6 +95,8 @@ export function createSSEHost(): WorkerHost {
     // `SSE-Client` is filled by the host from the first attaching tab's tag, before the first
     // connect; an empty header would reach the server as an invalid tag.
     alive: { url: "/api/events/alive" },
+    scopeUrl: "/api/events/scope",
+    deliver: deliverToTab,
     versions,
     revalidate: (ctx, tabs) => profileRevalidate(ctx, tabs, versions, digest, created.stream()),
     onLifecycle(ev) {
