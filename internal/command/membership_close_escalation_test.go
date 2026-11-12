@@ -207,7 +207,7 @@ func (f *fixedTabs) Close(context.Context, string, []string, map[string]tabs.Rec
 
 func (*fixedTabs) Forget(context.Context, string) (uint64, error) { return 2, nil }
 
-func (*fixedTabs) ExpireRecent(context.Context, time.Time) (uint64, error) { return 2, nil }
+func (*fixedTabs) ExpireRecent(context.Context) (uint64, error) { return 2, nil }
 
 func (*fixedTabs) Recent() []marotte.RecentClose { return nil }
 

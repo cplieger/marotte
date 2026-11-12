@@ -319,7 +319,8 @@ func TestExpireRecent_DropsWithAVersionOfItsOwn(t *testing.T) {
 	closedChat(t, s, "c-new")
 	_, before := s.List()
 
-	v, err := s.ExpireRecent(t.Context(), clock.at.Add(RecentWindow-time.Hour))
+	clock.advance(RecentWindow - time.Hour)
+	v, err := s.ExpireRecent(t.Context())
 	if err != nil || v != before+1 {
 		t.Fatalf("ExpireRecent at c-old's expiry = (v%d, %v), want version %d", v, err, before+1)
 	}
@@ -330,7 +331,7 @@ func TestExpireRecent_DropsWithAVersionOfItsOwn(t *testing.T) {
 		t.Errorf("tabs.json recent %+v at version %d, want c-new alone at %d", doc.Recent, doc.Version, v)
 	}
 
-	again, err := s.ExpireRecent(t.Context(), clock.at.Add(RecentWindow-time.Hour))
+	again, err := s.ExpireRecent(t.Context())
 	if err != nil || again != v {
 		t.Errorf("ExpireRecent with nothing expired = (v%d, %v), want version %d unchanged", again, err, v)
 	}

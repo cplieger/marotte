@@ -88,7 +88,7 @@ type failingExpiry struct {
 
 var errExpiryWrite = errors.New("simulated tabs.json write failure")
 
-func (f *failingExpiry) ExpireRecent(ctx context.Context, now time.Time) (uint64, error) {
+func (f *failingExpiry) ExpireRecent(ctx context.Context) (uint64, error) {
 	f.mu.Lock()
 	fail := f.fails > 0
 	if fail {
@@ -98,7 +98,7 @@ func (f *failingExpiry) ExpireRecent(ctx context.Context, now time.Time) (uint64
 	if fail {
 		return 0, errExpiryWrite
 	}
-	return f.Store.ExpireRecent(ctx, now)
+	return f.Store.ExpireRecent(ctx)
 }
 
 func TestCloseTab_TheFrameCarriesTheListWithEachClosedChatsName(t *testing.T) {
@@ -435,6 +435,62 @@ func TestTabMutations_PastTheWindowOnlyARealChangeDropsTheEntry(t *testing.T) {
 			t.Errorf("the pin's frame = %+v at v%d, want the pinned subject at v%d", frames[0], version, before+1)
 		}
 	})
+}
+
+func TestTabMutations_PastTheWindowEachRealChangeCarriesTheEmptiedList(t *testing.T) {
+	cases := []struct {
+		name string
+		do   func(t *testing.T, r *ackRig, a, b string) error
+	}{
+		{name: "reorder", do: func(t *testing.T, r *ackRig, a, b string) error {
+			_, err := r.mem.reorderTabs(t.Context(), []string{b, a}, "op-drag")
+			return err
+		}},
+		{name: "ack", do: func(t *testing.T, r *ackRig, a, _ string) error {
+			_, _, err := r.mem.ackTab(t.Context(), a, 3, "op-ack")
+			return err
+		}},
+		{name: "reparent", do: func(t *testing.T, r *ackRig, a, b string) error {
+			_, _, err := r.mem.reparent(t.Context(), b, a, "op-nest")
+			return err
+		}},
+		{name: "open of an unlisted chat", do: func(t *testing.T, r *ackRig, _, _ string) error {
+			_, err := r.mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-new"}, "op-open")
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				r := newAckRig(t)
+				for _, ref := range []marotte.ChatID{"c-old", "c-a", "c-b", "c-new"} {
+					seedNamed(t, r.chats.InMemoryChatStore, ref, string(ref))
+				}
+				closeListed(t, r.mem, "c-old")
+				a := openChatTab(t, r.mem, "c-a", "").ID
+				b := openChatTab(t, r.mem, "c-b", "").ID
+				r.chats.bound = 3
+				time.Sleep(tabs.RecentWindow)
+				_, before := r.st.List()
+				mark := len(r.bus.frames(t))
+
+				if err := tc.do(t, r, a, b); err != nil {
+					t.Fatalf("%s = %v", tc.name, err)
+				}
+
+				frames := r.bus.frames(t)[mark:]
+				if len(frames) != 1 {
+					t.Fatalf("the %s emitted %d frames, want 1", tc.name, len(frames))
+				}
+				if refs, ok := frameRecentRefs(&frames[0]); !ok || len(refs) != 0 {
+					t.Errorf("the %s's frame recent = %v (carried %v), want the emptied list carried", tc.name, refs, ok)
+				}
+				if frames[0].Version != before+1 {
+					t.Errorf("the %s's frame is at v%d, want v%d", tc.name, frames[0].Version, before+1)
+				}
+			})
+		})
+	}
 }
 
 // runExpiry starts the coordinator's expiry runner and answers its stop, which waits for it to return.

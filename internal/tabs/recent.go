@@ -126,12 +126,12 @@ func (s *Store) Forget(ctx context.Context, ref string) (uint64, error) {
 	})
 }
 
-// ExpireRecent drops every entry whose window has ended at now, with a version of its own, and
-// bumps nothing when none has. It is the only removal that is not part of another change.
-func (s *Store) ExpireRecent(ctx context.Context, now time.Time) (uint64, error) {
-	return s.mutate(ctx, func(st *state, _ int64) (bool, error) {
+// ExpireRecent drops every entry whose window has ended by the store's clock, with a version of
+// its own, and bumps nothing when none has. It is the only removal that is not part of another change.
+func (s *Store) ExpireRecent(ctx context.Context) (uint64, error) {
+	return s.mutate(ctx, func(st *state, now int64) (bool, error) {
 		var changed bool
-		st.recent, changed = dropExpired(st.recent, now.UnixMilli())
+		st.recent, changed = dropExpired(st.recent, now)
 		return changed, nil
 	})
 }

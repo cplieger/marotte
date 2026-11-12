@@ -51,6 +51,28 @@ func TestRetention_KeepState(t *testing.T) {
 			b.pass(t)
 			b.kept(t, "c-1", sess("c-1"))
 		}},
+		"recently_closed_survives_a_restart": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
+			b1 := bootSeam(t, root, eng, logs, seamOpts{})
+			b1.create(t, "c-1", sess("c-1"))
+			b1.closeTab(t, "c-1")
+			b1.shutdown(t)
+			b := bootSeam(t, root, eng, logs, seamOpts{})
+			if got := b.tabs.Recent(); len(got) != 1 || got[0].Ref != "c-1" || got[0].Name != "c-1" {
+				t.Errorf("Recent() after the restart = %+v, want c-1 listed under its name", got)
+			}
+		}},
+		"recently_closed_lists_nothing_with_retention_off": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
+			b := bootSeam(t, root, eng, logs, seamOpts{})
+			b.create(t, "c-1", sess("c-1"))
+			writeConfig(t, filepath.Join(root, "config.json"), `{"chat_retention_days":0}`)
+			b.closeTab(t, "c-1")
+			if got := b.tabs.Recent(); len(got) != 0 {
+				t.Errorf("Recent() after a close with retention off = %+v, want empty", got)
+			}
+			if b.present(t, "c-1") {
+				t.Error("c-1 survived a close with retention off; want deleted")
+			}
+		}},
 		"tab_unset": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
 			b := bootSeam(t, root, eng, logs, seamOpts{})
 			b.seed(t, "c-1", sess("c-1"))

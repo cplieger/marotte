@@ -79,7 +79,7 @@ type TabSet interface {
 	Open(ctx context.Context, spec marotte.OpenTab) (subject marotte.TabSubject, created bool, version uint64, err error)
 	Close(ctx context.Context, id string, unlisted []string, facts map[string]tabs.RecentFacts) ([]marotte.TabSubject, []tabs.OwedRelease, uint64, error)
 	Forget(ctx context.Context, ref string) (uint64, error)
-	ExpireRecent(ctx context.Context, now time.Time) (uint64, error)
+	ExpireRecent(ctx context.Context) (uint64, error)
 	Recent() []marotte.RecentClose
 	Reorder(ctx context.Context, ids []string) (uint64, error)
 	SetPinned(ctx context.Context, id string, pinned bool) (uint64, error)
@@ -1474,7 +1474,7 @@ func (m *Membership) closeTabsFor(ctx context.Context, chatID marotte.ChatID, op
 	open, _ := m.tabs.List()
 	removing := tabsForChat(open, chatID)
 	// Retention off keeps no closed chat to list again, so the cascade then lists none of the chats it closes.
-	listUnder := len(removing) == 0 || m.retention == nil || m.retention(ctx)
+	listUnder := m.retention == nil || m.retention(ctx)
 	for _, doomed := range removing {
 		under := m.subtreeChats(doomed.ID)
 		unlisted := []string{string(chatID)}
@@ -1483,7 +1483,10 @@ func (m *Membership) closeTabsFor(ctx context.Context, chatID marotte.ChatID, op
 		}
 		recent := m.tabs.Recent()
 		closed, owed, version, ok := m.closeRemovedTab(ctx, chatID, doomed.ID, opID, unlisted, m.recentFacts(ctx, under))
-		if !ok || len(closed) == 0 {
+		if !ok {
+			continue
+		}
+		if len(closed) == 0 {
 			continue // already gone; another close won the race
 		}
 		for _, child := range under {

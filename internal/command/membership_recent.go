@@ -130,7 +130,7 @@ func (m *Membership) expireRecent(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	before := m.tabs.Recent()
-	version, err := m.tabs.ExpireRecent(ctx, time.Now())
+	version, err := m.tabs.ExpireRecent(ctx)
 	if err != nil {
 		return err
 	}
