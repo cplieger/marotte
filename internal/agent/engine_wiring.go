@@ -221,8 +221,8 @@ func (rt *Runtime) onEngineReady(uint64) {
 	rt.KickCodeIntelligence()
 }
 
-// bootSeedTimeout bounds the boot observer pass: its door plus KAS's pushes after it. A var so the package's tests,
-// whose fake engine pushes no slash menu or steering documents, do not hold the boot pass for it.
+// bootSeedTimeout bounds the boot observer pass: its door plus KAS's pushes after it. A var so the package's tests
+// whose fake withholds a seed (noGovernance, noDoorSeeds) do not hold the boot pass for it.
 var bootSeedTimeout = 12 * time.Second
 
 // seedBoot holds the boot observer pass open until KAS sent what it sends only at a session door, the governance

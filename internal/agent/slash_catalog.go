@@ -76,20 +76,26 @@ func (c *slashCatalog) snapshot() (cmds []marotte.SlashCommand, ready bool) {
 
 type steeringIssues struct {
 	issues map[string][]marotte.SteeringIssue
-	// seeded closes on the first document list KAS sent.
+	// seeded closes on the first documents_changed frame KAS sent, success or failed.
 	seeded chan struct{}
 	mu     sync.Mutex
 }
 
 func newSteeringIssues() *steeringIssues { return &steeringIssues{seeded: make(chan struct{})} }
 
-// Set replaces the map, reporting whether it changed, and marks it seeded.
-func (s *steeringIssues) Set(issues map[string][]marotte.SteeringIssue) bool {
+// Seen marks the map seeded.
+func (s *steeringIssues) Seen() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !isClosed(s.seeded) {
 		close(s.seeded)
 	}
+}
+
+// Set replaces the map, reporting whether it changed.
+func (s *steeringIssues) Set(issues map[string][]marotte.SteeringIssue) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if maps.EqualFunc(s.issues, issues, steeringIssuesEqual) {
 		return false
 	}

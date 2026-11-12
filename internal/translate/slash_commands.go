@@ -15,9 +15,11 @@ type SlashCatalog interface {
 }
 
 // SteeringIssues holds KAS's per-document steering configuration issues. Set
-// replaces the whole map and reports whether it changed.
+// replaces the whole map and reports whether it changed. Seen records that KAS
+// answered a session's steering read, a failed read included.
 type SteeringIssues interface {
 	Set(issues map[string][]marotte.SteeringIssue) bool
+	Seen()
 }
 
 // KAS has already normalised name to the spelling its resolver matches.
@@ -176,6 +178,7 @@ func (t *Translator) HandleSteeringDocuments(ctx context.Context, _ marotte.Chat
 	if t.steeringIssues == nil {
 		return
 	}
+	t.steeringIssues.Seen()
 	issues, ok := readSteeringIssues(msg.Params)
 	if !ok {
 		slog.Debug("steering documents_changed: not a success frame")
