@@ -10,7 +10,11 @@ vi.mock("./icons.js", () => ({
   ICON_TRASH_UI: "<svg data-trash></svg>",
   ICON_REFRESH: "<svg data-refresh></svg>",
 }));
-vi.mock("./bus.js", () => ({ onSSE: vi.fn(() => () => undefined) }));
+vi.mock("./bus.js", () => ({
+  onSSE: vi.fn(() => () => undefined),
+  onBus: vi.fn(() => () => undefined),
+  BUS_ENGINE_READY: "engine:ready",
+}));
 vi.mock("./actions/index.js", () => ({
   bindLoadingState: vi.fn(() => () => undefined),
   registerCleanup: vi.fn(),
@@ -40,7 +44,7 @@ const settingsAnswer = vi.hoisted(() => ({ value: null as unknown }));
 vi.mock("./persist.js", () => ({ loadSettings: () => Promise.resolve(settingsAnswer.value) }));
 
 import { apiGetTyped } from "./api-client.js";
-import { onSSE } from "./bus.js";
+import { onBus, onSSE } from "./bus.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { showToast } from "./toast.js";
 import {
@@ -121,6 +125,29 @@ describe("initKnowledge", () => {
     (handler as ((chatID: string) => void) | undefined)?.("");
     await flush();
     expect(list().textContent).toContain("landed");
+  });
+
+  // A read the server refused while no engine was ready is asked again when the engine is back.
+  it("re-asks a list whose read failed when the engine is back, and not one that answered", async () => {
+    initKnowledge();
+    mockGet.mockResolvedValue(null);
+    loadKnowledge();
+    await flush();
+    expect(list().textContent).toContain("Could not load knowledge bases.");
+    const ready = vi.mocked(onBus).mock.calls.find((c) => c[0] === "engine:ready")?.[1] as
+      (() => void) | undefined;
+    expect(ready, "the section listens for the engine's return").toBeDefined();
+    mockGet.mockClear();
+    mockGet.mockResolvedValue({ contexts: [{ name: "back", id: "a", item_count: 1 }] });
+
+    ready?.();
+    await flush();
+    expect(list().textContent).toContain("back");
+
+    mockGet.mockClear();
+    ready?.();
+    await flush();
+    expect(mockGet, "a list that answered").not.toHaveBeenCalled();
   });
 
   it("toggles the add form open on + click", () => {

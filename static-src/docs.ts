@@ -7,7 +7,7 @@ import type { KiroDoc as WireKiroDoc, KiroDocsResponse, SteeringIssue } from "./
 import { defineAction, ActionError, retryNetwork, registerCleanup } from "./actions/index.js";
 import { setHookEnabled } from "./actions/hooks.js";
 import { asObject, decodeArray, optStr, reqBool, reqStr } from "./wire/validators.gen.js";
-import { onSSE } from "./bus.js";
+import { onBus, onSSE, BUS_ENGINE_READY } from "./bus.js";
 import { $, byId, maybeEl, queryAll, queryEl } from "./dom.js";
 import { swapViews } from "./view-swap.js";
 import { el } from "@cplieger/reactive";
@@ -215,6 +215,8 @@ const memoryOff = signal<boolean | null>(null);
 let docs: KiroDoc[] = [];
 /** Separate from `docs`: different invalidation triggers (`settings_updated` vs `hooks_changed`). */
 let hooks = new Map<string, HookState>();
+/** Whether the latest hook-state read answered. */
+let hooksCurrent = false;
 /** Own fetch and broadcast (`steering_issues_changed`), so a failure does not blank the list. */
 let steeringIssues = new Map<string, SteeringIssue[]>();
 let inited = false;
@@ -337,6 +339,7 @@ function loadSteeringIssues(): void {
  */
 function loadHookState(): void {
   void apiGetTyped("/api/hooks", decodeHookList).then((d) => {
+    hooksCurrent = d !== null;
     if (d === null) {
       return;
     }
@@ -434,6 +437,13 @@ function initDocsView(): void {
     onSSE("hooks_changed", () => {
       if ($.docsView.offsetParent !== null) {
         loadDocs();
+      }
+    }),
+  );
+  registerCleanup(
+    onBus(BUS_ENGINE_READY, () => {
+      if ($.docsView.offsetParent !== null && !hooksCurrent) {
+        loadHookState();
       }
     }),
   );

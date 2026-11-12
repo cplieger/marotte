@@ -43,6 +43,7 @@ import {
   restartPendingText,
 } from "./engine-status.js";
 import { showBanner, clearBannerCodes } from "./banner-stack.js";
+import { BUS_ENGINE_READY, onBus } from "./bus.js";
 
 const mockedShow = vi.mocked(showBanner);
 const mockedClear = vi.mocked(clearBannerCodes);
@@ -89,16 +90,32 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("adoptEngineStatus", () => {
-  it("says when a newer status brings the engine back to ready", () => {
-    adoptEngineStatus(status({ state: "down" }));
-    expect(adoptEngineStatus(status()), "down, then ready").toBe(true);
-    expect(adoptEngineStatus(status()), "ready, then ready").toBe(false);
-    adoptEngineStatus(status({ state: "starting" }));
-    const stale = status();
-    adoptEngineStatus(status({ state: "restarting" }));
-    expect(adoptEngineStatus(stale), "an older ready status is not adopted").toBe(false);
-    expect(adoptEngineStatus(status({ state: "down" })), "restarting, then down").toBe(false);
+describe("a status that brings the engine to ready", () => {
+  it("emits the ready event from another state or from none shown, never from ready", async () => {
+    const seen = vi.fn();
+    const off = onBus(BUS_ENGINE_READY, seen);
+    try {
+      adoptEngineStatus(status({ state: "down" }));
+      seen.mockClear();
+      adoptEngineStatus(status());
+      expect(seen, "down, then ready").toHaveBeenCalledTimes(1);
+      adoptEngineStatus(status());
+      expect(seen, "ready, then ready").toHaveBeenCalledTimes(1);
+      adoptEngineStatus(status({ state: "starting" }));
+      const stale = status();
+      adoptEngineStatus(status({ state: "restarting" }));
+      adoptEngineStatus(stale);
+      expect(seen, "an older ready status is not adopted").toHaveBeenCalledTimes(1);
+      adoptEngineStatus(status({ state: "down" }));
+      expect(seen, "restarting, then down").toHaveBeenCalledTimes(1);
+      const answer = openRead();
+      const reconciled = reconcileEngineStatus(new AbortController().signal);
+      answer(status());
+      await reconciled;
+      expect(seen, "none shown, then ready").toHaveBeenCalledTimes(2);
+    } finally {
+      off();
+    }
   });
 });
 

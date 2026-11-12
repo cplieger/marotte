@@ -13,7 +13,7 @@ import { editNativeRule, explainPolicy, setSecurityProfile } from "./actions/per
 import { reconcile } from "./reconcile.js";
 import { paintIfChanged, sigChanged } from "./paint-sig.js";
 import { join } from "@cplieger/keyenc";
-import { onSSE } from "./bus.js";
+import { onBus, onSSE, BUS_ENGINE_READY } from "./bus.js";
 import { confirm } from "./confirm.js";
 import type { PolicyView, PolicyRule, SecurityProfile } from "./types.js";
 // `types.js` re-exports the Policy* shapes the panel renders and not these two, which only an
@@ -337,6 +337,8 @@ class NativePolicyController {
    *  loaded once they fetch nothing, and while a load is in flight they queue one more. */
   private loaded = false;
   private reloadQueued = false;
+  /** The latest read failed or kiro-cli did not answer it. */
+  private refused = false;
   /** Never local constants: the ladder decides what one click grants, and policyfile owns it. */
   private profiles: SecurityProfile[] = [];
   private activeProfile = "";
@@ -381,6 +383,13 @@ class NativePolicyController {
     registerCleanup(
       onSSE("permissions_changed", () => {
         this.reloadOnChange();
+      }),
+    );
+    registerCleanup(
+      onBus(BUS_ENGINE_READY, () => {
+        if (this.refused) {
+          this.reloadOnChange();
+        }
       }),
     );
     registerCleanup(
@@ -439,7 +448,11 @@ class NativePolicyController {
 
   private async fetchAndRender(signal: AbortSignal): Promise<void> {
     const data = await apiGet<PolicyView>("/api/permissions", signal);
-    if (signal.aborted || data === null) {
+    if (signal.aborted) {
+      return;
+    }
+    this.refused = data?.available !== true;
+    if (data === null) {
       return;
     }
     // A completed read-back supersedes any note a past selection left. Without this, a failure

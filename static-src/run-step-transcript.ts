@@ -48,6 +48,7 @@ export function stepRead(workflowID: string, nodePath: string): StepRead | undef
  *  nothing about them. */
 export function clearStepTranscripts(): void {
   reads.clear();
+  addresses.clear();
   inFlight.clear();
   captures.clear();
 }
@@ -86,6 +87,18 @@ export function requestStepCapture(workflowID: string, nodePath: string): void {
     });
 }
 
+/** Each read's run and step, by its key, so a transient miss can be asked again. */
+const addresses = new Map<string, { readonly workflowID: string; readonly nodePath: string }>();
+
+/** Ask again for every step whose newest read missed transiently (`unavailable`). */
+export function rereadUnavailableSteps(): void {
+  for (const [key, at] of addresses) {
+    if (reads.get(key)?.state === "unavailable") {
+      requestStepTranscript(at.workflowID, at.nodePath);
+    }
+  }
+}
+
 /** Whether an answer is settled — never worth asking again. */
 function settled(state: StepReadState): boolean {
   return state === "ready" || state === "gone" || state === "unaddressable";
@@ -108,6 +121,7 @@ export function requestStepTranscript(workflowID: string, nodePath: string): voi
   }
   inFlight.add(key);
   reads.set(key, { state: "loading" });
+  addresses.set(key, { workflowID, nodePath });
   void fetchStep(key, workflowID, nodePath);
 }
 

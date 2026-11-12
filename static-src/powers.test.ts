@@ -60,7 +60,7 @@ import {
 } from "./powers.js";
 import type { PowerRow } from "./powers.js";
 import { confirm } from "./confirm.js";
-import { dispatch } from "./bus.js";
+import { BUS_ENGINE_READY, dispatch, emitBus } from "./bus.js";
 
 function row(name: string, over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -296,6 +296,47 @@ describe("the list", () => {
     dispatch({ type: "powers_changed", chat_id: "" });
     await settle();
     expect(names()).toEqual(["fresh"]);
+  });
+});
+
+// A read the server refused while no engine was ready is asked again when the engine is back.
+describe("the engine's return", () => {
+  const back = ok({ catalog: "ready", installed: "ready", powers: [row("back")] });
+
+  it("re-asks a list whose read failed", async () => {
+    listReply = { ok: false, status: 502, data: null, error: "engine not ready" };
+    await mount();
+    listReply = back;
+    emitBus(BUS_ENGINE_READY);
+    await settle();
+    expect(names()).toEqual(["back"]);
+  });
+
+  it("re-asks a list whose catalog or installed half was unavailable", async () => {
+    for (const half of ["catalog", "installed"]) {
+      listReply = ok({ catalog: "ready", installed: "ready", [half]: "unavailable", powers: [] });
+      await mount();
+      listReply = back;
+      emitBus(BUS_ENGINE_READY);
+      await settle();
+      expect(names(), half).toEqual(["back"]);
+    }
+  });
+
+  it("asks nothing for a list that answered, or while the tab is off screen", async () => {
+    await mount();
+    const answered = listCalls;
+    emitBus(BUS_ENGINE_READY);
+    await settle();
+    expect(listCalls, "a list that answered").toBe(answered);
+
+    listReply = { ok: false, status: 502, data: null, error: "engine not ready" };
+    await mount();
+    panel.classList.add("hidden");
+    const hidden = listCalls;
+    emitBus(BUS_ENGINE_READY);
+    await settle();
+    expect(listCalls, "off screen").toBe(hidden);
   });
 });
 

@@ -3,7 +3,7 @@
 
 import { el } from "@cplieger/reactive";
 import { join as joinKey } from "@cplieger/keyenc";
-import { onBus, onSSE, BUS_CATALOG_MODELS, BUS_RUNS_CHANGED } from "./bus.js";
+import { onBus, onSSE, BUS_CATALOG_MODELS, BUS_ENGINE_READY, BUS_RUNS_CHANGED } from "./bus.js";
 import { reconcile } from "./reconcile.js";
 import { loadRecipes, loadRuns, launchRun, cancelRun } from "./actions/runs.js";
 import {
@@ -49,6 +49,9 @@ let recipes: Recipe[] = [];
 /** Whether the latest recipe fetch answered. A rule is called orphaned only against a current
  *  list: a failed refetch keeps the old rows on screen, but absence from them proves nothing. */
 let recipesCurrent = false;
+
+/** Whether the latest live-runs fetch answered. */
+let runsCurrent = false;
 
 /** MODULE state, not a render parameter, and that distinction is load-bearing: this panel repaints
  *  itself on its own schedule (the run poll, the rules fetch, the settings SSE), and a parameter
@@ -141,6 +144,17 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
     onSSE("recipes_changed", () => {
       if (isShowing()) {
         void refreshRecipes();
+      }
+    });
+    onBus(BUS_ENGINE_READY, () => {
+      if (!isShowing()) {
+        return;
+      }
+      if (!recipesCurrent) {
+        void refreshRecipes();
+      }
+      if (!runsCurrent) {
+        void refreshRuns();
       }
     });
     window.matchMedia(COMPACT_QUERY).addEventListener("change", paint);
@@ -623,6 +637,7 @@ function isShowing(): boolean {
 
 async function refreshRuns(): Promise<void> {
   const d = await loadRuns.dispatch(undefined);
+  runsCurrent = d !== null;
   if (d === null) {
     return;
   }

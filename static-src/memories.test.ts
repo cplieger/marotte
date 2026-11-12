@@ -57,7 +57,7 @@ vi.mock("./actions/memory.js", async (importOriginal) => ({
 import { renderMemoriesPanel, setMemoryCountsListener, _resetMemoriesForTest } from "./memories.js";
 import { confirm } from "./confirm.js";
 import { apiGetTypedOrError } from "./api-client.js";
-import { dispatch } from "./bus.js";
+import { BUS_ENGINE_READY, dispatch, emitBus } from "./bus.js";
 import { confirmText } from "./__test-helpers__/confirm-text.js";
 
 function record(id: string, scope: string | null, title: string, updated = 1_700_000_000) {
@@ -137,6 +137,48 @@ beforeEach(() => {
     choice: { enabled: false, account: false },
   });
   syncWrites.length = 0;
+});
+
+// A read the server refused while no engine was ready is asked again when the engine is back.
+describe("the engine's return", () => {
+  function reads(path: string): number {
+    return vi.mocked(apiGetTypedOrError).mock.calls.filter((c) => c[0] === path).length;
+  }
+
+  it("re-asks a refused list and a refused sync state while the tab is on screen", async () => {
+    const answered = listReply;
+    const answeredSync = syncReply;
+    listReply = { ok: false, status: 502, data: null, error: "engine not ready" };
+    syncReply = { ok: false, status: 502, data: null, error: "engine not ready" };
+    await mount();
+    expect(panel.textContent).toContain("Couldn't load memories.");
+    listReply = answered;
+    syncReply = answeredSync;
+    vi.mocked(apiGetTypedOrError).mockClear();
+
+    emitBus(BUS_ENGINE_READY);
+    await settle();
+
+    expect(reads("/api/memory")).toBe(1);
+    expect(reads("/api/memory/sync")).toBe(1);
+    expect(titlesIn("repo:org/one")).toEqual(["Newer", "Older"]);
+    vi.mocked(apiGetTypedOrError).mockClear();
+    emitBus(BUS_ENGINE_READY);
+    await settle();
+    expect(vi.mocked(apiGetTypedOrError), "reads that answered").not.toHaveBeenCalled();
+  });
+
+  it("asks nothing while the tab is off screen", async () => {
+    listReply = { ok: false, status: 502, data: null, error: "engine not ready" };
+    await mount();
+    panel.classList.add("hidden");
+    vi.mocked(apiGetTypedOrError).mockClear();
+
+    emitBus(BUS_ENGINE_READY);
+    await settle();
+
+    expect(vi.mocked(apiGetTypedOrError)).not.toHaveBeenCalled();
+  });
 });
 
 describe("the list", () => {

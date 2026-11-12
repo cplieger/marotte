@@ -19,7 +19,7 @@ import { iconEl } from "./icon-el.js";
 import { ICON_TRASH } from "./icons.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { installPower, uninstallPower } from "./actions/powers.js";
-import { onSSE } from "./bus.js";
+import { onBus, onSSE, BUS_ENGINE_READY } from "./bus.js";
 
 export interface PowerRow {
   readonly name: string;
@@ -177,6 +177,13 @@ export function renderPowersPanel(panel: HTMLElement, filter = ""): void {
     // An install from a shell, another device or the agent lands here too.
     onSSE("powers_changed", () => {
       if (isShowing()) {
+        void refresh();
+      }
+    });
+    onBus(BUS_ENGINE_READY, () => {
+      const refused =
+        state === "failed" || catalogState === "unavailable" || installedState === "unavailable";
+      if (isShowing() && refused) {
         void refresh();
       }
     });

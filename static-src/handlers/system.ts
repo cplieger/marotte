@@ -3,7 +3,15 @@
 // held claim is void (new hub epoch, or must_refetch) and re-reads the whole projection; the
 // everyday wake is the adapter's digest.
 
-import { onSSE, onBus, BUS_RECONCILE, BUS_PAGE_RESUMED, decodeEnvelope, dispatch } from "../bus.js";
+import {
+  onSSE,
+  onBus,
+  BUS_ENGINE_READY,
+  BUS_RECONCILE,
+  BUS_PAGE_RESUMED,
+  decodeEnvelope,
+  dispatch,
+} from "../bus.js";
 import { adoptThemeFromSettings, applyGeneralPanel, syncSettings } from "../settings.js";
 import { applyAgentDirs } from "../agent-dirs-ui.js";
 import { applyPermissionsPanel } from "../permissions-ui.js";
@@ -26,9 +34,10 @@ import { dropAllRunAsks, runAskPosition } from "../run-asks.js";
 import { loadList, scheduleListRetry } from "../store-load.js";
 import { clearTurnState } from "../turn-teardown.js";
 import { adoptRetention } from "../retention.js";
-import { adoptConnectRuns, rereadHeldRuns } from "../run-store.js";
+import { adoptConnectRuns, rereadUnansweredRuns } from "../run-store.js";
 import { forgetAllStepSteers } from "../run-step-steers.js";
-import { fetchCatalog } from "../session-catalog.js";
+import { rereadUnavailableSteps } from "../run-step-transcript.js";
+import { fetchCatalog, rereadRefusedCatalog } from "../session-catalog.js";
 import { adoptEngineStatus, reconcileEngineStatus } from "../engine-status.js";
 import { invalidateTurnRails } from "../turn-rail.js";
 import type { SSEPayloads } from "../bus.js";
@@ -121,11 +130,14 @@ onSSE("settings_updated", (_chatID, p) => {
 });
 
 onSSE("engine_status", (_chatID, p) => {
-  // An API read answers at once while the engine is not ready, so what it refused is asked again now.
-  if (adoptEngineStatus(p)) {
-    void fetchCatalog({ reset: true });
-    rereadHeldRuns();
-  }
+  adoptEngineStatus(p);
+});
+
+// The catalog, the held runs and the run steps whose newest read missed ask again; each page re-asks its own.
+onBus(BUS_ENGINE_READY, () => {
+  rereadRefusedCatalog();
+  rereadUnansweredRuns();
+  rereadUnavailableSteps();
 });
 
 onBus(BUS_RECONCILE, ({ cause, signal }) => {

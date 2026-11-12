@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   explainDispatch: vi.fn<(args: Record<string, unknown>) => Promise<unknown>>(),
   confirm: vi.fn<(msg: string, label?: string) => Promise<boolean>>(),
   sseHandlers: new Map<string, SSEFn>(),
+  busHandlers: new Map<string, () => void>(),
 }));
 
 vi.mock("./api-client.js", () => ({ apiGet: mocks.apiGet }));
@@ -20,6 +21,11 @@ vi.mock("./bus.js", () => ({
     mocks.sseHandlers.set(type, fn);
     return () => mocks.sseHandlers.delete(type);
   },
+  onBus: (type: string, fn: () => void) => {
+    mocks.busHandlers.set(type, fn);
+    return () => mocks.busHandlers.delete(type);
+  },
+  BUS_ENGINE_READY: "engine:ready",
   // Present-but-inert so real-ESM linking succeeds; no case calls them.
   apiGetTyped: vi.fn(),
 }));
@@ -97,6 +103,7 @@ function policyRows(): HTMLElement[] {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.sseHandlers.clear();
+  mocks.busHandlers.clear();
   document.body.replaceChildren();
   document.body.appendChild(el("p", "native-policy-status"));
   document.body.appendChild(el("div", "native-policy-list"));
@@ -136,6 +143,30 @@ describe("native policy view", () => {
     initNativePolicyUI();
     expect(byId<HTMLSelectElement>("native-rule-effect").value).toBe("ask");
   });
+
+  // A read the server refused while no engine was ready is asked again when the engine is back.
+  for (const [what, refused] of [
+    ["kiro-cli did not answer", { ...sampleView, available: false }],
+    ["whose read failed", null],
+  ] as const) {
+    it(`re-reads a policy ${what} when the engine is back, and not one that answered`, async () => {
+      mocks.apiGet.mockResolvedValue(refused);
+      initAndLoad();
+      await flush();
+      mocks.apiGet.mockClear();
+      mocks.apiGet.mockResolvedValue(sampleView);
+
+      mocks.busHandlers.get("engine:ready")?.();
+      await flush();
+      expect(mocks.apiGet).toHaveBeenCalledWith("/api/permissions", expect.anything());
+      expect(policyRows()).toHaveLength(3);
+
+      mocks.apiGet.mockClear();
+      mocks.busHandlers.get("engine:ready")?.();
+      await flush();
+      expect(mocks.apiGet, "a policy that answered").not.toHaveBeenCalled();
+    });
+  }
 
   it("refetches when a permissions_changed SSE arrives", async () => {
     initAndLoad();

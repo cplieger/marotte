@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-import { readVerdict, refreshCatalog } from "./model-catalog.js";
+import { catalogRefused, readVerdict, refreshCatalog } from "./model-catalog.js";
 import type { CatalogAnswer } from "./model-catalog.js";
 import type { CatalogPhase } from "./picker.js";
 import type { CatalogState } from "./wire/types.gen.js";
@@ -166,5 +166,42 @@ describe("refreshCatalog", () => {
 
     await refreshCatalog(later.deps);
     expect(later.reads).toBe(1);
+  });
+});
+
+// The engine's return re-asks a catalog whose newest read was refused, and leaves one that answered.
+describe("catalogRefused", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("holds while the newest read answered nothing usable, and clears on a usable one", async () => {
+    const refused = refreshCatalog(recorder([answer("unavailable")]).deps);
+    await vi.runAllTimersAsync();
+    await refused;
+    expect(catalogRefused(), "a spent loop of unavailable answers").toBe(true);
+
+    await refreshCatalog(recorder([answer("ready")]).deps);
+    expect(catalogRefused(), "a ready answer").toBe(false);
+
+    const failed = refreshCatalog(recorder([null, answer("empty")]).deps);
+    await vi.runAllTimersAsync();
+    await failed;
+    expect(catalogRefused(), "a failed read, then an empty catalog").toBe(false);
+  });
+
+  it("holds while a loop waits to retry a refused read", async () => {
+    const r = recorder([null, answer("ready")]);
+    const loop = refreshCatalog(r.deps);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(r.reads).toBe(1);
+    expect(catalogRefused()).toBe(true);
+    await vi.runAllTimersAsync();
+    await loop;
+    expect(catalogRefused()).toBe(false);
   });
 });

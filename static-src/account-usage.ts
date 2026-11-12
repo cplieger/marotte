@@ -7,12 +7,15 @@ import { $ } from "./dom.js";
 import { apiGetTyped } from "./api-client.js";
 import { decodeAccountUsage } from "./wire/decoders.gen.js";
 import type { AccountUsage, AccountUsageBreakdown } from "./types.js";
+import { onBus, BUS_ENGINE_READY } from "./bus.js";
 
 const CLIENT_TTL_MS = 30_000;
 let lastFetch = 0;
 let inflight = false;
 /** Bumped by resetAccountUsage; a response fetched under an older epoch describes another account. */
 let epoch = 0;
+/** Whether the rows show "Usage unavailable". */
+let unavailable = false;
 
 /**
  * Fetch and render account usage, throttled to CLIENT_TTL_MS unless forced; safe on every
@@ -44,6 +47,7 @@ export function resetAccountUsage(): void {
   epoch++;
   inflight = false;
   lastFetch = 0;
+  unavailable = false;
   $.acctPlan.textContent = "";
   $.acctMeter.textContent = "";
   $.acctMeter.removeAttribute("data-tooltip");
@@ -74,6 +78,7 @@ function renderAccountUsage(u: AccountUsage | null): void {
   const overageEl = $.acctOverage;
   box.hidden = false;
 
+  unavailable = u === null;
   if (u === null) {
     planEl.textContent = "Usage unavailable";
     meterEl.textContent = "";
@@ -114,3 +119,10 @@ function renderAccountUsage(u: AccountUsage | null): void {
     meterEl.removeAttribute("data-tooltip");
   }
 }
+
+// The popup's rows are on screen only while it is open; a closed one fetches on its next open.
+onBus(BUS_ENGINE_READY, () => {
+  if (unavailable && !$.statusCard.hidden) {
+    loadAccountUsage(true);
+  }
+});

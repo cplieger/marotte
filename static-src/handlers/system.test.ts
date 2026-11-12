@@ -105,7 +105,15 @@ vi.mock("../retention.js", () => ({ adoptRetention: vi.fn() }));
 // A call count is the assertion: the catalog rides no frame, so a gap is the only signal that it
 // may have changed during the outage.
 const mockFetchCatalog = vi.fn(() => Promise.resolve());
-vi.mock("../session-catalog.js", () => ({ fetchCatalog: mockFetchCatalog }));
+const mockRereadRefusedCatalog = vi.fn();
+vi.mock("../session-catalog.js", () => ({
+  fetchCatalog: mockFetchCatalog,
+  rereadRefusedCatalog: mockRereadRefusedCatalog,
+}));
+const { mockRereadUnavailableSteps } = vi.hoisted(() => ({ mockRereadUnavailableSteps: vi.fn() }));
+vi.mock("../run-step-transcript.js", () => ({
+  rereadUnavailableSteps: mockRereadUnavailableSteps,
+}));
 
 // The engine banner's store is a boundary: the event and the gap hand it the status, and it paints.
 const { mockAdoptEngineStatus, mockReconcileEngineStatus } = vi.hoisted(() => ({
@@ -117,13 +125,17 @@ vi.mock("../engine-status.js", () => ({
   reconcileEngineStatus: mockReconcileEngineStatus,
 }));
 
-// PARTIAL: rereadHeldRuns is a spy, so a read the reconcile must not issue is observable, while
-// `adoptConnectRuns` is REAL, since the state it seeds is what the connect door owns. `vi.hoisted`
-// for the api-client pair's reason below.
-const { mockRereadHeldRuns } = vi.hoisted(() => ({ mockRereadHeldRuns: vi.fn() }));
+// PARTIAL: the two run re-reads are spies, so a read the reconcile or the engine's return issues (or
+// must not) is observable, while `adoptConnectRuns` is REAL, since the state it seeds is what the
+// connect door owns. `vi.hoisted` for the api-client pair's reason below.
+const { mockRereadHeldRuns, mockRereadUnansweredRuns } = vi.hoisted(() => ({
+  mockRereadHeldRuns: vi.fn(),
+  mockRereadUnansweredRuns: vi.fn(),
+}));
 vi.mock("../run-store.js", async (importOriginal) => ({
   ...(await importOriginal<typeof RunStore>()),
   rereadHeldRuns: mockRereadHeldRuns,
+  rereadUnansweredRuns: mockRereadUnansweredRuns,
 }));
 
 // Replaced so a per-run read is OBSERVABLE (the connect adoption issues none, the fallback one).
@@ -177,6 +189,7 @@ vi.mock("../bus.js", async (importOriginal) => {
     }),
     BUS_RECONCILE: "transport:reconcile",
     BUS_PAGE_RESUMED: "page:resumed",
+    BUS_ENGINE_READY: "engine:ready",
   });
 });
 
@@ -1119,19 +1132,18 @@ describe("engine_status", () => {
     expect(mockAdoptEngineStatus).toHaveBeenCalledWith(status);
   });
 
-  // An API read answers at once while the engine is not ready, so the engine's return re-asks the catalog and the
-  // held runs, and any other status asks nothing.
-  for (const back of [true, false]) {
-    it(`${back ? "re-reads" : "reads nothing"} when the status ${back ? "brings the engine back" : "is not a return to ready"}`, () => {
-      mockAdoptEngineStatus.mockReturnValueOnce(back);
-      fireSSE("engine_status", "", { state: "ready" });
-      if (back) {
-        expect(mockFetchCatalog).toHaveBeenCalledWith({ reset: true });
-        expect(mockRereadHeldRuns).toHaveBeenCalledTimes(1);
-      } else {
-        expect(mockFetchCatalog).not.toHaveBeenCalled();
-        expect(mockRereadHeldRuns).not.toHaveBeenCalled();
-      }
-    });
-  }
+  // A status only reaches the store: the store says when the engine is back, on the bus.
+  it("reads nothing itself", () => {
+    fireSSE("engine_status", "", { state: "ready" });
+    expect(mockRereadRefusedCatalog).not.toHaveBeenCalled();
+    expect(mockRereadUnansweredRuns).not.toHaveBeenCalled();
+    expect(mockRereadUnavailableSteps).not.toHaveBeenCalled();
+  });
+
+  it("re-asks the catalog, the held runs and the run steps whose newest read missed when the engine is back", () => {
+    busHandlers.get("engine:ready")?.();
+    expect(mockRereadRefusedCatalog).toHaveBeenCalledTimes(1);
+    expect(mockRereadUnansweredRuns).toHaveBeenCalledTimes(1);
+    expect(mockRereadUnavailableSteps).toHaveBeenCalledTimes(1);
+  });
 });

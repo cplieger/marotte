@@ -15,6 +15,7 @@ vi.mock("./wire/decoders.gen.js", () => ({ decodeAccountUsage: vi.fn() }));
 import { $ } from "./dom.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 const { loadAccountUsage, resetAccountUsage } = await import("./account-usage.js");
+const { BUS_ENGINE_READY, emitBus } = await import("./bus.js");
 
 async function flush(): Promise<void> {
   await Promise.resolve();
@@ -241,5 +242,56 @@ describe("the row's hidden state", () => {
     } finally {
       style.remove();
     }
+  });
+});
+
+// A read the server refused while no engine was ready is asked again when the engine is back.
+describe("the engine's return", () => {
+  const usage: AccountUsage = {
+    plan_name: "KIRO POWER",
+    breakdowns: [],
+    overages_enabled: false,
+  };
+
+  /** The popup holding the rows, open or closed. */
+  function seedCard(open: boolean): void {
+    const card = document.createElement("div");
+    card.id = "status-card";
+    card.hidden = !open;
+    card.append(...document.body.childNodes);
+    document.body.replaceChildren(card);
+  }
+
+  it("re-asks usage the open popup shows as unavailable, and not usage that answered", async () => {
+    resetAccountUsage();
+    seedCard(true);
+    mockApiGetTyped.mockResolvedValue(null);
+    loadAccountUsage(true);
+    await flush();
+    expect($.acctPlan.textContent).toBe("Usage unavailable");
+    mockApiGetTyped.mockClear();
+    mockApiGetTyped.mockResolvedValue(usage);
+
+    emitBus(BUS_ENGINE_READY);
+    await flush();
+    expect($.acctPlan.textContent).toBe("KIRO POWER");
+
+    mockApiGetTyped.mockClear();
+    emitBus(BUS_ENGINE_READY);
+    await flush();
+    expect(mockApiGetTyped, "usage that answered").not.toHaveBeenCalled();
+  });
+
+  it("asks nothing while the popup is closed", async () => {
+    resetAccountUsage();
+    seedCard(false);
+    mockApiGetTyped.mockResolvedValue(null);
+    loadAccountUsage(true);
+    await flush();
+    mockApiGetTyped.mockClear();
+
+    emitBus(BUS_ENGINE_READY);
+    await flush();
+    expect(mockApiGetTyped).not.toHaveBeenCalled();
   });
 });

@@ -11,6 +11,7 @@ import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 import { formatShortDate } from "./locale-time.js";
 import { confirmText } from "./__test-helpers__/confirm-text.js";
 import type { Confirmation } from "./confirm.js";
+import { BUS_ENGINE_READY, emitBus } from "./bus.js";
 
 /**
  * Cache-buster: `vi.resetModules()` does not re-evaluate a module in Browser Mode (URL-keyed module map). The `.ts`
@@ -2054,5 +2055,61 @@ describe("history: when the cross-chat search runs", () => {
         "Words spread across messages: we moved the cache to redis",
       );
     });
+  });
+});
+
+// A read the server refused while no engine was ready is asked again when the engine is back.
+describe("history: the engine's return", () => {
+  beforeEach(resetAll);
+
+  const answered = {
+    sessions: [chatRow],
+    runs: [runRow],
+    sessions_state: "ready",
+    runs_state: "ready",
+  };
+
+  it("re-asks a list that could not read the runs, and not one that answered", async () => {
+    await render({ ...answered, runs: [], runs_state: "unavailable" });
+    dispatch.mockClear();
+    dispatch.mockResolvedValue(answered);
+
+    emitBus(BUS_ENGINE_READY);
+    await vi.waitFor(() => {
+      expect(keysIn(runsPane())).toEqual(["r:wf_1"]);
+    });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+
+    dispatch.mockClear();
+    emitBus(BUS_ENGINE_READY);
+    await Promise.resolve();
+    expect(dispatch, "a list that answered").not.toHaveBeenCalled();
+  });
+
+  it("re-asks a list whose read failed", async () => {
+    await render(answered);
+    dispatch.mockResolvedValue(null);
+    current?.refreshHistoryView();
+    await vi.waitFor(() => {
+      expect(keysIn(chatsPane())).toEqual([]);
+    });
+    dispatch.mockClear();
+    dispatch.mockResolvedValue(answered);
+
+    emitBus(BUS_ENGINE_READY);
+    await vi.waitFor(() => {
+      expect(keysIn(chatsPane())).toEqual(["s:sess_chat"]);
+    });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks nothing while the page is off screen", async () => {
+    const view = await render({ ...answered, runs_state: "unavailable" });
+    view.style.display = "none";
+    dispatch.mockClear();
+
+    emitBus(BUS_ENGINE_READY);
+    await Promise.resolve();
+    expect(dispatch).not.toHaveBeenCalled();
   });
 });

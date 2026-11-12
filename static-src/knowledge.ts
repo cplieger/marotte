@@ -13,7 +13,7 @@ import { apiGetTyped, CancellableSlot, type Decoder } from "./api-client.js";
 import { loadSettings } from "./persist.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { mayStillApply } from "./actions/still-applying.js";
-import { onSSE } from "./bus.js";
+import { onBus, onSSE, BUS_ENGINE_READY } from "./bus.js";
 import { paintIfChanged, sigChanged } from "./paint-sig.js";
 import {
   addKnowledge,
@@ -72,6 +72,8 @@ let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let stalledPolls = 0;
 /** Progress signature from the previous tick, to tell advance from stall. */
 let lastProgress = "";
+/** Whether the latest list read failed. */
+let listFailed = false;
 
 registerCleanup(() => {
   listSlot.abort();
@@ -125,6 +127,7 @@ export function loadKnowledge(fromPoll = false): void {
     if (signal.aborted) {
       return;
     }
+    listFailed = d === null;
     if (d === null) {
       renderError();
       return;
@@ -477,6 +480,13 @@ export function initKnowledge(): void {
   registerCleanup(
     onSSE("knowledge_changed", () => {
       loadKnowledge();
+    }),
+  );
+  registerCleanup(
+    onBus(BUS_ENGINE_READY, () => {
+      if (listFailed) {
+        loadKnowledge();
+      }
     }),
   );
 }

@@ -15,7 +15,7 @@ import {
 import type { TabRunDotStatus } from "./tabs.js";
 import { pushRoute } from "./router.js";
 import type { HistoryTab } from "./route-path.js";
-import { onBus, BUS_RUNS_CHANGED } from "./bus.js";
+import { onBus, BUS_ENGINE_READY, BUS_RUNS_CHANGED } from "./bus.js";
 import { reconcile } from "./reconcile.js";
 import { paintPlaceholder } from "./skeleton.js";
 import { creditFigure } from "./strings.js";
@@ -519,6 +519,18 @@ class HistoryController {
     container.replaceChildren(...res.matches.map((m) => buildMatchRow(m, q)));
   }
 
+  /** Load again when the newest answer failed or could not read the chats or the runs; a page closed since, or not
+   *  yet loaded, has asked nothing. */
+  reloadIfRefused(): void {
+    if (this.abort === null) {
+      return;
+    }
+    const d = this.verdict.peek();
+    if (d === null || d.sessions_state === "unavailable" || d.runs_state === "unavailable") {
+      void this.load();
+    }
+  }
+
   /** The Chats pane only while no search is open. */
   async load(): Promise<void> {
     const chats = chatsContainer();
@@ -965,10 +977,20 @@ export function teardownHistoryView(): void {
   historyCtrl.teardown();
 }
 
+function historyShowing(): boolean {
+  const view = maybeEl("history-view");
+  return view !== null && view.offsetParent !== null;
+}
+
 // A run starting or finishing changes the Runs pane. Gated on the view being on screen.
 onBus(BUS_RUNS_CHANGED, () => {
-  const view = maybeEl("history-view");
-  if (view !== null && view.offsetParent !== null) {
+  if (historyShowing()) {
     void historyCtrl.load();
+  }
+});
+
+onBus(BUS_ENGINE_READY, () => {
+  if (historyShowing()) {
+    historyCtrl.reloadIfRefused();
   }
 });

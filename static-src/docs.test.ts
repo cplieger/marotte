@@ -83,6 +83,7 @@ vi.mock("./bus.js", () => ({
   BUS_PAGE_RESUMED: undefined,
   BUS_RECONCILE: "transport:reconcile",
   BUS_TAB_CHANGED: undefined,
+  BUS_ENGINE_READY: "engine:ready",
   decodeEnvelope: undefined,
   dispatch: undefined,
   emitBus: undefined,
@@ -841,6 +842,7 @@ describe("the Hooks tab: a kept row repaints when its state changes", () => {
 
 describe("the Hooks tab: staying current", () => {
   let sseHandlers: Map<string, () => void>;
+  let busHandlers: Map<string, () => void>;
 
   beforeAll(async () => {
     document.body.innerHTML = `
@@ -873,6 +875,8 @@ describe("the Hooks tab: staying current", () => {
     forceDocsTab("hooks");
     refreshDocsView();
     sseHandlers = new Map(vi.mocked(onSSE).mock.calls.map((c) => [c[0], c[1] as () => void]));
+    const { onBus } = await import("./bus.js");
+    busHandlers = new Map(vi.mocked(onBus).mock.calls.map((c) => [c[0], c[1] as () => void]));
   });
 
   it("badges a steering doc KAS reported an issue for, and refetches on steering_issues_changed", async () => {
@@ -1040,6 +1044,33 @@ describe("the Hooks tab: staying current", () => {
       expect.anything(),
     );
     expect(vi.mocked(apiGetTyped)).toHaveBeenCalledWith("/api/hooks", expect.anything());
+  });
+
+  // A read the server refused while no engine was ready is asked again when the engine is back.
+  it("re-asks a refused hook-state read when the engine is back, and not one that answered", async () => {
+    const { apiGetTyped } = await import("./api-client.js");
+    const ready = busHandlers.get("engine:ready");
+    expect(ready, "the page listens for the engine's return").toBeDefined();
+    const serve = serveDocsPage();
+    vi.mocked(apiGetTyped)
+      .mockClear()
+      .mockImplementation((path, decode) =>
+        path === "/api/hooks" ? Promise.resolve(null) : serve(path, decode),
+      );
+    sseHandlers.get("hooks_changed")?.();
+    await vi.waitFor(() => {
+      expect(vi.mocked(apiGetTyped)).toHaveBeenCalledWith("/api/hooks", expect.anything());
+    });
+    await Promise.resolve();
+    vi.mocked(apiGetTyped).mockClear().mockImplementation(serve);
+
+    ready?.();
+    expect(vi.mocked(apiGetTyped)).toHaveBeenCalledWith("/api/hooks", expect.anything());
+    await Promise.resolve();
+    await Promise.resolve();
+    vi.mocked(apiGetTyped).mockClear();
+    ready?.();
+    expect(vi.mocked(apiGetTyped), "a read that answered").not.toHaveBeenCalled();
   });
 
   it("dispatches the toggle for the row it was clicked on", async () => {

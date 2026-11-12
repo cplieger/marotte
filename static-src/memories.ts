@@ -12,7 +12,7 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { deleteMemory, setMemorySync, updateMemory } from "./actions/memory.js";
 import type { MemoryEdit } from "./actions/memory.js";
 import { forceReflow } from "./dom.js";
-import { onSSE } from "./bus.js";
+import { onBus, onSSE, BUS_ENGINE_READY } from "./bus.js";
 
 interface MemoryRecord {
   readonly id: string;
@@ -173,6 +173,17 @@ export function renderMemoriesPanel(panel: HTMLElement, filter = ""): void {
   if (!wired) {
     wired = true;
     onSSE("memories_changed", onMemoriesChanged);
+    onBus(BUS_ENGINE_READY, () => {
+      if (!isShowing()) {
+        return;
+      }
+      if (state.kind === "failed") {
+        void refresh();
+      }
+      if (cloud === "failed") {
+        void refreshCloud();
+      }
+    });
     onSSE("memory_sync_changed", () => {
       if (isShowing()) {
         void refreshCloud();
