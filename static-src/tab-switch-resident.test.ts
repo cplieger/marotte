@@ -72,7 +72,7 @@ vi.mock("./api-client.js", async (importOriginal) => ({
 
 import { openTab, tabIdFor, getActiveTabId, closeTab } from "./tabs.js";
 import { markBootDone, _resetForTest as resetViewSwap } from "./view-swap.js";
-import { registerTranscriptOwner } from "./transcript-cover.js";
+import { registerTranscriptOwner, releaseCover, swapTranscript } from "./transcript-cover.js";
 import { loadCSS } from "./__test-helpers__/css-rules.js";
 import { fx, installSwitchSuite, strip } from "./__test-helpers__/tab-switch-suite.js";
 import {
@@ -299,5 +299,48 @@ describe("a return to the mounted chat from Settings", () => {
     expect(view("messages-wrap").scrollTop).toBe(600);
     await pastShowWindow();
     expect(coverShown()).toBe(false);
+  });
+});
+
+describe("a switch from Settings to a chat with nothing resident", () => {
+  it("keeps Settings on screen through the window, then shows the chat under the shown cover", async () => {
+    const ids = await strip("a", "b");
+    await openTab({ kind: "settings", ref: "" });
+    await activationRan();
+    const page = fx.chat.page("b");
+
+    clickRow(ids["b"] ?? "");
+    await activationRan();
+    expect(rendered("settings-view"), "the activation emptied the view area").toBe(true);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(rendered("settings-view"), "the view area emptied inside the window").toBe(true);
+    expect(coverShown()).toBe(false);
+
+    await new Promise((r) => setTimeout(r, PAST_DELAY_MS - 200));
+    expect(coverShown(), "the chat still loading shows no skeleton").toBe(true);
+    expect(rendered("chat-view")).toBe(true);
+    expect(rendered("settings-view")).toBe(false);
+    page.resolve();
+  });
+
+  it("swaps straight from Settings to the chat when its page answers inside the window", async () => {
+    const ids = await strip("a", "b");
+    await openTab({ kind: "settings", ref: "" });
+    await activationRan();
+    const page = fx.chat.page("b");
+
+    clickRow(ids["b"] ?? "");
+    await activationRan();
+    // The paint of the answer, which the fake opener does not run.
+    page.resolve();
+    resident.add("b");
+    swapTranscript();
+    releaseCover("b");
+
+    expect(rendered("chat-view"), "the answer left Settings up").toBe(true);
+    expect(rendered("messages-wrap")).toBe(true);
+    expect(rendered("settings-view")).toBe(false);
+    await pastShowWindow();
+    expect(coverShown(), "a skeleton showed over the answered chat").toBe(false);
   });
 });

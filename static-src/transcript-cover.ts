@@ -26,19 +26,78 @@ let pendingLift: object | null = null;
 /** The held cover's pending show; null once it shows or while none is held. */
 let reveal: SkeletonTimingController | null = null;
 
+/** The chat whose switch keeps the outgoing view on screen until its cover shows or its turns
+ *  paint; "" when no swap waits. */
+let swapDue = "";
+/** The waiting switch's view reveal (tabs.ts), run at the swap. */
+let deferredReveal: (() => void) | null = null;
+
 /** Show `node` once the window passes, restarting a window already running. */
 function scheduleReveal(node: HTMLDivElement): void {
   reveal?.cancel();
   reveal = skeletonTiming(
     () => {
       reveal = null;
-      if (cover === node && node.isConnected) {
-        node.hidden = false;
-        delete node.dataset["state"];
+      if (cover !== node || !node.isConnected) {
+        return;
+      }
+      const due = swapDue;
+      if (due !== "") {
+        takeOutgoingReads();
+      }
+      node.hidden = false;
+      delete node.dataset["state"];
+      if (due !== "") {
+        runSwap();
+        owner?.swap(due);
       }
     },
     { showDelayMs: COVER_SHOW_DELAY_MS },
   );
+}
+
+/** Retake the outgoing view's park reads at the swap's layout: the reader could still scroll it. */
+function takeOutgoingReads(): void {
+  if ($.messagesWrap.closest(".hidden") === null) {
+    owner?.take();
+  }
+}
+
+function runSwap(): void {
+  swapDue = "";
+  const run = deferredReveal;
+  deferredReveal = null;
+  run?.();
+}
+
+/** Whether `chatID`'s switch still keeps the outgoing view on screen. */
+export function swapDeferred(chatID: string): boolean {
+  return swapDue !== "" && swapDue === chatID;
+}
+
+/** Run the switch's view reveal now, or at the swap while one waits; a later switch's hold
+ *  discards it. */
+export function deferReveal(fn: () => void): void {
+  if (swapDue === "") {
+    fn();
+    return;
+  }
+  deferredReveal = fn;
+}
+
+/** The waiting switch's target has turns to show: take the park reads and reveal its view, before
+ *  its paint parks the outgoing view. A no-op when no swap waits. */
+export function swapTranscript(): void {
+  if (swapDue === "") {
+    return;
+  }
+  takeOutgoingReads();
+  runSwap();
+}
+
+/** Whether the cover is on screen (not hidden, not fading out). */
+export function coverShown(): boolean {
+  return cover !== null && !cover.hidden && cover.dataset["state"] !== "released";
 }
 
 function cancelReveal(): void {
@@ -112,8 +171,12 @@ export function holdCover(chatID: string): void {
   const node = ensureCover();
   holder = chatID;
   pendingLift = null;
+  deferredReveal = null;
   if (node.hidden || node.dataset["state"] === "released") {
+    swapDue = chatID;
     scheduleReveal(node);
+  } else {
+    swapDue = "";
   }
   // Not `inert`: setting it restyles every resident turn, 30 to 140 ms each way in WebKit.
   $.messagesWrap.setAttribute("aria-hidden", "true");
@@ -178,6 +241,8 @@ interface TranscriptOwner {
   readonly drop: () => void;
   /** Whether `chatID` has a resident view holding its turns, which it can show with no load. */
   readonly painted: (chatID: string) => boolean;
+  /** Swap the transcript to `chatID`'s view, if it is still the painted chat and not yet active. */
+  readonly swap: (chatID: string) => void;
 }
 
 let owner: TranscriptOwner | null = null;
@@ -231,6 +296,13 @@ export function dropCover(): void {
     return;
   }
   dropParkReads();
+  const due = swapDue;
+  if (due !== "") {
+    // A failed, missing or abandoned switch still owes its view the swap the cover was waiting on.
+    takeOutgoingReads();
+    runSwap();
+    owner?.swap(due);
+  }
   if (cover === null || cover.hidden) {
     return;
   }

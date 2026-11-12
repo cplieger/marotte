@@ -71,8 +71,8 @@ const REPLY_PARAGRAPHS: readonly (readonly string[])[] = [
   ["92%", "95%", "84%", "90%", "41%"],
 ];
 
-/** Enough lines to fill a 2160px chat area; the cover shows only the whole lines that fit
- *  (13-messages.css). */
+/** The supported maximum chat-area height is 2160px, which 96 lines fill; a taller area leaves the
+ *  reply short of the composer. The cover shows only the whole lines that fit (13-messages.css). */
 const REPLY_LINES = 96;
 
 function replyLines(): string[] {

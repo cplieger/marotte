@@ -153,6 +153,17 @@ async function nextFrame(): Promise<void> {
   await new Promise((r) => requestAnimationFrame(() => r(undefined)));
 }
 
+/** Past the held cover's show window: the switch has swapped to the chat's empty view under the
+ *  shown cover, so a fetch answering later in a task paints with no chat switch, after the
+ *  attach's settle frames have run out. */
+async function pastCoverWindow(): Promise<void> {
+  await new Promise((r) => setTimeout(r, 300));
+  for (let i = 0; i < 4; i++) {
+    await nextFrame();
+  }
+  await new Promise((r) => setTimeout(r, 0));
+}
+
 interface HeldYields {
   step: () => Promise<void>;
   releaseAll: () => Promise<void>;
@@ -255,6 +266,9 @@ afterEach(async () => {
   }
   vi.restoreAllMocks();
   cover.dropCover();
+  // A released cover hides on its fade's `animationend`, which never fires here: this sheet lacks
+  // the design language's `vk-fade-out` keyframes. The next case gets a fresh cover.
+  document.getElementById("transcript-cover")?.remove();
 });
 
 describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => {
@@ -357,11 +371,7 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
     const b = freshID("cr-b");
     const older = `${b}-old`;
     await switchUnderCover([evicted(b)], b);
-    // A fetch answers in a task, after the attach's settle frames have run out on the empty view.
-    for (let i = 0; i < 4; i++) {
-      await nextFrame();
-    }
-    await new Promise((r) => setTimeout(r, 0));
+    await pastCoverWindow();
     expect(coverUp(), "the premise: the cold chat's cover waits on its answer").toBe(true);
     const s = store.get(b);
     if (s === undefined) {
@@ -401,10 +411,7 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
   it("renders a cold chat's built answer at the reader's landing in the first frame after the lift", async () => {
     const b = freshID("cr-b");
     await switchUnderCover([evicted(b)], b);
-    for (let i = 0; i < 4; i++) {
-      await nextFrame();
-    }
-    await new Promise((r) => setTimeout(r, 0));
+    await pastCoverWindow();
     const s = store.get(b);
     if (s === undefined) {
       throw new Error("no cold chat");
@@ -548,5 +555,66 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
       expect(node?.hidden, "the skeleton showed over B's painted rows").toBe(true);
       await yields.releaseAll();
     });
+  });
+});
+
+describe("a switch to a chat with nothing resident, inside the cover's window", () => {
+  /** The active transcript view holds turns. */
+  function activeHasTurns(): boolean {
+    return document.querySelector("#messages .transcript-view.is-active .turn") !== null;
+  }
+
+  function coverShown(): boolean {
+    const node = document.getElementById("transcript-cover");
+    return node !== null && !node.hidden && node.getAttribute("data-state") !== "released";
+  }
+
+  it("keeps the outgoing chat's turns active until the cover shows, never an empty view", async () => {
+    const b = freshID("cr-b");
+    let emptySeen = false;
+    const mo = new MutationObserver(() => {
+      if (!coverShown() && !activeHasTurns()) {
+        emptySeen = true;
+      }
+    });
+    mo.observe(document.getElementById("messages") as HTMLElement, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+      attributeFilter: ["class"],
+    });
+    await switchUnderCover([evicted(b)], b);
+    expect(activeHasTurns(), "the switch activated an empty view").toBe(true);
+    await new Promise((r) => setTimeout(r, 200));
+    await nextFrame();
+    expect(activeHasTurns(), "the outgoing turns left inside the window").toBe(true);
+    expect(coverShown()).toBe(false);
+    await new Promise((r) => setTimeout(r, 120));
+    expect(coverShown(), "the skeleton never showed for a chat still loading").toBe(true);
+    mo.disconnect();
+    expect(emptySeen, "a frame showed an empty transcript with no cover").toBe(false);
+  });
+
+  it("swaps straight to the answer when it lands inside the window, with no cover", async () => {
+    const b = freshID("cr-b");
+    await switchUnderCover([evicted(b)], b);
+    await new Promise((r) => setTimeout(r, 100));
+    const s = store.get(b);
+    if (s === undefined) {
+      throw new Error("no cold chat");
+    }
+    const entries = heavyTurn(`${b}-new`, 2, 1);
+    s.turns.set(`${b}-new`, { entries, openEntries: new Map() });
+    s.turn_order.push(`${b}-new`);
+    s.turn_count = 1;
+    s.has_more = false;
+    s.residency = "loaded";
+    store.bumpMessages(b, "load");
+    await flushed();
+    await nextFrame();
+    expect(activeHasTurns(), "the answer's turn is not on screen").toBe(true);
+    expect(cover.coverHeld(), "the answer left the cover held").toBe(false);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(coverShown(), "a skeleton showed over the answer").toBe(false);
   });
 });

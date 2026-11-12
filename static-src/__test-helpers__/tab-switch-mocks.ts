@@ -251,11 +251,13 @@ export function transcriptOwnerFake(): {
   take: () => void;
   drop: () => void;
   painted: (chatID: string) => boolean;
+  swap: (chatID: string) => void;
 } {
   return {
     take: () => undefined,
     drop: () => undefined,
     painted: (chatID) => residentViews.has(chatID) && resident.has(chatID),
+    swap: () => undefined,
   };
 }
 

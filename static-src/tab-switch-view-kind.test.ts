@@ -83,7 +83,6 @@ import {
   cover,
   coverUp,
   frame,
-  pointers,
 } from "./__test-helpers__/tab-switch-mocks.js";
 
 installSwitchSuite();
@@ -158,33 +157,25 @@ afterEach(() => {
 });
 
 describe("a switch from Settings to a chat", () => {
-  it("paints the cover in the click for an unpainted chat, with the transcript under it out of layout", async () => {
+  it("keeps Settings up for an unpainted chat until the cover shows, then shows the chat view with its transcript laid out", async () => {
     const ids = await onSettings("a", "b");
-    const b = ids["b"] ?? "";
-    let shownOver = false;
-    fx.chat.show.mockImplementation((id: string) => {
-      shownOver = rendered("messages-wrap");
-      pointers.painted = id;
-    });
     const page = fx.chat.page("b");
 
-    clickRow(b);
-
-    expect(rendered("settings-view")).toBe(false);
-    expect(rendered("chat-view"), "the cover's view stayed hidden").toBe(true);
-    expect(rendered("messages-wrap"), "the click laid out the transcript under the cover").toBe(
-      false,
-    );
+    clickRow(ids["b"] ?? "");
+    expect(rendered("settings-view"), "the click emptied the view area").toBe(true);
     await frame();
-    expect(coverUp(), "the cover is up in the gesture's frame").toBe(true);
-    expect(rendered("messages-wrap"), "the gesture's frame laid out the transcript").toBe(false);
-    expect(entryFade("chat-view"), "the covered view showed with no fade").toBeDefined();
-
+    expect(rendered("settings-view"), "the gesture's frame emptied the view area").toBe(true);
     await activationRan();
     expect(fx.chat.show).toHaveBeenCalledWith("b");
-    expect(shownOver, "the chat was shown into a scroller with no box").toBe(true);
-    expect(rendered("messages-wrap")).toBe(true);
-    expect(coverUp(), "the cover lifted before B's page").toBe(true);
+    expect(rendered("settings-view"), "the activation emptied the view area").toBe(true);
+    expect(cover()?.hidden, "the cover showed inside its window").toBe(true);
+
+    await new Promise((r) => setTimeout(r, 320));
+    expect(cover()?.hidden, "the chat still loading shows no skeleton").toBe(false);
+    expect(rendered("settings-view")).toBe(false);
+    expect(rendered("chat-view")).toBe(true);
+    expect(rendered("messages-wrap"), "the swap left the transcript out of layout").toBe(true);
+    expect(coverUp()).toBe(true);
     page.resolve();
   });
 

@@ -27,13 +27,15 @@ import { workspaceRoot } from "./workspace.js";
 import { buildEvent } from "./messages-events.js";
 import { releaseClampsIn } from "./clamp-text.js";
 import { releaseMarkdownIn } from "./markdown.js";
-import { effect, el, touch } from "@cplieger/reactive";
+import { effect, el, touch, untracked } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import {
   coverContentPainted,
   coverHeld,
   registerTranscriptOwner,
   releaseCover,
+  swapDeferred,
+  swapTranscript,
 } from "./transcript-cover.js";
 import { $ } from "./dom.js";
 import {
@@ -629,6 +631,12 @@ export function mountChatView(): void {
       parkReads = null;
     },
     painted: (chatID) => views.has(chatID) && (get(chatID)?.turn_order.length ?? 0) > 0,
+    swap: (chatID) => {
+      if (getPaintedId() === chatID && activeView?.chatID !== chatID) {
+        untracked(paint);
+      }
+      parkReads = null;
+    },
   });
   // In the positioned outer wrapper, not the scroller, so it does not scroll away with the content.
   mountTurnRail($.messagesWrapOuter);
@@ -1218,10 +1226,21 @@ function paint(): void {
   const isChatSwitch = lastPaintedId !== session.id;
   let unparked = false;
   if (isChatSwitch) {
+    if (
+      swapDeferred(session.id) &&
+      session.turn_order.length === 0 &&
+      session.residency !== "loaded" &&
+      !isEmptyChat(session)
+    ) {
+      // Nothing to show yet: the outgoing view stays until the cover shows or the turns land.
+      return;
+    }
+    swapTranscript();
     // Park first: its reads must precede every write of the task, and pruning disposes views.
     if (activeView !== null && activeView.chatID !== session.id) {
       parkView(activeView);
     }
+    parkReads = null;
     pruneDeadViews();
     // Already active only after a switch pass that threw: its finally landed the restore, and a second attach would
     // put the reader back on the park's snapshot.

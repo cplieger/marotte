@@ -54,30 +54,14 @@
   inset: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-
-  /* The column's side inset lives HERE, outside the `--content-max-w` cap, and is
-   * the same `--sp-4` `.bottom-bar` uses (19-files.css), so the transcript and the
-   * composer resolve to the same measure at every width. As padding on `#messages`
-   * itself it was inside the border box, so the cap paid for it and every turn card
-   * came out 2rem narrower than the prompt box. */
-
-  /* THE SCROLLBAR SITS IN THE GUTTER, OUTSIDE THAT MEASURE, and giving its width
-   * back here is what puts it there: a classic scrollbar takes its width out of
-   * this box's CONTENT box, so the column centred inside landed half a scrollbar
-   * left of `.prompt-box`. Reserving a matching strip on the bar instead aligns
-   * the two by making both narrower. `stable` makes the subtraction unconditional,
-   * so the column neither widens nor jumps when the transcript starts to scroll;
-   * `--scrollbar-w` is measured off this element by scroll.ts. */
-  /* THE SAFE-AREA INLINE INSETS FOLD IN AS ONE MORE TERM OF THE SAME `max()`,
-   * which is what keeps the scrollbar arithmetic above intact: the trailing side
-   * still subtracts `--scrollbar-w`, still clamps at 0px, and now also refuses to
-   * go under the device's own inset. Landscape is the orientation that matters —
-   * the notch lands on an inline edge there — and both terms are inert on a device
-   * that reports no inset, so a desktop's measure does not move. */
 }
 
-/* The cover takes the scroller's inline geometry, gutter included, so its column lands on the
- * transcript's. */
+/* The column's side inset sits here, outside the `--content-max-w` cap, at the `--sp-4` the
+ * `.bottom-bar` uses (19-files.css), so the transcript and the composer share one measure. A
+ * classic scrollbar takes its width out of the content box, so the end side gives `--scrollbar-w`
+ * back (measured by scroll.ts) and `stable` keeps that subtraction unconditional. The safe-area
+ * insets are one more `max()` term, inert where a device reports none. The cover takes the same
+ * geometry, gutter included, so its column lands on the transcript's. */
 [id="messages-wrap"],
 .transcript-cover {
   padding-inline: max(var(--sp-4), env(safe-area-inset-left, 0))

@@ -62,6 +62,8 @@ import {
 } from "./actions/tabs.js";
 import {
   coverHeld,
+  coverShown,
+  deferReveal,
   dropCover,
   dropParkReads,
   hideTranscript,
@@ -69,6 +71,7 @@ import {
   moveFocusOffTranscript,
   releaseCover,
   showTranscript,
+  swapDeferred,
   takeParkReads,
   transcriptHidden,
   transcriptPainted,
@@ -82,7 +85,7 @@ import { ICON_CLOSE, ICON_PIN_FILLED, ICON_TAB_SUBTAB } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { activeView, setActiveView } from "./device-view.js";
 import { $, queryEl, setAttr, setText } from "./dom.js";
-import { showOnlyView } from "./view-swap.js";
+import { otherViewShown, showOnlyView } from "./view-swap.js";
 import { signal, effect, el } from "@cplieger/reactive";
 import {
   attachDrag,
@@ -817,7 +820,11 @@ function runActivation(gen: number, deferred = false): void {
   }
   try {
     // First: a chat's restore writes the scroll offset, which a scroller with no box cannot take.
-    revealView(row);
+    if (revealWaits(row)) {
+      revealAtSwap(row);
+    } else {
+      revealView(row);
+    }
     // A chat this file showed and that is still painted is mounted; showing it again would re-key
     // its rail and clear what it painted. One whose removal cleared the painted chat and that is
     // shown again is not mounted. A Retry's fresh activation clears its own failure box.
@@ -2339,7 +2346,11 @@ function showView(row: TabRow): void {
   if (activationPending()) {
     holdView(row);
   } else {
-    revealView(row);
+    if (revealWaits(row)) {
+      revealAtSwap(row);
+    } else {
+      revealView(row);
+    }
     pushRoute(row.spec.route);
   }
 
@@ -2365,16 +2376,39 @@ function viewLaidOut(row: TabRow): boolean {
   return target?.classList.contains("hidden") !== true && !transcriptHidden();
 }
 
-/** The gesture form of `revealView`, which never leaves the view area empty. A non-chat view shows
- *  now, its entry fade starting with the click. A chat view not laid out shows under the cover
- *  (`beginActivation` holds it) with its transcript out of layout, which the activation lays out;
- *  a laid-out chat view is already the one shown. */
-function holdView(row: TabRow): void {
-  if (row.subject.kind !== "chat") {
-    showOnlyView(queryEl<HTMLElement>(row.spec.view));
-  } else if (coverHeld() && !viewLaidOut(row)) {
+/** A chat view not laid out whose switch keeps the outgoing view up (transcript-cover.ts
+ *  `deferReveal` runs its reveal). */
+function revealWaits(row: TabRow): boolean {
+  return row.subject.kind === "chat" && swapDeferred(row.subject.ref) && !viewLaidOut(row);
+}
+
+/** Reveal the row's view at its swap, while it is still the active tab. With no other view on
+ *  screen there is nothing to keep, so the chat view shows now with its transcript out of layout. */
+function revealAtSwap(row: TabRow): void {
+  const id = row.subject.id;
+  const target = queryEl<HTMLElement>(row.spec.view);
+  if (!otherViewShown(target)) {
     hideTranscript();
-    showOnlyView(queryEl<HTMLElement>(row.spec.view));
+    showOnlyView(target);
+  }
+  deferReveal(() => {
+    const current = rowOfID(id);
+    if (state.active === id && current !== undefined) {
+      revealView(current);
+    }
+  });
+}
+
+/** The gesture form of `revealView`. A non-chat view shows now. The outgoing view stays until the
+ *  cover shows or the target view is revealed; under a shown cover, or with no other view on
+ *  screen, a chat view not laid out shows with its transcript out of layout. */
+function holdView(row: TabRow): void {
+  const target = queryEl<HTMLElement>(row.spec.view);
+  if (row.subject.kind !== "chat") {
+    showOnlyView(target);
+  } else if (!viewLaidOut(row) && (coverShown() || (coverHeld() && !otherViewShown(target)))) {
+    hideTranscript();
+    showOnlyView(target);
   }
 }
 

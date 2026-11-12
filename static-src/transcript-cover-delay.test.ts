@@ -168,3 +168,91 @@ describe("a held cover waits before it shows", () => {
     expect(shown()).toBe(true);
   });
 });
+
+describe("the outgoing view stays on screen while the held cover waits", () => {
+  /** The owner's calls, in order, with whether the cover was on screen at each. */
+  function recordingOwner(): string[] {
+    const log: string[] = [];
+    coverModule.registerTranscriptOwner({
+      take: () => log.push(`take shown=${String(shown())}`),
+      drop: () => log.push("drop"),
+      painted: () => false,
+      swap: (chatID) => log.push(`swap ${chatID} shown=${String(shown())}`),
+    });
+    return log;
+  }
+
+  it("defers the swap to the window's end, then swaps under the shown cover at fresh park reads", () => {
+    const log = recordingOwner();
+    coverModule.holdCover("cd-a");
+    coverModule.deferReveal(() => log.push(`reveal shown=${String(shown())}`));
+
+    vi.advanceTimersByTime(DELAY_MS - 1);
+    expect(log, "the outgoing view was swapped out inside the window").toEqual([]);
+    expect(coverModule.swapDeferred("cd-a")).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(log, "the swap ran before the cover hid the outgoing view").toEqual([
+      "take shown=false",
+      "reveal shown=true",
+      "swap cd-a shown=true",
+    ]);
+    expect(coverModule.swapDeferred("cd-a")).toBe(false);
+  });
+
+  it("swaps straight to the content for a paint inside the window, with no cover frame", () => {
+    const log = recordingOwner();
+    coverModule.holdCover("cd-a");
+    const watch = watchCover();
+    coverModule.deferReveal(() => log.push("reveal"));
+    vi.advanceTimersByTime(DELAY_MS - 50);
+
+    coverModule.swapTranscript();
+    expect(log).toEqual(["take shown=false", "reveal"]);
+    coverModule.releaseCover("cd-a");
+    vi.advanceTimersByTime(DELAY_MS * 4);
+    expect(watch.changes(), "the fast answer flashed the cover").toEqual([]);
+    expect(log, "the swap ran twice").toEqual(["take shown=false", "reveal"]);
+    watch.stop();
+  });
+
+  it("still swaps when the switch drops its cover inside the window", () => {
+    const log = recordingOwner();
+    coverModule.holdCover("cd-a");
+    coverModule.deferReveal(() => log.push("reveal"));
+    vi.advanceTimersByTime(DELAY_MS / 2);
+
+    coverModule.dropCover();
+    expect(log, "a failed or abandoned switch left the outgoing view up").toEqual([
+      "take shown=false",
+      "reveal",
+      "swap cd-a shown=false",
+    ]);
+    vi.advanceTimersByTime(DELAY_MS * 4);
+    expect(shown()).toBe(false);
+  });
+
+  it("defers nothing once the cover is on screen", () => {
+    const log = recordingOwner();
+    coverModule.holdCover("cd-a");
+    vi.advanceTimersByTime(DELAY_MS);
+    log.length = 0;
+
+    coverModule.holdCover("cd-b");
+    expect(coverModule.swapDeferred("cd-b")).toBe(false);
+    coverModule.deferReveal(() => log.push("reveal"));
+    expect(log, "a reveal under a shown cover waited").toEqual(["reveal"]);
+  });
+
+  it("runs only the latest switch's reveal when a second switch comes inside the window", () => {
+    const log = recordingOwner();
+    coverModule.holdCover("cd-a");
+    coverModule.deferReveal(() => log.push("reveal a"));
+    vi.advanceTimersByTime(DELAY_MS - 50);
+    coverModule.holdCover("cd-b");
+    coverModule.deferReveal(() => log.push("reveal b"));
+    vi.advanceTimersByTime(DELAY_MS);
+
+    expect(log.filter((l) => l.startsWith("reveal"))).toEqual(["reveal b"]);
+    expect(log.at(-1)).toBe("swap cd-b shown=true");
+  });
+});
