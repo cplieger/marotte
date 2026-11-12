@@ -52,7 +52,7 @@ RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 
 # static-src/node_modules/@cplieger/<lib>/ for tsc and cmd/bundle to resolve.
 # This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=@cplieger/reactive
-ARG CPLIEGER_REACTIVE_VERSION=2.4.0-dev.1
+ARG CPLIEGER_REACTIVE_VERSION=2.4.0
 RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/reactive/-/reactive-${CPLIEGER_REACTIVE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/reactive --strip-components=1
