@@ -125,7 +125,7 @@ describe("matchEntries", () => {
 });
 
 describe("entryEnabled", () => {
-  it("greys only server-resolved rows while a turn runs", () => {
+  it("greys only server-resolved rows while a send would steer", () => {
     const entries = menuEntries(CATALOG);
     const verb = entries.find((e) => e.kind === "marotte");
     const prompt = entries.find((e) => e.kind === "prompt");
@@ -253,8 +253,10 @@ describe("the listbox", () => {
     expect(input.value).toBe("/");
   });
 
-  it("says why a row is greyed mid-turn", () => {
-    expect(BUSY_REASON).toBe("Runs as a new turn, available when the agent is idle");
+  it("says why a row is greyed while a send would steer, and how to queue it instead", () => {
+    expect(BUSY_REASON).toBe(
+      "A steer cannot run this. Send it when the turn ends, or turn on Queue messages",
+    );
   });
 });
 

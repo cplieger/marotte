@@ -217,6 +217,64 @@ func TestRunOrder_AContextReferenceQueuedBehindACompactionResolvesInItsTurn(t *t
 	}
 }
 
+// With Queue messages on, a saved prompt or context reference sent mid-turn waits behind the turn and goes as a
+// session/prompt of its own when the turn ends, never as a steer, so its context reference resolves.
+func TestRunOrder_APromptOnlyMessageQueuedBehindARunningTurnGoesAsItsOwnPrompt(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("remember the milk\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h, cs, br, _ := idleAfterFirstTurn(t, dir)
+	queueMode(t, cs)
+	turnID, _ := h.stagePromptTurn(t, "c1")
+	const text = "/review #[[file:notes.txt]]"
+
+	rec := postCmd(t, h, marotte.ClientCommand{
+		Type: marotte.CmdPrompt, ChatID: "c1",
+		Payload: json.RawMessage(`{"text":"` + text + `","message_id":"m-ref","prompt_only":true}`),
+	})
+	if got := ackAs(t, rec); got != "queued" {
+		t.Fatalf("prompt-only send behind a running turn in queue mode answered %s, want queued", got)
+	}
+	h.translateACPEvent("c1", h.originOf("c1"), newChunkMsg("an answer"))
+	endTurn(t, h, "c1", turnID)
+
+	waitFor(t, func() bool { return slices.Contains(promptIDs(t, cs, "c1"), "m-ref") })
+	if n := steerWrites(br); n != 0 {
+		t.Errorf("_session/steer written %d times, want none", n)
+	}
+	waitFor(t, func() bool { return br.paramsFor(marotte.MethodPrompt)["messageId"] == "m-ref" })
+	blocks, _ := br.paramsFor(marotte.MethodPrompt)[marotte.KeyPrompt].([]map[string]any)
+	if len(blocks) == 0 || blocks[0]["text"] != text {
+		t.Errorf("prompt blocks = %v, want text block 0 = %q as typed, for KAS to expand", blocks, text)
+	}
+	resolved := slices.ContainsFunc(blocks, func(b map[string]any) bool {
+		res, ok := b["resource"].(map[string]any)
+		body, _ := res["text"].(string)
+		return ok && strings.Contains(body, "remember the milk")
+	})
+	if !resolved {
+		t.Errorf("prompt blocks = %v, want a resource block with notes.txt's text", blocks)
+	}
+}
+
+// Where a send would steer, a saved prompt is refused 409 prompt_only and nothing reaches _session/steer.
+func TestRunOrder_APromptOnlyMessageThatWouldSteerIsRefused(t *testing.T) {
+	h, _, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+	h.stagePromptTurn(t, "c1")
+
+	rec := postCmd(t, h, marotte.ClientCommand{
+		Type: marotte.CmdPrompt, ChatID: "c1",
+		Payload: json.RawMessage(`{"text":"/review","message_id":"m-cmd","prompt_only":true}`),
+	})
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"prompt_only"`) {
+		t.Errorf("prompt-only send into a steerable turn = %d %s, want 409 prompt_only", rec.Code, rec.Body.String())
+	}
+	if n := steerWrites(br); n != 0 {
+		t.Errorf("_session/steer written %d times, want none", n)
+	}
+}
+
 // After a stopped turn, a message sent during its compaction goes first when the compaction ends; the row the stop
 // left waits for the next clean turn end.
 func TestRunOrder_AfterAStoppedTurnTheMessageSentDuringItsCompactionGoesFirst(t *testing.T) {

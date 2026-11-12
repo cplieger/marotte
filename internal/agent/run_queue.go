@@ -467,24 +467,21 @@ func submitVerb(entries []marotte.RunEntry, s *command.Submission, mode marotte.
 			return verb, command.ErrSubmitNoTurn
 		}
 	case marotte.SendQueue:
-		return verb, queueRefusal(entries, &s.Row, s.PromptOnly)
+		return verb, queueRefusal(entries, &s.Row)
 	}
 	return verb, nil
 }
 
-// queueRefusal is why row may not queue behind entries: past the draft cap or prompt-only behind a running turn of
-// marotte's, or past the queue's caps. Nil when it may.
-func queueRefusal(entries []marotte.RunEntry, row *marotte.QueuedPrompt, promptOnly bool) error {
+// queueRefusal is why row may not queue behind entries: past the draft cap behind a running turn of marotte's, or
+// past the queue's caps. Nil when it may.
+func queueRefusal(entries []marotte.RunEntry, row *marotte.QueuedPrompt) error {
 	for _, h := range marotte.LivePrefix(entries) {
 		if !h.Kind.TurnKind() || h.Origin == marotte.RunFromRun ||
 			(h.State != marotte.RunRunning && h.State != marotte.RunStarting) {
 			continue
 		}
-		switch {
-		case len(row.Text) > marotte.MaxDraftBytes:
+		if len(row.Text) > marotte.MaxDraftBytes {
 			return command.ErrSubmitTooBig
-		case promptOnly:
-			return command.ErrSubmitPromptOnly
 		}
 		break
 	}

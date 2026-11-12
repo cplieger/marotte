@@ -311,8 +311,8 @@ const reasonChatGone = "chat_not_found"
 // close ended it. The client keeps the text as the chat's draft.
 const reasonChatClosed = "chat_closed"
 
-// reasonPromptOnly is the 409 refusal class for prompt-only text that would be steered or wait behind a running
-// turn. The client keeps the text in the composer.
+// reasonPromptOnly is the 409 refusal class for prompt-only text that would be steered. The client keeps the text
+// in the composer.
 const reasonPromptOnly = "prompt_only"
 
 // promptAck is the prompt's answer: where the message went (As) and the run order after it.
