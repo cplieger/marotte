@@ -88,7 +88,7 @@ A workflow can also start itself on a schedule or when something happens on a fo
 
 ## Messages between chats
 
-Whether the agent in one chat can send a message to another chat is a setting, not a variable: **Messages between chats** under **Agent capabilities** on the **General** tab in **Settings**, off by default, as in kiro-cli. With it on, the agent can message another chat, which shows the message with the chat it came from, while the sending chat shows it with the chat it went to. Both chats need the setting in force, and a workflow step cannot receive a message. A change reaches new chats, and an open chat picks it up at its next message. Turning it off also turns it off for a chat that was opened while it was on.
+Whether the agent in one chat can send a message to another chat is a setting, not a variable: **Messages between chats** under **Agent capabilities** on the **General** tab in **Settings**, off by default, as in kiro-cli. With it on, the agent can message another chat, which shows the message with the chat it came from, while the sending chat shows it with the chat it went to. The agent names the other chat by its session ID, which it cannot look up, so tell it which chat to reach; each chat's agent knows its own ID as `KIRO_SESSION_ID`. Both chats need the setting in force, and a workflow step cannot receive a message. A change reaches new chats, and an open chat picks it up at its next message. Turning it off also turns it off for a chat that was opened while it was on.
 
 ## kiro-cli telemetry
 

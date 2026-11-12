@@ -46,10 +46,10 @@ func peerRowsOf(t *testing.T, cs *testChatStore, id marotte.ChatID) []marotte.En
 	return out
 }
 
-// With the setting on, both chats' sessions open with messaging on (KAS authorizes a peer send_message only when the
-// sender's and the target's are both on), and the message KAS delivers is a From row in the receiving chat and a To
-// row in the sending one.
-func TestChatMessaging_APeerMessageBetweenOpenChatsIsDelivered(t *testing.T) {
+// With the setting on, both chats' sessions open with messaging on, which KAS's authorizeTarget requires of sender and
+// target; the delivery gate itself is KAS's. The notify half pins the pairing: a From row in the receiving chat and a
+// To row in the sending one.
+func TestChatMessaging_BothChatsOpenWithMessagingOnAndPairThePeerRows(t *testing.T) {
 	h, cs, open := twoChatsWithMessaging(t)
 	for i, sb := range open {
 		if opts := fakeOf(sb).lastSessionOpts(); opts == nil || !opts.Features.Messaging {

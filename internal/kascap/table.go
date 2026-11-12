@@ -229,9 +229,8 @@ var table = []decl{
 		send:        true,
 	},
 	{
-		// KAS's sessionToolsMessaging switch, read as settings.sessionTools.messaging.enabled (acp-server.js
-		// `new NUe("messaging","sessionToolsMessaging","sessionMessagingEnabled")`, `keys:["sessionTools"]`).
-		// Always present: on load a stated value replaces the persisted sessionMessagingEnabled
+		// KAS's sessionToolsMessaging switch, read as settings.sessionTools.messaging.enabled (record field
+		// sessionMessagingEnabled). Always present: on load a stated value replaces the persisted sessionMessagingEnabled
 		// (saveSessionMessaging), so an explicit false is what turns a resumed chat's peer messaging off.
 		key:         "sessionTools",
 		door:        doorSession,

@@ -511,14 +511,14 @@ describe("the Messages between chats switch", () => {
     const { patchSettings } = await import("./persist.js");
     document.body.innerHTML = `<input type="checkbox" id="flag-chat-messaging">`;
     const box = document.getElementById("flag-chat-messaging") as HTMLInputElement;
-    initRetention(settingsPayload({ chat_messaging_enabled: false }));
-    expect(box.checked).toBe(false);
+    initRetention(settingsPayload({ chat_messaging_enabled: true }));
+    expect(box.checked).toBe(true);
 
-    box.checked = true;
+    box.checked = false;
     box.dispatchEvent(new Event("change"));
 
     expect(patchSettings).toHaveBeenLastCalledWith(
-      { chat_messaging_enabled: true },
+      { chat_messaging_enabled: false },
       { el: box, key: "chat_messaging_enabled", on: true },
     );
   });

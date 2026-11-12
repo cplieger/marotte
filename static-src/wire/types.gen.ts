@@ -883,7 +883,7 @@ export interface EffectiveSettings {
   spec_planning_ask_first: boolean;
   steering_reminders_enabled: boolean;
   workflows_enabled: boolean;
-  /** ChatMessaging lets a chat's agent message another open chat (kiro-cli's sessionToolsMessaging), default off. */
+  /** ChatMessaging lets a chat's agent message another chat (kiro-cli's sessionToolsMessaging), default off. */
   chat_messaging_enabled: boolean;
   supervised_default: boolean;
   scheduled_auto_approve: boolean;
