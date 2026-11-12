@@ -7,7 +7,7 @@ import type { ToolCall, ToolStatus, ToolDiff, TextSpan } from "./types.js";
 import { ensureToolCallSig, toolCallSigs, toolCallSigKey } from "./store-signals.js";
 import { effect, el } from "@cplieger/reactive";
 
-import { isToolDone, commandTitle, toolTitleText, type ToolKind } from "./tool-schema.js";
+import { isToolDone, cardTitle, renderInfoFor, type ToolKind } from "./tool-schema.js";
 import {
   adoptDenial,
   syncClassifierMarks,
@@ -660,14 +660,18 @@ function applyStatusUpdate(card: HTMLDivElement, status: ToolStatus): void {
 }
 
 function applyTitleUpdate(el: HTMLDivElement, tc: ToolCall): void {
-  // A disclosed skill/agent names the document that entered the prompt; keep that through routine title frames.
   // A steering box's title holds its document links, which a text rewrite would drop.
-  if (el.dataset["disclosed"] !== undefined || el.dataset["kind"] === "steering") {
+  if (el.dataset["kind"] === "steering") {
     return;
   }
   const t = el.querySelector(".tool-title");
   if (t !== null) {
-    const display = commandTitle(tc.title, tc.kind, tc.input) ?? toolTitleText(tc.title);
+    const info = renderInfoFor(tc.kind, tc.input as Record<string, unknown> | undefined, {
+      disclosed: tc.disclosed,
+      toolName: tc.tool_name,
+      mcp: tc.mcp,
+    });
+    const display = cardTitle(info, tc.title, tc.kind, tc.input);
     t.textContent = display;
     const header = t.closest<HTMLElement>(".tool-header");
     if (header !== null) {

@@ -574,6 +574,26 @@ describe("disclose_context and policy denials", () => {
     expect(card.dataset["disclosed"]).toBe("skill");
   });
 
+  it("keeps the document's name through a live card's update frames", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const { applyToolCallUpdate } = await import("./messages-tools.js");
+    const call = makeToolCall({
+      id: "t1-live",
+      title: "disclose_context",
+      kind: "other",
+      status: "in_progress",
+      disclosed: { type: "skill", display_name: "code-review", uri: "file:///x/code-review" },
+    });
+    const card = buildToolCard(toolCardOptsFor(call, true, "c-disclosed"));
+    applyToolCallUpdate(
+      card,
+      { ...call, title: "Running: disclose_context", status: "completed" },
+      "c-disclosed",
+    );
+    expect(card.dataset["title"]).toBe("Loaded skill: code-review");
+    expect(card.querySelector(".tool-title")?.textContent).toBe("Loaded skill: code-review");
+  });
+
   it("distinguishes a steering document from a skill", async () => {
     const { buildToolCard } = await import("./tool-card.js");
     const card = buildToolCard({
@@ -1996,15 +2016,32 @@ describe("an MCP card is built from the server's identity", () => {
     expect(card.querySelector(".tool-mcp-badge")).toBeNull();
   });
 
+  it("keeps the tool's own name through a live card's update frames", async () => {
+    const { applyToolCallUpdate } = await import("./messages-tools.js");
+    const call = makeToolCall({
+      id: "mcp-live",
+      title: "@probe/echo_text",
+      kind: "other",
+      status: "in_progress",
+      mcp: { server_name: "probe", tool_name: "echo_text" },
+    });
+    const card = buildToolCard(toolCardOptsFor(call, true, "c-mcp"));
+    applyToolCallUpdate(
+      card,
+      { ...call, title: "Running: @probe/echo_text", status: "completed" },
+      "c-mcp",
+    );
+    expect(mcpParts(card)).toEqual(["probe", "probe", "echo text"]);
+    expect(card.dataset["title"]).toBe("echo text");
+  });
+
   it("toolCardOptsFor copies mcp", () => {
     const mcp = { server_name: "s", tool_name: "t" };
     expect(toolCardOptsFor(makeToolCall({ mcp }), false).mcp).toEqual(mcp);
   });
 });
 
-// The user, 2026-11-05: "why is "tool load" using a magnifying glass (search icon). why not a
-// tool icon. in this case it loaded agent mail {"id": "tool::agent-mail::fetch_inbox"}". The
-// id's prefix says what loaded; the card names it and draws that thing's glyph.
+// The id's prefix says what loaded; the card names it and draws that thing's glyph.
 describe("a tool_load or load_resource card names what it loaded", () => {
   // A document draws its docs page tab's glyph (the tab whose list holds it).
   type Glyph = "mcp" | "tool" | "skills" | "steering" | "powers";
@@ -2065,6 +2102,30 @@ describe("a tool_load or load_resource card names what it loaded", () => {
         card.remove();
         expect(card.dataset["depth1"]).toBe("load");
         expect(loaded?.textContent).toContain(c.id);
+      });
+    }
+  }
+
+  // A live card takes title frames after its build; each one re-derives the same claim.
+  for (const tool of ["load_resource", "tool_load"]) {
+    for (const c of cases) {
+      it(`${tool} ${c.id} keeps its claim through a live card's update frames`, async () => {
+        const { buildToolCard } = await import("./tool-card.js");
+        const { applyToolCallUpdate } = await import("./messages-tools.js");
+        const wireTitle = tool === "tool_load" ? "Tool Load" : "Load Resource";
+        const call = makeToolCall({
+          id: `live-${tool}-${c.id}`,
+          title: wireTitle,
+          kind: "other",
+          status: "in_progress",
+          tool_name: tool,
+          input: { id: c.id },
+        });
+        const card = buildToolCard(toolCardOptsFor(call, true, "c-load"));
+        applyToolCallUpdate(card, { ...call, status: "completed", output: "loaded" }, "c-load");
+        expect(card.dataset["title"]).toBe(c.title);
+        expect(card.querySelector(".tool-title")?.textContent).toBe(c.title);
+        expect(card.querySelector<HTMLElement>(".tool-header")?.title).toBe(c.title);
       });
     }
   }

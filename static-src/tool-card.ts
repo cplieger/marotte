@@ -25,11 +25,8 @@ import {
 import { createDisclosure, type DisclosureController } from "./legacy-ui/disclosure.js";
 import {
   renderInfoFor,
-  disclosedClaim,
-  loadedClaim,
-  formatMCPToolName,
+  cardTitle,
   commandTitle,
-  toolTitleText,
   toolDepth1,
   cardDepth1,
   isToolActive,
@@ -58,15 +55,7 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   const depth1 = cardDepth1(info);
   const withToggle = depth1 !== "none";
   const shellTitle = commandTitle(opts.title, opts.kind, opts.input);
-  // A disclose_context or load call names what it loaded, not the tool that fetched it.
-  const displayTitle =
-    info.disclosed !== null
-      ? disclosedClaim(info.disclosed)
-      : info.loaded !== null
-        ? loadedClaim(info.loaded)
-        : info.mcp !== null
-          ? formatMCPToolName(info.mcp.tool_name)
-          : (shellTitle ?? toolTitleText(opts.title));
+  const displayTitle = cardTitle(info, opts.title, opts.kind, opts.input);
 
   const node = el("div", { className: `tool-call tool-depth1-${depth1}` }) as HTMLDivElement;
   node.dataset["kind"] = info.kind;

@@ -321,6 +321,19 @@ describe("loadedResources", () => {
     { id: "power::aws", want: { type: "unknown", name: "power::aws", server: "" } },
     { id: "plugin::::skill::x", want: { type: "unknown", name: "plugin::::skill::x", server: "" } },
     { id: "memory::x", want: { type: "unknown", name: "memory::x", server: "" } },
+    { id: "skill::team::land", want: { type: "skill", name: "team::land", server: "" } },
+    { id: "steering::web::css", want: { type: "steering", name: "web::css", server: "" } },
+    { id: "skill::", want: { type: "unknown", name: "skill::", server: "" } },
+    { id: "power::aws::skill::a::b", want: { type: "skill", name: "a::b", server: "" } },
+    { id: "plugin::kit::steering::a::b", want: { type: "steering", name: "a::b", server: "" } },
+    {
+      id: "power::a::b::skill::x",
+      want: { type: "unknown", name: "power::a::b::skill::x", server: "" },
+    },
+    {
+      id: "plugin::a::b::steering::x",
+      want: { type: "unknown", name: "plugin::a::b::steering::x", server: "" },
+    },
   ];
   it.each(cases)("$id", ({ id, want }) => {
     expect(loadedResources("load_resource", { id })).toEqual([{ id, ...want }]);

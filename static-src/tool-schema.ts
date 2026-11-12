@@ -151,7 +151,9 @@ const LOAD_TOOLS: ReadonlySet<string> = new Set(["tool_load", "load_resource"]);
 
 /** Parse one KAS resource id: `tool::<server>::<tool>`, `tool::<name>`, the older
  *  `builtin::<name>`, `skill::<name>`, `steering::<name>`, `power::<name>::overview`, and a
- *  Power or plugin member, `<power|plugin>::<name>::` before one of the others. */
+ *  Power or plugin member, `<power|plugin>::<name>::` before one of the others. As KAS reads
+ *  them, a skill or steering name runs to the id's end, `::` included, and a Power or plugin
+ *  name ends at its first `::`, so a member of a name holding one parses unknown. */
 function parseResourceID(id: string): LoadedResource {
   const unknown: LoadedResource = { id, type: "unknown", name: id, server: "" };
   let parts = id.split("::");
@@ -163,22 +165,19 @@ function parseResourceID(id: string): LoadedResource {
     parts = parts.slice(2);
   }
   const [head, a = "", b] = parts;
+  if (head === "skill" || head === "steering") {
+    const name = parts.slice(1).join("::");
+    return a === "" ? unknown : { id, type: head, name, server: "" };
+  }
   if (parts.length === 3 && head === "tool" && a !== "" && b !== undefined && b !== "") {
     return { id, type: "mcp", name: b, server: a };
   }
   if (parts.length !== 2 || a === "") {
     return unknown;
   }
-  switch (head) {
-    case "tool":
-    case "builtin":
-      return { id, type: "tool", name: a, server: "" };
-    case "skill":
-    case "steering":
-      return { id, type: head, name: a, server: "" };
-    default:
-      return unknown;
-  }
+  return head === "tool" || head === "builtin"
+    ? { id, type: "tool", name: a, server: "" }
+    : unknown;
 }
 
 /** What a load call loaded, from its `id` or an older call's `tool_ids`; null for a call
@@ -218,6 +217,27 @@ function loadedLabel(r: LoadedResource): string {
 /** The claim line for a load: what it loaded, not the tool that loaded it. */
 export function loadedClaim(loaded: readonly LoadedResource[]): string {
   return truncate(`Loaded ${loaded.map(loadedLabel).join(", ")}`, 120);
+}
+
+/** The title a card shows, at its build and on every title frame: what a disclose_context or
+ *  load call loaded, an MCP tool's own name, a description-less shell call's command, else the
+ *  call's title. */
+export function cardTitle(
+  info: ToolRenderInfo,
+  title: string,
+  kind: string,
+  input: unknown,
+): string {
+  if (info.disclosed !== null) {
+    return disclosedClaim(info.disclosed);
+  }
+  if (info.loaded !== null) {
+    return loadedClaim(info.loaded);
+  }
+  if (info.mcp !== null) {
+    return formatMCPToolName(info.mcp.tool_name);
+  }
+  return commandTitle(title, kind, input) ?? toolTitleText(title);
 }
 
 /** Format an MCP tool name for display: underscores become spaces. A server name stays
