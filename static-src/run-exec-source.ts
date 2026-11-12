@@ -676,7 +676,7 @@ function toNode(
 
 /** A flagged step's line: the server flags a run once its open step turns sent nothing for an hour
  *  (internal/agent/run_silence.go), and the run keeps running. */
-export const SILENT_STEP_TEXT = "No activity for 1 hour";
+const SILENT_STEP_TEXT = "No activity for 1 hour";
 
 /** The run's alert, and the five things that put it in front of a person. */
 function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): ExecRun["alert"] {
