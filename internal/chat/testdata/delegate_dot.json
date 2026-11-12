@@ -45,7 +45,7 @@
       "sites": [
         "internal/chat/entrylog.go:1135",
         "internal/translate/projection_entries.go:726",
-        "internal/translate/streaming_tools.go:487",
+        "internal/translate/streaming_tools.go:488",
         "internal/translate/wire_enums.go:36",
         "internal/turnlog/turnlog.go:691"
       ]
@@ -189,42 +189,42 @@
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:358",
+      "site": "internal/translate/streaming_tools.go:359",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:462",
+      "site": "internal/translate/streaming_tools.go:463",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:486",
+      "site": "internal/translate/streaming_tools.go:487",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:487",
+      "site": "internal/translate/streaming_tools.go:488",
       "form": "status_assign",
       "status": "aborted"
     },
     {
-      "site": "internal/translate/streaming_tools.go:509",
+      "site": "internal/translate/streaming_tools.go:510",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:523",
+      "site": "internal/translate/streaming_tools.go:524",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:523",
+      "site": "internal/translate/streaming_tools.go:524",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:545",
+      "site": "internal/translate/streaming_tools.go:546",
       "form": "compare",
       "status": "completed"
     },

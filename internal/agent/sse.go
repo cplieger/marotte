@@ -105,6 +105,7 @@ func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rt.bus.fanout.Serve(armedWriter(&rt.bus.closeAfter, w), r,
+		sse.WithRequestScope(principalOf(r)),
 		sse.WithClientTag(tag),
 		sse.WithOnConnect(func(sw *sse.Writer, h sse.Hello) error {
 			return rt.streamInitialState(sw, &h, legacy)
