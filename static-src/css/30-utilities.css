@@ -303,27 +303,28 @@
 }
 
 /* Syntax highlighting tokens. Emitted as `hl-${token.type}` (highlight.ts), so a
-   grep for the literal class names finds nothing — they are live. */
+   grep for the literal class names finds nothing — they are live. Coloured by
+   @cplieger/ui's syntax roles, as its [data-token] spans are. */
 .hl-keyword {
-  color: var(--c-hl-keyword);
+  color: var(--cp-syntax-keyword);
   font-weight: var(--fw-medium);
 }
 
 .hl-string {
-  color: var(--c-hl-string);
+  color: var(--cp-syntax-string);
 }
 
 .hl-comment {
-  color: var(--c-text-tertiary);
+  color: var(--cp-syntax-comment);
   font-style: italic;
 }
 
 .hl-number {
-  color: var(--c-hl-number);
+  color: var(--cp-syntax-number);
 }
 
 .hl-punctuation {
-  color: var(--c-text-secondary);
+  color: var(--cp-syntax-punctuation);
 }
 
 /* Deep-linked target (?highlight=<id> / openSetting, or a notification's

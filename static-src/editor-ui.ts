@@ -4,7 +4,7 @@
 
 import { el } from "@cplieger/reactive";
 import { $ } from "./dom.js";
-import { highlightRuns } from "./highlight.js";
+import { runs } from "@cplieger/ui/highlight";
 import { getActiveId } from "./store.js";
 import { fetchAgentLines as fetchAgentLinesAction } from "./actions/editor.js";
 import { goToLine, paintGoto } from "./editor-goto.js";
@@ -156,7 +156,7 @@ function scheduleHighlight(state: FileState, rows: WholeRows, highlight: boolean
     if (!isShown(state) || state.rows !== rows || $.editorViewer.classList.contains("hidden")) {
       return;
     }
-    state.runs = highlightRuns(rows.text, state.path);
+    state.runs = runs(rows.text, state.path);
     if (state.runs !== null) {
       viewer().update({ rows, runs: state.runs, agentLines: getAgentLines(state.path) });
     }

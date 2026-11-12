@@ -11,7 +11,7 @@ import type { ConflictFile } from "./conflict.js";
 import type { DiffBase, FileFacts } from "./viewer-rules.js";
 import type { EolRecord, EolTracker } from "./viewer-eol.js";
 import type { WholeRows } from "./viewer-rows.js";
-import type { HighlightRuns } from "./highlight.js";
+import type { Runs } from "@cplieger/ui/highlight";
 import type { FileRefusal } from "./wire/types.gen.js";
 
 const DIFF_LABEL_WORKING_TREE = "working tree";
@@ -169,7 +169,7 @@ export interface FileState {
   /** The read state's rows over `current`, rebuilt when it changes. */
   rows: WholeRows | null;
   /** Highlight runs for `rows`, computed after the first plain paint. */
-  runs: HighlightRuns | null;
+  runs: Runs | null;
   /** Load/save failure for this file, "" when there is none. */
   error: Signal<string>;
   alert: Signal<SaveAlert | null>;

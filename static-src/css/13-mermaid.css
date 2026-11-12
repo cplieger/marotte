@@ -34,7 +34,7 @@
   --pele-series-5: var(--c-teal);
   --pele-series-6: var(--c-yellow);
   --pele-series-7: var(--c-accent);
-  --pele-series-8: var(--c-hl-number);
+  --pele-series-8: var(--cp-syntax-number);
 
   background: var(--pele-bg);
 }
