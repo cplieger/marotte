@@ -21,8 +21,9 @@ interface HelloFields {
   verdict: string;
   keepalive_ms: number;
   keepalive_event: string;
-  /** Present on a connection the scope endpoint can rescope. */
-  conn?: string;
+  /** The id the scope endpoint rescopes this connection by; marotte's hub names every connection,
+   *  and "" leaves it out. */
+  conn: string;
 }
 
 interface ScriptedRequest {
@@ -91,6 +92,7 @@ export function createScriptedFetch(): ScriptedFetch {
   const responders: { prefix: string; responder: Responder }[] = [];
 
   function openStream(url: string, headers: Headers, signal: AbortSignal | null | undefined) {
+    const index = connections.length;
     let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
     let closed = false;
     const body = new ReadableStream<Uint8Array>({
@@ -120,9 +122,12 @@ export function createScriptedFetch(): ScriptedFetch {
           verdict: "fresh",
           keepalive_ms: 15_000,
           keepalive_event: "heartbeat",
+          conn: `conn-${String(index).padStart(17, "0")}`,
           ...over,
         };
-        write(`retry: 1500\nevent: sse:hello\ndata: ${JSON.stringify(fields)}\n\n`);
+        const { conn: id, ...rest } = fields;
+        const data = id === "" ? rest : fields;
+        write(`retry: 1500\nevent: sse:hello\ndata: ${JSON.stringify(data)}\n\n`);
       },
       frame(envelope, id) {
         const idLine = id === undefined ? "" : `id: ${id}\n`;

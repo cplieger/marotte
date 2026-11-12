@@ -59,6 +59,7 @@ import { refreshRun, showRun } from "./run-view.js";
 import { appendRunEntry, forgetRun, openRunTurn } from "./run-store.js";
 import { hasSubject } from "./subject-versions.js";
 import { showOnlyView } from "./view-swap.js";
+import { rescopeOwed, setScopePresenter, type ScopeOutcome } from "./run-content-scope.js";
 
 const WF = "wf_tails";
 const A = `${WF}:a`;
@@ -302,5 +303,186 @@ describe("a run tab leaving and re-entering the page's scope", () => {
       .mock.calls.map(([u]) => u)
       .filter((u) => u.includes("/turns/"));
     expect(ranges).toEqual([`/api/runs/${WF}/turns/t-a?after=1`]);
+  });
+});
+
+describe("a run tab's reads wait for the stream to deliver its run", () => {
+  /** The stream the page asks for a run's topic: each ask waits for the case to answer it. */
+  let asks: { run: string; answer: (outcome: ScopeOutcome) => void }[] = [];
+
+  beforeEach(() => {
+    asks = [];
+    setScopePresenter(
+      (run) =>
+        new Promise((resolve) => {
+          asks.push({ run, answer: resolve });
+        }),
+    );
+  });
+
+  afterEach(() => {
+    setScopePresenter(() => Promise.resolve("covered"));
+  });
+
+  function runReads(wf: string): string[] {
+    return [
+      ...vi.mocked(apiGetTyped).mock.calls.map(([u]) => u),
+      ...vi.mocked(apiGetTypedOrError).mock.calls.map(([u]) => u),
+    ].filter((u) => u.includes(`/runs/${wf}/turns/`) || u.includes(`/runs/${wf}/steps/`));
+  }
+
+  /** Show `wf`'s tab with its step `a` holding an open turn, then hide it behind another view. */
+  async function holdOpenTurnThenHide(wf: string): Promise<HTMLElement> {
+    showOnlyView(runView);
+    showRun(wf);
+    asks.at(-1)?.answer("covered");
+    refreshRun(wf);
+    await flush();
+    openRunTurn(wf, {
+      id: "t-a-0",
+      turn: "t-a",
+      lane: "",
+      kind: "turn_open",
+      payload: { source: "workflow_step", node_path: `${wf}:a`, n: 1 },
+      seq: 0,
+      ts: 0,
+    });
+    appendRunEntry(wf, {
+      id: "t-a-1",
+      turn: "t-a",
+      lane: "",
+      kind: "text",
+      payload: { text: "held" },
+      seq: 1,
+      ts: 1,
+    });
+    const other = document.createElement("div");
+    other.dataset["tabView"] = "";
+    document.body.append(other);
+    showOnlyView(other);
+    return other;
+  }
+
+  it("reads neither the shown step nor an open turn until the stream delivers the run", async () => {
+    const wf = "wf_scope_first";
+    vi.mocked(apiGetOrError).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: runRead(wf),
+      error: "",
+    });
+    showOnlyView(runView);
+    showRun(wf);
+    refreshRun(wf);
+    await flush();
+    expect(asks.map((a) => a.run)).toEqual([wf]);
+    expect(runReads(wf)).toEqual([]);
+
+    asks[0]?.answer("covered");
+    await flush();
+    // The shown step is in flight and holds nothing, so it is read once.
+    expect(runReads(wf)).toEqual([`/api/runs/${wf}/steps/${encodeURIComponent(`${wf}:b`)}`]);
+  });
+
+  it("catches a returning run's open turn up only after the stream delivers it", async () => {
+    const wf = "wf_scope_return";
+    vi.mocked(apiGetOrError).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: runRead(wf),
+      error: "",
+    });
+    await holdOpenTurnThenHide(wf);
+    vi.mocked(apiGetTyped).mockClear();
+    vi.mocked(apiGetTypedOrError).mockClear();
+
+    showOnlyView(runView);
+    showRun(wf);
+    await flush();
+    expect(runReads(wf).filter((u) => u.includes("/turns/"))).toEqual([]);
+
+    asks.at(-1)?.answer("covered");
+    await flush();
+    expect(runReads(wf).filter((u) => u.includes("/turns/"))).toEqual([
+      `/api/runs/${wf}/turns/t-a?after=1`,
+    ]);
+  });
+
+  it("reads nothing for a run that leaves while its ask waits", async () => {
+    const wf = "wf_scope_left";
+    vi.mocked(apiGetOrError).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: runRead(wf),
+      error: "",
+    });
+    const other = await holdOpenTurnThenHide(wf);
+    vi.mocked(apiGetTyped).mockClear();
+    vi.mocked(apiGetTypedOrError).mockClear();
+
+    showOnlyView(runView);
+    showRun(wf);
+    const waiting = asks.at(-1);
+    showOnlyView(other);
+    waiting?.answer("covered");
+    await flush();
+    expect(runReads(wf)).toEqual([]);
+  });
+
+  it("a run that leaves and returns reads once, on its newest ask", async () => {
+    const wf = "wf_scope_twice";
+    vi.mocked(apiGetOrError).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: runRead(wf),
+      error: "",
+    });
+    const other = await holdOpenTurnThenHide(wf);
+    vi.mocked(apiGetTyped).mockClear();
+    vi.mocked(apiGetTypedOrError).mockClear();
+
+    showOnlyView(runView);
+    showRun(wf);
+    const first = asks.at(-1);
+    showOnlyView(other);
+    showOnlyView(runView);
+    showRun(wf);
+    const newest = asks.at(-1);
+    first?.answer("covered");
+    await flush();
+    expect(runReads(wf).filter((u) => u.includes("/turns/"))).toEqual([]);
+
+    newest?.answer("covered");
+    await flush();
+    expect(runReads(wf).filter((u) => u.includes("/turns/"))).toEqual([
+      `/api/runs/${wf}/turns/t-a?after=1`,
+    ]);
+  });
+
+  it("an ask the link lost reads after the next open asks again", async () => {
+    const wf = "wf_scope_owed";
+    vi.mocked(apiGetOrError).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: runRead(wf),
+      error: "",
+    });
+    await holdOpenTurnThenHide(wf);
+    vi.mocked(apiGetTyped).mockClear();
+    vi.mocked(apiGetTypedOrError).mockClear();
+
+    showOnlyView(runView);
+    showRun(wf);
+    asks.at(-1)?.answer("owed");
+    await flush();
+    expect(runReads(wf).filter((u) => u.includes("/turns/"))).toEqual([]);
+
+    rescopeOwed();
+    expect(asks.at(-1)?.run).toBe(wf);
+    asks.at(-1)?.answer("covered");
+    await flush();
+    expect(runReads(wf).filter((u) => u.includes("/turns/"))).toEqual([
+      `/api/runs/${wf}/turns/t-a?after=1`,
+    ]);
   });
 });

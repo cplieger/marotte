@@ -9,6 +9,7 @@ import {
   type LifecycleEvent,
   type Removed,
   type RevalidateContext,
+  ScopeError,
   type SharedWorkerLike,
   type TabAttachment,
   type TabFallback,
@@ -23,9 +24,14 @@ import { BUS_PAGE_RESUMED, BUS_RECONCILE, decodeEnvelope, emitBus } from "./bus.
 import { inventoryHeld } from "./git-prs-state.js";
 import { mcpState } from "./mcp-state.js";
 import { isMirrorKind } from "./mirror.js";
-import { rawWorkflowID } from "./run-content-frame.js";
+import { rawWorkflowID, runContentOf, runScopeOf } from "./run-content-frame.js";
 import { refetchLiveRuns, rereadHeldRuns, runTurnHeldSeq } from "./run-store.js";
-import { runContentScoped } from "./run-content-scope.js";
+import {
+  rescopeOwed,
+  runContentScoped,
+  setScopePresenter,
+  type ScopeOutcome,
+} from "./run-content-scope.js";
 import { requestRunTurnRange } from "./run-turn-range.js";
 import { setSSEStatus } from "./send-state.js";
 import { fetchCatalog } from "./session-catalog.js";
@@ -94,12 +100,21 @@ function onLifecycle(ev: LifecycleEvent): void {
   switch (ev.kind) {
     case "state":
       onStatus(statusOf(ev.to));
+      if (ev.to === "open") {
+        rescopeOwed();
+      }
       return;
     case "frame_rejected": {
       const msg = ev.error instanceof Error ? ev.error.message : String(ev.error);
       console.error(`sse: decoder rejected ${ev.type}:`, msg);
       return;
     }
+    case "scope_refused":
+    case "deliver_failed":
+    case "auth_lost":
+      // The profile now draws every run's content, a tab's predicate threw, or the stream stopped.
+      console.warn("[sse]", JSON.stringify(ev));
+      return;
     default:
       console.debug("[sse]", JSON.stringify(ev));
   }
@@ -192,22 +207,6 @@ function deliver(evt: ServerEvent): void {
   if (evt.subject !== undefined && projectionHeld(evt.subject)) {
     observeStamp(evt.subject);
   }
-}
-
-/** The frames carrying a run step's content, which reach only a page whose scope names the run. */
-const RUN_CONTENT: ReadonlySet<ServerEvent["type"]> = new Set([
-  "turn_opened",
-  "entry_opened",
-  "entry_delta",
-  "entry_sealed",
-  "entry_appended",
-  "turn_closed",
-  "tool_progress",
-]);
-
-/** The run whose step content `evt` carries, "" for a chat's frame or any other kind. */
-function runContentOf(evt: ServerEvent): string {
-  return RUN_CONTENT.has(evt.type) ? rawWorkflowID(evt.payload) : "";
 }
 
 /** Whether this client holds the projection a stamp certifies. A mirror observes its own
@@ -306,6 +305,11 @@ function salvageUndecodable(data: string, err: unknown): void {
   if (chatID !== "") {
     console.warn(`sse: ${type} did not decode (${why}), asking for turn ${turnID} of ${chatID}`);
     requestTurnRange(chatID, turnID);
+    return;
+  }
+  if (workflowID !== "" && !runContentScoped(workflowID)) {
+    // The run's entry into the scope catches its open turns up.
+    console.warn(`sse: ${type} did not decode (${why}), run ${workflowID} is not shown here`);
     return;
   }
   // A run's frame: the whole turn, because a frame that did not decode says nothing about what this
@@ -526,6 +530,7 @@ function createTabStream(): TabFallback {
     // The receipt for every keepalive received, carrying SSE-Client: what lets the server read a
     // suspended or half-open profile gone at the alive window.
     alive: { url: "/api/events/alive" },
+    scopeUrl: "/api/events/scope",
   });
   return { stream, versions, headers };
 }
@@ -554,8 +559,25 @@ export function init(msg: MsgHandler, status: StatusHandler): void {
     onLifecycle,
     revalidate: tabRevalidate,
     tag: presented,
+    // Broadcasts only until a run tab scopes the page to its run.
+    scope: [],
   });
 }
+
+/** Ask the stream to deliver `run`'s topic to this tab ("" for broadcasts only). Never rejects:
+ *  a lost ask answers `owed`, and before `init` there is no stream to ask yet. */
+export function setPageScope(run: string): Promise<ScopeOutcome> {
+  if (attachment === null) {
+    return Promise.resolve("owed");
+  }
+  // An older host answers null and delivers everything, which covers the run too.
+  return attachment.setScope(runScopeOf(run)).then(
+    (): ScopeOutcome => "covered",
+    (e: unknown): ScopeOutcome =>
+      e instanceof ScopeError && e.failure === "superseded" ? "superseded" : "owed",
+  );
+}
+setScopePresenter(setPageScope);
 
 /** The tag presented on the current connection. */
 export function presentedTag(): string {
