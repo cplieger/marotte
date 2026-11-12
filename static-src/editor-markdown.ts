@@ -1,7 +1,7 @@
 // The editor's rendered-markdown read surface: every /docs document opens in the editor, and the `.kiro` inventory is
 // markdown with YAML front-matter, so the read state renders it; the edit toggle shows the source. The DOM is built
 // by markdown.ts as nodes, never through innerHTML. The prose container carries `.message.assistant`, the app's one
-// rendered-markdown skin and its reading measure, rather than a second copy of the prose CSS.
+// rendered-markdown skin, rather than a second copy of the prose CSS.
 
 import { el } from "@cplieger/reactive";
 import { releaseMarkdownIn, renderMarkdownInto } from "./markdown.js";

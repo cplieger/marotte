@@ -1,6 +1,6 @@
 // The assistant markdown bubble. A LIVE bubble owns a reveal cursor (`reveal.ts`) that spreads
 // lumpy deltas across frames at a fixed lag behind the live edge; mounted history paints at once.
-// `.message.assistant` is the prose container (~40rem measure).
+// `.message.assistant` is the prose container.
 
 import { el } from "@cplieger/reactive";
 import {

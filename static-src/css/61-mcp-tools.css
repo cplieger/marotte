@@ -84,15 +84,11 @@
 
 /* Turn actions: the copy and Branch icon buttons and Rewind, in the turn FOOTER's
  * trailing grid column (29-turns.css owns the placement). Ink is the footer's own;
- * each button lifts itself on hover. A code block's header row (`.code-actions`,
- * 13-messages.css) shares this gap token, not this button set. */
-.turn-actions-buttons,
-.code-actions {
+ * each button lifts itself on hover. */
+.turn-actions-buttons {
   /* Each box is its own target on touch and clears the mouse floor, so the gap only parts the fills. */
   --action-gap: var(--sp-05);
-}
 
-.turn-actions-buttons {
   display: inline-flex;
   align-items: center;
   gap: var(--action-gap);
@@ -128,7 +124,7 @@
 }
 
 /* THE TURN FOOTER'S CONTROL BOX for the action buttons, the ledger trigger and
-   Rewind, the code block's header buttons and a tool group's hooks badge: ONE definition, so they cannot drift.
+   Rewind and a tool group's hooks badge: ONE definition, so they cannot drift.
    `--btn-h-sm` with the button glyph: the mouse paint stays under the band so each control keeps air on
    every side (29-turns.css), and on touch the box is the 44px target, as the chat toolbar's is.
    `box-shadow` is in the transition because 03-base.css's press wash is an inset
@@ -136,7 +132,6 @@
 .turn-action-btn,
 .turn-ledger-summary,
 .turn-rewind,
-.code-act-btn,
 .tool-group-hooks {
   height: var(--btn-h-sm);
   border: none;
@@ -158,8 +153,7 @@
    The glyph inherits the row's ink (4.771 / 4.719) and hover keeps its own ink
    and fill lift, which is the whole affordance. */
 .turn-action-btn,
-.turn-rewind,
-.code-act-btn {
+.turn-rewind {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -188,7 +182,6 @@
 .turn-action-btn:hover,
 .turn-ledger-summary:hover,
 .turn-rewind:hover,
-.code-act-btn:hover,
 .tool-group-hooks:hover {
   background: var(--c-hover);
   color: var(--c-text-primary);

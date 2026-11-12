@@ -380,6 +380,10 @@ function hooksFor(host: Element, live: Live | null): Hooks {
   };
 }
 
+/** What @cplieger/ui/css/system styles a rendered host by: `.cp` for its element defaults and colours, `.cp-prose`
+ *  for the prose. */
+const PROSE_CLASSES = ["cp", "cp-prose"] as const;
+
 /** Each render that may still hold overflow observers, by the controller that lets them go, to its host. */
 const renders = new Map<AbortController, Element>();
 
@@ -447,8 +451,9 @@ function streamOptions(
 }
 
 /** The live renderer: chunks fade in, the caret follows the last word, and a block that completes off screen fades
- *  in. Large flushes yield across tasks. */
+ *  in. Large flushes yield across tasks. `host` takes the prose classes. */
 export function createMarkdownStream(host: HTMLElement, opts: StreamOpts = {}): MarkdownStream {
+  host.classList.add(...PROSE_CLASSES);
   const live: Live = { caret: null, onScreen: new WeakSet() };
   const controller = new AbortController();
   renders.set(controller, host);
@@ -468,8 +473,9 @@ export function createMarkdownStream(host: HTMLElement, opts: StreamOpts = {}): 
   };
 }
 
-/** Render `md` into `host`, after what it holds, at once and with no animation. */
+/** Render `md` into `host`, after what it holds, at once and with no animation. `host` takes the prose classes. */
 export function renderMarkdownInto(host: HTMLElement, md: string, opts: RenderOpts = {}): void {
+  host.classList.add(...PROSE_CLASSES);
   // A stream ended at once parses synchronously, and only a stream runs the object tail's text hook.
   const controller = new AbortController();
   renders.set(controller, host);

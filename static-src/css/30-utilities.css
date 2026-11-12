@@ -302,31 +302,6 @@
   font-family: var(--font-mono);
 }
 
-/* Syntax highlighting tokens. Emitted as `hl-${token.type}` (highlight.ts), so a
-   grep for the literal class names finds nothing — they are live. Coloured by
-   @cplieger/ui's syntax roles, as its [data-token] spans are. */
-.hl-keyword {
-  color: var(--cp-syntax-keyword);
-  font-weight: var(--fw-medium);
-}
-
-.hl-string {
-  color: var(--cp-syntax-string);
-}
-
-.hl-comment {
-  color: var(--cp-syntax-comment);
-  font-style: italic;
-}
-
-.hl-number {
-  color: var(--cp-syntax-number);
-}
-
-.hl-punctuation {
-  color: var(--cp-syntax-punctuation);
-}
-
 /* Deep-linked target (?highlight=<id> / openSetting, or a notification's
    #pr=<identity>) — flash-target.ts. Two accent rings that fade, so the mark reads
    on an element of any shape (checkbox, select, text input, a PR row) without
