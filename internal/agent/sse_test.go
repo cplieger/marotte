@@ -56,7 +56,7 @@ func TestEmit_CapsBufferAtReplayBufSize(t *testing.T) {
 	}
 }
 
-// TestEmit_PublishesOnTheEventsTopic pins the scope plan's topics: a chat's frame and a global one ride the
+// TestEmit_PublishesOnTheEventsTopic pins the publish topics: a chat's frame and a global one ride the
 // broadcast topic "", which every connection receives, and a run's log frame rides "run:<workflowID>".
 func TestEmit_PublishesOnTheEventsTopic(t *testing.T) {
 	h, _, _ := newTestHub()

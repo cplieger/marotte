@@ -28,7 +28,7 @@ if (FIXTURE === undefined || FIXTURE === "") {
   console.warn(`[vitest] ${SKIP_REASON}`);
 }
 
-/** The run log's frame types (the plan's B1 set): each carries its run in `payload.workflow_id`. */
+/** The run log's frame types: each carries its run in `payload.workflow_id`. */
 const RUN_LOG_TYPES = new Set([
   "turn_opened",
   "entry_opened",
