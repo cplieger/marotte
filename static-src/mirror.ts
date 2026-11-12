@@ -10,7 +10,7 @@ import { observeStamp, versionMap } from "./subject-versions.js";
 import type { SubjectStamp } from "./wire/types.gen.js";
 
 /** One read of the whole inventory and the stamp it was read at. */
-export interface MirrorSnapshot<K, V> {
+interface MirrorSnapshot<K, V> {
   readonly rows: ReadonlyMap<K, V>;
   readonly stamp: SubjectStamp;
 }

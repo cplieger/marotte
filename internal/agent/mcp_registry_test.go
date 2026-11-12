@@ -629,9 +629,8 @@ func (reg *mcpRegistry) snapshot() []mcpServerRuntime {
 	return out
 }
 
-// statusRowFrame is one mcp_status frame: the row it announces and its stamp.
+// statusRowFrame is one mcp_status frame and the row it announces.
 type statusRowFrame struct {
-	Subject *marotte.SubjectStamp    `json:"subject"`
 	Type    marotte.EventType        `json:"type"`
 	Payload marotte.MCPStatusPayload `json:"payload"`
 }

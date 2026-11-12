@@ -388,17 +388,18 @@ describe("any interleaving converges", () => {
           states.push(next);
         }
         const { mirror, kind } = scripted();
-        for (let delivered = 0; delivered <= ops.length; delivered++) {
+        const adoptSnapshotsAt = (delivered: number): void => {
           for (const [at, readAt] of snaps) {
             if (at === delivered) {
               mirror.adopt(states[readAt] ?? new Map(), String(readAt));
             }
           }
-          const frame = ops[delivered];
-          if (frame !== undefined) {
-            mirror.applyFrame(frame[0], frame[1], frameStamp(kind, String(delivered + 1)));
-          }
-        }
+        };
+        ops.forEach(([key, value], delivered) => {
+          adoptSnapshotsAt(delivered);
+          mirror.applyFrame(key, value, frameStamp(kind, String(delivered + 1)));
+        });
+        adoptSnapshotsAt(ops.length);
         expect(new Map(mirror.entries())).toEqual(states.at(-1));
       }),
     );
