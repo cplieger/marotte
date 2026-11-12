@@ -34,7 +34,6 @@ setting _suggestedPrompts
 setting checkpoint
 setting evalStrategy
 setting evalTreatments
-setting sendMessage
 setting sessionRecap
 setting tangentMode
 setting universalBackgroundTool

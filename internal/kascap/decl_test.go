@@ -363,12 +363,16 @@ var (
 	}{
 		{"with every gate field off", EngineSpawn{}},
 		{"with every gate field on", EngineSpawn{
-			SecretStorage: true, Knowledge: true, InfraSafetyMonitor: "on",
+			SecretStorage: true, Knowledge: true, InfraSafety: "enforce",
 			AutoRouting: "on", AutoDelegation: "on",
 			TerminalCommandTimeoutMs: 300000, SteeringReminders: true,
-			DisableTelemetry: true, ModelFallback: true,
+			DisableTelemetry: true, ModelFallback: true, MessageDeliveryLimit: 12,
+			KnowledgeTuning: marotte.KnowledgeTuning{
+				IndexType: "fast", IncludePatterns: []string{"**/*.md"}, ExcludePatterns: []string{"drafts/**"},
+				MaxFiles: 200, Chunking: marotte.KnowledgeChunking{Size: 256, Overlap: 32},
+			},
 		}},
-		{"with every choice off", EngineSpawn{AutoRouting: "off", AutoDelegation: "off", InfraSafetyMonitor: "off"}},
+		{"with every choice off", EngineSpawn{AutoRouting: "off", AutoDelegation: "off", InfraSafety: "off"}},
 	}
 	sessionStates = []struct {
 		name  string
@@ -380,7 +384,8 @@ var (
 			Presets:           []string{"read-workspace"},
 			SpecPlan:          "full", SpecAskClarification: true, WorkValidation: "on",
 			MemoryMode: "read_write", MemoryReflection: true,
-			Workflows: true, DisableAutoCompaction: true, ProfileAgentTurns: true,
+			Workflows: true, WorkflowCreatorEffort: "high", Messaging: true, Awareness: true,
+			DisableAutoCompaction: true, ProfileAgentTurns: true,
 			CustomAgents: []marotte.ClientCustomAgent{probeAgent},
 		}},
 		{"with every choice off", SessionSpawn{WorkValidation: "off"}},

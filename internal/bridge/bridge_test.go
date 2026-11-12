@@ -2723,8 +2723,8 @@ var initGateCases = []struct {
 	{"knowledge on", marotte.EngineFeatures{}, false, true, false},
 	// Proves Start copies EngineOpts.Features.
 	{"agent capabilities on", marotte.EngineFeatures{
-		SteeringReminders:  true,
-		InfraSafetyMonitor: "on", TerminalCommandTimeoutMs: 300000,
+		SteeringReminders: true,
+		InfraSafety:       "on", TerminalCommandTimeoutMs: 300000,
 	}, false, false, false},
 	{"telemetry off", marotte.EngineFeatures{}, false, false, true},
 	{"every gate on", marotte.EngineFeatures{}, true, true, false},

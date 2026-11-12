@@ -3,6 +3,7 @@ package settings
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -22,6 +23,20 @@ const (
 	FeatureOn         = "on"
 	FeatureOff        = "off"
 )
+
+// FeatureEnforce is KeyCloudFormationSafety's fourth value: KAS's infraSafety enforce, which blocks a change that breaks
+// a rule until the user allows it.
+const FeatureEnforce = "enforce"
+
+// KAS's sendMessageDeliveryLimit default and bounds (Koi, Tgt and xgt in 3.2.0). The default withholds the key.
+const (
+	DefaultChatMessageDeliveryLimit = 50
+	minChatMessageDeliveryLimit     = 1
+	maxChatMessageDeliveryLimit     = 500
+)
+
+// workflowCreatorEfforts is KAS's workflowsCreatorEffort vocabulary (gce in 3.2.0); KAS drops any other value.
+var workflowCreatorEfforts = []string{"low", "medium", "high", "xhigh", "max"}
 
 // OutputStyleDefault is KAS's default output style id, the one prompts never send.
 const OutputStyleDefault = "default"
@@ -44,6 +59,8 @@ const (
 	defaultSteeringReminders        = false
 	DefaultWorkflowsEnabled         = true
 	defaultChatMessaging            = false
+	defaultChatAwareness            = false
+	defaultWorkflowCreatorEffort    = ""
 	defaultOutputStyle              = OutputStyleDefault
 	defaultWorkValidation           = FeatureFollowKiro
 	defaultCloudFormationSafety     = FeatureFollowKiro
@@ -67,6 +84,21 @@ func ValidWorkflowLaunch(v string) bool {
 // ValidFeatureChoice reports whether v is a follow-kiro-cli choice.
 func ValidFeatureChoice(v string) bool {
 	return v == FeatureFollowKiro || v == FeatureOn || v == FeatureOff
+}
+
+// ValidCloudFormationChoice reports whether v is a CloudFormation check value: a follow-kiro-cli choice or enforce.
+func ValidCloudFormationChoice(v string) bool {
+	return ValidFeatureChoice(v) || v == FeatureEnforce
+}
+
+// ValidChatMessageDeliveryLimit reports whether n is inside KAS's sendMessageDeliveryLimit bounds.
+func ValidChatMessageDeliveryLimit(n int) bool {
+	return n >= minChatMessageDeliveryLimit && n <= maxChatMessageDeliveryLimit
+}
+
+// ValidWorkflowCreatorEffort reports whether v is unset ("") or one of KAS's creator effort levels.
+func ValidWorkflowCreatorEffort(v string) bool {
+	return v == "" || slices.Contains(workflowCreatorEfforts, v)
 }
 
 // ThreeStateChoice answers a follow-kiro-cli setting's effective choice by key, false for a key that
@@ -132,7 +164,7 @@ var agentPatchChecks = map[string]func(json.RawMessage) error{
 	},
 	KeyCloudFormationSafety: func(r json.RawMessage) error {
 		var v string
-		return decodeChecked(&v, r, KeyCloudFormationSafety, ValidFeatureChoice)
+		return decodeChecked(&v, r, KeyCloudFormationSafety, ValidCloudFormationChoice)
 	},
 	KeyAutoRouting: func(r json.RawMessage) error {
 		var v string
@@ -154,10 +186,19 @@ var agentPatchChecks = map[string]func(json.RawMessage) error{
 		var v int
 		return decodeChecked(&v, r, KeyTerminalCommandTimeoutMs, ValidTerminalCommandTimeoutMs)
 	},
+	KeyChatMessageDeliveryLimit: func(r json.RawMessage) error {
+		var v int
+		return decodeChecked(&v, r, KeyChatMessageDeliveryLimit, ValidChatMessageDeliveryLimit)
+	},
+	KeyWorkflowCreatorEffort: func(r json.RawMessage) error {
+		var v string
+		return decodeChecked(&v, r, KeyWorkflowCreatorEffort, ValidWorkflowCreatorEffort)
+	},
 	KeySpecPlanningAskFirst: func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
 	KeySteeringReminders:    func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
 	KeyWorkflowsEnabled:     func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
 	KeyChatMessaging:        func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
+	KeyChatAwareness:        func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
 	KeyModelFallback:        func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
 }
 
@@ -176,6 +217,15 @@ func validateAgentPatch(patch map[string]json.RawMessage) error {
 		}
 		if check(raw) != nil {
 			return fmt.Errorf("%s has a value the setting does not accept", key)
+		}
+	}
+	for key, check := range knowledgePatchChecks {
+		raw, ok := patch[key]
+		if !ok {
+			continue
+		}
+		if err := check(raw); err != nil {
+			return err
 		}
 	}
 	return nil

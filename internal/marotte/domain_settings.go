@@ -9,6 +9,13 @@ type KiroDefault struct {
 	LayerName string `json:"layer_name"`
 }
 
+// KnowledgeChunking is how KAS cuts an indexed file into passages: Size words each, the last Overlap of them
+// repeated at the start of the next.
+type KnowledgeChunking struct {
+	Size    int `json:"size"`
+	Overlap int `json:"overlap"`
+}
+
 // PctRange is a percentage slider's bounds and step.
 type PctRange struct {
 	Min  int `json:"min"`
@@ -54,8 +61,8 @@ type EffectiveSettings struct {
 	// SpecPlanning is "off", "quick" or "full"; default off, matching kiro-cli.
 	SpecPlanning string `json:"spec_planning"`
 	// WorkValidation, CloudFormationSafetyCheck, AutoRouting and AutoDelegation
-	// are "", "on" or "off". The empty string is a real value: marotte sends
-	// nothing and kiro-cli decides.
+	// are "", "on" or "off", and CloudFormationSafetyCheck also "enforce". The empty
+	// string is a real value: marotte sends nothing and kiro-cli decides.
 	WorkValidation            string `json:"work_validation"`
 	CloudFormationSafetyCheck string `json:"cloudformation_safety_check"`
 	AutoRouting               string `json:"auto_routing"`
@@ -66,6 +73,16 @@ type EffectiveSettings struct {
 	// WorkflowLaunch is "when-asked", "large-tasks" or "delegate-all", KAS's workflowLaunch
 	// values; it applies only while WorkflowsEnabled is on.
 	WorkflowLaunch string `json:"workflow_launch"`
+	// WorkflowCreatorEffort is "" (KAS's creator agent decides) or a KAS effort level for the step that drafts a
+	// workflow from a prose request; it applies only while WorkflowsEnabled is on.
+	WorkflowCreatorEffort string `json:"workflow_creator_effort"`
+	// KnowledgeIndexType is "" (kiro-cli's own, semantic unless its legacy knowledge.json says fast), "fast" or
+	// "best": the index a knowledge base added from now on is built as.
+	KnowledgeIndexType string `json:"knowledge_index_type"`
+	// KnowledgeIncludePatterns and KnowledgeExcludePatterns are glob lists matched against a file's path inside the
+	// indexed folder; empty is kiro-cli's own (every file of a type it indexes, and no exclusion).
+	KnowledgeIncludePatterns []string `json:"knowledge_include_patterns"`
+	KnowledgeExcludePatterns []string `json:"knowledge_exclude_patterns"`
 	// AgentIgnoreFiles is the ignore-FILE basename list marotte sends kiro-cli,
 	// which is what enforces it; marotte runs no matcher of its own. The default is
 	// EMPTY (settings.DefaultAgentIgnoreFiles), and an absent key must still not
@@ -96,6 +113,13 @@ type EffectiveSettings struct {
 	// and 6 (settings.TriggerCaps).
 	TriggerMaxLiveRuns        int `json:"trigger_max_live_runs"`
 	TriggerMaxLaunchesPerHour int `json:"trigger_max_launches_per_hour"`
+	// ChatMessageDeliveryLimit caps one agent-to-agent exchange between two chats, 1 to 500, default 50
+	// (settings.DefaultChatMessageDeliveryLimit, kiro-cli's own).
+	ChatMessageDeliveryLimit int `json:"chat_message_delivery_limit"`
+	// KnowledgeMaxFiles caps the files one knowledge base indexes, default 10000, and KnowledgeChunking is its
+	// passage shape, default 512 and 128 (settings.DefaultKnowledgeMaxFiles and its siblings, kiro-cli's own).
+	KnowledgeMaxFiles int               `json:"knowledge_max_files"`
+	KnowledgeChunking KnowledgeChunking `json:"knowledge_chunking"`
 	// SettingsEpoch and SettingsRevision are config.json's version (settings.KeySettingsEpoch and
 	// KeySettingsRevision), both 0 before the first write and compared epoch first. A config.json
 	// written without these keys or restored with lower ones is rewritten at a later version by
@@ -132,12 +156,13 @@ type EffectiveSettings struct {
 	// SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
 	// unattended run's permission ask at its deadline and is fail-closed by
 	// decision. DebugLogs raises the log level. All three default off.
-	// SpecPlanningAskFirst, SteeringReminders and ChatMessaging default off, matching kiro-cli.
+	// SpecPlanningAskFirst, SteeringReminders, ChatMessaging and ChatAwareness default off, matching kiro-cli.
 	// WorkflowsEnabled defaults ON (user's choice, where the TUI's default is off).
 	SpecPlanningAskFirst bool `json:"spec_planning_ask_first"`
 	SteeringReminders    bool `json:"steering_reminders_enabled"`
 	WorkflowsEnabled     bool `json:"workflows_enabled"`
 	ChatMessaging        bool `json:"chat_messaging_enabled"`
+	ChatAwareness        bool `json:"chat_awareness_enabled"`
 	SupervisedDefault    bool `json:"supervised_default"`
 	ScheduledAutoApprove bool `json:"scheduled_auto_approve"`
 	DebugLogs            bool `json:"debug_logs"`

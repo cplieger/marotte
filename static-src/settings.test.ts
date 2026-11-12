@@ -524,6 +524,56 @@ describe("the Messages between chats switch", () => {
   });
 });
 
+describe("the Search other chats switch", () => {
+  it("shows the stored value and writes chat_awareness_enabled on a flip", async () => {
+    const { patchSettings } = await import("./persist.js");
+    document.body.innerHTML = `<input type="checkbox" id="flag-chat-awareness">`;
+    const box = document.getElementById("flag-chat-awareness") as HTMLInputElement;
+    initRetention(settingsPayload({ chat_awareness_enabled: true }));
+    expect(box.checked).toBe(true);
+
+    box.checked = false;
+    box.dispatchEvent(new Event("change"));
+
+    expect(patchSettings).toHaveBeenLastCalledWith(
+      { chat_awareness_enabled: false },
+      { el: box, key: "chat_awareness_enabled", on: true },
+    );
+  });
+});
+
+describe("the Messages per exchange row", () => {
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <input type="checkbox" id="flag-chat-messaging">
+      <div id="chat-message-limit-row"><input type="number" id="chat-message-delivery-limit"></div>`;
+  });
+
+  const row = (): HTMLElement => document.getElementById("chat-message-limit-row") as HTMLElement;
+  const messaging = (): HTMLInputElement =>
+    document.getElementById("flag-chat-messaging") as HTMLInputElement;
+
+  it("shows only while Messages between chats is on, and paints the stored limit", () => {
+    applyGeneralPanel(
+      settingsPayload({ chat_messaging_enabled: true, chat_message_delivery_limit: 120 }),
+    );
+    expect(row().classList.contains("hidden")).toBe(false);
+    expect((document.getElementById("chat-message-delivery-limit") as HTMLInputElement).value).toBe(
+      "120",
+    );
+    applyGeneralPanel(settingsPayload({ chat_messaging_enabled: false }));
+    expect(row().classList.contains("hidden")).toBe(true);
+  });
+
+  it("follows the switch as it flips", () => {
+    initRetention(settingsPayload({ chat_messaging_enabled: false }));
+    expect(row().classList.contains("hidden")).toBe(true);
+    messaging().checked = true;
+    messaging().dispatchEvent(new Event("change"));
+    expect(row().classList.contains("hidden")).toBe(false);
+  });
+});
+
 describe("the config.json door in Settings > General", () => {
   it("opens config.json from the config directory", () => {
     document.body.innerHTML = `<button type="button" id="settings-open-config">config.json</button>`;
@@ -1042,10 +1092,13 @@ describe("the agent-capability selects and the shell timeout", () => {
       <p id="work-validation-default" class="hidden"></p>
       <select id="auto-routing"><option value="">Default</option><option value="on">On</option><option value="off">Off</option></select>
       <select id="auto-delegation"><option value="">Default</option><option value="on">On</option><option value="off">Off</option></select>
-      <input type="checkbox" id="flag-cloudformation-safety">
+      <select id="cloudformation-safety"><option value="">Default</option><option value="on">Warn</option><option value="enforce">Block until you allow</option><option value="off">Off</option></select>
       <input type="checkbox" id="flag-workflows">
       <div id="workflow-launch-row">
         <select id="workflow-launch"><option value="when-asked">Only when asked</option><option value="large-tasks">Only for large tasks</option><option value="delegate-all">As much as possible</option></select>
+      </div>
+      <div id="workflow-creator-effort-row">
+        <select id="workflow-creator-effort"><option value="">Default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">X-high</option><option value="max">Max</option></select>
       </div>
       <input type="number" id="shell-command-timeout">`;
   });
@@ -1064,6 +1117,40 @@ describe("the agent-capability selects and the shell timeout", () => {
     );
     expect(sel("workflow-launch").value).toBe("large-tasks");
     expect(workflowLaunchRow().classList.contains("hidden")).toBe(true);
+  });
+
+  const effortRow = (): HTMLElement =>
+    document.getElementById("workflow-creator-effort-row") as HTMLElement;
+
+  it("paints the stored planning effort and shows its row only while Workflows is on", () => {
+    applyGeneralPanel(
+      settingsPayload({ workflows_enabled: true, workflow_creator_effort: "xhigh" }),
+    );
+    expect(sel("workflow-creator-effort").value).toBe("xhigh");
+    expect(effortRow().classList.contains("hidden")).toBe(false);
+    applyGeneralPanel(settingsPayload({ workflows_enabled: false, workflow_creator_effort: "" }));
+    expect(sel("workflow-creator-effort").value).toBe("");
+    expect(effortRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("stores a planning effort, Default included, without touching the spec rows", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload({ workflows_enabled: true, spec_planning: "off" }));
+    vi.mocked(patchSettings).mockClear();
+    sel("workflow-creator-effort").value = "max";
+    sel("workflow-creator-effort").dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenLastCalledWith({ workflow_creator_effort: "max" });
+    sel("workflow-creator-effort").value = "";
+    sel("workflow-creator-effort").dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenLastCalledWith({ workflow_creator_effort: "" });
+    expect(askRow().classList.contains("hidden"), "spec planning is still off").toBe(true);
+  });
+
+  it("keeps the ask-first row hidden when a Workflow use choice is made with spec planning off", () => {
+    initRetention(settingsPayload({ workflows_enabled: true, spec_planning: "off" }));
+    sel("workflow-launch").value = "large-tasks";
+    sel("workflow-launch").dispatchEvent(new Event("change"));
+    expect(askRow().classList.contains("hidden")).toBe(true);
   });
 
   it("hides the Workflow use row while a lock pins Workflows off", async () => {
@@ -1113,14 +1200,13 @@ describe("the agent-capability selects and the shell timeout", () => {
     expect(askRow().classList.contains("hidden")).toBe(true);
   });
 
-  it.each([
-    ["an unset", "", "unchecked"],
-    ["an off", "off", "unchecked"],
-    ["an on", "on", "checked"],
-  ] as const)("renders %s CloudFormation switch %s", (_name, value, shown) => {
-    applyGeneralPanel(settingsPayload({ cloudformation_safety_check: value }));
-    expect(box("flag-cloudformation-safety").checked).toBe(shown === "checked");
-  });
+  it.each(["", "on", "enforce", "off"] as const)(
+    "selects the stored CloudFormation check %j",
+    (value) => {
+      applyGeneralPanel(settingsPayload({ cloudformation_safety_check: value }));
+      expect(sel("cloudformation-safety").value).toBe(value);
+    },
+  );
 
   it.each(["", "on", "off"] as const)(
     "selects the stored %j on every three-state control",
@@ -1174,7 +1260,7 @@ describe("the agent-capability selects and the shell timeout", () => {
     expect(sel("work-validation").options[0]?.textContent).toBe("Default");
   });
 
-  it("stores each three-state choice, Default included, and the CloudFormation switch as on or off", async () => {
+  it("stores each three-state choice, Default included, and the CloudFormation check's enforce", async () => {
     const { patchSettings } = await import("./persist.js");
     initRetention(settingsPayload());
     vi.mocked(patchSettings).mockClear();
@@ -1187,12 +1273,12 @@ describe("the agent-capability selects and the shell timeout", () => {
     sel("work-validation").value = "";
     sel("work-validation").dispatchEvent(new Event("change"));
     expect(patchSettings).toHaveBeenLastCalledWith({ work_validation: "" });
-    box("flag-cloudformation-safety").checked = false;
-    box("flag-cloudformation-safety").dispatchEvent(new Event("change"));
-    expect(patchSettings).toHaveBeenLastCalledWith(
-      { cloudformation_safety_check: "off" },
-      { el: box("flag-cloudformation-safety"), key: "cloudformation_safety_check", on: "on" },
-    );
+    sel("cloudformation-safety").value = "enforce";
+    sel("cloudformation-safety").dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenLastCalledWith({ cloudformation_safety_check: "enforce" });
+    sel("cloudformation-safety").value = "";
+    sel("cloudformation-safety").dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenLastCalledWith({ cloudformation_safety_check: "" });
   });
 
   it("writes seconds as milliseconds and clears the box on an empty entry", async () => {
@@ -1444,5 +1530,184 @@ describe("the agent engine memory limit", () => {
     expect(H.mockHeapDispatch).not.toHaveBeenCalled();
     expect(showError).toHaveBeenCalledWith("engine_heap_mib");
     expect(heap().value).toBe("");
+  });
+});
+
+describe("the knowledge index rows", () => {
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <select id="knowledge-index-type"><option value="">Default</option><option value="best">Best</option><option value="fast">Fast</option></select>
+      <input type="text" id="knowledge-include-patterns">
+      <input type="text" id="knowledge-exclude-patterns">
+      <input type="number" id="knowledge-max-files">
+      <input type="number" id="knowledge-chunk-size">
+      <input type="number" id="knowledge-chunk-overlap">`;
+  });
+
+  const box = (id: string): HTMLInputElement => document.getElementById(id) as HTMLInputElement;
+  const enter = (id: string, text: string): void => {
+    box(id).value = text;
+    box(id).dispatchEvent(new Event("change"));
+  };
+
+  it("paints every stored value, each glob list as one comma-separated line", () => {
+    applyGeneralPanel(
+      settingsPayload({
+        knowledge_index_type: "fast",
+        knowledge_include_patterns: ["docs/**", "**/*.{md,txt}"],
+        knowledge_exclude_patterns: ["**/test/**"],
+        knowledge_max_files: 2500,
+        knowledge_chunking: { size: 256, overlap: 32 },
+      }),
+    );
+    expect((document.getElementById("knowledge-index-type") as HTMLSelectElement).value).toBe(
+      "fast",
+    );
+    expect(box("knowledge-include-patterns").value).toBe("docs/**, **/*.{md,txt}");
+    expect(box("knowledge-exclude-patterns").value).toBe("**/test/**");
+    expect(box("knowledge-max-files").value).toBe("2500");
+    expect(box("knowledge-chunk-size").value).toBe("256");
+    expect(box("knowledge-chunk-overlap").value).toBe("32");
+  });
+
+  it("leaves the box the reader is typing in alone", () => {
+    applyGeneralPanel(settingsPayload({ knowledge_chunking: { size: 512, overlap: 128 } }));
+    box("knowledge-chunk-overlap").focus();
+    box("knowledge-chunk-overlap").value = "9";
+    applyGeneralPanel(settingsPayload({ knowledge_chunking: { size: 300, overlap: 100 } }));
+    expect(box("knowledge-chunk-overlap").value).toBe("9");
+    expect(box("knowledge-chunk-size").value).toBe("300");
+    box("knowledge-chunk-overlap").blur();
+  });
+
+  it("stores an index type, Default included", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload());
+    const select = document.getElementById("knowledge-index-type") as HTMLSelectElement;
+    select.value = "fast";
+    select.dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenLastCalledWith({ knowledge_index_type: "fast" });
+    select.value = "";
+    select.dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenLastCalledWith({ knowledge_index_type: "" });
+  });
+
+  it.each([
+    ["knowledge-include-patterns", "knowledge_include_patterns"],
+    ["knowledge-exclude-patterns", "knowledge_exclude_patterns"],
+  ] as const)("stores %s as a list, keeping brace sets whole", async (id, key) => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload());
+    enter(id, " docs/** ,, **/*.{ts,js}");
+    expect(patchSettings).toHaveBeenLastCalledWith({ [key]: ["docs/**", "**/*.{ts,js}"] });
+    expect(box(id).value, "the box shows what was sent").toBe("docs/**, **/*.{ts,js}");
+    enter(id, " ");
+    expect(patchSettings, "an emptied box clears the list").toHaveBeenLastCalledWith({
+      [key]: [],
+    });
+  });
+
+  it("puts a refused glob list back to the stored one", async () => {
+    const { settingsAsShown } = await import("./persist.js");
+    vi.mocked(settingsAsShown).mockReturnValue(
+      settingsPayload({ knowledge_include_patterns: ["docs/**"] }),
+    );
+    try {
+      initRetention(settingsPayload({ knowledge_include_patterns: ["docs/**"] }));
+      enter("knowledge-include-patterns", "src/**");
+      await flush();
+      expect(box("knowledge-include-patterns").value).toBe("docs/**");
+    } finally {
+      vi.mocked(settingsAsShown).mockReturnValue(null);
+    }
+  });
+
+  it("stores the file limit as a whole number of at least 1", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload());
+    enter("knowledge-max-files", "25000");
+    expect(patchSettings).toHaveBeenLastCalledWith({ knowledge_max_files: 25000 });
+    enter("knowledge-max-files", "0");
+    expect(patchSettings).toHaveBeenLastCalledWith({ knowledge_max_files: 1 });
+  });
+
+  it("stores the passage size and overlap together from either box", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload());
+    enter("knowledge-chunk-size", "256");
+    expect(patchSettings).toHaveBeenLastCalledWith({
+      knowledge_chunking: { size: 256, overlap: 128 },
+    });
+    enter("knowledge-chunk-overlap", "0");
+    expect(patchSettings).toHaveBeenLastCalledWith({
+      knowledge_chunking: { size: 256, overlap: 0 },
+    });
+  });
+
+  // settings.ValidKnowledgeChunking: a size of at least 64 words, an overlap from 0 to below the size.
+  it.each([
+    ["10", "8", { size: 64, overlap: 8 }],
+    ["512", "512", { size: 512, overlap: 511 }],
+    ["100", "-3", { size: 100, overlap: 0 }],
+    ["40", "100", { size: 64, overlap: 63 }],
+    ["300.4", "99.6", { size: 300, overlap: 100 }],
+  ] as const)(
+    "brings size %s and overlap %s into kiro-cli's bounds",
+    async (size, overlap, want) => {
+      const { patchSettings } = await import("./persist.js");
+      initRetention(settingsPayload());
+      box("knowledge-chunk-size").value = size;
+      enter("knowledge-chunk-overlap", overlap);
+      expect(patchSettings).toHaveBeenLastCalledWith({ knowledge_chunking: want });
+      expect([box("knowledge-chunk-size").value, box("knowledge-chunk-overlap").value]).toEqual([
+        String(want.size),
+        String(want.overlap),
+      ]);
+    },
+  );
+
+  it.each([
+    ["", "128"],
+    ["512", ""],
+    ["lots", "128"],
+  ])(
+    "sends nothing for size %j and overlap %j, and shows the stored pair",
+    async (size, overlap) => {
+      const { patchSettings, settingsAsShown } = await import("./persist.js");
+      vi.mocked(settingsAsShown).mockReturnValue(
+        settingsPayload({ knowledge_chunking: { size: 300, overlap: 30 } }),
+      );
+      try {
+        initRetention(settingsPayload({ knowledge_chunking: { size: 300, overlap: 30 } }));
+        vi.mocked(patchSettings).mockClear();
+        box("knowledge-chunk-size").value = size;
+        enter("knowledge-chunk-overlap", overlap);
+        expect(patchSettings).not.toHaveBeenCalled();
+        expect([box("knowledge-chunk-size").value, box("knowledge-chunk-overlap").value]).toEqual([
+          "300",
+          "30",
+        ]);
+      } finally {
+        vi.mocked(settingsAsShown).mockReturnValue(null);
+      }
+    },
+  );
+
+  it("puts a refused passage size back to the stored pair", async () => {
+    const { settingsAsShown } = await import("./persist.js");
+    vi.mocked(settingsAsShown).mockReturnValue(
+      settingsPayload({ knowledge_chunking: { size: 512, overlap: 128 } }),
+    );
+    try {
+      initRetention(settingsPayload());
+      enter("knowledge-chunk-size", "200");
+      await flush();
+      expect([box("knowledge-chunk-size").value, box("knowledge-chunk-overlap").value]).toEqual([
+        "512",
+        "128",
+      ]);
+    } finally {
+      vi.mocked(settingsAsShown).mockReturnValue(null);
+    }
   });
 });

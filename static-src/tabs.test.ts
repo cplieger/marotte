@@ -4,6 +4,8 @@
 // `tabs-projection.test.ts`'s subject.
 
 import type * as Dom from "./dom.js";
+import type * as GitTabs from "./git-tabs.js";
+import type * as SettingsTabs from "./settings-tabs.js";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { CloseImpact } from "./wire/types.gen.js";
 import type { Mock } from "vitest";
@@ -12,6 +14,15 @@ import { mountLiveRegions } from "./legacy-ui/announce.js";
 
 // Mock dependencies that tabs.ts imports at module level.
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
+// The sub-tab panel stores the view openers move; real otherwise, so the factory's lazy loaders run.
+vi.mock("./settings-tabs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof SettingsTabs>()),
+  forceSettingsTab: vi.fn(),
+}));
+vi.mock("./git-tabs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof GitTabs>()),
+  forceGitTab: vi.fn(),
+}));
 vi.mock("./icons.js", () => ({
   ICON_MODEL_UI: "",
   ICON_CLOSE: "",
@@ -192,8 +203,12 @@ import {
   claimNavigation,
   navigationHeld,
   setSettingsTab,
+  openSettingsView,
+  openGitView,
   _resetForTest,
 } from "./tabs.js";
+import { forceSettingsTab } from "./settings-tabs.js";
+import { forceGitTab } from "./git-tabs.js";
 // The namespace, for the activation seam: a named import of an export a build lacks fails the
 // whole file's linking in Browser Mode rather than only the case that calls it.
 import * as tabsModule from "./tabs.js";
@@ -3967,5 +3982,27 @@ describe("routes follow the activation", () => {
     setSettingsTab("tools");
 
     expect(vi.mocked(pushRoute).mock.calls).toEqual([[{ kind: "settings", tab: "tools" }]]);
+  });
+});
+
+// A link to a sub-tab (Code intelligence's Install, a recipe's Permissions, Connect GitHub) must
+// show that panel, whether its view is closed or already on another sub-tab.
+describe("a view opener shows the sub-tab it names", () => {
+  it("Settings, closed and then already open", async () => {
+    await openSettingsView("tools");
+    tabsModule.flushActivationForTest();
+    expect(vi.mocked(forceSettingsTab).mock.calls).toEqual([["tools"]]);
+    expect(vi.mocked(pushRoute)).toHaveBeenLastCalledWith({ kind: "settings", tab: "tools" });
+
+    await openSettingsView("permissions");
+    expect(vi.mocked(forceSettingsTab)).toHaveBeenLastCalledWith("permissions");
+    expect(vi.mocked(pushRoute)).toHaveBeenLastCalledWith({ kind: "settings", tab: "permissions" });
+  });
+
+  it("the git view", async () => {
+    await openGitView("sources");
+    tabsModule.flushActivationForTest();
+    expect(vi.mocked(forceGitTab).mock.calls).toEqual([["sources"]]);
+    expect(vi.mocked(pushRoute)).toHaveBeenLastCalledWith({ kind: "git", tab: "sources" });
   });
 });

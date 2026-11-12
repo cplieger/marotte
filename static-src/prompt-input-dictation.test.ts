@@ -420,14 +420,15 @@ describe("a press acts on the face it began on (rule 3)", () => {
     },
   );
 
-  it("stops on a Space press whose key up lands after the browser ended the session", async () => {
+  it("sends nothing from a Space press on Stop whose session the browser ended before the key up", async () => {
     await startFrom(sendBtn());
     speech.last().hear(["by keyboard", false]);
     sendBtn().focus();
     sendBtn().dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
     speech.last().finish();
-    sendBtn().dispatchEvent(new KeyboardEvent("keyup", { key: " ", bubbles: true }));
-    clickAt(sendBtn(), 0);
+    expect(document.activeElement, "the session's end takes focus off the button").toBe(input());
+    // The key up reaches the box, and a button that lost focus mid-press never clicks (https://crbug.com/945854).
+    input().dispatchEvent(new KeyboardEvent("keyup", { key: " ", bubbles: true }));
     expect(submitted).toEqual([]);
     expect(input().value).toBe("by keyboard");
   });
@@ -553,6 +554,20 @@ describe("a held key is one press, on the face it began on (rule 3)", () => {
     expect(submitted).toEqual(["hi"]);
   });
 
+  it("ends a Space press when focus leaves its button, so a click right after a key up back on it acts on the face painted", () => {
+    sendBtn().focus();
+    sendBtn().dispatchEvent(
+      new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }),
+    );
+    input().focus();
+    type("hi");
+    sendBtn().focus();
+    sendBtn().dispatchEvent(new KeyboardEvent("keyup", { key: " ", bubbles: true }));
+    sendBtn().click();
+    expect(dictation.listening.value).toBe(false);
+    expect(submitted).toEqual(["hi"]);
+  });
+
   it.each([
     ["Send's slot", false],
     ["the mid-turn slot", true],
@@ -603,7 +618,7 @@ describe("a press of one kind inside a press of the other (rule 3)", () => {
     ["Send's slot", false],
     ["the mid-turn slot", true],
   ])(
-    "only stops on a mouse click on Stop while a Space is held there, and the Space's click sends nothing, on %s",
+    "only stops on a mouse click on Stop while a Space is held there, and the Space sends nothing, on %s",
     async (_, mid) => {
       if (mid) {
         streaming();
@@ -620,8 +635,9 @@ describe("a press of one kind inside a press of the other (rule 3)", () => {
       clickAt(btn, 1);
       expect(dictation.listening.value).toBe(false);
       speech.last().finish();
-      btn.dispatchEvent(new KeyboardEvent("keyup", { key: " ", bubbles: true }));
-      clickAt(btn, 0);
+      expect(document.activeElement, "the stop takes focus off the button").toBe(input());
+      // The key up reaches the box, and a button that lost focus mid-press never clicks (https://crbug.com/945854).
+      input().dispatchEvent(new KeyboardEvent("keyup", { key: " ", bubbles: true }));
       expect(submitted).toEqual([]);
       expect(input().value).toBe("hello");
     },

@@ -25,6 +25,10 @@ func enabledIf(on bool) map[string]any { return map[string]any{enabledMember: on
 // row) and the ones KAS starts on its own (automaticTurnProfiling), so both fill the same info panel.
 const chatTurnBreakdown = "detailed"
 
+// infraSafetyEnforce is EngineSpawn.InfraSafety's value for kiro-cli's infraSafety enforce mode, which sends both
+// infraSafetyMonitor and infraSafetyEnforce.
+const infraSafetyEnforce = "enforce"
+
 // Not a bare true: KAS requires an object carrying a v2 member and then checks that member
 // (resolverObject).
 func hooksValue() map[string]any { return map[string]any{"enabled": true, "v2": true} }
@@ -48,6 +52,47 @@ func choiceValue(choice string) (any, bool) {
 		return enabledIf(false), true
 	}
 	return nil, false
+}
+
+// infraSafetyMonitor maps the CloudFormation check onto infraSafetyMonitor: enforce runs the check too.
+func infraSafetyMonitor(choice string) (any, bool) {
+	if choice == infraSafetyEnforce {
+		return enabledIf(true), true
+	}
+	return choiceValue(choice)
+}
+
+// workflowsValue builds settings.workflows. creatorEffort rides it only when stated: KAS reads a workflows object
+// without the member as no effort, which its creator agent's own level then fills.
+func workflowsValue(s *SessionSpawn) map[string]any {
+	v := enabledIf(s.Workflows)
+	if s.Workflows && s.WorkflowCreatorEffort != "" {
+		v["creatorEffort"] = s.WorkflowCreatorEffort
+	}
+	return v
+}
+
+// knowledgeValue builds settings.knowledge: enabled plus each stated member of KnowledgeTuning, under KAS's member
+// names (the kiroAgent knowledge entries in 3.2.0), which ResolvedKnowledgeConfig reads whatever enabled says.
+func knowledgeValue(s *EngineSpawn) map[string]any {
+	v := enabledIf(s.Knowledge)
+	k := s.KnowledgeTuning
+	if k.IndexType != "" {
+		v["indexType"] = k.IndexType
+	}
+	if len(k.IncludePatterns) > 0 {
+		v["includePatterns"] = k.IncludePatterns
+	}
+	if len(k.ExcludePatterns) > 0 {
+		v["excludePatterns"] = k.ExcludePatterns
+	}
+	if k.MaxFiles > 0 {
+		v["maxFiles"] = k.MaxFiles
+	}
+	if k.Chunking.Size > 0 {
+		v["chunkSize"], v["chunkOverlap"] = k.Chunking.Size, k.Chunking.Overlap
+	}
+	return v
 }
 
 // jsonChoice maps a follow-kiro-cli setting onto a resolverEnvJSON row: empty withholds the
@@ -210,7 +255,7 @@ var table = []decl{
 		// rather than enabled(), because the resolver needs the object shape in
 		// both states: isSettingEnabled reads .enabled unchecked, so {"enabled":
 		// false} is the off state and an absent member would be undefined.
-		engineGate: func(s *EngineSpawn) (any, bool) { return enabledIf(s.Knowledge), true },
+		engineGate: func(s *EngineSpawn) (any, bool) { return knowledgeValue(s), true },
 	},
 	{
 		key:      "toolSearch",
@@ -225,18 +270,29 @@ var table = []decl{
 		// Value-gated, always present: on load KAS takes the client value over
 		// the persisted workflowsEnabled, so an explicit false is what turns a
 		// resumed chat's workflow tools off.
-		sessionGate: func(s *SessionSpawn) (any, bool) { return enabledIf(s.Workflows), true },
+		sessionGate: func(s *SessionSpawn) (any, bool) { return workflowsValue(s), true },
 		send:        true,
 	},
 	{
-		// KAS's sessionToolsMessaging switch, read as settings.sessionTools.messaging.enabled (record field
-		// sessionMessagingEnabled). Always present: on load a stated value replaces the persisted sessionMessagingEnabled
-		// (saveSessionMessaging), so an explicit false is what turns a resumed chat's peer messaging off.
-		key:         "sessionTools",
-		door:        doorSession,
-		resolver:    resolverSettingObject,
-		sessionGate: func(s *SessionSpawn) (any, bool) { return map[string]any{"messaging": enabledIf(s.Messaging)}, true },
-		send:        true,
+		// KAS's sessionToolsMessaging and sessionToolsAwareness switches, read as settings.sessionTools.<switch>.enabled
+		// (record fields sessionMessagingEnabled, sessionAwarenessEnabled). Both always present: on load a stated value
+		// replaces the persisted field, so an explicit false is what turns a resumed chat's switch off.
+		key:      "sessionTools",
+		door:     doorSession,
+		resolver: resolverSettingObject,
+		sessionGate: func(s *SessionSpawn) (any, bool) {
+			return map[string]any{"messaging": enabledIf(s.Messaging), "awareness": enabledIf(s.Awareness)}, true
+		},
+		send: true,
+	},
+	{
+		key:      "sendMessage",
+		door:     doorConnection,
+		resolver: resolverSettingObject,
+		engineGate: func(s *EngineSpawn) (any, bool) {
+			return map[string]any{"deliveryLimit": s.MessageDeliveryLimit}, s.MessageDeliveryLimit > 0
+		},
+		send: true,
 	},
 	{
 		key:      "backgroundExecution",
@@ -303,7 +359,7 @@ var table = []decl{
 		key:        "infraSafetyMonitor",
 		door:       doorConnection,
 		resolver:   resolverSetting,
-		engineGate: func(s *EngineSpawn) (any, bool) { return choiceValue(s.InfraSafetyMonitor) },
+		engineGate: func(s *EngineSpawn) (any, bool) { return infraSafetyMonitor(s.InfraSafety) },
 		send:       true,
 	},
 	{
@@ -326,10 +382,11 @@ var table = []decl{
 		send:     false,
 	},
 	{
-		key:      "infraSafetyEnforce",
-		door:     doorConnection,
-		resolver: resolverSetting,
-		send:     false,
+		key:        "infraSafetyEnforce",
+		door:       doorConnection,
+		resolver:   resolverSetting,
+		engineGate: func(s *EngineSpawn) (any, bool) { return enabledIf(true), s.InfraSafety == infraSafetyEnforce },
+		send:       true,
 	},
 	{
 		key:      "terminal",

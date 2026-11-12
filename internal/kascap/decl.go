@@ -88,13 +88,17 @@ func inSettings(r resolver) bool { return r == resolverSetting || r == resolverS
 // EngineSpawn carries the engine-wide facts the connection and environment rows read: each is fixed when the engine
 // starts, so changing one needs an engine restart. Every field is a decision the caller already made.
 type EngineSpawn struct {
-	// InfraSafetyMonitor, AutoRouting and AutoDelegation are "", "on" or "off". Empty withholds the key so kiro-cli's
-	// own experiment decides.
-	InfraSafetyMonitor string
-	AutoRouting        string
-	AutoDelegation     string
+	// InfraSafety, AutoRouting and AutoDelegation are "", "on" or "off", and InfraSafety also "enforce". Empty
+	// withholds the key so kiro-cli's own experiment decides.
+	InfraSafety    string
+	AutoRouting    string
+	AutoDelegation string
+	// KnowledgeTuning rides the knowledge setting row beside its enabled member, in either state of Knowledge.
+	KnowledgeTuning marotte.KnowledgeTuning
 	// TerminalCommandTimeoutMs is the shell tool's default timeout; 0 withholds the key (KAS's 120 s).
 	TerminalCommandTimeoutMs int
+	// MessageDeliveryLimit is KAS's sendMessageDeliveryLimit; 0 withholds the key (KAS's 50).
+	MessageDeliveryLimit int
 	// SecretStorage is whether a credential store stands behind the secretStorage capability. See that row's because:
 	// declaring the capability without a store is worse than declining it.
 	SecretStorage bool
@@ -123,6 +127,8 @@ type SessionSpawn struct {
 	SpecPlan string
 	// WorkValidation is "", "on" or "off"; empty withholds the key so kiro-cli's own experiment decides.
 	WorkValidation string
+	// WorkflowCreatorEffort rides the workflows object as creatorEffort; empty withholds the member.
+	WorkflowCreatorEffort string
 	// Presets are the KAS policy-preset ids of the active security profile (policyfile.Profile). EMPTY means the
 	// Custom profile, so the key is withheld. KAS persists neither door's ids, so both doors resolve from this field.
 	Presets []string
@@ -135,8 +141,9 @@ type SessionSpawn struct {
 	SpecAskClarification  bool
 	// Workflows gives the agent its workflow tools; value-gated, always sent on both session doors.
 	Workflows bool
-	// Messaging is KAS's sessionToolsMessaging switch for this session.
+	// Messaging and Awareness are KAS's sessionToolsMessaging and sessionToolsAwareness switches for this session.
 	Messaging bool
+	Awareness bool
 	// ProfileAgentTurns is whether the session's turns render in a chat's turn footer, so the turns KAS starts on
 	// its own ask for a chat prompt's profiling. A run host's and an observer's turns render nowhere.
 	ProfileAgentTurns bool

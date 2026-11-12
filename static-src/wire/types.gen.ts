@@ -769,8 +769,8 @@ export interface EffectiveSettings {
   spec_planning: string;
   /**
  * WorkValidation, CloudFormationSafetyCheck, AutoRouting and AutoDelegation
- * are "", "on" or "off". The empty string is a real value: marotte sends
- * nothing and kiro-cli decides.
+ * are "", "on" or "off", and CloudFormationSafetyCheck also "enforce". The empty
+ * string is a real value: marotte sends nothing and kiro-cli decides.
  */
   work_validation: string;
   cloudformation_safety_check: string;
@@ -786,6 +786,22 @@ export interface EffectiveSettings {
  * values; it applies only while WorkflowsEnabled is on.
  */
   workflow_launch: string;
+  /**
+ * WorkflowCreatorEffort is "" (KAS's creator agent decides) or a KAS effort level for the step that drafts a
+ * workflow from a prose request; it applies only while WorkflowsEnabled is on.
+ */
+  workflow_creator_effort: string;
+  /**
+ * KnowledgeIndexType is "" (kiro-cli's own, semantic unless its legacy knowledge.json says fast), "fast" or
+ * "best": the index a knowledge base added from now on is built as.
+ */
+  knowledge_index_type: string;
+  /**
+ * KnowledgeIncludePatterns and KnowledgeExcludePatterns are glob lists matched against a file's path inside the
+ * indexed folder; empty is kiro-cli's own (every file of a type it indexes, and no exclusion).
+ */
+  knowledge_include_patterns: string[];
+  knowledge_exclude_patterns: string[];
   /**
  * AgentIgnoreFiles is the ignore-FILE basename list marotte sends kiro-cli,
  * which is what enforces it; marotte runs no matcher of its own. The default is
@@ -828,6 +844,17 @@ export interface EffectiveSettings {
  */
   trigger_max_live_runs: number;
   trigger_max_launches_per_hour: number;
+  /**
+ * ChatMessageDeliveryLimit caps one agent-to-agent exchange between two chats, 1 to 500, default 50
+ * (settings.DefaultChatMessageDeliveryLimit, kiro-cli's own).
+ */
+  chat_message_delivery_limit: number;
+  /**
+ * KnowledgeMaxFiles caps the files one knowledge base indexes, default 10000, and KnowledgeChunking is its
+ * passage shape, default 512 and 128 (settings.DefaultKnowledgeMaxFiles and its siblings, kiro-cli's own).
+ */
+  knowledge_max_files: number;
+  knowledge_chunking: KnowledgeChunking;
   /**
  * SettingsEpoch and SettingsRevision are config.json's version (settings.KeySettingsEpoch and
  * KeySettingsRevision), both 0 before the first write and compared epoch first. A config.json
@@ -879,13 +906,14 @@ export interface EffectiveSettings {
  * SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
  * unattended run's permission ask at its deadline and is fail-closed by
  * decision. DebugLogs raises the log level. All three default off.
- * SpecPlanningAskFirst, SteeringReminders and ChatMessaging default off, matching kiro-cli.
+ * SpecPlanningAskFirst, SteeringReminders, ChatMessaging and ChatAwareness default off, matching kiro-cli.
  * WorkflowsEnabled defaults ON (user's choice, where the TUI's default is off).
  */
   spec_planning_ask_first: boolean;
   steering_reminders_enabled: boolean;
   workflows_enabled: boolean;
   chat_messaging_enabled: boolean;
+  chat_awareness_enabled: boolean;
   supervised_default: boolean;
   scheduled_auto_approve: boolean;
   debug_logs: boolean;
@@ -2081,6 +2109,15 @@ export interface KiroDoc {
 export interface KiroDocsResponse {
   docs: KiroDoc[];
   truncated: boolean;
+}
+
+/**
+ * KnowledgeChunking is how KAS cuts an indexed file into passages: Size words each, the last Overlap of them
+ * repeated at the start of the next.
+ */
+export interface KnowledgeChunking {
+  size: number;
+  overlap: number;
 }
 
 /**

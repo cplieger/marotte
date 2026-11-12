@@ -27,6 +27,7 @@ type PressInput =
   | { readonly k: "contextmenu"; readonly e: MouseEvent }
   | { readonly k: "keydown"; readonly on: HTMLButtonElement | null; readonly e: KeyboardEvent }
   | { readonly k: "keyup"; readonly e: KeyboardEvent }
+  | { readonly k: "blur" }
   | { readonly k: "windowblur" }
   | { readonly k: "click"; readonly on: HTMLButtonElement; readonly e: MouseEvent };
 
@@ -180,6 +181,11 @@ export function pressOwner(faceOf: (btn: HTMLButtonElement) => Act): (i: PressIn
         return null;
       case "keyup":
         keyUp(i.e);
+        return null;
+      case "blur":
+        // A key press is on the focused button, and one that loses focus mid-press loses :active, so its Space key up
+        // clicks nothing even once focus is back (https://crbug.com/945854). Its held key's repeats stay swallowed.
+        key = null;
         return null;
       case "windowblur":
         // The keys' ups go to another window.

@@ -87,7 +87,14 @@ vi.mock("./bus.js", () => ({
   },
 }));
 
-import { initTools, loadToolsList } from "./tools.js";
+import {
+  initTools,
+  loadToolsList,
+  onToolInventory,
+  refreshToolInventory,
+  showLanguageServers,
+} from "./tools.js";
+import { openSettingsView } from "./tabs.js";
 import { byId } from "./dom.js";
 import { KEY_ATTR } from "./reconcile.js";
 import { join, split } from "@cplieger/keyenc";
@@ -111,6 +118,8 @@ function mountToolsDOM(): void {
   addPill("tool-catalog-refresh-btn", "Refresh catalog", "Refresh the tool catalog");
   add("button", "tool-open-manifest");
   add("p", "tool-catalog-meta").classList.add("hidden");
+  add("div", "tools-lsp-filter").classList.add("hidden");
+  add("button", "tools-lsp-filter-clear");
   add("div", "tool-update-output");
   // Both list hosts carry the classes index.html gives them, because the
   // geometry guards below measure real layout against the shipped stylesheet and
@@ -1195,6 +1204,76 @@ describe("the shipped page declares the ids the Tools panel looks up", () => {
     // suite green while byId throws on the reader's first visit.
     const doc = new DOMParser().parseFromString(indexHtml, "text/html");
     expect(doc.getElementById("tool-open-manifest")).not.toBeNull();
+  });
+
+  it("carries the language-server filter and its clear control", () => {
+    const doc = new DOMParser().parseFromString(indexHtml, "text/html");
+    expect(doc.getElementById("tools-lsp-filter")?.classList.contains("hidden")).toBe(true);
+    expect(doc.getElementById("tools-lsp-filter-clear")?.tagName).toBe("BUTTON");
+  });
+});
+
+describe("the language-server view", () => {
+  const names = (): string[] =>
+    [...document.querySelectorAll("#tools-list .list-row-name")].map((n) => n.textContent ?? "");
+
+  it("opens Settings > Tools listing only language servers until Show all tools", async () => {
+    initWith(
+      listWith([
+        tool({ name: "gh" }),
+        tool({ name: "gopls", lsp: true }),
+        tool({ name: "pyright", lsp: true, installed: false, disabled: true }),
+      ]),
+    );
+    onTestFinished(() => {
+      byId("tools-lsp-filter-clear").click();
+    });
+    await showLanguageServers();
+    expect(vi.mocked(openSettingsView)).toHaveBeenCalledWith("tools");
+    expect(names()).toEqual(["gopls", "pyright"]);
+    expect(byId("tools-lsp-filter").classList.contains("hidden")).toBe(false);
+    expect(byId("tools-list").textContent).not.toContain("built into the image");
+
+    byId("tools-lsp-filter-clear").click();
+    expect(names()).toEqual(["gh", "gopls", "pyright", "git"]);
+    expect(byId("tools-lsp-filter").classList.contains("hidden")).toBe(true);
+  });
+
+  it("keeps the narrowed view across a job-driven refetch", async () => {
+    initWith(listWith([tool({ name: "gh" }), tool({ name: "gopls", lsp: true })]));
+    onTestFinished(() => {
+      byId("tools-lsp-filter-clear").click();
+    });
+    await showLanguageServers();
+    mocks.sseHandlers.get("tool_job_changed")?.("", { job: { id: "tj-1", state: "done" } });
+    expect(names()).toEqual(["gopls"]);
+  });
+
+  it("says how to find one when the list holds no language server", async () => {
+    initWith(listWith([tool({ name: "gh" })]));
+    onTestFinished(() => {
+      byId("tools-lsp-filter-clear").click();
+    });
+    await showLanguageServers();
+    expect(byId("tools-list").textContent).toBe(
+      "No language servers in your list. Add tool finds one: search for the language, such as Go or Python.",
+    );
+  });
+});
+
+describe("inventory listeners", () => {
+  it("hear every read, and null for a failed one", () => {
+    const heard: (Inventory | null)[] = [];
+    const data = listWith([tool({ name: "gopls", lsp: true })]);
+    seedLoad(data);
+    initTools();
+    const off = onToolInventory((inv) => heard.push(inv));
+    onTestFinished(off);
+    refreshToolInventory();
+    failLoad({ message: "upstream exploded", status: 500 });
+    loadToolsList();
+    expect(heard).toEqual([data, null]);
+    expect(mocks.catalogInfoDispatch).toHaveBeenCalledTimes(1);
   });
 });
 
