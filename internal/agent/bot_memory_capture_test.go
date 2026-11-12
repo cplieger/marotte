@@ -110,7 +110,7 @@ func TestBotMemoryGrant_TheCapturedMemoryWriteIsAdmittedForTheBotAlone(t *testin
 	})
 }
 
-// TestBotMemoryGrant_TheCapturedTangentReadIsRefused pins P5's last clause on the bot_tangent capture: the read KAS
+// TestBotMemoryGrant_TheCapturedTangentReadIsRefused pins the bot_tangent capture: the read KAS
 // 3.2.0 sent from a tangent forked off a Bot is refused for the tangent's session, though it names the Bot's file.
 func TestBotMemoryGrant_TheCapturedTangentReadIsRefused(t *testing.T) {
 	reqs := capturedFSRequests(t, "bot_tangent", 1)
@@ -125,7 +125,7 @@ func TestBotMemoryGrant_TheCapturedTangentReadIsRefused(t *testing.T) {
 	}
 }
 
-// TestBotTangent_TheFirstOpenOnTheCapturedLoadRaisesNoError pins P5 on the door: a tangent of a Bot, its record on
+// TestBotTangent_TheFirstOpenOnTheCapturedLoadRaisesNoError pins the door: a tangent of a Bot, its record on
 // the default mode, opened on the session KAS 3.2.0 loaded for it (reporting vibe, no role among its modes), keeps the
 // default mode, sends no session/set_mode and no context call, and broadcasts no error.
 func TestBotTangent_TheFirstOpenOnTheCapturedLoadRaisesNoError(t *testing.T) {

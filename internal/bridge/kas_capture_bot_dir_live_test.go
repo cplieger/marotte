@@ -62,7 +62,7 @@ func (c *capture) replayed(lane int, text string) bool {
 	})
 }
 
-// runBotMemoryWrite is P4: KAS writes a Bot's memory file through fs/write_text_file with the Bot's directory among
+// runBotMemoryWrite: KAS writes a Bot's memory file through fs/write_text_file with the Bot's directory among
 // the session's additional directories, a load across a memory toggle finds the session, and a regular session's
 // requests for the same file reach the client, which refuses them.
 func runBotMemoryWrite(ctx context.Context, c *capture) error {
@@ -141,7 +141,7 @@ func runBotMemoryWrite(ctx context.Context, c *capture) error {
 	return nil
 }
 
-// runBotTangent is P5: a tangent forked from a Bot on the default mode loads as a regular chat on that mode, with no
+// runBotTangent: a tangent forked from a Bot on the default mode loads as a regular chat on that mode, with no
 // role among its modes and no not_found, and its read of the Bot's memory file reaches the client, which refuses it.
 // The fork copies the Bot's conversation, which holds the file as it stood, so the file changes after the fork and
 // only a read could learn the new marker.

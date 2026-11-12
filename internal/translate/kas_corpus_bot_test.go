@@ -148,7 +148,7 @@ func TestKASCorpus_BotRoleHoldsOnEveryDoor(t *testing.T) {
 	}
 }
 
-// TestKASCorpus_BotAsksWhatADefaultChatAsks pins P2 on the live answer: under every Permission profile, each probe
+// TestKASCorpus_BotAsksWhatADefaultChatAsks pins KAS's recorded answer: under every Permission profile, each probe
 // asks a Bot exactly as often as a Default chat, the Bot's memory write never asks, and under Trusted with sub-agents
 // on the Default chat names a sub-agent tool while the Bot names none of the tools its role excludes.
 func TestKASCorpus_BotAsksWhatADefaultChatAsks(t *testing.T) {
@@ -244,7 +244,7 @@ func TestKASCorpus_BotAsksWhatADefaultChatAsks(t *testing.T) {
 	}
 }
 
-// TestKASCorpus_BotMemoryIsAContextFileOfItsOwnSession pins P3 on the live answer: KAS takes a forced add of a file
+// TestKASCorpus_BotMemoryIsAContextFileOfItsOwnSession pins KAS's recorded answer: KAS takes a forced add of a file
 // not written yet, each turn sees the file as it stands (none, then each edit, then the recreated file), a deleted
 // file stays listed unmatched, and neither a regular session nor a fork of the Bot lists any context file.
 func TestKASCorpus_BotMemoryIsAContextFileOfItsOwnSession(t *testing.T) {
