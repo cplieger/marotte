@@ -413,12 +413,12 @@ initialize (Object.hasOwn on the settings), and honoured only on a connection
 that declares hooks and the infrastructureSafety capability: on a CloudFormation
 template write or a cdk deploy/destroy, Kiro's service derives safety properties
 and reports a would-violate as a safety status. Monitor mode never blocks.`,
-	"setting.steeringSupervisor": `SENT as a compiled {"enabled": false} on both session doors: a veto.
-vGt reads it with the experiment as fallback (N??K), so an explicit false holds
-against AB_STEERING_SUPERVISOR. In 2.27.x the supervisor runs in shadow mode only
-(buildPreToolUseGate logs "shadow: non-blocking, verdict not applied"): one fast
-model call per allow-listed tool call whose verdict is discarded, so enabling it
-buys cost and nothing else. Revisit when verdicts are applied.`,
+	"setting.steeringSupervisor": `WITHHELD, matching kiro-cli (a hidden setting no client sends), so the
+AB_STEERING_SUPERVISOR experiment decides: session/new resolves Y??experiment, and
+session/load resolves the setting, then the record's steeringSupervisorEnabled,
+then the experiment. A chat created while marotte sent {"enabled": false} keeps
+that persisted false on resume; a client cannot clear a record field by omission.
+In 3.2.0 the supervisor is shadow-only (buildPreToolUseGate: "verdict not applied").`,
 	"setting._providerPowers": `SENT as a compiled {"enabled": false} on both session doors, matching
 KAS's own default (km("_providerPowers","off",{hidden:true})). On, KAS drops
 installed Powers' MCP tools from the direct list and serves them only through
@@ -794,8 +794,8 @@ which qualifies same-named skills with their layer or owner.`,
 Continues a turn stalled after a tool result (default on).`,
 	"env.KIRO_FEATURE_STEERING_SUPERVISOR_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
-The steering supervisor; the steeringSupervisor settings row vetoes it on the
-session door, which the client value does without pinning the env arm.`,
+The steering supervisor's experiment arm; the steeringSupervisor settings row is
+withheld too, so this arm decides for every new chat.`,
 	"env.KIRO_FEATURE_STREAM_IDLE_WATCHDOG_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 The 60s/300s stream-idle watchdog and its _kiro/system/notify text (default on).`,

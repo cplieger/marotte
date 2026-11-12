@@ -310,8 +310,7 @@ var table = []decl{
 		key:      "steeringSupervisor",
 		door:     doorSession,
 		resolver: resolverSetting,
-		value:    enabledIf(false),
-		send:     true,
+		send:     false,
 	},
 	{
 		key:      "_providerPowers",

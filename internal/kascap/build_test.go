@@ -450,6 +450,24 @@ func TestSessionDoor_MessagingFollowsTheSetting(t *testing.T) {
 	}
 }
 
+// TestSessionDoor_WithholdsSteeringSupervisor pins that no session carries
+// steeringSupervisor, so kiro-cli resolves it from the AB_STEERING_SUPERVISOR
+// experiment (or a resumed chat's persisted record), as it does for its own TUI.
+func TestSessionDoor_WithholdsSteeringSupervisor(t *testing.T) {
+	for _, tc := range sessionMatrix {
+		settings, _ := SessionMeta(&tc.spawn)[settingsKey].(map[string]any)
+		if got, present := settings["steeringSupervisor"]; present {
+			t.Errorf("%s: SessionMeta carries steeringSupervisor = %#v; it is withheld so kiro-cli's value applies", tc.name, got)
+		}
+	}
+	for _, tc := range engineMatrix {
+		connection, _ := Capabilities(&tc.spawn)[settingsKey].(map[string]any)
+		if _, present := connection["steeringSupervisor"]; present {
+			t.Errorf("%s: Capabilities carries steeringSupervisor", tc.name)
+		}
+	}
+}
+
 // TestSessionDoor_BackgroundExecutionAndShellTypeAreUngated pins the two rows
 // every session carries whatever the spawn: the control_process class as an
 // {enabled} object (a bare true resolves undefined) and the shell type.
