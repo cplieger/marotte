@@ -34,7 +34,7 @@ func (in *inbound) respondFSWrite(ctx context.Context, chatID marotte.ChatID, or
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
-	target, err := in.lifetime.confine(ctx, p.Path, fsWrite)
+	target, err := in.confineFor(ctx, chatID, p.SessionID, p.Path, fsWrite)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
@@ -77,8 +77,9 @@ func (in *inbound) respondFSWrite(ctx context.Context, chatID marotte.ChatID, or
 }
 
 type fsWriteParams struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
+	Path      string            `json:"path"`
+	Content   string            `json:"content"`
+	SessionID marotte.SessionID `json:"sessionId"`
 }
 
 func parseFSWriteParams(msg *marotte.RPCResponse) (fsWriteParams, error) {

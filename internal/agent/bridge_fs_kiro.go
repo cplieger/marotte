@@ -1,6 +1,6 @@
 // KAS's own filesystem verbs `_kiro/fs/{stat,read_directory,delete}`, gated on
 // `clientCapabilities.fs._meta.kiro.<name>`. Undeclared, KAS serves them itself, so
-// declaring one confines an existing capability through lifetime.confine: stat and
+// declaring one confines an existing capability through confineFor: stat and
 // read_directory as reads, delete as a write. No staging gate: KAS restores a rejected
 // delete through `fs/write_text_file`. Delete removes only what fs/read_text_file could have
 // served KAS's undo snapshot (undoCopyRefusal). Read and write stay undeclared so
@@ -94,21 +94,13 @@ func kiroFSPath(msg *marotte.RPCResponse) (kiroFSParams, error) {
 	return p, nil
 }
 
-func (in *inbound) kiroFSReadablePath(ctx context.Context, msg *marotte.RPCResponse) (fsTarget, error) {
-	p, err := kiroFSPath(msg)
-	if err != nil {
-		return fsTarget{}, err
-	}
-	return in.lifetime.confine(ctx, p.Path, fsRead)
-}
-
 func (in *inbound) respondKiroFSStat(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
 	p, err := kiroFSPath(msg)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
-	target, err := in.confineRead(ctx, p.SessionID, p.Path)
+	target, err := in.confineFor(ctx, chatID, p.SessionID, p.Path, fsRead)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
@@ -129,7 +121,12 @@ func (in *inbound) respondKiroFSStat(ctx context.Context, chatID marotte.ChatID,
 
 // A missing directory answers an empty list, matching KAS's NodeFileSystem.
 func (in *inbound) respondKiroFSReadDirectory(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
-	target, err := in.kiroFSReadablePath(ctx, msg)
+	p, err := kiroFSPath(msg)
+	if err != nil {
+		in.respondFSError(ctx, chatID, origin, msg, err)
+		return
+	}
+	target, err := in.confineFor(ctx, chatID, p.SessionID, p.Path, fsRead)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
@@ -186,7 +183,7 @@ func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID marotte.ChatI
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
-	target, err := in.lifetime.confine(ctx, p.Path, fsUnlink)
+	target, err := in.confineFor(ctx, chatID, p.SessionID, p.Path, fsUnlink)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return

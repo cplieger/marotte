@@ -2,8 +2,8 @@ package marotte
 
 import "testing"
 
-// TestChat_AdoptModeHoldsABotOnItsRole pins design §7.1 "Holding the mode": a Bot's record names only the role, a
-// regular chat's never does, and the answer is whether the record changed.
+// TestChat_AdoptModeHoldsABotOnItsRole pins that a Bot's record names only the role, a regular chat's never does, and
+// the answer is whether the record changed.
 func TestChat_AdoptModeHoldsABotOnItsRole(t *testing.T) {
 	cases := []struct {
 		name      string

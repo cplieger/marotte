@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -16,27 +15,23 @@ import (
 // editSnapshotName is the file names KAS 2.37.1 writes for a workflowPrompt edit (its workflowWriteEditSnapshot).
 var editSnapshotName = regexp.MustCompile(`^(edit-snapshot-r\d+\.md|edit-replaced-r\d+\.json)$`)
 
-// confineRead is confine for a read by sessionID, which also admits the edit snapshot files in the directory of the
-// run sessionID is a step of. KAS names that path to the run's creator step and reads it through the client's fs.
-func (in *inbound) confineRead(ctx context.Context, sessionID marotte.SessionID, p string) (fsTarget, error) {
-	target, err := in.lifetime.confine(ctx, p, fsRead)
-	if err == nil {
-		return target, nil
-	}
+// confineSnapshot admits a read by sessionID of an edit snapshot file in the directory of the run sessionID is a step
+// of. KAS names that path to the run's creator step and reads it through the client's fs.
+func (in *inbound) confineSnapshot(sessionID marotte.SessionID, p string) (fsTarget, bool) {
 	home, dir, ok := in.snapshotDir(sessionID, p)
 	if !ok {
-		return fsTarget{}, err
+		return fsTarget{}, false
 	}
-	root, openErr := os.OpenRoot(dir)
-	if openErr != nil {
-		return fsTarget{}, err
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return fsTarget{}, false
 	}
 	name := filepath.Base(p)
 	if !linkFreeBelow(root, home, dir) || !regularOrAbsent(root, name) {
 		_ = root.Close()
-		return fsTarget{}, err
+		return fsTarget{}, false
 	}
-	return fsTarget{root: root, rel: name, opened: true}, nil
+	return fsTarget{root: root, rel: name, opened: true}, true
 }
 
 // linkFreeBelow reports that root, opened at dir, is the directory dir names with no symlink between home and it.

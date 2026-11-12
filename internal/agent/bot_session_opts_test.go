@@ -11,12 +11,12 @@ import (
 
 // botDoorOpts opens chat c1, written by write, through the chat door on a fresh or a resumed session, and returns
 // what the door sent. HOME is a test directory, so workspace.KiroHome() is under it.
-func botDoorOpts(t *testing.T, resumed bool, write func(c *marotte.Chat)) (*marotte.SessionOpts, string) {
+func botDoorOpts(t *testing.T, resumed bool, write func(c *marotte.Chat), opts ...Option) (*marotte.SessionOpts, string) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	cs := newTestChatStore()
-	h := newRuntimeOn(context.Background(), "/tmp/work", fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs)
+	h := newRuntimeOn(context.Background(), "/tmp/work", fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, opts...)
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	h.SetChatSteering(func(context.Context) []marotte.ClientSteeringDoc { return []marotte.ClientSteeringDoc{chatDoc} })
@@ -36,11 +36,11 @@ func botDoorOpts(t *testing.T, resumed bool, write func(c *marotte.Chat)) (*maro
 	if !ok {
 		t.Fatalf("the chat's bridge is %T, want the fake", sb.session())
 	}
-	opts := br.lastSessionOpts()
-	if opts == nil {
+	sent := br.lastSessionOpts()
+	if sent == nil {
 		t.Fatal("the session was never opened")
 	}
-	return opts, filepath.Join(home, ".kiro")
+	return sent, filepath.Join(home, ".kiro")
 }
 
 var chatDoc = marotte.ClientSteeringDoc{Name: "marotte", Inclusion: "always", Content: "chat steering"}
@@ -139,6 +139,36 @@ func TestChatSessionOpts_ARoleRecordThatIsNoStartedBotAsksForTheDefaultMode(t *t
 				}
 				if opts.Mode != marotte.DefaultModeID {
 					t.Errorf("Mode = %q, want %q", opts.Mode, marotte.DefaultModeID)
+				}
+			})
+		}
+	}
+}
+
+// TestChatSessionOpts_AStartedBotWithMemoryListsItsDirectory pins that the door lists the Bot's directory in the
+// session's additionalDirectories after the granted ones, so KAS treats the memory file as in a root, and no other
+// chat's door lists it.
+func TestChatSessionOpts_AStartedBotWithMemoryListsItsDirectory(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		bot     *marotte.Bot
+		withDir bool
+	}{
+		{"a started Bot with memory on", &marotte.Bot{Goal: "Answer the weekly questions.", StartedAt: 1, Memory: true}, true},
+		{"a started Bot with memory off", &marotte.Bot{Goal: "Answer the weekly questions.", StartedAt: 1}, false},
+		{"a draft with memory on", &marotte.Bot{Goal: "Not started yet.", Memory: true}, false},
+		{"a regular chat", nil, false},
+	} {
+		for _, door := range doors {
+			t.Run(tc.name+" on "+door.name, func(t *testing.T) {
+				f := newAgentRootsFixture(t)
+				opts, kiroHome := botDoorOpts(t, door.resumed, func(c *marotte.Chat) { c.Bot = tc.bot }, WithConfigDir(f.config))
+				want := []string{f.extra}
+				if tc.withDir {
+					want = append(want, filepath.Join(kiroHome, "bots", "c1"))
+				}
+				if !slices.Equal(opts.AdditionalDirectories, want) {
+					t.Errorf("AdditionalDirectories = %v, want %v", opts.AdditionalDirectories, want)
 				}
 			})
 		}
