@@ -1131,6 +1131,17 @@ export function rereadHeldRuns(): void {
   }
 }
 
+/** Read a run again when a read of it is held or out, coalesced as `invalidateRun`: what changed
+ *  since its held revision, to which the server adds every open step's row, else the whole run. A
+ *  run nothing holds or reads is left to its reader's first read. */
+export function rereadRun(workflowID: string): void {
+  if (runRevHeld(workflowID)) {
+    reviseRun(workflowID);
+  } else if (inFlight.has(workflowID) || cells.get(workflowID)?.peek() !== undefined) {
+    invalidateRun(workflowID);
+  }
+}
+
 /** The URL of a read in `shape`; a tree read with a `since` revision asks only what changed. */
 function readURL(workflowID: string, shape: RunShape, since: number | undefined): string {
   const url = `/api/runs/${encodeURIComponent(workflowID)}`;

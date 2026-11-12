@@ -459,6 +459,86 @@ describe("a run tab's reads wait for the stream to deliver its run", () => {
     ]);
   });
 
+  /** Answer each read of `wf`'s run with the next promise the case lands, one per read made. */
+  function heldRunReads(wf: string): { urls: string[]; land: (data: unknown) => void } {
+    const urls: string[] = [];
+    const waiting: ((v: unknown) => void)[] = [];
+    vi.mocked(apiGetOrError).mockImplementation((u: string) => {
+      if (u.split("?")[0] !== `/api/runs/${wf}`) {
+        return Promise.resolve({ ok: true, status: 200, data: runRead(wf), error: "" }) as never;
+      }
+      urls.push(u);
+      return new Promise((resolve) => {
+        waiting.push(resolve);
+      }) as never;
+    });
+    return {
+      urls,
+      land: (data) => {
+        waiting.shift()?.({ ok: true, status: 200, data, error: "" });
+      },
+    };
+  }
+
+  /** `readWithOpenEntry`'s row one delta on: the delta a scope not yet delivering the run lost. */
+  function readAfterLostDelta(wf: string): unknown {
+    const read = readWithOpenEntry(wf) as {
+      step_starts: Record<string, { open: { text: string; n: number } }>;
+    };
+    const open = read.step_starts[`${wf}:a`]?.open;
+    if (open !== undefined) {
+      open.text += " half\nthird";
+      open.n = 4;
+    }
+    return read;
+  }
+
+  it("reads a run answered before its ask again, so a sibling step's line follows its deltas", async () => {
+    const wf = "wf_scope_tail_before";
+    const reads = heldRunReads(wf);
+    showOnlyView(runView);
+    showRun(wf);
+    refreshRun(wf);
+    await flush();
+    reads.land(readWithOpenEntry(wf));
+    await flush();
+    expect(dockTail("a")).toBe("second");
+    expect(reads.urls).toHaveLength(1);
+
+    // Delta 4 is published before the scope delivers the run, so it never arrives.
+    asks[0]?.answer("covered");
+    await flush();
+    expect(reads.urls).toHaveLength(2);
+    delta(wf, 5, " line");
+    await flush();
+    reads.land(readAfterLostDelta(wf));
+    await flush();
+    expect(dockTail("a")).toBe("third line");
+
+    delta(wf, 6, "s");
+    await flush();
+    expect(dockTail("a")).toBe("third lines");
+  });
+
+  it("reads a run whose read is out when its ask is answered again, after that read lands", async () => {
+    const wf = "wf_scope_tail_out";
+    const reads = heldRunReads(wf);
+    showOnlyView(runView);
+    showRun(wf);
+    refreshRun(wf);
+    await flush();
+    asks[0]?.answer("covered");
+    await flush();
+    delta(wf, 5, " line");
+    reads.land(readWithOpenEntry(wf));
+    await flush();
+    expect(reads.urls).toHaveLength(2);
+
+    reads.land(readAfterLostDelta(wf));
+    await flush();
+    expect(dockTail("a")).toBe("third line");
+  });
+
   it("an ask the link lost reads after the next open asks again", async () => {
     const wf = "wf_scope_owed";
     vi.mocked(apiGetOrError).mockResolvedValue({

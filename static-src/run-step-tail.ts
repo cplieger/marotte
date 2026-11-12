@@ -104,7 +104,8 @@ interface TailCell {
   live: boolean;
 }
 
-/** Root-lane deltas of an entry a turn's cell has not seen open, by `n`, until a read's row opens it. */
+/** Root-lane deltas of an entry a turn's cell has not seen open, or past a gap in the one it holds,
+ *  by `n`, until a read's row reaches them. */
 interface EarlyDeltas {
   readonly id: string;
   readonly deltas: Map<number, string>;
@@ -162,8 +163,8 @@ export function noteStepTurn(workflowID: string, turnID: string, path: string): 
 }
 
 /** Seed each in-flight step's cell from a run read's rows, unless a frame has moved it since the
- *  run entered scope. A row's streaming entry opens a cell that holds none, and the deltas that
- *  arrived before the read landed follow it. */
+ *  run entered scope. A row's streaming entry opens a cell that holds none, or moves one holding
+ *  that entry at an earlier delta, and the deltas that arrived past the row follow it. */
 export function seedStepTails(
   workflowID: string,
   starts: Iterable<readonly [string, RunStepStart]>,
@@ -176,18 +177,16 @@ export function seedStepTails(
     t.paths.set(row.turn, path);
     const c = cellAt(t, path);
     const open = row.open?.turn === row.turn && (row.open.lane ?? "") === "" ? row.open : undefined;
-    if (!c.live) {
+    const held = open === undefined || c.open?.id !== open.id ? undefined : c.open;
+    const ahead =
+      open !== undefined &&
+      (held === undefined ? !c.live || c.open === undefined : open.n > held.n);
+    if (held === undefined ? !c.live : ahead) {
       c.line.value = (open === undefined ? "" : lastLine(open.text)) || (row.tail ?? "");
     }
-    if (open !== undefined && (!c.live || c.open === undefined)) {
+    if (open !== undefined && ahead) {
       c.open = { id: open.id, n: open.n, text: open.text };
-      const early = t.early.get(row.turn);
-      if (early?.id === open.id) {
-        t.early.delete(row.turn);
-        for (let n = open.n + 1; early.deltas.has(n); n++) {
-          applyDelta(c, n, early.deltas.get(n) ?? "");
-        }
-      }
+      followEarly(t, row.turn, c);
     }
   }
 }
@@ -204,9 +203,9 @@ export function tailOpened(workflowID: string, open: OpenEntry): void {
   moveLine(c, open.text, 0);
 }
 
-/** A delta on a root-lane entry of such a turn, or of a turn no read has named yet. One for an
- *  entry the cell does not hold waits for a read's row to open it; one that does not follow the
- *  held entry is dropped, and the line catches up at the next entry or read. */
+/** A delta on a root-lane entry of such a turn, or of a turn no read has named yet. One past a gap
+ *  in the held entry, or for an entry the cell does not hold, waits for a read's row to reach it;
+ *  one the cell holds already is dropped. */
 export function tailDelta(
   workflowID: string,
   turnID: string,
@@ -219,13 +218,34 @@ export function tailDelta(
     return;
   }
   const c = cellOf(workflowID, turnID);
-  if (c?.open?.id === entryID) {
-    if (n === c.open.n + 1) {
-      applyDelta(c, n, delta);
-    }
+  if (c?.open?.id === entryID && n <= c.open.n) {
     return;
   }
-  holdEarly(runTails(workflowID), turnID, entryID, n, delta);
+  const t = runTails(workflowID);
+  holdEarly(t, turnID, entryID, n, delta);
+  if (c?.open?.id === entryID) {
+    followEarly(t, turnID, c);
+  }
+}
+
+/** Apply the held deltas that follow the cell's open entry, and drop those it already holds. */
+function followEarly(t: RunTails, turnID: string, c: TailCell): void {
+  const early = t.early.get(turnID);
+  if (c.open === undefined || early?.id !== c.open.id) {
+    return;
+  }
+  for (const n of early.deltas.keys()) {
+    if (n <= c.open.n) {
+      early.deltas.delete(n);
+    }
+  }
+  for (let n = c.open.n + 1; early.deltas.has(n); n++) {
+    applyDelta(c, n, early.deltas.get(n) ?? "");
+    early.deltas.delete(n);
+  }
+  if (early.deltas.size === 0) {
+    t.early.delete(turnID);
+  }
 }
 
 function holdEarly(t: RunTails, turnID: string, entryID: string, n: number, delta: string): void {
@@ -264,6 +284,10 @@ export function tailSealed(workflowID: string, turnID: string, entryID: string):
   if (c?.open?.id === entryID) {
     c.open = undefined;
     c.live = true;
+    const t = tails.get(workflowID);
+    if (t?.early.get(turnID)?.id === entryID) {
+      t.early.delete(turnID);
+    }
   }
 }
 

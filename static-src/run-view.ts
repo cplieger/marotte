@@ -52,6 +52,7 @@ import {
   noteRunChat,
   readRunUnlessOut,
   registerRunStateDemand,
+  rereadRun,
   runStateAs,
   runHoldsEveryPass,
   runChatID,
@@ -105,8 +106,9 @@ registerRunStateDemand(
 
 /** Tell the page's content scope which run and step this view draws. A run leaving it stops
  *  receiving its step content, so its stamps and tails go stale and are released; a run entering
- *  it catches each turn its log holds open up from the held seq, one range read each, once the
- *  stream delivers the run's frames. */
+ *  it, once the stream delivers the run's frames, catches each turn its log holds open up from the
+ *  held seq, one range read each, and is read again: a read answered or out while the scope was
+ *  asked may hold step rows older than the first frame delivered. */
 function publishScope(): void {
   const run = runViewShown.peek() ? shownRun : "";
   const before = setRunContentScope(run, shownStep.peek());
@@ -122,6 +124,7 @@ function publishScope(): void {
       if (!ready) {
         return;
       }
+      rereadRun(run);
       for (const turnID of runOpenTurnIDs(run)) {
         requestRunTurnRange(run, turnID, runTurnHeldSeq(run, turnID));
       }
