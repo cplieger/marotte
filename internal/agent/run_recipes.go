@@ -60,6 +60,13 @@ func (c *recipeCatalog) invalidate() {
 	c.held, c.flight = nil, nil
 }
 
+// heldCatalog is the held catalog, nil when there is none.
+func (c *recipeCatalog) heldCatalog() []marotte.Recipe {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.held
+}
+
 // live joins or starts the one listing, never answering the hold. list runs on lt's context, never on a caller's,
 // so a caller walking away does not fail the others; each caller waits only as long as its ctx.
 func (c *recipeCatalog) live(
