@@ -144,19 +144,27 @@ describe("renderDiffPane syntax highlighting", () => {
       unified: true,
       lang: "internal/git/exec.go",
     });
-    expect(textsOf(pane, ".hl-keyword")).toContain("func");
+    expect(textsOf(pane, '[data-token="keyword"]')).toContain("func");
   });
 
   it("highlights BOTH columns of the two-pane shape", () => {
     const pane = renderDiffPane(MODIFIED, { lang: "main.go" });
-    expect(pane.querySelectorAll(".diff-col-old .hl-string").length).toBeGreaterThan(0);
-    expect(pane.querySelectorAll(".diff-col-new .hl-string").length).toBeGreaterThan(0);
+    expect(pane.querySelectorAll('.diff-col-old [data-token="string"]').length).toBeGreaterThan(0);
+    expect(pane.querySelectorAll('.diff-col-new [data-token="string"]').length).toBeGreaterThan(0);
   });
 
   it("falls back to plain text for a language it does not know", () => {
     const pane = renderDiffPane([add(1, "func main() {")], { unified: true, lang: "notes.zzz" });
-    expect(pane.querySelectorAll(".hl-keyword")).toHaveLength(0);
+    expect(pane.querySelectorAll("[data-token]")).toHaveLength(0);
     expect(textsOf(pane, ".diff-line-text")).toEqual(["func main() {"]);
+  });
+
+  it("keeps a word mark and its token's colour on the same characters", () => {
+    // The change swaps one keyword for another, so each mark and its colour cover the same word.
+    const pane = renderDiffPane(lineDiff("if x {\n", "for x {\n"), { unified: true, lang: "go" });
+    const word = pane.querySelector<HTMLElement>(".diff-word-add");
+    expect(word?.textContent).toBe("for");
+    expect(word?.getAttribute("data-token")).toBe("keyword");
   });
 
   it("gives every row a .diff-line-text, both shapes", () => {

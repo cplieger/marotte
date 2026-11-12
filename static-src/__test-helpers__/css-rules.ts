@@ -10,13 +10,20 @@ const sheets = import.meta.glob<string>("../css/*.css", {
   eager: true,
 });
 
-// The manifest also pulls the legacy-ui base in from outside css/, and
-// `import.meta.glob` needs a static pattern per directory.
-const legacy = import.meta.glob<string>("../legacy-ui/*.css", {
-  query: "?raw",
-  import: "default",
-  eager: true,
-});
+// The manifest also pulls the legacy-ui base and @cplieger/ui's system sheet in
+// from outside css/, and `import.meta.glob` needs a static pattern per directory.
+const outside = {
+  ...import.meta.glob<string>("../legacy-ui/*.css", {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  }),
+  ...import.meta.glob<string>("../node_modules/@cplieger/ui/css/*.css", {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  }),
+};
 
 export function loadCSS(name: string): string {
   const hit = sheets[`../css/${name}`];
@@ -26,27 +33,33 @@ export function loadCSS(name: string): string {
   return hit;
 }
 
-/** Every stylesheet `css/MANIFEST` declares, in declared order. Read rather than restated, so a
- *  sheet added to the bundle joins a sweep with no test edit. */
-export function manifestSheets(): { name: string; css: string }[] {
+/** Every stylesheet `css/MANIFEST` declares, in declared order, the library's included. */
+function shippedSheets(): { name: string; css: string }[] {
   const names = manifest
     .split("\n")
     .map((l) => l.trim())
     .filter((l) => l !== "" && !l.startsWith("#"));
-  // An entry is relative to `css/`, so one that climbs out of it (the
-  // legacy-ui base) resolves against static-src/.
+  // An entry is relative to `css/`, so one that climbs out of it resolves
+  // against static-src/.
   const text = (entry: string): string | undefined =>
-    entry.startsWith("../") ? legacy[`../${entry.slice(3)}`] : sheets[`../css/${entry}`];
+    entry.startsWith("../") ? outside[`../${entry.slice(3)}`] : sheets[`../css/${entry}`];
 
   const missing = names.filter((n) => text(n) === undefined);
   expect(missing, "every MANIFEST entry resolves to a stylesheet").toEqual([]);
   return names.map((n) => ({ name: n, css: text(n) ?? "" }));
 }
 
+/** The stylesheets marotte authors, in `css/MANIFEST` order: what an authoring-policy sweep
+ *  reads. Read rather than restated, so a sheet added to the bundle joins a sweep with no test
+ *  edit. A library's sheet is left out, since its own repo gates it. */
+export function manifestSheets(): { name: string; css: string }[] {
+  return shippedSheets().filter((s) => !s.name.startsWith("../node_modules/"));
+}
+
 /** The shipped stylesheet in `css/MANIFEST` order, as `cmd/bundle` concatenates it: that order
  *  decides this app's equal-specificity ties. */
 function appCSS(): string {
-  return manifestSheets()
+  return shippedSheets()
     .map((s) => s.css)
     .join("\n");
 }
@@ -58,6 +71,27 @@ export function mountAppCSS(): HTMLStyleElement {
   style.textContent = appCSS();
   document.head.appendChild(style);
   return style;
+}
+
+/** A selector list's members, split at its top-level commas only, so `:is(a, b)` stays one
+ *  member where `split(",")` would cut it into two that no element matches. */
+export function selectorMembers(list: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < list.length; i++) {
+    const ch = list[i];
+    if (ch === "(" || ch === "[") {
+      depth++;
+    } else if (ch === ")" || ch === "]") {
+      depth--;
+    } else if (ch === "," && depth === 0) {
+      out.push(list.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  out.push(list.slice(start).trim());
+  return out;
 }
 
 /** Every style rule, at-rule bodies included, as (selector, body) pairs; a body includes its

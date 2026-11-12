@@ -1,23 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extToLang, extToIconKey, KNOWN_EXTENSIONS, FILE_EXTS } from "./file-extensions.js";
-
-describe("extToLang", () => {
-  const langCases = Object.entries(KNOWN_EXTENSIONS)
-    .filter(([, meta]) => meta.lang)
-    .map(([ext, meta]) => ({ ext, lang: meta.lang! }));
-
-  it.each(langCases)("$ext → $lang", ({ ext, lang }) => {
-    expect(extToLang(ext)).toBe(lang);
-  });
-
-  it("returns empty string for unknown extension", () => {
-    expect(extToLang("zzz_unknown")).toBe("");
-  });
-
-  it("returns empty string for empty string", () => {
-    expect(extToLang("")).toBe("");
-  });
-});
+import { badgeForExt, extToIconKey, KNOWN_EXTENSIONS, FILE_EXTS } from "./file-extensions.js";
 
 describe("extToIconKey", () => {
   const iconCases = Object.entries(KNOWN_EXTENSIONS)
@@ -34,6 +16,19 @@ describe("extToIconKey", () => {
 
   it("returns empty string for empty string", () => {
     expect(extToIconKey("")).toBe("");
+  });
+
+  // A file named `x.constructor` must not read Object.prototype's member as its icon.
+  it("returns empty string for a name the object inherits", () => {
+    expect(extToIconKey("constructor")).toBe("");
+    expect(extToIconKey("toString")).toBe("");
+  });
+});
+
+describe("badgeForExt", () => {
+  it("returns empty string for a name the object inherits", () => {
+    expect(badgeForExt("constructor")).toBe("");
+    expect(badgeForExt("__proto__")).toBe("");
   });
 });
 

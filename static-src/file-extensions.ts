@@ -1,9 +1,7 @@
-// The single source of recognized file extensions, read by icons.ts, linkify.ts and highlight.ts.
+// The single source of recognized file extensions, read by icons.ts and linkify.ts.
 
 /** Per-extension metadata. All fields optional — absence means "not applicable". */
 interface ExtMeta {
-  /** Internal language key for syntax highlighting (e.g. "go", "ts", "py"). */
-  lang?: string;
   /** Icon key into FILE_ICONS (e.g. "go", "ts", "config"). */
   iconKey?: string;
   /** Emoji badge for attachment pills (e.g. "📄", "🖼️"). */
@@ -12,51 +10,51 @@ interface ExtMeta {
 
 /** Every recognized extension appears here exactly once. */
 export const KNOWN_EXTENSIONS: Readonly<Record<string, ExtMeta>> = {
-  ts: { lang: "ts", iconKey: "ts" },
-  tsx: { lang: "ts", iconKey: "ts" },
-  js: { lang: "js", iconKey: "js" },
-  jsx: { lang: "js", iconKey: "js" },
-  mjs: { lang: "js", iconKey: "js" },
-  cjs: { lang: "js", iconKey: "js" },
-  go: { lang: "go", iconKey: "go" },
-  mod: { lang: "go", iconKey: "go" },
+  ts: { iconKey: "ts" },
+  tsx: { iconKey: "ts" },
+  js: { iconKey: "js" },
+  jsx: { iconKey: "js" },
+  mjs: { iconKey: "js" },
+  cjs: { iconKey: "js" },
+  go: { iconKey: "go" },
+  mod: { iconKey: "go" },
   sum: { iconKey: "go" },
-  py: { lang: "py", iconKey: "py" },
-  rs: { lang: "rs", iconKey: "rs" },
-  rb: { lang: "rb", iconKey: "ruby" },
-  php: { lang: "php", iconKey: "php" },
-  java: { lang: "java", iconKey: "java" },
+  py: { iconKey: "py" },
+  rs: { iconKey: "rs" },
+  rb: { iconKey: "ruby" },
+  php: { iconKey: "php" },
+  java: { iconKey: "java" },
   kt: { iconKey: "java" },
-  c: { lang: "c", iconKey: "c" },
-  h: { lang: "c", iconKey: "c" },
-  cpp: { lang: "c", iconKey: "c" },
-  cc: { lang: "c", iconKey: "c" },
-  hpp: { lang: "c", iconKey: "c" },
+  c: { iconKey: "c" },
+  h: { iconKey: "c" },
+  cpp: { iconKey: "c" },
+  cc: { iconKey: "c" },
+  hpp: { iconKey: "c" },
   cs: { iconKey: "c" },
-  sh: { lang: "sh", iconKey: "sh" },
-  bash: { lang: "sh", iconKey: "sh" },
-  zsh: { lang: "sh", iconKey: "sh" },
-  json: { lang: "json", iconKey: "json" },
-  yaml: { lang: "yaml", iconKey: "yaml" },
-  yml: { lang: "yaml", iconKey: "yaml" },
-  toml: { lang: "toml", iconKey: "yaml" },
-  xml: { lang: "xml", iconKey: "xml" },
+  sh: { iconKey: "sh" },
+  bash: { iconKey: "sh" },
+  zsh: { iconKey: "sh" },
+  json: { iconKey: "json" },
+  yaml: { iconKey: "yaml" },
+  yml: { iconKey: "yaml" },
+  toml: { iconKey: "yaml" },
+  xml: { iconKey: "xml" },
   svg: { iconKey: "xml" },
   ini: { iconKey: "config" },
   env: { iconKey: "lock" },
   conf: { iconKey: "config" },
   cfg: { iconKey: "config" },
-  md: { lang: "md", iconKey: "md" },
-  mdx: { lang: "md", iconKey: "md" },
-  html: { lang: "html", iconKey: "html" },
-  htm: { lang: "html", iconKey: "html" },
-  css: { lang: "css", iconKey: "css" },
+  md: { iconKey: "md" },
+  mdx: { iconKey: "md" },
+  html: { iconKey: "html" },
+  htm: { iconKey: "html" },
+  css: { iconKey: "css" },
   scss: { iconKey: "sass" },
   sass: { iconKey: "sass" },
   less: { iconKey: "less" },
   vue: { iconKey: "vue" },
   svelte: { iconKey: "html" },
-  sql: { lang: "sql", iconKey: "config" },
+  sql: { iconKey: "config" },
   graphql: {},
   proto: {},
   txt: { iconKey: "file" },
@@ -71,22 +69,16 @@ export const KNOWN_EXTENSIONS: Readonly<Record<string, ExtMeta>> = {
   webp: { iconKey: "img" },
   ico: { iconKey: "img" },
   bmp: { iconKey: "img" },
-  // A pseudo-extension for fenced-code detection.
-  dockerfile: { lang: "docker" },
+  dockerfile: {},
   lua: { iconKey: "lua" },
 };
 
 /** Flat array of all recognized extensions (for regex construction). */
 export const FILE_EXTS: readonly string[] = Object.keys(KNOWN_EXTENSIONS);
 
-/** Look up the language key for an extension. Returns "" if unknown. */
-export function extToLang(ext: string): string {
-  return KNOWN_EXTENSIONS[ext]?.lang ?? "";
-}
-
 /** Look up the icon key for an extension. Returns "" if unknown. */
 export function extToIconKey(ext: string): string {
-  return KNOWN_EXTENSIONS[ext]?.iconKey ?? "";
+  return Object.hasOwn(KNOWN_EXTENSIONS, ext) ? (KNOWN_EXTENSIONS[ext]?.iconKey ?? "") : "";
 }
 
 /** Badge-only extensions (binary formats outside KNOWN_EXTENSIONS); `badgeForExt` checks both registries. */
@@ -117,7 +109,8 @@ const BADGE_ONLY: Readonly<Record<string, string>> = {
 /** Look up the emoji badge for an extension (without leading dot).
  *  Returns "" if no badge is defined. */
 export function badgeForExt(ext: string): string {
-  return KNOWN_EXTENSIONS[ext]?.badge ?? BADGE_ONLY[ext] ?? "";
+  const known = Object.hasOwn(KNOWN_EXTENSIONS, ext) ? KNOWN_EXTENSIONS[ext]?.badge : undefined;
+  return known ?? (Object.hasOwn(BADGE_ONLY, ext) ? BADGE_ONLY[ext] : undefined) ?? "";
 }
 
 /**

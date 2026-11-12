@@ -20,7 +20,7 @@ describe("when the diagram's renderer cannot be loaded", () => {
     host = document.createElement("div");
     document.body.appendChild(host);
     renderMarkdownInto(host, "```mermaid\nflowchart TD\n  A --> B\n```\n");
-    const wrap = host.querySelector<HTMLElement>(".code-wrap");
+    const wrap = host.querySelector<HTMLElement>(".cp-code");
     expect(wrap?.querySelector(".mermaid-skeleton")).not.toBeNull();
     await vi.waitFor(() => {
       expect(wrap?.getAttribute("data-mermaid")).toBe("failed");

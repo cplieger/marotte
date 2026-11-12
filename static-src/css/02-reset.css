@@ -36,8 +36,7 @@
   }
 
   /* Same "no UA fallthrough" rule for the other UA-colored primitives that
-     reach the DOM unclassed. The transcript's markdown `---` renders a bare
-     <hr> (smd-renderer maps RULE to hr with no class); UA <mark> is yellow
+     reach the DOM unclassed: a bare <hr>; UA <mark> is yellow
      with BLACK ink, unreadable if any future mark misses its class. */
   hr {
     border: none;

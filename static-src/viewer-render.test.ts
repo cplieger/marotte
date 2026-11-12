@@ -5,7 +5,7 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { mountEditorView } from "./__test-helpers__/editor-dom.js";
 import { EditSurface, MAX_SCROLL_PX, TextViewer } from "./viewer-render.js";
 import { ROW_MAX, WholeRows } from "./viewer-rows.js";
-import { highlightRuns } from "./highlight.js";
+import { runs } from "@cplieger/ui/highlight";
 
 /** The logical line of the viewer's top row. */
 function topLine(v: TextViewer): number {
@@ -51,7 +51,7 @@ function readState(text: string, path = "/w/a.txt"): WholeRows {
   gutterEl.classList.add("hidden");
   body.classList.remove("is-editing");
   const rows = new WholeRows(text);
-  viewer.show({ rows, runs: highlightRuns(text, path), agentLines: new Set() });
+  viewer.show({ rows, runs: runs(text, path), agentLines: new Set() });
   return rows;
 }
 
@@ -296,12 +296,20 @@ describe("the read state", () => {
     expect(root.querySelector('.viewer-row[data-row="5"]')).toBe(row5);
   });
 
-  it("carries a block comment's class on every row it spans", () => {
+  it("carries a block comment's token on every row it spans", () => {
     readState("a\n/* one\ntwo\nthree */\nb", "/w/a.ts");
-    const classes = seated()
+    const kinds = seated()
       .slice(1, 4)
-      .map((r) => r.querySelector(".viewer-text > span")?.className);
-    expect(classes).toEqual(["hl-comment", "hl-comment", "hl-comment"]);
+      .map((r) => r.querySelector(".viewer-text > span")?.getAttribute("data-token"));
+    expect(kinds).toEqual(["comment", "comment", "comment"]);
+  });
+
+  it("colours a keyword apart from the text around it", () => {
+    readState("const alpha = 1;", "/w/a.ts");
+    const text = q('.viewer-row[data-row="0"] .viewer-text');
+    const keyword = text.querySelector('[data-token="keyword"]');
+    expect(keyword?.textContent).toBe("const");
+    expect(getComputedStyle(keyword as Element).color).not.toBe(getComputedStyle(text).color);
   });
 
   it("maps a selection endpoint in a seated row to its text offset", () => {
@@ -339,8 +347,10 @@ describe("the read state", () => {
     it("survives the highlight arriving, direction included", () => {
       const before = selectAcross();
       const rows = viewer.rows as WholeRows;
-      viewer.update({ rows, runs: highlightRuns(SRC, "/w/a.ts"), agentLines: new Set() });
-      expect(q('.viewer-row[data-row="0"] .viewer-text > span').className).toMatch(/^hl-/);
+      viewer.update({ rows, runs: runs(SRC, "/w/a.ts"), agentLines: new Set() });
+      expect(q('.viewer-row[data-row="0"] .viewer-text > span').hasAttribute("data-token")).toBe(
+        true,
+      );
       expect(endpoints()).toEqual(before);
       expect(before).toEqual({
         anchor: "const alpha = 1;\nlet be".length,

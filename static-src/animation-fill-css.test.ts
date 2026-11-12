@@ -67,7 +67,7 @@ const ENTRY: readonly Fixture[] = [
   },
   {
     what: "a completed code block",
-    el: "pre[data-vk-block-enter]",
+    el: "div.cp-code[data-vk-block-enter]",
     under: ["div.message.assistant"],
   },
   {
@@ -75,7 +75,11 @@ const ENTRY: readonly Fixture[] = [
     el: "blockquote[data-vk-block-enter]",
     under: ["div.message.assistant"],
   },
-  { what: "a completed table", el: "table[data-vk-block-enter]", under: ["div.message.assistant"] },
+  {
+    what: "a completed table",
+    el: "div.cp-table-scroll[data-vk-block-enter]",
+    under: ["div.message.assistant"],
+  },
   { what: "a tooltip", el: "div.uip-tooltip" },
   { what: "a model picker card", el: "button.picker-btn" },
   { what: "a transcript boundary", el: "div.boundary" },

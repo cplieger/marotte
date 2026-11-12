@@ -174,14 +174,15 @@ function turn(): {
   const prompt = div("turn-req-text", "my question");
   const header = div("turn-header", headRow, div("turn-req", prompt));
   header.dataset["trigger"] = "user";
-  const codeHead = div("code-head", "bash");
-  codeHead.setAttribute(CHROME_ATTR, "");
+  // @cplieger/ui/markdown's code block: its bar carries no chrome marker of marotte's.
+  const codeHead = div("", "bash");
+  codeHead.setAttribute("data-part", "bar");
   const code = node("pre", "", "echo hi");
   const reply = div(
     "message assistant",
     p("first paragraph"),
     p("second paragraph"),
-    div("code-wrap", codeHead, code),
+    div("cp-code", codeHead, code),
   );
   const tool = div("tool-card", "ran a command");
   const second = div("message assistant", p("another reply"));

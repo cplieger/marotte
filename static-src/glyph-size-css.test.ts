@@ -109,8 +109,8 @@ const BUTTON_GLYPH_READERS: readonly string[] = [
   "15-input.css .pill-role-icon >> & svg height",
   "15-input.css .send-btn >> & svg width",
   "15-input.css .send-btn >> & svg height",
-  "61-mcp-tools.css .turn-action-btn, .turn-rewind, .code-act-btn >> & > :where(.ic-ui) inline-size",
-  "61-mcp-tools.css .turn-action-btn, .turn-rewind, .code-act-btn >> & > :where(.ic-ui) block-size",
+  "61-mcp-tools.css .turn-action-btn, .turn-rewind >> & > :where(.ic-ui) inline-size",
+  "61-mcp-tools.css .turn-action-btn, .turn-rewind >> & > :where(.ic-ui) block-size",
 ];
 
 /** The icon buttons that paint a row action's token or a menu row (`marotte/button-size.md`), each keeping `--icon-ui`. */

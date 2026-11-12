@@ -17,8 +17,8 @@ describe("a path in the final paragraph", () => {
   it("is linked when a stream ends", () => {
     const host = document.createElement("div");
     const stream = createMarkdownStream(host, { flushIntervalMs: 0 });
-    stream.writeDelta("Done.\n\nOpen ");
-    stream.writeDelta("src/outer.ts to review it.");
+    stream.write("Done.\n\nOpen ");
+    stream.write("src/outer.ts to review it.");
     stream.end();
     expect(titles(host)).toEqual(["src/outer.ts"]);
   });
@@ -32,7 +32,7 @@ describe("a path in the final paragraph", () => {
   it("stays unlinked while the stream is still writing it", () => {
     const host = document.createElement("div");
     const stream = createMarkdownStream(host, { flushIntervalMs: 0 });
-    stream.writeDelta("Open src/outer.ts to review it.");
+    stream.write("Open src/outer.ts to review it.");
     expect(titles(host)).toEqual([]);
     stream.end();
     expect(titles(host)).toEqual(["src/outer.ts"]);

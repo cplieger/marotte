@@ -28,7 +28,8 @@ const WIDGET = [
   ".uip-popover",
 ].join(",");
 
-const CHROME = `[${CHROME_ATTR}]`;
+/** A code block's bar (@cplieger/ui/markdown) is chrome it cannot mark. */
+const CHROME = `[${CHROME_ATTR}], .cp-code > [data-part="bar"]`;
 
 /** A control or chrome: its text is a UI label, never quoted. */
 const CONTROL = `${WIDGET},${CHROME}`;

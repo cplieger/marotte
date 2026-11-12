@@ -96,7 +96,7 @@ export function adoptSvg(host: HTMLElement, prefix: string): SVGSVGElement | nul
   for (const a of svg.querySelectorAll<SVGAElement>("a")) {
     const href = a.getAttribute("href");
     if (href !== null) {
-      // Like every rendered model link (link-guard.ts `linkAnchor`): a new tab, never this one.
+      // Like a markdown link (@cplieger/ui/markdown): a new tab, never this one.
       a.setAttribute("target", "_blank");
       formDiagramLink(a, href);
     }
@@ -120,15 +120,22 @@ function colourProbe(): CanvasRenderingContext2D | null {
   return probeCtx;
 }
 
-/** `value` as sRGB hex when it is a colour, so an `oklch()` or `color-mix()` token survives an editor that predates
- *  them; anything else, or a page with no 2D canvas, is returned unchanged. */
-function srgb(value: string): string {
+/** `value` as sRGB hex when it is a colour, as `scope` paints it, so an `oklch()` or `color-mix()` token survives an
+ *  editor that predates them; anything else, or a page with no 2D canvas, is returned unchanged. */
+function srgb(value: string, scope: Element): string {
   const probe = CSS.supports("color", value) ? colourProbe() : null;
   if (probe === null) {
     return value;
   }
+  // A canvas has no colour scheme to resolve `light-dark()` by (the library's surfaces are written in it), so the
+  // colour is first computed on an element inside `scope`.
+  const span = document.createElement("span");
+  span.style.color = value;
+  scope.append(span);
+  const used = getComputedStyle(span).color;
+  span.remove();
   probe.clearRect(0, 0, 1, 1);
-  probe.fillStyle = value;
+  probe.fillStyle = used;
   probe.fillRect(0, 0, 1, 1);
   const [r = 0, g = 0, b = 0, a = 0] = probe.getImageData(0, 0, 1, 1).data;
   const hex = (n: number): string => n.toString(16).padStart(2, "0");
@@ -147,7 +154,7 @@ function attrSafe(value: string): string {
 export function exportableSvg(svg: string, scope: Element): string {
   const style = getComputedStyle(scope);
   const peleValue = (name: string, fallback: string | undefined): string =>
-    srgb(style.getPropertyValue(name).trim() || (fallback ?? "").trim());
+    srgb(style.getPropertyValue(name).trim() || (fallback ?? "").trim(), scope);
   let out = svg.replace(PELE_VAR, (_m, name: string, fallback: string | undefined) =>
     attrSafe(peleValue(name, fallback)),
   );

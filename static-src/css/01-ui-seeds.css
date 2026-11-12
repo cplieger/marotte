@@ -1,0 +1,10 @@
+/* @cplieger/ui's colour seeds, marotte's hues: the accent's (01-tokens.css
+   --c-accent) and the surface ramp's. The library computes its steps from these
+   on :root, so they sit in an unlayered :root after css/system.css, which
+   outranks its own defaults by order (docs/design.md, "Seeds"). */
+:root {
+  --cp-accent-h: 300;
+  --cp-accent-c: 0.15;
+  --cp-neutral-h: 284;
+  --cp-neutral-c: 0.025;
+}

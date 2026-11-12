@@ -1,19 +1,8 @@
 // Accessibility tests: verify missing labels, focus management, and keyboard nav fixes.
 import { describe, it, expect, vi } from "vitest";
 import indexHtml from "../static/index.html?raw";
-import { domRenderer } from "./smd-renderer.js";
-import { CHECKBOX } from "./smd-parser-types.js";
 
 describe("a11y: missing labels", () => {
-  it("smd-renderer CHECKBOX has aria-label", () => {
-    const container = document.createElement("div");
-    const renderer = domRenderer(container, { animateText: false });
-    renderer.add_token(renderer.data, CHECKBOX);
-    const cb = container.querySelector("input[type=checkbox]")!;
-    expect(cb).not.toBeNull();
-    expect(cb.getAttribute("aria-label")).toBe("Task item");
-  });
-
   it("toast is announced via the shared live region and is self-describing", async () => {
     const { showToast, _resetForTest } = await import("./toast.js");
     const { mountLiveRegions } = await import("./legacy-ui/announce.js");

@@ -10,7 +10,13 @@ import { buildAttachmentPill } from "./attachment-pill.js";
 import { ICON_SEND } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { BUTTON_BOX } from "./__test-helpers__/button-reference.js";
-import { allRules, loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
+import {
+  allRules,
+  loadCSS,
+  mountAppCSS,
+  ruleContaining,
+  selectorMembers,
+} from "./__test-helpers__/css-rules.js";
 
 /** The pill row's band on touch: the button box and the row's 4px inset above and below it. */
 const COARSE_BAND = BUTTON_BOX.coarse + 2 * 4;
@@ -703,9 +709,9 @@ describe("the attachment chip, measured at real viewport sizes", () => {
           if (!(rule instanceof CSSStyleRule)) {
             continue;
           }
-          const selectors = rule.selectorText
-            .split(",")
-            .flatMap((part) => resolve(part.trim(), parents));
+          const selectors = selectorMembers(rule.selectorText).flatMap((part) =>
+            resolve(part, parents),
+          );
           const value =
             rule.style.getPropertyValue("background") ||
             rule.style.getPropertyValue("background-color");

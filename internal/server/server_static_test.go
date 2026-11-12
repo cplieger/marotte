@@ -317,6 +317,13 @@ func TestAssetCachePolicy(t *testing.T) {
 		"vendor/fonts-list.json":       revalidateAsset,
 		"vendor/fontsomething/x.woff2": revalidateAsset,
 		"vendor/fonts/index.html":      noStoreHTML,
+		// @cplieger/ui's copies: stamped assets for a year, its notices revalidate.
+		"vendor/ui/fonts/atkinson-hyperlegible-next-latin.0123abcd.woff2": immutableAsset,
+		"vendor/ui/icons/svg/copy.a1b2c3d4.svg":                           immutableAsset,
+		"vendor/ui/icons/svg/copy.svg":                                    revalidateAsset,
+		"vendor/ui/fonts/LICENSE-atkinson-hyperlegible-next":              revalidateAsset,
+		"vendor/ui/NOTICE":             revalidateAsset,
+		"vendor/uix/copy.a1b2c3d4.svg": revalidateAsset,
 		// Near misses, each one character or one path segment off the shape.
 		"assets/app-4K73XYBF.js":         revalidateAsset,
 		"chunks/api-client-4K73XY.js":    revalidateAsset,

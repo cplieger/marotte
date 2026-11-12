@@ -99,6 +99,101 @@ func stageOut(t *testing.T, files map[string]string) string {
 	return dir
 }
 
+// stageUI writes a @cplieger/ui package under the staged tree stageCSS made the working directory.
+func stageUI(t *testing.T, files map[string]string) {
+	t.Helper()
+	for name, body := range files {
+		path := filepath.Join(uiDir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+var uiPackage = map[string]string{
+	"css/system.css": `@font-face{src:url("../fonts/next.woff2") format("woff2")}` + "\n" +
+		`.a{--i:url("../icons/svg/copy.svg")}.b{--i:url("../icons/svg/copy.svg")}`,
+	"fonts/next.woff2":       "wOF2-next",
+	"fonts/LICENSE-next":     "OFL",
+	"icons/svg/copy.svg":     "<svg>copy</svg>",
+	"icons/svg/unused.svg":   "<svg/>",
+	"icons/LICENSE-lucide":   "ISC",
+	"LICENSE":                "Apache-2.0",
+	"NOTICE":                 "notice",
+	"THIRD_PARTY_NOTICES.md": "notices",
+}
+
+const uiManifest = "../node_modules/@cplieger/ui/css/system.css\napp.css\n"
+
+// TestBuildCSS_ServesTheUIStylesheetsAssets pins that every file the ui sheet names is served
+// under a content stamp the bundle points at, with the notices beside it, and nothing else.
+func TestBuildCSS_ServesTheUIStylesheetsAssets(t *testing.T) {
+	appPart := `.c{background:url("../not-ui.svg")}`
+	dir := stageCSS(t, "", uiManifest, map[string]string{"app/app.css": appPart})
+	stageUI(t, uiPackage)
+	if err := buildCSS(); err != nil {
+		t.Fatalf("buildCSS() = %v", err)
+	}
+	css := readBundle(t, dir)
+	served := regexp.MustCompile(`url\("/vendor/ui/([^"]+)"\)`).FindAllStringSubmatch(css, -1)
+	if len(served) != 3 {
+		t.Fatalf("bundle = %s, want the font and both icon URLs pointed at /vendor/ui/", css)
+	}
+	for _, m := range served {
+		stamped := m[1]
+		upstream := regexp.MustCompile(`\.[0-9a-f]{8}(\.[^./]+)$`).ReplaceAllString(stamped, "$1")
+		if upstream == stamped {
+			t.Errorf("%s carries no content stamp", stamped)
+			continue
+		}
+		got, err := os.ReadFile(filepath.Join(dir, outDir, "vendor", "ui", filepath.FromSlash(stamped)))
+		if err != nil {
+			t.Errorf("served %s is missing: %v", stamped, err)
+			continue
+		}
+		if string(got) != uiPackage[upstream] {
+			t.Errorf("%s = %q, want the bytes of %s", stamped, got, upstream)
+		}
+	}
+	if !strings.Contains(css, appPart) {
+		t.Errorf("bundle = %s, want a relative URL outside the ui sheet left as written", css)
+	}
+	for _, notice := range []string{"LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "fonts/LICENSE-next", "icons/LICENSE-lucide"} {
+		if _, err := os.Stat(filepath.Join(dir, outDir, "vendor", "ui", filepath.FromSlash(notice))); err != nil {
+			t.Errorf("notice %s not served beside the assets: %v", notice, err)
+		}
+	}
+	matches, err := filepath.Glob(filepath.Join(dir, outDir, "vendor", "ui", "icons", "svg", "unused*"))
+	if err != nil || len(matches) != 0 {
+		t.Errorf("served %v (err %v), want an icon the sheet does not name left out", matches, err)
+	}
+}
+
+// TestBuildCSS_RefusesAUIAssetOutsideThePackage: a sheet URL reaches a filesystem path.
+func TestBuildCSS_RefusesAUIAssetOutsideThePackage(t *testing.T) {
+	stageCSS(t, "", uiManifest, map[string]string{"app/app.css": ""})
+	ui := maps.Clone(uiPackage)
+	ui["css/system.css"] = `.a{--i:url("../../../../go.mod")}`
+	stageUI(t, ui)
+	if err := buildCSS(); err == nil || !strings.Contains(err.Error(), "leaves the package") {
+		t.Errorf("buildCSS() = %v, want a refusal of the climbing URL", err)
+	}
+}
+
+// TestBuildCSS_RefusesAServedFolderWithNoLicence: the fonts' OFL must travel with every copy.
+func TestBuildCSS_RefusesAServedFolderWithNoLicence(t *testing.T) {
+	stageCSS(t, "", uiManifest, map[string]string{"app/app.css": ""})
+	ui := maps.Clone(uiPackage)
+	delete(ui, "fonts/LICENSE-next")
+	stageUI(t, ui)
+	if err := buildCSS(); err == nil || !strings.Contains(err.Error(), "fonts/ is served with no LICENSE") {
+		t.Errorf("buildCSS() = %v, want a refusal naming the unlicensed folder", err)
+	}
+}
+
 // TestCleanOutputs_SweepsANestedModuleTree pins that output is owned by extension at any depth, so a new module tree is swept.
 func TestCleanOutputs_SweepsANestedModuleTree(t *testing.T) {
 	dir := stageOut(t, map[string]string{
@@ -136,9 +231,13 @@ func TestCleanOutputs_KeepsTheFetchedFontTree(t *testing.T) {
 		"vendor/fonts/MonaspaceNeonNF-LICENSE":       "OFL",
 		"vendor/fonts/MonaspaceNeonNF-Regular.woff2": "wOF2",
 		"chunks/chunk-abc.js":                        "stale\n",
+		"vendor/ui/icons/svg/copy.0123abcd.svg":      "<svg/>",
 	})
 	if err := cleanOutputs(); err != nil {
 		t.Fatalf("cleanOutputs() = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, outDir, "vendor", "ui")); !os.IsNotExist(err) {
+		t.Error("static/vendor/ui/ still present, want the bundler's ui copies swept")
 	}
 	for _, kept := range []string{"WebTerminalGlyphs.woff2", "MonaspaceNeonNF-LICENSE", "MonaspaceNeonNF-Regular.woff2"} {
 		if _, err := os.Stat(filepath.Join(dir, outDir, "vendor", "fonts", kept)); err != nil {

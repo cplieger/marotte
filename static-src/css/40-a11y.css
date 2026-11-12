@@ -81,13 +81,12 @@
  * rather than 2.4.11 degrading.
  *
  * What keeps a clipper's OTHER controls out is measured against that same reach, and
- * for all but two of them it is inner padding: an account row's own actions clear by
+ * for all but one of them it is inner padding: an account row's own actions clear by
  * 8px and its repo rows by 4px, `.git-file-list`'s path button by 14px, `.diff-pane`'s
  * whitespace checkbox by 4px, `.mcp-row`'s buttons and `.pill-model-list`'s rows and
- * tiers by 8px. The two exceptions' numbers move with something else. `.code-wrap`'s
- * header buttons clear the block edges by 4px because `.code-head`'s row is taller
- * than they are, so a row height or a button height changes it; `.run-open` clears
- * the run card's block-end by 4px the same way, centred in `.run-foot`'s band. `.tool-call`'s
+ * tiers by 8px. The exception's number moves with something else: `.run-open` clears
+ * the run card's block-end by 4px because it is centred in `.run-foot`'s taller band,
+ * so a band height or a button height changes it. `.tool-call`'s
  * disclosure is absolutely positioned, so 12px of inline clearance is a
  * declared `inset-inline-end` and 6px of block clearance is half the card's spare
  * height, which a `min-height`, a font-size or a second summary row changes without
@@ -139,6 +138,10 @@ a.subagent-header:focus-visible,
    box and the floor's OUTSIDE ring would be cut. The row's own 4px inline and
    block padding clear the band's [0, 2px] reach on all four edges. */
 .pill-account:focus-visible,
+/* A code block's bar buttons sit the bar's inset plus the block's border in from the block's
+   edge, 2px with @cplieger/ui's concentric corner, and a block opening a reply meets
+   `.msg-row`'s paint containment there. The buttons' own padding clears the band. */
+.cp-code > [data-part="bar"] > [data-part="actions"] > button:focus-visible,
 .run-head:focus-visible,
 .run-step-head:focus-visible,
 .tool-group-header:focus-visible,

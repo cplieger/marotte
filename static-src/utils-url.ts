@@ -20,39 +20,6 @@ export function isHttpMailtoOrRelativeURL(url: string): boolean {
   return scheme === undefined || scheme === "http:" || scheme === "https:" || scheme === "mailto:";
 }
 
-const EXFIL_QUERY_MIN_LEN = 200;
-const EXFIL_PERCENT_RE = /%[0-9A-Fa-f]{2}(?:%[0-9A-Fa-f]{2}){20,}/i;
-const EXFIL_CREDENTIAL_RE =
-  /(?:(?:AKIA|ASIA)[A-Z0-9]{16}|(?:ssh-rsa|ssh-ed25519)[\s+%]|BEGIN[\s+%](?:RSA|DSA|EC|OPENSSH)[\s+%]PRIVATE[\s+%]KEY|xox[bpas]-[0-9a-zA-Z-]+|gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})/i;
-// `=` counts only as trailing padding, so `name=` plus a short id does not fuse into one run.
-const EXFIL_B64_RE = /[A-Za-z0-9+/]{40,}={0,2}|[A-Za-z0-9+/]{39}=|[A-Za-z0-9+/]{38}==/i;
-
-/** Whether a link that LEAVES the origin carries an encoded payload in its query or fragment: a
- *  200+ char query, 21+ consecutive %XX escapes, a 40+ base64 run, or a credential marker. A
- *  heuristic ceiling: no host or shape waiver, since a waived shape is an injected prompt's channel.
- *  Path and subdomain are untested, a known hole. Normalizes as `isHttpMailtoOrRelativeURL`. */
-export function exfilShaped(url: string): boolean {
-  const cleaned = url
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\x00-\x1f]/g, "")
-    .trim();
-  const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(cleaned)?.[0].toLowerCase();
-  if (scheme === "mailto:" || (scheme === undefined && !/^[/\\]{2}/.test(cleaned))) {
-    return false;
-  }
-  const at = cleaned.search(/[?#]/);
-  if (at < 0) {
-    return false;
-  }
-  const query = cleaned.slice(at + 1);
-  return (
-    query.length >= EXFIL_QUERY_MIN_LEN ||
-    EXFIL_PERCENT_RE.test(query) ||
-    EXFIL_CREDENTIAL_RE.test(query) ||
-    EXFIL_B64_RE.test(query)
-  );
-}
-
 /** The route that serves a workspace file's BYTES (`/api/file` is JSON and 415s binaries), through
  *  the mount's confined `os.Root` with `Content-Disposition: attachment`, a SECURITY control: an
  *  `.svg` is served as `image/svg+xml`, script-capable if NAVIGATED to. Never hand this URL to an

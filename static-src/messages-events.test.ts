@@ -351,8 +351,9 @@ describe("compaction", () => {
 
     (node as HTMLDetailsElement).open = true;
     // `toggle` is queued, not dispatched synchronously.
+    // The summary sits under the chat's title, so `#` is an h2 and `##` an h3.
     await vi.waitFor(() => {
-      expect(body?.querySelector("h2")?.textContent).toBe("Goal");
+      expect(body?.querySelector("h3")?.textContent).toBe("Goal");
     });
     expect(body?.querySelector("code")?.textContent).toBe("auth");
     expect(body?.textContent ?? "").not.toContain("##");
