@@ -433,6 +433,9 @@ class HistoryController {
    */
   private readonly verdict = signal<SessionListResponse | null>(null);
 
+  /** The newest read that ran to its end failed or could not read the chats or the runs. */
+  private refused = false;
+
   constructor() {
     // A run's mark reads the dock's queue and every row reads the tab set, and neither change emits `runs:changed`, so a
     // plain rebuild would leave a working mark over a parked run, or a closed tab's chat and runs missing.
@@ -454,6 +457,7 @@ class HistoryController {
     searchChats.cancel();
     this.abort?.abort();
     this.abort = null;
+    this.refused = false;
     // A null verdict stops the effect re-deriving rows for a closed page; `load()` re-sets it.
     this.verdict.value = null;
     // reset(), not close(): close's clear would repaint, a fetch no reader needs.
@@ -519,14 +523,10 @@ class HistoryController {
     container.replaceChildren(...res.matches.map((m) => buildMatchRow(m, q)));
   }
 
-  /** Load again when the newest answer failed or could not read the chats or the runs; a page closed since, or not
-   *  yet loaded, has asked nothing. */
+  /** Load again when the newest answer failed or could not read the chats or the runs; a page closed since, not yet
+   *  loaded, or with its first read out, has asked nothing. */
   reloadIfRefused(): void {
-    if (this.abort === null) {
-      return;
-    }
-    const d = this.verdict.peek();
-    if (d === null || d.sessions_state === "unavailable" || d.runs_state === "unavailable") {
+    if (this.abort !== null && this.refused) {
       void this.load();
     }
   }
@@ -563,6 +563,8 @@ class HistoryController {
     }
     // No misleading empty state on failure: offer a retry. The held answer goes too, or the next tab-set, dock or
     // query change repaints it over the Retry.
+    this.refused =
+      d === null || d.sessions_state === "unavailable" || d.runs_state === "unavailable";
     if (d === null) {
       this.verdict.value = null;
       runs.replaceChildren(this.buildError());

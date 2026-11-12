@@ -2103,6 +2103,30 @@ describe("history: the engine's return", () => {
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
+  it("asks nothing more while the first read is out", async () => {
+    mountView();
+    let answer: (d: unknown) => void = () => undefined;
+    dispatch.mockReturnValueOnce(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    const { loadHistoryView, refreshHistoryView } = await freshModule();
+    loadHistoryView();
+    refreshHistoryView();
+    await vi.waitFor(() => {
+      expect(dispatch).toHaveBeenCalledTimes(1);
+    });
+
+    emitBus(BUS_ENGINE_READY);
+    await Promise.resolve();
+    expect(dispatch, "a second sessions read").toHaveBeenCalledTimes(1);
+    answer(answered);
+    await vi.waitFor(() => {
+      expect(keysIn(chatsPane())).toEqual(["s:sess_chat"]);
+    });
+  });
+
   it("asks nothing while the page is off screen", async () => {
     const view = await render({ ...answered, runs_state: "unavailable" });
     view.style.display = "none";
