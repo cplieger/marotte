@@ -26,7 +26,6 @@
   "actions/settings.test.ts",
   "actions/tabs-actions.test.ts",
   "actions/tools.test.ts",
-  "agent-finished-cue.test.ts",
   "attachments.test.ts",
   "attention-no-dom.node.test.ts",
   "attention-wiring.test.ts",

@@ -45,7 +45,7 @@ vi.mock("../decision-dock.js", () => ({
   dropTurnDecisions: vi.fn(),
 }));
 vi.mock("../notify.js", () => ({
-  notifyOffScreen: vi.fn(),
+  showNotice: vi.fn(),
   closeRunAsksExcept: vi.fn(() => Promise.resolve()),
 }));
 
@@ -78,7 +78,7 @@ import { trackRun } from "../run-dots.js";
 import { info, jumpToast } from "../toast.js";
 import { dropRunRequests, dropTurnDecisions } from "../decision-dock.js";
 import { _resetRunAsksForTest, runAskPosition, runAsksOf } from "../run-asks.js";
-import { closeRunAsksExcept, notifyOffScreen } from "../notify.js";
+import { closeRunAsksExcept, showNotice } from "../notify.js";
 import type { RunAsk } from "../wire/types.gen.js";
 
 const invalidate = vi.mocked(invalidateRun);
@@ -100,7 +100,7 @@ const runEntryOpened = vi.mocked(openRunEntry);
 const runDelta = vi.mocked(applyRunDelta);
 const runSealed = vi.mocked(sealRunEntry);
 const runAppended = vi.mocked(appendRunEntry);
-const notify = vi.mocked(notifyOffScreen);
+const notify = vi.mocked(showNotice);
 const closeStale = vi.mocked(closeRunAsksExcept);
 
 /** Every toast raised, in order, whatever its level. */

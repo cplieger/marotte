@@ -845,7 +845,7 @@ describe("pending_snapshot handler", () => {
 // question leaves the store and both of its banners close.
 
 describe("a client that missed a run's final run_asks", () => {
-  /** A page notification as `notifyOffScreen` raises one, recorded so its close is observable. */
+  /** A page notification as `showNotice` raises one, recorded so its close is observable. */
   class PageNotification {
     static readonly permission = "granted";
     static readonly raised: PageNotification[] = [];
@@ -864,13 +864,14 @@ describe("a client that missed a run's final run_asks", () => {
   }
 
   let tray: { tag: string; closed: boolean }[] = [];
+  /** A fresh notice id per hold: a page decides one id once. */
+  let held = 0;
 
   beforeEach(async () => {
     const notify = await import("../notify.js");
     PageNotification.raised.length = 0;
     vi.stubGlobal("Notification", PageNotification);
     notify.setNotificationsEnabled(true);
-    notify.setOnScreen(() => false);
     tray = [];
     notify._setRegistrationForTest(() =>
       Promise.resolve({
@@ -896,19 +897,24 @@ describe("a client that missed a run's final run_asks", () => {
     const notify = await import("../notify.js");
     notify._setRegistrationForTest(null);
     notify.setNotificationsEnabled(false);
-    notify.setOnScreen(() => document.visibilityState === "visible");
     vi.unstubAllGlobals();
   });
 
   /** Hold ask A of wf_1, launched from c1, with its page banner and its tray banner up. */
   async function holdAskA(): Promise<RunAsk> {
-    const { notifyOffScreen } = await import("../notify.js");
+    const { showNotice } = await import("../notify.js");
     setSessions([makeSession("c1")]);
     const a = stepAsk("wf_1");
     fireSSE("run_asks", "c1", runAsksFrame("wf_1", [a], "c1"));
     const subject = `runask:${runAskPosition("wf_1", a)}`;
     expect(
-      notifyOffScreen({ id: "n-c1", kind: "permission", title: "c1", body: "Ship it?", subject }),
+      showNotice({
+        id: `n-c1-${String(++held)}`,
+        kind: "permission",
+        title: "c1",
+        body: "Ship it?",
+        subject,
+      }),
     ).toBe(true);
     tray.push({ tag: askTag("wf_1", a), closed: false });
     return a;

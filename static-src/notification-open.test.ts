@@ -24,7 +24,6 @@ vi.mock("./deep-link.js", async (importOriginal) => ({
   admitLocation: vi.fn(() => "opens"),
 }));
 vi.mock("./chat.js", { spy: true });
-vi.mock("./agent-finished-cue.js", { spy: true });
 // A real module graph reads named elements at import time; any element stands in but the strip.
 vi.mock("./dom.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Dom>()),

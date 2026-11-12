@@ -5,6 +5,7 @@
 // and the recompute funnel covers both the tab SET and every dot write, via the real store.
 
 import type * as Dom from "./dom.js";
+import type * as ApiClient from "./api-client.js";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
@@ -77,15 +78,12 @@ vi.mock("./icons.js", () => ({
 vi.mock("./transport.js", () =>
   import("./__test-helpers__/tabs-server.js").then((m) => m.tabTransportMock()),
 );
-vi.mock("./api-client.js", () =>
-  import("./__test-helpers__/tabs-server.js").then((m) => ({
-    apiBlobOrError: vi.fn(),
-    apiGetTyped: m.tabListRead(),
-    // tabs.ts reaches api-client.ts through the files-shared.js edge the
-    // multi-instance browser added, so the real link needs this name present.
-    apiGet: vi.fn(() => Promise.resolve(null)),
-  })),
-);
+vi.mock("./api-client.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ApiClient>()),
+  apiBlobOrError: vi.fn(),
+  apiGetTyped: (await import("./__test-helpers__/tabs-server.js")).tabListRead(),
+  apiGet: vi.fn(() => Promise.resolve(null)),
+}));
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 vi.mock("./device-view.js", () => {
   let active = "";
@@ -183,12 +181,7 @@ import {
 } from "./attention.js";
 import { defaultUsage, setActive, setSessions, upsertHeader } from "./store.js";
 import { BUS_PAGE_RESUMED, BUS_RECONCILE, dispatch, emitBus } from "./bus.js";
-import {
-  _setRegistrationForTest,
-  notifyOffScreen,
-  setNotificationsEnabled,
-  setOnScreen,
-} from "./notify.js";
+import { _setRegistrationForTest, showNotice, setNotificationsEnabled } from "./notify.js";
 import type { ServerEvent } from "./types.js";
 import {
   openTab,
@@ -1378,13 +1371,12 @@ describe("initAttention", () => {
       }
       vi.stubGlobal("Notification", PageNotification);
       setNotificationsEnabled(true);
-      setOnScreen(() => false);
       try {
         await openChat("a");
         const b = await openChat("b", { activate: false });
         finish(b, "b", "done");
         expect(
-          notifyOffScreen({
+          showNotice({
             id: "n-b",
             kind: "agent_finished",
             chat_id: "b",
@@ -1397,7 +1389,6 @@ describe("initAttention", () => {
         expect(pageClosed).toEqual(["marotte:b"]);
       } finally {
         setNotificationsEnabled(false);
-        setOnScreen(() => document.visibilityState === "visible");
       }
     });
 

@@ -27,7 +27,6 @@ vi.mock("./deep-link.js", async (importOriginal) => ({
   admitLocation: vi.fn(() => "opens"),
 }));
 vi.mock("./chat.js", { spy: true });
-vi.mock("./agent-finished-cue.js", { spy: true });
 vi.mock("./dom.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Dom>()),
   $: new Proxy(

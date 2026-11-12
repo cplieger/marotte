@@ -128,15 +128,15 @@ describe("installPageView", () => {
     activate("editor", "/w/a.go");
     teardown = installPageView();
     await tick();
-    expect(last()).toMatchObject({ tab: null });
+    expect(last()).not.toHaveProperty("tab");
     activate("settings", "");
     await tick();
-    expect(last()).toMatchObject({ tab: null });
+    expect(last()).not.toHaveProperty("tab");
     h.active = "";
     h.subjects = [];
     emitBus(BUS_TAB_CHANGED, { to: "", kind: null });
     await tick();
-    expect(last()).toMatchObject({ tab: null });
+    expect(last()).not.toHaveProperty("tab");
     expect(sent()).toHaveLength(3);
   });
 

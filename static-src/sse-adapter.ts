@@ -36,7 +36,7 @@ import { setSSEStatus } from "./send-state.js";
 import { fetchCatalog } from "./session-catalog.js";
 import { chatHoldingTurn, get } from "./store.js";
 import { loadList, loadMessages, requestTurnRange } from "./store-load.js";
-import { adoptSubscriptionTag, persistedTag } from "./sse-tag.js";
+import { adoptSubscriptionTag, persistedTag, tagWrittenElsewhere } from "./sse-tag.js";
 import { observeStamp, setObserveSink, versionMap } from "./subject-versions.js";
 import { listTabs } from "./tabs-sync.js";
 import type { ConnectionStatus, ServerEvent, SubjectStamp } from "./types.js";
@@ -70,6 +70,9 @@ let attachment: TabAttachment | null = null;
 
 /** The SSE-Client tag this tab presents for the profile, whichever seat it holds. */
 let presented = "";
+
+/** Removes the `storage` listener that keeps `presented` on the profile's persisted tag. */
+let storageListener: AbortController | null = null;
 
 /** A worker spawner standing in for `new SharedWorker(...)`, so a suite can attach this tab to a
  *  host it holds in the page. */
@@ -544,6 +547,9 @@ export function init(msg: MsgHandler, status: StatusHandler): void {
   };
   holdUntilHydrated();
   presented = persistedTag();
+  storageListener?.abort();
+  storageListener = new AbortController();
+  window.addEventListener("storage", onStorage, { signal: storageListener.signal });
   // Every stamp this tab records is the profile's too: under the host it reaches the host's map
   // (one digest per profile), in fallback mode the attachment's own map is this one already.
   setObserveSink((subject, version, epoch) => {
@@ -598,10 +604,29 @@ export function onPresentedTag(listener: (tag: string) => void): () => void {
 export async function adoptPushSubscription(
   sub: { readonly endpoint: string } | null,
 ): Promise<void> {
-  await adoptSubscriptionTag(sub, presented, (tag) => {
-    presented = tag;
-    attachment?.setTag(tag);
-  });
+  await adoptSubscriptionTag(sub, presented, present);
+}
+
+/** The one writer of `presented` after `init`. */
+function present(tag: string): void {
+  if (tag === presented) {
+    return;
+  }
+  presented = tag;
+  attachment?.setTag(tag);
+  for (const listener of presentedListeners) {
+    listener(tag);
+  }
+}
+
+/** Another page of the profile moved the persisted tag: in SharedWorker mode the host already
+ *  reconnected, but this page's own reports still carry the old tag; in fallback mode its stream
+ *  does too. */
+function onStorage(event: StorageEvent): void {
+  const tag = tagWrittenElsewhere(event);
+  if (tag !== null) {
+    present(tag);
+  }
 }
 
 /** Undo `init` completely, for tests that boot the module more than once. `vi.resetModules()`
@@ -611,6 +636,8 @@ export async function adoptPushSubscription(
 export function _resetForTest(): void {
   attachment?.detach();
   attachment = null;
+  storageListener?.abort();
+  storageListener = null;
   spawnOverride = null;
   setObserveSink(null);
   if (hydrateTimer !== null) {

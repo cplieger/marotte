@@ -56,7 +56,7 @@ vi.mock("../decision-dock.js", async (importOriginal) => ({
 }));
 vi.mock("../notify.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Notify>()),
-  notifyOffScreen: vi.fn(),
+  showNotice: vi.fn(),
   closeRunAsksExcept: vi.fn(() => Promise.resolve()),
 }));
 

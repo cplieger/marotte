@@ -1,10 +1,11 @@
 // Turning a posted MESSAGE into a push target, `subject ?? ""` included, through the real seam
-// with a spy opener; the destination is push-route.test.ts's. An arrival on a focused page is
-// delivered as the page delivers its own `notification` frame, through the real notify.ts.
+// with a spy opener; the destination is push-route.test.ts's. An arrival on the focused page shows
+// through the real notify.ts unless its own chat or run is the tab on screen.
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { Route } from "../route-path.js";
 import { registerNotificationOpener } from "../notification-open.js";
+import { join } from "@cplieger/keyenc";
 import { chatTarget, runTarget, type PushTarget } from "../push-subject.js";
 import type * as SSEAdapter from "../sse-adapter.js";
 import type * as Tabs from "../tabs.js";
@@ -46,7 +47,19 @@ function postFromWorker(data: unknown): void {
 }
 
 let shown: { title: string; body: string | undefined; tag: string | undefined }[] = [];
-let onScreen: PushTarget | null = null;
+
+/** `target`'s tab is open and active on a visible page. */
+function onScreen(target: PushTarget): void {
+  const [kind, ref] =
+    target.kind === "chat"
+      ? ["chat", target.chatID]
+      : target.kind === "run" || target.kind === "run_ask"
+        ? ["run", target.workflowID]
+        : ["", ""];
+  tabsState.ids.set(`${kind}:${ref}`, `tab-${kind}-${ref}`);
+  tabsState.active = `tab-${kind}-${ref}`;
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+}
 
 function shadowNotification(): void {
   const fake = function fakeNotification(title: string, o?: NotificationOptions): void {
@@ -65,17 +78,17 @@ beforeEach(() => {
   vi.clearAllMocks();
   registerNotificationOpener(opened);
   shown = [];
-  onScreen = null;
+  tabsState.active = "";
+  tabsState.ids.clear();
   shadowNotification();
   notify.setNotificationsEnabled(true);
   for (const kind of ["agent_finished", "run_outcome", "pr_status"]) {
     notify.setKindEnabled(kind, true);
   }
-  notify.setOnScreen((t) => JSON.stringify(t) === JSON.stringify(onScreen));
 });
 
 afterEach(() => {
-  notify.setOnScreen(() => false);
+  vi.restoreAllMocks();
 });
 
 describe("initPushMessages", () => {
@@ -95,7 +108,7 @@ describe("initPushMessages", () => {
   });
 
   it("notifies an arrived push about a background chat under that chat's tag", () => {
-    onScreen = chatTarget("c2");
+    onScreen(chatTarget("c2"));
     postFromWorker({
       type: "push",
       reason: "arrived",
@@ -113,7 +126,7 @@ describe("initPushMessages", () => {
   });
 
   it("says nothing about an arrived push for the chat on screen", () => {
-    onScreen = chatTarget("c1");
+    onScreen(chatTarget("c1"));
     postFromWorker({
       type: "push",
       reason: "arrived",
@@ -127,7 +140,7 @@ describe("initPushMessages", () => {
   });
 
   it("notifies an arrived run outcome while another tab is on screen", () => {
-    onScreen = chatTarget("c1");
+    onScreen(chatTarget("c1"));
     postFromWorker({
       type: "push",
       reason: "arrived",
@@ -143,7 +156,7 @@ describe("initPushMessages", () => {
   });
 
   it("says nothing about an arrived run outcome while that run is on screen", () => {
-    onScreen = runTarget("wf1");
+    onScreen(runTarget("wf1"));
     postFromWorker({
       type: "push",
       reason: "arrived",
@@ -182,23 +195,12 @@ describe("an arrival on a focused page", () => {
       .map(([, init]) => JSON.parse(String(init?.body)) as unknown);
   }
 
-  /** Chat `chatID`'s tab is open and active on a visible page. */
-  function chatOnScreen(chatID: string): void {
-    tabsState.ids.set(`chat:${chatID}`, `tab-${chatID}`);
-    tabsState.active = `tab-${chatID}`;
-    onScreen = chatTarget(chatID);
-    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-  }
-
   beforeEach(() => {
     fetchSpy.mockClear();
     vi.stubGlobal("fetch", fetchSpy);
   });
 
   afterEach(() => {
-    tabsState.active = "";
-    tabsState.ids.clear();
-    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -216,15 +218,50 @@ describe("an arrival on a focused page", () => {
   }
 
   it("raises nothing and reports nothing for the chat on screen", async () => {
-    chatOnScreen("c1");
+    onScreen(chatTarget("c1"));
     arrive("n-on", "c1");
     await new Promise((r) => setTimeout(r, 0));
     expect(shown).toEqual([]);
     expect(reports()).toEqual([]);
   });
 
+  function askArrives(id: string, position: string): void {
+    postFromWorker({
+      type: "push",
+      reason: "arrived",
+      id,
+      chatId: "",
+      subject: `runask:${position}`,
+      kind: "permission",
+      title: `title ${id}`,
+      body: "Input required",
+    });
+  }
+
+  it("is silent for a step question only while its run's tab is on screen", () => {
+    const wait = join("wf1", join("wf1", "review"), "sess-1");
+    onScreen(chatTarget("c1"));
+    askArrives("n-ask-1", wait);
+    expect(shown.map((n) => n.title)).toEqual(["title n-ask-1"]);
+    onScreen(runTarget("wf1"));
+    askArrives("n-ask-2", wait);
+    expect(shown.map((n) => n.title)).toEqual(["title n-ask-1"]);
+  });
+
+  it("shows on a hidden page whatever tab is active", () => {
+    onScreen(chatTarget("c1"));
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    arrive("n-hidden", "c1");
+    expect(shown.map((n) => n.title)).toEqual(["title n-hidden"]);
+  });
+
+  it("shows for a chat with no open tab", () => {
+    arrive("n-gone", "gone");
+    expect(shown.map((n) => n.title)).toEqual(["title n-gone"]);
+  });
+
   it("raises an arrival for another chat once and reports it shown", async () => {
-    chatOnScreen("c2");
+    onScreen(chatTarget("c2"));
     arrive("n-off", "c3");
     expect(shown.map((n) => n.title)).toEqual(["title n-off"]);
     await vi.waitFor(() => {

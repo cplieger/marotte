@@ -51,9 +51,18 @@ export async function adoptSubscriptionTag(
   return tag;
 }
 
-/** Whether `value` fits the header's grammar. */
-export function wellFormedTag(value: string): boolean {
-  return TAG_GRAMMAR.test(value);
+/** The tag another page of this profile just persisted, null when `event` is not that write or the
+ *  store holds no well-formed tag. The store is read rather than `event.newValue`, so two pages
+ *  writing at once both end on the value that stayed. */
+export function tagWrittenElsewhere(event: StorageEvent): string | null {
+  try {
+    if (event.storageArea !== localStorage || event.key !== PROFILE_TAG_KEY) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  return readTag();
 }
 
 function readTag(): string | null {
@@ -63,7 +72,7 @@ function readTag(): string | null {
   } catch {
     /* storage refused; a per-document tag still counts this connection */
   }
-  return held !== null && wellFormedTag(held) ? held : null;
+  return held !== null && TAG_GRAMMAR.test(held) ? held : null;
 }
 
 function writeTag(tag: string): void {

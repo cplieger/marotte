@@ -117,9 +117,8 @@ import "./handlers/notification.js";
 import { installRunDotSubscriber } from "./run-dots.js";
 import { installSubagentDotSubscriber } from "./subagent-dots.js";
 import { installChatRunDotSubscriber } from "./chat-run-dots.js";
-import { installDeferredCueSubscriber } from "./agent-finished-cue.js";
-import { installNotifyAskGesture, setOnScreen } from "./notify.js";
-import { targetOnScreen } from "./notify-on-screen.js";
+import { installNotifyAskGesture } from "./notify.js";
+import { installPageView } from "./page-view.js";
 import { chatSettled } from "./chat-settled.js";
 import { confirmBusyClose } from "./close-busy.js";
 import "./handlers/steer.js";
@@ -248,13 +247,8 @@ function init(): void {
   // The one predicate both out-of-page cue paths ask, injected because `chat-settled.ts`'s
   // stores reach back into the tab projection. Before initAttention, for its first pass.
   setChatSettledProbe(chatSettled);
-  // The other half: a cue parked on an open turn or a pending ask is released here once both
-  // end. A live run never parks it: the server withholds agent_finished while the chat holds a
-  // lease.
-  installDeferredCueSubscriber();
-
-  // A notification is silent only while its own chat or run is the tab on screen.
-  setOnScreen(targetOnScreen);
+  // What the server's notice ledger reads to pick the one page per profile that shows a notice.
+  registerCleanup(installPageView());
 
   registerCloseGate(confirmBusyClose);
   // A refused close unparks the view it parked, with its scroll.
