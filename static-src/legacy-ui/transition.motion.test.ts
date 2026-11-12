@@ -122,6 +122,32 @@ describe("the committed start state, against real CSS", () => {
     ctl.dispose();
   });
 
+  it("closes a region created closed over laid-out content at once, with no height transition", async () => {
+    expect(window.matchMedia("(prefers-reduced-motion: reduce)").matches).toBe(false);
+
+    // A tool group's body is painted open before its disclosure exists; one created closed then
+    // must not play a collapse the reader never asked for.
+    const region = document.createElement("div");
+    region.appendChild(document.createElement("p")).textContent = "x".repeat(400);
+    document.body.append(region);
+    await nextFrame();
+    expect(region.getBoundingClientRect().height, "the premise: laid out open").toBeGreaterThan(0);
+
+    const ctl = createDisclosure(null, region, { open: false });
+
+    expect(region.getAnimations().map((a) => (a as CSSTransition).transitionProperty)).toEqual([]);
+    expect(region.getBoundingClientRect().height).toBe(0);
+    await nextFrame();
+    expect(region.getAnimations()).toEqual([]);
+
+    // The tweened path still animates afterwards.
+    const ended = ownTransitionEndWithin(region, 2000);
+    ctl.open();
+    expect(await ended).toBe("height");
+
+    ctl.dispose();
+  });
+
   it("fades a popup on hide, finishing on its own transitionend rather than the ceiling", async () => {
     expect(window.matchMedia("(prefers-reduced-motion: reduce)").matches).toBe(false);
 

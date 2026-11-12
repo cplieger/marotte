@@ -82,6 +82,14 @@ function isRendered(el: HTMLElement): boolean {
   return typeof el.checkVisibility !== "function" || el.checkVisibility();
 }
 
+function cancelHeightTransition(el: HTMLElement): void {
+  for (const a of el.getAnimations()) {
+    if (a instanceof CSSTransition && a.transitionProperty === "height") {
+      a.cancel();
+    }
+  }
+}
+
 /** Wire `trigger` (a button, or any element given button semantics) to `region`
  *  as an animated disclosure. With `trigger: null` nothing is wired (no
  *  aria-expanded, no click or keyboard handling) and only the controller
@@ -227,7 +235,14 @@ export function createDisclosure(
           }
         }
         if (height.tween === null) {
-          fx.setStyle(region, "height", d.open ? "" : "0px");
+          const next = d.open ? "" : "0px";
+          const changed = region.style.height !== next;
+          fx.setStyle(region, "height", next);
+          if (changed) {
+            // A write outside a tween is instant (no motion allowed, a region created closed over
+            // content painted open); the region's CSS height transition would play it.
+            cancelHeightTransition(region);
+          }
         }
       },
       notify(fx, d) {
