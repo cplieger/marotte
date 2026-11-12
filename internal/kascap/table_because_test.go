@@ -694,15 +694,15 @@ tool description and schema to every turn and let the model draw diagrams the us
 never sees, while the tool's result tells the model the user sees the drawing.
 Sending it needs that renderer, a session-confined read of the file and a card keyed
 on _meta.kiro.diagram first.`,
-	"capability.approveForMeOption": `WITHHELD. kiro-cli 3.2.1 reads _meta.kiro.approveForMeOption === true (3.2.0 read
-ACP's clientCapabilities.session.configOptions.boolean, which marotte never sent) and,
+	"capability.approveForMeOption": `WITHHELD. kiro-cli 3.2.1 reads _meta.kiro.approveForMeOption === true and,
 with KIRO_TRUST_CLASSIFIER_MODE=enforce, offers an "Approve for me" select (files, on,
 off) in every top-level session's configOptions and in the config template.
 Its default is "files", and approveForMePolicy's "files" and "off" arms drop the
 approve-for-me id from the session's policyPreset, so declaring it would strip the
 classifier from every chat on marotte's Approve for me profile until the user picked
-"on". marotte's security profile is its one approve-for-me control: the Approve for me
-profile sends the approve-for-me preset, which the absent option leaves untouched.`,
+"on". Sending it needs a per-chat Approve for me choice in marotte first; until then
+the Approve for me profile's approve-for-me preset is the control, and the absent
+option leaves it untouched.`,
 	"setting.c2s": `WITHHELD: code-to-spec is declined until Go is analysable end-to-end, a shipped
 client exposes its toggle, or KAS defers the c2s tools behind load_resource. KAS reads c2s
 through its feature proxy to register the Explore subagent and the code_index tools,
