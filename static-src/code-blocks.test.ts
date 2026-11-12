@@ -13,7 +13,29 @@ describe("isRunnableShell", () => {
     { name: "console lang accepted", lang: "console", text: "whoami", expected: true },
     { name: "terminal lang accepted", lang: "terminal", text: "date", expected: true },
     { name: "shell lang accepted", lang: "shell", text: "uname -a", expected: true },
+    // highlight.md "Detection": an untagged fence is shell unless it reads as another language.
+    { name: "untagged undetected text treated as shell", lang: "", text: "cd", expected: true },
+    { name: "untagged $ prompt accepted", lang: "", text: "$ ls -la", expected: true },
+    {
+      name: "untagged Go rejected",
+      lang: "",
+      text: "package main\n\nfunc main() {\n}",
+      expected: false,
+    },
+    {
+      name: "untagged Python rejected",
+      lang: "",
+      text: "def foo():\n    return 1",
+      expected: false,
+    },
+    { name: "untagged JSON rejected", lang: "", text: '{"a": 1}', expected: false },
     { name: "non-shell lang rejected", lang: "python", text: "print('hi')", expected: false },
+    {
+      name: "tagged shell kept whatever it reads as",
+      lang: "bash",
+      text: '{"a": 1}',
+      expected: true,
+    },
     { name: "non-shell lang go rejected", lang: "go", text: "fmt.Println()", expected: false },
     { name: "empty text rejected", lang: "bash", text: "", expected: false },
     { name: "whitespace-only text rejected", lang: "bash", text: "   \n  ", expected: false },
@@ -189,6 +211,32 @@ describe("Run on a rendered fence", () => {
     expect(blocks).toHaveLength(2);
     expect(blocks[0]?.querySelector('[aria-label="Run in shell"]')).not.toBeNull();
     expect(blocks[1]?.querySelector('[aria-label="Run in shell"]')).toBeNull();
+  });
+
+  // markdown.md: an untagged fence is labelled by detection, and plain when detection is unsure.
+  it("is on an untagged fence only when its label names no other language", () => {
+    setShellRunCallback(vi.fn());
+    renderMarkdownInto(
+      host,
+      [
+        "```\npackage main\n\nfunc main() {\n}\n```",
+        "```\ndef foo():\n    return 1\n```",
+        "```\nls -la\n```",
+        "```\n$ ls -la\n```",
+        "```python\nls -la\n```",
+      ].join("\n\n"),
+    );
+    const blocks = [...host.querySelectorAll<HTMLElement>(".cp-code")].map((b) => ({
+      label: b.querySelector('[data-part="lang"]')?.textContent ?? "",
+      run: b.querySelector('[aria-label="Run in shell"]') !== null,
+    }));
+    expect(blocks).toEqual([
+      { label: "Go", run: false },
+      { label: "Python", run: false },
+      { label: "", run: true },
+      { label: "Shell", run: true },
+      { label: "Python", run: false },
+    ]);
   });
 
   it("is withheld while the fence streams, then added once it closes", () => {

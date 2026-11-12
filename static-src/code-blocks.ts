@@ -3,11 +3,12 @@
 // the block, its label and its Copy.
 
 import { el } from "@cplieger/reactive";
+import { detectLanguage } from "@cplieger/ui/highlight";
 import { ICON_COPY, ICON_PLAY } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { confirm } from "./confirm.js";
 
-const SHELL_LANGS = new Set(["", "sh", "bash", "zsh", "shell", "console", "terminal"]);
+const SHELL_LANGS = new Set(["sh", "bash", "zsh", "shell", "console", "terminal"]);
 
 /** `final` once the block's `code` hook ran; a block without it is still streaming (13-messages.css's dot). */
 export const CODE_STATE_ATTR = "data-code-state";
@@ -63,9 +64,13 @@ export function finishCodeBlock(block: HTMLElement, lang: string, text: string):
   }
 }
 
-/** Whether a finished fence earns Run: a non-empty shell block that is not a `#!` script, of any line count. */
+/**
+ * Whether a finished fence earns Run: a non-empty shell block that is not a `#!` script, of any line count. An
+ * untagged fence counts as shell unless it reads as another language, the one the library's bar then names.
+ */
 export function isRunnableShell(lang: string, text: string): boolean {
-  if (!SHELL_LANGS.has(lang)) {
+  const shell = lang === "" ? ["", "sh"].includes(detectLanguage(text)) : SHELL_LANGS.has(lang);
+  if (!shell) {
     return false;
   }
   const trimmed = text.trim();
