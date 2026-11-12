@@ -12,9 +12,7 @@ import {
 import { readDownload } from "./download.js";
 import { joinPath } from "../files-shared.js";
 import { uploadFiles } from "../upload.js";
-// `joinKey` (not `joinPath`) builds every idempotency/dedupe key here, so no field's content can
-// forge a component boundary. The Go middleware treats the key as opaque, so only within-client
-// consistency matters.
+// `joinKey` (not `joinPath`) builds the dedupe key, so no name's content can forge a component boundary.
 import { join as joinKey } from "@cplieger/keyenc";
 
 const API_FILES_ACTION = "/api/files/action";
@@ -33,7 +31,9 @@ export const createFile = apiAction<CreateArgs>({
   scope: (args) => "dir:" + args.dir,
   retry: RETRY_STANDARD,
   retryable: retryNetwork,
-  idempotencyKey: (args) => joinKey("files.create", args.dir, args.name),
+  // One key per dispatch, never one per name: the server replays a key's answer for five minutes,
+  // and every New file asks for the same name, so a name-built key made the next one a no-op.
+  idempotencyKey: true,
   request: (args) => ({
     method: "POST",
     path: API_FILES_ACTION,
@@ -47,7 +47,7 @@ export const createFolder = apiAction<CreateArgs>({
   scope: (args) => "dir:" + args.dir,
   retry: RETRY_STANDARD,
   retryable: retryNetwork,
-  idempotencyKey: (args) => joinKey("files.create_folder", args.dir, args.name),
+  idempotencyKey: true,
   request: (args) => ({
     method: "POST",
     path: API_FILES_ACTION,
@@ -59,9 +59,7 @@ export const createFolder = apiAction<CreateArgs>({
 export const renameFile = apiAction<{ dir: string; original: string; newName: string }>({
   name: "files.rename",
   scope: (args) => "file:" + args.dir + "/" + args.original,
-  // Components, not a string: "->" is a legal filename sequence, so a built key collided and the
-  // second rename replayed the first's cached 200.
-  idempotencyKey: (args) => joinKey("files.rename", args.dir, args.original, args.newName),
+  idempotencyKey: true,
   request: ({ dir, original, newName }) => ({
     method: "POST",
     path: API_FILES_ACTION,

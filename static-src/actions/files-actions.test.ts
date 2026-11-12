@@ -205,72 +205,69 @@ describe("partialUploadOf", () => {
   });
 });
 
-// The keys travel as an opaque `Idempotency-Key` header, so only within-client injectivity matters.
+// The server replays any answer it cached under a key for five minutes (internal/server/idempotency.go),
+// so a key must name one user gesture: a retry of that gesture reuses it, a repeat of it must not.
+describe("idempotency keys name one gesture, not its arguments", () => {
+  const ok = (): Response => new Response(JSON.stringify({}), { status: 200 });
 
-describe("files.rename idempotency key", () => {
-  async function keyFor(args: { dir: string; original: string; newName: string }): Promise<string> {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
-    const { renameFile } = await import("./files.js");
-    await renameFile.dispatch(args);
-    const key = headerValue(mockFetch.mock.calls[0]![1], "idempotency-key");
-    mockFetch.mockReset();
-    resetActionFramework();
-    return key ?? "";
+  async function keysOf(dispatches: (() => Promise<unknown>)[]): Promise<(string | undefined)[]> {
+    mockFetch.mockImplementation(() => Promise.resolve(ok()));
+    for (const d of dispatches) {
+      await d();
+    }
+    return mockFetch.mock.calls.map((c) => headerValue(c[1] as RequestInit, "idempotency-key"));
   }
 
-  it("distinguishes two renames the old '->' form collapsed", async () => {
-    // "->" is a legal filename sequence: a string-built key gave both renames
-    // "files.rename:/w/a->b->c", and the middleware replayed the first 200 for the TTL.
-    const a = { dir: "/w", original: "a", newName: "b->c" };
-    const b = { dir: "/w", original: "a->b", newName: "c" };
-    const oldKey = (x: typeof a): string => `files.rename:${x.dir}/${x.original}->${x.newName}`;
-    expect(oldKey(a)).toBe(oldKey(b));
-
-    expect(await keyFor(a)).not.toBe(await keyFor(b));
-  });
-
-  it("emits verbatim components for ordinary names", async () => {
-    expect(await keyFor({ dir: "/src", original: "old.ts", newName: "new.ts" })).toBe(
-      "files.rename:/src:old.ts:new.ts",
-    );
-  });
-
-  it("separates the directory from the original name", async () => {
-    // A "/"-joined dir and original gives ("/a", "b/c") and ("/a/b", "c") one key.
-    const x = await keyFor({ dir: "/a", original: "b/c", newName: "z" });
-    const y = await keyFor({ dir: "/a/b", original: "c", newName: "z" });
-    expect(x).not.toBe(y);
-  });
-});
-
-describe("files.create idempotency keys", () => {
-  async function createKey(dir: string, name: string): Promise<string> {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+  it("New file twice in one folder sends two keys, so the second create is not a replay", async () => {
     const { createFile } = await import("./files.js");
-    await createFile.dispatch({ dir, name });
-    const key = headerValue(mockFetch.mock.calls[0]![1], "idempotency-key");
-    mockFetch.mockReset();
-    resetActionFramework();
-    return key ?? "";
-  }
-
-  it("distinguishes a slash in the name from a slash in the directory", async () => {
-    const oldKey = (dir: string, name: string): string => `files.create:${dir}/${name}`;
-    expect(oldKey("/a", "b/c")).toBe(oldKey("/a/b", "c"));
-    expect(await createKey("/a", "b/c")).not.toBe(await createKey("/a/b", "c"));
+    const args = { dir: "/w", name: "new file" };
+    const [first, second] = await keysOf([
+      () => createFile.dispatch(args),
+      () => createFile.dispatch(args),
+    ]);
+    expect(first).toEqual(expect.any(String));
+    expect(second).toEqual(expect.any(String));
+    expect(second).not.toBe(first);
   });
 
-  it("emits verbatim components for ordinary input", async () => {
-    expect(await createKey("/src", "index.ts")).toBe("files.create:/src:index.ts");
-  });
-
-  it("create_folder keys live in their own namespace", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+  it("New folder twice in one folder sends two keys", async () => {
     const { createFolder } = await import("./files.js");
-    await createFolder.dispatch({ dir: "/src", name: "index.ts" });
-    expect(headerValue(mockFetch.mock.calls[0]![1], "idempotency-key")).toBe(
-      "files.create_folder:/src:index.ts",
+    const args = { dir: "/w", name: "new folder" };
+    const [first, second] = await keysOf([
+      () => createFolder.dispatch(args),
+      () => createFolder.dispatch(args),
+    ]);
+    expect(first).toEqual(expect.any(String));
+    expect(second).not.toBe(first);
+  });
+
+  it("renaming A to B, back to A, then to B again sends a fresh key for the third rename", async () => {
+    const { renameFile } = await import("./files.js");
+    const ab = { dir: "/w", original: "a.txt", newName: "b.txt" };
+    const ba = { dir: "/w", original: "b.txt", newName: "a.txt" };
+    const keys = await keysOf([
+      () => renameFile.dispatch(ab),
+      () => renameFile.dispatch(ba),
+      () => renameFile.dispatch(ab),
+    ]);
+    expect(keys[0]).toEqual(expect.any(String));
+    expect(keys[2]).not.toBe(keys[0]);
+  });
+
+  it("a network retry of one create reuses its key, so the server can replay it", async () => {
+    vi.useFakeTimers();
+    mockFetch.mockRejectedValueOnce(new TypeError("Failed to fetch")).mockResolvedValueOnce(ok());
+    const { createFile } = await import("./files.js");
+    const p = createFile.dispatch({ dir: "/w", name: "new file" });
+    await vi.advanceTimersByTimeAsync(300);
+    await p;
+    vi.useRealTimers();
+    const keys = mockFetch.mock.calls.map((c) =>
+      headerValue(c[1] as RequestInit, "idempotency-key"),
     );
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toEqual(expect.any(String));
+    expect(keys[1]).toBe(keys[0]);
   });
 });
 
