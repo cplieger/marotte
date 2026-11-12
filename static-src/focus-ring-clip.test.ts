@@ -14,6 +14,7 @@ const MEMBERS = [
   "a.subagent-header",
   ".subagent-foot > .subagent-footer > .turn-ledger-summary",
   ".pill-account",
+  '.cp-code > [data-part="bar"] > [data-part="actions"] > button',
   ".run-head",
   ".run-step-head",
   ".tool-group-header",
@@ -622,6 +623,19 @@ describe("the ring is painted inside the card that clips it", () => {
     expectRingInside("foot ledger", ledger, clipper);
   });
 
+  it("on a code block's bar buttons, under the reach off a reply row the block opens", async () => {
+    // @cplieger/ui's bar inset is the block radius less its border and the button radius: 6 - 1 - 4 = 1px, plus the
+    // block's 1px border.
+    const { clipper, copy, run } = codeBlock();
+    expect(getComputedStyle(clipper).contentVisibility, "the row's paint containment").toBe("auto");
+    await focusByTab(copy);
+    expect(inset(copy, clipper).top).toBe(2);
+    expectRingInside("code copy button", copy, clipper);
+    await focusByTab(run);
+    expect(inset(run, clipper).top).toBe(2);
+    expectRingInside("code run button", run, clipper);
+  });
+
   it("on a run card's head", async () => {
     const { clipper, head } = runCard();
     await focusByTab(head);
@@ -796,15 +810,6 @@ describe("the exclusions: a focusable whose clipper clears the reach", () => {
     await focusByTab(discard);
     expect(inset(discard, clipper).top).toBe(8);
     expectClears("git file Discard", discard, clipper);
-  });
-
-  it("paints a code block's bar buttons' ring inside the reply row", async () => {
-    const { clipper, copy, run } = codeBlock();
-    expect(getComputedStyle(clipper).contentVisibility, "the row's paint containment").toBe("auto");
-    await focusByTab(copy);
-    expectRingInside("code copy button", copy, clipper);
-    await focusByTab(run);
-    expectRingInside("code run button", run, clipper);
   });
 
   it("pins the run card's Open run, centred in a foot band taller than it", async () => {

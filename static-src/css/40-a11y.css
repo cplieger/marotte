@@ -138,6 +138,10 @@ a.subagent-header:focus-visible,
    box and the floor's OUTSIDE ring would be cut. The row's own 4px inline and
    block padding clear the band's [0, 2px] reach on all four edges. */
 .pill-account:focus-visible,
+/* A code block's bar buttons sit the bar's inset plus the block's border in from the block's
+   edge, 2px with @cplieger/ui's concentric corner, and a block opening a reply meets
+   `.msg-row`'s paint containment there. The buttons' own padding clears the band. */
+.cp-code > [data-part="bar"] > [data-part="actions"] > button:focus-visible,
 .run-head:focus-visible,
 .run-step-head:focus-visible,
 .tool-group-header:focus-visible,
