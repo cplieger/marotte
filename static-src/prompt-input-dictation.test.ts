@@ -3,7 +3,7 @@
 
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { userEvent } from "vitest/browser";
-import { signal } from "@cplieger/ui";
+import { signal } from "@cplieger/reactive";
 import { initPromptInput, sendComposer, setSendState } from "./prompt-input.js";
 import { createDictation, type Dictation } from "./dictation.js";
 import { ICON_MIC, ICON_SEND } from "./icons.js";

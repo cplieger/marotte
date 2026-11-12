@@ -1,8 +1,8 @@
 // Dictation into the composer through the browser's Web Speech API, on-device wherever the browser offers it:
 // https://developer.mozilla.org/en-US/docs/Web/API/Web_Speech_API/Using_the_Web_Speech_API
 
-import { computed, effect, signal, type ReadonlySignal } from "@cplieger/ui";
-import { announce } from "@cplieger/ui/announce";
+import { computed, effect, signal, type ReadonlySignal } from "@cplieger/reactive";
+import { announce } from "./legacy-ui/announce.js";
 import { error as errorToast, info } from "./toast.js";
 import { BUS_TAB_CHANGED, onBus } from "./bus.js";
 import { watchActiveId } from "./store.js";

@@ -2,7 +2,7 @@
 // stops, what it tells the reader, which engine it picks, and that it never sends.
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { mountLiveRegions } from "@cplieger/ui/announce";
+import { mountLiveRegions } from "./legacy-ui/announce.js";
 import {
   browserSpeechPlatform,
   cloudServiceFor,

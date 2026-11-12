@@ -7,7 +7,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import fc from "fast-check";
-import { effect, signal } from "@cplieger/ui";
+import { effect, signal } from "@cplieger/reactive";
 import { initPromptInput, sendComposer, setSendState } from "./prompt-input.js";
 import { createDictation, type Dictation } from "./dictation.js";
 import { setActive, setSessions } from "./store.js";
