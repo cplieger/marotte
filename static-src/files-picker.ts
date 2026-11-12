@@ -8,6 +8,7 @@ import {
   parentPath,
   FB_ROOT,
   normalizeDirPath,
+  errorNotice,
   listNotice,
   sortEntries,
   initEditablePath,
@@ -148,7 +149,11 @@ function loadDir(): void {
 
     if (d.kind === "error") {
       reconcile(list, [], { key: () => "", mount: () => el("div") });
-      list.appendChild(listNotice(d.message, errorActions()));
+      list.appendChild(
+        errorNotice(d.message, currentPath, loadDir, () => {
+          navigateTo(FB_ROOT);
+        }),
+      );
       return;
     }
 
@@ -178,20 +183,6 @@ function loadDir(): void {
       list.appendChild(listNotice("Empty"));
     }
   });
-}
-
-/** Off the root an error clears the ".." row, so the root is offered beside Retry. */
-function errorActions(): { label: string; run: () => void }[] {
-  const actions = [{ label: "Retry", run: loadDir }];
-  if (currentPath !== FB_ROOT) {
-    actions.push({
-      label: "Go to root",
-      run: () => {
-        navigateTo(FB_ROOT);
-      },
-    });
-  }
-  return actions;
 }
 
 function navigateTo(path: string): void {

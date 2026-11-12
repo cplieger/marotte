@@ -48,7 +48,7 @@ func (h *Handler) admit(w http.ResponseWriter, r *http.Request, hostOK bool, tok
 	}
 	capb, err := h.signer.verify(tok)
 	if err != nil {
-		httpreply.Forbidden(w, "This preview link has expired or is invalid. Reload the preview.")
+		httpreply.Forbidden(w, "This preview link has expired or is invalid. Reload the preview in marotte.")
 		return "", false
 	}
 	if len(rel) == 0 || rel[len(rel)-1] == "" {

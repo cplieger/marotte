@@ -48,7 +48,7 @@ interface WebTab {
   status: TabStatus;
   hint: PreviewHint | undefined;
   epoch: string;
-  /** The grant URL of the document on screen, "" while there is none. */
+  /** The grant URL last mounted, "" while there is none; an in-frame navigation does not move it. */
   url: string;
   /** Bumped by every load and unload, so a grant that lands late is dropped. */
   loadSeq: number;
@@ -421,16 +421,19 @@ function paintPath(tab: WebTab): void {
   path.dataset["tooltip"] = tab.path;
 }
 
-/** Open in browser: the page in its own top-level tab, which the served
- *  sandbox lets download (internal/preview `setPreviewHeaders`). */
+/** internal/preview setPreviewHeaders owns which request may download. */
 function paintOpen(tab: WebTab): void {
   const open = $.webOpenBtn;
   if (tab.url === "") {
     open.removeAttribute("href");
+    open.removeAttribute("target");
+    open.removeAttribute("rel");
     open.setAttribute("aria-disabled", "true");
     return;
   }
   open.setAttribute("href", tab.url);
+  open.target = "_blank";
+  open.rel = "noopener noreferrer";
   open.removeAttribute("aria-disabled");
 }
 
