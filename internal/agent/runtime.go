@@ -219,6 +219,8 @@ type bus struct {
 	ownStopped func(marotte.ChatID) bool
 	// askSettled hears that one of a chat session's asks settled (autoCompactor.askSettled).
 	askSettled func(marotte.ChatID)
+	// runAskSettled hears that one of a run's asks settled (Runs.askSettled).
+	runAskSettled func(workflowID string)
 	// searches is the running grep_search and file_search calls, ended by a turn cancel, a run's end or their session's.
 	searches searchCancels
 	// legacyConnects and v3Connects count connects by wire generation; a legacy one (no SSE-Wire header) is an
@@ -562,6 +564,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	sseP.retractPush = h.coord.retractPush
 	sseP.ownStopped = h.coord.turns.ownStopped
 	sseP.askSettled = h.coord.autoCompact.askSettled
+	sseP.runAskSettled = runs.askSettled
 	// Built here because coord and the ignore matcher do not exist at the literal. Workspace-global: the
 	// orchestrator and its subagents write one spec from several sessions.
 	h.specs = coalesce.New(specChangedWindow, func(dir string) {

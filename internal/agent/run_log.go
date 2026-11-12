@@ -55,6 +55,8 @@ type runTurn struct {
 	// top is the run's top-level step this one sits under ("" when unknown), held because path is never
 	// split back (workflow.PathKey).
 	top string
+	// nodeType is KAS's node type, which decides whether the turn counts toward the run's silence (silenceCounts).
+	nodeType string
 	// answer folds the step's current KAS turn: the sink feeds it, and a turn_start resets it.
 	answer answerFold
 	// ownEnd is whether the step's newest edge is its own turn's turn_end, with no turn_start or node_paused after.
@@ -497,6 +499,22 @@ func (r *runLog) hasOpen(workflowID string) bool {
 	return ok && len(rec.open) > 0
 }
 
+// hasOpenStep reports whether an open turn of the run counts toward its silence (silenceCounts).
+func (r *runLog) hasOpenStep(workflowID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.runs[workflowID]
+	if !ok {
+		return false
+	}
+	for _, t := range rec.open {
+		if silenceCounts(t.nodeType) {
+			return true
+		}
+	}
+	return false
+}
+
 // openTops answers, in node path order, the top-level step each of the run's open step turns sits
 // under, skipping a turn whose opening frame carried no path.
 func (r *runLog) openTops(workflowID string) []string {
@@ -535,6 +553,9 @@ func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marot
 		if t.top == "" {
 			t.top = topStepOf(step)
 		}
+		if t.nodeType == "" {
+			t.nodeType = step.NodeType
+		}
 		return t.turn, nil, nil
 	}
 	e, err := rec.log.OpenTurn(ctx, &chat.TurnSpec{
@@ -548,7 +569,7 @@ func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marot
 		return nil, nil, err
 	}
 	delete(rec.staged, nodePath)
-	t := &runTurn{path: nodePath, top: topStepOf(step)}
+	t := &runTurn{path: nodePath, top: topStepOf(step), nodeType: step.NodeType}
 	t.turn = turnlog.Open(e.ID, runSink{log: rec.log, turn: t})
 	if r.steps != nil {
 		r.steps.holdStep(rec.host, e.ID)

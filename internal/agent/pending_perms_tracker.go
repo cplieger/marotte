@@ -341,6 +341,21 @@ func (t *pendingPermsTracker) clearForRun(workflowID string) []pendingAsk {
 	return cleared
 }
 
+// hasForRun reports whether a decision the run raised is still open, a claim mid-answer included.
+func (t *pendingPermsTracker) hasForRun(workflowID string) bool {
+	if workflowID == "" {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, e := range t.asks {
+		if e.end == endNone && marotte.DecisionRunID(e.ask.evt.Payload) == workflowID {
+			return true
+		}
+	}
+	return false
+}
+
 // idsForChat is the ask ids of chatID's unresolved asks, in ask order: the ids its cards carry.
 func (t *pendingPermsTracker) idsForChat(chatID marotte.ChatID) []string {
 	t.mu.Lock()
@@ -451,6 +466,11 @@ func (b *bus) ClearPendingPermsForRun(ctx context.Context, workflowID string) {
 				"workflow_id", workflowID, "kind", kind, "error", err)
 		}
 	}
+}
+
+// HasPendingForRun reports whether the run waits on a person's answer to one of its decisions.
+func (b *bus) HasPendingForRun(workflowID string) bool {
+	return b.pendingPerms.hasForRun(workflowID)
 }
 
 // TakePendingPerm claims an unanswered decision for exactly one surface, false when beaten. Take
@@ -576,7 +596,11 @@ func (b *bus) announceDecisionSettled(evt marotte.ServerEvent, askID int64, sett
 		Kind:      kind,
 		SettledBy: settledBy,
 	}))
-	b.retractPush(notice.AskSubject(evt.ChatID, marotte.DecisionRunID(evt.Payload)), notice.AskKey(askID))
+	run := marotte.DecisionRunID(evt.Payload)
+	b.retractPush(notice.AskSubject(evt.ChatID, run), notice.AskKey(askID))
+	if run != "" && b.runAskSettled != nil {
+		b.runAskSettled(run)
+	}
 	if inScope(&evt, evt.ChatID, command.ScopeChatSession) {
 		b.askSettled(evt.ChatID)
 	}

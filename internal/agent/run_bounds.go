@@ -28,8 +28,8 @@ import (
 const runIdleWindow = 15 * time.Minute
 
 // runSilenceBound is how long an open step turn may send no frame at all before the idle window's expiry acts on
-// it: a chat-launched run is flagged (flagSilent) and keeps running, a parentless one is stopped as stalled. A
-// hung compaction leaves the turn open with nothing to say (docs/known-upstream-issues.md).
+// it: a chat-launched run is flagged and keeps running, a parentless one is stopped as stalled. actOnSilence owns
+// what counts as silence. A hung compaction leaves the turn open with nothing to say (docs/known-upstream-issues.md).
 const runSilenceBound = time.Hour
 
 // refillGranularity is the smallest move a refill writes: each is a fsynced rewrite of runs.json. It
@@ -222,7 +222,7 @@ func (rs *Runs) refillDeadline(ctx context.Context, workflowID string) {
 }
 
 // RunMadeProgress rolls a run's idle window forward and, at most once per chat.RunMarkRefresh, its keep marks.
-// Satisfies translate.runBoundsAccess. Called per tool-call frame, so the pre-checks keep it two map reads.
+// Satisfies translate.runBoundsAccess. Called per step frame, so it stays a few locked map operations.
 func (rs *Runs) RunMadeProgress(workflowID string) {
 	if rs.noteFrame(workflowID) {
 		rs.announceSilence(workflowID)
@@ -749,11 +749,8 @@ func (rs *Runs) idleExpiryHandled(workflowID string, armedFor time.Time) bool {
 	seq := rs.lastArmSeq(workflowID)
 	switch rs.idleVerdict(ctx, workflowID) {
 	case idleWorking:
-		if rs.silentFor(workflowID) >= runSilenceBound {
-			if !rs.chatResumes(workflowID) {
-				return false
-			}
-			rs.flagSilent(ctx, workflowID)
+		if rs.actOnSilence(ctx, workflowID) {
+			return false
 		}
 		return rs.refillWorking(ctx, workflowID)
 	case idleParked:

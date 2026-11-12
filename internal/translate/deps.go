@@ -37,6 +37,8 @@ type RunStep struct {
 	RunID     string
 	NodePath  string
 	SessionID string
+	// NodeType is KAS's node type off node_start, empty when a step frame opened the turn first.
+	NodeType string
 	// Path is NodePath's segments when the opening frame carried them, since the key is never split back.
 	Path []string
 }

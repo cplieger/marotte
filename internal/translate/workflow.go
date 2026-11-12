@@ -39,6 +39,7 @@ type kasRunNode struct {
 	NodeID     string `json:"nodeId"`
 	LoopID     string `json:"loopId"`
 	SessionID  string `json:"sessionId"`
+	Type       string `json:"type"`
 	Status     string `json:"status"`
 	// Reason is node_paused's text; node_complete names its own FailureReason.
 	Reason        string `json:"reason"`
@@ -156,7 +157,9 @@ func (t *Translator) RunProgressHandler(kind marotte.RunProgressKind) func(conte
 				t.wakes.nodeStarted(p.SessionID)
 			}
 			// The run turn's opening bracket; a path already open is a no-op on the log.
-			t.runs.RunNodeStart(ctx, &RunStep{RunID: p.WorkflowID, NodePath: path, SessionID: p.SessionID, Path: nodePathOf(p.NodePath, node)}, chatID)
+			t.runs.RunNodeStart(ctx, &RunStep{
+				RunID: p.WorkflowID, NodePath: path, SessionID: p.SessionID, NodeType: p.Type, Path: nodePathOf(p.NodePath, node),
+			}, chatID)
 		case marotte.RunProgressNodeComplete:
 			t.wakeMem.nodeRunning(p.WorkflowID, node)
 			t.runs.RunNodeComplete(ctx, p.WorkflowID, nodePathOf(p.NodePath, node), p.Status, p.FailureReason)

@@ -41,15 +41,21 @@ func (rs *Runs) framed(next chatHandler) chatHandler {
 	}
 }
 
-// silentFor is how long the run has sent no frame since its last frame or arm, zero for a run never armed.
-func (rs *Runs) silentFor(workflowID string) time.Duration {
-	rs.mu.Lock()
-	defer rs.mu.Unlock()
-	last, armed := rs.bounds.lastFrame[workflowID]
-	if !armed {
-		return 0
+// askSettled restarts the run's silence when a person answers one of its asks: the wait was not silence.
+func (rs *Runs) askSettled(workflowID string) {
+	if rs.noteFrame(workflowID) {
+		rs.announceSilence(workflowID)
 	}
-	return time.Since(last)
+}
+
+// silenceCounts reports whether an open turn of a KAS node of this type counts toward the run's silence. A watch is
+// bounded by its own idleTimeoutSec, and a container's children send its frames. An untyped turn is a step's.
+func silenceCounts(nodeType string) bool {
+	switch nodeType {
+	case "watch", "sequence", "repeat", "parallel":
+		return false
+	}
+	return true
 }
 
 // silentSince is when the flagged run's silence began, zero when it is not flagged.
@@ -59,21 +65,37 @@ func (rs *Runs) silentSince(workflowID string) time.Time {
 	return rs.bounds.silent[workflowID]
 }
 
-// flagSilent marks a chat-launched run silent and, once per silence, tells the user: a person decides whether the
-// step is hung (Mark step failed, Cancel), since a long tool call looks the same.
-func (rs *Runs) flagSilent(ctx context.Context, workflowID string) {
+// actOnSilence acts on an open step turn that has sent nothing for runSilenceBound, true when the run is to stop as
+// stalled. A chat-launched run is flagged instead and, once per silence, the user told: a person decides whether the
+// step is hung (Mark step failed, Cancel), since a long tool call looks the same. A step waiting on an answer is not
+// silent (askSettled restarts the count), nor is a paused run, whose stale timer may still fire. The silence is
+// re-read under mu, since a frame can land after the checks.
+func (rs *Runs) actOnSilence(ctx context.Context, workflowID string) (stop bool) {
+	if rs.log == nil || !rs.log.hasOpenStep(workflowID) || rs.perms != nil && rs.perms.HasPendingForRun(workflowID) {
+		return false
+	}
+	parented := rs.chatResumes(workflowID)
+	store := rs.leaseStore()
 	rs.mu.Lock()
-	_, flagged := rs.bounds.silent[workflowID]
 	last, armed := rs.bounds.lastFrame[workflowID]
-	if !flagged && armed {
+	if l, held := store.Get(workflowID); !held || !l.Bounded() || !armed || time.Since(last) < runSilenceBound {
+		rs.mu.Unlock()
+		return false
+	}
+	if !parented {
+		rs.mu.Unlock()
+		return true
+	}
+	_, flagged := rs.bounds.silent[workflowID]
+	if !flagged {
 		if rs.bounds.silent == nil {
 			rs.bounds.silent = map[string]time.Time{}
 		}
 		rs.bounds.silent[workflowID] = last
 	}
 	rs.mu.Unlock()
-	if flagged || !armed {
-		return
+	if flagged {
+		return false
 	}
 	l, held := rs.lease(workflowID)
 	slog.Warn(logMsgRunSilent, "workflow_id", workflowID, "silent_since", last, "recipe", l.Recipe)
@@ -82,6 +104,7 @@ func (rs *Runs) flagSilent(ctx context.Context, workflowID string) {
 		n := notice.StepSilent(notice.RunTarget(workflowID, rs.leasedRunName(&l)))
 		rs.coord.Notify(ctx, marotte.ChatID(l.ChatID), &n)
 	}
+	return false
 }
 
 // announceSilence sends the run's chat a run-level `silence` frame, on which the run view reads the run again.
