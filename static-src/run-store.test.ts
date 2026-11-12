@@ -1683,10 +1683,13 @@ describe("a run's log orders its turns by the run's own ordinal", () => {
 });
 
 describe("rereadUnansweredRuns re-reads each held run whose newest read missed", () => {
+  beforeEach(() => {
+    holdTrees = false;
+  });
   const unregisters: (() => void)[] = [];
 
   function hold(...ids: string[]): () => void {
-    const un = store.registerRunStateDemand((id) => ids.includes(id));
+    const un = store.registerRunStateDemand((id) => ids.includes(id), "tree");
     unregisters.push(un);
     return un;
   }
@@ -1697,8 +1700,7 @@ describe("rereadUnansweredRuns re-reads each held run whose newest read missed",
       un();
     }
     for (const id of ["wf_1", "wf_2", "wf_3"]) {
-      store.forgetRun(id);
-      store.noteRunSettled(id);
+      forget(id);
     }
   });
 
