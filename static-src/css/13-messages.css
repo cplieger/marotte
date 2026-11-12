@@ -370,7 +370,10 @@
      *
      * NO `max-width` on the host: evidence beside it (tool cards, diffs, output)
      * runs the full body width, and a cap here is a dead gutter on every reply.
+     * The same holds for the prose's `--cp-measure` on its blocks.
      * The editor's rendered-markdown view declares its own measure. */
+    --cp-measure: none;
+
     color: var(--c-text-primary);
     background: none;
     position: relative;
