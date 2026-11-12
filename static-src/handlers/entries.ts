@@ -68,9 +68,6 @@ onSSE("entry_appended", (chatID, p) => {
 });
 
 onSSE("tool_progress", (chatID, p) => {
-  if (forRun(p)) {
-    return;
-  }
   // `undefined` means the window holds no such call, and a card cannot be built from a delta,
   // so the answer is the turn's range read rather than a synthesized create.
   if (applyToolProgress(chatID, p.turn, p) === undefined) {

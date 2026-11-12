@@ -24,7 +24,7 @@ import (
 	"github.com/cplieger/marotte/internal/subject"
 )
 
-// The transport is github.com/cplieger/go/sse's and tested there; these pin marotte's layer: emit and chat
+// The transport is github.com/cplieger/go/sse's and tested there; these pin marotte's layer: emit and its
 // topics, the frame-cap substitute, the handshake, the initial-state hook, the draining gate.
 
 func TestEmit_AppendsToReplayBuffer(t *testing.T) {
@@ -36,9 +36,6 @@ func TestEmit_AppendsToReplayBuffer(t *testing.T) {
 	evts := ringSince(h, base)
 	if len(evts) != 2 {
 		t.Fatalf("replay len = %d, want 2", len(evts))
-	}
-	if evts[0].Event.Topic != "c1" || evts[1].Event.Topic != "c2" {
-		t.Errorf("replay topics: %q, %q", evts[0].Event.Topic, evts[1].Event.Topic)
 	}
 	if evts[0].Offset >= evts[1].Offset {
 		t.Errorf("event offsets not monotonic: %d → %d", evts[0].Offset, evts[1].Offset)
@@ -59,23 +56,69 @@ func TestEmit_CapsBufferAtReplayBufSize(t *testing.T) {
 	}
 }
 
-func TestEmit_TopicCarriesChatID(t *testing.T) {
-	// emit maps ChatID onto the topic (empty is global); the stream is unfiltered, so the topic is diagnostic.
+// TestEmit_PublishesOnTheEventsTopic pins the scope plan's topics: a chat's frame and a global one ride the
+// broadcast topic "", which every connection receives, and a run's log frame rides "run:<workflowID>".
+func TestEmit_PublishesOnTheEventsTopic(t *testing.T) {
 	h, _, _ := newTestHub()
 	base := h.bus.fanout.Position().Head
-	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
-	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c2"})
-	h.bus.emit(marotte.ServerEvent{Type: "connected"}) // global: empty topic
+	h.bus.emit(marotte.ServerEvent{Type: marotte.EventChatUpdated, ChatID: "c1"})
+	h.bus.emit(marotte.ServerEvent{Type: marotte.EventConnected})
+	h.bus.emit(marotte.ServerEvent{Type: marotte.EventEntryDelta, Topic: "run:wf_1"})
 
 	got := ringSince(h, base)
 	if len(got) != 3 {
 		t.Fatalf("buffered = %d events, want 3", len(got))
 	}
-	wantTopics := []string{"c1", "c2", ""}
+	wantTopics := []string{"", "", "run:wf_1"}
 	for i, e := range got {
 		if e.Event.Topic != wantTopics[i] {
 			t.Errorf("event %d topic = %q, want %q", i, e.Event.Topic, wantTopics[i])
 		}
+	}
+	if strings.Contains(string(got[2].Event.Data), "run:wf_1") {
+		t.Errorf("the topic reached the frame's JSON: %s", got[2].Event.Data)
+	}
+}
+
+// TestEmit_ARunChatsWorkingLabelIsNotPublished pins that a run step's working label, which no tab reads (a run
+// chat id names no chat in the client's store), reaches no connection, while a chat's still does.
+func TestEmit_ARunChatsWorkingLabelIsNotPublished(t *testing.T) {
+	h, _, _ := newTestHub()
+	base := h.bus.fanout.Position().Head
+	label := marotte.WorkingLabelPayload{Label: marotte.WorkingLabelThinking}
+	h.bus.emit(marotte.NewEvent(marotte.EventWorkingLabel, runChatID("wf_1"), label))
+	h.bus.emit(marotte.NewEvent(marotte.EventWorkingLabel, "c1", label))
+
+	got := ringSince(h, base)
+	if len(got) != 1 || !strings.Contains(string(got[0].Event.Data), `"chat_id":"c1"`) {
+		t.Fatalf("published %d frames, want only the chat's working label: %+v", len(got), got)
+	}
+}
+
+// TestEmit_TheSubstituteRidesTheRefusedFramesTopic pins that an over-cap run frame's subject_changed reaches the
+// connections the refused frame would have reached, and no others.
+func TestEmit_TheSubstituteRidesTheRefusedFramesTopic(t *testing.T) {
+	logs := &logCapture{}
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(logs, nil)))
+	h, _, _ := newTestHub()
+	base := len(h.bus.fanout.Snapshot())
+
+	big := marotte.NewEvent(marotte.EventEntryAppended, "", marotte.EntryAppendedPayload{
+		Entry: textEntry(t, "t1", 1, strings.Repeat("o", sse.MaxFrameBytes+1)), WorkflowID: "wf_1",
+	})
+	big.Topic = "run:wf_1"
+	big.Subject = &marotte.SubjectStamp{Kind: "run_turn", Ref: "wf_1/t1", Version: "3"}
+	h.bus.emit(big)
+
+	ring := h.bus.fanout.Snapshot()[base:]
+	if len(ring) != 1 {
+		t.Fatalf("ring holds %d frames, want the one substitute", len(ring))
+	}
+	if !strings.Contains(string(ring[0].Event.Data), `"type":"subject_changed"`) {
+		t.Fatalf("ring[0] is not the substitute: %.120s", ring[0].Event.Data)
+	}
+	if ring[0].Event.Topic != "run:wf_1" {
+		t.Errorf("substitute topic = %q, want the refused frame's %q", ring[0].Event.Topic, "run:wf_1")
 	}
 }
 

@@ -6,9 +6,9 @@ import {
   type Changed,
   type DigestClient,
   type DigestVerdict,
+  type HostStream,
   type LifecycleEvent,
   type RevalidateContext,
-  type Stream,
   type TabSet,
   type VersionMap,
   type WorkerHost,
@@ -37,7 +37,7 @@ export async function profileRevalidate(
   tabs: TabSet,
   versions: VersionMap,
   digest: DigestClient,
-  stream: Stream,
+  stream: HostStream,
 ): Promise<void> {
   if (ctx.full) {
     await tabs.run(ctx);
@@ -64,7 +64,7 @@ export async function profileRevalidate(
 /** Every tab that attaches to a LIVE stream needs the connect hook's two snapshot frames
  *  (`pending_snapshot`, `status_snapshot`): those sets reach a client only through the hook, and
  *  the hook ran once, for the tabs attached at that connect. */
-function reconnectForAttach(ev: LifecycleEvent, stream: Stream): void {
+function reconnectForAttach(ev: LifecycleEvent, stream: HostStream): void {
   if (ev.kind === "tab_attached" && ev.state === "open") {
     stream.reconnect();
   }

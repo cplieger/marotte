@@ -8,10 +8,9 @@ package marotte
 // error and the full event vocabulary discoverable via IDE completion.
 type EventType string
 
-// ServerEvent is the server→client event envelope broadcast to every SSE
-// client: {type, chat_id, payload}. Payload is the event-specific JSON
-// object; handlers type-assert based on Type. Construct it through NewEvent,
-// which keeps the payload typed at the emit site.
+// ServerEvent is the server→client event envelope: {type, chat_id, payload}.
+// Payload is the event-specific JSON object; handlers type-assert based on Type.
+// Construct it through NewEvent, which keeps the payload typed at the emit site.
 type ServerEvent struct {
 	Payload any `json:"payload,omitempty"`
 	// Subject is the version stamp of the projection this frame COMPLETES, set by
@@ -20,6 +19,14 @@ type ServerEvent struct {
 	Subject *SubjectStamp `json:"subject,omitempty"`
 	Type    EventType     `json:"type"`
 	ChatID  ChatID        `json:"chat_id,omitempty"`
+	// Topic is the hub topic the frame publishes on, never on the wire: "" reaches every
+	// connection, RunTopic(id) only a connection scoped to that run or to everything.
+	Topic string `json:"-"`
+}
+
+// RunTopic is the hub topic of one run's log frames, the one Go spelling of "run:<workflowID>".
+func RunTopic(workflowID string) string {
+	return "run:" + workflowID
 }
 
 // SubjectStamp names one digest subject at one version. Kind and Ref spell the

@@ -18,7 +18,8 @@ const wireHeader = "SSE-Wire"
 
 const clientTagHeader = "SSE-Client"
 
-// Broadcast publishes evt to every connected client.
+// Broadcast publishes evt on its topic: every connection receives the broadcast topic "", and a run topic reaches
+// only a connection whose scope holds it.
 func (b *bus) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 	b.emit(evt)
 }
@@ -40,13 +41,18 @@ func (b *bus) emit(evt marotte.ServerEvent) {
 		}
 	case marotte.EventTurnClosed:
 		b.chatStatus.clearAtTurnEnd(evt.ChatID)
+	case marotte.EventWorkingLabel:
+		// No tab reads it: a run chat id names no chat in the client's store, and the run tab paints from its log.
+		if isRunChat(evt.ChatID) {
+			return
+		}
 	}
 	data, err := json.Marshal(evt)
 	if err != nil {
 		slog.Error("emit marshal", "type", evt.Type, "error", err)
 		return
 	}
-	_, err = b.fanout.Publish(sse.Event{Topic: string(evt.ChatID), Data: data})
+	_, err = b.fanout.Publish(sse.Event{Topic: evt.Topic, Data: data})
 	if err == nil {
 		return
 	}
@@ -66,12 +72,13 @@ func (b *bus) emit(evt marotte.ServerEvent) {
 		"kind", evt.Subject.Kind, "ref", logsafe.Field(evt.Subject.Ref))
 	substitute := marotte.NewEvent(marotte.EventSubjectChanged, evt.ChatID, marotte.SubjectChangedPayload{})
 	substitute.Subject = evt.Subject
+	substitute.Topic = evt.Topic
 	data, err = json.Marshal(substitute)
 	if err != nil {
 		slog.Error("emit marshal", "type", substitute.Type, "error", err)
 		return
 	}
-	if _, err := b.fanout.Publish(sse.Event{Topic: string(evt.ChatID), Data: data}); err != nil {
+	if _, err := b.fanout.Publish(sse.Event{Topic: substitute.Topic, Data: data}); err != nil {
 		slog.Error("emit publish", "type", substitute.Type, "error", err)
 	}
 }

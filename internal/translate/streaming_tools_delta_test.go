@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // TestToolCallDelta_SendsEachOutputChunkOnce pins that each output chunk travels on one
@@ -200,4 +201,27 @@ func toolCallDeltas(t *testing.T, events *[]marotte.ServerEvent) []marotte.ToolP
 		out = append(out, p)
 	}
 	return out
+}
+
+// TestToolCallDelta_ARunStepPublishesNoDelta pins that a run step's in-flight update reaches no tool_progress
+// frame: the run tab reads a step's tool call from its log, and the run topic carries only the log's frames.
+func TestToolCallDelta_ARunStepPublishesNoDelta(t *testing.T) {
+	deps, events := newEventCaptureDeps()
+	tr := New(rolesOf(deps))
+	path := []string{"wf_1", "build"}
+	attr := FrameAttribution{Step: true, RunID: "wf_1", NodePath: workflow.PathKey(path)}
+	deps.RunNodeStart(t.Context(), &RunStep{RunID: attr.RunID, NodePath: attr.NodePath}, "c1")
+	tr.HandleToolCall(t.Context(), "c1", mustJSON(t, map[string]any{
+		"toolCallId": "tc-1", "title": "readFile", "kind": "read", "status": "pending",
+	}), attr)
+
+	tr.HandleToolCallUpdate(t.Context(), "c1", mustJSON(t, map[string]any{
+		"toolCallId": "tc-1",
+		"status":     "in_progress",
+		"content":    []map[string]any{{"type": "content", "content": map[string]any{"text": "chunk"}}},
+	}), attr)
+
+	if deltas := toolCallDeltas(t, events); len(deltas) != 0 {
+		t.Errorf("a run step's update published %d tool_progress frames, want 0: %+v", len(deltas), deltas)
+	}
 }

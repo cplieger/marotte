@@ -115,9 +115,10 @@ func classifierNote(in *acpTrustClassifier) string {
 	return displayText(in.Reason)
 }
 
-// HandleToolCallUpdate folds an update into the call's in-flight value. A non-terminal
-// frame is announced as tool_progress (the fold's delta); a terminal one seals the
-// settled value as the tool_result entry.
+// HandleToolCallUpdate folds an update into the call's in-flight value. A chat's
+// non-terminal frame is announced as tool_progress (the fold's delta), a run step's
+// is not (the run tab reads its log); a terminal one seals the settled value as the
+// tool_result entry.
 func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var tu acpToolCallUpdateWire
 	if json.Unmarshal(raw, &tu) != nil {
@@ -151,9 +152,9 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID marotte.Ch
 	t.applyToolCallUpdate(ctx, chatID, turn, &open, &tc, &tu, content)
 	if !tc.Status.Terminal() {
 		turn.SetOpenCall(tu.ToolCallID, &tc)
-		p := toolProgress(turn.ID(), &before, &tc)
-		p.WorkflowID = sc.runID
-		t.bus.Broadcast(ctx, sc.event(marotte.EventToolProgress, p))
+		if sc.runID == "" {
+			t.bus.Broadcast(ctx, sc.event(marotte.EventToolProgress, toolProgress(turn.ID(), &before, &tc)))
+		}
 		return
 	}
 	res := marotte.EntryToolResultOf(&tc)
