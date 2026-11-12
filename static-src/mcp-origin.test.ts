@@ -418,8 +418,16 @@ describe("the sign-in frames", () => {
     initMCP();
 
     dispatch({
-      type: "mcp_sign_in_open",
-      payload: { server: "frames", url: "https://auth.example.com/authorize?state=s" },
+      type: "mcp_status",
+      payload: {
+        server: "frames",
+        status: {
+          name: "frames",
+          state: "signing_in",
+          origin: "user",
+          oauth_url: "https://auth.example.com/authorize?state=s",
+        },
+      },
     } as ServerEvent);
     expect(statusSignalFor("frames").value).toMatchObject({
       state: "signing_in",
@@ -427,7 +435,13 @@ describe("the sign-in frames", () => {
       relayed: false,
     });
 
-    dispatch({ type: "mcp_oauth_needed", payload: { server: "frames" } } as ServerEvent);
+    dispatch({
+      type: "mcp_status",
+      payload: {
+        server: "frames",
+        status: { name: "frames", state: "needs_auth", origin: "user" },
+      },
+    } as ServerEvent);
     expect(statusSignalFor("frames").value).toEqual({
       name: "frames",
       origin: "user",
@@ -435,8 +449,11 @@ describe("the sign-in frames", () => {
     });
 
     dispatch({
-      type: "mcp_oauth_needed",
-      payload: { server: "frames", error: "listener busy" },
+      type: "mcp_status",
+      payload: {
+        server: "frames",
+        status: { name: "frames", state: "needs_auth", origin: "user", error: "listener busy" },
+      },
     } as ServerEvent);
     expect(statusSignalFor("frames").value).toEqual({
       name: "frames",
@@ -548,16 +565,17 @@ describe("unconfiguredNames after a status fetch", () => {
   });
 });
 
-describe("setStatusFromEvent", () => {
-  it("keeps the origin an SSE frame cannot carry", async () => {
+describe("an mcp_status row's provenance", () => {
+  it("keeps a foreign server's origin through a failure", async () => {
     statusResponse.servers = [{ name: "from-a-power", state: "connected", origin: "power" }];
     mcpState.refetchStatus();
     await settle();
 
-    // mcp_failed carries no origin; falling back to "user" would present another config's server as the user's own.
-    mcpState.setStatusFromEvent("from-a-power", {
+    // Falling back to "user" would present another config's server as the user's own.
+    mcpState.applyStatusFrame("from-a-power", {
       name: "from-a-power",
       state: "failed",
+      origin: "power",
       error: "boom",
     });
 
@@ -566,7 +584,7 @@ describe("setStatusFromEvent", () => {
     expect(after.state).toBe("failed");
   });
 
-  it("keeps the workspace root and the shadow flag an SSE frame cannot carry", async () => {
+  it("keeps the workspace root and the shadow flag through a failure", async () => {
     statusResponse.servers = [
       {
         name: "shadowed",
@@ -579,7 +597,14 @@ describe("setStatusFromEvent", () => {
     mcpState.refetchStatus();
     await settle();
 
-    mcpState.setStatusFromEvent("shadowed", { name: "shadowed", state: "failed", error: "boom" });
+    mcpState.applyStatusFrame("shadowed", {
+      name: "shadowed",
+      state: "failed",
+      origin: "workspace",
+      origin_root: "/workspace/app",
+      shadows: true,
+      error: "boom",
+    });
 
     const after = statusSignalFor("shadowed").peek();
     expect(after.originRoot).toBe("/workspace/app");

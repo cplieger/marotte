@@ -7,7 +7,7 @@ import type {
   EngineStatus,
   MCPPrewarmPayload,
   MCPSignInClosedPayload,
-  MCPSignInOpenPayload,
+  MCPStatusPayload,
   NotificationPayload,
   RunAsksPayload,
   SettingsUpdatedPayload,
@@ -29,10 +29,6 @@ import type {
   PermissionNeeded,
   ErrorPayload,
   ConnectedPayload,
-  MCPConnectedPayload,
-  MCPOAuthPayload,
-  MCPFailedPayload,
-  MCPDisconnectedPayload,
   ElicitationNeededPayload,
   UserInputNeededPayload,
   DecisionSettledPayload,
@@ -117,12 +113,8 @@ export interface SSEPayloads {
   readonly settings_updated: SettingsUpdatedPayload;
   readonly mcp_config_changed: undefined;
   readonly mcp_pool_changed: undefined;
-  readonly mcp_connected: MCPConnectedPayload;
-  readonly mcp_oauth_needed: MCPOAuthPayload;
-  readonly mcp_sign_in_open: MCPSignInOpenPayload;
+  readonly mcp_status: MCPStatusPayload;
   readonly mcp_sign_in_closed: MCPSignInClosedPayload;
-  readonly mcp_failed: MCPFailedPayload;
-  readonly mcp_disconnected: MCPDisconnectedPayload;
   readonly mcp_prewarm: MCPPrewarmPayload;
   readonly mode_changed: { readonly mode_id: string };
   readonly safety_status: SafetyStatusPayload;

@@ -207,7 +207,7 @@ const decodeMCPServersResponseLocal: Decoder<{ servers: Server[]; unreadable: nu
 
 // SSE is the legacy HTTP+SSE remote transport, a first-class stored value sharing the url/headers form with http.
 export type { Transport } from "./wire/types.gen.js";
-import type { MCPOrigin, MCPPrewarmState, Transport } from "./wire/types.gen.js";
+import type { MCPOrigin, MCPPrewarmState, MCPServerStatus, Transport } from "./wire/types.gen.js";
 
 /** KAS's per-server `versionNegotiation` enum. */
 type VersionNegotiation = "auto" | "legacy";
@@ -311,9 +311,6 @@ export type RuntimeStatus = Provenance &
     | { name: string; state: "failed"; error: string }
     | { name: string; state: "disabled" }
   );
-
-/** Distributive: a plain `Omit` collapses the union to its common members. */
-type WithoutOrigin<T> = T extends unknown ? Omit<T, keyof Provenance> : never;
 
 export const SECRET_MASK = "***";
 
@@ -468,23 +465,21 @@ class MCPStateController {
     statusMap.ensure(name, rs).value = rs;
   }
 
-  /**
-   * SSE frames carry no provenance, so the known one is kept; defaulting to `user` would move a foreign server's status
-   * onto marotte's row.
-   */
-  setStatusFromEvent(name: string, next: WithoutOrigin<RuntimeStatus>): void {
-    const prev = statusMap.ensure(name, idleStatus(name)).peek();
-    const prov: Provenance = { origin: prev.origin };
-    if (prev.originRoot !== undefined) {
-      prov.originRoot = prev.originRoot;
+  /** Apply one mcp_status frame's row; an absent row returns the server to idle. */
+  applyStatusFrame(name: string, row: MCPServerStatus | undefined): void {
+    if (row === undefined) {
+      this.deleteStatus(name);
+      this.setDiscovery(name, [], [], []);
+      return;
     }
-    if (prev.originPower !== undefined) {
-      prov.originPower = prev.originPower;
-    }
-    if (prev.shadows !== undefined) {
-      prov.shadows = prev.shadows;
-    }
-    this.setStatus(name, { ...next, ...prov });
+    this.setStatus(name, adaptStatus(row));
+    this.setDiscovery(
+      name,
+      row.tools ?? [],
+      row.prompts ?? [],
+      row.resources ?? [],
+      row.resource_templates ?? [],
+    );
   }
 
   deleteStatus(name: string): void {

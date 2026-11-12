@@ -1175,35 +1175,25 @@ export function initMCP(): void {
     mcpState.refetchServers();
     mcpState.refetchStatus();
   });
-  onSSE("mcp_connected", (_chat, p) => {
-    mcpState.setStatusFromEvent(p.server, { name: p.server, state: "connected" });
-    // Prompts and resources ride /api/mcp/status, and so does a foreign server's origin.
-    mcpState.refetchStatus();
-  });
-  onSSE("mcp_oauth_needed", (_chat, p) => {
-    if (p.error === undefined || p.error === "") {
-      mcpState.setStatusFromEvent(p.server, { name: p.server, state: "needs_auth" });
-      return;
+  onSSE("mcp_status", (_chat, p) => {
+    // Read the previous row first: each toast fires on a transition, and a row frame repeats an unchanged state.
+    const prev = statusSignalFor(p.server).peek();
+    mcpState.applyStatusFrame(p.server, p.status);
+    const next = p.status;
+    if (next?.state === "failed") {
+      announceMCPFailure(p.server, next.error ?? "", prev.state);
+    } else if (
+      next?.state === "needs_auth" &&
+      next.error !== undefined &&
+      next.error !== "" &&
+      (prev.state !== "needs_auth" || prev.error !== next.error)
+    ) {
+      showToast(signInFailureText(p.server, next.error), "error");
     }
-    showToast(signInFailureText(p.server, p.error), "error");
-    mcpState.setStatusFromEvent(p.server, { name: p.server, state: "needs_auth", error: p.error });
-  });
-  onSSE("mcp_sign_in_open", (_chat, p) => {
-    mcpState.setStatusFromEvent(p.server, {
-      name: p.server,
-      state: "signing_in",
-      oauth_url: p.url,
-      // A fresh attempt clears the relay latch: a stale `true` hides the paste box for an undelivered code.
-      relayed: false,
-    });
-  });
-  onSSE("mcp_failed", (_chat, p) => {
-    // Read the previous state first: the toast fires on the transition into `failed`.
-    announceMCPFailure(p.server, p.error, statusSignalFor(p.server).peek().state);
-    mcpState.setStatusFromEvent(p.server, { name: p.server, state: "failed", error: p.error });
-  });
-  onSSE("mcp_disconnected", (_chat, p) => {
-    mcpState.deleteStatus(p.server);
+    if (next?.state === "connected") {
+      // A foreign server's own row is listed from /api/mcp/status.
+      mcpState.refetchStatus();
+    }
   });
   onSSE("mcp_prewarm", (_chat, p) => {
     for (const id of p.server_ids) {

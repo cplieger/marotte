@@ -2181,44 +2181,6 @@ export interface LoginResult {
 }
 
 /**
- * MCPConnectedPayload is the payload for type="mcp_connected", emitted
- * when kiro-cli reports _kiro.dev/mcp/server_initialized.
- */
-export interface MCPConnectedPayload {
-  server: string;
-}
-
-/**
- * MCPDisconnectedPayload is the payload for type="mcp_disconnected".
- * Emitted per server when the agent engine ends: kiro-cli's MCP subprocesses
- * shut down with it, so no configured server is currently live.
- * Clients use this to clear their runtime-state map.
- */
-export interface MCPDisconnectedPayload {
-  server: string;
-}
-
-/**
- * MCPFailedPayload is the payload for type="mcp_failed", emitted
- * when kiro-cli reports _kiro.dev/mcp/server_init_failure.
- */
-export interface MCPFailedPayload {
-  server: string;
-  error: string;
-}
-
-/**
- * MCPOAuthPayload is the payload for type="mcp_oauth_needed", emitted when kiro-cli reports a server failed for
- * want of sign-in, and again when a Sign in kiro-cli refused leaves it waiting. It carries no URL: the user starts a
- * sign-in from the server's row.
- */
-export interface MCPOAuthPayload {
-  server: string;
-  /** Error is why kiro-cli refused the last Sign in, absent when none was refused. */
-  error?: string;
-}
-
-/**
  * MCPPrewarmPayload is the payload for type="mcp_prewarm", emitted when a prewarm install starts,
  * succeeds or fails, and when a server joins or leaves one in flight. State applies to exactly the
  * servers ServerIDs names.
@@ -2227,6 +2189,60 @@ export interface MCPPrewarmPayload {
   package: string;
   state: MCPPrewarmState;
   server_ids: string[];
+}
+
+/**
+ * MCPPromptInfo describes one prompt a connected MCP server advertises. Name is KAS's display
+ * title, the prompt's title when it has one, else its name.
+ */
+export interface MCPPromptInfo {
+  name: string;
+  description?: string;
+}
+
+/**
+ * MCPResourceInfo describes one resource a connected MCP server advertises.
+ * URI is the identifier passed to _kiro/mcp/getResource.
+ */
+export interface MCPResourceInfo {
+  name: string;
+  uri: string;
+  description?: string;
+  mime_type?: string;
+}
+
+/**
+ * MCPResourceTemplateInfo is one resource template a connected MCP server
+ * advertises; URITemplate is RFC 6570.
+ */
+export interface MCPResourceTemplateInfo {
+  name: string;
+  uri_template: string;
+  description?: string;
+  mime_type?: string;
+}
+
+/** MCPServerStatus is one server's row of GET /api/mcp/status and of an mcp_status frame. */
+export interface MCPServerStatus {
+  name: string;
+  state: string;
+  /** Origin is never omitted: the client attributes a status to marotte's row only on "user". */
+  origin: MCPOrigin;
+  origin_root?: string;
+  origin_power?: string;
+  /** OAuthURL is the standing Sign in's consent URL, set only while signing_in. */
+  oauth_url?: string;
+  /** Error is the server's failure, or why kiro-cli refused the last Sign in while it waits for one. */
+  error?: string;
+  /** Tools is the connected server's tool names, for the per-tool deny editor's suggestions. */
+  tools?: string[];
+  prompts?: MCPPromptInfo[];
+  resources?: MCPResourceInfo[];
+  resource_templates?: MCPResourceTemplateInfo[];
+  /** Relayed stops a reload or second device offering the paste box for a spent code. */
+  relayed?: boolean;
+  /** Shadows keeps the client from putting this status on marotte's config row. */
+  shadows?: boolean;
 }
 
 /**
@@ -2241,12 +2257,19 @@ export interface MCPSignInClosedPayload {
 }
 
 /**
- * MCPSignInOpenPayload is the payload for type="mcp_sign_in_open": kiro-cli opened URL, the consent page of the
- * sign-in the user started on Server's row.
+ * MCPStatusPayload is the payload for type="mcp_status": Server's row changed, stamped with the
+ * `mcp_status` version. A nil Status means the server left the status inventory.
  */
-export interface MCPSignInOpenPayload {
+export interface MCPStatusPayload {
+  status?: MCPServerStatus;
   server: string;
-  url: string;
+}
+
+/** MCPStatusResponse is GET /api/mcp/status's reply, sorted by server name. */
+export interface MCPStatusResponse {
+  /** Subject is the `mcp_status` digest stamp with the hub epoch, read with the rows. */
+  subject?: SubjectStamp;
+  servers: MCPServerStatus[];
 }
 
 /**
@@ -3987,10 +4010,11 @@ export interface SteeringIssuesResponse {
 /**
  * SubjectStamp names one digest subject at one version. Kind and Ref spell the
  * subject the way internal/subject does; Version is opaque decimal, compared by
- * equality, except a subject a client mirror holds (`runs`), which is minted by
- * subject.Versions.BumpCounter so its versions strictly increase within an epoch and
- * the mirror orders them as numbers. Epoch is filled by REST responses alone, so a
- * response issued under a previous hub epoch is refused by the client.
+ * equality, except a subject a client mirror holds (`runs`, `mcp_status`), which
+ * is minted by subject.Versions.BumpCounter so its versions strictly increase
+ * within an epoch and the mirror orders them as numbers. Epoch is filled by REST
+ * responses alone, so a response issued under a previous hub epoch is refused by
+ * the client.
  */
 export interface SubjectStamp {
   kind: string;

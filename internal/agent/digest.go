@@ -59,7 +59,7 @@ func (rt *Runtime) resolveOne(ctx context.Context, h *sse.Held) sse.State {
 		}
 		st.Version, _ = rt.versions.Current(subject.KindChat, h.Ref)
 	case subject.KindChats, subject.KindPending, subject.KindRuns, subject.KindCatalog, subject.KindStatus,
-		subject.KindForgeInventory:
+		subject.KindForgeInventory, subject.KindMCPStatus:
 		st.Version, _ = rt.versions.Current(subject.Kind(h.Kind), h.Ref)
 	case subject.KindLiveTurn:
 		// The ref is a turn id: the registry names the chat holding it, the store its newest sealed seq.

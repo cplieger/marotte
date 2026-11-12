@@ -33,6 +33,8 @@ const (
 	// KindForgeInventory is one forge connection's pull-request inventory entry,
 	// ref the connection id.
 	KindForgeInventory Kind = "forge_inventory"
+	// KindMCPStatus is the workspace-wide MCP status inventory, GET /api/mcp/status.
+	KindMCPStatus Kind = "mcp_status"
 )
 
 // Unminted is the version a counter reports before its first bump this

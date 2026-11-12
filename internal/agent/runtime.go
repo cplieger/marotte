@@ -526,7 +526,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		sseP.Broadcast(c, marotte.NewEvent(marotte.EventConfigStandingChanged, "", marotte.ConfigStandingChangedPayload{}))
 	})
 	h.runRoutes = &runRoutes{runs: runs, epoch: h.Epoch}
-	h.mcpRegistry = newMCPRegistry(h.engine, sseP, lc, h.mcpConfig, func(c marotte.ChatID) (marotte.SessionID, bool) {
+	h.mcpRegistry = newMCPRegistry(h.engine, sseP, lc, h.mcpConfig, mcpStamps{versions: h.versions, epoch: h.Epoch}, func(c marotte.ChatID) (marotte.SessionID, bool) {
 		if b := bridgeP.mgr.get(c); b != nil {
 			return b.SessionID(), true
 		}

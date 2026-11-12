@@ -24,10 +24,11 @@ type ServerEvent struct {
 
 // SubjectStamp names one digest subject at one version. Kind and Ref spell the
 // subject the way internal/subject does; Version is opaque decimal, compared by
-// equality, except a subject a client mirror holds (`runs`), which is minted by
-// subject.Versions.BumpCounter so its versions strictly increase within an epoch and
-// the mirror orders them as numbers. Epoch is filled by REST responses alone, so a
-// response issued under a previous hub epoch is refused by the client.
+// equality, except a subject a client mirror holds (`runs`, `mcp_status`), which
+// is minted by subject.Versions.BumpCounter so its versions strictly increase
+// within an epoch and the mirror orders them as numbers. Epoch is filled by REST
+// responses alone, so a response issued under a previous hub epoch is refused by
+// the client.
 type SubjectStamp struct {
 	Kind    string `json:"kind"`
 	Ref     string `json:"ref"`
@@ -116,16 +117,14 @@ const (
 	EventElicitationNeeded EventType = "elicitation_needed"
 	EventUserInputNeeded   EventType = "user_input_needed"
 	EventMCPConfigChanged  EventType = "mcp_config_changed"
-	EventMCPConnected      EventType = "mcp_connected"
-	EventMCPDisconnected   EventType = "mcp_disconnected"
-	EventMCPFailed         EventType = "mcp_failed"
-	EventMCPOAuthNeeded    EventType = "mcp_oauth_needed"
 	// EventMCPPoolChanged is an empty refetch signal for GET /api/mcp/pool: a
 	// session's pool was replaced or dropped.
 	EventMCPPoolChanged  EventType = "mcp_pool_changed"
 	EventMCPPrewarm      EventType = "mcp_prewarm"
-	EventMCPSignInOpen   EventType = "mcp_sign_in_open"
 	EventMCPSignInClosed EventType = "mcp_sign_in_closed"
+	// EventMCPStatus is one row change of GET /api/mcp/status, stamped with the
+	// `mcp_status` version.
+	EventMCPStatus       EventType = "mcp_status"
 	EventModeChanged     EventType = "mode_changed"
 	EventOpenExternalURL EventType = "open_external_url"
 	// EventPermissionNeeded carries a turn's verdict as well as an individual

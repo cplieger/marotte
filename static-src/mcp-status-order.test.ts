@@ -113,8 +113,14 @@ describe("a frame and a status read in flight", () => {
     await readOpened(1);
     // The server answered the read while the server was connected, then it failed.
     const readAt = nextVersion();
-    nextVersion();
-    dispatch({ type: "mcp_failed", payload: { server: "s", error: "boom" } } as ServerEvent);
+    dispatch({
+      type: "mcp_status",
+      payload: {
+        server: "s",
+        status: { name: "s", state: "failed", origin: "user", error: "boom" },
+      },
+      subject: { kind: "mcp_status", ref: "", version: nextVersion() },
+    } as ServerEvent);
     answerStatus([{ name: "s", state: "connected", origin: "user" }], readAt);
     await settle();
 

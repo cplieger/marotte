@@ -134,12 +134,13 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.PermissionCommand](),
 	wiregen.TypeRef[marotte.PermissionNeededPayload](),
 	wiregen.TypeRef[marotte.ErrorPayload](),
-	wiregen.TypeRef[marotte.MCPConnectedPayload](),
-	wiregen.TypeRef[marotte.MCPOAuthPayload](),
-	wiregen.TypeRef[marotte.MCPSignInOpenPayload](),
+	wiregen.TypeRef[marotte.MCPPromptInfo](),
+	wiregen.TypeRef[marotte.MCPResourceInfo](),
+	wiregen.TypeRef[marotte.MCPResourceTemplateInfo](),
+	wiregen.TypeRef[marotte.MCPServerStatus](),
+	wiregen.TypeRef[marotte.MCPStatusPayload](),
+	wiregen.TypeRef[marotte.MCPStatusResponse](),
 	wiregen.TypeRef[marotte.MCPSignInClosedPayload](),
-	wiregen.TypeRef[marotte.MCPFailedPayload](),
-	wiregen.TypeRef[marotte.MCPDisconnectedPayload](),
 	wiregen.TypeRef[marotte.MCPPrewarmPayload](),
 	wiregen.TypeRef[marotte.ChatDeletedPayload](),
 	wiregen.TypeRef[marotte.DraftChangedPayload](),
@@ -454,7 +455,6 @@ var enumTSNames = map[string]string{
 // pathNameOverrides pins the snake_case path for a name whose acronym cluster
 // cannot be split unambiguously.
 var pathNameOverrides = map[string]string{
-	"MCPOAuthPayload": "mcp_oauth_payload",
 	// URL acronym cluster can't be split unambiguously; pin the path.
 	"OpenExternalURLPayload": "open_external_url_payload",
 }
@@ -474,12 +474,8 @@ var wireEvents = []wiregen.Event{
 	{Name: "user_input_needed", Data: wiregen.TypeRef[marotte.UserInputNeededPayload]()},
 	{Name: "error", Data: wiregen.TypeRef[marotte.ErrorPayload]()},
 	{Name: "governance_state", Data: wiregen.TypeRef[marotte.GovernanceStatePayload]()},
-	{Name: "mcp_connected", Data: wiregen.TypeRef[marotte.MCPConnectedPayload]()},
-	{Name: "mcp_disconnected", Data: wiregen.TypeRef[marotte.MCPDisconnectedPayload]()},
-	{Name: "mcp_failed", Data: wiregen.TypeRef[marotte.MCPFailedPayload]()},
+	{Name: "mcp_status", Data: wiregen.TypeRef[marotte.MCPStatusPayload]()},
 	{Name: "mcp_prewarm", Data: wiregen.TypeRef[marotte.MCPPrewarmPayload]()},
-	{Name: "mcp_oauth_needed", Data: wiregen.TypeRef[marotte.MCPOAuthPayload]()},
-	{Name: "mcp_sign_in_open", Data: wiregen.TypeRef[marotte.MCPSignInOpenPayload]()},
 	{Name: "mcp_sign_in_closed", Data: wiregen.TypeRef[marotte.MCPSignInClosedPayload]()},
 	{Name: "open_external_url", Data: wiregen.TypeRef[marotte.OpenExternalURLPayload]()},
 	{Name: "notification", Data: wiregen.TypeRef[marotte.NotificationPayload]()},
