@@ -201,7 +201,7 @@ type bridges struct {
 	mgr *bridgeManager
 }
 
-// bus groups SSE transport, replay and pending permissions: cplieger/go/sse plus the scope route and pending replay.
+// bus groups the SSE transport (cplieger/go/sse and its scope route), the connect replay and pending permissions.
 type bus struct {
 	fanout *sse.Hub
 	// scope is fanout's ScopeHandler, the one writer of a live connection's scope.
