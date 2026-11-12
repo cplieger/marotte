@@ -92,6 +92,12 @@ When you send a saved prompt, such as `/chat-extract`, your message in the chat 
 
 Reported as [kirodotdev/Kiro#12398](https://github.com/kirodotdev/Kiro/issues/12398), open. kiro-cli sends the prompt's text to the model but reports only the typed command to marotte, live and on reload. marotte has no workaround, because it shows what kiro-cli reports rather than reading the prompt file itself. To see what the agent received, open the prompt on the `/docs` page.
 
+### A forked or branched chat carries the ID of the chat it came from
+
+The agent's shell commands carry the chat's session ID as `KIRO_SESSION_ID`. In a chat started with **Fork a tangent** or **Branch from here**, that variable holds the ID of the chat it was forked from, not the new chat's own. A [notify request](configuration.md#waking-a-chat-from-another-service-marotte_notify_token) or a [message between chats](configuration.md#messages-between-chats) addressed with it reaches the chat it came from. kiro-cli sets the variable from the conversation's root, which a fork keeps from its source chat.
+
+Not reported upstream yet. marotte has no workaround, because kiro-cli sets the variable itself. Until it changes, a forked or branched chat cannot read its own ID, so address requests and messages only to chats that were not forked or branched.
+
 ## Skills
 
 ### A skill with a long description or an underscore in its name never loads

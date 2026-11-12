@@ -93,6 +93,18 @@ var (
 			jsIdent + `\s*;?\s*\}`,
 	)
 
+	// wireReaderRe is the settings registry's reader object for one fixed key,
+	// `{keys:["sessionTools"],read:...}`.
+	wireReaderRe  = regexp.MustCompile(`\{keys:\["(` + jsIdent + `)"\],read:`)
+	wireReaderLit = `{keys:[`
+
+	// wireFactoryRe names a registry reader factory taking its key as the first parameter,
+	// `function f(t,e){return{keys:[t],read:...}}`; group 2 must equal group 3, which RE2 cannot say.
+	wireFactoryRe = regexp.MustCompile(
+		`function\s+(` + jsIdent + `)\s*\((` + jsIdent + `)[^()]*\)\s*\{\s*return\s*\{keys:\[(` +
+			jsIdent + `)\],read:`,
+	)
+
 	// absentTrueResolverRe is settingResolverRe's subset whose fallback ends in a literal true, so
 	// an ABSENT key resolves TRUE.
 	absentTrueResolverRe = regexp.MustCompile(
@@ -504,7 +516,7 @@ func bindingScope(src string, pos int) string {
 	return ""
 }
 
-// readSettingKeys returns the _meta.kiro.settings keys the agent server reads through its five
+// readSettingKeys returns the _meta.kiro.settings keys the agent server reads through its seven
 // static reader shapes.
 func readSettingKeys(t *testing.T, src string) []string {
 	t.Helper()
@@ -524,10 +536,33 @@ func readSettingKeys(t *testing.T, src string) []string {
 	resolved := requireNonEmpty(t, "settings resolvers", keysAround(settingResolverRe, ".data.", src))
 	destructured := requireNonEmpty(t, "destructuring resolvers", keysAround(settingDestructureRe, ".data.", src))
 	computed := requireNonEmpty(t, "computed-member resolver calls", computedResolverKeys(t, src))
+	wired := requireNonEmpty(t, "fixed-key wire readers", keysAround(wireReaderRe, wireReaderLit, src))
+	built := requireNonEmpty(t, "wire-reader factory calls", wireFactoryKeys(t, src))
 
-	all := slices.Concat(direct, features, resolved, destructured, computed)
+	all := slices.Concat(direct, features, resolved, destructured, computed, wired, built)
 	slices.Sort(all)
 	return slices.Compact(all)
+}
+
+// wireFactoryKeys returns the literal keys passed to the settings registry's reader factories.
+func wireFactoryKeys(t *testing.T, src string) []string {
+	t.Helper()
+	var keys []string
+	for _, fn := range requireNonEmpty(t, "wire-reader factories", wireFactories(src)) {
+		keys = append(keys, keysAround(regexp.MustCompile(`\b`+regexp.QuoteMeta(fn)+`\("(`+jsIdent+`)"`), fn+"(", src)...)
+	}
+	slices.Sort(keys)
+	return slices.Compact(keys)
+}
+
+func wireFactories(src string) []string {
+	seen := make(map[string]bool)
+	for _, m := range findAround(wireFactoryRe, wireReaderLit, src) {
+		if src[m[4]:m[5]] == src[m[6]:m[7]] {
+			seen[src[m[2]:m[3]]] = true
+		}
+	}
+	return slices.Sorted(maps.Keys(seen))
 }
 
 // computedResolverKeys returns the literal keys passed to the computed-member

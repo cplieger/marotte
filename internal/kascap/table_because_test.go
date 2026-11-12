@@ -205,7 +205,8 @@ own sessionToolsMessaging default). KAS's session-tools reader takes
 settings.sessionTools and reads each switch's .enabled as a boolean, a
 non-boolean being malformed and dropped. With it on, the agent's send_message
 can target another session as a peer. A chat gets send_message only inside
-workflowChatTools, so sending also needs workflowsEnabled on, while receiving
+workflowChatTools, pushed while workflowsGatedOn holds: workflowsEnabled on and
+a mode other than plan, autonomous, spec, quick-spec or bug-fix. Receiving
 reads only the target's messaging flag; KAS authorizes that only when the
 workspace is trusted, both sessions have messaging on, the target is not a
 workflow step and the two sessions' workspace paths overlap, so every chat door

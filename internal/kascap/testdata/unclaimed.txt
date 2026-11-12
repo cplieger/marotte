@@ -25,7 +25,17 @@ session repositories
 session rootConversationId
 session titleSetByUser
 session workflow
+setting _delegate
+setting _parallelTasks
+setting _quickSpec
+setting _requirementAnalyzer
+setting _subagent
 setting _suggestedPrompts
+setting checkpoint
+setting evalStrategy
+setting evalTreatments
+setting sendMessage
 setting sessionRecap
+setting tangentMode
 setting universalBackgroundTool
 setting verifyFirstWorkflow
