@@ -812,16 +812,17 @@ describe("turn_closed for a carrier turn no agent ran", () => {
     expect(mockClearAgentDown).toHaveBeenCalled();
   });
 });
-// A chat that launched a workflow must not raise the cue when `run_workflow` returns, only when the
-// work is done: the server's notification frame goes through `agent-finished-cue.ts`. The real
-// live-run inventory.
+// The server withholds `agent_finished` while a run the chat launched is live, so the notice that
+// arrives is raised whatever the client's copy of the runs says; only an unanswered ask still parks
+// it once the turn has closed. The real live-run inventory and the real cue.
 
-describe("the notification waits for the work, not just the turn", () => {
+describe("the notification waits for the chat's asks, not its runs", () => {
   beforeEach(() => {
     notifyGate.agentFinished = true;
   });
   afterEach(() => {
     notifyGate.agentFinished = false;
+    mockHasPendingDecision.mockImplementation(() => false);
     for (const id of liveRunsSeeded) {
       frameRunGone(id);
     }
@@ -832,6 +833,10 @@ describe("the notification waits for the work, not just the turn", () => {
   function seedLiveRun(workflowID: string, chatID: string, executing = true): void {
     liveRunsSeeded.push(workflowID);
     frameRunLive(workflowID, chatID, executing);
+  }
+
+  function askPendingOn(chatID: string): void {
+    mockHasPendingDecision.mockImplementation((id?: string) => id === chatID);
   }
 
   /** A settled chat with one closed turn and the server's notification about it. */
@@ -849,27 +854,24 @@ describe("the notification waits for the work, not just the turn", () => {
     return notice;
   }
 
-  it("says nothing when a run this chat launched is still live", () => {
+  it("raises the notice the server sent although a run this chat launched is live", () => {
     seedLiveRun("wf-defer-clean", "defer-clean");
-    closeOn("defer-clean");
-    expect(mockNotifyOffScreen).not.toHaveBeenCalled();
+    const notice = closeOn("defer-clean");
+    expect(mockNotifyOffScreen).toHaveBeenCalledWith(notice);
   });
 
   // The withhold is about the reader's attention rather than the turn's verdict, so a
-  // broken turn that launched a still-running run makes the same false claim.
-  it("says nothing for a BROKEN turn while a run is live", () => {
-    seedLiveRun("wf-defer-broken", "defer-broken");
+  // broken turn with an unanswered ask waits the same way.
+  it("says nothing for a BROKEN turn while an ask is pending", () => {
+    askPendingOn("defer-broken");
     closeOn("defer-broken", "failed");
     expect(mockNotifyOffScreen).not.toHaveBeenCalled();
   });
 
-  // A run stopped on a person is exactly what a "finished" notification must not
-  // claim is over, and it is the case the narrow store-eviction predicate answers
-  // the wrong way.
-  it("says nothing while the run is merely PAUSED", () => {
+  it("raises it while a run this chat launched is merely PAUSED", () => {
     seedLiveRun("wf-defer-parked", "defer-parked", false);
-    closeOn("defer-parked");
-    expect(mockNotifyOffScreen).not.toHaveBeenCalled();
+    const notice = closeOn("defer-parked");
+    expect(mockNotifyOffScreen).toHaveBeenCalledWith(notice);
   });
 
   it("notifies immediately when nothing is outstanding", () => {
@@ -878,18 +880,17 @@ describe("the notification waits for the work, not just the turn", () => {
   });
 
   // One busy conversation must not mute the rest of the workspace.
-  it("notifies when the live run belongs to another chat", () => {
-    seedLiveRun("wf-defer-other", "some-other-chat");
+  it("notifies when the pending ask belongs to another chat", () => {
+    askPendingOn("some-other-chat");
     const notice = closeOn("defer-other");
     expect(mockNotifyOffScreen).toHaveBeenCalledWith(notice);
   });
 
-  // A manual or scheduled launch is parentless, so its lease names no chat and its
-  // outcome travels on its own push rather than on a chat's.
-  it("notifies when the live run is PARENTLESS", () => {
-    seedLiveRun("wf-defer-parentless", "");
-    const notice = closeOn("defer-parentless");
-    expect(mockNotifyOffScreen).toHaveBeenCalledWith(notice);
+  it("says nothing while an ask is pending beside a live run", () => {
+    seedLiveRun("wf-defer-ask-run", "defer-ask-run");
+    askPendingOn("defer-ask-run");
+    closeOn("defer-ask-run");
+    expect(mockNotifyOffScreen).not.toHaveBeenCalled();
   });
 
   // The switch decides WHETHER the reader is told; the deferral decides WHEN. A cue
@@ -897,7 +898,7 @@ describe("the notification waits for the work, not just the turn", () => {
   // deliver a notification about work that finished while it was off.
   it("parks nothing at all when the master switch is off", () => {
     notifyGate.agentFinished = false;
-    seedLiveRun("wf-defer-gate-off", "defer-gate-off");
+    askPendingOn("defer-gate-off");
     closeOn("defer-gate-off");
     expect(mockNotifyOffScreen).not.toHaveBeenCalled();
     expect(hasDeferredCue("defer-gate-off")).toBe(false);
@@ -907,7 +908,7 @@ describe("the notification waits for the work, not just the turn", () => {
   // composition root installs has something to fire. Without this the two silent
   // cases above pass equally for a handler that dropped the notification entirely.
   it("parks the cue rather than dropping it", () => {
-    seedLiveRun("wf-defer-parked-cue", "defer-parked-cue");
+    askPendingOn("defer-parked-cue");
     closeOn("defer-parked-cue");
     expect(hasDeferredCue("defer-parked-cue")).toBe(true);
     forgetDeferredCue("defer-parked-cue");

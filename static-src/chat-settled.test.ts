@@ -1,5 +1,5 @@
-// "Is everything this chat started actually over?": the three reasons a cue must wait, plus
-// the property `agent-finished-cue.ts` releases on, that every read is TRACKED. The dock is
+// "Is everything this chat started actually over?": the three terms of `chatSettled`, the two of
+// `noticeSettled`, and the property both release on, that every read is TRACKED. The dock is
 // mocked with a real signal behind it, so a predicate that stopped subscribing fails.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -34,7 +34,7 @@ function setPending(chatID: string, on: boolean): void {
   pendingVersion.value = pendingVersion.peek() + 1;
 }
 
-const { chatOutstanding, chatSettled } = await import("./chat-settled.js");
+const { chatOutstanding, chatSettled, noticeSettled } = await import("./chat-settled.js");
 const store = await import("./store.js");
 const { frameRunGone, frameRunLive } = await import("./__test-helpers__/live-runs.js");
 
@@ -207,5 +207,41 @@ describe("every term is a tracked read", () => {
     frameRunLive("wf-a", "c1", true);
     expect(w.settled.length).toBeGreaterThan(before);
     w.dispose();
+  });
+});
+
+// The server withholds `agent_finished` for a live run, so the notice's own predicate leaves the
+// runs out and keeps the two holds it does not wait for.
+describe("noticeSettled", () => {
+  it("is true while a run this chat launched is live, executing or parked", () => {
+    frameRunLive("wf-a", "c1", true);
+    frameRunLive("wf-b", "c1", false);
+    expect(noticeSettled("c1")).toBe(true);
+    expect(chatSettled("c1")).toBe(false);
+  });
+
+  it("is false while the chat's own turn is live", () => {
+    store.setTurnOpen("c1", true);
+    expect(noticeSettled("c1")).toBe(false);
+  });
+
+  it("is false while a decision sits in this chat's dock queue", () => {
+    setPending("c1", true);
+    expect(noticeSettled("c1")).toBe(false);
+  });
+
+  it("re-runs when the turn or the ask moves", () => {
+    const seen: boolean[] = [];
+    const dispose = effect(() => {
+      seen.push(noticeSettled("c1"));
+    });
+    store.setTurnOpen("c1", true);
+    expect(seen.at(-1)).toBe(false);
+    store.setTurnOpen("c1", false);
+    setPending("c1", true);
+    expect(seen.at(-1)).toBe(false);
+    setPending("c1", false);
+    expect(seen.at(-1)).toBe(true);
+    dispose();
   });
 });

@@ -2,11 +2,11 @@
 // module owns WHEN (per-kind switch, replay dedup, settle test, parking, re-fire); the
 // server's notification owns what it says. A cue is parked with its notification and
 // released by whatever ends the last outstanding thing, whatever its outcome. The
-// re-fire is an effect over `chatSettled`'s tracked reads. Not persisted: after a reload
+// re-fire is an effect over `noticeSettled`'s tracked reads. Not persisted: after a reload
 // the reader is back, and a persisted cue would notify for work already seen.
 
 import { effect, signal, touch } from "@cplieger/reactive";
-import { chatSettled } from "./chat-settled.js";
+import { noticeSettled } from "./chat-settled.js";
 import { isAgentFinishedEnabled, notifyOffScreen } from "./notify.js";
 import type { NotificationPayload } from "./wire/types.gen.js";
 
@@ -79,7 +79,7 @@ export function noteAgentFinished(chatID: string, notice: NotificationPayload): 
   if (chatID === "" || !isAgentFinishedEnabled()) {
     return;
   }
-  if (chatSettled(chatID)) {
+  if (noticeSettled(chatID)) {
     raiseAgentFinished(chatID, notice);
     return;
   }
@@ -129,7 +129,7 @@ export function installDeferredCueSubscriber(): () => void {
     touch(deferredVersion);
     // A copy, so deleting the entry a pass is releasing cannot disturb the walk.
     for (const [chatID, notice] of [...deferred]) {
-      if (!chatSettled(chatID)) {
+      if (!noticeSettled(chatID)) {
         continue;
       }
       // Removed BEFORE the raise, or a refused raise would re-offer it on every later pass.
