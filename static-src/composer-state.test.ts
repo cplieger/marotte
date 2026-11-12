@@ -41,6 +41,7 @@ import {
   addAttachmentTo,
   attachmentGeneration,
 } from "./attachments.js";
+import { onComposerWrite } from "./composer-value.js";
 import { setSessions } from "./store.js";
 import type { Session } from "./types.js";
 
@@ -247,6 +248,37 @@ describe("draft text across a chat switch", () => {
     noteComposerText("same");
     noteComposerText("same");
     expect(mockDispatch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("which restores count as an edit of the box (onComposerWrite)", () => {
+  function writesDuring(fn: () => void): number {
+    let n = 0;
+    onComposerWrite(() => {
+      n++;
+    });
+    try {
+      fn();
+    } finally {
+      onComposerWrite(() => undefined);
+    }
+    return n;
+  }
+
+  it("treats putting the parked chat's own draft back as no edit", () => {
+    restoreComposerState("c1");
+    type("my draft");
+    saveComposerState();
+    expect(writesDuring(() => restoreComposerState("c1"))).toBe(0);
+    expect(input().value).toBe("my draft");
+  });
+
+  it("treats showing another chat's draft as an edit", () => {
+    restoreComposerState("c1");
+    type("my draft");
+    saveComposerState();
+    expect(writesDuring(() => restoreComposerState("c2"))).toBe(1);
+    expect(input().value).toBe("");
   });
 });
 

@@ -10,8 +10,8 @@ const text = signal("");
 
 let beforeWrite: () => void = () => undefined;
 
-/** `fn` runs ahead of every programmatic write of the box: dictation ends its session there, as for the reader's
- *  own edit. */
+/** `fn` runs ahead of every programmatic write that edits the box, every one but `restoreComposerDraft`; one hook,
+ *  the last registration wins. */
 export function onComposerWrite(fn: () => void): void {
   beforeWrite = fn;
 }
@@ -22,9 +22,11 @@ export function onComposerWrite(fn: () => void): void {
 export const composerText: ReadonlySignal<string> = text;
 
 /** Every programmatic write of the box. `announce` fires a bubbling `input` event, as a keystroke does; `recall`
- *  writes one undo step with none. */
-function write(v: string, how: "announce" | "silent" | "recall"): void {
-  beforeWrite();
+ *  writes one undo step with none; `restore` is no edit, so the write hook does not run. */
+function write(v: string, how: "announce" | "silent" | "recall" | "restore"): void {
+  if (how !== "restore") {
+    beforeWrite();
+  }
   const box = $.promptInput;
   switch (how) {
     case "announce":
@@ -32,6 +34,7 @@ function write(v: string, how: "announce" | "silent" | "recall"): void {
       box.dispatchEvent(new Event("input", { bubbles: true }));
       return;
     case "silent":
+    case "restore":
       box.value = v;
       break;
     case "recall":
@@ -55,6 +58,12 @@ export function setComposerValue(v: string): void {
  *  recorded as typing. */
 export function writeComposerSilently(v: string): void {
   write(v, "silent");
+}
+
+/** Put the chat the box was parked from back on screen with its own draft, with no `input` event: the reader comes
+ *  back to the text they left, so nothing in the box was edited. */
+export function restoreComposerDraft(v: string): void {
+  write(v, "restore");
 }
 
 /** Show `v` in the box as one undo step with no `input` event: history recall is navigation, so the draft layer

@@ -10,6 +10,13 @@ import { ICON_MIC, ICON_SEND } from "./icons.js";
 import { setActive, setSessions } from "./store.js";
 import { setComposerValue, writeComposerSilently } from "./composer-value.js";
 import { BUS_TAB_CHANGED, emitBus } from "./bus.js";
+import {
+  _resetComposerStateForTest,
+  composerDraft,
+  initComposerState,
+  restoreComposerState,
+  saveComposerState,
+} from "./composer-state.js";
 import type { RunView, Session } from "./types.js";
 import { fakeSpeech, settle } from "./__test-helpers__/fake-speech.js";
 import { glyphMarkup, registryMarkup } from "./__test-helpers__/glyph.js";
@@ -533,6 +540,19 @@ describe("a held key is one press, on the face it began on (rule 3)", () => {
     expect(dictation.listening.value).toBe(true);
   });
 
+  it("ends a Space press at a key up off the button, so a click right after acts on the face painted", () => {
+    sendBtn().focus();
+    sendBtn().dispatchEvent(
+      new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }),
+    );
+    input().focus();
+    type("hi");
+    input().dispatchEvent(new KeyboardEvent("keyup", { key: " ", bubbles: true }));
+    sendBtn().click();
+    expect(dictation.listening.value).toBe(false);
+    expect(submitted).toEqual(["hi"]);
+  });
+
   it.each([
     ["Send's slot", false],
     ["the mid-turn slot", true],
@@ -897,7 +917,12 @@ describe("where focus goes when dictation ends (rule 9)", () => {
       "> q\n",
       [],
     ],
-    ["a silent write (a draft restore)", () => writeComposerSilently("a draft"), "a draft", []],
+    [
+      "a silent write (a seed, another chat's draft)",
+      () => writeComposerSilently("a draft"),
+      "a draft",
+      [],
+    ],
   ];
 
   function hide(): void {
@@ -999,6 +1024,35 @@ describe("where focus goes when dictation ends (rule 9)", () => {
 });
 
 describe("words heard while focus is off the box (rule 9)", () => {
+  it("land after a tab switch and the return to the chat, which restores its own draft", async () => {
+    initComposerState();
+    restoreComposerState(CHAT);
+    const other = document.createElement("input");
+    document.body.append(other);
+    try {
+      await startFrom(sendBtn());
+      speech.last().hear(["hello", true]);
+      expect(composerDraft(CHAT)).toBe("hello");
+      other.focus();
+      speech.last().hear(["hello", true], ["there", true]);
+      emitBus(BUS_TAB_CHANGED, { to: "__files__", kind: "files" });
+      expect(dictation.listening.value).toBe(false);
+      // The chat tab's return, as activateChatView runs it.
+      emitBus(BUS_TAB_CHANGED, { to: CHAT, kind: "chat" });
+      saveComposerState();
+      setActive(CHAT);
+      restoreComposerState(CHAT);
+      expect(input().value).toBe("hello");
+      await userEvent.click(input());
+      expect(document.activeElement).toBe(input());
+      expect(input().value).toBe("hello there");
+      expect(submitted).toEqual([]);
+    } finally {
+      other.remove();
+      _resetComposerStateForTest();
+    }
+  });
+
   it("never reach the box of a send held for its answer, nor the box the answer clears", async () => {
     let answer: (v: unknown) => void = () => undefined;
     nextSend = new Promise((resolve) => {

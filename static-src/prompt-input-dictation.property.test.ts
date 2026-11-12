@@ -640,6 +640,21 @@ const enterInsideMouseOnStop: readonly Step[] = [
   },
 ];
 
+/** Space held on the microphone while a click on it starts dictation and typing ends it, so the key up lands in the
+ *  box, then a `click()` on the Send face that leaves. */
+const spaceUpOffTheButton: readonly Step[] = [
+  {
+    k: "gesture",
+    slot: "main",
+    input: "space",
+    count: 1,
+    end: "click",
+    gaps: quiet([{ k: "type", text: "words" }]),
+    inner: "pointer",
+  },
+  { k: "click", slot: "main", detail: 0 },
+];
+
 /** Dictation started from a focused Send, then the browser ends it and the reader types a Space. */
 const endFromFocusedButton: readonly Step[] = [
   { k: "focusButton", slot: "main" },
@@ -704,6 +719,7 @@ describe("a press on the composer's buttons (rule 3)", () => {
         examples: [
           [false, spaceThenHeldEnter],
           [false, enterInsideMouseOnStop],
+          [false, spaceUpOffTheButton],
           [true, endFromFocusedButton],
           [false, endFromFocusedButton],
         ],

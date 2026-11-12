@@ -102,12 +102,13 @@ export function pressOwner(faceOf: (btn: HTMLButtonElement) => Act): (i: PressIn
     if (p?.key !== e.key) {
       return;
     }
-    if (p.spent) {
+    // Space clicks only the button its key up reaches, so a key up after focus moved off it ends the press.
+    if (p.spent || e.target !== p.btn) {
       key = null;
       return;
     }
     // Space clicks after this key up's listeners, in the same task, and that click ends the press; one whose click
-    // never comes (its button disabled meanwhile, or focus moved off it) ends a task later.
+    // never comes (its button disabled meanwhile, or the page cancelled it) ends a task later.
     p.up = true;
     setTimeout(() => {
       if (key === p) {
