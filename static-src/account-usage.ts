@@ -16,6 +16,8 @@ let inflight = false;
 let epoch = 0;
 /** Whether the rows show "Usage unavailable". */
 let unavailable = false;
+/** The engine came back while a read was out; that read re-asks if it was refused. */
+let reaskOwed = false;
 
 /**
  * Fetch and render account usage, throttled to CLIENT_TTL_MS unless forced; safe on every
@@ -36,10 +38,27 @@ export function loadAccountUsage(force = false): void {
       }
     })
     .finally(() => {
-      if (started === epoch) {
-        inflight = false;
+      if (started !== epoch) {
+        return;
+      }
+      inflight = false;
+      if (!unavailable) {
+        reaskOwed = false;
+        return;
+      }
+      // A refusal is no answer, so it holds no throttle against the next open.
+      lastFetch = 0;
+      if (reaskOwed) {
+        reaskOwed = false;
+        reaskIfShown();
       }
     });
+}
+
+function reaskIfShown(): void {
+  if (unavailable && !$.statusCard.hidden) {
+    loadAccountUsage(true);
+  }
 }
 
 /** Blank the usage rows and drop the throttle and any in-flight fetch, for an account change. */
@@ -48,6 +67,7 @@ export function resetAccountUsage(): void {
   inflight = false;
   lastFetch = 0;
   unavailable = false;
+  reaskOwed = false;
   $.acctPlan.textContent = "";
   $.acctMeter.textContent = "";
   $.acctMeter.removeAttribute("data-tooltip");
@@ -120,9 +140,12 @@ function renderAccountUsage(u: AccountUsage | null): void {
   }
 }
 
-// The popup's rows are on screen only while it is open; a closed one fetches on its next open.
+// The popup's rows are on screen only while it is open; a closed one fetches on its next open, since a refused read
+// leaves no throttle.
 onBus(BUS_ENGINE_READY, () => {
-  if (unavailable && !$.statusCard.hidden) {
-    loadAccountUsage(true);
+  if (inflight) {
+    reaskOwed = true;
+    return;
   }
+  reaskIfShown();
 });

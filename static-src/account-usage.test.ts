@@ -282,6 +282,62 @@ describe("the engine's return", () => {
     expect(mockApiGetTyped, "usage that answered").not.toHaveBeenCalled();
   });
 
+  it("asks on the next open after a refused read, inside the throttle window", async () => {
+    resetAccountUsage();
+    seedCard(true);
+    mockApiGetTyped.mockResolvedValue(null);
+    loadAccountUsage();
+    await flush();
+    $.statusCard.hidden = true;
+    emitBus(BUS_ENGINE_READY);
+    mockApiGetTyped.mockClear();
+    mockApiGetTyped.mockResolvedValue(usage);
+
+    $.statusCard.hidden = false;
+    loadAccountUsage();
+    await flush();
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(1);
+    expect($.acctPlan.textContent).toBe("KIRO POWER");
+  });
+
+  it("asks once more when the engine returns while a refused read is out", async () => {
+    resetAccountUsage();
+    seedCard(true);
+    let answer: (u: AccountUsage | null) => void = () => undefined;
+    mockApiGetTyped.mockReturnValueOnce(
+      new Promise<AccountUsage | null>((resolve) => {
+        answer = resolve;
+      }),
+    );
+    loadAccountUsage(true);
+    emitBus(BUS_ENGINE_READY);
+    mockApiGetTyped.mockResolvedValue(usage);
+
+    answer(null);
+    await flush();
+    await flush();
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(2);
+    expect($.acctPlan.textContent).toBe("KIRO POWER");
+  });
+
+  it("asks nothing more when the engine returns while a read that answers is out", async () => {
+    resetAccountUsage();
+    seedCard(true);
+    let answer: (u: AccountUsage | null) => void = () => undefined;
+    mockApiGetTyped.mockReturnValueOnce(
+      new Promise<AccountUsage | null>((resolve) => {
+        answer = resolve;
+      }),
+    );
+    loadAccountUsage(true);
+    emitBus(BUS_ENGINE_READY);
+
+    answer(usage);
+    await flush();
+    await flush();
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(1);
+  });
+
   it("asks nothing while the popup is closed", async () => {
     resetAccountUsage();
     seedCard(false);
