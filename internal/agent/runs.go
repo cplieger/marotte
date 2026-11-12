@@ -215,7 +215,6 @@ type runBroadcaster interface {
 type runPermClaimer interface {
 	TakePendingPermOn(origin acpResponder, acpID int64, settledBy marotte.SettledBy) (command.AskReply, bool)
 	ClearPendingPermsForRun(ctx context.Context, workflowID string)
-	HasPendingForRun(workflowID string) bool
 }
 
 // Runs exposes the run surface to the composition root (orphan sweep, schedule.Launcher).

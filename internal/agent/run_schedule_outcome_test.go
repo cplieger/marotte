@@ -267,24 +267,44 @@ func TestScheduledRun_AStallSaysWhyOnTheRow(t *testing.T) {
 	}
 }
 
-// TestScheduledRun_ASilentStepSaysWhyOnTheRow pins that a scheduled run stopped for an hour of silence on an open step
-// says so on its row, not the idle window's 15 minutes.
-func TestScheduledRun_ASilentStepSaysWhyOnTheRow(t *testing.T) {
-	h, br, st, entry := scheduledHub(t)
-	const id = "wf_1"
-	launchScheduled(t, h, br, &entry, id)
-	h.runs.log = newRunLog(t.TempDir())
-	openStep(t, h, id, []string{id, "a"}, "step-session-a")
-	h.runs.armDeadline(t.Context(), id)
-	stageSilence(h.runs, id, runSilenceBound)
-	l, _ := h.runs.lease(id)
+// TestScheduledRun_ASilenceStopSaysWhyOnTheRow pins that a scheduled run stopped for an hour of silence on an open step
+// says so on its row, while one with only a container open is the idle window's 15-minute stall.
+func TestScheduledRun_ASilenceStopSaysWhyOnTheRow(t *testing.T) {
+	for name, tc := range map[string]struct {
+		arrange    func(r runTree)
+		wantReason string
+	}{
+		"a silent step": {
+			arrange:    func(r runTree) { r.start(stepNodeType, "a") },
+			wantReason: "sent nothing for 60 minutes",
+		},
+		"only a container open": {
+			arrange: func(r runTree) {
+				r.start("repeat", "loop")
+				r.start(stepNodeType, "loop", "iter-0", "a")
+				r.complete("loop", "iter-0", "a")
+			},
+			wantReason: "15 minutes",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, br, st, entry := scheduledHub(t)
+			const id = "wf_1"
+			launchScheduled(t, h, br, &entry, id)
+			h.runs.log = newRunLog(t.TempDir())
+			tc.arrange(runTree{t: t, h: h, id: id})
+			h.runs.armDeadline(t.Context(), id)
+			stageSilence(h.runs, id, runSilenceBound)
+			l, _ := h.runs.lease(id)
 
-	h.runs.cancelExpired(id, l.Deadline)
+			h.runs.cancelExpired(id, l.Deadline)
 
-	row := onlyRow(t, st)
-	if row.LastStatus != launchrule.StatusFailed || !strings.Contains(row.LastReason, "sent nothing for 60 minutes") {
-		t.Errorf("a silent scheduled run left the row reading (%q, %q), want failed naming its 60 silent minutes",
-			row.LastStatus, row.LastReason)
+			row := onlyRow(t, st)
+			if row.LastStatus != launchrule.StatusFailed || !strings.Contains(row.LastReason, tc.wantReason) {
+				t.Errorf("the stopped scheduled run left the row reading (%q, %q), want failed naming %q",
+					row.LastStatus, row.LastReason, tc.wantReason)
+			}
+		})
 	}
 }
 

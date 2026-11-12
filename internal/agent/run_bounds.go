@@ -28,8 +28,9 @@ import (
 const runIdleWindow = 15 * time.Minute
 
 // runSilenceBound is how long an open step turn may send no frame at all before the idle window's expiry acts on
-// it: a chat-launched run is flagged and keeps running, a parentless one is stopped as stalled. actOnSilence owns
-// what counts as silence. A hung compaction leaves the turn open with nothing to say (docs/known-upstream-issues.md).
+// it: a chat-launched run is flagged and keeps running, a parentless one is stopped as stalled.
+// runTurn.countsTowardSilence owns which turn counts. A hung compaction leaves the turn open with nothing to say
+// (docs/known-upstream-issues.md).
 const runSilenceBound = time.Hour
 
 // refillGranularity is the smallest move a refill writes: each is a fsynced rewrite of runs.json. It
@@ -703,12 +704,15 @@ func (rs *Runs) endReason(workflowID string) string {
 
 // cancelExpired stops a run whose deadline (armedFor) ran out and, once the cancel lands, records why.
 // The slot test is "not after the deadline" because the floor can push the deadline past SlotAt. Only
-// the idle window consults idleVerdict.
+// the idle window consults idleExpiry.
 func (rs *Runs) cancelExpired(workflowID string, armedFor time.Time) {
 	l, held := rs.lease(workflowID)
 	slotRanOut := held && !l.SlotAt.IsZero() && !l.SlotAt.After(armedFor)
-	if held && !slotRanOut && rs.idleExpiryHandled(workflowID, armedFor) {
-		return
+	expiry := expiryStalled
+	if held && !slotRanOut {
+		if expiry = rs.idleExpiry(workflowID, armedFor); expiry == expiryHandled {
+			return
+		}
 	}
 	if !rs.claimExpiredDeadline(workflowID, armedFor) {
 		return
@@ -721,7 +725,7 @@ func (rs *Runs) cancelExpired(workflowID string, armedFor time.Time) {
 	case slotRanOut:
 		slog.Info(logMsgRunYieldedToSlot, "workflow_id", workflowID, "recipe", l.Recipe,
 			"slot_at", l.SlotAt)
-	case rs.log != nil && rs.log.hasOpen(workflowID):
+	case expiry == expirySilent:
 		reason, rowReason, counted = runEndStalled, reasonSilent, obs.RunStalled
 		slog.Error(logMsgRunStalled, "workflow_id", workflowID,
 			"silence_bound", runSilenceBound.String(), "recipe", l.Recipe)
@@ -740,27 +744,38 @@ func (rs *Runs) cancelExpired(workflowID string, armedFor time.Time) {
 	rs.recordScheduleOutcome(ctx, ruleRun(&l), launchrule.Outcome{Status: launchrule.StatusFailed, Reason: rowReason})
 }
 
-// idleExpiryHandled applies idleVerdict to an expired idle window, true when it refilled or parked the
-// run; false leaves cancelExpired to stop it as stalled. A park refused for an arm since the verdict
-// refills instead: the timer that fired was the run's only one.
-func (rs *Runs) idleExpiryHandled(workflowID string, armedFor time.Time) bool {
+// expiryOutcome is what an expired idle window did: refilled or parked the run, or left cancelExpired to stop it.
+type expiryOutcome int
+
+const (
+	expiryStalled expiryOutcome = iota
+	// expirySilent is a stop for a step's hour of silence (actOnSilence), which the row names apart from a stall.
+	expirySilent
+	expiryHandled
+)
+
+// idleExpiry applies idleVerdict to an expired idle window. A park refused for an arm since the verdict refills
+// instead: the timer that fired was the run's only one.
+func (rs *Runs) idleExpiry(workflowID string, armedFor time.Time) expiryOutcome {
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
 	seq := rs.lastArmSeq(workflowID)
 	switch rs.idleVerdict(ctx, workflowID) {
 	case idleWorking:
 		if rs.actOnSilence(ctx, workflowID) {
-			return false
+			return expirySilent
 		}
-		return rs.refillWorking(ctx, workflowID)
+		if rs.refillWorking(ctx, workflowID) {
+			return expiryHandled
+		}
 	case idleParked:
 		if !rs.parkExpired(ctx, workflowID, armedFor, seq) {
 			rs.refillDeadline(ctx, workflowID)
 		}
-		return true
+		return expiryHandled
 	case idleStalled:
 	}
-	return false
+	return expiryStalled
 }
 
 // idleVerdict is what an expired idle window means for a run.
@@ -772,14 +787,13 @@ const (
 	idleParked
 )
 
-// idleVerdict reads an expired idle window. An open step turn is working: a KAS-side tool or a model reasoning
-// silently sends no frame, and idleExpiryHandled bounds how long it may stay silent (runSilenceBound). A run its
-// chat resumes that KAS reports
-// paused is parked: KAS reconciles a dead owner's run to paused on its next read and emits no frame, so its pause
-// never reached observePaused.
-// Anything else, an unreadable run and a parentless orphan included, is stalled.
+// idleVerdict reads an expired idle window. A run with open work (runLog.hasOpenWork) is working: a KAS-side tool or a
+// model reasoning silently sends no frame, and actOnSilence bounds how long a step may stay silent. A run its chat
+// resumes that KAS reports paused is parked: KAS reconciles a dead owner's run to paused on its next read and emits no
+// frame, so its pause never reached observePaused. Anything else, an unreadable run, a parentless orphan and a
+// container open with no child included, is stalled.
 func (rs *Runs) idleVerdict(ctx context.Context, workflowID string) idleVerdict {
-	if rs.log != nil && rs.log.hasOpen(workflowID) {
+	if rs.log != nil && rs.log.hasOpenWork(workflowID) {
 		return idleWorking
 	}
 	if !rs.chatResumes(workflowID) {

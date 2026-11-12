@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"slices"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 )
 
 const silentRunID = "wf_1"
@@ -22,7 +24,7 @@ func silentStep(t *testing.T, launch launchOrigin, ago time.Duration, opts ...Op
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	h.insertBridgeNow(runChatID(silentRunID), testBridge(br, bridgeReady))
 	h.runs.log = newRunLog(t.TempDir())
-	openStep(t, h, silentRunID, []string{silentRunID, "a"}, "step-session-a")
+	runTree{t: t, h: h, id: silentRunID}.start(stepNodeType, "a")
 	deadline := stagedExpiry(t, h.runs, silentRunID, launch)
 	stageSilence(h.runs, silentRunID, ago)
 	return h, br, deadline
@@ -179,17 +181,9 @@ func TestSilentStep_AnHourStopsAParentlessRunAsStalled(t *testing.T) {
 var silenceLaunches = map[string]launchOrigin{"chat-launched": agentLaunch(), "run-button": manualLaunch()}
 
 // fileStepAsk files an open ask of the silent step, as the step's request would.
-func fileStepAsk(h *Runtime, kind marotte.EventType) marotte.ServerEvent {
-	var payload any
-	switch kind {
-	case marotte.EventUserInputNeeded:
-		payload = marotte.UserInputNeededPayload{RunID: silentRunID, NodeID: "a"}
-	case marotte.EventElicitationNeeded:
-		payload = marotte.ElicitationNeededPayload{RunID: silentRunID, NodeID: "a"}
-	default:
-		payload = marotte.PermissionNeededPayload{RunID: silentRunID, NodeID: "a"}
-	}
-	return h.bus.pendingPerms.add(1, marotte.NewEvent(kind, runChatID(silentRunID), payload), nil)
+func fileStepAsk(t *testing.T, h *Runtime, kind marotte.EventType) marotte.ServerEvent {
+	t.Helper()
+	return runTree{t: t, h: h, id: silentRunID}.ask(kind, "a")
 }
 
 // A step waiting on a person's answer is not hung, whoever launched the run.
@@ -200,7 +194,7 @@ func TestSilentStep_AnOpenAskIsNotSilence(t *testing.T) {
 			t.Run(name+" "+string(kind), func(t *testing.T) {
 				fp := newRunOutcomePush()
 				h, br, deadline := silentStep(t, launch, 2*time.Hour, WithPush(fp))
-				fileStepAsk(h, kind)
+				fileStepAsk(t, h, kind)
 
 				h.runs.cancelExpired(silentRunID, deadline)
 				joinInflight(t, h)
@@ -217,38 +211,36 @@ func TestSilentStep_AnOpenAskIsNotSilence(t *testing.T) {
 	}
 }
 
-// The answer restarts the count: a full hour from it passes before the step is flagged.
+// The answer to a long-open ask restarts the count: past an idle window after it the step is not flagged, an hour
+// after it it is.
 func TestSilentStep_AnAnswerRestartsTheCount(t *testing.T) {
-	fp := newRunOutcomePush()
-	h, br, deadline := silentStep(t, agentLaunch(), 2*time.Hour, WithPush(fp))
-	ask := fileStepAsk(h, marotte.EventPermissionNeeded)
-	h.runs.cancelExpired(silentRunID, deadline)
-	joinInflight(t, h)
+	synctest.Test(t, func(t *testing.T) {
+		fp := newRunOutcomePush()
+		h, br, _ := silentStep(t, agentLaunch(), 2*time.Hour, WithPush(fp))
+		defer shutdownHub(t, h)
+		ask := fileStepAsk(t, h, marotte.EventPermissionNeeded)
+		time.Sleep(2 * time.Hour)
+		synctest.Wait()
+		runTree{t: t, h: h, id: silentRunID}.answer(ask)
 
-	reply, ok := h.bus.TakePendingPerm(runChatID(silentRunID), requestIDOf(t, ask), marotte.DecisionKindPermission, marotte.SettledByUser)
-	if !ok {
-		t.Fatal("Setup: the ask could not be taken")
-	}
-	if _, err := reply.Respond(t.Context(), marotte.PermissionOutcomeSelected("allow")); err != nil {
-		t.Fatalf("Setup: answering the ask: %v", err)
-	}
+		time.Sleep(runIdleWindow + 5*time.Minute)
+		synctest.Wait()
+		joinInflight(t, h)
+		wantRunning(t, h, br)
+		if got := h.runs.silentSince(silentRunID); !got.IsZero() {
+			t.Errorf("silentSince = %v 20 minutes after the answer, want the count restarted", got)
+		}
+		if n := len(runOutcomePushes(fp)); n != 0 {
+			t.Errorf("20 minutes after the answer %d notifications went out, want none", n)
+		}
 
-	expireAgain(t, h.runs, silentRunID)
-	joinInflight(t, h)
-	wantRunning(t, h, br)
-	if got := h.runs.silentSince(silentRunID); !got.IsZero() {
-		t.Errorf("silentSince = %v right after the answer, want the count restarted", got)
-	}
-	if n := len(runOutcomePushes(fp)); n != 0 {
-		t.Errorf("the expiry right after the answer pushed %d notifications, want none", n)
-	}
-
-	stageSilence(h.runs, silentRunID, time.Hour)
-	expireAgain(t, h.runs, silentRunID)
-	joinInflight(t, h)
-	if h.runs.silentSince(silentRunID).IsZero() {
-		t.Error("an hour of silence after the answer left no flag")
-	}
+		time.Sleep(runSilenceBound - runIdleWindow)
+		synctest.Wait()
+		joinInflight(t, h)
+		if h.runs.silentSince(silentRunID).IsZero() {
+			t.Error("an hour of silence after the answer left no flag")
+		}
+	})
 }
 
 // A paused step has no timer running, so no length of pause flags or stops it.
@@ -338,4 +330,236 @@ func servedSilentSince(t *testing.T, h *Runtime, br *fakeBridge) string {
 		t.Fatalf("decoding the run reply: %s", err)
 	}
 	return reply.SilentSince
+}
+
+// runTree drives a run's node tree through KAS's own frames on the run's host session.
+type runTree struct {
+	t  *testing.T
+	h  *Runtime
+	id string
+}
+
+func (r runTree) frame(method string, params map[string]any) {
+	r.t.Helper()
+	params["workflowId"] = r.id
+	host := runChatID(r.id)
+	r.h.dispatch(r.t.Context(), host, r.h.originOf(host), runNotif(method, params))
+}
+
+func (r runTree) node(path []string) map[string]any {
+	return map[string]any{"nodeId": path[len(path)-1], "nodePath": append([]string{r.id}, path...)}
+}
+
+// start opens the node at path, below the run, as a KAS node of type typ.
+func (r runTree) start(typ string, path ...string) {
+	r.t.Helper()
+	params := r.node(path)
+	params["type"] = typ
+	r.frame(methodWFNodeStart, params)
+}
+
+func (r runTree) complete(path ...string) {
+	r.t.Helper()
+	params := r.node(path)
+	params["status"] = "completed"
+	r.frame(methodWFNodeComplete, params)
+}
+
+// park is KAS parking the step at path for a person (parkAwaitingUser): node_paused alone, the run still running.
+func (r runTree) park(path ...string) {
+	r.t.Helper()
+	params := r.node(path)
+	params["reason"] = askPauseReason
+	r.frame(methodWFNodePaused, params)
+}
+
+// ask files an open ask of the step node, as its session's request would.
+func (r runTree) ask(kind marotte.EventType, node string) marotte.ServerEvent {
+	r.t.Helper()
+	var payload any
+	switch kind {
+	case marotte.EventUserInputNeeded:
+		payload = marotte.UserInputNeededPayload{RunID: r.id, NodeID: node}
+	case marotte.EventElicitationNeeded:
+		payload = marotte.ElicitationNeededPayload{RunID: r.id, NodeID: node}
+	default:
+		payload = marotte.PermissionNeededPayload{RunID: r.id, NodeID: node}
+	}
+	evt, _ := r.h.bus.PendingPermsAdd(r.t.Context(), 1, marotte.NewEvent(kind, runChatID(r.id), payload), nil)
+	return evt
+}
+
+// answer is a person allowing the permission ask evt.
+func (r runTree) answer(evt marotte.ServerEvent) {
+	r.t.Helper()
+	reply, ok := r.h.bus.TakePendingPerm(runChatID(r.id), requestIDOf(r.t, evt), marotte.DecisionKindPermission, marotte.SettledByUser)
+	if !ok {
+		r.t.Fatal("Setup: the ask could not be taken")
+	}
+	if _, err := reply.Respond(r.t.Context(), marotte.PermissionOutcomeSelected("allow")); err != nil {
+		r.t.Fatalf("Setup: answering the ask: %v", err)
+	}
+}
+
+// expiryVerdict is what an idle window's expiry did to a run.
+type expiryVerdict int
+
+const (
+	// verdictKept is refilled, neither flagged nor stopped.
+	verdictKept expiryVerdict = iota
+	// verdictSilent is an hour of silence on a counting step: flagged when a chat launched the run, stopped otherwise.
+	verdictSilent
+	// verdictStalled is no work open: stopped whoever launched the run.
+	verdictStalled
+)
+
+// The run is silent only when a step that is running, open, asks nobody, is no watch and was not just answered sent
+// nothing for an hour; any frame from any node restarts the count.
+func TestSilence_OnePredicateOverTheRunTree(t *testing.T) {
+	for _, tc := range []struct {
+		arrange func(r runTree)
+		// then runs after the silence is staged.
+		then    func(r runTree)
+		name    string
+		quiet   time.Duration
+		verdict expiryVerdict
+	}{
+		{
+			name: "a running step silent 59 minutes", quiet: 59 * time.Minute, verdict: verdictKept,
+			arrange: func(r runTree) { r.start(stepNodeType, "a") },
+		},
+		{
+			name: "a running step silent an hour", quiet: time.Hour, verdict: verdictSilent,
+			arrange: func(r runTree) { r.start(stepNodeType, "a") },
+		},
+		{
+			name: "an ask open on the step", quiet: 2 * time.Hour, verdict: verdictKept,
+			arrange: func(r runTree) {
+				r.start(stepNodeType, "a")
+				r.ask(marotte.EventPermissionNeeded, "a")
+			},
+		},
+		{
+			name: "an ask answered a minute ago", quiet: 2 * time.Hour, verdict: verdictKept,
+			arrange: func(r runTree) {
+				r.start(stepNodeType, "a")
+				r.answer(r.ask(marotte.EventPermissionNeeded, "a"))
+			},
+		},
+		{
+			name: "a watch", quiet: 2 * time.Hour, verdict: verdictKept,
+			arrange: func(r runTree) {
+				r.start("repeat", "loop")
+				r.start("watch", "loop", "iter-0", "mail")
+			},
+		},
+		{
+			name: "only a container open", quiet: 2 * time.Hour, verdict: verdictStalled,
+			arrange: func(r runTree) {
+				r.start("repeat", "loop")
+				r.start(stepNodeType, "loop", "iter-0", "a")
+				r.complete("loop", "iter-0", "a")
+			},
+		},
+		{
+			name: "a step KAS parked for a person", quiet: 2 * time.Hour, verdict: verdictKept,
+			arrange: func(r runTree) {
+				r.start(stepNodeType, "a")
+				r.park("a")
+			},
+		},
+		{
+			name: "a parallel branch parked on a person beside a running silent one", quiet: time.Hour, verdict: verdictSilent,
+			arrange: func(r runTree) {
+				r.start("parallel", "p")
+				r.start(stepNodeType, "p", "a")
+				r.start(stepNodeType, "p", "b")
+				r.park("p", "a")
+			},
+		},
+		{
+			name: "a parallel branch asking a person beside a running silent one", quiet: time.Hour, verdict: verdictSilent,
+			arrange: func(r runTree) {
+				r.start("parallel", "p")
+				r.start(stepNodeType, "p", "a")
+				r.start(stepNodeType, "p", "b")
+				r.ask(marotte.EventUserInputNeeded, "a")
+			},
+		},
+		{
+			name: "a parallel branch parked on a person beside an hourly watch", quiet: 2 * time.Hour, verdict: verdictKept,
+			arrange: func(r runTree) {
+				r.start("parallel", "p")
+				r.start(stepNodeType, "p", "a")
+				r.park("p", "a")
+				r.start("watch", "p", "mail")
+			},
+		},
+		{
+			name: "a frame from a sibling", quiet: 2 * time.Hour, verdict: verdictKept,
+			arrange: func(r runTree) {
+				r.start("parallel", "p")
+				r.start(stepNodeType, "p", "a")
+				r.start(stepNodeType, "p", "b")
+			},
+			then: func(r runTree) { r.h.runs.RunMadeProgress(r.id) },
+		},
+	} {
+		for origin, launch := range silenceLaunches {
+			t.Run(tc.name+" "+origin, func(t *testing.T) {
+				fp := newRunOutcomePush()
+				h, _, br := newTestHub(WithPush(fp))
+				br.callResults = map[string]json.RawMessage{
+					methodKiroWorkflowCancel:  json.RawMessage(`{}`),
+					methodKiroWorkflowInspect: inspectReply(t, silentRunID, marotte.RunStatusRunning, ""),
+				}
+				h.insertBridgeNow(runChatID(silentRunID), testBridge(br, bridgeReady))
+				h.runs.log = newRunLog(t.TempDir())
+				tree := runTree{t: t, h: h, id: silentRunID}
+				tc.arrange(tree)
+				deadline := stagedExpiry(t, h.runs, silentRunID, launch)
+				stageSilence(h.runs, silentRunID, tc.quiet)
+				if tc.then != nil {
+					tc.then(tree)
+				}
+
+				h.runs.cancelExpired(silentRunID, deadline)
+				joinInflight(t, h)
+
+				wantVerdict(t, h, br, fp, tc.verdict, launch.origin == runlease.OriginAgent)
+			})
+		}
+	}
+}
+
+func wantVerdict(t *testing.T, h *Runtime, br *fakeBridge, fp *runOutcomePush, v expiryVerdict, chatLaunched bool) {
+	t.Helper()
+	var pushed int
+	for _, p := range runOutcomePushes(fp) {
+		if p.body == silencePushBody {
+			pushed++
+		}
+	}
+	flagged := !h.runs.silentSince(silentRunID).IsZero()
+	switch {
+	case v == verdictKept, v == verdictSilent && chatLaunched:
+		wantRunning(t, h, br)
+		wantPushes := 0
+		if v == verdictSilent {
+			wantPushes = 1
+		}
+		if flagged != (v == verdictSilent) || pushed != wantPushes {
+			t.Errorf("flagged = %t with %d silence pushes, want flagged = %t with %d", flagged, pushed, v == verdictSilent, wantPushes)
+		}
+	default:
+		if got := h.runs.endReason(silentRunID); got != runEndStalled {
+			t.Errorf("endReason = %q, want %q", got, runEndStalled)
+		}
+		if !slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
+			t.Errorf("no cancel went out: %v", br.callLog())
+		}
+		if flagged || pushed != 0 {
+			t.Errorf("a stopped run was flagged = %t with %d silence pushes, want neither", flagged, pushed)
+		}
+	}
 }

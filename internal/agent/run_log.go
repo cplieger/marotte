@@ -55,8 +55,13 @@ type runTurn struct {
 	// top is the run's top-level step this one sits under ("" when unknown), held because path is never
 	// split back (workflow.PathKey).
 	top string
-	// nodeType is KAS's node type, which decides whether the turn counts toward the run's silence (silenceCounts).
+	// nodeType is KAS's node type; a container's turn holds neither the idle window nor the silence (containerNode).
 	nodeType string
+	// nodeID is the node's own id, the last path segment, which a step's asks name it by.
+	nodeID string
+	// asks holds the ids of the step's open asks, and askClosed when the last of them settled (countsTowardSilence).
+	asks      map[int64]struct{}
+	askClosed time.Time
 	// answer folds the step's current KAS turn: the sink feeds it, and a turn_start resets it.
 	answer answerFold
 	// ownEnd is whether the step's newest edge is its own turn's turn_end, with no turn_start or node_paused after.
@@ -499,8 +504,9 @@ func (r *runLog) hasOpen(workflowID string) bool {
 	return ok && len(rec.open) > 0
 }
 
-// hasOpenStep reports whether an open turn of the run counts toward its silence (silenceCounts).
-func (r *runLog) hasOpenStep(workflowID string) bool {
+// hasOpenWork reports whether an open turn of the run is not a container's: a container's frames come from its
+// children, so one open with no child open is an orchestration stall.
+func (r *runLog) hasOpenWork(workflowID string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec, ok := r.runs[workflowID]
@@ -508,7 +514,7 @@ func (r *runLog) hasOpenStep(workflowID string) bool {
 		return false
 	}
 	for _, t := range rec.open {
-		if silenceCounts(t.nodeType) {
+		if !containerNode(t.nodeType) {
 			return true
 		}
 	}
@@ -556,6 +562,9 @@ func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marot
 		if t.nodeType == "" {
 			t.nodeType = step.NodeType
 		}
+		if t.nodeID == "" {
+			t.nodeID = nodeIDOf(step)
+		}
 		return t.turn, nil, nil
 	}
 	e, err := rec.log.OpenTurn(ctx, &chat.TurnSpec{
@@ -569,7 +578,7 @@ func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marot
 		return nil, nil, err
 	}
 	delete(rec.staged, nodePath)
-	t := &runTurn{path: nodePath, top: topStepOf(step), nodeType: step.NodeType}
+	t := &runTurn{path: nodePath, top: topStepOf(step), nodeType: step.NodeType, nodeID: nodeIDOf(step)}
 	t.turn = turnlog.Open(e.ID, runSink{log: rec.log, turn: t})
 	if r.steps != nil {
 		r.steps.holdStep(rec.host, e.ID)

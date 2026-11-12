@@ -42,6 +42,12 @@ func TestCancelExpired_NoOpenStepTurnIsAStall(t *testing.T) {
 				t.Fatalf("close the step: %v", err)
 			}
 		},
+		"only a container open": func(t *testing.T, h *Runtime) {
+			r := runTree{t: t, h: h, id: "wf_1"}
+			r.start("repeat", "loop")
+			r.start(stepNodeType, "loop", "iter-0", "a")
+			r.complete("loop", "iter-0", "a")
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			logs := captureLogs(t)

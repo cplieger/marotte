@@ -341,21 +341,6 @@ func (t *pendingPermsTracker) clearForRun(workflowID string) []pendingAsk {
 	return cleared
 }
 
-// hasForRun reports whether a decision the run raised is still open, a claim mid-answer included.
-func (t *pendingPermsTracker) hasForRun(workflowID string) bool {
-	if workflowID == "" {
-		return false
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	for _, e := range t.asks {
-		if e.end == endNone && marotte.DecisionRunID(e.ask.evt.Payload) == workflowID {
-			return true
-		}
-	}
-	return false
-}
-
 // idsForChat is the ask ids of chatID's unresolved asks, in ask order: the ids its cards carry.
 func (t *pendingPermsTracker) idsForChat(chatID marotte.ChatID) []string {
 	t.mu.Lock()
@@ -439,6 +424,10 @@ func (b *bus) cancelAsk(ctx context.Context, chatID marotte.ChatID, ref askRef) 
 // it before reading the session/cancel, and the Stop's own answers have gone (kiro-cli's TUI does the same).
 func (b *bus) PendingPermsAdd(ctx context.Context, acpID int64, evt marotte.ServerEvent, origin translate.AskOrigin) (marotte.ServerEvent, bool) {
 	evt = b.pendingPerms.add(acpID, evt, origin)
+	// Before the stop check, whose cancel settles the ask.
+	if run := marotte.DecisionRunID(evt.Payload); run != "" && b.runAsk != nil {
+		b.runAsk.askOpened(run, marotte.DecisionNodeID(evt.Payload), marotte.DecisionRequestID(evt.Payload))
+	}
 	// Filed before the stop check, so a racing Stop either answers it among its own asks or is seen here.
 	if !inScope(&evt, evt.ChatID, command.ScopeChatSession) || !b.ownStopped(evt.ChatID) {
 		return evt, true
@@ -466,11 +455,6 @@ func (b *bus) ClearPendingPermsForRun(ctx context.Context, workflowID string) {
 				"workflow_id", workflowID, "kind", kind, "error", err)
 		}
 	}
-}
-
-// HasPendingForRun reports whether the run waits on a person's answer to one of its decisions.
-func (b *bus) HasPendingForRun(workflowID string) bool {
-	return b.pendingPerms.hasForRun(workflowID)
 }
 
 // TakePendingPerm claims an unanswered decision for exactly one surface, false when beaten. Take
@@ -598,8 +582,8 @@ func (b *bus) announceDecisionSettled(evt marotte.ServerEvent, askID int64, sett
 	}))
 	run := marotte.DecisionRunID(evt.Payload)
 	b.retractPush(notice.AskSubject(evt.ChatID, run), notice.AskKey(askID))
-	if run != "" && b.runAskSettled != nil {
-		b.runAskSettled(run)
+	if run != "" && b.runAsk != nil {
+		b.runAsk.askSettled(run, marotte.DecisionNodeID(evt.Payload), askID)
 	}
 	if inScope(&evt, evt.ChatID, command.ScopeChatSession) {
 		b.askSettled(evt.ChatID)
