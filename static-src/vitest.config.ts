@@ -246,6 +246,10 @@ const webkitDevices = [
   },
 ];
 
+/** The mouse files whose clicks a browser engine decides, run again in WebKit and Firefox on a desktop
+ *  viewport. Opt-in (`POINTER_ENGINES=1`): it needs `npx playwright install firefox webkit`, which CI does not. */
+const pointerEngineFiles = ["context-menu.pointer.test.ts"];
+
 export default defineConfig({
   // Serves the MSW worker script from the package for the browser tests that mock the network;
   // each such test starts its own worker.
@@ -341,6 +345,27 @@ export default defineConfig({
                   provider: playwright(),
                   instances: engineInstances,
                   commands: { parkPointer: parkPointerCommand },
+                },
+              },
+            } satisfies TestProjectInlineConfiguration,
+          ]
+        : []),
+      ...(process.env["POINTER_ENGINES"] === "1"
+        ? [
+            {
+              extends: true,
+              test: {
+                name: "browser-pointer-engines",
+                include: pointerEngineFiles,
+                exclude: sharedExclude,
+                setupFiles: ["./ro-loop-gate.ts", "./storage-reset-setup.ts"],
+                browser: {
+                  enabled: true,
+                  headless: true,
+                  screenshotFailures: false,
+                  provider: playwright(),
+                  instances: [{ browser: "webkit" }, { browser: "firefox" }],
+                  viewport: { width: 1440, height: 900 },
                 },
               },
             } satisfies TestProjectInlineConfiguration,
