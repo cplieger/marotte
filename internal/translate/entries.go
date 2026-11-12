@@ -15,7 +15,7 @@ import (
 // entryScope names the log a frame's entries belong to: a chat's, addressed by
 // the envelope's chat id, or a RUN's, addressed by an empty chat id plus the
 // workflow id on every payload so the client routes to the run store with no
-// lookup.
+// lookup. A run's frames publish on marotte.RunTopic(runID).
 type entryScope struct {
 	chatID marotte.ChatID
 	runID  string
@@ -35,7 +35,11 @@ func scopeOf(chatID marotte.ChatID, attr FrameAttribution) entryScope {
 }
 
 func (sc entryScope) event(kind marotte.EventType, payload any) marotte.ServerEvent {
-	return marotte.NewEvent(kind, sc.chatID, payload)
+	evt := marotte.NewEvent(kind, sc.chatID, payload)
+	if sc.runID != "" {
+		evt.Topic = marotte.RunTopic(sc.runID)
+	}
+	return evt
 }
 
 func (t *Translator) publishSealed(ctx context.Context, sc entryScope, sealed []turnlog.Sealed) {

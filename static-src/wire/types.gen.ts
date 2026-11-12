@@ -4583,8 +4583,7 @@ export interface ToolProgressPayload {
   /**
  * TerminalID, AgentSubtaskID and WorkflowID are late identity attachments, each
  * adopted once. AgentSubtaskID is informational: the card's lane is its
- * tool_call's, and a disagreeing value is logged rather than adopted. WorkflowID
- * doubles as the run scope on a run's frame.
+ * tool_call's, and a disagreeing value is logged rather than adopted.
  */
   terminal_id?: string;
   agent_subtask_id?: string;

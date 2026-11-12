@@ -36,7 +36,7 @@ import { inFlight, neverRan, settled } from "./exec-view/status.js";
 import { flatten, workNodes, type ExecNode } from "./exec-view/model.js";
 import { runToExec, type ExecFoldMemo, type StepEnds } from "./run-exec-source.js";
 import { lastPrintedLine, leaveStepTails, stepTail } from "./run-step-tail.js";
-import { setRunContentScope } from "./run-content-scope.js";
+import { afterScopeAnswer, scopeReady, setRunContentScope } from "./run-content-scope.js";
 import type { RunStepPaint, RunStepStream } from "./run-chat-steps.js";
 import {
   clearStepTranscripts,
@@ -52,6 +52,7 @@ import {
   noteRunChat,
   readRunUnlessOut,
   registerRunStateDemand,
+  rereadRun,
   runStateAs,
   runHoldsEveryPass,
   runChatID,
@@ -105,7 +106,9 @@ registerRunStateDemand(
 
 /** Tell the page's content scope which run and step this view draws. A run leaving it stops
  *  receiving its step content, so its stamps and tails go stale and are released; a run entering
- *  it catches each turn its log holds open up from the held seq, one range read each. */
+ *  it, once the stream delivers the run's frames, catches each turn its log holds open up from the
+ *  held seq, one range read each, and is read again: a read answered or out while the scope was
+ *  asked may hold step rows older than the first frame delivered. */
 function publishScope(): void {
   const run = runViewShown.peek() ? shownRun : "";
   const before = setRunContentScope(run, shownStep.peek());
@@ -117,9 +120,15 @@ function publishScope(): void {
     leaveStepTails(before);
   }
   if (run !== "") {
-    for (const turnID of runOpenTurnIDs(run)) {
-      requestRunTurnRange(run, turnID, runTurnHeldSeq(run, turnID));
-    }
+    void scopeReady(run).then((ready) => {
+      if (!ready) {
+        return;
+      }
+      rereadRun(run);
+      for (const turnID of runOpenTurnIDs(run)) {
+        requestRunTurnRange(run, turnID, runTurnHeldSeq(run, turnID));
+      }
+    });
   }
 }
 
@@ -186,8 +195,12 @@ export function showRun(workflowID: string): void {
 
 /** Refetch this run's state and its controls. A run tab's `refresh`. */
 export function refreshRun(workflowID: string): void {
-  // The wake and the reconcile run this right after the revalidation's own read of the run.
-  readRunUnlessOut(workflowID);
+  // The wake and the reconcile run this right after the revalidation's own read of the run. A run
+  // entering the scope is read once its ask answers, since a read out when the stream delivers the
+  // run is read again (`publishScope`).
+  afterScopeAnswer(workflowID, () => {
+    readRunUnlessOut(workflowID);
+  });
   // NO chat refresh: a step's entries are the RUN's, so a chat's window cannot move this pane. The
   // step transcript's refresh is the step GET, armed by `armStepRead`.
 }
@@ -677,13 +690,23 @@ function armStepRead(node: ExecNode | undefined): void {
   if (node?.transcript !== true || shownRun === "") {
     return;
   }
-  switch (stepReadVerb(shownRun, node)) {
+  const run = shownRun;
+  void scopeReady(run).then((ready) => {
+    // A read that settles before the stream delivers the run would miss the frames between.
+    if (ready && shownRun === run && shownNode === node) {
+      readShownStep(run, node);
+    }
+  });
+}
+
+function readShownStep(workflowID: string, node: ExecNode): void {
+  switch (stepReadVerb(workflowID, node)) {
     case "request":
-      catchUpsOwed.add(join(shownRun, node.path));
-      requestStepTranscript(shownRun, node.path);
+      catchUpsOwed.add(join(workflowID, node.path));
+      requestStepTranscript(workflowID, node.path);
       return;
     case "reread":
-      rereadStepTranscript(shownRun, node.path);
+      rereadStepTranscript(workflowID, node.path);
       return;
     case undefined:
       return;

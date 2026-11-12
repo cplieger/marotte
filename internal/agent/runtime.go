@@ -201,9 +201,11 @@ type bridges struct {
 	mgr *bridgeManager
 }
 
-// bus groups SSE transport, replay and pending permissions: cplieger/go/sse plus chat-topic filtering and pending replay.
+// bus groups the SSE transport (cplieger/go/sse and its scope route), the connect replay and pending permissions.
 type bus struct {
-	fanout       *sse.Hub
+	fanout *sse.Hub
+	// scope is fanout's ScopeHandler, the one writer of a live connection's scope.
+	scope        http.Handler
 	pendingPerms *pendingPermsTracker
 	// presence receives the hub's connect feed and client acks (alive_route.go); nil drops both.
 	presence presenceTable `wiring:"optional"`
@@ -439,6 +441,12 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		sse.WithReconnectDelay(liveness.ReconnectDelay),
 		sse.WithPresence(func(ev sse.PresenceEvent) { sseP.forwardPresence(&ev) }),
 	)
+	// It fails only on a nil authorize, a build defect like a bad MustNew option.
+	scope, err := sseP.fanout.ScopeHandler(ownsConnection)
+	if err != nil {
+		panic(err)
+	}
+	sseP.scope = scope
 	lc := &lifetime{
 		workDir:        workDir,
 		uploadsDir:     marotte.DefaultUploadDir,
@@ -675,6 +683,9 @@ func (rt *Runtime) RegisterRoutes(mux *http.ServeMux) {
 	))
 	// Not drain-gated: a late receipt changes nothing.
 	mux.HandleFunc("POST /api/events/alive", rt.handleAlive)
+	// A plain path, so a wrong method gets the scope handler's own 405 (sse docs/wire.md). Not drain-gated: a live
+	// stream may still narrow, and after the hub's Shutdown the handler answers 404 scope_conn.
+	mux.Handle("/api/events/scope", rt.bus.scope)
 	mux.HandleFunc("/api/shell/ws", rt.shellMgr.handleWS)
 	mux.HandleFunc("POST /api/shell/restart", rt.shellMgr.handleRestart)
 	mux.HandleFunc("/api/file-changes", rt.handleFileChanges)

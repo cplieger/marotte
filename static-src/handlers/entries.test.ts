@@ -145,14 +145,14 @@ describe("each event is one call into one store operation", () => {
 describe("a RUN's frame belongs to the run store, not to a chat", () => {
   // A run's log arrives with an EMPTY chat id and one `onSSE` registration fans out to every
   // subscriber, so each run-scoped handler refuses it itself; table-driven so a new handler that
-  // forgets fails. `code_references` is excluded: its payload carries no workflow id.
+  // forgets fails. `code_references` is excluded: its payload carries no workflow id. A run
+  // publishes no `tool_progress`, whose `workflow_id` is the call's own attachment.
   const frames: [keyof SSEPayloads, unknown][] = [
     ["turn_opened", { entry: entry("turn_open", {}, { seq: 0 }) }],
     ["entry_opened", { open: { turn: TURN, id: "e1", kind: "text", text: "x", n: 1 } }],
     ["entry_delta", { turn: TURN, entry_id: "e1", lane: "", n: 2, delta: "x" }],
     ["entry_sealed", { turn: TURN, entry_id: "e1", lane: "", seq: 1, ts: 1, n: 2 }],
     ["entry_appended", { entry: entry("text", { text: "x" }) }],
-    ["tool_progress", { turn: TURN, tool_call_id: "tc1" }],
   ];
 
   it.each(frames)("drops a %s carrying a workflow id", (type, payload) => {
@@ -241,6 +241,16 @@ describe("tool_progress", () => {
 
     expect(progress).toHaveBeenCalledWith(CHAT, TURN, payload);
     expect(rangeRead).not.toHaveBeenCalled();
+  });
+
+  it("folds a chat call's delta that adopts the run it launched", () => {
+    // `workflow_id` here is a late identity attachment of the call (a run launch), not a run's
+    // address: the server publishes no `tool_progress` for a run step.
+    const payload = { turn: TURN, tool_call_id: "tc1", workflow_id: "wf-1" };
+
+    send("tool_progress", payload);
+
+    expect(progress).toHaveBeenCalledWith(CHAT, TURN, payload);
   });
 
   it("asks for the turn's range when the window holds no such call", () => {

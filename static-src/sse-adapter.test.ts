@@ -11,12 +11,13 @@ import {
   init,
   markHydrated,
   presentedTag,
+  setPageScope,
   _resetForTest,
   _revalidateForTest,
   _spawnWorkerForTest,
   _tabRevalidateForTest,
 } from "./sse-adapter.js";
-import { setRunContentScope } from "./run-content-scope.js";
+import { scopeReady, setRunContentScope } from "./run-content-scope.js";
 import { PROFILE_TAG_KEY } from "./sse-tag.js";
 import { createSSEHost } from "./sse-worker-host.js";
 import { setSessions } from "./store.js";
@@ -46,7 +47,6 @@ const {
   mockRereadHeldRuns,
   mockRunTurnHeldSeq,
   mockRequestRunTurnRange,
-  mockPeekRunState,
   mockFetchCatalog,
   mockInventoryHeld,
   mockRefreshPRs,
@@ -61,7 +61,6 @@ const {
   mockRereadHeldRuns: vi.fn(),
   mockRunTurnHeldSeq: vi.fn((_id: string, _turn: string): number | undefined => undefined),
   mockRequestRunTurnRange: vi.fn((_id: string, _turn: string, _after?: number) => undefined),
-  mockPeekRunState: vi.fn((_id: string): unknown => undefined),
   mockFetchCatalog: vi.fn((_opts?: { signal?: AbortSignal }) => Promise.resolve()),
   mockInventoryHeld: vi.fn(() => false),
   mockRefreshPRs: vi.fn((_signal?: AbortSignal) => Promise.resolve()),
@@ -75,7 +74,6 @@ vi.mock("./tabs-sync.js", () => ({ listTabs: mockListTabs }));
 vi.mock("./run-store.js", () => ({
   refetchLiveRuns: mockRefetchLiveRuns,
   rereadHeldRuns: mockRereadHeldRuns,
-  peekRunState: mockPeekRunState,
   runTurnHeldSeq: mockRunTurnHeldSeq,
 }));
 vi.mock("./run-turn-range.js", () => ({ requestRunTurnRange: mockRequestRunTurnRange }));
@@ -208,11 +206,11 @@ beforeEach(() => {
   mockRefetchLiveRuns.mockResolvedValue(undefined);
   mockRequestRunTurnRange.mockReturnValue(undefined);
   mockRunTurnHeldSeq.mockReturnValue(undefined);
-  // No run held unless a case says so, which is what makes a `run_turn` stamp unheld.
-  mockPeekRunState.mockReturnValue(undefined);
   mockFetchCatalog.mockResolvedValue(undefined);
   mockInventoryHeld.mockReturnValue(false);
   mockRefreshPRs.mockClear();
+  // The hub's answer to a rescope, at the epoch every scripted hello presents.
+  scripted.respond("/api/events/scope", () => json({ epoch: EPOCH_A, offset: "3" }));
 });
 
 afterEach(() => {
@@ -618,7 +616,6 @@ describe("a run's step turn is a subject of its own", () => {
     // Same rule as an evicted chat's window: the frame was applied to nothing, so recording its
     // version would make the digest name a projection nobody holds. A scoped run's sibling step
     // moves only its dock line, holding no turn.
-    mockPeekRunState.mockReturnValue({ id: "wf-1" });
     const conn = await connect();
     markHydrated();
     conn?.frame(runFrame("t-1", "5"));
@@ -699,7 +696,6 @@ describe("a run's content reaches only the page that draws it", () => {
   });
 
   it("drops a run's step content while no view of this page shows the run, and keeps its lifecycle", async () => {
-    mockPeekRunState.mockReturnValue({ id: "wf-1" });
     const conn = await connect();
     markHydrated();
 
@@ -716,6 +712,171 @@ describe("a run's content reaches only the page that draws it", () => {
     await until(() => seen.some((e) => e.type === "run_progress"), "the lifecycle frame");
 
     expect(seen.map((e) => e.type)).toEqual(["run_progress"]);
+  });
+});
+
+describe("the page's scope on the stream", () => {
+  const RUN = "wf-1";
+
+  afterEach(() => {
+    setRunContentScope("", "");
+  });
+
+  function scopePosts(): { conn: string; seq: number; topics: string[] | null }[] {
+    return scripted.requests
+      .filter((r) => r.url === "/api/events/scope")
+      .map(
+        (r) => JSON.parse(r.body ?? "{}") as { conn: string; seq: number; topics: string[] | null },
+      );
+  }
+
+  /** What a readiness promise has settled to after a few tasks: "pending" when it has not. */
+  async function settledAs<T>(p: Promise<T>): Promise<T | "pending"> {
+    let out: T | "pending" = "pending";
+    void p.then((v) => {
+      out = v;
+    });
+    for (let i = 0; i < 5; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    return out;
+  }
+
+  it("connects drawing broadcasts only", async () => {
+    const conn = await connect();
+    expect(conn?.headers.get("SSE-Topics")).toBe("[]");
+  });
+
+  it("asks the hub for the shown run's topic on this connection, and the run reads once the hub delivers it", async () => {
+    const conn = await connect();
+    markHydrated();
+    setRunContentScope(RUN, "");
+    expect(await scopeReady(RUN)).toBe(true);
+    expect(scopePosts()).toEqual([
+      { conn: "conn-00000000000000000", seq: 1, topics: [`run:${RUN}`] },
+    ]);
+    expect(conn?.headers.get("SSE-Topics")).toBe("[]");
+  });
+
+  it.each([
+    { run: "", why: "no run" },
+    { run: "wf/1", why: "an id no run carries" },
+  ])("draws broadcasts only for $why, which the connection already does", async ({ run }) => {
+    await connect();
+    expect(await setPageScope(run)).toBe("covered");
+    expect(scopePosts()).toEqual([]);
+  });
+
+  it("draws everything for an id too long for a topic", async () => {
+    await connect();
+    const long = "w".repeat(125);
+    expect(await setPageScope(long)).toBe("covered");
+    expect(scopePosts().map((p) => p.topics)).toEqual([null]);
+  });
+
+  it("answers owed before the stream exists", async () => {
+    expect(await setPageScope(RUN)).toBe("owed");
+  });
+
+  it("an ask the link lost is asked again at the next open, and the run reads after that", async () => {
+    // The first connection's hub never answers, so the ask is still out when the tab detaches.
+    scripted.respond("/api/events/scope", () => new Promise<Response>(() => undefined));
+    await connect();
+    setRunContentScope(RUN, "");
+    await until(() => scopePosts().length === 1, "the first ask");
+    const ready = scopeReady(RUN);
+
+    scripted.respond("/api/events/scope", () => json({ epoch: EPOCH_A, offset: "3" }));
+    init(
+      (evt) => {
+        seen.push(evt);
+      },
+      () => undefined,
+    );
+    await until(() => scripted.connections.length === 2, "the new seat's connection");
+    expect(await settledAs(ready)).toBe("pending");
+    scripted.connections[1]?.hello();
+
+    expect(await ready).toBe(true);
+    expect(scopePosts().at(-1)).toEqual({
+      conn: "conn-00000000000000001",
+      seq: 1,
+      topics: [`run:${RUN}`],
+    });
+  });
+
+  it("a refused scope draws everything once: the run reads, and nothing asks for a scope again", async () => {
+    const warns = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    scripted.respond("/api/events/scope", () =>
+      json({ error: "bad topic", code: "sse_scope" }, 400),
+    );
+    await connect();
+    markHydrated();
+    setRunContentScope(RUN, "");
+    const ready = scopeReady(RUN);
+    await until(() => scripted.connections.length === 2, "the reconnect on everything");
+    expect(scripted.connections[1]?.headers.get("SSE-Topics")).toBeNull();
+    scripted.connections[1]?.hello();
+
+    expect(await ready).toBe(true);
+    setRunContentScope("", "");
+    setRunContentScope("wf-2", "");
+    expect(await scopeReady("wf-2")).toBe(true);
+    expect(scopePosts()).toHaveLength(1);
+    expect(warns.mock.calls.some((c) => String(c[1]).includes("scope_refused"))).toBe(true);
+  });
+
+  it("an older host that delivers everything covers the run at once", async () => {
+    _spawnWorkerForTest(() => {
+      const channel = new MessageChannel();
+      channel.port2.onmessage = (event: MessageEvent) => {
+        const m = event.data as { type?: unknown };
+        if (m.type === "attach") {
+          // No `scope: true`: a host that takes no set_scope.
+          channel.port2.postMessage({
+            type: "state",
+            state: { kind: "open", generation: 1, cursor: null, visible: true, online: true },
+          });
+        }
+      };
+      return { port: channel.port1, addEventListener: () => undefined };
+    });
+    init(
+      (evt) => {
+        seen.push(evt);
+      },
+      () => undefined,
+    );
+    expect(await setPageScope(RUN)).toBe("covered");
+  });
+
+  it("a run's undecodable frame is not re-read while the run is not shown here", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const conn = await connect();
+    markHydrated();
+    const broken = (run: string) => ({
+      type: "entry_appended",
+      chat_id: "",
+      payload: { workflow_id: run, entry: { id: "e1", turn: "t-1" } },
+    });
+    conn?.frame(broken("wf-2"));
+    setRunContentScope(RUN, "");
+    conn?.frame(broken(RUN));
+    await until(() => mockRequestRunTurnRange.mock.calls.length === 1, "the scoped run's re-read");
+    expect(mockRequestRunTurnRange.mock.calls).toEqual([[RUN, "t-1"]]);
+  });
+
+  it("delivers a chat call's delta that names the run it launched, the run not shown here", async () => {
+    const conn = await connect();
+    markHydrated();
+    conn?.frame({
+      type: "tool_progress",
+      chat_id: "c1",
+      payload: { turn: "t1", tool_call_id: "call-1", workflow_id: "wf-launched" },
+    });
+    await until(() => seen.length === 1, "the chat's delta");
+    expect(seen[0]?.type).toBe("tool_progress");
   });
 });
 

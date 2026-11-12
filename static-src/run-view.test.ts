@@ -2852,10 +2852,14 @@ describe("showRun and refreshRun", () => {
     expect(invalidateRun).not.toHaveBeenCalled();
   });
 
-  it("refreshRun reads the run, whose read carries its controls, unless a read of it is out", () => {
+  it("refreshRun reads the run, whose read carries its controls, unless a read of it is out", async () => {
     showRun("wf_refresh");
     refreshRun("wf_refresh");
     refreshRun("wf_refresh");
+    // The reads wait for the stream to answer the tab's ask for the run.
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
 
     const reads = vi
       .mocked(apiGetOrError)

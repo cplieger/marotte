@@ -1,6 +1,7 @@
-// The worker host's two marotte-owned decisions (the attach reconnect, the profile's one digest)
-// driven through the REAL library host over Node MessageChannel ports and a scripted stream. Node:
-// a SharedWorker's scope has no DOM, and the host's behaviour must hold with none.
+// The worker host's marotte-owned decisions (the attach reconnect, the profile's one digest, which
+// tab draws a frame) driven through the REAL library host over Node MessageChannel ports and a
+// scripted stream. Node: a SharedWorker's scope has no DOM, and the host's behaviour must hold with
+// none.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -51,7 +52,11 @@ afterEach(() => {
   tabs.length = 0;
 });
 
-function attach(tabId: string, tag = "profile-tag-0123456789"): Tab {
+function attach(
+  tabId: string,
+  tag = "profile-tag-0123456789",
+  scope?: readonly string[] | null,
+): Tab {
   const channel = new MessageChannel();
   const tab: Tab = { port: channel.port1, received: [], answerRuns: "done" };
   tab.port.onmessage = (event: MessageEvent) => {
@@ -75,7 +80,15 @@ function attach(tabId: string, tag = "profile-tag-0123456789"): Tab {
   tab.port.start();
   tabs.push(tab);
   host?.attach(channel.port2);
-  send(tab, { type: "attach", tabId, visible: true, online: true, hadWorker: false, tag });
+  send(tab, {
+    type: "attach",
+    tabId,
+    visible: true,
+    online: true,
+    hadWorker: false,
+    tag,
+    ...(scope === undefined ? {} : { scope }),
+  });
   return tab;
 }
 
@@ -147,6 +160,69 @@ describe("reconnectForAttach", () => {
     await roundTrip(b);
     expect(scripted.connections).toHaveLength(1);
     expect(scripted.connections.at(-1)?.aborted()).toBe(false);
+  });
+});
+
+describe("deliver", () => {
+  const RUN = "wf_5y00000000000001";
+  const OTHER = "wf_5y00000000000002";
+  const CONN = "c0nn3ct10n1d0123456789";
+
+  /** The application frames a tab received, as each frame's data. */
+  function delivered(tab: Tab): string[] {
+    return tab.received.flatMap((m) => (m.type === "frame" ? [m.frame.data] : []));
+  }
+
+  it("a run's log frames reach only the tab scoped to that run, every broadcast reaches both", async () => {
+    scripted.respond("/api/events/scope", () => json({ epoch: EPOCH_A, offset: "0" }));
+    host = createSSEHost();
+    const chat = attach("chat", undefined, []);
+    await until(() => scripted.connections.length === 1, "the first connection");
+    const run = attach("run", undefined, [`run:${RUN}`]);
+    await roundTrip(run);
+    const conn = scripted.connections[0];
+    // The first connect presents the one tab's scope; the run tab's topic is added on the
+    // connection the hello names.
+    expect(conn?.headers.get("SSE-Topics")).toBe("[]");
+    conn?.hello({ conn: CONN });
+    await until(
+      () => scripted.requests.some((r) => r.url === "/api/events/scope"),
+      "the scope request",
+    );
+    const scopeRequest = scripted.requests.find((r) => r.url === "/api/events/scope");
+    expect(scopeRequest?.method).toBe("POST");
+    expect(JSON.parse(scopeRequest?.body ?? "{}")).toEqual({
+      conn: CONN,
+      seq: 1,
+      topics: [`run:${RUN}`],
+    });
+
+    const chatFrame = { type: "chat_updated", chat_id: "c1", payload: { id: "c1" } };
+    const chatEntry = { type: "entry_delta", chat_id: "c1", payload: { turn: "t2", seq: 0 } };
+    const runTree = { type: "run_progress", payload: { workflow_id: RUN } };
+    const runEntry = { type: "entry_delta", payload: { workflow_id: RUN, turn: "t1", seq: 0 } };
+    const otherEntry = { type: "entry_sealed", payload: { workflow_id: OTHER, turn: "t9" } };
+    let offset = 0;
+    for (const envelope of [chatFrame, runEntry, otherEntry, runTree, chatEntry]) {
+      conn?.frame(envelope, `${EPOCH_A}:${String(++offset)}`);
+    }
+    // Not JSON: no run can be read off it, so it reaches every tab.
+    conn?.named("message", "{not json");
+    const each = (envelopes: object[]) => [...envelopes.map((e) => JSON.stringify(e)), "{not json"];
+    await until(
+      () => delivered(chat).length >= 4 && delivered(run).length >= 5,
+      "the frames on both tabs",
+    );
+    await roundTrip(chat);
+    await roundTrip(run);
+
+    expect(delivered(chat)).toEqual(each([chatFrame, runTree, chatEntry]));
+    expect(delivered(run)).toEqual(each([chatFrame, runEntry, runTree, chatEntry]));
+    expect(
+      [...chat.received, ...run.received].some(
+        (m) => m.type === "lifecycle" && m.event.kind === "deliver_failed",
+      ),
+    ).toBe(false);
   });
 });
 
