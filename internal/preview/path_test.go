@@ -65,7 +65,7 @@ func TestSplitServePath(t *testing.T) {
 	if err != nil || len(rel) != 1 || rel[0] != "" {
 		t.Errorf("splitServePath(trailing slash) = %q %v, want one empty trailing segment", rel, err)
 	}
-	tok, rel, err = splitServePath("/preview/tab/T/sub/a.html", TabPathPrefix)
+	tok, rel, err = splitServePath("/preview/tab/T/sub/a.html", tabPathPrefix)
 	if err != nil || tok != "T" || len(rel) != 2 || rel[0] != "sub" || rel[1] != "a.html" {
 		t.Errorf("splitServePath(tab route) = %q %q %v, want T [sub a.html] nil", tok, rel, err)
 	}
@@ -78,7 +78,7 @@ func TestSplitServePath(t *testing.T) {
 			t.Errorf("splitServePath(%q) = %v, want errNonCanonical", p, err)
 		}
 	}
-	if _, _, err := splitServePath("/preview/T/x", TabPathPrefix); !errors.Is(err, errNonCanonical) {
+	if _, _, err := splitServePath("/preview/T/x", tabPathPrefix); !errors.Is(err, errNonCanonical) {
 		t.Errorf("splitServePath(frame path, tab prefix) = %v, want errNonCanonical", err)
 	}
 }

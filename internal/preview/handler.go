@@ -223,7 +223,7 @@ func (h *Handler) Grant(p string, exp time.Time) (marotte.PreviewGrant, error) {
 	base := PathPrefix + tok + "/"
 	return marotte.PreviewGrant{
 		URL:       base + url.PathEscape(pg.name),
-		TabURL:    TabPathPrefix + tok + "/" + url.PathEscape(pg.name),
+		TabURL:    tabPathPrefix + tok + "/" + url.PathEscape(pg.name),
 		Base:      base,
 		ExpiresAt: exp.UTC(),
 		Epoch:     h.signer.currentEpoch(),

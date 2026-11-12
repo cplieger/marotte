@@ -10,10 +10,10 @@ import (
 // PathPrefix is the serve route's mount point. The token is its first segment.
 const PathPrefix = "/preview/"
 
-// TabPathPrefix is the serve route's form for a top-level tab (Open in browser):
+// tabPathPrefix is the serve route's form for a top-level tab (Open in browser):
 // the same token and folder rules under another policy. A minted token always
 // holds a ".", so no token reads as "tab".
-const TabPathPrefix = PathPrefix + "tab/"
+const tabPathPrefix = PathPrefix + "tab/"
 
 var errNonCanonical = errors.New("non-canonical preview path")
 

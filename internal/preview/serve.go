@@ -12,14 +12,14 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// ServeHTTP answers /preview/<token>/<rel> and its tab form under TabPathPrefix.
+// ServeHTTP answers /preview/<token>/<rel> and its tab form under tabPathPrefix.
 // The preview header set goes on first, so every response, a refusal included,
 // is sandboxed under its route's policy.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	escaped := r.URL.EscapedPath()
-	prefix, tab := PathPrefix, strings.HasPrefix(escaped, TabPathPrefix)
+	prefix, tab := PathPrefix, strings.HasPrefix(escaped, tabPathPrefix)
 	if tab {
-		prefix = TabPathPrefix
+		prefix = tabPathPrefix
 	}
 	hostOK := len(r.Host) <= maxHostBytes && hostPattern.MatchString(r.Host)
 	tok, rel, perr := splitServePath(escaped, prefix)
