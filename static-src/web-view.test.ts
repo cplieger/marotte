@@ -86,6 +86,7 @@ function mountView(): void {
           <div id="web-viewport" class="seg-bar web-viewport" role="radiogroup" aria-label="Preview width"></div>
           <button type="button" id="web-scale-btn" class="icon-btn web-scale-btn" aria-pressed="true" aria-label="Scale to fit"><span class="web-scale-readout">100%</span></button>
           <button type="button" id="web-reload-btn" class="icon-btn" aria-label="Reload preview"></button>
+          <a id="web-open-btn" class="icon-btn" target="_blank" rel="noopener noreferrer" aria-label="Open in browser"></a>
           <button type="button" id="web-edit-btn" class="icon-btn" aria-label="Edit"></button>
         </div>
       </div></div>
@@ -294,6 +295,72 @@ describe("Edit", () => {
   it("draws its glyph from the icon registry", () => {
     showWebTab("/workspace/demo/index.html");
     expect(edit().querySelector("svg")).not.toBeNull();
+  });
+});
+
+describe("Open in browser", () => {
+  const open = (): HTMLAnchorElement =>
+    document.getElementById("web-open-btn") as HTMLAnchorElement;
+
+  it("links the shown page's grant in a new top-level tab with no opener and no referrer", async () => {
+    showWebTab("/workspace/demo/my page.html");
+    await flush();
+    expect(open().getAttribute("href")).toBe("/preview/tok1/my%20page.html");
+    expect(open().target).toBe("_blank");
+    expect(open().rel).toBe("noopener noreferrer");
+    expect(open().hasAttribute("aria-disabled")).toBe(false);
+  });
+
+  it("links nothing until the grant lands", async () => {
+    grants.hold = true;
+    showWebTab("/workspace/demo/index.html");
+    await flush();
+    expect(open().hasAttribute("href")).toBe(false);
+    expect(open().getAttribute("aria-disabled")).toBe("true");
+    grants.held.shift()?.();
+    await flush();
+    expect(open().getAttribute("href")).toBe("/preview/tok1/index.html");
+    expect(open().hasAttribute("aria-disabled")).toBe(false);
+  });
+
+  it("links nothing while the preview shows a refusal", async () => {
+    showWebTab("/workspace/demo/index.html");
+    await flush();
+    grants.refuse = "the page could not be read";
+    document.getElementById("web-reload-btn")!.click();
+    await flush();
+    expect(open().hasAttribute("href")).toBe(false);
+    expect(open().getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("follows a reload's fresh grant and the tab on screen", async () => {
+    showWebTab("/workspace/a/index.html");
+    await flush();
+    document.getElementById("web-reload-btn")!.click();
+    await flush();
+    expect(open().getAttribute("href")).toBe("/preview/tok2/index.html");
+    showWebTab("/workspace/b/index.html");
+    await flush();
+    expect(open().getAttribute("href")).toBe("/preview/tok3/index.html");
+    showWebTab("/workspace/a/index.html");
+    expect(open().getAttribute("href")).toBe("/preview/tok2/index.html");
+  });
+
+  it("keeps a hidden tab's late grant off the shown tab's link", async () => {
+    grants.hold = true;
+    showWebTab("/workspace/a/index.html");
+    await flush();
+    grants.hold = false;
+    showWebTab("/workspace/b/index.html");
+    await flush();
+    grants.held.shift()?.();
+    await flush();
+    expect(open().getAttribute("href")).toBe("/preview/tok2/index.html");
+  });
+
+  it("draws its glyph from the icon registry", () => {
+    showWebTab("/workspace/demo/index.html");
+    expect(open().querySelector("svg")).not.toBeNull();
   });
 });
 

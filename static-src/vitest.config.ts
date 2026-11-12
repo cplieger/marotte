@@ -272,9 +272,10 @@ export default defineConfig({
         },
       },
       {
-        // The SSE lifecycle against the REAL server: `SSE_FIXTURE` names a `-tags marotte_test` binary the
-        // globalSetup starts on a scratch dir and free port; every file skips when it is unset. Node, not
-        // the browser: the fixture refuses cross-site POSTs and sends no CORS header.
+        // Suites against the REAL server (the SSE lifecycle, a preview's own tab driven through Playwright):
+        // `SSE_FIXTURE` names a `-tags marotte_test` binary the globalSetup starts on a scratch dir and free
+        // port; every file skips when it is unset. Node, not the browser: the fixture refuses cross-site
+        // POSTs and sends no CORS header.
         extends: true,
         test: {
           name: "e2e-sse",

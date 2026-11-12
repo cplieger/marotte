@@ -1,5 +1,5 @@
-// Starts the marotte binary named by SSE_FIXTURE and hands its origin through
-// `inject("marotteURL")`; a no-op when unset. The binary must be built with `-tags marotte_test`,
+// Starts the marotte binary named by SSE_FIXTURE and hands its origin and workspace through
+// `inject("marotteURL")` and `inject("marotteWorkDir")`; a no-op when unset. The binary must be built with `-tags marotte_test`,
 // the only build that mounts the SSE control surface.
 import { type ChildProcess, spawn } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -11,6 +11,8 @@ import type { TestProject } from "vitest/node";
 declare module "vitest" {
   export interface ProvidedContext {
     marotteURL: string;
+    /** The spawned binary's KIRO_WORK_DIR, where a test writes the pages it previews. */
+    marotteWorkDir: string;
   }
 }
 
@@ -130,6 +132,7 @@ export default async function setup(
     throw e;
   }
   project.provide("marotteURL", url);
+  project.provide("marotteWorkDir", join(scratch, "work"));
   return async () => {
     child.kill("SIGTERM");
     await waitForExit(child);

@@ -6,6 +6,7 @@ import indexHtml from "../static/index.html?raw";
 import { iconEl } from "./icon-el.js";
 import {
   ICON_EDIT_UI,
+  ICON_EXTERNAL,
   ICON_REFRESH,
   ICON_VIEWPORT_DESKTOP,
   ICON_VIEWPORT_FILL,
@@ -52,6 +53,7 @@ function mount(): void {
     viewport.append(btn);
   }
   host.querySelector("#web-reload-btn")!.append(iconEl(ICON_REFRESH));
+  host.querySelector("#web-open-btn")!.append(iconEl(ICON_EXTERNAL));
   host.querySelector("#web-edit-btn")!.append(iconEl(ICON_EDIT_UI));
   document.body.append(host);
 }
@@ -99,9 +101,11 @@ describe.each([
     expect(bar.height).toBeCloseTo(reload.height, 0);
     expect(reload.height).toBeGreaterThanOrEqual(hitFloor());
     expect(reload.width).toBeGreaterThanOrEqual(hitFloor());
-    const edit = q("#web-edit-btn").getBoundingClientRect();
-    expect(edit.height).toBeCloseTo(reload.height, 0);
-    expect(edit.width).toBeCloseTo(reload.width, 0);
+    for (const sel of ["#web-open-btn", "#web-edit-btn"]) {
+      const box = q(sel).getBoundingClientRect();
+      expect(box.height, sel).toBeCloseTo(reload.height, 0);
+      expect(box.width, sel).toBeCloseTo(reload.width, 0);
+    }
     const scale = q("#web-scale-btn").getBoundingClientRect();
     expect(scale.height).toBeGreaterThanOrEqual(hitFloor());
     for (const seg of segs()) {
@@ -162,16 +166,46 @@ describe("the path box", () => {
 });
 
 describe("the toolbar on a phone-shaped screen", () => {
-  it("hides the switcher and the scale toggle and keeps the path, Reload and Edit", async () => {
+  it("hides the switcher and the scale toggle and keeps the path, Reload, Open in browser and Edit", async () => {
     await at(390, 844, "coarse");
     expect(getComputedStyle(q(".web-viewport")).display).toBe("none");
     expect(getComputedStyle(q("#web-scale-btn")).display).toBe("none");
     expect(getComputedStyle(q("#web-path")).display).not.toBe("none");
     const reload = q("#web-reload-btn").getBoundingClientRect();
     expect(reload.width).toBeGreaterThanOrEqual(hitFloor());
+    const open = q("#web-open-btn").getBoundingClientRect();
+    expect(open.width).toBeGreaterThanOrEqual(hitFloor());
     const edit = q("#web-edit-btn").getBoundingClientRect();
     expect(edit.width).toBeGreaterThanOrEqual(hitFloor());
     expect(edit.right).toBeLessThanOrEqual(window.innerWidth);
+  });
+});
+
+describe("Open in browser", () => {
+  afterEach(() => {
+    q("#web-open-btn").removeAttribute("aria-disabled");
+  });
+
+  it("dims and refuses the cursor while it links nothing, as a disabled button does", async () => {
+    await at(1440, 900, "fine");
+    const open = q("#web-open-btn");
+    const reload = q<HTMLButtonElement>("#web-reload-btn");
+    open.setAttribute("aria-disabled", "true");
+    reload.disabled = true;
+    try {
+      expect(getComputedStyle(open).opacity).toBe(getComputedStyle(reload).opacity);
+      expect(getComputedStyle(open).opacity).not.toBe("1");
+      expect(getComputedStyle(open).cursor).toBe("not-allowed");
+    } finally {
+      reload.disabled = false;
+    }
+  });
+
+  it("draws its glyph in the primary ink, as the buttons beside it do", async () => {
+    await at(1440, 900, "fine");
+    const cs = getComputedStyle(q("#web-open-btn"));
+    expect(cs.color).toBe(getComputedStyle(q("#web-reload-btn")).color);
+    expect(cs.textDecorationLine).toBe("none");
   });
 });
 
@@ -184,6 +218,7 @@ describe("surfaces and motion", () => {
       q("#web-view .editor-toolbar"),
       q("#web-scale-btn"),
       q("#web-reload-btn"),
+      q("#web-open-btn"),
       ...segs(),
     ];
     for (const e of els) {

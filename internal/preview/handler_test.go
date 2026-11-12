@@ -291,6 +291,39 @@ func TestServe_HeadersAndInjection(t *testing.T) {
 	}
 }
 
+func TestServe_OnlyATopLevelDocumentMayDownload(t *testing.T) {
+	f := newFixture(t)
+	g := f.grant(t, filepath.Join(f.demo, "index.html"))
+	const frameList, tabList = "sandbox allow-scripts allow-forms allow-modals;", "sandbox allow-scripts allow-forms allow-modals allow-downloads;"
+	for _, tc := range []struct {
+		name, dest, target, want string
+	}{
+		{"a new tab's page", "document", g.URL, tabList},
+		{"a new tab's refusal", "document", g.Base + ".env", tabList},
+		{"the preview frame's page", "iframe", g.URL, frameList},
+		{"a page fetched by script", "empty", g.URL, frameList},
+		{"a script", "script", g.Base + "app.js", frameList},
+		{"no fetch metadata", "", g.URL, frameList},
+		{"a nested frame", "frame", g.URL, frameList},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var hdr []string
+			if tc.dest != "" {
+				hdr = []string{"Sec-Fetch-Dest", tc.dest}
+			}
+			rec := f.do(http.MethodGet, tc.target, "", hdr...)
+			csp := rec.Header().Get("Content-Security-Policy")
+			if !strings.HasPrefix(csp, tc.want) || strings.Contains(csp, "allow-same-origin") {
+				sandbox, _, _ := strings.Cut(csp, ";")
+				t.Errorf("Sec-Fetch-Dest %q sandbox = %q, want %q with no allow-same-origin", tc.dest, sandbox, tc.want)
+			}
+			if got := rec.Header().Get("Vary"); got != "Sec-Fetch-Dest" {
+				t.Errorf("Vary = %q, want Sec-Fetch-Dest", got)
+			}
+		})
+	}
+}
+
 func TestServe_NonHTMLIsByteIdentical(t *testing.T) {
 	f := newFixture(t)
 	g := f.grant(t, filepath.Join(f.demo, "index.html"))

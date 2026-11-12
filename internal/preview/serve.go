@@ -22,7 +22,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if hostOK && len(tok) <= tokenMaxLen && tokenPattern.MatchString(tok) {
 		src = "http://" + r.Host + PathPrefix + tok + "/"
 	}
-	setPreviewHeaders(w.Header(), src)
+	setPreviewHeaders(w.Header(), src, r.Header.Get("Sec-Fetch-Dest") == "document")
 
 	folder, ok := h.admit(w, r, hostOK, tok, rel, perr)
 	if !ok {
@@ -120,8 +120,12 @@ func servePage(w http.ResponseWriter, r *http.Request, f *os.File) {
 // httpserver.SecurityHeaders sets before the handler and documents as overridable.
 // src is the granted folder as a CSP source, or "" when the request named none
 // worth trusting, in which case every list that would hold only it is 'none'.
-func setPreviewHeaders(h http.Header, src string) {
-	h.Set("Content-Security-Policy", previewCSP(src))
+// topLevel is a top-level document navigation (Open in browser's tab), the one
+// request whose sandbox allows downloads; the frame cannot make one, since it
+// may neither navigate its top nor open a popup.
+func setPreviewHeaders(h http.Header, src string, topLevel bool) {
+	h.Set("Content-Security-Policy", previewCSP(src, topLevel))
+	h.Set("Vary", "Sec-Fetch-Dest")
 	h.Set("X-Frame-Options", "SAMEORIGIN")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Cache-Control", "no-store")
@@ -132,7 +136,9 @@ func setPreviewHeaders(h http.Header, src string) {
 	h.Set("Referrer-Policy", "no-referrer")
 }
 
-func previewCSP(src string) string {
+// previewCSP never grants allow-same-origin: the opaque origin keeps a page,
+// framed or in its own tab, out of marotte's cookies, storage and API.
+func previewCSP(src string, topLevel bool) string {
 	list := func(srcs ...string) string {
 		var kept []string
 		for _, s := range srcs {
@@ -145,7 +151,11 @@ func previewCSP(src string) string {
 		}
 		return strings.Join(kept, " ")
 	}
-	return "sandbox allow-scripts allow-forms allow-modals; default-src 'none'" +
+	sandbox := "sandbox allow-scripts allow-forms allow-modals"
+	if topLevel {
+		sandbox += " allow-downloads"
+	}
+	return sandbox + "; default-src 'none'" +
 		"; script-src " + list(src, "https:", "'unsafe-inline'", "'unsafe-eval'", "'wasm-unsafe-eval'", "blob:") +
 		"; style-src " + list(src, "https:", "'unsafe-inline'") +
 		"; img-src " + list(src, "https:", "data:", "blob:") +

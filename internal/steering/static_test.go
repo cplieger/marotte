@@ -469,6 +469,7 @@ func TestWriteUIGuide_NamesEveryTab(t *testing.T) {
 		"(Fill, Phone, Tablet, Desktop)",
 		`"Scale to fit"`,
 		`"Reload preview"`,
+		`"Open in browser" (the page in a new browser tab`,
 		`"Open preview"`,
 		`"Edit", which opens the page in the editor`,
 	} {
