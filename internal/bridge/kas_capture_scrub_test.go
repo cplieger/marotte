@@ -17,9 +17,15 @@ func catalogLine(options ...string) string {
 const (
 	acmeOption   = `{"value":"acme-large-2","name":"Acme Large 2","description":"[Internal] Acme Large 2"}`
 	zenithOption = `{"value":"zenith-3.1","name":"Zenith 3.1","description":"Zenith 3.1 [Legacy]"}`
+	// orbitOption's second id word and its description's vendor word appear nowhere else.
+	orbitOption = `{"value":"acme-orbit-2","name":"Acme Orbit 2","description":"QuillSoft Acme Orbit 2"}`
+	// mkOption's id has no word of three letters and its name only short or generic ones, so only
+	// the whole id and the whole name can refuse a mention of it.
+	mkOption = `{"value":"x9-2","name":"Mk 4 Beta","description":"Mk 4 Beta"}`
 )
 
 func TestScrubModels_rewrites(t *testing.T) {
+	scrubbedOrbit := catalogLine(`{"value":"model-a","name":"Model A","description":"Model A"}`) + "\n"
 	cases := []struct {
 		name, in, want string
 	}{
@@ -37,6 +43,17 @@ func TestScrubModels_rewrites(t *testing.T) {
 					`{"value":"model-a","name":"Model A","description":"[Internal] Model A"}`,
 				) + "\n" +
 				`{"dir":"out","frame":{"params":{"configId":"model","value":"model-b"}}}` + "\n",
+		},
+		{
+			name: "escaped spelling of a value is replaced whole",
+			in: catalogLine(`{"value":"acme-large-2","name":"Acme \u0026 Large","description":"Acme \u0026 Large"}`) + "\n" +
+				`{"text":"\u0061cme-large-2"}` + "\n",
+			want: catalogLine(`{"value":"model-a","name":"Model A","description":"Model A"}`) + "\n" + `{"text":"model-a"}` + "\n",
+		},
+		{
+			name: "a string holding an id with a letter after it is left whole",
+			in:   catalogLine(mkOption) + "\n" + `{"text":"x9-2b"}` + "\n",
+			want: catalogLine(`{"value":"model-a","name":"Model A","description":"Model A"}`) + "\n" + `{"text":"x9-2b"}` + "\n",
 		},
 		{
 			name: "empty description leaves other empty strings alone",
@@ -59,12 +76,16 @@ func TestScrubModels_rewrites(t *testing.T) {
 			want: catalogLine(`{"value":"model-a","name":"Model A","description":"[Internal] Model A"}`) + "\n" +
 				`{"text":"model-a answered"}` + "\n",
 		},
-		{
-			name: "family letters inside a longer word pass",
-			in:   catalogLine(acmeOption) + "\n" + `{"text":"the pacmen ran"}` + "\n",
-			want: catalogLine(`{"value":"model-a","name":"Model A","description":"[Internal] Model A"}`) + "\n" +
-				`{"text":"the pacmen ran"}` + "\n",
-		},
+	}
+	for _, text := range []string{
+		"the pacmen ran", "orbital mechanics", "quillsofts", "the next coder", "a beta feature", "a preview build",
+	} {
+		line := `{"text":"` + text + `"}` + "\n"
+		cases = append(cases, struct{ name, in, want string }{
+			name: "a catalog word inside a longer word or a generic word passes: " + text,
+			in:   catalogLine(`{"value":"acme-orbit-coder-next","name":"Acme Orbit Beta Preview","description":"QuillSoft Acme Orbit"}`) + "\n" + line,
+			want: scrubbedOrbit + line,
+		})
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -80,17 +101,21 @@ func TestScrubModels_rewrites(t *testing.T) {
 }
 
 func TestScrubModels_refuses(t *testing.T) {
-	cases := []struct{ name, text string }{
-		{"family word in prose", `the acme reply was the placeholder`},
-		{"family word in another case", `ACME answered`},
-		{"display name in another case", `asked acme large 2 again`},
-		{"id in another case", `switched to ZENITH-3.1`},
-		{"family word after a JSON escape", `first line\nacme said`},
-		{"family word in a path", `/work/zenith.txt`},
+	cases := []struct{ name, option, text string }{
+		{"whole id", mkOption, `switched to X9-2`},
+		{"whole display name", mkOption, `asked MK 4 BETA again`},
+		{"leading id word", orbitOption, `the acme reply was the placeholder`},
+		{"later id word on its own", orbitOption, `Orbit answered`},
+		{"id word with a digit after it", orbitOption, `Acme2 wrote it`},
+		{"vendor word from the description", orbitOption, `QuillSoft published a note`},
+		{"vendor word in another case", orbitOption, `quillsoft published a note`},
+		{"id word after a JSON escape", orbitOption, `first line\norbit said`},
+		{"id word in a path", orbitOption, `/work/orbit.txt`},
+		{"id word in a key", orbitOption, `x","orbit":"y`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			in := catalogLine(acmeOption, zenithOption) + "\n" + `{"text":"` + tc.text + `"}` + "\n"
+			in := catalogLine(tc.option) + "\n" + `{"text":"` + tc.text + `"}` + "\n"
 			if out, err := scrubModels([]byte(in)); err == nil {
 				t.Errorf("scrubModels returned no error, wrote\n%s", out)
 			}
