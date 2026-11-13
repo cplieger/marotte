@@ -10,6 +10,7 @@ import {
   adoptPushSubscription,
   init,
   markHydrated,
+  onPresentedTag,
   presentedTag,
   setPageScope,
   _resetForTest,
@@ -341,6 +342,62 @@ describe("the connect", () => {
     await connect();
     await until(() => versionMap().epoch() === EPOCH_A, "the version map to adopt epoch A");
     expect(versionMap().snapshot().held).toEqual([]);
+  });
+});
+
+// Another page of the profile wrote the persisted tag: this page presents what the store now holds.
+describe("following the profile's persisted tag", () => {
+  const HELD = "held-tag_0123456789AB";
+  const MOVED = "moved-tag_0123456789AB";
+
+  function storageEvent(over: Partial<StorageEventInit>): void {
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: PROFILE_TAG_KEY,
+        storageArea: localStorage,
+        newValue: localStorage.getItem(PROFILE_TAG_KEY),
+        ...over,
+      }),
+    );
+  }
+
+  it("presents the stored tag once, reconnects with it and tells the listeners", async () => {
+    localStorage.setItem(PROFILE_TAG_KEY, HELD);
+    await connect();
+    const heard: string[] = [];
+    const off = onPresentedTag((tag) => heard.push(tag));
+    // The event carries one page's write, the store already holds a later one: the store wins.
+    localStorage.setItem(PROFILE_TAG_KEY, MOVED);
+    storageEvent({ newValue: "stale-tag_0123456789AB" });
+    await until(() => scripted.connections.length === 2, "the reconnect under the moved tag");
+    expect(presentedTag()).toBe(MOVED);
+    expect(scripted.connections[1]?.headers.get("SSE-Client")).toBe(MOVED);
+    expect(heard).toEqual([MOVED]);
+
+    storageEvent({});
+    await new Promise((r) => setTimeout(r, 0));
+    expect(heard).toEqual([MOVED]);
+    expect(scripted.connections).toHaveLength(2);
+    off();
+  });
+
+  it("keeps its tag on a malformed value, a cleared store, another key or sessionStorage", async () => {
+    localStorage.setItem(PROFILE_TAG_KEY, HELD);
+    await connect();
+    const heard: string[] = [];
+    const off = onPresentedTag((tag) => heard.push(tag));
+    localStorage.setItem(PROFILE_TAG_KEY, "not a tag!");
+    storageEvent({});
+    localStorage.removeItem(PROFILE_TAG_KEY);
+    storageEvent({ key: null, newValue: null });
+    localStorage.setItem(PROFILE_TAG_KEY, MOVED);
+    storageEvent({ key: "some.other.key" });
+    storageEvent({ storageArea: sessionStorage });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(presentedTag()).toBe(HELD);
+    expect(heard).toEqual([]);
+    expect(scripted.connections).toHaveLength(1);
+    off();
   });
 });
 

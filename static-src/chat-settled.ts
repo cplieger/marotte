@@ -1,7 +1,6 @@
-// Two settle predicates over what a chat still has outstanding. `chatSettled` counts live runs, for
-// the attention fold that hides a `done` dot while a launched run runs; `noticeSettled` does not,
-// because the server withholds `agent_finished` while the chat holds a live lease. Every read is
-// TRACKED. Subagents are not an input: a delegate runs inside its launching turn.
+// What a chat still has outstanding, for the attention fold that hides a `done` dot while a launched
+// run runs. Every read is TRACKED. Subagents are not an input: a delegate runs inside its launching
+// turn.
 
 import { hasPendingDecision } from "./decision-dock.js";
 import { liveRunIDsForChat } from "./run-store.js";
@@ -44,10 +43,4 @@ export function chatOutstanding(chatID: string): ChatOutstanding {
 export function chatSettled(chatID: string): boolean {
   const outstanding = chatOutstanding(chatID);
   return !outstanding.turn && outstanding.runs === 0 && !outstanding.asks;
-}
-
-/** Is this chat free of an open turn and a pending ask, the two holds the server's `agent_finished`
- *  does not wait for? */
-export function noticeSettled(chatID: string): boolean {
-  return !turnOutstanding(chatID) && !hasPendingDecision(chatID);
 }

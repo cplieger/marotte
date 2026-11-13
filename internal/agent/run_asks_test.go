@@ -57,26 +57,24 @@ func askCoreHub(t *testing.T, workflowID string, reply json.RawMessage) (*Runtim
 
 // askPush records every notification's subject and ask and every retraction, from any goroutine.
 type askPush struct {
+	pushStub
 	sent, retracted []marotte.PushSubject
 	retractedAsks   []string
 	mu              sync.Mutex
 }
 
-func (*askPush) HasSubscribers() bool                     { return true }
-func (*askPush) SetPreferences(map[marotte.PushKind]bool) {}
-func (*askPush) Preferences() map[marotte.PushKind]bool   { return nil }
-func (*askPush) Close()                                   {}
-func (p *askPush) Retract(subj marotte.PushSubject, ask string) {
+func (p *askPush) Settled(subj marotte.PushSubject, ask string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.retracted = append(p.retracted, subj)
 	p.retractedAsks = append(p.retractedAsks, ask)
 }
 
-func (p *askPush) Send(_ context.Context, n *marotte.NotificationPayload) {
+func (p *askPush) Raise(_ context.Context, _ marotte.ChatID, n *marotte.NotificationPayload, _ uint64) func(context.Context) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.sent = append(p.sent, n.PushSubject)
+	return func(context.Context) {}
 }
 
 func retracted(fp *askPush) []marotte.PushSubject {

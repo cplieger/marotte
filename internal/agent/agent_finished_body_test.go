@@ -186,10 +186,11 @@ func TestPushTurnOutcome_PushSubjectIsTheChat(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("no push sent for a non-cancelled turn")
 	}
-	if fp.subject.ChatID != "c1" {
-		t.Errorf("subject chat id = %q, want %q", fp.subject.ChatID, "c1")
+	subj, _ := fp.last()
+	if subj.ChatID != "c1" {
+		t.Errorf("subject chat id = %q, want %q", subj.ChatID, "c1")
 	}
-	if fp.subject.Key != "" {
-		t.Errorf("a chat notification carries a subject key %q; the chat id IS its subject", fp.subject.Key)
+	if subj.Key != "" {
+		t.Errorf("a chat notification carries a subject key %q; the chat id IS its subject", subj.Key)
 	}
 }

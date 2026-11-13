@@ -10,7 +10,7 @@ import (
 )
 
 // presenceClock drives a Presence through time without sleeping. Locked, because
-// the deferred variant's poll timer reads it off the test's goroutine.
+// the ledger's beat reads it off the test's goroutine.
 type presenceClock struct {
 	at time.Time
 	mu sync.Mutex

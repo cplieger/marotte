@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type * as Dom from "./dom.js";
+import type * as ApiClient from "./api-client.js";
 
 import routeApplySrc from "./route-apply.ts?raw";
 import navigateSrc from "./navigate.ts?raw";
@@ -108,8 +109,6 @@ vi.mock("./deep-link.js", () => ({
 vi.mock("./chat.js", () => ({ switchSession: vi.fn() }));
 vi.mock("./editor-openers.js", () => ({ openFile: vi.fn() }));
 vi.mock("./files.js", () => ({ pointFilesTab: vi.fn() }));
-// The push handler shows a notification through the cue module, whose graph reaches the decision dock.
-vi.mock("./agent-finished-cue.js", () => ({ deliverNotification: vi.fn() }));
 vi.mock("./settings-tabs.js", () => ({ forceSettingsTab: vi.fn() }));
 vi.mock("./settings-highlight.js", () => ({ flushURLHighlight: vi.fn() }));
 vi.mock("./git-tabs.js", () => ({ forceGitTab: mocks.forceGitTab }));
@@ -218,13 +217,12 @@ vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) 
 vi.mock("./transport.js", () =>
   import("./__test-helpers__/tabs-server.js").then((m) => m.tabTransportMock()),
 );
-vi.mock("./api-client.js", () =>
-  import("./__test-helpers__/tabs-server.js").then((m) => ({
-    apiBlobOrError: vi.fn(),
-    apiGetTyped: m.tabListRead(),
-    apiGet: vi.fn(() => Promise.resolve(null)),
-  })),
-);
+vi.mock("./api-client.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ApiClient>()),
+  apiBlobOrError: vi.fn(),
+  apiGetTyped: (await import("./__test-helpers__/tabs-server.js")).tabListRead(),
+  apiGet: vi.fn(() => Promise.resolve(null)),
+}));
 
 import { openGitView, openTab, tabIdFor, getActiveTabRoute, _resetForTest } from "./tabs.js";
 import { applyRoute } from "./route-apply.js";

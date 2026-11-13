@@ -215,8 +215,8 @@ type bus struct {
 	chatStatus *chatStatusCache
 	// stageStatusDesc records a declared description on the open turn, for the agent_finished push.
 	stageStatusDesc func(marotte.ChatID, string)
-	// retractPush drops a held push whose ask was settled (bridgeCoordinator.RetractPush).
-	retractPush func(subj marotte.PushSubject, ask string)
+	// settleNotice ends the notices announcing an ask that settled (bridgeCoordinator.settleNotice).
+	settleNotice func(subj marotte.PushSubject, ask string)
 	// ownStopped reports a stop requested during the chat's current turn (turnRegistry.ownStopped).
 	ownStopped func(marotte.ChatID) bool
 	// askSettled hears that one of a chat session's asks settled (autoCompactor.askSettled).
@@ -501,6 +501,11 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	for _, o := range opts {
 		o(h)
 	}
+	if h.push != nil {
+		h.push.SetFrames(func(chatID marotte.ChatID, n marotte.NotificationPayload) {
+			sseP.emit(marotte.NewEvent(marotte.EventNotification, chatID, n))
+		})
+	}
 	// After the options and before anything can mint.
 	sseP.pendingPerms.versions = h.versions
 	sseP.steers.versions = h.versions
@@ -570,17 +575,18 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	h.coord.reconcileSessions = func(ctx context.Context, deadline time.Time) {
 		h.reconcileSessionSettings(ctx, "session settings", deadline)
 	}
-	h.coord.autoCompact = newAutoCompactor(h.coord, h.compactionPolicy,
-		func(chatID marotte.ChatID) bool {
-			return len(h.bus.pendingPerms.askRefs(chatID, command.ScopeChatSession)) > 0
-		},
+	h.coord.autoCompact = newAutoCompactor(h.coord, h.compactionPolicy, h.coord.chatHasAsk,
 		func(ctx context.Context, chatID marotte.ChatID, rs command.RunStop) error {
 			return h.dispatcher.CarryOutStop(ctx, chatID, rs)
 		})
 	sseP.stageStatusDesc = h.coord.turns.stageStatusDescription
-	sseP.retractPush = h.coord.retractPush
+	sseP.settleNotice = h.coord.settleNotice
 	sseP.ownStopped = h.coord.turns.ownStopped
-	sseP.askSettled = h.coord.autoCompact.askSettled
+	sseP.askSettled = func(chatID marotte.ChatID) {
+		h.coord.autoCompact.askSettled(chatID)
+		h.coord.finishAskSettled(chatID)
+	}
+	h.coord.readBound = newReadBound(h.chatStore.ReadBound, runs.RunReadBound, noticeRunBoundTimeout)
 	sseP.runAsk = runs
 	// Built here because coord and the ignore matcher do not exist at the literal. Workspace-global: the
 	// orchestrator and its subagents write one spec from several sessions.
@@ -683,6 +689,8 @@ func (rt *Runtime) RegisterRoutes(mux *http.ServeMux) {
 	))
 	// Not drain-gated: a late receipt changes nothing.
 	mux.HandleFunc("POST /api/events/alive", rt.handleAlive)
+	mux.HandleFunc("POST /api/events/view", rt.handleView)
+	mux.HandleFunc("POST /api/events/notice", rt.handleNotice)
 	// A plain path, so a wrong method gets the scope handler's own 405 (sse docs/wire.md). Not drain-gated: a live
 	// stream may still narrow, and after the hub's Shutdown the handler answers 404 scope_conn.
 	mux.Handle("/api/events/scope", rt.bus.scope)

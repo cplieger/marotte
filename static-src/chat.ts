@@ -46,7 +46,6 @@ import {
 } from "./tabs.js";
 import { beginAdopt, adoptCommitted, opFailed } from "./tabs-sync.js";
 import { hasPendingDecision, dropDecisions } from "./decision-dock.js";
-import { forgetDeferredCue } from "./agent-finished-cue.js";
 import { submitLabelled, submitPrompt, type SubmitResult } from "./submit.js";
 import {
   mountChatView,
@@ -125,8 +124,6 @@ export function closeChatTab(id: string): void {
   flushComposerDraft();
   // The dock queue is keyed by chat id, so a leftover queue resurrects on reopening the id.
   dropDecisions(id);
-  // A withheld agent-finished cue is keyed by chat id too.
-  forgetDeferredCue(id);
   // Before removeChat: the store reassigning the painted chat repaints synchronously,
   // and a dead view still in the registry would be parked by that paint.
   disposeChatView(id);

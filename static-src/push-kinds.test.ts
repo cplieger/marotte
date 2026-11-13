@@ -164,11 +164,11 @@ describe("restoreNotifications", () => {
     expect(notify.isKindEnabled("pr_status")).toBe(false);
   });
 
-  it("keeps agent_finished's own getter working", async () => {
+  it("reads agent_finished's switch from its own setting", async () => {
     const notify = await import("./notify.js");
     notify.restoreNotifications(
       settingsPayload({ notifications_enabled: true, notify_agent_finished: false }),
     );
-    expect(notify.isAgentFinishedEnabled()).toBe(false);
+    expect(notify.isKindEnabled("agent_finished")).toBe(false);
   });
 });

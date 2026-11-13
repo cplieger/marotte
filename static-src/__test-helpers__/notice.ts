@@ -4,24 +4,28 @@
 import type { PushTarget } from "../push-subject.js";
 import type { NotificationPayload, PushKind } from "../wire/types.gen.js";
 
+let minted = 0;
+
 export function noticeFor(
   target: PushTarget,
   body: string,
   kind: PushKind = "permission",
   title = "A chat",
 ): NotificationPayload {
+  // A fresh id per call: a page shows one notice id once, and each call is a new notice.
+  const id = `notice-${String(++minted)}`;
   switch (target.kind) {
     case "chat":
-      return { chat_id: target.chatID, kind, title, body };
+      return { id, chat_id: target.chatID, kind, title, body };
     case "run":
-      return { subject: `run:${target.workflowID}`, kind, title, body };
+      return { id, subject: `run:${target.workflowID}`, kind, title, body };
     case "run_ask":
-      return { subject: `runask:${target.position}`, kind, title, body };
+      return { id, subject: `runask:${target.position}`, kind, title, body };
     case "pr":
-      return { subject: `pr:${target.identity}`, kind, title, body };
+      return { id, subject: `pr:${target.identity}`, kind, title, body };
     case "rule":
-      return { subject: `rule:${target.ruleID}`, kind, title, body };
+      return { id, subject: `rule:${target.ruleID}`, kind, title, body };
     case "workspace":
-      return { kind, title, body };
+      return { id, kind, title, body };
   }
 }

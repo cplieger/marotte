@@ -4,7 +4,6 @@ import { onSSE } from "../bus.js";
 import { upsertHeader, removeChat, getActiveId, setAgentStatus } from "../store.js";
 import { noteHeaderFrame } from "../header-frames.js";
 import { dropDecisions } from "../decision-dock.js";
-import { forgetDeferredCue } from "../agent-finished-cue.js";
 import { dropComposerState, adoptRemoteComposerState } from "../composer-state.js";
 import { parseRoute } from "../route-path.js";
 import { replaceRoute } from "../router.js";
@@ -66,7 +65,6 @@ onSSE("chat_deleted", (_chatID, p) => {
   // No tab close: the membership coordinator closes a deleted chat's tabs under the delete's lock.
   // The per-chat cleanups below are keyed by chat id, outlive the tab, and are idempotent.
   dropDecisions(p.id);
-  forgetDeferredCue(p.id);
   dropComposerState(p.id);
   forgetDeletedChat(p.id);
   removeChat(p.id);

@@ -480,14 +480,46 @@ func (bc *bridgeCoordinator) concludeStop(
 	return c
 }
 
-// pushTurnOutcome sends a finished turn's notification, reading the severity so it never claims success. On the
-// detached context: the push fans out on its own goroutine.
+// finishAskSettled hears that one of chatID's chat-session asks settled, which may release its parked finish. Off
+// the tracker's call, which holds its own lock.
+func (bc *bridgeCoordinator) finishAskSettled(chatID marotte.ChatID) {
+	bc.spawnRun(func() { bc.releaseFinish(context.Background(), chatID) })
+}
+
+// dropFinish drops chatID's parked finish: its last tab closed.
+func (bc *bridgeCoordinator) dropFinish(chatID marotte.ChatID) {
+	bc.finishMu.Lock()
+	defer bc.finishMu.Unlock()
+	delete(bc.finishes, chatID)
+}
+
+// releaseFinish raises chatID's parked finish once the chat has neither an open turn nor a pending ask, and drops
+// it once the chat is gone. The reads run before finishMu: the chat store and the turn registry take locks of their own.
+func (bc *bridgeCoordinator) releaseFinish(ctx context.Context, chatID marotte.ChatID) {
+	_, exists := bc.chatStore.Get(ctx, chatID)
+	waits := exists && (bc.turns.turnOpen(chatID) || bc.chatHasAsk(chatID))
+	if waits {
+		return
+	}
+	bc.finishMu.Lock()
+	n, ok := bc.finishes[chatID]
+	delete(bc.finishes, chatID)
+	bc.finishMu.Unlock()
+	if ok && exists {
+		bc.Notify(ctx, chatID, &n)
+	}
+}
+
+// pushTurnOutcome parks a finished turn's notification in the chat's finish slot, reading the severity so it never
+// claims success, then releases the slot if nothing holds it. Every close releases, so a finish parked behind a turn
+// that closes under a live run or stopped is still raised.
 func (bc *bridgeCoordinator) pushTurnOutcome(
 	ctx context.Context,
 	chatID marotte.ChatID,
 	c marotte.TurnConclusion,
 	statusDesc string,
 ) {
+	defer bc.releaseFinish(ctx, chatID)
 	// The turn ended but a run it launched is still on the wire (`run_workflow` returns at creation); the run's
 	// own `run_outcome` push covers it.
 	if bc.chatHasLiveRun != nil && bc.chatHasLiveRun(chatID) {
@@ -495,14 +527,20 @@ func (bc *bridgeCoordinator) pushTurnOutcome(
 			"chat_id", chatID, "outcome", c.Outcome)
 		return
 	}
+	var n marotte.NotificationPayload
 	switch marotte.SeverityOf(c.Outcome) {
 	case marotte.TurnSeverityClean:
-		n := notice.TurnFinished(bc.NoticeTarget(ctx, chatID, ""), statusDesc)
-		bc.Notify(ctx, chatID, &n)
+		n = notice.TurnFinished(bc.NoticeTarget(ctx, chatID, ""), statusDesc)
 	case marotte.TurnSeverityBroken:
-		n := notice.TurnFailed(bc.NoticeTarget(ctx, chatID, ""), c.Reason)
-		bc.Notify(ctx, chatID, &n)
+		n = notice.TurnFailed(bc.NoticeTarget(ctx, chatID, ""), c.Reason)
 	case marotte.TurnSeverityStopped, marotte.TurnSeverityRunning:
 		// A cancel was asked for and an unreadable end says nothing, so neither pushes; `running` cannot close.
+		return
 	}
+	bc.finishMu.Lock()
+	if bc.finishes == nil {
+		bc.finishes = make(map[marotte.ChatID]marotte.NotificationPayload)
+	}
+	bc.finishes[chatID] = n
+	bc.finishMu.Unlock()
 }

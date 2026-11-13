@@ -42,7 +42,7 @@ interface FakeNotification {
 
 function shadowNotification(permission: string, answer: string | null): FakeNotification {
   const fake = function fakeNotification(): void {
-    /* the constructor itself is never reached here; `notifyOffScreen` needs a grant */
+    /* the constructor itself is never reached here; `showNotice` needs a grant */
   } as FakeNotification;
   fake.permission = permission;
   fake.requests = 0;
@@ -92,7 +92,7 @@ describe("a cue that could not fire arms the ask", () => {
   it("raises the prompt on the reader's next click", async () => {
     expect.assertions(3);
     const fake = shadowNotification("default", "granted");
-    expect(notify.notifyOffScreen(noticeFor(chatTarget("c1"), "Agent finished"))).toBe(false);
+    expect(notify.showNotice(noticeFor(chatTarget("c1"), "Agent finished"))).toBe(false);
     expect(fake.requests).toBe(0);
     click();
     await settle();
@@ -104,7 +104,7 @@ describe("a cue that could not fire arms the ask", () => {
     // The arm leads every gate, so a visible page still counts the cue.
     expect(document.visibilityState).toBe("visible");
     const fake = shadowNotification("default", "granted");
-    notify.notifyOffScreen(noticeFor(chatTarget("c1"), "Agent finished"));
+    notify.showNotice(noticeFor(chatTarget("c1"), "Agent finished"));
     click();
     await settle();
     expect(fake.requests).toBe(1);
@@ -123,7 +123,7 @@ describe("a cue that could not fire arms the ask", () => {
     expect.assertions(1);
     localStorage.setItem(LS_NOTIFY_ASK_KEY, "1");
     const fake = shadowNotification("default", "granted");
-    notify.notifyOffScreen(noticeFor(chatTarget("c1"), "Agent finished"));
+    notify.showNotice(noticeFor(chatTarget("c1"), "Agent finished"));
     click();
     await settle();
     expect(fake.requests).toBe(0);
@@ -133,7 +133,7 @@ describe("a cue that could not fire arms the ask", () => {
     expect.assertions(1);
     const fake = shadowNotification("default", "granted");
     notify.spendNotifyAsk();
-    notify.notifyOffScreen(noticeFor(chatTarget("c1"), "Agent finished"));
+    notify.showNotice(noticeFor(chatTarget("c1"), "Agent finished"));
     click();
     await settle();
     expect(fake.requests).toBe(0);
@@ -144,7 +144,7 @@ describe("a grant turns the settings switch on", () => {
   it("writes the master key and subscribes push", async () => {
     expect.assertions(4);
     shadowNotification("default", "granted");
-    notify.notifyOffScreen(noticeFor(chatTarget("c1"), "Agent finished"));
+    notify.showNotice(noticeFor(chatTarget("c1"), "Agent finished"));
     click();
     await settle();
     expect(mocks.patches).toEqual([{ notifications_enabled: true }]);
@@ -157,7 +157,7 @@ describe("a grant turns the settings switch on", () => {
     expect.assertions(3);
     mocks.patchResult = { outcome: "failed" };
     shadowNotification("default", "granted");
-    notify.notifyOffScreen(noticeFor(chatTarget("c1"), "Agent finished"));
+    notify.showNotice(noticeFor(chatTarget("c1"), "Agent finished"));
     click();
     await settle();
     expect(mocks.patches).toHaveLength(1);
@@ -168,7 +168,7 @@ describe("a grant turns the settings switch on", () => {
   it("writes nothing on a denial", async () => {
     expect.assertions(3);
     const fake = shadowNotification("default", "denied");
-    notify.notifyOffScreen(noticeFor(chatTarget("c1"), "Agent finished"));
+    notify.showNotice(noticeFor(chatTarget("c1"), "Agent finished"));
     click();
     await settle();
     expect(fake.requests).toBe(1);
@@ -179,7 +179,7 @@ describe("a grant turns the settings switch on", () => {
   it("records the device's answer so a reload does not ask again", async () => {
     expect.assertions(1);
     shadowNotification("default", "denied");
-    notify.notifyOffScreen(noticeFor(chatTarget("c1"), "Agent finished"));
+    notify.showNotice(noticeFor(chatTarget("c1"), "Agent finished"));
     click();
     await settle();
     expect(localStorage.getItem(LS_NOTIFY_ASK_KEY)).toBe("1");
@@ -199,7 +199,7 @@ describe("the Settings door and the automatic one share the ask", () => {
     const fake = shadowNotification("default", "granted");
     notify.requestPermission();
     fake.permission = "default";
-    notify.notifyOffScreen(noticeFor(chatTarget("c1"), "Agent finished"));
+    notify.showNotice(noticeFor(chatTarget("c1"), "Agent finished"));
     click();
     await settle();
     expect(fake.requests).toBe(1);
@@ -210,7 +210,7 @@ describe("a browser that cannot be asked", () => {
   it("declines when the Notification API is absent", async () => {
     expect.assertions(2);
     vi.stubGlobal("Notification", undefined);
-    notify.notifyOffScreen(noticeFor(chatTarget("c1"), "Agent finished"));
+    notify.showNotice(noticeFor(chatTarget("c1"), "Agent finished"));
     click();
     await settle();
     expect(mocks.patches).toEqual([]);
@@ -220,7 +220,7 @@ describe("a browser that cannot be asked", () => {
   it("declines when permission was already denied, which no prompt reopens", async () => {
     expect.assertions(1);
     const fake = shadowNotification("denied", "granted");
-    notify.notifyOffScreen(noticeFor(chatTarget("c1"), "Agent finished"));
+    notify.showNotice(noticeFor(chatTarget("c1"), "Agent finished"));
     click();
     await settle();
     expect(fake.requests).toBe(0);
@@ -229,7 +229,7 @@ describe("a browser that cannot be asked", () => {
   it("survives a browser that throws rather than be asked", async () => {
     expect.assertions(2);
     const fake = shadowNotification("default", null);
-    notify.notifyOffScreen(noticeFor(chatTarget("c1"), "Agent finished"));
+    notify.showNotice(noticeFor(chatTarget("c1"), "Agent finished"));
     click();
     await settle();
     expect(fake.requests).toBe(1);

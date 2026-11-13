@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { settingsPayload } from "./__test-helpers__/settings.js";
 import type { EffectiveSettings, PatchAnswer } from "./persist.js";
 import { LS_NOTIFY_ASK_KEY } from "./ls-keys.js";
+import type * as ActionsIndex from "./actions/index.js";
 
 const mocks = vi.hoisted(() => ({
   patches: [] as Record<string, unknown>[],
@@ -39,7 +40,8 @@ vi.mock("./actions/notify.js", () => ({
   unsubscribePush: { dispatch: async (): Promise<null> => null },
 }));
 
-vi.mock("./actions/index.js", () => ({
+vi.mock("./actions/index.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ActionsIndex>()),
   bindLoadingState: (): (() => void) => vi.fn(),
   registerCleanup: vi.fn(),
 }));

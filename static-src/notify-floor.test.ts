@@ -75,10 +75,10 @@ describe("no client code can address the removed setting", () => {
 });
 
 describe("the master switch still governs everything", () => {
-  it("notifyOffScreen gates on the master enabled flag", async () => {
+  it("showNotice gates on the master enabled flag", async () => {
     const notify = await import("./notify.js");
     expect(notify.areNotificationsEnabled()).toBe(false);
-    expect(notify.notifyOffScreen(noticeFor(chatTarget(""), "Permission needed"))).toBe(false);
+    expect(notify.showNotice(noticeFor(chatTarget(""), "Permission needed"))).toBe(false);
 
     notify.restoreNotifications(
       settingsPayload({

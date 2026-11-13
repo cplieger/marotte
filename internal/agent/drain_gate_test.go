@@ -104,16 +104,17 @@ func TestHoldUnlessDraining_HoldsShutdownUntilReleasedAndRefusesOnceItBegan(t *t
 }
 
 type blockingPush struct {
+	pushStub
 	entered chan struct{}
 	release chan struct{}
 	once    sync.Once
 }
 
-func (*blockingPush) HasSubscribers() bool                { return true }
-func (*blockingPush) Retract(marotte.PushSubject, string) {}
-func (p *blockingPush) Send(context.Context, *marotte.NotificationPayload) {
-	p.once.Do(func() { close(p.entered) })
-	<-p.release
+func (p *blockingPush) Raise(context.Context, marotte.ChatID, *marotte.NotificationPayload, uint64) func(context.Context) {
+	return func(context.Context) {
+		p.once.Do(func() { close(p.entered) })
+		<-p.release
+	}
 }
 
 func TestNotify_OnceShutdownBeganStillPushesWithoutJoiningInflight(t *testing.T) {

@@ -11,6 +11,8 @@ import {
   type PushTarget,
 } from "./push-subject.js";
 import { registerPush, unsubscribePush } from "./actions/notify.js";
+import { reportNotice } from "./page-view.js";
+import { adoptPushSubscription } from "./sse-adapter.js";
 import { registerCleanup } from "./actions/index.js";
 import { createNotifyAsk, type NotifyAsk } from "./notify-ask.js";
 import { LS_NOTIFY_ASK_KEY } from "./ls-keys.js";
@@ -41,12 +43,8 @@ export function isKindEnabled(kind: string): boolean {
   return kindEnabled.get(kind) ?? true;
 }
 
-export function isAgentFinishedEnabled(): boolean {
-  return isKindEnabled("agent_finished");
-}
-
 // No per-kind getter for the permission ask: the master switch, checked in
-// notifyOffScreen, is its only gate (KEYED_PUSH_KINDS says why).
+// showNotice, is its only gate (KEYED_PUSH_KINDS says why).
 
 export function setNotificationsEnabled(v: boolean): void {
   enabled = v;
@@ -151,7 +149,7 @@ export function _resetNotifyAskForTest(): void {
   ask = null;
 }
 
-/** Private: notifyOffScreen is the one funnel every cue passes through, so nothing
+/** Private: showNotice is the one funnel every cue passes through, so nothing
  *  else may arm the ask. */
 function armNotifyAsk(): void {
   notifyAsk().arm();
@@ -261,36 +259,51 @@ export function unregisterPush(): void {
  *  retraction reach one when the ask it announced is answered elsewhere. */
 const shown = new Map<string, Notification>();
 
-/** Whether `target`'s tab is the one the reader is looking at. The root installs the real
- *  test (the page is visible AND that tab is active); until then a visible page counts. */
-let onScreen: (target: PushTarget) => boolean = () => document.visibilityState === "visible";
-
-export function setOnScreen(fn: (target: PushTarget) => boolean): void {
-  onScreen = fn;
-}
+/** Notice ids this page already decided, so a hub replay or a frame plus its push arrival
+ *  decide once. */
+const decided = new Set<string>();
+const DECIDED_CAP = 256;
 
 /** The tab a notification's click opens, from its subject. */
 function noticeTarget(n: NotificationPayload): PushTarget {
   return parsePushTarget({ chatId: n.chat_id ?? "", subject: n.subject ?? "" });
 }
 
-/** Show the server's notification unless its own chat or run is on screen (web-terminal-kiro's
- *  rule). It is tagged as the service worker tags the push for that target, so the retraction on
- *  the settled ask reaches both. */
-export function notifyOffScreen(notice: NotificationPayload): boolean {
+/** Show a notice the server gave this page, through this device's gates (master switch, kind
+ *  switch, OS permission), and report it shown or declined. Where it shows is the server's call;
+ *  a push arrival's own screen check is handlers/push-message.ts's. It is tagged as the service
+ *  worker tags the push for that target, so the retraction on the settled ask reaches both. */
+export function showNotice(notice: NotificationPayload): boolean {
+  if (notice.id !== "") {
+    if (decided.has(notice.id)) {
+      return false;
+    }
+    decided.add(notice.id);
+    if (decided.size > DECIDED_CAP) {
+      const oldest = decided.values().next().value;
+      if (oldest !== undefined) {
+        decided.delete(oldest);
+      }
+    }
+  }
+  const ok = raise(notice);
+  if (notice.id !== "") {
+    reportNotice(notice.id, ok ? "shown" : "declined");
+  }
+  return ok;
+}
+
+function raise(notice: NotificationPayload): boolean {
   // The arm leads every gate: each is a way this call wants to notify and cannot.
   // One funnel, so no new notify site has to remember to arm.
   armNotifyAsk();
   if (!enabled || !isKindEnabled(notice.kind)) {
     return false;
   }
-  const target = noticeTarget(notice);
-  if (onScreen(target)) {
-    return false;
-  }
   if (!("Notification" in window) || Notification.permission !== "granted") {
     return false;
   }
+  const target = noticeTarget(notice);
   const tag = pushTargetTag(target);
   try {
     const n = new Notification(notice.title, {
@@ -433,6 +446,13 @@ async function registerPushViaAction(silent = false): Promise<void> {
   if (reg !== null) {
     swRegistration = reg;
     pushState = { kind: "registered" };
+    // The new subscription's tag at once, or the server sees this browser as two profiles until
+    // a reload.
+    try {
+      await adoptPushSubscription(await reg.pushManager.getSubscription());
+    } catch (err: unknown) {
+      console.debug("sse: push subscription not adopted for the presence tag", err);
+    }
   } else {
     pushState = { kind: "failed" };
   }

@@ -19,6 +19,8 @@ func newWithholdHub(t *testing.T) (*Runtime, *runOutcomePush) {
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	settleBoot(t, h)
+	// A closing turn's chat has a record; a finish for a chat with none is dropped.
+	cs.seed(t, "c1", nil)
 	return h, fp
 }
 

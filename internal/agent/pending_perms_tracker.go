@@ -581,7 +581,7 @@ func (b *bus) announceDecisionSettled(evt marotte.ServerEvent, askID int64, sett
 		SettledBy: settledBy,
 	}))
 	run := marotte.DecisionRunID(evt.Payload)
-	b.retractPush(notice.AskSubject(evt.ChatID, run), notice.AskKey(askID))
+	b.settleNotice(notice.AskSubject(evt.ChatID, run), notice.AskKey(askID))
 	if run != "" && b.runAsk != nil {
 		b.runAsk.askSettled(run, marotte.DecisionNodeID(evt.Payload), askID)
 	}

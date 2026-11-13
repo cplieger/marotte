@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -280,7 +281,7 @@ func TestNotify_AChatlessNoticeReachesThePageAndThePush(t *testing.T) {
 	if err := json.Unmarshal(frames[0].Payload, &got); err != nil {
 		t.Fatalf("decoding the frame: %v", err)
 	}
-	if got != n {
+	if !reflect.DeepEqual(got, n) {
 		t.Errorf("the page's frame = %+v, want %+v", got, n)
 	}
 }

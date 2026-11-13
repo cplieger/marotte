@@ -1,6 +1,7 @@
 package translate
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -69,7 +70,7 @@ func TestAsks_notifyWhatTheyAskUnderTheirTab(t *testing.T) {
 			if len(deps.notices) != 1 {
 				t.Fatalf("notifications = %+v, want one", deps.notices)
 			}
-			if got := deps.notices[0]; got != tc.want {
+			if got := deps.notices[0]; !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("notification = %+v, want %+v", got, tc.want)
 			}
 		})

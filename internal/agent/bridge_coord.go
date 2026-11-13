@@ -110,10 +110,19 @@ type bridgeCoordinator struct {
 	chatHasLiveRun func(marotte.ChatID) bool `wiring:"optional"`
 	// chatHasTab reports an open tab on the chat; it answers true when no tab set is wired, so nothing is released.
 	chatHasTab func(marotte.ChatID) bool
+	// chatHasAsk reports a pending ask of the chat's own session; a launched run's asks are not the chat's.
+	chatHasAsk func(marotte.ChatID) bool
+	// finishes holds per chat the newest close's notice, parked while the chat has an open turn or a pending ask
+	// (releaseFinish). In memory only: a restart forgets a parked finish.
+	finishes map[marotte.ChatID]marotte.NotificationPayload
+	// readBound is the read bound of the tab a notice names, 0 when unread (newReadBound). Nil reads 0.
+	readBound func(ctx context.Context, kind marotte.TabKind, ref string) uint64 `wiring:"optional"`
 	// runLabel is a run's display name, for a notification titled by it. Nil names none.
 	runLabel func(workflowID string) string `wiring:"optional"`
 	// unknownStops records stop reasons already warned about: one line per unmapped value.
 	unknownStops sync.Map
+	// finishMu guards finishes.
+	finishMu sync.Mutex
 	// noSubscribers latches the no-subscriber report once per episode (reportNoSubscribers).
 	noSubscribers atomic.Bool
 	// idleEndGrace is WireTurnActivity's wait, zero meaning defaultIdleEndGrace; a field so a test shortens it.
@@ -161,6 +170,9 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 			return slices.ContainsFunc(open, func(t marotte.TabSubject) bool {
 				return t.Kind == marotte.TabKindChat && marotte.ChatID(t.Ref) == chatID
 			})
+		},
+		chatHasAsk: func(chatID marotte.ChatID) bool {
+			return len(h.bus.pendingPerms.askRefs(chatID, command.ScopeChatSession)) > 0
 		},
 		runLabel:            h.runs.runName,
 		onSessionRehydrated: h.runs.resumeInterruptedRuns,
@@ -1416,34 +1428,36 @@ func (bc *bridgeCoordinator) chatName(ctx context.Context, chatID marotte.ChatID
 	return ""
 }
 
-// Notify shows n on both channels: the page's `notification` frame on chatID's stream, and
-// the Web Push when push is configured.
+// Notify hands n to the push service's notice ledger, which decides the page that shows it or the push. With no
+// push service nothing is delivered.
 func (bc *bridgeCoordinator) Notify(ctx context.Context, chatID marotte.ChatID, n *marotte.NotificationPayload) {
-	bc.broadcast(ctx, marotte.NewEvent(marotte.EventNotification, chatID, *n))
 	if bc.push == nil {
 		return
 	}
-	if !bc.push.HasSubscribers() {
+	if bc.push.HasSubscribers() {
+		bc.noSubscribers.Store(false)
+	} else {
 		bc.reportNoSubscribers(n.Kind, n.PushSubject)
-		return
 	}
-	bc.noSubscribers.Store(false)
 	// Gated, since a caller need not run on inflight (the PR status poller outlives Shutdown). Once draining the send
 	// still goes, unwaited: push.Close in Shutdown unblocks it and owns its writes. The send outlives the caller's
-	// ctx (a heal cancels its own on return); push.Close bounds it.
+	// ctx (a heal cancels its own on return); push.Close bounds it. Off the caller, since a run's read bound asks KAS.
 	sendCtx := context.WithoutCancel(ctx)
-	send := func() { bc.push.Send(sendCtx, n) }
+	send := func() {
+		deliver := bc.push.Raise(sendCtx, chatID, n, bc.noticePosition(sendCtx, n))
+		deliver(sendCtx)
+	}
 	if !bc.lifecycle.goUnlessDraining(send) {
 		go send()
 	}
 }
 
-// retractPush drops the held push about subj announcing ask: the ask was settled elsewhere.
-func (bc *bridgeCoordinator) retractPush(subj marotte.PushSubject, ask string) {
+// settleNotice ends the notices about subj announcing ask: the ask was settled elsewhere.
+func (bc *bridgeCoordinator) settleNotice(subj marotte.PushSubject, ask string) {
 	if bc.push == nil {
 		return
 	}
-	bc.push.Retract(subj, ask)
+	bc.push.Settled(subj, ask)
 }
 
 // reportNoSubscribers logs once per episode that a notification had no subscriber; a
@@ -1452,7 +1466,7 @@ func (bc *bridgeCoordinator) reportNoSubscribers(kind marotte.PushKind, subj mar
 	if !bc.noSubscribers.CompareAndSwap(false, true) {
 		return
 	}
-	slog.Info("no push subscribers; notifications are being dropped until a browser subscribes",
+	slog.Info("no push subscribers; pushes are dropped until a browser subscribes",
 		"chat_id", subj.ChatID, "subject", subj.Key, "kind", string(kind))
 }
 

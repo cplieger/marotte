@@ -1046,6 +1046,8 @@ type testChatStore struct {
 	onGet atomic.Pointer[func(id marotte.ChatID)]
 	// Gets counts Get calls, for a test about how often the store is read.
 	Gets atomic.Int64
+	// runtime receives the store's broadcasts once wire names it (storeRelay).
+	runtime atomic.Pointer[Runtime]
 	// tornDown names sessions SessionInTeardown reports in teardown besides the store's own, set through tearDown.
 	tornDown   map[string]bool
 	tornDownMu sync.Mutex
@@ -1084,16 +1086,29 @@ var (
 
 func newTestChatStore() *testChatStore {
 	dir := filepath.Join(testChatRoot, strconv.FormatInt(testChatSeq.Add(1), 10))
-	s, err := chat.NewStore(dir)
+	s := &testChatStore{}
+	st, err := chat.NewStore(dir, chat.WithBroadcaster(storeRelay{s}))
 	if err != nil {
 		panic("test chat store: " + err.Error())
 	}
-	return &testChatStore{Store: s}
+	s.Store = st
+	return s
+}
+
+// storeRelay is the store's broadcaster from construction, forwarding to the runtime wire names. A test seeds the
+// store before its runtime exists, and the seed's coalesced header publish reads the broadcaster on a timer, so wire
+// must not write the store's field under it.
+type storeRelay struct{ s *testChatStore }
+
+func (r storeRelay) Broadcast(ctx context.Context, e marotte.ServerEvent) {
+	if h := r.s.runtime.Load(); h != nil {
+		h.Broadcast(ctx, e)
+	}
 }
 
 // wire hands the store the runtime seams the composition root wires after New.
 func (s *testChatStore) wire(h *Runtime) {
-	chat.WithBroadcaster(h)(s.Store)
+	s.runtime.Store(h)
 	chat.WithLiveTurn(h.TurnLive)(s.Store)
 	chat.WithOpenTurns(h.OpenTurns)(s.Store)
 }

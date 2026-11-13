@@ -48,6 +48,8 @@ export type ModelSwitchReason = "unavailable";
 
 export type NoticeLevel = "info" | "warning" | "error";
 
+export type NoticeOutcome = "shown" | "declined";
+
 export type PlanStatus = "pending" | "in_progress" | "completed";
 
 export type PreviewHintSource = "meta" | "viewport";
@@ -2380,6 +2382,12 @@ export interface MeteringItem {
   value: number;
 }
 
+/** NoticeReport is a page's report to POST /api/events/notice about the notice ID. */
+export interface NoticeReport {
+  id: string;
+  outcome: NoticeOutcome;
+}
+
 /**
  * NotificationPayload is the payload for type="notification", and the Web Push payload's
  * content: one notification as both channels show it. internal/notice is its only
@@ -2392,6 +2400,10 @@ export interface NotificationPayload {
   kind: PushKind;
   title: string;
   body: string;
+  /** ID names this notice on both channels, so a page reports what became of it and shows it once. */
+  id: string;
+  /** ShowIn lists the pages offered the notice, at most one per browser profile; never set on a push. */
+  show_in?: string[];
 }
 
 /**
@@ -2537,6 +2549,19 @@ export interface PRList {
   successor?: RepoSuccessor;
   next?: string;
   prs: PR[];
+}
+
+/**
+ * PageView is one page's report to POST /api/events/view: whether it is visible and focused, and the
+ * chat or run tab it shows (nil for every other tab, or none). Closed ends the page's row and voids
+ * the other fields.
+ */
+export interface PageView {
+  tab?: TabRef;
+  page: string;
+  visible: boolean;
+  focused: boolean;
+  closed?: boolean;
 }
 
 /**
@@ -4153,6 +4178,12 @@ export interface TabList {
   tabs: TabSubject[];
   recent: RecentClose[];
   version: number;
+}
+
+/** TabRef names a chat or run tab in a page's view report. */
+export interface TabRef {
+  kind: TabKind;
+  ref: string;
 }
 
 /**

@@ -54,46 +54,56 @@ func newRecordingStartHub(t *testing.T) (*Runtime, *testChatStore, *recordingSta
 	return h, cs, rb
 }
 
-// recordingPush records each Send's body on a channel, plus the latest subject and chat
-// name, read only after a body arrives.
+// recordingPush records each delivered notice's body on a channel, plus the latest subject and chat
+// name (last). Deliveries run on concurrent goroutines, so every field but sends is read under mu.
 type recordingPush struct {
+	pushStub
 	sends chan string
 	// noSubs flips HasSubscribers to false; the zero value keeps a subscriber.
 	noSubs  atomic.Bool
 	subject marotte.PushSubject
 	title   string
-	// retracted records each Retract call's subject and ask, in order; asks records each Send's ask.
+	// retracted records each Settled call's subject and ask, in order; asks records each delivery's ask.
 	retracted []retraction
 	asks      []string
 	mu        sync.Mutex
 }
 
-// retraction is one Retract call.
+// retraction is one Settled call.
 type retraction struct {
 	subject marotte.PushSubject
 	ask     string
 }
 
-func (p *recordingPush) HasSubscribers() bool                   { return !p.noSubs.Load() }
-func (*recordingPush) SetPreferences(map[marotte.PushKind]bool) {}
-func (*recordingPush) Preferences() map[marotte.PushKind]bool   { return nil }
-func (*recordingPush) Close()                                   {}
-func (p *recordingPush) Retract(subj marotte.PushSubject, ask string) {
+func (p *recordingPush) HasSubscribers() bool { return !p.noSubs.Load() }
+func (p *recordingPush) Settled(subj marotte.PushSubject, ask string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.retracted = append(p.retracted, retraction{subject: subj, ask: ask})
 }
 
-func (p *recordingPush) Send(_ context.Context, n *marotte.NotificationPayload) {
-	p.mu.Lock()
-	p.asks = append(p.asks, n.Ask)
-	p.mu.Unlock()
-	p.subject = n.PushSubject
-	p.title = n.Title
-	select {
-	case p.sends <- n.Body:
-	default:
+func (p *recordingPush) Raise(_ context.Context, _ marotte.ChatID, n *marotte.NotificationPayload, _ uint64) func(context.Context) {
+	return func(context.Context) {
+		if p.noSubs.Load() {
+			return
+		}
+		p.mu.Lock()
+		p.asks = append(p.asks, n.Ask)
+		p.subject = n.PushSubject
+		p.title = n.Title
+		p.mu.Unlock()
+		select {
+		case p.sends <- n.Body:
+		default:
+		}
 	}
+}
+
+// last is the latest delivered notice's subject and title.
+func (p *recordingPush) last() (marotte.PushSubject, string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.subject, p.title
 }
 
 // On session/new the override model wins over the stored value, and the persisted model comes from the opened session.
@@ -450,9 +460,9 @@ func TestNoticeTarget_TitlesTheTabTheClickOpens(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatalf("no push sent for %q/%q", tc.chatID, tc.runID)
 		}
-		if fp.title != tc.want || fp.subject != tc.wantSubjs {
+		if subj, title := fp.last(); title != tc.want || subj != tc.wantSubjs {
 			t.Errorf("NoticeTarget(%q, %q) pushed title %q under %+v, want %q under %+v",
-				tc.chatID, tc.runID, fp.title, fp.subject, tc.want, tc.wantSubjs)
+				tc.chatID, tc.runID, title, subj, tc.want, tc.wantSubjs)
 		}
 	}
 }

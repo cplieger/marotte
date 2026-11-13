@@ -221,6 +221,10 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.RunFinishedPayload](),
 	wiregen.TypeRef[marotte.RunRevPayload](),
 	wiregen.TypeRef[marotte.NotificationPayload](),
+	// Requests a page composes: its view and what it did with a notice.
+	wiregen.TypeRef[marotte.TabRef](),
+	wiregen.TypeRef[marotte.PageView](),
+	wiregen.TypeRef[marotte.NoticeReport](),
 	// One step waiting on a person: run_asks's element and GET /api/runs/{id}'s `open_asks`. No
 	// `Payload` suffix, so the SSE-binding test exempts it.
 	wiregen.TypeRef[marotte.RunAsk](),
@@ -382,6 +386,7 @@ var wireEnums = []wiregen.EnumRef{
 	wiregen.StringEnum[marotte.NoticeLevel](),
 	// A notification's kind picks its Settings switch on the page.
 	wiregen.StringEnum[marotte.PushKind](),
+	wiregen.StringEnum[marotte.NoticeOutcome](),
 	wiregen.StringEnum[marotte.RunProgressKind](),
 	// The client folds over both status vocabularies.
 	wiregen.StringEnum[marotte.RunStatus](),
