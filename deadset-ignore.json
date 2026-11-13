@@ -23,6 +23,12 @@
       "symbol": "ts://marotte-web/retention.ts#onRetentionChange",
       "path": "static-src/retention.ts",
       "reason": "Kept for the sidebar's Recently closed list, which hides while chat retention is off and is the next reader of a subscription to the retention setting; this entry goes stale, and is removed, when that list lands."
+    },
+    {
+      "code": "DS1102",
+      "symbol": "go://github.com/cplieger/marotte/internal/marotte#RunFromCarried",
+      "path": "internal/marotte/run_order.go",
+      "reason": "A chat record stored by an earlier version can hold a held row with origin carried; SanitizeRun keeps it held and the client decoder must still accept the value, so the wire value stays though nothing writes it now."
     }
   ]
 }

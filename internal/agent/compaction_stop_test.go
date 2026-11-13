@@ -59,13 +59,15 @@ func promptCmd(id, text string) marotte.ClientCommand {
 	return marotte.ClientCommand{Type: marotte.CmdPrompt, ChatID: "c1", Payload: payload}
 }
 
-// postAsync posts cmd on its own goroutine; the channel carries the answer.
+// postAsync posts cmd from the page (postCmd) on its own goroutine; the channel carries the answer.
 func postAsync(h *Runtime, cmd marotte.ClientCommand) <-chan *httptest.ResponseRecorder {
 	done := make(chan *httptest.ResponseRecorder, 1)
 	body, _ := json.Marshal(cmd)
 	go func() {
 		rec := httptest.NewRecorder()
-		h.handleCommand(rec, httptest.NewRequest(http.MethodPost, "/api/command", bytes.NewReader(body)))
+		req := httptest.NewRequest(http.MethodPost, "/api/command", bytes.NewReader(body))
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		h.handleCommand(rec, req)
 		done <- rec
 	}()
 	return done
@@ -170,8 +172,8 @@ func TestCompaction_OneTheHoldsReleaseRunsSaysItSendsTheRowQueuedUnderTheHold(t 
 	waitFor(t, func() bool { return opensInOrder(t, cs, "m-c1", "m-q1", "m-q0") })
 }
 
-// A prompt that reaches the server during a stopped turn's compaction (another device, a stale page, an API caller)
-// is queued at once behind it, above the row the stop paused, and goes first when the compaction ends.
+// A user's prompt that reaches the server during a stopped turn's compaction (another device, a stale page) is queued
+// at once behind it, above the row the stop paused, and goes first when the compaction ends.
 func TestPrompt_DuringAStoppedTurnsCompactionIsQueuedBehindIt(t *testing.T) {
 	h, cs, _, release := stoppedTurnCompaction(t, nil)
 

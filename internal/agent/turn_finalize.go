@@ -259,8 +259,8 @@ func (bc *bridgeCoordinator) afterTurnClose(ctx context.Context, lc *chatLifecyc
 	})
 }
 
-// resolveCloseEnds settles the steer ends of the closed turn and older ones and records them on its run entry
-// (closeEndsResolved). Nothing once shutdown began.
+// resolveCloseEnds settles the steer ends of the closed turn and older ones, then hands the run list the ends still
+// owed (endsApplied). Nothing once shutdown began.
 func (bc *bridgeCoordinator) resolveCloseEnds(ctx context.Context, lc *chatLifecycle, cf *closeFacts) {
 	if bc.resolveEnds == nil || bc.draining() || lc.endedNow() {
 		return
@@ -274,7 +274,8 @@ func (bc *bridgeCoordinator) resolveCloseEnds(ctx context.Context, lc *chatLifec
 	if lc.endedNow() {
 		return
 	}
-	bc.closeEndsResolved(lc, cf.turnID, bc.resolveEnds(ctx, lc.chatID, cf.fence))
+	bc.resolveEnds(ctx, lc.chatID, cf.fence)
+	bc.endsApplied(lc)
 }
 
 // betweenTurns waits for KAS to go idle, then for an abandoned prompt's answer, runs atIdle once and applies a parked

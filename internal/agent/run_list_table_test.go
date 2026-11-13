@@ -19,6 +19,9 @@ type tableWorld struct {
 	stops      int
 	stopSeq    uint64
 	nextSeq    uint64
+	offers     uint64
+	// mode is the interrupt_mode a door send takes (doorSubmitLocked).
+	mode marotte.InterruptMode
 }
 
 func newTableWorld() *tableWorld { return &tableWorld{l: &runList{}} }
@@ -33,8 +36,8 @@ func (w *tableWorld) facts() *orderFacts {
 			w.tokens++
 			return command.Reservation{Chat: "c1", Token: w.tokens}, takeGranted
 		},
-		newMessageID: func() string { return "m-unread" },
-		nextSeq:      w.nextSeq, stopSeq: w.stopSeq, stops: w.stops,
+		newOffer: func() uint64 { w.offers++; return w.offers },
+		nextSeq:  w.nextSeq, stopSeq: w.stopSeq, stops: w.stops,
 		admit: !w.kasRunning, sessionCall: !w.kasRunning,
 	}
 }
@@ -262,7 +265,10 @@ func TestRunList_Table(t *testing.T) {
 		{
 			name: "send-now on a held row is refused",
 			run: func(_ *testing.T, w *tableWorld) string {
-				w.l.holdCarried(&marotte.QueuedPrompt{ID: "m-held", Text: "x", Resends: []string{"s-1"}})
+				w.l.entries = append(w.l.entries, &runEntry{
+					id: "m-held", kind: marotte.RunKindRow, origin: marotte.RunFromCarried, state: marotte.RunHeld,
+					row: &marotte.QueuedPrompt{ID: "m-held", Text: "x", Resends: []string{"s-1"}},
+				})
 				if _, err := w.l.sendNow("m-held", "", false); err != errRowHeld {
 					return "not refused"
 				}

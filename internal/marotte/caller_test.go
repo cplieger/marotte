@@ -38,19 +38,3 @@ func TestSharedCaller(t *testing.T) {
 		})
 	}
 }
-
-func TestQueuedPrompt_AbsorbKeepsOnlyASharedCaller(t *testing.T) {
-	row := CarriedRow("m-1", []string{"a"}, []string{"steer-a"})
-	row.Caller = &Caller{Label: "Agent Mail"}
-	same := CarriedRow("m-2", []string{"b"}, []string{"steer-b"})
-	same.Caller = &Caller{Label: "Agent Mail"}
-	row.Absorb(&same)
-	if row.Caller == nil || row.Caller.Label != "Agent Mail" {
-		t.Errorf("after absorbing the same caller's row, caller = %+v, want Agent Mail", row.Caller)
-	}
-	users := CarriedRow("m-3", []string{"c"}, []string{"steer-c"})
-	row.Absorb(&users)
-	if row.Caller != nil {
-		t.Errorf("after absorbing the user's row, caller = %+v, want none", row.Caller)
-	}
-}

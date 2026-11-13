@@ -46,12 +46,12 @@ func cmdQueuePrompt(ctx context.Context, runq runQueue, admission turnAdmission,
 }
 
 // maxQueuedEncodedBytes bounds the queue's rows as the chat header encodes them. The header
-// is capped at 8 MiB (internal/chat maxHeaderBytes) and must still hold a shutdown's carried
-// row and the draft, each up to six times its text once JSON escapes it (\u003c for <).
+// is capped at 8 MiB (internal/chat maxHeaderBytes) and must still hold a carried row and the
+// draft, each up to six times its text once JSON escapes it (\u003c for <).
 const maxQueuedEncodedBytes = 4 << 20
 
 // RowCapsRefusal is why row may not join a list already holding rows: the user rows stop short of
-// marotte.MaxQueuedPrompts, so a shutdown's carried row always has a slot, and the rows' encoded size stays under
+// marotte.MaxQueuedPrompts, so a carried row an earlier version wrote always has a slot, and the rows' encoded size stays under
 // maxQueuedEncodedBytes. Nil when it may.
 func RowCapsRefusal(rows []*marotte.QueuedPrompt, row *marotte.QueuedPrompt) error {
 	users := 0
@@ -97,8 +97,9 @@ func queuedRow(cmd *marotte.ClientCommand) (marotte.QueuedPrompt, error) {
 }
 
 // cmdUnqueuePrompt removes one queued row. An unknown id is success (two devices can discard one
-// row); a row whose turn starts or runs is a 409 sending.
-func cmdUnqueuePrompt(ctx context.Context, runq runQueue, cmd *marotte.ClientCommand) (any, error) {
+// row); a row whose turn starts or runs, or whose steer is being sent, is a 409 sending. A row
+// kiro-cli holds as a steer is deleted from its buffer as the dock's Delete does.
+func cmdUnqueuePrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -106,13 +107,29 @@ func cmdUnqueuePrompt(ctx context.Context, runq runQueue, cmd *marotte.ClientCom
 	if json.Unmarshal(cmd.Payload, &p) != nil || p.MessageID == "" {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	switch err := runq.Unqueue(ctx, cmd.ChatID, p.MessageID); {
+	switch err := roles.runq.Unqueue(ctx, cmd.ChatID, p.MessageID); {
+	case errors.Is(err, ErrRowInKAS):
+		if rerr := removeChatSteer(ctx, roles, cmd.ChatID, marotte.SteerIDFor(p.MessageID), false); rerr != nil {
+			return nil, rerr
+		}
 	case errors.Is(err, ErrRowSending):
 		return nil, StatusErrorReason(http.StatusConflict, reasonSending, err)
 	case err != nil:
 		return nil, StatusError(http.StatusInternalServerError, err)
 	}
-	return runAnswer(ctx, runq, cmd.ChatID, nil), nil
+	return runAnswer(ctx, roles.runq, cmd.ChatID, nil), nil
+}
+
+// cmdResumeQueue is the queue's Resume (runQueue.Resume): the rows a stop paused go in order. A queue with nothing
+// paused is success.
+func cmdResumeQueue(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
+	if err := requireChatID(cmd); err != nil {
+		return nil, err
+	}
+	if err := roles.runq.Resume(ctx, cmd.ChatID); err != nil {
+		return nil, StatusError(http.StatusInternalServerError, err)
+	}
+	return runAnswer(ctx, roles.runq, cmd.ChatID, nil), nil
 }
 
 // cmdSendQueuedNow sends one queued row next (SendQueuedNowCommand). It stops only the turn its Stop names, and only

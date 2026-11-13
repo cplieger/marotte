@@ -796,7 +796,9 @@ func TestRunOrder_ASteerTheAgentDroppedAtACleanCloseIsSentNext(t *testing.T) {
 	at := s.h.originOf("c1")
 	id, _ := s.h.stagePromptTurn(t, "c1")
 	s.h.translateACPEvent("c1", at, newPromptTurnStartMsg(id))
-	s.steer("steer-a", "dropped at the close")
+	if code := postSteer(t, s.h, "a", "dropped at the close"); code != http.StatusOK {
+		t.Fatalf("Setup: steer = %d, want 200", code)
+	}
 	br.setCallResult(marotte.MethodSessionSteerClear, clearReply([]string{"steer-a"}))
 	release := holdCall(t, br, marotte.MethodSessionSteerClear)
 
@@ -1266,8 +1268,8 @@ func TestRunOrder_AWireTurnBeforeACompactionIsWrittenRequeuesIt(t *testing.T) {
 	}
 }
 
-// Cancel with kiro-cli running a turn marotte has none for stops that run with one session/cancel, pauses nothing,
-// and the message queued behind it goes once kiro-cli reports idle.
+// Cancel with kiro-cli running a turn marotte has none for stops that run with one session/cancel and pauses the
+// message queued behind it, as any Stop pauses the queue: kiro-cli's idle sends nothing, and Resume sends it.
 func TestRunOrder_CancelStopsKiroCLIsRunWithNoTurnHere(t *testing.T) {
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	h.coord.WireTurnActivity("c1", true)
@@ -1284,10 +1286,15 @@ func TestRunOrder_CancelStopsKiroCLIsRunWithNoTurnHere(t *testing.T) {
 		t.Fatalf("cancel = %d %s", rec.Code, rec.Body.String())
 	}
 	waitFor(t, func() bool { return len(br.notified(marotte.MethodCancel)) == 1 })
-	if got := runStates(t, cs, "c1"); !slices.Equal(got, []string{"run stopping", "m-new pending"}) {
-		t.Errorf("list after the cancel = %v, want [run stopping, m-new pending]", got)
+	if got := runStates(t, cs, "c1"); !slices.Equal(got, []string{"run stopping", "m-new paused"}) {
+		t.Errorf("list after the cancel = %v, want [run stopping, m-new paused]", got)
 	}
 	h.coord.WireTurnActivity("c1", false)
+	waitFor(t, func() bool { return slices.Equal(runStates(t, cs, "c1"), []string{"m-new paused"}) })
+	if slices.Contains(promptIDs(t, cs, "c1"), "m-new") {
+		t.Error("kiro-cli's idle sent the message the stop paused")
+	}
+	resumeQueue(t, h)
 	waitFor(t, func() bool { return slices.Contains(promptIDs(t, cs, "c1"), "m-new") })
 	if n := len(br.notified(marotte.MethodCancel)); n != 1 {
 		t.Errorf("session/cancel sent %d times, want 1", n)

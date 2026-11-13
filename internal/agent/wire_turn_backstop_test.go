@@ -142,8 +142,8 @@ func TestCmdCancel_AWireTurnEndedInsideTheGraceLeavesTheNextTurnOpen(t *testing.
 	}
 }
 
-// A frame with no turn open opens a wire turn no turn_end is owed for; Cancel beside it closes it at the grace, so
-// a Steer sent beside it reaches KAS as the next prompt, once, rather than waiting in a buffer nothing reads.
+// A frame with no turn open opens a wire turn no turn_end is owed for; Cancel beside it closes it cancelled at the
+// grace, and the reader's next Send reaches KAS as one prompt.
 func TestCmdCancel_AFoldOpenedWireTurnClosesAtTheGrace(t *testing.T) {
 	setCancelGrace(t, 20*time.Millisecond)
 	h, cs, br := kasSteerHub(t, time.Hour)
@@ -151,15 +151,13 @@ func TestCmdCancel_AFoldOpenedWireTurnClosesAtTheGrace(t *testing.T) {
 	if _, open := ownID(h, "c1"); !open {
 		t.Fatal("setup: the frame opened no wire turn")
 	}
-	if rec := postCmd(t, h, marotte.ClientCommand{
-		Type: marotte.CmdSteer, ChatID: "c1",
-		Payload: json.RawMessage(`{"text":"also check the logs","message_id":"steer-a"}`),
-	}); rec.Code != http.StatusOK {
-		t.Fatalf("steer = %d %s, want 200", rec.Code, rec.Body.String())
-	}
 
 	if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
 		t.Fatalf("cancel = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	waitFor(t, func() bool { _, open := ownID(h, "c1"); return !open })
+	if rec := awaitAnswer(t, sendAsUser(h, "c1", "m-a", "also check the logs")); rec.Code != http.StatusOK {
+		t.Fatalf("send = %d %s, want 200", rec.Code, rec.Body.String())
 	}
 	waitFor(t, func() bool { return slices.Contains(promptTexts(t, cs), "also check the logs") })
 	joinInflight(t, h)

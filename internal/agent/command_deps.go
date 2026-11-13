@@ -125,11 +125,6 @@ func (rt *Runtime) AwaitNoClose(ctx context.Context, chatID marotte.ChatID) (boo
 	return rt.coord.AwaitNoClose(ctx, chatID)
 }
 
-// PromptHolder names the prompt-class turn holding the chat's admission.
-func (rt *Runtime) PromptHolder(chatID marotte.ChatID) (string, bool) {
-	return rt.coord.PromptHolder(chatID)
-}
-
 // ReleaseTurnReservation frees the chat's admission slot and wakes waiters.
 func (rt *Runtime) ReleaseTurnReservation(res command.Reservation) {
 	rt.coord.ReleaseTurnReservation(res)
@@ -238,6 +233,11 @@ func (rt *Runtime) ClearNext(chatID marotte.ChatID, id string) { rt.coord.ClearN
 // Unqueue removes a waiting row.
 func (rt *Runtime) Unqueue(ctx context.Context, chatID marotte.ChatID, id string) error {
 	return rt.coord.Unqueue(ctx, chatID, id)
+}
+
+// Resume lets the rows a stop paused go in order.
+func (rt *Runtime) Resume(ctx context.Context, chatID marotte.ChatID) error {
+	return rt.coord.Resume(ctx, chatID)
 }
 
 // Stop stops the live entry target names.

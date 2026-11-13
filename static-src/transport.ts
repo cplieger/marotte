@@ -88,20 +88,9 @@ type TypedCommand =
       chat_id: string;
       payload: { text: string; message_id: string };
     }
-  // A follow-up held for the end of the running turn (Queue mode). Attachments stay
-  // paths: the server reads them when the row is sent.
-  | {
-      type: "queue_prompt";
-      chat_id: string;
-      payload: {
-        text: string;
-        message_id: string;
-        display_text?: string;
-        attachments?: readonly { path: string; name: string }[];
-      };
-    }
-  | { type: "steer_remove"; chat_id: string; payload: { steer_id: string } }
+  | { type: "steer_remove"; chat_id: string; payload: { steer_id: string; queue?: true } }
   | { type: "send_queued_now"; chat_id: string; payload: { message_id: string; stop: string } }
+  | { type: "resume_queue"; chat_id: string }
   | { type: "compact"; chat_id: string }
   // Addresses a USER MESSAGE, not a turn ordinal: KAS's revertMultiple takes a
   // messageId and refuses a non-user one.

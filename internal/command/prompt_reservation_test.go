@@ -140,18 +140,6 @@ func TestStartPrompt_EveryCallerCarriesItsReservation(t *testing.T) {
 		h.waitInflight(t)
 		checkCarried(t, ledger, opens, 1)
 	})
-	t.Run("the unread steers' launch", func(t *testing.T) {
-		h := newResendHost(newSteerBridge(), AdmissionAcquired, 0, false)
-		q := newStubSteerQueue()
-		q.unsentRows = []SteerRow{{Key: "steer-a", Text: "first"}}
-		roles := drainRoles(h, q)
-		ledger, opens := withLedger(roles)
-
-		res := ledger.mint(testReservation("c1", true), true)
-		_, _ = sendUnread(t.Context(), roles, res, TurnFence{})
-		h.waitInflight(t)
-		checkCarried(t, ledger, opens, 1)
-	})
 	t.Run("the merge's summary and delivery", func(t *testing.T) {
 		f := newMergeFixture(t)
 		ledger, opens := withLedger(f.roles)

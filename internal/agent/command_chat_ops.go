@@ -138,6 +138,13 @@ func (rt *Runtime) beginSteerTeardown(ctx context.Context, chatID marotte.ChatID
 		}
 	}
 	unread := rt.bus.steers.beginTeardown(chatID, rt.coord.turns.forwardExit(chatID))
+	if lived {
+		for _, e := range lc.takeEndedSteers() {
+			unread = append(unread, marotte.SteerQueuedPayload{
+				SteerID: marotte.SteerIDFor(e.ID), Text: e.Row.Text, Origin: marotte.SteerOriginUser, Caller: e.Row.Caller,
+			})
+		}
+	}
 	if !notes || len(unread) == 0 {
 		return lc, lived
 	}

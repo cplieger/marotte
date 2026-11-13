@@ -111,8 +111,8 @@ func TestUnreadSteerResend_ShowsTheUsersWordsLiveAndAfterReplay(t *testing.T) {
 			at := s.h.originOf("c1")
 			id, _ := s.h.stagePromptTurn(t, "c1")
 			s.h.translateACPEvent("c1", at, newPromptTurnStartMsg(id))
-			s.steer("steer-a", "first")
-			s.steer("steer-b", "second")
+			s.userSteer(t, "steer-a", "first")
+			s.userSteer(t, "steer-b", "second")
 			if tc.lead != "" {
 				payload := json.RawMessage(`{"lead":"` + tc.lead + `"}`)
 				if rec := postCmd(t, s.h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1", Payload: payload}); rec.Code != http.StatusOK {

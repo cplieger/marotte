@@ -94,7 +94,7 @@ const (
 	rJoinProbe
 	rRoute
 	rDrop
-	// rPark: back to parked, for the drain that follows to send in order.
+	// rPark: back to parked, no longer in KAS.
 	rPark
 )
 
@@ -156,7 +156,7 @@ func rowRuleFor(s rowState, ev steerEvent) rowRule { //nolint:gocyclo // one fla
 	case evBind:
 		return rKeep
 	case evSteer:
-		// A turn end re-routes a cleared row into a turn the prompt holds; an unsent one goes via parked.
+		// A turn end re-routes a cleared row into a turn the prompt holds.
 		return cell(s, rRoute, rKeep, rKeep, rRoute, rRoute, rKeep)
 	case evDeleteQueued:
 		return cell(s, rKeep, rResubmit, rResubmit, rJoinProbe, rJoinProbe, rKeep)

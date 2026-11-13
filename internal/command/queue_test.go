@@ -115,9 +115,10 @@ func unqueueReq(id string) *marotte.ClientCommand {
 
 func TestUnqueuePrompt_AnAbsentIDIsSuccessAndASendingRowIsConflict(t *testing.T) {
 	q := liveRun()
+	q.roles.runq = q
 	q.rows = []marotte.QueuedPrompt{{ID: "m-1", Text: "a"}, {ID: "m-2", Text: "b"}}
 	for range 2 {
-		if _, err := cmdUnqueuePrompt(t.Context(), q, unqueueReq("m-1")); err != nil {
+		if _, err := cmdUnqueuePrompt(t.Context(), q.roles, unqueueReq("m-1")); err != nil {
 			t.Fatalf("unqueue m-1: %v", err)
 		}
 	}
@@ -126,9 +127,26 @@ func TestUnqueuePrompt_AnAbsentIDIsSuccessAndASendingRowIsConflict(t *testing.T)
 	}
 
 	q.unqueue = func(string) error { return ErrRowSending }
-	_, err := cmdUnqueuePrompt(t.Context(), q, unqueueReq("m-2"))
+	_, err := cmdUnqueuePrompt(t.Context(), q.roles, unqueueReq("m-2"))
 	if statusOf(err) != http.StatusConflict || reasonOf(err) != reasonSending {
 		t.Errorf("unqueue of a sending row: status = %d reason = %q, want 409 %q", statusOf(err), reasonOf(err), reasonSending)
+	}
+}
+
+func TestResumeQueue_ResumesTheChatsQueueAndNeedsAChat(t *testing.T) {
+	q := liveRun()
+	q.roles.runq = q
+	if _, err := cmdResumeQueue(t.Context(), q.roles, &marotte.ClientCommand{ChatID: "c1"}); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if q.resumed != 1 {
+		t.Errorf("queue resumed %d times, want once", q.resumed)
+	}
+	if _, err := cmdResumeQueue(t.Context(), q.roles, &marotte.ClientCommand{}); statusOf(err) != http.StatusBadRequest {
+		t.Errorf("resume with no chat: status = %d, want 400", statusOf(err))
+	}
+	if q.resumed != 1 {
+		t.Errorf("queue resumed %d times after a refused command, want once", q.resumed)
 	}
 }
 

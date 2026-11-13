@@ -84,7 +84,7 @@ func decodeAnswer(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 }
 
 func TestHandler_DeliversThroughThePort(t *testing.T) {
-	for _, verb := range []string{DeliveredSteer, DeliveredPrompt} {
+	for _, verb := range []string{DeliveredSteer, DeliveredPrompt, DeliveredQueued} {
 		t.Run(verb, func(t *testing.T) {
 			rig := newHandlerRig(t)
 			rig.deliv.answer = func(string) (string, error) { return verb, nil }
@@ -145,6 +145,18 @@ func TestHandler_Dedupe(t *testing.T) {
 		w := rig.serve(t, "sess-2", "Bearer "+testToken, notifyBody(t, "wake", "grelot", "m-1"))
 		if got := decodeAnswer(t, w); got["delivered"] != DeliveredPrompt {
 			t.Errorf("answer = %v, want a delivery", got)
+		}
+	})
+	t.Run("a repeat of a queued delivery within ten minutes adds nothing", func(t *testing.T) {
+		rig := newHandlerRig(t)
+		rig.deliv.answer = func(string) (string, error) { return DeliveredQueued, nil }
+		rig.post(t, notifyBody(t, "wake", "grelot", "m-1"))
+		w := rig.post(t, notifyBody(t, "wake", "grelot", "m-1"))
+		if got := decodeAnswer(t, w); w.Code != http.StatusOK || got["duplicate"] != true {
+			t.Errorf("answer = %d %v, want 200 {duplicate: true}", w.Code, got)
+		}
+		if len(rig.deliv.calls) != 1 {
+			t.Errorf("delivered %d times, want once: the waiting message is not placed again", len(rig.deliv.calls))
 		}
 	})
 	t.Run("a refused delivery is not recorded, so its retry is delivered", func(t *testing.T) {

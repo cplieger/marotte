@@ -135,8 +135,6 @@ func (a *scriptedAdmission) reservePromptOld(context.Context, marotte.ChatID, ti
 	return AdmissionAcquired
 }
 
-func (*scriptedAdmission) PromptHolder(marotte.ChatID) (string, bool) { return "", false }
-
 func (a *scriptedAdmission) tryReserveIdleOld(c marotte.ChatID, s marotte.TurnOpenSource) bool {
 	return a.tryReserveOld(c, s)
 }

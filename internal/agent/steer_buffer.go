@@ -32,7 +32,7 @@ type steerRecords struct {
 	runJob     func(command.SteerJob)
 	// stepJob runs a step key's flush on the step's host session; a chat key's goes to runJob.
 	stepJob func(command.SteerJob) `wiring:"optional"`
-	// onRunFacts wakes the chat's run list when a step moved its pending turn ends or its unsent rows (runFacts).
+	// onRunFacts wakes the chat's run list when a step moved its pending turn ends (runFacts) or an entry row's fate.
 	// Called under mu, where a chat's lifecycle lock may be held too, so it only starts work on another goroutine.
 	onRunFacts func(marotte.ChatID) `wiring:"optional"`
 	endSeq     uint64
@@ -49,16 +49,16 @@ type steerRecord struct {
 	// starting is a turn startTurn began whose bracket has not bound the channel:
 	// its execution may already be reading the buffer.
 	starting string
-	// absorbing is a prompt's turn that opened and has not reached its start delivery
-	// (NextParked), which takes the unsent rows into it.
-	absorbing string
-	turnID    string
-	probe     string
-	op        string
-	opTarget  string
-	lead      string
-	rows      []dockRow
-	others    []marotte.SteerQueuedPayload
+	turnID   string
+	probe    string
+	op       string
+	opTarget string
+	lead     string
+	rows     []dockRow
+	others   []marotte.SteerQueuedPayload
+	// fates are the entry rows' fates not yet taken by the chat's run list (takeEntryFates), in the order they met
+	// them.
+	fates []entryFate
 	// endHeld are the rows KAS held as a turn end's window ran: the agent rows at the end, and every row KAS holds
 	// when a continuation binds. That continuation still runs for them, so no clear may race it until each is read
 	// or gone (prune drops it).
@@ -83,6 +83,8 @@ type steerRecord struct {
 	gone       bool
 	flushing   bool
 	opEndStale bool
+	// opQueue: the op is a queue-instead, so its target's words go back to the chat's run list.
+	opQueue bool
 	// noCarry marks a run step's record: a finished step stays finished, so its turn end leaves every
 	// unread row "not read" instead of carrying it.
 	noCarry bool
@@ -100,12 +102,25 @@ type dockRow struct {
 	kasID  string
 	text   string
 	owner  string
-	seq    uint64
-	state  rowState
+	// entry is the run-list entry the chat's list offered as this row ("" for a row routed here first), and offer
+	// that offer's token: the row's fates go to the list (settleEntries), which owns its words.
+	entry string
+	seq   uint64
+	offer uint64
+	state rowState
+	// fate is the last fate reported for entry.
+	fate steerFate
 	// sent: the KEY has reached KAS, so it is never sent under the key again.
 	sent bool
 	// noted: a steer entry exists under the key, so it never gets a second one.
 	noted bool
+	// back is the fate a clear gave this entry row when it handed the words back to the run list.
+	back steerFate
+	// acked: KAS answered the send queued, or the answer was lost while KAS may hold it; refused: it answered not
+	// queued.
+	acked, refused bool
+	// drained: the row's turn died with a bridge that drained, so kiro-cli's buffer for it is gone (DeathDrained).
+	drained bool
 }
 
 type steerFx struct {
@@ -126,8 +141,8 @@ type steerNote struct {
 // the oldest agent row.
 const maxSteerRows = 64
 
-// maxSteerBytes bounds the user rows' joined text, so the drain's combined prompt
-// of every unread row is always one valid prompt.
+// maxSteerBytes bounds the user rows' joined text, so the one prompt a turn end's
+// unread rows join into is always a valid prompt.
 var maxSteerBytes = command.MaxPromptBytes + marotte.CarryCost("")
 
 func newSteerRecords() *steerRecords {
@@ -144,40 +159,83 @@ func (r *steerRecords) record(chatID marotte.ChatID, create bool) *steerRecord {
 	return rec
 }
 
-// runFacts are the record's facts the chat's run list reads, never under the lifecycle lock: the pending turn ends,
-// the keys of the unsent rows a prompt would carry (UnsentRows' rule) and the sequence of the read.
-func (r *steerRecords) runFacts(chatID marotte.ChatID, deathDrained bool) (ends int, unsent []string, seq uint64) {
+// runFacts are the record's facts the chat's run list reads, never under the lifecycle lock: the pending turn ends
+// and the sequence of the read. A final fate the list has not taken counts as an end owed, so the list takes no turn
+// before it applies that fate: a wake behind the words a turn end gave back would take their turn.
+func (r *steerRecords) runFacts(chatID marotte.ChatID) (ends int, seq uint64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec := r.record(chatID, false)
 	if rec == nil || rec.gone {
-		return 0, nil, r.factsSeq
+		return 0, r.factsSeq
 	}
-	return len(rec.ends), rec.unsentKeys(deathDrained), r.factsSeq
-}
-
-// unsentCount is the number of rows unsentKeys may name, whatever the death bits.
-func (rec *steerRecord) unsentCount() int {
-	n := 0
-	rec.live(func(w *dockRow) {
-		if w.owner == "" && w.state == rowUnsent {
-			n++
+	ends = len(rec.ends)
+	for _, f := range rec.fates {
+		if f.fate.final() {
+			ends++
 		}
-	})
-	return n
+	}
+	return ends, r.factsSeq
 }
 
-func (rec *steerRecord) unsentKeys(deathDrained bool) []string {
-	if rec.reinject && !deathDrained {
+// takeEntryFates hands the chat's run list the fates its entry rows met since the last take, in order. Never called
+// under the lifecycle lock.
+func (r *steerRecords) takeEntryFates(chatID marotte.ChatID) []entryFate {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec := r.record(chatID, false)
+	if rec == nil {
 		return nil
 	}
-	var keys []string
-	rec.live(func(w *dockRow) {
-		if w.owner == "" && w.state == rowUnsent {
-			keys = append(keys, w.key)
+	fs := rec.fates
+	rec.fates = nil
+	return fs
+}
+
+// settleEntries records each entry row's new fate for the run list, and retires a row whose words went back to the
+// list: KAS refused it, a clear of the user's handed it back, or a turn end left it unread with no copy a session/load
+// may re-inject. It runs before prune, which drops a read or removed row.
+func (rec *steerRecord) settleEntries(fx *steerFx) (moved bool) {
+	for i := range rec.rows {
+		w := &rec.rows[i]
+		if w.entry == "" || w.fate.final() {
+			continue
 		}
-	})
-	return keys
+		f := rec.fateOf(w)
+		if f == fateNone || f == w.fate {
+			continue
+		}
+		w.fate = f
+		rec.fates = append(rec.fates, entryFate{id: w.entry, offer: w.offer, fate: f})
+		if f == fateBack || f == fateUnread || f == fateCleared {
+			w.owner = ""
+			retire(w, nil, fx)
+		}
+		moved = true
+	}
+	return moved
+}
+
+// fateOf is what entry row w's state says of its offer. A row an op or a pending end owns waits for that owner,
+// which decides whether a continuation read it.
+func (rec *steerRecord) fateOf(w *dockRow) steerFate {
+	switch {
+	case w.state == rowRead:
+		return fateRead
+	case w.state == rowDone:
+		return fateGone
+	case w.owner != "":
+	case w.back != fateNone:
+		return w.back
+	case w.state == rowCleared && w.refused:
+		return fateBack
+	case (w.state == rowUnsent || w.state == rowParked) && (!rec.reinject || w.drained):
+		return fateUnread
+	}
+	if w.acked && w.state.inKAS() {
+		return fateInKAS
+	}
+	return fateNone
 }
 
 func (r *steerRecords) eventFor(key marotte.ChatID, p *marotte.SteerQueuedPayload) (marotte.ServerEvent, bool) {
@@ -201,14 +259,15 @@ func (r *steerRecords) step(chatID marotte.ChatID, create bool, fn func(rec *ste
 		return false
 	}
 	before := rec.wires()
-	ends, unsent := len(rec.ends), rec.unsentCount()
+	ends := len(rec.ends)
 	fn(rec, fx)
+	fated := rec.settleEntries(fx)
 	rec.prune()
 	rec.reframe(fx, before)
 	if fx.changed || len(fx.frames) > 0 || len(fx.notes) > 0 {
 		mintPending(&r.versions)
 	}
-	moved := ends != len(rec.ends) || unsent != rec.unsentCount()
+	moved := fated || ends != len(rec.ends)
 	if moved {
 		r.factsSeq++
 	}
@@ -299,16 +358,8 @@ func (rec *steerRecord) inKASNow(k wireKey) bool {
 	return w != nil && w.state.inKAS()
 }
 
-// awaitsPrompt: no clean turn close sends the unsent rows as a prompt of their own, because UnsentRows
-// answers none while KAS may re-inject them, and an opened prompt's start delivery takes them.
-func (rec *steerRecord) awaitsPrompt() bool { return rec.reinject || rec.absorbing != "" }
-
-// absorbed ends turnID's claim on the unsent rows: its start delivery ran, or it bound or closed.
-func (rec *steerRecord) absorbed(turnID string) {
-	if turnID != "" && rec.absorbing == turnID {
-		rec.absorbing = ""
-	}
-}
+// awaitsPrompt: the unsent rows wait for the next prompt's post-load clear, since KAS may re-inject them.
+func (rec *steerRecord) awaitsPrompt() bool { return rec.reinject }
 
 // rowWire is what a live row's frame tells a client: a step that moves it owes the row a frame.
 type rowWire struct {
@@ -380,12 +431,6 @@ func (rec *steerRecord) frameOf(w *dockRow) marotte.SteerQueuedPayload {
 		f.AwaitsPrompt = rec.awaitsPrompt()
 	}
 	return f
-}
-
-// names reports whether turnID is the turn this record knows as starting or bound,
-// the one target check delivery shares.
-func (rec *steerRecord) names(turnID string) bool {
-	return turnID != "" && (rec.starting == turnID || rec.turnID == turnID)
 }
 
 func (rec *steerRecord) row(key string) *dockRow {
@@ -705,11 +750,6 @@ func (r *steerRecords) turnStarted(chatID marotte.ChatID, turnID string) {
 	}
 }
 
-// turnOpened records a prompt's turn that opened and has yet to take the unsent rows.
-func (r *steerRecords) turnOpened(chatID marotte.ChatID, turnID string) {
-	r.step(chatID, false, func(rec *steerRecord, _ *steerFx) { rec.absorbing = turnID })
-}
-
 // turnBound opens the channel for a turn that became own; unbound rows already in
 // KAS join it, because that turn's execution is the one whose cursor reads them.
 func (r *steerRecords) turnBound(chatID marotte.ChatID, turnID string) {
@@ -726,7 +766,6 @@ func (r *steerRecords) turnBound(chatID marotte.ChatID, turnID string) {
 			rec.holdAtBind()
 		}
 		rec.settling = false
-		rec.absorbed(turnID)
 	})
 }
 
@@ -771,7 +810,6 @@ func (r *steerRecords) turnEnded(chatID marotte.ChatID, end command.SteerTurnEnd
 // A stale bind has no pipeline to resolve a pending end, so its unowned rows are settled here and a
 // flush job routes them.
 func (rec *steerRecord) endLocked(r *steerRecords, end command.SteerTurnEnd, stale bool, fx *steerFx) {
-	rec.absorbed(end.TurnID)
 	if rec.noCarry {
 		rec.endStepLocked(end, fx)
 		return
@@ -922,8 +960,8 @@ func (r *steerRecords) bridgeGone(chatID marotte.ChatID) {
 }
 
 // beginTeardown runs before the teardown's cancel, so every later fold, job and op finds the record gone. It
-// answers the unread rows for the close's notes, keeps agent rows for the death closer, and returns once
-// earlier steps published.
+// answers the unread rows for the close's notes, an entry row's being the run list's (takeEndedSteers), keeps agent
+// rows for the death closer, and returns once earlier steps published.
 func (r *steerRecords) beginTeardown(chatID marotte.ChatID, exit <-chan struct{}) []marotte.SteerQueuedPayload {
 	r.mu.Lock()
 	rec := r.record(chatID, true)
@@ -933,12 +971,12 @@ func (r *steerRecords) beginTeardown(chatID marotte.ChatID, exit <-chan struct{}
 	}
 	var unread []marotte.SteerQueuedPayload
 	rec.live(func(w *dockRow) {
-		if !w.noted && rowRuleFor(w.state, evTeardown) == rDrop {
+		if !w.noted && w.entry == "" && rowRuleFor(w.state, evTeardown) == rDrop {
 			unread = append(unread, marotte.SteerQueuedPayload{SteerID: w.key, Text: w.text, Origin: marotte.SteerOriginUser, Caller: w.caller})
 		}
 	})
 	rec.rows, rec.ends, rec.endHeld, rec.settling = nil, nil, nil, false
-	rec.op, rec.opEnd, rec.opEndStale, rec.lead, rec.reinject, rec.starting, rec.absorbing = "", nil, false, "", false, "", ""
+	rec.op, rec.opEnd, rec.opEndStale, rec.lead, rec.reinject, rec.starting = "", nil, false, "", false, ""
 	rec.channel, rec.turnID, rec.probe = chanNone, "", ""
 	rec.exit, rec.gone = exit, true
 	mintPending(&r.versions)
@@ -984,7 +1022,7 @@ func (r *steerRecords) shutdownTake(chatID marotte.ChatID) []shutdownRow {
 	}
 	var live []*dockRow
 	rec.live(func(w *dockRow) {
-		if w.state != rowRead {
+		if w.state != rowRead && w.entry == "" {
 			live = append(live, w)
 		}
 	})
@@ -998,7 +1036,7 @@ func (r *steerRecords) shutdownTake(chatID marotte.ChatID) []shutdownRow {
 		out = append(out, shutdownRow{Key: rec.others[i].SteerID, Agent: true})
 	}
 	rec.rows, rec.others, rec.ends, rec.endHeld, rec.settling = nil, nil, nil, nil, false
-	rec.op, rec.opEnd, rec.opEndStale, rec.lead, rec.starting, rec.absorbing = "", nil, false, "", "", ""
+	rec.op, rec.opEnd, rec.opEndStale, rec.lead, rec.starting = "", nil, false, "", ""
 	rec.channel, rec.turnID, rec.probe, rec.gone = chanNone, "", "", true
 	mintPending(&r.versions)
 	r.awaitLocked(rec, &steerFx{chat: chatID, done: make(chan struct{})})
@@ -1127,21 +1165,23 @@ func (r *steerRecords) stepOpen(key marotte.ChatID) bool {
 
 // setLead records the send-now arrow's row, sent first until it is sent or
 // terminal; a key no live row has records nothing and answers waiting false.
-func (r *steerRecords) setLead(chatID marotte.ChatID, key string) (undo func(), waiting bool) {
+// entry is the run-list entry the row carries, "" for a row routed here first.
+func (r *steerRecords) setLead(chatID marotte.ChatID, key string) (undo func(), waiting bool, entry string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec := r.record(chatID, false)
 	if rec == nil || rec.gone || key == "" || rec.row(key) == nil {
-		return func() {}, false
+		return func() {}, false, ""
 	}
 	rec.lead = key
+	entry = rec.row(key).entry
 	return func() {
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		if rec.lead == key {
 			rec.lead = ""
 		}
-	}, true
+	}, true, entry
 }
 
 // needsPostLoadClear: KAS may hold copies this record also holds, nothing bound is

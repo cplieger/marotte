@@ -17,7 +17,6 @@ import { join as joinKey } from "@cplieger/keyenc";
 import { errorAbout, successAbout } from "./subject.js";
 import { mayStillApply, retryUnlessStill, stillOr } from "./still-applying.js";
 
-import type { AttachedFile } from "../attachments.js";
 import type {
   ChatHeader,
   PendingSteer,
@@ -451,50 +450,6 @@ export const readMergeStatus = apiAction<{ chatID: string; opID: string }, Merge
   error: false,
 });
 
-/** Holds a message for the end of what runs (an API caller's verb, and a steer moved to the queue).
- *  Not optimistic: the row comes from the answer's `run` and the header broadcast, so every device
- *  shows one list. Lifts `reason` into the error code; `error: false`. */
-export const queuePrompt = defineAction<
-  {
-    chatID: string;
-    text: string;
-    messageID: string;
-    attachments?: readonly AttachedFile[];
-    displayText?: string;
-  },
-  // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- run consumes the POST body itself, no result for a caller
-  void
->({
-  name: "chat.queue_prompt",
-  networkMode: "always",
-  scope: ({ chatID }) => `chat:${chatID}`,
-  dedupe: (args) => joinKey("chat.queue_prompt", args.chatID, args.messageID),
-  idempotencyKey: true,
-  error: false,
-  run: async ({ chatID, text, messageID, attachments, displayText }, signal, ctx) => {
-    const cmd: Parameters<typeof transportSend>[0] = {
-      type: "queue_prompt",
-      chat_id: chatID,
-      payload: {
-        text,
-        message_id: messageID,
-        ...(displayText !== undefined ? { display_text: displayText } : {}),
-        ...(attachments !== undefined && attachments.length > 0
-          ? { attachments: attachments.map((a) => ({ path: a.path, name: a.name })) }
-          : {}),
-      },
-    };
-    if (ctx?.idempotencyKey !== undefined) {
-      (cmd as Record<string, unknown>)[IDEMPOTENCY_COMMAND_FIELD] = ctx.idempotencyKey;
-    }
-    const r: SendResult = await transportSend(cmd, { signal, reportSendState: false });
-    if (!r.ok) {
-      throw refusalOf(r, `send failed (${String(r.status)})`);
-    }
-    applyRun(chatID, runOfAnswer(r.body));
-  },
-});
-
 /** Removes one queued follow-up. An id no row carries is success on the server,
  *  because two devices can discard the same row. */
 export const unqueuePrompt = transportAction<{ chatID: string; messageID: string }>({
@@ -510,6 +465,18 @@ export const unqueuePrompt = transportAction<{ chatID: string; messageID: string
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   error: errorAbout(onChat, "Could not remove the follow-up"),
+});
+
+/** The queue's Resume: the rows the reader's stop paused go in order, as if the reader had sent a message. */
+export const resumeQueue = transportAction<{ chatID: string }>({
+  name: "chat.resume_queue",
+  networkMode: "always",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  dedupe: ({ chatID }) => joinKey("chat.resume_queue", chatID),
+  command: ({ chatID }) => ({ type: "resume_queue", chat_id: chatID }),
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  error: errorAbout(onChat, "Could not resume the queue"),
 });
 
 /** Sends one queued follow-up next. `stop` is the `run.cancel` the row's arrow was drawn against: the
@@ -573,19 +540,25 @@ export const clearSteers = transportAction<
  *  resends the kept rows as one steer; nothing is drawn here. A refusal is an `ActionError` with
  *  the server's sentence, status and `reason`, so Edit can tell a refusal from a lost reply.
  *  Deduped per row. */
+/** Deletes one dock row, or with `queue` hands it back to the chat's queue as a follow-up. */
 export const removeSteer = defineAction<
-  { chatID: string; steerID: string },
+  { chatID: string; steerID: string; queue?: true },
   // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for an action with no result
   void
 >({
   name: "chat.remove_steer",
   networkMode: "always",
   scope: ({ chatID }) => `chat:${chatID}`,
-  dedupe: ({ chatID, steerID }) => joinKey("chat.remove_steer", chatID, steerID),
+  dedupe: ({ chatID, steerID, queue }) =>
+    joinKey("chat.remove_steer", chatID, steerID, queue === true ? "queue" : "delete"),
   error: false,
-  run: async ({ chatID, steerID }, signal) => {
+  run: async ({ chatID, steerID, queue }, signal) => {
     const r: SendResult = await transportSend(
-      { type: "steer_remove", chat_id: chatID, payload: { steer_id: steerID } },
+      {
+        type: "steer_remove",
+        chat_id: chatID,
+        payload: { steer_id: steerID, ...(queue === true && { queue }) },
+      },
       { signal, reportSendState: false },
     );
     if (!r.ok) {
