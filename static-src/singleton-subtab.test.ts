@@ -18,61 +18,50 @@ const spies = vi.hoisted(() => ({
   refreshGitView: vi.fn(),
 }));
 
-vi.mock("./router.js", () => ({ pushRoute: vi.fn(), replaceRoute: vi.fn() }));
-// No-ops rather than absent: Browser Mode links ESM for real.
-vi.mock("./deep-link.js", () => ({
+vi.mock("./router.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  pushRoute: vi.fn(),
+  replaceRoute: vi.fn(),
+}));
+vi.mock("./deep-link.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   admitLocation: vi.fn(() => "opens"),
   settleDeepLinkedChat: vi.fn(),
 }));
-vi.mock("./chat.js", () => ({ switchSession: vi.fn() }));
-vi.mock("./editor-openers.js", () => ({ openFile: vi.fn() }));
-vi.mock("./files.js", () => ({ pointFilesTab: vi.fn() }));
-vi.mock("./settings-highlight.js", () => ({ flushURLHighlight: vi.fn() }));
+vi.mock("./chat.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  switchSession: vi.fn(),
+}));
+vi.mock("./editor-openers.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  openFile: vi.fn(),
+}));
+vi.mock("./files.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  pointFilesTab: vi.fn(),
+}));
+vi.mock("./settings-highlight.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  flushURLHighlight: vi.fn(),
+}));
 // The git page's fetches are what a sub-tab change must not start; its panels are git-tabs.ts's.
-vi.mock("./git.js", () => ({
+vi.mock("./git.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   loadGitRepos: spies.loadGitRepos,
   refreshGitView: spies.refreshGitView,
 }));
-vi.mock("./git-prs-tab.js", () => ({ requestPRFocus: vi.fn() }));
-vi.mock("./icons.js", () => ({
-  ICON_MODEL_UI: "",
-  ICON_CLOSE: "",
-  ICON_TAB_CHAT: "",
-  ICON_TAB_SETTINGS: "",
-  ICON_TAB_GIT: "",
-  ICON_TAB_FILES: "",
-  ICON_TAB_RUN: "",
-  ICON_TAB_WEB: "",
-  ICON_TAB_AGENT: "",
-  ICON_TAB_PLAN: "",
-  ICON_TAB_SPEC: "",
-  ICON_TAB_QUICK_SPEC: "",
-  ICON_TAB_BUG: "",
-  ICON_TAB_AUTONOMOUS: "",
-  ICON_TAB_REVIEW: "",
-  ICON_SUBAGENT_INTROSPECT: "",
-  ICON_SUBAGENT_GATHERER: "",
-  ICON_SUBAGENT_TASK: "",
-  ICON_SUBAGENT_CREATOR: "",
-  ICON_TAB_EDITOR: "",
-  ICON_TAB_HISTORY: "",
-  ICON_TAB_DOCS: "",
-  ICON_TAB_SUBTAB: "",
-  ICON_SEND: "",
-  ICON_SPINNER: "",
-  ICON_HOURGLASS: "",
-  ICON_ALERT: "",
-  ICON_PIN_FILLED: "",
+vi.mock("./git-prs-tab.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  requestPRFocus: vi.fn(),
 }));
-vi.mock("./device-view.js", () => {
-  let active = "";
-  return {
-    activeView: vi.fn(() => active),
-    setActiveView: vi.fn((id: string) => {
-      active = id;
-    }),
-  };
-});
+vi.mock("./icons.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/tab-switch-mocks.js")).iconsMock(),
+}));
+vi.mock("./device-view.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/tab-switch-mocks.js")).deviceViewMock(),
+}));
 // One element per `$` name, kept in the document, so the Settings bar the page wired at init is the
 // bar a case clicks.
 vi.mock("./dom.js", async (importOriginal) => ({
@@ -103,39 +92,40 @@ vi.mock("./dom.js", async (importOriginal) => ({
     return node;
   },
 }));
-vi.mock("./tabs-drag.js", () => ({
+vi.mock("./tabs-drag.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   attachDrag: vi.fn(),
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
-  setReprojectCallback: vi.fn(),
-  dragOwnsStrip: vi.fn(() => false),
-  exceedsSlop: vi.fn(() => false),
-  pointerDragActivation: vi.fn(() => ({ holdMs: 150, slopPx: 8 })),
 }));
-vi.mock("./store.js", () =>
-  import("./__test-helpers__/store-mock.js").then((m) => ({ ...m.storeMock })),
-);
-vi.mock("./run-store.js", () => ({ runLabelOf: vi.fn(() => "") }));
-vi.mock("./composer-state.js", () => ({
-  adoptUnownedComposer: vi.fn(),
-  retargetComposer: vi.fn(),
-  restoreFailedSend: vi.fn(),
-  saveComposerState: vi.fn(),
-  restoreComposerState: vi.fn(),
-  flushComposerDraft: vi.fn(),
-  dropComposerState: vi.fn(),
-  seedComposerState: vi.fn(),
-  adoptRemoteComposerState: vi.fn(),
-  noteComposerText: vi.fn(),
-  initComposerState: vi.fn(),
-  _resetComposerStateForTest: vi.fn(),
+vi.mock("./store.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/store-mock.js")).storeMock,
 }));
-vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
-vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
-vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
-vi.mock("./transport.js", () =>
-  import("./__test-helpers__/tabs-server.js").then((m) => m.tabTransportMock()),
-);
+vi.mock("./run-store.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  runLabelOf: vi.fn(() => ""),
+}));
+vi.mock("./composer-state.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/tab-switch-mocks.js")).composerStateMock(),
+}));
+vi.mock("./context-menu.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  showContextMenu: vi.fn(),
+}));
+vi.mock("./chat-export.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  downloadChatExport: vi.fn(),
+}));
+vi.mock("./toast.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/toast-mock.js")).toastMock(),
+}));
+vi.mock("./transport.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/tabs-server.js")).tabTransportMock(),
+}));
 vi.mock("./api-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ApiClient>()),
   apiBlobOrError: vi.fn(),
@@ -167,7 +157,10 @@ bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
 
 const GIT_TABS: readonly GitTab[] = ["changes", "prs", "sources"];
 
-beforeAll(() => {
+beforeAll(async () => {
+  // The factory reaches git.js through a dynamic import: loading its graph here keeps that cold
+  // load out of the first Git case's wait.
+  await import("./git.js");
   const settingsBar = document.createElement("nav");
   settingsBar.id = "settingsTabBar";
   const gitBar = document.createElement("nav");
@@ -311,19 +304,25 @@ describe("a reopened singleton lands on the panel its URL names", () => {
     await settingsOn("tools");
     await gitOn("changes");
 
+    clearSpies();
+
     await toggleSettingsView();
     flushActivationForTest();
+    await settled(() => loaded().length > 0, "the activation's load");
 
     expect(shownPanel("settings")).toBe("tools");
+    expect(loaded()).toEqual(["tools"]);
     expect(getActiveTabRoute()).toEqual({ kind: "settings", tab: "tools" });
   });
 
   it("the Git toggle after Git closed on Sources shows Changes", async () => {
     await gitOn("sources");
     await closeTab(tabIdFor("git"));
+    clearSpies();
 
     await toggleGitView();
     flushActivationForTest();
+    await settled(() => spies.refreshGitView.mock.calls.length > 0, "the Git activation's fetch");
 
     expect(shownPanel("git")).toBe("changes");
     expect(selectedPill("git")).toBe("changes");
@@ -392,8 +391,12 @@ describe("a door's sub-tab", () => {
     tabServer.openElsewhere({ kind: "settings" });
     tabServer.flushFrames();
     await activateTab(tabIdFor("settings"));
+    flushActivationForTest();
+    await settled(() => loaded().length > 0, "the remote row's load");
 
     expect(getActiveTabRoute()).toEqual({ kind: "settings", tab: "general" });
+    expect(shownPanel("settings")).toBe("general");
+    expect(loaded()).toEqual(["general"]);
   });
 });
 

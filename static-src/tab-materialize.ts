@@ -356,9 +356,7 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         route: { kind: "git", tab: "changes" },
         owns: subject.owns,
         ...parentOf(subject),
-        // Same divergence as settings: navigate.ts's path-link door passes no
-        // onShow, so /git reached from a chat's file link did not wire its panel
-        // while the sidebar's door did.
+        // The panel is wired here, not by a door: navigate.ts's path link into /git passes none.
         onShow: () => {
           lazily(
             import("./git.js").then(({ loadGitRepos }) => {

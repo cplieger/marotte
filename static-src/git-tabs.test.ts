@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type * as ModGitTabs from "./git-tabs.js";
+import type * as Tabs from "./tabs.js";
 import type { GitTab } from "./route-path.js";
 
 /**
@@ -17,7 +18,8 @@ const gitRoute = await vi.hoisted(async () => {
   const { signal } = await import("@cplieger/reactive");
   return { cell: signal<GitTab | null>(null) };
 });
-vi.mock("./tabs.js", () => ({
+vi.mock("./tabs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Tabs>()),
   subTabOf: (kind: string) => (kind === "git" ? gitRoute.cell.value : null),
   // The real setter's no-op while no row is open.
   setGitTab: vi.fn((tab: GitTab) => {
