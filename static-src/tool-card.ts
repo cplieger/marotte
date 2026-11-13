@@ -571,6 +571,25 @@ export function applyOutcome(
   nameTarget.setAttribute("aria-label", `${subject}, ${outcomeWord(state)}`);
 }
 
+/** Re-pick a built card's identity glyph from `info`, for a frame that brings what the build lacked (a load's id).
+ *  A slot `applyOutcome` already painted ok or running shows the new glyph at once. */
+export function setToolIdentity(card: HTMLElement, info: ToolRenderInfo): void {
+  const icon = card.querySelector<HTMLElement>(".tool-icon");
+  if (icon === null) {
+    return;
+  }
+  const glyph = iconEl(toolIcon(info));
+  const mark = iconMarks.get(icon);
+  if (mark === undefined) {
+    icon.replaceChildren(glyph);
+    return;
+  }
+  mark.identity = glyph.cloneNode(true) as Element;
+  if (mark.painted === "ok" || mark.painted === "running") {
+    icon.replaceChildren(glyph);
+  }
+}
+
 /** Bring one card's SILENCE marker up to date: shown past the threshold, removed
  *  otherwise, only while `data-start-ms` says it is in flight. Idempotent. The value is
  *  TRACKED, so a caller inside an effect repaints while the call stays quiet. */

@@ -20,6 +20,7 @@ import {
   syncInteractionFact,
   syncOffloadLink,
   syncSilenceMarker,
+  setToolIdentity,
 } from "./tool-card.js";
 import { clearToolSilence, forgetToolSilence } from "./tool-silence.js";
 import { toolCardOptsFor } from "./tool-card-opts.js";
@@ -679,6 +680,9 @@ function applyTitleUpdate(el: HTMLDivElement, tc: ToolCall): void {
     }
     // Status updates read this for the accessible outcome label.
     el.dataset["title"] = display;
+    if (info.loaded !== null) {
+      setToolIdentity(el, info);
+    }
   }
 }
 

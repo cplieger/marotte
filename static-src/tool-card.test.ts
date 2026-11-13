@@ -2130,6 +2130,37 @@ describe("a tool_load or load_resource card names what it loaded", () => {
     }
   }
 
+  // A create frame without the id paints the kind's glyph; the frame that brings the id re-picks it, and the settle
+  // keeps the re-picked glyph as the card's identity.
+  for (const c of cases) {
+    it(`a live card whose id ${c.id} arrives after its build draws that thing's glyph`, async () => {
+      const { buildToolCard } = await import("./tool-card.js");
+      const { applyToolCallUpdate } = await import("./messages-tools.js");
+      const call = makeToolCall({
+        id: `late-${c.id}`,
+        title: "Tool Load",
+        kind: "other",
+        status: "in_progress",
+        tool_name: "tool_load",
+      });
+      const card = buildToolCard(toolCardOptsFor(call, true, "c-load"));
+      const want = drawing(await glyphOf(c.glyph));
+      applyToolCallUpdate(card, { ...call, input: { id: c.id } }, "c-load");
+      expect(card.dataset["title"]).toBe(c.title);
+      expect(drawing(card.querySelector(".tool-icon")?.innerHTML ?? ""), "while it runs").toBe(
+        want,
+      );
+      applyToolCallUpdate(
+        card,
+        { ...call, input: { id: c.id }, status: "completed", output: "loaded" },
+        "c-load",
+      );
+      expect(drawing(card.querySelector(".tool-icon")?.innerHTML ?? ""), "once it settles").toBe(
+        want,
+      );
+    });
+  }
+
   it("names every id an older tool_load's tool_ids carried", async () => {
     const { buildToolCard } = await import("./tool-card.js");
     const card = buildToolCard({
