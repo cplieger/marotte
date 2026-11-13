@@ -35,7 +35,6 @@ vi.mock("./run-store.js", () => ({
 vi.mock("./settings-tabs.js", () => ({
   loadSettingsTabData: vi.fn(),
   refreshSettingsPanel: vi.fn(),
-  forceSettingsTab: vi.fn(),
   // Present-but-inert so real-ESM linking succeeds: the tab projection widened
   // this graph and these names are imported somewhere in it. No case here calls
   // them.
@@ -56,12 +55,11 @@ vi.mock("./history.js", () => ({
 vi.mock("./docs.js", () => ({
   showDocsTab: vi.fn(),
   refreshDocsView: vi.fn(),
-  forceDocsTab: vi.fn(),
 }));
 
 import { get } from "./store.js";
 import { runLabelOf } from "./run-store.js";
-import { showDocsTab, refreshDocsView, forceDocsTab } from "./docs.js";
+import { showDocsTab, refreshDocsView } from "./docs.js";
 import { showFilesTab, releaseFilesTab } from "./files.js";
 import { loadGitRepos, refreshGitView } from "./git.js";
 import { loadHistoryView, refreshHistoryView, teardownHistoryView } from "./history.js";
@@ -636,14 +634,12 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
     });
   }
 
-  // A toggle CLOSES an active tab, so reaching one would destroy the tab being materialized. Also
-  // pins that activation does not force the canonical sub-tab.
+  // A toggle CLOSES an active tab, so reaching one would destroy the tab being materialized.
   it("docs", async () => {
     register();
     materializeTab(subject({ kind: "docs" })).onShow?.();
     await settle();
     expect(showDocsTab).toHaveBeenCalled();
-    expect(forceDocsTab).not.toHaveBeenCalled();
   });
 
   // No activation half: settings' and files' `onShow` was the data half (for files, the BIND), so the
@@ -718,14 +714,11 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
     expect(loadHistoryView).not.toHaveBeenCalled();
   });
 
-  // Forces no sub-tab, for the activation's reason: a refresh that forced the
-  // canonical panel would discard the reader's own on every gap.
   it("docs refresh refetches the inventory", async () => {
     register();
     materializeTab(subject({ kind: "docs" })).refresh(signal);
     await settle();
     expect(refreshDocsView).toHaveBeenCalled();
-    expect(forceDocsTab).not.toHaveBeenCalled();
     expect(showDocsTab).not.toHaveBeenCalled();
   });
 

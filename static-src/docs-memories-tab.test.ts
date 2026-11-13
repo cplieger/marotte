@@ -11,10 +11,19 @@ import type * as Recipes from "./recipes.js";
 import type * as Router from "./router.js";
 import type * as Tabs from "./tabs.js";
 import type * as Toast from "./toast.js";
+import type { DocsTab } from "./route-path.js";
 
+/** The docs row's route as the strip holds it, open on its default. A fresh signal per case: each
+ *  case's docs.ts instance stays subscribed to the cell it first read. */
+const docsRoute = await vi.hoisted(async () => {
+  const { signal } = await import("@cplieger/reactive");
+  return { cell: signal<DocsTab | null>("steering") };
+});
 const H = vi.hoisted(() => ({
   memoryMode: "off",
-  setDocsTab: vi.fn(),
+  setDocsTab: vi.fn((tab: DocsTab) => {
+    docsRoute.cell.value = tab;
+  }),
   sse: new Map<string, () => void>(),
 }));
 
@@ -65,6 +74,7 @@ vi.mock("./memories.js", async (importOriginal) => ({
 }));
 vi.mock("./tabs.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Tabs>()),
+  subTabOf: (kind: string) => (kind === "docs" ? docsRoute.cell.value : null),
   setDocsTab: H.setDocsTab,
 }));
 vi.mock("./bus.js", async (importOriginal) => ({
@@ -126,6 +136,8 @@ async function openDocs(mode: string): Promise<typeof Docs> {
 }
 
 beforeEach(async () => {
+  const { signal } = await import("@cplieger/reactive");
+  docsRoute.cell = signal<DocsTab | null>("steering");
   resetActionFramework();
   (await import("./persist.js")).__testResetTracking();
   H.sse.clear();
@@ -152,11 +164,12 @@ afterEach(() => {
 describe("the Memories tab follows the Memory setting", () => {
   it("withdraws a deep-linked Memories tab once the settings say Off, opening no panel", async () => {
     H.memoryMode = "off";
-    const { forceDocsTab, showDocsTab } = await freshDocs();
+    const { showDocsTab } = await freshDocs();
     const { renderMemoriesPanel } = await import("./memories.js");
     const { replaceRoute } = await import("./router.js");
 
-    forceDocsTab("memories");
+    // The row a /docs/memories deep link opens before the settings answer.
+    docsRoute.cell.value = "memories";
     showDocsTab();
 
     await vi.waitFor(() => {
@@ -170,11 +183,11 @@ describe("the Memories tab follows the Memory setting", () => {
     expect(TABS.filter((t) => segment(t).classList.contains("hidden"))).toEqual(["memories"]);
   });
 
-  it("lands a router force on a withdrawn tab on the first tab", async () => {
-    const { forceDocsTab } = await openDocs("off");
+  it("resolves a route to a withdrawn tab to the first tab", async () => {
+    const { resolveDocsTab } = await openDocs("off");
 
-    expect(forceDocsTab("memories")).toBe("steering");
-    expect(forceDocsTab("hooks")).toBe("hooks");
+    expect(resolveDocsTab("memories")).toBe("steering");
+    expect(resolveDocsTab("hooks")).toBe("hooks");
   });
 
   it("brings the tab back as soon as Memory turns on", async () => {
@@ -188,9 +201,9 @@ describe("the Memories tab follows the Memory setting", () => {
   });
 
   it("moves a reader off the open Memories tab when Memory turns off", async () => {
-    const { forceDocsTab } = await openDocs("learn");
+    await openDocs("learn");
     const { renderMemoriesPanel } = await import("./memories.js");
-    forceDocsTab("memories");
+    docsRoute.cell.value = "memories";
     expect(panelShown("memories")).toBe(true);
     expect(renderMemoriesPanel).toHaveBeenCalled();
 

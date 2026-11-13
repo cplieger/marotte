@@ -2,6 +2,7 @@
 // file because `initDocsView` is guarded by a module `inited` flag, so each file needs a fresh module graph.
 import { describe, it, expect, vi, beforeAll, afterEach } from "vitest";
 import type { PageFind } from "./find-registry.js";
+import type { DocsTab } from "./route-path.js";
 
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 vi.mock("./api-client.js", () => ({
@@ -17,7 +18,13 @@ vi.mock("./editor-openers.js", () => ({
   openFileDiff: undefined,
   openFileGitDiff: undefined,
 }));
+/** The docs row's route as the strip holds it, open on its default. */
+const docsRoute = await vi.hoisted(async () => {
+  const { signal } = await import("@cplieger/reactive");
+  return signal<DocsTab | null>("steering");
+});
 vi.mock("./tabs.js", () => ({
+  subTabOf: (kind: string) => (kind === "docs" ? docsRoute.value : null),
   // navigate.js's `openSpec` imports these five; a missing name fails this file's import.
   activateTab: undefined,
   openTab: undefined,
@@ -25,7 +32,9 @@ vi.mock("./tabs.js", () => ({
   setTabParent: undefined,
   tabIdFor: undefined,
   openGitView: undefined,
-  setDocsTab: vi.fn(),
+  setDocsTab: vi.fn((tab: DocsTab) => {
+    docsRoute.value = tab;
+  }),
   // The tab factory reaches `showDocsTab` lazily; the toggle only has to resolve.
   toggleDocsView: vi.fn(() => Promise.resolve()),
 }));
@@ -64,7 +73,10 @@ let setDocs: (d: DocRecord[]) => void;
 let setHooks: (h: HookRecord[]) => void;
 let render: () => void;
 let refresh: () => void;
-let forceTab: (t: string) => void;
+/** Point the docs row at `t`, as a pill click or a door does. */
+function forceTab(t: string): void {
+  docsRoute.value = t as DocsTab;
+}
 let find: PageFind;
 
 /** The page's four GETs off one mock: the inventory and the standing through the caller's decoder, hooks and
@@ -110,13 +122,11 @@ beforeAll(async () => {
   const mod = await import("./docs.js");
   // The page's own doors: `toggleDocsView` toggles the tab and registers no find.
   mod.showDocsTab();
-  mod.forceDocsTab("steering");
   mod.refreshDocsView();
   setDocs = mod._setDocsForTest as unknown as (d: DocRecord[]) => void;
   setHooks = mod._setHooksForTest as unknown as (h: HookRecord[]) => void;
   render = mod._renderActiveForTest;
   refresh = mod.refreshDocsView;
-  forceTab = mod.forceDocsTab as unknown as (t: string) => void;
   // Reached through the leaf registry, the door Ctrl-F and the magnifier use.
   const { pageFind } = await import("./find-registry.js");
   const registered = pageFind("docs");

@@ -27,10 +27,10 @@ import { join as joinKey } from "@cplieger/keyenc";
 import { paintIfChanged, sigChanged } from "./paint-sig.js";
 import { entryRow, entryList, entrySkeleton } from "./entry-row.js";
 import type { EntryRowSpec, EntrySub } from "./entry-row.js";
-import { signal, subscribe } from "@cplieger/reactive";
+import { computed, signal, subscribe } from "@cplieger/reactive";
 import { skeletonTiming } from "./legacy-ui/skeleton.js";
 import { paintPlaceholder } from "./skeleton.js";
-import { pushRoute, replaceRoute } from "./router.js";
+import { replaceRoute } from "./router.js";
 import { buildPath, type DocsTab } from "./route-path.js";
 import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
 import { agentRunButton } from "./agent-run.js";
@@ -39,7 +39,7 @@ import { renderMemoriesPanel, setMemoryCountsListener } from "./memories.js";
 import { loadSettings, refreshSettings } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
 import { renderPowersPanel, setPowerCountsListener } from "./powers.js";
-import { setDocsTab as setTabRoute } from "./tabs.js";
+import { setDocsTab, subTabOf } from "./tabs.js";
 import { initSegmentedBar, setSegmentHidden } from "./segmented-bar.js";
 import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
@@ -208,7 +208,8 @@ const EMPTY_TEXT: Readonly<Record<Exclude<DocsTab, RpcTab>, string>> = {
 
 const FIRST_TAB: DocsTab = "steering";
 
-const activeTab = signal<DocsTab>(FIRST_TAB);
+/** The category the docs row's route names, null while no docs row is open. */
+const shownTab = computed(() => subTabOf("docs"));
 /** The Memory setting is Off, which withdraws the Memories tab. Null until the settings answer, so
  *  a Memories deep link waits rather than opening a panel it may have to withdraw. */
 const memoryOff = signal<boolean | null>(null);
@@ -249,7 +250,7 @@ const loadDocsAction = defineAction<undefined, KiroDocsResponse>({
   error: false,
 });
 
-/** The docs tab's activation: one-shot init only; forces no sub-tab, fetches nothing. */
+/** The docs tab's activation: one-shot init only; fetches nothing. */
 export function showDocsTab(): void {
   initDocsView();
 }
@@ -260,16 +261,14 @@ export function refreshDocsView(): void {
   loadDocs();
 }
 
-/** Set the active tab without pushing a URL — the router's entry point when
- *  back/forward lands on /docs/<tab>. Returns the tab applied: a withdrawn one lands on the first. */
-export function forceDocsTab(tab: DocsTab): DocsTab {
+/** The category a /docs/<tab> route may open: a withdrawn one resolves to the first. The router's
+ *  entry point, before it opens the docs tab on the answer. */
+export function resolveDocsTab(tab: DocsTab): DocsTab {
   const applied = tab === "memories" && memoryOff.peek() === true ? FIRST_TAB : tab;
   // Replaced, not left for the tab's own push, so Back cannot land on the withdrawn tab again.
   if (applied !== tab && location.pathname === buildPath({ kind: "docs", tab })) {
     replaceRoute({ kind: "docs", tab: applied });
   }
-  setTabRoute(applied);
-  activeTab.value = applied;
   return applied;
 }
 
@@ -286,14 +285,14 @@ function refreshMemoryAvailability(read: () => Promise<EffectiveSettings | null>
 
 /** The route is replaced only while this page is on screen; otherwise the URL belongs to another tab. */
 function withdrawMemories(): void {
-  if (activeTab.peek() !== "memories") {
+  if (shownTab.peek() !== "memories") {
     return;
   }
+  // Before the route write, so the emit's push finds the address bar already there and adds no entry.
   if ($.docsView.offsetParent !== null) {
     replaceRoute({ kind: "docs", tab: FIRST_TAB });
   }
-  setTabRoute(FIRST_TAB);
-  activeTab.value = FIRST_TAB;
+  setDocsTab(FIRST_TAB);
 }
 
 /** Fetch (or refetch) the inventory and repaint. */
@@ -310,7 +309,7 @@ function loadDocs(): void {
     },
     onError: () => {
       skeleton?.cancel();
-      panelFor(activeTab.peek())?.replaceChildren(
+      panelFor(shownTab.peek())?.replaceChildren(
         el("div", { className: "list-empty" }, "Failed to load .kiro documents"),
       );
     },
@@ -326,7 +325,7 @@ function loadSteeringIssues(): void {
       return;
     }
     steeringIssues = new Map(Object.entries(d.issues));
-    if (activeTab.peek() === "steering") {
+    if (shownTab.peek() === "steering") {
       renderActive();
     }
   });
@@ -350,7 +349,7 @@ function loadHookState(): void {
       next.set(hookKey(hookScopeOf(h), h.file_path ?? "", h.name), h);
     }
     hooks = next;
-    if (activeTab.peek() === "hooks") {
+    if (shownTab.peek() === "hooks") {
       renderActive();
     }
     settle(true);
@@ -368,7 +367,7 @@ function initDocsView(): void {
     attr: "data-docs-tab",
     idPrefix: "docs",
     tabs: DOCS_TABS.map((id) => ({ id, label: TAB_LABELS[id] })),
-    onSelect: selectTab,
+    onSelect: setDocsTab,
   });
   // Through the leaf registry, not the dispatcher: find-dispatch would pull scroll.ts's self-initialising singleton
   // into this lazy page. Every tab is filterable, so no `available` predicate.
@@ -376,17 +375,17 @@ function initDocsView(): void {
   // The Workflows panel reports its own counts; wired once since it repaints on its own schedule.
   setRecipeCountsListener(({ total, shown }) => {
     // The panel's refetch can land after the reader left, and would stamp another tab's note.
-    if (activeTab.peek() === "workflows") {
+    if (shownTab.peek() === "workflows") {
       docsFilter.shell?.setNote(noteFor("workflows", total, shown));
     }
   });
   setMemoryCountsListener(({ total, shown }) => {
-    if (activeTab.peek() === "memories") {
+    if (shownTab.peek() === "memories") {
       docsFilter.shell?.setNote(noteFor("memories", total, shown));
     }
   });
   setPowerCountsListener(({ total, shown }) => {
-    if (activeTab.peek() === "powers") {
+    if (shownTab.peek() === "powers") {
       docsFilter.shell?.setNote(noteFor("powers", total, shown));
     }
   });
@@ -402,7 +401,11 @@ function initDocsView(): void {
       void import("./chat.js").then(({ createSpecSession }) => createSpecSession(prompt, shown));
     },
   );
-  subscribe(activeTab, (tab) => {
+  subscribe(shownTab, (tab) => {
+    // No row: nothing is on screen to repaint.
+    if (tab === null) {
+      return;
+    }
     syncTabChrome(tab, paintBar);
     syncNewDoc(tab);
     renderActive();
@@ -411,7 +414,7 @@ function initDocsView(): void {
     setSegmentHidden(bar, "data-docs-tab", "memories", off === true);
     if (off === true) {
       withdrawMemories();
-    } else if (off === false && activeTab.peek() === "memories") {
+    } else if (off === false && shownTab.peek() === "memories") {
       renderActive();
     }
   });
@@ -468,15 +471,6 @@ function initDocsView(): void {
   });
 }
 
-function selectTab(tab: DocsTab): void {
-  if (tab === activeTab.peek()) {
-    return;
-  }
-  setTabRoute(tab);
-  pushRoute({ kind: "docs", tab });
-  activeTab.value = tab;
-}
-
 function syncTabChrome(tab: DocsTab, paint: (tab: DocsTab) => void): void {
   paint(tab);
   swapViews(() => {
@@ -497,8 +491,8 @@ function syncTabChrome(tab: DocsTab, paint: (tab: DocsTab) => void): void {
   setPageSubtitle("docs", TAB_LABELS[tab]);
 }
 
-function panelFor(tab: DocsTab): HTMLDivElement | null {
-  return queryEl<HTMLDivElement>(`[data-docs-panel="${tab}"]`);
+function panelFor(tab: DocsTab | null): HTMLDivElement | null {
+  return tab === null ? null : queryEl<HTMLDivElement>(`[data-docs-panel="${tab}"]`);
 }
 
 /** The note for the shown tab: silent with no filter unless the server truncated; an emptied tab names where matches went. */
@@ -630,9 +624,9 @@ function filterHaystack(doc: KiroDoc): string {
 }
 
 function renderActive(): void {
-  const tab = activeTab.peek();
+  const tab = shownTab.peek();
   const container = panelFor(tab);
-  if (container === null) {
+  if (tab === null || container === null) {
     return;
   }
   // The RPC panels filter their own rows and report counts through the listeners in initDocsView.
@@ -1183,7 +1177,7 @@ function gitLetter(doc: KiroDoc, gates: RowGates): string {
 
 /** On the list's own tier, so the swap to real rows moves nothing. */
 function showSkeleton(): () => void {
-  return paintPlaceholder(panelFor(activeTab.peek()), () => {
+  return paintPlaceholder(panelFor(shownTab.peek()), () => {
     const list = entryList();
     list.append(...entrySkeleton(4));
     return list;

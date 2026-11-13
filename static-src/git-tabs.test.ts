@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type * as ModGitTabs from "./git-tabs.js";
+import type * as Tabs from "./tabs.js";
+import type { GitTab } from "./route-path.js";
 
 /**
  * Cache-buster: `vi.resetModules()` does not re-evaluate a module in Browser Mode (URL-keyed module map). The `.ts`
@@ -8,22 +10,41 @@ import type * as ModGitTabs from "./git-tabs.js";
  */
 let bootSeq = 0;
 
-// setGitTab pushes a URL and syncs the git tab's route, so the suite runs under the real location and history; a
-// fresh module per test resets the signal to "changes".
-beforeEach(() => {
+/**
+ * The git row's route as the strip holds it, null while no row is open. A fresh signal per case: every re-imported
+ * module instance stays subscribed to the cell it first read.
+ */
+const gitRoute = await vi.hoisted(async () => {
+  const { signal } = await import("@cplieger/reactive");
+  return { cell: signal<GitTab | null>(null) };
+});
+vi.mock("./tabs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Tabs>()),
+  subTabOf: (kind: string) => (kind === "git" ? gitRoute.cell.value : null),
+  // The real setter's no-op while no row is open.
+  setGitTab: vi.fn((tab: GitTab) => {
+    if (gitRoute.cell.peek() !== null) {
+      gitRoute.cell.value = tab;
+    }
+  }),
+}));
+
+beforeEach(async () => {
+  const { signal } = await import("@cplieger/reactive");
+  gitRoute.cell = signal<GitTab | null>("changes");
   vi.resetModules();
   bootSeq++;
-  // resetModules clears module state, not the global location.
-  history.replaceState(null, "", "/");
 });
 
-describe("git-tabs store", () => {
-  it("onGitTabChange fires immediately with the current tab", async () => {
-    const { onGitTabChange } = (await import(
-      /* @vite-ignore */ `./git-tabs.ts?boot=${bootSeq}`
-    )) as typeof ModGitTabs;
+async function boot(): Promise<typeof ModGitTabs> {
+  return (await import(/* @vite-ignore */ `./git-tabs.ts?boot=${bootSeq}`)) as typeof ModGitTabs;
+}
 
-    const seen: GitTabName[] = [];
+describe("git-tabs reads the git row's sub-tab", () => {
+  it("onGitTabChange fires immediately with the row's tab", async () => {
+    const { onGitTabChange } = await boot();
+
+    const seen: GitTab[] = [];
     const dispose = onGitTabChange((tab) => {
       seen.push(tab);
     });
@@ -32,55 +53,51 @@ describe("git-tabs store", () => {
     dispose();
   });
 
-  it("setGitTab notifies subscribers with the new tab", async () => {
-    const { onGitTabChange, setGitTab, getGitTab } = (await import(
-      /* @vite-ignore */ `./git-tabs.ts?boot=${bootSeq}`
-    )) as typeof ModGitTabs;
+  it("a route write notifies subscribers with the new tab", async () => {
+    const { onGitTabChange, getGitTab } = await boot();
 
-    const seen: GitTabName[] = [];
+    const seen: GitTab[] = [];
     const dispose = onGitTabChange((tab) => {
       seen.push(tab);
     });
 
-    setGitTab("prs");
+    gitRoute.cell.value = "prs";
 
     expect(seen).toEqual(["changes", "prs"]);
     expect(getGitTab()).toBe("prs");
     dispose();
   });
 
-  it("same-tab setGitTab is a no-op and does not re-notify", async () => {
-    const { onGitTabChange, setGitTab, getGitTab } = (await import(
-      /* @vite-ignore */ `./git-tabs.ts?boot=${bootSeq}`
-    )) as typeof ModGitTabs;
+  it("a same-tab route write does not re-notify", async () => {
+    const { onGitTabChange, getGitTab } = await boot();
 
-    const fn = vi.fn<(tab: GitTabName) => void>();
+    const fn = vi.fn<(tab: GitTab) => void>();
     const dispose = onGitTabChange(fn);
     fn.mockClear(); // Drop the immediate fire; count change notifications only.
 
-    setGitTab("changes"); // Already the default: deduped, no notify.
+    gitRoute.cell.value = "changes";
 
     expect(fn).not.toHaveBeenCalled();
     expect(getGitTab()).toBe("changes");
     dispose();
   });
 
-  it("setGitTab pushes the matching URL; changes maps to the canonical /git", async () => {
-    const { setGitTab } = (await import(
-      /* @vite-ignore */ `./git-tabs.ts?boot=${bootSeq}`
-    )) as typeof ModGitTabs;
+  it("with no git row, getGitTab answers null and a close notifies no one", async () => {
+    const { onGitTabChange, getGitTab, readGitTab } = await boot();
 
-    setGitTab("prs");
-    expect(location.pathname).toBe("/git/prs");
+    const fn = vi.fn<(tab: GitTab) => void>();
+    const dispose = onGitTabChange(fn);
+    fn.mockClear();
 
-    setGitTab("sources");
-    expect(location.pathname).toBe("/git/sources");
+    gitRoute.cell.value = null;
 
-    setGitTab("changes");
-    expect(location.pathname).toBe("/git");
+    expect(fn).not.toHaveBeenCalled();
+    expect(getGitTab()).toBeNull();
+    expect(readGitTab()).toBeNull();
+    dispose();
   });
 
-  it("names the active Git section in the title bar subtitle", async () => {
+  it("names the active Git section in the title bar subtitle, and a pill click writes the row", async () => {
     document.body.innerHTML = `
       <nav id="git-tab-bar">
         <button data-git-tab="changes"></button>
@@ -92,9 +109,7 @@ describe("git-tabs store", () => {
       <div data-git-panel="changes"></div>
       <div data-git-panel="prs"></div>
       <div data-git-panel="sources"></div>`;
-    const { initGitTabs, setGitTab } = (await import(
-      /* @vite-ignore */ `./git-tabs.ts?boot=${bootSeq}`
-    )) as typeof ModGitTabs;
+    const { initGitTabs } = await boot();
 
     // Two writers: `showView` owns the title, the tab module the subtitle, which paints only for the kind shown, so the
     // test performs the view switch as `tabs.ts` does.
@@ -104,10 +119,11 @@ describe("git-tabs store", () => {
     initGitTabs();
     expect(document.getElementById("titlebar-subtitle")?.textContent).toBe("Changes");
 
-    setGitTab("prs");
+    document.querySelector<HTMLElement>('[data-git-tab="prs"]')?.click();
+    expect(gitRoute.cell.peek()).toBe("prs");
     expect(document.getElementById("titlebar-subtitle")?.textContent).toBe("Pull requests");
+    expect(document.querySelector('[data-git-panel="prs"]')?.classList.contains("hidden")).toBe(
+      false,
+    );
   });
 });
-
-// A local alias, since each test imports the module fresh inside its own body.
-type GitTabName = "changes" | "prs" | "sources";

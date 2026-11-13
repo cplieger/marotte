@@ -27,11 +27,6 @@ vi.mock("./tabs.js", () => ({
   setTabParent: () => Promise.resolve(false),
   tabIdFor: () => "",
 }));
-vi.mock("./git-tabs.js", () => ({
-  setGitTab: (tab: string) => {
-    calls.push(`gittab:${tab}`);
-  },
-}));
 
 import { openChange, openCallDiff, openChangeSet, openAtLine, openFileOrPage } from "./navigate.js";
 import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";

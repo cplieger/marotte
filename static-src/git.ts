@@ -9,6 +9,7 @@ import { initSourcesTab, refreshSources } from "./git-sources-tab.js";
 import { initGitBadge, refreshGitBadge as refreshBadgeImpl } from "./git-badge.js";
 import { refreshGitStatus } from "./git-status-store.js";
 import { registerFind } from "./find-registry.js";
+import { getActiveTabRoute } from "./tabs.js";
 import type { PageFind } from "./find-registry.js";
 import type { SearchPopup } from "./search-popup.js";
 
@@ -54,14 +55,17 @@ export function initGitPanel(): void {
     // singleton into the git view.
     registerFind("git", gitFind);
 
-    // The whole callback is gated on `painted`: the attach-time fire is a DOM sync, not a switch.
+    // The attach-time fire is a DOM sync, not a switch. A sub-tab a door names on a background or new
+    // row is fetched by the activation's `refreshGitView`.
     onGitTabChange((tab) => {
       if (painted) {
         // A filter belongs to one panel, so the box closes on a switch; closing clears the query, so switching back finds the
         // panel whole.
         changesFind.close();
         prsFind.close();
-        refreshGitTab(tab);
+        if (getActiveTabRoute()?.kind === "git") {
+          refreshGitTab(tab);
+        }
       }
       painted = true;
     });
@@ -94,7 +98,10 @@ function refreshGitTab(tab: GitTab): void {
  */
 export function refreshGitView(): void {
   initGitPanel();
-  refreshGitTab(getGitTab());
+  const tab = getGitTab();
+  if (tab !== null) {
+    refreshGitTab(tab);
+  }
 }
 
 /** Boot entry used by app.ts; the name predates the multi-repo view. */

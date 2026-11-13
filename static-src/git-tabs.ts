@@ -1,9 +1,8 @@
 // Git view tab bar: Changes / Pull requests / Sources. Mirrors settings-tabs.ts.
 
-import { signal, subscribe } from "@cplieger/reactive";
-import { pushRoute } from "./router.js";
+import { computed, subscribe } from "@cplieger/reactive";
 import type { GitTab } from "./route-path.js";
-import { setGitTab as setGitTabRoute } from "./tabs.js";
+import { setGitTab, subTabOf } from "./tabs.js";
 import { initSegmentedBar } from "./segmented-bar.js";
 import { setPageSubtitle } from "./page-title.js";
 import { maybeEl, queryAll } from "./dom.js";
@@ -19,49 +18,27 @@ const GIT_TAB_LABELS: Readonly<Record<GitTab, string>> = {
   sources: "Sources",
 };
 
-type Listener = (tab: GitTab) => void;
+/** The sub-tab the git row's route names, null while no git row is open. */
+const shownTab = computed(() => subTabOf("git"));
 
-// Deduped: a same-value write is a no-op. subscribe() fires immediately on attach to init panel visibility.
-const activeTab = signal<GitTab>("changes");
-
-/** Subscribe to tab changes. Fires immediately with the current tab. */
-export function onGitTabChange(fn: Listener): () => void {
-  return subscribe(activeTab, fn);
+/** Subscribe to the shown sub-tab. Fires at once when a git row is open, and never for null: with
+ *  no row nothing is on screen to repaint. */
+export function onGitTabChange(fn: (tab: GitTab) => void): () => void {
+  return subscribe(shownTab, (tab) => {
+    if (tab !== null) {
+      fn(tab);
+    }
+  });
 }
 
-/**
- * Switch to a tab; no-op if already active. Pushes the URL and syncs the git view tab's route, so the sub-tabs are
- * deep-linkable and back/forward navigable.
- */
-export function setGitTab(tab: GitTab): void {
-  if (tab === activeTab.peek()) {
-    return;
-  }
-  setGitTabRoute(tab);
-  pushRoute({ kind: "git", tab });
-  activeTab.value = tab;
+/** The shown sub-tab at this moment, or null with no git row. */
+export function getGitTab(): GitTab | null {
+  return shownTab.peek();
 }
 
-/** Current active tab. */
-export function getGitTab(): GitTab {
-  return activeTab.peek();
-}
-
-/**
- * The active sub-tab as a reactive read: inside an `effect` it subscribes. `getGitTab` peeks on purpose, since most
- * callers want the value at a moment.
- */
-export function readGitTab(): GitTab {
-  return activeTab.value;
-}
-
-/**
- * Force the active sub-tab without pushing a URL, for the router on back/forward to /git/<tab>. Safe before the git
- * view tab exists.
- */
-export function forceGitTab(tab: GitTab): void {
-  setGitTabRoute(tab);
-  activeTab.value = tab;
+/** The shown sub-tab as a reactive read: inside an `effect` it subscribes. */
+export function readGitTab(): GitTab | null {
+  return shownTab.value;
 }
 
 /** Wire the tab buttons and panel visibility. Idempotent; acts only when the tab bar is in the DOM. */
