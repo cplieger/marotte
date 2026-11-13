@@ -501,7 +501,7 @@ func (s *Service) TabClosed(kind marotte.TabKind, ref string) {
 // View records one page's view report under its profile's tag.
 func (s *Service) View(tag string, v marotte.PageView) {
 	if s.presence != nil {
-		s.presence.View(tag, v)
+		s.presence.view(tag, v)
 	}
 }
 

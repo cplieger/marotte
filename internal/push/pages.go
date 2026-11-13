@@ -21,9 +21,9 @@ type pageRow struct {
 	focused   bool
 }
 
-// View records one page's report under tag. A closed report deletes the page's row. A report for a
+// view records one page's report under tag. A closed report deletes the page's row. A report for a
 // tag with no presence row is dropped: the tag's stream is what makes its pages live.
-func (p *Presence) View(tag string, v marotte.PageView) {
+func (p *Presence) view(tag string, v marotte.PageView) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	row, ok := p.rows[tag]

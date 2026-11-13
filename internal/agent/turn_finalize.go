@@ -533,7 +533,7 @@ func (bc *bridgeCoordinator) pushTurnOutcome(
 		n = notice.TurnFinished(bc.NoticeTarget(ctx, chatID, ""), statusDesc)
 	case marotte.TurnSeverityBroken:
 		n = notice.TurnFailed(bc.NoticeTarget(ctx, chatID, ""), c.Reason)
-	default:
+	case marotte.TurnSeverityStopped, marotte.TurnSeverityRunning:
 		// A cancel was asked for and an unreadable end says nothing, so neither pushes; `running` cannot close.
 		return
 	}
