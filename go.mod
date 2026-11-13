@@ -5,6 +5,7 @@ go 1.27.4
 require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
+	github.com/coreos/go-oidc/v3 v3.21.0 // indirect
 	github.com/cplieger/go/httpcache v1.1.0-dev.5 // indirect
 	github.com/cplieger/go/httpclient v1.2.0-dev.1 // indirect
 	github.com/cplieger/go/jsonx v1.1.0-dev.1 // indirect
@@ -12,11 +13,25 @@ require (
 	github.com/cplieger/go/urlform v1.2.0-dev.1 // indirect
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/expr-lang/expr v1.17.8 // indirect
+	github.com/fxamacker/cbor/v2 v2.10.0 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.9 // indirect
+	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
+	github.com/go-webauthn/webauthn v0.18.2 // indirect
+	github.com/go-webauthn/x v0.3.1 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
+	github.com/google/go-tpm v0.9.8 // indirect
+	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
+	github.com/philhofer/fwd v1.2.1 // indirect
+	github.com/tinylib/msgp v1.6.5 // indirect
+	github.com/x448/float16 v0.8.4 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/mod v0.43.0 // indirect
+	golang.org/x/oauth2 v0.38.0 // indirect
 )
 
 require (
+	github.com/cplieger/access v1.0.0-dev.8.0.20261112215528-356b9d582aaf
 	github.com/cplieger/forgeapi/v2 v2.0.0-dev.18
 	github.com/cplieger/go/envx v1.1.0-dev.2
 	github.com/cplieger/go/filesafe v1.1.0-dev.1
