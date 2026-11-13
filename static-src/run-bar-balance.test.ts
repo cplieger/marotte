@@ -4,9 +4,10 @@
 // reaching the first run's. The fold row's chevron and the runs' status squares form one column.
 
 import { describe, it, expect, afterEach } from "vitest";
-import { page as browser } from "vitest/browser";
+import { page as browser, userEvent } from "vitest/browser";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { parkPointer } from "./__test-helpers__/park-pointer.js";
 import { until } from "./__test-helpers__/until.js";
 import { buildExecSummary } from "./exec-view/summary.js";
 import { chevronEl } from "./chevron.js";
@@ -162,6 +163,8 @@ interface Ink {
  *  other; and neither otherwise: the border row, which a fractional box height blends across one or
  *  two pixel rows of the clip, is uniform and so is never read as ink or as empty. */
 async function readInk(box: HTMLElement): Promise<Ink> {
+  // A row under the pointer paints its hover background, which reads as ink.
+  await parkPointer();
   const png = await browser.elementLocator(box).screenshot({ base64: true, save: false });
   const bytes = Uint8Array.from(atob(png as unknown as string), (c) => c.charCodeAt(0));
   const img = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
@@ -383,6 +386,17 @@ describe("the run bar box's cap", () => {
     expect(last.bottom, "the seventh row is fully visible").toBeLessThanOrEqual(
       list.getBoundingClientRect().bottom + 0.5,
     );
+    const ink = await readInk(box);
+    expect(Math.abs(ink.top - ink.bottom)).toBeLessThanOrEqual(TOLERANCE_PX);
+  });
+
+  it("reads the same balance with the pointer left over the last run", async () => {
+    await browser.viewport(360, 740);
+    style = mountAppCSS();
+    document.documentElement.setAttribute("data-pointer", "coarse");
+    const { box, rows } = mount(7, true, 344);
+    await settle();
+    await userEvent.hover(rows[rows.length - 1]!.querySelector<HTMLElement>(".run-bar-open")!);
     const ink = await readInk(box);
     expect(Math.abs(ink.top - ink.bottom)).toBeLessThanOrEqual(TOLERANCE_PX);
   });
