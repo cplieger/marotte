@@ -30,7 +30,7 @@ func leaseStampCap(src string) (string, bool) {
 	}
 	name := src[at[0][2]:at[0][3]]
 	lo := max(0, at[0][0]-leaseStampWindow)
-	assign := regexp.MustCompile(`[,;\s]` + regexp.QuoteMeta(name) + `=(\d+)[,;]`).FindAllStringSubmatch(src[lo:at[0][0]], -1)
+	assign := regexp.MustCompile(`[,;\s]`+regexp.QuoteMeta(name)+`=(\d+)[,;]`).FindAllStringSubmatch(src[lo:at[0][0]], -1)
 	if len(assign) == 0 {
 		return "", false
 	}

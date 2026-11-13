@@ -82,21 +82,7 @@ func (e *Engine) reapProcess(pgid int, owns, endedItself, closed bool) {
 	if closed && !endedItself {
 		awaitExit(e.cmd.Process.Pid, stdinEOFGrace)
 	}
-	termErr := procgroup.Kill(e.cmd.Process, syscall.SIGTERM)
-	gone := procgroup.AlreadyGone(termErr)
-	if termErr != nil && !gone {
-		slog.Error("signal kiro-cli", "generation", e.generation, "error", termErr)
-	}
-	if !gone && (!owns || !procgroup.WaitGone(pgid, bridgeTeardownGrace)) {
-		// Without a group there is nothing to wait on; kill the head now.
-		if killErr := procgroup.Kill(e.cmd.Process, syscall.SIGKILL); killErr != nil && !procgroup.AlreadyGone(killErr) {
-			slog.Error("kill kiro-cli", "generation", e.generation, "error", killErr)
-		}
-		if owns {
-			slog.Warn("kiro-cli did not exit within the teardown grace; killed",
-				"generation", e.generation, "grace_ms", bridgeTeardownGrace.Milliseconds())
-		}
-	}
+	e.signalTree(pgid, owns)
 	// Wait releases the process entry, so restarts leak no zombies.
 	waitErr := e.cmd.Wait()
 	e.mu.Lock()
@@ -117,6 +103,26 @@ func (e *Engine) reapProcess(pgid int, owns, endedItself, closed bool) {
 			"generation", e.generation, "pgid", pgid, "grace_ms", bridgeGroupGrace.Milliseconds())
 	}
 	e.sweepEngineGroups()
+}
+
+// signalTree SIGTERMs the kiro-cli process's group, then SIGKILLs it once bridgeTeardownGrace passes with the group
+// still alive, or at once when owns says there is no group of its own to wait on.
+func (e *Engine) signalTree(pgid int, owns bool) {
+	termErr := procgroup.Kill(e.cmd.Process, syscall.SIGTERM)
+	gone := procgroup.AlreadyGone(termErr)
+	if termErr != nil && !gone {
+		slog.Error("signal kiro-cli", "generation", e.generation, "error", termErr)
+	}
+	if gone || (owns && procgroup.WaitGone(pgid, bridgeTeardownGrace)) {
+		return
+	}
+	if killErr := procgroup.Kill(e.cmd.Process, syscall.SIGKILL); killErr != nil && !procgroup.AlreadyGone(killErr) {
+		slog.Error("kill kiro-cli", "generation", e.generation, "error", killErr)
+	}
+	if owns {
+		slog.Warn("kiro-cli did not exit within the teardown grace; killed",
+			"generation", e.generation, "grace_ms", bridgeTeardownGrace.Milliseconds())
+	}
 }
 
 // exitSettle bounds the wait for a kiro-cli process whose stdout reached EOF to become waitable: the kernel closes an

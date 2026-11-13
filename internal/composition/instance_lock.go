@@ -45,9 +45,9 @@ func ownedRoots(cfg *Config) []ownedRoot {
 // heldRoots keeps the claimed folders and lock files open. It must stay reachable for the process lifetime:
 // an unreachable *os.File is closed by its finalizer, and closing the fd drops the flock.
 type heldRoots struct {
-	files []*os.File
 	// full maps each role whose folder and marotte.lock are both locked to its dir.
-	full map[string]string
+	full  map[string]string
+	files []*os.File
 }
 
 func (h *heldRoots) release() {
@@ -59,11 +59,18 @@ func (h *heldRoots) release() {
 	h.full = nil
 }
 
-// fullyHeld answers role's dir when this process holds both its folder and its marotte.lock, which
-// excludes every other marotte on this kernel and on any host sharing the folder.
-func (h *heldRoots) fullyHeld(role string) (string, bool) {
-	dir, ok := h.full[role]
+// fullyHeldKiroHome answers kiro_home's dir when this process holds both its folder and its
+// marotte.lock, which excludes every other marotte on this kernel and on any host sharing the folder.
+func (h *heldRoots) fullyHeldKiroHome() (string, bool) {
+	dir, ok := h.full[roleKiroHome]
 	return dir, ok
+}
+
+// share gives role the claim first took on the same folder, full only when first's is.
+func (h *heldRoots) share(first string, r ownedRoot) {
+	if _, ok := h.full[first]; ok {
+		h.full[r.role] = r.dir
+	}
 }
 
 // rootHeldError is claimRoots' refusal: another process holds the root's lock.
@@ -101,9 +108,7 @@ func claimRoots(roots []ownedRoot) (*heldRoots, error) {
 			continue
 		}
 		if first, dup := claimedBy[key]; dup {
-			if _, ok := held.full[first]; ok {
-				held.full[r.role] = r.dir
-			}
+			held.share(first, r)
 			continue
 		}
 		claimedBy[key] = r.role

@@ -56,7 +56,7 @@ func inRuneRange(s string, maxLen int) bool {
 // other marotte engine, can be writing this home then, and only marotte stamps kascap.ClientTitle,
 // so every such stamp was written by an engine that is gone.
 func sweepOwnSessionLeases(roots *heldRoots) {
-	home, ok := roots.fullyHeld(roleKiroHome)
+	home, ok := roots.fullyHeldKiroHome()
 	if !ok {
 		return
 	}
