@@ -260,7 +260,7 @@ function passBudget(
 
 /** What a step's row names as its model: the model it runs or ran on, absent for the agent default
  *  (`auto` is the absence of a choice, not a pin), and a pin the account is not offered. A started
- *  step's dropped pin is KAS's `notOfferedModelId`; a pending step's own pin is judged against the
+ *  step's dropped pin is KAS's `notOfferedModelId`; a pending step's pin is judged against the
  *  loaded catalog, because KAS falls back at step start or fails the step at its first model call,
  *  never running on it. */
 function modelView(node: RunNode): { model: string | undefined; notOffered: string | undefined } {
@@ -661,21 +661,13 @@ onBus(BUS_CATALOG_MODELS, () => {
   catalogLanded.value = catalogLanded.peek() + 1;
 });
 
-/** KAS's version suffix, which its pin check strips to find the stem several served ids share. */
-const VERSION_SUFFIX = /(\d+(?:\.\d+)*)\s*$/;
-
-/** Whether KAS runs a pin on a model the account is offered, as its pin check (`mgo`) and its auto
- *  test (`k7`) decide: `auto` or any `auto-` id, an exact id, or a case-insensitive part of three
- *  characters or more of one served id, or of several sharing one stem. True while no catalog has
- *  loaded, which knows nothing. */
+/** Whether a pending step's pin is served, as KAS's launch check decides it: an exact served id, or
+ *  any pin while no catalog has loaded. KAS corrects a near-miss pin only on a step with
+ *  onModelNotOffered, which neither its state nor its plan carries, so such a step reads not
+ *  offered until it starts. */
 function offered(pin: string): boolean {
   const ids = getCachedModels().map((m) => m.model_id);
-  if (ids.length === 0 || pin === "auto" || pin.startsWith("auto-") || ids.includes(pin)) {
-    return true;
-  }
-  const part = pin.toLowerCase();
-  const hits = part.length >= 3 ? ids.filter((id) => id.toLowerCase().includes(part)) : [];
-  return hits.length > 0 && new Set(hits.map((id) => id.replace(VERSION_SUFFIX, ""))).size === 1;
+  return ids.length === 0 || ids.includes(pin);
 }
 
 /** What a container KAS has not expanded yet will hold, from its plan: a parallel's branches

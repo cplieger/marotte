@@ -286,22 +286,16 @@ describe("runToExec decides work by kind and fills an unexpanded container from 
     expect(test.node?.subtitle).not.toContain("not offered");
   });
 
-  // KAS's pin check (`mgo`) runs a pin that is a case-insensitive part, three characters or more,
-  // of one served id or of several differing only in their version suffix, and `k7` reads any
-  // `auto-` id as auto.
-  it("names no pin KAS corrects or reads as auto", () => {
-    const cases: [string, string[], string][] = [
-      ["a part of one served id", ["model-b-1"], "model-b"],
-      ["a part in another case", ["model-b-1"], "MODEL-B"],
-      ["one stem in two versions", ["model-b-1", "model-b-2.5"], "model-b"],
-      ["an auto- id", ["model-b-1"], "auto-fast"],
-    ];
-    for (const [name, served, pin] of cases) {
-      catalog.models = served.map((id) => ({ model_id: id, model_name: id }));
+  it("judges a pending pin by exact served id", () => {
+    catalog.models = [{ model_id: "model-b-1", model_name: "Model B 1" }];
+    const exact = pendingFanOf("model-b-1");
+    const served = factsOf(exact.root, exact.plan, "code");
+    expect(served.facts.has("Pinned model")).toBe(false);
+    expect(served.node?.subtitle).not.toContain("not offered");
+    for (const pin of ["model-b", "MODEL-B-1"]) {
       const fan = pendingFanOf(pin);
       const code = factsOf(fan.root, fan.plan, "code");
-      expect(code.facts.has("Pinned model"), name).toBe(false);
-      expect(code.node?.subtitle, name).not.toContain("not offered");
+      expect(code.facts.get("Pinned model"), pin).toBe(`${pin}, not offered`);
     }
   });
 
