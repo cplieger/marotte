@@ -60,7 +60,7 @@ export function slideBox(
   const still = !motion || matchMedia("(prefers-reduced-motion: reduce)").matches;
   const measured = !still || slides.has(box);
   const from = measured ? box.getBoundingClientRect().height : 0;
-  const offsets = measured ? scrolledOffsets(box) : [];
+  const offsets = still ? [] : scrolledOffsets(box);
   let fromOpacity: string | undefined;
   if (fade && !still) {
     // A reversed slide fades on from where the one it replaces stood, not from an end.
