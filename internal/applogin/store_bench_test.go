@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -53,7 +54,9 @@ func countAttempt(ctx context.Context, s *Store, ref account.FailureRef) error {
 }
 
 // BenchmarkCountCommit is the latency the count commit adds to a password attempt on the real
-// store, for one attempt at a time and for 16 concurrent ones sharing group commits.
+// store, for one attempt at a time and for 16 concurrent ones sharing group commits. ns/attempt
+// is the mean of each attempt's own wall time: ns/op divided by 16 would be throughput, not the
+// wait an attempt sees.
 func BenchmarkCountCommit(b *testing.B) {
 	for _, n := range []int{1, 16} {
 		b.Run(fmt.Sprintf("concurrent=%d", n), func(b *testing.B) {
@@ -65,20 +68,22 @@ func BenchmarkCountCommit(b *testing.B) {
 			}
 			base := d.publishes.Load()
 			attempts := 0
-			start := time.Now()
+			var waited atomic.Int64
 			for b.Loop() {
 				var wg sync.WaitGroup
 				for i := range n {
 					wg.Go(func() {
+						start := time.Now()
 						if err := countAttempt(ctx, s, refs[i]); err != nil {
 							b.Error(err)
 						}
+						waited.Add(time.Since(start).Nanoseconds())
 					})
 				}
 				wg.Wait()
 				attempts += n
 			}
-			b.ReportMetric(float64(time.Since(start).Nanoseconds())/float64(attempts), "ns/attempt")
+			b.ReportMetric(float64(waited.Load())/float64(attempts), "ns/attempt")
 			b.ReportMetric(float64(d.publishes.Load()-base)/float64(attempts), "publishes/attempt")
 		})
 	}
