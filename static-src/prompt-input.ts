@@ -161,7 +161,7 @@ class PromptInputController {
   private midTurn: HTMLButtonElement | null = null;
   /** The `pointerType` of the last pointer press on a slot button. */
   private pressPointer = "";
-  /** Whether the press that started the current or last dictation was a finger's, which never moves focus. */
+  /** Whether the press that last started or stopped dictation was a finger's, which never moves focus. */
   private fingerDictation = false;
   private readonly press = pressOwner((btn) => this.actOf(btn));
   /** Each chat whose send is in flight, by the token of that send. */
@@ -434,8 +434,8 @@ class PromptInputController {
   }
 
   /** A session's end puts focus in the box from a slot button, whose face may now send or steer on the reader's next
-   *  Space, or from nowhere; focus the reader moved elsewhere on the page stays there. A finger's session only takes
-   *  focus off a slot button, since focusing the box would raise the keyboard. */
+   *  Space, or from nowhere; focus the reader moved elsewhere on the page stays there. After a finger's start or stop
+   *  it only takes focus off a slot button, since focusing the box would raise the keyboard. */
   private focusAfterDictation(): void {
     const at = document.activeElement;
     if (this.fingerDictation) {
@@ -449,7 +449,7 @@ class PromptInputController {
     }
   }
 
-  /** Escape leaves dictation ahead of Cancel, so a keyboard reader keeps the turn. */
+  /** Escape leaves dictation ahead of Cancel as a keyboard's stop, so a keyboard reader keeps the turn and focus. */
   private escapeStops(e: KeyboardEvent): boolean {
     if (
       e.key !== "Escape" ||
@@ -464,6 +464,7 @@ class PromptInputController {
     }
     e.preventDefault();
     e.stopPropagation();
+    this.fingerDictation = false;
     this.dictation.toggle();
     return true;
   }
@@ -485,9 +486,7 @@ class PromptInputController {
       case "start":
       case "stop":
         if (listening === (act === "stop")) {
-          if (act === "start") {
-            this.fingerDictation = finger;
-          }
+          this.fingerDictation = finger;
           this.dictation.toggle({ finger });
         }
         return;

@@ -1869,7 +1869,7 @@
   /* LISTENING is on, so it takes the accent solid with its own ink (design
      language: what is on shows the accent), a jump no hover or press depth
      reaches; hover and press then mix toward the text colour, as a hover on a
-     coloured fill does. After `:hover` and `:active`, which tie it. */
+     coloured fill does. */
   &.dictating {
     --listen-mix: 0%;
 
@@ -1894,14 +1894,14 @@
     --send-hue: var(--c-red);
   }
 
-  /* THE BREATH — a slow swell of the hue while a turn runs or dictation listens,
-     so the state reads off the composer without the glyph. Opacity on a pre-painted
+  /* THE BREATH — a slow swell while a turn runs or dictation listens, so the
+     state reads off the composer without the glyph. Opacity on a pre-painted
      overlay carrying the shared `vk-dot-beat` (03-base.css) at its own peak, so it
      beats in step with the tab dot of the chat it belongs to — the delay comes off
      one global origin. Reduced motion runs it once and it rests at the `opacity: 0`
-     declared here, leaving this face identical to a still one. 8% of the hue is ~5
-     points of depth wherever the ladder sits, half the rest-to-hover step. Radius
-     `--pill-radius` - 1px, concentric with the ring above. */
+     declared here, leaving this face identical to a still one. The streaming face
+     swells its hue at 8%, ~5 points of depth wherever the ladder sits, half the
+     rest-to-hover step. Radius `--pill-radius` - 1px, concentric with the ring above. */
   &:where(.streaming, .dictating)::before {
     content: "";
     position: absolute;

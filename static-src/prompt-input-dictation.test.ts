@@ -1,7 +1,7 @@
-// The microphone in the composer's Send slot, painted on the real buttons: its face, its name and pressed state,
-// where a press goes, and that it never sends or cancels by itself.
+// The microphone in the composer's Send slot, painted on the real buttons: its face and its name while idle and
+// listening, where a press goes, and that it never sends or cancels by itself.
 
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import { signal } from "@cplieger/reactive";
 import { initPromptInput, sendComposer, setSendState } from "./prompt-input.js";
@@ -268,7 +268,7 @@ describe("the microphone in Send's slot (rule 1)", () => {
 });
 
 describe("pressing it (rules 3 and 8)", () => {
-  it("starts dictation, and the button becomes the pressed stop control", async () => {
+  it("starts dictation, and the button becomes the Stop control", async () => {
     const btn = sendBtn();
     await startFrom(btn);
     expect(dictation.listening.value).toBe(true);
@@ -1039,6 +1039,62 @@ describe("where focus goes when dictation ends (rule 9)", () => {
         input().disabled = false;
         await settle();
       }
+    });
+  });
+
+  describe("after a finger's tap starts it, the press that stops it decides", () => {
+    /** A finger's tap on `btn`, focusing it as a touch engine does. */
+    function fingerTap(btn: HTMLButtonElement): void {
+      btn.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerType: "touch" }),
+      );
+      btn.focus();
+      release(btn, true);
+      clickAt(btn, 1);
+    }
+
+    async function tapToDictate(): Promise<void> {
+      fingerTap(sendBtn());
+      await settle();
+      speech.last().begin();
+      speech.last().hear(["hello", true]);
+      expect(document.activeElement, "the tap that starts it").toBe(sendBtn());
+    }
+
+    afterEach(() => {
+      // The next case's presses are a mouse's.
+      pressDown(sendBtn());
+      release(sendBtn(), false);
+    });
+
+    it.each([
+      ["Escape", "{Escape}"],
+      ["Space", " "],
+      ["Enter", "{Enter}"],
+    ])("a keyboard's %s on the focused Stop leaves focus in the box", async (_, key) => {
+      await underFinger(async () => {
+        await tapToDictate();
+        await userEvent.keyboard(key);
+        speech.last().finish();
+        await settle();
+        expect(dictation.listening.value).toBe(false);
+        expect(document.activeElement).toBe(input());
+        expect(input().value).toBe("hello");
+        expect(submitted).toEqual([]);
+        expect(cancelled).not.toHaveBeenCalled();
+      });
+    });
+
+    it("a second tap leaves focus off the box and off the button", async () => {
+      await underFinger(async () => {
+        await tapToDictate();
+        fingerTap(sendBtn());
+        speech.last().finish();
+        await settle();
+        expect(dictation.listening.value).toBe(false);
+        expect([input(), sendBtn()]).not.toContain(document.activeElement);
+        expect(input().value).toBe("hello");
+      });
     });
   });
 });
