@@ -12,7 +12,7 @@ logfmt_value() {
 }
 
 # A process that recreates /tmp under umask 022 leaves it 0755; a symlinked /tmp is the operator's.
-# 01777 needs its five digits: GNU chmod keeps a directory's setgid bit for a four-digit mode.
+# 01777, not 1777: GNU chmod keeps a directory's setgid bit below five digits (coreutils manual, Directory Setuid and Setgid).
 restore_tmp_mode() {
   local dir=$1 was now msg="the temp folder had the wrong mode; restored it to 1777"
   [ -L "$dir" ] && return 0
