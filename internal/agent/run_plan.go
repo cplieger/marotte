@@ -108,7 +108,7 @@ func planRejectedNoteID(runID string) string {
 }
 
 // RunPlanRejection notes a person's rejection of a run's launch plan in the launching chat.
-// kasID is KAS's rejection id, so a repeated frame files the same note.
+// kasID is KAS's rejection id; the note's id is derived from it, so one rejection always names one id.
 func (rs *Runs) RunPlanRejection(ctx context.Context, chatID marotte.ChatID, runID, kasID, reason string) {
 	text := "Plan rejected"
 	if reason != "" {

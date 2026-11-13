@@ -244,7 +244,8 @@ func pinnedRecipe(br *fakeBridge, step string) {
 	))
 }
 
-// KAS owns a step pin's validation: it launches, warns, and drops or fails the unserved pin at step start.
+// KAS owns a step pin's validation: it launches, warns, then falls back at step start or fails the
+// step at its first model call.
 func TestLaunch_SendsAStepPinTheCatalogDoesNotOffer(t *testing.T) {
 	_, br, mux := runDefaultsHub(t)
 	pinnedRecipe(br, planStep("review", "model-e-9", "xhigh"))

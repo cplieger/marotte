@@ -258,19 +258,33 @@ function passBudget(
   return { max, added: planned === undefined ? 0 : Math.max(0, max - planned) };
 }
 
-/** A pin the account is not offered: what a pending step will not run on, or what a started one
- *  fell back from. */
+/** What a step's row names as its model: the model it runs or ran on, absent for the agent default
+ *  (`auto` is the absence of a choice, not a pin), and a pin the account is not offered. A started
+ *  step's dropped pin is KAS's `notOfferedModelId`; a pending step's own pin is judged against the
+ *  loaded catalog, because KAS falls back at step start or fails the step at its first model call,
+ *  never running on it. */
+function modelView(node: RunNode): { model: string | undefined; notOffered: string | undefined } {
+  const id = node.modelId;
+  const model = id === undefined || id === "" || id === "auto" ? undefined : id;
+  const dropped = node.notOfferedModelId;
+  if (dropped !== undefined && dropped !== "") {
+    return { model, notOffered: dropped };
+  }
+  if (node.type === "step" && node.status === "pending" && model !== undefined && !offered(model)) {
+    return { model: undefined, notOffered: model };
+  }
+  return { model, notOffered: undefined };
+}
+
 function pinnedModelFact(node: RunNode): string | undefined {
-  const pin = node.notOfferedModelId;
-  if (pin === undefined || pin === "") {
+  const { model, notOffered } = modelView(node);
+  if (notOffered === undefined) {
     return undefined;
   }
   if (node.status === "pending") {
-    return `${pin}, not offered`;
+    return `${notOffered}, not offered`;
   }
-  const model = node.modelId;
-  const ran = model === undefined || model === "" || model === "auto" ? "the agent default" : model;
-  return `${pin}, not offered; ran on ${ran}`;
+  return `${notOffered}, not offered; ran on ${model ?? "the agent default"}`;
 }
 
 /** The identity facts for a step, in the order they answer questions: who ran it, on what, how
@@ -288,9 +302,7 @@ function stepFacts(
     }
   };
   add("Agent", node.agentName);
-  // `auto` is not a model, it is the absence of a choice, and naming it as one implies a pin that
-  // never happened.
-  add("Model", node.modelId === "auto" ? undefined : node.modelId);
+  add("Model", modelView(node).model);
   add("Pinned model", pinnedModelFact(node));
   add("Effort", node.effortLevel);
   // KAS's own statement of WHY the node ended, which is different information from its status: a
@@ -424,12 +436,14 @@ function subtitleOf(
     if (node.agentName !== undefined && node.agentName !== "") {
       bits.push(node.agentName);
     }
-    if (node.modelId !== undefined && node.modelId !== "" && node.modelId !== "auto") {
-      bits.push(node.modelId);
+    const { model, notOffered } = modelView(node);
+    if (model !== undefined) {
+      bits.push(model);
     }
-    const pin = node.notOfferedModelId;
-    if (pin !== undefined && pin !== "") {
-      bits.push(node.status === "pending" ? `${pin} not offered` : `fell back from ${pin}`);
+    if (notOffered !== undefined) {
+      bits.push(
+        node.status === "pending" ? `${notOffered} not offered` : `fell back from ${notOffered}`,
+      );
     }
     // No pass number: the pass is the loop's, stated on its pass row.
     if (node.continuationAttempts !== undefined && node.continuationAttempts > 0) {
@@ -619,9 +633,7 @@ function countPausedSteps(root: RunNode | undefined): Map<string, number> {
 }
 
 /** A raw plan child as a not-yet-started state node, or nothing when it names no node. Any type is
- *  kept, as the state tree keeps it, so `kindOf` decides both paths alike. A pin the loaded catalog
- *  does not offer is the step's `notOfferedModelId`, not its model: KAS falls back or fails the
- *  step at its start, so it never runs on it. */
+ *  kept, as the state tree keeps it, so `kindOf` decides both paths alike. */
 function plannedNode(raw: unknown): RunNode[] {
   if (raw === null || typeof raw !== "object") {
     return [];
@@ -639,11 +651,6 @@ function plannedNode(raw: unknown): RunNode[] {
       out[key] = v;
     }
   }
-  const pin = out.modelId;
-  if (pin !== undefined && pin !== "auto" && !offered(pin)) {
-    out.notOfferedModelId = pin;
-    delete out.modelId;
-  }
   return [out];
 }
 
@@ -654,10 +661,21 @@ onBus(BUS_CATALOG_MODELS, () => {
   catalogLanded.value = catalogLanded.peek() + 1;
 });
 
-/** Whether the account is offered model id; true while no catalog has loaded, which knows nothing. */
-function offered(id: string): boolean {
-  const models = getCachedModels();
-  return models.length === 0 || models.some((m) => m.model_id === id);
+/** KAS's version suffix, which its pin check strips to find the stem several served ids share. */
+const VERSION_SUFFIX = /(\d+(?:\.\d+)*)\s*$/;
+
+/** Whether KAS runs a pin on a model the account is offered, as its pin check (`mgo`) and its auto
+ *  test (`k7`) decide: `auto` or any `auto-` id, an exact id, or a case-insensitive part of three
+ *  characters or more of one served id, or of several sharing one stem. True while no catalog has
+ *  loaded, which knows nothing. */
+function offered(pin: string): boolean {
+  const ids = getCachedModels().map((m) => m.model_id);
+  if (ids.length === 0 || pin === "auto" || pin.startsWith("auto-") || ids.includes(pin)) {
+    return true;
+  }
+  const part = pin.toLowerCase();
+  const hits = part.length >= 3 ? ids.filter((id) => id.toLowerCase().includes(part)) : [];
+  return hits.length > 0 && new Set(hits.map((id) => id.replace(VERSION_SUFFIX, ""))).size === 1;
 }
 
 /** What a container KAS has not expanded yet will hold, from its plan: a parallel's branches

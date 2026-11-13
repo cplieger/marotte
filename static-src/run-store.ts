@@ -48,8 +48,8 @@ export interface RunNode {
   status: ClassifiedRunNodeStatus;
   agentName?: string;
   modelId?: string;
-  /** The step's pinned model KAS dropped because the account is not offered it; `modelId` is then
-   *  the model it ran on instead, absent for the agent's default. */
+  /** The pinned model KAS dropped for a started step because the account is not offered it;
+   *  `modelId` is then the model it ran on instead, absent for the agent's default. */
   notOfferedModelId?: string;
   effortLevel?: string;
   sessionId?: string;

@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -163,16 +165,18 @@ func TestRunPlanRejection_ARunChatTellsNoOne(t *testing.T) {
 	}
 }
 
+// The id is KAS's rejection id hashed, never a clock, so every Runs names one rejection alike.
 func TestRunPlanRejection_OneRejectionOneID(t *testing.T) {
 	const chatID = marotte.ChatID("c1")
-	h, cs, _ := runLoggingHub(t)
-	seedChat(t, cs, chatID)
-
-	h.runs.RunPlanRejection(t.Context(), chatID, "wf_1", kasRejectionID, "split step 2")
-	h.runs.RunPlanRejection(t.Context(), chatID, "wf_1", kasRejectionID, "split step 2")
-
-	byID := steerEntries(t, cs, chatID)
-	if len(byID) != 1 || len(byID[wantRejectionID(kasRejectionID)]) == 0 {
-		t.Errorf("notes = %+v, want every one under %q", byID, wantRejectionID(kasRejectionID))
+	ids := make([][]string, 2)
+	for i := range ids {
+		h, cs, _ := runLoggingHub(t)
+		seedChat(t, cs, chatID)
+		h.runs.RunPlanRejection(t.Context(), chatID, "wf_1", kasRejectionID, "split step 2")
+		ids[i] = slices.Collect(maps.Keys(steerEntries(t, cs, chatID)))
+	}
+	want := []string{wantRejectionID(kasRejectionID)}
+	if !slices.Equal(ids[0], want) || !slices.Equal(ids[1], want) {
+		t.Errorf("note ids = %v, want %v from each", ids, want)
 	}
 }

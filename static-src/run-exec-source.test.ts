@@ -230,29 +230,112 @@ describe("runToExec decides work by kind and fills an unexpanded container from 
     }
   });
 
-  it("a pending step names a pin the account is not offered", () => {
+  // KAS's initState: a pending sequence root whose children are every top-level step, pending and
+  // carrying its declared pin as `modelId` with no catalog check.
+  const launched = (...steps: [string, string][]) => ({
+    nodeId: "wf_1",
+    type: "sequence",
+    status: "pending",
+    children: steps.map(([id, pin]) =>
+      step(id, "pending", { agentName: "wf-coder", modelId: pin }),
+    ),
+  });
+  const pendingFanOf = (pin: string) => ({
+    root: {
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [{ nodeId: "fan", type: "parallel", status: "pending", children: [] }],
+    },
+    plan: [
+      {
+        nodeId: "fan",
+        type: "parallel",
+        branches: [{ nodeId: "code", type: "step", agentName: "wf-coder", modelId: pin }],
+      },
+    ],
+  });
+  const factsOf = (root: unknown, plan: unknown, label: string) => {
+    const node = flatten(runToExec(stateWith(root), plan, NO_ASKS).nodes).find(
+      (n) => n.label === label,
+    );
+    return { node, facts: new Map((node?.facts ?? []).map((f) => [f.label, f.value])) };
+  };
+
+  it("a pending step names a pin the account is not offered, launched or planned", () => {
     catalog.models = [{ model_id: "model-b", model_name: "Model B" }];
     const plan = [
       { nodeId: "code", type: "step", agentName: "wf-coder", modelId: "model-a-5.5" },
       { nodeId: "test", type: "step", agentName: "wf-coder", modelId: "model-b" },
     ];
-    const unstarted = { nodeId: "wf_1", type: "sequence", status: "running", children: [] };
-    const nodes = flatten(runToExec(stateWith(unstarted), plan, NO_ASKS).nodes);
-    const code = nodes.find((n) => n.label === "code");
-    const codeFacts = new Map((code?.facts ?? []).map((f) => [f.label, f.value]));
-    expect(codeFacts.get("Model")).toBeUndefined();
-    expect(codeFacts.get("Pinned model")).toBe("model-a-5.5, not offered");
-    expect(code?.subtitle).toContain("model-a-5.5 not offered");
-    const test = nodes.find((n) => n.label === "test");
-    const testFacts = new Map((test?.facts ?? []).map((f) => [f.label, f.value]));
-    expect(testFacts.get("Model")).toBe("model-b");
-    expect(testFacts.has("Pinned model")).toBe(false);
+    const root = launched(["code", "model-a-5.5"], ["test", "model-b"]);
+    const fan = pendingFanOf("model-a-5.5");
+    const cases: [string, unknown, unknown][] = [
+      ["launched", root, plan],
+      ["parallel branch", fan.root, fan.plan],
+    ];
+    for (const [name, r, p] of cases) {
+      const code = factsOf(r, p, "code");
+      expect(code.facts.get("Model"), name).toBeUndefined();
+      expect(code.facts.get("Pinned model"), name).toBe("model-a-5.5, not offered");
+      expect(code.node?.subtitle, name).toContain("model-a-5.5 not offered");
+    }
+    const test = factsOf(root, plan, "test");
+    expect(test.facts.get("Model")).toBe("model-b");
+    expect(test.facts.has("Pinned model")).toBe(false);
+    expect(test.node?.subtitle).not.toContain("not offered");
+  });
+
+  // KAS's pin check (`mgo`) runs a pin that is a case-insensitive part, three characters or more,
+  // of one served id or of several differing only in their version suffix, and `k7` reads any
+  // `auto-` id as auto.
+  it("names no pin KAS corrects or reads as auto", () => {
+    const cases: [string, string[], string][] = [
+      ["a part of one served id", ["model-b-1"], "model-b"],
+      ["a part in another case", ["model-b-1"], "MODEL-B"],
+      ["one stem in two versions", ["model-b-1", "model-b-2.5"], "model-b"],
+      ["an auto- id", ["model-b-1"], "auto-fast"],
+    ];
+    for (const [name, served, pin] of cases) {
+      catalog.models = served.map((id) => ({ model_id: id, model_name: id }));
+      const fan = pendingFanOf(pin);
+      const code = factsOf(fan.root, fan.plan, "code");
+      expect(code.facts.has("Pinned model"), name).toBe(false);
+      expect(code.node?.subtitle, name).not.toContain("not offered");
+    }
+  });
+
+  it("names a pin KAS cannot correct", () => {
+    const cases: [string, string[], string][] = [
+      ["a part of two stems", ["model-b-1", "model-bx-2"], "model-b"],
+      ["a part under three characters", ["model-b-1"], "mo"],
+      ["no part of any id", ["model-b-1"], "model-c"],
+    ];
+    for (const [name, served, pin] of cases) {
+      catalog.models = served.map((id) => ({ model_id: id, model_name: id }));
+      const code = factsOf(launched(["code", pin]), undefined, "code");
+      expect(code.facts.get("Pinned model"), name).toBe(`${pin}, not offered`);
+    }
+  });
+
+  // Once a step starts, KAS's own record decides: a step it failed at its first model call keeps
+  // the unserved pin as its model and drops nothing.
+  it("judges no started step's model against the catalog", () => {
+    catalog.models = [{ model_id: "model-b", model_name: "Model B" }];
+    const root = {
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [step("code", "failed", { modelId: "model-a-5.5" })],
+    };
+    const code = factsOf(root, undefined, "code");
+    expect(code.facts.get("Model")).toBe("model-a-5.5");
+    expect(code.facts.has("Pinned model")).toBe(false);
   });
 
   it("a catalog landing after the first fold names the pending pin, and repaints", () => {
     const plan = [{ nodeId: "code", type: "step", agentName: "wf-coder", modelId: "model-a-5.5" }];
-    const unstarted = { nodeId: "wf_1", type: "sequence", status: "running", children: [] };
-    const state = stateWith(unstarted);
+    const state = stateWith(launched(["code", "model-a-5.5"]));
     const memo: ExecFoldMemo = {};
     const pinOf = () =>
       flatten(runToExec(state, plan, NO_ASKS, "", new Map(), memo).nodes)
