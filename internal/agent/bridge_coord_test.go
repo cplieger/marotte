@@ -55,7 +55,7 @@ func newRecordingStartHub(t *testing.T) (*Runtime, *testChatStore, *recordingSta
 }
 
 // recordingPush records each delivered notice's body on a channel, plus the latest subject and chat
-// name, read only after a body arrives.
+// name (last). Deliveries run on concurrent goroutines, so every field but sends is read under mu.
 type recordingPush struct {
 	pushStub
 	sends chan string
@@ -89,14 +89,21 @@ func (p *recordingPush) Raise(_ context.Context, _ marotte.ChatID, n *marotte.No
 		}
 		p.mu.Lock()
 		p.asks = append(p.asks, n.Ask)
-		p.mu.Unlock()
 		p.subject = n.PushSubject
 		p.title = n.Title
+		p.mu.Unlock()
 		select {
 		case p.sends <- n.Body:
 		default:
 		}
 	}
+}
+
+// last is the latest delivered notice's subject and title.
+func (p *recordingPush) last() (marotte.PushSubject, string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.subject, p.title
 }
 
 // On session/new the override model wins over the stored value, and the persisted model comes from the opened session.
@@ -453,9 +460,9 @@ func TestNoticeTarget_TitlesTheTabTheClickOpens(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatalf("no push sent for %q/%q", tc.chatID, tc.runID)
 		}
-		if fp.title != tc.want || fp.subject != tc.wantSubjs {
+		if subj, title := fp.last(); title != tc.want || subj != tc.wantSubjs {
 			t.Errorf("NoticeTarget(%q, %q) pushed title %q under %+v, want %q under %+v",
-				tc.chatID, tc.runID, fp.title, fp.subject, tc.want, tc.wantSubjs)
+				tc.chatID, tc.runID, title, subj, tc.want, tc.wantSubjs)
 		}
 	}
 }

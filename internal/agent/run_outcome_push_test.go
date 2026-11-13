@@ -17,7 +17,6 @@ type runOutcomePush struct {
 	pushStub
 	sent     chan runPushSent
 	frames   func(marotte.ChatID, marotte.NotificationPayload)
-	subject  marotte.PushSubject
 	mu       sync.Mutex
 	ctxs     []context.Context // each delivery's ctx, read after the sender returned
 	position []uint64          // each Raise's position
@@ -50,7 +49,6 @@ func (p *runOutcomePush) Raise(_ context.Context, chatID marotte.ChatID, n *maro
 		p.mu.Lock()
 		p.ctxs = append(p.ctxs, ctx)
 		p.mu.Unlock()
-		p.subject = n.PushSubject
 		select {
 		case p.sent <- runPushSent{title: n.Title, body: n.Body, ask: n.Ask, kind: n.Kind, subject: n.PushSubject}:
 		default:
