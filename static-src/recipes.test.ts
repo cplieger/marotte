@@ -13,6 +13,8 @@ const authoredSource = import.meta.glob<string>(
 const dispatched: { name: string; args: unknown }[] = [];
 /** Holds the recipe read until released, with the reply it was asked under. */
 let holdRecipes: Promise<void> | null = null;
+/** The warnings the launch answers with, or none. */
+let launchWarnings: string[] | undefined;
 
 vi.mock("./actions/runs.js", () => ({
   loadRecipes: {
@@ -32,11 +34,18 @@ vi.mock("./actions/runs.js", () => ({
     dispatch: vi.fn(
       (
         args: unknown,
-        opts?: { onSuccess?: (d: { workflow_id: string; name: string }) => void },
+        opts?: {
+          onSuccess?: (d: { workflow_id: string; name: string; warnings?: string[] }) => void;
+        },
       ) => {
         dispatched.push({ name: "launch", args });
-        opts?.onSuccess?.({ workflow_id: "wf_new", name: "goal" });
-        return Promise.resolve({ workflow_id: "wf_new", name: "goal" });
+        const d = {
+          workflow_id: "wf_new",
+          name: "goal",
+          ...(launchWarnings === undefined ? {} : { warnings: launchWarnings }),
+        };
+        opts?.onSuccess?.(d);
+        return Promise.resolve(d);
       },
     ),
   },
@@ -162,6 +171,7 @@ function shownText(btn: HTMLElement): string {
 
 beforeEach(() => {
   holdRecipes = null;
+  launchWarnings = undefined;
   document.body.replaceChildren();
   dispatched.length = 0;
   vi.mocked(openRunView).mockClear();
@@ -353,11 +363,7 @@ describe("the Run ⇄ Cancel row", () => {
 
   it("a launch with warnings shows them", async () => {
     const warnings = ["[workflow] step 'a' modelId 'm-x' is not a served model", "second advisory"];
-    vi.mocked(launchRun.dispatch).mockImplementationOnce((_args, opts) => {
-      const d = { workflow_id: "wf_new", name: "goal", warnings };
-      opts?.onSuccess?.(d);
-      return Promise.resolve(d);
-    });
+    launchWarnings = warnings;
     recipesReply = { recipes: [recipe("goal")] };
     const panel = await render();
     buttonFor(panel, "bundled://goal")?.click();
