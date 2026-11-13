@@ -148,6 +148,36 @@ describe("the committed start state, against real CSS", () => {
     ctl.dispose();
   });
 
+  it("keeps a reopen's tween running past the end of the close it replaced", async () => {
+    expect(window.matchMedia("(prefers-reduced-motion: reduce)").matches).toBe(false);
+
+    const trigger = document.createElement("button");
+    const region = document.createElement("div");
+    region.appendChild(document.createElement("p")).textContent = "x".repeat(400);
+    document.body.append(trigger, region);
+    const ctl = createDisclosure(trigger, region, { open: true });
+    await nextFrame();
+
+    ctl.close();
+    const closing = region.getAnimations();
+    expect(closing.length, "the premise: the close tweens").toBeGreaterThan(0);
+    // The reopen runs where an awaiter of the close's `finished` resumes: before the close's
+    // own transitionend is dispatched.
+    await Promise.allSettled(closing.map((a) => a.finished));
+    ctl.open();
+    await settle();
+
+    expect(region.style.height).toBe("auto");
+    expect(region.getAnimations().map((a) => (a as CSSTransition).transitionProperty)).toEqual([
+      "height",
+    ]);
+    expect(await ownTransitionEndWithin(region, 2000)).toBe("height");
+    await settle();
+    expect(region.style.height).toBe("");
+
+    ctl.dispose();
+  });
+
   it("fades a popup on hide, finishing on its own transitionend rather than the ceiling", async () => {
     expect(window.matchMedia("(prefers-reduced-motion: reduce)").matches).toBe(false);
 

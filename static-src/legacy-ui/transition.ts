@@ -34,9 +34,23 @@ interface TransitionSpec {
  *  so a settle armed against a node that is then dropped retains nothing. */
 const inFlight = new WeakMap<HTMLElement, () => void>();
 
+/** Whether a transition of `property` still runs on `el`. The end of a transition a newer write
+ *  replaced is dispatched after the promise its `finished` resolves, so a settle armed by that
+ *  promise's awaiter would otherwise take the old end for its own. */
+function stillRunning(el: HTMLElement, property: string): boolean {
+  return el
+    .getAnimations()
+    .some(
+      (a) =>
+        a instanceof CSSTransition &&
+        a.transitionProperty === property &&
+        a.playState === "running",
+    );
+}
+
 /** @internal Arm one settle on `el`: the first `transitionend` whose target is
- *  `el`, or the fallback ceiling, whichever comes first. Fires once; returns
- *  its cancel. */
+ *  `el` and whose property no newer transition still runs, or the fallback
+ *  ceiling, whichever comes first. Fires once; returns its cancel. */
 export function watchSettle(el: HTMLElement, onSettled: () => void): () => void {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const detach = (): void => {
@@ -53,7 +67,7 @@ export function watchSettle(el: HTMLElement, onSettled: () => void): () => void 
     onSettled();
   };
   const onEnd = (e: TransitionEvent): void => {
-    if (e.target === el) {
+    if (e.target === el && !stillRunning(el, e.propertyName)) {
       fire();
     }
   };
