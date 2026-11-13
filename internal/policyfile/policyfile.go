@@ -186,8 +186,8 @@ func Load(path string) (*File, error) {
 }
 
 // readSource returns the bytes and base name of the file KAS reads for path: path itself, or its
-// permissions.json sibling when path is a missing permissions.yaml; a blank .yaml is the file KAS
-// reads. Nothing to read yields nil bytes.
+// permissions.json sibling when path is a missing permissions.yaml. Nothing to read yields nil
+// bytes.
 func readSource(ctx context.Context, path string) (data []byte, name string, err error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
