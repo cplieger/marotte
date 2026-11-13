@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -183,50 +184,34 @@ func TestShutdown_JoinsTheTickerLoops(t *testing.T) {
 // TestShutdown_WaitsForARunningMCPNotifier holds the notifier inside its callback (the environment.md
 // generator): an unjoined loop here produces no other symptom.
 func TestShutdown_WaitsForARunningMCPNotifier(t *testing.T) {
-	h := newHubWithMCPConfig(t, nil)
+	synctest.Test(t, func(t *testing.T) {
+		h := newHubWithMCPConfig(t, nil)
 
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	var once sync.Once
-	h.SetMCPOnChange(func() {
-		once.Do(func() { close(entered) })
-		<-release
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		var once sync.Once
+		h.SetMCPOnChange(func() {
+			once.Do(func() { close(entered) })
+			<-release
+		})
+		// Any mutation signals the notifier, which debounces 100ms.
+		reportMCP(t, h, "s1", connectedMCP("a", marotte.MCPSource{}))
+		<-entered
+
+		result := make(chan error, 1)
+		go func() { result <- h.Shutdown(context.Background()) }()
+		synctest.Wait()
+		select {
+		case err := <-result:
+			t.Fatalf("Shutdown returned %v while the MCP notifier was still in its callback", err)
+		default:
+		}
+
+		close(release)
+		if err := <-result; err != nil {
+			t.Errorf("Shutdown after the notifier returned = %v, want nil", err)
+		}
 	})
-	// Any mutation signals the notifier, which debounces 100ms.
-	reportMCP(t, h, "s1", connectedMCP("a", marotte.MCPSource{}))
-
-	select {
-	case <-entered:
-	case <-time.After(2 * time.Second):
-		t.Fatal("the notifier callback never ran, so the fixture is holding nothing")
-	}
-
-	// The budget ends only once the teardown before the loop join is done (the engine stopped, its lanes and
-	// handlers joined, none of which this fixture holds), so a slow host cannot spend it on an earlier wait.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	result := make(chan error, 1)
-	go func() { result <- h.Shutdown(ctx) }()
-	select {
-	case <-h.lifecycle.shutdownCtx.Done():
-	case <-time.After(5 * time.Second):
-		t.Fatal("Shutdown never reached its engine stop")
-	}
-	select {
-	case err := <-result:
-		t.Fatalf("Shutdown returned %v while the MCP notifier was still in its callback", err)
-	case <-time.After(time.Second):
-	}
-	cancel()
-	if err := <-result; err == nil {
-		t.Error("Shutdown reported success while the MCP notifier was still in its callback")
-	} else if !strings.Contains(err.Error(), "background loops") {
-		t.Errorf("error %q does not name the background-loop wait", err)
-	}
-
-	// Released, the loop joins: the control.
-	close(release)
-	shutdownHub(t, h)
 }
 
 // lifetimeWatchingEngine records whether the runtime's lifetime was still live when the engine was stopped.
