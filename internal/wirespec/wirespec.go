@@ -8,7 +8,7 @@
 package wirespec
 
 import (
-	"github.com/cplieger/go/wiregen"
+	"github.com/cplieger/go/wiregen/v2"
 	"github.com/cplieger/marotte/internal/auth"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/filebrowse"

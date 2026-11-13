@@ -38,8 +38,8 @@ github.com/cplieger/go/textsafe v1.1.0 h1:D+p7ZDBQmABv/empI2TNMZfvhMXNlfii8E2e5V
 github.com/cplieger/go/textsafe v1.1.0/go.mod h1:x29RmZpMO2yjPt1zRbjtcXWVdkekukl+jA5FN1wXUlI=
 github.com/cplieger/go/urlform v1.2.0 h1:AQkwiRasHq1e57dzpFyrSRZWgp503XNPJ0DikXQLt1E=
 github.com/cplieger/go/urlform v1.2.0/go.mod h1:o7cRPRmslS3o05jpTJHqGKebD4eawAV7rIOB4AdGLao=
-github.com/cplieger/go/wiregen v1.1.0-dev.2 h1:W4UOrswuWtLzNhflZ4qldQMhw6EHBhbyhnar2dmVoUs=
-github.com/cplieger/go/wiregen v1.1.0-dev.2/go.mod h1:nQMd9q6pc/4h07R8R2PrdvMVlteTRD2LAfxyYC+Ym7w=
+github.com/cplieger/go/wiregen/v2 v2.2.0 h1:mY7kgQ42kEvZ4A2W/85Jc6FY7GpEr8mNcI+yu3cBXYw=
+github.com/cplieger/go/wiregen/v2 v2.2.0/go.mod h1:nQ6ftWl/tPZj9tZf3kErrZgPFNBsP2vJrs6O6E8ta2I=
 github.com/cplieger/go/yamlenv v1.1.0 h1:vNaxHJnJMmg7MfRhqTBDaFPhMylEzzEtNefCvqU9ZPc=
 github.com/cplieger/go/yamlenv v1.1.0/go.mod h1:2kEi6iiRSxaaAusNrPoC6l0BUqvVVskkR1Cdpt15nUg=
 github.com/cplieger/toolbelt/v3 v3.16.0-dev.1 h1:4gPMNAI7kjsECMZw3pNuMfPmCYYFQDAHy7slLlgrpGE=
