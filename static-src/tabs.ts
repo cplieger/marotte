@@ -2755,7 +2755,7 @@ function renderDOM(): void {
 /** Play a new row's entry once. The class leaves when the entry ends or stops, because any later
  *  restart (a re-insert, a return from display: none, a drag class leaving) would replay it
  *  (CSS Animations 1). Every other row animation replaces the entry's, so any end or cancel on the
- *  row itself means the entry has stopped; the target check drops events from its dot and label. */
+ *  row itself means the entry has stopped; the target check drops its status dot's events. */
 function playEntry(node: HTMLElement): void {
   node.classList.add("entering");
   const settle = (e: AnimationEvent): void => {

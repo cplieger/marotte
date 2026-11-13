@@ -461,6 +461,31 @@ describe("slideBox", () => {
     expect(applied).toEqual([false]);
   });
 
+  it("keeps a scroller around a measured close at its offset, clamping only as the slide shuts", async () => {
+    const scroller = mount(document.createElement("div"));
+    scroller.style.cssText = "block-size: 200px; overflow-y: auto";
+    const content = document.createElement("div");
+    content.style.blockSize = "300px";
+    const box = document.createElement("div");
+    scroller.append(content, box);
+    const applied: boolean[] = [];
+    const apply = (o: boolean): void => {
+      applied.push(o);
+      box.style.blockSize = o ? "200px" : "0px";
+    };
+    apply(true);
+    applied.length = 0;
+    scroller.scrollTop = scroller.scrollHeight;
+    const before = scroller.scrollTop;
+    expect(before, "scrolled to the end").toBe(300);
+
+    slideBox(box, false, apply);
+    expect(applied, "the close measured the shut box").toEqual([false, true]);
+    expect(scroller.scrollTop).toBe(before);
+    await finish(box);
+    expect(scroller.scrollTop, "the shut box's layout").toBe(100);
+  });
+
   it("keeps a scroller scrolled mid-slide, and clips a plain box without making it one", async () => {
     const scroller = mount(document.createElement("div"));
     scroller.style.overflowY = "auto";

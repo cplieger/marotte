@@ -389,13 +389,8 @@ body.sidebar-resizing {
    with a known upper bound lets the browser interpolate height even
    though the computed height is "auto" at rest.
 
-   It does NOT touch `margin`, and that is load-bearing rather than an
-   omission. `.tab.tab-child` carries the sub-tab indent as
-   `margin-inline-start`, so the `margin: 0` this used to open with reset the
-   indent on frame one: the row jumped a full 1rem wider and left before it
-   swiped, which is exactly what a sub-tab close looked like. The vertical
-   margins the reset was written for are gone — `.side-section-list` spaces its rows
-   with `gap` now — so there is nothing left for it to collapse. */
+   It leaves `margin` alone: `.tab.tab-child`'s indent is `margin-inline-start`,
+   so a reset would make a closing sub-tab jump wider on its first frame. */
   0% {
     opacity: 1;
     transform: translateX(0);

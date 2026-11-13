@@ -979,9 +979,7 @@
 }
 
 /* THE SIDEBAR'S SECTIONS (Open, Pinned): a disclosure header over each list, and
-   History as one row at their foot. A section carries no block padding, border or
-   gap of its own, so its header's height is the whole section while its rows are
-   folded away. */
+   History as one row at their foot. */
 .side-section + .side-section {
   margin-block-start: var(--sp-1);
 }

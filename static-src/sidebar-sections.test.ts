@@ -941,6 +941,40 @@ describe("a header's box and motion", () => {
     await slideEnd(list);
   });
 
+  it.each(
+    (["open", "pinned"] as const).flatMap((key) =>
+      (["top", "middle", "end"] as const).flatMap((at) =>
+        (["auto", "none"] as const).map((anchor) => ({ key, at, anchor })),
+      ),
+    ),
+  )(
+    "keeps the sidebar's offset as $key folds with it scrolled to its $at, overflow-anchor $anchor",
+    async ({ key, at, anchor }) => {
+      const refs = Array.from({ length: 40 }, (_, i) => `r${String(i)}`);
+      await openChats(...refs);
+      for (const r of refs.slice(0, 20)) {
+        await setTabPinned(chatID(r), true);
+      }
+      await paint();
+      const scroller = el("tab-sections");
+      // WebKit ships no scroll anchoring, which in Chromium can put a clamped offset back.
+      scroller.style.overflowAnchor = anchor;
+      const list = el(key === "open" ? "tab-list" : "pinned-list");
+      try {
+        const max = scroller.scrollHeight - scroller.clientHeight;
+        expect(max, "the sidebar scrolls").toBeGreaterThan(scroller.clientHeight);
+        scroller.scrollTop = { top: 0, middle: Math.round(max / 2), end: max }[at];
+        const before = scroller.scrollTop;
+        toggle(key).click();
+        expect(list.getAnimations(), "the list slides shut").not.toHaveLength(0);
+        expect(scroller.scrollTop).toBe(before);
+      } finally {
+        await slideEnd(list);
+        scroller.style.removeProperty("overflow-anchor");
+      }
+    },
+  );
+
   describe("a row's entry", () => {
     const refOf = (e: HTMLElement): string =>
       tabServer.subjects().find((s) => s.id === e.dataset["tabId"])?.ref ?? "";
@@ -1164,15 +1198,16 @@ describe("a header's box and motion", () => {
           ),
           "only the entries run",
         ).toEqual([["vk-slide-in-x"], ["vk-slide-in-x"]]);
-        row("kid")
-          .querySelector(".tab-name")
-          ?.dispatchEvent(
-            new AnimationEvent("animationend", { animationName: "vk-dot-beat", bubbles: true }),
-          );
-        await frame();
-        expect(row("kid").getAnimations(), "a label's animation ending leaves the entry").toEqual(
-          entries[0],
+        const dot = row("kid").querySelector(".tab-status-dot");
+        expect(dot, "the sub-tab's status dot").not.toBeNull();
+        dot?.dispatchEvent(
+          new AnimationEvent("animationend", { animationName: "vk-dot-beat", bubbles: true }),
         );
+        await frame();
+        expect(
+          row("kid").getAnimations(),
+          "a status dot's animation ending leaves the entry",
+        ).toEqual(entries[0]);
         await lift("c", midY(row("p")) - 2);
         expect(row("kid").checkVisibility(), "the lift folds the sub-tab away").toBe(false);
         root.removeProperty("--dur-micro");

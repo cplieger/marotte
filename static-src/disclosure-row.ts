@@ -42,7 +42,7 @@ const slides = new WeakMap<HTMLElement, { anim: Animation; open: boolean }>();
  * which only Chromium ships (https://webkit.org/b/295132, https://bugzil.la/1945962). A close keeps the content
  * applied until the slide ends; reduced motion, an unrendered box and `motion: false` flip at once, cancelling a
  * slide still running. `fade` carries the box's opacity from 0 or to 0 in the same tween. `closedHeight`, when the
- * caller knows it, spares a close its measuring layout of the shut box, which would clamp a scroller the box resizes.
+ * caller knows it, spares a close its measuring layout of the shut box, which would clamp a scroller beside the box.
  */
 export function slideBox(
   box: HTMLElement,
@@ -60,7 +60,7 @@ export function slideBox(
   const still = !motion || matchMedia("(prefers-reduced-motion: reduce)").matches;
   const measured = !still || slides.has(box);
   const from = measured ? box.getBoundingClientRect().height : 0;
-  const scrollTop = measured ? box.scrollTop : 0;
+  const offsets = measured ? scrolledOffsets(box) : [];
   let fromOpacity: string | undefined;
   if (fade && !still) {
     // A reversed slide fades on from where the one it replaces stood, not from an end.
@@ -111,9 +111,10 @@ export function slideBox(
     apply(open);
     return;
   }
-  // The layouts read above (a cancel, the open measure) can clamp a scroller's offset at a height the slide is not at.
-  if (scrollTop !== 0) {
-    box.scrollTop = scrollTop;
+  // The layouts read above (a cancel, either end's measure) can clamp the box's offset, or a scroller's around it, at
+  // a height the slide is not at. The box's own then clamps to the slide's first frame.
+  for (const [scroller, top] of offsets) {
+    scroller.scrollTop = top;
   }
   slides.set(box, { anim, open });
   // A cancelled slide rejects `finished`: the slide that replaced it owns the state.
@@ -127,6 +128,17 @@ export function slideBox(
     },
     () => undefined,
   );
+}
+
+/** `box` and each element around it that is scrolled down, with its offset. */
+function scrolledOffsets(box: HTMLElement): (readonly [Element, number])[] {
+  const offsets: (readonly [Element, number])[] = [];
+  for (let e: Element | null = box; e !== null; e = e.parentElement) {
+    if (e.scrollTop !== 0) {
+      offsets.push([e, e.scrollTop]);
+    }
+  }
+  return offsets;
 }
 
 /** Whether a `slideBox` slide is running on `box`. */
