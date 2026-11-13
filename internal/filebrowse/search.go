@@ -343,7 +343,6 @@ type walkEntry struct {
 	name string
 	abs  string
 	srel string
-	rrel string
 	typ  fs.FileMode
 	// inFilter says the entry passes the include half of the Files filter.
 	inFilter bool
@@ -792,7 +791,7 @@ func (w *searchWalk) admit(d *walkDir, e fs.DirEntry) (*walkEntry, bool) {
 	}
 	included := d.included || (w.filter.hasIncludes() && w.filter.includes(sub))
 	return &walkEntry{
-		sub: sub, name: name, abs: abs, srel: srel, rrel: rrel, typ: e.Type(),
+		sub: sub, name: name, abs: abs, srel: srel, typ: e.Type(),
 		inFilter: !w.filter.hasIncludes() || included, included: included,
 	}, true
 }

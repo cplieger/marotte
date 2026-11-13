@@ -61,7 +61,7 @@ func runMain() int {
 		return dir
 	})
 
-	app, err := composition.Build(context.Background(), &cfg, staticFS)
+	app, err := composition.Build(context.Background(), &cfg, appStatic())
 	if err != nil {
 		slog.Error("build", "error", err)
 		return 1
