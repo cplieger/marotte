@@ -3908,6 +3908,10 @@ export const decodeRunLaunchedResponse: Decoder<RunLaunchedResponse> = (v) => {
     workflow_id: reqStr(o, "workflow_id", "$.run_launched_response"),
     name: reqStr(o, "name", "$.run_launched_response"),
   };
+  {
+    const $v = own(o, "warnings");
+    if ($v !== undefined && $v !== null) out.warnings = own(o, "warnings") === null ? [] : decodeArray(own(o, "warnings"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.run_launched_response.warnings");
+  }
   return out;
 };
 

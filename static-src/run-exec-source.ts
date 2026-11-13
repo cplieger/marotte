@@ -1,7 +1,10 @@
 // The WORKFLOW adapter: KAS's `inspect` reply folded into the exec view's model.
 
+import { signal } from "@cplieger/reactive";
+import { BUS_CATALOG_MODELS, onBus } from "./bus.js";
 import { nodePathKey, nodePathSegment } from "./run-node-key.js";
 import { creditFigure, truncate } from "./strings.js";
+import { getCachedModels } from "./picker.js";
 import {
   pauseDetailPhrase,
   pausePendingSentence,
@@ -255,6 +258,21 @@ function passBudget(
   return { max, added: planned === undefined ? 0 : Math.max(0, max - planned) };
 }
 
+/** A pin the account is not offered: what a pending step will not run on, or what a started one
+ *  fell back from. */
+function pinnedModelFact(node: RunNode): string | undefined {
+  const pin = node.notOfferedModelId;
+  if (pin === undefined || pin === "") {
+    return undefined;
+  }
+  if (node.status === "pending") {
+    return `${pin}, not offered`;
+  }
+  const model = node.modelId;
+  const ran = model === undefined || model === "" || model === "auto" ? "the agent default" : model;
+  return `${pin}, not offered; ran on ${ran}`;
+}
+
 /** The identity facts for a step, in the order they answer questions: who ran it, on what, how
  *  it ended, and what it took to get there. */
 function stepFacts(
@@ -273,6 +291,7 @@ function stepFacts(
   // `auto` is not a model, it is the absence of a choice, and naming it as one implies a pin that
   // never happened.
   add("Model", node.modelId === "auto" ? undefined : node.modelId);
+  add("Pinned model", pinnedModelFact(node));
   add("Effort", node.effortLevel);
   // KAS's own statement of WHY the node ended, which is different information from its status: a
   // step can complete having asked for input.
@@ -408,6 +427,10 @@ function subtitleOf(
     if (node.modelId !== undefined && node.modelId !== "" && node.modelId !== "auto") {
       bits.push(node.modelId);
     }
+    const pin = node.notOfferedModelId;
+    if (pin !== undefined && pin !== "") {
+      bits.push(node.status === "pending" ? `${pin} not offered` : `fell back from ${pin}`);
+    }
     // No pass number: the pass is the loop's, stated on its pass row.
     if (node.continuationAttempts !== undefined && node.continuationAttempts > 0) {
       const n = node.continuationAttempts;
@@ -481,6 +504,7 @@ export interface ExecFoldMemo {
     asked: AskedSteps;
     pausedIDs: ReadonlyMap<string, number>;
     ends: StepEnds;
+    catalog: number;
     held: WeakMap<RunNode, HeldFold>;
   };
 }
@@ -525,9 +549,11 @@ function heldFolds(
   plan: unknown,
 ): { held: WeakMap<RunNode, HeldFold>; endsMoved: boolean } {
   const last = memo?.last;
+  const catalog = catalogLanded.value;
   const reuse =
     last !== undefined &&
     last.plan === plan &&
+    last.catalog === catalog &&
     last.run === ctx.run &&
     sameAsked(last.asked, ctx.asked) &&
     sameCounts(last.pausedIDs, ctx.pausedIDs);
@@ -541,6 +567,7 @@ function heldFolds(
       asked: ctx.asked,
       pausedIDs: ctx.pausedIDs,
       ends: ctx.ends,
+      catalog,
       held,
     };
   }
@@ -592,7 +619,9 @@ function countPausedSteps(root: RunNode | undefined): Map<string, number> {
 }
 
 /** A raw plan child as a not-yet-started state node, or nothing when it names no node. Any type is
- *  kept, as the state tree keeps it, so `kindOf` decides both paths alike. */
+ *  kept, as the state tree keeps it, so `kindOf` decides both paths alike. A pin the loaded catalog
+ *  does not offer is the step's `notOfferedModelId`, not its model: KAS falls back or fails the
+ *  step at its start, so it never runs on it. */
 function plannedNode(raw: unknown): RunNode[] {
   if (raw === null || typeof raw !== "object") {
     return [];
@@ -610,7 +639,25 @@ function plannedNode(raw: unknown): RunNode[] {
       out[key] = v;
     }
   }
+  const pin = out.modelId;
+  if (pin !== undefined && pin !== "auto" && !offered(pin)) {
+    out.notOfferedModelId = pin;
+    delete out.modelId;
+  }
   return [out];
+}
+
+/** Moves when a model catalog lands. The catalog `offered` reads is not reactive, so a fold reads
+ *  this to be repainted, and its held nodes refolded, by a catalog newer than the one it judged. */
+const catalogLanded = signal(0);
+onBus(BUS_CATALOG_MODELS, () => {
+  catalogLanded.value = catalogLanded.peek() + 1;
+});
+
+/** Whether the account is offered model id; true while no catalog has loaded, which knows nothing. */
+function offered(id: string): boolean {
+  const models = getCachedModels();
+  return models.length === 0 || models.some((m) => m.model_id === id);
 }
 
 /** What a container KAS has not expanded yet will hold, from its plan: a parallel's branches

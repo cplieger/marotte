@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"strconv"
 	"time"
 
@@ -24,7 +26,8 @@ type runPlans struct {
 }
 
 // RunPlanUpdate records a queued revision, naming the top-level step it replaces the plan after,
-// or settles the queued one. A rejection also reaches the launching chat.
+// or settles the queued one. A rejected outcome is KAS failing to apply the revision, and also
+// reaches the launching chat.
 func (rs *Runs) RunPlanUpdate(ctx context.Context, chatID marotte.ChatID, runID string, u marotte.RunPlanUpdate) {
 	if u.Outcome == marotte.RunPlanQueued {
 		u.After = rs.runningTopStep(runID)
@@ -42,7 +45,7 @@ func (rs *Runs) RunPlanUpdate(ctx context.Context, chatID marotte.ChatID, runID 
 	rs.plans.put(runID, u)
 	rs.mu.Unlock()
 	if u.Outcome == marotte.RunPlanRejected {
-		rs.notePlanRejected(ctx, chatID, runID, u.Reason)
+		rs.notePlan(ctx, chatID, runID, planRejectedNoteID(runID), withReason("Plan update could not be applied", u.Reason), severityError)
 	}
 }
 
@@ -104,17 +107,36 @@ func planRejectedNoteID(runID string) string {
 	return "notify-" + runID + ":plan-rejected:" + strconv.FormatInt(time.Now().UnixNano(), 36)
 }
 
+// RunPlanRejection notes a person's rejection of a run's launch plan in the launching chat.
+// kasID is KAS's rejection id, so a repeated frame files the same note.
+func (rs *Runs) RunPlanRejection(ctx context.Context, chatID marotte.ChatID, runID, kasID, reason string) {
+	text := "Plan rejected"
+	if reason != "" {
+		text = "Plan edits requested: " + reason
+	}
+	rs.notePlan(ctx, chatID, runID, planRejectionNoteID(runID, kasID), text, "")
+}
+
+// KAS's rejection id is a JSON array string, unfit for an entry id.
+func planRejectionNoteID(runID, kasID string) string {
+	sum := sha256.Sum256([]byte(kasID))
+	return "notify-" + runID + ":plan-rejection:" + hex.EncodeToString(sum[:8])
+}
+
+func withReason(text, reason string) string {
+	if reason == "" {
+		return text
+	}
+	return text + ": " + reason
+}
+
 // A parentless run has no chat to tell.
-func (rs *Runs) notePlanRejected(ctx context.Context, chatID marotte.ChatID, runID, reason string) {
+func (rs *Runs) notePlan(ctx context.Context, chatID marotte.ChatID, runID, id, text, severity string) {
 	if chatID == "" || workflowIDOf(chatID) != "" || rs.coord == nil {
 		return
 	}
-	text := "Plan update rejected"
-	if reason != "" {
-		text += ": " + reason
-	}
-	rs.coord.recordSteer(ctx, chatID, planRejectedNoteID(runID), &marotte.EntrySteer{
+	rs.coord.recordSteer(ctx, chatID, id, &marotte.EntrySteer{
 		Text: text, Origin: marotte.SteerOriginAgent, State: marotte.SteerStateRead,
-		Severity: severityError, OriginRun: runID, ProducedTs: time.Now().UnixMilli(),
+		Severity: severity, OriginRun: runID, ProducedTs: time.Now().UnixMilli(),
 	})
 }

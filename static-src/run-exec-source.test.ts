@@ -1,7 +1,17 @@
 // The workflow adapter: KAS's `inspect` reply folded into the exec view's model.
 
-import { describe, it, expect } from "vitest";
-import { runToExec, indexPlan, planToExec } from "./run-exec-source.js";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import type { ModelInfo } from "./types.js";
+
+const catalog = vi.hoisted(() => ({ models: [] as ModelInfo[] }));
+vi.mock("./picker.js", () => ({ getCachedModels: () => catalog.models }));
+afterEach(() => {
+  catalog.models = [];
+});
+
+import { effect } from "@cplieger/reactive";
+import { BUS_CATALOG_MODELS, emitBus } from "./bus.js";
+import { runToExec, indexPlan, planToExec, type ExecFoldMemo } from "./run-exec-source.js";
 import { nodePathKey } from "./run-node-key.js";
 import { flatten, workNodes, counters, miniBar, type ExecNode } from "./exec-view/model.js";
 import extendedLoopRaw from "./testdata/run-extended-loop.json?raw";
@@ -218,6 +228,97 @@ describe("runToExec decides work by kind and fills an unexpanded container from 
       expect(facts.get("Model"), name).toBe("model-a-5.5");
       expect(facts.get("Effort"), name).toBe("high");
     }
+  });
+
+  it("a pending step names a pin the account is not offered", () => {
+    catalog.models = [{ model_id: "model-b", model_name: "Model B" }];
+    const plan = [
+      { nodeId: "code", type: "step", agentName: "wf-coder", modelId: "model-a-5.5" },
+      { nodeId: "test", type: "step", agentName: "wf-coder", modelId: "model-b" },
+    ];
+    const unstarted = { nodeId: "wf_1", type: "sequence", status: "running", children: [] };
+    const nodes = flatten(runToExec(stateWith(unstarted), plan, NO_ASKS).nodes);
+    const code = nodes.find((n) => n.label === "code");
+    const codeFacts = new Map((code?.facts ?? []).map((f) => [f.label, f.value]));
+    expect(codeFacts.get("Model")).toBeUndefined();
+    expect(codeFacts.get("Pinned model")).toBe("model-a-5.5, not offered");
+    expect(code?.subtitle).toContain("model-a-5.5 not offered");
+    const test = nodes.find((n) => n.label === "test");
+    const testFacts = new Map((test?.facts ?? []).map((f) => [f.label, f.value]));
+    expect(testFacts.get("Model")).toBe("model-b");
+    expect(testFacts.has("Pinned model")).toBe(false);
+  });
+
+  it("a catalog landing after the first fold names the pending pin, and repaints", () => {
+    const plan = [{ nodeId: "code", type: "step", agentName: "wf-coder", modelId: "model-a-5.5" }];
+    const unstarted = { nodeId: "wf_1", type: "sequence", status: "running", children: [] };
+    const state = stateWith(unstarted);
+    const memo: ExecFoldMemo = {};
+    const pinOf = () =>
+      flatten(runToExec(state, plan, NO_ASKS, "", new Map(), memo).nodes)
+        .find((n) => n.label === "code")
+        ?.facts?.find((f) => f.label === "Pinned model")?.value;
+    let folds = 0;
+    let pin: string | undefined;
+    const stop = effect(() => {
+      folds++;
+      pin = pinOf();
+    });
+    expect(pin).toBeUndefined();
+    catalog.models = [{ model_id: "model-b", model_name: "Model B" }];
+    emitBus(BUS_CATALOG_MODELS);
+    stop();
+    expect(folds).toBe(2);
+    expect(pin).toBe("model-a-5.5, not offered");
+  });
+
+  it("a catalog landing refolds a held container's planned pin", () => {
+    const plan = [
+      {
+        nodeId: "fan",
+        type: "parallel",
+        branches: [{ nodeId: "code", type: "step", agentName: "wf-coder", modelId: "model-a-5.5" }],
+      },
+    ];
+    const fan = { nodeId: "fan", type: "parallel", status: "pending", children: [] };
+    const state = stateWith({
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [fan],
+    });
+    const memo: ExecFoldMemo = {};
+    const pinOf = () =>
+      flatten(runToExec(state, plan, NO_ASKS, "", new Map(), memo).nodes)
+        .find((n) => n.label === "code")
+        ?.facts?.find((f) => f.label === "Pinned model")?.value;
+    expect(pinOf()).toBeUndefined();
+    catalog.models = [{ model_id: "model-b", model_name: "Model B" }];
+    emitBus(BUS_CATALOG_MODELS);
+    expect(pinOf()).toBe("model-a-5.5, not offered");
+  });
+
+  it("names a step's dropped model pin", () => {
+    const run = runToExec(
+      stateWith({
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "running",
+        children: [
+          step("fell", "completed", { notOfferedModelId: "m-x", modelId: "m-y" }),
+          step("bare", "running", { notOfferedModelId: "m-x" }),
+        ],
+      }),
+      undefined,
+      NO_ASKS,
+    );
+    const [fell, bare] = run.nodes;
+    const fact = (n: ExecNode | undefined) =>
+      (n?.facts ?? []).find((f) => f.label === "Pinned model")?.value;
+    expect(fact(fell)).toBe("m-x, not offered; ran on m-y");
+    expect(fact(bare)).toBe("m-x, not offered; ran on the agent default");
+    expect(fell?.subtitle).toContain("fell back from m-x");
+    expect(bare?.subtitle).toContain("fell back from m-x");
   });
 
   it("never counts a childless container as a step, plan or no plan", () => {

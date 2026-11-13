@@ -540,11 +540,11 @@ func (rr *runRoutes) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	rr.runs.lifecycle.answerEngineMutation(w, r, engineMutation{
 		verb: "run launch",
 		call: func(ctx context.Context) engineReply {
-			id, name, err := rr.runs.launch(ctx, req.Source, req.Inputs, defaults)
+			id, name, warnings, err := rr.runs.launch(ctx, req.Source, req.Inputs, defaults)
 			if err != nil {
 				return engineReply{err: err, write: func(w http.ResponseWriter) { writeLaunchErr(w, req.Source, err) }}
 			}
-			body := marotte.RunLaunchedResponse{WorkflowID: id, Name: name}
+			body := marotte.RunLaunchedResponse{WorkflowID: id, Name: name, Warnings: warnings}
 			return engineReply{write: func(w http.ResponseWriter) { httpserver.WriteJSON(w, body) }, applied: true}
 		},
 	})

@@ -77,17 +77,17 @@ var errLaunchNewUnconfirmed = errors.New("the engine's answer to the launch was 
 // stall (engineOwner.stallAware). A var so a test can shorten it.
 var launchTimeout = 120 * time.Second
 
-// launch starts one parentless attended run of the recipe and returns its workflow id and name.
+// launch starts one parentless attended run of the recipe and returns its workflow id, its name and KAS's
+// launch warnings.
 func (rs *Runs) launch(
 	ctx context.Context, source string, inputs map[string]string, defaults marotte.RunDefaults,
-) (id, name string, err error) {
+) (id, name string, warnings []string, err error) {
 	return rs.launchAs(ctx, source, inputs, defaults, manualLaunch())
 }
 
 // LaunchScheduled launches an unattended run for a schedule. slotAt is its next slot; zero leaves the idle window.
 // Only the inputs the recipe declares are sent; the caller's map is not modified. The sign-in gate's refusal wraps
-// schedule.ErrNoRunCanStart; an engine that did not answer before the run was created, or a model list too unreadable
-// to check the recipe's step picks against, wraps schedule.ErrEngineBusy.
+// schedule.ErrNoRunCanStart; an engine that did not answer before the run was created wraps schedule.ErrEngineBusy.
 func (rs *Runs) LaunchScheduled(
 	ctx context.Context, source string, row launchrule.Row, inputs map[string]string, defaults marotte.RunDefaults,
 	slotAt time.Time,
@@ -98,11 +98,11 @@ func (rs *Runs) LaunchScheduled(
 		return "", "", errRuntimeDraining
 	}
 	defer release()
-	id, name, err = rs.launchAs(ctx, source, inputs, defaults, scheduledLaunch(row, slotAt))
+	id, name, _, err = rs.launchAs(ctx, source, inputs, defaults, scheduledLaunch(row, slotAt))
 	switch {
 	case errors.Is(err, errRunsNeedSignIn) || errors.Is(err, errRunsProviderDown):
 		err = fmt.Errorf("%w: %w", schedule.ErrNoRunCanStart, err)
-	case errors.Is(err, errEngineSlow) || errors.Is(err, errDefaultsUncheckable):
+	case errors.Is(err, errEngineSlow):
 		err = fmt.Errorf("%w: %w", schedule.ErrEngineBusy, err)
 	case errors.Is(err, errLaunchUnconfirmed):
 		// The runner records any error as a failed slot; the run may be running, and its ending settles the row.
@@ -133,7 +133,7 @@ func (rs *Runs) LaunchTriggered(
 		return "", classLaunch(dErr)
 	}
 	o := triggeredLaunch(ruleID, eventKey, coalesceKey, trigger.EventLabel(inputs))
-	workflowID, _, err = rs.launchAs(ctx, source, inputs, defaults, o)
+	workflowID, _, _, err = rs.launchAs(ctx, source, inputs, defaults, o)
 	if workflowID == "" {
 		err = classLaunch(err)
 	}
@@ -142,20 +142,20 @@ func (rs *Runs) LaunchTriggered(
 
 func (rs *Runs) launchAs(
 	ctx context.Context, source string, inputs map[string]string, defaults marotte.RunDefaults, o launchOrigin,
-) (id, name string, err error) {
+) (id, name string, warnings []string, err error) {
 	// One admission from before workflow/new through invoke, so no run is created that the gate then never starts.
 	a, gErr := rs.admitRunWork(refuseClosed, "", "")
 	if gErr != nil {
-		return "", "", gErr
+		return "", "", nil, gErr
 	}
 	defer func() { a.settle(id) }()
 	budgetEnd := time.Now().Add(launchTimeout)
 	cctx, cancel := rs.engine.stallAware(ctx, launchTimeout)
 	defer cancel()
 
-	recipe, err := rs.launchCheckedRecipe(ctx, cctx, source, inputs, defaults)
+	recipe, err := rs.launchRecipe(cctx, source, inputs)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, unanswered(ctx, err)
 	}
 	if o.origin == runlease.OriginManual && !isAgentSource(source) {
 		// A manual run yields to its recipe's next slot.
@@ -163,7 +163,7 @@ func (rs *Runs) launchAs(
 	}
 	unlock, bErr := rs.lockIdleRecipe(cctx, recipe.Name, &o)
 	if bErr != nil {
-		return "", "", unanswered(ctx, bErr)
+		return "", "", nil, unanswered(ctx, bErr)
 	}
 	defer unlock()
 	inputs, dropped := o.sentInputs(inputs, recipe.Inputs)
@@ -188,17 +188,17 @@ func (rs *Runs) launchAs(
 			sb.attach(relay)
 			return nil
 		}); oErr != nil {
-		return "", "", unanswered(ctx, fmt.Errorf("%w: %w", errRunHostStart, oErr))
+		return "", "", nil, unanswered(ctx, fmt.Errorf("%w: %w", errRunHostStart, oErr))
 	}
 	parent := sb.SessionID()
 	if parent == "" {
 		sb.closeOwned(rs.bridges.closeSession)
-		return "", "", fmt.Errorf("%w: the host session's door answered no session id", errRunHostStart)
+		return "", "", nil, fmt.Errorf("%w: the host session's door answered no session id", errRunHostStart)
 	}
 	var wfID string
 	err = sb.useRun(cctx, func(ctx context.Context, s engineSession) error {
 		var nErr error
-		wfID, nErr = rs.workflowNew(ctx, s, recipe.Source, inputs, defaults, parent, o.runLabel(recipe.Name))
+		wfID, warnings, nErr = rs.workflowNew(ctx, s, recipe.Source, inputs, defaults, parent, o.runLabel(recipe.Name))
 		return nErr
 	})
 	if err != nil {
@@ -206,11 +206,11 @@ func (rs *Runs) launchAs(
 		if ctx.Err() == nil && (verdictOf(err) == kasUnconfirmed || isCtxErr(err)) {
 			err = fmt.Errorf("%w: %w", errLaunchNewUnconfirmed, err)
 		}
-		return "", "", err
+		return "", "", nil, err
 	}
 	if !rs.bridges.insert(runChatID(wfID), sb) {
 		sb.closeOwned(rs.bridges.closeSession)
-		return "", "", fmt.Errorf("workflow %s %w", wfID, errHostSessionTaken)
+		return "", "", nil, fmt.Errorf("workflow %s %w", wfID, errHostSessionTaken)
 	}
 	// The run exists: a caller that stops waiting now must not leave it half launched, its row naming a run that
 	// nothing tracks, so the rest keeps the launch's budget and drops the caller's cancel. A stall-aware context's
@@ -225,10 +225,10 @@ func (rs *Runs) launchAs(
 	})
 	relay.begin()
 	if sErr := rs.startLaunched(rctx, a, sb, wfID, recipe.Name, &o, hostSecurityOf(presets), unlock); sErr != nil {
-		return wfID, recipe.Name, sErr
+		return wfID, recipe.Name, warnings, sErr
 	}
 	logLaunched(wfID, recipe.Name, dropped)
-	return wfID, recipe.Name, nil
+	return wfID, recipe.Name, warnings, nil
 }
 
 // lockIdleRecipe takes the recipe's launch lock and runs the single-run check under it. The caller holds the lock until
@@ -1069,21 +1069,6 @@ var agentNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 func isAgentSource(source string) bool { return strings.HasPrefix(source, agentSourcePrefix) }
 
-// launchCheckedRecipe is launchRecipe's recipe once its step pins passed checkRecipePins. ctx is the caller's, which
-// unanswered reads; cctx is the launch's budget.
-func (rs *Runs) launchCheckedRecipe(
-	ctx, cctx context.Context, source string, inputs map[string]string, defaults marotte.RunDefaults,
-) (marotte.Recipe, error) {
-	recipe, err := rs.launchRecipe(cctx, source, inputs)
-	if err != nil {
-		return marotte.Recipe{}, unanswered(ctx, err)
-	}
-	if err := rs.checkRecipePins(cctx, recipe.Plan, defaults); err != nil {
-		return marotte.Recipe{}, err
-	}
-	return recipe, nil
-}
-
 // launchRecipe resolves a listed recipe or an agent:// source. An agent run needs a prompt, and its
 // recipe name is KAS's `agent-<name>`, so one live run per agent. KAS refuses an unregistered agent.
 func (rs *Runs) launchRecipe(ctx context.Context, source string, inputs map[string]string) (marotte.Recipe, error) {
@@ -1216,12 +1201,13 @@ func (rs *Runs) fetchRecipes(ctx context.Context) ([]marotte.Recipe, error) {
 	return out, nil
 }
 
-// workflowNew creates the run on bridge and returns its id. parent is the run host session's id, so
-// frames route back to that session. workspacePaths stays for pre-0.63.3 engines.
+// workflowNew creates the run on bridge and returns its id and KAS's launch warnings, each also logged, since the log
+// is the only place an unattended launch's warnings reach. parent is the run host session's id, so frames route back
+// to that session. workspacePaths stays for pre-0.63.3 engines.
 func (rs *Runs) workflowNew(
 	ctx context.Context, bridge acpCaller, source string, inputs map[string]string,
 	defaults marotte.RunDefaults, parent marotte.SessionID, label string,
-) (string, error) {
+) (id string, warnings []string, err error) {
 	// Always a map: KAS answers "inputs is not iterable" without one.
 	in := map[string]any{}
 	for k, v := range inputs {
@@ -1245,17 +1231,22 @@ func (rs *Runs) workflowNew(
 	resp, err := bridge.Call(ctx, methodKiroWorkflowNew, params)
 	if cErr := workflow.Classify(err); cErr != nil {
 		if ctx.Err() != nil {
-			return "", fmt.Errorf("workflow new: kiro-cli did not answer in time and may have created the run: %w", cErr)
+			return "", nil, fmt.Errorf("workflow new: kiro-cli did not answer in time and may have created the run: %w", cErr)
 		}
-		return "", fmt.Errorf("workflow new: %w", cErr)
+		return "", nil, fmt.Errorf("workflow new: %w", cErr)
 	}
 	var res struct {
-		WorkflowID string `json:"workflowId"`
+		WorkflowID string   `json:"workflowId"`
+		Warnings   []string `json:"warnings"`
 	}
 	if err := json.Unmarshal(resp.Result, &res); err != nil || res.WorkflowID == "" {
-		return "", fmt.Errorf("%w: workflow new: reply carried no workflowId", errLaunchNewUnconfirmed)
+		return "", nil, fmt.Errorf("%w: workflow new: reply carried no workflowId", errLaunchNewUnconfirmed)
 	}
-	return res.WorkflowID, nil
+	for _, w := range res.Warnings {
+		slog.Warn("workflow launch warning", "workflow_id", res.WorkflowID, "source", logsafe.Field(source),
+			"warning", logsafe.Field(w))
+	}
+	return res.WorkflowID, res.Warnings, nil
 }
 
 // stalePauseReason is KAS's STALE_RUNNING_PAUSE_REASON for a run whose owner died. A literal: only this reason licenses a cancel.

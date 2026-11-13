@@ -61,6 +61,8 @@ type sessionInfoKiroBlock struct {
 	DisplayError *displayErrorBlock `json:"displayError"`
 	// InteractionResolved is the kind=="interaction_resolved" block.
 	InteractionResolved *interactionResolvedBlock `json:"interactionResolved"`
+	// WorkflowPlanRejection is a person's launch-plan rejection (see plan_rejection.go).
+	WorkflowPlanRejection *workflowPlanRejection `json:"workflowPlanRejection"`
 	// PendingInteraction is the kind=="pending_interaction" block (see turn_facts.go).
 	PendingInteraction *pendingInteractionBlock `json:"pendingInteraction"`
 	// SteeringDocuments is the kind=="steering_inclusion" list, FLAT beside Kind.
@@ -219,6 +221,10 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 
 // handleChatInfo routes a chat's own frame to the first handler its _meta.kiro shape names, context usage last.
 func (t *Translator) handleChatInfo(ctx context.Context, chatID marotte.ChatID, sessionID string, k *sessionInfoKiroBlock) {
+	if r := k.WorkflowPlanRejection; r != nil {
+		t.handlePlanRejection(ctx, chatID, r)
+		return
+	}
 	if k.Kind == infoKindTurnTiming {
 		if turn, ok := t.turns.OwnTurn(chatID); ok {
 			turn.NoteFirstOutput(firstOutputFrom(k.TTFT))

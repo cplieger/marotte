@@ -44,6 +44,8 @@ type baseDeps struct {
 	// leaseChats are the chats LeaseChat answers, keyed by workflow id.
 	leaseChats  map[string]marotte.ChatID
 	planUpdates []marotte.RunPlanUpdate
+	// planRejections records each RunPlanRejection call, in order.
+	planRejections []planRejectionCall
 	// runNotices is the per-chat queue RunNotice consumes, oldest first, so a test
 	// can stage a finished run behind a notify-wf- notice without a run registry.
 	runNotices map[marotte.ChatID][]stagedRunNotice
@@ -505,6 +507,16 @@ func (d *baseDeps) RunUnsettledWorkflowMessages(_ context.Context, runID string)
 func (d *baseDeps) RunPlanUpdate(_ context.Context, _ marotte.ChatID, runID string, u marotte.RunPlanUpdate) {
 	d.planUpdates = append(d.planUpdates, u)
 	d.runCalls = append(d.runCalls, runCall{kind: "plan_update", runID: runID})
+}
+
+type planRejectionCall struct {
+	chat                 marotte.ChatID
+	runID, kasID, reason string
+}
+
+func (d *baseDeps) RunPlanRejection(_ context.Context, chatID marotte.ChatID, runID, kasID, reason string) {
+	d.planRejections = append(d.planRejections, planRejectionCall{chat: chatID, runID: runID, kasID: kasID, reason: reason})
+	d.runCalls = append(d.runCalls, runCall{kind: "plan_rejection", runID: runID, chat: chatID, reason: reason})
 }
 
 // foldRecord is one fold site's target: a chat's own turn when runID is empty,

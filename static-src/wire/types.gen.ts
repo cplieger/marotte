@@ -3337,6 +3337,8 @@ export interface RunLaunchRequest {
 export interface RunLaunchedResponse {
   workflow_id: string;
   name: string;
+  /** Warnings are KAS's workflow/new advisories, verbatim. */
+  warnings?: string[];
 }
 
 /**

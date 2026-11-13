@@ -48,6 +48,9 @@ export interface RunNode {
   status: ClassifiedRunNodeStatus;
   agentName?: string;
   modelId?: string;
+  /** The step's pinned model KAS dropped because the account is not offered it; `modelId` is then
+   *  the model it ran on instead, absent for the agent's default. */
+  notOfferedModelId?: string;
   effortLevel?: string;
   sessionId?: string;
   /** When the node's current attempt began: the run log's where it holds the current one
