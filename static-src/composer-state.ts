@@ -124,9 +124,10 @@ export function restoreComposerState(chatID: string): void {
 
 /**
  * Point the composer at `chatID`, parking what it held first: save-and-restore as one call for sites that move the
- * active chat without `selectChat` (`createSession`, `openTangentChat`, `removeChat`). Without it a keystroke
- * in that window is filed under the chat the user just left. Idempotent, so it can run ahead of the activation. What
- * the box held with no chat open goes to `chatID` (`adoptUnownedComposer`), or stays in the box when `chatID` is "".
+ * active chat without `selectChat` (`createSession`, `openTangentChat`, `reselectPaintedChat`'s no-chat arm). Without
+ * it a keystroke in that window is filed under the chat the user just left. Idempotent, so it can run ahead of the
+ * activation. What the box held with no chat open goes to `chatID` (`adoptUnownedComposer`), or stays in the box when
+ * `chatID` is "".
  */
 export function retargetComposer(chatID: string): void {
   if (chatID === "" && liveChatID === "") {

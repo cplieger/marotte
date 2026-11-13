@@ -2,7 +2,16 @@
 // mock, since closing a tab is outside this handler's contract.
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
-import { setSessions, getSessions, get, setActive } from "../store.js";
+import { effect } from "@cplieger/reactive";
+import {
+  setSessions,
+  getSessions,
+  get,
+  setActive,
+  setPainted,
+  getActiveId,
+  watchPaintedId,
+} from "../store.js";
 import type { Session, ChatHeader } from "../types.js";
 import { framedSince, headerFrameMark } from "../header-frames.js";
 
@@ -247,6 +256,23 @@ describe("chat_deleted", () => {
     setSessions([makeSession("c5")]);
     fireSSE("chat_deleted", "", { id: "c5" });
     expect(mockForgetDeletedChat).toHaveBeenCalledWith("c5");
+  });
+
+  it("another device's delete of the chat on screen points the store at no chat until the tab frame", () => {
+    setSessions([makeSession("y"), makeSession("x")]);
+    setActive("x");
+    setPainted("x");
+    const painted: string[] = [];
+    const stop = effect(() => {
+      painted.push(watchPaintedId());
+    });
+    try {
+      fireSSE("chat_deleted", "", { id: "x" });
+      expect(painted, "a chat the reader never chose was painted").toEqual(["x", ""]);
+      expect(getActiveId(), "the store chose the chat a Send goes to").toBe("");
+    } finally {
+      stop();
+    }
   });
 
   it("does not reach the tab store at all when nothing is open", () => {

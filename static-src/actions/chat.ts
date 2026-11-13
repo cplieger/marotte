@@ -39,6 +39,8 @@ import {
 } from "../wire/decoders.gen.js";
 import {
   get,
+  getActiveId,
+  setActive,
   setSupervisedMode,
   setChatInterruptMode,
   removeChat,
@@ -137,7 +139,7 @@ function chatFromReply(r: SendResult, signal: AbortSignal, what: string): Create
 export const deleteChat = defineAction<
   { id: string; impact: CloseImpact },
   undefined,
-  { session: Session; atIndex: number }
+  { session: Session; atIndex: number; wasActive: boolean }
 >({
   name: "chat.delete",
   networkMode: "always",
@@ -171,14 +173,20 @@ export const deleteChat = defineAction<
       return undefined;
     }
     const atIndex = indexOfSession(id);
+    const wasActive = getActiveId() === id;
     removeChat(id);
-    return { session, atIndex };
+    return { session, atIndex, wasActive };
   },
-  // If the server deleted but the response timed out, rollback reinserts a
-  // ghost session that a later SSE chat_deleted event removes.
-  rollback: (_args, op) => {
-    if (op !== undefined) {
-      reinsertSession(op.session, op.atIndex);
+  // If the server deleted but the response timed out, rollback reinserts a ghost session: a
+  // chat_deleted arriving after the rollback removes it, one that arrived before leaves it.
+  rollback: ({ id }, op) => {
+    if (op === undefined) {
+      return;
+    }
+    reinsertSession(op.session, op.atIndex);
+    // Only while nothing chose another chat since the optimistic step cleared this one.
+    if (op.wasActive && getActiveId() === "") {
+      setActive(id);
     }
   },
   // Its one dispatcher (history.ts deleteRow) toasts every failure but a stale confirm, which it
