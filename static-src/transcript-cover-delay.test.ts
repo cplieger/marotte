@@ -93,10 +93,10 @@ describe("a held cover waits before it shows", () => {
     expect(shown(), "a wait that began before the hold waited a fresh window").toBe(true);
   });
 
-  it("shows in the next task for a reader who has already waited past the window", () => {
+  it("shows in the hold's own task for a reader who has already waited past the window", () => {
     coverModule.holdCover("cd-a", performance.now() - DELAY_MS * 4);
-    vi.advanceTimersByTime(0);
-    expect(shown(), "a wait already past the window waited a fresh window").toBe(true);
+    expect(shown(), "a wait already past the window waited for a timer").toBe(true);
+    expect(coverModule.swapDeferred("cd-a"), "a shown cover still deferred the swap").toBe(false);
   });
 
   it("never shows for a paint inside the window, and plays no fade over the content", () => {

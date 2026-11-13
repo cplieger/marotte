@@ -365,8 +365,7 @@ describe("the boot's restore of a chat with nothing resident", () => {
     activateRestoredTab();
     expect(getActiveTabId()).toBe("tab-a");
     expect(coverUp(), "the restore held no cover over a chat with nothing resident").toBe(true);
-    await new Promise((r) => setTimeout(r, 0));
-    expect(coverShown(), "a boot already past the window waited a fresh one").toBe(true);
+    expect(coverShown(), "a boot already past the window waited for a timer").toBe(true);
     expect(rendered("chat-view"), "the cover stands over no chat view").toBe(true);
     page.resolve();
   });

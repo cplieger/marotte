@@ -34,29 +34,39 @@ let swapDue = "";
 let deferredReveal: (() => void) | null = null;
 
 /** Show `node` once the reader has waited the window since `since` (`performance.now()` clock),
- *  restarting a window already running. */
+ *  restarting a window already running. A window already over shows it in this task: a long task
+ *  queued behind the hold (a boot's first paint) would hold a timer back past it. */
 function scheduleReveal(node: HTMLDivElement, since: number): void {
   reveal?.cancel();
-  const waited = performance.now() - since;
+  reveal = null;
+  const left = COVER_SHOW_DELAY_MS - (performance.now() - since);
+  if (left <= 0) {
+    showCover(node);
+    return;
+  }
   reveal = skeletonTiming(
     () => {
       reveal = null;
-      if (cover !== node || !node.isConnected) {
-        return;
-      }
-      const due = swapDue;
-      if (due !== "") {
-        takeOutgoingReads();
-      }
-      node.hidden = false;
-      delete node.dataset["state"];
-      if (due !== "") {
-        runSwap();
-        owner?.swap(due);
-      }
+      showCover(node);
     },
-    { showDelayMs: Math.max(0, COVER_SHOW_DELAY_MS - waited) },
+    { showDelayMs: left },
   );
+}
+
+function showCover(node: HTMLDivElement): void {
+  if (cover !== node || !node.isConnected) {
+    return;
+  }
+  const due = swapDue;
+  if (due !== "") {
+    takeOutgoingReads();
+  }
+  node.hidden = false;
+  delete node.dataset["state"];
+  if (due !== "") {
+    runSwap();
+    owner?.swap(due);
+  }
 }
 
 /** Retake the outgoing view's park reads at the swap's layout: the reader could still scroll it. */
