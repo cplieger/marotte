@@ -135,7 +135,7 @@ export const ICON_HOURGLASS = svg(
     '<path d="M7 21.5V19.1L12 12L17 19.1V21.5"/>',
 );
 // A stop square, filled: the outline reads as a checkbox at 16px, and stop-is-filled is the transport convention.
-// Every stop uses it (a turn's Cancel, a run's Cancel, dictation's Stop), so one action has one glyph.
+// Cancel and dictation's Stop share it: the two sit side by side mid-turn, and one action keeps one glyph.
 export const ICON_CANCEL = svg(
   "ui",
   '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/>',
