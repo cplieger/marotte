@@ -42,6 +42,8 @@ type runLogEngine struct {
 	probeEngine
 }
 
+var _ runLogProbe = (*runLogEngine)(nil)
+
 func (e *runLogEngine) PublishRunLog(_ context.Context, runID string) {
 	e.published = append(e.published, runID)
 }

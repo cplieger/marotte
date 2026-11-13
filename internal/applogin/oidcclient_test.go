@@ -56,8 +56,8 @@ func TestOIDCClient_SeamKeepsTheChecks(t *testing.T) {
 	t.Run("ip_literal_endpoint_refused", func(t *testing.T) {
 		idp := newSeamIdP(t, idpURL, accesstest.IdPOptions{TokenEndpoint: "https://192.0.2.1/token"})
 		_, err := oidc.NewProvider(t.Context(), ProviderConfig(providerOf(idp), origin, access.NewEphemeralSealer()))
-		if !errors.Is(err, ErrEndpointIPLiteral) {
-			t.Errorf("an IP-literal token endpoint = %v, want ErrEndpointIPLiteral", err)
+		if !errors.Is(err, errEndpointIPLiteral) {
+			t.Errorf("an IP-literal token endpoint = %v, want errEndpointIPLiteral", err)
 		}
 	})
 	t.Run("non_https_endpoint_refused_by_the_library", func(t *testing.T) {
@@ -353,7 +353,7 @@ func TestOIDC_DiscoveryEndpointRules(t *testing.T) {
 			want           error
 		}{
 			{"http://idp.example.com" + f.path, "http", oidc.ErrDiscovery},
-			{"https://192.0.2.1" + f.path, "ip_literal", ErrEndpointIPLiteral},
+			{"https://192.0.2.1" + f.path, "ip_literal", errEndpointIPLiteral},
 		} {
 			t.Run(f.name+"_"+c.kind, func(t *testing.T) {
 				var opts accesstest.IdPOptions
@@ -385,11 +385,11 @@ func TestOIDC_ChangedEndpointOriginLeavesProviderUnbuilt(t *testing.T) {
 			var opts accesstest.IdPOptions
 			f.set(&opts, idp2URL+f.path)
 			idp := newSeamIdP(t, idpURL, opts)
-			if _, _, err := recordedBuild(t, providerOf(idp), origin); !errors.Is(err, ErrEndpointsChanged) || !strings.Contains(err.Error(), f.name) {
-				t.Errorf("build = %v, want ErrEndpointsChanged naming %s", err, f.name)
+			if _, _, err := recordedBuild(t, providerOf(idp), origin); !errors.Is(err, errEndpointsChanged) || !strings.Contains(err.Error(), f.name) {
+				t.Errorf("build = %v, want errEndpointsChanged naming %s", err, f.name)
 			}
-			if err := rebuildFailure(t, opts); !errors.Is(err, ErrEndpointsChanged) {
-				t.Errorf("rebuild failure = %v, want ErrEndpointsChanged", err)
+			if err := rebuildFailure(t, opts); !errors.Is(err, errEndpointsChanged) {
+				t.Errorf("rebuild failure = %v, want errEndpointsChanged", err)
 			}
 			if n := moved.Load(); n != 0 {
 				t.Errorf("the moved origin received %d requests", n)
@@ -423,8 +423,8 @@ func TestOIDC_EndpointOriginComparedInItsSerializedForm(t *testing.T) {
 			rec.Origins.Token, rec.Origins.JWKS = c.saved, c.saved
 			_, recorded, err := recordedBuild(t, rec, origin)
 			if c.changed {
-				if !errors.Is(err, ErrEndpointsChanged) {
-					t.Errorf("build = %v, want ErrEndpointsChanged", err)
+				if !errors.Is(err, errEndpointsChanged) {
+					t.Errorf("build = %v, want errEndpointsChanged", err)
 				}
 				for _, u := range recorded.urls() {
 					if strings.HasPrefix(u, c.endpoint+"/") {

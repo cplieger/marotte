@@ -50,7 +50,7 @@ func TestRequestIsHTTPS_AndClientAddr(t *testing.T) {
 				t.Errorf("ClientAddr = %+v, want IP %s proxied %t untrusted %t", a, c.ip, c.proxied, c.untrusted)
 			}
 			if c.exposePeer != "" {
-				peer, _, ok := p.LastUntrustedPeer()
+				peer, ok := p.LastUntrustedPeer()
 				if !ok || peer.String() != c.exposePeer {
 					t.Errorf("LastUntrustedPeer = (%s, %t), want %s", peer, ok, c.exposePeer)
 				}

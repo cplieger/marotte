@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/cplieger/access"
 	"github.com/cplieger/go/httpserver"
@@ -18,8 +17,6 @@ import (
 // a new value on the context rather than change one.
 type requestFacts struct {
 	plain bool
-	// mismatch: the request carried an HTTPS session's cookie, which the gate stripped.
-	mismatch bool
 }
 
 type factsKey struct{}
@@ -28,30 +25,18 @@ func withFacts(ctx context.Context, f requestFacts) context.Context {
 	return context.WithValue(ctx, factsKey{}, f)
 }
 
-// TransportOf reports the transport the gate decided; ok is false outside the gate.
-func TransportOf(ctx context.Context) (plain, ok bool) {
+// transportOf reports the transport the gate decided; ok is false outside the gate.
+func transportOf(ctx context.Context) (plain, ok bool) {
 	f, ok := ctx.Value(factsKey{}).(requestFacts)
 	return f.plain, ok
-}
-
-// SessionTransportMismatch reports whether the gate stripped an HTTPS session's cookie from a
-// plain request; false outside the gate.
-func SessionTransportMismatch(ctx context.Context) bool {
-	f, _ := ctx.Value(factsKey{}).(requestFacts)
-	return f.mismatch
 }
 
 // Proxies is the one TRUSTED_PROXIES rule both transport predicates read, so the client address,
 // the limiter key and the HTTPS decision never disagree.
 type Proxies struct {
-	exposure atomic.Pointer[exposure]
-	trusted  []netip.Prefix
-}
-
-// exposure is the last peer seen forwarding from outside the trusted set.
-type exposure struct {
-	At   time.Time
-	Peer netip.Addr
+	// untrusted is the last peer seen forwarding from outside the trusted set.
+	untrusted atomic.Pointer[netip.Addr]
+	trusted   []netip.Prefix
 }
 
 // ParseProxies parses TRUSTED_PROXIES, comma-separated CIDRs or addresses. A malformed entry is
@@ -93,19 +78,19 @@ func (p *Proxies) ClientAddr(r *http.Request) access.ClientAddr {
 	res := httpserver.ResolveClient(r, p.trusted...)
 	untrusted := res.UntrustedForwarding || (!res.PeerTrusted && r.Header.Get("X-Forwarded-Proto") != "")
 	if untrusted {
-		p.exposure.Store(&exposure{Peer: res.Peer, At: time.Now()})
+		peer := res.Peer
+		p.untrusted.Store(&peer)
 	}
 	return access.ClientAddr{IP: res.IP, Peer: res.Peer, Proxied: res.Forwarded, UntrustedForwarding: untrusted}
 }
 
 // LastUntrustedPeer reports the last peer seen forwarding from outside TRUSTED_PROXIES; ok is
 // false when none has.
-func (p *Proxies) LastUntrustedPeer() (peer netip.Addr, at time.Time, ok bool) {
-	e := p.exposure.Load()
-	if e == nil {
-		return netip.Addr{}, time.Time{}, false
+func (p *Proxies) LastUntrustedPeer() (peer netip.Addr, ok bool) {
+	if a := p.untrusted.Load(); a != nil {
+		return *a, true
 	}
-	return e.Peer, e.At, true
+	return netip.Addr{}, false
 }
 
 // SessionCookieName is the session cookie's base name.

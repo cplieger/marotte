@@ -340,7 +340,7 @@ func (t *txView) CreateSession(ctx context.Context, sess *access.Session) error 
 	if _, ok := t.s.sessByID[sess.ID]; ok {
 		return errSessionIDTaken
 	}
-	plain, ok := TransportOf(ctx)
+	plain, ok := transportOf(ctx)
 	if !ok {
 		slog.Error("access: a session was created without a transport; stored as plain HTTP")
 		plain = true

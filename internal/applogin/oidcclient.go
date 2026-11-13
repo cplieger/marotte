@@ -218,7 +218,7 @@ func checkDiscovery(resp *http.Response, saved ProviderOrigins) (*http.Response,
 	}
 	for _, f := range fields {
 		if _, err := netip.ParseAddr(originHost(f.value)); err == nil {
-			return nil, fmt.Errorf("%w: %s", ErrEndpointIPLiteral, f.name)
+			return nil, fmt.Errorf("%w: %s", errEndpointIPLiteral, f.name)
 		}
 	}
 	for _, f := range fields {
@@ -227,7 +227,7 @@ func checkDiscovery(resp *http.Response, saved ProviderOrigins) (*http.Response,
 			continue
 		}
 		if origin, _ := httpsOrigin(u); origin == "" || origin != canonicalOrigin(f.saved) {
-			return nil, fmt.Errorf("%w: %s is %s, saved %s", ErrEndpointsChanged, f.name, f.value, f.saved)
+			return nil, fmt.Errorf("%w: %s is %s, saved %s", errEndpointsChanged, f.name, f.value, f.saved)
 		}
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(body))
@@ -235,10 +235,10 @@ func checkDiscovery(resp *http.Response, saved ProviderOrigins) (*http.Response,
 }
 
 var (
-	// ErrEndpointIPLiteral refuses a discovery endpoint whose host is an IP literal; the error
+	// errEndpointIPLiteral refuses a discovery endpoint whose host is an IP literal; the error
 	// names the field.
-	ErrEndpointIPLiteral = errors.New("access: an OIDC discovery endpoint's host is an IP literal")
-	// ErrEndpointsChanged refuses a discovery endpoint on an origin other than the one the owner
+	errEndpointIPLiteral = errors.New("access: an OIDC discovery endpoint's host is an IP literal")
+	// errEndpointsChanged refuses a discovery endpoint on an origin other than the one the owner
 	// approved at Test; the error names the field. Settings answers it by asking for a new Test.
-	ErrEndpointsChanged = errors.New("access: the OIDC provider's endpoints changed")
+	errEndpointsChanged = errors.New("access: the OIDC provider's endpoints changed")
 )

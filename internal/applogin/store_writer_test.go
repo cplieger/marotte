@@ -14,7 +14,7 @@ import (
 
 // heldGroup queues calls behind one held group, so they run as the next group together; it returns
 // once each call has returned.
-func heldGroup(t *testing.T, s *Store, d *testDisk, calls ...func()) {
+func heldGroup(t *testing.T, s *Store, calls ...func()) {
 	t.Helper()
 	entered, pending, release := s.holdGroup()
 	first := make(chan error, 1)
@@ -46,7 +46,7 @@ func TestWriter_AllErrorGroupPublishesNothing(t *testing.T) {
 	s, d := openTestStore(t)
 	var gotA, gotB error
 	before := d.publishes.Load() + 1 // the held first group's own publish
-	heldGroup(t, s, d,
+	heldGroup(t, s,
 		func() { gotA = s.Update(t.Context(), func(account.Tx) error { return errA }) },
 		func() { gotB = s.Update(t.Context(), func(account.Tx) error { return errB }) },
 	)
@@ -83,7 +83,7 @@ func TestWriter_GuardOnlyRefusal(t *testing.T) {
 func TestWriter_FailedCallbackBesideAWrite(t *testing.T) {
 	s, d := openTestStore(t)
 	var gotA, gotB error
-	heldGroup(t, s, d,
+	heldGroup(t, s,
 		func() {
 			gotA = s.Update(t.Context(), func(tx account.Tx) error {
 				if err := tx.CreateUser(t.Context(), &access.User{Username: "rolled-back"}); err != nil {
@@ -107,10 +107,10 @@ func TestWriter_FailedCallbackBesideAWrite(t *testing.T) {
 }
 
 func TestWriter_PanicReRaisedInItsCaller(t *testing.T) {
-	s, d := openTestStore(t)
+	s, _ := openTestStore(t)
 	var recovered any
 	var gotB error
-	heldGroup(t, s, d,
+	heldGroup(t, s,
 		func() {
 			defer func() { recovered = recover() }()
 			_ = s.Update(t.Context(), func(tx account.Tx) error {
@@ -200,18 +200,18 @@ func TestWriter_JobCancelledWhileQueuedDoesNotRun(t *testing.T) {
 func TestCleanup_GroupedWritesJudgedInOrder(t *testing.T) {
 	now := epoch.Add(48 * time.Hour)
 	timeouts := access.SessionTimeouts{Idle: time.Hour, Absolute: 7 * 24 * time.Hour}
-	seed := func(t *testing.T) (*Store, *testDisk, *access.Session) {
-		s, d := openTestStore(t)
+	seed := func(t *testing.T) (*Store, *access.Session) {
+		s, _ := openTestStore(t)
 		sess := newTestSession(1, now.Add(-2*time.Hour))
 		if err := s.CreateSession(plainCtx(t.Context()), sess); err != nil {
 			t.Fatal(err)
 		}
-		return s, d, sess
+		return s, sess
 	}
 	t.Run("activity_first", func(t *testing.T) {
-		s, d, sess := seed(t)
+		s, sess := seed(t)
 		var refs []access.SessionRef
-		heldGroup(t, s, d,
+		heldGroup(t, s,
 			func() {
 				_ = s.UpdateSessionActivity(t.Context(), sess.TokenHash, access.SessionActivity{At: now, IP: "192.0.2.5"})
 			},
@@ -227,12 +227,12 @@ func TestCleanup_GroupedWritesJudgedInOrder(t *testing.T) {
 		}
 	})
 	t.Run("cleanup_first", func(t *testing.T) {
-		s, d, sess := seed(t)
+		s, sess := seed(t)
 		var refs []access.SessionRef
 		var rotErr error
 		next := *sess
 		_, next.TokenHash = access.GenerateSessionToken()
-		heldGroup(t, s, d,
+		heldGroup(t, s,
 			func() { refs, _ = s.CleanupExpiredSessions(t.Context(), now, timeouts, 10) },
 			func() {
 				_ = s.UpdateSessionActivity(t.Context(), sess.TokenHash, access.SessionActivity{At: now, IP: "192.0.2.5"})
@@ -262,7 +262,7 @@ func TestActivity_OlderWriteIsANoop(t *testing.T) {
 			t.Fatal(err)
 		}
 		base := d.publishes.Load() + 1
-		heldGroup(t, s, d,
+		heldGroup(t, s,
 			func() {
 				_ = s.UpdateSessionActivity(t.Context(), sess.TokenHash, access.SessionActivity{At: t0.Add(30 * time.Minute), IP: "192.0.2.2"})
 			},

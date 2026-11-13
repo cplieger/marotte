@@ -1834,7 +1834,7 @@ func queueInOrder(t *testing.T, s *Store, calls ...func()) {
 }
 
 // enrolPasskey registers dev for p's user through the real ceremony.
-func (h *harness) enrolPasskey(p access.Principal, dev *accesstest.PasskeyDevice) access.PasskeyCredential {
+func (h *harness) enrolPasskey(p access.Principal, dev *accesstest.PasskeyDevice) {
 	h.t.Helper()
 	ctx := context.Background()
 	o := webOrigin(h.t)
@@ -1842,22 +1842,21 @@ func (h *harness) enrolPasskey(p access.Principal, dev *accesstest.PasskeyDevice
 	if err != nil {
 		h.t.Fatalf("PasskeyRegisterBegin: %v", err)
 	}
-	reg, err := h.svc.PasskeyRegisterFinish(ctx, p, cer.ID, bytes.NewReader(dev.Register(mustJSON(h.t, cer.Creation))))
-	if err != nil {
+	if _, err := h.svc.PasskeyRegisterFinish(ctx, p, cer.ID, bytes.NewReader(dev.Register(mustJSON(h.t, cer.Creation)))); err != nil {
 		h.t.Fatalf("PasskeyRegisterFinish: %v", err)
 	}
-	return reg.Passkey
 }
 
 // passkeySignIn signs in with dev through the real ceremony.
-func (h *harness) passkeySignIn(dev *accesstest.PasskeyDevice) (account.SignedIn, error) {
+func (h *harness) passkeySignIn(dev *accesstest.PasskeyDevice) error {
 	h.t.Helper()
 	ctx := httpsCtx(context.Background())
 	cer, err := h.svc.PasskeyLoginBegin(ctx, testClient, webOrigin(h.t), account.LoginModal)
 	if err != nil {
-		return account.SignedIn{}, err
+		return err
 	}
-	return h.svc.PasskeyLoginFinish(ctx, testClient, cer.ID, bytes.NewReader(dev.Assert(mustJSON(h.t, cer.Assertion))))
+	_, err = h.svc.PasskeyLoginFinish(ctx, testClient, cer.ID, bytes.NewReader(dev.Assert(mustJSON(h.t, cer.Assertion))))
+	return err
 }
 
 func webOrigin(t testing.TB) webauthn.Origin {
@@ -2494,7 +2493,7 @@ func TestRestoreAllowance_RecoveryPasskeyTurnsPasskeyOn(t *testing.T) {
 		if !b.store.policy().Methods.Passkey {
 			t.Error("Passkey is off")
 		}
-		if _, err := b.passkeySignIn(dev); err != nil {
+		if err := b.passkeySignIn(dev); err != nil {
 			t.Errorf("the recovered passkey does not sign in: %v", err)
 		}
 	}

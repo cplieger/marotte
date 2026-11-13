@@ -308,7 +308,7 @@ func (w *writer) runJob(tx *txView, j *job) (outcome, bool) {
 	tx.undo, tx.creds, tx.guardDue, tx.rewrite = tx.undo[:0], nil, false, false
 	o := protect(func() error { return j.fn(tx) })
 	if o.kind == outcomeNoop {
-		if err := st.settleOwnWrite(tx, j); err != nil {
+		if err := settleOwnWrite(tx, j); err != nil {
 			o = failed(err)
 		}
 	}
@@ -327,14 +327,14 @@ func (w *writer) runJob(tx *txView, j *job) (outcome, bool) {
 
 // settleOwnWrite applies the job's restore allowance, then its guard: the guard counts the
 // methods the allowance turned on.
-func (s *Store) settleOwnWrite(tx *txView, j *job) error {
+func settleOwnWrite(tx *txView, j *job) error {
 	if j.marker != "" {
 		if err := applyRestore(tx, j.marker); err != nil {
 			return err
 		}
 	}
 	if tx.guardDue && j.guard != nil {
-		return s.checkGuard(tx, j)
+		return checkGuard(tx, j)
 	}
 	return nil
 }

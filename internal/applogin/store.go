@@ -181,6 +181,8 @@ func seqCmp(e storeLogEntry, seq uint64) int { //nolint:gocritic // hugeParam: s
 }
 
 // Store is marotte's account.Store over /config/access.json.
+//
+//deadset:ignore DS1501 -- composition opens and holds it once the login is wired
 type Store struct {
 	disk filemode.Disk
 	ctx  context.Context
@@ -245,30 +247,6 @@ func (s *Store) keyRecord(id int64) (storeKey, bool) {
 func (s *Store) policy() storePolicy { return s.cur.Load().policy.clone() }
 
 func (s *Store) seenSeq() uint64 { return s.cur.Load().seenSeq }
-
-// SessionNote is one session's transport, the one session fact the library's views lack.
-type SessionNote struct {
-	ID        string `json:"id"`
-	Transport string `json:"transport"` // "plain" or "https"
-}
-
-// annotations lists the transport of each of userID's sessions, by session ID.
-func (s *Store) annotations(userID int64) []SessionNote {
-	snap := s.cur.Load()
-	out := []SessionNote{}
-	for _, r := range snap.sessions {
-		if r.UserID != userID {
-			continue
-		}
-		t := schemeHTTPS
-		if r.Plain {
-			t = "plain"
-		}
-		out = append(out, SessionNote{ID: r.ID, Transport: t})
-	}
-	slices.SortFunc(out, func(a, b SessionNote) int { return cmp.Compare(a.ID, b.ID) })
-	return out
-}
 
 // OIDCProvider is account.Config.OIDC: the provider of the published snapshot, nil while none is
 // built.
@@ -438,7 +416,7 @@ func (s *Store) openState(tx *txView) (Reset, error, error) {
 	snap, arm, err := openArmOf(data, err)
 	switch arm {
 	case armNoFile:
-		s.adoptFresh(tx)
+		adoptFresh(tx)
 		return Reset{}, nil, nil
 	case armValid:
 		snap.providerGen = 1
@@ -450,7 +428,7 @@ func (s *Store) openState(tx *txView) (Reset, error, error) {
 		if cErr != nil {
 			return Reset{}, nil, fmt.Errorf("access: copying the unreadable sign-in data aside: %w", cErr)
 		}
-		s.adoptFresh(tx)
+		adoptFresh(tx)
 		return Reset{Aside: aside, At: time.Now().UTC()}, err, nil
 	}
 	return Reset{}, nil, err
@@ -458,7 +436,7 @@ func (s *Store) openState(tx *txView) (Reset, error, error) {
 
 // adoptFresh puts the first-boot state on the private copy: no records, the default policy at
 // generation 1, one device key and a failure key.
-func (s *Store) adoptFresh(tx *txView) {
+func adoptFresh(tx *txView) {
 	fk := make([]byte, keyBytes)
 	_, _ = rand.Read(fk) // never fails since Go 1.24
 	fresh := emptySnapshot()

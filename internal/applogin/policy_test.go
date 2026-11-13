@@ -39,7 +39,7 @@ func TestValidatePolicy_TimeoutRanges(t *testing.T) {
 	} {
 		p := defaultPolicy()
 		c.edit(&p)
-		var pe *PolicyInvalidError
+		var pe *policyInvalidError
 		err := validatePolicy(&p)
 		if !asPolicyInvalid(err, &pe) || pe.Reason != c.reason {
 			t.Errorf("%s: validatePolicy = %v, want reason %s", c.name, err, c.reason)
@@ -47,8 +47,8 @@ func TestValidatePolicy_TimeoutRanges(t *testing.T) {
 	}
 }
 
-func asPolicyInvalid(err error, target **PolicyInvalidError) bool {
-	pe, ok := err.(*PolicyInvalidError) //nolint:errorlint // validatePolicy returns the type itself for range refusals
+func asPolicyInvalid(err error, target **policyInvalidError) bool {
+	pe, ok := err.(*policyInvalidError) //nolint:errorlint // validatePolicy returns the type itself for range refusals
 	*target = pe
 	return ok
 }
@@ -126,7 +126,7 @@ func TestCandidateOf_SecondsRangeCheckedBeforeConversion(t *testing.T) {
 			req := inRange()
 			c.edit(&req)
 			_, err := candidateOf(&req)
-			var pe *PolicyInvalidError
+			var pe *policyInvalidError
 			if !asPolicyInvalid(err, &pe) || pe.Reason != c.reason {
 				t.Errorf("candidateOf = %v, want reason %s", err, c.reason)
 			}
@@ -190,7 +190,7 @@ func TestCandidateOf_OriginsAndPinKeysStoredCanonical(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, err := candidateOf(c.req)
-			var pe *PolicyInvalidError
+			var pe *policyInvalidError
 			if !asPolicyInvalid(err, &pe) || pe.Reason != c.reason {
 				t.Errorf("candidateOf = %v, want reason %s", err, c.reason)
 			}
@@ -200,7 +200,7 @@ func TestCandidateOf_OriginsAndPinKeysStoredCanonical(t *testing.T) {
 		req := request(idpURL, "idp.example.com")
 		req.Provider.Pinned["IDP.example.com"] = []string{"10.0.0.8"}
 		_, err := candidateOf(req)
-		var pe *PolicyInvalidError
+		var pe *policyInvalidError
 		if !asPolicyInvalid(err, &pe) || pe.Reason != "pinned_host_duplicate" {
 			t.Errorf("candidateOf = %v, want reason pinned_host_duplicate", err)
 		}

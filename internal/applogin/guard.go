@@ -83,7 +83,7 @@ func applyRestore(tx *txView, m access.Method) error {
 
 // checkGuard refuses an own write after which the owner has no password, no passkey and no linked
 // and enabled OIDC identity, counted by the library over the job's private copy.
-func (s *Store) checkGuard(tx *txView, j *job) error {
+func checkGuard(tx *txView, j *job) error {
 	owner := tx.s.owner()
 	if owner == nil {
 		return nil

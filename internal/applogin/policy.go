@@ -60,6 +60,8 @@ type storeProvider struct {
 }
 
 // ProviderOrigins are the endpoint origins the owner approved at Test.
+//
+//deadset:ignore DS1501 -- a field of PolicyView and PolicyWriteRequest, which the endpoint table names once the policy routes are mounted
 type ProviderOrigins struct {
 	Issuer        string `json:"issuer"`
 	Authorization string `json:"authorization"`
@@ -160,23 +162,23 @@ func planProviderEdit(base, next storeProvider, replacement access.Secret) (*pro
 // ErrPolicyConflict refuses a Settings save built on a generation the record no longer holds.
 var ErrPolicyConflict = errors.New("applogin: the sign-in policy changed since the form was loaded")
 
-// PolicyInvalidError refuses a policy whose values are out of range; Reason is the envelope's.
-type PolicyInvalidError struct {
+// policyInvalidError refuses a policy whose values are out of range; Reason is the envelope's.
+type policyInvalidError struct {
 	Reason string
 }
 
-func (e *PolicyInvalidError) Error() string { return "applogin: invalid sign-in policy: " + e.Reason }
+func (e *policyInvalidError) Error() string { return "applogin: invalid sign-in policy: " + e.Reason }
 
 // validatePolicy checks a candidate record before any build or write.
 func validatePolicy(p *storePolicy) error {
 	switch {
 	case p.Idle < minIdle || p.Idle > maxIdle:
-		return &PolicyInvalidError{Reason: "idle_out_of_range"}
+		return &policyInvalidError{Reason: "idle_out_of_range"}
 	case p.Absolute < minAbsolute || p.Absolute > maxAbsolute:
-		return &PolicyInvalidError{Reason: "absolute_out_of_range"}
+		return &policyInvalidError{Reason: "absolute_out_of_range"}
 	}
 	if err := rulesOf(p, nil).Validate(); err != nil {
-		return fmt.Errorf("%w: %w", &PolicyInvalidError{Reason: "rules_invalid"}, err)
+		return fmt.Errorf("%w: %w", &policyInvalidError{Reason: "rules_invalid"}, err)
 	}
 	return nil
 }
@@ -184,7 +186,7 @@ func validatePolicy(p *storePolicy) error {
 // PlainCaps is Rules.SessionCaps: a plain request, or one the gate never saw, gets the plain caps;
 // an HTTPS request none.
 func PlainCaps(ctx context.Context, _ account.Client) (idle, absolute time.Duration) { //nolint:gocritic // hugeParam: Rules.SessionCaps's signature
-	if plain, ok := TransportOf(ctx); ok && !plain {
+	if plain, ok := transportOf(ctx); ok && !plain {
 		return 0, 0
 	}
 	return 30 * time.Minute, 12 * time.Hour
@@ -301,9 +303,9 @@ func candidateOf(req *PolicyWriteRequest) (storePolicy, error) {
 	// Range-checked as seconds: a Duration product past the int64 range wraps into range.
 	switch {
 	case req.IdleSeconds < int64(minIdle/time.Second) || req.IdleSeconds > int64(maxIdle/time.Second):
-		return storePolicy{}, &PolicyInvalidError{Reason: "idle_out_of_range"}
+		return storePolicy{}, &policyInvalidError{Reason: "idle_out_of_range"}
 	case req.AbsoluteSeconds < int64(minAbsolute/time.Second) || req.AbsoluteSeconds > int64(maxAbsolute/time.Second):
-		return storePolicy{}, &PolicyInvalidError{Reason: "absolute_out_of_range"}
+		return storePolicy{}, &policyInvalidError{Reason: "absolute_out_of_range"}
 	}
 	p := storePolicy{
 		Methods:   policyMethods(req.Methods),
@@ -324,13 +326,13 @@ func candidateOf(req *PolicyWriteRequest) (storePolicy, error) {
 	for raw, addrs := range req.Provider.Pinned {
 		host := canonicalHost(raw)
 		if hosts[host] {
-			return storePolicy{}, &PolicyInvalidError{Reason: "pinned_host_duplicate"}
+			return storePolicy{}, &policyInvalidError{Reason: "pinned_host_duplicate"}
 		}
 		hosts[host] = true
 		for _, a := range addrs {
 			addr, err := netip.ParseAddr(a)
 			if err != nil {
-				return storePolicy{}, &PolicyInvalidError{Reason: "pinned_address_invalid"}
+				return storePolicy{}, &policyInvalidError{Reason: "pinned_address_invalid"}
 			}
 			pins[host] = append(pins[host], addr)
 		}
@@ -350,7 +352,7 @@ func canonicalOrigins(raw ProviderOrigins) (ProviderOrigins, error) {
 		Token: canonicalOrigin(raw.Token), JWKS: canonicalOrigin(raw.JWKS),
 	}
 	if out.Issuer == "" || out.Authorization == "" || out.Token == "" || out.JWKS == "" {
-		return ProviderOrigins{}, &PolicyInvalidError{Reason: "origin_invalid"}
+		return ProviderOrigins{}, &policyInvalidError{Reason: "origin_invalid"}
 	}
 	return out, nil
 }

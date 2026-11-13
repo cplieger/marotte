@@ -28,8 +28,6 @@ func (s *Store) holdGroup() (entered <-chan struct{}, pending func() int, releas
 		}
 }
 
-func (s *Store) diskIsOwned() bool { return s.diskOwned.Load() }
-
 // setKeysForTest replaces the device keys and the failure key on the next publication.
 func (s *Store) setKeysForTest(device, failure []byte) error {
 	return s.write(context.Background(), func(tx *txView) error {
@@ -38,14 +36,6 @@ func (s *Store) setKeysForTest(device, failure []byte) error {
 		snap.deviceKeys = []access.Secret{access.NewSecret(string(device))}
 		snap.failureKey = access.NewSecret(string(failure))
 		tx.record(func() { snap.deviceKeys, snap.failureKey = oldD, oldF })
-		return nil
-	})
-}
-
-// putSessionForTest stores r as is, bypassing the SPI's rules.
-func (s *Store) putSessionForTest(r storeSession) error {
-	return s.write(context.Background(), func(tx *txView) error {
-		tx.putSession(&r)
 		return nil
 	})
 }
