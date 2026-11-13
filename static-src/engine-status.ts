@@ -200,7 +200,11 @@ function paintBanner(s: EngineStatus | null): void {
     );
     return;
   }
-  clearBannerCodes(GLOBAL_BANNER, [RESTARTING_CODE, DOWN_CODE]);
+  // A start after a failure is still the restart the banner names: clearing it here blinks it on
+  // every retry of an engine that keeps failing. At boot no engine banner is up.
+  if (s.state !== "starting") {
+    clearBannerCodes(GLOBAL_BANNER, [RESTARTING_CODE, DOWN_CODE]);
+  }
   if (!s.restart.pending) {
     clearBannerCodes(GLOBAL_BANNER, [PENDING_CODE]);
     return;

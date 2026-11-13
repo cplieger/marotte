@@ -176,6 +176,25 @@ describe("engine banner", () => {
     adoptEngineStatus(status());
     expect(mockedClear).toHaveBeenCalledWith("*", ["engine_restarting", "engine_down"]);
   });
+
+  it("keeps the restarting banner through a retry's start until the engine is ready", () => {
+    adoptEngineStatus(status({ state: "down" }));
+    mockedClear.mockClear();
+    mockedShow.mockClear();
+
+    adoptEngineStatus(status({ state: "starting" }));
+
+    const cleared = mockedClear.mock.calls.flatMap((c) => c[1]);
+    expect(cleared, "the retry's start took the banner down").not.toContain("engine_down");
+    expect(shownCodes(), "the retry's start showed a banner of its own").toEqual([]);
+    adoptEngineStatus(status());
+    expect(mockedClear).toHaveBeenCalledWith("*", ["engine_restarting", "engine_down"]);
+  });
+
+  it("shows no banner while the engine starts at boot", () => {
+    adoptEngineStatus(status({ state: "starting" }));
+    expect(shownCodes()).toEqual([]);
+  });
 });
 
 describe("status ordering", () => {
