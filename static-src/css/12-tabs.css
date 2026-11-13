@@ -1028,15 +1028,6 @@
 
 .side-section-chevron {
   transition: transform var(--dur-micro) var(--ease-standard);
-
-  &[hidden] {
-    display: none;
-  }
-}
-
-/* The tab dot's `[data-status]` reveal would outrank the UA's `[hidden]`. */
-.side-section-dot[hidden] {
-  display: none;
 }
 
 .side-section-name {

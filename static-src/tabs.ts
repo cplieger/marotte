@@ -2752,6 +2752,21 @@ function renderDOM(): void {
   }
 }
 
+/** Play a new row's entry once. The class leaves when the entry ends or stops, because any later
+ *  restart (a re-insert, a return from display: none, a drag class leaving) would replay it
+ *  (CSS Animations 1). Every other row animation replaces the entry's, so any end or cancel on the
+ *  row itself means the entry has stopped; the target check drops events from its dot and label. */
+function playEntry(node: HTMLElement): void {
+  node.classList.add("entering");
+  const settle = (e: AnimationEvent): void => {
+    if (e.target === node) {
+      node.classList.remove("entering");
+    }
+  };
+  node.addEventListener("animationend", settle);
+  node.addEventListener("animationcancel", settle);
+}
+
 /** Seat one row in `list` right after `prev` (or first), creating or reusing its element, and
  *  paint its per-row state. Answers the seated element, the next row's `prev`. */
 function seatRow(
@@ -2769,7 +2784,7 @@ function seatRow(
     } else {
       list.prepend(node);
     }
-    node.classList.add("entering");
+    playEntry(node);
   } else {
     node.classList.remove("exiting", "exiting-merge");
     const nameEl = node.querySelector(".tab-name");
@@ -2832,7 +2847,7 @@ function paintFold(
     for (const node of rows) {
       node.hidden = folded && node.dataset["tabId"] !== state.active;
       if (node.hidden) {
-        // A box returning from display: none restarts its animations (CSS Animations 1).
+        // A row seated hidden never starts its entry, so no animation event clears the class.
         node.classList.remove("entering");
       }
     }

@@ -79,7 +79,7 @@ import {
 import * as tabsModule from "./tabs.js";
 import * as deviceView from "./device-view.js";
 import { showContextMenu } from "./context-menu.js";
-import { dragOwnsStrip, MOUSE_DRAG } from "./tabs-drag.js";
+import { dragOwnsStrip, MOUSE_DRAG, REORDER_STILL_MS } from "./tabs-drag.js";
 import type { ContextMenuItem } from "./context-menu.js";
 import { LS_UI_STATE_KEY } from "./ls-keys.js";
 import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.js";
@@ -886,20 +886,39 @@ describe("a header's box and motion", () => {
     }
   });
 
-  it("hides every element of a new section class under [hidden]", async () => {
+  it("hides every element of a new section class that sets display under [hidden]", async () => {
     await bothSections();
-    const styled = [...el("tab-sections").querySelectorAll<HTMLElement>("*")].filter((e) =>
-      [...e.classList].some((c) => c.startsWith("side-")),
-    );
-    const classes = new Set(styled.flatMap((e) => [...e.classList]));
-    for (const c of ["side-section", "side-section-h", "side-section-toggle", "side-history-row"]) {
-      expect(classes.has(c), c).toBe(true);
+    const setsDisplay = new Set<string>();
+    const walk = (rules: CSSRuleList): void => {
+      for (const r of rules) {
+        if (r instanceof CSSStyleRule) {
+          const cls = /^\.(side-[\w-]+)$/.exec(r.selectorText)?.[1];
+          if (cls !== undefined && r.style.display !== "" && r.style.display !== "none") {
+            setsDisplay.add(cls);
+          }
+        }
+        if (r instanceof CSSGroupingRule) {
+          walk(r.cssRules);
+        }
+      }
+    };
+    const sheet = style.sheet;
+    if (sheet === null) {
+      throw new Error("the app stylesheet is not mounted");
     }
-    for (const e of styled) {
-      const was = e.hidden;
-      e.hidden = true;
-      expect(getComputedStyle(e).display, e.className).toBe("none");
-      e.hidden = was;
+    walk(sheet.cssRules);
+    expect(setsDisplay.size, "the stylesheet's section classes that set display").toBeGreaterThan(
+      0,
+    );
+    for (const c of setsDisplay) {
+      const found = [...el("tab-sections").querySelectorAll<HTMLElement>(`.${c}`)];
+      expect(found, c).not.toEqual([]);
+      for (const e of found) {
+        const was = e.hidden;
+        e.hidden = true;
+        expect(getComputedStyle(e).display, c).toBe("none");
+        e.hidden = was;
+      }
     }
   });
 
@@ -922,37 +941,258 @@ describe("a header's box and motion", () => {
     await slideEnd(list);
   });
 
-  it("plays each row's entry once, and not again across a fold and an unfold", async () => {
-    const list = el("tab-list");
-    const entries: string[] = [];
-    // An animation that starts and ends within one frame still dispatches its animationstart.
-    const record = (e: AnimationEvent): void => {
-      if (e.animationName === "vk-slide-in-x" && e.target instanceof HTMLElement) {
-        entries.push(e.target.dataset["tabId"] ?? "");
-      }
-    };
-    list.addEventListener("animationstart", record);
-    try {
-      await openChats("a", "b", "c");
-      await Promise.all(
-        ["a", "b", "c"].flatMap((r) =>
+  describe("a row's entry", () => {
+    const refOf = (e: HTMLElement): string =>
+      tabServer.subjects().find((s) => s.id === e.dataset["tabId"])?.ref ?? "";
+    const frame = (): Promise<void> =>
+      new Promise((r) => {
+        requestAnimationFrame(() => {
+          r();
+        });
+      });
+    /** Every running animation and transition on the rows, finished or cancelled (a drag's settle
+     *  timer cancels its own slide under load), then a frame: a `finished` promise resolves before
+     *  its frame dispatches the animation events (Web Animations 1, "update animations"). */
+    const settled = async (refs: readonly string[]): Promise<void> => {
+      await Promise.allSettled(
+        refs.flatMap((r) =>
           row(r)
             .getAnimations()
             .map((a) => a.finished),
         ),
       );
-      const opened = ["a", "b", "c"].map(chatID);
-      expect(entries.toSorted(), "each new row plays its entry").toEqual(opened.toSorted());
-      toggle("open").click();
-      expect(list.getAnimations(), "the list slides shut").not.toHaveLength(0);
-      await slideEnd(list);
-      toggle("open").click();
-      expect(list.getAnimations(), "the list slides open").not.toHaveLength(0);
-      await slideEnd(list);
-      expect(entries.toSorted(), "the fold and unfold replay none").toEqual(opened.toSorted());
-    } finally {
-      list.removeEventListener("animationstart", record);
-    }
+      await frame();
+    };
+    const pointerAt = (type: string, target: EventTarget, x: number, y: number): void => {
+      target.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          isPrimary: true,
+          pointerId: 7,
+          pointerType: "mouse",
+          clientX: x,
+          clientY: y,
+          buttons: type === "pointerup" ? 0 : 1,
+        }),
+      );
+    };
+    const midY = (e: HTMLElement): number => {
+      const r = e.getBoundingClientRect();
+      return r.top + r.height / 2;
+    };
+    /** Lift `ref` past the slop, carry it to `toY`, and let the ghost's animation start and report. */
+    const lift = async (ref: string, toY: number): Promise<HTMLElement> => {
+      const r = row(ref);
+      const x = r.getBoundingClientRect().left + 10;
+      pointerAt("pointerdown", r, x, midY(r));
+      pointerAt("pointermove", r, x, midY(r) + MOUSE_DRAG.slopPx + 2);
+      expect(dragOwnsStrip(), "a real drag is live").toBe(true);
+      pointerAt("pointermove", r, x, toY);
+      await frame();
+      await Promise.allSettled(
+        (document.querySelector(".tab-drag-ghost")?.getAnimations() ?? []).map((a) => a.ready),
+      );
+      await frame();
+      await frame();
+      return r;
+    };
+    /** Take the slot at `y`: a position report at an unchanged position, after the still window. */
+    const slotAt = async (r: HTMLElement, y: number): Promise<void> => {
+      await new Promise((res) => {
+        setTimeout(res, REORDER_STILL_MS + 20);
+      });
+      pointerAt("pointermove", r, r.getBoundingClientRect().left + 10, y);
+      await frame();
+    };
+
+    it.each<{ path: string; lifts: number; run: () => Promise<void> }>([
+      {
+        path: "a fold and an unfold",
+        lifts: 0,
+        run: async () => {
+          toggle("open").click();
+          expect(el("tab-list").getAnimations(), "the list slides shut").not.toHaveLength(0);
+          await slideEnd(el("tab-list"));
+          toggle("open").click();
+          expect(el("tab-list").getAnimations(), "the list slides open").not.toHaveLength(0);
+          await slideEnd(el("tab-list"));
+        },
+      },
+      {
+        path: "a status repaint",
+        lifts: 0,
+        run: async () => {
+          setTabStatus(chatID("a"), "working");
+          await paint();
+          setTabStatus(chatID("a"), "idle");
+          await paint();
+        },
+      },
+      {
+        path: "a pin and an unpin",
+        lifts: 0,
+        run: async () => {
+          await setTabPinned(chatID("a"), true);
+          await paint();
+          expect(row("a").parentElement?.id).toBe("pinned-list");
+          await setTabPinned(chatID("a"), false);
+          await paint();
+          expect(row("a").parentElement?.id).toBe("tab-list");
+        },
+      },
+      {
+        path: "a drop that commits",
+        lifts: 1,
+        run: async () => {
+          const history = el("history-btn");
+          const r = await lift("p", midY(history));
+          pointerAt("pointerup", r, r.getBoundingClientRect().left + 10, midY(history));
+          await paint();
+          expect(
+            [...el("tab-list").querySelectorAll<HTMLElement>(":scope > [data-tab-id]")].map(refOf),
+          ).toEqual(["a", "b", "p", "kid"]);
+        },
+      },
+      {
+        path: "a drop released outside the sections",
+        lifts: 1,
+        run: async () => {
+          const top = midY(row("p")) - 2;
+          const r = await lift("b", top);
+          await slotAt(r, top);
+          expect(r.classList.contains("tab-slotted"), "the row took the slot").toBe(true);
+          pointerAt("pointerup", document.body, window.innerWidth - 2, top);
+          await paint();
+        },
+      },
+      {
+        path: "a drag ended by Escape",
+        lifts: 1,
+        run: async () => {
+          const top = midY(row("p")) - 2;
+          const r = await lift("b", top);
+          await slotAt(r, top);
+          window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+          await paint();
+        },
+      },
+    ])("plays once and not again across $path", async ({ lifts, run }) => {
+      const starts: string[] = [];
+      // An animation that starts and ends within one frame still dispatches its animationstart.
+      const record = (e: AnimationEvent): void => {
+        if (e.target instanceof HTMLElement) {
+          const who = e.target.classList.contains("tab-drag-ghost") ? "ghost" : refOf(e.target);
+          starts.push(`${e.animationName} ${who}`);
+        }
+      };
+      document.addEventListener("animationstart", record, { capture: true });
+      try {
+        await openChats("p");
+        await openTab({ kind: "chat", ref: "kid", parent: chatID("p") });
+        await openChats("a", "b");
+        const refs = ["p", "kid", "a", "b"];
+        await settled(refs);
+        const entered = starts.filter((s) => s.startsWith("vk-slide-in-x"));
+        expect(entered.toSorted(), "each new row plays its entry").toEqual(
+          refs.map((r) => `vk-slide-in-x ${r}`).toSorted(),
+        );
+        starts.length = 0;
+
+        await run();
+        await settled(refs);
+        expect(
+          starts.filter((s) => s.startsWith("vk-slide-in-x")),
+          "replayed entries",
+        ).toEqual([]);
+        expect(
+          starts.filter((s) => s === "tab-drag-float ghost"),
+          "the ghost's bob",
+        ).toHaveLength(lifts);
+      } finally {
+        document.removeEventListener("animationstart", record, { capture: true });
+      }
+    });
+
+    it("plays no entry for a row opened into a folded section when the unfold reveals it", async () => {
+      const starts: string[] = [];
+      const record = (e: AnimationEvent): void => {
+        if (e.animationName === "vk-slide-in-x" && e.target instanceof HTMLElement) {
+          starts.push(refOf(e.target));
+        }
+      };
+      document.addEventListener("animationstart", record, { capture: true });
+      try {
+        await openChats("a", "b");
+        toggle("open").click();
+        await slideEnd(el("tab-list"));
+        await openTab({ kind: "chat", ref: "c", activate: false });
+        await paint();
+        expect(hiddenRefs("tab-list")).toEqual(["a", "c"]);
+        starts.length = 0;
+        toggle("open").click();
+        await slideEnd(el("tab-list"));
+        await frame();
+        expect(hiddenRefs("tab-list")).toEqual([]);
+        expect(starts).toEqual([]);
+      } finally {
+        document.removeEventListener("animationstart", record, { capture: true });
+      }
+    });
+
+    it("plays each entry once and floats the ghost when a lift lands mid-entry", async () => {
+      const starts: string[] = [];
+      const record = (e: AnimationEvent): void => {
+        if (e.target instanceof HTMLElement && e.target.dataset["tabId"] !== undefined) {
+          const who = e.target.classList.contains("tab-drag-ghost") ? "ghost" : refOf(e.target);
+          starts.push(`${e.animationName} ${who}`);
+        }
+      };
+      document.addEventListener("animationstart", record, { capture: true });
+      const root = document.documentElement.style;
+      try {
+        await openChats("p", "b");
+        await settled(["p", "b"]);
+        // A long entry, so the lift, not the clock under load, decides how it stops.
+        root.setProperty("--dur-micro", "60s");
+        await openTab({ kind: "chat", ref: "kid", parent: chatID("p"), activate: false });
+        await openChats("c");
+        const entries = ["kid", "c"].map((r) => row(r).getAnimations());
+        expect(
+          entries.map((list) =>
+            list.map((a) => (a instanceof CSSAnimation ? a.animationName : "")),
+          ),
+          "only the entries run",
+        ).toEqual([["vk-slide-in-x"], ["vk-slide-in-x"]]);
+        row("kid")
+          .querySelector(".tab-name")
+          ?.dispatchEvent(
+            new AnimationEvent("animationend", { animationName: "vk-dot-beat", bubbles: true }),
+          );
+        await frame();
+        expect(row("kid").getAnimations(), "a label's animation ending leaves the entry").toEqual(
+          entries[0],
+        );
+        await lift("c", midY(row("p")) - 2);
+        expect(row("kid").checkVisibility(), "the lift folds the sub-tab away").toBe(false);
+        root.removeProperty("--dur-micro");
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+        await paint();
+        await settled(["kid", "c"]);
+        expect(starts.filter((s) => !s.startsWith("vk-dot-beat")).toSorted()).toEqual(
+          [
+            "vk-slide-in-x p",
+            "vk-slide-in-x b",
+            "vk-slide-in-x kid",
+            "vk-slide-in-x c",
+            "tab-drag-float ghost",
+          ].toSorted(),
+        );
+      } finally {
+        root.removeProperty("--dur-micro");
+        document.removeEventListener("animationstart", record, { capture: true });
+      }
+    });
   });
 
   it("paints the count and the Tab stop of a render that lands during an unfold", async () => {

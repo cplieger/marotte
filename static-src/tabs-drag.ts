@@ -430,6 +430,8 @@ class TabDragController {
     const rect = tabEl.getBoundingClientRect();
     // Cloned BEFORE the row takes the slot's look, so the ghost is the pristine row.
     this.dragGhost = tabEl.cloneNode(true) as HTMLElement;
+    // A row lifted mid-entry would play the entry on its ghost in place of the bob.
+    this.dragGhost.classList.remove("entering");
     this.dragGhost.classList.add("tab-drag-ghost");
     this.dragGhost.style.width = `${String(rect.width)}px`;
     this.dragGhost.style.left = `${String(rect.left)}px`;
