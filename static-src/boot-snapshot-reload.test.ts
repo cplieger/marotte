@@ -45,8 +45,11 @@ let seq = 0;
 
 /** Inside and past the cover's 250 ms show window. */
 const LANDINGS_MS = [100, 400];
-/** Long enough for a cover's lift and the near observer's follow-up frames. */
-const SETTLE_MS = 800;
+/** The longest a cover may take to lift once the page lands; past it the premise fails. */
+const LIFT_DEADLINE_MS = 10_000;
+/** The near observer's follow-up frames after the lift: frames, since a loaded runner paints few
+ *  in a fixed period. */
+const SETTLE_FRAMES = 30;
 
 function sealed(turnID: string, at: number, kind: Entry["kind"], payload: unknown): Entry {
   return { id: `${turnID}-e${String(at)}`, turn: turnID, kind, seq: at, ts: at + 1, payload };
@@ -226,7 +229,11 @@ async function reload(server: Session, landAfterMs: number): Promise<ReloadRun> 
   s.residency = "loaded";
   store.bumpMessages(s.id, "load");
   const landed = performance.now();
-  while (performance.now() - landed < SETTLE_MS) {
+  while (coverUp() && performance.now() - landed < LIFT_DEADLINE_MS) {
+    await frames(1);
+    sample();
+  }
+  for (let i = 0; i < SETTLE_FRAMES; i++) {
     await frames(1);
     sample();
   }
