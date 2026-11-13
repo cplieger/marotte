@@ -39,7 +39,10 @@ vi.mock("./api-client.js", () => ({
   // Present-but-inert for real-ESM linking; no case calls them.
   apiGet: vi.fn(),
 }));
-vi.mock("./dom.js", () => ({ byId: (id: string) => document.getElementById(id) }));
+vi.mock("./dom.js", () => ({
+  byId: (id: string) => document.getElementById(id),
+  maybeEl: (id: string) => document.getElementById(id),
+}));
 const settingsAnswer = vi.hoisted(() => ({ value: null as unknown }));
 vi.mock("./persist.js", () => ({ loadSettings: () => Promise.resolve(settingsAnswer.value) }));
 
@@ -149,6 +152,26 @@ describe("initKnowledge", () => {
     engineReady?.();
     await flush();
     expect(mockGet, "a list that answered").not.toHaveBeenCalled();
+  });
+
+  it("re-asks a refused list only once the section is on screen", async () => {
+    initKnowledge();
+    mockGet.mockResolvedValue(null);
+    loadKnowledge();
+    await flush();
+    const section = document.getElementById("knowledge-section") as HTMLElement;
+    section.style.display = "none";
+    mockGet.mockClear();
+    mockGet.mockResolvedValue({ contexts: [{ name: "back", id: "a", item_count: 1 }] });
+
+    engineReady?.();
+    await flush();
+    expect(mockGet, "a section off screen reads on its next open").not.toHaveBeenCalled();
+
+    section.style.display = "";
+    engineReady?.();
+    await flush();
+    expect(mockGet, "the same section on screen").toHaveBeenCalledTimes(1);
   });
 
   it.each([

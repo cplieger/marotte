@@ -342,7 +342,7 @@ class NativePolicyController {
     () => {
       this.reloadOnChange();
     },
-    () => this.loaded,
+    () => this.loaded && (maybeEl("native-policy-list")?.offsetParent ?? null) !== null,
   );
   /** Never local constants: the ladder decides what one click grants, and policyfile owns it. */
   private profiles: SecurityProfile[] = [];

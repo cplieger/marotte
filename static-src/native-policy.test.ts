@@ -167,6 +167,25 @@ describe("native policy view", () => {
     });
   }
 
+  it("re-reads a refused policy only once the panel is on screen", async () => {
+    mocks.apiGet.mockResolvedValue(null);
+    initAndLoad();
+    await flush();
+    const list = byId<HTMLDivElement>("native-policy-list");
+    list.style.display = "none";
+    mocks.apiGet.mockClear();
+    mocks.apiGet.mockResolvedValue(sampleView);
+
+    mocks.busHandlers.get("engine:ready")?.();
+    await flush();
+    expect(mocks.apiGet, "a panel off screen reads on its next open").not.toHaveBeenCalled();
+
+    list.style.display = "";
+    mocks.busHandlers.get("engine:ready")?.();
+    await flush();
+    expect(mocks.apiGet, "the same panel on screen").toHaveBeenCalledTimes(1);
+  });
+
   it("re-reads once more after the engine came back during a read", async () => {
     let release = (): void => undefined;
     mocks.apiGet.mockResolvedValue(sampleView);

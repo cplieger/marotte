@@ -3,7 +3,7 @@
 
 import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
-import { byId } from "./dom.js";
+import { byId, maybeEl } from "./dom.js";
 import { buildAddForm, wireAddForm } from "./add-form.js";
 import type { AddForm } from "./add-form.js";
 import { reconcile } from "./reconcile.js";
@@ -73,12 +73,11 @@ let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let stalledPolls = 0;
 /** Progress signature from the previous tick, to tell advance from stall. */
 let lastProgress = "";
-/** The section has no off-screen state of its own: the settings page holds it whether shown or not. */
 const listRead = engineRead(
   () => {
     loadKnowledge();
   },
-  () => true,
+  () => (maybeEl("knowledge-list")?.offsetParent ?? null) !== null,
 );
 
 registerCleanup(() => {
