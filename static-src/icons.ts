@@ -120,12 +120,6 @@ export const ICON_MIC = svg(
   "ui",
   '<path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/>',
 );
-/** Lucide `circle-stop`, its square filled: dictation listening, a press stops it. The ring keeps it apart from
- *  Cancel's bare square, which can sit beside it mid-turn. */
-export const ICON_MIC_STOP = svg(
-  "ui",
-  '<circle cx="12" cy="12" r="10"/><rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor"/>',
-);
 // Rotated by 15-input.css. Not a marching `stroke-dashoffset`: under `non-scaling-stroke` Chromium computes the dash
 // in a space `stroke-dasharray` disagrees with, collapsing the arc to a dot.
 export const ICON_SPINNER =
@@ -141,6 +135,7 @@ export const ICON_HOURGLASS = svg(
     '<path d="M7 21.5V19.1L12 12L17 19.1V21.5"/>',
 );
 // A stop square, filled: the outline reads as a checkbox at 16px, and stop-is-filled is the transport convention.
+// Cancel and dictation's Stop share it: the two sit side by side mid-turn, and one action keeps one glyph.
 export const ICON_CANCEL = svg(
   "ui",
   '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/>',

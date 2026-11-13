@@ -451,10 +451,6 @@ type turnAdmission interface {
 	// AwaitNoClose waits until no close of chatID is being decided or torn down, reporting whether it waited; a ctx
 	// end answers the ctx's error. It admits nothing.
 	AwaitNoClose(ctx context.Context, chatID marotte.ChatID) (waited bool, err error)
-	// PromptHolder names the prompt-class turn holding admission: the pending
-	// prompt, else an own prompt-class turn. A bare reservation or a wire turn is
-	// never named.
-	PromptHolder(chatID marotte.ChatID) (turnID string, ok bool)
 	// ReleaseTurnReservation frees the admission slot res holds, waking every waiter; a slot another reservation
 	// holds is left alone.
 	ReleaseTurnReservation(res Reservation)
@@ -598,9 +594,11 @@ const (
 	SteerRefuseFull       = "full"
 	SteerRefuseNotWaiting = "not_waiting"
 	SteerRefuseNotUser    = "not_user"
-	SteerRefuseAgentRows  = "agent_rows_waiting"
-	SteerRefuseSettling   = "settling"
-	SteerRefuseChatGone   = "chat_gone"
+	// SteerRefuseNotQueueable is a queue-instead of a row that is not the user's own entry on the chat's run list.
+	SteerRefuseNotQueueable = "not_queueable"
+	SteerRefuseAgentRows    = "agent_rows_waiting"
+	SteerRefuseSettling     = "settling"
+	SteerRefuseChatGone     = "chat_gone"
 	// SteerRefuseNoReply is a clear that got no reply: nothing changed.
 	SteerRefuseNoReply = "no_reply"
 	// SteerRefuseConsumed is a delete whose target the agent read first.
@@ -640,16 +638,22 @@ type SteerSend struct {
 	Keys []string
 }
 
+// EntrySteer is one run-list entry the chat's list offers as a steer into the running turn (Dispatcher.SteerEntry).
+// Offer names this offer of the entry, which every outcome the record reports for it carries; Resent says an earlier
+// offer may have reached kiro-cli under the entry's key.
+type EntrySteer struct {
+	Caller *marotte.Caller
+	Entry  string
+	Text   string
+	Offer  uint64
+	Resent bool
+}
+
 // SteerHolder is what admission says about a chat when a steer is routed.
 type SteerHolder struct {
-	// Turn is the prompt turn a delivering route is aimed at; the record routes
-	// the row only while it names that turn as starting or bound.
-	Turn        string
 	Held        bool
 	PromptClass bool
 	Live        bool
-	// Delivering is the parked drain itself, which must not re-park its head row.
-	Delivering bool
 }
 
 // SteerOpResult is what an op learns when it re-reads the record after its clear.
@@ -662,13 +666,11 @@ type SteerOpResult struct {
 	Reason string
 }
 
-// SteerRow is one row a pending end holds, or one unread row the drain sends.
+// SteerRow is one row a pending end holds.
 type SteerRow struct {
-	// Caller is the API caller that sent the row, nil for the user's.
-	Caller *marotte.Caller
-	Key    string
-	Text   string
-	InKAS  bool
+	Key   string
+	Text  string
+	InKAS bool
 }
 
 // SteerQueue is the server's record of the user's mid-turn steers and of what
@@ -685,10 +687,16 @@ type SteerQueue interface {
 	// RouteSteer answers the sends to issue, in order, or the refusal class. from is who sent a new row; a row the
 	// record already holds under key keeps its own.
 	RouteSteer(chatID marotte.ChatID, key, text string, from *marotte.Caller, h SteerHolder) (sends []SteerSend, refuse string)
+	// RouteEntry answers the sends that steer a run-list entry the chat's list offered, or the refusal class, in which
+	// case nothing was recorded and the entry is the list's again.
+	RouteEntry(chatID marotte.ChatID, s *EntrySteer, h SteerHolder) (sends []SteerSend, refuse string)
 	SteerSent(chatID marotte.ChatID, s SteerSend, queued bool, err error)
 	// BeginRemove decides a delete. A row KAS does not hold is deleted at once and
 	// needsClear is false; otherwise the op owns its rows until EndOp.
 	BeginRemove(chatID marotte.ChatID, key, opID string) (needsClear bool, refuse string)
+	// BeginQueueInstead is BeginRemove for "Queue this message instead": the user's row of the chat's run list
+	// leaves the dock and waits on the list as a queued row; any other row is refused SteerRefuseNotQueueable.
+	BeginQueueInstead(chatID marotte.ChatID, key, opID string) (needsClear bool, refuse string)
 	// RemoveCleared re-reads after the delete's clear (landed false: no reply).
 	RemoveCleared(chatID marotte.ChatID, opID string, cleared []string, landed bool) SteerOpResult
 	// BeginDiscard decides a Discard all; needsClear is false when nothing is in KAS, and refuse names why a
@@ -699,9 +707,8 @@ type SteerQueue interface {
 	OpSent(chatID marotte.ChatID, opID string, s SteerSend, queued bool, err error)
 	// EndOp releases every row the op still owns. When a turn closed under the op
 	// its rows go to a pending end that close's pipeline resolves; when a stale
-	// bind ended the op's channel they are settled and reroute is true, for the
-	// caller to route them before it lets go of the steer lock.
-	EndOp(chatID marotte.ChatID, opID string) (reroute bool)
+	// bind ended the op's channel they are settled at once.
+	EndOp(chatID marotte.ChatID, opID string)
 	OnSteerJob(run func(SteerJob))
 	// SetSteerLead records the send-now arrow's row, sent first; undo takes it
 	// back when the stop could not be sent. waiting is false, and nothing is
@@ -709,7 +716,7 @@ type SteerQueue interface {
 	SetSteerLead(chatID marotte.ChatID, key string) (undo func(), waiting bool)
 }
 
-// SteerJobs is the record as the close pipeline and the prompt's drain drive it.
+// SteerJobs is the record as the close pipeline and a prompt's turn start drive it.
 type SteerJobs interface {
 	// Ends lists the chat's pending turn ends, oldest first.
 	Ends(chatID marotte.ChatID) []SteerEnd
@@ -720,29 +727,23 @@ type SteerJobs interface {
 	StraysCleared(chatID marotte.ChatID, owner string, cleared []string, all bool)
 	// Release hands the end's remaining rows, or only its in-KAS ones, back.
 	Release(chatID marotte.ChatID, owner string, inKASOnly bool)
+	// DeathDrained records that the dead bridge behind the end's rows drained: its buffer is gone, so the entry rows
+	// go back to the chat's run list unread, the next prompt's start clearing what kiro-cli's log may re-inject.
+	DeathDrained(chatID marotte.ChatID, owner string)
 	// EndUnsent makes every row the end still owns that KAS does not hold unsent
 	// and unowned, and drops the end.
 	EndUnsent(chatID marotte.ChatID, owner string)
-	// UnsentRows answers the unread rows the drain may send, lead first; none
-	// while KAS may re-inject them, unless the drain follows a drained death.
-	UnsentRows(chatID marotte.ChatID, deathDrained bool) []SteerRow
-	// Delivered retires the named rows, once the prompt carrying them has opened.
-	Delivered(chatID marotte.ChatID, keys []string)
 	// PlanFlush answers the sends the record owes after a read or a clear.
 	PlanFlush(chatID marotte.ChatID) []SteerSend
 	// NeedsPostLoadClear: KAS may re-inject steers this server also holds, and
 	// nothing is reading yet.
 	NeedsPostLoadClear(chatID marotte.ChatID) bool
-	// PostLoadCleared: a row of this record's the clear named goes back to parked,
-	// to be sent again in order.
+	// PostLoadCleared: a row of this record's the clear named is no longer in KAS,
+	// so a run-list entry's words go back to its list.
 	PostLoadCleared(chatID marotte.ChatID, cleared []string, landed bool)
 	// AgentRowsWaiting reports an agent row in KAS's buffer, which a clear would
 	// drop with no re-wake.
 	AgentRowsWaiting(chatID marotte.ChatID) bool
-	// NextParked answers the head parked row for turnID, the lead first, after
-	// parking every unowned unsent row; it parks and answers nothing while the
-	// record names turnID neither starting nor bound, or KAS may re-inject them.
-	NextParked(chatID marotte.ChatID, turnID string) (key, text string, ok bool)
 }
 
 // runCutter is what a rewind needs of the run registry: which of the runs a cut
@@ -903,5 +904,20 @@ type promptRoles struct {
 	sendGate    promptSendGate
 	auth        *AuthReadiness
 	signIn      signInReach
+	reopen      chatReopener
 	workspace   Workspace // last for fieldalignment, as in Roles
+}
+
+// chatReopener opens the tab of a chat an outside caller's message reaches, so the work it starts has a row.
+type chatReopener interface {
+	ReopenForMessage(ctx context.Context, chatID marotte.ChatID)
+}
+
+var _ chatReopener = (*Membership)(nil)
+
+// reopenForCaller reopens cmd's chat for an outside caller's message; a page's own command (From nil) never does.
+func reopenForCaller(ctx context.Context, reopen chatReopener, cmd *marotte.ClientCommand) {
+	if cmd.From != nil {
+		reopen.ReopenForMessage(ctx, cmd.ChatID)
+	}
 }

@@ -31,6 +31,8 @@ type runEffectsHost interface {
 	writeRun(chatID marotte.ChatID, mutate func(c *marotte.Chat) bool) error
 	// startEntry carries out a take on its own goroutine: a launch, or a compaction's start.
 	startEntry(lc *chatLifecycle, e *runEntry)
+	// steerEntry carries out a row's offer as a steer on its own goroutine.
+	steerEntry(lc *chatLifecycle, e *runEntry)
 	// toast tells the chat's pages, in detail's words, of a run-list outcome the dock alone does not explain.
 	toast(chatID marotte.ChatID, code marotte.ErrorCode, detail string)
 	// spawnRun runs fn on the process's in-flight count, refused once shutdown began.
@@ -62,6 +64,9 @@ func (lc *chatLifecycle) flushRunLocked() {
 	}
 	for _, e := range fx.launch {
 		host.startEntry(lc, e)
+	}
+	for _, e := range fx.steer {
+		host.steerEntry(lc, e)
 	}
 	if len(fx.toast) > 0 {
 		detail := compactFailed
@@ -126,14 +131,13 @@ func (lc *chatLifecycle) orderFactsLocked() orderFacts {
 			}
 			return a.res, takeGranted
 		},
-		unsent:       func() int { return lc.run.unsent },
-		newMessageID: func() string { return "m-" + newMessageID() },
-		stamp:        lc.stamp,
-		nextSeq:      lc.nextSeq,
-		stopSeq:      lc.stopSeq,
-		stops:        len(lc.stops),
-		admit:        may.admit,
-		sessionCall:  may.sessionCall,
+		newOffer:    func() uint64 { return r.offerTokens.Add(1) },
+		stamp:       lc.stamp,
+		nextSeq:     lc.nextSeq,
+		stopSeq:     lc.stopSeq,
+		stops:       len(lc.stops),
+		admit:       may.admit,
+		sessionCall: may.sessionCall,
 	}
 }
 
@@ -143,7 +147,7 @@ func sourceOfEntry(e *runEntry) marotte.TurnOpenSource {
 		return marotte.TurnSourceEmptyRetry
 	case marotte.RunKindRevert:
 		return marotte.TurnSourceRevert
-	case marotte.RunKindTurn, marotte.RunKindRow, marotte.RunKindUnread, marotte.RunKindCompaction, marotte.RunKindResume:
+	case marotte.RunKindTurn, marotte.RunKindRow, marotte.RunKindCompaction, marotte.RunKindResume:
 	}
 	return marotte.TurnSourcePrompt
 }
@@ -189,13 +193,23 @@ func (r *turnRegistry) loadRunLocked(lc *chatLifecycle) {
 // endRunLocked is the run list's part of the life's end: every waiter is answered, and the list the next life
 // starts from is recorded for writeFinalRun. Caller holds mu.
 func (lc *chatLifecycle) endRunLocked() {
-	final := lc.run.endLife()
+	final, steers := lc.run.endLife()
+	lc.runSteers = steers
 	// Per entry, so an empty list matches whether it is stored as nil or as an empty slice.
 	same := slices.EqualFunc(final, lc.run.stored, func(a, b marotte.RunEntry) bool { return reflect.DeepEqual(a, b) })
 	if same && !lc.run.dirty {
 		return
 	}
 	lc.runFinal, lc.runFinalOwed = final, true
+}
+
+// takeEndedSteers answers, once, the steers the life's end took off the list: a close notes their words as not read.
+func (lc *chatLifecycle) takeEndedSteers() []marotte.RunEntry {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	steers := lc.runSteers
+	lc.runSteers = nil
+	return steers
 }
 
 // writeFinalRun stores the list an ended life left, once, as a compare-and-set on the version this life last wrote,
@@ -267,6 +281,13 @@ func (bc *bridgeCoordinator) startEntry(lc *chatLifecycle, e *runEntry) {
 	if e.row != nil {
 		l.Row = *e.row
 	}
+	switch {
+	case e.unread:
+		carryUnread(l, e)
+	case e.offer != 0:
+		// An offer kiro-cli refused may stand in its log under the steer key (3.2.0 persists a steer it drops).
+		l.Resends = []string{marotte.SteerIDFor(e.id)}
+	}
 	if e.opts.composer {
 		id := e.id
 		l.Claim = func() bool {
@@ -288,6 +309,38 @@ func (bc *bridgeCoordinator) startEntry(lc *chatLifecycle, e *runEntry) {
 }
 
 var errLaunchUnwired = errors.New("agent: no launcher for the chat's run list")
+
+// carryUnread makes l the one prompt of an Unread lead and the rows it joined: their words in order, under a new message
+// id, naming their dock keys.
+func carryUnread(l *command.EntryLaunch, lead *runEntry) {
+	texts := append(make([]string, 0, 1+len(lead.joined)), l.Row.Text)
+	l.Resends = append(make([]string, 0, 1+len(lead.joined)), marotte.SteerIDFor(lead.id))
+	for _, j := range lead.joined {
+		texts = append(texts, j.row.Text)
+		l.Resends = append(l.Resends, marotte.SteerIDFor(j.id))
+	}
+	l.Row.ID, l.Row.Text = "m-"+newMessageID(), joinSteers(texts)
+}
+
+// steerEntry carries out one offer of a row as a steer. A refusal before any send puts the row back on the list at
+// once; kiro-cli's answer, the read and a turn end reach the list as the steer record's fates (runFactsChanged).
+// Caller holds lc.mu.
+func (bc *bridgeCoordinator) steerEntry(lc *chatLifecycle, e *runEntry) {
+	s := &command.EntrySteer{Entry: e.id, Text: e.row.Text, Caller: e.row.Caller, Offer: e.offer, Resent: e.resent}
+	bc.spawnRun(func() {
+		refuse := command.SteerRefuseNoTurn
+		if bc.sendEntrySteer != nil {
+			refuse = bc.sendEntrySteer(context.Background(), lc.chatID, s)
+		}
+		if refuse == "" {
+			return
+		}
+		lc.mu.Lock()
+		lc.run.steerFates([]entryFate{{id: s.Entry, offer: s.Offer, fate: fateBack}})
+		lc.wakeLocked()
+		lc.mu.Unlock()
+	})
+}
 
 // spawnRun runs fn on the process's in-flight count, or on a bare goroutine with no lifetime (tests).
 func (bc *bridgeCoordinator) spawnRun(fn func()) {
@@ -319,7 +372,7 @@ func (bc *bridgeCoordinator) entryLaunched(lc *chatLifecycle, id string, token u
 	case errors.Is(err, command.ErrTakeWithdrawn):
 		refusal = launchWithdrawn
 	default:
-		refusal = launchClosed
+		refusal = launchFailed
 	}
 	if refusal == launchOpened {
 		err = nil
@@ -329,11 +382,6 @@ func (bc *bridgeCoordinator) entryLaunched(lc *chatLifecycle, id string, token u
 	release := e != nil && refusal == launchOpened && e.opts.awaited && !e.submitter
 	ended := lc.ended
 	removed := lc.run.launched(id, token, turnID, refusal, err)
-	if errors.Is(err, command.ErrUnreadGone) {
-		if _, gone := lc.run.find(id); gone != nil {
-			lc.run.remove(gone)
-		}
-	}
 	lc.wakeLocked()
 	lc.mu.Unlock()
 	if release {
@@ -425,8 +473,8 @@ func (bc *bridgeCoordinator) Submit(ctx context.Context, chatID marotte.ChatID, 
 	return lc.awaitLaunch(ctx, e)
 }
 
-// submitLocked decides a send by VerbFor and places it, answering the entry whose launch the caller waits on (nil
-// when it answers at once). Caller holds mu.
+// submitLocked decides a send by VerbFor and places it, answering the entry whose first outcome the caller waits on
+// (nil when it answers at once). Caller holds mu.
 func (lc *chatLifecycle) submitLocked(stamp uint64, s *command.Submission, mode marotte.InterruptMode) (command.SubmitAnswer, *runEntry, error) {
 	row := s.Row
 	if _, have := lc.run.find(row.ID); have != nil {
@@ -436,18 +484,23 @@ func (lc *chatLifecycle) submitLocked(stamp uint64, s *command.Submission, mode 
 		}
 		return command.SubmitAnswer{As: as}, nil, nil
 	}
-	verb, err := submitVerb(lc.run.project(), s, mode)
-	switch {
-	case err != nil:
+	if s.Origin == marotte.RunFromNotify {
+		return lc.doorSubmitLocked(stamp, s, mode)
+	}
+	entries := lc.run.project()
+	verb, err := submitVerb(entries, s, mode)
+	if err != nil {
 		return command.SubmitAnswer{}, nil, err
-	case verb == marotte.SendSteer:
-		return command.SubmitAnswer{Steer: true}, nil, nil
 	}
 	e := &runEntry{
 		id: row.ID, kind: marotte.RunKindRow, origin: s.Origin, row: &row, retry: s.Retry,
 		opts: launchOpts{model: row.Model, composer: s.Composer, awaited: s.Awaited},
+		want: marotte.WantFor(entries, mode, s.Kind),
 	}
-	waits := s.Wait && verb == marotte.SendPrompt
+	if s.NoSteer {
+		e.want = marotte.RunWantPrompt
+	}
+	waits := s.Wait && verb != marotte.SendQueue
 	f := lc.orderFactsLocked()
 	a := lc.run.submit(e, &f, stamp, waits)
 	switch {
@@ -455,10 +508,37 @@ func (lc *chatLifecycle) submitLocked(stamp uint64, s *command.Submission, mode 
 		return command.SubmitAnswer{}, nil, marotte.ErrChatClosedDuringCall
 	case a.refused == takeGone:
 		return command.SubmitAnswer{}, nil, command.ErrChatNotFound
-	case a.taken && waits:
+	case a.taken && waits, a.steering:
 		return command.SubmitAnswer{}, e, nil
 	}
 	return command.SubmitAnswer{As: command.SubmitQueued, Settle: s.Composer}, nil, nil
+}
+
+// doorSubmitLocked places a notify-door send (runList.doorSend). A send the caller's earlier entry takes answers at
+// once: queued while that entry waits, steered while kiro-cli holds it. Caller holds mu.
+func (lc *chatLifecycle) doorSubmitLocked(stamp uint64, s *command.Submission, mode marotte.InterruptMode) (command.SubmitAnswer, *runEntry, error) {
+	row := s.Row
+	e := &runEntry{id: row.ID, kind: marotte.RunKindRow, origin: s.Origin, row: &row, retry: s.Retry}
+	if mode == marotte.InterruptQueue {
+		e.want = marotte.RunWantPrompt
+	}
+	f := lc.orderFactsLocked()
+	a, place := lc.run.doorSend(e, &f, stamp, s.Wait)
+	switch {
+	case place == doorTooBig:
+		return command.SubmitAnswer{}, nil, command.ErrSubmitTooBig
+	case place == doorWithKAS:
+		return command.SubmitAnswer{As: command.SubmitSteered}, nil, nil
+	case place == doorReplaced:
+		return command.SubmitAnswer{As: command.SubmitQueued}, nil, nil
+	case a.refused == takeClosed:
+		return command.SubmitAnswer{}, nil, marotte.ErrChatClosedDuringCall
+	case a.refused == takeGone:
+		return command.SubmitAnswer{}, nil, command.ErrChatNotFound
+	case a.taken && s.Wait, a.steering:
+		return command.SubmitAnswer{}, e, nil
+	}
+	return command.SubmitAnswer{As: command.SubmitQueued}, nil, nil
 }
 
 // submitVerb is where s goes on a list holding entries (VerbFor, with steering ruled out by NoSteer), or why it is
@@ -468,11 +548,15 @@ func submitVerb(entries []marotte.RunEntry, s *command.Submission, mode marotte.
 	if verb == marotte.SendSteer && s.NoSteer {
 		verb = marotte.SendQueue
 	}
+	if s.SteerOnly && verb != marotte.SendSteer {
+		return verb, command.ErrSubmitNoSteer
+	}
 	switch verb {
 	case marotte.SendSteer:
 		if s.PromptOnly {
 			return verb, command.ErrSubmitPromptOnly
 		}
+		return verb, steerBudgetRefusal(entries, &s.Row)
 	case marotte.SendPrompt:
 		if s.Kind == marotte.SendQueuePrompt {
 			return verb, command.ErrSubmitNoTurn
@@ -486,21 +570,59 @@ func submitVerb(entries []marotte.RunEntry, s *command.Submission, mode marotte.
 // queueRefusal is why row may not queue behind entries: past the draft cap behind a running turn of marotte's, or
 // past the queue's caps. Nil when it may.
 func queueRefusal(entries []marotte.RunEntry, row *marotte.QueuedPrompt) error {
-	for _, h := range marotte.LivePrefix(entries) {
-		if !h.Kind.TurnKind() || h.Origin == marotte.RunFromRun ||
-			(h.State != marotte.RunRunning && h.State != marotte.RunStarting) {
-			continue
-		}
-		if len(row.Text) > marotte.MaxDraftBytes {
-			return command.ErrSubmitTooBig
-		}
-		break
+	if turnRuns(entries) && len(row.Text) > marotte.MaxDraftBytes {
+		return command.ErrSubmitTooBig
 	}
-	return command.RowCapsRefusal(marotte.RunRows(entries), row)
+	return command.RowCapsRefusal(cappedRows(entries), row)
 }
 
-// awaitLaunch waits for submit's own take to open its turn, up to command.AdmissionWait; past it, one section
-// answers queued unless the launch answered first.
+// turnRuns reports a turn of marotte's starting or running at the head of entries.
+func turnRuns(entries []marotte.RunEntry) bool {
+	for _, h := range marotte.LivePrefix(entries) {
+		if h.Kind.TurnKind() && h.Origin != marotte.RunFromRun &&
+			(h.State == marotte.RunRunning || h.State == marotte.RunStarting) {
+			return true
+		}
+	}
+	return false
+}
+
+// steerBudgetRefusal is command.ErrSteerFull when row, bound for the running turn as a steer, would take the user's
+// steers offered, in kiro-cli or in flight past the steer record's row or byte cap, else nil.
+func steerBudgetRefusal(entries []marotte.RunEntry, row *marotte.QueuedPrompt) error {
+	n, bytes := 1, marotte.CarryCost(row.Text)
+	view := marotte.RunViewOf(entries, 0)
+	for i := range view.Entries {
+		v := &view.Entries[i]
+		if v.Row != nil && v.ByUser() && (v.State == marotte.RunOffered || v.State == marotte.RunInKAS || v.SteerInFlight) {
+			n++
+			bytes += marotte.CarryCost(v.Row.Text)
+		}
+	}
+	if n > maxSteerRows || bytes > maxSteerBytes {
+		return command.ErrSteerFull
+	}
+	return nil
+}
+
+// cappedRows are the rows the queue's caps count: every row on the list but the notify door's, which holds one entry
+// per caller (runList.doorSend), and a steer offered, in kiro-cli or in flight, which the steer cap counts.
+func cappedRows(entries []marotte.RunEntry) []*marotte.QueuedPrompt {
+	view := marotte.RunViewOf(entries, 0)
+	var rows []*marotte.QueuedPrompt
+	for i := range view.Entries {
+		v := &view.Entries[i]
+		if v.Origin == marotte.RunFromNotify || v.State == marotte.RunOffered || v.State == marotte.RunInKAS ||
+			v.SteerInFlight {
+			continue
+		}
+		rows = append(rows, marotte.RunRows([]marotte.RunEntry{v.RunEntry})...)
+	}
+	return rows
+}
+
+// awaitLaunch waits for the first outcome of submit's own entry (its turn open, kiro-cli holding its steer), up to
+// command.AdmissionWait; past it, one section answers queued unless the outcome answered first.
 func (lc *chatLifecycle) awaitLaunch(ctx context.Context, e *runEntry) (command.SubmitAnswer, error) {
 	lc.mu.Lock()
 	w := e.launch
@@ -524,6 +646,8 @@ func (lc *chatLifecycle) awaitLaunch(ctx context.Context, e *runEntry) (command.
 		return command.SubmitAnswer{Run: view}, w.err
 	case w.queued:
 		return command.SubmitAnswer{As: command.SubmitQueued, Settle: w.composer, Run: view}, nil
+	case w.steered:
+		return command.SubmitAnswer{As: command.SubmitSteered, Run: view}, nil
 	}
 	return command.SubmitAnswer{As: command.SubmitStarted, TurnID: w.turnID, Run: view}, nil
 }
@@ -676,6 +800,19 @@ func (bc *bridgeCoordinator) ClearNext(chatID marotte.ChatID, id string) {
 	lc.mu.Unlock()
 }
 
+// leadSteer marks the steer the list handed to kiro-cli as entry id as the send-now arrow's lead (runList.leadSteer).
+func (bc *bridgeCoordinator) leadSteer(chatID marotte.ChatID, id string) bool {
+	lc, ok := bc.turns.lookup(chatID)
+	if !ok {
+		return false
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	marked := lc.run.leadSteer(id)
+	lc.wakeLocked()
+	return marked
+}
+
 // Unqueue removes a waiting row; an unknown id is success.
 func (bc *bridgeCoordinator) Unqueue(ctx context.Context, chatID marotte.ChatID, id string) error {
 	lc, err := bc.runLife(ctx, chatID, bc.LifeStamp())
@@ -686,9 +823,25 @@ func (bc *bridgeCoordinator) Unqueue(ctx context.Context, chatID marotte.ChatID,
 	defer lc.mu.Unlock()
 	err = lc.run.unqueue(id)
 	lc.wakeLocked()
-	if errors.Is(err, errRowSending) {
+	switch {
+	case errors.Is(err, errRowSending):
 		return command.ErrRowSending
+	case errors.Is(err, errRowInKAS):
+		return command.ErrRowInKAS
 	}
+	return nil
+}
+
+// Resume lets the rows a stop paused go in order (command.runQueue.Resume).
+func (bc *bridgeCoordinator) Resume(ctx context.Context, chatID marotte.ChatID) error {
+	lc, err := bc.runLife(ctx, chatID, bc.LifeStamp())
+	if err != nil {
+		return err
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	lc.run.resumeQueue()
+	lc.wakeLocked()
 	return nil
 }
 
@@ -744,62 +897,38 @@ func (bc *bridgeCoordinator) StopUndone(chatID marotte.ChatID, stop *command.Tur
 	lc.mu.Unlock()
 }
 
-// runFactsChanged applies the steer queue's pending ends and unsent rows to the chat's list (runList.endsChanged).
-// The steer record's lock is never taken under lc.mu: the death bits are read first, then the record, and a read
-// with other bits than the list's is made again until one matches, since only an applied read sets the unsent count.
+// runFactsChanged hands chatID's list the steer record's facts (endsApplied).
 func (bc *bridgeCoordinator) runFactsChanged(chatID marotte.ChatID) {
-	lc, ok := bc.turns.lookup(chatID)
-	if !ok || bc.steerFacts == nil {
-		return
-	}
-	drained := false
-	for {
-		ends, unsent, seq := bc.steerFacts(chatID, drained)
-		live := bc.bridgeLive(chatID)
-		lc.mu.Lock()
-		f := lc.orderFactsLocked()
-		reread, d := lc.run.endsChanged(seq, ends, unsent, drained, live, &f)
-		lc.wakeLocked()
-		lc.mu.Unlock()
-		if !reread {
-			return
-		}
-		drained = d
+	if lc, ok := bc.turns.lookup(chatID); ok {
+		bc.endsApplied(lc)
 	}
 }
 
-// closeEndsResolved records a close's steer ends on its closing entry, with the steer queue's facts read first
-// (outside lc.mu, as in runFactsChanged) and read again while the list holds other death bits than the read's.
-func (bc *bridgeCoordinator) closeEndsResolved(lc *chatLifecycle, turnID string, ends command.EndFacts) {
-	drained := ends.Death && !ends.Undrained
-	read := drained
-	for {
-		var (
-			n      int
-			unsent []string
-			seq    uint64
-		)
-		if bc.steerFacts != nil {
-			n, unsent, seq = bc.steerFacts(lc.chatID, read)
-		}
-		live := bc.bridgeLive(lc.chatID)
-		lc.mu.Lock()
-		f := lc.orderFactsLocked()
-		if bc.steerFacts != nil {
-			reread, d := lc.run.endsChanged(seq, n, unsent, read, live, &f)
-			if reread {
-				lc.mu.Unlock()
-				read = d
-				continue
-			}
-		}
-		if _, e := lc.run.byTurn(turnID); e != nil {
-			lc.run.closeEndsResolved(e.id, drained, live, &f)
-		}
-		lc.wakeLocked()
-		lc.mu.Unlock()
+// endsApplied takes the steer record's entry fates (runList.steerFates), then reads its pending ends
+// (runList.endsChanged), and applies both in one lc.mu section; the record's lock is never taken under lc.mu.
+// factsMu pairs each take and read with its apply: a read landing between another's take and apply would count no
+// end owed while the words those fates give back are not on the list yet, and a wake behind them would take their turn.
+func (bc *bridgeCoordinator) endsApplied(lc *chatLifecycle) {
+	lc.factsMu.Lock()
+	defer lc.factsMu.Unlock()
+	var fs []entryFate
+	if bc.takeEntryFates != nil {
+		fs = bc.takeEntryFates(lc.chatID)
+	}
+	ends, seq, read := 0, uint64(0), bc.steerFacts != nil
+	if read {
+		ends, seq = bc.steerFacts(lc.chatID)
+	}
+	if len(fs) == 0 && !read {
 		return
 	}
+	lc.mu.Lock()
+	lc.run.steerFates(fs)
+	if read {
+		lc.run.endsChanged(seq, ends)
+	}
+	lc.wakeLocked()
+	lc.mu.Unlock()
 }
 
 // awaitReleased waits until the entry whose turn is turnID has given its reservation back, or is gone: a holder a
@@ -849,33 +978,6 @@ func (lc *chatLifecycle) endTail(turnID string, seq uint64, standDown bool) bool
 	}
 	lc.wakeLocked()
 	return true
-}
-
-// holdCarried absorbs a shutdown's unread steers into the chat's carried row, on its live list when one is
-// registered, else on the stored list by the version rule.
-func (bc *bridgeCoordinator) holdCarried(ctx context.Context, chatID marotte.ChatID, row *marotte.QueuedPrompt) error {
-	if lc, ok := bc.turns.lookup(chatID); ok {
-		lc.mu.Lock()
-		if !lc.ended {
-			lc.run.holdCarried(row)
-			lc.flushRunLocked()
-			lc.mu.Unlock()
-			return nil
-		}
-		lc.mu.Unlock()
-	}
-	_, err := bc.chatStore.Mutate(durable.Context(ctx), chatID, func(c *marotte.Chat, exists bool) bool {
-		if !exists {
-			return false
-		}
-		var l runList
-		l.load(c.Run, c.Run, c.RunVersion)
-		l.holdCarried(row)
-		c.Run = l.project()
-		c.RunVersion++
-		return true
-	})
-	return err
 }
 
 // closeRunEntryLocked places a turn's close on the list (runList.turnClosed), with the close's facts finalizeTurn

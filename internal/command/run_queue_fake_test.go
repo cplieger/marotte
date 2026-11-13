@@ -1,6 +1,7 @@
 package command
 
 import (
+	"cmp"
 	"context"
 	"slices"
 	"sync"
@@ -33,7 +34,7 @@ type idleReserver interface {
 }
 
 // launchingRun is runQueue over a fixture's admission: a send the fixture admits is taken and launched at once
-// (launchEntry), a busy holder steers it in steer mode or queues it, and every queued row waits in rows. Stops and
+// (launchEntry), a busy holder steers it in steer mode or queues it, a steer-only send is offered only to a turn holding admission, and every queued row waits in rows. Stops and
 // send-now answers come from the scripted funcs, nothing when unset.
 type launchingRun struct {
 	roles   *promptRoles
@@ -43,7 +44,10 @@ type launchingRun struct {
 	rows    []marotte.QueuedPrompt
 	cleared []string
 	undone  []*TurnStop
+	resumed int
 	steer   bool
+	// mode stands in for the interrupt_mode setting a send naming no mode takes.
+	mode marotte.InterruptMode
 	// live queues every queue_prompt; compacting queues every send, as a running compaction does.
 	live, compacting bool
 	mu               sync.Mutex
@@ -52,6 +56,12 @@ type launchingRun struct {
 var _ runQueue = (*launchingRun)(nil)
 
 func (q *launchingRun) Submit(ctx context.Context, chatID marotte.ChatID, stamp uint64, s *Submission) (SubmitAnswer, error) {
+	if s.SteerOnly {
+		if h := steerHolder(q.roles, chatID); !h.Held || !q.steerMode(s) {
+			return SubmitAnswer{}, ErrSubmitNoSteer
+		}
+		return q.offerSteer(ctx, chatID, stamp, s)
+	}
 	q.mu.Lock()
 	queues := q.compacting || q.live && s.Kind == marotte.SendQueuePrompt
 	q.mu.Unlock()
@@ -72,6 +82,7 @@ func (q *launchingRun) Submit(ctx context.Context, chatID marotte.ChatID, stamp 
 	} else {
 		res = testReservation(chatID, true)
 	}
+	steers := out == AdmissionBusy && !s.NoSteer && q.steerMode(s) && s.Kind == marotte.SendPlain
 	switch {
 	case out == AdmissionClosed:
 		return SubmitAnswer{}, marotte.ErrChatClosedDuringCall
@@ -82,11 +93,11 @@ func (q *launchingRun) Submit(ctx context.Context, chatID marotte.ChatID, stamp 
 	case out == AdmissionAcquired && s.Kind == marotte.SendQueuePrompt:
 		q.roles.admission.ReleaseTurnReservation(res)
 		return SubmitAnswer{}, ErrSubmitNoTurn
-	case out == AdmissionBusy && !s.NoSteer && q.steerMode(s) && s.Kind == marotte.SendPlain:
+	case steers:
 		if s.PromptOnly {
 			return SubmitAnswer{}, ErrSubmitPromptOnly
 		}
-		return SubmitAnswer{Steer: true}, nil
+		return q.offerSteer(ctx, chatID, stamp, s)
 	case out == AdmissionBusy:
 		return q.queue(s), nil
 	}
@@ -106,6 +117,20 @@ func (q *launchingRun) Submit(ctx context.Context, chatID marotte.ChatID, stamp 
 	return SubmitAnswer{As: SubmitStarted, TurnID: turnID}, nil
 }
 
+// offerSteer offers s into the running turn as the agent's list does (Dispatcher.SteerEntry): a full steer record refuses
+// it, as the list's steer budget does, and a refusal for no turn takes it as a turn of its own.
+func (q *launchingRun) offerSteer(ctx context.Context, chatID marotte.ChatID, stamp uint64, s *Submission) (SubmitAnswer, error) {
+	switch steerEntry(ctx, q.roles, chatID, &EntrySteer{Entry: s.Row.ID, Text: s.Row.Text, Caller: s.Row.Caller}) {
+	case "":
+		return SubmitAnswer{As: SubmitSteered}, nil
+	case SteerRefuseFull:
+		return SubmitAnswer{}, ErrSteerFull
+	}
+	again := *s
+	again.NoSteer, again.SteerOnly = true, false
+	return q.Submit(ctx, chatID, stamp, &again)
+}
+
 func (q *launchingRun) queue(s *Submission) SubmitAnswer {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -116,7 +141,7 @@ func (q *launchingRun) queue(s *Submission) SubmitAnswer {
 }
 
 func (q *launchingRun) steerMode(s *Submission) bool {
-	return q.steer || s.Mode != marotte.InterruptQueue
+	return q.steer || cmp.Or(s.Mode, q.mode) != marotte.InterruptQueue
 }
 
 func (q *launchingRun) TakeIdle(ctx context.Context, chatID marotte.ChatID, kind IdleKind, stamp uint64, wait time.Duration) (IdleAdmission, Reservation, string) {
@@ -154,6 +179,13 @@ func (q *launchingRun) Unqueue(_ context.Context, _ marotte.ChatID, id string) e
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.rows = slices.DeleteFunc(q.rows, func(r marotte.QueuedPrompt) bool { return r.ID == id })
+	return nil
+}
+
+func (q *launchingRun) Resume(context.Context, marotte.ChatID) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.resumed++
 	return nil
 }
 

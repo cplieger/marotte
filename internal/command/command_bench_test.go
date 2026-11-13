@@ -192,8 +192,7 @@ func (d *benchDeps) ReserveIdleTurn(_ context.Context, chatID marotte.ChatID, _ 
 func (*benchDeps) tryReserveDrainOld(marotte.ChatID, marotte.TurnOpenSource, CloseFacts) bool {
 	return true
 }
-func (*benchDeps) PromptHolder(marotte.ChatID) (string, bool) { return "", false }
-func (*benchDeps) releaseOld(marotte.ChatID)                  {}
+func (*benchDeps) releaseOld(marotte.ChatID) {}
 
 func (*benchDeps) AwaitTurn(context.Context, marotte.ChatID, string) (marotte.TurnResult, error) {
 	return marotte.TurnResult{}, marotte.ErrNoSuchTurn

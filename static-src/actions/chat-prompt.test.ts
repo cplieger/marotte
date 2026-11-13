@@ -57,7 +57,7 @@ import { send as transportSend } from "../transport.js";
 import { applyRun, setThinking, recordSteerQueued } from "../store.js";
 import { IDLE_RUN } from "../run-order.js";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
-import { compactChat, queuePrompt, sendPrompt } from "./chat.js";
+import { compactChat, sendPrompt } from "./chat.js";
 
 const mockSend = vi.mocked(transportSend);
 
@@ -165,10 +165,7 @@ describe("sendPrompt — a failure that is not a 409", () => {
 // An idle chat's compact POST answers only once the summary commits, so a message sent meanwhile
 // must reach the server at once: held behind it, the message showed nowhere for the whole compaction.
 describe("a message sent while the chat's compact POST waits", () => {
-  it.each([
-    ["queued", () => queuePrompt.dispatch({ chatID: "c1", text: "next", messageID: "m7" })],
-    ["sent as a prompt", () => sendPrompt.dispatch({ ...args, messageID: "m8" })],
-  ])("is %s without waiting for the compaction", async (_how, send) => {
+  it("is sent as a prompt without waiting for the compaction", async () => {
     let finishCompact: (r: { ok: boolean; status: number }) => void = () => undefined;
     mockSend.mockImplementation((cmd: { type?: string }) =>
       cmd.type === "compact"
@@ -182,7 +179,7 @@ describe("a message sent while the chat's compact POST waits", () => {
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledTimes(1);
     });
-    void send();
+    void sendPrompt.dispatch({ ...args, messageID: "m8" });
 
     try {
       await vi.waitFor(() => {

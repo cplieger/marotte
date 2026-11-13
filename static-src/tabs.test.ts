@@ -236,7 +236,12 @@ import {
   _resetTabsSyncForTest,
 } from "./tabs-sync.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
-import { bindTabsSync, tabServer, settleTabs } from "./__test-helpers__/tabs-server.js";
+import {
+  bindTabsSync,
+  fakeSubject,
+  tabServer,
+  settleTabs,
+} from "./__test-helpers__/tabs-server.js";
 import { until } from "./__test-helpers__/until.js";
 import type { TabKind } from "./types.js";
 
@@ -4135,5 +4140,102 @@ describe("subTabOf", () => {
   it("reads History's absent tab as Chats", async () => {
     await openTab({ kind: "history" });
     expect(subTabOf("history")).toBe("chats");
+  });
+});
+
+describe("recentClosed", () => {
+  const alpha = { ref: "c-alpha", name: "Alpha", closed_at: 1_700_000_000_000 };
+  const beta = { ref: "c-beta", name: "Beta", closed_at: 1_700_000_001_000 };
+
+  /** The tracked reader, through the namespace: a named import of an export a build lacks fails
+   *  the whole file's linking. */
+  function held(): readonly unknown[] {
+    return (tabsModule as unknown as { recentClosed: () => readonly unknown[] }).recentClosed();
+  }
+
+  it("adopts the list a boot read carries", async () => {
+    tabServer.queueList({ tabs: [], recent: [beta, alpha], version: 3 });
+    await listTabs();
+    expect(held()).toEqual([beta, alpha]);
+  });
+
+  it("adopts the list a frame carries and keeps it through a frame without one", async () => {
+    tabServer.queueList({ tabs: [], recent: [], version: 1 });
+    await listTabs();
+    tabServer.emitRaw({ recent: { items: [alpha] }, version: 2 });
+    await settleTabs();
+    expect(held()).toEqual([alpha]);
+
+    tabServer.emitRaw({ changed: fakeSubject("tb_x", { ref: "c-x" }), version: 3 });
+    await settleTabs();
+    expect(held()).toEqual([alpha]);
+
+    tabServer.emitRaw({ recent: { items: [] }, version: 4 });
+    await settleTabs();
+    expect(held()).toEqual([]);
+  });
+
+  it("ignores the list a stale frame carries", async () => {
+    tabServer.queueList({ tabs: [], recent: [alpha], version: 5 });
+    await listTabs();
+    tabServer.emitRaw({ recent: { items: [beta] }, version: 5 });
+    tabServer.emitRaw({ recent: { items: [beta] }, version: 4 });
+    await settleTabs();
+    expect(held()).toEqual([alpha]);
+  });
+
+  it("is replaced by a re-list after a gap", async () => {
+    tabServer.queueList({ tabs: [], recent: [alpha], version: 1 });
+    await listTabs();
+    tabServer.queueList({ tabs: [], recent: [beta], version: 7 });
+    tabServer.emitRaw({ recent: { items: [] }, version: 6 });
+    await settleTabs();
+    expect(tabServer.listCalls()).toBe(2);
+    expect(held()).toEqual([beta]);
+  });
+
+  it("is never edited by this device: its own open and close leave it until a frame says", async () => {
+    tabServer.queueList({ tabs: [], recent: [alpha], version: 0 });
+    await listTabs();
+    // The fake server's frames carry no `recent`, as a server whose list did not change sends.
+    await openChat("c-alpha");
+    expect(held()).toEqual([alpha]);
+    await closeTab(chatID("c-alpha"));
+    await settleTabs();
+    expect(held()).toEqual([alpha]);
+  });
+
+  it("is a tracked read: an effect over it re-runs when a frame replaces it", async () => {
+    tabServer.queueList({ tabs: [], recent: [], version: 1 });
+    await listTabs();
+    const seen: number[] = [];
+    const stop = effect(() => {
+      seen.push(held().length);
+    });
+    tabServer.emitRaw({ recent: { items: [beta, alpha] }, version: 2 });
+    await settleTabs();
+    stop();
+    expect(seen).toEqual([0, 2]);
+  });
+
+  it("names a chat a remote frame opens, and one a re-list adds, in the tracked open refs", async () => {
+    tabServer.queueList({ tabs: [], recent: [], version: 1 });
+    await listTabs();
+    const seen: string[][] = [];
+    const stop = effect(() => {
+      seen.push(tabsModule.openChatRefs());
+    });
+    tabServer.emitRaw({ changed: fakeSubject("tb_r", { ref: "c-remote" }), version: 2 });
+    await settleTabs();
+    tabServer.queueList({
+      tabs: [fakeSubject("tb_r", { ref: "c-remote" }), fakeSubject("tb_l", { ref: "c-listed" })],
+      recent: [],
+      version: 9,
+    });
+    tabServer.emitRaw({ recent: { items: [] }, version: 8 });
+    await settleTabs();
+    stop();
+    expect(seen.at(-1)).toEqual(["c-remote", "c-listed"]);
+    expect(seen).toContainEqual(["c-remote"]);
   });
 });

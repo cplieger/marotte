@@ -30,8 +30,8 @@ github.com/cplieger/go/scheduler v1.1.0 h1:AzmRDvZ/wEEwK7Ab5Uz0Pa5Xx67oWndalpVkn
 github.com/cplieger/go/scheduler v1.1.0/go.mod h1:PEVHRl8YalcfFnicvMQdoWQKM16Ddrby9GPlG1oxyQI=
 github.com/cplieger/go/slogx v1.1.0 h1:whWmZcNmLuWGFM33SYFR+alUTfEodzBjKju44DHNgPY=
 github.com/cplieger/go/slogx v1.1.0/go.mod h1:N88y5LJZ1aVp++cLFqzEV4WsalaX5YKXoRtXT29Ngkw=
-github.com/cplieger/go/sse/v2 v2.3.0-dev.2 h1:w35VZgJd/mDx2LllhEstQ6IoWwLZlnlp8NgtaZT9glk=
-github.com/cplieger/go/sse/v2 v2.3.0-dev.2/go.mod h1:BPIBSZUvuSRIAVT1LYv0XrUa2zqZYpZtbkJrLC9h/uY=
+github.com/cplieger/go/sse/v2 v2.3.0-dev.3 h1:Y+F/1B/CPF/NKZtmTzQK7cD/ijm3wLMhm03CcHsZU74=
+github.com/cplieger/go/sse/v2 v2.3.0-dev.3/go.mod h1:m/CJ/aIrOfqhhXfhik74lnjW4d/aAqegJBScg9tWde0=
 github.com/cplieger/go/ssrf v1.1.0 h1:gyP7pYm1415RkHmIdod1YCvuX+I1xD1dXiRa8tvz8Bg=
 github.com/cplieger/go/ssrf v1.1.0/go.mod h1:95hUJ04+tP4FHFyd9Vp+egJpNDuf8d+jtgvcxzf7Mkw=
 github.com/cplieger/go/textsafe v1.1.0 h1:D+p7ZDBQmABv/empI2TNMZfvhMXNlfii8E2e5V+dUWE=
@@ -42,8 +42,8 @@ github.com/cplieger/go/wiregen v1.1.0-dev.2 h1:W4UOrswuWtLzNhflZ4qldQMhw6EHBhbyh
 github.com/cplieger/go/wiregen v1.1.0-dev.2/go.mod h1:nQMd9q6pc/4h07R8R2PrdvMVlteTRD2LAfxyYC+Ym7w=
 github.com/cplieger/go/yamlenv v1.1.0 h1:vNaxHJnJMmg7MfRhqTBDaFPhMylEzzEtNefCvqU9ZPc=
 github.com/cplieger/go/yamlenv v1.1.0/go.mod h1:2kEi6iiRSxaaAusNrPoC6l0BUqvVVskkR1Cdpt15nUg=
-github.com/cplieger/toolbelt/v3 v3.15.0 h1:6SnFe6r+ccPigP4mSOGgmqluYzwSeql+EH0jLSd5eps=
-github.com/cplieger/toolbelt/v3 v3.15.0/go.mod h1:fa2yqaoQO2geBNV4wT+jdbvHS99f4HdvKcO6x6TYRPU=
+github.com/cplieger/toolbelt/v3 v3.16.0-dev.1 h1:4gPMNAI7kjsECMZw3pNuMfPmCYYFQDAHy7slLlgrpGE=
+github.com/cplieger/toolbelt/v3 v3.16.0-dev.1/go.mod h1:gqpUavWDno1/Xd04MKBaL4pqaTWrXSTYhZME05/VW5A=
 github.com/cplieger/web-terminal-engine/v6 v6.5.0 h1:nECDhDAW4K4XYFfl+B+57nNHwlKos9/s2qzr2hfHUeA=
 github.com/cplieger/web-terminal-engine/v6 v6.5.0/go.mod h1:Q9FfHBKIYRzkwHND2f1/psB2MeZtO9CgA8lev7LLx6c=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=

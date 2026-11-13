@@ -11,6 +11,7 @@ import { apiGetTyped } from "./api-client.js";
 import { observeStamp } from "./subject-versions.js";
 import type { TabKind, TabSubject, TabsChangedPayload } from "./types.js";
 import { decodeTabList } from "./wire/decoders.gen.js";
+import type { RecentClose } from "./wire/types.gen.js";
 
 /** How long a dispatched mutation stays correlatable: bounds the set for frames that never come
  *  (an idempotent open, a refusal, a dropped connection). */
@@ -25,8 +26,9 @@ const VERIFY_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000] as const;
 
 /** What the sync layer needs from the row holder: two verbs, declared at the consumer. */
 export interface TabsTarget {
-  /** Replace the projection from a version-checked, overlaid snapshot (boot list and re-lists only). */
-  reset: (tabs: readonly TabSubject[]) => void;
+  /** Replace the projection and the Recently closed list from a version-checked, overlaid snapshot
+   *  (boot list and re-lists only). */
+  reset: (tabs: readonly TabSubject[], recent: readonly RecentClose[]) => void;
   /** Apply ONE version-checked mutation; `local` marks this device's own echo (mechanism 4). */
   apply: (delta: TabsChangedPayload, local: boolean) => void;
 }
@@ -582,7 +584,7 @@ async function readList(signal?: AbortSignal): Promise<boolean> {
       (list.tabs.some((t) => t.id === op.id) ? rollbacks : confirms).push(op);
     }
   }
-  target?.reset(overlayList(list.tabs, list.version));
+  target?.reset(overlayList(list.tabs, list.version), list.recent);
   for (const op of confirms) {
     op.onConfirm();
   }

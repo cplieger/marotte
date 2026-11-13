@@ -89,8 +89,7 @@ const (
 )
 
 // PromptClass reports whether a turn opened by this source is a user prompt
-// marotte dispatched, which steer routing, parked-steer delivery and admission
-// key on. A workflow step's turn is deliberately not one: a steer aimed into it
+// marotte dispatched, which steer routing and admission key on. A workflow step's turn is deliberately not one: a steer aimed into it
 // is read as that step's own input rather than as the reader's correction.
 func (s TurnOpenSource) PromptClass() bool {
 	switch s {

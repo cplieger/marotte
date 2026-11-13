@@ -626,6 +626,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	runs.steers.queue = h.steerQueue
 	sseP.steers.onRunFacts = func(chatID marotte.ChatID) { h.coord.spawnRun(func() { h.coord.runFactsChanged(chatID) }) }
 	h.coord.steerFacts = sseP.steers.runFacts
+	h.coord.takeEntryFates = sseP.steers.takeEntryFates
 	h.wireSteerRecords()
 	h.hookTriggers = newHookTriggers(lc.shutdownCtx, configP.hooksListRaw, lc.goUnlessDraining)
 	h.translator = translate.New(h.translateRoles())
@@ -766,6 +767,11 @@ func (rt *Runtime) Shutdown(ctx context.Context) error {
 	for chatID := range bridges {
 		rt.holdUnreadSteers(ctx, chatID)
 	}
+	for _, chatID := range rt.coord.turns.chatIDs() {
+		if _, ok := bridges[chatID]; !ok {
+			rt.recordRestart(durable.Context(ctx), chatID, rt.coord.cutSteers(chatID))
+		}
+	}
 
 	// 2b. Join the background loops; step 0 signalled them.
 	if teardownErr == nil {
@@ -789,9 +795,8 @@ func (rt *Runtime) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// The lifecycle is re-fenced first; a row an opened resend carried gets no entry; the forward exit
-// is awaited within ctx. Every other live row gets one dropped/restart entry (textless when KAS may
-// hold it), and record-only rows join the Held row.
+// The lifecycle is re-fenced first; the forward exit is awaited within ctx. Every live row of the
+// steer record and every steer or wake the run list cut gets its restart entry (recordRestart).
 func (rt *Runtime) holdUnreadSteers(ctx context.Context, chatID marotte.ChatID) {
 	rt.coord.turns.refence(chatID)
 	if exit := rt.coord.turns.forwardExit(chatID); exit != nil {
@@ -808,13 +813,17 @@ func (rt *Runtime) holdUnreadSteers(ctx context.Context, chatID marotte.ChatID) 
 	} else {
 		defer unlock()
 	}
-	durableCtx := durable.Context(ctx)
-	rows := rt.bus.steers.shutdownTake(chatID)
+	rows := append(rt.bus.steers.shutdownTake(chatID), rt.coord.cutSteers(chatID)...)
+	rt.recordRestart(durable.Context(ctx), chatID, rows)
+}
+
+// recordRestart gives each row a shutdown cut its dropped/restart entry, the words only where kiro-cli's log cannot
+// hold them: the merge with that log decides the rest at the next load.
+func (rt *Runtime) recordRestart(ctx context.Context, chatID marotte.ChatID, rows []shutdownRow) {
 	if len(rows) == 0 {
 		return
 	}
-	resent := rt.resentKeys(durableCtx, chatID)
-	var held []shutdownRow
+	resent := rt.resentKeys(ctx, chatID)
 	for _, r := range rows {
 		if resent[r.Key] {
 			continue
@@ -828,11 +837,9 @@ func (rt *Runtime) holdUnreadSteers(ctx context.Context, chatID marotte.ChatID) 
 			steer.Origin = marotte.SteerOriginAgent
 		case !r.KASHeld:
 			steer.Text = r.Text
-			held = append(held, r)
 		}
-		rt.coord.recordSteer(durableCtx, chatID, r.Key, steer)
+		rt.coord.recordSteer(ctx, chatID, r.Key, steer)
 	}
-	rt.coord.holdUnread(durableCtx, chatID, held)
 }
 
 // An unreadable log answers none.

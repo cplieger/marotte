@@ -168,6 +168,28 @@ func TestCloseImpact_NamesTheChatsAsksRunsAndQueuedRows(t *testing.T) {
 	}
 }
 
+// A steer kiro-cli was handed is a dock row, named once under Steers: never also a queued row.
+func TestCloseImpact_ASteerTheAgentHoldsIsNoQueuedRow(t *testing.T) {
+	rt, cs, _ := newTestHub()
+	seedChat(t, cs, "c1")
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Run = []marotte.RunEntry{
+			{ID: "m-1", Kind: marotte.RunKindRow, State: marotte.RunInKAS, Want: marotte.RunWantEither, Row: &marotte.QueuedPrompt{ID: "m-1", Text: "use tabs"}},
+			{ID: "m-2", Kind: marotte.RunKindRow, State: marotte.RunOffered, Want: marotte.RunWantEither, Row: &marotte.QueuedPrompt{ID: "m-2", Text: "and spaces"}},
+			{ID: "q-3", Kind: marotte.RunKindRow, State: marotte.RunPending, Want: marotte.RunWantPrompt, Row: &marotte.QueuedPrompt{ID: "q-3", Text: "then add tests"}},
+		}
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := rt.CloseImpact(t.Context(), []marotte.ChatID{"c1"})["c1"]
+
+	if !slices.Equal(w.Queued, []string{"q-3"}) {
+		t.Errorf("queued = %v, want only the follow-up waiting for a turn of its own", w.Queued)
+	}
+}
+
 func askIDString(t *testing.T, evt marotte.ServerEvent) string {
 	t.Helper()
 	p, ok := evt.Payload.(marotte.PermissionNeededPayload)

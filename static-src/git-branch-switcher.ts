@@ -212,20 +212,31 @@ function closePopover(): void {
 
 /**
  * Unbind loading states, abort the branches load, drop the panel. Focus return and aria-expanded are the popover
- * controller's.
+ * controller's, except after a checkout still pending, whose focus goes back to the anchor here.
  */
 function cleanupSwitcher(): void {
   if (openPopover === null) {
     return;
   }
+  const anchor = activeAnchor;
   switcherRoot?.dispose();
   switcherRoot = null;
   popoverNav?.dispose();
   popoverNav = null;
+  // A pending checkout disabled its row, so the hide found focus on <body> and restored nothing;
+  // the dispose above re-enabled and focused that row, inside the panel the remove drops.
+  const pendingRowFocused = openPopover.contains(document.activeElement);
   openPopover.remove();
   openPopover = null;
   popoverCtl = null;
   activeAnchor = null;
+  if (
+    pendingRowFocused &&
+    anchor?.isConnected === true &&
+    (document.activeElement === null || document.activeElement === document.body)
+  ) {
+    anchor.focus();
+  }
 }
 
 async function doCheckout(repo: string, branch: string, create: boolean): Promise<void> {

@@ -93,7 +93,7 @@ func TestSubmit_PlacesASendAsTheHeadersVerbSays(t *testing.T) {
 			if got := lc.runViewLocked().Send; got != tc.want {
 				t.Fatalf("RunView.Send = %q, want %q", got, tc.want)
 			}
-			ans, taken, err := lc.submitLocked(h.coord.LifeStamp(), &command.Submission{
+			ans, waited, err := lc.submitLocked(h.coord.LifeStamp(), &command.Submission{
 				Row:    marotte.QueuedPrompt{ID: "m-new", Text: "hello"},
 				Origin: marotte.RunFromPrompt, Kind: marotte.SendPlain, Wait: true, Composer: true,
 			}, marotte.InterruptSteer)
@@ -102,9 +102,9 @@ func TestSubmit_PlacesASendAsTheHeadersVerbSays(t *testing.T) {
 			}
 			var placed marotte.SendVerb
 			switch {
-			case ans.Steer:
+			case waited != nil && waited.inFlight():
 				placed = marotte.SendSteer
-			case taken != nil:
+			case waited != nil && waited.live():
 				placed = marotte.SendPrompt
 			case ans.As == command.SubmitQueued:
 				placed = marotte.SendQueue
@@ -166,23 +166,27 @@ func TestSubmit_APromptOnlySendQueuesUnlessItWouldSteer(t *testing.T) {
 			}, tc.mode)
 			switch {
 			case tc.refused:
-				if !errors.Is(err, command.ErrSubmitPromptOnly) || ans.Steer {
+				if !errors.Is(err, command.ErrSubmitPromptOnly) || ans.As == command.SubmitSteered {
 					t.Errorf("submit = %+v, %v; want the prompt_only refusal and no steer", ans, err)
 				}
-			case err != nil || ans.Steer || ans.As != command.SubmitQueued:
+			case err != nil || ans.As != command.SubmitQueued:
 				t.Errorf("submit = %+v, %v; want queued", ans, err)
 			}
 		})
 	}
 }
 
-// Chat.RunVersion grows with every write of Chat.Run, whichever writer makes it (a carried row written with no live
-// life, then a live life's list), so a page holding the newest version never takes an older list.
+// Chat.RunVersion grows with every write of Chat.Run, whichever writer makes it (a held row an earlier process left,
+// then a live life's list), so a page holding the newest version never takes an older list.
 func TestRunVersion_GrowsAcrossWriters(t *testing.T) {
 	h, cs, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Run = []marotte.RunEntry{{
+			ID: "m-held", Kind: marotte.RunKindRow, State: marotte.RunHeld, Origin: marotte.RunFromQueue,
+			Row: &marotte.QueuedPrompt{ID: "m-held", Text: "from before"},
+		}}
 		c.RunVersion = 5
 		return true
 	}); err != nil {
@@ -193,17 +197,8 @@ func TestRunVersion_GrowsAcrossWriters(t *testing.T) {
 		return c.RunVersion
 	}
 
-	carried := &marotte.QueuedPrompt{ID: "m-carried", Text: "unread", Resends: []string{"steer-a"}}
-	if err := h.coord.holdCarried(t.Context(), "c1", carried); err != nil {
-		t.Fatalf("holdCarried: %v", err)
-	}
-	afterCarry := version()
-	if afterCarry <= 5 {
-		t.Fatalf("version after the carried row = %d, want above the stored 5", afterCarry)
-	}
-
 	runPrompt(t, h, cs, "c1", "m-1")
-	if got := version(); got <= afterCarry {
-		t.Errorf("version after a live life's writes = %d, want above %d", got, afterCarry)
+	if got := version(); got <= 5 {
+		t.Errorf("version after a live life's writes = %d, want above the stored 5", got)
 	}
 }

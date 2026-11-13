@@ -493,20 +493,49 @@ func (m *Membership) openTabLocked(ctx context.Context, spec marotte.OpenTab, op
 	defer m.mu.Unlock()
 	switch spec.Kind {
 	case marotte.TabKindChat:
-		claim, err := m.chats.Hold(ctx, marotte.ChatID(spec.Ref), marotte.KeyTab, chat.KeepDurable)
-		if err != nil {
-			return TabOpened{}, holdTabErr(err)
-		}
-		opened, err := m.openTab(ctx, spec, opID)
-		if err != nil {
-			m.rollback(ctx, &claim)
-		}
-		return opened, err
+		return m.openChatTabUnderMu(ctx, spec, opID)
 	case marotte.TabKindRun:
 		return m.openRunTabLocked(ctx, spec, opID, launcher)
 	}
 	spec.Launch = nil
 	return m.openTab(ctx, spec, opID)
+}
+
+// openChatTabUnderMu holds the chat's tab fact, then opens its tab, rolling the hold back when the open fails.
+// Caller holds mu.
+func (m *Membership) openChatTabUnderMu(ctx context.Context, spec marotte.OpenTab, opID string) (TabOpened, error) {
+	claim, err := m.chats.Hold(ctx, marotte.ChatID(spec.Ref), marotte.KeyTab, chat.KeepDurable)
+	if err != nil {
+		return TabOpened{}, holdTabErr(err)
+	}
+	opened, err := m.openTab(ctx, spec, opID)
+	if err != nil {
+		m.rollback(ctx, &claim)
+	}
+	return opened, err
+}
+
+// ReopenForMessage opens chatID's tab, owning and top level, when a message from an outside caller reaches a chat
+// with none; a chat with a tab costs one lookup and writes nothing. It never refuses the message: at MaxOpenTabs the
+// open is skipped at Info, a gone or tearing-down chat is left to the prompt's own refusal, and any other failure is
+// logged at Warn.
+func (m *Membership) ReopenForMessage(ctx context.Context, chatID marotte.ChatID) {
+	if m.tabs == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.tabForChat(chatID) != "" {
+		return
+	}
+	_, err := m.openChatTabUnderMu(ctx, marotte.OpenTab{Kind: marotte.TabKindChat, Ref: string(chatID), Owns: true}, "")
+	switch {
+	case err == nil, errors.Is(err, errOpenChatUnknown), errors.Is(err, errChatPurging):
+	case errors.Is(err, errTabsFull):
+		slog.Info("command: a messaged chat's tab was not reopened; 48 tabs are open", "chat_id", chatID)
+	default:
+		slog.Warn("command: a messaged chat's tab was not reopened", "chat_id", chatID, keyError, err)
+	}
 }
 
 // openRunTabLocked opens a run tab. An open one only gains focus. A new one is refused unless its owners were

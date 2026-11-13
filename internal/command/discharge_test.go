@@ -84,6 +84,7 @@ func TestCommandDischarges_ClassifiesEveryCommand(t *testing.T) {
 		marotte.CmdQueuePrompt:         "CmdQueuePrompt",
 		marotte.CmdUnqueuePrompt:       "CmdUnqueuePrompt",
 		marotte.CmdSendQueuedNow:       "CmdSendQueuedNow",
+		marotte.CmdResumeQueue:         "CmdResumeQueue",
 		marotte.CmdRenameChat:          "CmdRenameChat",
 		marotte.CmdSteerRemove:         "CmdSteerRemove",
 		marotte.CmdOpenTab:             "CmdOpenTab",

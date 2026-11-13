@@ -84,12 +84,15 @@ type bridgeCoordinator struct {
 	// autoCompact owns every compaction of a chat: the policy's triggers and the reader's requests.
 	autoCompact *autoCompactor `wiring:"optional"`
 	// resolveEnds settles a close's steer ends in afterTurnClose.
-	resolveEnds func(context.Context, marotte.ChatID, command.TurnFence) command.EndFacts `wiring:"optional"`
+	resolveEnds func(context.Context, marotte.ChatID, command.TurnFence) `wiring:"optional"`
 	// launchEntry opens the turn of a run list entry the list's taker took (command.Dispatcher.LaunchEntry).
 	launchEntry func(context.Context, marotte.ChatID, *command.EntryLaunch) (string, error) `wiring:"optional"`
-	// steerFacts reads the steer queue's pending ends, unsent row keys and change sequence for the run list
-	// (steerRecords.runFacts).
-	steerFacts func(chatID marotte.ChatID, deathDrained bool) (ends int, unsent []string, seq uint64) `wiring:"optional"`
+	// sendEntrySteer routes and sends a row the run list offered as a steer (command.Dispatcher.SteerEntry).
+	sendEntrySteer func(context.Context, marotte.ChatID, *command.EntrySteer) string `wiring:"optional"`
+	// takeEntryFates takes the steer record's fates of the run list's offered rows (steerRecords.takeEntryFates).
+	takeEntryFates func(marotte.ChatID) []entryFate `wiring:"optional"`
+	// steerFacts reads the steer queue's pending ends and change sequence for the run list (steerRecords.runFacts).
+	steerFacts func(chatID marotte.ChatID) (ends int, seq uint64) `wiring:"optional"`
 	// settleNotices clears a run notice KAS's boundary left queued, once KAS is idle. Nil in tests.
 	settleNotices func(context.Context, marotte.ChatID) `wiring:"optional"`
 	// runs lets the death closer close every open step turn of the runs this bridge hosted.
@@ -102,7 +105,6 @@ type bridgeCoordinator struct {
 	// steerTurnStarted runs under the lifecycle lock, so it never waits on the record's queue.
 	steerTurnEnded   func(marotte.ChatID, command.SteerTurnEnd) `wiring:"optional"`
 	steerTurnStarted func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
-	steerTurnOpened  func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
 	steerTurnBound   func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
 	steerBridgeGone  func(marotte.ChatID)                       `wiring:"optional"`
 	steerKASSettled  func(marotte.ChatID)                       `wiring:"optional"`
@@ -185,11 +187,14 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		},
 		forgetLane:        func(origin acpResponder) { h.runs.mutations.forgetLane(laneRef{session: origin}) },
 		applyPendingModel: h.applyPendingModel,
-		resolveEnds: func(ctx context.Context, chatID marotte.ChatID, f command.TurnFence) command.EndFacts {
-			return h.dispatcher.ResolveAfterClose(ctx, chatID, f)
+		resolveEnds: func(ctx context.Context, chatID marotte.ChatID, f command.TurnFence) {
+			h.dispatcher.ResolveAfterClose(ctx, chatID, f)
 		},
 		launchEntry: func(ctx context.Context, chatID marotte.ChatID, l *command.EntryLaunch) (string, error) {
 			return h.dispatcher.LaunchEntry(ctx, chatID, l)
+		},
+		sendEntrySteer: func(ctx context.Context, chatID marotte.ChatID, s *command.EntrySteer) string {
+			return h.dispatcher.SteerEntry(ctx, chatID, s)
 		},
 		settleNotices:    h.runs.clearStaleNotices,
 		runs:             h.runs.log,
@@ -197,7 +202,6 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		takeAgentSteers:  h.bus.steers.takeAgentRows,
 		steerTurnEnded:   h.bus.steers.turnEnded,
 		steerTurnStarted: h.bus.steers.turnStarted,
-		steerTurnOpened:  h.bus.steers.turnOpened,
 		steerTurnBound:   h.bus.steers.turnBound,
 		steerBridgeGone:  h.bus.steers.bridgeGone,
 		steerKASSettled:  h.bus.steers.kasSettled,

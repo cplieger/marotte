@@ -41,12 +41,13 @@ func (o *openRecorder) prompts() []*marotte.EntryPrompt {
 // callerFixture serves prompt, steer and queue_prompt for chat c1, whose composer holds a draft and a staged file,
 // through the real dispatcher. The prompt's session open fails at once, so no turn outlives the test.
 type callerFixture struct {
-	d      *Dispatcher
-	opens  *openRecorder
-	store  *testsupport.InMemoryChatStore
-	steers *stubSteerQueue
-	queue  *launchingRun
-	join   *promptJoin
+	d       *Dispatcher
+	opens   *openRecorder
+	store   *testsupport.InMemoryChatStore
+	steers  *stubSteerQueue
+	queue   *launchingRun
+	join    *promptJoin
+	reopens *reopenRecorder
 }
 
 func newCallerFixture(t *testing.T) *callerFixture {
@@ -79,32 +80,46 @@ func newCallerFixture(t *testing.T) *callerFixture {
 	roles.lifecycle = join
 	queue := runOf(roles)
 	queue.live = true
+	reopens := &reopenRecorder{opens: opens, queue: queue}
+	roles.reopen = reopens
 
 	d := New()
 	d.status = &fakeChatStatus{}
+	d.prompts = roles
 	d.register(marotte.CmdPrompt, func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
 		return cmdPrompt(ctx, roles, cmd)
 	})
 	// benchDeps holds a prompt turn for the steer to join.
 	steerRoles := steerRolesOf(newBenchDeps(), NewSteerLedger(), steers)
+	steerRoles.reopen = reopens
 	d.register(marotte.CmdSteer, func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
 		return cmdSteer(ctx, steerRoles, cmd)
 	})
 	d.register(marotte.CmdQueuePrompt, func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
-		return cmdQueuePrompt(ctx, queue, roles.admission, cmd)
+		return cmdQueuePrompt(ctx, queue, roles.admission, reopens, cmd)
 	})
-	return &callerFixture{d: d, opens: opens, store: store, steers: steers, queue: queue, join: join}
+	return &callerFixture{d: d, opens: opens, store: store, steers: steers, queue: queue, join: join, reopens: reopens}
 }
 
-// post sends a command the way the poller does (no fetch metadata, no Origin), with headers adding a page's.
+// post sends a command the way the poller does (no fetch metadata, no Origin), with headers adding a page's, and
+// fails t unless it is answered 200.
 func (f *callerFixture) post(t *testing.T, cmdType marotte.CommandType, label string, headers map[string]string) {
 	t.Helper()
-	payload, err := json.Marshal(map[string]string{"text": "Agent Mail: 1 new message", "message_id": "m-1"})
+	w := f.send(t, cmdType, label, headers, map[string]string{"text": "Agent Mail: 1 new message", "message_id": "m-1"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("%s answered %d: %s", cmdType, w.Code, w.Body.String())
+	}
+}
+
+// send posts cmdType for c1 with payload as post does and returns the answer, whatever its status.
+func (f *callerFixture) send(t *testing.T, cmdType marotte.CommandType, label string, headers, payload map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	raw, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
 	body, err := json.Marshal(map[string]any{
-		"type": cmdType, "chat_id": "c1", "caller": label, "payload": json.RawMessage(payload),
+		"type": cmdType, "chat_id": "c1", "caller": label, "payload": json.RawMessage(raw),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -116,9 +131,7 @@ func (f *callerFixture) post(t *testing.T, cmdType marotte.CommandType, label st
 	w := httptest.NewRecorder()
 	f.d.ServeHTTP(w, req)
 	f.join.join()
-	if w.Code != http.StatusOK {
-		t.Fatalf("%s answered %d: %s", cmdType, w.Code, w.Body.String())
-	}
+	return w
 }
 
 var pageHeaders = map[string]string{"Sec-Fetch-Site": "same-origin"}

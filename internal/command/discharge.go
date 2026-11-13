@@ -74,6 +74,7 @@ var commandDischarges = map[marotte.CommandType]dischargeVerdict{
 	marotte.CmdSteerClear:        dischargeNo,
 	marotte.CmdUnqueuePrompt:     dischargeNo,
 	marotte.CmdSendQueuedNow:     dischargeNo,
+	marotte.CmdResumeQueue:       dischargeNo,
 	marotte.CmdRenameChat:        dischargeNo,
 	marotte.CmdSteerRemove:       dischargeNo,
 	marotte.CmdOpenTab:           dischargeNo,

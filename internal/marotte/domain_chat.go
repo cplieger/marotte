@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"math"
 	"slices"
-	"strings"
 )
 
 // ToolKind identifies the category of a tool invocation, assigned by kiro-cli and
@@ -631,7 +630,7 @@ func (m InterruptMode) Valid() bool {
 }
 
 // MaxQueuedPrompts caps the rows on Chat.Run, which the header carries to every device. A
-// user's queue_prompt stops short of it, so a shutdown's carried row always has a slot.
+// user's queue_prompt stops short of it, so a carried row always has a slot.
 const MaxQueuedPrompts = 20
 
 // carrySeparator joins the steers one carried row resends.
@@ -640,8 +639,8 @@ const carrySeparator = "\n\n"
 // CarryCost is the bytes a steer of this text adds to its carried row, separator included.
 func CarryCost(text string) int { return len(text) + len(carrySeparator) }
 
-// QueuedPrompt is the message a row, unread or retry entry of Chat.Run sends. A row with Resends is CARRIED,
-// written at shutdown from unread steers; a list holds at most one carried row, and it is held. Label is the row's
+// QueuedPrompt is the message a row or retry entry of Chat.Run sends. A row with Resends is CARRIED: an
+// earlier version's shutdown wrote it from unread steers, and it stays held. Label is the row's
 // PromptCommand.DisplayText; Model is the POST's model, which seeds a new record's.
 type QueuedPrompt struct {
 	// Caller is set on a row an API caller queued.
@@ -656,18 +655,6 @@ type QueuedPrompt struct {
 
 // Carried reports whether the row resends dropped steers.
 func (q *QueuedPrompt) Carried() bool { return len(q.Resends) > 0 }
-
-// CarriedRow is the carried row for unread steers, texts in the order given.
-func CarriedRow(id string, texts, resends []string) QueuedPrompt {
-	return QueuedPrompt{ID: id, Text: strings.Join(texts, carrySeparator), Resends: resends}
-}
-
-// Absorb appends more steers to q, keeping q's id; q keeps a caller only when neither row is the user's (SharedCaller).
-func (q *QueuedPrompt) Absorb(more *QueuedPrompt) {
-	q.Text += carrySeparator + more.Text
-	q.Resends = append(q.Resends, more.Resends...)
-	q.Caller = SharedCaller([]*Caller{q.Caller, more.Caller})
-}
 
 // SessionChain returns every KAS session id this chat has run on, current one last: the
 // reaper's keep-set.

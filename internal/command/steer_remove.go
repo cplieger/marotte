@@ -2,7 +2,7 @@ package command
 
 // KAS's steer buffer has two verbs, append and clear, and its read cursor does not
 // rewind on a clear (kirodotdev/Kiro#11449), so deleting one steer clears and
-// resends the kept rows as ONE combined probe whose fate is observed.
+// resends the user's kept rows as ONE combined probe whose fate is observed.
 
 import (
 	"context"
@@ -30,6 +30,7 @@ var ResendBridgeWait = 10 * time.Second
 var (
 	errSteerRemoveNotWaiting = errors.New("that message is no longer waiting, because the agent has read it or the turn ended")
 	errSteerRemoveNotUser    = errors.New("only a message you sent can be deleted")
+	errSteerNotQueueable     = errors.New("only a message you sent in this chat can be moved to the queue")
 	errSteerRemoveAgentRows  = errors.New("a workflow result is waiting beside it, so only discarding them all is possible")
 	errSteerRemoveSettling   = errors.New("the agent is still reading or dropping the messages it held when its turn ended, so a message it holds cannot be deleted until it is done. Try again in a moment")
 	errSteerRemoveConsumed   = errors.New("the agent read that message before it could be deleted")
@@ -41,6 +42,8 @@ func steerRefusal(reason string) error {
 	switch reason {
 	case SteerRefuseNotUser:
 		return StatusErrorReason(http.StatusConflict, reason, errSteerRemoveNotUser)
+	case SteerRefuseNotQueueable:
+		return StatusErrorReason(http.StatusConflict, reason, errSteerNotQueueable)
 	case SteerRefuseAgentRows:
 		return StatusErrorReason(http.StatusConflict, reason, errSteerRemoveAgentRows)
 	case SteerRefuseSettling:
@@ -56,9 +59,9 @@ func steerRefusal(reason string) error {
 	}
 }
 
-// cmdSteerRemove deletes one dock row the user sent. Once the target is deleted the
-// answer is success whatever became of the resubmit: the server keeps custody of the
-// kept rows, and their frames say where they went.
+// cmdSteerRemove deletes one dock row the user sent, or with Queue moves it to the chat's queue. Once
+// the target is out of the dock the answer is success whatever became of the resubmit: the server
+// keeps custody of the kept rows, and their frames say where they went.
 func cmdSteerRemove(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
@@ -67,25 +70,44 @@ func cmdSteerRemove(ctx context.Context, roles *promptRoles, cmd *marotte.Client
 	if json.Unmarshal(cmd.Payload, &p) != nil || p.SteerID == "" {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	unlock, err := roles.queue.LockSteerOps(ctx, cmd.ChatID)
-	if err != nil {
-		return nil, StatusError(http.StatusServiceUnavailable, err)
-	}
-	defer unlock()
-	if err := RemoveSteerFrom(ctx, roles.steerTarget(cmd.ChatID), p.SteerID, func(opID string) {
-		endSteerOp(ctx, roles, cmd.ChatID, opID)
-	}); err != nil {
+	if err := removeChatSteer(ctx, roles, cmd.ChatID, p.SteerID, p.Queue); err != nil {
 		return nil, err
+	}
+	if p.Queue {
+		return responseWith(map[string]any{"queued": p.SteerID}), nil
 	}
 	return removed(p.SteerID), nil
 }
 
+// removeChatSteer takes the row steerID out of the chat's dock under its steer lock: deleted, or with
+// queue handed back to the chat's run list as a queued row.
+func removeChatSteer(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, steerID string, queue bool) error {
+	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
+	if err != nil {
+		return StatusError(http.StatusServiceUnavailable, err)
+	}
+	defer unlock()
+	t := roles.steerTarget(chatID)
+	begin := t.Queue.BeginRemove
+	if queue {
+		begin = t.Queue.BeginQueueInstead
+	}
+	return takeSteerOut(ctx, t, steerID, begin, func(opID string) { roles.queue.EndOp(chatID, opID) })
+}
+
 // RemoveSteerFrom deletes the row steerID from t's buffer: a row KAS cannot hold goes at once, else
-// one clear and one combined resubmit of the kept rows. endOp ends the op under the steer lock the
-// caller holds; it runs only when a clear was issued.
+// one clear and one combined resubmit of the user's kept rows. endOp ends the op under the steer lock
+// the caller holds; it runs only when a clear was issued.
 func RemoveSteerFrom(ctx context.Context, t SteerTarget, steerID string, endOp func(opID string)) error {
+	return takeSteerOut(ctx, t, steerID, t.Queue.BeginRemove, endOp)
+}
+
+func takeSteerOut(
+	ctx context.Context, t SteerTarget, steerID string,
+	begin func(chatID marotte.ChatID, key, opID string) (needsClear bool, refuse string), endOp func(opID string),
+) error {
 	opID := ids.NewMessageID()
-	needsClear, refuse := t.Queue.BeginRemove(t.Key, steerID, opID)
+	needsClear, refuse := begin(t.Key, steerID, opID)
 	if refuse != "" {
 		return steerRefusal(refuse)
 	}
@@ -115,18 +137,6 @@ func removed(key string) map[string]any {
 	return responseWith(map[string]any{"deleted": key})
 }
 
-// endSteerOp ends an op that marked rows, still under the steer lock. A stale bind
-// that ended the op's channel settled its rows, and they are routed here before
-// the lock is released; a close's rows wait for that close's pipeline. The route
-// runs on a turn context, not the op's RPC budget, which the clear may have spent.
-func endSteerOp(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, opID string) {
-	if roles.queue.EndOp(chatID, opID) {
-		tctx, cancel := roles.lifecycle.TurnContext(ctx)
-		defer cancel()
-		routeIntoStartedPrompt(tctx, roles, chatID)
-	}
-}
-
 // runSteerJobs runs each flush on its own goroutine under the chat's steer lock:
 // the record hands them out from a fold, which must never wait on a command.
 func runSteerJobs(roles *promptRoles) func(SteerJob) {
@@ -142,7 +152,6 @@ func runSteerJobs(roles *promptRoles) func(SteerJob) {
 			}
 			defer unlock()
 			flushSteers(ctx, roles, job.Chat)
-			routeIntoStartedPrompt(ctx, roles, job.Chat)
 		}()
 	}
 }
@@ -151,45 +160,36 @@ func flushSteers(ctx context.Context, roles *promptRoles, chatID marotte.ChatID)
 	SendPlanned(ctx, roles.steerTarget(chatID), roles.jobs.PlanFlush(chatID))
 }
 
-// EndFacts is what resolving a chat's pending ends learned about bridge deaths:
-// Death when a death end was resolved, Undrained when its forwarder never drained.
-type EndFacts struct {
-	Death     bool
-	Undrained bool
-}
-
 // resolveEnds settles every pending turn end whose turn opened at or before upTo,
 // oldest first, leaving each end's rows unsent and unowned. A newer close's end is
 // left for that close. The caller holds the steer lock; nothing is written to any
 // store, so resolving cannot fail.
-func resolveEnds(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, upTo uint64) EndFacts {
-	var facts EndFacts
+func resolveEnds(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, upTo uint64) {
 	for _, e := range roles.jobs.Ends(chatID) {
 		if e.End.TurnSeq > upTo {
 			continue
 		}
 		rows, gone := roles.jobs.JobRows(chatID, e.Owner)
 		if gone {
-			return facts
+			return
 		}
 		switch {
 		case len(rows) == 0:
 		case e.End.BridgeDeath:
-			facts.Death = true
-			if !awaitForwarder(ctx, e.End.Exit) {
-				facts.Undrained = true
-				slog.Warn("steer resend: the dead bridge did not drain; the rows wait for the next prompt's clear",
-					"chat_id", chatID)
-			}
 			// A dead buffer holds nothing; KAS's own re-injection is the post-load
 			// clear's to decide.
 			roles.jobs.StraysCleared(chatID, e.Owner, nil, true)
+			if awaitForwarder(ctx, e.End.Exit) {
+				roles.jobs.DeathDrained(chatID, e.Owner)
+			} else {
+				slog.Warn("steer resend: the dead bridge did not drain; the rows wait for the next prompt's clear",
+					"chat_id", chatID)
+			}
 		default:
 			settleStrays(ctx, roles, chatID, e.Owner, rows)
 		}
 		roles.jobs.EndUnsent(chatID, e.Owner)
 	}
-	return facts
 }
 
 // awaitForwarder waits for a dead bridge's forward goroutine, bounded by
@@ -234,27 +234,13 @@ func settleStrays(ctx context.Context, roles *promptRoles, chatID marotte.ChatID
 	}
 }
 
-// routeIntoStartedPrompt sends the chat's unread rows into the prompt turn that
-// holds admission, once that turn may be past its own delivery point. A prompt
-// that has not started is left alone: its own deliverParkedSteers takes them. The
-// caller holds the steer lock.
-func routeIntoStartedPrompt(ctx context.Context, roles *promptRoles, chatID marotte.ChatID) {
-	turnID, ok := roles.admission.PromptHolder(chatID)
-	if !ok || roles.jobs.NeedsPostLoadClear(chatID) {
-		return
-	}
-	deliverUnread(ctx, roles, chatID, turnID)
-}
-
 // resolveAfterClose is a close pipeline's first step: resolve the closed turn's
-// ends and older ones, then route what that left unsent into a started prompt.
-func resolveAfterClose(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, fence TurnFence) EndFacts {
+// ends and older ones.
+func resolveAfterClose(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, fence TurnFence) {
 	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
 	if err != nil {
-		return EndFacts{}
+		return
 	}
 	defer unlock()
-	facts := resolveEnds(ctx, roles, chatID, fence.Seq)
-	routeIntoStartedPrompt(ctx, roles, chatID)
-	return facts
+	resolveEnds(ctx, roles, chatID, fence.Seq)
 }

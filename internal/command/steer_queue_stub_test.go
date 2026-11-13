@@ -8,27 +8,22 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// stubSteerQueue is a scripted SteerQueue: it routes a steer as itself (or parks
-// it while the session opens) and answers each op step from the fields a test
+// stubSteerQueue is a scripted SteerQueue: it routes a steer as itself (or holds
+// it unsent while the session opens) and answers each op step from the fields a test
 // sets, recording every call in order. The real record's transitions are pinned in
 // internal/agent; here the subject is what the commands DO with the answers.
 type stubSteerQueue struct {
 	removeRes  SteerOpResult
 	discardRes SteerOpResult
-	// reroute is what EndOp answers: a stale bind ended the op's channel.
-	reroute    bool
 	ends       []SteerEnd
-	unsentRows []SteerRow
 	run        func(SteerJob)
 	removeRef  string
 	discardRef string
 	routeRef   string
 	flush      []SteerSend
 	jobRows    []SteerRow
-	delivered  []string
 	calls      []string
 	sent       []stubSent
-	parked     []string
 	cleared    []string
 	// froms is the caller each RouteSteer named, in call order.
 	froms      []*marotte.Caller
@@ -94,12 +89,19 @@ func (q *stubSteerQueue) RouteSteer(_ marotte.ChatID, key, text string, from *ma
 	case !h.Held:
 		return nil, SteerRefuseNoTurn
 	case h.PromptClass && !h.Live:
-		q.mu.Lock()
-		q.parked = append(q.parked, key)
-		q.mu.Unlock()
 		return nil, ""
 	}
 	return []SteerSend{{ID: key, Text: text}}, ""
+}
+
+// RouteEntry refuses no_turn with no turn holding admission or no live bridge, as the record does, else routes the
+// entry's row as RouteSteer would.
+func (q *stubSteerQueue) RouteEntry(_ marotte.ChatID, s *EntrySteer, h SteerHolder) ([]SteerSend, string) {
+	if !h.Held || !h.Live {
+		q.log("route " + marotte.SteerIDFor(s.Entry))
+		return nil, SteerRefuseNoTurn
+	}
+	return q.RouteSteer("", marotte.SteerIDFor(s.Entry), s.Text, s.Caller, h)
 }
 
 func (q *stubSteerQueue) SteerSent(_ marotte.ChatID, s SteerSend, queued bool, err error) {
@@ -111,6 +113,11 @@ func (q *stubSteerQueue) SteerSent(_ marotte.ChatID, s SteerSend, queued bool, e
 
 func (q *stubSteerQueue) BeginRemove(_ marotte.ChatID, key, _ string) (bool, string) {
 	q.log("begin-remove " + key)
+	return q.needsClear, q.removeRef
+}
+
+func (q *stubSteerQueue) BeginQueueInstead(_ marotte.ChatID, key, _ string) (bool, string) {
+	q.log("begin-queue " + key)
 	return q.needsClear, q.removeRef
 }
 
@@ -147,10 +154,7 @@ func (q *stubSteerQueue) OpSent(_ marotte.ChatID, _ string, s SteerSend, queued 
 	q.mu.Unlock()
 }
 
-func (q *stubSteerQueue) EndOp(marotte.ChatID, string) bool {
-	q.log("end-op")
-	return q.reroute
-}
+func (q *stubSteerQueue) EndOp(marotte.ChatID, string) { q.log("end-op") }
 
 func (q *stubSteerQueue) OnSteerJob(run func(SteerJob)) { q.run = run }
 
@@ -181,24 +185,14 @@ func (q *stubSteerQueue) Release(_ marotte.ChatID, _ string, inKASOnly bool) {
 	q.log("release")
 }
 
+func (*stubSteerQueue) DeathDrained(marotte.ChatID, string) {}
+
 // EndUnsent drops the end, as the record does once its rows are unsent.
 func (q *stubSteerQueue) EndUnsent(_ marotte.ChatID, owner string) {
 	q.log("end-unsent")
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.ends = slices.DeleteFunc(q.ends, func(e SteerEnd) bool { return e.Owner == owner })
-}
-
-func (q *stubSteerQueue) UnsentRows(marotte.ChatID, bool) []SteerRow {
-	q.log("unsent-rows")
-	return q.unsentRows
-}
-
-func (q *stubSteerQueue) Delivered(_ marotte.ChatID, keys []string) {
-	q.log("delivered")
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.delivered = append(q.delivered, keys...)
 }
 
 func (q *stubSteerQueue) PlanFlush(marotte.ChatID) []SteerSend {
@@ -215,17 +209,6 @@ func (q *stubSteerQueue) PostLoadCleared(_ marotte.ChatID, _ []string, landed bo
 }
 
 func (q *stubSteerQueue) AgentRowsWaiting(marotte.ChatID) bool { return q.agentRows }
-
-func (q *stubSteerQueue) NextParked(marotte.ChatID, string) (string, string, bool) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if len(q.parked) == 0 {
-		return "", "", false
-	}
-	key := q.parked[0]
-	q.parked = q.parked[1:]
-	return key, "parked " + key, true
-}
 
 func (q *stubSteerQueue) SetSteerLead(_ marotte.ChatID, key string) (func(), bool) {
 	q.log("lead " + key)

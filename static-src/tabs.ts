@@ -118,7 +118,7 @@ import { info, error as toastError } from "./toast.js";
 import { BUS_TAB_CHANGED, emitBus } from "./bus.js";
 import { setPageTitle, clearPageTitle } from "./page-title.js";
 import type { ClosingChat } from "./close-busy.js";
-import type { CloseImpact } from "./wire/types.gen.js";
+import type { CloseImpact, RecentClose } from "./wire/types.gen.js";
 
 // --- Types ---
 
@@ -319,6 +319,15 @@ const stateVersion = signal(0);
 /** Bumped by every `setTabRoute`, which emits only for the active row: `subTabOf` must also see a
  *  background row's route move. */
 const routeVersion = signal(0);
+
+/** The server's Recently closed list, newest first: replaced by a snapshot and by each applied frame
+ *  carrying `recent`, never edited here. */
+const recentList = signal<readonly RecentClose[]>([]);
+
+/** The Recently closed list as a TRACKED read. */
+export function recentClosed(): readonly RecentClose[] {
+  return recentList.value;
+}
 
 /** Reactive counter for DOT writes, which do not `emit()`; only `subscribeTabCues` reads it. */
 const dotVersion = signal(0);
@@ -536,7 +545,8 @@ function expandOrder(order: readonly string[]): string[] {
  *  anything older), so a tab absent from it really is closed; a DELTA's `order` never implies
  *  closure. Surviving rows are REUSED, so a name override, a dot and the spec ride through a
  *  re-list and the lazy singleton imports are not re-entered. */
-function reset(subjects: readonly TabSubject[]): void {
+function reset(subjects: readonly TabSubject[], recent: readonly RecentClose[]): void {
+  recentList.value = recent;
   const before = new Map(state.tabs.map((t) => [t.subject.id, t]));
   const next: TabRow[] = [];
   for (const subject of subjects) {
@@ -594,6 +604,9 @@ function reset(subjects: readonly TabSubject[]): void {
  *  remote close, torn down as the row leaves. `changed` is an upsert by id, `removed_ids` the ONLY
  *  statement of closure, `order` a permutation. */
 function apply(delta: TabsChangedPayload, local: boolean): void {
+  if (delta.recent !== undefined) {
+    recentList.value = delta.recent.items;
+  }
   const changed = delta.changed;
   if (changed !== undefined) {
     upsertSubject(changed);
@@ -2313,7 +2326,7 @@ export function openTabSubjects(): TabSubject[] {
  *  authoritative snapshot does but advances NO version, so the boot's `listTabs()` answer is
  *  adopted over it and every row it does not name is torn down. */
 export function paintProvisionalTabs(subjects: readonly TabSubject[]): void {
-  reset(subjects);
+  reset(subjects, recentList.peek());
 }
 
 /** The cue-bearing tabs and their dot states, for attention.ts's out-of-page fold. A pure
@@ -2498,6 +2511,18 @@ function paintStripNow(): void {
     internal.renderQueued = false;
     renderDOM();
   }
+}
+
+/** Focus a tab's row when it is drawn and not folded away, drawing a queued render first, since a
+ *  row adopted from a reply is drawn one frame later. Answers whether the row took focus. */
+export function focusTabRow(id: string): boolean {
+  paintStripNow();
+  const node = elementOf(id);
+  if (node === null || node.hidden || node.classList.contains("exiting")) {
+    return false;
+  }
+  node.focus();
+  return document.activeElement === node;
 }
 
 // --- View / route (subscriber) ---
@@ -3082,7 +3107,7 @@ function createTabEl(row: TabRow): HTMLElement {
         },
       },
     );
-    showContextMenu(items, { x: e.clientX, y: e.clientY });
+    showContextMenu(items, { x: e.clientX, y: e.clientY }, { returnFocus: node });
   });
 
   return node;
@@ -3589,6 +3614,7 @@ export function _resetForTest(): void {
   internal.emptyDeferred = false;
   internal.renderQueued = false;
   internal.everOpened = false;
+  recentList.value = [];
   internal.unshown = "";
   internal.stripRestore = null;
   nameOverrides.clear();

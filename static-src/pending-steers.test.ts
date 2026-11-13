@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => {
     cancelDispatch: vi.fn((_args: { chatID: string; lead?: string }) => ({
       outcome: Promise.resolve<{ status: string; value?: boolean }>({ status: "success" }),
     })),
-    removeDispatch: vi.fn((_args: { chatID: string; steerID: string }) => ({
+    removeDispatch: vi.fn((_args: { chatID: string; steerID: string; queue?: true }) => ({
       outcome: Promise.resolve<RemoveOutcome>({ status: "success" }),
     })),
     confirmMock: vi.fn((_q: Confirmation) => Promise.resolve(true)),
@@ -33,22 +33,14 @@ const mocks = vi.hoisted(() => {
       outcome: Promise.resolve<RemoveOutcome>({ status: "success" }),
     })),
     announceMock: vi.fn((_message: string) => undefined),
-    queueDispatch: vi.fn((_args: { chatID: string; text: string; messageID: string }) => ({
-      outcome: Promise.resolve<QueueOutcome>({ status: "success" }),
-    })),
-    submitPromptMock: vi.fn((_chatID: string, _text: string, _opts?: unknown) =>
-      Promise.resolve("sent"),
-    ),
-    restoreFailedSendMock: vi.fn((_chatID: string, _text: string) => undefined),
     cancelCompactDispatch: vi.fn((_args: { chatID: string }) => ({
+      outcome: Promise.resolve<RemoveOutcome>({ status: "success" }),
+    })),
+    resumeQueueDispatch: vi.fn((_args: { chatID: string }) => ({
       outcome: Promise.resolve<RemoveOutcome>({ status: "success" }),
     })),
   };
 });
-
-type QueueOutcome =
-  | { status: "success" }
-  | { status: "error"; error: { status?: number; code?: string; message: string } };
 
 type RemoveOutcome =
   | { status: "success"; value?: boolean }
@@ -62,10 +54,10 @@ vi.mock("./actions/chat.js", () => ({
   unqueuePrompt: { dispatch: mocks.unqueueDispatch },
   sendQueuedNow: { dispatch: mocks.sendQueuedNowDispatch },
   cancelCompact: { dispatch: mocks.cancelCompactDispatch },
-  queuePrompt: { dispatch: mocks.queueDispatch },
+  resumeQueue: { dispatch: mocks.resumeQueueDispatch },
 }));
 vi.mock("./submit.js", () => ({
-  submitPrompt: mocks.submitPromptMock,
+  submitPrompt: vi.fn(),
   submitLabelled: vi.fn(),
   forgetDeletedChat: vi.fn(),
   inFlightMessageIDs: vi.fn(() => []),
@@ -94,7 +86,7 @@ vi.mock("./composer-state.js", () => ({
   adoptUnownedComposer: vi.fn(),
   composerDraft: mocks.composerDraftMock,
   restoreRefusedEdit: mocks.restoreRefusedEditMock,
-  restoreFailedSend: mocks.restoreFailedSendMock,
+  restoreFailedSend: vi.fn(),
 }));
 // The refusal is a chat notice; the message is what these cases read.
 vi.mock("./notice-subject.js", async () => {
@@ -118,16 +110,24 @@ const {
   addAttachmentMock,
   removeAttachmentMock,
   sendQueuedNowDispatch,
-  queueDispatch,
-  submitPromptMock,
-  restoreFailedSendMock,
   cancelCompactDispatch,
+  resumeQueueDispatch,
 } = mocks;
 
 import { setSessions, setActive, recordSteerQueued, openTurn, appendEntry, get } from "./store.js";
 import { initPendingSteers, mountSteerStack, type SteerStackSource } from "./pending-steers.js";
 import { signal } from "@cplieger/reactive";
-import type { Entry, PendingSteer, QueuedPrompt, RunEntryView, RunView, Session } from "./types.js";
+// `vitest/browser` is the Vitest 5 spelling; `@vitest/browser/context` throws.
+import { page } from "vitest/browser";
+import type {
+  Entry,
+  PendingSteer,
+  QueuedPrompt,
+  RunEntryView,
+  RunView,
+  RunWait,
+  Session,
+} from "./types.js";
 import {
   compactionEntry,
   resumeEntry,
@@ -317,10 +317,7 @@ describe("the steer stack", () => {
     removeAttachmentMock.mockClear();
     sendQueuedNowDispatch.mockReset();
     sendQueuedNowDispatch.mockReturnValue({ outcome: Promise.resolve({ status: "success" }) });
-    queueDispatch.mockReset();
-    queueDispatch.mockReturnValue({ outcome: Promise.resolve({ status: "success" }) });
-    submitPromptMock.mockClear();
-    restoreFailedSendMock.mockClear();
+    resumeQueueDispatch.mockClear();
   });
 
   it("renders into the bottom-bar stack rather than inside the composer", () => {
@@ -374,6 +371,42 @@ describe("the steer stack", () => {
       "Sent by Agent Mail, waiting for the agent: Agent Mail: 1 new message",
     );
     expect(labelOf(rowAt(1))).toBe("Sent by an API caller \u00b7 unread \u00b7 sends next");
+  });
+
+  // A wake kiro-cli holds is the caller's words, not the reader's: it can be deleted, never edited,
+  // queued as the reader's follow-up or sent now.
+  it("offers a steer an API caller sent only its Delete", () => {
+    recordSteerQueued("chat-1", { id: "steer-m-1", text: "use tabs", origin: "user" });
+    recordSteerQueued("chat-1", {
+      id: "steer-n-1",
+      text: "1 new; run grelot inbox",
+      origin: "user",
+      caller: { label: "grelot" },
+    });
+
+    expect(actions(rowAt(0))).toEqual(PER_ROW("use tabs"));
+    expect(actions(rowAt(1))).toEqual(['Delete "1 new; run grelot inbox"']);
+  });
+
+  // Send-now takes the next turn for the reader's own steers; a wake beside them goes after it.
+  it("says send-now sends the pressed message alone when the only other steer is a caller's", async () => {
+    recordSteerQueued("chat-1", { id: "steer-m-1", text: "use tabs", origin: "user" });
+    recordSteerQueued("chat-1", {
+      id: "steer-n-1",
+      text: "1 new; run grelot inbox",
+      origin: "user",
+      caller: { label: "grelot" },
+    });
+
+    expect(actionButton(rowAt(0), "Send this message now").dataset["tooltip"]).toBe(
+      "Stops the turn and sends this message as a new one",
+    );
+    mocks.announceMock.mockClear();
+    clickAction(rowAt(0), "Send this message now");
+    await vi.waitFor(() => {
+      expect(cancelDispatch).toHaveBeenCalledWith({ chatID: "chat-1", lead: "steer-m-1" });
+    });
+    expect(mocks.announceMock).toHaveBeenCalledWith("Stopping the turn and sending this message");
   });
 
   it("says a message is still sending before the server confirms it", () => {
@@ -787,28 +820,24 @@ describe("the steer stack", () => {
     expect(clearDispatch).not.toHaveBeenCalled();
   });
 
-  it("queues instead: deletes the steer, then queues the same words under a new id", async () => {
+  // The server moves the steer to the queue in one removal, so its words stay with the server
+  // whatever becomes of the reply: on the list as a follow-up, or still in the dock.
+  it("queues instead in one removal that keeps the words with the server", async () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "keep me", origin: "user" });
     recordSteerQueued("chat-1", { id: "steer-2", text: "run the census after", origin: "user" });
     clickAction(rowAt(1), "Queue this message instead");
 
     await vi.waitFor(() => {
-      expect(queueDispatch).toHaveBeenCalledTimes(1);
+      expect(removeDispatch).toHaveBeenCalledTimes(1);
     });
-    expect(removeDispatch.mock.calls).toEqual([[{ chatID: "chat-1", steerID: "steer-2" }]]);
-    const [queued] = queueDispatch.mock.calls[0] ?? [];
-    expect(queued?.chatID).toBe("chat-1");
-    expect(queued?.text).toBe("run the census after");
-    expect(queued?.messageID).toMatch(/^m-/);
-    const removed = removeDispatch.mock.invocationCallOrder[0] ?? Infinity;
-    const queuedAt = queueDispatch.mock.invocationCallOrder[0] ?? -Infinity;
-    expect(removed).toBeLessThan(queuedAt);
-    expect(restoreFailedSendMock).not.toHaveBeenCalled();
-    expect(submitPromptMock).not.toHaveBeenCalled();
+    expect(removeDispatch.mock.calls).toEqual([
+      [{ chatID: "chat-1", steerID: "steer-2", queue: true }],
+    ]);
+    expect(setComposerValueMock).not.toHaveBeenCalled();
     expect(errorToastMock).not.toHaveBeenCalled();
   });
 
-  it("queues nothing when the server refuses the delete, and says why", async () => {
+  it("moves nothing when the server refuses, and says why", async () => {
     removeDispatch.mockReturnValue({
       outcome: Promise.resolve({
         status: "error",
@@ -821,11 +850,10 @@ describe("the steer stack", () => {
     await vi.waitFor(() => {
       expect(errorToastMock).toHaveBeenCalledWith("The agent already read that message");
     });
-    expect(queueDispatch).not.toHaveBeenCalled();
-    expect(restoreFailedSendMock).not.toHaveBeenCalled();
+    expect(setComposerValueMock).not.toHaveBeenCalled();
   });
 
-  it("puts the words in the message box when the delete's reply is lost", async () => {
+  it("says the move is unconfirmed when the reply is lost, leaving the words with the server", async () => {
     removeDispatch.mockReturnValue({
       outcome: Promise.resolve({ status: "error", error: { status: 0, message: "network" } }),
     });
@@ -833,85 +861,10 @@ describe("the steer stack", () => {
     clickAction(firstRow(), "Queue this message instead");
 
     await vi.waitFor(() => {
-      expect(restoreFailedSendMock).toHaveBeenCalledWith("chat-1", "run it after");
+      expect(errorToastMock).toHaveBeenCalledWith("Could not confirm the message was moved");
     });
-    expect(queueDispatch).not.toHaveBeenCalled();
-    expect(errorToastMock).toHaveBeenCalledWith("Could not confirm the message was moved");
-  });
-
-  it("sends the words as a prompt when the turn ended between the delete and the queue", async () => {
-    queueDispatch.mockReturnValue({
-      outcome: Promise.resolve({
-        status: "error",
-        error: { status: 409, code: "no_turn", message: "No turn is running" },
-      }),
-    });
-    recordSteerQueued("chat-1", { id: "steer-1", text: "run it after", origin: "user" });
-    clickAction(firstRow(), "Queue this message instead");
-
-    await vi.waitFor(() => {
-      expect(submitPromptMock).toHaveBeenCalledWith("chat-1", "run it after", { attachments: [] });
-    });
-    expect(restoreFailedSendMock).not.toHaveBeenCalled();
-    expect(errorToastMock).not.toHaveBeenCalled();
-  });
-
-  it("puts the words in the message box when the queue refuses them after the delete", async () => {
-    queueDispatch.mockReturnValue({
-      outcome: Promise.resolve({
-        status: "error",
-        error: { status: 409, code: "full", message: "The follow-up queue is full" },
-      }),
-    });
-    recordSteerQueued("chat-1", { id: "steer-1", text: "run it after", origin: "user" });
-    clickAction(firstRow(), "Queue this message instead");
-
-    await vi.waitFor(() => {
-      expect(errorToastMock).toHaveBeenCalledWith("The follow-up queue is full");
-    });
-    expect(restoreFailedSendMock.mock.calls).toEqual([["chat-1", "run it after"]]);
-    expect(submitPromptMock).not.toHaveBeenCalled();
-  });
-
-  it("puts the words in the message box when the queue's reply is lost", async () => {
-    queueDispatch.mockReturnValue({
-      outcome: Promise.resolve({ status: "error", error: { status: 0, message: "network" } }),
-    });
-    recordSteerQueued("chat-1", { id: "steer-1", text: "run it after", origin: "user" });
-    clickAction(firstRow(), "Queue this message instead");
-
-    await vi.waitFor(() => {
-      expect(restoreFailedSendMock).toHaveBeenCalledWith("chat-1", "run it after");
-    });
-  });
-
-  it("leaves the box alone when the queue's reply is lost but its row landed", async () => {
-    queueDispatch.mockImplementation(({ chatID, text, messageID }) => {
-      const s = get(chatID);
-      if (s !== undefined) {
-        setSessions([
-          {
-            ...s,
-            run: runAt(1, [
-              rowEntry(messageID, { after: "next" }, { row: { id: messageID, text } }),
-            ]),
-          },
-        ]);
-      }
-      return {
-        outcome: Promise.resolve({ status: "error", error: { status: 0, message: "network" } }),
-      };
-    });
-    recordSteerQueued("chat-1", { id: "steer-1", text: "run it after", origin: "user" });
-    clickAction(firstRow(), "Queue this message instead");
-
-    await vi.waitFor(() => {
-      expect(queueDispatch).toHaveBeenCalled();
-    });
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(restoreFailedSendMock).not.toHaveBeenCalled();
-    expect(errorToastMock).not.toHaveBeenCalled();
+    expect(removeDispatch).toHaveBeenCalledTimes(1);
+    expect(setComposerValueMock).not.toHaveBeenCalled();
   });
 
   it("reports a refused delete in the server's words", async () => {
@@ -1038,6 +991,208 @@ describe("the steer stack", () => {
     withRun(behindTurn([{ id: "m-q1", text: "from grelot", caller: { label: "grelot" } }]));
 
     expect(labelOf(firstRow())).toBe("Sent by grelot \u00b7 after this turn");
+  });
+
+  /** A wake the notify door holds behind the reader's rows, waiting `wait`, as the server lists it. */
+  function wake(id: string, text: string, wait: RunWait): RunEntryView {
+    return rowEntry(id, wait, {
+      origin: "notify",
+      want: "either",
+      row: { id, text, caller: { label: "grelot" } },
+    });
+  }
+
+  // A wake waiting behind the reader's own follow-up is grelot's words: drawn with its sender, never
+  // edited or sent early, and discarded like any row.
+  it("draws a wake waiting behind the reader's follow-up as grelot's row, which can only be discarded", async () => {
+    withRun([
+      ...behindTurn([{ id: "m-q1", text: "then add tests" }]),
+      wake("n-1", "1 new; run grelot inbox", { after: "turns", turns: 2 }),
+    ]);
+    const row = rowAt(1);
+
+    expect(rows().map(textOf)).toEqual(["then add tests", "1 new; run grelot inbox"]);
+    expect(labelOf(row)).toBe("Sent by grelot \u00b7 after 2 turns");
+    expect(actions(row)).toEqual(["Discard this message from grelot"]);
+    expect(actionButton(row, "Discard").dataset["tooltip"]).toBe(
+      "It has not been sent. grelot may send it again while it stays unread",
+    );
+
+    clickAction(row, "Discard");
+    await vi.waitFor(() => {
+      expect(unqueueDispatch).toHaveBeenCalledExactlyOnceWith({
+        chatID: "chat-1",
+        messageID: "n-1",
+      });
+    });
+  });
+
+  // One waiting row per sender: grelot's next wake replaces the waiting one's words and keeps its place.
+  it("replaces a waiting wake's words in place when its sender's next wake arrives", () => {
+    withRun([
+      ...behindTurn([{ id: "m-q1", text: "then add tests" }]),
+      wake("n-1", "1 new; run grelot inbox", { after: "turns", turns: 2 }),
+    ]);
+    const before = rows();
+
+    withRun([
+      ...behindTurn([{ id: "m-q1", text: "then add tests" }]),
+      wake("n-1", "2 new; run grelot inbox", { after: "turns", turns: 2 }),
+    ]);
+
+    expectSameNodes(rows(), before);
+    expect(textOf(rowAt(1))).toBe("2 new; run grelot inbox");
+    expect(rowAt(1).getAttribute("aria-label")).toBe(
+      "Sent by grelot \u00b7 after 2 turns: 2 new; run grelot inbox",
+    );
+  });
+
+  // THE PAUSED QUEUE (user ruling 2026-11-13). Stop pauses the whole queue: every sender's rows stay, each with its
+  // sender, and nothing goes until the reader sends something or presses Resume on the queue.
+  function stoppedQueue(): RunEntryView[] {
+    return [
+      rowEntry(
+        "m-q1",
+        { after: "paused" },
+        {
+          state: "paused",
+          stop_paused: true,
+          row: { id: "m-q1", text: "then add tests" },
+          send_now: "now",
+        },
+      ),
+      {
+        ...wake("n-1", "1 new; run grelot inbox", { after: "paused" }),
+        state: "paused",
+        stop_paused: true,
+      },
+    ];
+  }
+
+  it("draws the rows a stop paused under the paused queue's head, each with its sender", () => {
+    withRun(stoppedQueue(), { send: "prompt" }, false);
+
+    expect(rows().map(labelOf)).toEqual(["Paused", "Paused", "Sent by grelot \u00b7 paused"]);
+    expect(rows().map(textOf)).toEqual([
+      "Stopped. The messages below wait for your next message or Resume",
+      "then add tests",
+      "1 new; run grelot inbox",
+    ]);
+    expect(actions(rowAt(0))).toEqual(["Resume the queue"]);
+    expect(actions(rowAt(1))).toEqual([
+      "Send this follow-up next",
+      "Edit this follow-up",
+      "Discard this follow-up",
+    ]);
+    expect(actions(rowAt(2))).toEqual(["Discard this message from grelot"]);
+  });
+
+  it("keeps the paused queue's head over a caller's row once the reader discarded their own", () => {
+    const callerOnly = stoppedQueue().slice(1);
+    withRun(callerOnly, { send: "prompt" }, false);
+
+    expect(rows().map(labelOf)).toEqual(["Paused", "Sent by grelot \u00b7 paused"]);
+    expect(actions(rowAt(0))).toEqual(["Resume the queue"]);
+  });
+
+  it("resumes the chat's queue from the paused queue's head", async () => {
+    withRun(stoppedQueue(), { send: "prompt" }, false);
+
+    clickAction(rowAt(0), "Resume the queue");
+    await vi.waitFor(() => {
+      expect(resumeQueueDispatch).toHaveBeenCalledExactlyOnceWith({ chatID: "chat-1" });
+    });
+    expect(unqueueDispatch).not.toHaveBeenCalled();
+    expect(sendQueuedNowDispatch).not.toHaveBeenCalled();
+  });
+
+  // Rows a broken close or the failsafe's stop paused go by themselves at the next clean turn end: no Resume.
+  it("draws no paused queue's head over rows paused until the next turn", () => {
+    withRun(
+      [
+        rowEntry(
+          "m-q1",
+          { after: "turns", turns: 1 },
+          { state: "paused", row: { id: "m-q1", text: "first" }, send_now: "now" },
+        ),
+      ],
+      { send: "prompt" },
+      false,
+    );
+
+    expect(rows().map(labelOf)).toEqual(["After the next turn"]);
+  });
+
+  // A phone row has room for the message and its glyph, not the state word; a row someone else sent still names
+  // its sender there, since the reader must see who is waiting in the queue.
+  describe("at phone width", () => {
+    let styleEl: HTMLStyleElement | null = null;
+    let entry: { readonly width: number; readonly height: number } | null = null;
+
+    beforeAll(() => {
+      entry = { width: window.innerWidth, height: window.innerHeight };
+      styleEl = mountAppCSS();
+    });
+
+    afterAll(async () => {
+      styleEl?.remove();
+      if (entry !== null) {
+        await page.viewport(entry.width, entry.height);
+      }
+    });
+
+    /** The label as drawn: `innerText` leaves out a hidden child and applies the uppercase, but answers the
+     *  whole text for an element that is not rendered itself. */
+    function shownLabel(row: HTMLElement): string {
+      const label = row.querySelector<HTMLElement>(".steer-state-label");
+      return label?.checkVisibility() === true ? label.innerText.toLowerCase() : "";
+    }
+
+    async function atWidth(width: number): Promise<void> {
+      await page.viewport(width, 800);
+      expect(window.innerWidth, "viewport actually resized").toBe(width);
+    }
+
+    it("names the sender of a caller's row and drops every state word", async () => {
+      await atWidth(390);
+      withRun(stoppedQueue(), { send: "prompt" }, false);
+
+      expect(rows().map(shownLabel)).toEqual(["", "", "sent by grelot"]);
+    });
+
+    it("names the sender of a caller's steer", async () => {
+      await atWidth(390);
+      recordSteerQueued("chat-1", { id: "steer-m-1", text: "use tabs", origin: "user" });
+      recordSteerQueued("chat-1", {
+        id: "steer-n-1",
+        text: "nightly report",
+        origin: "user",
+        caller: { label: "Agent Mail" },
+        state: "unsent",
+      });
+
+      expect(rows().map(shownLabel)).toEqual(["", "sent by agent mail"]);
+    });
+
+    it("leaves the message the wider column under the longest caller label", async () => {
+      await atWidth(360);
+      const label = "a".repeat(64);
+      withRun([
+        ...behindTurn([{ id: "m-q1", text: "1 new; run grelot inbox", caller: { label } }]),
+      ]);
+      const row = firstRow();
+      const width = (sel: string): number =>
+        row.querySelector(sel)?.getBoundingClientRect().width ?? 0;
+
+      expect(width(".steer-text")).toBeGreaterThan(width(".steer-state"));
+    });
+
+    it("keeps the whole label at desktop width", async () => {
+      await atWidth(1280);
+      withRun(stoppedQueue(), { send: "prompt" }, false);
+
+      expect(rows().map(shownLabel)).toEqual(["paused", "paused", "sent by grelot \u00b7 paused"]);
+    });
   });
 
   it("draws a quoted follow-up's passage as a sent prompt's band, and names it without the marks", () => {
@@ -1212,10 +1367,7 @@ describe("the steer stack", () => {
   // CASE I: a steer the agent had not read when the turn stopped waits under the running compaction.
   it("draws an unread steer under the running compaction it waits for", () => {
     withRun(
-      [
-        compactionEntry("compact-1", { after: "running" }),
-        rowEntry("m-u", { after: "compaction" }, { kind: "unread", origin: "unread" }),
-      ],
+      [compactionEntry("compact-1", { after: "running" })],
       { send: "queue", unread_wait: { after: "compaction" } },
       false,
     );
@@ -1341,6 +1493,51 @@ describe("the steer stack", () => {
     expect(rows().map(labelOf)).toEqual(["Sent", "After this turn"]);
   });
 
+  // The server lists a steer kiro-cli holds on the run order too; it is one message, drawn as a steer.
+  it("draws a steer kiro-cli holds once, as a steer, never also as a follow-up", () => {
+    withRun([
+      rowEntry(
+        "m-1",
+        { after: "turns", turns: 1, this: true },
+        { state: "in_kas", want: "either", row: { id: "m-1", text: "use tabs" } },
+      ),
+    ]);
+    recordSteerQueued("chat-1", { id: "steer-m-1", text: "use tabs", origin: "user" });
+
+    expect(rows().map(textOf)).toEqual(["use tabs"]);
+    expect(labelOf(firstRow())).toBe("Sent");
+  });
+
+  // kiro-cli takes one steer at a time, so a second quick steer waits for the first's answer: it is
+  // already the running turn's, drawn as a steer still sending, never as a follow-up with an Edit.
+  it("draws a steer waiting behind the one being sent as sending, and keeps its row when its frame lands", () => {
+    const thisTurn: RunWait = { after: "turns", turns: 1, this: true };
+    withRun([
+      rowEntry("m-1", thisTurn, {
+        state: "offered",
+        want: "either",
+        row: { id: "m-1", text: "first" },
+      }),
+      rowEntry("m-2", thisTurn, {
+        want: "either",
+        steer_in_flight: true,
+        row: { id: "m-2", text: "second" },
+      }),
+    ]);
+    recordSteerQueued("chat-1", { id: "steer-m-1", text: "first", origin: "user" });
+
+    expect(rows().map(textOf)).toEqual(["first", "second"]);
+    const [first, second] = [rowAt(0), rowAt(1)];
+    expect(second.dataset["state"]).toBe("sending");
+    expect(labelOf(second)).toBe("Sending");
+    expect(actions(second)).toEqual([]);
+
+    recordSteerQueued("chat-1", { id: "steer-m-2", text: "second", origin: "user" });
+
+    expectSameNodes(rows(), [first, second]);
+    expect(labelOf(second)).toBe("Sent");
+  });
+
   // A steer waiting for a prompt rides the entry that carries it; behind a compaction that sends none, it
   // goes with the next message, never "after the compaction".
   it("does not say a steer waiting for a prompt goes after a compaction whose end sends none", () => {
@@ -1437,19 +1634,6 @@ describe("the steer stack", () => {
 
     expect(hint(rows()[0] as HTMLElement)).toContain("It has not been sent");
     expect(hint(rows()[1] as HTMLElement)).toContain("It will not be sent again");
-  });
-
-  it("updates a carried row's text in place when it absorbs a later carry", () => {
-    withRun(behindTurn([{ id: "m-c", text: "use tabs", resends: ["steer-1"] }]));
-    const before = firstRow();
-    withRun(
-      behindTurn([
-        { id: "m-c", text: "use tabs\n\nand rename it", resends: ["steer-1", "steer-2"] },
-      ]),
-    );
-
-    expect(firstRow()).toBe(before);
-    expect(textOf(firstRow())).toBe("use tabs and rename it");
   });
 
   it("discards one follow-up by its own id, leaving the steer buffer alone", async () => {

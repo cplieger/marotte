@@ -5,7 +5,9 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
@@ -442,72 +444,6 @@ func shutdownMidPrompt(t *testing.T, arm func(h *Runtime)) *testChatStore {
 	return cs
 }
 
-// TestShutdown_RecordsAKASQueuedSteerAsADroppedRestart pins that the skipped death closer would otherwise lose a queued steer.
-func TestShutdown_RecordsAKASQueuedSteerAsADroppedRestart(t *testing.T) {
-	cs := shutdownMidPrompt(t, func(h *Runtime) {
-		sends, refuse := h.steerQueue.RouteSteer("c1", "s-1", "use tabs", nil,
-			command.SteerHolder{Held: true, PromptClass: true, Live: true})
-		if refuse != "" || len(sends) != 1 {
-			t.Fatalf("RouteSteer = %+v %q, want one send", sends, refuse)
-		}
-		h.bus.steers.SteerWaiting("c1", &marotte.SteerQueuedPayload{
-			SteerID: sends[0].ID, Text: sends[0].Text, Origin: marotte.SteerOriginUser,
-		})
-		h.steerQueue.SteerSent("c1", sends[0], true, nil)
-	})
-
-	entries := logOf(t, cs, "c1")
-	closeAt, steerAt := -1, -1
-	var steer marotte.EntrySteer
-	for i, e := range entries {
-		switch e.Kind {
-		case marotte.EntryKindTurnClose:
-			closeAt = i
-		case marotte.EntryKindSteer:
-			if steerAt >= 0 {
-				t.Errorf("a second steer entry %q, want exactly one", e.ID)
-			}
-			steerAt = i
-			if e.ID != "s-1" {
-				t.Errorf("steer id = %q, want s-1", e.ID)
-			}
-			if err := json.Unmarshal(e.Payload, &steer); err != nil {
-				t.Fatalf("decode the steer: %v", err)
-			}
-		}
-	}
-	if steerAt < 0 {
-		t.Fatalf("no steer entry after the shutdown, want a dropped/restart record of s-1")
-	}
-	if closeAt < 0 || steerAt < closeAt {
-		t.Errorf("steer at %d, turn_close at %d, want the steer after the close", steerAt, closeAt)
-	}
-	want := marotte.EntrySteer{Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonRestart}
-	if steer.Text != "" || steer.Origin != want.Origin || steer.State != want.State || steer.Reason != want.Reason {
-		t.Errorf("steer = %+v, want text-less %+v: the empty text is the reconcile signal", steer, want)
-	}
-}
-
-// TestShutdown_RecordsAParkedSteerWithItsText pins that only this process has its text, so it goes in the dropped row and a Held row.
-func TestShutdown_RecordsAParkedSteerWithItsText(t *testing.T) {
-	cs := shutdownMidPrompt(t, func(h *Runtime) {
-		if _, refuse := h.steerQueue.RouteSteer("c1", "s-park", "use tabs", nil,
-			command.SteerHolder{Held: true, PromptClass: true}); refuse != "" {
-			t.Fatalf("RouteSteer refused %q", refuse)
-		}
-	})
-
-	got := chatSteers(t, cs, "c1")
-	if len(got) != 1 || got[0].Text != "use tabs" || got[0].State != marotte.SteerStateDropped ||
-		got[0].Reason != marotte.SteerReasonRestart {
-		t.Errorf("steers = %+v, want one dropped/restart carrying the parked text", got)
-	}
-	rows := queuedRows(t, cs, "c1")
-	if len(rows) != 1 || rows[0].State != marotte.RunHeld || !rows[0].Row.Carried() || rows[0].Row.Text != "use tabs" {
-		t.Errorf("queue = %+v, want one held carried row with the parked text", rows)
-	}
-}
-
 // TestShutdown_TheCutTurnNamesTheRestartAsItsCause: the reader cancelled nothing, so
 // the footer must not say they did.
 func TestShutdown_TheCutTurnNamesTheRestartAsItsCause(t *testing.T) {
@@ -655,6 +591,50 @@ func TestCmdPrompt_ASteeredPromptsRowIsKeyedByTheIDKASStampsOnIt(t *testing.T) {
 	}
 }
 
+// A Send bound for the running turn as a steer while the unread steers already fill kiro-cli's buffer budget is refused
+// 409 full, so the client keeps the text: it is neither steered nor queued as a row.
+func TestCmdPrompt_ASteerPastTheSteerBudgetIsRefusedFull(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		text string
+		// unread is how many steers fill the budget before the refused one.
+		unread int
+	}{
+		{name: "past the joined text's size", text: strings.Repeat("x", command.MaxPromptBytes/2+1), unread: 1},
+		{name: "past the row count", text: "more", unread: maxSteerRows},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, br := steerOpsHub(t)
+			s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnStartMsg())
+			send := func(id string) *httptest.ResponseRecorder {
+				payload, _ := json.Marshal(map[string]string{"text": tc.text, "message_id": id})
+				return postCmd(t, s.h, marotte.ClientCommand{Type: marotte.CmdPrompt, ChatID: "c1", Payload: payload})
+			}
+			for i := range tc.unread {
+				if got := ackAs(t, send(fmt.Sprintf("m-%d", i))); got != "steered" {
+					t.Fatalf("Setup: send %d answered %q, want steered", i, got)
+				}
+			}
+
+			rec := send("m-over")
+			joinInflight(t, s.h)
+
+			var body struct {
+				Reason string `json:"reason"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); rec.Code != http.StatusConflict || err != nil || body.Reason != "full" {
+				t.Errorf("the send past the budget = %d %s, want 409 full", rec.Code, rec.Body.String())
+			}
+			if n := countCalls(br, marotte.MethodSessionSteer); n != tc.unread {
+				t.Errorf("session/steer calls = %d, want %d: the refused send is not steered", n, tc.unread)
+			}
+			if got := stateOf(s.h, "c1", "m-over"); got != "" {
+				t.Errorf("the refused send stands on the list as %q, want it gone", got)
+			}
+		})
+	}
+}
+
 // A prompt that reads as a KAS notification is never steered: KAS would file it under a notify- id no row
 // carries. It waits for the running turn's end instead.
 func TestCmdPrompt_NotificationShapedTextBesideATurnIsQueuedNotSteered(t *testing.T) {
@@ -746,9 +726,9 @@ func TestMergeTangent_QueuesTheFindingsBehindAParentsWakeTurn(t *testing.T) {
 	}
 }
 
-// A steer while the chat's session door is still opening is parked for the session, never sent on a record that
-// holds none.
-func TestPromptTurn_SteerInTheSessionDoorWindowIsAccepted(t *testing.T) {
+// A steer while the chat's session door is still opening has no running turn to join: it is refused no_turn, which
+// the client answers by sending the words as a prompt, and nothing is left on the list for a later turn.
+func TestPromptTurn_SteerInTheSessionDoorWindowIsRefusedNoTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
 	entered, gate := gateSessionOpen(h)
@@ -765,14 +745,13 @@ func TestPromptTurn_SteerInTheSessionDoorWindowIsAccepted(t *testing.T) {
 		Type: marotte.CmdSteer, ChatID: "c1",
 		Payload: json.RawMessage(`{"text":"also this","message_id":"m-2"}`),
 	})
-	if rec.Code >= http.StatusInternalServerError {
-		t.Errorf("steer in the door window = %d %s, want an answer the client can act on", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"reason":"no_turn"`) {
+		t.Errorf("steer in the door window = %d %s, want 409 no_turn", rec.Code, rec.Body.String())
 	}
 	close(gate)
-	// The fake engine never takes the steer up, so the first turn's end sends it as the next prompt.
-	waitForTurnClosed(t, h, 2)
+	waitForTurnClosed(t, h, 1)
 	opens := opensOf(t, logOf(t, cs, "c1"))
-	if len(opens) != 2 || opens[1].Prompt == nil || !strings.Contains(opens[1].Prompt.Text, "also this") {
-		t.Errorf("turn_open entries = %+v, want the prompt's turn then one carrying the parked steer", opens)
+	if len(opens) != 1 {
+		t.Errorf("turn_open entries = %+v, want the prompt's turn alone", opens)
 	}
 }

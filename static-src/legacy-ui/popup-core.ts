@@ -37,9 +37,9 @@ export interface PopupOptions {
    *  Omit (or pass `null`) to leave focus alone — by default the caller owns
    *  focus. Opt-in. */
   initialFocus?: HTMLElement | null;
-  /** Restore focus when the popup closes. `true` captures whatever was focused
-   *  at open time and refocuses it on close; an element refocuses that element;
-   *  `false`/omitted leaves focus alone. Opt-in. */
+  /** Restore focus when the popup closes with focus inside it. `true` captures
+   *  whatever was focused at open time and refocuses it on close; an element
+   *  refocuses that element; `false`/omitted leaves focus alone. Opt-in. */
   returnFocus?: boolean | HTMLElement;
   /** aria-haspopup value advertised on the trigger. Match the panel's role.
    *  Default `true` (menu). Ignored without a trigger. */
@@ -388,16 +388,21 @@ export function createPopupCore<C extends PopupConfig>(
       leave?.cancel();
       leave = null;
     };
-    /** Move focus back out, once per hide: to the restore target, else off the panel. */
+    /** Move focus back out, once per hide, only while it is inside the panel: to the restore
+     *  target, else off the panel. Focus a click put elsewhere, `<body>` included, stays
+     *  (https://html.spec.whatwg.org/multipage/popover.html, the hide popover algorithm). */
     const restoreFocus = (fx: Fx): void => {
       const { restore, moved } = focus;
       focus = { ...focus, restore: null, moved: false };
+      const active = document.activeElement;
+      if (!(active instanceof HTMLElement) || !panel.contains(active)) {
+        return;
+      }
       if (restore?.isConnected === true) {
         fx.focus(restore);
         return;
       }
-      const active = document.activeElement;
-      if (moved && active instanceof HTMLElement && panel.contains(active)) {
+      if (moved) {
         fx.blur(active);
       }
     };

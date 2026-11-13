@@ -298,38 +298,6 @@ func TestCmdSteerRemove_ATurnThatClosedUnderTheOpEndsTheOpBeforeTheUnlock(t *tes
 	}
 }
 
-// A stale bind that ended the op's channel settled the op's rows; the op routes
-// them into the started prompt before it unlocks.
-func TestCmdSteerClear_AStaleBindUnderTheClearRoutesBeforeTheUnlock(t *testing.T) {
-	b := newSteerBridge()
-	q := clearingQueue()
-	q.discardRes = SteerOpResult{Reason: SteerRefuseNoReply}
-	q.reroute = true
-	q.parked = []string{"steer-w"}
-	host := &promptHolderHost{hostDouble: removeHost(b), turn: "t-p"}
-
-	_, err := cmdSteerClear(t.Context(), steerRolesOf(host, NewSteerLedger(), q), clearReq("c1"))
-	if statusOf(err) != http.StatusBadGateway {
-		t.Errorf("status = %d, want 502 (body %s)", statusOf(err), errText(err))
-	}
-	log := q.callLog()
-	end, route, unlock := slices.Index(log, "end-op"), slices.Index(log, "route steer-w"), slices.Index(log, "unlock")
-	if end < 0 || route < end || unlock < route {
-		t.Errorf("record calls = %v, want end-op, then the reroute, then unlock", log)
-	}
-}
-
-type promptHolderHost struct {
-	hostDouble
-	turn string
-}
-
-func (h *promptHolderHost) PromptHolder(marotte.ChatID) (string, bool) { return h.turn, h.turn != "" }
-
-func (*promptHolderHost) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSource, bool) {
-	return marotte.TurnSourcePrompt, true
-}
-
 // A reader who closes the tab mid-delete must not strand the rows it kept: the
 // clear and the resubmit run on a context the request's cancel does not reach.
 func TestCmdSteerRemove_ADisconnectMidOpStillResubmits(t *testing.T) {
@@ -491,55 +459,6 @@ func drainRoles(h hostDouble, q *stubSteerQueue) *promptRoles {
 	return steerRolesOf(h, NewSteerLedger(), q)
 }
 
-// What a turn leaves unread goes back together, in order, as the next prompt, and
-// the prompt names the rows it carries; the rows retire only once it opened.
-func TestSendUnread_UnreadSteersGoAsOnePromptNamingTheirKeys(t *testing.T) {
-	h := newResendHost(newSteerBridge(), AdmissionAcquired, 0, false)
-	q := newStubSteerQueue()
-	q.unsentRows = []SteerRow{{Key: "steer-a", Text: "first"}, {Key: "steer-b", Text: "second"}}
-
-	_, _ = sendUnread(t.Context(), drainRoles(h, q), testReservation("c1", true), TurnFence{})
-	h.waitInflight(t)
-
-	if len(h.opened) != 1 {
-		t.Fatalf("prompts opened = %d, want 1", len(h.opened))
-	}
-	if p := h.opened[0]; p.Text != "first\n\nsecond" || !slices.Equal(p.Resends, []string{"steer-a", "steer-b"}) {
-		t.Errorf("prompt = %+v, want the rows joined in order, naming both keys", p)
-	}
-	if got := h.opened[0].Label; got != "" {
-		t.Errorf("prompt label = %q, want none: the words are the user's, so they show as written", got)
-	}
-	if !slices.Equal(q.delivered, []string{"steer-a", "steer-b"}) {
-		t.Errorf("delivered = %v, want both keys retired after the open", q.delivered)
-	}
-}
-
-// An unread entry whose prompt cannot open keeps custody of the rows: they stay unsent
-// rather than vanishing with the refused open.
-func TestSendUnread_APromptThatCannotOpenLeavesTheRowsUnsent(t *testing.T) {
-	for _, tc := range []struct {
-		err  error
-		name string
-	}{
-		{name: "the open fails", err: errors.New("disk full")},
-		{name: "a newer turn opened", err: ErrTurnSuperseded},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			h := newResendHost(newSteerBridge(), AdmissionAcquired, 0, false)
-			h.openErr = tc.err
-			q := newStubSteerQueue()
-			q.unsentRows = []SteerRow{{Key: "steer-a", Text: "first"}}
-
-			_, _ = sendUnread(t.Context(), drainRoles(h, q), testReservation("c1", true), TurnFence{})
-
-			if len(q.delivered) != 0 {
-				t.Errorf("delivered = %v, want nothing retired by a refused open", q.delivered)
-			}
-		})
-	}
-}
-
 // A close resolves only the ends of turns that opened at or before it, so an older
 // pipeline never consumes a newer close's end.
 func TestResolveEnds_LeavesANewerTurnsEnd(t *testing.T) {
@@ -602,9 +521,10 @@ func TestResolveEnds_AStrayIsClearedOnlyWithNoHolder(t *testing.T) {
 	}
 }
 
-// A dead bridge's frames must fold before its rows are sent as prompt text; a wait
-// that ends without the drain is reported, so the close's drain withholds them.
+// A dead bridge whose forwarder never drained still has its end resolved: the rows go
+// unsent, left to the next prompt's post-load clear, and the wait that gave up is logged.
 func TestResolveEnds_ADeadBridgeThatHasNotDrainedIsReported(t *testing.T) {
+	logs := captureLogs(t)
 	was := ResendBridgeWait
 	ResendBridgeWait = time.Millisecond
 	t.Cleanup(func() { ResendBridgeWait = was })
@@ -613,10 +533,10 @@ func TestResolveEnds_ADeadBridgeThatHasNotDrainedIsReported(t *testing.T) {
 	q.ends = []SteerEnd{{Owner: "end-1", End: SteerTurnEnd{BridgeDeath: true, Exit: make(chan struct{})}}}
 	q.jobRows = []SteerRow{{Key: "steer-a", Text: "first", InKAS: true}}
 
-	facts := resolveEnds(t.Context(), drainRoles(h, q), "c1", 1)
+	resolveEnds(t.Context(), drainRoles(h, q), "c1", 1)
 
-	if !facts.Death || !facts.Undrained {
-		t.Errorf("facts = %+v, want an undrained death", facts)
+	if !strings.Contains(logs.String(), "did not drain") {
+		t.Errorf("the undrained death logged nothing: %s", logs.String())
 	}
 	if got := q.callLog(); !slices.Contains(got, "end-unsent") {
 		t.Errorf("record calls = %v, want the rows made unsent", got)

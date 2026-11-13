@@ -178,6 +178,18 @@ describe("each kind of live work names itself", () => {
     expect(await gate()).toBe("Close Alpha? It drops 3 queued messages.");
   });
 
+  it("a steer the agent holds once, as its steer, though the run order lists it too", async () => {
+    store.setSessions([
+      makeSession("a", {
+        steers: [{ id: "steer-m-1", text: "use tabs", origin: "user" }],
+        run: runAt(1, [
+          rowEntry("m-1", { after: "turns", turns: 1, this: true }, { state: "in_kas" }),
+        ]),
+      }),
+    ]);
+    expect(await gate()).toBe("Close Alpha? It drops 1 queued message.");
+  });
+
   it("not a follow-up whose turn already opened: that is the running reply", async () => {
     store.setSessions([makeSession("a", { run: runAt(1, [openedRow("q1", "t1")]) })]);
     store.openTurn("a", {

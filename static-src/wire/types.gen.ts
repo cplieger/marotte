@@ -72,11 +72,11 @@ export type RunAskRefusal = "ask_stopping" | "ask_pending" | "ask_stale" | "ask_
 
 export type RunAskText = "asked" | "last_message" | "unseen";
 
-export type RunEntryKind = "turn" | "row" | "unread" | "retry" | "compaction" | "revert" | "resume";
+export type RunEntryKind = "turn" | "row" | "retry" | "compaction" | "revert" | "resume";
 
-export type RunEntryOrigin = "prompt" | "queue" | "tangent" | "summary" | "unread" | "retry" | "wire" | "run" | "carried" | "request" | "threshold" | "turn_end" | "context_limit" | "rewind" | "failsafe";
+export type RunEntryOrigin = "prompt" | "queue" | "tangent" | "summary" | "retry" | "wire" | "run" | "carried" | "request" | "threshold" | "turn_end" | "context_limit" | "rewind" | "failsafe" | "notify";
 
-export type RunEntryState = "pending" | "paused" | "held" | "starting" | "running" | "stopping" | "closing";
+export type RunEntryState = "pending" | "paused" | "held" | "offered" | "in_kas" | "starting" | "running" | "stopping" | "closing";
 
 export type RunNodeStatus = "pending" | "running" | "paused" | "completed" | "failed" | "aborted" | "skipped";
 
@@ -96,7 +96,9 @@ export type RunStepMessageVerb = "steer" | "answer" | "prompt";
 
 export type RunStepTranscriptState = "ready" | "gone" | "unavailable";
 
-export type RunWaitAfter = "running" | "starting" | "next" | "compaction" | "turns" | "held";
+export type RunWaitAfter = "running" | "starting" | "next" | "compaction" | "turns" | "held" | "paused";
+
+export type RunWant = "either" | "prompt";
 
 export type SafetyStatus = "idle" | "formalizing" | "evaluating" | "blocked" | "error";
 
@@ -2877,8 +2879,8 @@ export interface ProbeResult {
 }
 
 /**
- * QueuedPrompt is the message a row, unread or retry entry of Chat.Run sends. A row with Resends is CARRIED,
- * written at shutdown from unread steers; a list holds at most one carried row, and it is held. Label is the row's
+ * QueuedPrompt is the message a row or retry entry of Chat.Run sends. A row with Resends is CARRIED: an
+ * earlier version's shutdown wrote it from unread steers, and it stays held. Label is the row's
  * PromptCommand.DisplayText; Model is the POST's model, which seeds a new record's.
  */
 export interface QueuedPrompt {
@@ -3241,7 +3243,7 @@ export interface RunControlsResponse {
 
 /** RunEntry is one entry of Chat.Run, in run order: the live entries first, then what runs after them. */
 export interface RunEntry {
-  /** Row is a row, unread or retry entry's message. */
+  /** Row is a row or retry entry's message. */
   row?: QueuedPrompt;
   id: string;
   kind: RunEntryKind;
@@ -3249,20 +3251,28 @@ export interface RunEntry {
   origin: RunEntryOrigin;
   /** Turn is the turn id once the entry's turn opened: the transcript then shows its message. */
   turn?: string;
+  want?: RunWant;
   /** Next marks the row send_queued_now moved to the front. */
   next?: boolean;
+  /** Unread marks a row a turn end left unread in kiro-cli's steer buffer: one sender's run of them is one prompt. */
+  unread?: boolean;
   steerable?: boolean;
   /** Yields marks a fold-opened wire turn, which owes no close: a turn-kind take or a compaction goes beside it. */
   yields?: boolean;
   /** Admits, with Yields, is whether kiro-cli's state admits a take beside it now. */
   admits?: boolean;
+  /**
+ * StopPaused marks a paused row the reader's stop paused: the queue is paused until the reader sends, sends a row
+ * now or resumes it.
+ */
+  stop_paused?: boolean;
 }
 
 /** RunEntryView is one entry as the header draws it. */
 export interface RunEntryView {
   /** SendNow is the row's arrow; absent: no arrow. */
   send_now?: SendNowKind;
-  /** Row is a row, unread or retry entry's message. */
+  /** Row is a row or retry entry's message. */
   row?: QueuedPrompt;
   id: string;
   kind: RunEntryKind;
@@ -3270,16 +3280,29 @@ export interface RunEntryView {
   origin: RunEntryOrigin;
   /** Turn is the turn id once the entry's turn opened: the transcript then shows its message. */
   turn?: string;
+  want?: RunWant;
   /** Next marks the row send_queued_now moved to the front. */
   next?: boolean;
+  /** Unread marks a row a turn end left unread in kiro-cli's steer buffer: one sender's run of them is one prompt. */
+  unread?: boolean;
   steerable?: boolean;
   /** Yields marks a fold-opened wire turn, which owes no close: a turn-kind take or a compaction goes beside it. */
   yields?: boolean;
   /** Admits, with Yields, is whether kiro-cli's state admits a take beside it now. */
   admits?: boolean;
+  /**
+ * StopPaused marks a paused row the reader's stop paused: the queue is paused until the reader sends, sends a row
+ * now or resumes it.
+ */
+  stop_paused?: boolean;
   wait: RunWait;
   /** CarriesUnread marks the entry whose turn the awaits-prompt steers ride. */
   carries_unread?: boolean;
+  /**
+ * SteerInFlight marks a user row the running turn takes as a steer once the turn's prompt is written and the one
+ * steer offered is answered: drawn as a steer being sent, never as a queue row.
+ */
+  steer_in_flight?: boolean;
 }
 
 /**

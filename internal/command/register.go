@@ -83,7 +83,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	}
 	d.RegisterChange(marotte.CmdForkChat, bind4(r.Bridges, chats, r.Workspace, mem, cmdForkChat))
 
-	d.register(marotte.CmdQueuePrompt, bind2(r.Run, r.Admission, cmdQueuePrompt))
+	d.register(marotte.CmdQueuePrompt, bind3(r.Run, r.Admission, chatReopener(mem), cmdQueuePrompt))
 	d.register(marotte.CmdRenameChat, bind2(chats, r.Renamer, cmdRenameChat))
 
 	prompt := &promptRoles{
@@ -101,10 +101,12 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		sendGate:    r.SendGate,
 		auth:        r.AuthReadiness,
 		signIn:      r.SignIn,
+		reopen:      mem,
 	}
 	d.prompts = prompt
 	d.register(marotte.CmdPrompt, bind1(prompt, cmdPrompt))
-	d.register(marotte.CmdUnqueuePrompt, bind1(r.Run, cmdUnqueuePrompt))
+	d.register(marotte.CmdUnqueuePrompt, bind1(prompt, cmdUnqueuePrompt))
+	d.register(marotte.CmdResumeQueue, bind1(prompt, cmdResumeQueue))
 	d.register(marotte.CmdSendQueuedNow, bind5(r.Run, r.Bridges, r.Perms, r.Terminals, r.Stops, cmdSendQueuedNow))
 	d.merges = newTangentMerges(prompt, mem, r.Loader)
 	d.register(marotte.CmdMergeTangent, bind2(r.Tangents, d.merges, cmdMergeTangent))
