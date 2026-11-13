@@ -5,6 +5,7 @@
 import { newMessageID } from "./transport.js";
 import { get as getSession } from "./store.js";
 import { sendPrompt as sendPromptAction, type SendPromptAnswer } from "./actions/chat.js";
+import type { InterruptMode } from "./wire/types.gen.js";
 
 /** Options for the low-level prompt sender. */
 interface SendPromptOpts {
@@ -16,6 +17,8 @@ interface SendPromptOpts {
   displayText?: string;
   /** The text is resolved only by a turn of its own, so the server never steers it. */
   promptOnly?: boolean;
+  /** What the prompt does beside a running turn; absent leaves it to the instance's setting. */
+  interruptMode?: InterruptMode;
 }
 
 /** Every answer `sendPromptTo` gives; a caller's branch over it should be total. */
@@ -40,6 +43,7 @@ export async function sendPromptTo(
     ...(opts.attachments !== undefined ? { attachments: opts.attachments } : {}),
     ...(opts.displayText !== undefined ? { displayText: opts.displayText } : {}),
     ...(opts.promptOnly === true ? { promptOnly: true } : {}),
+    ...(opts.interruptMode !== undefined ? { interruptMode: opts.interruptMode } : {}),
   });
   return result ?? "failed";
 }

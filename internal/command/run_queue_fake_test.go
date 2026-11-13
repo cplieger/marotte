@@ -42,7 +42,6 @@ type launchingRun struct {
 	unqueue func(id string) error
 	rows    []marotte.QueuedPrompt
 	cleared []string
-	modes   []marotte.ChatID
 	undone  []*TurnStop
 	steer   bool
 	// live queues every queue_prompt; compacting queues every send, as a running compaction does.
@@ -83,7 +82,7 @@ func (q *launchingRun) Submit(ctx context.Context, chatID marotte.ChatID, stamp 
 	case out == AdmissionAcquired && s.Kind == marotte.SendQueuePrompt:
 		q.roles.admission.ReleaseTurnReservation(res)
 		return SubmitAnswer{}, ErrSubmitNoTurn
-	case out == AdmissionBusy && !s.NoSteer && q.steerMode(ctx, chatID) && s.Kind == marotte.SendPlain:
+	case out == AdmissionBusy && !s.NoSteer && q.steerMode(s) && s.Kind == marotte.SendPlain:
 		if s.PromptOnly {
 			return SubmitAnswer{}, ErrSubmitPromptOnly
 		}
@@ -116,15 +115,8 @@ func (q *launchingRun) queue(s *Submission) SubmitAnswer {
 	return SubmitAnswer{As: SubmitQueued, Settle: s.Composer}
 }
 
-func (q *launchingRun) steerMode(ctx context.Context, chatID marotte.ChatID) bool {
-	if q.steer {
-		return true
-	}
-	if q.roles.chats == nil {
-		return true
-	}
-	c, ok := q.roles.chats.Get(ctx, chatID)
-	return !ok || c.InterruptMode != marotte.InterruptQueue
+func (q *launchingRun) steerMode(s *Submission) bool {
+	return q.steer || s.Mode != marotte.InterruptQueue
 }
 
 func (q *launchingRun) TakeIdle(ctx context.Context, chatID marotte.ChatID, kind IdleKind, stamp uint64, wait time.Duration) (IdleAdmission, Reservation, string) {
@@ -180,12 +172,6 @@ func (q *launchingRun) StopUndone(_ marotte.ChatID, stop *TurnStop) {
 
 func (*launchingRun) RunView(context.Context, marotte.ChatID) marotte.RunView {
 	return marotte.RunView{}
-}
-
-func (q *launchingRun) ModeChanged(chatID marotte.ChatID) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.modes = append(q.modes, chatID)
 }
 
 // queued is the rows waiting, in order.

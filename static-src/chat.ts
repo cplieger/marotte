@@ -28,6 +28,7 @@ import {
 } from "./store-load.js";
 import { effect, el, touch } from "@cplieger/reactive";
 import type { ChatHeader } from "./types.js";
+import type { InterruptMode } from "./wire/types.gen.js";
 import { ensureBound } from "./banner-stack.js";
 import {
   openTab,
@@ -423,13 +424,14 @@ function pageOlder(chatID: string): void {
 
 // --- Sending prompts ---
 
-/** Send from the composer; the composer holds the text until the answer says where it went. */
-export function sendPrompt(text: string): Promise<SubmitResult> | undefined {
+/** Send from the composer, naming what the send does beside a running turn; the composer holds the
+ *  text until the answer says where it went. */
+export function sendPrompt(text: string, mode: InterruptMode): Promise<SubmitResult> | undefined {
   const chatID = getActiveId();
   if (chatID === "") {
     return undefined;
   }
-  return submitPrompt(chatID, text);
+  return submitPrompt(chatID, text, { interrupt: mode });
 }
 
 /** The composer's Esc: cancel what the active chat's run names (`run.cancel`), by id, so a stale press stops nothing else. */

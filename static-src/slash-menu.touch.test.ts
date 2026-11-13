@@ -98,9 +98,7 @@ describe("a tap on a menu row", () => {
   });
 
   it("takes the tap on a row a running turn greyed as soon as that turn ends", async () => {
-    setSessions([
-      makeSession({ id: CHAT, turn_open: true, run: runningRun("steer") }),
-    ]);
+    setSessions([makeSession({ id: CHAT, turn_open: true, run: runningRun("steer") })]);
     await userEvent.keyboard("/chat");
     expect(greyedRows()).toEqual(["/chat-extract"]);
     setTurnOpen(CHAT, false);
@@ -112,9 +110,7 @@ describe("a tap on a menu row", () => {
   });
 
   it("takes the tap on a saved prompt mid-turn when a staged file makes the message queue", async () => {
-    setSessions([
-      makeSession({ id: CHAT, turn_open: true, run: runningRun("steer") }),
-    ]);
+    setSessions([makeSession({ id: CHAT, turn_open: true, run: runningRun("steer") })]);
     addAttachment("docs/plan.md");
     await userEvent.keyboard("/chat");
     expect(greyedRows()).toEqual([]);
@@ -123,9 +119,7 @@ describe("a tap on a menu row", () => {
   });
 
   it("greys an open saved-prompt row once the staged file is removed mid-turn", async () => {
-    setSessions([
-      makeSession({ id: CHAT, turn_open: true, run: runningRun("steer") }),
-    ]);
+    setSessions([makeSession({ id: CHAT, turn_open: true, run: runningRun("steer") })]);
     addAttachment("docs/plan.md");
     await userEvent.keyboard("/chat");
     expect(greyedRows()).toEqual([]);

@@ -17,6 +17,7 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 )
 
 var _ runEffectsHost = (*bridgeCoordinator)(nil)
@@ -394,11 +395,12 @@ func (bc *bridgeCoordinator) runLife(ctx context.Context, chatID marotte.ChatID,
 	return nil, command.ErrSubmitStarting
 }
 
-func (bc *bridgeCoordinator) interruptMode(ctx context.Context, chatID marotte.ChatID) marotte.InterruptMode {
-	if c, ok := bc.chatStore.Get(ctx, chatID); ok {
-		return c.InterruptMode
+// sendMode is what s does beside a steerable turn: its own mode, else the instance's interrupt_mode setting.
+func (bc *bridgeCoordinator) sendMode(ctx context.Context, s *command.Submission) marotte.InterruptMode {
+	if s.Mode.Valid() {
+		return s.Mode
 	}
-	return ""
+	return settings.InterruptModeIn(ctx, bc.lifecycle.configDir)
 }
 
 // Submit places a sent message on the chat's run list (command.runQueue.Submit).
@@ -407,7 +409,7 @@ func (bc *bridgeCoordinator) Submit(ctx context.Context, chatID marotte.ChatID, 
 	if err != nil {
 		return command.SubmitAnswer{}, err
 	}
-	mode := bc.interruptMode(ctx, chatID)
+	mode := bc.sendMode(ctx, s)
 	lc.mu.Lock()
 	if lc.ended {
 		lc.mu.Unlock()
@@ -415,12 +417,12 @@ func (bc *bridgeCoordinator) Submit(ctx context.Context, chatID marotte.ChatID, 
 	}
 	out, e, err := lc.submitLocked(stamp, s, mode)
 	lc.wakeLocked()
-	out.Run = lc.runViewLocked(mode)
+	out.Run = lc.runViewLocked()
 	lc.mu.Unlock()
 	if err != nil || e == nil {
 		return out, err
 	}
-	return lc.awaitLaunch(ctx, e, mode)
+	return lc.awaitLaunch(ctx, e)
 }
 
 // submitLocked decides a send by VerbFor and places it, answering the entry whose launch the caller waits on (nil
@@ -499,7 +501,7 @@ func queueRefusal(entries []marotte.RunEntry, row *marotte.QueuedPrompt) error {
 
 // awaitLaunch waits for submit's own take to open its turn, up to command.AdmissionWait; past it, one section
 // answers queued unless the launch answered first.
-func (lc *chatLifecycle) awaitLaunch(ctx context.Context, e *runEntry, mode marotte.InterruptMode) (command.SubmitAnswer, error) {
+func (lc *chatLifecycle) awaitLaunch(ctx context.Context, e *runEntry) (command.SubmitAnswer, error) {
 	lc.mu.Lock()
 	w := e.launch
 	lc.mu.Unlock()
@@ -514,9 +516,9 @@ func (lc *chatLifecycle) awaitLaunch(ctx context.Context, e *runEntry, mode maro
 	defer lc.mu.Unlock()
 	if !w.closed {
 		settle := answerQueued(e)
-		return command.SubmitAnswer{As: command.SubmitQueued, Settle: settle, Run: lc.runViewLocked(mode)}, nil
+		return command.SubmitAnswer{As: command.SubmitQueued, Settle: settle, Run: lc.runViewLocked()}, nil
 	}
-	view := lc.runViewLocked(mode)
+	view := lc.runViewLocked()
 	switch {
 	case w.err != nil:
 		return command.SubmitAnswer{Run: view}, w.err
@@ -527,41 +529,24 @@ func (lc *chatLifecycle) awaitLaunch(ctx context.Context, e *runEntry, mode maro
 }
 
 // runViewLocked is the list as the header draws it. Caller holds mu.
-func (lc *chatLifecycle) runViewLocked(mode marotte.InterruptMode) marotte.RunView {
-	return marotte.RunViewOf(lc.run.project(), lc.run.version, mode)
+func (lc *chatLifecycle) runViewLocked() marotte.RunView {
+	return marotte.RunViewOf(lc.run.project(), lc.run.version)
 }
 
 // RunView is the chat's run list as the header draws it: the live list, else the stored one.
 func (bc *bridgeCoordinator) RunView(ctx context.Context, chatID marotte.ChatID) marotte.RunView {
-	mode := bc.interruptMode(ctx, chatID)
 	if lc, ok := bc.turns.lookup(chatID); ok {
 		lc.mu.Lock()
 		defer lc.mu.Unlock()
 		if !lc.ended {
-			return lc.runViewLocked(mode)
+			return lc.runViewLocked()
 		}
 	}
 	c, ok := bc.chatStore.Get(ctx, chatID)
 	if !ok {
-		return marotte.RunViewOf(nil, 0, mode)
+		return marotte.RunViewOf(nil, 0)
 	}
-	return marotte.RunViewOf(c.Run, c.RunVersion, mode)
-}
-
-// ModeChanged writes a live life's list again, so its version moves with the mode the header's send now reads and a
-// page holding the older version takes it; the write keeps lc.run.version and runWritten with the record's. With no
-// live life nothing on the list runs, so no send reads the mode.
-func (bc *bridgeCoordinator) ModeChanged(chatID marotte.ChatID) {
-	lc, ok := bc.turns.lookup(chatID)
-	if !ok {
-		return
-	}
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	if lc.ended || lc.reg == nil || lc.reg.runHost == nil {
-		return
-	}
-	lc.writeRunLocked()
+	return marotte.RunViewOf(c.Run, c.RunVersion)
 }
 
 // wakeOnChangeLocked wakes the chat's waiters only when a look changed the list. A waiter that woke on every look of

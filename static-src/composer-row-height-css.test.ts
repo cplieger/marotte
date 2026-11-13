@@ -284,9 +284,9 @@ describe("the composer, measured at real viewport sizes", () => {
   it("holds every control's TARGET at the hit floor, and lets none reach the textarea", async () => {
     // A hit test, not a style read: the 44px target and the no-overhang rule are properties of what `elementFromPoint`
     // answers, and a source assertion that looked right is how the earlier defect survived. The row is at its fullest:
-    // mid-turn, with the second Send shown beside Cancel.
+    // mid-turn, with both halves of the send pill beside Cancel.
     await bandsAt(390, 844, "coarse");
-    withMidTurnSend();
+    withSplitPill();
     const row = document.querySelector<HTMLElement>(".prompt-pills");
     const input = document.getElementById("prompt-input");
     if (row === null || input === null) {
@@ -298,7 +298,10 @@ describe("the composer, measured at real viewport sizes", () => {
       Number.parseFloat(root.getPropertyValue("--hit-floor")) * Number.parseFloat(root.fontSize);
     expect(floor, "the coarse floor, in px").toBe(44);
 
-    const controls = [...row.querySelectorAll<HTMLElement>(".pill:not(.hidden), .send-btn")];
+    // A control the row's ladder gives way (the context pill beside both halves) holds no target to measure.
+    const controls = [...row.querySelectorAll<HTMLElement>(".pill:not(.hidden), .send-btn")].filter(
+      (el) => el.getClientRects().length > 0,
+    );
     expect(controls.length, "the row renders its controls").toBeGreaterThan(3);
 
     const owns = (el: Element, x: number, y: number): boolean => {
@@ -358,6 +361,7 @@ describe("the composer, measured at real viewport sizes", () => {
     }
     midTurn.replaceChildren(iconEl(ICON_SEND));
     midTurn.hidden = false;
+    midTurn.parentElement?.removeAttribute("hidden");
     return { midTurn, cancel };
   }
 
@@ -445,7 +449,12 @@ describe("the composer, measured at real viewport sizes", () => {
 
   /** The split pill as prompt-input.ts paints it beside a steerable turn: the default half with its word and glyph,
    *  then the other action's glyph alone. */
-  function withSplitPill(): { group: HTMLElement; main: HTMLElement; alt: HTMLElement; cancel: HTMLElement } {
+  function withSplitPill(): {
+    group: HTMLElement;
+    main: HTMLElement;
+    alt: HTMLElement;
+    cancel: HTMLElement;
+  } {
     const cancel = withSendGlyph();
     const group = document.getElementById("midturn-send");
     const main = document.getElementById("midturn-send-btn");
@@ -456,37 +465,62 @@ describe("the composer, measured at real viewport sizes", () => {
     main.replaceChildren(el("span", { className: "send-btn-label" }, "Steer"), iconEl(ICON_SEND));
     alt.replaceChildren(iconEl(ICON_QUEUE_UI));
     group.hidden = false;
+    group.classList.add("send-split-both");
     main.hidden = false;
     alt.hidden = false;
     return { group, main, alt, cancel };
   }
 
   it("fits the split pill beside Cancel at every width, both halves one touch box under a coarse pointer", async () => {
-    for (const [w, h, tier] of [
-      [320, 568, "coarse"],
-      [360, 740, "coarse"],
-      [390, 844, "coarse"],
-      [820, 1180, "coarse"],
-      [1180, 820, "fine"],
-      [1440, 900, "fine"],
+    // From 390 up the worst case carries the task list; below, a phone's row holds it only by squeezing a neighbour.
+    // Under 24rem of row the context pill gives way, with or without the task list.
+    for (const [w, h, tier, tasks, contextGives] of [
+      [320, 568, "coarse", false, true],
+      [360, 740, "coarse", false, true],
+      [390, 844, "coarse", false, true],
+      [430, 932, "coarse", true, false],
+      [390, 844, "coarse", true, true],
+      [820, 1180, "coarse", true, false],
+      [1180, 820, "fine", true, false],
+      [1440, 900, "fine", true, false],
     ] as const) {
       await bandsAt(w, h, tier);
-      document.getElementById("task-list-pill")?.classList.remove("hidden");
+      document.getElementById("task-list-pill")?.classList.toggle("hidden", !tasks);
       const model = document.getElementById("ctx-model-pill");
       if (model !== null) {
         model.textContent = "model-alpha-4.5-thinking";
       }
+      const context = document.getElementById("context-label");
       const row = document.querySelector<HTMLElement>(".prompt-pills");
-      if (row === null) {
+      if (row === null || context === null) {
         throw new Error("the composer subtree did not mount");
       }
-      const at = `${String(w)}x${String(h)} ${tier}`;
+      // Two digits, the widest a context share reaches before compaction.
+      context.textContent = "79%";
+      const at = `${String(w)}x${String(h)} ${tier}${tasks ? " tasks" : ""}`;
       const before = row.getBoundingClientRect().height;
       const { main, alt, cancel } = withSplitPill();
+      const gauge = document.getElementById("context-indicator");
+      expect(gauge?.getClientRects().length === 0, `${at}: the context pill gives way`).toBe(
+        contextGives,
+      );
+      const shown = [...row.querySelectorAll<HTMLElement>("button")].filter(
+        (b) => b.getClientRects().length > 0,
+      );
+      for (let i = 1; i < shown.length; i += 1) {
+        const prev = shown[i - 1]?.getBoundingClientRect();
+        const next = shown[i]?.getBoundingClientRect();
+        expect(
+          (next?.left ?? 0) - (prev?.right ?? 0),
+          `${at}: ${shown[i]?.id ?? ""} overlaps nothing`,
+        ).toBeGreaterThanOrEqual(-0.5);
+      }
       const m = main.getBoundingClientRect();
       const a = alt.getBoundingClientRect();
       const c = cancel.getBoundingClientRect();
-      expect(row.scrollWidth, `${at}: nothing overflows the row`).toBeLessThanOrEqual(row.clientWidth);
+      expect(row.scrollWidth, `${at}: nothing overflows the row`).toBeLessThanOrEqual(
+        row.clientWidth,
+      );
       expect(row.getBoundingClientRect().height, `${at}: the row keeps its height`).toBe(before);
       expect(a.left - m.right, `${at}: the halves touch, one shape`).toBeCloseTo(0, 1);
       expect(a.right, `${at}: the pill sits left of Cancel`).toBeLessThanOrEqual(c.left);
@@ -498,11 +532,19 @@ describe("the composer, measured at real viewport sizes", () => {
       }
       if (tier === "coarse") {
         // The touch tier is the rule that makes Return a new line (composer-touch.ts), so the word goes with it.
-        expect(getComputedStyle(label).display, `${at}: the default half is its glyph alone`).toBe("none");
-        expect(m.width, `${at}: the default half is a touch box`).toBeGreaterThanOrEqual(BUTTON_BOX.coarse);
-        expect(a.width, `${at}: the icon half is a touch box`).toBeGreaterThanOrEqual(BUTTON_BOX.coarse);
+        expect(getComputedStyle(label).display, `${at}: the default half is its glyph alone`).toBe(
+          "none",
+        );
+        expect(m.width, `${at}: the default half is a touch box`).toBeGreaterThanOrEqual(
+          BUTTON_BOX.coarse,
+        );
+        expect(a.width, `${at}: the icon half is a touch box`).toBeGreaterThanOrEqual(
+          BUTTON_BOX.coarse,
+        );
       } else {
-        expect(getComputedStyle(label).display, `${at}: the default half shows its word`).not.toBe("none");
+        expect(getComputedStyle(label).display, `${at}: the default half shows its word`).not.toBe(
+          "none",
+        );
         expect(m.width, `${at}: the word widens the default half`).toBeGreaterThan(a.width);
       }
     }
@@ -516,15 +558,18 @@ describe("the composer, measured at real viewport sizes", () => {
       const ms = getComputedStyle(main);
       const as = getComputedStyle(alt);
       const radius = getComputedStyle(cancel).borderTopRightRadius;
-      expect([ms.borderTopLeftRadius, ms.borderBottomLeftRadius], `${tier}: the pill's start corners`).toEqual([
-        radius,
-        radius,
-      ]);
-      expect([as.borderTopRightRadius, as.borderBottomRightRadius], `${tier}: the pill's end corners`).toEqual([
-        radius,
-        radius,
-      ]);
-      expect([px(ms.borderTopRightRadius), px(as.borderTopLeftRadius)], `${tier}: a square seam`).toEqual([0, 0]);
+      expect(
+        [ms.borderTopLeftRadius, ms.borderBottomLeftRadius],
+        `${tier}: the pill's start corners`,
+      ).toEqual([radius, radius]);
+      expect(
+        [as.borderTopRightRadius, as.borderBottomRightRadius],
+        `${tier}: the pill's end corners`,
+      ).toEqual([radius, radius]);
+      expect(
+        [px(ms.borderTopRightRadius), px(as.borderTopLeftRadius)],
+        `${tier}: a square seam`,
+      ).toEqual([0, 0]);
       const seam = px(ms.borderRightWidth) + px(as.borderLeftWidth);
       expect(seam, `${tier}: one thin line at the seam, not two borders`).toBeGreaterThan(0);
       expect(seam, `${tier}: one thin line at the seam, not two borders`).toBeLessThanOrEqual(1);

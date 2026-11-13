@@ -214,6 +214,7 @@ export function applyGeneralPanel(s: EffectiveSettings, shown: EffectiveSettings
   applyAgentCapabilities(shown);
   applyPanelSwitches(shown);
   applyEngineHeap(shown);
+  paintInterruptMode(shown);
 }
 
 /** Register the General panel's `change` listeners. Once per page, from `initUI`: every one of
@@ -223,8 +224,24 @@ export function initGeneralPanelControls(): void {
   initAgentCapabilityControls();
   initPanelSwitchControls();
   initEngineHeapControl();
+  initInterruptModeControl();
   maybeEl("settings-open-config")?.addEventListener("click", () => {
     void openConfigFile("config.json");
+  });
+}
+
+function paintInterruptMode(s: EffectiveSettings): void {
+  const select = maybeEl<HTMLSelectElement>("interrupt-mode");
+  if (select !== null) {
+    select.value = s.interrupt_mode;
+  }
+}
+
+function initInterruptModeControl(): void {
+  const select = maybeEl<HTMLSelectElement>("interrupt-mode");
+  select?.addEventListener("change", () => {
+    const mode = select.value === "queue" ? "queue" : "steer";
+    saveControl(select, { interrupt_mode: mode }, paintInterruptMode);
   });
 }
 

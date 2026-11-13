@@ -1,8 +1,17 @@
-// Who owns a press on Send's or Steer's slot, and for how long: one record per press kind and one transition for
-// every input, so a click acts once, on the face its press began on.
+// Who owns a press on Send's slot or a half of the mid-turn pill, and for how long: one record per press kind and
+// one transition for every input, so a click acts once, on the face its press began on.
 
-/** What a press on Send's or Steer's slot does: `send` is the send path, which steers or queues mid-turn. */
-export type Act = "send" | "cancel" | "start" | "stop";
+import type { InterruptMode } from "./wire/types.gen.js";
+
+/** A press that sends: `send` names the default beside a running turn, `steer` and `queue` the pill half pressed. */
+export type SendAct = "send" | InterruptMode;
+
+/** What a press on a slot button does. */
+export type Act = SendAct | "cancel" | "start" | "stop";
+
+export function isSendAct(act: Act): act is SendAct {
+  return act === "send" || act === "steer" || act === "queue";
+}
 
 interface Pressed {
   readonly btn: HTMLButtonElement;

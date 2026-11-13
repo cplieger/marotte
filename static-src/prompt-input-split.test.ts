@@ -86,7 +86,9 @@ function type(text: string): void {
 }
 
 function enter(): void {
-  box().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  box().dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+  );
 }
 
 function glyphOf(btn: HTMLElement): string {
@@ -120,6 +122,7 @@ describe("with Steer the default", () => {
     expect(group().hidden).toBe(false);
     expect(group().getAttribute("role")).toBe("group");
     expect(group().getAttribute("aria-label")).toBe("Send mid-turn");
+    expect(group().classList.contains("send-split-both"), "the joined shape").toBe(true);
     expect(main().hidden).toBe(false);
     expect(main().querySelector(".send-btn-label")?.textContent).toBe("Steer");
     expect(main().getAttribute("aria-label")).toBe("Steer the running turn");
@@ -229,6 +232,7 @@ describe("where a send cannot steer", () => {
       expect(main().querySelector(".send-btn-label")?.textContent, mode).toBe("Queue");
       expect(glyphOf(main()), mode).toBe(glyph(ICON_QUEUE_UI));
       expect(alt().hidden, mode).toBe(true);
+      expect(group().classList.contains("send-split-both"), mode).toBe(false);
     }
   });
 

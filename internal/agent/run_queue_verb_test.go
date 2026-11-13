@@ -33,7 +33,6 @@ func TestSubmit_PlacesASendAsTheHeadersVerbSays(t *testing.T) {
 	}
 	cases := []struct {
 		name    string
-		mode    marotte.InterruptMode
 		entries func() []*runEntry
 		want    marotte.SendVerb
 	}{
@@ -41,13 +40,9 @@ func TestSubmit_PlacesASendAsTheHeadersVerbSays(t *testing.T) {
 		{name: "only a paused row", want: marotte.SendPrompt, entries: func() []*runEntry {
 			return []*runEntry{row("m-q0", marotte.RunPaused)}
 		}},
-		{name: "a running steerable turn, steer mode", want: marotte.SendSteer, entries: func() []*runEntry {
+		{name: "a running steerable turn", want: marotte.SendSteer, entries: func() []*runEntry {
 			return []*runEntry{running("t-1", true)}
 		}},
-		{
-			name: "a running steerable turn, queue mode", mode: marotte.InterruptQueue, want: marotte.SendQueue,
-			entries: func() []*runEntry { return []*runEntry{running("t-1", true)} },
-		},
 		{name: "a running run step", want: marotte.SendQueue, entries: func() []*runEntry {
 			return []*runEntry{running("t-1", false)}
 		}},
@@ -95,13 +90,13 @@ func TestSubmit_PlacesASendAsTheHeadersVerbSays(t *testing.T) {
 			defer lc.mu.Unlock()
 			lc.run.entries = tc.entries()
 
-			if got := lc.runViewLocked(tc.mode).Send; got != tc.want {
+			if got := lc.runViewLocked().Send; got != tc.want {
 				t.Fatalf("RunView.Send = %q, want %q", got, tc.want)
 			}
 			ans, taken, err := lc.submitLocked(h.coord.LifeStamp(), &command.Submission{
 				Row:    marotte.QueuedPrompt{ID: "m-new", Text: "hello"},
 				Origin: marotte.RunFromPrompt, Kind: marotte.SendPlain, Wait: true, Composer: true,
-			}, tc.mode)
+			}, marotte.InterruptSteer)
 			if err != nil {
 				t.Fatalf("submit = %v", err)
 			}

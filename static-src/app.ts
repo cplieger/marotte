@@ -4,6 +4,7 @@
 // The server is the source of truth: a prompt posts a command and SSE drives rendering.
 
 import type { ServerEvent } from "./types.js";
+import type { InterruptMode } from "./wire/types.gen.js";
 import { getActiveId, getSessions } from "./store.js";
 import { effect } from "@cplieger/reactive";
 import { mountLiveRegions } from "./legacy-ui/announce.js";
@@ -452,7 +453,7 @@ function setupInput(): void {
     openFilePicker();
   });
   initPromptInput(
-    (text: string) => {
+    (text: string, mode: InterruptMode) => {
       // The PROJECTION's active subject, not the store pointer: optimistic closes leave a closed
       // chat's row until confirmed, and the empty state must create rather than send into it.
       if (activeChatRef() === "") {
@@ -461,7 +462,7 @@ function setupInput(): void {
         void createSession(text);
         return undefined;
       }
-      return sendPrompt(text);
+      return sendPrompt(text, mode);
     },
     cancelActiveTurn,
     stagedAttachment,

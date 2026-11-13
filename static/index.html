@@ -460,8 +460,12 @@
                 </span>
               </span>
               <div class="pill-spacer"></div>
-              <!-- Mid-turn Send (prompt-input.ts). Left of Cancel, which keeps the row's end and its corner. -->
-              <button type="button" id="midturn-send-btn" class="send-btn" hidden></button>
+              <!-- Mid-turn send (prompt-input.ts): the default action, then the other as a glyph. Left of Cancel, which
+                   keeps the row's end and its corner. -->
+              <div id="midturn-send" class="send-split" role="group" aria-label="Send mid-turn" hidden>
+                <button type="button" id="midturn-send-btn" class="send-btn" hidden></button>
+                <button type="button" id="midturn-alt-btn" class="send-btn send-split-alt" hidden></button>
+              </div>
               <!-- ONE activity button: Send when nothing runs, Cancel while a
                    turn streams (prompt-input.ts flips its type so a streaming
                    click can never submit). The 4-state split button it
@@ -595,6 +599,23 @@
                     <option value="h12">12-hour</option>
                   </select>
                   <p class="section-hint" id="clock-choice-hint">How times of day are shown, on this device only. Automatic follows your browser's language and time format.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="page-section" id="general-composer-section">
+              <h2 class="section-title">Composer</h2>
+              <div class="section-option section-option-fixed">
+                <div class="section-field">
+                  <div class="section-title-status-row">
+                    <label class="section-option-label" for="interrupt-mode">Sending while a turn runs</label>
+                    <span class="settings-save-status hidden" data-save-status="interrupt_mode" aria-live="polite"></span>
+                  </div>
+                  <select id="interrupt-mode" class="rf-select" aria-describedby="interrupt-mode-hint">
+                    <option value="steer" selected>Steer the running turn</option>
+                    <option value="queue">Queue for after the turn</option>
+                  </select>
+                  <p class="section-hint" id="interrupt-mode-hint">What Enter and the first half of the send button do with a message you send while the agent works, in every chat. Steer lets the agent read it mid-turn. Queue holds it until the turn ends, and queued messages go one per turn. The button's second half always does the other. Steer is the default.</p>
                 </div>
               </div>
             </div>
