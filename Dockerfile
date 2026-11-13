@@ -61,7 +61,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
 # fonts and icons the stylesheet names, with their notices, into static/vendor/ui/.
 # This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=@cplieger/ui
-ARG CPLIEGER_UI_VERSION=1.3.0-dev.19
+ARG CPLIEGER_UI_VERSION=1.3.0-dev.20
 RUN mkdir -p static-src/node_modules/@cplieger/ui && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/ui/-/ui-${CPLIEGER_UI_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/ui --strip-components=1
