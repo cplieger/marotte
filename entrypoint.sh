@@ -1,10 +1,7 @@
 #!/bin/bash
 
-# Make an untrusted value (a name off the /config volume, a folder from the environment, dpkg
-# output) safe in a log line: it cannot split the line, nor close a quoted logfmt field and append keys.
-# Truncate the raw value first, or the doubling could split a `\\` pair; then
-# double backslashes, replace non-printables, and neutralize the quote. $2 is the
-# input bound (default 200).
+# Make an untrusted value safe in a logfmt line: it cannot split the line nor close a quoted field.
+# Truncate to $2 (default 200) before doubling backslashes, or the doubling could split a `\\` pair.
 logfmt_value() {
   local raw=$1 safe
   safe=${raw:0:${2:-200}}
@@ -13,6 +10,26 @@ logfmt_value() {
   safe=${safe//\"/\'}
   printf '%s' "$safe"
 }
+
+# A process that removes and recreates /tmp under umask 022 leaves it 0755, so no other uid can
+# write there. install -d resets an existing folder's mode in place, keeping its contents; a
+# symlinked /tmp is the operator's and is left alone.
+restore_tmp_mode() {
+  local dir=$1 was
+  [ -L "$dir" ] && return 0
+  was=$(stat -c %a "$dir" 2>/dev/null) || was=missing
+  [ "$was" = 1777 ] && return 0
+  if install -d -m 1777 "$dir" 2>/dev/null; then
+    printf 'level=warn msg="the temp folder had the wrong mode; restored it to 1777" path="%s" was=%s component=entrypoint\n' \
+      "$(logfmt_value "$dir")" "$was" >&2
+  else
+    printf 'level=warn msg="could not restore the temp folder to mode 1777; a process running as another uid may fail to write temporary files" path="%s" was=%s component=entrypoint\n' \
+      "$(logfmt_value "$dir")" "$was" >&2
+  fi
+  return 0
+}
+
+restore_tmp_mode /tmp
 
 # Sets CONFIG_DIR, TOOLS, KIRO_HOME, PATH, GOPATH and GOBIN from `$1 paths`, the server's own
 # derivation (internal/composition/paths.go), so this script acts on the folders the server uses.
@@ -177,11 +194,10 @@ if ! rm -rf "$HOME/.local/bin"/kiro-cli*; then
   printf "WARNING: failed to remove legacy kiro-cli residue from %s/.local/bin; an unpinned copy may stay resolvable by bare name\n" "$(logfmt_value "$HOME")" >&2
 fi
 
-# Repair an interrupted dpkg transaction before the listener binds: apt installs
-# are the tools engine's, and it cannot repair a database it does not own. Gate on
-# the audit OUTPUT as well as its status, because `dpkg --audit` exits 0 while
-# reporting unconfigured packages; a non-empty updates journal is a third trigger.
-# Warn only.
+# Repair an interrupted dpkg transaction before the listener binds: apt installs are the tools
+# engine's, and it cannot repair a database it does not own. Gate on the audit OUTPUT as well as
+# its status, because `dpkg --audit` exits 0 while reporting unconfigured packages; a non-empty
+# updates journal is a third trigger.
 dpkg_audit_rc=0
 dpkg_audit_out=$(timeout --signal=TERM --kill-after=30s 300s dpkg --audit 2>/dev/null) || dpkg_audit_rc=$?
 # A truncated first line is enough to name the state.
