@@ -32,11 +32,16 @@ interface CreateArgs {
 export type CreateOutcome = "created" | "taken";
 
 const HTTP_CONFLICT = 409;
+/** The server's code on a create's 409 (actions.go codeNameTaken). The idempotency layer's own 409,
+ *  a retry finding its first attempt still running, carries none and stays an error. */
+const NAME_TAKEN = "name_taken";
 
 const createdOrTaken = {
   decode: (): CreateOutcome => "created",
   decodeError: (info: ApiErrorInfo): ApiErrorDecision<CreateOutcome> | undefined =>
-    info.status === HTTP_CONFLICT ? { kind: "success", value: "taken" } : undefined,
+    info.status === HTTP_CONFLICT && info.code === NAME_TAKEN
+      ? { kind: "success", value: "taken" }
+      : undefined,
 };
 
 export const CREATE_FILE_ERROR = "Could not create file";

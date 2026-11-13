@@ -54,12 +54,13 @@ func openChild(dir *os.File, name, displayPath string, flags int) (*os.File, err
 	return os.NewFile(uintptr(fd), displayPath), nil
 }
 
-// lstatTypeAt is the type of name in dir, a symlink not followed; found is false when nothing is
-// there or the lookup failed.
-func lstatTypeAt(dir *os.File, name string) (typ fs.FileMode, found bool) {
+// lstatTypeAt looks name up in dir: typ is 0 for a regular file, fs.ModeDir for a directory and
+// fs.ModeIrregular for anything else, a symlink included (not followed). Nothing there is found
+// false with a nil error.
+func lstatTypeAt(dir *os.File, name, displayPath string) (typ fs.FileMode, found bool, err error) {
 	conn, err := dir.SyscallConn()
 	if err != nil {
-		return 0, false
+		return 0, false, err
 	}
 	var st unix.Stat_t
 	var statErr error
@@ -70,16 +71,22 @@ func lstatTypeAt(dir *os.File, name string) (typ fs.FileMode, found bool) {
 				return
 			}
 		}
-	}); ctlErr != nil || statErr != nil {
-		return 0, false
+	}); ctlErr != nil {
+		return 0, false, ctlErr
+	}
+	switch {
+	case errors.Is(statErr, unix.ENOENT):
+		return 0, false, nil
+	case statErr != nil:
+		return 0, false, &os.PathError{Op: "fstatat", Path: displayPath, Err: statErr}
 	}
 	switch st.Mode & unix.S_IFMT {
 	case unix.S_IFREG:
-		return 0, true
+		return 0, true, nil
 	case unix.S_IFDIR:
-		return fs.ModeDir, true
+		return fs.ModeDir, true, nil
 	default:
-		return fs.ModeIrregular, true
+		return fs.ModeIrregular, true, nil
 	}
 }
 

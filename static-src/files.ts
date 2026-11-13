@@ -813,29 +813,41 @@ function freeName(base: string): string {
  *  listing, which the reload before the next try shows. */
 const CREATE_TRIES = 3;
 
-function createEntry(action: "touch" | "mkdir", base: string, triesLeft = CREATE_TRIES): void {
+function createEntry(action: "touch" | "mkdir", base: string): void {
   const actionFn = action === "mkdir" ? createFolder : createFile;
-  const name = freeName(base);
-  void actionFn.dispatch(
-    {
-      dir: cur().currentPath,
-      name,
-    },
-    {
-      onSuccess: (outcome) => {
-        void loadDirAsync().then(() => {
-          if (outcome === "created") {
-            startInlineRename(name);
-          } else if (triesLeft > 1) {
-            createEntry(action, base, triesLeft - 1);
-          } else {
-            const label = action === "mkdir" ? CREATE_FOLDER_ERROR : CREATE_FILE_ERROR;
-            toast.error(`${label}: ${name} already exists`);
+  const st = cur();
+  const dir = st.currentPath;
+  const attempt = (triesLeft: number): void => {
+    const name = freeName(base);
+    void actionFn.dispatch(
+      { dir, name },
+      {
+        onSuccess: (outcome) => {
+          void loadDirAsync().then(() => {
+            // A browser now showing another folder, or another browser, holds no row and no free name of dir's.
+            if (cur() !== st || st.currentPath !== dir) {
+              return;
+            }
+            if (outcome === "created") {
+              startInlineRename(name);
+            } else if (triesLeft > 1) {
+              attempt(triesLeft - 1);
+            } else {
+              const label = action === "mkdir" ? CREATE_FOLDER_ERROR : CREATE_FILE_ERROR;
+              toast.error(`${label}: ${name} already exists`);
+            }
+          });
+        },
+        // A failure can still have created the entry (a retry finding its first attempt running).
+        onError: () => {
+          if (cur() === st && st.currentPath === dir) {
+            loadDir();
           }
-        });
+        },
       },
-    },
-  );
+    );
+  };
+  attempt(CREATE_TRIES);
 }
 
 function addSelectedToChat(): void {
@@ -898,6 +910,8 @@ function startInlineRename(targetName: string): void {
     }
     const pending = el("span", { className: FB_NAME }, newName);
     input.replaceWith(pending);
+    // Until the reload rebuilds it, every handler on the row still names the original.
+    row.inert = true;
 
     void renameFile.dispatch(
       { dir: cur().currentPath, original, newName },
@@ -909,6 +923,7 @@ function startInlineRename(targetName: string): void {
           loadDir();
         },
         onError: () => {
+          row.inert = false;
           pending.replaceWith(nameEl);
         },
       },

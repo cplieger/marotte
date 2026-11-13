@@ -3,6 +3,7 @@ package filebrowse
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -350,87 +351,140 @@ func TestDirIdentity_AFailedStatIsNotAReplacement(t *testing.T) {
 	}
 }
 
-// ignoredNeedleRoot builds a repository root of needle files its own .gitignore excludes and
-// answers it with the entry budget that cuts its raw listing where cut says. It retries in a fresh
-// directory until the filesystem's listing order gives cut a needle before the cut.
-func ignoredNeedleRoot(t *testing.T, cut func(order []string) (budget int, ok bool)) (dir string, budget int) {
+// needleRepo is a repository root holding needle files its own .gitignore excludes.
+func needleRepo(t *testing.T, needles int) string {
 	t.Helper()
+	dir := t.TempDir()
 	tree := map[string]string{".gitignore": "needle-*\n", ".git/HEAD": ""}
-	for i := range 200 {
+	for i := range needles {
 		tree[fmt.Sprintf("needle-%03d.txt", i)] = ""
 	}
-	for range 20 {
-		dir = t.TempDir()
-		writeTree(t, dir, tree)
-		f, err := os.Open(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		entries, err := f.ReadDir(-1)
-		_ = f.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
-		order := make([]string, len(entries))
-		for i, e := range entries {
-			order[i] = e.Name()
-		}
-		if budget, ok := cut(order); ok {
-			return dir, budget
-		}
-	}
-	t.Fatal("no listing order put a needle before the cut in 20 directories")
-	return "", 0
+	writeTree(t, dir, tree)
+	return dir
 }
 
-// cutBefore cuts the listing just before name, when a needle comes earlier and, for each of
-// alsoBefore, that name does too.
-func cutBefore(name string, alsoBefore ...string) func([]string) (int, bool) {
-	return func(order []string) (int, bool) {
-		at := slices.Index(order, name)
-		if at < 0 || !slices.ContainsFunc(order[:at], func(n string) bool { return strings.HasPrefix(n, "needle-") }) {
-			return 0, false
-		}
-		for _, n := range alsoBefore {
-			if !slices.Contains(order[:at], n) {
-				return 0, false
-			}
-		}
-		return at, true
+// A partial listing may have dropped either rule file, so enterIgnore finds both against the
+// directory's handle rather than in the listing.
+func TestEnterIgnore_APartialListingFindsTheRuleFilesItDropped(t *testing.T) {
+	dir := needleRepo(t, 1)
+	listing, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-// A listing the entry budget cuts still applies its directory's own rule files, whichever of them
-// the cut dropped: the needles read before the cut are all ignored.
-func TestNameSearch_ACutListingKeepsItsOwnIgnoreRules(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		cut  func([]string) (int, bool)
-	}{
-		{"cut before the gitignore", cutBefore(".gitignore")},
-		{"cut before the git directory", cutBefore(".git", ".gitignore")},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir, budget := ignoredNeedleRoot(t, tc.cut)
-			h, err := New(Sensitive{}, []string{dir})
+	for _, dropped := range []string{".git", ".gitignore"} {
+		t.Run("without "+dropped, func(t *testing.T) {
+			f, err := os.Open(dir)
 			if err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(func() { _ = f.Close() })
+			entries := slices.DeleteFunc(slices.Clone(listing), func(e fs.DirEntry) bool { return e.Name() == dropped })
+			d := &walkDir{f: f, abs: dir, pruneGit: true}
+			w := newSearchWalk(t.Context(), newNameVisitor(mustQuery(t, "needle")), budgetFor(modeNames, false))
+			w.ignoreRules = true
 
-			v := newNameVisitor(mustQuery(t, "needle"))
-			walk := newSearchWalk(t.Context(), v, budgetFor(modeNames, false))
-			walk.ignoreRules = true
-			walk.entries = maxNameSearchEntries - budget
-			walk.walkRoots([]loc{{m: &h.mounts[0], abs: h.mounts[0].dir}})
-			res := v.result(walk.truncated)
+			w.enterIgnore(d, entries, false)
 
-			if res.Matched != 0 {
-				t.Errorf("matched = %d, want 0: the root's .gitignore excludes every needle", res.Matched)
+			if !d.inRepo {
+				t.Error("inRepo = false, want true: the directory holds .git")
 			}
-			if !res.Truncated || !walk.spent {
-				t.Errorf("truncated = %v spent = %v, want both true: the budget cut the listing", res.Truncated, walk.spent)
+			if d.ign == nil || !d.ign.ignored("needle-000.txt", "needle-000.txt", false) {
+				t.Error("needle-000.txt not ignored, want ignored by the directory's .gitignore")
 			}
 		})
+	}
+}
+
+func TestLstatTypeAt(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"file": "", "sub/x": ""})
+	if err := os.Symlink("sub", filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	for _, tc := range []struct {
+		name      string
+		wantType  fs.FileMode
+		wantFound bool
+	}{
+		{"file", 0, true},
+		{"sub", fs.ModeDir, true},
+		{"link", fs.ModeIrregular, true},
+		{"missing", 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			typ, found, err := lstatTypeAt(f, tc.name, filepath.Join(dir, tc.name))
+			if err != nil || typ != tc.wantType || found != tc.wantFound {
+				t.Errorf("lstatTypeAt(%q) = %v, %v, %v; want %v, %v, nil", tc.name, typ, found, err, tc.wantType, tc.wantFound)
+			}
+		})
+	}
+	t.Run("failed lookup", func(t *testing.T) {
+		long := strings.Repeat("n", 300)
+		if _, found, err := lstatTypeAt(f, long, filepath.Join(dir, long)); found || err == nil {
+			t.Errorf("lstatTypeAt(over-long name) found = %v err = %v, want false and an error", found, err)
+		}
+	})
+	t.Run("closed handle", func(t *testing.T) {
+		closed, err := os.Open(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = closed.Close()
+		if _, found, err := lstatTypeAt(closed, "file", filepath.Join(dir, "file")); found || err == nil {
+			t.Errorf("lstatTypeAt(closed dir) found = %v err = %v, want false and an error", found, err)
+		}
+	})
+}
+
+// A rule-file lookup that fails is reported like a rule file that fails to open, not taken for an
+// absent one in silence.
+func TestEnterIgnore_AFailedRuleFileLookupIsLogged(t *testing.T) {
+	dir := needleRepo(t, 1)
+	f, err := os.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	logs := captureFilebrowseLogs(t)
+	d := &walkDir{f: f, abs: dir, pruneGit: true}
+	w := newSearchWalk(t.Context(), newNameVisitor(mustQuery(t, "needle")), budgetFor(modeNames, false))
+	w.ignoreRules = true
+
+	w.enterIgnore(d, nil, false)
+
+	if got := logs.String(); !strings.Contains(got, "search read failed") || !strings.Contains(got, dir) {
+		t.Errorf("logs = %q, want a search read failed line naming %s", got, dir)
+	}
+}
+
+// Whichever entries the budget lets a listing read, the walk applies its directory's own rule
+// files to them: no cut point lets an ignored needle through.
+func TestNameSearch_ACutListingKeepsItsOwnIgnoreRules(t *testing.T) {
+	const needles = 50
+	dir := needleRepo(t, needles)
+	h, err := New(Sensitive{}, []string{dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for budget := 1; budget < needles+2; budget++ {
+		v := newNameVisitor(mustQuery(t, "needle"))
+		walk := newSearchWalk(t.Context(), v, budgetFor(modeNames, false))
+		walk.ignoreRules = true
+		walk.entries = maxNameSearchEntries - budget
+		walk.walkRoots([]loc{{m: &h.mounts[0], abs: h.mounts[0].dir}})
+		res := v.result(walk.truncated)
+
+		if res.Matched != 0 {
+			t.Errorf("budget %d: matched = %d, want 0: the root's .gitignore excludes every needle", budget, res.Matched)
+		}
+		if !res.Truncated || !walk.spent {
+			t.Errorf("budget %d: truncated = %v spent = %v, want both true: the budget cut the listing", budget, res.Truncated, walk.spent)
+		}
 	}
 }
 

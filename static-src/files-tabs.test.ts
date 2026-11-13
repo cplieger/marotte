@@ -2,6 +2,7 @@
 // and middle-click opens another in the background.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { userEvent } from "vitest/browser";
 import type * as Toast from "./toast.js";
 
 // One hoisted block: `vi.mock` factories run above module consts, and this file value-imports two mocked modules.
@@ -185,6 +186,13 @@ function held(): { answer: Promise<unknown>; release: (v: unknown) => void } {
     release = r;
   });
   return { answer, release };
+}
+
+/** Lets a settled request's continuations, and any request they start, run before an assertion that nothing happened. */
+async function settleTasks(): Promise<void> {
+  for (let i = 0; i < 5; i++) {
+    await new Promise((r) => setTimeout(r, 0));
+  }
 }
 
 /** Narrows without a `!`. */
@@ -804,6 +812,9 @@ describe("New file and New folder beside entries holding the default name", () =
   const sent: { action: string; path: string }[] = [];
   /** Status per create, in order; past the end every create answers 200. */
   const statuses: number[] = [];
+  const TAKEN = 409;
+  /** The idempotency layer's 409 for a retry whose first attempt is still running. */
+  const IN_PROGRESS = -409;
 
   beforeEach(() => {
     sent.length = 0;
@@ -813,7 +824,12 @@ describe("New file and New folder beside entries holding the default name", () =
       vi.fn((_url: string, init: RequestInit) => {
         sent.push(JSON.parse(init.body as string) as { action: string; path: string });
         const status = statuses.shift() ?? 200;
-        const body = status === 409 ? '{"error":"taken"}' : "{}";
+        if (status === IN_PROGRESS) {
+          return Promise.resolve(
+            new Response('{"error":"request already in progress"}', { status: 409 }),
+          );
+        }
+        const body = status === TAKEN ? '{"error":"taken","code":"name_taken"}' : "{}";
         return Promise.resolve(new Response(body, { status }));
       }),
     );
@@ -904,6 +920,71 @@ describe("New file and New folder beside entries holding the default name", () =
     expect($.fbList.querySelector(".fb-name-edit")).toBeNull();
   });
 
+  it("tries no other name when the server is still running the same create, and shows what it made", async () => {
+    statuses.push(IN_PROGRESS);
+    answers.set("/w", [
+      okAnswer({ files: [], writable: true }),
+      okAnswer({ files: [{ name: "new file", isDir: false }], writable: true }),
+    ]);
+    initFileBrowser();
+    await show("/w");
+    $.fbNewFile.click();
+    await vi.waitFor(() => {
+      expect(sent).toHaveLength(1);
+    });
+    await settleTasks();
+    expect(sent).toEqual([{ action: "touch", path: "/w/new file" }]);
+    expect($.fbList.querySelector(".fb-name-edit")).toBeNull();
+    expect(rowFor("new file"), "the first attempt's file, listed").toBeDefined();
+  });
+
+  for (const [status, outcome] of [
+    [TAKEN, "taken"],
+    [200, "created"],
+  ] as const) {
+    for (const [move, go] of [
+      [
+        "opened a subfolder",
+        () => rowFor("sub").querySelector(`.${FB_NAME}`)?.dispatchEvent(new MouseEvent("click")),
+      ],
+      ["switched files tab", () => show("/b")],
+    ] as const) {
+      it(`acts on nothing shown when the reload after a ${outcome} create lands after the user ${move}`, async () => {
+        statuses.push(status);
+        const there = { name: "new file", isDir: false };
+        const reload = held();
+        answers.set("/w", [
+          okAnswer({ files: [{ name: "sub", isDir: true }], writable: true }),
+          reload.answer,
+        ]);
+        answers.set("/w/sub", [okAnswer({ files: [there], writable: true })]);
+        answers.set("/b", [okAnswer({ files: [there], writable: true })]);
+        initFileBrowser();
+        await show("/w");
+        $.fbNewFile.click();
+        await vi.waitFor(() => {
+          const loads = vi
+            .mocked(apiGetOrError)
+            .mock.calls.filter((c) => String(c[0]).endsWith("path=%2Fw"));
+          expect(loads, "the reload after the create was asked for").toHaveLength(2);
+        });
+
+        await go();
+        await vi.waitFor(() => {
+          expect(rowFor("new file")).toBeDefined();
+        });
+        reload.release(okAnswer({ files: [{ name: "sub", isDir: true }, there], writable: true }));
+        await settleTasks();
+
+        expect(sent).toEqual([{ action: "touch", path: "/w/new file" }]);
+        expect(
+          $.fbList.querySelector(".fb-name-edit"),
+          "a rename opened on the folder now shown",
+        ).toBeNull();
+      });
+    }
+  }
+
   it("keeps the default name when no entry holds it", async () => {
     await create($.fbNewFile, [{ name: "new file.txt", isDir: false }], {
       name: "new file",
@@ -960,6 +1041,35 @@ describe("renaming an entry", () => {
     expect(label.textContent).toBe("b.txt");
     label.click();
     expect(h.openFile).not.toHaveBeenCalled();
+  });
+
+  it("opens nothing in the background from the new name's label before the listing reloads", async () => {
+    await renameTo("b.txt");
+    document.body.appendChild($.fbList);
+    try {
+      const label = must(rowFor("a.txt").querySelector<HTMLElement>(`.${FB_NAME}`));
+      await userEvent.click(label, { button: "middle", force: true });
+      expect(h.openFileInBackground).not.toHaveBeenCalled();
+    } finally {
+      $.fbList.remove();
+    }
+  });
+
+  it("opens the original in the background from its label after the rename failed", async () => {
+    await renameTo("b.txt");
+    must(renames[0]).release(new Response('{"error":"no"}', { status: 403 }));
+    await vi.waitFor(() => {
+      expect(rowFor("a.txt").querySelector(`.${FB_NAME}`)?.textContent).toBe("a.txt");
+    });
+    document.body.appendChild($.fbList);
+    try {
+      await userEvent.click(must(rowFor("a.txt").querySelector<HTMLElement>(`.${FB_NAME}`)), {
+        button: "middle",
+      });
+      expect(h.openFileInBackground.mock.calls.map((c) => c[0])).toEqual(["/w/a.txt"]);
+    } finally {
+      $.fbList.remove();
+    }
   });
 
   it("opens the original from its label after the rename failed", async () => {

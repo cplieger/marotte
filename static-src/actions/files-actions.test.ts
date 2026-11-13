@@ -72,12 +72,33 @@ describe("a create on a name already taken", () => {
     it(`${which} answers taken on a 409 and created on a 200, toasting neither`, async () => {
       const actions = await import("./files.js");
       mockFetch.mockResolvedValueOnce(
-        new Response('{"error":"x already exists"}', { status: 409 }),
+        new Response('{"error":"x already exists","code":"name_taken"}', { status: 409 }),
       );
       expect(await actions[which].dispatch({ dir: "/", name: "x" })).toBe("taken");
       mockFetch.mockResolvedValueOnce(new Response("{}", { status: 200 }));
       expect(await actions[which].dispatch({ dir: "/", name: "x 2" })).toBe("created");
       expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    // A retry whose first attempt the server is still running gets the idempotency layer's 409:
+    // the name may well be about to exist, so the create fails rather than moving to the next name.
+    it(`${which} fails on the 409 of a retry that found its first attempt still running`, async () => {
+      const actions = await import("./files.js");
+      mockFetch
+        .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+        .mockResolvedValueOnce(
+          new Response('{"error":"request already in progress"}', { status: 409 }),
+        );
+      vi.useFakeTimers();
+      const p = actions[which].dispatch({ dir: "/", name: "x" });
+      await vi.advanceTimersByTimeAsync(300);
+      const outcome = await p;
+      vi.useRealTimers();
+      expect(outcome).toBeNull();
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      const error =
+        which === "createFile" ? actions.CREATE_FILE_ERROR : actions.CREATE_FOLDER_ERROR;
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining(error), undefined);
     });
   }
 });

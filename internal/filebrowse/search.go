@@ -737,7 +737,11 @@ func (w *searchWalk) list(d *walkDir) (entries []fs.DirEntry, whole, more bool) 
 func (w *searchWalk) enterIgnore(d *walkDir, entries []fs.DirEntry, whole bool) {
 	hasGit, gitIsDir, hasIgnore := ruleFilesListed(entries)
 	if !whole {
-		hasGit, gitIsDir, hasIgnore = ruleFilesAt(d.f)
+		var err error
+		hasGit, gitIsDir, hasIgnore, err = ruleFilesAt(d.f, d.abs)
+		if err != nil {
+			logSearchReadError(d.abs, err)
+		}
 	}
 	if hasGit {
 		d.inRepo, d.rrel, d.ign = true, "", nil
@@ -762,10 +766,11 @@ func ruleFilesListed(entries []fs.DirEntry) (hasGit, gitIsDir, hasIgnore bool) {
 	return hasGit, gitIsDir, hasIgnore
 }
 
-func ruleFilesAt(dir *os.File) (hasGit, gitIsDir, hasIgnore bool) {
-	gitType, hasGit := lstatTypeAt(dir, ".git")
-	ignoreType, found := lstatTypeAt(dir, ".gitignore")
-	return hasGit, gitType == fs.ModeDir, found && ignoreType == 0
+// ruleFilesAt looks both rule files up in dir; a failed lookup counts as absent and is returned.
+func ruleFilesAt(dir *os.File, abs string) (hasGit, gitIsDir, hasIgnore bool, err error) {
+	gitType, hasGit, gitErr := lstatTypeAt(dir, ".git", filepath.Join(abs, ".git"))
+	ignoreType, found, ignoreErr := lstatTypeAt(dir, ".gitignore", filepath.Join(abs, ".gitignore"))
+	return hasGit, gitType == fs.ModeDir, found && ignoreType == 0, errors.Join(gitErr, ignoreErr)
 }
 
 // admit records the include half of the Files filter on the entry rather than applying it, since

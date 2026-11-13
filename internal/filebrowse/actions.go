@@ -120,11 +120,16 @@ func refuseMountPoint(w http.ResponseWriter, action string, l loc) error {
 	return errHandled
 }
 
+// codeNameTaken tags refuseTaken's 409, which the client tells apart from the idempotency layer's
+// in-progress 409 by it.
+const codeNameTaken = "name_taken"
+
 // refuseTaken writes the 409 for a create on a name already taken: the client created a name it
 // shows the user, so succeeding on someone else's entry would hand them that entry instead.
 func refuseTaken(w http.ResponseWriter, action string, l loc) error {
 	slog.Info("filebrowse: "+action+" on a taken name", "path", logsafe.Field(l.abs))
-	httpreply.Conflict(w, filepath.Base(l.abs)+" already exists")
+	httpserver.WriteJSONStatus(w, http.StatusConflict,
+		httpreply.ErrorJSONWithCode(filepath.Base(l.abs)+" already exists", codeNameTaken))
 	return errHandled
 }
 

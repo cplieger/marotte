@@ -2317,6 +2317,10 @@ func TestAction_CreateOnATakenNameConflictsAndKeepsIt(t *testing.T) {
 			if rec.Code != http.StatusConflict {
 				t.Errorf("%s on a taken name: status = %d, want 409; body = %s", tc.action, rec.Code, rec.Body.String())
 			}
+			var resp map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || resp["code"] != "name_taken" || resp["error"] != "have already exists" {
+				t.Errorf("%s on a taken name: body = %s (%v), want error %q and code %q", tc.action, rec.Body.String(), err, "have already exists", "name_taken")
+			}
 			kept := existing
 			if tc.existing == "dir" {
 				kept = filepath.Join(existing, "inner.txt")
