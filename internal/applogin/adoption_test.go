@@ -342,11 +342,10 @@ func TestAdoption_DiscoveryRefusesHTTPEndpoint(t *testing.T) {
 	for _, c := range []struct {
 		field string
 		opts  accesstest.IdPOptions
-		url   string
 	}{
-		{"authorization_endpoint", accesstest.IdPOptions{AuthorizationEndpoint: "http://idp.example.com/authorize"}, "http://idp.example.com/authorize"},
-		{"token_endpoint", accesstest.IdPOptions{TokenEndpoint: "http://idp.example.com/token"}, "http://idp.example.com/token"},
-		{"jwks_uri", accesstest.IdPOptions{JWKSURI: "http://idp.example.com/jwks"}, "http://idp.example.com/jwks"},
+		{"authorization_endpoint", accesstest.IdPOptions{AuthorizationEndpoint: "http://idp.example.com/authorize"}},
+		{"token_endpoint", accesstest.IdPOptions{TokenEndpoint: "http://idp.example.com/token"}},
+		{"jwks_uri", accesstest.IdPOptions{JWKSURI: "http://idp.example.com/jwks"}},
 	} {
 		t.Run(c.field, func(t *testing.T) {
 			idp := newSeamIdP(t, idpURL, c.opts)
@@ -355,7 +354,7 @@ func TestAdoption_DiscoveryRefusesHTTPEndpoint(t *testing.T) {
 				t.Errorf("NewProvider = %v, want ErrDiscovery naming %s", err, c.field)
 			}
 			for _, u := range rec.urls() {
-				if u == c.url || strings.HasPrefix(u, "http://") {
+				if strings.HasPrefix(u, "http://") {
 					t.Errorf("the client sent a request to %s", u)
 				}
 			}
