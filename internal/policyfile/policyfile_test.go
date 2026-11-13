@@ -563,15 +563,17 @@ func TestLoad_ReadsTheJSONSiblingKASWouldRead(t *testing.T) {
 			t.Errorf("saved .yaml policies = %#v, want the .json's [read-all]", doc["policies"])
 		}
 	})
-	t.Run("yaml blank", func(t *testing.T) {
-		dir := t.TempDir()
-		writeFixture(t, filepath.Join(dir, filename), "  \n")
-		writeFixture(t, filepath.Join(dir, jsonFilename), jsonBody)
-		f, err := Load(filepath.Join(dir, filename))
-		if err != nil || len(f.Rules) != 1 {
-			t.Errorf("Load = %+v, %v, want the .json's one rule", f, err)
-		}
-	})
+	for name, blank := range map[string]string{"yaml blank empty": "", "yaml blank whitespace": "  \n"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFixture(t, filepath.Join(dir, filename), blank)
+			writeFixture(t, filepath.Join(dir, jsonFilename), jsonBody)
+			f, err := Load(filepath.Join(dir, filename))
+			if err != nil || len(f.Rules) != 0 {
+				t.Errorf("Load = %+v, %v, want zero rules (the blank .yaml shadows the .json)", f, err)
+			}
+		})
+	}
 	t.Run("yaml present", func(t *testing.T) {
 		dir := t.TempDir()
 		writeFixture(t, filepath.Join(dir, filename), "rules: []\n")
