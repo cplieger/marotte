@@ -15,6 +15,7 @@ import { fakeSpeech, settle } from "./fake-speech.js";
 import { useSteppableClock, waitForOnClock } from "./fake-clock.js";
 import { glyphMarkup, registryMarkup } from "./glyph.js";
 import { makeSession } from "./model.js";
+import { parkPointer } from "./park-pointer.js";
 import { markDictationCloudNoted } from "../device-view.js";
 
 export interface PressSuite {
@@ -54,6 +55,8 @@ export function dictationPressSuite({ press: pressNow, finger }: PressSuite): vo
       });
     }
     await pressNow(selector);
+    // Every face is read with no pointer over it, as the resting face is (pointer-park-setup.ts).
+    await parkPointer();
     lastPress = performance.now();
   }
   const speech = fakeSpeech({ cloud: "Apple's speech service" });

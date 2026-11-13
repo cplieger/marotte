@@ -382,7 +382,11 @@ export default defineConfig({
                     name,
                     include,
                     exclude: sharedExclude,
-                    setupFiles: ["./ro-loop-gate.ts", "./storage-reset-setup.ts"],
+                    setupFiles: [
+                      "./ro-loop-gate.ts",
+                      "./storage-reset-setup.ts",
+                      "./pointer-park-setup.ts",
+                    ],
                     browser: {
                       enabled: true,
                       headless: true,
@@ -390,7 +394,11 @@ export default defineConfig({
                       provider: playwright({ contextOptions }),
                       instances: [{ browser: "webkit" }],
                       viewport,
-                      commands: { tap: tapCommand, emulateA11yMedia: emulateA11yMediaCommand },
+                      commands: {
+                        tap: tapCommand,
+                        parkPointer: parkPointerCommand,
+                        emulateA11yMedia: emulateA11yMediaCommand,
+                      },
                     },
                   },
                 }) satisfies TestProjectInlineConfiguration,
