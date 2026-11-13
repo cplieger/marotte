@@ -139,8 +139,8 @@ const (
 	// staged writes are KAS's.
 	EventPermissionNeeded   EventType = "permission_needed"
 	EventPermissionsChanged EventType = "permissions_changed"
-	// EventNotification is the in-page twin of a Web Push: the page shows it while
-	// that chat or run is not on screen.
+	// EventNotification is the in-page twin of a Web Push, shown only by the pages
+	// its show_in names.
 	EventNotification EventType = "notification"
 	// EventPendingSnapshot is the whole pending set (permissions, run asks,
 	// steers, across every chat) as ONE frame on a v3 connect, stamped with the

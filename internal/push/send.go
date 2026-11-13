@@ -301,6 +301,15 @@ type pushVerdict struct {
 // preflightSend evaluates every pre-send gate and stamps the debounce under one mu hold (closing the
 // decide/record TOCTOU). pushable is healthy and the kind registered and enabled.
 func (s *Service) preflightSend(notifyType marotte.PushKind, subject marotte.PushSubject) pushVerdict {
+	return s.pushGates(notifyType, subject, true)
+}
+
+// peekSend is preflightSend's verdict without the stamp, for a notice that is never delivered.
+func (s *Service) peekSend(notifyType marotte.PushKind, subject marotte.PushSubject) pushVerdict {
+	return s.pushGates(notifyType, subject, false)
+}
+
+func (s *Service) pushGates(notifyType marotte.PushKind, subject marotte.PushSubject, stamp bool) pushVerdict {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.healthy {
@@ -321,6 +330,9 @@ func (s *Service) preflightSend(notifyType marotte.PushKind, subject marotte.Pus
 	if last, ok := s.lastPush[key]; ok && time.Since(last) < pushDebounce {
 		slog.Debug("push: debounced", "kind", string(notifyType), "subject", key.subject)
 		v.debounced = true
+		return v
+	}
+	if !stamp {
 		return v
 	}
 	s.pruneDebounceLocked()

@@ -75,9 +75,9 @@ func (p *Presence) pageOnTab(tag string, kind marotte.TabKind, ref string) bool 
 	return false
 }
 
-// offerTarget picks the one page of tag a notice is offered to: the focused visible page, else the
-// one visible most recently, else the one that reported most recently. ok is false when tag has no
-// live page.
+// offerTarget picks the one page of tag a notice is offered to: the focused visible page, else a
+// visible one, else the one visible most recently, else the one that reported most recently. ok is
+// false when tag has no live page.
 func (p *Presence) offerTarget(tag string) (page string, ok bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -101,15 +101,14 @@ func (p *Presence) dropPage(tag, page string) {
 	}
 }
 
-// livePages returns tag's page rows after judging the tag, which clears a gone tag's rows, so a
-// page whose stream left is never read as live. Caller holds mu.
+// livePages returns tag's page rows, none while the tag reads gone, so a page whose stream left or
+// went silent is never read as live. Caller holds mu.
 func (p *Presence) livePages(tag string) (map[string]*pageRow, time.Time) {
 	now := p.now()
 	row, ok := p.rows[tag]
-	if !ok {
+	if !ok || p.judge(row, now) {
 		return nil, now
 	}
-	p.judge(row, now)
 	return row.pages, now
 }
 
@@ -122,6 +121,9 @@ func (pg *pageRow) onScreen(now time.Time) bool {
 // offerBefore orders two pages for offerTarget; ties go to the smaller page id so the pick is stable.
 func (pg *pageRow) offerBefore(id string, other *pageRow, otherID string, now time.Time) bool {
 	if a, b := pg.onScreen(now) && pg.focused, other.onScreen(now) && other.focused; a != b {
+		return a
+	}
+	if a, b := pg.onScreen(now), other.onScreen(now); a != b {
 		return a
 	}
 	if !pg.visibleAt.Equal(other.visibleAt) {

@@ -85,11 +85,26 @@ func TestPresenceView_OfferTargetOrder(t *testing.T) {
 			t.Errorf("offerTarget = %q, want P1", got)
 		}
 	})
-	t.Run("else the one visible most recently", func(t *testing.T) {
+	t.Run("else a page on screen over one that just hid", func(t *testing.T) {
 		p, clock := pagesAt(t)
 		p.View("t1", marotte.PageView{Page: "P1", Visible: true})
 		clock.Advance(time.Second)
 		p.View("t1", marotte.PageView{Page: "P2", Visible: true})
+		clock.Advance(time.Second)
+		p.View("t1", marotte.PageView{Page: "P2"})
+		clock.Advance(time.Second)
+		p.View("t1", marotte.PageView{Page: "P3"})
+		if got, _ := p.offerTarget("t1"); got != "P1" {
+			t.Errorf("offerTarget = %q, want P1, still on screen", got)
+		}
+	})
+	t.Run("else among hidden pages the one visible most recently", func(t *testing.T) {
+		p, clock := pagesAt(t)
+		p.View("t1", marotte.PageView{Page: "P1", Visible: true})
+		clock.Advance(time.Second)
+		p.View("t1", marotte.PageView{Page: "P2", Visible: true})
+		clock.Advance(time.Second)
+		p.View("t1", marotte.PageView{Page: "P1"})
 		clock.Advance(time.Second)
 		p.View("t1", marotte.PageView{Page: "P2"})
 		clock.Advance(time.Second)
@@ -120,6 +135,19 @@ func TestPresenceView_AGoneTagLosesItsPages(t *testing.T) {
 	p.Observe(connected("t1"))
 	if _, ok := p.offerTarget("t1"); ok {
 		t.Error("a reconnect revived the gone tag's page rows")
+	}
+}
+
+func TestPresenceView_ASilentTagOffersNothingUntilItsAcksResume(t *testing.T) {
+	p, clock := pagesAt(t)
+	p.View("t1", marotte.PageView{Page: "P1"})
+	clock.Advance(liveness.AliveWindow + time.Millisecond)
+	if _, ok := p.offerTarget("t1"); ok {
+		t.Error("offerTarget found a page of a silent tag")
+	}
+	p.Alive("t1")
+	if got, ok := p.offerTarget("t1"); !ok || got != "P1" {
+		t.Errorf("offerTarget after the acks resumed = %q, %v, want P1", got, ok)
 	}
 }
 

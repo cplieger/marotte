@@ -286,3 +286,43 @@ func TestLedger_GoneTagIgnoresItsPageRows(t *testing.T) {
 		}
 	}
 }
+
+// A silence verdict on a socket still connected is no departure: once acks resume, the profile's hidden page, which
+// re-reports only on a change, is offered the next notice.
+func TestLedger_ASilenceFlapKeepsAHiddenPageOffered(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		eps  []string
+	}{
+		{"subscribed", []string{epA}},
+		{"no subscription", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newLedgerRig(t, tc.eps...)
+			r.present(epA)
+			r.view(epA, marotte.PageView{Page: "P1"})
+			r.leave()
+			if !r.s.presence.Gone(tagOf(epA)) {
+				t.Fatal("the silent profile reads present")
+			}
+			r.s.presence.Alive(tagOf(epA))
+
+			r.raise(t, finished("c1", "done"), 3)
+			if frames := r.framesNow(); len(frames) != 1 || !slices.Equal(frames[0].ShowIn, []string{"P1"}) {
+				t.Errorf("frames = %+v, want one offering P1", frames)
+			}
+		})
+	}
+}
+
+// A notice dropped as read at raise starts no push debounce: the next unread notice of its chat is pushed.
+func TestLedger_ANoticeReadAtRaiseLeavesTheDebounceOpen(t *testing.T) {
+	r := newLedgerRig(t, epA)
+	r.s.Seen(marotte.TabKindChat, "c1", 3)
+
+	r.raise(t, finished("c1", "read"), 3)
+	r.raise(t, finished("c1", "unread"), 4)
+	if got := r.awaitPushTo(t, epA); len(got) != 1 || got[0].Title != "unread" {
+		t.Errorf("pushes = %+v, want the unread notice once", got)
+	}
+}

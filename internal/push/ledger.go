@@ -98,21 +98,29 @@ func (s *Service) Raise(
 	if !ok {
 		return noDelivery
 	}
-	v := s.preflightSend(notice.Kind, notice.PushSubject)
 	kind, ref, hasTab := notice.Tab()
 	proto := noticeRecord{
 		notice: notice, chatID: chatID, payload: payload, tab: tabKey{kind: kind, ref: ref}, hasTab: hasTab,
-		key: debounceKey(notice.Kind, notice.PushSubject), position: position, pushable: v.pushable,
+		key: debounceKey(notice.Kind, notice.PushSubject), position: position,
 	}
+	// A read notice must not stamp the debounce, and Service.mu is never taken under the ledger lock: the
+	// marker is read before preflightSend and again under the placement hold, for an ack landing between.
 	s.ledger.mu.Lock()
-	tags := s.noticeTags(v.subs)
-	if s.ledger.readAt(&proto) {
-		present := s.presentCount(tags)
-		s.ledger.mu.Unlock()
-		s.countSuppressed(notice.Kind, present)
-		slog.Debug("push: notice already read at raise", "kind", string(notice.Kind))
+	read := s.ledger.readAt(&proto)
+	s.ledger.mu.Unlock()
+	if read {
+		s.readAtRaise(&proto, s.peekSend(notice.Kind, notice.PushSubject))
 		return noDelivery
 	}
+	v := s.preflightSend(notice.Kind, notice.PushSubject)
+	proto.pushable = v.pushable
+	s.ledger.mu.Lock()
+	if s.ledger.readAt(&proto) {
+		s.ledger.mu.Unlock()
+		s.readAtRaise(&proto, v)
+		return noDelivery
+	}
+	tags := s.noticeTags(v.subs)
 	showIn, now := s.placeTags(tags, &proto, &v)
 	s.armBeatLocked()
 	s.ledger.mu.Unlock()
@@ -126,6 +134,12 @@ func (s *Service) Raise(
 }
 
 func noDelivery(context.Context) {}
+
+// readAtRaise counts a notice ended at raise as suppressed on each present profile it was decided for.
+func (s *Service) readAtRaise(proto *noticeRecord, v pushVerdict) {
+	s.countSuppressed(proto.notice.Kind, s.presentCount(s.noticeTags(v.subs)))
+	slog.Debug("push: notice already read at raise", "kind", string(proto.notice.Kind))
+}
 
 // placeTags decides rec for each tag, records it where it waits, and returns the pages offered it and the
 // subscriptions to push now. Caller holds the ledger lock.
@@ -190,7 +204,7 @@ func pushPayload(n *marotte.NotificationPayload) ([]byte, bool) {
 }
 
 // noticeTags is every tag a notice is decided for: those with a page row and those with a subscription, sorted so
-// a frame's page order is stable. Caller holds the ledger lock.
+// a frame's page order is stable.
 func (s *Service) noticeTags(subs map[string]marotte.PushSubscription) []string {
 	tags := make([]string, 0, len(subs))
 	for tag := range subs {
