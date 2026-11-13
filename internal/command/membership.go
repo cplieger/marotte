@@ -519,7 +519,7 @@ func (m *Membership) openChatTabUnderMu(ctx context.Context, spec marotte.OpenTa
 // with none; a chat with a tab costs one lookup and writes nothing. It never refuses the message: at MaxOpenTabs the
 // open is skipped at Info, a gone or tearing-down chat is left to the prompt's own refusal, and any other failure is
 // logged at Warn.
-func (m *Membership) ReopenForMessage(ctx context.Context, chatID marotte.ChatID, _ *marotte.Caller) {
+func (m *Membership) ReopenForMessage(ctx context.Context, chatID marotte.ChatID) {
 	if m.tabs == nil {
 		return
 	}

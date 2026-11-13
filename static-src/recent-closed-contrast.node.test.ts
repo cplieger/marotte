@@ -76,29 +76,38 @@ function row(selector: string): { rule: string; hover: string; hoverFill: string
   };
 }
 
+/** The rule both rows paint from; each row's own rule adds only its geometry. */
+const ROWS = ":is(.recent-row, .side-history-row)";
+
 // The script lives outside static-src, and Stryker's sandbox copies static-src alone.
 describe.skipIf(!existsSync(script))("a Recently closed row's inks", () => {
-  it.each([".recent-row", ".side-history-row"])("paints %s's hover with --c-hover", (sel) => {
-    expect(row(sel).hoverFill).toBe("var(--c-hover)");
-  });
-
   it.each([".recent-row", ".side-history-row"])(
-    "holds %s's secondary ink to 4.5:1 at rest and hovered",
+    "leaves %s's inks and fills to the shared rule",
     (sel) => {
-      const r = row(sel);
-      const rest = own(r.rule, "color");
-      expect(rest).toBe("var(--c-text-secondary)");
-      expectFloor(`${sel} at rest`, rest, sidebar());
-      expectFloor(
-        `${sel} hovered`,
-        decl(r.hover, "color") ?? rest,
-        `over(${r.hoverFill}, ${sidebar()})`,
-      );
+      const body = uncommented(ruleBody(tabs, sel));
+      expect(body).not.toMatch(/(?:^|[;{\s])(?:color|background(?:-color)?):/);
+      expect(body).not.toContain(":hover");
     },
   );
 
+  it("paints the rows' hover with --c-hover", () => {
+    expect(row(ROWS).hoverFill).toBe("var(--c-hover)");
+  });
+
+  it("holds the rows' secondary ink to 4.5:1 at rest and hovered", () => {
+    const r = row(ROWS);
+    const rest = own(r.rule, "color");
+    expect(rest).toBe("var(--c-text-secondary)");
+    expectFloor("a row at rest", rest, sidebar());
+    expectFloor(
+      "a row hovered",
+      decl(r.hover, "color") ?? rest,
+      `over(${r.hoverFill}, ${sidebar()})`,
+    );
+  });
+
   it("holds the close time's tertiary ink to 4.5:1 at rest and hovered", () => {
-    const r = row(".recent-row");
+    const r = row(ROWS);
     const ink = own(ruleBody(tabs, ".recent-row-time"), "color");
     expect(ink).toBe("var(--c-text-tertiary)");
     expectFloor("the time at rest", ink, sidebar());
@@ -107,7 +116,7 @@ describe.skipIf(!existsSync(script))("a Recently closed row's inks", () => {
 
   it("declares no token of its own", () => {
     const tokens = readFileSync(join(here, "css", "01-tokens.css"), "utf8");
-    for (const sel of [".recent-row", ".recent-row-time", ".side-history-row"]) {
+    for (const sel of [ROWS, ".recent-row", ".recent-row-time", ".side-history-row"]) {
       const body = uncommented(ruleBody(tabs, sel));
       expect(/(?:^|[;{\s])--[\w-]+\s*:/.test(body), `${sel} declares a custom property`).toBe(
         false,

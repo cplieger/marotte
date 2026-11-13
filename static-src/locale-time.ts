@@ -4,6 +4,7 @@
 // `hour12`. The Clock choice forces `hourCycle`; Automatic follows the languages, or a 24-hour
 // browser default, where Firefox exposes the OS time format and no language list does.
 
+import { signal } from "@cplieger/reactive";
 import { clockChoice, setClockChoice, type ClockChoice } from "./device-view.js";
 
 type Cycle = "h23" | "h12";
@@ -13,6 +14,7 @@ type Cycle = "h23" | "h12";
 let choice: ClockChoice | null = null;
 let default24: boolean | null = null;
 const formatters = new Map<string, Intl.DateTimeFormat>();
+const choiceVersion = signal(0);
 
 function forget(): void {
   formatters.clear();
@@ -73,17 +75,24 @@ export function clock(): ClockChoice {
   return choice;
 }
 
+/** A count that moves on every `setClock` and `reloadClock`, so an effect reading it reruns on a Clock change. */
+export function watchClock(): number {
+  return choiceVersion.value;
+}
+
 /** Record this screen's Clock choice; every later format follows it. `redrawClocks` repaints. */
 export function setClock(next: ClockChoice): void {
   setClockChoice(next);
   choice = next;
   forget();
+  choiceVersion.value++;
 }
 
 /** Re-read the choice from storage, after another tab of this screen wrote it. */
 export function reloadClock(): void {
   choice = null;
   forget();
+  choiceVersion.value++;
 }
 
 /** The hour cycle the clock draws in now, Automatic resolved. */

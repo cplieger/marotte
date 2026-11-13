@@ -9,7 +9,7 @@ import { isSliding, slideBox } from "./disclosure-row.js";
 import { $, maybeEl, setText } from "./dom.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_TAB_CHAT } from "./icons.js";
-import { formatClock } from "./locale-time.js";
+import { formatClock, watchClock } from "./locale-time.js";
 import { isRetentionEnabled, onRetentionChange } from "./retention.js";
 import { watchSession } from "./store.js";
 import { dragOwnsStrip } from "./tabs-drag.js";
@@ -21,11 +21,14 @@ const HOLD_MS = 500;
 /** How long a touch lift's click stays swallowed, as `tabs-drag.ts` expires its release suppression. */
 const LIFT_CLICK_MS = 80;
 
+let descSeq = 0;
+
 interface Row {
   readonly li: HTMLLIElement;
   readonly button: HTMLButtonElement;
   readonly name: HTMLElement;
   readonly time: HTMLTimeElement;
+  readonly closedAt: HTMLElement;
   entry: RecentClose;
   drawn: string;
 }
@@ -58,7 +61,7 @@ export function initRecentClosed(): void {
     busy.add(ref);
     row.button.setAttribute("aria-busy", "true");
     try {
-      const outcome = await reopenChat(ref, watchSession(ref)?.name ?? row.entry.name);
+      const outcome = await reopenChat(ref, row.entry.name);
       const tabID = tabIdFor("chat", ref);
       const focus = document.activeElement;
       const ours = focus === null || focus === document.body || focus === row.button;
@@ -176,8 +179,11 @@ export function initRecentClosed(): void {
       name,
       time,
     ) as HTMLButtonElement;
-    const li = el("li", {}, button) as HTMLLIElement;
-    const row: Row = { li, button, name, time, entry, drawn: "" };
+    descSeq++;
+    const closedAt = el("span", { className: "sr-only", id: `recent-row-desc-${String(descSeq)}` });
+    button.setAttribute("aria-describedby", closedAt.id);
+    const li = el("li", {}, button, closedAt) as HTMLLIElement;
+    const row: Row = { li, button, name, time, closedAt, entry, drawn: "" };
     bindRow(row);
     return row;
   }
@@ -197,11 +203,13 @@ export function initRecentClosed(): void {
     setText(row.time, clock);
     row.time.dateTime = new Date(entry.closed_at).toISOString();
     row.button.setAttribute("aria-label", `Reopen ${label}`);
-    row.button.setAttribute("aria-description", `Closed at ${clock}`);
+    setText(row.closedAt, `Closed at ${clock}`);
     row.button.dataset["tooltip"] = `Reopen ${label}\nClosed at ${clock}`;
   }
 
   effect(() => {
+    // A Clock change redraws each row's time through paintRow's drawn key.
+    watchClock();
     const entries = retentionOn.value ? recentClosed() : [];
     const keep = new Set(entries.map((e) => e.ref));
     for (const [ref, row] of rows) {

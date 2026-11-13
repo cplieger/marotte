@@ -111,7 +111,7 @@ vi.mock("./api-client.js", async (importOriginal) => {
 
 import { initSidebarHistory } from "./sidebar-history.js";
 import { adoptRetention } from "./retention.js";
-import { formatClock } from "./locale-time.js";
+import { formatClock, setClock } from "./locale-time.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_TAB_CHAT } from "./icons.js";
 import { LS_UI_STATE_KEY } from "./ls-keys.js";
@@ -820,8 +820,32 @@ describe("a Recently closed row to a screen reader and the keyboard", () => {
     unfold();
     const row = browser.getByRole("button", { name: "Reopen Alpha", exact: true }).element();
     expect(row).toBe(rowFor("Alpha"));
-    const described = row.getAttribute("aria-description") ?? description(row as HTMLElement);
-    expect(described).toBe(`Closed at ${formatClock(T0 - 5 * 60_000)}`);
+    expect(description(row as HTMLElement)).toBe(`Closed at ${formatClock(T0 - 5 * 60_000)}`);
+  });
+
+  it("redraws its time, description and tooltip on a Clock change", async () => {
+    await listed(entry("c-a", "Alpha", 5));
+    unfold();
+    const row = rowFor("Alpha");
+    const drawn = (): string[] => [
+      row.querySelector("time")?.textContent ?? "",
+      description(row),
+      row.dataset["tooltip"] ?? "",
+    ];
+    try {
+      setClock("h23");
+      await settle();
+      const h23 = drawn();
+      expect(h23[0]).toMatch(/^\d{1,2}:\d{2}$/);
+      setClock("h12");
+      await settle();
+      const h12 = drawn();
+      const clock12 = formatClock(T0 - 5 * 60_000);
+      expect(clock12).not.toBe(h23[0]);
+      expect(h12).toEqual([clock12, `Closed at ${clock12}`, `Reopen Alpha\nClosed at ${clock12}`]);
+    } finally {
+      setClock("auto");
+    }
   });
 
   it("makes each shown row one Tab stop, then the History row", async () => {

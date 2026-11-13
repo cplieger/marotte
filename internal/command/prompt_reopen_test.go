@@ -18,7 +18,6 @@ import (
 // reopenCall is one ReopenForMessage call, with how many prompts had opened a turn and how many rows were queued
 // when it ran.
 type reopenCall struct {
-	from          *marotte.Caller
 	chat          marotte.ChatID
 	promptsOpened int
 	rowsQueued    int
@@ -33,13 +32,13 @@ type reopenRecorder struct {
 	mu    sync.Mutex
 }
 
-func (r *reopenRecorder) ReopenForMessage(ctx context.Context, chatID marotte.ChatID, from *marotte.Caller) {
-	call := reopenCall{chat: chatID, from: from, promptsOpened: len(r.opens.prompts()), rowsQueued: len(r.queue.queued())}
+func (r *reopenRecorder) ReopenForMessage(ctx context.Context, chatID marotte.ChatID) {
+	call := reopenCall{chat: chatID, promptsOpened: len(r.opens.prompts()), rowsQueued: len(r.queue.queued())}
 	r.mu.Lock()
 	r.calls = append(r.calls, call)
 	r.mu.Unlock()
 	if r.inner != nil {
-		r.inner.ReopenForMessage(ctx, chatID, from)
+		r.inner.ReopenForMessage(ctx, chatID)
 	}
 }
 
@@ -57,8 +56,8 @@ func TestPrompt_FromAnAPICallerReopensTheChatBeforeItsSubmit(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("reopens = %+v, want 1", calls)
 	}
-	if calls[0].chat != "c1" || calls[0].from == nil || calls[0].from.Label != "Agent Mail" {
-		t.Errorf("reopen = %+v, want c1 from Agent Mail", calls[0])
+	if calls[0].chat != "c1" {
+		t.Errorf("reopen = %+v, want c1", calls[0])
 	}
 	if calls[0].promptsOpened != 0 {
 		t.Errorf("the reopen ran after %d prompts opened a turn, want before the submit", calls[0].promptsOpened)
@@ -118,20 +117,6 @@ func TestPrompt_RefusedByItsValidationReopensNothing(t *testing.T) {
 	}
 }
 
-// The run queue's refusal after the reopen is the caller's answer; the reopen has already run and is not undone.
-func TestPrompt_ARunQueueRefusalAfterTheReopenIsAnswered(t *testing.T) {
-	f := newCallerFixture(t)
-	f.opens.admitFirst = AdmissionStarting
-	w := f.send(t, marotte.CmdPrompt, "Agent Mail", nil, map[string]string{"text": "hello", "message_id": "m-1"})
-
-	if w.Code != http.StatusConflict {
-		t.Errorf("a prompt into a starting chat answered %d, want 409", w.Code)
-	}
-	if calls := f.reopens.recorded(); len(calls) != 1 {
-		t.Errorf("reopens = %+v, want the one that ran before the submit", calls)
-	}
-}
-
 func TestSteer_FromAnAPICallerReopensNothing(t *testing.T) {
 	f := newCallerFixture(t)
 	f.post(t, marotte.CmdSteer, "Agent Mail", nil)
@@ -145,8 +130,8 @@ func TestNotify_ReopensTheChatBeforeItsSubmit(t *testing.T) {
 	notifyInto(t, f)
 
 	calls := f.reopens.recorded()
-	if len(calls) != 1 || calls[0].chat != "c1" || calls[0].from == nil || calls[0].from.Label != "grelot" {
-		t.Fatalf("reopens = %+v, want one for c1 from grelot", calls)
+	if len(calls) != 1 || calls[0].chat != "c1" {
+		t.Fatalf("reopens = %+v, want one for c1", calls)
 	}
 	if calls[0].promptsOpened != 0 {
 		t.Errorf("the reopen ran after %d prompts opened a turn, want before the submit", calls[0].promptsOpened)
@@ -219,6 +204,29 @@ func TestPrompt_FromAnAPICallerOpensTheClosedChatsTabThenPrompts(t *testing.T) {
 	}
 	if n := len(m.opens.prompts()); n != 1 {
 		t.Errorf("turn opens = %d, want the prompt delivered", n)
+	}
+}
+
+// The run queue's refusal after the reopen is the caller's answer; the reopen has already run and is not undone.
+func TestPrompt_ARunQueueRefusalAfterTheReopenLeavesTheTabOpen(t *testing.T) {
+	m := newMessageFixture(t)
+	m.opens.admitFirst = AdmissionStarting
+	mark := len(m.bus.frames(t))
+
+	w := m.send(t, marotte.CmdPrompt, "Agent Mail", nil, map[string]string{"text": "hello", "message_id": "m-1"})
+
+	if w.Code != http.StatusConflict {
+		t.Errorf("a prompt into a starting chat answered %d, want 409", w.Code)
+	}
+	if _, ok := chatTabOf(m.st, "c1"); !ok {
+		t.Error("c1 has no tab after the refused prompt, want the reopen kept")
+	}
+	frames := m.bus.frames(t)[mark:]
+	if len(frames) != 1 {
+		t.Fatalf("the message emitted %d frames, want 1", len(frames))
+	}
+	if refs, carried := frameRecentRefs(&frames[0]); !carried || !slices.Equal(refs, []string{"c2"}) {
+		t.Errorf("frame recent = %v (carried %v), want [c2]", refs, carried)
 	}
 }
 

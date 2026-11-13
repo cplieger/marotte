@@ -234,7 +234,8 @@ body.sidebar-resizing {
   padding-block-end: var(--sp-1);
 }
 
-.side-section-list {
+.side-section-list,
+.recent-list {
   /* THE SAME INSET `.sidebar-actions` TAKES, so a tab's border box and the New chat
    button's are the same box: the list carries no border and no inset of its own
    beyond this, so there is no second expression to keep in step. */

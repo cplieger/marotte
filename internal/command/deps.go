@@ -910,7 +910,7 @@ type promptRoles struct {
 
 // chatReopener opens the tab of a chat an outside caller's message reaches, so the work it starts has a row.
 type chatReopener interface {
-	ReopenForMessage(ctx context.Context, chatID marotte.ChatID, from *marotte.Caller)
+	ReopenForMessage(ctx context.Context, chatID marotte.ChatID)
 }
 
 var _ chatReopener = (*Membership)(nil)
@@ -918,6 +918,6 @@ var _ chatReopener = (*Membership)(nil)
 // reopenForCaller reopens cmd's chat for an outside caller's message; a page's own command (From nil) never does.
 func reopenForCaller(ctx context.Context, reopen chatReopener, cmd *marotte.ClientCommand) {
 	if cmd.From != nil {
-		reopen.ReopenForMessage(ctx, cmd.ChatID, cmd.From)
+		reopen.ReopenForMessage(ctx, cmd.ChatID)
 	}
 }

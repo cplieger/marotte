@@ -1042,47 +1042,30 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Recently closed's rows: the inset and gap of `.side-section-list`, so a row is a tab row's box. */
 .recent-list {
   margin: 0;
-  padding: var(--sp-1) var(--sp-2) 0;
   list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
-
-  &[hidden] {
-    display: none;
-  }
 }
 
-/* A tab row's geometry. A touch hold opens the row menu, so the row selects no text. */
-.recent-row {
-  color: var(--c-text-secondary);
+/* A tab row's geometry, so the closed rows and History line up with the tab rows above them. */
+:is(.recent-row, .side-history-row) {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  inline-size: 100%;
   padding-block: var(--sp-2);
   padding-inline: var(--sp-3) var(--sp-2);
   min-block-size: var(--tab-row-h);
   border: 1px solid transparent;
   border-radius: var(--r);
   background: transparent;
+  color: var(--c-text-secondary);
   font-size: var(--fs-sm);
   text-align: start;
   cursor: pointer;
-  -webkit-user-select: none;
-  user-select: none;
-  -webkit-touch-callout: none;
   transition: background var(--dur-micro);
 
   & > svg {
     flex-shrink: 0;
-  }
-
-  &[aria-busy="true"] {
-    cursor: progress;
   }
 
   @media (any-hover: hover) {
@@ -1090,6 +1073,18 @@
       background: var(--c-hover);
       color: var(--c-text-primary);
     }
+  }
+}
+
+/* A touch hold opens the row menu, so the row selects no text. */
+.recent-row {
+  inline-size: 100%;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+
+  &[aria-busy="true"] {
+    cursor: progress;
   }
 }
 
@@ -1107,34 +1102,8 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* A tab row's geometry, so History lines up with the rows above it. */
 .side-history-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
   margin: 0.125rem var(--sp-2) 0;
-  padding-block: var(--sp-2);
-  padding-inline: var(--sp-3) var(--sp-2);
-  min-block-size: var(--tab-row-h);
-  border: 1px solid transparent;
-  border-radius: var(--r);
-  background: transparent;
-  color: var(--c-text-secondary);
-  font-size: var(--fs-sm);
-  text-align: start;
-  cursor: pointer;
-  transition: background var(--dur-micro);
-
-  & > svg {
-    flex-shrink: 0;
-  }
-
-  @media (any-hover: hover) {
-    &:hover {
-      background: var(--c-hover);
-      color: var(--c-text-primary);
-    }
-  }
 
   &[hidden] {
     display: none;
