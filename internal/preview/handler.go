@@ -173,7 +173,7 @@ func (h *Handler) readHead(pg *page) ([]byte, error) {
 	if err != nil {
 		return nil, h.resolveError(err, "no such page")
 	}
-	f := os.NewFile(uintptr(fd), pg.name)
+	f := os.NewFile(uintptr(fd), "preview")
 	head, rerr := io.ReadAll(io.LimitReader(f, hintScanBytes))
 	_ = f.Close()
 	if rerr != nil {
