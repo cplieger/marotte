@@ -58,11 +58,11 @@ describe("the active and painted chat pointers", () => {
     }
   });
 
-  it("moves the painted chat to the active chat when removeChat drops the painted chat", () => {
+  it("clears the painted chat when removeChat drops it mid-switch, keeping the active chat", () => {
     store.setActive("b"); // a switch's gesture: B is active, A still painted
     store.removeChat("a");
     expect(store.getActiveId()).toBe("b");
-    expect(store.getPaintedId(), "the painted pointer names a removed row").toBe("b");
+    expect(store.getPaintedId(), "the store painted a chat no activation chose").toBe("");
   });
 
   it("keeps the painted chat when removeChat drops another chat", () => {

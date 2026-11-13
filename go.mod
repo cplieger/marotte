@@ -22,18 +22,18 @@ require (
 	github.com/cplieger/go/envx v1.1.0
 	github.com/cplieger/go/filesafe v1.1.0
 	github.com/cplieger/go/health/v2 v2.0.0
-	github.com/cplieger/go/httpserver v1.4.0-dev.1
+	github.com/cplieger/go/httpserver v1.4.0
 	github.com/cplieger/go/keyenc v1.3.0
 	github.com/cplieger/go/keylock v1.1.0
 	github.com/cplieger/go/measure v1.2.0
 	github.com/cplieger/go/pathinside v1.1.0
 	github.com/cplieger/go/slogx v1.1.0
-	github.com/cplieger/go/sse/v2 v2.3.0-dev.1
+	github.com/cplieger/go/sse/v2 v2.3.0-dev.2
 	github.com/cplieger/go/ssrf v1.1.0
 	github.com/cplieger/go/textsafe v1.1.0
 	github.com/cplieger/go/wiregen v1.1.0-dev.2
 	github.com/cplieger/go/yamlenv v1.1.0
-	github.com/cplieger/toolbelt/v3 v3.15.0-dev.40
+	github.com/cplieger/toolbelt/v3 v3.15.0-dev.41
 	github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.13
 	github.com/evanw/esbuild v0.28.2
 	github.com/klauspost/compress v1.20.4
