@@ -67,7 +67,7 @@ vi.mock("./api-client.js", async () => ({
 }));
 
 const { mountChatView, mountTurnBody, activeTranscriptView } = await import("./messages.js");
-const { setSessions, setActive, bumpMessages } = await import("./store.js");
+const { setSessions, setActive, setPainted, bumpMessages } = await import("./store.js");
 const { setTurnOpen, openForSearch, clearSearchOpened, resetFoldState } =
   await import("./fold-state.js");
 const { OVERSCAN_ENTRIES, RESIDENT_ENTRIES, RESIDENT_TOOL_CALLS } =
@@ -243,6 +243,7 @@ function activate(chatID: string, turnEntries: readonly (readonly Entry[])[], li
     },
   ]);
   setActive(chatID);
+  setPainted(chatID);
   // A same-id re-activation writes no signal the paint effect tracks; the bump
   // is what store-load.ts issues after every page mutation.
   bumpMessages(chatID);
@@ -343,6 +344,7 @@ beforeEach(() => {
   // between cases.
   setSessions([] as never);
   setActive("");
+  setPainted("");
 });
 
 // --- What residency is measured in --------------------------------------------
@@ -378,12 +380,12 @@ describe("the mounted derivation", () => {
     // in for the ordinals above it.
     expect(hasBody("big")).toBe(true);
     expect(isFolded("big")).toBe(false);
-    // The paint takes ONE slice and owes the rest, so assert the settled shape: the head spacer alone,
-    // tail reached.
+    // The paint takes ONE slice and owes the rest, so wait for the settled shape: the whole window
+    // mounted, with the head spacer alone.
     await vi.waitFor(() => {
-      expect(spacersIn("big")).toEqual(["head"]);
+      expect(ordinalsIn("big")).toBe(RESIDENT_ENTRIES);
     });
-    expect(ordinalsIn("big")).toBe(RESIDENT_ENTRIES);
+    expect(spacersIn("big")).toEqual(["head"]);
     expect(ordinalsIn("big")).toBeLessThan(span);
     // That spacer prices the ordinals it stands in for, floored at 1px so no
     // ordinal is ever worth nothing at all.
@@ -1135,7 +1137,10 @@ describe("the cold build", () => {
     // body under a folded card.
     activate(id, [heavyTurn("u-heavy", RESIDENT_ENTRIES + 64), toolTurn("u1", 2)]);
     expect(hasBody("u-heavy")).toBe(false);
-    expect(held.length, "the cold build is owed").toBeGreaterThan(0);
+    // One drain serves every pass, so it may still be finishing an earlier case's build first.
+    await vi.waitFor(() => {
+      expect(held.length, "the drain waits on a yield").toBeGreaterThan(0);
+    });
 
     // Release every yield, including any the released work asks for, until none is left. A task
     // after a release runs once every promise continuation queued by then has.

@@ -26,7 +26,7 @@ import { dropAllRunAsks, runAskPosition } from "../run-asks.js";
 import { loadList, scheduleListRetry } from "../store-load.js";
 import { clearTurnState } from "../turn-teardown.js";
 import { adoptRetention } from "../retention.js";
-import { adoptConnectRuns, rebuildLiveRuns } from "../run-store.js";
+import { adoptConnectRuns } from "../run-store.js";
 import { forgetAllStepSteers } from "../run-step-steers.js";
 import { fetchCatalog } from "../session-catalog.js";
 import { adoptEngineStatus, reconcileEngineStatus } from "../engine-status.js";
@@ -139,10 +139,6 @@ onBus(BUS_RECONCILE, ({ cause, signal }) => {
       scheduleListRetry();
     }
   });
-  // The live-runs inventory is event-fed, so a lost stream leaves it blind to any
-  // run that started or settled meanwhile; re-read the server's presence-based
-  // projection. The held runs' own state was re-read by the revalidation (`rereadHeldRuns`).
-  void rebuildLiveRuns(signal);
   // The catalog rides no frame, so a gap must re-read it.
   void fetchCatalog({ signal });
   // A gap may have swallowed an engine_status, and the next one comes only on a change.

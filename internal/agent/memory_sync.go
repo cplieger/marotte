@@ -1,7 +1,8 @@
 package agent
 
-// The Memories tab's Cloud sync section: KAS's sync state and the memorySync choice, read and written as kiro-cli's
-// own terminal UI does. KAS owns both, so marotte keeps no copy and refetches on _kiro/memory/syncStatus.
+// The Memories tab's Cloud sync section: KAS's sync state and the memorySync choice, read as kiro-cli's own terminal
+// UI reads them and written at the one layer KAS grants. KAS owns both, so marotte keeps no copy and refetches on
+// _kiro/memory/syncStatus.
 
 import (
 	"context"
@@ -18,12 +19,9 @@ import (
 
 const memorySyncKRN = "krn:::setting/memorySync"
 
-// The layers a client may write memorySync at: the account's synced settings, and this host's, which KAS writes
-// with the account's on as well when it is on.
-const (
-	memorySyncAccountLayer = "user-synced"
-	memorySyncDeviceLayer  = "user-local"
-)
+// memorySyncAccountLayer is the one layer kiro-cli 3.2.1 lets a client write memorySync at, the account's synced
+// settings: _kiro/configuration/set refuses user-local as notGranted.
+const memorySyncAccountLayer = "user-synced"
 
 // memorySyncUnknown stands for a state or reason this build has no wording for.
 const memorySyncUnknown = "unknown"
@@ -64,13 +62,12 @@ type MemorySyncLock struct {
 	Name  string `json:"name"`
 }
 
-// MemorySyncChoice is the composed memorySync setting: Enabled is its value, Account and Device whether the
-// account's and this host's layers state it on.
+// MemorySyncChoice is the composed memorySync setting: Enabled is its value, Account whether the account's layer
+// states it on.
 type MemorySyncChoice struct {
 	Lock    *MemorySyncLock `json:"lock,omitempty"`
 	Enabled bool            `json:"enabled"`
 	Account bool            `json:"account"`
-	Device  bool            `json:"device"`
 }
 
 // MemorySync is GET /api/memory/sync's body.
@@ -79,9 +76,10 @@ type MemorySync struct {
 	Choice MemorySyncChoice `json:"choice"`
 }
 
-// MemorySyncUpdate is PUT /api/memory/sync's body.
+// MemorySyncUpdate is PUT /api/memory/sync's body. Scope is decoded only to refuse it: a page that still names
+// a layer must not have its write land at the account's.
 type MemorySyncUpdate struct {
-	Scope string `json:"scope"`
+	Scope string `json:"scope,omitempty"`
 	On    bool   `json:"on"`
 }
 
@@ -128,14 +126,8 @@ func decodeMemorySyncStatus(raw json.RawMessage) MemorySyncStatus {
 func memorySyncChoiceOf(s *kasSetting, names map[string]string) MemorySyncChoice {
 	c := MemorySyncChoice{Enabled: settingOn(s.Value)}
 	for _, k := range s.Contributions {
-		if k.Stated == nil || !settingOn(k.Stated.Value) {
-			continue
-		}
-		switch k.Layer {
-		case memorySyncAccountLayer:
+		if k.Layer == memorySyncAccountLayer && k.Stated != nil && settingOn(k.Stated.Value) {
 			c.Account = true
-		case memorySyncDeviceLayer:
-			c.Device = true
 		}
 	}
 	if s.Compose == "locked" && len(s.Assertions) > 0 {
@@ -189,8 +181,8 @@ func decodeMemorySyncChoice(raw json.RawMessage) (MemorySyncChoice, error) {
 	return MemorySyncChoice{}, nil
 }
 
-// handleMemorySync serves /api/memory/sync: GET answers the state and the choice, PUT {scope: account|device, on}
-// writes the choice at that scope's layer and answers it.
+// handleMemorySync serves /api/memory/sync: GET answers the state and the choice, PUT {on} writes the choice at the
+// account's layer and answers it.
 func (st *Settings) handleMemorySync(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
@@ -200,9 +192,8 @@ func (st *Settings) handleMemorySync(w http.ResponseWriter, r *http.Request) {
 		if !httpreply.DecodeJSON(w, r, &body) {
 			return
 		}
-		layer, ok := map[string]string{"account": memorySyncAccountLayer, "device": memorySyncDeviceLayer}[body.Scope]
-		if !ok {
-			httpreply.BadRequest(w, "scope must be account or device")
+		if body.Scope != "" {
+			httpreply.BadRequest(w, "memory sync takes {on} only")
 			return
 		}
 		value := "off"
@@ -211,7 +202,7 @@ func (st *Settings) handleMemorySync(w http.ResponseWriter, r *http.Request) {
 		}
 		st.lifecycle.answerEngineMutation(w, r, engineMutation{
 			verb: "memory sync", changed: st.broadcastMemorySyncChanged,
-			call: func(ctx context.Context) engineReply { return st.setMemorySync(ctx, value, layer) },
+			call: func(ctx context.Context) engineReply { return st.setMemorySync(ctx, value) },
 		})
 	}
 }
@@ -237,10 +228,10 @@ func (st *Settings) getMemorySync(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, MemorySync{Status: decodeMemorySyncStatus(rawStatus), Choice: choice})
 }
 
-func (st *Settings) setMemorySync(ctx context.Context, value, layer string) engineReply {
+func (st *Settings) setMemorySync(ctx context.Context, value string) engineReply {
 	cctx, cancel := st.engine.stallAware(ctx, memoryCallTimeout)
 	defer cancel()
-	raw, err := st.engine.configurationSetRaw(cctx, memorySyncKRN, value, layer)
+	raw, err := st.engine.configurationSetRaw(cctx, memorySyncKRN, value, memorySyncAccountLayer)
 	if err != nil {
 		return engineReply{err: err, write: func(w http.ResponseWriter) { writeMemorySyncErr(w, err) }}
 	}

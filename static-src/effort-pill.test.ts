@@ -69,10 +69,10 @@ document.body.innerHTML = `
   <span id="ctx-tools"></span>
   <span id="ctx-metering"></span>`;
 
-const { effect } = await import("@cplieger/ui");
+const { effect } = await import("@cplieger/reactive");
 const store = await import("./store.js");
 const { refreshContextUI } = await import("./context-ui.js");
-const { configure, configureTransport } = await import("@cplieger/ui/actions");
+const { configure, configureTransport } = await import("@cplieger/reactive/actions");
 const { initModelSwitcher } = await import("./model-switcher.js");
 
 // `configure({})` is the framework's silent mode; the transport must answer or the rollback undoes the optimistic write.
@@ -107,7 +107,7 @@ function session(id: string, over: Partial<Session> = {}): Session {
     ...makeSession({
       id,
       name: id,
-      model: "claude-opus-5",
+      model: "model-a-5",
       effort: "",
       effort_levels: fiveTiers(),
       usage: {
@@ -196,7 +196,7 @@ describe("the model pill's reasoning tier", () => {
 
   // Control: the path that already worked, proving the chain is the real one.
   it("names a chosen tier when the catalog knows a different default", async () => {
-    staged.models = [model("claude-opus-5", "high")];
+    staged.models = [model("model-a-5", "high")];
     mount(session("c", { effort: "max" }));
     expect(await tier()).toEqual({ text: "· max", hidden: false });
   });
@@ -209,7 +209,7 @@ describe("the model pill's reasoning tier", () => {
 
   // A resolved tier equal to the model's default is still named.
   it("names the tier when the resolved tier EQUALS the model's own default", async () => {
-    staged.models = [model("claude-opus-5", "high")];
+    staged.models = [model("model-a-5", "high")];
     mount(session("e", { effort: "high" }));
     expect(await tier()).toEqual({ text: "· high", hidden: false });
   });
@@ -222,7 +222,7 @@ describe("the model pill's reasoning tier", () => {
 
   it("says nothing when no level resolves at all", async () => {
     // Nothing resolves, so naming a tier would invent one.
-    staged.models = [model("claude-opus-5")];
+    staged.models = [model("model-a-5")];
     mount(session("y"));
     expect(await tier()).toEqual({ text: "", hidden: true });
   });
@@ -253,28 +253,28 @@ describe("the model pill's model half", () => {
   // The model half reads `humanName(s.model)` with no catalog dependency; asserted since both halves paint together.
   it("names the model with nothing in the catalog", async () => {
     mount(session("h"));
-    expect(await modelName()).toBe("claude opus 5");
+    expect(await modelName()).toBe("model a 5");
   });
 
   it("repaints the model on a local pick, with no bridge and no message sent", async () => {
-    mount(session("i", { model: "claude-sonnet-5" }));
-    expect(await modelName()).toBe("claude sonnet 5");
+    mount(session("i", { model: "model-b-5" }));
+    expect(await modelName()).toBe("model b 5");
 
     arm();
-    store.setModel("i", "claude-opus-5");
+    store.setModel("i", "model-a-5");
 
-    expect(await modelName()).toBe("claude opus 5");
+    expect(await modelName()).toBe("model a 5");
   });
 
   it("paints the model and the tier together on selection", async () => {
-    mount(session("j", { model: "claude-sonnet-5" }));
+    mount(session("j", { model: "model-b-5" }));
     await modelName();
 
     arm();
-    store.setModel("j", "claude-opus-5");
+    store.setModel("j", "model-a-5");
     store.setEffort("j", "max");
 
-    expect(await modelName()).toBe("claude opus 5");
+    expect(await modelName()).toBe("model a 5");
     expect(await tier()).toEqual({ text: "· max", hidden: false });
   });
 });
@@ -290,8 +290,8 @@ describe("a gesture on the slider", () => {
   }
 
   it("paints the pill, through the real action", async () => {
-    staged.models = [model("claude-opus-5", "high")];
-    mount(session("k", { model: "claude-opus-5" }));
+    staged.models = [model("model-a-5", "high")];
+    mount(session("k", { model: "model-a-5" }));
     // The readout moves from the model's default.
     expect(await tier()).toEqual({ text: "· high", hidden: false });
 
@@ -315,8 +315,8 @@ describe("a gesture on the slider", () => {
   });
 
   it("rolls a refused pick back to the chat's own tier, not the preview", async () => {
-    staged.models = [model("claude-opus-5", "high")];
-    mount(session("m", { model: "claude-opus-5", effort: "medium" }));
+    staged.models = [model("model-a-5", "high")];
+    mount(session("m", { model: "model-a-5", effort: "medium" }));
     // Held, so the optimistic write is observable before the refusal rolls it back.
     // Cast, not annotated: tsc would narrow an annotated `null` past the closure's assignment.
     let refuse = null as (() => void) | null;

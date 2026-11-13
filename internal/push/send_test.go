@@ -34,7 +34,7 @@ func TestSendFailureLogCarriesTheTagNotTheEndpoint(t *testing.T) {
 		hostile := "https://evil.example/\x1b]0;pwned\x07/" + strings.Repeat("x", 100)
 		s.Subscribe(pushSubscriptionWithValidKeys(t, hostile))
 
-		s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "t", Body: "b"})
+		send(t, s, &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "t", Body: "b"})
 
 		got, ok := rec.AttrValue("push: send failed", "tag")
 		if !ok {
@@ -66,7 +66,7 @@ func TestSend_PreferenceFiltering(t *testing.T) {
 	// subscription carries real keys (see newServiceOnTestServer).
 	rec := &recordingHandler{}
 	s := newServiceOnTestServer(t, rec)
-	// Subscribe so Send reaches the preflight stage rather than the empty-subs early exit.
+	// Subscribe so Raise reaches the preflight stage rather than the empty-subs early exit.
 	s.Subscribe(pushSubscriptionWithValidKeys(t, "https://fcm.googleapis.com/fcm/send/pref-test"))
 
 	// With agentFinished disabled, preflight short-circuits before stamping last-push.
@@ -74,12 +74,12 @@ func TestSend_PreferenceFiltering(t *testing.T) {
 		marotte.PushKindAgentFinished: false,
 		marotte.PushKindPermission:    true,
 	})
-	s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
+	send(t, s, &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 	s.mu.Lock()
 	_, afRecorded := s.lastPush[debounceKey(marotte.PushKindAgentFinished, marotte.PushSubject{})]
 	s.mu.Unlock()
 	if afRecorded {
-		t.Error("agentFinished=false should prevent Send from recording last-push timestamp")
+		t.Error("agentFinished=false should prevent Raise from recording last-push timestamp")
 	}
 
 	// Permission has no settings key (see floor_test.go), so the reachable assertion is that
@@ -88,7 +88,7 @@ func TestSend_PreferenceFiltering(t *testing.T) {
 		marotte.PushKindAgentFinished: false,
 		marotte.PushKindPermission:    true,
 	})
-	s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindPermission, Title: "title", Body: "body"})
+	send(t, s, &marotte.NotificationPayload{Kind: marotte.PushKindPermission, Title: "title", Body: "body"})
 	s.mu.Lock()
 	_, pnRecorded := s.lastPush[debounceKey(marotte.PushKindPermission, marotte.PushSubject{})]
 	s.mu.Unlock()
@@ -128,7 +128,7 @@ func TestSend_Debounce(t *testing.T) {
 	before := s.lastPush[debounceKey(marotte.PushKindAgentFinished, marotte.PushSubject{})]
 	s.mu.Unlock()
 
-	s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
+	send(t, s, &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 	s.mu.Lock()
 	after := s.lastPush[debounceKey(marotte.PushKindAgentFinished, marotte.PushSubject{})]
@@ -150,7 +150,7 @@ func TestSend_DebouncePerType(t *testing.T) {
 	s.mu.Unlock()
 
 	s.Subscribe(pushSubscriptionWithValidKeys(t, "https://push.example.com/x"))
-	s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindPermission, Title: "title", Body: "body"})
+	send(t, s, &marotte.NotificationPayload{Kind: marotte.PushKindPermission, Title: "title", Body: "body"})
 
 	s.mu.Lock()
 	permTimestamp := s.lastPush[debounceKey(marotte.PushKindPermission, marotte.PushSubject{})]
@@ -169,7 +169,7 @@ func TestSend_UnknownKindRejected(t *testing.T) {
 	rec := &recordingHandler{}
 	s := newServiceOnTestServer(t, rec)
 	s.Subscribe(marotte.PushSubscription{Endpoint: "https://push.example.com/x"})
-	s.Send(t.Context(), &marotte.NotificationPayload{Kind: "what-is-this", Title: "title", Body: "body"})
+	send(t, s, &marotte.NotificationPayload{Kind: "what-is-this", Title: "title", Body: "body"})
 	if got := rec.snapshot(); len(got) != 0 {
 		t.Errorf("an unknown kind attempted %d deliveries, want 0", len(got))
 	}
@@ -187,7 +187,7 @@ func TestSend_UnhealthySkips(t *testing.T) {
 	s.healthy = false
 	s.mu.Unlock()
 
-	s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
+	send(t, s, &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 }
 
 func TestSend_StatusCodePruning(t *testing.T) {
@@ -212,13 +212,13 @@ func TestSend_StatusCodePruning(t *testing.T) {
 			s.client = srv.Client()
 			s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
-			s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
+			send(t, s, &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 			if tt.wantPruned && s.HasSubscribers() {
-				t.Errorf("Send did not prune subscription after %d", tt.status)
+				t.Errorf("Raise did not prune subscription after %d", tt.status)
 			}
 			if !tt.wantPruned && !s.HasSubscribers() {
-				t.Errorf("Send pruned subscription on %d", tt.status)
+				t.Errorf("Raise pruned subscription on %d", tt.status)
 			}
 		})
 	}
@@ -258,7 +258,7 @@ func TestSend_AuthRejectionNeedsAWitnessBeforePruning(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, refusedEP))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
+		send(t, s, &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 		if got := remaining(s); !slices.Equal(got, []string{refusedEP}) {
 			t.Errorf("subs after a 403 with nothing delivered = %v, want the subscription kept", got)
@@ -281,7 +281,7 @@ func TestSend_AuthRejectionNeedsAWitnessBeforePruning(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, refusedEP))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
+		send(t, s, &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 		if got := remaining(s); !slices.Equal(got, []string{witnessEP}) {
 			t.Errorf("subs after one 201 and one 403 = %v, want only the delivering endpoint", got)
@@ -300,7 +300,7 @@ func TestSend_AuthRejectionNeedsAWitnessBeforePruning(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, refused2))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
+		send(t, s, &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 		if got := remaining(s); !slices.Equal(got, []string{refusedEP, refused2}) {
 			t.Errorf("subs after a store-wide 401 = %v, want both kept", got)
@@ -346,7 +346,7 @@ func sendOneAndRecordHeaders(t *testing.T, kind marotte.PushKind) deliveryHeader
 	s.Subscribe(pushSubscriptionWithValidKeys(t, "https://fcm.googleapis.com/fcm/send/headers"))
 	s.SetPreferences(map[marotte.PushKind]bool{kind: true})
 
-	s.Send(t.Context(), &marotte.NotificationPayload{Kind: kind, Title: "title", Body: "body"})
+	send(t, s, &marotte.NotificationPayload{Kind: kind, Title: "title", Body: "body"})
 
 	got := rec.snapshot()
 	if len(got) != 1 {
@@ -357,7 +357,7 @@ func sendOneAndRecordHeaders(t *testing.T, kind marotte.PushKind) deliveryHeader
 }
 
 // TestSend_SetsUrgencyPerKind pins the RFC 8030 section 5.3 urgency per kind, asserted
-// through Send so the kind reaches the header as production sends it.
+// through Raise so the kind reaches the header as production sends it.
 func TestSend_SetsUrgencyPerKind(t *testing.T) {
 	cases := []struct {
 		kind marotte.PushKind
@@ -401,7 +401,7 @@ func TestSend_SetsTTLPerKind(t *testing.T) {
 func TestSend_TruncatesOversizePayload(t *testing.T) {
 	var receivedPayload []byte
 	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The payload is encrypted, so only the Send path's success is verifiable here.
+		// The payload is encrypted, so only the Raise path's success is verifiable here.
 		w.WriteHeader(http.StatusCreated)
 	}))
 
@@ -414,7 +414,7 @@ func TestSend_TruncatesOversizePayload(t *testing.T) {
 	title := "Marotte"
 	body := strings.Repeat("x", 4000)
 
-	s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: title, Body: body})
+	send(t, s, &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: title, Body: body})
 
 	if !s.HasSubscribers() {
 		t.Error("subscriber was pruned after successful oversize send")
@@ -447,9 +447,9 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 		s := New(t.Context(), t.TempDir(), testSubject)
 		defer s.Close()
 		capLog := capture.Default(t)
-		s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "aa", Body: "bb"})
+		send(t, s, &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "aa", Body: "bb"})
 		if capLog.CountExact(warnMsg) > 0 {
-			t.Errorf("Send warned %q for a 4-byte payload; want no warn", warnMsg)
+			t.Errorf("Raise warned %q for a 4-byte payload; want no warn", warnMsg)
 		}
 	})
 
@@ -457,10 +457,10 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 		s := New(t.Context(), t.TempDir(), testSubject)
 		defer s.Close()
 		capLog := capture.Default(t)
-		s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: strings.Repeat("a", 10), Body: strings.Repeat("b", 4000)})
+		send(t, s, &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: strings.Repeat("a", 10), Body: strings.Repeat("b", 4000)})
 		got, ok := capLog.AttrValue(warnMsg, "bytes")
 		if !ok {
-			t.Fatalf("Send did not warn %q for a 4010-byte payload", warnMsg)
+			t.Fatalf("Raise did not warn %q for a 4010-byte payload", warnMsg)
 		}
 		if got != "4010" {
 			t.Errorf("truncation warn bytes = %v, want 4010", got)
@@ -472,14 +472,15 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 		s := New(t.Context(), t.TempDir(), testSubject)
 		defer s.Close()
 		capLog := capture.Default(t)
-		n := marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Body: strings.Repeat("b", 2000)}
+		// Raise mints an id of this length, so the sizing counts it.
+		n := marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Body: strings.Repeat("b", 2000), ID: strings.Repeat("i", 22)}
 		n.Title = strings.Repeat("a", pushBodyCap-marshaledLen(&n))
 		if got := marshaledLen(&n); got != pushBodyCap {
 			t.Fatalf("Setup: envelope = %d bytes, want exactly %d", got, pushBodyCap)
 		}
-		s.Send(t.Context(), &n)
+		send(t, s, &n)
 		if capLog.CountExact(warnMsg) > 0 {
-			t.Errorf("Send warned %q at exactly the marshaled cap; want no warn", warnMsg)
+			t.Errorf("Raise warned %q at exactly the marshaled cap; want no warn", warnMsg)
 		}
 	})
 }
@@ -585,7 +586,7 @@ func TestSend_ResultStatusLogging(t *testing.T) {
 			s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 			capLog := capture.Default(t)
-			s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
+			send(t, s, &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 			if capLog.CountExact(tc.want) == 0 {
 				t.Errorf("status %d: did not log %q", tc.status, tc.want)
@@ -631,7 +632,7 @@ func TestSend_RetriesThenSucceeds(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
+		send(t, s, &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 		if got := attempts.Load(); got != 2 {
 			t.Errorf("attempts = %d, want 2 (one 429 then one success)", got)
@@ -654,7 +655,7 @@ func TestSend_RetriesThenSucceeds(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
+		send(t, s, &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 		if got := attempts.Load(); got != int32(pushMaxAttempts) {
 			t.Errorf("attempts = %d, want pushMaxAttempts (%d)", got, pushMaxAttempts)
@@ -679,7 +680,7 @@ func TestSend_RetriesThenSucceeds(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
+		send(t, s, &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 		if got := attempts.Load(); got != 1 {
 			t.Errorf("attempts = %d, want 1 (the retry lands past the budget)", got)
@@ -702,7 +703,7 @@ func TestSend_RetriesThenSucceeds(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 		capLog := capture.Default(t)
-		s.Send(t.Context(), &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
+		send(t, s, &marotte.NotificationPayload{Kind: marotte.PushKindAgentFinished, Title: "title", Body: "body"})
 
 		if got := attempts.Load(); got != 1 {
 			t.Fatalf("attempts = %d, want 1: this case has to deliver first try", got)
@@ -847,6 +848,38 @@ func TestFitToCap_KeepsTheBodysCRLFAxis(t *testing.T) {
 		}
 		if n := marshaledLen(&marotte.NotificationPayload{Title: gotTitle, Body: gotBody}); n > pushBodyCap {
 			t.Errorf("marshaled payload = %d bytes, exceeds cap %d", n, pushBodyCap)
+		}
+	})
+}
+
+func TestUnstampDebounce_RemovesItsOwnStampAndKeepsANewerOne(t *testing.T) {
+	s := newServiceOnTestServer(t, &recordingHandler{})
+	key := debounceKey(marotte.PushKindAgentFinished, marotte.PushSubject{})
+	stamped := time.Now()
+
+	t.Run("its own stamp", func(t *testing.T) {
+		s.mu.Lock()
+		s.lastPush[key] = stamped
+		s.mu.Unlock()
+		s.unstampDebounce(key, stamped)
+		s.mu.Lock()
+		_, kept := s.lastPush[key]
+		s.mu.Unlock()
+		if kept {
+			t.Error("the stamp of a notice read before delivery stayed, want it removed")
+		}
+	})
+	t.Run("a newer stamp", func(t *testing.T) {
+		newer := stamped.Add(time.Millisecond)
+		s.mu.Lock()
+		s.lastPush[key] = newer
+		s.mu.Unlock()
+		s.unstampDebounce(key, stamped)
+		s.mu.Lock()
+		got, kept := s.lastPush[key]
+		s.mu.Unlock()
+		if !kept || !got.Equal(newer) {
+			t.Errorf("lastPush = %v, %v, want another notice's newer stamp %v kept", got, kept, newer)
 		}
 	})
 }

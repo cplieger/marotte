@@ -24,7 +24,6 @@ vi.mock("./deep-link.js", async (importOriginal) => ({
   admitLocation: vi.fn(() => "opens"),
 }));
 vi.mock("./chat.js", { spy: true });
-vi.mock("./agent-finished-cue.js", { spy: true });
 // A real module graph reads named elements at import time; any element stands in but the strip.
 vi.mock("./dom.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Dom>()),
@@ -86,7 +85,15 @@ beforeEach(async () => {
   _resetTabsSyncForTest();
   _resetTabOpenersForTest();
   registerTabOpeners({
-    chat: { show: vi.fn(), refresh: vi.fn(), close: vi.fn(), dot: () => "" },
+    chat: {
+      prefetch: vi.fn(),
+      select: vi.fn(),
+      loadFailed: vi.fn(),
+      show: vi.fn(),
+      refresh: vi.fn(() => Promise.resolve()),
+      close: vi.fn(),
+      dot: () => "",
+    },
     editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn() },
     run: { show: vi.fn(), refresh: vi.fn() },
     subagent: { show: vi.fn(), refresh: vi.fn() },

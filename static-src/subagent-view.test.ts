@@ -3,7 +3,7 @@
 // outlives its DOM.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { signal, touch } from "@cplieger/ui";
+import { signal, touch } from "@cplieger/reactive";
 import type { Session } from "./types.js";
 import type { Entry, EntryToolCall } from "./wire/types.gen.js";
 import { makeToolCall } from "./__test-helpers__/model.js";
@@ -531,13 +531,32 @@ describe("demand for the mounted page", () => {
 
 describe("refreshSubagent delegates to the launching chat", () => {
   it("refreshes the launching chat and nothing else", () => {
-    vi.mocked(refreshChatView).mockImplementation(() => undefined);
+    vi.mocked(refreshChatView).mockImplementation(() => Promise.resolve());
+    const signal = new AbortController().signal;
 
-    refreshSubagent("c-launcher");
+    refreshSubagent("c-launcher", signal);
 
     expect(refreshChatView).toHaveBeenCalledTimes(1);
-    expect(refreshChatView).toHaveBeenCalledWith("c-launcher");
+    expect(refreshChatView).toHaveBeenCalledWith("c-launcher", signal);
     expect(vi.mocked(sliceSubagent)).not.toHaveBeenCalled();
+  });
+
+  // The subagent page keeps its own error row, so the parent's failed load is not its refusal.
+  it("resolves when the launching chat's load fails", async () => {
+    const parentLoad = Promise.reject(new Error("load failed"));
+    vi.mocked(refreshChatView).mockImplementation(
+      () => parentLoad as unknown as ReturnType<typeof refreshChatView>,
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      refreshSubagent("c-launcher", new AbortController().signal);
+      await new Promise((r) => setTimeout(r, 0));
+      // The spy records the promise's settlement, which marks it handled, so the owner is
+      // witnessed by its log rather than by the absence of an unhandled rejection.
+      expect(warn, "nothing owned the parent's failed load").toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
@@ -636,5 +655,195 @@ describe("the page's scroll position", () => {
       expect(body().textContent).toContain("first Paragraph 0.");
     });
     expect(scroller().scrollTop).toBe(700);
+  });
+});
+
+// The page paints only while its tab is the visible view: a hidden subagent tab does no work for its
+// launching chat's entries, and showing it again draws what arrived meanwhile.
+describe("a hidden subagent tab", () => {
+  it("projects nothing for the chat's entries until its tab is shown again", async () => {
+    const { showOnlyView } = await import("./view-swap.js");
+    const chat = "c-hidden";
+    const turn = "t-hidden";
+    seedChats({ chat, turn });
+    delegate(chat, turn, "st-h");
+    const host = body();
+    const dock = document.getElementById("subagent-exec-dock") as HTMLElement;
+    const view = document.createElement("div");
+    view.id = "subagent-view";
+    view.dataset["tabView"] = "";
+    view.append(host, dock);
+    const other = document.createElement("div");
+    other.dataset["tabView"] = "";
+    document.body.append(view, other);
+    try {
+      showOnlyView(view);
+      show(chat, "st-h");
+      await vi.waitFor(() => {
+        expect(host.textContent).toContain("delegate work");
+      });
+
+      showOnlyView(other);
+      vi.mocked(sliceSubagent).mockClear();
+      for (let n = 0; n < 20; n++) {
+        laneText(chat, turn, "st-h", `hidden ${String(n)}`);
+      }
+      expect(vi.mocked(sliceSubagent)).not.toHaveBeenCalled();
+
+      showOnlyView(view);
+      show(chat, "st-h");
+      await vi.waitFor(() => {
+        expect(host.textContent).toContain("hidden 19");
+      });
+    } finally {
+      showOnlyView(null);
+      document.body.append(host, dock);
+      view.remove();
+      other.remove();
+    }
+  });
+});
+
+// A long delegate's page mounts a window from the lane's head, as a run step mounts one from its live edge, and grows
+// it a slice at a time as the reader nears its mounted end.
+describe("a long delegate's page", () => {
+  /** The step budget's newest window plus the overscan floor, and its tool-card share. */
+  const WINDOW_ENTRIES = 96 + 24;
+  const WINDOW_TOOL_CALLS = 32;
+
+  let view: HTMLElement;
+  let content: HTMLElement;
+  beforeEach(() => {
+    view = document.createElement("div");
+    view.id = "subagent-view";
+    view.style.cssText = "display:flex;flex-direction:column;height:600px;width:800px";
+    content = document.createElement("div");
+    content.className = "page-content";
+    content.style.cssText = "flex:1 1 0;min-height:0;overflow-y:auto";
+    content.appendChild(body());
+    view.appendChild(content);
+    document.body.appendChild(view);
+  });
+  afterEach(() => {
+    closeSubagentTabs();
+    document.body.appendChild(body());
+    view.remove();
+  });
+
+  const mountedEntries = (): number => body().querySelectorAll("[data-entry-seq]").length;
+  const mountedCalls = (): number => body().querySelectorAll(".tool-call").length;
+
+  /** 2,000 entries in `lane`: runs of prose and groups of tool calls, 300 calls in all. */
+  function longLane(chat: string, turn: string, lane: string): void {
+    push(chat, turn, "tool_call", invocation(`tc-${lane}`, lane, "in_progress"), {
+      id: `tc-${lane}`,
+    });
+    let n = 0;
+    while (n < 2000) {
+      for (let i = 0; i < 17 && n < 2000; i++, n++) {
+        laneText(chat, turn, lane, `line ${String(n)}`);
+      }
+      for (let i = 0; i < 3 && n < 2000; i++, n++) {
+        push(
+          chat,
+          turn,
+          "tool_call",
+          makeToolCall({
+            id: `call-${lane}-${String(n)}`,
+            title: `Run ${String(n)}`,
+            kind: "execute",
+          }),
+          { lane, id: `call-${lane}-${String(n)}` },
+        );
+      }
+    }
+  }
+
+  it("mounts the head of the lane, not the whole lane", async () => {
+    const chat = "c-long";
+    const turn = "t-long";
+    seedChats({ chat, turn });
+    longLane(chat, turn, "lg-1");
+
+    show(chat, "lg-1");
+    await vi.waitFor(() => {
+      expect(body().textContent).toContain("line 0");
+    });
+
+    expect(mountedEntries()).toBeLessThanOrEqual(WINDOW_ENTRIES);
+    expect(mountedCalls()).toBeLessThanOrEqual(WINDOW_TOOL_CALLS);
+    expect(body().textContent).not.toContain("line 1999");
+  });
+
+  it("seats the next slice, within the same budget, when the reader nears the mounted end", async () => {
+    const chat = "c-long-door";
+    const turn = "t-long-door";
+    seedChats({ chat, turn });
+    longLane(chat, turn, "lg-2");
+
+    show(chat, "lg-2");
+    await vi.waitFor(() => {
+      expect(body().textContent).toContain("line 0");
+    });
+    const first = mountedEntries();
+    expect(first).toBeLessThanOrEqual(WINDOW_ENTRIES);
+
+    content.scrollTop = content.scrollHeight;
+    await expect.poll(() => mountedEntries()).toBeGreaterThan(first);
+    expect(mountedEntries() - first).toBeLessThanOrEqual(WINDOW_ENTRIES);
+  });
+
+  it("mounts what a live delegate appends past an unmounted tail only when the reader reaches it", async () => {
+    const chat = "c-long-live";
+    const turn = "t-long-live";
+    seedChats({ chat, turn });
+    longLane(chat, turn, "lg-3");
+
+    show(chat, "lg-3");
+    await vi.waitFor(() => {
+      expect(body().textContent).toContain("line 0");
+    });
+    const first = mountedEntries();
+    laneText(chat, turn, "lg-3", "arrived late");
+    await new Promise((r) => requestAnimationFrame(r));
+
+    expect(mountedEntries()).toBe(first);
+    expect(body().textContent).not.toContain("arrived late");
+  });
+
+  it("lands a returning reader where they left it, past the first slice", async () => {
+    const chat = "c-long-back";
+    const turn = "t-long-back";
+    seedChats({ chat, turn });
+    longLane(chat, turn, "lg-4");
+    push(chat, turn, "tool_call", invocation("tc-lg-5", "lg-5"), { id: "tc-lg-5" });
+    laneText(chat, turn, "lg-5", "other delegate");
+    setSubagentTabs([subagentRef(chat, "lg-4"), subagentRef(chat, "lg-5")]);
+
+    showSubagent(chat, "lg-4");
+    await vi.waitFor(() => {
+      expect(body().textContent).toContain("line 0");
+    });
+    // Two slices down, then park it.
+    for (let i = 0; i < 2; i++) {
+      const before = mountedEntries();
+      content.scrollTop = content.scrollHeight;
+      await expect.poll(() => mountedEntries()).toBeGreaterThan(before);
+    }
+    content.scrollTop = content.scrollHeight - content.clientHeight - 50;
+    const parked = content.scrollTop;
+    await new Promise((r) => requestAnimationFrame(r));
+    await new Promise((r) => requestAnimationFrame(r));
+
+    showSubagent(chat, "lg-5");
+    await vi.waitFor(() => {
+      expect(body().textContent).toContain("other delegate");
+    });
+    showSubagent(chat, "lg-4");
+    await vi.waitFor(() => {
+      expect(body().textContent).toContain("line 0");
+    });
+
+    expect(content.scrollTop).toBe(parked);
   });
 });

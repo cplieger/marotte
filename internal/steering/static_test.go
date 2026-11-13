@@ -251,7 +251,7 @@ func TestWriteRuntime_BacktickInValueDropsTheVariable(t *testing.T) {
 
 func TestWriteToolsEngine(t *testing.T) {
 	var b strings.Builder
-	writeToolsEngine(&b, "/cfg", "/t")
+	writeToolsEngine(&b, "/cfg", "/t", "localhost:9847")
 	out := b.String()
 	for _, want := range []string{
 		"localhost:9847/api/tools/search?q=<name>",
@@ -296,7 +296,7 @@ func TestWriteUIGuide_DescribesTheToolsTab(t *testing.T) {
 
 func TestWriteToolsEngine_NoToolsDirSaysTheEngineIsOff(t *testing.T) {
 	var b strings.Builder
-	writeToolsEngine(&b, "/cfg", "")
+	writeToolsEngine(&b, "/cfg", "", "127.0.0.1:9847")
 	out := b.String()
 	if !strings.Contains(out, "The tools engine is off because the server cannot use the folder configured for it") ||
 		!strings.Contains(out, "`MAROTTE_TOOLS_DIR`") {
@@ -311,7 +311,7 @@ func TestWriteToolsEngine_NoToolsDirSaysTheEngineIsOff(t *testing.T) {
 
 func TestWriteToolsEngine_SaysABadManifestLeavesToolsOffRatherThanStoppingMarotte(t *testing.T) {
 	var b strings.Builder
-	writeToolsEngine(&b, "/cfg", "/cfg/tools")
+	writeToolsEngine(&b, "/cfg", "/cfg/tools", "127.0.0.1:9847")
 	out := b.String()
 	for _, want := range []string{
 		"an invalid one turns the tools engine off with the reason in Settings → Tools",
@@ -328,7 +328,7 @@ func TestWriteToolsEngine_SaysABadManifestLeavesToolsOffRatherThanStoppingMarott
 
 func TestWriteToolsEngine_SaysFileToolsCannotReachTheManifest(t *testing.T) {
 	var b strings.Builder
-	writeToolsEngine(&b, "/cfg", "/cfg/tools")
+	writeToolsEngine(&b, "/cfg", "/cfg/tools", "127.0.0.1:9847")
 	out := b.String()
 	if !strings.Contains(out, "Your file tools cannot write it, because `/cfg` is outside the workspace") {
 		t.Errorf("writeToolsEngine does not say file tools cannot reach tools.json:\n%s", out)
@@ -469,6 +469,7 @@ func TestWriteUIGuide_NamesEveryTab(t *testing.T) {
 		"(Fill, Phone, Tablet, Desktop)",
 		`"Scale to fit"`,
 		`"Reload preview"`,
+		`"Open in browser" (the page in a new browser tab`,
 		`"Open preview"`,
 		`"Edit", which opens the page in the editor`,
 	} {
@@ -663,7 +664,7 @@ func TestWriteAttachments_TeachesTheHTMLPreview(t *testing.T) {
 
 func TestToolsSection_SaysAShellWriteAppliesWithinSeconds(t *testing.T) {
 	var b strings.Builder
-	writeToolsEngine(&b, "/cfg", "/t")
+	writeToolsEngine(&b, "/cfg", "/t", "127.0.0.1:9847")
 	out := b.String()
 	for _, want := range []string{
 		"A shell write is checked and applied within seconds",

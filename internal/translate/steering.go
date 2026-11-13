@@ -212,8 +212,8 @@ func (t *Translator) classifyCleared(
 	return c
 }
 
-// clearIsCancels reports whether a chat's clear ends a turn the reader stopped: KAS clears the buffer inside
-// session/cancel, before the turn's end. A teardown's cancel is a boundary (marotte.TurnStopTeardown).
+// clearIsCancels reports whether a chat's clear ends a turn stopped by a cancel KAS re-prompts after
+// (marotte.TurnStopCause.KASRewakes): KAS clears the buffer inside session/cancel, before the turn's end.
 func (t *Translator) clearIsCancels(sc steerScope) bool {
 	if sc.run != "" {
 		return false
@@ -222,7 +222,7 @@ func (t *Translator) clearIsCancels(sc steerScope) bool {
 	if !ok {
 		turn, ok = t.turns.PromptTurn(sc.key)
 	}
-	return ok && t.turns.StopCauseAfter(sc.key, turn.ID()) == marotte.TurnStopReader
+	return ok && t.turns.StopCauseAfter(sc.key, turn.ID()).KASRewakes()
 }
 
 // stampRunNotice writes the provenance of a finished run's notice read with these words: its run id and

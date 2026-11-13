@@ -128,6 +128,12 @@
   accent-color: var(--c-accent);
 }
 
+/* A glob list grows with the row, so a few patterns stay readable without scrolling the box. */
+.section-field > .rf-glob-list {
+  flex: 1 1 12rem;
+  max-inline-size: 28rem;
+}
+
 [id="auto-compact-pct-value"] {
   font-size: var(--fs-form-label);
   font-variant-numeric: tabular-nums;

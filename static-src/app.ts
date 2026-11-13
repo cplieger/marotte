@@ -4,14 +4,14 @@
 // The server is the source of truth: a prompt posts a command and SSE drives rendering.
 
 import type { ServerEvent } from "./types.js";
-import { get, getActiveId, getSessions } from "./store.js";
-import { effect } from "@cplieger/ui";
-import { mountLiveRegions } from "@cplieger/ui/announce";
+import { getActiveId, getSessions } from "./store.js";
+import { effect } from "@cplieger/reactive";
+import { mountLiveRegions } from "./legacy-ui/announce.js";
 import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_RECONCILE } from "./bus.js";
 import { findGlyph } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { $ } from "./dom.js";
-import { guardDuplicateActivation, initSidebarSwipe } from "./platform.js";
+import { initSidebarSwipe } from "./platform.js";
 import { initShellViewport } from "./shell-viewport.js";
 import { initPointerTier } from "./pointer-tier.js";
 import { initPointerModeToggle, revealPointerModeToggle } from "./pointer-mode.js";
@@ -19,6 +19,7 @@ import { initClockSetting } from "./clock-setting.js";
 import { initPageTitleFit } from "./page-title.js";
 import { initRolePicker } from "./role-picker.js";
 import * as sse from "./sse-adapter.js";
+import { installMirrors } from "./mirror.js";
 import { initUI, renderIdentity } from "./settings.js";
 import { initPostAuth, onTransportStatus, startBoot } from "./boot.js";
 import { resolveIdentity } from "./identity.js";
@@ -34,7 +35,8 @@ import {
 import { chatNotice } from "./notice-subject.js";
 import { applyRoute } from "./route-apply.js";
 import { markBootDone } from "./view-swap.js";
-import { ingestTabsChanged, listTabs } from "./tabs-sync.js";
+import { ingestTabsChanged, listTabs, removePendingFor } from "./tabs-sync.js";
+import { setParkedViewExemption } from "./messages.js";
 import { onPopState } from "./router.js";
 import type { Route } from "./route-path.js";
 import { initModelPicker } from "./picker.js";
@@ -62,6 +64,7 @@ import { initTerminalStream } from "./terminal-stream.js";
 import { initTooltips } from "./tooltip.js";
 import { guardBackspaceChars } from "./backspace-char.js";
 import { initSidebarHistory } from "./sidebar-history.js";
+import { initNewChatControl } from "./new-chat-control.js";
 import { initKeyboardShortcuts } from "./keys.js";
 import { openShortcutsSheet } from "./shortcuts.js";
 import {
@@ -74,8 +77,12 @@ import {
   createSession,
   sendPrompt,
   installStoreSubscribers,
-  activateChatView,
+  selectChat,
+  showChatView,
+  cancelActiveTurn,
   refreshChatView,
+  startChatPage,
+  showBlankLoadFailure,
   closeChatTab,
   chatTabDot,
 } from "./chat.js";
@@ -84,6 +91,7 @@ import { makeExpandable } from "./pill-expand.js";
 import { initContextCard } from "./context-card.js";
 import { loadAccountUsage } from "./account-usage.js";
 import { initPromptInput, sendComposer } from "./prompt-input.js";
+import { browserSpeechPlatform, createDictation } from "./dictation.js";
 import { rewindLatest } from "./typed-commands.js";
 import { initComposerState } from "./composer-state.js";
 import { initSlashMenu } from "./slash-menu.js";
@@ -109,9 +117,8 @@ import "./handlers/notification.js";
 import { installRunDotSubscriber } from "./run-dots.js";
 import { installSubagentDotSubscriber } from "./subagent-dots.js";
 import { installChatRunDotSubscriber } from "./chat-run-dots.js";
-import { installDeferredCueSubscriber } from "./agent-finished-cue.js";
-import { installNotifyAskGesture, setOnScreen } from "./notify.js";
-import { targetOnScreen } from "./notify-on-screen.js";
+import { installNotifyAskGesture } from "./notify.js";
+import { installPageView } from "./page-view.js";
 import { chatSettled } from "./chat-settled.js";
 import { confirmBusyClose } from "./close-busy.js";
 import "./handlers/steer.js";
@@ -119,7 +126,6 @@ import "./handlers/system-notice.js";
 import { initPushMessages } from "./handlers/push-message.js";
 import { registerNotificationOpener } from "./notification-open.js";
 import { initLaunchQueue } from "./share-target.js";
-import { cancelTurn } from "./actions/chat.js";
 import { copyClipboard } from "./actions/messages.js";
 import { setCopyCallback } from "./code-blocks.js";
 import { installLinkGuard, setLinkCopyCallback } from "./link-guard.js";
@@ -162,8 +168,11 @@ function init(): void {
   // registering here keeps the factory out of a cycle.
   registerTabOpeners({
     chat: {
-      show: activateChatView,
+      select: selectChat,
+      show: showChatView,
+      prefetch: startChatPage,
       refresh: refreshChatView,
+      loadFailed: showBlankLoadFailure,
       close: closeChatTab,
       dot: chatTabDot,
     },
@@ -178,7 +187,12 @@ function init(): void {
     },
     // No close half for the same reason: a subagent page is a projection of blocks the
     // chat store owns, so it starts nothing and can stop nothing.
-    subagent: { show: showSubagent, refresh: refreshSubagent },
+    subagent: {
+      show: showSubagent,
+      refresh: (chatID, _subtaskID, signal) => {
+        refreshSubagent(chatID, signal);
+      },
+    },
     // Lazily imported: the page module carries the markdown renderer and the task
     // tree, and a session that never opens a spec tab should not pay for either.
     spec: {
@@ -210,6 +224,7 @@ function init(): void {
   onBus(BUS_RECONCILE, ({ signal }) => {
     void listTabs(signal);
   });
+  installMirrors();
 
   sse.init((evt: ServerEvent) => {
     dispatch(evt);
@@ -232,14 +247,12 @@ function init(): void {
   // The one predicate both out-of-page cue paths ask, injected because `chat-settled.ts`'s
   // stores reach back into the tab projection. Before initAttention, for its first pass.
   setChatSettledProbe(chatSettled);
-  // The other half: an agent-finished cue withheld while a run the turn launched is
-  // still going is released here, when the last outstanding thing for that chat ends.
-  installDeferredCueSubscriber();
-
-  // A notification is silent only while its own chat or run is the tab on screen.
-  setOnScreen(targetOnScreen);
+  // What the server's notice ledger reads to pick the one page per profile that shows a notice.
+  registerCleanup(installPageView());
 
   registerCloseGate(confirmBusyClose);
+  // A refused close unparks the view it parked, with its scroll.
+  setParkedViewExemption((chatID) => removePendingFor("chat", chatID));
 
   // A cue that could not notify arms this; the reader's next click raises the browser
   // prompt, which needs a gesture.
@@ -450,30 +463,21 @@ function setupInput(): void {
       }
       return sendPrompt(text);
     },
-    () => {
-      // Cancel what the server names (`run.cancel`), by id, so a stale press stops nothing else.
-      const chatID = getActiveId();
-      const target = chatID === "" ? undefined : get(chatID)?.run?.cancel;
-      if (target === undefined) {
-        return;
-      }
-      void cancelTurn.dispatch({ chatID, target });
-    },
+    cancelActiveTurn,
     stagedAttachment,
     () => {
       if (getActiveId() !== "") {
         rewindLatest(getActiveId());
       }
     },
+    createDictation(browserSpeechPlatform(), $.promptInput),
   );
 
-  const doCreate = guardDuplicateActivation(() => {
-    // Detached: closing the sidebar does not depend on the chat. The guard absorbs a duplicate
-    // dispatch; the create's op id covers a deliberate repeat.
+  initNewChatControl($.newChatBtn, () => {
+    // Detached: closing the sidebar does not depend on the chat.
     void createSession();
     $.sidebar.classList.remove("open");
   });
-  $.newChatBtn.addEventListener("click", doCreate);
   $.menuToggle.addEventListener("click", () => $.sidebar.classList.toggle("open"));
   $.sidebarClose.addEventListener("click", () => {
     $.sidebar.classList.remove("open");

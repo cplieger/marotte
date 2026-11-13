@@ -2,7 +2,7 @@
 // refetches depends on the event (`run_start` re-fires on resume; `node_complete` carries neither
 // iteration nor branch). A run's own LOG is its own describe below.
 
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
 vi.mock("../run-store.js", () => ({
   // `false` by default: the frame did not land, which is the arm that still
@@ -12,8 +12,7 @@ vi.mock("../run-store.js", () => ({
   noteRunChat: vi.fn(),
   noteRunLabel: vi.fn(),
   noteRunResumed: vi.fn(),
-  noteRunLive: vi.fn(),
-  noteRunSettled: vi.fn(),
+  applyLiveRunFrame: vi.fn(),
   hasLiveRunForChat: vi.fn(() => false),
   runLabelOf: vi.fn(() => ""),
   runChatID: vi.fn(() => ""),
@@ -26,6 +25,11 @@ vi.mock("../run-store.js", () => ({
   sealRunEntry: vi.fn(),
   appendRunEntry: vi.fn(),
   runStepEnds: vi.fn(() => new Map()),
+  // Held by default, so a log frame reaches the log; a sibling step's case holds nothing.
+  runTurnHeldSeq: vi.fn((): number | undefined => 0),
+  // No revision held by default: a frame the store cannot apply reads the run.
+  runRevHeld: vi.fn(() => false),
+  reviseRun: vi.fn(),
 }));
 // The launching chat's own liveness, for the orphan sweep's two gates. Mocked
 // because what this suite pins is WHEN the sweep fires, not how a chat comes to
@@ -41,7 +45,7 @@ vi.mock("../decision-dock.js", () => ({
   dropTurnDecisions: vi.fn(),
 }));
 vi.mock("../notify.js", () => ({
-  notifyOffScreen: vi.fn(),
+  showNotice: vi.fn(),
   closeRunAsksExcept: vi.fn(() => Promise.resolve()),
 }));
 
@@ -57,20 +61,24 @@ import {
   noteRunChat,
   noteRunLabel,
   noteRunResumed,
-  noteRunLive,
-  noteRunSettled,
+  applyLiveRunFrame,
   hasLiveRunForChat,
   openRunEntry,
   openRunTurn,
   runLabelOf,
+  reviseRun,
+  runRevHeld,
+  runTurnHeldSeq,
   sealRunEntry,
 } from "../run-store.js";
+import { setRunContentScope } from "../run-content-scope.js";
+import { forgetStepTails, stepTail } from "../run-step-tail.js";
 import { isBusy } from "../store.js";
 import { trackRun } from "../run-dots.js";
 import { info, jumpToast } from "../toast.js";
 import { dropRunRequests, dropTurnDecisions } from "../decision-dock.js";
 import { _resetRunAsksForTest, runAskPosition, runAsksOf } from "../run-asks.js";
-import { closeRunAsksExcept, notifyOffScreen } from "../notify.js";
+import { closeRunAsksExcept, showNotice } from "../notify.js";
 import type { RunAsk } from "../wire/types.gen.js";
 
 const invalidate = vi.mocked(invalidateRun);
@@ -78,8 +86,7 @@ const applyProgress = vi.mocked(applyRunProgress);
 const noteChat = vi.mocked(noteRunChat);
 const noteLabel = vi.mocked(noteRunLabel);
 const noteResumed = vi.mocked(noteRunResumed);
-const noteLive = vi.mocked(noteRunLive);
-const noteSettled = vi.mocked(noteRunSettled);
+const liveRunFrame = vi.mocked(applyLiveRunFrame);
 const track = vi.mocked(trackRun);
 const toastInfo = vi.mocked(info);
 const toastEnd = vi.mocked(jumpToast);
@@ -93,7 +100,7 @@ const runEntryOpened = vi.mocked(openRunEntry);
 const runDelta = vi.mocked(applyRunDelta);
 const runSealed = vi.mocked(sealRunEntry);
 const runAppended = vi.mocked(appendRunEntry);
-const notify = vi.mocked(notifyOffScreen);
+const notify = vi.mocked(showNotice);
 const closeStale = vi.mocked(closeRunAsksExcept);
 
 /** Every toast raised, in order, whatever its level. */
@@ -111,8 +118,7 @@ onBus(BUS_RUNS_CHANGED, () => {
 beforeEach(() => {
   invalidate.mockClear();
   noteChat.mockClear();
-  noteLive.mockClear();
-  noteSettled.mockClear();
+  liveRunFrame.mockClear();
   track.mockClear();
   toastInfo.mockClear();
   toastEnd.mockClear();
@@ -140,7 +146,8 @@ type RunEvent =
   | "entry_delta"
   | "entry_sealed"
   | "entry_appended"
-  | "turn_closed";
+  | "turn_closed"
+  | "run_rev";
 
 function send(type: RunEvent, payload: Record<string, unknown>, chatID = "c1"): void {
   dispatch({ type, chat_id: chatID, payload });
@@ -152,6 +159,8 @@ const _keys: readonly (keyof SSEPayloads)[] = [
   "run_started",
   "run_progress",
   "run_finished",
+  "run_rev",
+  "live_run",
   "run_asks",
   "turn_opened",
   "entry_opened",
@@ -234,6 +243,21 @@ describe("run SSE handlers", () => {
     expect(invalidate).toHaveBeenCalledWith("wf_1");
   });
 
+  // A held revision means the server re-reads the run and publishes `run_rev` for this frame, so
+  // the client reads only what changed, on that frame.
+  it("leaves a frame it could not apply to the run's next revision when one is held", () => {
+    applyProgress.mockReturnValue(false);
+    vi.mocked(runRevHeld).mockReturnValue(true);
+    try {
+      send("run_progress", { workflow_id: "wf_1", kind: "loop_iteration" });
+      expect(invalidate).not.toHaveBeenCalled();
+      send("run_rev", { workflow_id: "wf_1", rev: 12, status: "running" });
+      expect(reviseRun).toHaveBeenCalledWith("wf_1", 12, "running");
+    } finally {
+      vi.mocked(runRevHeld).mockReturnValue(false);
+    }
+  });
+
   // Every run's tab carries a dot, agent-launched included, so every event tracks the run:
   // the origin decides nothing, because a chat's own dot cannot cover a run that outlives
   // its turn.
@@ -278,47 +302,24 @@ describe("run SSE handlers", () => {
     expect(invalidate).toHaveBeenCalledWith("wf_other");
   });
 
-  // The live-runs inventory exempts a chat with a run in flight from eviction. Both events carry the
-  // chat (run_started is not replayed mid-run) and both say EXECUTING: a start fires on launch and
-  // every resume, a node-level progress frame is a step moving.
-  it("records the run LIVE and EXECUTING with its chat, on start and on progress", () => {
+  // The lease store owns the inventory: its `live_run` frame reaches the store with the envelope's
+  // stamp, which is what orders it against an inventory read.
+  it("hands a live_run frame and its stamp to the inventory", () => {
+    const payload = { workflow_id: "wf_live", chat_id: "c1", live: true, executing: true };
+    const subject = { kind: "runs", ref: "", version: "12" };
+    dispatch({ type: "live_run", chat_id: "", payload, subject });
+    expect(liveRunFrame).toHaveBeenCalledExactlyOnceWith(payload, subject);
+  });
+
+  it("writes the inventory from no lifecycle frame, an ending or a pause included", () => {
     send("run_started", { workflow_id: "wf_live", name: "publish" });
-    expect(noteLive).toHaveBeenCalledWith("wf_live", "c1", true);
-    send("run_progress", { workflow_id: "wf_live", kind: "node_start" });
-    expect(noteLive).toHaveBeenLastCalledWith("wf_live", "c1", true);
-    expect(noteLive).toHaveBeenCalledTimes(2);
-    expect(noteSettled).not.toHaveBeenCalled();
-  });
-
-  // A RUN-LEVEL pause folds into run_progress: live but not executing, or a parked run keeps its
-  // chat's window resident for hours.
-  it("records a run-level pause as live but NOT executing", () => {
-    send("run_progress", { workflow_id: "wf_live", kind: "paused" });
-    expect(noteLive).toHaveBeenCalledWith("wf_live", "c1", false);
-    expect(noteSettled).not.toHaveBeenCalled();
-  });
-
-  // Its counterpart, and the reason the gate is the run-level kind rather than any
-  // pause: a node-level pause is one step waiting inside a run that is still going.
-  it("records a NODE-level pause as still executing", () => {
-    send("run_progress", { workflow_id: "wf_live", kind: "node_paused" });
-    expect(noteLive).toHaveBeenCalledWith("wf_live", "c1", true);
-  });
-
-  it("settles the run on every terminal finish, recognised or not", () => {
-    for (const status of ["completed", "failed", "aborted", "cancelled", "exploded"]) {
-      noteSettled.mockClear();
-      send("run_finished", { workflow_id: "wf_end", status });
-      expect(noteSettled, status).toHaveBeenCalledWith("wf_end");
+    for (const kind of ["node_start", "node_paused", "paused"]) {
+      send("run_progress", { workflow_id: "wf_live", kind });
     }
-  });
-
-  it("keeps a PAUSED run live but stops calling it executing", () => {
-    // Presence means non-terminal, so the row and dot stay; the eviction exemption lapses, since a
-    // policy stop (`onMaxIterations`) writes nothing more.
-    send("run_finished", { workflow_id: "wf_pause", status: "paused" });
-    expect(noteSettled).not.toHaveBeenCalled();
-    expect(noteLive).toHaveBeenCalledWith("wf_pause", "c1", false);
+    for (const status of ["paused", "completed", "failed", "aborted", "cancelled", "exploded"]) {
+      send("run_finished", { workflow_id: "wf_live", status });
+    }
+    expect(liveRunFrame).not.toHaveBeenCalled();
   });
 
   // A parked run's mark can only say `waiting` through this frame's ONE re-read (an executing run
@@ -369,8 +370,8 @@ describe("run SSE handlers", () => {
     });
 
     it("leaves a SIBLING run's orphan alone while that run is still executing", () => {
-      // A sibling run's orphan also has an empty runID; `noteRunSettled` already ran for THIS run, so the
-      // predicate answers about siblings only.
+      // A sibling run's orphan also has an empty runID; the server's `live_run` removal already took
+      // THIS run out, so the predicate answers about siblings only.
       siblingRunLive.mockReturnValue(true);
       send("run_finished", { workflow_id: "wf_orphan", status: "completed" }, "c-parent");
       expect(sweepOrphans).not.toHaveBeenCalled();
@@ -679,6 +680,105 @@ describe("a run's own log", () => {
     // And nothing about a run moved either: no refetch, no toast, no tracking.
     expect(invalidate).not.toHaveBeenCalled();
     expect(toasts()).toEqual([]);
+  });
+});
+
+describe("a scoped run's frames for a step the pane does not show", () => {
+  const RUN = "wf_route";
+  const SHOWN = "wf_route:shown";
+  const SIDE = "wf_route:side";
+
+  beforeEach(() => {
+    forgetStepTails(RUN);
+    setRunContentScope(RUN, SHOWN);
+    vi.mocked(runTurnHeldSeq).mockReturnValue(undefined);
+  });
+  afterEach(() => {
+    setRunContentScope("", "");
+  });
+
+  function opened(turn: string, path: string): void {
+    send(
+      "turn_opened",
+      {
+        workflow_id: RUN,
+        entry: {
+          id: `${turn}-0`,
+          turn,
+          kind: "turn_open",
+          seq: 0,
+          ts: 1,
+          payload: { source: "workflow_step", node_path: path, n: 1 },
+        },
+      },
+      "",
+    );
+  }
+
+  it("moves only the step's tail: its turn is not opened and its entries reach no log", () => {
+    opened("t-side", SIDE);
+    send(
+      "entry_opened",
+      { workflow_id: RUN, open: { turn: "t-side", id: "o1", kind: "text", text: "", n: 0 } },
+      "",
+    );
+    for (const [n, delta] of ["## Plan\n", "- check", "ing the tree"].entries()) {
+      send(
+        "entry_delta",
+        { workflow_id: RUN, turn: "t-side", entry_id: "o1", lane: "", n: n + 1, delta },
+        "",
+      );
+    }
+
+    expect(stepTail(RUN, SIDE)).toBe("checking the tree");
+    expect(runTurnOpened).not.toHaveBeenCalled();
+    expect(runEntryOpened).not.toHaveBeenCalled();
+    expect(runDelta).not.toHaveBeenCalled();
+
+    send(
+      "entry_appended",
+      {
+        workflow_id: RUN,
+        entry: {
+          id: "e2",
+          turn: "t-side",
+          kind: "tool_call",
+          seq: 2,
+          ts: 3,
+          payload: { title: "rg heavy" },
+        },
+      },
+      "",
+    );
+    expect(stepTail(RUN, SIDE)).toBe("rg heavy");
+    expect(runAppended).not.toHaveBeenCalled();
+  });
+
+  it("leaves a sub-agent lane's text out of the step's line", () => {
+    opened("t-lane", SIDE);
+    send(
+      "entry_opened",
+      {
+        workflow_id: RUN,
+        open: { turn: "t-lane", id: "o2", lane: "sub-1", kind: "text", text: "deep", n: 0 },
+      },
+      "",
+    );
+    expect(stepTail(RUN, SIDE)).toBe("");
+  });
+
+  it("opens the shown step's turn into the log", () => {
+    opened("t-shown", SHOWN);
+    expect(runTurnOpened).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops a frame for a turn no read or turn_opened named", () => {
+    send(
+      "entry_delta",
+      { workflow_id: RUN, turn: "t-unknown", entry_id: "o1", lane: "", n: 1, delta: "x" },
+      "",
+    );
+    expect(runDelta).not.toHaveBeenCalled();
   });
 });
 

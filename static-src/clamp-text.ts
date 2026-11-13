@@ -172,7 +172,8 @@ function reviewClamp(text: HTMLElement, s: ClampState): void {
   }
   const more = s.more;
   if (more === undefined) {
-    const cut = text.scrollHeight - text.clientHeight > 1;
+    const [measured, visible] = boxHeights(text);
+    const cut = measured - visible > 1;
     if (text.hasAttribute("data-cut") !== cut) {
       text.toggleAttribute("data-cut", cut);
       s.onCut?.(cut);
@@ -192,8 +193,7 @@ function reviewClamp(text: HTMLElement, s: ClampState): void {
   if (s.snapToLine) {
     text.style.removeProperty(CLAMP_H);
   }
-  const measured = text.scrollHeight;
-  const visible = text.clientHeight;
+  const [measured, visible] = boxHeights(text);
   const body = text.textContent;
   const measurable = measured > 0 && visible > 0;
   const overflows = measurable
@@ -210,6 +210,13 @@ function reviewClamp(text: HTMLElement, s: ClampState): void {
   if (s.snapToLine && overflows && measured > 0 && visible > 0) {
     snapClampToLine(text);
   }
+}
+
+/** `[scrollHeight, clientHeight]`, read only while `text` is in the document: a detached text measures 0, and WebKit's
+ *  getters restyle the whole document before answering even then (`Document::updateLayoutIfDimensionsOutOfDate`), a
+ *  forced style pass per card a transcript paint builds. */
+function boxHeights(text: HTMLElement): readonly [number, number] {
+  return text.isConnected ? [text.scrollHeight, text.clientHeight] : [0, 0];
 }
 
 /** `ink` holds only rects that start above the clip; one starting below can straddle nothing, which bounds the store. */

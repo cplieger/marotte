@@ -268,7 +268,7 @@
   color: var(--c-text-secondary);
 }
 
-/* Who sent a request another program posted, over its words and outside their clamp as the wake's label is, so a
+/* Who sent a request the user did not write, over its words and outside their clamp as the wake's label is, so a
  * folded turn still says the user did not write it. Its words take the secondary ink, never the user's own. */
 .turn-sent-by {
   align-self: stretch;
@@ -1223,19 +1223,22 @@
 
 /* The fisheye: the pointed row 24px, its neighbours 16px and 12px, in pure CSS so a swipe writes
  * nothing. Pointer and keyboard are separate properties, so where both ladders reach a row the bar
- * takes the larger. `:where()` keeps the keyboard selectors inside the specificity ceiling. */
+ * takes the larger. `:where()` and the `li` in `:has()` keep the selectors inside the specificity
+ * ceiling. Each `:has(+ …)` sits under the map's own hover, focus or scrub state: WebKit re-tests a
+ * sibling `:has()` against every row on each row insertion or removal, which made a 300-row rail's
+ * repaint cost 0.6 s there, and the state check rejects the rule before that walk. */
 @media (any-hover: hover) {
   .turn-pill:hover {
     --pill-hover: 1;
   }
 
   .turn-pill:hover + .turn-pill,
-  .turn-pill:has(+ .turn-pill:hover) {
+  .turn-map-stack:hover > .turn-pill:has(+ li:hover) {
     --pill-hover: calc(16 / 24);
   }
 
   .turn-pill:hover + .turn-pill + .turn-pill,
-  .turn-pill:has(+ .turn-pill + .turn-pill:hover) {
+  .turn-map-stack:hover > .turn-pill:has(+ li + li:hover) {
     --pill-hover: calc(12 / 24);
   }
 }
@@ -1247,12 +1250,12 @@
 }
 
 .turn-pill[data-scrub] + .turn-pill,
-.turn-pill:has(+ .turn-pill[data-scrub]) {
+.turn-map-stack:has(> [data-scrub]) > .turn-pill:has(+ li[data-scrub]) {
   --pill-scrub: calc(16 / 24);
 }
 
 .turn-pill[data-scrub] + .turn-pill + .turn-pill,
-.turn-pill:has(+ .turn-pill + .turn-pill[data-scrub]) {
+.turn-map-stack:has(> [data-scrub]) > .turn-pill:has(+ li + li[data-scrub]) {
   --pill-scrub: calc(12 / 24);
 }
 
@@ -1262,12 +1265,12 @@
 }
 
 .turn-pill:where(:has(> .turn-pill-link:focus-visible)) + .turn-pill,
-.turn-pill:where(:has(+ .turn-pill > .turn-pill-link:focus-visible)) {
+.turn-map-stack:focus-within > .turn-pill:has(+ li > :focus-visible) {
   --pill-focus: calc(16 / 24);
 }
 
 .turn-pill:where(:has(> .turn-pill-link:focus-visible)) + .turn-pill + .turn-pill,
-.turn-pill:where(:has(+ .turn-pill + .turn-pill > .turn-pill-link:focus-visible)) {
+.turn-map-stack:focus-within > .turn-pill:has(+ li + li > :focus-visible) {
   --pill-focus: calc(12 / 24);
 }
 

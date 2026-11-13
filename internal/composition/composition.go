@@ -19,6 +19,7 @@ import (
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/apitable"
 	"github.com/cplieger/marotte/internal/auth"
+	"github.com/cplieger/marotte/internal/bot"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/chat/archive"
 	"github.com/cplieger/marotte/internal/command"
@@ -90,6 +91,8 @@ type App struct {
 	stopTriggerRunner func()
 	// stopKASHeal stops the KAS MCP file heal loop and waits for its goroutine.
 	stopKASHeal func()
+	// stopRecentExpiry stops the Recently closed expiry runner and waits for its goroutine.
+	stopRecentExpiry func()
 	// stopToolsSteering waits for the boot's environment.md regeneration, which reads the tools engine.
 	stopToolsSteering func()
 	// stopKeepState stops the keep-state reconcile and waits: a round in flight reads KAS over the agent engine.
@@ -154,6 +157,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Before agent.New, so no Bot door makes a directory while the sweep judges it.
+	sweepBotDirs(ctx, chatStore, bot.Paths{KiroHome: workspace.KiroHome()})
 
 	// The sign-in the agent engine is answered from, on the app's lifetime: its poll and renewals outlive a request.
 	vault := signin.Open(appCtx, cfg.ConfigDir, signinBackends()...)
@@ -209,6 +214,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	chat.WithBroadcaster(h)(chatStore)
 	chat.WithEpoch(h.Epoch)(chatStore)
 	pruneTabs(ctx, tabStore, chatStore)
+	stopRecentExpiry := runBackground(appCtx, "recently closed expiry", h.Membership().RunRecentExpiry)
 	// Once at boot, so a Power installed from a shell before this start gets its
 	// servers with no tab open; the runtime renders it again on every lock change.
 	h.SyncPowers(ctx)
@@ -352,6 +358,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithKiroReady(kiro.ready),
 		server.WithKiroRescan(kiro.rescan),
 		server.WithAuthUnavailable(authReadiness.Unavailable),
+		server.WithListenAddr(cfg.ListenAddr),
 		server.WithConfigDir(cfg.ConfigDir),
 		server.WithSensitive(sensitive),
 		server.WithKASNode(func() string { return cfg.KASLookup.Find(kiro.version()).Node }),
@@ -393,6 +400,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		stopTriggerLauncher:  stopTriggerLauncher,
 		stopTriggerRunner:    stopTriggerRunner,
 		stopKASHeal:          stopKASHeal,
+		stopRecentExpiry:     stopRecentExpiry,
 		stopToolsSteering:    stopToolsSteering,
 		stopKeepState:        stopKeepState,
 		stopSessionSweep:     stopSessionSweep,
@@ -438,6 +446,8 @@ func (a *App) Shutdown() {
 	callIfSet(a.stopForges)
 	callIfSet(a.stopGitScans)
 	callIfSet(a.stopKASHeal)
+	// Before the runtime's teardown: an expiry in flight emits through the runtime's hub.
+	callIfSet(a.stopRecentExpiry)
 	// Before the runtime's teardown: a sweep in flight launches its run through the runtime.
 	callIfSet(a.stopScheduleRunner)
 	// Before the runtime's teardown: a launch in flight runs through the runtime, and its cancels go to the
@@ -808,7 +818,9 @@ func buildToolsEngine(cfg *Config, h *agent.Runtime,
 
 func newSteering(cfg *Config) *steering.Generator {
 	toolsDir, _ := cfg.Tools.use()
-	return steering.New(cfg.WorkDir, cfg.ConfigDir, toolsDir)
+	return steering.New(steering.Config{
+		WorkDir: cfg.WorkDir, ConfigDir: cfg.ConfigDir, ToolsDir: toolsDir, ServerAddr: cfg.LocalAddr,
+	})
 }
 
 // regenerateSteering runs generate and logs its failure at ERROR, except the ctx's own error, which
@@ -1064,7 +1076,7 @@ func pruneTabs(ctx context.Context, st *tabs.Store, chats *chat.Store) {
 		}
 		_, found, err := chats.Lookup(ctx, marotte.ChatID(t.Ref))
 		if err != nil {
-			slog.Warn("tab prune kept a chat tab whose record could not be read", "chat_id", logsafe.Field(t.Ref), "error", err)
+			slog.Warn("tab prune kept a chat whose record could not be read", "chat_id", logsafe.Field(t.Ref), "error", err)
 			return true
 		}
 		return found

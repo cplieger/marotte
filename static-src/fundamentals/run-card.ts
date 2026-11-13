@@ -8,8 +8,8 @@
 // `inspect` (`run-store.ts` fetches).
 
 import { join as joinKey } from "@cplieger/keyenc";
-import { el } from "@cplieger/ui";
-import { createDisclosure } from "@cplieger/ui/disclosure";
+import { el } from "@cplieger/reactive";
+import { createDisclosure } from "../legacy-ui/disclosure.js";
 import { hasSelectionIn, selectableButton } from "../disclosure-row.js";
 import { STATE_WORD, paintStateMark, stateOf } from "../exec-view/status.js";
 import {
@@ -20,10 +20,12 @@ import {
   latestPass,
   passText,
   progressPhrase,
-  window as execWindow,
+  windowAt,
+  windowBounds,
   type ExecKind,
   type ExecNode,
   type ExecRun,
+  type WindowBounds,
 } from "../exec-view/model.js";
 import { buildProgress } from "../exec-view/summary.js";
 import { reconcile } from "../reconcile.js";
@@ -358,6 +360,9 @@ export function buildRunCard(
     if (node.interruption !== undefined) {
       bits.push(truncate(node.interruption, 80));
     }
+    if (node.silence !== undefined) {
+      bits.push(node.silence);
+    }
     row.meta.textContent = bits.join(" \u00b7 ");
 
     const ms = elapsed(node.start, node.end);
@@ -463,8 +468,13 @@ export function buildRunCard(
     );
   }
 
+  /** The foot's words but its clock, and the window the clock reads, from the last render: the
+   *  tick only re-reads the clock. `undefined` for a deleted run. */
+  let ledgerParts: { bits: readonly string[]; bounds: WindowBounds | undefined } | undefined;
+
   function renderFoot(state: RunState | undefined): void {
     if (lastDetail.gone === true) {
+      ledgerParts = undefined;
       ledger.textContent = "This run was deleted";
       return;
     }
@@ -477,11 +487,18 @@ export function buildRunCard(
       bits.push(`${String(c.failed)} failed`);
     }
     bits.push(runWord(state?.status));
-    const ms = execWindow(lastNodes, runIsLive(state))?.span ?? 0;
-    if (ms > 0) {
-      bits.push(formatElapsed(ms));
+    ledgerParts = { bits, bounds: windowBounds(lastNodes, runIsLive(state)) };
+    paintFoot();
+  }
+
+  function paintFoot(): void {
+    if (ledgerParts === undefined) {
+      return;
     }
-    ledger.textContent = bits.join(" \u00b7 ");
+    const ms = ledgerParts.bounds === undefined ? 0 : windowAt(ledgerParts.bounds, Date.now()).span;
+    ledger.textContent = (
+      ms > 0 ? [...ledgerParts.bits, formatElapsed(ms)] : ledgerParts.bits
+    ).join(" \u00b7 ");
   }
 
   /** Whether this run holds a FAILURE a reader has to see: a failed launch, a failed run, or a
@@ -588,9 +605,7 @@ export function buildRunCard(
         row.dur.textContent = formatElapsed(rowMs);
       }
     }
-    // The run's own elapsed is the FOOT's, and `window` reads `Date.now()` while
-    // the run is live, so re-rendering the ledger IS the tick.
-    renderFoot(lastState);
+    paintFoot();
   }
 
   render(undefined);

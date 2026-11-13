@@ -9,6 +9,7 @@ import {
   setGitTab,
   setDocsTab,
   setHistoryTab,
+  showUnshownTab,
   tabIdFor,
 } from "./tabs.js";
 import { replaceRoute } from "./router.js";
@@ -109,7 +110,7 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
       // openTab would spend a POST /api/command round trip per Back press for a mutation the server
       // answers created:false to.
       pointFilesTab(ref, dir);
-      activateTab(id);
+      void activateTab(id);
       break;
     }
     case "file":
@@ -126,9 +127,7 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
             setDocsTab(tab);
           });
         })
-        .catch(() => {
-          /* noop */
-        });
+        .catch(showUnshownTab);
     case "history": {
       // The docs arm's shape: the pane is forced BEFORE the open, because this tab's refresh loads
       // the ACTIVE pane. Hoisted for the reason the git arm hoists `pr`.
@@ -140,9 +139,7 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
             setHistoryTab(tab);
           });
         })
-        .catch(() => {
-          /* noop */
-        });
+        .catch(showUnshownTab);
     }
     case "run":
       // RETURNED rather than voided: the router's claim on this location stands until it resolves,
@@ -153,24 +150,18 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
           // supplies the real name.
           await openRunView(route.id, route.id, "", route.node ?? "");
         })
-        .catch(() => {
-          /* noop */
-        });
+        .catch(showUnshownTab);
     case "spec":
       // RETURNED for the run arm's reason: the claim on this location stands until the open
       // settles, and the open is a server round trip.
       return openTab({ kind: "spec", ref: route.dir, owns: false })
         .then(() => undefined)
-        .catch(() => {
-          /* noop */
-        });
+        .catch(showUnshownTab);
     case "web":
       // Returned so the location claim stands until the open's round trip settles.
       return openTab({ kind: "web", ref: route.path })
         .then(() => undefined)
-        .catch(() => {
-          /* noop */
-        });
+        .catch(showUnshownTab);
     case "subagent":
       // A delegate's page has nothing to fetch — its blocks are already in the chat store, or they
       // are not resident and the page says so — so this is just the tab.
@@ -181,9 +172,7 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
           // write the restored tab's route over the reader's URL.
           await openSubagentView(route.chat, route.id);
         })
-        .catch(() => {
-          /* noop */
-        });
+        .catch(showUnshownTab);
   }
   return Promise.resolve();
 }

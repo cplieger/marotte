@@ -27,6 +27,13 @@ type RunTurnRange struct {
 	Subject     []marotte.SubjectStamp `json:"subject"`
 }
 
+// RunQuery is GET /api/runs/{id}'s query: View "header" or "glance" reads that form (it wins over
+// Since), and Since a revision answers only the changes after it.
+type RunQuery struct {
+	View  string `json:"view,omitempty"`
+	Since string `json:"since,omitempty"`
+}
+
 // RunTurnQuery is GET /api/runs/{id}/turns/{turn}'s query: the exclusive sequence to read after.
 type RunTurnQuery struct {
 	After string `json:"after,omitempty"`
@@ -50,10 +57,11 @@ func (rr *runRoutes) register(m routeMux) {
 	ok := func(pattern string, h http.HandlerFunc) route.Binding {
 		return write(idp(route.JSON[struct{}, httpreply.OKBody](pattern, h)))
 	}
-	m.Bind(route.WithParams[marotte.IDPath](route.Raw("GET /api/runs/{id}", http.HandlerFunc(rr.handleRun))))
+	m.Bind(route.WithQuery[RunQuery](route.WithParams[marotte.IDPath](route.Raw("GET /api/runs/{id}", http.HandlerFunc(rr.handleRun)))))
 	m.Bind(idp(route.JSON[struct{}, marotte.RunControlsResponse]("GET /api/runs/{id}/controls", http.HandlerFunc(rr.handleControls))))
 	m.Bind(route.JSON[struct{}, marotte.LiveRunsResponse]("GET /api/runs/live", http.HandlerFunc(rr.handleLiveRuns)))
 	m.Bind(step(route.JSON[struct{}, marotte.RunStepTranscript]("GET /api/runs/{id}/steps/{path}", http.HandlerFunc(rr.handleStepTranscript))))
+	m.Bind(step(route.JSON[struct{}, marotte.RunStepCapture]("GET /api/runs/{id}/steps/{path}/capture", http.HandlerFunc(rr.handleStepCapture))))
 	m.Bind(route.WithQuery[RunTurnQuery](route.WithParams[marotte.IDTurnPath](
 		route.JSON[struct{}, RunTurnRange]("GET /api/runs/{id}/turns/{turn}", http.HandlerFunc(rr.handleTurnRange)),
 	)))

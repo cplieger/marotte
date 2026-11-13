@@ -49,6 +49,7 @@ vi.mock("./send-state.js", () => ({
   reportSendRefused: mockReportSendRefused,
 }));
 vi.mock("./composer-state.js", () => ({
+  adoptUnownedComposer: vi.fn(),
   restoreFailedSend: mockRestoreFailedSend,
   retargetComposer: vi.fn(),
   saveComposerState: vi.fn(),
@@ -70,7 +71,7 @@ function makeSession(id: string): Session {
   return {
     id,
     name: "test",
-    model: "claude",
+    model: "model-x",
     acp_session_id: "",
     current_mode_id: "",
     supervised_mode: false,

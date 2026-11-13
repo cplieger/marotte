@@ -420,24 +420,26 @@
   border-radius: 50%;
 }
 
-/* Painted arc, still box — see `--vk-spin-arc` (00-header.css). The border above
-   is neutralised rather than dropped: the still `waiting` ring shares that rule and
-   DRAWS with it, and it also reserves this ring's band inside `--dot-size` for the
-   mask to paint over. */
+/* Still host, turning disc (00-header.css "A RING THAT SPINS WHILE WORK RUNS"): the
+   slot holds the ring's shape at `--dot-size`, so the disc below may outgrow it. */
+.run-step[data-status="running"] .run-step-glyph {
+  clip-path: circle(calc(var(--dot-size) / 2));
+  mask: radial-gradient(
+    circle,
+    transparent calc(var(--dot-size) / 2 - 0.125rem),
+    #000 calc(var(--dot-size) / 2 - 0.125rem)
+  );
+}
+
+/* The border above is neutralised rather than dropped: the still `waiting` ring
+   shares that rule and DRAWS with it, and it keeps this box the column's
+   `--dot-size`. */
 .run-step[data-status="running"] .run-step-glyph::before {
   border-color: transparent;
-  background: conic-gradient(
-      from var(--vk-spin-arc),
-      transparent 0deg 90deg,
-      var(--c-accent) 90deg 360deg
-    )
+  background: conic-gradient(from -45deg, transparent 0deg 90deg, var(--c-accent) 90deg 360deg)
     border-box;
-  mask: radial-gradient(
-    closest-side,
-    transparent calc(100% - 0.125rem),
-    #000 calc(100% - 0.125rem)
-  );
-  animation: vk-spin var(--spin-dur) linear infinite;
+  scale: 1.5;
+  animation: vk-spin-rotate var(--spin-dur) linear infinite;
 }
 
 .run-step[data-status="waiting"] .run-step-glyph::before {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { resetActionFramework } from "@cplieger/ui/actions/testing";
+import { resetActionFramework } from "@cplieger/reactive/actions/testing";
 import type * as ApiClient from "./api-client.js";
 import type * as Bus from "./bus.js";
 import type * as Docs from "./docs.js";

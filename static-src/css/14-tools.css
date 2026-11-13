@@ -523,22 +523,23 @@
   font-size: var(--fs-sm);
 }
 
-/* The arc is PAINTED and the box never turns (`--vk-spin-arc`, 00-header.css): a
-   rotated bordered circle wobbles. The trailing `border-box` is the gradient's ORIGIN
-   and load-bearing. */
+/* Still host, turning disc: 00-header.css "A RING THAT SPINS WHILE WORK RUNS". */
 .tool-spinner {
   width: 0.75rem;
   height: 0.75rem;
   flex-shrink: 0;
-  border-radius: 50%;
-  background: conic-gradient(
-      from var(--vk-spin-arc),
-      var(--c-accent) 0deg 90deg,
-      var(--c-border) 90deg 360deg
-    )
-    border-box;
+  clip-path: circle();
   mask: radial-gradient(closest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
-  animation: vk-spin var(--spin-dur) linear infinite;
+}
+
+.tool-spinner::before {
+  content: "";
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  background: conic-gradient(from -45deg, var(--c-accent) 0deg 90deg, var(--c-border) 90deg 360deg);
+  scale: 1.5;
+  animation: vk-spin-rotate var(--spin-dur) linear infinite;
 }
 
 /* THE SILENCE MARKER STATES A FACT, so it is hint-ink text rather than a mark: hue
@@ -873,19 +874,22 @@ a.subagent-header {
   width: 1rem;
   height: 1rem;
   flex-shrink: 0;
-  border-radius: 50%;
-  background: conic-gradient(
-      from var(--vk-spin-arc),
-      transparent 0deg 90deg,
-      var(--c-accent) 90deg 360deg
-    )
-    border-box;
+  clip-path: circle();
   mask: radial-gradient(
     closest-side,
     transparent calc(100% - 0.125rem),
     #000 calc(100% - 0.125rem)
   );
-  animation: vk-spin var(--spin-dur) linear infinite;
+}
+
+.subagent-spinner::before {
+  content: "";
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  background: conic-gradient(from -45deg, transparent 0deg 90deg, var(--c-accent) 90deg 360deg);
+  scale: 1.5;
+  animation: vk-spin-rotate var(--spin-dur) linear infinite;
 }
 
 .subagent-name {
@@ -1123,7 +1127,7 @@ a.subagent-header {
 }
 
 /* THE NEUTRAL GHOST BUTTON, and the ONE place its box is declared. `.uip-ask-ok` and
- * `.uip-ask-cancel` are listed because @cplieger/ui builds them without our classes;
+ * `.uip-ask-cancel` are listed because legacy-ui builds them without our classes;
  * this wins over 04-uip-skin.css by MANIFEST order. `.uip-toast-retry` is NOT listed: it
  * sits on a saturated fill and derives its ink from `currentcolor`. */
 .action-pill,

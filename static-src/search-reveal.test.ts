@@ -1,7 +1,7 @@
 // The reveal chain on fixture containers: what it opens for a hit, what a step closes, what a hand toggle keeps.
 
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { createDisclosure } from "@cplieger/ui/disclosure";
+import { createDisclosure } from "./legacy-ui/disclosure.js";
 import type { Hit } from "./wire/types.gen.js";
 import type * as FoldState from "./fold-state.js";
 import type * as ChatSearch from "./chat-search.js";

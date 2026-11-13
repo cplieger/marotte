@@ -79,6 +79,7 @@ function parkThenLand(body: (turnID: string) => Entry[]): void {
   const turnID = `t-${String(chatSeq)}`;
   store.setSessions([session(chat)]);
   store.setActive(chat);
+  store.setPainted(chat);
   scrollMock.readingState.mockReturnValue("reading");
   onReading("reading"); // Baseline: nothing reachable yet.
   store.openTurn(

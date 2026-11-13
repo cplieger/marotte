@@ -63,5 +63,15 @@ func testHookEntries() []route.Entry {
 			Summary: "Test builds: close the next stream after N frames",
 			Access:  route.Access{Class: route.ClassSession, Transport: route.TransportAny},
 		},
+		{
+			Name:    "postTestSseRunLog",
+			Method:  http.MethodPost,
+			Path:    "/api/test/sse/run-log",
+			Kind:    route.KindJSON,
+			Request: reflect.TypeFor[server.SSERunLog](),
+			Status:  http.StatusNoContent,
+			Summary: "Test builds: publish a run's log frames with no engine",
+			Access:  route.Access{Class: route.ClassSession, Transport: route.TransportAny},
+		},
 	}
 }

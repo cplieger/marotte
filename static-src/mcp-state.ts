@@ -6,12 +6,15 @@ import { configStanding } from "./config-standing.js";
 import type { ConfigStanding } from "./wire/types.gen.js";
 import {
   SignalMap,
+  computed,
   createCollection,
   signal,
   type ReadonlySignal,
   type Signal,
   type Collection,
-} from "@cplieger/ui";
+} from "@cplieger/reactive";
+import { createMirror, type MirrorChange } from "./mirror.js";
+import { decodeMCPStatusResponse } from "./wire/decoders.gen.js";
 import {
   asObject,
   decodeArray,
@@ -23,109 +26,6 @@ import {
   reqStr,
   type Decoder,
 } from "./wire/validators.gen.js";
-
-const decodePromptInfo: Decoder<MCPPromptInfo> = (v) => {
-  const o = asObject(v, "$.mcp.prompt");
-  const out: MCPPromptInfo = {
-    name: reqStr(o, "name", "$.mcp.prompt"),
-  };
-  const d = optStr(o, "description", "$.mcp.prompt");
-  if (d !== undefined) {
-    out.description = d;
-  }
-  return out;
-};
-
-export const decodeResourceInfo: Decoder<MCPResourceInfo> = (v) => {
-  const o = asObject(v, "$.mcp.resource");
-  const out: MCPResourceInfo = {
-    name: reqStr(o, "name", "$.mcp.resource"),
-    uri: reqStr(o, "uri", "$.mcp.resource"),
-  };
-  const d = optStr(o, "description", "$.mcp.resource");
-  if (d !== undefined) {
-    out.description = d;
-  }
-  return out;
-};
-
-export const decodeResourceTemplateInfo: Decoder<MCPResourceTemplateInfo> = (v) => {
-  const o = asObject(v, "$.mcp.resource_template");
-  const out: MCPResourceTemplateInfo = {
-    name: reqStr(o, "name", "$.mcp.resource_template"),
-    uri_template: reqStr(o, "uri_template", "$.mcp.resource_template"),
-  };
-  const d = optStr(o, "description", "$.mcp.resource_template");
-  if (d !== undefined) {
-    out.description = d;
-  }
-  return out;
-};
-
-const decodeWireRuntimeStatus: Decoder<WireRuntimeStatus> = (v) => {
-  const s = asObject(v, "$.mcp_status.server");
-  const out: WireRuntimeStatus = {
-    name: reqStr(s, "name", "$.mcp_status.server"),
-    state: reqStr(s, "state", "$.mcp_status.server"),
-  };
-  // Optional on decode though always sent: requiring it would reject the whole status response if one server omitted it.
-  const origin = optStr(s, "origin", "$.mcp_status.server");
-  if (origin !== undefined) {
-    out.origin = origin;
-  }
-  const root = optStr(s, "origin_root", "$.mcp_status.server");
-  if (root !== undefined) {
-    out.origin_root = root;
-  }
-  const power = optStr(s, "origin_power", "$.mcp_status.server");
-  if (power !== undefined) {
-    out.origin_power = power;
-  }
-  // Strict `=== true`: omitted in the common case, and absent means it shadows nothing.
-  if (s["shadows"] === true) {
-    out.shadows = true;
-  }
-  const oauthUrl = optStr(s, "oauth_url", "$.mcp_status.server");
-  if (oauthUrl !== undefined) {
-    out.oauth_url = oauthUrl;
-  }
-  const err = optStr(s, "error", "$.mcp_status.server");
-  if (err !== undefined) {
-    out.error = err;
-  }
-  // Strict `=== true`: omitted in the common case, and absent means "not yet relayed", which keeps the paste box offered.
-  if (s["relayed"] === true) {
-    out.relayed = true;
-  }
-  if (Array.isArray(s["tools"])) {
-    out.tools = (s["tools"] as unknown[]).map((x) => String(x));
-  }
-  if (Array.isArray(s["prompts"])) {
-    out.prompts = decodeArray(s["prompts"], decodePromptInfo, "$.mcp_status.server.prompts");
-  }
-  if (Array.isArray(s["resources"])) {
-    out.resources = decodeArray(
-      s["resources"],
-      decodeResourceInfo,
-      "$.mcp_status.server.resources",
-    );
-  }
-  if (Array.isArray(s["resource_templates"])) {
-    out.resource_templates = decodeArray(
-      s["resource_templates"],
-      decodeResourceTemplateInfo,
-      "$.mcp_status.server.resource_templates",
-    );
-  }
-  return out;
-};
-
-const decodeMCPStatusResponseLocal: Decoder<{ servers: WireRuntimeStatus[] }> = (v) => {
-  const o = asObject(v, "$.mcp_status");
-  return {
-    servers: decodeArray(o["servers"], decodeWireRuntimeStatus, "$.mcp_status.servers"),
-  };
-};
 
 const decodeKeyPair: Decoder<KeyPair> = (v) => {
   const o = asObject(v, "$.kp");
@@ -207,7 +107,16 @@ const decodeMCPServersResponseLocal: Decoder<{ servers: Server[]; unreadable: nu
 
 // SSE is the legacy HTTP+SSE remote transport, a first-class stored value sharing the url/headers form with http.
 export type { Transport } from "./wire/types.gen.js";
-import type { MCPOrigin, MCPPrewarmState, Transport } from "./wire/types.gen.js";
+import type {
+  MCPOrigin,
+  MCPPrewarmState,
+  MCPPromptInfo,
+  MCPResourceInfo,
+  MCPResourceTemplateInfo,
+  MCPServerStatus,
+  SubjectStamp,
+  Transport,
+} from "./wire/types.gen.js";
 import { getMcpEndpoint, getMcpStatusEndpoint } from "./wire/client.gen.js";
 
 /** KAS's per-server `versionNegotiation` enum. */
@@ -255,26 +164,6 @@ export interface Server {
   updated_at: number;
 }
 
-/** A prompt a connected MCP server advertises; `name` is the display title. */
-export interface MCPPromptInfo {
-  name: string;
-  description?: string;
-}
-
-/** A resource a connected MCP server advertises. `uri` is what a `#mcp:` mention names. */
-export interface MCPResourceInfo {
-  name: string;
-  uri: string;
-  description?: string;
-}
-
-/** A parameterised resource a server advertises; `uri_template` is RFC 6570. */
-export interface MCPResourceTemplateInfo {
-  name: string;
-  uri_template: string;
-  description?: string;
-}
-
 /**
  * What a connected server exposes (tools, prompts, resources, resource templates), keyed by server name and arriving
  * together on /api/mcp/status. Tools are a discovery result, not persisted config.
@@ -313,26 +202,7 @@ export type RuntimeStatus = Provenance &
     | { name: string; state: "disabled" }
   );
 
-/** Distributive: a plain `Omit` collapses the union to its common members. */
-type WithoutOrigin<T> = T extends unknown ? Omit<T, keyof Provenance> : never;
-
 export const SECRET_MASK = "***";
-
-interface WireRuntimeStatus {
-  name: string;
-  state: string;
-  origin?: string;
-  origin_root?: string;
-  origin_power?: string;
-  shadows?: boolean;
-  oauth_url?: string;
-  relayed?: boolean;
-  error?: string;
-  tools?: string[];
-  prompts?: MCPPromptInfo[];
-  resources?: MCPResourceInfo[];
-  resource_templates?: MCPResourceTemplateInfo[];
-}
 
 const FOREIGN_ORIGINS: ReadonlySet<string> = new Set<Exclude<MCPOrigin, "user">>([
   "workspace",
@@ -346,7 +216,7 @@ function adaptOrigin(raw: string | undefined): MCPOrigin {
   return raw !== undefined && FOREIGN_ORIGINS.has(raw) ? (raw as MCPOrigin) : "user";
 }
 
-function adaptProvenance(w: WireRuntimeStatus): Provenance {
+function adaptProvenance(w: MCPServerStatus): Provenance {
   const p: Provenance = { origin: adaptOrigin(w.origin) };
   if (w.origin_root !== undefined && w.origin_root !== "") {
     p.originRoot = w.origin_root;
@@ -361,7 +231,7 @@ function adaptProvenance(w: WireRuntimeStatus): Provenance {
 }
 
 /** Exported for testing: adapt a wire status to the domain type. */
-export function adaptStatus(w: WireRuntimeStatus): RuntimeStatus {
+export function adaptStatus(w: MCPServerStatus): RuntimeStatus {
   const prov = adaptProvenance(w);
   switch (w.state) {
     case "needs_auth":
@@ -387,7 +257,18 @@ export function adaptStatus(w: WireRuntimeStatus): RuntimeStatus {
   }
 }
 
-const statusMap = new SignalMap<RuntimeStatus>();
+/** The registry's status rows, ordered by the `mcp_status` version: its `mcp_status` frames and
+ *  `GET /api/mcp/status` are the only writers. */
+const mcpStatus = createMirror<string, MCPServerStatus>({
+  kind: "mcp_status",
+  async fetch(signal) {
+    const d = await apiGetTyped(getMcpStatusEndpoint.path, decodeMCPStatusResponse, signal);
+    if (d?.subject === undefined) {
+      return null;
+    }
+    return { rows: new Map(d.servers.map((s) => [s.name, s])), stamp: d.subject };
+  },
+});
 
 function idleStatus(name: string): RuntimeStatus {
   return { name, origin: "user", state: "idle" };
@@ -399,9 +280,20 @@ export function standingFor(name: string): ConfigStanding | undefined {
   return configStanding.value.servers.get(name);
 }
 
-/** Reactive per-server runtime-status signal, created lazily as "idle". */
+const statusSignals = new Map<string, ReadonlySignal<RuntimeStatus>>();
+
+/** Reactive per-server runtime status, idle while the server has no row. */
 export function statusSignalFor(name: string): ReadonlySignal<RuntimeStatus> {
-  return statusMap.ensure(name, idleStatus(name));
+  let sig = statusSignals.get(name);
+  if (sig === undefined) {
+    const row = mcpStatus.watch(name);
+    sig = computed(() => {
+      const r = row.value;
+      return r === undefined ? idleStatus(name) : adaptStatus(r);
+    });
+    statusSignals.set(name, sig);
+  }
+  return sig;
 }
 
 const EMPTY_DISCOVERY: ServerDiscovery = {
@@ -410,11 +302,34 @@ const EMPTY_DISCOVERY: ServerDiscovery = {
   resources: [],
   resource_templates: [],
 };
-const discoveryMap = new SignalMap<ServerDiscovery>();
+const discoverySignals = new Map<string, ReadonlySignal<ServerDiscovery>>();
 
-/** Reactive per-server discovery signal (empty default), from /api/mcp/status. */
+function discoveryOf(row: MCPServerStatus | undefined): ServerDiscovery {
+  const tools = row?.tools ?? [];
+  const prompts = row?.prompts ?? [];
+  const resources = row?.resources ?? [];
+  const templates = row?.resource_templates ?? [];
+  if (
+    tools.length === 0 &&
+    prompts.length === 0 &&
+    resources.length === 0 &&
+    templates.length === 0
+  ) {
+    // The shared frozen empty value, so idle servers do not churn their readers.
+    return EMPTY_DISCOVERY;
+  }
+  return { tools, prompts, resources, resource_templates: templates };
+}
+
+/** Reactive per-server discovery (empty while the server advertises nothing), from its status row. */
 export function discoverySignalFor(name: string): ReadonlySignal<ServerDiscovery> {
-  return discoveryMap.ensure(name, EMPTY_DISCOVERY);
+  let sig = discoverySignals.get(name);
+  if (sig === undefined) {
+    const row = mcpStatus.watch(name);
+    sig = computed(() => discoveryOf(row.value));
+    discoverySignals.set(name, sig);
+  }
+  return sig;
 }
 
 export type PrewarmState = "none" | "installing" | "failed";
@@ -434,11 +349,36 @@ export function setPrewarm(id: string, state: MCPPrewarmState): void {
 /** The configured MCP servers: field changes fire `signalFor(id)`, add/remove/reorder fire `ids`. */
 export const servers: Collection<Server> = createCollection<Server>((s) => s.id);
 
+function sameNames(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((n, i) => n === b[i]);
+}
+
+/** The status rows a foreign server needs its own row for, sorted. */
+function foreignNames(
+  rows: readonly (readonly [string, MCPServerStatus])[],
+  configured: readonly Server[],
+): string[] {
+  const names = new Set(configured.map((s) => s.name));
+  const out: string[] = [];
+  for (const [name, row] of rows) {
+    // A foreign server gets its own row unless marotte's config has the name, except when it SHADOWS that name: then
+    // marotte's row is not in use and the running server needs its own.
+    if (adaptOrigin(row.origin) !== "user" && (!names.has(name) || row.shadows === true)) {
+      out.push(name);
+    }
+  }
+  return out.sort();
+}
+
 /**
- * Names /api/mcp/status reported that the config list does not hold (a Power's server, or an unreadable config),
- * sorted. Such a server has no persisted id, so its rows are read-only.
+ * Names the status rows hold that the config list does not (a Power's server, or an unreadable config), sorted, and
+ * recomputed when either input moves. Such a server has no persisted id, so its rows are read-only.
  */
-export const unconfiguredNames: Signal<string[]> = signal<string[]>([]);
+export const unconfiguredNames: ReadonlySignal<readonly string[]> = computed(
+  () => foreignNames(mcpStatus.entries(), servers.items()),
+  // An equal list must not rebuild every read-only row.
+  { equals: sameNames },
+);
 
 /** How many entries of marotte's record could not be read at boot, from GET /api/mcp. */
 export const unreadableEntries: Signal<number> = signal(0);
@@ -448,49 +388,23 @@ export function configuredServers(): Server[] {
   return servers.items();
 }
 
-function sameNames(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((n, i) => n === b[i]);
-}
-
 class MCPStateController {
   private readonly serversSlot = new CancellableSlot();
-  private readonly statusSlot = new CancellableSlot();
   private serversFetchPending = false;
-  private statusFetchPending = false;
 
   abort(): void {
     this.serversSlot.abort();
-    this.statusSlot.abort();
     this.serversFetchPending = false;
-    this.statusFetchPending = false;
   }
 
-  setStatus(name: string, rs: RuntimeStatus): void {
-    statusMap.ensure(name, rs).value = rs;
-  }
-
-  /**
-   * SSE frames carry no provenance, so the known one is kept; defaulting to `user` would move a foreign server's status
-   * onto marotte's row.
-   */
-  setStatusFromEvent(name: string, next: WithoutOrigin<RuntimeStatus>): void {
-    const prev = statusMap.ensure(name, idleStatus(name)).peek();
-    const prov: Provenance = { origin: prev.origin };
-    if (prev.originRoot !== undefined) {
-      prov.originRoot = prev.originRoot;
-    }
-    if (prev.originPower !== undefined) {
-      prov.originPower = prev.originPower;
-    }
-    if (prev.shadows !== undefined) {
-      prov.shadows = prev.shadows;
-    }
-    this.setStatus(name, { ...next, ...prov });
-  }
-
-  deleteStatus(name: string): void {
-    // Reset to idle rather than clear, which would orphan the row's subscription.
-    statusMap.ensure(name, idleStatus(name)).value = idleStatus(name);
+  /** Apply one `mcp_status` frame (an absent row: the server left the inventory). Answers the
+   *  change, or `undefined` when the frame is not newer than the row held. */
+  applyStatusFrame(
+    name: string,
+    row: MCPServerStatus | undefined,
+    stamp: SubjectStamp | undefined,
+  ): MirrorChange<string, MCPServerStatus> | undefined {
+    return mcpStatus.applyFrame(name, row, stamp);
   }
 
   refetchServers(): void {
@@ -515,80 +429,9 @@ class MCPStateController {
     unreadableEntries.value = d?.unreadable ?? 0;
   }
 
-  refetchStatus(): void {
-    if (this.statusFetchPending) {
-      return;
-    }
-    this.statusFetchPending = true;
-    queueMicrotask(() => {
-      this.statusFetchPending = false;
-      void this.doRefetchStatus();
-    });
-  }
-
-  private async doRefetchStatus(): Promise<void> {
-    const abort = this.statusSlot.start();
-    const d = await apiGetTyped(getMcpStatusEndpoint.path, decodeMCPStatusResponseLocal, abort);
-    if (abort.aborted) {
-      return;
-    }
-    const configured = new Set(servers.items().map((s) => s.name));
-    const seen = new Set<string>();
-    const foreign: string[] = [];
-    for (const s of d?.servers ?? []) {
-      seen.add(s.name);
-      const st = adaptStatus(s);
-      this.setStatus(s.name, st);
-      this.setDiscovery(
-        s.name,
-        s.tools ?? [],
-        s.prompts ?? [],
-        s.resources ?? [],
-        s.resource_templates ?? [],
-      );
-      // A foreign server gets its own row unless marotte's config has the name, except when it SHADOWS that name: then
-      // marotte's row is not in use and the running server needs its own.
-      if (st.origin !== "user" && (!configured.has(s.name) || st.shadows === true)) {
-        foreign.push(s.name);
-      }
-    }
-    foreign.sort();
-    // Replace only on a real change: an equal new array would rebuild every read-only row.
-    if (!sameNames(unconfiguredNames.peek(), foreign)) {
-      unconfiguredNames.value = foreign;
-    }
-    // Servers with no reported status revert to idle.
-    for (const s of servers.items()) {
-      if (!seen.has(s.name)) {
-        this.deleteStatus(s.name);
-        this.setDiscovery(s.name, [], [], []);
-      }
-    }
-  }
-
-  setDiscovery(
-    name: string,
-    tools: string[],
-    prompts: MCPPromptInfo[],
-    resources: MCPResourceInfo[],
-    templates: MCPResourceTemplateInfo[] = [],
-  ): void {
-    if (
-      tools.length === 0 &&
-      prompts.length === 0 &&
-      resources.length === 0 &&
-      templates.length === 0
-    ) {
-      // The shared frozen empty value, so idle servers do not churn the signal.
-      discoveryMap.ensure(name, EMPTY_DISCOVERY).value = EMPTY_DISCOVERY;
-      return;
-    }
-    discoveryMap.ensure(name, EMPTY_DISCOVERY).value = {
-      tools,
-      prompts,
-      resources,
-      resource_templates: templates,
-    };
+  /** Read the status inventory again (`Mirror.refetch`). */
+  refetchStatus(signal?: AbortSignal): Promise<void> {
+    return mcpStatus.refetch(signal);
   }
 }
 

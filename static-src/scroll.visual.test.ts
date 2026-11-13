@@ -30,7 +30,7 @@ const messagesEl = document.createElement("div");
 messagesEl.id = "messages";
 scrollerEl.appendChild(messagesEl);
 
-const { setSessions, setActive, bumpMessages } = await import("./store.js");
+const { setSessions, setActive, setPainted, bumpMessages } = await import("./store.js");
 const { mountChatView } = await import("./messages.js");
 const { scrollToBottom, readingState, readerGestureOpen, readingLineOffset } =
   await import("./scroll.js");
@@ -365,6 +365,7 @@ beforeAll(async () => {
     { ...makeSession({ id: chat, name: "c" }), turns, turn_order: order, turn_count: TURNS },
   ]);
   setActive(chat);
+  setPainted(chat);
   bumpMessages(chat, "load");
   for (let i = TURNS - 3; i < TURNS; i++) {
     setTurnOpen(chat, `t${String(i)}`, true);

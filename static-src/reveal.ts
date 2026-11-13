@@ -25,9 +25,9 @@ const MAX_DRAIN_SECS = 2.5;
 const RATE_SLEW_TAU = 0.15;
 
 /** Smallest slice handed downstream, unless it is the last one. Every write is a permanent DOM
- *  node here (`smd-renderer`'s `add_text_dom` appends one text node, or one faded span while
- *  streaming), and at the MIN_CPS floor a per-frame write is ONE character, which would spend a
- *  node per character for a message nobody is reading quickly. */
+ *  node here (the markdown stream's `text` hook wraps each in one faded span), and at the MIN_CPS
+ *  floor a per-frame write is ONE character, which would spend a node per character for a message
+ *  nobody is reading quickly. */
 const MIN_EMIT_CHARS = 3;
 
 /** Clamp on the measured frame interval (seconds). A backgrounded tab hands the first frame

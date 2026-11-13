@@ -11,7 +11,7 @@ import { readPerChat, updatePerChat } from "./per-chat-store.js";
 import { isHttpURL } from "./url-safety.js";
 import { ICON_CLOSE } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import { el, createCollection, bindList, computed } from "@cplieger/ui";
+import { el, createCollection, bindList, computed } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import type { BannerLevel } from "./types.js";
 

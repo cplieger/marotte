@@ -27,7 +27,9 @@ func TestValidateAgentPatch_RefusesValuesTheUICannotProduce(t *testing.T) {
 		{name: "auto routing bool", key: KeyAutoRouting, raw: `true`, wantErr: true},
 		{name: "smart helpers off", key: KeyAutoDelegation, raw: `"off"`},
 		{name: "smart helpers unknown", key: KeyAutoDelegation, raw: `"auto"`, wantErr: true},
-		{name: "cfn enforce", key: KeyCloudFormationSafety, raw: `"enforce"`, wantErr: true},
+		{name: "cfn enforce", key: KeyCloudFormationSafety, raw: `"enforce"`},
+		{name: "cfn monitor", key: KeyCloudFormationSafety, raw: `"monitor"`, wantErr: true},
+		{name: "validation enforce", key: KeyWorkValidation, raw: `"enforce"`, wantErr: true},
 		{name: "style concise", key: KeyOutputStyle, raw: `"concise"`},
 		{name: "style proactive", key: KeyOutputStyle, raw: `"proactive"`},
 		{name: "style learning", key: KeyOutputStyle, raw: `"learning"`},
@@ -49,6 +51,23 @@ func TestValidateAgentPatch_RefusesValuesTheUICannotProduce(t *testing.T) {
 		{name: "reminders null", key: KeySteeringReminders, raw: `null`, wantErr: true},
 		{name: "workflows off", key: KeyWorkflowsEnabled, raw: `false`},
 		{name: "workflows string", key: KeyWorkflowsEnabled, raw: `"off"`, wantErr: true},
+		{name: "chat messaging on", key: KeyChatMessaging, raw: `true`},
+		{name: "chat messaging string", key: KeyChatMessaging, raw: `"on"`, wantErr: true},
+		{name: "chat awareness on", key: KeyChatAwareness, raw: `true`},
+		{name: "chat awareness string", key: KeyChatAwareness, raw: `"on"`, wantErr: true},
+		// KAS's sendMessageDeliveryLimit is a whole number from 1 to 500.
+		{name: "delivery limit floor", key: KeyChatMessageDeliveryLimit, raw: `1`},
+		{name: "delivery limit ceiling", key: KeyChatMessageDeliveryLimit, raw: `500`},
+		{name: "delivery limit zero", key: KeyChatMessageDeliveryLimit, raw: `0`, wantErr: true},
+		{name: "delivery limit over ceiling", key: KeyChatMessageDeliveryLimit, raw: `501`, wantErr: true},
+		{name: "delivery limit fraction", key: KeyChatMessageDeliveryLimit, raw: `2.5`, wantErr: true},
+		// KAS's workflowsCreatorEffort vocabulary, plus unset.
+		{name: "creator effort unset", key: KeyWorkflowCreatorEffort, raw: `""`},
+		{name: "creator effort low", key: KeyWorkflowCreatorEffort, raw: `"low"`},
+		{name: "creator effort xhigh", key: KeyWorkflowCreatorEffort, raw: `"xhigh"`},
+		{name: "creator effort max", key: KeyWorkflowCreatorEffort, raw: `"max"`},
+		{name: "creator effort unknown", key: KeyWorkflowCreatorEffort, raw: `"extreme"`, wantErr: true},
+		{name: "creator effort bool", key: KeyWorkflowCreatorEffort, raw: `true`, wantErr: true},
 		{name: "model fallback on", key: KeyModelFallback, raw: `true`},
 		{name: "model fallback string", key: KeyModelFallback, raw: `"on"`, wantErr: true},
 		{name: "workflow use when asked", key: KeyWorkflowLaunch, raw: `"when-asked"`},
@@ -112,9 +131,19 @@ func TestEffective_AgentCapabilityDefaultsAreKiroCLIs(t *testing.T) {
 	if !DefaultWorkflowsEnabled {
 		t.Error("DefaultWorkflowsEnabled = false, want true")
 	}
-	// kiro-cli ships the refusal and availability fallback flags off.
-	if defaultModelFallback {
-		t.Error("defaultModelFallback = true, want false")
+	// kiro-cli's sessionToolsMessaging and sessionToolsAwareness default off, and the user kept them off.
+	d := EffectiveDefaults()
+	if d.ChatMessaging || d.ChatAwareness {
+		t.Errorf("EffectiveDefaults() ChatMessaging, ChatAwareness = %v, %v, want both false", d.ChatMessaging, d.ChatAwareness)
+	}
+	// KAS's sendMessageDeliveryLimit defaults to 50 (Koi), and workflowsCreatorEffort has no default.
+	if d.ChatMessageDeliveryLimit != 50 || d.WorkflowCreatorEffort != "" {
+		t.Errorf("EffectiveDefaults() ChatMessageDeliveryLimit, WorkflowCreatorEffort = %d, %q, want 50, \"\"",
+			d.ChatMessageDeliveryLimit, d.WorkflowCreatorEffort)
+	}
+	// kiro-cli 3.2.0 ships the refusal and availability fallback flags on (FEATURES model_fallback_*).
+	if !defaultModelFallback {
+		t.Error("defaultModelFallback = false, want true")
 	}
 	// KAS's own workflowLaunch default for a new session.
 	if DefaultWorkflowLaunch != "when-asked" {

@@ -2,10 +2,10 @@
 // the trace ends or sibling text arrives. The summary shows a word count only: no reasoning
 // content may leak into a collapsed summary.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
 import { CHROME_ATTR } from "../chrome-attr.js";
-import { slideDetails, wireDetailsSlide } from "../disclosure-row.js";
+import { slideDetails, targetOpen, wireDetailsSlide } from "../disclosure-row.js";
 
 /** No `g` flag, so `test` stays stateless. */
 const SPACE = /\s/u;
@@ -37,8 +37,9 @@ export interface ReasoningView {
    *  posted after. Idempotent. */
   settle(): void;
   /** Settle, then COLLAPSE. What a successor arriving means: the trace is finished AND
-   *  no longer the newest element in its lane. Idempotent. */
-  seal(): void;
+   *  no longer the newest element in its lane. Idempotent. `motion: false` collapses it without
+   *  the slide, for a trace no reader saw open. */
+  seal(opts?: { readonly motion?: boolean }): void;
 }
 
 /** Build a reasoning block. `live` owns the pulse and label; `open` owns the disclosure and is
@@ -124,13 +125,19 @@ export function buildReasoning(initial: string, live: boolean, open: boolean): R
       showCount();
     },
     settle: settleNow,
-    seal(): void {
+    seal(opts): void {
       settleNow();
       if (collapsed) {
         return;
       }
       collapsed = true;
-      slideDetails(root, false);
+      // A trace built closed has nothing to slide.
+      if (!targetOpen(root, root.open)) {
+        return;
+      }
+      // Detached or in a parked view nobody sees the slide, and measuring would force that view's layout.
+      const seen = root.isConnected && root.closest(".transcript-view:not(.is-active)") === null;
+      slideDetails(root, false, seen && opts?.motion !== false);
     },
   };
 }

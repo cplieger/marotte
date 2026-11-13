@@ -165,7 +165,7 @@ func TestHandleV3Summarization_SuccessCompletes(t *testing.T) {
 	}
 }
 
-// KAS reports no reading after a summary lands, so the stored one describes the context before it: the landed
+// KAS sends no fresh reading after a summary lands, so the stored one describes the context before it: the landed
 // compaction clears it, keeping the window size and the credits.
 func TestHandleV3Summarization_ALandedCompactionClearsTheStaleReading(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")

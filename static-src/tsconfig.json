@@ -38,7 +38,8 @@
     "__test-helpers__/*.ts",
     "lib/**/*.ts",
     "textsearch/*.ts",
-    "audit/*.ts"
+    "audit/*.ts",
+    "legacy-ui/**/*.ts"
   ],
   "exclude": [
     "vitest.config.ts",

@@ -2,9 +2,11 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"maps"
 	"slices"
+	"time"
 
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -198,15 +200,16 @@ func (rt *Runtime) publishEngineStatus(st *marotte.EngineStatus) {
 	rt.bus.Broadcast(rt.lifecycle.shutdownCtx, marotte.NewEvent(marotte.EventEngineStatus, "", *st))
 }
 
-// onEngineReady runs after each generation is ready. The first one makes the boot observer pass: the governance
-// profile and the slash menu's seed arrive at its door, and the administrator rules are read on it.
+// onEngineReady runs after each generation is ready. The first one makes the boot observer pass (seedBoot), on which
+// the administrator rules are read too.
 func (rt *Runtime) onEngineReady(uint64) {
 	rt.bootPass.Do(func() {
 		rt.lifecycle.goUnlessDraining(func() {
-			ctx, cancel := context.WithTimeout(rt.lifecycle.shutdownCtx, governanceWarmTimeout)
+			ctx, cancel := context.WithTimeout(rt.lifecycle.shutdownCtx, bootSeedTimeout)
 			defer cancel()
-			if err := rt.config.warmGovernance(ctx); err != nil {
-				slog.Warn("governance: the boot observer pass failed; the next session door reads it", "error", err)
+			if err := rt.seedBoot(ctx); err != nil {
+				slog.Warn("the boot observer pass ended before KAS sent all it sends at a session door; the next session door sends it",
+					"error", err)
 			}
 		})
 	})
@@ -218,6 +221,34 @@ func (rt *Runtime) onEngineReady(uint64) {
 	rt.KickCodeIntelligence()
 }
 
+// bootSeedTimeout bounds the boot observer pass: its door plus KAS's pushes after it. A var so the package's tests
+// whose fake withholds a seed (noGovernance, noDoorSeeds) do not hold the boot pass for it.
+var bootSeedTimeout = 12 * time.Second
+
+// seedBoot holds the boot observer pass open until KAS sent what it sends only at a session door, the governance
+// profile, the slash menu and the steering documents, or ctx ends. kiro-cli 3.2.1 sends the last two after the
+// session/new answer and drops them for a session closed before then.
+func (rt *Runtime) seedBoot(ctx context.Context) error {
+	seeds := []struct {
+		ch   <-chan struct{}
+		name string
+	}{
+		{rt.config.governance.warm, "governance profile"},
+		{rt.slash.seeded, "slash menu"},
+		{rt.steeringIssues.seeded, "steering documents"},
+	}
+	return rt.observe(ctx, func(ctx context.Context, _ engineSession) error {
+		for _, s := range seeds {
+			select {
+			case <-s.ch:
+			case <-ctx.Done():
+				return fmt.Errorf("no %s: %w", s.name, ctx.Err())
+			}
+		}
+		return nil
+	})
+}
+
 // onEngineEnded runs once generation gen ended and was reaped: its unsettled mutations go (their writes meet a dead
 // engine), its open step turns end, and every MCP server it ran is reported gone. The recipe catalog goes too: KAS
 // sends no recipes_changed for the next engine's first listing, so an edit made while no engine ran would otherwise
@@ -226,7 +257,7 @@ func (rt *Runtime) onEngineEnded(gen uint64) {
 	rt.runs.mutations.dropGeneration(gen)
 	rt.runs.askEngineEnded()
 	rt.runs.recipes.invalidate()
-	rt.mcpRegistry.clearAll(rt.lifecycle.shutdownCtx)
+	rt.mcpRegistry.clearAll()
 }
 
 // closeSession releases a session the registry let go of; bridge.Session.Release owns every outcome after it.

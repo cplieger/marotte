@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { signal } from "@cplieger/ui";
+import { signal } from "@cplieger/reactive";
 import type { PageFind } from "./find-registry.js";
 import type * as ModHistory from "./history.js";
 import { ICON_TAB_RUN, outcomeIcon } from "./icons.js";
@@ -125,7 +125,7 @@ vi.mock("./tabs.js", () => ({
 }));
 // The pane switch pushes its URL; a forced switch (the router's) must not.
 vi.mock("./router.js", () => ({ pushRoute }));
-vi.mock("@cplieger/ui/skeleton", () => ({
+vi.mock("./legacy-ui/skeleton.js", () => ({
   // A spy: whether the arm fires is what the settled-empty case pins.
   skeletonTiming: skeletonTimingMock,
 }));
@@ -830,12 +830,12 @@ describe("history: an overrun reads differently from a cancel", () => {
 
   const sub = (row: Element): string => row.querySelector(".entry-sub")?.textContent ?? "";
 
-  it("says a wall-clock overrun stopped the run", async () => {
+  it("says the next scheduled slot stopped the run", async () => {
     await render({
       sessions: [],
       runs: [{ ...runRow, status: "aborted", end_reason: "overran" }],
     });
-    expect(sub(rowOf("r:wf_1"))).toContain("ran past its time limit");
+    expect(sub(rowOf("r:wf_1"))).toContain("next scheduled slot came due");
   });
 
   it("says the idle window stopped the run, and settles it as aborted", async () => {
@@ -845,7 +845,7 @@ describe("history: an overrun reads differently from a cancel", () => {
       runs: [{ ...runRow, status: "running", end_reason: "stalled" }],
     });
     const row = rowOf("r:wf_1");
-    expect(sub(row)).toBe("stopped: no activity and no live shell within its idle window");
+    expect(sub(row)).toBe("stopped: it showed no activity for too long");
     expect(openName(row)).toBe("Open feature-pipeline, aborted");
   });
 
@@ -898,7 +898,7 @@ describe("history: an overrun reads differently from a cancel", () => {
     });
     const row = rowOf("r:wf_1");
     expect(row.querySelector(".tool-icon")).not.toBeNull();
-    expect(sub(row)).toContain("ran past its time limit");
+    expect(sub(row)).toContain("next scheduled slot came due");
   });
 
   it("ignores an end reason it does not recognise", async () => {
@@ -1099,6 +1099,19 @@ describe("history: cross-chat search", () => {
     });
     expect(table.querySelector(".entry-sub")?.textContent).toBe(
       "Sent by Agent Mail: we moved the cache to redis",
+    );
+  });
+
+  it("names marotte when the words matched are its own resume prompt", async () => {
+    const named = match();
+    const { table } = await search({
+      matches: [{ ...named, best: { ...named.best, automatic: true } }],
+      scanned: 1,
+      matched: 1,
+      truncated: false,
+    });
+    expect(table.querySelector(".entry-sub")?.textContent).toBe(
+      "Sent by marotte: we moved the cache to redis",
     );
   });
 
@@ -1754,7 +1767,7 @@ describe("history: the per-row delete", () => {
 describe("history: the row's subtitle and time", () => {
   /** The facts `/api/sessions` states for the chat that owns the row. */
   const facts = {
-    model: "claude-opus-5",
+    model: "model-a-5",
     current_mode_id: "vibe",
     turn_count: 34,
     credits: 12.5,
@@ -1769,12 +1782,12 @@ describe("history: the row's subtitle and time", () => {
 
   it("states model, mode, turns and credits from the session row", async () => {
     await render({ sessions: [{ ...ownedRow, ...facts }], runs: [] });
-    expect(sub("s:sess_owned")).toBe("claude-opus-5 · Default · 34 turns · 12.50 cr");
+    expect(sub("s:sess_owned")).toBe("model-a-5 · Default · 34 turns · 12.50 cr");
   });
 
   it("states a sub-cent metered chat as under a cent, never as 0.00", async () => {
     await render({ sessions: [{ ...ownedRow, ...facts, credits: 0.004 }], runs: [] });
-    expect(sub("s:sess_owned")).toBe("claude-opus-5 · Default · 34 turns · <0.01 cr");
+    expect(sub("s:sess_owned")).toBe("model-a-5 · Default · 34 turns · <0.01 cr");
   });
 
   it("omits a zero credit total rather than printing 0.00", async () => {
@@ -1783,7 +1796,7 @@ describe("history: the row's subtitle and time", () => {
       sessions: [{ ...ownedRow, ...facts, turn_count: 1, credits: 0 }],
       runs: [],
     });
-    expect(sub("s:sess_owned")).toBe("claude-opus-5 · Default · 1 turn");
+    expect(sub("s:sess_owned")).toBe("model-a-5 · Default · 1 turn");
   });
 
   it("prefers the agent's own description to the facts", async () => {
@@ -1811,7 +1824,7 @@ describe("history: the row's subtitle and time", () => {
     hasTab.mockReturnValue(false);
     tabsVersion.value++;
     await vi.waitFor(() => {
-      expect(sub("s:sess_owned")).toBe("claude-opus-5 · Default · 34 turns · 12.50 cr");
+      expect(sub("s:sess_owned")).toBe("model-a-5 · Default · 34 turns · 12.50 cr");
     });
   });
 

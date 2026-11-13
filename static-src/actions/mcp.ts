@@ -281,7 +281,7 @@ export const reconnectServer = apiAction<{ server: string }, void>({
 });
 
 // Starts kiro-cli's explicit sign-in, which discards the server's stored credentials: 202 once queued, 409 when the
-// server is not waiting for sign-in or its sign-in is already in progress. The consent page arrives as mcp_sign_in_open.
+// server is not waiting for sign-in or its sign-in is already in progress. The consent page arrives as an mcp_status row.
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no result
 export const signInServer = apiAction<{ server: string }, void>({
   name: "mcp.sign_in",

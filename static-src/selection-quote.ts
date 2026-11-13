@@ -3,8 +3,8 @@
 // that quote in the tangent's composer. The buttons follow the selection: they show while one qualifies and go when it
 // stops.
 
-import { el, effect } from "@cplieger/ui";
-import { createPopover, type PopoverController } from "@cplieger/ui/popover";
+import { el, effect } from "@cplieger/reactive";
+import { createPopover, type PopoverController } from "./legacy-ui/popover.js";
 import { openTangentChat } from "./chat.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { setComposerValue } from "./composer-value.js";
@@ -28,7 +28,8 @@ const WIDGET = [
   ".uip-popover",
 ].join(",");
 
-const CHROME = `[${CHROME_ATTR}]`;
+/** A code block's bar (@cplieger/ui/markdown) is chrome it cannot mark. */
+const CHROME = `[${CHROME_ATTR}], .cp-code > [data-part="bar"]`;
 
 /** A control or chrome: its text is a UI label, never quoted. */
 const CONTROL = `${WIDGET},${CHROME}`;

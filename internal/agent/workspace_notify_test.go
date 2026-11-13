@@ -23,14 +23,34 @@ var workspaceMethods = []string{
 // countedSession is the session id of the frames countWorkspaceHandlers counts.
 const countedSession marotte.SessionID = "sess_any"
 
-// countWorkspaceHandlers replaces every workspace handler with a counter of the frames for countedSession it was
-// handed. An observer pass's door copy can still be in its pump when the hub's boot drain returns.
+// countedHub is newTestHub whose workspace handlers count the frames for countedSession they were handed. The
+// counters go in before the engine starts: an observer pass's pump, untracked by the boot drain, reads the table.
+func countedHub(t *testing.T) (*Runtime, *testChatStore, *fakeBridge, func(method string) int) {
+	t.Helper()
+	cs := newTestChatStore()
+	br := newFakeBridge()
+	src := fakeEngineOf(func() engineSession { return br }, br)
+	gate := make(chan struct{})
+	src.startGate = gate
+	h := newRuntimeOn(context.Background(), "/tmp/work", src, cs)
+	cs.wire(h)
+	t.Cleanup(func() { shutdownHub(t, h) })
+	count := countWorkspaceHandlers(h)
+	close(gate)
+	settleBoot(t, h)
+	br.forgetCalls()
+	return h, cs, br, count
+}
+
+// countWorkspaceHandlers wraps every workspace handler in a counter of the frames for countedSession it was handed;
+// a frame for another session, such as the boot's own observer passes, goes to the real handler.
 func countWorkspaceHandlers(h *Runtime) func(method string) int {
 	var mu sync.Mutex
 	counts := map[string]int{}
-	for method := range h.workspaceHandlers {
-		h.workspaceHandlers[method] = func(_ context.Context, _ marotte.ChatID, msg *marotte.RPCResponse) {
+	for method, real := range h.workspaceHandlers {
+		h.workspaceHandlers[method] = func(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 			if sessionIDOfParams(msg.Params) != countedSession {
+				real(ctx, chatID, msg)
 				return
 			}
 			mu.Lock()
@@ -46,13 +66,11 @@ func countWorkspaceHandlers(h *Runtime) func(method string) int {
 }
 
 func TestWorkspaceNotifications_HandledOnceOnEveryLane(t *testing.T) {
-	h, cs, br := newTestHub()
-	t.Cleanup(func() { shutdownHub(t, h) })
+	h, cs, br, count := countedHub(t)
 	seedChat(t, cs, "c1")
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: OpenBridge: %v", err)
 	}
-	count := countWorkspaceHandlers(h)
 	o := oneObserver(t, h)
 	lanes := []struct {
 		name    string

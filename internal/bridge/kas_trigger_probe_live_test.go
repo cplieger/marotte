@@ -75,18 +75,10 @@ func TestProbeMissingInput(t *testing.T) {
 
 func newProbe(t *testing.T) (*probe, context.Context) {
 	t.Helper()
-	bin := os.Getenv("MAROTTE_LIVE_KIRO_CLI")
-	if bin == "" {
-		t.Skip("MAROTTE_LIVE_KIRO_CLI names no kiro-cli binary")
-	}
 	if !*kasTriggerProbe {
 		t.Skip("-kas-trigger-probe not set: the probe rewrites testdata")
 	}
-	if os.Getenv("KIRO_RUNTIME_DIR") != "" {
-		t.Fatal("unset KIRO_RUNTIME_DIR: a kiro-cli of another version started with it deletes the running engine's runtime")
-	}
-	pin := pinnedKiroCLI(t)
-	checkBinaryVersion(t, bin, pin)
+	bin, pin := liveKiroCLI(t)
 	c := newCapture(t, &captureEnv{cli: bin, kiroCLI: pin})
 	p := &probe{c: c, t: t, owner: map[string]marotte.SessionID{}}
 	if err := os.MkdirAll(filepath.Join(c.work, ".kiro", "workflows"), 0o755); err != nil {
@@ -601,21 +593,24 @@ func (p *probe) write(name string, body map[string]any) {
 		"recorded": "live", "kiroCli": p.c.env.kiroCLI, "kas": p.kas,
 		"date": time.Now().UTC().Format(time.DateOnly), "regenerate": "go test ./internal/bridge/ -run " + p.t.Name() + " -kas-trigger-probe",
 	}
-	raw, err := json.MarshalIndent(body, "", "  ")
+	// One line, because scrubModels decodes its input a line at a time; indented after the checks.
+	raw, err := json.Marshal(body)
 	if err != nil {
 		p.t.Fatal(err)
 	}
-	out := p.c.scrub(raw)
-	for _, bad := range forbiddenInCapture {
-		if i := bytes.Index(out, []byte(bad)); i >= 0 {
-			p.t.Fatalf("%s holds %q near %q", name, bad, excerpt(out, i))
-		}
+	scrubbed, err := publishable(p.c.scrub(raw), os.TempDir())
+	if err != nil {
+		p.t.Fatalf("%s %v", name, err)
+	}
+	var out bytes.Buffer
+	if err := json.Indent(&out, scrubbed, "", "  "); err != nil {
+		p.t.Fatal(err)
 	}
 	if err := os.MkdirAll(probeDir, 0o755); err != nil {
 		p.t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(probeDir, name+".json"), append(out, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(probeDir, name+".json"), append(out.Bytes(), '\n'), 0o644); err != nil {
 		p.t.Fatal(err)
 	}
-	p.t.Logf("%s: %s", name, out)
+	p.t.Logf("%s: %s", name, out.Bytes())
 }

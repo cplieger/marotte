@@ -22,6 +22,9 @@ type ConnectedPayload struct {
 	// client cannot derive it: ACP-supplied paths arrive workspace-RELATIVE while the
 	// /api/file* surface is container-ABSOLUTE, and opening a changed file rejoins them.
 	Workspace string `json:"workspace,omitempty"`
+	// LiveRunsVersion is the `runs` version LiveRuns was read at, from the same lease-store
+	// read, stated even when the list is withheld.
+	LiveRunsVersion string `json:"live_runs_version"`
 	// Floor and Head are the replay ring's bounds, present ONLY on a legacy connect
 	// (a client that sent no SSE-Wire header): the v2 bundle reads them as numbers
 	// to detect a gap, and a v3 client gets the same facts from the library's hello.
@@ -46,13 +49,10 @@ type ConnectedPayload struct {
 	// and an absent marker can never read as "stated": a withheld list is withheld
 	// WHOLE rather than truncated, so a reader has to be told which it holds.
 	BusyStated bool `json:"busy_stated"`
-	// LiveRunsStated says whether LiveRuns is the COMPLETE inventory. False only when
-	// the lease store holds more than maxConnectLiveRuns rows, in which case the list
-	// is WITHHELD and the client falls back to its own GET /api/runs/live.
-	//
-	// It exists because the client CLEARS its inventory before repopulating it, so a
-	// truncated list would silently drop runs — and an empty LiveRuns is otherwise
-	// indistinguishable from "no runs are live". No omitempty, for BusyStated's reason.
+	// LiveRunsStated says whether LiveRuns is the COMPLETE inventory. False only when the
+	// lease store holds more than maxConnectLiveRuns rows: the list is WITHHELD and the client
+	// reads GET /api/runs/live. A truncated list would drop runs from a client that adopts it
+	// whole, and an empty one reads as "no runs are live". No omitempty, for BusyStated's reason.
 	LiveRunsStated bool `json:"live_runs_stated"`
 }
 
@@ -257,6 +257,20 @@ func DecisionRunID(payload any) string {
 	}
 }
 
+// DecisionNodeID is the workflow node a *_needed payload's ask came from, "" for any other payload or one of no run.
+func DecisionNodeID(payload any) string {
+	switch p := payload.(type) {
+	case PermissionNeededPayload:
+		return p.NodeID
+	case ElicitationNeededPayload:
+		return p.NodeID
+	case UserInputNeededPayload:
+		return p.NodeID
+	default:
+		return ""
+	}
+}
+
 // DecisionRequestID is the ask id a *_needed payload carries, 0 for any other payload.
 func DecisionRequestID(payload any) int64 {
 	switch p := payload.(type) {
@@ -291,6 +305,9 @@ const (
 	// runs unsupervised. Unlike mode_not_applied, the record keeps the REQUEST, so the next spawn
 	// re-asserts; this event is the only thing naming the refusal.
 	ErrCodeSupervisedNotApplied ErrorCode = "supervised_not_applied"
+	// ErrCodeMemoryNotLoaded means a Bot's session opened without its memory file loaded; the Bot runs without its
+	// notes until its next session opens.
+	ErrCodeMemoryNotLoaded ErrorCode = "memory_not_loaded"
 	// ErrCodeModelNotServed means an explicitly-picked model is absent from the set this
 	// account's session advertises, so it was refused before the wire rather than rejected
 	// mid-prompt on every later turn.
@@ -301,6 +318,9 @@ const (
 	// ErrCodeTangentMergeFailed means a tangent merge stopped after it was accepted: the summary
 	// turn did not finish cleanly, or its summary could not be delivered.
 	ErrCodeTangentMergeFailed ErrorCode = "tangent_merge_failed"
+	// ErrCodeResumeNotSent means marotte stopped a turn to compact the context and sends no prompt to continue it,
+	// so the stopped task waits for the reader's next message.
+	ErrCodeResumeNotSent ErrorCode = "resume_not_sent"
 )
 
 // ErrorPayload is the payload for type="error"; Code lets clients react per-class.
@@ -811,6 +831,9 @@ type TabsChangedPayload struct {
 	// reorder. A pointer because "no tab changed" and "a zero-valued tab changed" are
 	// different facts the client branches on.
 	Changed *TabSubject `json:"changed,omitempty"`
+	// Recent is the whole Recently closed list when this mutation changed it; absent means
+	// unchanged, which is a different fact from an emptied list.
+	Recent *RecentList `json:"recent,omitempty"`
 	// OpID is the client-minted correlation id echoed back so a caller can match the frame
 	// to its own dispatch; empty for a mutation no client asked for. Distinct from
 	// Idempotency-Key: this has no TTL, no cache and no 409 branch.

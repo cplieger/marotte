@@ -13,6 +13,7 @@ import type * as StoreLoad from "./store-load.js";
 // so it adds no runtime edge the `vi.mock` would have to reach around.
 import type * as Store from "./store.js";
 import type { ChatHeader, Entry, OpenEntry, SubjectStamp, Usage } from "./wire/types.gen.js";
+import { orErrorOver } from "./__test-helpers__/api-result.js";
 
 const {
   sessions,
@@ -298,6 +299,9 @@ beforeEach(() => {
   // itself, and the rest would otherwise print one per assertion.
   warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+  // A page load reads the status-bearing GET. A case written against the collapsed answer is
+  // served through it, as `apiGetTyped` collapses that envelope; a confirm case replaces it.
+  mockApiGetTypedOrError.mockImplementation(orErrorOver(mockApiGetTyped));
 });
 
 afterEach(() => {
@@ -615,7 +619,7 @@ describe("loadMessages walks a page's entries into whole turns", () => {
       header: { turn_count: 2 },
     });
 
-    expect(await loadMessages("c1")).toBe(true);
+    expect(await loadMessages("c1")).toEqual({ kind: "loaded" });
     expect(sessions.get("c1")?.turn_order).toEqual(["t1", "t2"]);
     expect(seqsOf("c1", "t1")).toEqual([0, 1]);
     expect(seqsOf("c1", "t2")).toEqual([0, 1]);
@@ -820,7 +824,7 @@ describe("an undecodable entry is DROPPED, never the window", () => {
       draft: "",
     });
 
-    expect(await loadMessages("c1")).toBe(true);
+    expect(await loadMessages("c1")).toEqual({ kind: "loaded" });
     expect(seqsOf("c1", "c1-t1")).toEqual([0]);
     expect(rangeReads()).toEqual([{ turnID: "c1-t1", after: "0" }]);
     // The warn IS the signal, so it names the member rather than dropping it silently.
@@ -838,7 +842,7 @@ describe("an undecodable entry is DROPPED, never the window", () => {
       draft: "",
     });
 
-    expect(await loadMessages("c1")).toBe(true);
+    expect(await loadMessages("c1")).toEqual({ kind: "loaded" });
     expect(turnOf("c1", "t1").openEntries.size).toBe(0);
   });
 
@@ -854,7 +858,7 @@ describe("an undecodable entry is DROPPED, never the window", () => {
       draft: "",
     });
 
-    expect(await loadMessages("c1")).toBe(false);
+    expect(await loadMessages("c1")).toMatchObject({ kind: "failed" });
     expect(sessions.get("c1")?.residency).toBe("load_failed");
   });
 
@@ -870,7 +874,7 @@ describe("an undecodable entry is DROPPED, never the window", () => {
       draft: "",
     });
 
-    expect(await loadMessages("c1")).toBe(true);
+    expect(await loadMessages("c1")).toEqual({ kind: "loaded" });
     expect(heldCount()).toBe(0);
   });
 });
@@ -945,6 +949,38 @@ describe("mergeTurn keeps what landed while the request was in flight", () => {
 
     await loadMessages("c1");
     expect(turnOf("c1", "t1").openEntries.get("sub-1")?.id).toBe("o-sub");
+  });
+
+  it("drops the page's tail for an entry the held stream has since sealed", async () => {
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1), entry("t1", 1, "text", { text: "done" }, { id: "o1" })]);
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1)],
+      open: [openTail("t1", "o1", 3)],
+      header: { turn_count: 1 },
+    });
+
+    await loadMessages("c1");
+    expect(seqsOf("c1", "t1")).toEqual([0, 1]);
+    expect(turnOf("c1", "t1").openEntries.size).toBe(0);
+  });
+
+  it("keeps the held tail that opened on a lane after the page's tail there sealed", async () => {
+    const s = seedSession("c1");
+    seedTurn(
+      s,
+      "t1",
+      [turnOpen("t1", 1), entry("t1", 1, "text", { text: "done" }, { id: "o1" })],
+      [openTail("t1", "o2", 1)],
+    );
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1)],
+      open: [openTail("t1", "o1", 3)],
+      header: { turn_count: 1 },
+    });
+
+    await loadMessages("c1");
+    expect([...turnOf("c1", "t1").openEntries.values()].map((o) => o.id)).toEqual(["o2"]);
   });
 });
 
@@ -1236,7 +1272,7 @@ describe("residency", () => {
     seedSession("c1", { residency: "loaded" });
     mockApiGetTyped.mockResolvedValue(null);
 
-    expect(await loadMessages("c1")).toBe(false);
+    expect(await loadMessages("c1")).toMatchObject({ kind: "failed" });
     expect(sessions.get("c1")?.residency).toBe("load_failed");
   });
 
@@ -1244,7 +1280,7 @@ describe("residency", () => {
     seedSession("c1", { residency: "loaded" });
     mockApiGetTyped.mockResolvedValue(null);
 
-    expect(await loadMessages("c1", "t2")).toBe(false);
+    expect(await loadMessages("c1", "t2")).toMatchObject({ kind: "failed" });
     expect(sessions.get("c1")?.residency).toBe("loaded");
   });
 });
@@ -1426,6 +1462,53 @@ describe("loadMessages announces a fetched window as a replay", () => {
     expect(mockBumpMessages).toHaveBeenCalledExactlyOnceWith("c1", "load");
   });
 
+  it("answers the server's status when the page is refused", async () => {
+    seedSession("c1");
+    mockApiGetTypedOrError.mockResolvedValue({ ok: false, status: 404, data: null, error: "gone" });
+
+    expect(await loadMessages("c1")).toEqual({ kind: "failed", status: 404 });
+  });
+
+  it("answers a newest load a newer one superseded with the newer one's verdict", async () => {
+    seedSession("c1");
+    answerPage("c1");
+    let release: (v: unknown) => void = () => undefined;
+    mockApiGetTyped.mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          release = r;
+        }),
+    );
+
+    const first = loadMessages("c1");
+    const second = loadMessages("c1");
+    await second;
+    release(null);
+
+    expect(await first).toEqual({ kind: "loaded" });
+  });
+
+  it("answers aborted when the caller's own signal stopped it, whatever took over", async () => {
+    seedSession("c1");
+    answerPage("c1");
+    let release: (v: unknown) => void = () => undefined;
+    mockApiGetTyped.mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          release = r;
+        }),
+    );
+    const caller = new AbortController();
+
+    const first = loadMessages("c1", undefined, caller.signal);
+    const second = loadMessages("c1");
+    caller.abort();
+    await second;
+    release(null);
+
+    expect(await first).toEqual({ kind: "aborted" });
+  });
+
   it("writes nothing at all when the read was aborted", async () => {
     const s = seedSession("c1", { residency: "loaded" });
     const controller = new AbortController();
@@ -1434,7 +1517,7 @@ describe("loadMessages announces a fetched window as a replay", () => {
       return Promise.resolve(null);
     });
 
-    expect(await loadMessages("c1", undefined, controller.signal)).toBe(false);
+    expect(await loadMessages("c1", undefined, controller.signal)).toEqual({ kind: "aborted" });
     expect(s.residency).toBe("loaded");
     expect(mockBumpMessages).not.toHaveBeenCalled();
   });
@@ -1454,7 +1537,7 @@ describe("loadMessages announces a fetched window as a replay", () => {
       });
     });
 
-    expect(await loadMessages("c1")).toBe(false);
+    expect(await loadMessages("c1")).toEqual({ kind: "aborted" });
     expect(mockBumpMessages).not.toHaveBeenCalled();
   });
 });
@@ -1613,19 +1696,52 @@ describe("the range read repairs one turn", () => {
     expect(mockBumpMessages).toHaveBeenCalledWith("c1", "load");
   });
 
-  it("REPLACES the turn's open tails with the answer's, lane set included", async () => {
+  it("merges the turn's open tails by version: the answer's on a shared lane, a sealed one gone", async () => {
     const s = seedSession("c1");
     seedTurn(
       s,
       "t1",
       [turnOpen("t1", 1)],
-      [openTail("t1", "stale", 1), openTail("t1", "stale-sub", 1, { lane: "sub-1" })],
+      [
+        openTail("t1", "older", 1),
+        openTail("t1", "sealed-sub", 1, { lane: "sub-1" }),
+        openTail("t1", "only-held", 2, { lane: "sub-2" }),
+      ],
     );
-    answerRange({ entries: [textEntry("t1", 1)], open: [openTail("t1", "fresh", 4)] });
+    answerRange({
+      entries: [entry("t1", 1, "text", { text: "done" }, { id: "sealed-sub", lane: "sub-1" })],
+      open: [openTail("t1", "fresh", 4)],
+    });
 
     requestTurnRange("c1", "t1", 0);
     await vi.waitFor(() => expect(turnOf("c1", "t1").entries).toHaveLength(2));
-    expect([...turnOf("c1", "t1").openEntries.values()].map((o) => o.id)).toEqual(["fresh"]);
+    expect(
+      Object.fromEntries([...turnOf("c1", "t1").openEntries].map(([l, o]) => [l, o.id])),
+    ).toEqual({
+      "": "fresh",
+      "sub-2": "only-held",
+    });
+  });
+
+  it("leaves an entry the stream sealed while the read was out sealed, with no tail", async () => {
+    const s = seedSession("c1");
+    const held = seedTurn(s, "t1", [turnOpen("t1", 1)], [openTail("t1", "o1", 1)]);
+    let answerNow: (v: unknown) => void = () => undefined;
+    mockApiGetTyped.mockReturnValueOnce(
+      new Promise((r) => {
+        answerNow = r;
+      }),
+    );
+
+    requestTurnRange("c1", "t1", 0);
+    // The stream's seal of o1, as `sealEntry` leaves the held turn.
+    held.entries.push(entry("t1", 1, "text", { text: "so far!" }, { id: "o1" }));
+    held.openEntries.delete("");
+    answerNow({ entries: [], open_entries: [openTail("t1", "o1", 1)], subject: [] });
+
+    await vi.waitFor(() => expect(mockBumpMessages).toHaveBeenCalledWith("c1", "load"));
+    expect(seqsOf("c1", "t1")).toEqual([0, 1]);
+    expect(turnOf("c1", "t1").openEntries.size).toBe(0);
   });
 
   it("stops at a SECOND gap rather than folding an entry in at the wrong index", async () => {

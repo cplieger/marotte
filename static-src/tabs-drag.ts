@@ -2,7 +2,7 @@
 // behaviour or its constants, check the other app. Both judge a live drag's viewport
 // against the PRESS-time frame, so a move a hold lifted across still ends the drag.
 
-import { announce } from "@cplieger/ui/announce";
+import { announce } from "./legacy-ui/announce.js";
 
 import type { ViewportBox } from "./viewport-frame.js";
 import { onViewportChange, viewportBox, viewportMoved } from "./viewport-frame.js";
@@ -326,7 +326,9 @@ class TabDragController {
     }
     // Capture phase on `window`, so moves and releases the row never sees still reach the arm. No
     // `isPrimary` check: the pointerId decides, so a non-primary release cannot clear a primary arm.
-    window.addEventListener("pointermove", this.boundPendingMove, true);
+    // Passive, because WebKit lays the whole page out again when a blocking `pointermove` listener
+    // joins or leaves the window, which would delay every tab click's first paint.
+    window.addEventListener("pointermove", this.boundPendingMove, { capture: true, passive: true });
     window.addEventListener("pointerup", this.boundPendingRelease, true);
     window.addEventListener("pointercancel", this.boundPendingRelease, true);
     window.addEventListener("pointerdown", this.boundPendingPointerDown, true);
@@ -427,7 +429,7 @@ class TabDragController {
     // `window` in the CAPTURE phase for the pointer trio, because pointer capture
     // retargeting the release is exactly the thing that fails when a drag gets
     // stuck. `pointermove` there too, so a drag survives a capture that never took.
-    window.addEventListener("pointermove", this.boundDragMove);
+    window.addEventListener("pointermove", this.boundDragMove, { passive: true });
     window.addEventListener("pointerup", this.boundRelease, true);
     window.addEventListener("pointercancel", this.boundCancelled, true);
     window.addEventListener("pointerdown", this.boundAbandon, true);

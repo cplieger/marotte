@@ -85,9 +85,15 @@ import {
 import { _resetForTest as resetFreshness, observeStamp } from "./subject-versions.js";
 import type { ChatHeader, RunView, Session, ToolCall, ToolProgressPayload } from "./types.js";
 import type { Entry, EntryToolCall, EntryToolResult, TurnOutcome } from "./wire/types.gen.js";
-import { effect } from "@cplieger/ui";
+import { effect } from "@cplieger/reactive";
 import { IDLE_RUN } from "./run-order.js";
-import { compactionEntry, rowEntry, runAt, turnEntry } from "./__test-helpers__/run-order.js";
+import {
+  compactionEntry,
+  resumeEntry,
+  rowEntry,
+  runAt,
+  turnEntry,
+} from "./__test-helpers__/run-order.js";
 
 function makeSession(chatID: string): Session {
   return {
@@ -226,7 +232,7 @@ describe("parseContextSize reads a window size out of a model's own description"
     ["200k context", 200_000],
     ["1M context", 1_000_000],
     ["2M context", 2_000_000],
-    ["Claude with 200K context window", 200_000],
+    ["Model with 200K context window", 200_000],
     ["no numbers here", undefined],
     ["", undefined],
     ["200Kcontext", 200_000],
@@ -797,6 +803,15 @@ describe("isBusy: what Send and the mid-turn gates read", () => {
     expect(isBusy("a"), "a compaction alone is no turn").toBe(false);
   });
 
+  it("is true while marotte's resume is taken, before its turn opens", () => {
+    resetStore("a");
+    applyRun(
+      "a",
+      runAt(1, [resumeEntry("m-resume", "continue", { after: "starting" }, { state: "starting" })]),
+    );
+    expect(isBusy("a")).toBe(true);
+  });
+
   it("is false once the open turn closes", () => {
     resetStore("a");
     const turn = openTurnIn("a", "t1");
@@ -998,23 +1013,23 @@ describe("upsertHeader re-syncs an existing row", () => {
 
   it("leaves a locally-chosen model alone when the header omits it", () => {
     resetStore("a");
-    setModel("a", "opus");
+    setModel("a", "model-a");
     upsertHeader(headerFor("a"));
-    expect(get("a")?.model).toBe("opus");
+    expect(get("a")?.model).toBe("model-a");
   });
 
   it("does not read an empty model string as a clear either", () => {
     resetStore("a");
-    setModel("a", "opus");
+    setModel("a", "model-a");
     upsertHeader({ ...headerFor("a"), model: "" });
-    expect(get("a")?.model).toBe("opus");
+    expect(get("a")?.model).toBe("model-a");
   });
 
   it("overwrites the local model when the header names one", () => {
     resetStore("a");
-    setModel("a", "opus");
-    upsertHeader({ ...headerFor("a"), model: "sonnet" });
-    expect(get("a")?.model).toBe("sonnet");
+    setModel("a", "model-a");
+    upsertHeader({ ...headerFor("a"), model: "model-b" });
+    expect(get("a")?.model).toBe("model-b");
   });
 
   it("reads an ABSENT last_turn_outcome as a CLEAR, unlike model", () => {
@@ -1027,8 +1042,8 @@ describe("upsertHeader re-syncs an existing row", () => {
 
   it("takes pending_model in both directions, which is what clears the badge everywhere", () => {
     resetStore("a");
-    upsertHeader({ ...headerFor("a"), pending_model: "opus" });
-    expect(get("a")?.pending_model).toBe("opus");
+    upsertHeader({ ...headerFor("a"), pending_model: "model-a" });
+    expect(get("a")?.pending_model).toBe("model-a");
     upsertHeader(headerFor("a"));
     expect(get("a")?.pending_model).toBe("");
   });

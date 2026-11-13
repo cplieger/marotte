@@ -1,7 +1,7 @@
 // Expandable pills: click or keyboard to expand a pill into a detail card anchored to the pill's
 // position. One pill open at a time; click outside, click the pill, or press Escape to collapse.
 
-import { closePopupGroup, createPopup } from "@cplieger/ui/popup";
+import { closePopupGroup, createPopup } from "./legacy-ui/popup.js";
 
 import type { ViewportBox } from "./viewport-frame.js";
 import { onViewportChange, viewportBox, viewportMoved } from "./viewport-frame.js";

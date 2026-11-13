@@ -32,6 +32,7 @@ import {
   type SteerFrame,
 } from "./steer-rows.js";
 import { callIDOfToolResult } from "./entry-ids.js";
+import { deltaIsRedelivery, openIsRedelivery, sealIsRedelivery } from "./open-tails.js";
 import { interactionFact } from "./interaction.js";
 import { severityOf } from "./turn-severity.js";
 import {
@@ -42,7 +43,7 @@ import {
   touch,
   SignalMap,
   type Signal,
-} from "@cplieger/ui";
+} from "@cplieger/reactive";
 import { forgetView, viewStale } from "./view-freshness.js";
 import {
   bumpLane,
@@ -183,7 +184,13 @@ export function parseContextSize(description: string): number | undefined {
 /** Structure ops fire `sessions.ids`; per-session field writes fire `signalFor(id)`. Module-private:
  *  consumers go through the typed accessors below and the `activeSession` computed. */
 const sessions = createCollection<Session>((s) => s.id);
+// Two chat pointers, equal except in a chat switch's gap and while a non-chat tab shows after a
+// closed chat. ACTIVE is the chat the reader is on (a switch's gesture moves it); PAINTED is the
+// chat whose transcript is mounted (its activation moves it). Code acting for the reader (send,
+// cancel, steers, attachments, the composer) reads the active chat; code reading or writing the
+// transcript's DOM reads the painted chat. Mixing them sends to one chat while showing another.
 const activeId = signal("");
+const paintedId = signal("");
 /** Active session, tracking the active id AND the active session's signal, so subscribers
  *  re-render only when that session or which session is active changes. */
 export const activeSession = computed<Session | undefined>(() => {
@@ -204,6 +211,17 @@ export function watchActiveId(): string {
 }
 export function getActive(): Session | undefined {
   const id = activeId.peek();
+  return id === "" ? undefined : sessions.get(id);
+}
+export function getPaintedId(): string {
+  return paintedId.peek();
+}
+/** The painted chat id as a TRACKED read; `getPaintedId` is the untracked peek. */
+export function watchPaintedId(): string {
+  return paintedId.value;
+}
+export function getPainted(): Session | undefined {
+  const id = paintedId.peek();
   return id === "" ? undefined : sessions.get(id);
 }
 export function get(id: string): Session | undefined {
@@ -267,9 +285,16 @@ export function setActive(id: string): void {
   if (activeId.peek() === id) {
     return;
   }
-  // Re-derives `activeSession`, so the messages renderer repaints the new chat's #messages; without
-  // it the renderer keeps the previous chat's DOM.
   activeId.value = id;
+  stampActivity(id);
+}
+
+/** Move the painted chat; the messages renderer repaints `#messages` for it. */
+export function setPainted(id: string): void {
+  if (paintedId.peek() === id) {
+    return;
+  }
+  paintedId.value = id;
   stampActivity(id);
 }
 
@@ -308,14 +333,14 @@ export function registerEvictionExemption(fn: (chatID: string) => boolean): () =
   };
 }
 
-/** Five exemptions, each alone decisive: the active chat, a busy chat, a chat with an EXECUTING run,
- *  a parked view, and an open subagent tab projecting the chat. */
+/** Five exemptions, each alone decisive: the active or painted chat, a busy chat, a chat with an
+ *  EXECUTING run, a parked view, and an open subagent tab projecting the chat. */
 function evictable(s: Session, now: number): boolean {
   if (s.turn_order.length === 0) {
     return false; // nothing resident to reclaim
   }
-  if (s.id === activeId.peek()) {
-    return false; // the active chat is being read
+  if (s.id === activeId.peek() || s.id === paintedId.peek()) {
+    return false; // the reader's chat, or the mounted one
   }
   if (s.thinking) {
     return false; // busy: a live turn is streaming into this window
@@ -888,10 +913,11 @@ export function removeChat(id: string): void {
     return;
   }
   const wasActive = activeId.peek() === id;
+  const wasPainted = paintedId.peek() === id;
   const order = sessions.ids.peek();
-  // Both reactive writes below feed the `activeSession` computed. Batch them so subscribers
-  // re-derive ONCE; otherwise removing the active chat double-fires it and the messages renderer
-  // flashes a transient teardown of the new chat's DOM.
+  // The reactive writes below feed `activeSession` and the messages renderer's effect. Batch them
+  // so subscribers re-derive ONCE; otherwise removing the painted chat double-fires the renderer
+  // and it flashes a transient teardown of the new chat's DOM.
   batch(() => {
     sessions.remove(id);
     clearLiveTurnFacts(id);
@@ -908,6 +934,10 @@ export function removeChat(id: string): void {
     if (wasActive) {
       const remaining = order.filter((x) => x !== id);
       activeId.value = remaining[0] ?? "";
+    }
+    // No paint may target a removed row.
+    if (wasPainted) {
+      paintedId.value = activeId.peek();
     }
   });
 }
@@ -1147,7 +1177,7 @@ function holdsSteerEntry(s: Session, steerID: string): boolean {
 
 /** Store the open entry a lane is coalescing into, with the `n` it arrived with — the count of
  *  deltas already folded into `open.text`. One open entry per lane, so a second open in the same
- *  lane replaces the first. Mints the streaming signal, which is what a surface that is not the
+ *  lane replaces the first; one the turn already holds (`openIsRedelivery`) changes nothing. Mints the streaming signal, which is what a surface that is not the
  *  entry's own bubble follows. */
 export function openEntry(chatID: string, open: OpenEntry): void {
   const s = get(chatID);
@@ -1159,6 +1189,9 @@ export function openEntry(chatID: string, open: OpenEntry): void {
     markHole(chatID, open.turn);
     return;
   }
+  if (openIsRedelivery(state.entries, state.openEntries, open)) {
+    return;
+  }
   const lane = open.lane ?? "";
   stampActivity(chatID);
   state.openEntries.set(lane, { ...open, lane });
@@ -1168,8 +1201,8 @@ export function openEntry(chatID: string, open: OpenEntry): void {
 }
 
 /** Extend a lane's open entry by one delta. `n` is the running count AFTER the delta, so the
- *  only admissible value is `open.n + 1`; anything else, and any frame naming an entry this lane
- *  is not coalescing, is the same hole. */
+ *  only admissible value is `open.n + 1`; a delta the turn already holds (`deltaIsRedelivery`) is
+ *  dropped, and anything else is the same hole. */
 export function applyDelta(
   chatID: string,
   turn: string,
@@ -1188,6 +1221,9 @@ export function applyDelta(
     return;
   }
   const open = state.openEntries.get(lane);
+  if (deltaIsRedelivery(state.entries, open, entryID, n)) {
+    return;
+  }
   if (open?.id !== entryID || n !== open.n + 1) {
     markHole(chatID, turn, state.entries.length - 1);
     return;
@@ -1225,6 +1261,9 @@ export function sealEntry(
     return;
   }
   const open = state.openEntries.get(lane);
+  if (sealIsRedelivery(state.entries, entryID, seq)) {
+    return;
+  }
   if (open?.id !== entryID || n !== open.n) {
     markHole(chatID, turn, state.entries.length - 1);
     return;

@@ -140,6 +140,7 @@ async function paint(
     },
   ]);
   store.setActive(id);
+  store.setPainted(id);
   // A repaint of the active chat: `setSessions` alone bumps no transcript version.
   store.bumpMessages(id);
   await until(() => cards().length === expected, `${String(expected)} cards for ${id}`);

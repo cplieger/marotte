@@ -84,7 +84,7 @@ function subject(id: string, over: Partial<TabSubject> = {}): TabSubject {
 }
 
 function list(version: number, ...ids: string[]): TabList {
-  return { tabs: ids.map((id) => subject(id)), version };
+  return { tabs: ids.map((id) => subject(id)), recent: [], version };
 }
 
 /** Every path through it is either synchronous or a single awaited fetch, so one macrotask turn is
@@ -285,6 +285,36 @@ describe("a stale snapshot", () => {
   });
 });
 
+// --- The Recently closed list rides the same version ---
+
+describe("the recently closed list", () => {
+  const closed = { ref: "c-a", name: "Alpha", closed_at: 1_700_000_000_000 };
+
+  it("applies a frame carrying only the list, as the expiry runner sends it", async () => {
+    ingestTabsChanged({ changed: subject("a"), order: ["a"], version: 1 });
+    ingestTabsChanged({ recent: { items: [] }, version: 2 });
+    await settle();
+    expect(tabsVersion()).toBe(2);
+    expect(t.applied.map((a) => a.delta.recent)).toEqual([undefined, { items: [] }]);
+    expect(t.ids).toEqual(["a"]);
+  });
+
+  it("hands a close's list to the projection beside its removed ids", async () => {
+    ingestTabsChanged({ changed: subject("a"), order: ["a"], version: 1 });
+    ingestTabsChanged({ removed_ids: ["a"], recent: { items: [closed] }, version: 2 });
+    await settle();
+    expect(t.ids).toEqual([]);
+    expect(t.applied[1]?.delta.recent).toEqual({ items: [closed] });
+  });
+
+  it("adopts a snapshot that lists closed chats", async () => {
+    listing.answers.push({ tabs: [subject("b")], recent: [closed], version: 3 });
+    expect(await listTabs()).toBe(true);
+    expect(t.ids).toEqual(["b"]);
+    expect(tabsVersion()).toBe(3);
+  });
+});
+
 // --- Order is a permutation ---
 
 describe("order is a permutation, never a membership statement", () => {
@@ -409,7 +439,7 @@ describe("pending adopt: the transition table, both orders", () => {
     // The echo lost its correlation, but the watermark reaches the committed version, so the op is
     // absorbed; for a remove that releases the deferred teardown.
     const { onConfirm, rollback } = removeSpies();
-    beginRemove("op-close", { id: "a", capturedTabIDs: ["a"], onConfirm, rollback });
+    beginRemove("op-close", { id: "a", captured: [subject("a")], onConfirm, rollback });
     removeCommitted("op-close", ["a"], 2);
     expect(onConfirm).not.toHaveBeenCalled();
 
@@ -459,7 +489,7 @@ describe("pending remove: the transition table, both orders", () => {
     await settle();
     const { onConfirm, rollback } = removeSpies();
     markLocalOp("op-close");
-    beginRemove("op-close", { id: "a", capturedTabIDs: ["a"], onConfirm, rollback });
+    beginRemove("op-close", { id: "a", captured: [subject("a")], onConfirm, rollback });
 
     removeCommitted("op-close", ["a"], 2);
     // Committed but not yet framed: the teardown stays deferred.
@@ -479,7 +509,7 @@ describe("pending remove: the transition table, both orders", () => {
     await settle();
     const { onConfirm, rollback } = removeSpies();
     markLocalOp("op-close");
-    beginRemove("op-close", { id: "a", capturedTabIDs: ["a"], onConfirm, rollback });
+    beginRemove("op-close", { id: "a", captured: [subject("a")], onConfirm, rollback });
 
     ingestTabsChanged({ removed_ids: ["a"], order: [], version: 2, op_id: "op-close" });
     await settle();
@@ -493,7 +523,7 @@ describe("pending remove: the transition table, both orders", () => {
 
   it("confirms a close whose response the frame already covered (localVersion >= committedVersion)", async () => {
     const { onConfirm, rollback } = removeSpies();
-    beginRemove("op-close", { id: "a", capturedTabIDs: ["a"], onConfirm, rollback });
+    beginRemove("op-close", { id: "a", captured: [subject("a")], onConfirm, rollback });
     // The echo lost its correlation (swept, or claimed by a duplicate): the
     // frame still advances the watermark to the committed version, and the
     // response's immediate arm settles the op.
@@ -509,7 +539,7 @@ describe("pending remove: the transition table, both orders", () => {
     ingestTabsChanged({ changed: subject("a"), order: ["a"], version: 1 });
     await settle();
     const { onConfirm, rollback } = removeSpies();
-    beginRemove("op-close", { id: "a", capturedTabIDs: ["a"], onConfirm, rollback });
+    beginRemove("op-close", { id: "a", captured: [subject("a")], onConfirm, rollback });
     removeCommitted("op-close", [], 2);
     expect(onConfirm).toHaveBeenCalledTimes(1);
     expect(rollback).not.toHaveBeenCalled();
@@ -520,7 +550,7 @@ describe("pending remove: the transition table, both orders", () => {
 
   it("rolls back on a DEFINITIVE failure, exactly once", async () => {
     const { onConfirm, rollback } = removeSpies();
-    beginRemove("op-close", { id: "a", capturedTabIDs: ["a"], onConfirm, rollback });
+    beginRemove("op-close", { id: "a", captured: [subject("a")], onConfirm, rollback });
     opFailed("op-close");
     expect(rollback).toHaveBeenCalledTimes(1);
     expect(onConfirm).not.toHaveBeenCalled();
@@ -535,7 +565,7 @@ describe("pending remove: the transition table, both orders", () => {
     await settle();
     const { onConfirm, rollback } = removeSpies();
     markLocalOp("op-close");
-    beginRemove("op-close", { id: "a", capturedTabIDs: ["a"], onConfirm, rollback });
+    beginRemove("op-close", { id: "a", captured: [subject("a")], onConfirm, rollback });
     ingestTabsChanged({ removed_ids: ["a"], order: [], version: 2, op_id: "op-close" });
     await settle();
     expect(onConfirm).toHaveBeenCalledTimes(1);
@@ -565,7 +595,7 @@ describe("a remove that times out: the verifying state", () => {
 
   it("neither restores nor retires: the removal stays applied and the op verifies", async () => {
     const { onConfirm, rollback } = removeSpies();
-    beginRemove("op-close", { id: "a", capturedTabIDs: ["a"], onConfirm, rollback });
+    beginRemove("op-close", { id: "a", captured: [subject("a")], onConfirm, rollback });
     opTimedOut("op-close");
     expect(rollback).not.toHaveBeenCalled();
     expect(onConfirm).not.toHaveBeenCalled();
@@ -576,7 +606,7 @@ describe("a remove that times out: the verifying state", () => {
 
   it("re-lists once per backoff tick while the list keeps failing", async () => {
     const { onConfirm, rollback } = removeSpies();
-    beginRemove("op-close", { id: "a", capturedTabIDs: ["a"], onConfirm, rollback });
+    beginRemove("op-close", { id: "a", captured: [subject("a")], onConfirm, rollback });
     opTimedOut("op-close");
 
     // Every answer is null (unreachable). Each tick asks exactly once, and a
@@ -596,7 +626,7 @@ describe("a remove that times out: the verifying state", () => {
     ingestTabsChanged({ changed: subject("a"), order: ["a"], version: 1 });
     await flushMicrotasks();
     const { onConfirm, rollback } = removeSpies();
-    beginRemove("op-close", { id: "a", capturedTabIDs: ["a"], onConfirm, rollback });
+    beginRemove("op-close", { id: "a", captured: [subject("a")], onConfirm, rollback });
     opTimedOut("op-close");
 
     listing.answers.push(list(1, "a"));
@@ -616,7 +646,7 @@ describe("a remove that times out: the verifying state", () => {
     ingestTabsChanged({ changed: subject("a"), order: ["a"], version: 1 });
     await flushMicrotasks();
     const { onConfirm, rollback } = removeSpies();
-    beginRemove("op-close", { id: "a", capturedTabIDs: ["a"], onConfirm, rollback });
+    beginRemove("op-close", { id: "a", captured: [subject("a")], onConfirm, rollback });
     opTimedOut("op-close");
 
     listing.answers.push(list(2, "b"));
@@ -631,7 +661,7 @@ describe("a remove that times out: the verifying state", () => {
     await flushMicrotasks();
     const { onConfirm, rollback } = removeSpies();
     markLocalOp("op-close");
-    beginRemove("op-close", { id: "a", capturedTabIDs: ["a"], onConfirm, rollback });
+    beginRemove("op-close", { id: "a", captured: [subject("a")], onConfirm, rollback });
     opTimedOut("op-close");
 
     ingestTabsChanged({ removed_ids: ["a"], order: [], version: 2, op_id: "op-close" });
@@ -650,7 +680,7 @@ describe("a remove that times out: the verifying state", () => {
     ingestTabsChanged({ changed: subject("b"), order: ["a", "b"], version: 2 });
     await flushMicrotasks();
     const { onConfirm, rollback } = removeSpies();
-    beginRemove("op-close", { id: "a", capturedTabIDs: ["a"], onConfirm, rollback });
+    beginRemove("op-close", { id: "a", captured: [subject("a")], onConfirm, rollback });
     opTimedOut("op-close");
 
     listing.answers.push(list(1, "a"));
@@ -668,13 +698,13 @@ describe("a remove that times out: the verifying state", () => {
     const b = removeSpies();
     beginRemove("op-a", {
       id: "a",
-      capturedTabIDs: ["a"],
+      captured: [subject("a")],
       onConfirm: a.onConfirm,
       rollback: a.rollback,
     });
     beginRemove("op-b", {
       id: "b",
-      capturedTabIDs: ["b"],
+      captured: [subject("b")],
       onConfirm: b.onConfirm,
       rollback: b.rollback,
     });
@@ -701,7 +731,7 @@ describe("the overlay rules", () => {
     ingestTabsChanged({ changed: subject("a"), order: ["a"], version: 1 });
     await settle();
     const { onConfirm, rollback } = removeSpies();
-    beginRemove("op-close", { id: "a", capturedTabIDs: ["a"], onConfirm, rollback });
+    beginRemove("op-close", { id: "a", captured: [subject("a")], onConfirm, rollback });
 
     ingestTabsChanged({ changed: subject("a", { pinned: true }), order: ["a"], version: 2 });
     await settle();
@@ -718,7 +748,7 @@ describe("the overlay rules", () => {
     ingestTabsChanged({ changed: subject("a"), order: ["a"], version: 1 });
     await settle();
     const { onConfirm, rollback } = removeSpies();
-    beginRemove("op-close", { id: "a", capturedTabIDs: ["a"], onConfirm, rollback });
+    beginRemove("op-close", { id: "a", captured: [subject("a")], onConfirm, rollback });
 
     ingestTabsChanged({
       changed: { ...subject("fresh"), ref: "c-a" },
@@ -737,7 +767,7 @@ describe("the overlay rules", () => {
     ingestTabsChanged({ changed: subject("a"), order: ["a"], version: 1 });
     await settle();
     const { onConfirm, rollback } = removeSpies();
-    beginRemove("op-close", { id: "a", capturedTabIDs: ["a"], onConfirm, rollback });
+    beginRemove("op-close", { id: "a", captured: [subject("a")], onConfirm, rollback });
     beginAdopt("op-reopen");
     adoptCommitted("op-reopen", subject("a"), 3, true);
 
@@ -752,7 +782,12 @@ describe("the overlay rules", () => {
     ingestTabsChanged({ changed: subject("a"), order: ["a"], version: 1 });
     await settle();
     const { onConfirm, rollback } = removeSpies();
-    beginRemove("op-close", { id: "a", capturedTabIDs: ["a", "child"], onConfirm, rollback });
+    beginRemove("op-close", {
+      id: "a",
+      captured: [subject("a"), subject("child")],
+      onConfirm,
+      rollback,
+    });
 
     listing.answers.push(list(1, "a", "child", "b"));
     await listTabs();
@@ -766,7 +801,7 @@ describe("the overlay rules", () => {
     ingestTabsChanged({ changed: subject("a"), order: ["a"], version: 1 });
     await settle();
     const { onConfirm, rollback } = removeSpies();
-    beginRemove("op-close", { id: "a", capturedTabIDs: ["a"], onConfirm, rollback });
+    beginRemove("op-close", { id: "a", captured: [subject("a")], onConfirm, rollback });
     removeCommitted("op-close", ["a"], 2);
 
     listing.answers.push(list(2, "b"));
@@ -785,13 +820,13 @@ describe("the removes-settled notification", () => {
     const b = removeSpies();
     beginRemove("op-a", {
       id: "a",
-      capturedTabIDs: ["a"],
+      captured: [subject("a")],
       onConfirm: a.onConfirm,
       rollback: a.rollback,
     });
     beginRemove("op-b", {
       id: "b",
-      capturedTabIDs: ["b"],
+      captured: [subject("b")],
       onConfirm: b.onConfirm,
       rollback: b.rollback,
     });

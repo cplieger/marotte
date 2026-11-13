@@ -395,9 +395,9 @@ func (p *EntryProjection) ingestToolCall(raw json.RawMessage) {
 	if isInternalTool(tc.Meta.Kiro.ToolID) {
 		return
 	}
-	// KAS announces a call live only once it runs or awaits approval, and records its state at that
-	// moment: one replayed already settled (subagent_response) reached the live chat as a bare
-	// update, which the live fold drops, so its update finds no call here either.
+	// KAS announces a call live only once it runs or awaits approval, and replays the state it recorded
+	// at that moment: one replayed already settled reached the live chat as a bare update, which the
+	// live fold drops, so its update finds no call here either.
 	if tc.Status.Terminal() {
 		return
 	}

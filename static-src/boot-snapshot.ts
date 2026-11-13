@@ -3,7 +3,7 @@
 // advances no tab-set version, and `boot.ts` paints it only until its own chat read
 // answers.
 
-import { effect } from "@cplieger/ui";
+import { effect } from "@cplieger/reactive";
 
 import {
   derivedHasMore,

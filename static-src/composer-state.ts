@@ -4,7 +4,7 @@
 // (`seedComposerState`), except for a chat this device is not typing in (`adoptRemoteComposerState`).
 
 import { $ } from "./dom.js";
-import { writeComposerSilently } from "./composer-value.js";
+import { restoreComposerDraft, writeComposerSilently } from "./composer-value.js";
 import { get } from "./store.js";
 import { setDraft } from "./actions/chat.js";
 import { debouncedDispatch, registerCleanup, type DebouncedDispatch } from "./actions/index.js";
@@ -13,6 +13,8 @@ import {
   restoreAttachments,
   dropAttachments,
   seedAttachments,
+  addAttachmentTo,
+  takeAttachments,
   adoptRemoteAttachments,
   flushAttachments,
   _resetAttachmentsForTest,
@@ -26,6 +28,9 @@ const drafts = new Map<string, string>();
 
 /** The chat the textarea belongs to; "" between a save and its restore, so `noteComposerText` no-ops on "". */
 let liveChatID = "";
+
+/** The chat the last save parked, so a restore of it is known to put its own draft back. */
+let parkedChatID = "";
 
 let debouncedSave: DebouncedDispatch<{ chatID: string; text: string }> | null = null;
 
@@ -100,27 +105,65 @@ export function flushComposerDraft(): void {
 export function saveComposerState(): void {
   flushComposerDraft();
   stashAttachments();
+  parkedChatID = liveChatID;
   liveChatID = "";
 }
 
 /** Put `chatID`'s composer contents on screen; a chat with no draft gets an empty box, never the previous one's. */
 export function restoreComposerState(chatID: string): void {
+  const own = chatID === parkedChatID;
   liveChatID = chatID;
-  writeComposerSilently(drafts.get(chatID) ?? "");
+  const text = drafts.get(chatID) ?? "";
+  if (own) {
+    restoreComposerDraft(text);
+  } else {
+    writeComposerSilently(text);
+  }
   restoreAttachments(chatID);
 }
 
 /**
  * Point the composer at `chatID`, parking what it held first: save-and-restore as one call for sites that move the
- * active chat without `activateChatView` (`createSession`, `openTangentChat`, `removeChat`). Without it a keystroke
- * in that window is filed under the chat the user just left. Idempotent, so it can run ahead of the activation. Text
- * typed with no chat open (it lives only in the box) becomes `chatID`'s draft unless that chat already has one.
+ * active chat without `selectChat` (`createSession`, `openTangentChat`, `removeChat`). Without it a keystroke
+ * in that window is filed under the chat the user just left. Idempotent, so it can run ahead of the activation. What
+ * the box held with no chat open goes to `chatID` (`adoptUnownedComposer`), or stays in the box when `chatID` is "".
  */
 export function retargetComposer(chatID: string): void {
-  const unowned = liveChatID === "" ? $.promptInput.value : "";
+  if (chatID === "" && liveChatID === "") {
+    return;
+  }
+  adoptUnownedComposer(chatID);
   saveComposerState();
   restoreComposerState(chatID);
-  restoreFailedSend(chatID, unowned);
+}
+
+/**
+ * Hand what the composer holds while no chat owns it (text and files staged with no chat open) to `chatID`, keeping
+ * what that chat holds: its draft, a blank line, then the text; its files, then these. Persisted like a keystroke and
+ * taken out of the box, so a second chat cannot adopt it; the restore that shows `chatID` puts it on screen. A no-op
+ * while a chat owns the box.
+ */
+export function adoptUnownedComposer(chatID: string): void {
+  if (chatID === "" || liveChatID !== "") {
+    return;
+  }
+  const files = takeAttachments();
+  if (files.length > 0) {
+    // The stored list first: adding to a chat not yet seeded would persist over it.
+    seedAttachments(chatID, get(chatID)?.attachments ?? []);
+    for (const f of files) {
+      addAttachmentTo(chatID, f.path);
+    }
+  }
+  const text = $.promptInput.value;
+  if (text === "") {
+    return;
+  }
+  const held = drafts.get(chatID) ?? get(chatID)?.draft ?? "";
+  const kept = held === "" ? text : `${held}\n\n${text}`;
+  drafts.set(chatID, kept);
+  debouncedSave?.({ chatID, text: kept });
+  writeComposerSilently("");
 }
 
 /**
@@ -217,5 +260,6 @@ export function _resetComposerStateForTest(): void {
   debouncedSave = null;
   drafts.clear();
   liveChatID = "";
+  parkedChatID = "";
   _resetAttachmentsForTest();
 }

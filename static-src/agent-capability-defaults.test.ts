@@ -16,10 +16,12 @@ function shippedSwitch(id: string): HTMLInputElement {
 describe("Agent capabilities switches before settings load", () => {
   it.each([
     ["flag-knowledge", true],
-    ["flag-model-fallback", false],
+    ["flag-model-fallback", true],
     ["flag-spec-ask-first", false],
     ["flag-steering-reminders", false],
     ["flag-workflows", true],
+    ["flag-chat-messaging", false],
+    ["flag-chat-awareness", false],
   ] as const)("paints #%s at its default (%s)", (id, on) => {
     expect(shippedSwitch(id).checked).toBe(on);
   });
@@ -31,6 +33,9 @@ describe("Agent capabilities switches before settings load", () => {
     ["work-validation", ""],
     ["auto-routing", ""],
     ["auto-delegation", ""],
+    ["cloudformation-safety", ""],
+    ["workflow-creator-effort", ""],
+    ["knowledge-index-type", ""],
   ] as const)("paints #%s at its default (%j)", (id, value) => {
     const doc = new DOMParser().parseFromString(indexHtml, "text/html");
     const select = doc.getElementById(id);
@@ -39,6 +44,19 @@ describe("Agent capabilities switches before settings load", () => {
     }
     expect(select.value).toBe(value);
     expect(select.querySelectorAll("option[selected]")).toHaveLength(1);
+  });
+
+  // kiro-cli 3.2.0's vocabularies: workflowsCreatorEffort's gce list, the infraSafety enum
+  // (off, monitor, enforce) behind settings.ValidCloudFormationChoice's "", on, off and enforce, and
+  // knowledgeIndexType's best and fast (its "accurate" normalizes to best).
+  it.each([
+    ["workflow-creator-effort", ["", "low", "medium", "high", "xhigh", "max"]],
+    ["cloudformation-safety", ["", "on", "enforce", "off"]],
+    ["knowledge-index-type", ["", "best", "fast"]],
+  ] as const)("#%s offers exactly the values the server accepts", (id, values) => {
+    const doc = new DOMParser().parseFromString(indexHtml, "text/html");
+    const options = doc.querySelectorAll<HTMLOptionElement>(`select[id="${id}"] option`);
+    expect([...options].map((o) => o.value)).toEqual(values);
   });
 
   it("#flag-workflows hint names what each position does to delegation", () => {

@@ -73,7 +73,7 @@ func TestParse_FoldedScalarDescription(t *testing.T) {
 // TestParse_BlockScalarDoesNotSwallowFollowingKeys pins that a folded value ends at the next
 // unindented key.
 func TestParse_BlockScalarDoesNotSwallowFollowingKeys(t *testing.T) {
-	in := "---\ndescription: >\n  A folded value.\ninclusion: manual\nmodel: claude-opus-5\nname: thing\n---\n"
+	in := "---\ndescription: >\n  A folded value.\ninclusion: manual\nmodel: model-a-5\nname: thing\n---\n"
 	fm := Parse([]byte(in))
 	if fm.Description != "A folded value." {
 		t.Errorf("Description = %q", fm.Description)
@@ -81,8 +81,8 @@ func TestParse_BlockScalarDoesNotSwallowFollowingKeys(t *testing.T) {
 	if fm.Inclusion != "manual" {
 		t.Errorf("Inclusion = %q, want manual (the key after a block scalar must survive)", fm.Inclusion)
 	}
-	if fm.Model != "claude-opus-5" {
-		t.Errorf("Model = %q, want claude-opus-5", fm.Model)
+	if fm.Model != "model-a-5" {
+		t.Errorf("Model = %q, want model-a-5", fm.Model)
 	}
 	if fm.Name != "thing" {
 		t.Errorf("Name = %q, want thing", fm.Name)
@@ -92,7 +92,7 @@ func TestParse_BlockScalarDoesNotSwallowFollowingKeys(t *testing.T) {
 func TestParse_Fields(t *testing.T) {
 	in := "---\nname: my-agent\ndescription: \"A quoted description: with a colon\"\n" +
 		"inclusion: fileMatch\nfileMatchPattern: \"internal/**/*.go\"\n" +
-		"model: claude-opus-5\nsteering_override: true\n---\n"
+		"model: model-a-5\nsteering_override: true\n---\n"
 	fm := Parse([]byte(in))
 	if fm.Name != "my-agent" {
 		t.Errorf("Name = %q", fm.Name)
@@ -107,7 +107,7 @@ func TestParse_Fields(t *testing.T) {
 	if fm.FileMatch != "internal/**/*.go" {
 		t.Errorf("FileMatch = %q", fm.FileMatch)
 	}
-	if fm.Model != "claude-opus-5" {
+	if fm.Model != "model-a-5" {
 		t.Errorf("Model = %q", fm.Model)
 	}
 	if !fm.SteeringOverride {

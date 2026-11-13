@@ -34,13 +34,14 @@ export interface ExecNode {
    *  differently, so `startGen` orders starts. */
   start?: string;
   end?: string;
+  /** On a container whose source left work out of `children` (a glance's earlier passes): that
+   *  work's window, which `windowBounds` folds in. */
+  earlier?: WindowBounds;
   /** Orders this node's current start against the run's others: larger is later, and one start
    *  keeps its value however its time is re-read. Absent before it starts. */
   startGen?: number;
   /** The one-line summary under the label, pre-joined by the adapter. */
   subtitle?: string;
-  /** The newest line the node printed, for a one-line glance; absent where the source has none. */
-  tail?: string;
   /** The identity facts, for the detail pane. */
   facts?: ExecFact[];
   /** Why this node ended badly, never blank: the source's reason trimmed, or its outcome's default sentence. */
@@ -48,12 +49,17 @@ export interface ExecNode {
   /** What an engine end did to the step's newest turn: "Interrupted, resumed", or "Interrupted: <reason>" while
    *  nothing has resumed it. Never a failure. */
   interruption?: string;
+  /** On a step still in flight whose turn has sent nothing for an hour: the source's sentence saying so. */
+  silence?: string;
   /** Set on a step that finished because a person or its parent ended it, not its own turn: it reads succeeded. */
   endedByHand?: true;
   /** What the node produced, as markdown. */
   output?: string;
-  /** The card's result text: the capture verbatim, or a decoded watch's last output line (its
-   *  subtitle says how it ended). */
+  /** Set when the node produced an output the source did not carry: the page asks its consumer for
+   *  it (`ExecPageOpts.output`). */
+  deferredOutput?: true;
+  /** The card's result text: the capture verbatim or its summary, or a decoded watch's last output
+   *  line (its subtitle says how it ended). */
   capture?: string;
   /** Named artifacts the node published. */
   artifacts?: Record<string, string>;
@@ -122,6 +128,9 @@ export interface ExecRun {
   focus?: string;
   /** Whether anything is still moving, so the page knows to run its clock. */
   live: boolean;
+  /** Whether the source left earlier passes out of `nodes` (a glance): the panes that list every
+   *  step wait for a whole run instead of drawing a part of it. */
+  partial?: boolean;
 }
 
 /** Every node, depth-first, in plan order. */
@@ -402,13 +411,6 @@ function progressOf(run: ProgressSource, withSteps: boolean): ProgressPhrase {
 /** The repeat glyph's text stand-in, for a surface that compares or prints the phrase as text. */
 const REPEAT_MARK = "\u21bb";
 
-/** The phrase as one compact string, "↻15/50 › 2/4 · 1/4"; "" for a plan with no work. */
-export function compactText(p: ProgressPhrase): string {
-  const loop =
-    p.pass === "" ? "" : `${REPEAT_MARK}${p.pass}${p.inner === "" ? "" : ` \u203a ${p.inner}`}`;
-  return [loop, p.steps].filter((s) => s !== "").join(" \u00b7 ");
-}
-
 /** Where the run stands, as every run surface words it, in parts: the outermost loop's pass and an
  *  inner loop past its first pass when the whole run stands in them, then the step count
  *  (`counters` decides between the in-flight position and how many are done). */
@@ -491,10 +493,31 @@ interface ExecWindow {
 }
 
 export function window(nodes: readonly ExecNode[], live: boolean): ExecWindow | undefined {
+  const bounds = windowBounds(nodes, live);
+  return bounds === undefined ? undefined : windowAt(bounds, Date.now());
+}
+
+/** The part of a window that only a new model moves, so a clock reads the window at any instant
+ *  from it without walking the nodes again. */
+export interface WindowBounds {
+  readonly from: number;
+  /** The latest end a settled node or an unparsable end gave. */
+  readonly closedTo: number;
+  /** Whether the window runs to now: a live run, or a started node with no end. */
+  readonly open: boolean;
+}
+
+export function windowBounds(nodes: readonly ExecNode[], live: boolean): WindowBounds | undefined {
   let from = Number.POSITIVE_INFINITY;
-  let to = 0;
-  for (const n of workNodes(nodes)) {
-    if (n.start === undefined) {
+  let closedTo = 0;
+  let open = live;
+  for (const n of flatten(nodes)) {
+    if (n.earlier !== undefined) {
+      from = Math.min(from, n.earlier.from);
+      closedTo = Math.max(closedTo, n.earlier.closedTo);
+      open ||= n.earlier.open;
+    }
+    if (!isWork(n) || n.start === undefined) {
       continue;
     }
     const s = Date.parse(n.start);
@@ -502,15 +525,18 @@ export function window(nodes: readonly ExecNode[], live: boolean): ExecWindow | 
       continue;
     }
     from = Math.min(from, s);
-    const e = n.end === undefined ? Date.now() : Date.parse(n.end);
-    to = Math.max(to, Number.isNaN(e) ? s : e);
+    if (n.end === undefined) {
+      open = true;
+      continue;
+    }
+    const e = Date.parse(n.end);
+    closedTo = Math.max(closedTo, Number.isNaN(e) ? s : e);
   }
-  if (!Number.isFinite(from)) {
-    return undefined;
-  }
-  if (live) {
-    to = Math.max(to, Date.now());
-  }
+  return Number.isFinite(from) ? { from, closedTo, open } : undefined;
+}
+
+export function windowAt(bounds: WindowBounds, now: number): ExecWindow {
+  const to = bounds.open ? Math.max(bounds.closedTo, now) : bounds.closedTo;
   // A 1ms floor so a one-tick run still divides and its bars have a width.
-  return { from, to, span: Math.max(1, to - from) };
+  return { from: bounds.from, to, span: Math.max(1, to - bounds.from) };
 }

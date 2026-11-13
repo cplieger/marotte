@@ -7,8 +7,8 @@ import { checkRuntimeHealth, runtimeStatusLine } from "./runtime-health.js";
 import { contextStroke, tokensUsed, wedgeDash } from "./context-ring.js";
 import type { CompactionPoint } from "./context-ring.js";
 import { versionsSignal } from "./versions.js";
-import { el, effect, touch } from "@cplieger/ui";
-import { announce } from "@cplieger/ui/announce";
+import { el, effect, touch } from "@cplieger/reactive";
+import { announce } from "./legacy-ui/announce.js";
 import type { MeteringItem, ConnectionStatus } from "./types.js";
 
 /** Options for updateContextBar — named fields prevent argument-order bugs. */

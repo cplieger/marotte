@@ -47,7 +47,7 @@ func wantWindowHeld(t *testing.T, h *Runtime, br *fakeBridge, id string) {
 	}
 }
 
-// A model reasoning past the window sends nothing: GPT-class steps stream no thinking frames.
+// A model reasoning past the window sends nothing: some models stream no thinking frames.
 func TestCancelExpired_AStepReasoningSilentlyPastTheWindowIsNotStopped(t *testing.T) {
 	const id = "wf_1"
 	h, br := stepFixture(t, id)

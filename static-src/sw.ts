@@ -143,6 +143,7 @@ sw.addEventListener("fetch", ((event: FetchEvent) => {
 /** The push is marotte.NotificationPayload as internal/notice wrote it: shown as sent, with at
  *  most ONE subject field (`chat_id`, or a kind-prefixed `subject`); the page owns routes. */
 interface PushData {
+  id?: string;
   title?: string;
   body?: string;
   kind?: string;
@@ -188,6 +189,7 @@ sw.addEventListener("push", ((event: PushEvent) => {
   } catch {
     data = { title: "Marotte", body: event.data.text() };
   }
+  const id = data.id ?? "";
   const title = data.title ?? "Marotte";
   const body = data.body ?? "";
   const kind = data.kind ?? "";
@@ -196,22 +198,21 @@ sw.addEventListener("push", ((event: PushEvent) => {
 
   event.waitUntil(
     (async () => {
-      // A focused page delivers it as its own `notification` frame (only the page knows which tab
-      // is on screen): the one sanctioned exception to userVisibleOnly (Chrome would substitute a
-      // generic notice).
-      const clients = await windowClients();
-      if (clients.some((c) => c.focused)) {
-        for (const c of clients) {
-          c.postMessage({
-            type: "push",
-            reason: "arrived",
-            chatId: chatID,
-            subject,
-            kind,
-            title,
-            body,
-          } satisfies Required<PushPageMessage>);
-        }
+      // The focused page shows it (only that page knows which tab is on screen): the one sanctioned
+      // exception to userVisibleOnly (Chrome would substitute a generic notice). Posting to every
+      // window would let each one decide alone.
+      const focused = (await windowClients()).find((c) => c.focused);
+      if (focused !== undefined) {
+        focused.postMessage({
+          type: "push",
+          reason: "arrived",
+          id,
+          chatId: chatID,
+          subject,
+          kind,
+          title,
+          body,
+        } satisfies Required<PushPageMessage>);
         return;
       }
       try {
@@ -259,6 +260,7 @@ sw.addEventListener("notificationclick", ((event: NotificationEvent) => {
           target.postMessage({
             type: "push",
             reason: "clicked",
+            id: "",
             chatId: chatID,
             subject,
             kind: "",
@@ -294,6 +296,7 @@ sw.addEventListener("pushsubscriptionchange", ((event: PushSubscriptionChangeEve
           c.postMessage({
             type: "push",
             reason: "subscription_changed",
+            id: "",
             chatId: "",
             subject: "",
             kind: "",

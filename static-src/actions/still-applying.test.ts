@@ -16,7 +16,7 @@ vi.mock("../run-store.js", async (importOriginal) => ({
   invalidateRun: vi.fn(),
 }));
 
-import { configure, configureApi } from "@cplieger/ui/actions";
+import { configure, configureApi } from "@cplieger/reactive/actions";
 import { setHookEnabled } from "./hooks.js";
 import { deleteMemory, updateMemory } from "./memory.js";
 import {

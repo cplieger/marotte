@@ -416,7 +416,7 @@ func TestStepEnd_AStepKASCompletedWithNoSignalAfterAnEmptyAnswerReadsFailed(t *t
 		session = "step-session-1"
 		stand   = "(No assistant response was recorded for the preceding turn. This placeholder was inserted automatically to preserve message alternation.)"
 	)
-	path := []string{id, "review-grok"}
+	path := []string{id, "review-b"}
 	nodePath := workflow.PathKey(path)
 	for _, tc := range []struct {
 		desc, before, after, signal string
@@ -438,7 +438,7 @@ func TestStepEnd_AStepKASCompletedWithNoSignalAfterAnEmptyAnswerReadsFailed(t *t
 		{desc: "a success signal", after: "", signal: "success"},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
-			g := newWakeRig(t, id, inspectWithStep(t, id, "review-grok", "completed", tc.signal))
+			g := newWakeRig(t, id, inspectWithStep(t, id, "review-b", "completed", tc.signal))
 			h := g.h
 			step := &translate.RunStep{RunID: id, NodePath: nodePath, SessionID: session}
 			h.runs.RunNodeStart(t.Context(), step, "")
@@ -609,7 +609,7 @@ func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *tes
 		id      = "wf_aabb60d3e105b178"
 		session = "step-session-1"
 	)
-	path := []string{id, "review-grok"}
+	path := []string{id, "review-b"}
 	for _, tc := range []struct {
 		desc, status, signal string
 		drive                func(s *stepEnding)
@@ -766,7 +766,7 @@ func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *tes
 		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
-			g := newWakeRig(t, id, inspectWithStep(t, id, "review-grok", tc.status, tc.signal))
+			g := newWakeRig(t, id, inspectWithStep(t, id, "review-b", tc.status, tc.signal))
 			h := g.h
 			nodePath := workflow.PathKey(path)
 			h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: id, NodePath: nodePath, SessionID: session}, "")

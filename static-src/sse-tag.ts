@@ -51,6 +51,20 @@ export async function adoptSubscriptionTag(
   return tag;
 }
 
+/** The tag another page of this profile just persisted, null when `event` is not that write or the
+ *  store holds no well-formed tag. The store is read rather than `event.newValue`, so two pages
+ *  writing at once both end on the value that stayed. */
+export function tagWrittenElsewhere(event: StorageEvent): string | null {
+  try {
+    if (event.storageArea !== localStorage || event.key !== PROFILE_TAG_KEY) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  return readTag();
+}
+
 function readTag(): string | null {
   let held: string | null = null;
   try {

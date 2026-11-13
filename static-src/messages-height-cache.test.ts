@@ -26,7 +26,7 @@ vi.mock("./api-client.js", async () => ({
 }));
 
 const { mountChatView, disposeChatView } = await import("./messages.js");
-const { setSessions, setActive, bumpMessages } = await import("./store.js");
+const { setSessions, setActive, setPainted, bumpMessages } = await import("./store.js");
 const { recordRowHeight, spacerHeight } = await import("./block-heights.js");
 const { projectTurns } = await import("./turns.js");
 const { resetFoldState } = await import("./fold-state.js");
@@ -71,6 +71,7 @@ function activate(): void {
     { ...makeSession({ id: CHAT, name: CHAT }), turns, turn_order: [TURN], turn_count: 1 },
   ]);
   setActive(CHAT);
+  setPainted(CHAT);
   bumpMessages(CHAT, "load");
 }
 
@@ -98,6 +99,7 @@ beforeEach(() => {
   resetFoldState();
   setSessions([]);
   setActive("");
+  setPainted("");
 });
 
 describe("the measurement cache over a view's life", () => {

@@ -4,8 +4,8 @@
 // the rendered region follows it. Each scroller ends the file with a tail one viewport less one
 // line tall, so a jump can put the last line at the top.
 
-import { el } from "@cplieger/ui";
-import { RUN_CLASSES, type HighlightRuns } from "./highlight.js";
+import { el } from "@cplieger/reactive";
+import { TOKEN_KINDS, type Runs } from "@cplieger/ui/highlight";
 import type { LineLocation, WholeRows } from "./viewer-rows.js";
 
 /** The tallest spacer drawn, under the lowest engine height cap (16,777,216 px). */
@@ -18,7 +18,7 @@ const PROBE_PX = 100;
 
 interface ViewerContent {
   readonly rows: WholeRows;
-  readonly runs: HighlightRuns | null;
+  readonly runs: Runs | null;
   readonly agentLines: ReadonlySet<number>;
 }
 
@@ -56,7 +56,7 @@ export class TextViewer {
     private readonly root: HTMLElement,
   ) {
     this.spacer = el("div", { className: "viewer-spacer" });
-    this.host = el("div", { className: "viewer-rows" });
+    this.host = el("div", { className: "viewer-rows cp-syntax" });
     root.replaceChildren(this.spacer, this.host);
     scroller.addEventListener(
       "scroll",
@@ -512,14 +512,14 @@ export class TextViewer {
   }
 }
 
-/** Fill a row's text span from the runs overlapping `[start, end)`: text nodes and classed
- *  spans, never parsed markup. */
+/** Fill a row's text span from the runs overlapping `[start, end)`: text nodes and
+ *  `span[data-token]`, never parsed markup. */
 function appendRowText(
   host: HTMLElement,
   text: string,
   start: number,
   end: number,
-  runs: HighlightRuns | null,
+  runs: Runs | null,
 ): void {
   if (runs === null || runs.starts.length === 0) {
     host.textContent = text.slice(start, end);
@@ -546,8 +546,10 @@ function appendRowText(
     if (s > at) {
       host.append(text.slice(at, s));
     }
-    const cls = RUN_CLASSES[runs.kinds[k] ?? 0] ?? "keyword";
-    host.append(el("span", { className: `hl-${cls}` }, text.slice(s, e)));
+    const kind = TOKEN_KINDS[runs.kinds[k] ?? 0];
+    host.append(
+      kind === undefined ? text.slice(s, e) : el("span", { "data-token": kind }, text.slice(s, e)),
+    );
     at = e;
   }
   if (at < end) {

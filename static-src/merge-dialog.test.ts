@@ -26,7 +26,7 @@ vi.mock("./actions/git-prs.js", () => ({
 }));
 // The dialog follows the held rows through a signal, so the double holds them in one.
 vi.mock("./forge-store.js", async () => {
-  const { signal } = await import("@cplieger/ui");
+  const { signal } = await import("@cplieger/reactive");
   const { staticStore } = await import("./__test-helpers__/forge-rows.js");
   const held = signal<ForgesListResponse | null>(null);
   mocks.setHeld = (v: unknown) => {
@@ -62,8 +62,8 @@ function mountDialog(): void {
   endFadeAtOnce(document.getElementById("pr-merge-dialog") as HTMLDialogElement);
 }
 
-/** Most cases mount no stylesheet, so nothing animates the close and it would wait out the
- *  library's settle ceiling: end the fade as it starts, as the shipped transition's end would. */
+/** Most cases mount no stylesheet, so nothing animates the close and it would wait out
+ *  legacy-ui's settle ceiling: end the fade as it starts, as the shipped transition's end would. */
 function endFadeAtOnce(dlg: HTMLDialogElement): void {
   new MutationObserver(() => {
     if (dlg.classList.contains("is-leaving")) {

@@ -3,7 +3,7 @@
 
 import { vi } from "vitest";
 import { join } from "@cplieger/keyenc";
-import { batch, computed, signal } from "@cplieger/ui";
+import { batch, computed, signal } from "@cplieger/reactive";
 import type * as ModPRs from "../git-prs-tab.js";
 import type * as ModActions from "../actions/git-prs.js";
 import type { ConfiguredForge, InventoryEntry } from "../wire/types.gen.js";

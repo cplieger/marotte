@@ -130,7 +130,7 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 	if l.SlotAt.Sub(wantSlot).Abs() > time.Minute {
 		t.Errorf("SlotAt = %v, want the schedule's own next slot %v", l.SlotAt, wantSlot)
 	}
-	// The slot bounds it, floored to minRunBudget; BackstopAt is zero on a first arm.
+	// The slot bounds it, floored to minRunBudget.
 	want := runlease.NextDeadline(before, runlease.Bounds{
 		SlotAt: l.SlotAt, Idle: runIdleWindow, Floor: minRunBudget,
 	})

@@ -84,7 +84,7 @@ export function makeSession(over: SessionOverrides = {}): Session {
   return {
     id: "c-1",
     name: "Chat",
-    model: "claude-sonnet-5",
+    model: "model-b-5",
     acp_session_id: "s-1",
     current_mode_id: "vibe",
     usage,

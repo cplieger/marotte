@@ -256,6 +256,7 @@ async function park(top: number): Promise<void> {
 async function mount(s: Session): Promise<void> {
   store.setSessions([s]);
   store.setActive(s.id);
+  store.setPainted(s.id);
   const want = s.turn_order.length;
   await until(
     () => messages.activeTranscriptView() !== null && cards().length === want,
@@ -297,6 +298,7 @@ beforeEach(() => {
   messages.teardownAll();
   rail.resetTurnRail();
   store.setActive("");
+  store.setPainted("");
   store.setSessions([]);
   served.turns = [];
   apiGetMock.mockImplementation((path: string) =>
@@ -371,6 +373,7 @@ describe(
       const seen = vi.fn();
       const off = scroll.onReaderGesture(seen);
       store.setActive(second);
+      store.setPainted(second);
       await until(() => cards().length === 3, "the switched-to chat's cards to mount");
       // An opened chat still lands at the live edge through the streaming auto-scroll, not this mount.
       await until(atLiveEdge, "the opened chat to land at the live edge");

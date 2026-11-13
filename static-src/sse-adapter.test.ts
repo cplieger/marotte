@@ -10,12 +10,15 @@ import {
   adoptPushSubscription,
   init,
   markHydrated,
+  onPresentedTag,
   presentedTag,
+  setPageScope,
   _resetForTest,
   _revalidateForTest,
   _spawnWorkerForTest,
   _tabRevalidateForTest,
 } from "./sse-adapter.js";
+import { scopeReady, setRunContentScope } from "./run-content-scope.js";
 import { PROFILE_TAG_KEY } from "./sse-tag.js";
 import { createSSEHost } from "./sse-worker-host.js";
 import { setSessions } from "./store.js";
@@ -41,11 +44,10 @@ const {
   mockLoadMessages,
   mockRequestTurnRange,
   mockListTabs,
-  mockRebuildLiveRuns,
+  mockRefetchLiveRuns,
   mockRereadHeldRuns,
   mockRunTurnHeldSeq,
   mockRequestRunTurnRange,
-  mockPeekRunState,
   mockFetchCatalog,
   mockInventoryHeld,
   mockRefreshPRs,
@@ -56,11 +58,10 @@ const {
   ),
   mockRequestTurnRange: vi.fn((_chatID: string, _turnID: string) => undefined),
   mockListTabs: vi.fn((_signal?: AbortSignal) => Promise.resolve(true)),
-  mockRebuildLiveRuns: vi.fn((_signal?: AbortSignal) => Promise.resolve()),
+  mockRefetchLiveRuns: vi.fn((_signal?: AbortSignal) => Promise.resolve()),
   mockRereadHeldRuns: vi.fn(),
   mockRunTurnHeldSeq: vi.fn((_id: string, _turn: string): number | undefined => undefined),
   mockRequestRunTurnRange: vi.fn((_id: string, _turn: string, _after?: number) => undefined),
-  mockPeekRunState: vi.fn((_id: string): unknown => undefined),
   mockFetchCatalog: vi.fn((_opts?: { signal?: AbortSignal }) => Promise.resolve()),
   mockInventoryHeld: vi.fn(() => false),
   mockRefreshPRs: vi.fn((_signal?: AbortSignal) => Promise.resolve()),
@@ -72,9 +73,8 @@ vi.mock("./store-load.js", () => ({
 }));
 vi.mock("./tabs-sync.js", () => ({ listTabs: mockListTabs }));
 vi.mock("./run-store.js", () => ({
-  rebuildLiveRuns: mockRebuildLiveRuns,
+  refetchLiveRuns: mockRefetchLiveRuns,
   rereadHeldRuns: mockRereadHeldRuns,
-  peekRunState: mockPeekRunState,
   runTurnHeldSeq: mockRunTurnHeldSeq,
 }));
 vi.mock("./run-turn-range.js", () => ({ requestRunTurnRange: mockRequestRunTurnRange }));
@@ -204,14 +204,14 @@ beforeEach(() => {
   mockLoadMessages.mockResolvedValue(true);
   mockRequestTurnRange.mockReturnValue(undefined);
   mockListTabs.mockResolvedValue(true);
-  mockRebuildLiveRuns.mockResolvedValue(undefined);
+  mockRefetchLiveRuns.mockResolvedValue(undefined);
   mockRequestRunTurnRange.mockReturnValue(undefined);
   mockRunTurnHeldSeq.mockReturnValue(undefined);
-  // No run held unless a case says so, which is what makes a `run_turn` stamp unheld.
-  mockPeekRunState.mockReturnValue(undefined);
   mockFetchCatalog.mockResolvedValue(undefined);
   mockInventoryHeld.mockReturnValue(false);
   mockRefreshPRs.mockClear();
+  // The hub's answer to a rescope, at the epoch every scripted hello presents.
+  scripted.respond("/api/events/scope", () => json({ epoch: EPOCH_A, offset: "3" }));
 });
 
 afterEach(() => {
@@ -342,6 +342,62 @@ describe("the connect", () => {
     await connect();
     await until(() => versionMap().epoch() === EPOCH_A, "the version map to adopt epoch A");
     expect(versionMap().snapshot().held).toEqual([]);
+  });
+});
+
+// Another page of the profile wrote the persisted tag: this page presents what the store now holds.
+describe("following the profile's persisted tag", () => {
+  const HELD = "held-tag_0123456789AB";
+  const MOVED = "moved-tag_0123456789AB";
+
+  function storageEvent(over: Partial<StorageEventInit>): void {
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: PROFILE_TAG_KEY,
+        storageArea: localStorage,
+        newValue: localStorage.getItem(PROFILE_TAG_KEY),
+        ...over,
+      }),
+    );
+  }
+
+  it("presents the stored tag once, reconnects with it and tells the listeners", async () => {
+    localStorage.setItem(PROFILE_TAG_KEY, HELD);
+    await connect();
+    const heard: string[] = [];
+    const off = onPresentedTag((tag) => heard.push(tag));
+    // The event carries one page's write, the store already holds a later one: the store wins.
+    localStorage.setItem(PROFILE_TAG_KEY, MOVED);
+    storageEvent({ newValue: "stale-tag_0123456789AB" });
+    await until(() => scripted.connections.length === 2, "the reconnect under the moved tag");
+    expect(presentedTag()).toBe(MOVED);
+    expect(scripted.connections[1]?.headers.get("SSE-Client")).toBe(MOVED);
+    expect(heard).toEqual([MOVED]);
+
+    storageEvent({});
+    await new Promise((r) => setTimeout(r, 0));
+    expect(heard).toEqual([MOVED]);
+    expect(scripted.connections).toHaveLength(2);
+    off();
+  });
+
+  it("keeps its tag on a malformed value, a cleared store, another key or sessionStorage", async () => {
+    localStorage.setItem(PROFILE_TAG_KEY, HELD);
+    await connect();
+    const heard: string[] = [];
+    const off = onPresentedTag((tag) => heard.push(tag));
+    localStorage.setItem(PROFILE_TAG_KEY, "not a tag!");
+    storageEvent({});
+    localStorage.removeItem(PROFILE_TAG_KEY);
+    storageEvent({ key: null, newValue: null });
+    localStorage.setItem(PROFILE_TAG_KEY, MOVED);
+    storageEvent({ key: "some.other.key" });
+    storageEvent({ storageArea: sessionStorage });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(presentedTag()).toBe(HELD);
+    expect(heard).toEqual([]);
+    expect(scripted.connections).toHaveLength(1);
+    off();
   });
 });
 
@@ -527,7 +583,10 @@ describe("frames", () => {
   it("holds frames until markHydrated and releases them in arrival order", async () => {
     scripted.respond("/api/events/alive", () => new Response(null, { status: 204 }));
     const conn = await connect();
-    conn?.frame({ type: "connected", payload: { busy_stated: false, live_runs_stated: false } });
+    conn?.frame({
+      type: "connected",
+      payload: { busy_stated: false, live_runs_stated: false, live_runs_version: "0" },
+    });
     // `options` is required by the wire's own decoder, which runs here.
     conn?.frame({
       type: "permission_needed",
@@ -592,20 +651,28 @@ describe("a run's step turn is a subject of its own", () => {
     };
   }
 
-  it("observes the stamp while the run store holds that run", async () => {
-    mockPeekRunState.mockReturnValue({ id: "wf-1" });
+  beforeEach(() => {
+    setRunContentScope("wf-1", "");
+  });
+  afterEach(() => {
+    setRunContentScope("", "");
+  });
+
+  it("observes the stamp while the run's log holds that turn", async () => {
+    mockRunTurnHeldSeq.mockReturnValue(1);
     const conn = await connect();
     markHydrated();
     conn?.frame(runFrame("t-1", "5"));
     await until(() => seen.length === 1, "the frame to be delivered");
     expect(hasSubject("run_turn", "wf-1/t-1")).toBe(true);
-    // The WORKFLOW half is what the residency question is asked about, not the whole ref.
-    expect(mockPeekRunState).toHaveBeenCalledWith("wf-1");
+    // The ref splits into the run and the turn the residency question is asked about.
+    expect(mockRunTurnHeldSeq).toHaveBeenCalledWith("wf-1", "t-1");
   });
 
-  it("observes nothing for a run this client is not holding", async () => {
+  it("observes nothing for a turn this client is not holding", async () => {
     // Same rule as an evicted chat's window: the frame was applied to nothing, so recording its
-    // version would make the digest name a projection nobody holds.
+    // version would make the digest name a projection nobody holds. A scoped run's sibling step
+    // moves only its dock line, holding no turn.
     const conn = await connect();
     markHydrated();
     conn?.frame(runFrame("t-1", "5"));
@@ -662,6 +729,211 @@ describe("a run's step turn is a subject of its own", () => {
     expect(hasSubject("run_turn", "wf-1/t-1")).toBe(false);
     expect(mockRequestRunTurnRange).toHaveBeenCalledWith("wf-1", "t-1", 2);
     expect(mockLoadMessages).not.toHaveBeenCalled();
+  });
+});
+
+describe("a run's content reaches only the page that draws it", () => {
+  afterEach(() => {
+    setRunContentScope("", "");
+  });
+
+  it("delivers a run's step content while this page's scope names the run", async () => {
+    setRunContentScope("wf-1", "");
+    const conn = await connect();
+    markHydrated();
+
+    conn?.frame({
+      type: "entry_delta",
+      chat_id: "",
+      payload: { workflow_id: "wf-1", turn: "t-1", entry_id: "e1", lane: "", n: 1, delta: "x" },
+    });
+    await until(() => seen.length === 1, "the content frame");
+
+    expect(seen.map((e) => e.type)).toEqual(["entry_delta"]);
+  });
+
+  it("drops a run's step content while no view of this page shows the run, and keeps its lifecycle", async () => {
+    const conn = await connect();
+    markHydrated();
+
+    conn?.frame({
+      type: "entry_delta",
+      chat_id: "",
+      payload: { workflow_id: "wf-1", turn: "t-1", entry_id: "e1", lane: "", n: 1, delta: "x" },
+    });
+    conn?.frame({
+      type: "run_progress",
+      chat_id: "",
+      payload: { workflow_id: "wf-1", kind: "node_start", node_id: "build" },
+    });
+    await until(() => seen.some((e) => e.type === "run_progress"), "the lifecycle frame");
+
+    expect(seen.map((e) => e.type)).toEqual(["run_progress"]);
+  });
+});
+
+describe("the page's scope on the stream", () => {
+  const RUN = "wf-1";
+
+  afterEach(() => {
+    setRunContentScope("", "");
+  });
+
+  function scopePosts(): { conn: string; seq: number; topics: string[] | null }[] {
+    return scripted.requests
+      .filter((r) => r.url === "/api/events/scope")
+      .map(
+        (r) => JSON.parse(r.body ?? "{}") as { conn: string; seq: number; topics: string[] | null },
+      );
+  }
+
+  /** What a readiness promise has settled to after a few tasks: "pending" when it has not. */
+  async function settledAs<T>(p: Promise<T>): Promise<T | "pending"> {
+    let out: T | "pending" = "pending";
+    void p.then((v) => {
+      out = v;
+    });
+    for (let i = 0; i < 5; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    return out;
+  }
+
+  it("connects drawing broadcasts only", async () => {
+    const conn = await connect();
+    expect(conn?.headers.get("SSE-Topics")).toBe("[]");
+  });
+
+  it("asks the hub for the shown run's topic on this connection, and the run reads once the hub delivers it", async () => {
+    const conn = await connect();
+    markHydrated();
+    setRunContentScope(RUN, "");
+    expect(await scopeReady(RUN)).toBe(true);
+    expect(scopePosts()).toEqual([
+      { conn: "conn-00000000000000000", seq: 1, topics: [`run:${RUN}`] },
+    ]);
+    expect(conn?.headers.get("SSE-Topics")).toBe("[]");
+  });
+
+  it.each([
+    { run: "", why: "no run" },
+    { run: "wf/1", why: "an id no run carries" },
+  ])("draws broadcasts only for $why, which the connection already does", async ({ run }) => {
+    await connect();
+    expect(await setPageScope(run)).toBe("covered");
+    expect(scopePosts()).toEqual([]);
+  });
+
+  it("draws everything for an id too long for a topic", async () => {
+    await connect();
+    const long = "w".repeat(125);
+    expect(await setPageScope(long)).toBe("covered");
+    expect(scopePosts().map((p) => p.topics)).toEqual([null]);
+  });
+
+  it("answers owed before the stream exists", async () => {
+    expect(await setPageScope(RUN)).toBe("owed");
+  });
+
+  it("an ask the link lost is asked again at the next open, and the run reads after that", async () => {
+    // The first connection's hub never answers, so the ask is still out when the tab detaches.
+    scripted.respond("/api/events/scope", () => new Promise<Response>(() => undefined));
+    await connect();
+    setRunContentScope(RUN, "");
+    await until(() => scopePosts().length === 1, "the first ask");
+    const ready = scopeReady(RUN);
+
+    scripted.respond("/api/events/scope", () => json({ epoch: EPOCH_A, offset: "3" }));
+    init(
+      (evt) => {
+        seen.push(evt);
+      },
+      () => undefined,
+    );
+    await until(() => scripted.connections.length === 2, "the new seat's connection");
+    expect(await settledAs(ready)).toBe("pending");
+    scripted.connections[1]?.hello();
+
+    expect(await ready).toBe(true);
+    expect(scopePosts().at(-1)).toEqual({
+      conn: "conn-00000000000000001",
+      seq: 1,
+      topics: [`run:${RUN}`],
+    });
+  });
+
+  it("a refused scope draws everything once: the run reads, and nothing asks for a scope again", async () => {
+    const warns = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    scripted.respond("/api/events/scope", () =>
+      json({ error: "bad topic", code: "sse_scope" }, 400),
+    );
+    await connect();
+    markHydrated();
+    setRunContentScope(RUN, "");
+    const ready = scopeReady(RUN);
+    await until(() => scripted.connections.length === 2, "the reconnect on everything");
+    expect(scripted.connections[1]?.headers.get("SSE-Topics")).toBeNull();
+    scripted.connections[1]?.hello();
+
+    expect(await ready).toBe(true);
+    setRunContentScope("", "");
+    setRunContentScope("wf-2", "");
+    expect(await scopeReady("wf-2")).toBe(true);
+    expect(scopePosts()).toHaveLength(1);
+    expect(warns.mock.calls.some((c) => String(c[1]).includes("scope_refused"))).toBe(true);
+  });
+
+  it("an older host that delivers everything covers the run at once", async () => {
+    _spawnWorkerForTest(() => {
+      const channel = new MessageChannel();
+      channel.port2.onmessage = (event: MessageEvent) => {
+        const m = event.data as { type?: unknown };
+        if (m.type === "attach") {
+          // No `scope: true`: a host that takes no set_scope.
+          channel.port2.postMessage({
+            type: "state",
+            state: { kind: "open", generation: 1, cursor: null, visible: true, online: true },
+          });
+        }
+      };
+      return { port: channel.port1, addEventListener: () => undefined };
+    });
+    init(
+      (evt) => {
+        seen.push(evt);
+      },
+      () => undefined,
+    );
+    expect(await setPageScope(RUN)).toBe("covered");
+  });
+
+  it("a run's undecodable frame is not re-read while the run is not shown here", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const conn = await connect();
+    markHydrated();
+    const broken = (run: string) => ({
+      type: "entry_appended",
+      chat_id: "",
+      payload: { workflow_id: run, entry: { id: "e1", turn: "t-1" } },
+    });
+    conn?.frame(broken("wf-2"));
+    setRunContentScope(RUN, "");
+    conn?.frame(broken(RUN));
+    await until(() => mockRequestRunTurnRange.mock.calls.length === 1, "the scoped run's re-read");
+    expect(mockRequestRunTurnRange.mock.calls).toEqual([[RUN, "t-1"]]);
+  });
+
+  it("delivers a chat call's delta that names the run it launched, the run not shown here", async () => {
+    const conn = await connect();
+    markHydrated();
+    conn?.frame({
+      type: "tool_progress",
+      chat_id: "c1",
+      payload: { turn: "t1", tool_call_id: "call-1", workflow_id: "wf-launched" },
+    });
+    await until(() => seen.length === 1, "the chat's delta");
+    expect(seen[0]?.type).toBe("tool_progress");
   });
 });
 
@@ -749,7 +1021,7 @@ describe("revalidate", () => {
 
     expect(mockLoadList).toHaveBeenCalledWith(controller.signal);
     expect(mockListTabs).toHaveBeenCalledWith(controller.signal);
-    expect(mockRebuildLiveRuns).toHaveBeenCalledWith(controller.signal);
+    expect(mockRefetchLiveRuns).toHaveBeenCalledWith(controller.signal);
     expect(mockFetchCatalog).toHaveBeenCalledWith({ signal: controller.signal });
   });
 
@@ -1264,7 +1536,7 @@ describe("every revalidation re-reads the held runs once", () => {
     expect(mockRereadHeldRuns).toHaveBeenCalledTimes(1);
   });
 
-  it("a verdict naming the runs subject rebuilds the inventory and re-reads nothing more", async () => {
+  it("a verdict naming the runs subject reads the inventory and re-reads nothing more", async () => {
     observeStamp({ kind: "chats", ref: "", version: "1" });
     observeStamp({ kind: "runs", ref: "", version: "1" });
     scripted.respond(
@@ -1279,8 +1551,8 @@ describe("every revalidation re-reads the held runs once", () => {
     await _revalidateForTest(ctx({ signal: controller.signal }));
 
     expect(mockRereadHeldRuns).toHaveBeenCalledTimes(1);
-    expect(mockRebuildLiveRuns).toHaveBeenCalledTimes(1);
-    expect(mockRebuildLiveRuns.mock.calls[0]).toEqual([controller.signal]);
+    expect(mockRefetchLiveRuns).toHaveBeenCalledTimes(1);
+    expect(mockRefetchLiveRuns.mock.calls[0]).toEqual([controller.signal]);
   });
 
   it("a refused runs frame on the stream re-reads the held runs", async () => {
@@ -1288,16 +1560,82 @@ describe("every revalidation re-reads the held runs once", () => {
     observeStamp({ kind: "chat", ref: "X", version: "3" });
     const conn = await connectSettled();
     mockRereadHeldRuns.mockClear();
-    mockRebuildLiveRuns.mockClear();
+    mockRefetchLiveRuns.mockClear();
 
     conn?.frame({
       type: "subject_changed",
       chat_id: "",
       subject: { kind: "runs", ref: "", version: "2" },
     });
-    await until(() => mockRebuildLiveRuns.mock.calls.length === 1, "the inventory rebuild");
+    await until(() => mockRefetchLiveRuns.mock.calls.length === 1, "the inventory read");
 
     expect(mockRereadHeldRuns).toHaveBeenCalledTimes(1);
-    expect(mockRebuildLiveRuns).toHaveBeenCalledTimes(1);
+    expect(mockRefetchLiveRuns).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the MCP status subject re-reads the status inventory", () => {
+  // The server's `mcp_status` counter, increasing across the cases: the status mirror is module state that outlives
+  // a case, while each case starts with an empty version map.
+  let counter = 0;
+  function nextVersion(): string {
+    counter++;
+    return String(counter);
+  }
+
+  function statusReads(): ScriptedFetch["requests"] {
+    return scripted.requests.filter((r) => r.url === "/api/mcp/status");
+  }
+
+  function statusAnswer(version: string): Response {
+    return json({
+      servers: [],
+      subject: { kind: "mcp_status", ref: "", version, epoch: EPOCH_A },
+    });
+  }
+
+  function heldStatusVersion(): string | undefined {
+    return versionMap()
+      .snapshot()
+      .held.find((h) => h.kind === "mcp_status")?.version;
+  }
+
+  it("a verdict naming mcp_status reads the status and holds its version once applied", async () => {
+    observeStamp({ kind: "mcp_status", ref: "", version: nextVersion() });
+    const moved = nextVersion();
+    scripted.respond("/api/sync", digestAnswer([{ kind: "mcp_status", ref: "", version: moved }]));
+    scripted.respond("/api/mcp/status", () => statusAnswer(moved));
+
+    await _revalidateForTest(ctx());
+
+    expect(statusReads()).toHaveLength(1);
+    expect(heldStatusVersion()).toBe(moved);
+  });
+
+  it("a refused mcp_status frame reads the status, and the held version moves only with the read", async () => {
+    const held = nextVersion();
+    const moved = nextVersion();
+    observeStamp({ kind: "mcp_status", ref: "", version: held });
+    const conn = await connectSettled();
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    scripted.respond("/api/mcp/status", async () => {
+      await gate;
+      return statusAnswer(moved);
+    });
+
+    conn?.frame({
+      type: "subject_changed",
+      chat_id: "",
+      subject: { kind: "mcp_status", ref: "", version: moved },
+    });
+    await until(() => statusReads().length === 1, "the status read");
+    expect(heldStatusVersion(), "the frame's own stamp is not observed").toBe(held);
+
+    release();
+    await until(() => heldStatusVersion() === moved, "the read's stamp to be observed");
+    expect(statusReads()).toHaveLength(1);
   });
 });

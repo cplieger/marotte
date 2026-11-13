@@ -746,6 +746,12 @@
   white-space: nowrap;
 }
 
+/* Takes the toolbar row's free space and wraps inside it, so the New button stays on the same row. */
+.docs-new-hint {
+  flex: 1 1 0;
+  min-inline-size: 0;
+}
+
 .docs-new-popover {
   inline-size: min(24rem, 100vw - 2rem);
   max-block-size: 80dvh;

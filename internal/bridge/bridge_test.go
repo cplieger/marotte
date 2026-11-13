@@ -61,15 +61,15 @@ func TestIsDeprecatedOrLegacy(t *testing.T) {
 		want bool
 	}{
 		{desc: "", want: false},
-		{desc: "Claude 3.5 Sonnet", want: false},
-		{desc: "Claude 3.5 Sonnet [Internal]", want: false},
-		{desc: "Claude 3.5 Sonnet [Preview]", want: false},
-		{desc: "Claude 3.5 Sonnet [Deprecated]", want: true},
-		{desc: "Claude 3.5 Sonnet [DEPRECATED]", want: true},
-		{desc: "Claude 3.5 Sonnet [Legacy]", want: true},
-		{desc: "Claude 3.5 Sonnet [LEGACY]", want: true},
+		{desc: "Model B 3.5", want: false},
+		{desc: "Model B 3.5 [Internal]", want: false},
+		{desc: "Model B 3.5 [Preview]", want: false},
+		{desc: "Model B 3.5 [Deprecated]", want: true},
+		{desc: "Model B 3.5 [DEPRECATED]", want: true},
+		{desc: "Model B 3.5 [Legacy]", want: true},
+		{desc: "Model B 3.5 [LEGACY]", want: true},
 		// "deprecated" in prose must not trigger the filter.
-		{desc: "Successor to the deprecated Claude 2 family", want: false},
+		{desc: "Successor to the deprecated Model 2 family", want: false},
 		{desc: "Old model, deprecated 2024-10-01", want: false},
 		{desc: "Model for legacyapi users", want: false},
 	}
@@ -89,7 +89,7 @@ func TestValidIdent(t *testing.T) {
 		{in: "kiro_default", want: true},
 		{in: "kiro-planner", want: true},
 		{in: "my.custom.agent", want: true},
-		{in: "Claude3_5", want: true},
+		{in: "Model3_5", want: true},
 		{in: "a", want: true},
 		{in: "kiro..planner", want: true}, // interior dots are still fine
 		{in: strings.Repeat("a", 128), want: true},
@@ -125,9 +125,9 @@ func TestApplySessionResult_CopiesModesAndModels(t *testing.T) {
 			{"id": "mode-a", "name": "Alpha", "description": "first"},
 			{"id": "mode-b", "name": "Beta", "description": "second"}
 		]},
-		"configOptions": [{"id": "model", "currentValue": "claude-sonnet", "options": [
-			{"value": "claude-sonnet", "name": "Sonnet", "description": "general", "_meta": {"kiro": {"rateMultiplier": 1.0}}},
-			{"value": "old-opus", "name": "Opus", "description": "[Deprecated] old", "_meta": {"kiro": {"rateMultiplier": 3.0}}},
+		"configOptions": [{"id": "model", "currentValue": "model-b", "options": [
+			{"value": "model-b", "name": "Model B", "description": "general", "_meta": {"kiro": {"rateMultiplier": 1.0}}},
+			{"value": "old-model-a", "name": "Model A", "description": "[Deprecated] old", "_meta": {"kiro": {"rateMultiplier": 3.0}}},
 			{"value": "preview", "name": "Preview", "description": "[Internal] experimental", "_meta": {"kiro": {"rateMultiplier": 1.5}}},
 			{"value": "legacy", "name": "Legacy", "description": "[Legacy] v1", "_meta": {"kiro": {"rateMultiplier": 1.0}}}
 		]}]
@@ -145,8 +145,8 @@ func TestApplySessionResult_CopiesModesAndModels(t *testing.T) {
 	if got := b.Modes(); len(got) != 2 {
 		t.Errorf("modes len = %d, want 2", len(got))
 	}
-	if got := b.ModelID(); got != "claude-sonnet" {
-		t.Errorf("modelID = %q, want claude-sonnet", got)
+	if got := b.ModelID(); got != "model-b" {
+		t.Errorf("modelID = %q, want model-b", got)
 	}
 	models := b.Models()
 	if len(models) != 2 {
@@ -156,10 +156,10 @@ func TestApplySessionResult_CopiesModesAndModels(t *testing.T) {
 	for _, m := range models {
 		seen[m.ID] = true
 	}
-	if !seen["claude-sonnet"] || !seen["preview"] {
-		t.Errorf("models = %v, want claude-sonnet + preview", models)
+	if !seen["model-b"] || !seen["preview"] {
+		t.Errorf("models = %v, want model-b + preview", models)
 	}
-	if seen["old-opus"] || seen["legacy"] {
+	if seen["old-model-a"] || seen["legacy"] {
 		t.Errorf("filtered-out models leaked through: %v", models)
 	}
 }
@@ -1564,10 +1564,10 @@ func TestNotify_MarshalErrorReturnsErrNoWrite(t *testing.T) {
 func TestNewSession_SendsTheModelAndEffortInSessionMeta(t *testing.T) {
 	b := NewEngine("/nonexistent", "/work")
 	sent, _, err := runNewSession(t, b,
-		&marotte.SessionOpts{Model: "claude-opus-5", Effort: "max"},
+		&marotte.SessionOpts{Model: "model-a-5", Effort: "max"},
 		&marotte.RPCResponse{Result: json.RawMessage(
 			`{"sessionId":"acp-session-xyz","configOptions":[` +
-				`{"id":"model","currentValue":"claude-opus-5","options":[{"value":"claude-opus-5","name":"O5","_meta":{"kiro":{"rateMultiplier":1}}}]},` +
+				`{"id":"model","currentValue":"model-a-5","options":[{"value":"model-a-5","name":"O5","_meta":{"kiro":{"rateMultiplier":1}}}]},` +
 				`{"id":"effortLevel","currentValue":"max","options":[{"value":"max","name":"max"}]}]}`,
 		)})
 	if err != nil {
@@ -1575,7 +1575,7 @@ func TestNewSession_SendsTheModelAndEffortInSessionMeta(t *testing.T) {
 	}
 
 	first, _, _ := bytes.Cut(sent, []byte("\n"))
-	for _, want := range []string{`"modelId":"claude-opus-5"`, `"effortLevel":"max"`} {
+	for _, want := range []string{`"modelId":"model-a-5"`, `"effortLevel":"max"`} {
 		if !bytes.Contains(first, []byte(want)) {
 			t.Errorf("session/new params carry no %s; the frame was:\n%s", want, first)
 		}
@@ -1620,7 +1620,7 @@ func TestNewSession_OmitsAMalformedLevelFromTheDoor(t *testing.T) {
 	}
 }
 
-// A well-formed tier marotte does not name still reaches the door: gpt-luna ships "none", and the catalog is
+// A well-formed tier marotte does not name still reaches the door: one model ships "none", and the catalog is
 // upstream's.
 func TestNewSession_SendsAWellFormedUnknownLevel(t *testing.T) {
 	b := NewEngine("/nonexistent", "/work")
@@ -1913,7 +1913,7 @@ func TestSetModel_ClearsTheCachedEffortLevel(t *testing.T) {
 	s.mu.Unlock()
 
 	sent, err := driveSessionCall(t, b, &marotte.RPCResponse{Result: json.RawMessage(`{}`)}, false,
-		func(ctx context.Context) error { return s.SetModel(ctx, "claude-sonnet-5") })
+		func(ctx context.Context) error { return s.SetModel(ctx, "model-b-5") })
 	if err != nil {
 		t.Fatalf("SetModel returned error: %v", err)
 	}
@@ -2237,6 +2237,26 @@ func TestSessionDoorWorkflowsFollowsTheSetting(t *testing.T) {
 			if !ok || got["enabled"] != on {
 				t.Errorf("%s with Workflows=%v sent workflows=%v, want {\"enabled\":%v}",
 					method, on, settings["workflows"], on)
+			}
+		}
+	}
+}
+
+// TestSessionDoorMessagingFollowsTheSetting pins the Messages between chats setting on both verbs as KAS's
+// settings.sessionTools.messaging {"enabled": bool}; off is sent as false, which on load clears a persisted on.
+func TestSessionDoorMessagingFollowsTheSetting(t *testing.T) {
+	for _, method := range []string{"session/new", "session/load"} {
+		for _, on := range []bool{false, true} {
+			opts := &marotte.SessionOpts{Model: "m", Features: marotte.SessionFeatures{Messaging: on}}
+			if method == "session/load" {
+				opts.SessionID = "sess_resume_door"
+			}
+			settings := metaKiroSettings(t, captureRequest(t, method, opts))
+			tools, _ := settings["sessionTools"].(map[string]any)
+			got, ok := tools["messaging"].(map[string]any)
+			if !ok || got["enabled"] != on || len(got) != 1 {
+				t.Errorf("%s with Messaging=%v sent sessionTools=%v, want {\"messaging\":{\"enabled\":%v}}",
+					method, on, settings["sessionTools"], on)
 			}
 		}
 	}
@@ -2703,8 +2723,8 @@ var initGateCases = []struct {
 	{"knowledge on", marotte.EngineFeatures{}, false, true, false},
 	// Proves Start copies EngineOpts.Features.
 	{"agent capabilities on", marotte.EngineFeatures{
-		SteeringReminders:  true,
-		InfraSafetyMonitor: "on", TerminalCommandTimeoutMs: 300000,
+		SteeringReminders: true,
+		InfraSafety:       "on", TerminalCommandTimeoutMs: 300000,
 	}, false, false, false},
 	{"telemetry off", marotte.EngineFeatures{}, false, false, true},
 	{"every gate on", marotte.EngineFeatures{}, true, true, false},

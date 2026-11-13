@@ -171,7 +171,7 @@ func TestRunLog_ARecordedRefusalOutranksTheNodeCompleteStatus(t *testing.T) {
 	refused := &marotte.RefusalInfo{
 		Category:         "policy",
 		Explanation:      "I will not continue with this request.",
-		RecommendedModel: "claude-sonnet-5",
+		RecommendedModel: "model-b-5",
 	}
 	cases := []struct {
 		desc    string
@@ -453,14 +453,15 @@ func startOf(e *marotte.Entry, ended bool) marotte.RunStepStart {
 	return marotte.RunStepStart{StartedAt: time.UnixMilli(e.Ts).UTC().Format(time.RFC3339Nano), Ended: ended}
 }
 
-// assertStarts checks the registry's answer against want.
+// assertStarts checks the registry's attempt (its start and whether it ended) against want.
 func assertStarts(t *testing.T, r *runLog, path string, want marotte.RunStepStart) {
 	t.Helper()
 	got, err := r.stepStarts(t.Context(), "wf1")
 	if err != nil {
 		t.Fatalf("StepStarts: %v", err)
 	}
-	if got[path] != want || len(got) != 1 {
+	row := got[path]
+	if row.StartedAt != want.StartedAt || row.Ended != want.Ended || len(got) != 1 {
 		t.Errorf("StepStarts = %+v, want only %s = %+v", got, path, want)
 	}
 }
@@ -956,17 +957,17 @@ func TestLastWords_TakesTheTrailingProseRunAcrossAnAppliedFallback(t *testing.T)
 		return entryRow{kind: marotte.EntryKindText, payload: marotte.EntryText{Text: s}}
 	}
 	applied := entryRow{kind: marotte.EntryKindModelFallback, payload: marotte.EntryModelFallback{
-		From: "opus-5", To: "sonnet-5", Scope: marotte.ModelFallbackScopeSession, Trigger: "refusal",
+		From: "model-a-5", To: "model-b-5", Scope: marotte.ModelFallbackScopeSession, Trigger: "refusal",
 	}}
 	declined := entryRow{kind: marotte.EntryKindModelFallback, payload: marotte.EntryModelFallback{
-		From: "opus-5", Trigger: "availability", Reason: "noServedTarget",
+		From: "model-a-5", Trigger: "availability", Reason: "noServedTarget",
 	}}
-	targetless := entryRow{kind: marotte.EntryKindModelFallback, payload: marotte.EntryModelFallback{From: "opus-5", Trigger: "refusal"}}
+	targetless := entryRow{kind: marotte.EntryKindModelFallback, payload: marotte.EntryModelFallback{From: "model-a-5", Trigger: "refusal"}}
 	declinedTarget := entryRow{kind: marotte.EntryKindModelFallback, payload: marotte.EntryModelFallback{
-		From: "opus-5", To: "sonnet-5", Trigger: "refusal", Reason: "noServedTarget",
+		From: "model-a-5", To: "model-b-5", Trigger: "refusal", Reason: "noServedTarget",
 	}}
 	subagent := entryRow{kind: marotte.EntryKindModelFallback, payload: marotte.EntryModelFallback{
-		From: "opus-5", Trigger: "availability", Reason: "noServedTarget", Subagent: true,
+		From: "model-a-5", Trigger: "availability", Reason: "noServedTarget", Subagent: true,
 	}}
 	call := entryRow{kind: marotte.EntryKindToolCall, payload: marotte.EntryToolCall{ID: "c1", Title: "Read", Kind: marotte.ToolKindRead}}
 	result := entryRow{kind: marotte.EntryKindToolResult, payload: marotte.EntryToolResult{Status: marotte.ToolCompleted}}

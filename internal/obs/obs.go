@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/measure"
+	"github.com/cplieger/marotte/internal/version"
 )
 
 var registry = measure.NewRegistry("marotte")
@@ -50,8 +51,6 @@ const (
 	RunNeedsApproval = "needs_approval"
 	// RunOverran is a scheduled run still going when its next slot came due.
 	RunOverran = "overran"
-	// RunBackstop is a run that spent its absolute executing-time budget.
-	RunBackstop = "backstop"
 	// RunStalled is a run that made no progress inside its idle window.
 	RunStalled = "stalled"
 	// RunPaused is a run left paused with nobody to resume it.
@@ -63,7 +62,7 @@ const (
 )
 
 var unattendedRunFailureReasons = []string{
-	RunNeedsApproval, RunOverran, RunBackstop, RunStalled, RunPaused, RunOrphaned, RunCancelGivenUp,
+	RunNeedsApproval, RunOverran, RunStalled, RunPaused, RunOrphaned, RunCancelGivenUp,
 }
 
 // The events that leave a schedule slot with no run.
@@ -83,6 +82,8 @@ const (
 	labelReason = "reason"
 	labelRuleID = "rule_id"
 )
+
+var buildInfo = measure.NewLabeledGauge("build_info", "Build information, always 1.", []string{"version"})
 
 var (
 	engineExits = measure.NewLabeledCounter("engine_exits_total",
@@ -124,9 +125,10 @@ var (
 )
 
 func init() {
-	registry.MustRegister(engineExits, promptFailures, signInSaveFailures, engineUp, engineResident, engineHeapLimit,
-		unattendedRunFailures, unattendedApprovals, slotsNotStarted, scheduleFailedSlots, scheduleNextDue,
-		triggerBlocked, triggerQueueFull, triggerPollFailures, triggerGaps)
+	registry.MustRegister(buildInfo, engineExits, promptFailures, signInSaveFailures, engineUp, engineResident,
+		engineHeapLimit, unattendedRunFailures, unattendedApprovals, slotsNotStarted, scheduleFailedSlots,
+		scheduleNextDue, triggerBlocked, triggerQueueFull, triggerPollFailures, triggerGaps)
+	buildInfo.Set(1, version.Build)
 	for _, c := range engineExitCauses {
 		engineExits.Add(0, c)
 	}

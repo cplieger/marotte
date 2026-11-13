@@ -1,11 +1,12 @@
 // The run's range read: `GET /api/runs/{id}/turns/{turn}?after=<seq>`.
 
+import { batch } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import { apiGetTyped } from "./api-client.js";
 import { asArray, asObject, type Decoder } from "./wire/validators.gen.js";
 import { decodeEntry, decodeOpenEntry } from "./wire/decoders.gen.js";
 import {
-  adoptRunOpenEntries,
+  mergeRunOpenEntries,
   appendRunEntry,
   clearRunHole,
   openRunTurn,
@@ -111,12 +112,15 @@ async function runRange(workflowID: string, turnID: string, afterSeq?: number): 
     console.warn(`run turn range: no answer for ${workflowID} ${turnID}`);
     return;
   }
-  adopt(workflowID, turnID, d.entries, d.open_entries, before);
+  // One batch, so the log's readers repaint once per answer rather than once per entry.
+  const { entries, open_entries } = d;
+  batch(() => {
+    adopt(workflowID, turnID, entries, open_entries, before);
+  });
 }
 
-/** The turn's open tails are REPLACED by the answer's, after the sealed entries: the answer is
- *  authoritative about them (`run-store.ts` `adoptRunOpenEntries` states why), and it must run after
- *  the seats or it would replace the tails of a turn the answer had not created yet. */
+/** The turn's open tails are merged after the sealed entries are seated, because the merge drops a
+ *  tail whose entry is sealed and needs the turn the answer may have just created. */
 function adopt(
   workflowID: string,
   turnID: string,
@@ -137,9 +141,7 @@ function adopt(
     }
     want = Math.max(want, e.seq);
   }
-  // REPLACED rather than seated, so a tail whose entry this answer sealed does not survive beside
-  // it; the store owns that rule for both of the run's reads.
-  adoptRunOpenEntries(workflowID, turnID, open);
+  mergeRunOpenEntries(workflowID, turnID, open);
   const held = runTurnHeldSeq(workflowID, turnID);
   if (held === undefined) {
     // Nothing held and nothing seated: the turn's own `turn_open` did not arrive, so there is no

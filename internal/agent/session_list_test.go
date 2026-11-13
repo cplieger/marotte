@@ -428,12 +428,12 @@ func TestWithChatFacts_CopiesHeaderFacts(t *testing.T) {
 	}
 	headers := []marotte.ChatHeader{
 		{ID: "c0", Model: "other", TurnCount: 9},
-		{ID: "c1", Model: "claude-sonnet-5.5", CurrentModeID: "kiro_default", TurnCount: 2, Usage: marotte.Usage{Credits: 4.29}},
+		{ID: "c1", Model: "model-b-5.5", CurrentModeID: "kiro_default", TurnCount: 2, Usage: marotte.Usage{Credits: 4.29}},
 	}
 
 	withChatFacts(rows, headers)
 
-	want := marotte.ResumableSession{SessionID: "s1", ChatID: "c1", Model: "claude-sonnet-5.5", CurrentModeID: "kiro_default", TurnCount: 2, Credits: 4.29}
+	want := marotte.ResumableSession{SessionID: "s1", ChatID: "c1", Model: "model-b-5.5", CurrentModeID: "kiro_default", TurnCount: 2, Credits: 4.29}
 	if rows[0] != want {
 		t.Errorf("owned row = %+v, want %+v", rows[0], want)
 	}
@@ -454,8 +454,8 @@ func TestWithChatFacts_LabelsABotsRow(t *testing.T) {
 		{SessionID: "s-free"},
 	}
 	headers := []marotte.ChatHeader{
-		{ID: "c-plain", Model: "claude"},
-		{ID: "c-bot", Model: "claude", Bot: &marotte.BotSummary{State: "closed"}},
+		{ID: "c-plain", Model: "model-x"},
+		{ID: "c-bot", Model: "model-x", Bot: &marotte.BotSummary{State: "closed"}},
 	}
 
 	withChatFacts(rows, headers)

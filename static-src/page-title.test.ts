@@ -54,32 +54,44 @@ function mountBar(width: string): HTMLElement {
 
 const LONG = "Fix the mobile top bar menu alignment";
 
+/** The heading fits in a frame callback after the write. */
+async function nextFrame(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    requestAnimationFrame(() => {
+      resolve();
+    });
+  });
+}
+
 describe("the title bar's measured fit", () => {
-  it("clips the heading when the actions leave too little room for the title", () => {
+  it("clips the heading when the actions leave too little room for the title", async () => {
     // A phone: the actions and the bar's padding fill the row, so a title of any real length cannot
     // render and a three-character stub is worth less than nothing. `.sr-only` and not `display:
     // none` — the assertions below are what say the `<h1>` survives.
     const heading = mountBar("390px");
     setPageTitle(LONG, "chat");
+    await nextFrame();
     expect(heading.classList.contains("sr-only"), "clipped at 390px").toBe(true);
   });
 
-  it("shows the heading where the title fits whole", () => {
+  it("shows the heading where the title fits whole", async () => {
     // A tablet-width chat area: the actions need the same room, and what is left is more than the
     // title wants.
     const heading = mountBar("768px");
     setPageTitle(LONG, "chat");
+    await nextFrame();
     expect(heading.classList.contains("sr-only"), "shown at 768px").toBe(false);
     const title = heading.querySelector<HTMLElement>(".titlebar-title");
     expect(title?.scrollWidth, "the title renders untruncated").toBe(title?.clientWidth);
   });
 
-  it("clips a SHORT title once the ACTIONS have wrapped", () => {
+  it("clips a SHORT title once the ACTIONS have wrapped", async () => {
     // The title's own overflow is not the whole test: the heading is `flex: 1 1 0`, so it
     // contributes no basis to the line, but it is still a flex item and the bar is still charged
     // its 2px GAP — which the row's 44px targets and their gaps cannot spare.
     const heading = mountBar("240px");
     setPageTitle("Git", "chat");
+    await nextFrame();
     expect(heading.classList.contains("sr-only"), "clipped although the title is short").toBe(true);
 
     // The title genuinely fits, which is what makes this case about the ACTIONS.
@@ -107,6 +119,7 @@ describe("the title bar's measured fit", () => {
     // becomes a latch that only a title change breaks. Measured
     const heading = mountBar("240px");
     setPageTitle("Git", "chat");
+    await nextFrame();
     expect(heading.classList.contains("sr-only"), "clipped while narrow").toBe(true);
     // A fit over a clipped heading always rewrites its class (remove, then re-add), so each record
     // past init's own is a delivery's fit.
@@ -149,31 +162,68 @@ describe("the title bar's measured fit", () => {
     expect(title?.textContent).toBe(LONG);
   });
 
-  it("re-decides when the title changes, in both directions", () => {
+  it("re-decides when the title changes, in both directions", async () => {
     // The observer watches the heading's SIZE, and a clipped heading is 1px whatever its text says
     // — so a title change has to re-measure explicitly or the verdict sticks at whatever the
     // previous title earned.
     const heading = mountBar("768px");
     setPageTitle(LONG, "chat");
+    await nextFrame();
     expect(heading.classList.contains("sr-only")).toBe(false);
 
     setPageTitle(LONG.repeat(4), "chat");
+    await nextFrame();
     expect(heading.classList.contains("sr-only"), "a longer title stops fitting").toBe(true);
 
     setPageTitle("Git", "chat");
+    await nextFrame();
     expect(heading.classList.contains("sr-only"), "a short title fits again").toBe(false);
   });
 
-  it("re-decides when a subtitle lands, because it competes for the same room", () => {
+  it("re-decides when a subtitle lands, because it competes for the same room", async () => {
     // `setPageSubtitle` writes half the heading without touching the title, so it owns its own
     // re-measure. Both terms carry margin rather than straddling the fit boundary, which moves with
     // the font stack — 768px is where the sibling above measures it untruncated.
     const heading = mountBar("768px");
     setPageTitle(LONG, "git");
+    await nextFrame();
     expect(heading.classList.contains("sr-only"), "the title alone fits at 768px").toBe(false);
 
     setPageSubtitle("git", "Changes and section names ".repeat(12));
+    await nextFrame();
     expect(heading.classList.contains("sr-only"), "the subtitle pushes it over").toBe(true);
+  });
+
+  it("fits a changed title in the next frame, reading no width in the writer's task", async () => {
+    // A tab switch writes the title inside the click, beside the strip and the cover; a
+    // `scrollWidth` read there forces a layout of every write before it.
+    const heading = mountBar("390px");
+    const title = heading.querySelector<HTMLElement>(".titlebar-title");
+    expect(title).not.toBeNull();
+    const desc = Object.getOwnPropertyDescriptor(Element.prototype, "scrollWidth");
+    let reads = 0;
+    Object.defineProperty(title, "scrollWidth", {
+      configurable: true,
+      get(this: Element): number {
+        reads += 1;
+        return desc?.get?.call(this) as number;
+      },
+    });
+    onTestFinished(() => {
+      Reflect.deleteProperty(title as HTMLElement, "scrollWidth");
+    });
+
+    setPageTitle(LONG, "chat");
+    expect(reads, "no scrollWidth read in the task that wrote the title").toBe(0);
+
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          resolve();
+        });
+      });
+    });
+    expect(heading.classList.contains("sr-only"), "clipped once the frame ran").toBe(true);
   });
 
   it("writes a title for a caller with no bar mounted", () => {

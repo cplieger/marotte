@@ -550,6 +550,9 @@ class Elements {
   get webReloadBtn(): HTMLButtonElement {
     return byId("web-reload-btn");
   }
+  get webOpenBtn(): HTMLAnchorElement {
+    return byId("web-open-btn");
+  }
   get webEditBtn(): HTMLButtonElement {
     return byId("web-edit-btn");
   }

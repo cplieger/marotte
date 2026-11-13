@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 // Mock only the I/O edges. chip (buildChip), reconcile,
-// @cplieger/ui (el), icons, and dom (byId/maybeEl over the real
+// @cplieger/reactive (el), icons, and dom (byId/maybeEl over the real
 // document) stay real so we exercise the actual DOM behaviour.
 vi.mock("./api-client.js", () => ({ apiGet: mocks.apiGet }));
 vi.mock("./persist.js", () => ({

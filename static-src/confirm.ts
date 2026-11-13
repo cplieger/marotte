@@ -1,7 +1,7 @@
-// Confirm dialog over `@cplieger/ui/ask`'s `ask`: a short question as the heading, what it does as the body.
+// Confirm dialog over `./legacy-ui/ask.js`'s `ask`: a short question as the heading, what it does as the body.
 // The destructive variant uses role="alertdialog" and focuses Cancel. Skin: `.uip-ask` in css/04-uip-skin.css.
 
-import { ask } from "@cplieger/ui/ask";
+import { ask } from "./legacy-ui/ask.js";
 
 const CONTROL = "button, summary, a[href], [role='button'], [role='menuitem']";
 

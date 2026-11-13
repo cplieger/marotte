@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // TestToolCallDelta_SendsEachOutputChunkOnce pins that each output chunk travels on one
@@ -200,4 +201,56 @@ func toolCallDeltas(t *testing.T, events *[]marotte.ServerEvent) []marotte.ToolP
 		out = append(out, p)
 	}
 	return out
+}
+
+// TestToolCallDelta_AChatCallsDeltaCarriesTheRunItLaunched pins that a chat call's in-flight
+// update publishes the workflow id it adopted, on the broadcast topic: the launch card adopts
+// its run from that late attachment.
+func TestToolCallDelta_AChatCallsDeltaCarriesTheRunItLaunched(t *testing.T) {
+	tr, _, _, events, chatID := primeToolCall(t)
+
+	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+		"toolCallId": "tc-1",
+		"status":     "in_progress",
+		"rawOutput":  map[string]any{"workflowId": "wf_9", "status": "running"},
+	}), FrameAttribution{})
+
+	var frames []marotte.ServerEvent
+	for _, e := range *events {
+		if e.Type == marotte.EventToolProgress {
+			frames = append(frames, e)
+		}
+	}
+	if len(frames) != 1 {
+		t.Fatalf("got %d tool_progress frames, want 1", len(frames))
+	}
+	if frames[0].Topic != "" {
+		t.Errorf("a chat call's tool_progress publishes on %q, want the broadcast topic", frames[0].Topic)
+	}
+	if p, _ := frames[0].Payload.(marotte.ToolProgressPayload); p.WorkflowID != "wf_9" {
+		t.Errorf("tool_progress workflow_id = %q, want the launched run %q", p.WorkflowID, "wf_9")
+	}
+}
+
+// TestToolCallDelta_ARunStepPublishesNoDelta pins that a run step's in-flight update reaches no tool_progress
+// frame: the run tab reads a step's tool call from its log, and the run topic carries only the log's frames.
+func TestToolCallDelta_ARunStepPublishesNoDelta(t *testing.T) {
+	deps, events := newEventCaptureDeps()
+	tr := New(rolesOf(deps))
+	path := []string{"wf_1", "build"}
+	attr := FrameAttribution{Step: true, RunID: "wf_1", NodePath: workflow.PathKey(path)}
+	deps.RunNodeStart(t.Context(), &RunStep{RunID: attr.RunID, NodePath: attr.NodePath}, "c1")
+	tr.HandleToolCall(t.Context(), "c1", mustJSON(t, map[string]any{
+		"toolCallId": "tc-1", "title": "readFile", "kind": "read", "status": "pending",
+	}), attr)
+
+	tr.HandleToolCallUpdate(t.Context(), "c1", mustJSON(t, map[string]any{
+		"toolCallId": "tc-1",
+		"status":     "in_progress",
+		"content":    []map[string]any{{"type": "content", "content": map[string]any{"text": "chunk"}}},
+	}), attr)
+
+	if deltas := toolCallDeltas(t, events); len(deltas) != 0 {
+		t.Errorf("a run step's update published %d tool_progress frames, want 0: %+v", len(deltas), deltas)
+	}
 }

@@ -18,7 +18,8 @@ const wireHeader = "SSE-Wire"
 
 const clientTagHeader = "SSE-Client"
 
-// Broadcast publishes evt to every connected client.
+// Broadcast publishes evt on its topic: every connection receives the broadcast topic "", and a run topic reaches
+// only a connection whose scope holds it.
 func (b *bus) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 	b.emit(evt)
 }
@@ -26,6 +27,9 @@ func (b *bus) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 // It touches evt.Subject only for chat_status, taking the stamp MergeStamped minted with the
 // payload.
 func (b *bus) emit(evt marotte.ServerEvent) {
+	if b.observe != nil {
+		b.observe(&evt)
+	}
 	switch evt.Type {
 	case marotte.EventChatStatus:
 		// A producer of this event must not hold chatLifecycle.mu: stageStatusDesc takes it (non-reentrant).
@@ -37,13 +41,18 @@ func (b *bus) emit(evt marotte.ServerEvent) {
 		}
 	case marotte.EventTurnClosed:
 		b.chatStatus.clearAtTurnEnd(evt.ChatID)
+	case marotte.EventWorkingLabel:
+		// No tab reads it: a run chat id names no chat in the client's store, and the run tab paints from its log.
+		if isRunChat(evt.ChatID) {
+			return
+		}
 	}
 	data, err := json.Marshal(evt)
 	if err != nil {
 		slog.Error("emit marshal", "type", evt.Type, "error", err)
 		return
 	}
-	_, err = b.fanout.Publish(sse.Event{Topic: string(evt.ChatID), Data: data})
+	_, err = b.fanout.Publish(sse.Event{Topic: evt.Topic, Data: data})
 	if err == nil {
 		return
 	}
@@ -63,12 +72,13 @@ func (b *bus) emit(evt marotte.ServerEvent) {
 		"kind", evt.Subject.Kind, "ref", logsafe.Field(evt.Subject.Ref))
 	substitute := marotte.NewEvent(marotte.EventSubjectChanged, evt.ChatID, marotte.SubjectChangedPayload{})
 	substitute.Subject = evt.Subject
+	substitute.Topic = evt.Topic
 	data, err = json.Marshal(substitute)
 	if err != nil {
 		slog.Error("emit marshal", "type", substitute.Type, "error", err)
 		return
 	}
-	if _, err := b.fanout.Publish(sse.Event{Topic: string(evt.ChatID), Data: data}); err != nil {
+	if _, err := b.fanout.Publish(sse.Event{Topic: substitute.Topic, Data: data}); err != nil {
 		slog.Error("emit publish", "type", substitute.Type, "error", err)
 	}
 }
@@ -81,12 +91,7 @@ func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 	client := "v3"
 	if legacy {
 		client = "legacy"
-		rt.bus.legacyConnects.Add(1)
-	} else {
-		rt.bus.v3Connects.Add(1)
 	}
-	slog.Info("SSE connected", "client", client,
-		"last_event_id", logsafe.Field(r.Header.Get("Last-Event-ID")))
 
 	// A reconnect brings the server's own live settings, notification toggles included, up to a hand edit made while
 	// the stream was down.
@@ -94,13 +99,27 @@ func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 		rt.syncProcessLive(r.Context())
 	}
 
+	// Counted and logged in the hook, which runs only for a connection Serve accepts: a refused
+	// SSE-Topics, the cap and a missing flusher answer before it.
+	connected := false
 	rt.bus.fanout.Serve(armedWriter(&rt.bus.closeAfter, w), r,
+		sse.WithRequestScope(principalOf(r)),
 		sse.WithClientTag(tag),
 		sse.WithOnConnect(func(sw *sse.Writer, h sse.Hello) error {
+			connected = true
+			if legacy {
+				rt.bus.legacyConnects.Add(1)
+			} else {
+				rt.bus.v3Connects.Add(1)
+			}
+			slog.Info("SSE connected", "client", client,
+				"last_event_id", logsafe.Field(r.Header.Get("Last-Event-ID")))
 			return rt.streamInitialState(sw, &h, legacy)
 		}),
 	)
-	slog.Info("SSE disconnected", "client", client)
+	if connected {
+		slog.Info("SSE disconnected", "client", client)
+	}
 }
 
 // The connect payload's two list bounds, policy numbers: exceeding one is the defect, never the constant.
@@ -123,7 +142,7 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, h *sse.Hello, legacy bool)
 		slog.Warn("connect busy-chat list withheld: over cap", "cap", maxBusyChats, "count", len(busy))
 		busy = nil
 	}
-	liveRuns := rt.runs.liveRunRows()
+	liveRuns, liveRunsStamp := rt.runs.liveRunRowsStamped()
 	liveRunsStated := len(liveRuns) <= maxConnectLiveRuns
 	if !liveRunsStated {
 		slog.Warn("connect live-run inventory withheld: over cap",
@@ -131,11 +150,12 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, h *sse.Hello, legacy bool)
 		liveRuns = nil
 	}
 	connected := marotte.ConnectedPayload{
-		Workspace:      rt.lifecycle.workDir,
-		BusyChats:      busy,
-		LiveRuns:       liveRuns,
-		BusyStated:     busyStated,
-		LiveRunsStated: liveRunsStated,
+		Workspace:       rt.lifecycle.workDir,
+		BusyChats:       busy,
+		LiveRuns:        liveRuns,
+		BusyStated:      busyStated,
+		LiveRunsStated:  liveRunsStated,
+		LiveRunsVersion: liveRunsStamp.Version,
 	}
 	if legacy {
 		// The v2 bundle reads floor 0 as "not resumed, refetch".

@@ -33,7 +33,7 @@ env -u KIRO_KAS_SERVER_PATH -u KIRO_KAS_NODE_PATH -u KIRO_RUNTIME_DIR -u KIRO_HO
 env -u KIRO_RUNTIME_DIR -u KIRO_HOME HOME=<scratch> go test ./internal/kascap/
 ```
 
-The `e2e-sse` test project runs against a real server binary and skips unless `SSE_FIXTURE` names one, which CI never sets. After a change to the SSE stream or the sync digest, build that binary and run the project:
+The `e2e-sse` test project runs against a real server binary and skips unless `SSE_FIXTURE` names one. CI does not set it yet, because the shared TypeScript workflow has no step that builds the binary. After a change to the SSE stream, the sync digest or how the chat store publishes headers, build that binary and run the project:
 
 ```sh
 go build -tags marotte_test -o /tmp/marotte-test .

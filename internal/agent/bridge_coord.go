@@ -110,10 +110,19 @@ type bridgeCoordinator struct {
 	chatHasLiveRun func(marotte.ChatID) bool `wiring:"optional"`
 	// chatHasTab reports an open tab on the chat; it answers true when no tab set is wired, so nothing is released.
 	chatHasTab func(marotte.ChatID) bool
+	// chatHasAsk reports a pending ask of the chat's own session; a launched run's asks are not the chat's.
+	chatHasAsk func(marotte.ChatID) bool
+	// finishes holds per chat the newest close's notice, parked while the chat has an open turn or a pending ask
+	// (releaseFinish). In memory only: a restart forgets a parked finish.
+	finishes map[marotte.ChatID]marotte.NotificationPayload
+	// readBound is the read bound of the tab a notice names, 0 when unread (newReadBound). Nil reads 0.
+	readBound func(ctx context.Context, kind marotte.TabKind, ref string) uint64 `wiring:"optional"`
 	// runLabel is a run's display name, for a notification titled by it. Nil names none.
 	runLabel func(workflowID string) string `wiring:"optional"`
 	// unknownStops records stop reasons already warned about: one line per unmapped value.
 	unknownStops sync.Map
+	// finishMu guards finishes.
+	finishMu sync.Mutex
 	// noSubscribers latches the no-subscriber report once per episode (reportNoSubscribers).
 	noSubscribers atomic.Bool
 	// idleEndGrace is WireTurnActivity's wait, zero meaning defaultIdleEndGrace; a field so a test shortens it.
@@ -162,6 +171,9 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 				return t.Kind == marotte.TabKindChat && marotte.ChatID(t.Ref) == chatID
 			})
 		},
+		chatHasAsk: func(chatID marotte.ChatID) bool {
+			return len(h.bus.pendingPerms.askRefs(chatID, command.ScopeChatSession)) > 0
+		},
 		runLabel:            h.runs.runName,
 		onSessionRehydrated: h.runs.resumeInterruptedRuns,
 		reapSession:         func(sessionID string) { h.reapSessions([]string{sessionID}) },
@@ -191,6 +203,8 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		steerKASSettled:  h.bus.steers.kasSettled,
 	}
 	turns.runHost = bc
+	turns.sendRole = bc.reassertBotRole
+	turns.spawnRole = bc.spawnRole
 	return bc
 }
 
@@ -567,7 +581,7 @@ func (bc *bridgeCoordinator) openGeneration(
 	if rec.ACPSessionID != "" {
 		so := bc.sessionOpts(ctx, rec, &ask, steering)
 		so.SessionID = rec.ACPSessionID
-		loaded, err := bc.tryLoadSession(ctx, chatID, sb, so, held, stamp)
+		loaded, err := bc.tryLoadSession(ctx, chatID, sb, rec, so, held, stamp)
 		switch {
 		case loaded:
 			bc.settleResumed(ctx, lc, chatID, sb)
@@ -582,7 +596,8 @@ func (bc *bridgeCoordinator) openGeneration(
 
 	// The forward attaches before the door writes: KAS's requests during session/new must be answered for it to
 	// finish.
-	session, err := bc.engine.openSession(ctx, bc.sessionOpts(ctx, rec, &ask, steering), func(s engineSession) error {
+	so := bc.sessionOpts(ctx, rec, &ask, steering)
+	session, err := bc.engine.openSession(ctx, so, func(s engineSession) error {
 		if _, err := bc.goForward(ctx, chatID, s, stamp); err != nil {
 			return err
 		}
@@ -592,6 +607,13 @@ func (bc *bridgeCoordinator) openGeneration(
 	if err = closeCut(ctx, err); err != nil {
 		bc.restoreUnservedModel(ctx, chatID, held)
 		bc.failGeneration(chatID, sb, err)
+		return
+	}
+	if err := bc.holdBotDoor(ctx, rec, sb, session, false); err != nil {
+		sessionID := string(session.SessionID())
+		bc.restoreUnservedModel(ctx, chatID, held)
+		bc.failGeneration(chatID, sb, err)
+		bc.reapSession(sessionID)
 		return
 	}
 	if err := bc.persistNewSessionMetadata(ctx, chatID, session, ask.first); err != nil {
@@ -851,7 +873,8 @@ func (bc *bridgeCoordinator) reportSupervisedNotApplied(ctx context.Context, cha
 // restored none of the chat's turns (errReplayRestoredNothing) both return loaded false with a nil error after
 // retireSession, so the generation opens session/new.
 func (bc *bridgeCoordinator) tryLoadSession(
-	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, so *marotte.SessionOpts, held unservedSelection, stamp uint64,
+	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, rec *marotte.Chat, so *marotte.SessionOpts,
+	held unservedSelection, stamp uint64,
 ) (loaded bool, err error) {
 	// Open the projection first: KAS replays inside the door. The forward attaches before the door writes; a failed
 	// load closed its session, and the generation still owns its entry (bridgeManager.removeIfBridge).
@@ -889,6 +912,9 @@ func (bc *bridgeCoordinator) tryLoadSession(
 		return false, verdict
 	case !session.Open():
 		return false, fmt.Errorf("%w: the session ended during its replay", marotte.ErrBridgeExited)
+	}
+	if err := bc.holdBotDoor(ctx, rec, sb, session, true); err != nil {
+		return false, err
 	}
 	title := session.SessionTitle()
 	bc.catalog.setModes(session.Modes())
@@ -1039,7 +1065,7 @@ func adoptKASTitle(c *marotte.Chat, stored string) {
 // the catalogue no longer serves, cleared here and settled by commitUnservedModel.
 func applyLoadedSessionFacts(c *marotte.Chat, facts acpSessionFacts, title string) (renameTo string, dropped unservedSelection) {
 	if mode := facts.CurrentMode(); mode != "" {
-		c.CurrentModeID = mode
+		c.AdoptMode(mode)
 	}
 	// An absent catalog keeps the previous set (ApplyServedModels is false for empty).
 	marotte.ApplyServedModels(c, facts.Catalog())
@@ -1115,18 +1141,20 @@ func (bc *bridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 	bc.catalog.SetModels(bridge.Models())
 	// Read before the next line overwrites it with what landed.
 	var requestedMode string
+	var bot bool
 	version, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
-		requestedMode = c.CurrentModeID
+		requestedMode = doorMode(c)
+		bot = c.IsStartedBot()
 		c.RecordSession(string(newSessionID))
 		prevModel := c.Model
 		if newModelID != "" {
 			c.MoveToModel(string(newModelID))
 		}
 		c.Effort = first.onto(c.Effort, prevModel, c.Model)
-		c.CurrentModeID = currentMode
+		c.AdoptMode(currentMode)
 		marotte.ApplyServedModels(c, catalog)
 		renameTo = reconcileUserName(c, title, titleSetByUser)
 		return true
@@ -1138,7 +1166,10 @@ func (bc *bridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 		return fmt.Errorf("%w: %s", command.ErrChatGone, chatID)
 	}
 	reassertUserName(ctx, chatID, bridge, renameTo)
-	bc.reportModeNotApplied(ctx, chatID, requestedMode, currentMode)
+	// A started Bot's mode is the door's to report (holdBotRole).
+	if !bot {
+		bc.reportModeNotApplied(ctx, chatID, requestedMode, currentMode)
+	}
 	return nil
 }
 
@@ -1397,34 +1428,36 @@ func (bc *bridgeCoordinator) chatName(ctx context.Context, chatID marotte.ChatID
 	return ""
 }
 
-// Notify shows n on both channels: the page's `notification` frame on chatID's stream, and
-// the Web Push when push is configured.
+// Notify hands n to the push service's notice ledger, which decides the page that shows it or the push. With no
+// push service nothing is delivered.
 func (bc *bridgeCoordinator) Notify(ctx context.Context, chatID marotte.ChatID, n *marotte.NotificationPayload) {
-	bc.broadcast(ctx, marotte.NewEvent(marotte.EventNotification, chatID, *n))
 	if bc.push == nil {
 		return
 	}
-	if !bc.push.HasSubscribers() {
+	if bc.push.HasSubscribers() {
+		bc.noSubscribers.Store(false)
+	} else {
 		bc.reportNoSubscribers(n.Kind, n.PushSubject)
-		return
 	}
-	bc.noSubscribers.Store(false)
 	// Gated, since a caller need not run on inflight (the PR status poller outlives Shutdown). Once draining the send
 	// still goes, unwaited: push.Close in Shutdown unblocks it and owns its writes. The send outlives the caller's
-	// ctx (a heal cancels its own on return); push.Close bounds it.
+	// ctx (a heal cancels its own on return); push.Close bounds it. Off the caller, since a run's read bound asks KAS.
 	sendCtx := context.WithoutCancel(ctx)
-	send := func() { bc.push.Send(sendCtx, n) }
+	send := func() {
+		deliver := bc.push.Raise(sendCtx, chatID, n, bc.noticePosition(sendCtx, n))
+		deliver(sendCtx)
+	}
 	if !bc.lifecycle.goUnlessDraining(send) {
 		go send()
 	}
 }
 
-// retractPush drops the held push about subj announcing ask: the ask was settled elsewhere.
-func (bc *bridgeCoordinator) retractPush(subj marotte.PushSubject, ask string) {
+// settleNotice ends the notices about subj announcing ask: the ask was settled elsewhere.
+func (bc *bridgeCoordinator) settleNotice(subj marotte.PushSubject, ask string) {
 	if bc.push == nil {
 		return
 	}
-	bc.push.Retract(subj, ask)
+	bc.push.Settled(subj, ask)
 }
 
 // reportNoSubscribers logs once per episode that a notification had no subscriber; a
@@ -1433,7 +1466,7 @@ func (bc *bridgeCoordinator) reportNoSubscribers(kind marotte.PushKind, subj mar
 	if !bc.noSubscribers.CompareAndSwap(false, true) {
 		return
 	}
-	slog.Info("no push subscribers; notifications are being dropped until a browser subscribes",
+	slog.Info("no push subscribers; pushes are dropped until a browser subscribes",
 		"chat_id", subj.ChatID, "subject", subj.Key, "kind", string(kind))
 }
 
@@ -1667,7 +1700,7 @@ func (bc *bridgeCoordinator) persistModelSwitch(ctx context.Context, chatID maro
 			return false
 		}
 		mv.landOn(c)
-		c.Usage = marotte.Usage{ContextSize: contextSize}
+		c.Usage = marotte.Usage{ContextSize: contextSize, ContextCompacted: c.Usage.ContextCompacted}
 		c.ResetSpend()
 		return true
 	}); err != nil {

@@ -412,9 +412,9 @@ func (g *wakeRig) wakes() []string {
 }
 
 // wakeStepPath is the review seat of wf_4712dbcf39b116b2 that ended on an empty turn (2026-11-06T20:54:22Z).
-var wakeStepPath = []string{wakeRunID, "seat-grok"}
+var wakeStepPath = []string{wakeRunID, "seat-b"}
 
-// kasStandIn is KAS's ensureAlternatingMessages placeholder, which grok-4.7 echoed as its whole answer.
+// kasStandIn is KAS's ensureAlternatingMessages placeholder, which one model echoed as its whole answer.
 const kasStandIn = "(No assistant response was recorded for the preceding turn. This placeholder was inserted automatically to preserve message alternation.)"
 
 // endStep drives the seat's one turn as the frames recorded it: text, a tool call to its result, then after, then
@@ -465,7 +465,7 @@ func TestRunNodeComplete_AnEmptyAnswerWakesTheLaunchingAgent(t *testing.T) {
 		{desc: "placeholder mid-turn then tools then a real answer", before: kasStandIn, after: "Two findings, written to the review file."},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
-			g := newWakeRig(t, wakeRunID, inspectWithStep(t, wakeRunID, "seat-grok", "completed", ""))
+			g := newWakeRig(t, wakeRunID, inspectWithStep(t, wakeRunID, "seat-b", "completed", ""))
 			g.endStep(t, tc.before, tc.after, marotte.StopReasonEndTurn, "completed")
 			end := stepEndsOf(t, g.h, wakeRunID)[nodePath]
 			waitUntil(t, "the launching agent's wake", func() bool { return !tc.failed || len(g.wakes()) > 0 })
@@ -517,7 +517,7 @@ func TestRunNodeComplete_AnEmptyAnswerWakesTheLaunchingAgent(t *testing.T) {
 // KAS refuses update_workflow replace_remaining on a finished run (KAS 3.1.0 classifyMutationBoundary), so a step
 // graded at the run's run_complete is offered a new run instead.
 func TestRunNodeComplete_AnEmptyAnswerGradedAtTheRunsEndOffersANewRun(t *testing.T) {
-	g := newWakeRig(t, wakeRunID, inspectWithStep(t, wakeRunID, "seat-grok", "completed", ""))
+	g := newWakeRig(t, wakeRunID, inspectWithStep(t, wakeRunID, "seat-b", "completed", ""))
 	g.br.setCallErr(methodKiroWorkflowInspect, errors.New("the engine did not answer"))
 	g.endStep(t, "Reading the diff.", kasStandIn, marotte.StopReasonEndTurn, "completed")
 	if w := g.wakes(); len(w) != 0 {
@@ -551,7 +551,7 @@ func TestRunNodeComplete_AStepThatSignalledIsNotAnEmptyAnswer(t *testing.T) {
 		{desc: "an error signal KAS fails the step on", signal: "error", status: "failed", stop: marotte.StopReasonEndTurn},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
-			g := newWakeRig(t, wakeRunID, inspectWithStep(t, wakeRunID, "seat-grok", tc.status, tc.signal))
+			g := newWakeRig(t, wakeRunID, inspectWithStep(t, wakeRunID, "seat-b", tc.status, tc.signal))
 			g.endStep(t, "Reading the diff.", "", tc.stop, tc.status)
 			end := stepEndsOf(t, g.h, wakeRunID)[nodePath]
 			joinInflight(t, g.h)
@@ -569,7 +569,7 @@ func TestRunNodeComplete_AStepThatSignalledIsNotAnEmptyAnswer(t *testing.T) {
 		})
 	}
 	t.Run("a warning answered, then a success signal", func(t *testing.T) {
-		g := newWakeRig(t, wakeRunID, inspectWithStep(t, wakeRunID, "seat-grok", "completed", "success"))
+		g := newWakeRig(t, wakeRunID, inspectWithStep(t, wakeRunID, "seat-b", "completed", "success"))
 		s := &stepEnding{t: t, h: g.h, id: wakeRunID, path: wakeStepPath, nodePath: nodePath, session: wakeSession}
 		g.h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: wakeRunID, NodePath: nodePath, SessionID: wakeSession}, parkChat)
 		s.turnStart()

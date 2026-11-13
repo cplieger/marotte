@@ -20,6 +20,7 @@ import (
 	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/go/sse/v2"
 	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/coalesce"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
@@ -29,7 +30,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/route"
 	"github.com/cplieger/marotte/internal/runlease"
-	"github.com/cplieger/marotte/internal/spec"
 	"github.com/cplieger/marotte/internal/specapproval"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/tabs"
@@ -203,9 +203,11 @@ type bridges struct {
 	mgr *bridgeManager
 }
 
-// bus groups SSE transport, replay and pending permissions: cplieger/go/sse plus chat-topic filtering and pending replay.
+// bus groups the SSE transport (cplieger/go/sse and its scope route), the connect replay and pending permissions.
 type bus struct {
-	fanout       *sse.Hub
+	fanout *sse.Hub
+	// scope is fanout's ScopeHandler, the one writer of a live connection's scope.
+	scope        http.Handler
 	pendingPerms *pendingPermsTracker
 	// presence receives the hub's connect feed and client acks (alive_route.go); nil drops both.
 	presence presenceTable `wiring:"optional"`
@@ -215,10 +217,16 @@ type bus struct {
 	chatStatus *chatStatusCache
 	// stageStatusDesc records a declared description on the open turn, for the agent_finished push.
 	stageStatusDesc func(marotte.ChatID, string)
-	// retractPush drops a held push whose ask was settled (bridgeCoordinator.RetractPush).
-	retractPush func(subj marotte.PushSubject, ask string)
+	// settleNotice ends the notices announcing an ask that settled (bridgeCoordinator.settleNotice).
+	settleNotice func(subj marotte.PushSubject, ask string)
 	// ownStopped reports a stop requested during the chat's current turn (turnRegistry.ownStopped).
 	ownStopped func(marotte.ChatID) bool
+	// askSettled hears that one of a chat session's asks settled (autoCompactor.askSettled).
+	askSettled func(marotte.ChatID)
+	// observe sees every event before it is published (Runs.noteRunEvent); it must not block.
+	observe func(*marotte.ServerEvent)
+	// runAsk hears each of a run's asks open and settle (Runs).
+	runAsk runAskListener
 	// searches is the running grep_search and file_search calls, ended by a turn cancel, a run's end or their session's.
 	searches searchCancels
 	// legacyConnects and v3Connects count connects by wire generation; a legacy one (no SSE-Wire header) is an
@@ -227,6 +235,12 @@ type bus struct {
 	v3Connects     atomic.Uint64
 	// closeAfter cuts the next connection after that many frames (sse_probe.go). Test-only.
 	closeAfter atomic.Int64
+}
+
+// runAskListener hears a workflow step's ask open and settle, by run, node and ask id.
+type runAskListener interface {
+	askOpened(workflowID, nodeID string, askID int64)
+	askSettled(workflowID, nodeID string, askID int64)
 }
 
 // Runtime is the central coordinator.
@@ -285,7 +299,7 @@ type Runtime struct {
 	runRoutes *runRoutes
 	inbound   *inbound
 	// specs coalesces spec-directory marks into spec_changed broadcasts.
-	specs         *spec.Notifier
+	specs         *coalesce.Notifier[string]
 	replay        *replay
 	sessionReaper *kirosession.Reaper
 	lines         *buffer.LineTracker
@@ -429,6 +443,12 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		sse.WithReconnectDelay(liveness.ReconnectDelay),
 		sse.WithPresence(func(ev sse.PresenceEvent) { sseP.forwardPresence(&ev) }),
 	)
+	// It fails only on a nil authorize, a build defect like a bad MustNew option.
+	scope, err := sseP.fanout.ScopeHandler(ownsConnection)
+	if err != nil {
+		panic(err)
+	}
+	sseP.scope = scope
 	lc := &lifetime{
 		workDir:        workDir,
 		uploadsDir:     marotte.DefaultUploadDir,
@@ -472,8 +492,8 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		config:         configP,
 		chatStore:      chatStore,
 		catalog:        &catalog{},
-		slash:          &slashCatalog{},
-		steeringIssues: &steeringIssues{},
+		slash:          newSlashCatalog(),
+		steeringIssues: newSteeringIssues(),
 		versions:       &subject.Versions{},
 		digestSlots:    newDigestSemaphore(digestConcurrency),
 		chatHandlers:   make(map[string]chatHandler),
@@ -483,12 +503,18 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	for _, o := range opts {
 		o(h)
 	}
+	if h.push != nil {
+		h.push.SetFrames(func(chatID marotte.ChatID, n marotte.NotificationPayload) {
+			sseP.emit(marotte.NewEvent(marotte.EventNotification, chatID, n))
+		})
+	}
 	// After the options and before anything can mint.
 	sseP.pendingPerms.versions = h.versions
 	sseP.steers.versions = h.versions
 	sseP.chatStatus.versions = h.versions
 	runs.asks.versions = h.versions
 	runs.asks.epoch = h.Epoch
+	runs.leaseStore().BindInventory(h.versions, sseP.announceLiveRun)
 	// After the options, so the leases are the durable store's: the first pending_snapshot names every run.
 	runs.asks.seed(runs.leaseStore().List())
 	h.catalog.versions = h.versions
@@ -517,7 +543,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		sseP.Broadcast(c, marotte.NewEvent(marotte.EventConfigStandingChanged, "", marotte.ConfigStandingChangedPayload{}))
 	})
 	h.runRoutes = &runRoutes{runs: runs, epoch: h.Epoch}
-	h.mcpRegistry = newMCPRegistry(h.engine, sseP, lc, h.mcpConfig, func(c marotte.ChatID) (marotte.SessionID, bool) {
+	h.mcpRegistry = newMCPRegistry(h.engine, sseP, lc, h.mcpConfig, mcpStamps{versions: h.versions, epoch: h.Epoch}, func(c marotte.ChatID) (marotte.SessionID, bool) {
 		if b := bridgeP.mgr.get(c); b != nil {
 			return b.SessionID(), true
 		}
@@ -551,13 +577,22 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	h.coord.reconcileSessions = func(ctx context.Context, deadline time.Time) {
 		h.reconcileSessionSettings(ctx, "session settings", deadline)
 	}
-	h.coord.autoCompact = newAutoCompactor(h.coord, h.compactionPolicy)
+	h.coord.autoCompact = newAutoCompactor(h.coord, h.compactionPolicy, h.coord.chatHasAsk,
+		func(ctx context.Context, chatID marotte.ChatID, rs command.RunStop) error {
+			return h.dispatcher.CarryOutStop(ctx, chatID, rs)
+		})
 	sseP.stageStatusDesc = h.coord.turns.stageStatusDescription
-	sseP.retractPush = h.coord.retractPush
+	sseP.settleNotice = h.coord.settleNotice
 	sseP.ownStopped = h.coord.turns.ownStopped
+	sseP.askSettled = func(chatID marotte.ChatID) {
+		h.coord.autoCompact.askSettled(chatID)
+		h.coord.finishAskSettled(chatID)
+	}
+	h.coord.readBound = newReadBound(h.chatStore.ReadBound, runs.RunReadBound, noticeRunBoundTimeout)
+	sseP.runAsk = runs
 	// Built here because coord and the ignore matcher do not exist at the literal. Workspace-global: the
 	// orchestrator and its subagents write one spec from several sessions.
-	h.specs = spec.NewNotifier(specChangedWindow, func(dir string) {
+	h.specs = coalesce.New(specChangedWindow, func(dir string) {
 		sseP.Broadcast(context.Background(), marotte.NewEvent(marotte.EventSpecChanged, "", marotte.SpecChangedPayload{Dir: dir}))
 	})
 	h.inbound = &inbound{
@@ -576,6 +611,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	}
 	runs.servedModels = h.servedModels
 	runs.coord = h.coord
+	sseP.observe = runs.noteRunEvent
 	configP.engine = h.engine
 	configP.observe = h.observe
 	configP.broadcast = sseP.Broadcast
@@ -655,6 +691,7 @@ var (
 	sseClientRequiredHeader = route.Header{Name: clientTagHeader, Arg: "sseClient", Required: true, MinBytes: 1, MaxBytes: 64}
 	sseWireHeader           = route.Header{Name: wireHeader, Arg: "sseWire", MinBytes: 1, MaxBytes: 20}
 	lastEventIDHeader       = route.Header{Name: "Last-Event-ID", Arg: "lastEventId", MaxBytes: sseCursorMaxBytes}
+	sseTopicsHeader         = route.Header{Name: "SSE-Topics", Arg: "sseTopics", MinBytes: 2, MaxBytes: sse.MaxScopeHeaderBytes}
 )
 
 // FileChangesQuery is GET /api/file-changes' query.
@@ -672,7 +709,7 @@ type FileChanges struct {
 // (WebSocket PTY) and the runtime's own reads and writes.
 func (rt *Runtime) RegisterRoutes(m routeMux) {
 	m.Bind(route.WithHeaders(route.Stream("/api/events", rt.refuseWhenDraining(http.HandlerFunc(rt.handleSSE))),
-		sseClientHeader, sseWireHeader, lastEventIDHeader))
+		sseClientHeader, sseWireHeader, lastEventIDHeader, sseTopicsHeader))
 	// Each command answers its own body, so the reply is raw JSON; the request is the command union.
 	m.Bind(route.Binding{
 		Pattern: "/api/command", Handler: rt.lifecycle.admitUnlessDraining(rt.dispatcher), Kind: route.KindRaw,
@@ -685,6 +722,13 @@ func (rt *Runtime) RegisterRoutes(m routeMux) {
 	// Not drain-gated: a late receipt changes nothing.
 	m.Bind(route.WithHeaders(route.WithStatus(route.JSON[struct{}, struct{}]("POST /api/events/alive",
 		http.HandlerFunc(rt.handleAlive)), http.StatusNoContent), sseClientRequiredHeader))
+	m.Bind(route.WithHeaders(route.WithStatus(route.JSON[marotte.PageView, struct{}]("POST /api/events/view",
+		http.HandlerFunc(rt.handleView)), http.StatusNoContent), sseClientRequiredHeader))
+	m.Bind(route.WithHeaders(route.WithStatus(route.JSON[marotte.NoticeReport, struct{}]("POST /api/events/notice",
+		http.HandlerFunc(rt.handleNotice)), http.StatusNoContent), sseClientRequiredHeader))
+	// The sse library's scope handler writes its own body and codes (sse docs/wire.md). Not drain-gated: a live
+	// stream may still narrow, and after the hub's Shutdown the handler answers 404 scope_conn.
+	m.Bind(route.Raw("POST /api/events/scope", rt.bus.scope))
 	m.Bind(route.WebSocket("/api/shell/ws", http.HandlerFunc(rt.shellMgr.handleWS)))
 	m.Bind(route.JSON[struct{}, httpreply.OKBody]("POST /api/shell/restart", http.HandlerFunc(rt.shellMgr.handleRestart)))
 	m.Bind(route.Methods("/api/file-changes", http.HandlerFunc(rt.handleFileChanges),

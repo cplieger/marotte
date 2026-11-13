@@ -30,8 +30,12 @@ export const STATE_MARK: Readonly<Record<ExecState, StateMark>> = {
   skipped: { kind: "char", text: "\u2013" },
 };
 
-/** Write a state's mark into a slot. */
+/** Write a state's mark into a slot; a slot already showing that state's mark is left alone. */
 export function paintStateMark(slot: HTMLElement, state: ExecState): void {
+  if (slot.dataset["mark"] === state) {
+    return;
+  }
+  slot.dataset["mark"] = state;
   const mark = STATE_MARK[state];
   // Every kind named, no `default`, so a kind added later fails the type check
   // here rather than being absorbed silently into one of these arms.

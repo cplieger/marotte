@@ -2,6 +2,7 @@ package chat
 
 import (
 	"testing"
+	"testing/synctest"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -85,38 +86,46 @@ func TestWireHeader_EveryProducerCarriesTheOpenLogsPosition(t *testing.T) {
 		}
 	})
 	t.Run("a header mutation", func(t *testing.T) {
-		s, b := reopenedStore(t, seededDir(t, 2))
-		if err := s.Warm(t.Context(), readPosChat); err != nil {
-			t.Fatalf("Setup: Warm: %v", err)
-		}
-		b.reset()
-		if _, err := s.Mutate(t.Context(), readPosChat, func(c *marotte.Chat, _ bool) bool {
-			c.Name = "renamed"
-			return true
-		}); err != nil {
-			t.Fatalf("Mutate: %v", err)
-		}
-		hs := updatedHeaders(b)
-		if len(hs) != 1 || hs[0].ReadPosition != 2 {
-			t.Errorf("chat_updated headers = %+v, want one with read_position 2", hs)
-		}
+		synctest.Test(t, func(t *testing.T) {
+			s, b := reopenedStore(t, seededDir(t, 2))
+			if err := s.Warm(t.Context(), readPosChat); err != nil {
+				t.Fatalf("Setup: Warm: %v", err)
+			}
+			synctest.Sleep(headerPublishWindow)
+			b.reset()
+			if _, err := s.Mutate(t.Context(), readPosChat, func(c *marotte.Chat, _ bool) bool {
+				c.Name = "renamed"
+				return true
+			}); err != nil {
+				t.Fatalf("Mutate: %v", err)
+			}
+			synctest.Sleep(headerPublishWindow)
+			hs := updatedHeaders(b)
+			if len(hs) != 1 || hs[0].ReadPosition != 2 {
+				t.Errorf("chat_updated headers = %+v, want one with read_position 2", hs)
+			}
+		})
 	})
 }
 
 func TestLogFor_FirstOpenAnnouncesThePosition(t *testing.T) {
-	s, b := reopenedStore(t, seededDir(t, 3))
-	if _, held := s.TurnSeq(t.Context(), readPosChat, "no-such-turn"); held {
-		t.Fatalf("Setup: TurnSeq of an absent turn answered held")
-	}
-	hs := updatedHeaders(b)
-	if len(hs) != 1 || hs[0].ReadPosition != 3 {
-		t.Fatalf("first open broadcast %+v, want one chat_updated with read_position 3", hs)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		s, b := reopenedStore(t, seededDir(t, 3))
+		if _, held := s.TurnSeq(t.Context(), readPosChat, "no-such-turn"); held {
+			t.Fatalf("Setup: TurnSeq of an absent turn answered held")
+		}
+		synctest.Sleep(headerPublishWindow)
+		hs := updatedHeaders(b)
+		if len(hs) != 1 || hs[0].ReadPosition != 3 {
+			t.Fatalf("first open broadcast %+v, want one chat_updated with read_position 3", hs)
+		}
 
-	s.TurnSeq(t.Context(), readPosChat, "no-such-turn")
-	if n := len(updatedHeaders(b)); n != 1 {
-		t.Errorf("a second read broadcast %d headers in all, want the first open's 1", n)
-	}
+		s.TurnSeq(t.Context(), readPosChat, "no-such-turn")
+		synctest.Sleep(headerPublishWindow)
+		if n := len(updatedHeaders(b)); n != 1 {
+			t.Errorf("a second read broadcast %d headers in all, want the first open's 1", n)
+		}
+	})
 }
 
 func TestLogFor_FirstOpenAnnouncesTheSettledQueueOnce(t *testing.T) {
@@ -128,41 +137,53 @@ func TestLogFor_FirstOpenAnnouncesTheSettledQueueOnce(t *testing.T) {
 		{name: "at read position 0", turns: 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := seededDir(t, tc.turns)
-			writer, _ := reopenedStore(t, dir)
-			if _, err := writer.Mutate(t.Context(), readPosChat, func(c *marotte.Chat, _ bool) bool {
-				c.Run = []marotte.RunEntry{rowEntry("m-wait", marotte.RunPaused)}
-				return true
-			}); err != nil {
-				t.Fatalf("Setup: queue a row: %v", err)
-			}
-
-			s, b := reopenedStore(t, dir)
-			s.TurnSeq(t.Context(), readPosChat, "no-such-turn")
-
-			hs := updatedHeaders(b)
-			if len(hs) != 1 {
-				t.Fatalf("first open broadcast %+v, want exactly one chat_updated", hs)
-			}
-			if got := hs[0].ReadPosition; got != uint64(tc.turns) {
-				t.Errorf("announced read_position = %d, want %d", got, tc.turns)
-			}
-			if q := hs[0].Run.Entries; len(q) != 1 || q[0].State != marotte.RunHeld {
-				t.Errorf("announced queue = %+v, want the row held", q)
-			}
+			synctest.Test(t, func(t *testing.T) { testFirstOpenAnnouncesTheSettledQueueOnce(t, tc.turns) })
 		})
 	}
 }
 
-func TestLogFor_FirstOpenAtPositionZeroIsSilent(t *testing.T) {
-	s, b := reopenedStore(t, seededDir(t, 0))
+func testFirstOpenAnnouncesTheSettledQueueOnce(t *testing.T, turns int) {
+	dir := seededDir(t, turns)
+	writer, _ := reopenedStore(t, dir)
+	if _, err := writer.Mutate(t.Context(), readPosChat, func(c *marotte.Chat, _ bool) bool {
+		c.Run = []marotte.RunEntry{rowEntry("m-wait", marotte.RunPaused)}
+		return true
+	}); err != nil {
+		t.Fatalf("Setup: queue a row: %v", err)
+	}
+
+	s, b := reopenedStore(t, dir)
 	s.TurnSeq(t.Context(), readPosChat, "no-such-turn")
-	if hs := updatedHeaders(b); len(hs) != 0 {
-		t.Errorf("first open of a log at position 0 broadcast %+v, want nothing", hs)
+	synctest.Sleep(headerPublishWindow)
+
+	hs := updatedHeaders(b)
+	if len(hs) != 1 {
+		t.Fatalf("first open broadcast %+v, want exactly one chat_updated", hs)
+	}
+	if got := hs[0].ReadPosition; got != uint64(turns) {
+		t.Errorf("announced read_position = %d, want %d", got, turns)
+	}
+	if q := hs[0].Run.Entries; len(q) != 1 || q[0].State != marotte.RunHeld {
+		t.Errorf("announced queue = %+v, want the row held", q)
 	}
 }
 
+func TestLogFor_FirstOpenAtPositionZeroIsSilent(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s, b := reopenedStore(t, seededDir(t, 0))
+		s.TurnSeq(t.Context(), readPosChat, "no-such-turn")
+		synctest.Sleep(headerPublishWindow)
+		if hs := updatedHeaders(b); len(hs) != 0 {
+			t.Errorf("first open of a log at position 0 broadcast %+v, want nothing", hs)
+		}
+	})
+}
+
 func TestWriteCounters_BroadcastsAPositionMovedWithCountersUnchanged(t *testing.T) {
+	synctest.Test(t, testWriteCountersBroadcastsAPositionMovedWithCountersUnchanged)
+}
+
+func testWriteCountersBroadcastsAPositionMovedWithCountersUnchanged(t *testing.T) {
 	s, b := newTestStore(t)
 	newChat(t, s, readPosChat)
 	closedTurns(t, s, 1)
@@ -181,11 +202,13 @@ func TestWriteCounters_BroadcastsAPositionMovedWithCountersUnchanged(t *testing.
 		t.Fatalf("Setup: WriteCounters at open: %v", err)
 	}
 	closeStoreTurn(t, s, opened.Turn)
+	synctest.Sleep(headerPublishWindow)
 	b.reset()
 
 	if err := s.WriteCounters(t.Context(), readPosChat); err != nil {
 		t.Fatalf("WriteCounters: %v", err)
 	}
+	synctest.Sleep(headerPublishWindow)
 	hs := updatedHeaders(b)
 	if len(hs) != 1 || hs[0].ReadPosition != 2 {
 		t.Errorf("WriteCounters after the close broadcast %+v, want one header with read_position 2", hs)

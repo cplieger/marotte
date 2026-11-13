@@ -3,16 +3,19 @@
 
 import { apiGetTyped } from "./api-client.js";
 import { currentRepos } from "./git-status-store.js";
-import { decodeResourceInfo, decodeResourceTemplateInfo } from "./mcp-state.js";
-import type { MCPResourceInfo, MCPResourceTemplateInfo } from "./mcp-state.js";
 import { fileQuery, mentionable, parseTemplate, splitFileQuery } from "./context-mentions.js";
 import type { MentionProvider, UriTemplate } from "./context-mentions.js";
 import { specDirOf } from "./spec-path.js";
 import { getActiveId } from "./store.js";
 import { asObject, decodeArray, reqStr } from "./wire/validators.gen.js";
 import type { Decoder } from "./wire/validators.gen.js";
-import { decodeFileSearchResult, decodeKiroDocsResponse } from "./wire/decoders.gen.js";
-import type { KiroDoc } from "./wire/types.gen.js";
+import {
+  decodeFileSearchResult,
+  decodeKiroDocsResponse,
+  decodeMCPResourceInfo,
+  decodeMCPResourceTemplateInfo,
+} from "./wire/decoders.gen.js";
+import type { KiroDoc, MCPResourceInfo, MCPResourceTemplateInfo } from "./wire/types.gen.js";
 import { relToWorkspace, workspaceRoot } from "./workspace.js";
 import {
   getFilesSearchEndpoint,
@@ -178,10 +181,10 @@ const decodePoolServer: Decoder<PoolServer> = (v) => {
   const o = asObject(v, "$.mcp_pool.server");
   return {
     name: reqStr(o, "name", "$.mcp_pool.server"),
-    resources: decodeArray(o["resources"], decodeResourceInfo, "$.mcp_pool.resources"),
+    resources: decodeArray(o["resources"], decodeMCPResourceInfo, "$.mcp_pool.resources"),
     resource_templates: decodeArray(
       o["resource_templates"],
-      decodeResourceTemplateInfo,
+      decodeMCPResourceTemplateInfo,
       "$.mcp_pool.resource_templates",
     ),
   };

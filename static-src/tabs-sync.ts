@@ -9,13 +9,17 @@
 
 import { apiGetTyped } from "./api-client.js";
 import { observeStamp } from "./subject-versions.js";
-import type { TabSubject, TabsChangedPayload } from "./types.js";
+import type { TabKind, TabSubject, TabsChangedPayload } from "./types.js";
 import { decodeTabList } from "./wire/decoders.gen.js";
 import { getTabsEndpoint } from "./wire/client.gen.js";
 
 /** How long a dispatched mutation stays correlatable: bounds the set for frames that never come
  *  (an idempotent open, a refusal, a dropped connection). */
 const OP_TTL_MS = 60_000;
+
+/** How long a close may stay unanswered before its op VERIFIES by re-listing (the removal stays applied). The op's
+ *  own clock, because a dispatch has been seen unsettled past its transport deadline (WebKit, an active close). */
+export const CLOSE_CONFIRM_MS = 5000;
 
 /** Re-list backoff for a `verifying` remove, capped at the last entry. */
 const VERIFY_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000] as const;
@@ -101,9 +105,10 @@ interface PendingRemoveSpec {
   /** The tab the close names. Presence of THIS id in an authoritative list is
    *  what settles a verifying op. */
   id: string;
-  /** Every tab id the reversible visual removal took out (the row and its
-   *  descendants). Keys the changed-upsert suppression and the snapshot filter. */
-  capturedTabIDs: readonly string[];
+  /** Every subject the reversible visual removal took out (the row and its
+   *  descendants). Their ids key the changed-upsert suppression and the snapshot
+   *  filter; their (kind, ref) answer `removePendingFor`. */
+  captured: readonly TabSubject[];
   /** The deferred client-local teardown. Runs exactly once, on confirmation. */
   onConfirm: () => void;
   /** Restore the captured subtree. Runs exactly once, on definitive failure or
@@ -130,12 +135,13 @@ interface PendingRemove {
   /** Gesture order; see PendingAdopt.seq. */
   seq: number;
   id: string;
-  capturedTabIDs: readonly string[];
+  captured: readonly TabSubject[];
   onConfirm: () => void;
   rollback: () => void;
   committedVersion?: number;
   verifyAttempts: number;
-  verifyTimer: ReturnType<typeof setTimeout> | null;
+  /** The CLOSE_CONFIRM_MS deadline while awaiting the response, then the next verifying re-list. */
+  timer: ReturnType<typeof setTimeout> | null;
 }
 
 interface PendingReorder {
@@ -171,18 +177,23 @@ export function beginAdopt(opID: string): void {
  *  caller has already applied. The capture itself stays with the caller (see
  *  PendingRemoveSpec); the machine keeps the ids and the two callbacks. */
 export function beginRemove(opID: string, spec: PendingRemoveSpec): void {
-  pendingOps.set(opID, {
+  const op: PendingRemove = {
     kind: "remove",
     opID,
     state: "awaiting-response",
     seq: ++opSeq,
     id: spec.id,
-    capturedTabIDs: spec.capturedTabIDs,
+    captured: spec.captured,
     onConfirm: spec.onConfirm,
     rollback: spec.rollback,
     verifyAttempts: 0,
-    verifyTimer: null,
-  });
+    timer: null,
+  };
+  op.timer = setTimeout(() => {
+    op.timer = null;
+    opTimedOut(opID);
+  }, CLOSE_CONFIRM_MS);
+  pendingOps.set(opID, op);
 }
 
 /** Transition 1 for a reorder: record the dispatch. The caller has already
@@ -266,7 +277,7 @@ export function removeCommitted(
   if (op?.kind !== "remove") {
     return;
   }
-  cancelVerify(op);
+  cancelTimer(op);
   op.committedVersion = committedVersion;
   if (closed.length === 0 || localVersion >= committedVersion) {
     confirmOp(op);
@@ -286,12 +297,14 @@ export function opFailed(opID: string): boolean {
   return true;
 }
 
-/** Transition 6: no answer, so NO restore and NO retire; the op verifies by re-listing. Remove-only. */
+/** Transition 6: no answer, from the dispatch or the op's CLOSE_CONFIRM_MS deadline, whichever comes first; NO
+ *  restore and NO retire, the op verifies by re-listing. Remove-only, and only while awaiting the response. */
 export function opTimedOut(opID: string): void {
   const op = pendingOps.get(opID);
-  if (op?.kind !== "remove" || op.state === "verifying") {
+  if (op?.kind !== "remove" || op.state !== "awaiting-response") {
     return;
   }
+  cancelTimer(op);
   op.state = "verifying";
   armVerify(op);
 }
@@ -308,6 +321,17 @@ export function removesPending(): boolean {
   return false;
 }
 
+/** Whether a pending remove, in any state, took out the tab of `(kind, ref)`: the
+ *  row a rollback may still put back. */
+export function removePendingFor(kind: TabKind, ref: string): boolean {
+  for (const op of pendingOps.values()) {
+    if (op.kind === "remove" && op.captured.some((c) => c.kind === kind && c.ref === ref)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Register the removes-settled notification. Called once, from the composition
  *  root (tabs.ts). Last registration wins, like `registerTabsTarget`. */
 export function setOnRemovesSettled(fn: (() => void) | null): void {
@@ -318,7 +342,7 @@ export function setOnRemovesSettled(fn: (() => void) | null): void {
  *  opID now finds nothing, which is what retired-op immunity IS. */
 function retire(op: PendingOp): void {
   if (op.kind === "remove") {
-    cancelVerify(op);
+    cancelTimer(op);
   }
   pendingOps.delete(op.opID);
 }
@@ -347,18 +371,18 @@ function noteRemoveSettled(): void {
   }
 }
 
-function cancelVerify(op: PendingRemove): void {
-  if (op.verifyTimer !== null) {
-    clearTimeout(op.verifyTimer);
-    op.verifyTimer = null;
+function cancelTimer(op: PendingRemove): void {
+  if (op.timer !== null) {
+    clearTimeout(op.timer);
+    op.timer = null;
   }
 }
 
 /** One timer per verifying remove, re-armed per attempt, cleared on retire; each tick re-lists once. */
 function armVerify(op: PendingRemove): void {
   const delay = VERIFY_BACKOFF_MS[Math.min(op.verifyAttempts, VERIFY_BACKOFF_MS.length - 1)] ?? 0;
-  op.verifyTimer = setTimeout(() => {
-    op.verifyTimer = null;
+  op.timer = setTimeout(() => {
+    op.timer = null;
     op.verifyAttempts++;
     void relist().finally(() => {
       if (pendingOps.get(op.opID) === op && op.state === "verifying") {
@@ -382,7 +406,7 @@ function frameIsLocal(opID: string | undefined): boolean {
 function suppressChanged(changed: TabSubject): boolean {
   let capturedBy = -1;
   for (const op of pendingOps.values()) {
-    if (op.kind === "remove" && op.capturedTabIDs.includes(changed.id)) {
+    if (op.kind === "remove" && op.captured.some((c) => c.id === changed.id)) {
       capturedBy = Math.max(capturedBy, op.seq);
     }
   }
@@ -454,7 +478,7 @@ function overlayList(tabs: readonly TabSubject[], version: number): TabSubject[]
       op.kind === "remove" &&
       (op.committedVersion === undefined || op.committedVersion > version)
     ) {
-      out = out.filter((t) => !op.capturedTabIDs.includes(t.id));
+      out = out.filter((t) => !op.captured.some((c) => c.id === t.id));
     }
   }
   for (const op of pendingOps.values()) {
@@ -617,7 +641,7 @@ export function _resetTabsSyncForTest(): void {
   localOps.clear();
   for (const op of pendingOps.values()) {
     if (op.kind === "remove") {
-      cancelVerify(op);
+      cancelTimer(op);
     }
   }
   pendingOps.clear();

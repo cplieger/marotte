@@ -2,7 +2,7 @@
 // the editor's find. A leaf with no app imports, scrolling or overlay. Two modes: literal (the editor's), where each
 // occurrence is a step, and unit (the transcript's), where a step is one unit element holding every term.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { occurrences, prepare } from "./textsearch/scan.js";
 import { spans, type Matcher } from "./textsearch/query.js";
 
@@ -36,9 +36,10 @@ const BLOCK_TAGS = new Set([
 
 /**
  * UI chrome the walker skips, except two producers whose text the server searches: the denial block (`tool_denial`)
- * and the MCP badge.
+ * and the MCP badge. A code block's bar (@cplieger/ui/markdown) is chrome it cannot mark.
  */
-const CHROME_SELECTOR = "[data-vk-chrome]:not(.tool-denial):not(.tool-mcp-badge)";
+const CHROME_SELECTOR =
+  '[data-vk-chrome]:not(.tool-denial):not(.tool-mcp-badge), .cp-code > [data-part="bar"]';
 
 /**
  * Prunes script/style, SVG, wrapped hits, chrome, structurally hidden subtrees and elements `checkVisibility` calls

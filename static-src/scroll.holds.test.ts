@@ -169,6 +169,7 @@ describe("placeholders taking their real size under a follower", () => {
     let sampler: ResizeObserver | null = null;
     try {
       scroll.attach({ el: view, scrollTop: 0, readingState: "following" });
+      scroll.applyPendingRestore();
       view.append(...rows);
       sampler = new ResizeObserver(() => {
         gaps.push(wrap.scrollHeight - wrap.clientHeight - wrap.scrollTop);
@@ -188,6 +189,7 @@ describe("placeholders taking their real size under a follower", () => {
       sampler?.disconnect();
       scroll.detach();
       scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
+      scroll.applyPendingRestore();
       wrap.id = "messagesWrap";
     }
   });
@@ -385,6 +387,35 @@ describe("a clamp from the scrollport growing", () => {
       writes,
     }).toEqual({ state: "reading", moved: 0, writes: [] });
   });
+});
+
+describe("a scrollport resize in the frame a turn below the reader resizes", () => {
+  // The turn's observer delivers before the scrollport's, and the hold measures from the scrollport's top, so the
+  // reading line's move is not drift.
+  it.each([350, 500])(
+    "leaves the text in place at a %ipx scrollport, with no write",
+    async (port) => {
+      const wrap = await reset();
+      block(1000);
+      block(1980);
+      const last = block(20);
+      await land();
+      await readAt(wrap, 2300);
+      const line = onReadingLine(wrap);
+      const before = screenTop(wrap, line);
+      const writes = recordWrites(wrap);
+
+      wrap.style.height = `${String(port)}px`;
+      last.style.height = "40px";
+      await land();
+
+      expect({
+        state: scroll.readingState(),
+        moved: Math.round(screenTop(wrap, line) - before),
+        writes,
+      }).toEqual({ state: "reading", moved: 0, writes: [] });
+    },
+  );
 });
 
 describe("holds on the engine's grid", () => {
@@ -899,6 +930,7 @@ describe("a size change above in the frame a restored view settles", () => {
     const at = screenTop(wrap, held);
     const parked = scroll.detach();
     scroll.attach({ el: messagesEl, ...parked });
+    scroll.applyPendingRestore();
     above.style.height = "1189px";
     const moved: number[] = [];
     // Created after the owner's observer, so each callback reads what that delivery's frame paints.

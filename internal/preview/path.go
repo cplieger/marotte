@@ -10,6 +10,11 @@ import (
 // PathPrefix is the serve route's mount point. The token is its first segment.
 const PathPrefix = "/preview/"
 
+// tabPathPrefix is the serve route's form for a top-level tab (Open in browser):
+// the same token and folder rules under another policy. A minted token always
+// holds a ".", so no token reads as "tab".
+const tabPathPrefix = PathPrefix + "tab/"
+
 var errNonCanonical = errors.New("non-canonical preview path")
 
 func isPageName(name string) bool {
@@ -59,12 +64,12 @@ func checkRelComponents(rel string) error {
 	return nil
 }
 
-// splitServePath decodes the escaped path after PathPrefix exactly once, one
+// splitServePath decodes the escaped path after prefix exactly once, one
 // segment at a time, so %2F stays inside its segment. It returns the token and
 // the relative segments; a trailing empty segment is kept so the caller can
 // answer a directory URL with 404 rather than 400.
-func splitServePath(escaped string) (tok string, rel []string, err error) {
-	rest, ok := strings.CutPrefix(escaped, PathPrefix)
+func splitServePath(escaped, prefix string) (tok string, rel []string, err error) {
+	rest, ok := strings.CutPrefix(escaped, prefix)
 	if !ok {
 		return "", nil, errNonCanonical
 	}

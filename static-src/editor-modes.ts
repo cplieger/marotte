@@ -4,7 +4,7 @@
 // live toggle) from the file's record and keeps nothing of its own.
 // ---------------------------------------------------------------------------
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { $ } from "./dom.js";
 import { paintIfChanged } from "./paint-sig.js";
 import { renderDiffModeUI } from "./editor-diff.js";

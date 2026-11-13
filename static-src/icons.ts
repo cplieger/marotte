@@ -110,6 +110,11 @@ export const ICON_CHEVRON_UP = svg("ui", '<path d="M18 15l-6-6-6 6"/>');
 export const ICON_STEP_PREV = svg("ui", '<path d="M7 14.5l5-5 5 5"/>');
 export const ICON_STEP_NEXT = svg("ui", '<path d="M7 9.5l5 5 5-5"/>');
 export const ICON_SEND = svg("ui", PATH_SEND);
+/** Lucide `mic`: dictation, in Send's slot. */
+export const ICON_MIC = svg(
+  "ui",
+  '<path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/>',
+);
 // Rotated by 15-input.css. Not a marching `stroke-dashoffset`: under `non-scaling-stroke` Chromium computes the dash
 // in a space `stroke-dasharray` disagrees with, collapsing the arc to a dot.
 export const ICON_SPINNER =
@@ -488,7 +493,7 @@ export const ICON_TAB_AGENT = svg(
 // transcript, and a circled `?` with `ICON_INFO`.
 export const ICON_SUBAGENT_INTROSPECT = svg(
   "ui",
-  '<path d="M21.42 10.922a1 1 0 00-.019-1.838L12.83 5.18a2 2 0 00-1.66 0L2.6 9.08a1 1 0 000 1.832l8.57 3.908a2 2 0 001.66 0z"/><path d="M22 10v6"/><path d="M6 12.5V16a6 3 0 0012 0v-3.5"/>',
+  '<path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z"/><path d="M22 10v6"/><path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5"/>',
 );
 // Context gatherer (Lucide "telescope"): explores the codebase read-only. Not the magnifier, which the search tools
 // draw inside this subagent's block.

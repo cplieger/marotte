@@ -1,6 +1,12 @@
 // Real layout throughout: a detached element measures 0, which only exercises the character guess.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { attachClamp, releaseClamp, releaseClampsIn, clampObservationCount } from "./clamp-text.js";
+import {
+  attachClamp,
+  releaseClamp,
+  releaseClampsIn,
+  clampObservationCount,
+  watchCut,
+} from "./clamp-text.js";
 import clampSource from "./clamp-text.ts?raw";
 import messagesCSS from "./css/13-messages.css?raw";
 import type { TurnState } from "./types.js";
@@ -26,7 +32,7 @@ const transcriptEl = document.createElement("div");
 transcriptEl.id = "messages";
 scrollerEl.appendChild(transcriptEl);
 
-const { setSessions, setActive, bumpMessages } = await import("./store.js");
+const { setSessions, setActive, setPainted, bumpMessages } = await import("./store.js");
 const { mountChatView, disposeChatView } = await import("./messages.js");
 
 function sealed(turnID: string, seq: number, kind: Entry["kind"], payload: unknown): Entry {
@@ -70,6 +76,7 @@ function paintTurns(chat: string, turnRows: Entry[][]): void {
     },
   ]);
   setActive(chat);
+  setPainted(chat);
   bumpMessages(chat, "load");
 }
 
@@ -243,6 +250,62 @@ describe("deciding whether the opener is needed", () => {
     host.style.inlineSize = "1200px";
     host.replaceChildren(text, more);
     await settles({ text, more }, true, "corrected once laid out");
+  });
+
+  /** Counts reads of `target`'s own box heights, delegating to the real getters. */
+  function countHeightReads(target: HTMLElement): () => number {
+    let n = 0;
+    for (const name of ["scrollHeight", "clientHeight"] as const) {
+      const real = Object.getOwnPropertyDescriptor(Element.prototype, name)?.get;
+      Object.defineProperty(target, name, {
+        configurable: true,
+        get(this: Element): unknown {
+          n += 1;
+          return real?.call(this);
+        },
+      });
+    }
+    return () => n;
+  }
+
+  // `boxHeights` (clamp-text.ts) owns why a detached text is not read.
+  it("reads no box height of a detached text, and measures it once laid out", async () => {
+    const text = document.createElement("div");
+    text.className = "ct-text";
+    text.textContent = "x".repeat(240);
+    const more = document.createElement("button");
+    more.type = "button";
+    const reads = countHeightReads(text);
+    attachClamp(text, more, { lines: 3 });
+    expect(reads(), "reads while detached").toBe(0);
+    expect(more.hidden, "the character guess").toBe(false);
+
+    host.style.inlineSize = "1200px";
+    host.replaceChildren(text, more);
+    await settles({ text, more }, true, "measured once laid out");
+    expect(reads(), "reads once laid out").toBeGreaterThan(0);
+  });
+
+  it("a cut watch reads no box height of a detached text, and reports the cut once laid out", async () => {
+    const text = document.createElement("div");
+    text.className = "ct-text";
+    text.setAttribute("data-clamped", "");
+    text.textContent = LONG;
+    const reads = countHeightReads(text);
+    const cuts: boolean[] = [];
+    watchCut(text, (cut) => cuts.push(cut));
+    expect(reads(), "reads while detached").toBe(0);
+    expect(text.hasAttribute("data-cut"), "no cut while detached").toBe(false);
+
+    host.style.inlineSize = "400px";
+    host.replaceChildren(text);
+    const deadline = Date.now() + 2000;
+    while (cuts.length === 0 && Date.now() < deadline) {
+      await observerRuns();
+    }
+    expect(cuts, "cut reported once laid out").toEqual([true]);
+    expect(text.hasAttribute("data-cut")).toBe(true);
+    releaseClamp(text);
   });
 });
 
@@ -520,6 +583,77 @@ describe("inside the transcript's own observer set", () => {
       window.removeEventListener("error", onError);
       scrollerEl.style.inlineSize = "";
       noteStyle.remove();
+      disposeChatView(chat);
+    }
+  });
+
+  it("paints a page of turns reading no layout of an element still being built", () => {
+    // Each turn's header and steer note attach their clamp before the card is in the document.
+    const detached: string[] = [];
+    const restores: (() => void)[] = [];
+    const note = (what: string, target: unknown): void => {
+      if (target instanceof Element && !target.isConnected) {
+        detached.push(`${what} of .${target.className}`);
+      }
+    };
+    const getters: [object, string][] = [
+      [Element.prototype, "scrollHeight"],
+      [Element.prototype, "clientHeight"],
+      [Element.prototype, "scrollWidth"],
+      [Element.prototype, "clientWidth"],
+      [HTMLElement.prototype, "offsetHeight"],
+      [HTMLElement.prototype, "offsetWidth"],
+      [HTMLElement.prototype, "offsetTop"],
+    ];
+    for (const [proto, name] of getters) {
+      const desc = Object.getOwnPropertyDescriptor(proto, name);
+      const real = desc?.get;
+      if (desc === undefined || real === undefined) {
+        throw new Error(`no ${name} getter`);
+      }
+      Object.defineProperty(proto, name, {
+        ...desc,
+        get(this: Element): unknown {
+          note(name, this);
+          return real.call(this);
+        },
+      });
+      restores.push(() => {
+        Object.defineProperty(proto, name, desc);
+      });
+    }
+    for (const name of ["getBoundingClientRect", "getClientRects"] as const) {
+      const real = Element.prototype[name] as (this: Element) => unknown;
+      Element.prototype[name] = function (this: Element) {
+        note(name, this);
+        return real.call(this);
+      } as never;
+      restores.push(() => {
+        Element.prototype[name] = real as never;
+      });
+    }
+    const realStyle = window.getComputedStyle;
+    window.getComputedStyle = (elt: Element, pseudo?: string | null): CSSStyleDeclaration => {
+      note("getComputedStyle", elt);
+      return realStyle.call(window, elt, pseudo);
+    };
+    restores.push(() => {
+      window.getComputedStyle = realStyle;
+    });
+    const chat = "c-clamp-detached-reads";
+    try {
+      mountChatView();
+      const rows: Entry[][] = [];
+      for (let t = 0; t < 4; t++) {
+        rows.push(turnWithSteer(`d${String(t)}`, t + 1, `request ${String(t)}`, LONG));
+      }
+      paintTurns(chat, rows);
+      expect(document.querySelectorAll(".steer-note-text"), "the page painted").toHaveLength(4);
+      expect(detached).toEqual([]);
+    } finally {
+      for (const restore of restores) {
+        restore();
+      }
       disposeChatView(chat);
     }
   });

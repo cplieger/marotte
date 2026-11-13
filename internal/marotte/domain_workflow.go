@@ -10,9 +10,9 @@ package marotte
 import "encoding/json"
 
 // RunProgressKind is the KAS lifecycle kind behind a run_progress event: seven of
-// KAS's nine. The other two are their own events, because one inserts a row and
-// the other is terminal and fires a push, while every kind between them carries
-// the same instruction — refetch.
+// KAS's nine, plus marotte's own `silence`. The other two are their own events,
+// because one inserts a row and the other is terminal and fires a push, while every
+// kind between them carries the same instruction — refetch.
 type RunProgressKind string
 
 // The seven progress kinds, spelled as KAS's method suffixes so one string greps
@@ -25,6 +25,8 @@ const (
 	RunProgressWatchPoll     RunProgressKind = "watch_poll"
 	RunProgressPaused        RunProgressKind = "paused"
 	RunProgressStepsQueued   RunProgressKind = "steps_queued"
+	// RunProgressSilence is marotte's: a step's silence flag was set or cleared (the run read's `silent_since`).
+	RunProgressSilence RunProgressKind = "silence"
 )
 
 // RunStartedPayload is the payload for type="run_started": a run began on this chat. Name is its display label, for a
@@ -82,6 +84,15 @@ type RunProgressPayload struct {
 	// Credits is the step session's whole credit-unit total KAS recorded at the step's end, on
 	// node_complete only; zero when KAS recorded none.
 	Credits float64 `json:"credits,omitempty"`
+}
+
+// RunRevPayload is the payload for type="run_rev": the run read moved to Rev, which a client
+// holding an earlier revision reads as GET /api/runs/{id}?since=<its rev>. Status is the run's
+// status at Rev.
+type RunRevPayload struct {
+	WorkflowID string `json:"workflow_id"`
+	Status     string `json:"status,omitempty"`
+	Rev        uint64 `json:"rev"`
 }
 
 // RunPlanOutcome is where a queued plan revision stands, in KAS's `steps_queued` words. Open on
@@ -180,6 +191,15 @@ type RunStepTranscript struct {
 	// the run store's lock with the entries it certifies; empty on a settled path and
 	// on the replay source, which no subject versions.
 	Subject []SubjectStamp `json:"subject"`
+}
+
+// RunStepCapture is GET /api/runs/{id}/steps/{path}/capture's reply: the whole captured output of
+// one node, which the run read carries only as its summary.
+type RunStepCapture struct {
+	// CapturedOutput is absent when the node captured nothing; "" is a capture of no text.
+	CapturedOutput *string `json:"captured_output,omitempty"`
+	WorkflowID     string  `json:"workflow_id"`
+	NodePath       string  `json:"node_path"`
 }
 
 // RunAsksPayload is the payload for type="run_asks": every step of one run waiting on a person, as
@@ -287,9 +307,17 @@ type RunStepEnd struct {
 // cannot say this. Ended is true once the attempt's newest turn closed for any reason but an interruption: a node KAS
 // shows in flight past an ended attempt is on a new one.
 type RunStepStart struct {
+	// Open is set on an attempt in flight whose turn's own lane is streaming an entry, as the entry stood when the
+	// read was written: the id and delta count its next entry_delta follows, and the end of its text from the newest
+	// finished line that prints, all the dock line reads of it.
+	Open *OpenEntry `json:"open,omitempty"`
 	// StartedAt is RFC 3339.
 	StartedAt string `json:"started_at"`
-	Ended     bool   `json:"ended"`
+	// Turn and Tail are set on an attempt in flight: its newest turn id and the newest line its own lane printed, the
+	// seed of the run tab's dock line for a step whose transcript the page does not hold.
+	Turn  string `json:"turn,omitempty"`
+	Tail  string `json:"tail,omitempty"`
+	Ended bool   `json:"ended"`
 }
 
 // RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step. Empty Text is a 400.
@@ -424,8 +452,17 @@ type LiveRun struct {
 	// Executing reports whether THIS PROCESS holds a deadline for the run (runlease.Lease.Deadline),
 	// not KAS's status, which would cost a `_kiro/workflow/list` call on every client connect. It can
 	// read false while KAS says running (a lease read back from disk is parked; `set_step_status`
-	// advances a step without re-arming); the client corrects itself on the run's next progress frame.
+	// advances a step without re-arming) until marotte arms the run again.
 	Executing bool `json:"executing"`
+}
+
+// LiveRunPayload is the payload for type="live_run": one LiveRun row changed. Live false
+// means the run left the inventory: ChatID is the chat it was under, Executing false.
+type LiveRunPayload struct {
+	WorkflowID string `json:"workflow_id"`
+	ChatID     string `json:"chat_id"`
+	Live       bool   `json:"live"`
+	Executing  bool   `json:"executing"`
 }
 
 // LiveRunsResponse is GET /api/runs/live's reply.

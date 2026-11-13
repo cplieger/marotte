@@ -26,11 +26,13 @@ interface PushWire {
 }
 
 /** The service worker's message to an open page: the subject (the page owns routes) and whether the
- *  user clicked the notification, it arrived for a focused page to deliver, or the presence tag must
+ *  user clicked the notification, it arrived for the focused page to show, or the presence tag must
  *  be re-derived. Structured-cloned across the worker boundary, so the page validates it. */
 export interface PushPageMessage {
   type: "push";
   reason: "clicked" | "arrived" | "subscription_changed";
+  /** The notice's id on an arrival (the one the page reports against), "" otherwise. */
+  id?: string;
   chatId: string;
   /** The notification's subject when it has no chat behind it: a run, a launch rule or a pull request,
    *  kind-prefixed so the route is keyed on what the subject IS. */

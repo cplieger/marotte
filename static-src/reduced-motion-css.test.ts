@@ -52,9 +52,9 @@ describe("reduced motion", () => {
     expect.assertions(4);
     await resetA11yMedia();
     const { spinner, subagent, button } = mount();
-    expect(getComputedStyle(spinner).animationIterationCount).toBe("infinite");
-    expect(getComputedStyle(subagent).animationIterationCount).toBe("infinite");
-    expect(longest(getComputedStyle(spinner).animationDuration)).toBeGreaterThan(0.1);
+    expect(getComputedStyle(spinner, "::before").animationIterationCount).toBe("infinite");
+    expect(getComputedStyle(subagent, "::before").animationIterationCount).toBe("infinite");
+    expect(longest(getComputedStyle(spinner, "::before").animationDuration)).toBeGreaterThan(0.1);
     expect(longest(getComputedStyle(button).transitionDuration)).toBeGreaterThan(0.01);
   });
 
@@ -62,10 +62,10 @@ describe("reduced motion", () => {
     expect.assertions(5);
     await emulateA11yMedia({ reducedMotion: "reduce" });
     const { spinner, subagent, button } = mount();
-    expect(getComputedStyle(spinner).animationIterationCount).toBe("1");
-    expect(getComputedStyle(subagent).animationIterationCount).toBe("1");
-    expect(longest(getComputedStyle(spinner).animationDuration)).toBeLessThan(0.001);
-    expect(longest(getComputedStyle(subagent).animationDuration)).toBeLessThan(0.001);
+    expect(getComputedStyle(spinner, "::before").animationIterationCount).toBe("1");
+    expect(getComputedStyle(subagent, "::before").animationIterationCount).toBe("1");
+    expect(longest(getComputedStyle(spinner, "::before").animationDuration)).toBeLessThan(0.001);
+    expect(longest(getComputedStyle(subagent, "::before").animationDuration)).toBeLessThan(0.001);
     expect(longest(getComputedStyle(button).transitionDuration)).toBeLessThan(0.001);
   });
 });

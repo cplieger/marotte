@@ -67,14 +67,15 @@ const logMsgRunOverran = "scheduled run still going when its next slot came due;
 const reasonOverran = "still running when its next slot came due, so it was cancelled. " +
 	"Give the schedule a longer interval, or make the workflow finish inside it"
 
-// reasonStalled and reasonBackstop are the row's text for the other two bounds (cancelExpired).
-var (
-	reasonStalled = "made no progress and had no live shell for " +
-		strconv.Itoa(int(runIdleWindow.Minutes())) + " minutes, so it was cancelled. " +
-		"Open the run to see the step it stopped in"
-	reasonBackstop = "ran for " + strconv.Itoa(int(runBackstop.Hours())) +
-		" hours in total, the most one run may, so it was cancelled. Make the workflow finish sooner"
-)
+// reasonStalled is the row's text for the idle window (cancelExpired).
+var reasonStalled = "made no progress and had no live shell for " +
+	strconv.Itoa(int(runIdleWindow.Minutes())) + " minutes, so it was cancelled. " +
+	"Open the run to see the step it stopped in"
+
+// reasonSilent is the row's text for a parentless run whose open step turn sent nothing past runSilenceBound.
+var reasonSilent = "had a step that sent nothing for " +
+	strconv.Itoa(int(runSilenceBound.Minutes())) + " minutes, so it was cancelled. " +
+	"Open the run to see the step it stopped in"
 
 // reasonCancelRefused is the row's text once retryTermination gives up on a stop marotte decided.
 var reasonCancelRefused = "reached a limit that stops it, but kiro-cli refused the cancel " +
@@ -140,17 +141,9 @@ func (rs *Runs) answerUnattended(
 	defer cancel()
 
 	approve := scheduledAutoApprove(ctx, rs.lifecycle.configDir)
-	// An administrator `ask` needs a person; KAS would count any allow_once, so the switch must not answer it.
-	adminAsk := adminConsentAsk(msgParams)
-	if approve && adminAsk {
-		slog.Warn("unattended auto-approve: refusing, an administrator rule requires a person to approve",
-			"chat_id", chatID, "tool", name.tool, "subject", name.subject)
-		approve = false
-	}
-	// Kiro's safety check did not clear the call and handed it to a person; approving it blind defeats the check.
-	classifierAsk := safetyCheckUncleared(msgParams, delegated)
-	if approve && classifierAsk {
-		slog.Warn("unattended auto-approve: refusing, Kiro's safety check handed the request to a person",
+	asker := askerOf(msgParams, delegated)
+	if refusal := asker.refusal(); approve && refusal != "" {
+		slog.Warn("unattended auto-approve: refusing, "+refusal,
 			"chat_id", chatID, "tool", name.tool, "subject", name.subject)
 		approve = false
 	}
@@ -203,7 +196,7 @@ func (rs *Runs) answerUnattended(
 
 	countUnattendedFailure(l, obs.RunNeedsApproval)
 	// Surface it on the schedule row, or the run fails silently every night.
-	reason := unattendedRefusalReason(name.label(), adminAsk, classifierAsk)
+	reason := unattendedRefusalReason(name.label(), asker)
 	rs.recordScheduleOutcome(ctx, run, launchrule.Outcome{Status: launchrule.StatusFailed, Reason: reason})
 }
 
@@ -215,19 +208,61 @@ func countUnattendedFailure(l *runlease.Lease, reason string) {
 	}
 }
 
+// refusedAsk is who asked for the person an unattended refusal stood in for.
+type refusedAsk int
+
+const (
+	askPolicy refusedAsk = iota
+	askAdministrator
+	askSafetyCheck
+	askCloudFormation
+)
+
+// askerOf names who asked for a person, the administrator first: no rule outranks an administrator one.
+func askerOf(msgParams json.RawMessage, delegated bool) refusedAsk {
+	switch {
+	case adminConsentAsk(msgParams):
+		// KAS would count any allow_once as the administrator's consent.
+		return askAdministrator
+	case safetyCheckUncleared(msgParams, delegated):
+		// Kiro's safety check did not clear the call; approving it blind defeats the check.
+		return askSafetyCheck
+	case infraSafetyBlockAsk(msgParams):
+		// The CloudFormation check's enforce mode holds a rule-breaking change behind this ask.
+		return askCloudFormation
+	}
+	return askPolicy
+}
+
+// refusal is why auto-approve must not answer a's ask, or empty for askPolicy, the one ask it may answer.
+func (a refusedAsk) refusal() string {
+	switch a {
+	case askAdministrator:
+		return "an administrator rule requires a person to approve"
+	case askSafetyCheck:
+		return "Kiro's safety check handed the request to a person"
+	case askCloudFormation:
+		return "Kiro's CloudFormation check blocked the change"
+	}
+	return ""
+}
+
 // unattendedRefusalReason is the schedule row's reason for a refused ask on label (empty when the ask names
 // nothing).
-// An administrator ask gets no rule remedy: no workspace or user rule outranks an administrator one.
-func unattendedRefusalReason(label string, adminAsk, classifierAsk bool) string {
+// An administrator ask gets no rule remedy: no workspace or user rule outranks an administrator one, and no rule
+// answers a CloudFormation block.
+func unattendedRefusalReason(label string, asker refusedAsk) string {
 	switch {
-	case adminAsk && label == "":
+	case asker == askAdministrator && label == "":
 		return "your organization requires a person to approve this, and nobody was watching"
-	case adminAsk:
+	case asker == askAdministrator:
 		return "your organization requires a person to approve " + label + ", and nobody was watching"
-	case classifierAsk && label == "":
+	case asker == askSafetyCheck && label == "":
 		return "Kiro's safety check asked a person to approve a request with nobody watching. Approve it in a chat, or add a permission rule to allow it"
-	case classifierAsk:
+	case asker == askSafetyCheck:
 		return "Kiro's safety check asked a person to approve " + label + " with nobody watching. Approve it in a chat, or add a permission rule to allow it"
+	case asker == askCloudFormation:
+		return "Kiro's CloudFormation check blocked a change that breaks one of your account's safety rules, and nobody was watching. Make the change in a chat to decide"
 	case label == "":
 		return "needed an approval with nobody watching. Add a permission rule to allow it"
 	default:
@@ -442,6 +477,20 @@ func safetyCheckUncleared(params json.RawMessage, delegated bool) bool {
 	}
 	return delegated && k.ToolID != "" &&
 		k.Consent.AskType != consentAskTypeExplicit && k.Consent.Capability != consentCapabilityWorkflow
+}
+
+// infraSafetyOverrideCallPrefix starts the tool call id of KAS's CloudFormation enforce ask
+// (requestSafetyOverridePermission), which carries no _meta to name it by.
+const infraSafetyOverrideCallPrefix = "safety-override-"
+
+// infraSafetyBlockAsk reports whether params is the CloudFormation check's enforce ask.
+func infraSafetyBlockAsk(params json.RawMessage) bool {
+	var p struct {
+		ToolCall struct {
+			ToolCallID string `json:"toolCallId"`
+		} `json:"toolCall"`
+	}
+	return json.Unmarshal(params, &p) == nil && strings.HasPrefix(p.ToolCall.ToolCallID, infraSafetyOverrideCallPrefix)
 }
 
 func planApprovalAsk(params json.RawMessage) bool {

@@ -836,7 +836,7 @@ export const switchModel = defineAction<
 
 // The server answers where the message went (`as`) and the run order after it (`run`), at the take's
 // turn open or at once when it queued. Returns "sent" (it started), "steered", "queued", or a 409's
-// class: "prompt_only" (prompt-only text it would steer or hold behind a turn), "full" (the queue is
+// class: "prompt_only" (prompt-only text it would steer), "full" (the queue is
 // at its cap), "gone" (chat_not_found), "closed" (chat_closed), "starting" (starting, or any other
 // 409); null otherwise. `error: false`: transport.send already toasts.
 

@@ -1,11 +1,12 @@
 package agent
 
 // The run surface: two reads, and routes that forward to KAS's own control verbs. The run read
-// passes `state` and `nodePlan` through verbatim.
+// passes `state` and `nodePlan` through, each step's capture as its summary (summarizedRead).
 
 // The step read loads a step's own KAS session and projects the replay: `inspect` carries only what a step declared.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"time"
+	"unicode"
 
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/apicaller"
@@ -23,60 +25,29 @@ import (
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
+	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
-// handleRun serves GET /api/runs/{workflowId}: the run's full state. It grades a failed read two ways,
-// since the client treats 404 as final.
+// handleRun serves GET /api/runs/{workflowId}: the run's full state, or its ?since, ?view=header and
+// ?view=glance forms (serveRunView). It grades a failed read two ways, since the client treats 404 as final.
 func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		httpreply.BadRequest(w, "missing workflow id")
 		return
 	}
-	read, err := rr.runs.positionedRead(r.Context(), id)
+	if rr.serveRunView(w, r, id) {
+		return
+	}
+	raw, extras, err := rr.runs.wholeRead(r.Context(), id)
 	if err != nil {
 		writeInspectErr(w, id, err)
 		return
 	}
-	raw := read.raw
-	position, err := read.position()
-	if err != nil {
-		slog.Warn("workflow inspect: the run's read position could not be computed",
-			"workflow_id", logsafe.Field(id), "error", err)
-	}
-	var ends map[string]marotte.RunStepEnd
-	var starts map[string]marotte.RunStepStart
-	if rr.runs.log != nil {
-		ends, err = rr.runs.stepEnds(r.Context(), id, kasSteps(read.in))
-		if err != nil {
-			slog.Warn("workflow inspect: the run log's step ends could not be read",
-				"workflow_id", logsafe.Field(id), "error", err)
-		}
-		starts, err = rr.runs.log.stepStarts(r.Context(), id)
-		if err != nil {
-			slog.Warn("workflow inspect: the run log's step starts could not be read",
-				"workflow_id", logsafe.Field(id), "error", err)
-		}
-	}
-	pending := -1
-	if read.in.OK {
-		pending = read.in.Pending
-	}
-	plan := rr.runs.servedPlan(id, pending)
-	extras := &runExtras{
-		asks: read.asks, asksReachable: read.reachable, ends: ends, starts: starts, plan: plan, readPosition: position,
-		displayName: rr.runs.runName(id),
-	}
-	if l, held := rr.runs.lease(id); held {
-		extras.autoResumeStoppedAt = l.AutoResumeStoppedAt
-	}
-	if head, hErr := headOf(raw); hErr == nil && head.Status != "" {
-		c := rr.runs.controls(id, &head)
-		extras.controls = &c
-	}
+	extras.starts = rr.runs.withLiveRows(id, extras.starts)
 	out, err := withRunExtras(raw, extras)
 	if err != nil {
 		slog.Warn("workflow inspect: the reply could not carry the run's open asks, step ends, step starts, plan update and controls",
@@ -85,6 +56,78 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpreply.WriteRawJSON(w, out)
+}
+
+// wholeRead is the run read handleRun serves and the extras it splices in.
+func (rs *Runs) wholeRead(ctx context.Context, id string) (raw json.RawMessage, extras *runExtras, err error) {
+	read, err := rs.positionedRead(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	raw = read.rev.served
+	if raw == nil {
+		raw = summarizedOrWhole(id, read.raw)
+	}
+	position, err := read.position()
+	if err != nil {
+		slog.Warn("workflow inspect: the run's read position could not be computed",
+			"workflow_id", logsafe.Field(id), "error", err)
+	}
+	ends, starts := rs.readStepExtras(ctx, id, &read.runRead)
+	pending := -1
+	if read.in.OK {
+		pending = read.in.Pending
+	}
+	plan := rs.servedPlan(id, pending)
+	extras = &runExtras{
+		asks: read.asks, asksReachable: read.reachable, ends: ends, starts: starts, plan: plan, readPosition: position,
+		displayName: rs.runName(id), rev: read.rev.rev,
+	}
+	if l, held := rs.lease(id); held {
+		extras.autoResumeStoppedAt = l.AutoResumeStoppedAt
+	}
+	extras.silentSince = rs.silentSince(id)
+	if head, hErr := headOf(raw); hErr == nil && head.Status != "" {
+		ctl := rs.controls(id, &head)
+		extras.controls = &ctl
+	}
+	return raw, extras, nil
+}
+
+// readStepExtras is the run log's step ends and starts for read: its revision's, else read afresh
+// (recording the grades due under read's state).
+func (rs *Runs) readStepExtras(ctx context.Context, id string, read *runRead) (
+	ends map[string]marotte.RunStepEnd, starts map[string]marotte.RunStepStart,
+) {
+	if read.rev.ok {
+		return read.rev.ends, read.rev.starts
+	}
+	if rs.log == nil {
+		return nil, nil
+	}
+	ends, err := rs.stepEnds(ctx, id, kasSteps(read.in))
+	if err != nil {
+		slog.Warn("workflow inspect: the run log's step ends could not be read",
+			"workflow_id", logsafe.Field(id), "error", err)
+	}
+	starts, err = rs.log.stepStarts(ctx, id)
+	if err != nil {
+		slog.Warn("workflow inspect: the run log's step starts could not be read",
+			"workflow_id", logsafe.Field(id), "error", err)
+	}
+	return ends, starts
+}
+
+// summarizedOrWhole is raw as the run read serves it (summarizedRead), or raw whole when it cannot be
+// summarized: the client still reads a whole capture.
+func summarizedOrWhole(id string, raw json.RawMessage) json.RawMessage {
+	served, err := summarizedRead(raw)
+	if err != nil {
+		slog.Warn("workflow inspect: the reply's captures could not be summarized; it goes out whole",
+			"workflow_id", logsafe.Field(id), "error", err)
+		return raw
+	}
+	return served
 }
 
 // writeInspectErr grades a failed `inspect` two ways, since a client treats 404 as final: the engine
@@ -111,6 +154,7 @@ type runRead struct {
 	raw       json.RawMessage
 	asks      []marotte.RunAsk
 	in        workflow.Inspect
+	rev       revSnapshot
 	reachable bool
 }
 
@@ -132,7 +176,7 @@ func (rs *Runs) openRun(ctx context.Context, workflowID string) (runRead, error)
 	r, err := rs.readAsks(ctx, c)
 	switch {
 	case err == nil:
-		return runRead{raw: r.raw, in: r.in, asks: wireAsks(r.asks), reachable: true}, nil
+		return runRead{raw: r.raw, in: r.in, asks: wireAsks(r.asks), rev: r.rev, reachable: true}, nil
 	case r.raw != nil:
 		// The engine answered something this build cannot read: the state goes out as KAS gave it.
 		return runRead{raw: r.raw, inErr: err, asks: rs.lastAsks(c), reachable: false}, nil
@@ -149,6 +193,7 @@ func (rs *Runs) lastAsks(c *askCell) []marotte.RunAsk {
 // runExtras are marotte's top-level keys on GET /api/runs/{id}.
 type runExtras struct {
 	autoResumeStoppedAt time.Time
+	silentSince         time.Time
 	ends                map[string]marotte.RunStepEnd
 	starts              map[string]marotte.RunStepStart
 	plan                *marotte.RunPlanUpdate
@@ -156,7 +201,11 @@ type runExtras struct {
 	displayName         string
 	asks                []marotte.RunAsk
 	readPosition        uint64
-	asksReachable       bool
+	// rev is the run read's revision (run_rev.go), written when not 0.
+	rev           uint64
+	asksReachable bool
+	// noLog leaves out step_ends and step_starts: the header view carries no per-step facts.
+	noLog bool
 }
 
 // runReadPosition is a run's read position: the turns its own log holds plus one once KAS reports
@@ -206,18 +255,47 @@ func (rs *Runs) RunReadBound(ctx context.Context, workflowID string) (uint64, er
 	return read.position()
 }
 
-// withRunExtras splices marotte's top-level keys into KAS's reply, decoding to raw values so future
-// keys survive and nested values stay byte-identical: `open_asks`, `step_ends` and `step_starts`, never
+// withRunExtras splices marotte's top-level keys before the closing brace of KAS's reply, so KAS's keys and
+// nested values stay byte-identical and the reply is never decoded: `open_asks`, `step_ends` and `step_starts`, never
 // null because an agent could not tell "none" from "unsupported", `asks_reachable`, false when
 // `open_asks` is not a statement that nothing waits, `read_position` (runReadPosition), `display_name`
 // (Runs.runName, "" when nothing names the run), `plan_update` when servedPlan answers one, `controls`
-// (Runs.controls) when the reply's state carries a status, and `auto_resume_stopped_at` when marotte stopped
-// resuming the run on its own (runlease.Lease.AutoResumeStoppedAt).
+// (Runs.controls) when the reply's state carries a status, `auto_resume_stopped_at` when marotte stopped
+// resuming the run on its own (runlease.Lease.AutoResumeStoppedAt), `silent_since` when a step's open turn has sent
+// nothing past runSilenceBound (Runs.silentSince), and `rev` when a revision describes the read (run_rev.go). A reply
+// that is not one JSON object (null aside) is an error.
 func withRunExtras(raw json.RawMessage, x *runExtras) (json.RawMessage, error) {
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &obj); err != nil {
-		return nil, err
+	body := bytes.TrimSpace(raw)
+	if len(body) == 0 || bytes.Equal(body, []byte("null")) {
+		body = []byte("{}")
 	}
+	if body[0] != '{' || !json.Valid(body) {
+		return nil, errReplyNotObject
+	}
+	keys := x.keys()
+	head := bytes.TrimRightFunc(body[:len(body)-1], unicode.IsSpace)
+	var out bytes.Buffer
+	out.Grow(len(body))
+	out.Write(head)
+	sep := len(head) > 1
+	for _, k := range keys {
+		v, err := json.Marshal(k.v)
+		if err != nil {
+			return nil, err
+		}
+		if sep {
+			out.WriteByte(',')
+		}
+		sep = true
+		out.WriteString(`"` + k.name + `":`)
+		out.Write(v)
+	}
+	out.WriteByte('}')
+	return out.Bytes(), nil
+}
+
+// keys is what withRunExtras writes of x, in order.
+func (x *runExtras) keys() []extraKey {
 	asks, ends, starts := x.asks, x.ends, x.starts
 	if asks == nil {
 		asks = []marotte.RunAsk{}
@@ -228,58 +306,43 @@ func withRunExtras(raw json.RawMessage, x *runExtras) (json.RawMessage, error) {
 	if starts == nil {
 		starts = map[string]marotte.RunStepStart{}
 	}
-	encodedAsks, err := json.Marshal(asks)
-	if err != nil {
-		return nil, err
+	keys := []extraKey{
+		{name: "open_asks", v: asks},
+		{name: "asks_reachable", v: x.asksReachable},
 	}
-	encodedEnds, err := json.Marshal(ends)
-	if err != nil {
-		return nil, err
+	if !x.noLog {
+		keys = append(keys, extraKey{name: "step_ends", v: ends}, extraKey{name: "step_starts", v: starts})
 	}
-	encodedStarts, err := json.Marshal(starts)
-	if err != nil {
-		return nil, err
+	keys = append(keys,
+		extraKey{name: "read_position", v: x.readPosition},
+		extraKey{name: "display_name", v: x.displayName},
+	)
+	if x.rev != 0 {
+		keys = append(keys, extraKey{name: "rev", v: x.rev})
 	}
-	if obj == nil {
-		obj = make(map[string]json.RawMessage, 4)
-	}
-	obj["open_asks"] = encodedAsks
-	if obj["asks_reachable"], err = json.Marshal(x.asksReachable); err != nil {
-		return nil, err
-	}
-	obj["step_ends"] = encodedEnds
-	obj["step_starts"] = encodedStarts
-	if obj["read_position"], err = json.Marshal(x.readPosition); err != nil {
-		return nil, err
-	}
-	if obj["display_name"], err = json.Marshal(x.displayName); err != nil {
-		return nil, err
-	}
-	if err := withOptionalExtras(obj, x); err != nil {
-		return nil, err
-	}
-	return json.Marshal(obj)
-}
-
-// withOptionalExtras sets withRunExtras's keys that only a present value writes.
-func withOptionalExtras(obj map[string]json.RawMessage, x *runExtras) (err error) {
 	if x.plan != nil {
-		if obj["plan_update"], err = json.Marshal(x.plan); err != nil {
-			return err
-		}
+		keys = append(keys, extraKey{name: "plan_update", v: x.plan})
 	}
 	if x.controls != nil {
-		if obj["controls"], err = json.Marshal(x.controls); err != nil {
-			return err
-		}
+		keys = append(keys, extraKey{name: "controls", v: x.controls})
 	}
 	if !x.autoResumeStoppedAt.IsZero() {
-		if obj["auto_resume_stopped_at"], err = json.Marshal(x.autoResumeStoppedAt.UTC()); err != nil {
-			return err
-		}
+		keys = append(keys, extraKey{name: "auto_resume_stopped_at", v: x.autoResumeStoppedAt.UTC()})
 	}
-	return nil
+	if !x.silentSince.IsZero() {
+		keys = append(keys, extraKey{name: "silent_since", v: x.silentSince.UTC()})
+	}
+	return keys
 }
+
+// extraKey is one key withRunExtras writes, its name already a JSON string's contents.
+type extraKey struct {
+	v    any
+	name string
+}
+
+// errReplyNotObject refuses a KAS reply withRunExtras cannot splice into.
+var errReplyNotObject = errors.New("workflow inspect: the reply is not a JSON object")
 
 // handleStepTranscript serves GET /api/runs/{id}/steps/{path}: one step's transcript, {path} one
 // percent-encoded workflow.PathKey. A step outside run {id} is a 404 (StepTranscript). Every 4xx is
@@ -386,24 +449,29 @@ func (rr *runRoutes) handleLiveRuns(w http.ResponseWriter, _ *http.Request) {
 	httpserver.WriteJSON(w, marotte.LiveRunsResponse{Runs: rows, Subject: stamp})
 }
 
-// liveRunRows projects every held lease, shared by this route and the SSE connect so they agree. Cannot fail.
-func (rs *Runs) liveRunRows() []marotte.LiveRun {
-	rows, _ := rs.liveRunRowsStamped()
-	return rows
-}
-
-// liveRunRowsStamped is liveRunRows with the lease store's `runs` version, paired under its lock.
+// liveRunRowsStamped projects every held lease with the lease store's `runs` version, paired under its lock;
+// shared by this route and the SSE connect so they agree. Cannot fail.
 func (rs *Runs) liveRunRowsStamped() ([]marotte.LiveRun, *marotte.SubjectStamp) {
 	held, version := rs.leaseStore().ListStamped()
 	out := make([]marotte.LiveRun, 0, len(held))
 	for i := range held {
-		out = append(out, marotte.LiveRun{
-			WorkflowID: held[i].WorkflowID,
-			ChatID:     held[i].ChatID,
-			Executing:  held[i].Bounded(),
-		})
+		out = append(out, liveRunOf(held[i].Row()))
 	}
 	return out, marotte.NewSubjectStamp(string(subject.KindRuns), "", version)
+}
+
+func liveRunOf(r runlease.Row) marotte.LiveRun {
+	return marotte.LiveRun{WorkflowID: r.WorkflowID, ChatID: r.ChatID, Executing: r.Executing}
+}
+
+// announceLiveRun is the lease store's announcer: one stamped live_run frame per row change. The store calls
+// it under its own lock, and Broadcast takes no lock the store's callers hold.
+func (b *bus) announceLiveRun(r runlease.Row, live bool, version string) {
+	frame := marotte.NewEvent(marotte.EventLiveRun, "", marotte.LiveRunPayload{
+		WorkflowID: r.WorkflowID, ChatID: r.ChatID, Live: live, Executing: r.Executing,
+	})
+	frame.Subject = marotte.NewSubjectStamp(string(subject.KindRuns), "", version)
+	b.Broadcast(context.Background(), frame)
 }
 
 // head reads one run's current state head, a zero head (status "") for an unknown run (the caller's 404): control

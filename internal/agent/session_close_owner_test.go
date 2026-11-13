@@ -1293,7 +1293,7 @@ func TestCloseOwner_EachHoldRefusesThenReleases(t *testing.T) {
 				t.Fatalf("Setup: open c1's tab: %v", err)
 			}
 			return func() {
-				if _, _, _, err := o.st.Close(t.Context(), subject.ID); err != nil {
+				if _, _, _, err := o.st.Close(t.Context(), subject.ID, nil, nil); err != nil {
 					t.Fatalf("close c1's tab: %v", err)
 				}
 			}

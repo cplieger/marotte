@@ -52,11 +52,12 @@ describe("the tree spins for running work, never for a container", () => {
       /* selection is not under test */
     });
     document.body.appendChild(view.root);
+    view.attach(document.body);
     view.render([loop], "");
     try {
       expect(ring(view.root, "l").content).toBe("none");
       expect(ring(view.root, "l:p").content).toBe("none");
-      expect(ring(view.root, "l:p:code").animationName).toBe("vk-spin");
+      expect(ring(view.root, "l:p:code").animationName).toBe("vk-spin-rotate");
     } finally {
       view.root.remove();
     }
@@ -67,6 +68,7 @@ describe("the tree spins for running work, never for a container", () => {
       /* selection is not under test */
     });
     document.body.appendChild(view.root);
+    view.attach(document.body);
     view.render(
       [{ ...loop, state: "fail", children: [{ ...pass, state: "fail", children: [] }] }],
       "",

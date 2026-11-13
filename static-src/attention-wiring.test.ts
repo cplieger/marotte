@@ -5,6 +5,7 @@
 // and the recompute funnel covers both the tab SET and every dot write, via the real store.
 
 import type * as Dom from "./dom.js";
+import type * as ApiClient from "./api-client.js";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
@@ -77,15 +78,12 @@ vi.mock("./icons.js", () => ({
 vi.mock("./transport.js", () =>
   import("./__test-helpers__/tabs-server.js").then((m) => m.tabTransportMock()),
 );
-vi.mock("./api-client.js", () =>
-  import("./__test-helpers__/tabs-server.js").then((m) => ({
-    apiBlobOrError: vi.fn(),
-    apiGetTyped: m.tabListRead(),
-    // tabs.ts reaches api-client.ts through the files-shared.js edge the
-    // multi-instance browser added, so the real link needs this name present.
-    apiGet: vi.fn(() => Promise.resolve(null)),
-  })),
-);
+vi.mock("./api-client.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ApiClient>()),
+  apiBlobOrError: vi.fn(),
+  apiGetTyped: (await import("./__test-helpers__/tabs-server.js")).tabListRead(),
+  apiGet: vi.fn(() => Promise.resolve(null)),
+}));
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 vi.mock("./device-view.js", () => {
   let active = "";
@@ -101,7 +99,7 @@ vi.mock("./device-view.js", () => {
 // One signal per run, so a reply moving only `readPosition` re-runs the fold as the real cell does.
 const runCells = vi.hoisted(() => new Map<string, { value: unknown }>());
 vi.mock("./run-store.js", async () => {
-  const { signal } = await import("@cplieger/ui");
+  const { signal } = await import("@cplieger/reactive");
   return {
     // Inert here; a Browser-Mode mock is linked as real ESM, so a name any module in the graph
     // reaches has to exist on it.
@@ -173,7 +171,7 @@ vi.mock("./dom.js", async (importOriginal) => ({
   },
 }));
 
-import { signal, touch } from "@cplieger/ui";
+import { signal, touch } from "@cplieger/reactive";
 import {
   browserAttentionEnv,
   createAttention,
@@ -183,12 +181,7 @@ import {
 } from "./attention.js";
 import { defaultUsage, setActive, setSessions, upsertHeader } from "./store.js";
 import { BUS_PAGE_RESUMED, BUS_RECONCILE, dispatch, emitBus } from "./bus.js";
-import {
-  _setRegistrationForTest,
-  notifyOffScreen,
-  setNotificationsEnabled,
-  setOnScreen,
-} from "./notify.js";
+import { _setRegistrationForTest, showNotice, setNotificationsEnabled } from "./notify.js";
 import type { ServerEvent } from "./types.js";
 import {
   openTab,
@@ -276,8 +269,11 @@ const seededDots = new Map<string, TabDotStatus>();
 function registerOpeners(): void {
   registerTabOpeners({
     chat: {
+      prefetch: vi.fn(),
+      select: vi.fn(),
+      loadFailed: vi.fn(),
       show: vi.fn(),
-      refresh: vi.fn(),
+      refresh: vi.fn(() => Promise.resolve()),
       close: vi.fn(),
       dot: (chatID: string) => seededDots.get(chatID) ?? "",
     },
@@ -1375,20 +1371,24 @@ describe("initAttention", () => {
       }
       vi.stubGlobal("Notification", PageNotification);
       setNotificationsEnabled(true);
-      setOnScreen(() => false);
       try {
         await openChat("a");
         const b = await openChat("b", { activate: false });
         finish(b, "b", "done");
         expect(
-          notifyOffScreen({ kind: "agent_finished", chat_id: "b", title: "b", body: "" }),
+          showNotice({
+            id: "n-b",
+            kind: "agent_finished",
+            chat_id: "b",
+            title: "b",
+            body: "",
+          }),
         ).toBe(true);
 
         tabServer.ackRemotely(b, 1);
         expect(pageClosed).toEqual(["marotte:b"]);
       } finally {
         setNotificationsEnabled(false);
-        setOnScreen(() => document.visibilityState === "visible");
       }
     });
 

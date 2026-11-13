@@ -47,16 +47,16 @@ function spec(open: PillOpen, knob: PillKnob, clicked: string | undefined): Pill
 const efforts = ["", "medium", "high"];
 const pendings: readonly (readonly [string, string])[] = [
   ["", ""],
-  ["sonnet", ""],
-  ["sonnet", "high"],
-  ["sonnet", "low"],
-  ["opus", "low"],
+  ["model-b", ""],
+  ["model-b", "high"],
+  ["model-b", "low"],
+  ["model-a", "low"],
 ];
 const knobs: readonly PillKnob[] = [
   { touched: false },
   ...[OFF, "low", "medium", "high"].map((level) => ({ touched: true, level }) as const),
 ];
-const clicks = [undefined, "opus", "sonnet", "haiku"];
+const clicks = [undefined, "model-a", "model-b", "model-c"];
 
 describe("resolvePillCommit", () => {
   it("matches the spec over every card, knob and click", () => {
@@ -66,7 +66,7 @@ describe("resolvePillCommit", () => {
       for (const thinkingOff of [false, true]) {
         for (const [pendingModel, pendingEffort] of pendings) {
           const open: PillOpen = {
-            chatModel: "opus",
+            chatModel: "model-a",
             effort,
             thinkingOff,
             pendingModel,
@@ -108,47 +108,47 @@ describe("resolvePillCommit", () => {
   // parked tier, so moving off it is a change.
   it("sends the chat's own tier over a parked one when the knob moved to it", () => {
     const open: PillOpen = {
-      chatModel: "opus",
+      chatModel: "model-a",
       effort: "medium",
       thinkingOff: false,
-      pendingModel: "sonnet",
+      pendingModel: "model-b",
       pendingEffort: "high",
     };
 
     expect(parkedStop(open), "the card opens on the parked tier").toBe("high");
-    expect(resolvePillCommit(open, { touched: true, level: "medium" }, "sonnet")).toEqual({
+    expect(resolvePillCommit(open, { touched: true, level: "medium" }, "model-b")).toEqual({
       kind: "switch",
-      model: "sonnet",
+      model: "model-b",
       effort: "medium",
     });
     expect(resolvePillCommit(open, { touched: true, level: "medium" }, undefined)).toEqual({
       kind: "switch",
-      model: "sonnet",
+      model: "model-b",
       effort: "medium",
     });
   });
 
   it("sends a moved tier with the model clicked, even one equal to the chat's", () => {
     const open: PillOpen = {
-      chatModel: "opus",
+      chatModel: "model-a",
       effort: "medium",
       thinkingOff: false,
       pendingModel: "",
       pendingEffort: "",
     };
 
-    expect(resolvePillCommit(open, { touched: true, level: "medium" }, "sonnet")).toEqual({
+    expect(resolvePillCommit(open, { touched: true, level: "medium" }, "model-b")).toEqual({
       kind: "switch",
-      model: "sonnet",
+      model: "model-b",
       effort: "medium",
     });
   });
 
   const parkedHigh = (thinkingOff: boolean): PillOpen => ({
-    chatModel: "opus",
+    chatModel: "model-a",
     effort: "medium",
     thinkingOff,
-    pendingModel: "sonnet",
+    pendingModel: "model-b",
     pendingEffort: "high",
   });
 
@@ -161,9 +161,9 @@ describe("resolvePillCommit", () => {
 
   it("carries the parked tier it shows to another model clicked", () => {
     for (const thinkingOff of [false, true]) {
-      expect(resolvePillCommit(parkedHigh(thinkingOff), { touched: false }, "haiku")).toEqual({
+      expect(resolvePillCommit(parkedHigh(thinkingOff), { touched: false }, "model-c")).toEqual({
         kind: "switch",
-        model: "haiku",
+        model: "model-c",
         effort: "high",
       });
     }
@@ -176,9 +176,9 @@ describe("resolvePillCommit", () => {
     for (const thinkingOff of [false, true]) {
       for (const level of ["low", "medium", OFF]) {
         expect(
-          resolvePillCommit(parkedHigh(thinkingOff), { touched: true, level }, "opus"),
+          resolvePillCommit(parkedHigh(thinkingOff), { touched: true, level }, "model-a"),
           JSON.stringify({ thinkingOff, level }),
-        ).toEqual({ kind: "switch", model: "opus", effort: level });
+        ).toEqual({ kind: "switch", model: "model-a", effort: level });
       }
     }
   });
@@ -188,7 +188,7 @@ describe("resolvePillCommit", () => {
     for (const thinkingOff of [false, true]) {
       expect(resolvePillCommit(parkedHigh(thinkingOff), off, undefined)).toEqual({
         kind: "switch",
-        model: "sonnet",
+        model: "model-b",
         effort: OFF,
       });
     }

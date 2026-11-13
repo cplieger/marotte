@@ -49,7 +49,7 @@ func findDoc(docs []KiroDoc, name string) (KiroDoc, bool) {
 // TestScanKiroDocs_FoldedDescriptionSurvives pins that a folded description is not ">".
 func TestScanKiroDocs_FoldedDescriptionSurvives(t *testing.T) {
 	fsys := fstest.MapFS{
-		"agents/twin.md": {Data: []byte("---\nname: twin\ndescription: >\n  Even-cycle twin of the\n  other reviewer.\nmodel: claude-opus-5\ntools: [read, write]\n---\n")},
+		"agents/twin.md": {Data: []byte("---\nname: twin\ndescription: >\n  Even-cycle twin of the\n  other reviewer.\nmodel: model-a-5\ntools: [read, write]\n---\n")},
 	}
 	docs := scanKiroDocsFS(t.Context(), fsys, "ws/.kiro", nil).docs
 	d, ok := findDoc(docs, "twin")
@@ -59,7 +59,7 @@ func TestScanKiroDocs_FoldedDescriptionSurvives(t *testing.T) {
 	if d.Description != "Even-cycle twin of the other reviewer." {
 		t.Errorf("Description = %q, want the folded value joined", d.Description)
 	}
-	if d.Model != "claude-opus-5" {
+	if d.Model != "model-a-5" {
 		t.Errorf("Model = %q", d.Model)
 	}
 	if !slices.Equal(d.Tools, []string{"read", "write"}) {

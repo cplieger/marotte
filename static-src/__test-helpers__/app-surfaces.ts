@@ -3,8 +3,8 @@
 // state and planted by hand in that module's shape where none does. `touch-targets.test.ts` walks them
 // on the coarse tier and `button-size.test.ts` classifies every control on them.
 import { expect } from "vitest";
-import { _resetForTest as resetAsk } from "@cplieger/ui/ask";
-import { _resetForTest as resetScrollLock } from "@cplieger/ui/modal";
+import { _resetForTest as resetAsk } from "../legacy-ui/ask.js";
+import { _resetForTest as resetScrollLock } from "../legacy-ui/modal.js";
 
 import indexHtml from "../../static/index.html?raw";
 import type { Pele } from "../mermaid-svg.js";
@@ -945,7 +945,7 @@ function plantModelList(): void {
 
 function fillModelList(list: HTMLElement): void {
   const scroll = make("div", "pill-model-scroll", { role: "listbox", "aria-label": "Models" });
-  for (const [i, name] of ["Claude Opus", "Claude Sonnet", "Auto"].entries()) {
+  for (const [i, name] of ["Model A", "Model B", "Auto"].entries()) {
     const opt = make("div", i === 0 ? "pill-model-item active" : "pill-model-item", {
       role: "option",
       "aria-selected": i === 0 ? "true" : "false",
@@ -1498,7 +1498,7 @@ export const SURFACES: readonly Surface[] = [
     name: "a reply",
     sizes: TWO,
     setup: plantReply,
-    controls: [".code-act-btn"],
+    controls: ['.cp-code [data-part="actions"] > .cp-button'],
     rows: [".subagent-header"],
   },
   {
@@ -1684,8 +1684,9 @@ export const SURFACES: readonly Surface[] = [
     setup: () => {
       show("web-view");
       q("#web-path").textContent = "/preview/index.html";
+      q("#web-open-btn").setAttribute("href", "/preview/tab/tok/index.html");
     },
-    controls: ["#web-reload-btn", "#web-edit-btn"],
+    controls: ["#web-reload-btn", "#web-open-btn", "#web-edit-btn"],
   },
   {
     name: "the web preview's scale",

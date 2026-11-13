@@ -151,12 +151,14 @@ function seed(...sessions: Session[]): void {
   const first = sessions[0];
   if (first !== undefined) {
     store.setActive(first.id);
+    store.setPainted(first.id);
     store.bumpMessages(first.id, "load");
   }
 }
 
 function switchTo(chatID: string): void {
   store.setActive(chatID);
+  store.setPainted(chatID);
 }
 
 function viewOf(chatID: string): HTMLElement {
@@ -181,11 +183,22 @@ async function settledFrames(): Promise<void> {
   await new Promise((r) => requestAnimationFrame(() => r(undefined)));
 }
 
+/** The follower has landed the reader on the live edge, so a move up from there is a move up. */
+async function followedToEnd(scroller: HTMLElement): Promise<void> {
+  await settledFrames();
+  // Over a fractional end Chromium truncates `scrollTop` and rounds `scrollHeight`, a pixel apart.
+  expect(
+    Math.abs(scroller.scrollTop - (scroller.scrollHeight - scroller.clientHeight)),
+    "the premise: Following at the end",
+  ).toBeLessThanOrEqual(1);
+}
+
 beforeEach(() => {
   // The multiplexer's registry persists at module scope; earlier parked views would count against the LRU.
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
+  store.setPainted("");
   // Production never scrolls the document (`#app` is fixed); `.focus()` here would, pushing rows out of
   // `content-visibility` relevance so the find walker misses them in the next case.
   window.scrollTo(0, 0);
@@ -399,6 +412,7 @@ describe("park → grow → unpark", { timeout: testTimeoutFor(FRAME_BUDGET_MS) 
 
     // No active chat while the session stays in the store: the paint must hide, never dispose.
     store.setActive("");
+    store.setPainted("");
     await flushed();
     expect(view.isConnected).toBe(true);
     expect(view.classList.contains("is-active")).toBe(false);
@@ -446,12 +460,7 @@ describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => 
     // scroll event says where it went.
     const scroller = scroll.getScrollEl();
     expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight + 150);
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    // scrollHeight rounds a fractional content height up, so the live edge reads up to 1px past the scrollTop it clamps to.
-    expect(
-      scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop,
-      "the premise: Following at the end",
-    ).toBeLessThanOrEqual(1);
+    await followedToEnd(scroller);
     scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
     scroller.scrollTo({ top: 5, behavior: "instant" });
     scroller.dispatchEvent(new Event("scroll"));
@@ -792,6 +801,8 @@ describe("disposal", () => {
       switchTo(id);
       await flushed();
     }
+    // Eviction runs in the task after the paint.
+    await new Promise((r) => setTimeout(r, 0));
 
     // Five chats visited: the first is past the parked budget of three and its container is gone.
     expect(messages.transcriptViewFor(first)).toBeNull();
@@ -805,6 +816,94 @@ describe("disposal", () => {
     for (const id of ids.slice(2, -1)) {
       expect(viewOf(id).isConnected).toBe(true);
     }
+  });
+
+  it("paints the incoming view before the least-recently-used parked view is disposed", async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < messages.PARKED_VIEWS + 2; i++) {
+      ids.push(freshID("c-evict-late"));
+    }
+    seed(...ids.map((id) => oneTurn(id, `text of ${id}`)));
+    await flushed();
+    for (const id of ids.slice(1, -1)) {
+      switchTo(id);
+      await flushed();
+    }
+    const lru = ids[0] ?? "";
+    const last = ids[ids.length - 1] ?? "";
+    expect(messages.transcriptViewFor(lru), "the LRU view is still parked").not.toBeNull();
+
+    switchTo(last);
+    await flushed();
+    expect(viewOf(last).classList.contains("is-active")).toBe(true);
+    expect(viewOf(last).querySelectorAll(".turn").length).toBeGreaterThan(0);
+    expect(messages.transcriptViewFor(lru), "disposed in the paint's own task").not.toBeNull();
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(messages.transcriptViewFor(lru), "disposed in a later task").toBeNull();
+  });
+
+  it("keeps a view its exemption names past the budget, with its reading position", async () => {
+    const x = freshID("c-pend");
+    const others: string[] = [];
+    for (let i = 0; i < messages.PARKED_VIEWS + 1; i++) {
+      others.push(freshID("c-pend"));
+    }
+    const turns: Entry[][] = [];
+    for (let i = 0; i < 10; i++) {
+      const t = `${x}-t${String(i)}`;
+      turns.push([
+        turnOpen(t, i + 1, `prompt ${String(i)}`),
+        textEntry(t, 1, `reply ${String(i)}`),
+        turnClose(t, 2),
+      ]);
+    }
+    seed(settled(x, turns), ...others.map((id) => oneTurn(id, `text of ${id}`)));
+    await flushed();
+    const scroller = scroll.getScrollEl();
+    expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight + 150);
+    await followedToEnd(scroller);
+    scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
+    scroller.scrollTo({ top: 5, behavior: "instant" });
+    scroller.dispatchEvent(new Event("scroll"));
+    expect(scroll.readingState()).toBe("reading");
+    // A close of X pends: its rollback must find the view it parked.
+    messages.setParkedViewExemption((chatID) => chatID === x);
+    try {
+      for (const id of others) {
+        switchTo(id);
+        await flushed();
+      }
+      await new Promise((r) => setTimeout(r, 0));
+      expect(messages.transcriptViewFor(x), "the pending close's view was evicted").not.toBeNull();
+
+      switchTo(x);
+      await flushed();
+      expect(scroll.readingState()).toBe("reading");
+      expect(Math.abs(scroller.scrollTop - 5)).toBeLessThanOrEqual(1);
+    } finally {
+      messages.setParkedViewExemption(() => false);
+    }
+  });
+
+  it("paints on the painted chat moving, not on the active chat moving", async () => {
+    const a = freshID("c-ptr");
+    const b = freshID("c-ptr");
+    seed(oneTurn(a, "text of a"), oneTurn(b, "text of b"));
+    await flushed();
+    expect(viewOf(a).classList.contains("is-active")).toBe(true);
+    // A switch's gesture: the reader is on B, A's transcript stays mounted until the activation.
+    store.setActive(b);
+    await flushed();
+    expect(viewOf(a).classList.contains("is-active"), "setActive repainted the transcript").toBe(
+      true,
+    );
+    expect(messages.transcriptViewFor(b), "setActive built B's view").toBeNull();
+
+    store.setPainted(b);
+    await flushed();
+    expect(viewOf(b).classList.contains("is-active")).toBe(true);
+    expect(viewOf(a).classList.contains("is-active")).toBe(false);
   });
 
   it("teardownAll with parked views leaves no DOM and no state", async () => {

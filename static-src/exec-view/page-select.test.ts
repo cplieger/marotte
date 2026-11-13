@@ -40,11 +40,17 @@ afterEach(() => {
 function selectedPath(run: ExecRun): string {
   host = document.createElement("div");
   const dock = document.createElement("div");
-  const view = buildExecPage({ emptyNote: () => "", dock });
+  let path = "";
+  const view = buildExecPage({
+    emptyNote: () => "",
+    dock,
+    onSelect: (n) => {
+      path = n?.path ?? "";
+    },
+  });
   host.append(view.root, dock);
   document.body.appendChild(host);
   view.render(run);
-  const path = host.querySelector<HTMLElement>(".ev-row.ev-selected")?.dataset["path"] ?? "";
   view.dispose();
   return path;
 }

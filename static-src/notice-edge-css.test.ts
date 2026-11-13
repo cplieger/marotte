@@ -59,10 +59,6 @@ describe("a notice is a hue wash of its state, never a coloured edge", () => {
     const offenders: string[] = [];
     for (const { name, css } of manifestSheets()) {
       for (const { chain, decl } of declarations(css)) {
-        // Rendered Markdown's blockquote is the one leading edge: a typographic convention, not a notice.
-        if (name === "13-messages.css" && chain.at(-1) === "& blockquote") {
-          continue;
-        }
         if (isLeadingEdge(decl)) {
           offenders.push(`${name}: ${chain.join(" ")} { ${decl} }`);
         }

@@ -10,6 +10,7 @@ import (
 var Codes = route.CodeSet{
 	{Code: "agent_rows_waiting", Status: http.StatusConflict},
 	{Code: "always_rule_not_saved", Status: http.StatusConflict},
+	{Code: "bot_mode", Status: http.StatusConflict},
 	{Code: "busy", Status: http.StatusConflict},
 	{Code: "chat_closed", Status: http.StatusConflict},
 	{Code: "chat_gone", Status: http.StatusConflict},

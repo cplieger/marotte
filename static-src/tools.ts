@@ -28,14 +28,14 @@ import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { onSSE } from "./bus.js";
 import { $, byId } from "./dom.js";
 import { openConfigFile } from "./editor-openers.js";
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import { reconcile, KEY_ATTR } from "./reconcile.js";
 import { sigChanged, wireSignature } from "./paint-sig.js";
 import { relativeTime } from "./relative-time.js";
 import { classify, emptyNote, type Nouns } from "./textsearch/copy.js";
 import { error as toastError, errorWithAction } from "./toast.js";
-import { openGitView } from "./tabs.js";
+import { openGitView, openSettingsView } from "./tabs.js";
 import {
   accountRaisesLimit,
   bodyRateLimit,
@@ -120,6 +120,9 @@ type ListEntry =
   | { kind: "tool"; tool: ToolInfo }
   | { kind: "system"; name: string }
   | { kind: "apt"; pkg: AptPackage };
+
+/** Hears every inventory read: the inventory, or null when the read failed. */
+type InventoryListener = (inv: Inventory | null) => void;
 
 // The rest — install, uninstall, disable and reconcile — come from a tool row, a tools.json save or
 // the boot, so they are the residual case in `pillOwns` and are never named here.
@@ -214,6 +217,12 @@ const f = {
   get cancel(): HTMLButtonElement {
     return byId("tool-cancel-btn");
   },
+  get lspFilter(): HTMLDivElement {
+    return byId("tools-lsp-filter");
+  },
+  get lspFilterClear(): HTMLButtonElement {
+    return byId("tools-lsp-filter-clear");
+  },
   get catalogRefresh(): HTMLButtonElement {
     return byId("tool-catalog-refresh-btn");
   },
@@ -270,6 +279,10 @@ class ToolsManager {
   /** The trimmed query behind `lastSearch`: empty makes a no-rows reply a featured browse. Not the
    *  live input, which may be edited past the results. */
   private lastQuery = "";
+  /** The list shows language servers only. Kept until Show all tools or a reload, so the
+   *  order in which the tab's loader and the opener run cannot drop it. */
+  private lspOnly = false;
+  private readonly inventoryListeners = new Set<InventoryListener>();
 
   /** Public hook for global cleanup: cancels in-flight tool fetch. */
   cancelLoad(): void {
@@ -308,6 +321,9 @@ class ToolsManager {
     bindLoadingState("tools.refresh_catalog", f.catalogRefresh);
     f.openManifest.addEventListener("click", () => {
       void openConfigFile("tools.json");
+    });
+    f.lspFilterClear.addEventListener("click", () => {
+      this.setLspOnly(false);
     });
     // The residual Cancel pill, for a job kind no pill above owns.
     f.cancel.addEventListener("click", () => {
@@ -429,10 +445,18 @@ class ToolsManager {
 
   loadToolsList(): void {
     this.loadCatalogMeta();
+    this.loadInventory();
+  }
+
+  /** Every inventory read lands here, so a listener sees each one the list paints. */
+  loadInventory(): void {
     void loadTools.dispatch(undefined, {
       onSuccess: (d) => {
         this.data = d;
         this.renderToolsList();
+        for (const fn of this.inventoryListeners) {
+          fn(d);
+        }
         this.seedLiveJob(d.job);
         // A job already running when the panel opens (boot sync, or a
         // reload mid-install): seed the output panel with its tail.
@@ -442,8 +466,22 @@ class ToolsManager {
       },
       onError: (err) => {
         $.toolsList.replaceChildren(el("div", { className: "list-empty" }, loadFailureText(err)));
+        for (const fn of this.inventoryListeners) {
+          fn(null);
+        }
       },
     });
+  }
+
+  onInventory(fn: InventoryListener): () => void {
+    this.inventoryListeners.add(fn);
+    return () => this.inventoryListeners.delete(fn);
+  }
+
+  setLspOnly(on: boolean): void {
+    this.lspOnly = on;
+    f.lspFilter.classList.toggle("hidden", !on);
+    this.renderToolsList();
   }
 
   private async resumeJobOutput(job: Job): Promise<void> {
@@ -490,36 +528,14 @@ class ToolsManager {
     // the app needs, so the engine refuses its removal (ErrEssential) and its row has no bin; Disable is
     // the escape hatch. Labels appear only when the split is real.
     const flat: ListEntry[] = [];
-    const essential = d.tools.filter((t) => t.essential === true);
-    const chosen = d.tools.filter((t) => t.essential !== true);
-    if (essential.length > 0) {
-      flat.push({ kind: "label", label: "pre-bundled, kept current by the catalog" });
-      for (const t of essential) {
-        flat.push({ kind: "tool", tool: t });
+    if (this.lspOnly) {
+      for (const t of d.tools) {
+        if (t.lsp === true) {
+          flat.push({ kind: "tool", tool: t });
+        }
       }
-      if (chosen.length > 0) {
-        flat.push({ kind: "label", label: "added by you" });
-      }
-    }
-    for (const t of chosen) {
-      flat.push({ kind: "tool", tool: t });
-    }
-    const system = d.system.filter((s) => s.installed);
-    if (system.length > 0) {
-      flat.push({ kind: "label", label: "built into the image" });
-      for (const s of system) {
-        flat.push({ kind: "system", name: s.name });
-      }
-    }
-    // Debian packages somebody CHOSE (image or shell), minus apt's auto-installed dependencies and
-    // required/important priorities. Read-only: no manifest row stands behind one. An ABSENT list means
-    // apt is not the package manager or enumeration failed; both render as no group.
-    const apt = d.apt_packages ?? [];
-    if (apt.length > 0) {
-      flat.push({ kind: "label", label: "installed with apt, outside the engine" });
-      for (const pkg of apt) {
-        flat.push({ kind: "apt", pkg });
-      }
+    } else {
+      this.groupedEntries(d, flat);
     }
 
     // Drop any non-keyed empty-state placeholder before reconciling.
@@ -529,13 +545,15 @@ class ToolsManager {
       }
     }
 
-    if (d.tools.length === 0) {
+    if (d.tools.length === 0 || flat.length === 0) {
       container.replaceChildren();
       container.appendChild(
         el(
           "div",
           { className: "list-empty" },
-          "No tools installed yet. Add tool searches a catalog of ~700 runtimes, language servers, and CLIs.",
+          this.lspOnly
+            ? "No language servers in your list. Add tool finds one: search for the language, such as Go or Python."
+            : "No tools installed yet. Add tool searches a catalog of ~700 runtimes, language servers, and CLIs.",
         ),
       );
       return;
@@ -593,6 +611,41 @@ class ToolsManager {
         // All volatile state is in the key; same-key rows are static.
       },
     });
+  }
+
+  /** The unfiltered list: tools split on `essential`, then the image's and apt's read-only groups. */
+  private groupedEntries(d: Inventory, flat: ListEntry[]): void {
+    const essential = d.tools.filter((t) => t.essential === true);
+    const chosen = d.tools.filter((t) => t.essential !== true);
+    if (essential.length > 0) {
+      flat.push({ kind: "label", label: "pre-bundled, kept current by the catalog" });
+      for (const t of essential) {
+        flat.push({ kind: "tool", tool: t });
+      }
+      if (chosen.length > 0) {
+        flat.push({ kind: "label", label: "added by you" });
+      }
+    }
+    for (const t of chosen) {
+      flat.push({ kind: "tool", tool: t });
+    }
+    const system = d.system.filter((s) => s.installed);
+    if (system.length > 0) {
+      flat.push({ kind: "label", label: "built into the image" });
+      for (const s of system) {
+        flat.push({ kind: "system", name: s.name });
+      }
+    }
+    // Debian packages somebody CHOSE (image or shell), minus apt's auto-installed dependencies and
+    // required/important priorities. Read-only: no manifest row stands behind one. An ABSENT list means
+    // apt is not the package manager or enumeration failed; both render as no group.
+    const apt = d.apt_packages ?? [];
+    if (apt.length > 0) {
+      flat.push({ kind: "label", label: "installed with apt, outside the engine" });
+      for (const pkg of apt) {
+        flat.push({ kind: "apt", pkg });
+      }
+    }
   }
 
   private renderSystemRow(name: string): HTMLDivElement {
@@ -1338,4 +1391,17 @@ export function initTools(): void {
 }
 export function loadToolsList(): void {
   manager.loadToolsList();
+}
+/** Re-read the inventory without the catalog line: for a reader outside the Tools tab. */
+export function refreshToolInventory(): void {
+  manager.loadInventory();
+}
+/** Subscribe to every inventory read the Tools tab makes, job-driven refetches included. */
+export function onToolInventory(fn: InventoryListener): () => void {
+  return manager.onInventory(fn);
+}
+/** Open Settings > Tools with its list narrowed to language servers. */
+export async function showLanguageServers(): Promise<void> {
+  manager.setLspOnly(true);
+  await openSettingsView("tools");
 }

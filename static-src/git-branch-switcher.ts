@@ -6,11 +6,11 @@ import { apiGet } from "./api-client.js";
 import { checkoutBranch } from "./actions/git-branch.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
-import { createRoot, el, runWithOwner, type Owner } from "@cplieger/ui";
+import { createRoot, el, runWithOwner, type Owner } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
 import { ICON_GIT_BRANCH, ICON_SEND, findGlyph } from "./icons.js";
-import { createPopover, type PopoverController } from "@cplieger/ui/popover";
-import { rovingFocus, type RovingFocusController } from "@cplieger/ui/roving-focus";
+import { createPopover, type PopoverController } from "./legacy-ui/popover.js";
+import { rovingFocus, type RovingFocusController } from "./legacy-ui/roving-focus.js";
 import { getGitBranchesEndpoint } from "./wire/client.gen.js";
 
 interface BranchEntry {

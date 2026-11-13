@@ -8,7 +8,7 @@ import { get, subagentStatusFor, turnLive } from "./store.js";
 import { runLabelOf } from "./run-store.js";
 import { FALLBACK_SUBAGENT_NAME, subagentLabel } from "./roles.js";
 import { findSubagentInvocation } from "./subagent-slice.js";
-// Acyclic: files-shared.ts imports only @cplieger/ui.
+// Acyclic: files-shared.ts imports only @cplieger/reactive and the locale-time.js leaf.
 import { FB_ROOT, normalizeDirPath } from "./files-shared.js";
 
 // --- The injected half ---
@@ -16,8 +16,11 @@ import { FB_ROOT, normalizeDirPath } from "./files-shared.js";
 /** `dot` is injected because the pending-ask half of it reads the decision dock, which is not a leaf
  *  module; `close` is the chat's CLIENT-LOCAL teardown, whoever closed the tab. */
 interface ChatTabOpener {
+  select: (chatID: string) => void;
   show: (chatID: string) => void;
-  refresh: (chatID: string) => void;
+  prefetch: (chatID: string, signal: AbortSignal) => void;
+  refresh: (chatID: string, signal: AbortSignal) => Promise<void>;
+  loadFailed: (chatID: string) => void;
   close: (chatID: string) => void;
   dot: (chatID: string) => TabDotStatus | "";
 }
@@ -41,7 +44,7 @@ interface RunTabOpener {
  *  nothing and can stop nothing, and every door opens it with `owns: false`. */
 interface SubagentTabOpener {
   show: (chatID: string, subtaskID: string) => void;
-  refresh: (chatID: string, subtaskID: string) => void;
+  refresh: (chatID: string, subtaskID: string, signal: AbortSignal) => void;
 }
 
 /** No `close` half for the subagent opener's reason: the page is a view over documents Kiro writes
@@ -190,6 +193,10 @@ function dotOf(status: TabDotStatus | ""): { dotStatus?: TabDotStatus } {
   return status === "" ? {} : { dotStatus: status };
 }
 
+/** The answer of a view whose own loader paints its placeholder and error row: it is never blank,
+ *  so there is nothing for the refresh to wait on. */
+const SHOWN: Promise<void> = Promise.resolve();
+
 /** Run a singleton's loader through a LAZY import, swallowing a failed chunk load as app.ts does.
  *  Lazy for every singleton: they reach tabs.ts, which calls materializeTab, so a static import
  *  closes a cycle. Specifiers stay literal at each call site for the bundler. */
@@ -220,11 +227,18 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         owns: subject.owns,
         ...parentOf(subject),
         ...dotOf(reg.chat.dot(chatID)),
+        onSelect: () => {
+          reg.chat.select(chatID);
+        },
+        prefetch: (signal) => {
+          reg.chat.prefetch(chatID, signal);
+        },
         onShow: () => {
           reg.chat.show(chatID);
         },
-        refresh: () => {
-          reg.chat.refresh(chatID);
+        refresh: (signal) => reg.chat.refresh(chatID, signal),
+        onLoadFailed: () => {
+          reg.chat.loadFailed(chatID);
         },
         onClose: () => {
           reg.chat.close(chatID);
@@ -247,6 +261,7 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         },
         refresh: () => {
           reg.editor.refresh(path);
+          return SHOWN;
         },
         onClose: () => {
           reg.editor.close(path);
@@ -270,6 +285,7 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         },
         refresh: () => {
           reg.run.refresh(workflowID);
+          return SHOWN;
         },
       };
     }
@@ -287,6 +303,7 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         },
         refresh: () => {
           reg.spec.refresh(dir);
+          return SHOWN;
         },
       };
     }
@@ -304,8 +321,9 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         onShow: () => {
           reg.subagent.show(chatID, subtaskID);
         },
-        refresh: () => {
-          reg.subagent.refresh(chatID, subtaskID);
+        refresh: (signal) => {
+          reg.subagent.refresh(chatID, subtaskID, signal);
+          return SHOWN;
         },
         // No onClose: the page projects blocks the chat store owns; `subagent-view.ts`'s demand effect
         // releases it.
@@ -329,6 +347,7 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
               refreshSettingsPanel();
             }),
           );
+          return SHOWN;
         },
       };
     case "git":
@@ -355,6 +374,7 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
               refreshGitView();
             }),
           );
+          return SHOWN;
         },
       };
     case "files": {
@@ -379,6 +399,7 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
               showFilesTab(dir);
             }),
           );
+          return SHOWN;
         },
         onClose: () => {
           lazily(
@@ -404,6 +425,7 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
               showWebTab(path);
             }),
           );
+          return SHOWN;
         },
         onClose: () => {
           lazily(
@@ -435,6 +457,7 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
               refreshHistoryView();
             }),
           );
+          return SHOWN;
         },
         // Unlike docs, this page needs a close hook: it holds a dispatch, an
         // AbortController and a debounce timer.
@@ -467,6 +490,7 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
               refreshDocsView();
             }),
           );
+          return SHOWN;
         },
       };
   }

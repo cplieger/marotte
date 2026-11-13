@@ -1,7 +1,7 @@
 // The one client owner of the governance snapshot (GET /api/governance plus the governance_state SSE), the
 // org-policy disclosure and the setting locks.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { onSSE } from "./bus.js";
 import { apiGetTyped } from "./api-client.js";
 import { decodeGovernanceStatePayload } from "./wire/decoders.gen.js";
@@ -127,7 +127,7 @@ export function paintSettingLocks(): void {
         delete input.dataset["heldValue"];
       }
       note?.remove();
-      input.removeAttribute("aria-describedby");
+      linkLockNote(input, noteID, false);
       continue;
     }
     input.dataset["heldValue"] ??= String(input.checked);
@@ -137,7 +137,22 @@ export function paintSettingLocks(): void {
       text.appendChild(note);
     }
     note.textContent = lock.reason;
-    input.setAttribute("aria-describedby", noteID);
+    linkLockNote(input, noteID, true);
+  }
+}
+
+/** Add or drop only the lock note's id: the row's hint and the engine-restart hint share the attribute. */
+function linkLockNote(input: HTMLInputElement, noteID: string, linked: boolean): void {
+  const ids = (input.getAttribute("aria-describedby") ?? "")
+    .split(" ")
+    .filter((t) => t !== "" && t !== noteID);
+  if (linked) {
+    ids.push(noteID);
+  }
+  if (ids.length === 0) {
+    input.removeAttribute("aria-describedby");
+  } else {
+    input.setAttribute("aria-describedby", ids.join(" "));
   }
 }
 

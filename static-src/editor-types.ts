@@ -4,14 +4,14 @@
 // editor-ui, and editor-openers.
 // ---------------------------------------------------------------------------
 
-import { signal, computed, type Signal, type ReadonlySignal } from "@cplieger/ui";
+import { signal, computed, type Signal, type ReadonlySignal } from "@cplieger/reactive";
 import { lineDiff, type DiffLine } from "./diff.js";
 import { relToWorkspace } from "./workspace.js";
 import type { ConflictFile } from "./conflict.js";
 import type { DiffBase, FileFacts } from "./viewer-rules.js";
 import type { EolRecord, EolTracker } from "./viewer-eol.js";
 import type { WholeRows } from "./viewer-rows.js";
-import type { HighlightRuns } from "./highlight.js";
+import type { Runs } from "@cplieger/ui/highlight";
 import type { FileRefusal } from "./wire/types.gen.js";
 import { getFileEndpoint, getFileStatEndpoint } from "./wire/client.gen.js";
 
@@ -171,7 +171,7 @@ export interface FileState {
   /** The read state's rows over `current`, rebuilt when it changes. */
   rows: WholeRows | null;
   /** Highlight runs for `rows`, computed after the first plain paint. */
-  runs: HighlightRuns | null;
+  runs: Runs | null;
   /** Load/save failure for this file, "" when there is none. */
   error: Signal<string>;
   alert: Signal<SaveAlert | null>;

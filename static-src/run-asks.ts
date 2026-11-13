@@ -3,7 +3,7 @@
 // dots, the notifications) reads it, and nothing else says a step is waiting.
 
 import { join } from "@cplieger/keyenc";
-import { signal, touch } from "@cplieger/ui";
+import { signal, touch } from "@cplieger/reactive";
 import { nodePathKey, nodePathSegment } from "./run-node-key.js";
 import type { RunNode } from "./run-store.js";
 import type { RunAsk, RunAsksPayload } from "./wire/types.gen.js";
@@ -93,6 +93,26 @@ export interface RunAskAddress {
   askID?: string;
   /** What the ask says, whole; absent where the source has no text. */
   text?: string;
+}
+
+/** Whether two readings of a run's asks say the same: every reader builds a fresh object. */
+export function sameRunAsks(a: RunAsks, b: RunAsks): boolean {
+  return (
+    a.count === b.count &&
+    a.label === b.label &&
+    a.asked.length === b.asked.length &&
+    a.asked.every((x, i) => {
+      const y = b.asked[i];
+      return (
+        x.nodeID === y?.nodeID &&
+        x.sessionID === y.sessionID &&
+        x.answer === y.answer &&
+        x.path === y.path &&
+        x.askID === y.askID &&
+        x.text === y.text
+      );
+    })
+  );
 }
 
 export interface AskedSteps {

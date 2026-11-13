@@ -35,11 +35,20 @@ type autoCompactor struct {
 	// position are folded. Both nil in tests.
 	budget func(context.Context, time.Duration) (context.Context, context.CancelFunc)
 	folded func(ctx context.Context, chatID marotte.ChatID, seq uint64) bool
-	// failed tells the chat's pages that a compaction the dock showed did not run.
-	failed func(ctx context.Context, chatID marotte.ChatID, detail string)
+	// toast tells the chat's pages of a compaction the dock showed that did not run, or a resume not sent.
+	toast func(ctx context.Context, chatID marotte.ChatID, code marotte.ErrorCode, detail string)
+	// asksOpen reports an ask the chat's own turn is parked on (a permission, a question, an elicitation).
+	asksOpen func(marotte.ChatID) bool
+	// carryOutStop carries out the failsafe's stop as a Cancel does (command.Dispatcher.CarryOutStop).
+	carryOutStop func(context.Context, marotte.ChatID, command.RunStop) error
+	// spawn runs the failsafe's stop off the read loop that reported the reading.
+	spawn func(func())
 }
 
-func newAutoCompactor(bc *bridgeCoordinator, policy func(context.Context) (enabled bool, pct int)) *autoCompactor {
+func newAutoCompactor(
+	bc *bridgeCoordinator, policy func(context.Context) (enabled bool, pct int),
+	asksOpen func(marotte.ChatID) bool, carryOutStop func(context.Context, marotte.ChatID, command.RunStop) error,
+) *autoCompactor {
 	return &autoCompactor{
 		turns: bc.turns,
 		bridgeOf: func(chatID marotte.ChatID) *sharedBridge {
@@ -61,26 +70,30 @@ func newAutoCompactor(bc *bridgeCoordinator, policy func(context.Context) (enabl
 		compact: command.Compact,
 		budget:  bc.engine.stallAware,
 		folded:  bc.turns.awaitPosition,
-		failed: func(ctx context.Context, chatID marotte.ChatID, detail string) {
+		toast: func(ctx context.Context, chatID marotte.ChatID, code marotte.ErrorCode, detail string) {
 			bc.broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
-				Code: marotte.ErrCodeCompactionFailed, Message: detail,
+				Code: code, Message: detail,
 			}))
 		},
+		asksOpen:     asksOpen,
+		carryOutStop: carryOutStop,
+		spawn:        bc.spawnRun,
 	}
 }
 
-// ObserveContextUsage hands each context reading KAS reported to the chat's compactor.
+// ObserveContextUsage hands each live context reading KAS reported to the chat's compactor.
 func (bc *bridgeCoordinator) ObserveContextUsage(ctx context.Context, chatID marotte.ChatID, pct float64) {
 	bc.autoCompact.noteUsage(ctx, chatID, pct)
 }
 
-// noteUsage lists the running turn's compaction the first time a reading inside it reaches the point, once per turn
-// and never after the reader cancelled that turn's (runList.crossing).
-func (a *autoCompactor) noteUsage(ctx context.Context, chatID marotte.ChatID, pct float64) {
+// ObserveToolCall hands each tool call the chat's own agent opened to the chat's compactor.
+func (bc *bridgeCoordinator) ObserveToolCall(chatID marotte.ChatID) {
+	bc.autoCompact.noteToolCall(chatID)
+}
+
+// noteToolCall records that the chat's running turn went on past its last reading.
+func (a *autoCompactor) noteToolCall(chatID marotte.ChatID) {
 	if a == nil {
-		return
-	}
-	if enabled, point := a.policy(ctx); !enabled || pct < float64(point) {
 		return
 	}
 	lc, ok := a.turns.lookup(chatID)
@@ -88,14 +101,129 @@ func (a *autoCompactor) noteUsage(ctx context.Context, chatID marotte.ChatID, pc
 		return
 	}
 	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	if lc.ended || !lc.liveLockedState() || lc.run.liveLen() == 0 || !lc.run.crossing(lc.compactTurnLocked()) {
+	lc.toolCallTurn = lc.compactTurnLocked()
+	lc.mu.Unlock()
+}
+
+// noteUsage lists the running turn's compaction the first time a reading inside it reaches the point, once per turn
+// and never after the reader cancelled that turn's (runList.crossing). A reading at compactionFailsafePct stops the
+// turn to compact it and, under compactionFailsafeResumes, resume it (runList.failsafe) when the response it measures
+// called a tool, so the turn goes on; while an ask is open the stop is owed until the asks settle (askSettled) or a
+// later reading replaces it. Each reading is one model response's own (translate passes no published figure, replay
+// or breakdown twin as live). One under the point re-arms the failsafe.
+func (a *autoCompactor) noteUsage(ctx context.Context, chatID marotte.ChatID, pct float64) {
+	if a == nil {
 		return
 	}
-	if _, joined := lc.run.requestCompaction(marotte.RunFromThreshold, lc.compactTurnLocked()); !joined {
-		slog.Info("auto-compaction listed: the context reached the point", "chat_id", chatID, "context_pct", pct)
+	lc, ok := a.turns.lookup(chatID)
+	if !ok {
+		return
 	}
-	lc.wakeLocked()
+	enabled, point := a.policy(ctx)
+	lc.mu.Lock()
+	goesOn := lc.toolCallTurn
+	lc.toolCallTurn = ""
+	lc.run.failsafeOwed = ""
+	if !compactsLocked(lc, enabled) {
+		lc.mu.Unlock()
+		return
+	}
+	if pct < float64(point) {
+		lc.run.usageUnderThePoint()
+		lc.mu.Unlock()
+		return
+	}
+	turn := lc.compactTurnLocked()
+	listCrossingLocked(lc, turn, pct)
+	var rs command.RunStop
+	if pct >= compactionFailsafePct && goesOn == turn {
+		// Read under lc.mu, as fireOwed reads it: an ask settling between this reading and the owed mark would
+		// otherwise find nothing owed, and the turn would run on to the limit.
+		if a.asksOpen(chatID) {
+			lc.run.failsafeOwed = turn
+		} else {
+			rs = a.failsafeLocked(lc, turn)
+		}
+	}
+	lc.wakeOnChangeLocked()
+	lc.mu.Unlock()
+	a.carryOutFailsafe(lc, rs, "turn", turn, "context_pct", pct)
+}
+
+// askSettled fires the stop a reading owed while the chat's turn waited on an ask, once the chat session's last
+// open ask has settled (answered, denied, withdrawn or ended): the response's next model call is the one that would
+// overflow, so the stop cannot wait for another reading. KAS can open a tool's ask before its response's reading
+// (processChunkStream dispatches a finished tool block inside the stream loop and reports usage after it).
+func (a *autoCompactor) askSettled(chatID marotte.ChatID) {
+	if a == nil {
+		return
+	}
+	a.spawn(func() { a.fireOwed(chatID) })
+}
+
+func (a *autoCompactor) fireOwed(chatID marotte.ChatID) {
+	lc, ok := a.turns.lookup(chatID)
+	if !ok {
+		return
+	}
+	enabled, _ := a.policy(lc.ctx)
+	lc.mu.Lock()
+	turn := lc.run.failsafeOwed
+	var rs command.RunStop
+	if turn != "" && compactsLocked(lc, enabled) && !a.asksOpen(chatID) {
+		lc.run.failsafeOwed = ""
+		rs = a.failsafeLocked(lc, turn)
+	}
+	lc.wakeOnChangeLocked()
+	lc.mu.Unlock()
+	a.carryOutFailsafe(lc, rs, "turn", turn, "owed", true)
+}
+
+// carryOutFailsafe carries out a fired failsafe's stop off the caller's goroutine.
+func (a *autoCompactor) carryOutFailsafe(lc *chatLifecycle, rs command.RunStop, attrs ...any) {
+	if rs.Arm != command.StopCancel {
+		return
+	}
+	slog.Warn("compaction failsafe: stopping the turn to compact it", append([]any{"chat_id", lc.chatID}, attrs...)...)
+	a.spawn(func() { a.stopForCompaction(lc, rs) })
+}
+
+// compactsLocked reports whether a reading may compact lc's chat now: the policy is on and a turn is live.
+// Caller holds lc.mu.
+func compactsLocked(lc *chatLifecycle, enabled bool) bool {
+	return enabled && !lc.ended && lc.liveLockedState()
+}
+
+// listCrossingLocked lists turn's compaction when a reading inside it reaches the point for the first time.
+// Caller holds lc.mu.
+func listCrossingLocked(lc *chatLifecycle, turn string, pct float64) {
+	if lc.run.liveLen() == 0 || !lc.run.crossing(turn) {
+		return
+	}
+	if _, joined := lc.run.requestCompaction(marotte.RunFromThreshold, turn); !joined {
+		slog.Info("auto-compaction listed: the context reached the point", "chat_id", lc.chatID, "context_pct", pct)
+	}
+}
+
+// failsafeLocked fires the failsafe in turn, answering the stop to carry out (StopNothing when it did not fire).
+// Caller holds lc.mu.
+func (a *autoCompactor) failsafeLocked(lc *chatLifecycle, turn string) command.RunStop {
+	token := a.turns.stopTokens.Add(1)
+	plan := lc.run.failsafe(failsafeFacts{turnID: turn, resumeID: "m-" + newMessageID(), token: token})
+	if plan.arm != stopRunning {
+		return command.RunStop{}
+	}
+	rs, _ := a.turns.carryStopLocked(lc, plan, token, marotte.TurnStopCompaction)
+	return rs
+}
+
+// stopForCompaction carries out the failsafe's stop. A cancel not delivered was undone (runList.stopUndone), so the
+// turn runs on and compacts at its end.
+func (a *autoCompactor) stopForCompaction(lc *chatLifecycle, rs command.RunStop) {
+	if err := a.carryOutStop(lc.ctx, lc.chatID, rs); err != nil {
+		slog.Warn("compaction failsafe: the turn could not be stopped; it compacts at its end",
+			"chat_id", lc.chatID, "error", err)
+	}
 }
 
 // turnEndCompaction is the compaction a closing turn's end asks for: the model refused the turn for the context's

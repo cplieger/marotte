@@ -292,6 +292,71 @@ func TestServe_HeadersAndInjection(t *testing.T) {
 	}
 }
 
+func TestGrant_TabURLNamesThePageUnderTheTabRoute(t *testing.T) {
+	f := newFixture(t)
+	write(t, filepath.Join(f.demo, "my page.html"), "<p>spaced")
+	g := f.grant(t, filepath.Join(f.demo, "my page.html"))
+	tok := strings.TrimSuffix(strings.TrimPrefix(g.Base, PathPrefix), "/")
+	if want := "/preview/tab/" + tok + "/my%20page.html"; g.TabURL != want {
+		t.Errorf("grant tab_url = %q, want %q", g.TabURL, want)
+	}
+}
+
+func TestServe_OnlyTheTabRouteMayDownload(t *testing.T) {
+	f := newFixture(t)
+	g := f.grant(t, filepath.Join(f.demo, "index.html"))
+	tok := strings.TrimSuffix(strings.TrimPrefix(g.Base, PathPrefix), "/")
+	tabBase := "/preview/tab/" + tok + "/"
+	type policy struct{ sandbox, src, ancestors, xfo string }
+	frame := policy{"sandbox allow-scripts allow-forms allow-modals;", "http://" + testHost + PathPrefix + tok + "/", "frame-ancestors 'self'", "SAMEORIGIN"}
+	tab := policy{"sandbox allow-scripts allow-forms allow-modals allow-downloads;", "http://" + testHost + tabBase, "frame-ancestors 'none'", "DENY"}
+	for _, tc := range []struct {
+		name, dest, target string
+		status             int
+		want               policy
+	}{
+		{"the frame's page with no fetch metadata", "", g.URL, 200, frame},
+		{"the frame's page in a frame", "iframe", g.URL, 200, frame},
+		{"the frame's page in a top-level tab", "document", g.URL, 200, frame},
+		{"the tab's page with no fetch metadata", "", tabBase + "index.html", 200, tab},
+		{"the tab's page in a top-level tab", "document", tabBase + "index.html", 200, tab},
+		{"the tab's page asked for by a frame", "iframe", tabBase + "index.html", 200, tab},
+		{"the tab's script", "script", tabBase + "app.js", 200, tab},
+		{"the tab's dotfile", "", tabBase + ".env", 404, tab},
+		{"the tab's symlink", "", tabBase + "link.txt", 404, tab},
+		{"the tab's symlink escaping", "", tabBase + "escape/secret.txt", 404, tab},
+		{"the tab's bad token", "", "/preview/tab/nope/index.html", 403, tab},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var hdr []string
+			if tc.dest != "" {
+				hdr = []string{"Sec-Fetch-Dest", tc.dest}
+			}
+			rec := f.do(http.MethodGet, tc.target, "", hdr...)
+			if rec.Code != tc.status {
+				t.Errorf("GET %s = %d, want %d", tc.target, rec.Code, tc.status)
+			}
+			csp := rec.Header().Get("Content-Security-Policy")
+			if !strings.HasPrefix(csp, tc.want.sandbox) || strings.Contains(csp, "allow-same-origin") {
+				sandbox, _, _ := strings.Cut(csp, ";")
+				t.Errorf("sandbox = %q, want %q with no allow-same-origin", sandbox, tc.want.sandbox)
+			}
+			if tc.status != 403 && !strings.Contains(csp, "; connect-src "+tc.want.src+";") {
+				t.Errorf("CSP = %q, want connect-src %s", csp, tc.want.src)
+			}
+			if !strings.HasSuffix(csp, "; "+tc.want.ancestors) {
+				t.Errorf("CSP = %q, want it to end with %s", csp, tc.want.ancestors)
+			}
+			if got := rec.Header().Get("X-Frame-Options"); got != tc.want.xfo {
+				t.Errorf("X-Frame-Options = %q, want %q", got, tc.want.xfo)
+			}
+			if got := rec.Header().Get("Vary"); got != "" {
+				t.Errorf("Vary = %q, want none: no request header selects the policy", got)
+			}
+		})
+	}
+}
+
 func TestServe_NonHTMLIsByteIdentical(t *testing.T) {
 	f := newFixture(t)
 	g := f.grant(t, filepath.Join(f.demo, "index.html"))

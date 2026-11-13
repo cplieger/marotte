@@ -198,6 +198,27 @@ func TestSpecPlanningAskFirst_ReopensOnlyWhilePlanningIsOn(t *testing.T) {
 	}
 }
 
+// KAS delivers a peer send_message only when messaging is on for both the sender's and the target's session, so
+// every chat door carries the setting: off until the user turns it on, then on at the chat's reload.
+func TestChatMessaging_ReachesEveryChatDoor(t *testing.T) {
+	h, configDir := reopenFixture(t)
+	first, err := h.coord.openReleased(t.Context(), "c1", "")
+	if err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+	if fakeOf(first).lastSessionOpts().Features.Messaging {
+		t.Error("a chat opened with the setting unset carried messaging on, want off")
+	}
+
+	if !reloadsAfter(t, h, func() { writeSetting(t, configDir, settings.KeyChatMessaging, true) }) {
+		t.Fatal("turning Messages between chats on did not reload the open chat")
+	}
+	sb := h.bridge.mgr.get("c1")
+	if opts := fakeOf(sb).lastSessionOpts(); opts.SessionID != string(first.SessionID()) || !opts.Features.Messaging {
+		t.Errorf("the reload = %+v, want the chat's own session loaded with messaging on", opts)
+	}
+}
+
 func TestWorkflowLaunch_ReopensOnlyWhileWorkflowsAreOn(t *testing.T) {
 	for _, tc := range []struct {
 		workflows bool
@@ -241,18 +262,31 @@ var configWrites = []struct {
 	{key: settings.KeyMemoryMode, value: "learn", reach: reachReopen},
 	{key: settings.KeySecurityProfile, value: policyfile.ProfileTrusted, reach: reachReopen},
 	{key: settings.KeyWorkflowsEnabled, value: false, reach: reachReopen},
+	{key: settings.KeyChatMessaging, value: true, reach: reachReopen},
+	{key: settings.KeyChatAwareness, value: true, reach: reachReopen},
+	// Saving kiro-cli's own 50 changes nothing: TestEngineFeatures_MessageDeliveryLimitWithholdsTheDefault.
+	{key: settings.KeyChatMessageDeliveryLimit, value: 12, reach: reachEngine},
 	// Read only while workflows are on: TestWorkflowLaunch_ReopensOnlyWhileWorkflowsAreOn.
 	{key: settings.KeyWorkflowLaunch, value: marotte.WorkflowLaunchDelegateAll, reach: reachReopen},
+	// Read only while workflows are on, like Workflow use (TestSessionFeatures_CreatorEffortOnlyWithWorkflows).
+	{key: settings.KeyWorkflowCreatorEffort, value: "high", reach: reachReopen},
 	{key: settings.KeySpecPlanning, value: settings.SpecPlanningQuick, reach: reachReopen},
 	// Read only while planning is on: TestSpecPlanningAskFirst_ReopensOnlyWhilePlanningIsOn.
 	{key: settings.KeySpecPlanningAskFirst, value: true, reach: reachNoChat},
 	{key: settings.KeyWorkValidation, value: settings.FeatureOff, reach: reachReopen},
 	{key: settings.KeySteeringReminders, value: true, reach: reachEngine},
 	{key: settings.KeyCloudFormationSafety, value: settings.FeatureOn, reach: reachEngine},
+	{key: settings.KeyCloudFormationSafety, from: settings.FeatureOn, value: settings.FeatureEnforce, reach: reachEngine},
 	{key: settings.KeyAutoRouting, value: settings.FeatureOff, reach: reachEngine},
 	{key: settings.KeyAutoDelegation, value: settings.FeatureOff, reach: reachEngine},
-	{key: settings.KeyModelFallback, value: true, reach: reachEngine},
+	{key: settings.KeyModelFallback, value: false, reach: reachEngine},
 	{key: settings.KeyKnowledgeEnabled, value: false, reach: reachEngine},
+	// Saving a kiro-cli default changes nothing: TestEngineFeatures_KnowledgeTuningWithholdsDefaultsAndInvalid.
+	{key: settings.KeyKnowledgeIndexType, value: settings.KnowledgeIndexFast, reach: reachEngine},
+	{key: settings.KeyKnowledgeIncludePatterns, value: []string{"**/*.md"}, reach: reachEngine},
+	{key: settings.KeyKnowledgeExcludePatterns, value: []string{"drafts/**"}, reach: reachEngine},
+	{key: settings.KeyKnowledgeMaxFiles, value: 200, reach: reachEngine},
+	{key: settings.KeyKnowledgeChunking, value: map[string]int{"size": 256, "overlap": 32}, reach: reachEngine},
 	// marotte's compactor reads both at each trigger; every chat door turns KAS's own compaction off.
 	{key: settings.KeyAutoCompactionEnabled, value: false, reach: reachLive},
 	{key: settings.KeyAutoCompactPct, value: 60, reach: reachLive},
@@ -263,8 +297,8 @@ var configWrites = []struct {
 	{key: settings.KeyMCPWaitForReady, value: true, reach: reachLive},
 	{key: settings.KeyOutputStyle, value: "proactive", reach: reachLive},
 	{key: settings.KeySupervisedDefault, value: true, reach: reachNewChat},
-	{key: settings.KeyLastModel, value: "claude-sonnet-4", reach: reachNewChat},
-	{key: settings.KeyLastEffortByModel, value: map[string]string{"claude-sonnet-4": "high"}, reach: reachNewChat},
+	{key: settings.KeyLastModel, value: "model-b-4", reach: reachNewChat},
+	{key: settings.KeyLastEffortByModel, value: map[string]string{"model-b-4": "high"}, reach: reachNewChat},
 	{key: settings.KeyScheduledAutoApprove, value: true, reach: reachNoChat},
 	// The trigger launcher reads both at each launch.
 	{key: "trigger_max_live_runs", value: 4, reach: reachNoChat},

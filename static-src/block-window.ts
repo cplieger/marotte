@@ -17,6 +17,14 @@ export const RESIDENT_ENTRIES = 320;
 export const RESIDENT_TOOL_CALLS = 96;
 
 /**
+ * A run step pane's slice: the newest window it mounts and each older slice it seats, at the chat's ratio. Smaller
+ * than the chat's because a step is built in one paint when it is shown, and sized so that paint fits a frame
+ * budget on WebKit phone (`marotte/workflow-runs.md` "The step pane").
+ */
+const STEP_RESIDENT_ENTRIES = 96;
+const STEP_RESIDENT_TOOL_CALLS = 32;
+
+/**
  * The depth the window guarantees each side of its anchor, asserted as a FLOOR. Also
  * `demandRange`'s half-width and `demandPin`'s arrival tolerance: one distance, one name.
  */
@@ -30,6 +38,12 @@ interface TurnCost {
   readonly entries: number;
   readonly toolCalls: number;
 }
+
+/** The step pane's budget, `planResidency`'s for a run step. */
+export const STEP_BUDGET: TurnCost = {
+  entries: STEP_RESIDENT_ENTRIES,
+  toolCalls: STEP_RESIDENT_TOOL_CALLS,
+};
 
 /** A turn's `tool_result` entries that carry a workflow id, keyed by their OWN entry id. */
 export type RunResults = ReadonlyMap<string, string>;
@@ -545,6 +559,7 @@ function runBounds(t: Turn, seq: number, lane: string, folds: TurnFolds): EntryR
  * The entries each turn's body may hold this paint. `turns` is newest LAST, already
  * filtered to turns that render open. An absent or unknown `anchor` is the live edge; one
  * naming an empty turn seeds at the nearest ordinal. A turn no entry reaches is absent.
+ * `headward` grows from the anchor toward the first turn only: the slice above a window.
  */
 export function planResidency(
   turns: readonly Turn[],
@@ -552,6 +567,7 @@ export function planResidency(
   // The VIEW's root, with NO default, for `spacerHeight`'s reason.
   lane: string,
   budget: TurnCost = DEFAULT_BUDGET,
+  headward = false,
 ): ResidencyPlan {
   const plan = new Map<string, EntryRange>();
   const bases: number[] = [];
@@ -601,7 +617,7 @@ export function planResidency(
   let entries = isFree[at] === true ? 0 : 1;
   let toolCalls = isTool[at] === true ? 1 : 0;
   let headLatched = lo === 0;
-  let tailLatched = hi === total;
+  let tailLatched = headward || hi === total;
   let head = true;
   while (!headLatched || !tailLatched) {
     if (head ? !headLatched : !tailLatched) {

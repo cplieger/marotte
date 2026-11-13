@@ -1,5 +1,32 @@
 package marotte
 
+// BotRoleID is the mode id of every Bot's session-scoped role, and the only mode a Bot's record names.
+const BotRoleID = "marotte-bot"
+
+// DefaultModeID is KAS's bundled default mode, the client's DEFAULT_MODE_ID (static-src/roles.ts).
+const DefaultModeID = "vibe"
+
+// AdoptMode writes id as the chat's mode and reports whether the record changed. A Bot's record only ever names
+// BotRoleID, whatever id is, and a regular chat's never does.
+func (c *Chat) AdoptMode(id string) bool {
+	switch {
+	case c.Bot != nil:
+		id = BotRoleID
+	case id == BotRoleID:
+		return false
+	}
+	if c.CurrentModeID == id {
+		return false
+	}
+	c.CurrentModeID = id
+	return true
+}
+
+// IsStartedBot reports whether c is a Bot past its first start, the only Bot whose sessions carry the role.
+func (c *Chat) IsStartedBot() bool {
+	return c.Bot != nil && c.Bot.StartedAt != 0
+}
+
 // Bot is the block that makes a chat a Bot: a chat whose record carries it is one, for good, and every setting
 // marotte keeps about the Bot lives here, in the chat's own chat.json. Field order is fieldalignment's.
 type Bot struct {

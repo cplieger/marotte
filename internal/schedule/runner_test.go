@@ -161,7 +161,7 @@ func TestSweep_SendsTheSchedulesModelPick(t *testing.T) {
 	due := at(2026, time.August, 4, 2, 0)
 	st, l, r := newFixture(t, due.Add(30*time.Second))
 	e := st.Clocks()[0].Rule
-	e.Model, e.Effort = "opus", "high"
+	e.Model, e.Effort = "model-a", "high"
 	if _, _, err := st.Replace(t.Context(), e.ID, &e, 0); err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestSweep_SendsTheSchedulesModelPick(t *testing.T) {
 	l.mu.Lock()
 	got := slices.Clone(l.defaults)
 	l.mu.Unlock()
-	if want := []marotte.RunDefaults{{Model: "opus", Effort: "high"}}; !slices.Equal(got, want) {
+	if want := []marotte.RunDefaults{{Model: "model-a", Effort: "high"}}; !slices.Equal(got, want) {
 		t.Errorf("launch defaults = %+v, want %+v", got, want)
 	}
 }

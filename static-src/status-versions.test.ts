@@ -21,7 +21,7 @@ vi.mock("./banner-stack.js", () => ({
 }));
 vi.mock("./modals.js", () => ({ showLoginModal: vi.fn() }));
 vi.mock("./settings-highlight.js", () => ({ openSetting: vi.fn() }));
-vi.mock("@cplieger/ui/announce", () => ({ announce: vi.fn() }));
+vi.mock("./legacy-ui/announce.js", () => ({ announce: vi.fn() }));
 
 const { setStatus, initStatusVersions, refreshRuntimeLine } = await import("./status.js");
 const { loadVersions, getVersions, _resetVersionsForTest } = await import("./versions.js");

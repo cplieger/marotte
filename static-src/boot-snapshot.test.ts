@@ -59,7 +59,7 @@ function session(id: string, name: string): Session {
   return {
     id,
     name,
-    model: "claude",
+    model: "model-x",
     acp_session_id: "acp-1",
     current_mode_id: "default",
     usage: defaultUsage(),
@@ -675,7 +675,7 @@ describe("paintBootSnapshot", () => {
 
     const painted = paintBootSnapshot({
       tabs: [chatTab("t1", "c1")],
-      chats: [snapChat("c1", { name: "Refactor the boot", model: "claude" })],
+      chats: [snapChat("c1", { name: "Refactor the boot", model: "model-x" })],
       window: snapWindow("c1", [turnOpen("turn-1", 1), textEntry("turn-1", 1)]),
     });
 
@@ -695,7 +695,7 @@ describe("paintBootSnapshot", () => {
       window: snapWindow("c1", [turnOpen("turn-1", 1)]),
     });
 
-    // `activateChatView` fetches on `transcriptStale`, so a painted window must not pass for an
+    // `refreshChatView` fetches on `transcriptStale`, so a painted window must not pass for an
     // answered one.
     expect(transcriptStale(row("c1"))).toBe(true);
   });

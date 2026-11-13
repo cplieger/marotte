@@ -54,20 +54,21 @@ export function slideBox(
     closedHeight,
   }: { readonly motion?: boolean; readonly fade?: boolean; readonly closedHeight?: number } = {},
 ): void {
-  const from = box.getBoundingClientRect().height;
-  const scrollTop = box.scrollTop;
+  // Checked before the first geometry read, so a motionless flip forces no layout. A slide being cut still reads
+  // it before the cancel: that layout clamps a scrolling box's offset to the slide's height, and a flip without it
+  // leaves the box scrolled past its content.
+  const still = !motion || matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const measured = !still || slides.has(box);
+  const from = measured ? box.getBoundingClientRect().height : 0;
+  const scrollTop = measured ? box.scrollTop : 0;
   let fromOpacity: string | undefined;
-  if (fade) {
+  if (fade && !still) {
     // A reversed slide fades on from where the one it replaces stood, not from an end.
     fromOpacity = slides.has(box) ? getComputedStyle(box).opacity : open ? "0" : "1";
   }
   slides.get(box)?.anim.cancel();
   slides.delete(box);
-  if (
-    !motion ||
-    box.getClientRects().length === 0 ||
-    matchMedia("(prefers-reduced-motion: reduce)").matches
-  ) {
+  if (still || box.getClientRects().length === 0) {
     apply(open);
     return;
   }
@@ -299,11 +300,16 @@ export function wireDetailsSlide(details: HTMLDetailsElement): void {
   });
 }
 
-/** Open or close `details` through the slide. */
-export function slideDetails(details: HTMLDetailsElement, open: boolean): void {
-  slideBox(details, open, (o) => {
-    details.open = o;
-  });
+/** Open or close `details` through the slide; `motion: false` flips it with no geometry read. */
+export function slideDetails(details: HTMLDetailsElement, open: boolean, motion = true): void {
+  slideBox(
+    details,
+    open,
+    (o) => {
+      details.open = o;
+    },
+    { motion },
+  );
 }
 
 /**

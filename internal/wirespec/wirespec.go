@@ -117,6 +117,8 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.AgentNoticePayload](),
 	wiregen.TypeRef[marotte.SystemNoticePayload](),
 	wiregen.TypeRef[marotte.TabSubject](),
+	wiregen.TypeRef[marotte.RecentClose](),
+	wiregen.TypeRef[marotte.RecentList](),
 	wiregen.TypeRef[marotte.TabsChangedPayload](),
 	wiregen.TypeRef[marotte.TabList](),
 	// A close_tab or delete_chat confirmation, and the impact a close_impact_changed refusal answers.
@@ -139,12 +141,13 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.PermissionCommand](),
 	wiregen.TypeRef[marotte.PermissionNeededPayload](),
 	wiregen.TypeRef[marotte.ErrorPayload](),
-	wiregen.TypeRef[marotte.MCPConnectedPayload](),
-	wiregen.TypeRef[marotte.MCPOAuthPayload](),
-	wiregen.TypeRef[marotte.MCPSignInOpenPayload](),
+	wiregen.TypeRef[marotte.MCPPromptInfo](),
+	wiregen.TypeRef[marotte.MCPResourceInfo](),
+	wiregen.TypeRef[marotte.MCPResourceTemplateInfo](),
+	wiregen.TypeRef[marotte.MCPServerStatus](),
+	wiregen.TypeRef[marotte.MCPStatusPayload](),
+	wiregen.TypeRef[marotte.MCPStatusResponse](),
 	wiregen.TypeRef[marotte.MCPSignInClosedPayload](),
-	wiregen.TypeRef[marotte.MCPFailedPayload](),
-	wiregen.TypeRef[marotte.MCPDisconnectedPayload](),
 	wiregen.TypeRef[marotte.MCPPrewarmPayload](),
 	wiregen.TypeRef[marotte.ChatDeletedPayload](),
 	wiregen.TypeRef[marotte.DraftChangedPayload](),
@@ -204,6 +207,7 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.SessionListResponse](),
 	wiregen.TypeRef[marotte.LiveRun](),
 	wiregen.TypeRef[marotte.LiveRunsResponse](),
+	wiregen.TypeRef[marotte.LiveRunPayload](),
 	// REST replies; no `Payload` suffix, so the SSE-binding test exempts them.
 	wiregen.TypeRef[marotte.RunControlsResponse](),
 	wiregen.TypeRef[marotte.RunRetriedResponse](),
@@ -220,7 +224,12 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.RunStartedPayload](),
 	wiregen.TypeRef[marotte.RunProgressPayload](),
 	wiregen.TypeRef[marotte.RunFinishedPayload](),
+	wiregen.TypeRef[marotte.RunRevPayload](),
 	wiregen.TypeRef[marotte.NotificationPayload](),
+	// Requests a page composes: its view and what it did with a notice.
+	wiregen.TypeRef[marotte.TabRef](),
+	wiregen.TypeRef[marotte.PageView](),
+	wiregen.TypeRef[marotte.NoticeReport](),
 	// One step waiting on a person: run_asks's element and GET /api/runs/{id}'s `open_asks`. No
 	// `Payload` suffix, so the SSE-binding test exempts it.
 	wiregen.TypeRef[marotte.RunAsk](),
@@ -232,6 +241,8 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.RunStepStart](),
 	// GET /api/runs/{id}/steps/{path}. No omitempty, so `state` is REQUIRED in TypeScript.
 	wiregen.TypeRef[marotte.RunStepTranscript](),
+	// GET /api/runs/{id}/steps/{path}/capture.
+	wiregen.TypeRef[marotte.RunStepCapture](),
 	wiregen.TypeRef[marotte.ToolJobChangedPayload](),
 	wiregen.TypeRef[marotte.ToolJobOutputPayload](),
 	wiregen.TypeRef[marotte.TerminalCreatedPayload](),
@@ -252,6 +263,7 @@ var wireTypes = []wiregen.Type{
 	// GET /api/settings. No omitempty, so the client holds no defaults of its own.
 	wiregen.TypeRef[marotte.KiroDefault](),
 	wiregen.TypeRef[marotte.PctRange](),
+	wiregen.TypeRef[marotte.KnowledgeChunking](),
 	wiregen.TypeRef[marotte.EffectiveSettings](),
 	wiregen.TypeRef[forges.ForgeError](),
 	wiregen.TypeRef[forges.ConfiguredForge](),
@@ -331,7 +343,6 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[agent.HookInfo](),
 	wiregen.TypeRef[agent.KnowledgeContext](),
 	wiregen.TypeRef[agent.MCPPoolServer](),
-	wiregen.TypeRef[agent.MCPStatusServer](),
 	wiregen.TypeRef[agent.MemoryRow](),
 	wiregen.TypeRef[agent.MemorySyncStatus](),
 	wiregen.TypeRef[agent.MemorySyncLock](),
@@ -351,9 +362,6 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[git.RepoStatus](),
 	wiregen.TypeRef[mcp.KeyPair](),
 	wiregen.TypeRef[mcp.ImportResult](),
-	wiregen.TypeRef[marotte.MCPResourceTemplateInfo](),
-	wiregen.TypeRef[marotte.MCPResourceInfo](),
-	wiregen.TypeRef[marotte.MCPPromptInfo](),
 	wiregen.TypeRef[launchrule.Gap](),
 	wiregen.TypeRef[launchrule.ClockSpec](),
 	wiregen.TypeRef[launchrule.EventSpec](),
@@ -411,6 +419,7 @@ var wireEnums = []wiregen.EnumRef{
 	wiregen.StringEnum[marotte.NoticeLevel](),
 	// A notification's kind picks its Settings switch on the page.
 	wiregen.StringEnum[marotte.PushKind](),
+	wiregen.StringEnum[marotte.NoticeOutcome](),
 	wiregen.StringEnum[marotte.RunProgressKind](),
 	// The client folds over both status vocabularies.
 	wiregen.StringEnum[marotte.RunStatus](),
@@ -504,7 +513,6 @@ var tsNames = map[string]string{
 // pathNameOverrides pins the snake_case path for a name whose acronym cluster
 // cannot be split unambiguously.
 var pathNameOverrides = map[string]string{
-	"MCPOAuthPayload": "mcp_oauth_payload",
 	// URL acronym cluster can't be split unambiguously; pin the path.
 	"OpenExternalURLPayload": "open_external_url_payload",
 }
@@ -524,12 +532,8 @@ var wireEvents = []wiregen.Event{
 	{Name: "user_input_needed", Data: wiregen.TypeRef[marotte.UserInputNeededPayload]()},
 	{Name: "error", Data: wiregen.TypeRef[marotte.ErrorPayload]()},
 	{Name: "governance_state", Data: wiregen.TypeRef[marotte.GovernanceStatePayload]()},
-	{Name: "mcp_connected", Data: wiregen.TypeRef[marotte.MCPConnectedPayload]()},
-	{Name: "mcp_disconnected", Data: wiregen.TypeRef[marotte.MCPDisconnectedPayload]()},
-	{Name: "mcp_failed", Data: wiregen.TypeRef[marotte.MCPFailedPayload]()},
+	{Name: "mcp_status", Data: wiregen.TypeRef[marotte.MCPStatusPayload]()},
 	{Name: "mcp_prewarm", Data: wiregen.TypeRef[marotte.MCPPrewarmPayload]()},
-	{Name: "mcp_oauth_needed", Data: wiregen.TypeRef[marotte.MCPOAuthPayload]()},
-	{Name: "mcp_sign_in_open", Data: wiregen.TypeRef[marotte.MCPSignInOpenPayload]()},
 	{Name: "mcp_sign_in_closed", Data: wiregen.TypeRef[marotte.MCPSignInClosedPayload]()},
 	{Name: "open_external_url", Data: wiregen.TypeRef[marotte.OpenExternalURLPayload]()},
 	{Name: "notification", Data: wiregen.TypeRef[marotte.NotificationPayload]()},
@@ -538,7 +542,9 @@ var wireEvents = []wiregen.Event{
 	{Name: "run_started", Data: wiregen.TypeRef[marotte.RunStartedPayload]()},
 	{Name: "run_progress", Data: wiregen.TypeRef[marotte.RunProgressPayload]()},
 	{Name: "run_finished", Data: wiregen.TypeRef[marotte.RunFinishedPayload]()},
+	{Name: "live_run", Data: wiregen.TypeRef[marotte.LiveRunPayload]()},
 	{Name: "run_asks", Data: wiregen.TypeRef[marotte.RunAsksPayload]()},
+	{Name: "run_rev", Data: wiregen.TypeRef[marotte.RunRevPayload]()},
 	{Name: "safety_properties", Data: wiregen.TypeRef[marotte.SafetyPropertiesPayload]()},
 	{Name: "safety_status", Data: wiregen.TypeRef[marotte.SafetyStatusPayload]()},
 	{Name: "knowledge_indexing", Data: wiregen.TypeRef[marotte.KnowledgeIndexingPayload]()},

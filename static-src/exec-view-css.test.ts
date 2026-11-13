@@ -146,6 +146,7 @@ describe("the tree's indent lines dots up under their parents", () => {
     pane.className = "ev-pane ev-pane-tree";
     pane.appendChild(tree.root);
     mount(pane);
+    tree.attach(pane);
     tree.render(
       [
         node("par", "parallel", [
@@ -434,7 +435,7 @@ describe("the run page's collapsed report ends on a whole line", () => {
     handle: ReturnType<typeof attachClamp>;
   } {
     const bubble = document.createElement("div");
-    bubble.className = "message assistant";
+    bubble.className = "message assistant cp cp-prose";
     bubble.append(...blocks);
 
     const text = document.createElement("div");
@@ -700,37 +701,41 @@ describe("the run page's collapsed report ends on a whole line", () => {
     img.src = PNG16;
     img.alt = "";
     await img.decode();
-    const line = document.createElement("p");
-    line.append(document.createTextNode("lead "), img, document.createTextNode(" trail"));
-    // The bait window is the font's descent; the negative margin slides the line into it.
-    line.style.marginBlockStart = "-3.6px";
-    // A rule as the tail, so the walk does not close the cut band early on text below the clip; the
-    // paragraph under it makes the cut more than the clamp leaves uncut.
-    const { text, more, handle } = resultBox(
-      para(74, "alpha"),
-      line,
-      document.createElement("hr"),
-      para(60, "omega"),
-    );
 
+    /** The report with the image's line moved `shift` px down (up when negative); the bait is set when the image's
+     *  own bottom fits under the cap while the line it rides does not. */
+    function bait(shift: number) {
+      const line = document.createElement("p");
+      line.append(document.createTextNode("lead "), img, document.createTextNode(" trail"));
+      // The bait window is the font's descent; the margin slides the line into it.
+      line.style.marginBlockStart = `${String(shift)}px`;
+      // A rule as the tail, so the walk does not close the cut band early on text below the clip; the
+      // paragraph under it makes the cut more than the clamp leaves uncut.
+      const box = resultBox(
+        para(74, "alpha"),
+        line,
+        document.createElement("hr"),
+        para(60, "omega"),
+      );
+      const nominal = nominalClip(box.text, box.handle);
+      const { top, bottom } = img.getBoundingClientRect();
+      const ridden = textBands(box.text).find((b) => top < b.bottom - 0.5 && bottom > b.top + 0.5);
+      const set = ridden !== undefined && bottom - nominal <= 0.5 && ridden.bottom - nominal > 0.5;
+      return set ? { ...box, nominal, imgBottom: bottom } : null;
+    }
+
+    // The slide is searched over a line's height each way rather than fixed, since the line metrics belong to the
+    // prose font.
+    let found: ReturnType<typeof bait> = null;
+    for (let shift = -24; shift <= 24 && found === null; shift += 0.25) {
+      found = bait(shift);
+    }
+    expect(found, "some slide sets the bait").not.toBeNull();
+    const { text, more, nominal, imgBottom } = found!;
     expect(text.scrollHeight - text.clientHeight, "the report overflows the clamp").toBeGreaterThan(
       1,
     );
     expect(more.hidden, "so the opener is offered").toBe(false);
-
-    const nominal = nominalClip(text, handle);
-    const imgBottom = img.getBoundingClientRect().bottom;
-    const imgTop = img.getBoundingClientRect().top;
-    const ridden = textBands(text).find((b) => imgTop < b.bottom - 0.5 && imgBottom > b.top + 0.5);
-    expect(ridden, "the image shares a line box with text, so a band stands for it").toBeDefined();
-    expect(
-      imgBottom - nominal,
-      "the image's OWN bottom fits under the stylesheet's cap, so the bait is live",
-    ).toBeLessThanOrEqual(0.5);
-    expect(
-      (ridden?.bottom ?? 0) - nominal,
-      "while the band it rides does NOT fit, which is the whole of the bait",
-    ).toBeGreaterThan(0.5);
 
     // The killing assertion: the clip may not land inside that line.
     expect(straddling(text)).toEqual([]);
@@ -1046,7 +1051,7 @@ describe("a run step's transcript spaces its blocks the way a chat turn does", (
     const p = document.createElement("p");
     p.append("Step 1: confirm ", code, " equals wt.");
     const message = document.createElement("div");
-    message.className = "message assistant";
+    message.className = "message assistant cp cp-prose";
     message.appendChild(p);
     const prose = document.createElement("div");
     prose.className = "msg-row";
@@ -1118,7 +1123,6 @@ describe("a run step's transcript spaces its blocks the way a chat turn does", (
     mount(pair);
     const runCode = body.querySelector(".message.assistant code")!;
     const chatCode = chat.querySelector(".message.assistant code")!;
-    expect(css(runCode, "padding-inline-start")).toBe("4px");
     expect(css(runCode, "padding-inline-start")).toBe(css(chatCode, "padding-inline-start"));
     expect(css(runCode, "background-color")).toBe(css(chatCode, "background-color"));
     expect(css(runCode, "font-family")).toBe(css(chatCode, "font-family"));
@@ -1160,6 +1164,7 @@ describe("an included step's qualifier on the selected fill", () => {
   it("takes the selected muted ink on a selected tree row", () => {
     const tree = buildExecTree(vi.fn());
     mount(tree.root);
+    tree.attach(host);
     tree.render(nodes, "wf:advisor");
     const muted = tokenColor(tree.root, "--c-selected-muted-fg");
     expect(qualifierInk(tree.root, ".ev-row", "wf:advisor")).toBe(muted);
@@ -1171,6 +1176,7 @@ describe("an included step's qualifier on the selected fill", () => {
   it("takes the selected muted ink on a selected timeline lane", () => {
     const timeline = buildExecTimeline(vi.fn());
     mount(timeline.root);
+    timeline.attach(host);
     timeline.render(nodes, "wf:advisor", false);
     const muted = tokenColor(timeline.root, "--c-selected-muted-fg");
     expect(qualifierInk(timeline.root, ".ev-tl-lane", "wf:advisor")).toBe(muted);

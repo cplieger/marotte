@@ -3,7 +3,7 @@
 // editor-openers.ts, rendering in editor-ui.ts and the windowed renderer in viewer-render.ts.
 // ---------------------------------------------------------------------------
 
-import { effect, el } from "@cplieger/ui";
+import { effect, el } from "@cplieger/reactive";
 import { $ } from "./dom.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { parseConflicts } from "./conflict.js";

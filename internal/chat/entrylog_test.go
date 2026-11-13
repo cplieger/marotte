@@ -120,7 +120,7 @@ func TestEntryLog_AMissingLogIsAChatOfZeroTurns(t *testing.T) {
 	}
 	f.reopen()
 
-	window, err := f.log.window(20, "")
+	window, err := f.log.window(20, "", noByteBound)
 	if err != nil {
 		t.Fatalf("window: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestEntryLog_AReadErrorFailsTheOpenAndKeepsTheLog(t *testing.T) {
 // seq continues.
 func TestEntryLog_StoreOpenCloserClosesEveryOrphanedTurn(t *testing.T) {
 	f := newLogFixture(t)
-	if err := f.header.write(t.Context(), &marotte.Chat{ID: "c-abcdef01", Model: "opus"}); err != nil {
+	if err := f.header.write(t.Context(), &marotte.Chat{ID: "c-abcdef01", Model: "model-a"}); err != nil {
 		t.Fatalf("write header: %v", err)
 	}
 	first := f.prompt("one")
@@ -347,7 +347,7 @@ func TestEntryLog_StoreOpenCloserClosesEveryOrphanedTurn(t *testing.T) {
 		t.Errorf("outcome is %q, want interrupted", footer.Outcome)
 	case footer.StopReasonRaw != string(marotte.StopReasonUnterminated):
 		t.Errorf("stop_reason_raw is %q, want unterminated", footer.StopReasonRaw)
-	case footer.Model != "opus":
+	case footer.Model != "model-a":
 		t.Errorf("model is %q, want the header's", footer.Model)
 	case footer.Credits != 0:
 		t.Errorf("credits are %v, want absent: nothing metered them", footer.Credits)
@@ -483,7 +483,7 @@ func TestEntryLog_WindowPagesByTurn(t *testing.T) {
 		turns = append(turns, turn)
 	}
 
-	newest, err := f.log.window(2, "")
+	newest, err := f.log.window(2, "", noByteBound)
 	if err != nil {
 		t.Fatalf("window: %v", err)
 	}
@@ -494,7 +494,7 @@ func TestEntryLog_WindowPagesByTurn(t *testing.T) {
 		t.Errorf("the newest page holds turns %v, want the last two", got)
 	}
 
-	older, err := f.log.window(2, turns[2])
+	older, err := f.log.window(2, turns[2], noByteBound)
 	if err != nil {
 		t.Fatalf("window before: %v", err)
 	}
@@ -505,7 +505,7 @@ func TestEntryLog_WindowPagesByTurn(t *testing.T) {
 		t.Errorf("the ?before page holds turns %v, want the first two", got)
 	}
 
-	if _, err := f.log.window(2, "t-nosuchturn"); err == nil {
+	if _, err := f.log.window(2, "t-nosuchturn", noByteBound); err == nil {
 		t.Error("a window before an unknown turn reported success")
 	}
 }
@@ -521,7 +521,7 @@ func TestEntryLog_WindowSkipsAForeignTurnInsideItsRange(t *testing.T) {
 	f.closeTurn(third, marotte.TurnOutcomeCompleted)
 	f.closeTurn(second, marotte.TurnOutcomeCompleted)
 
-	window, err := f.log.window(1, third)
+	window, err := f.log.window(1, third, noByteBound)
 	if err != nil {
 		t.Fatalf("window: %v", err)
 	}
@@ -789,21 +789,21 @@ func TestEntryLog_TurnRangeAnswersTheTailFromItsBound(t *testing.T) {
 	}
 }
 
-// A missing turn is the one caller-caused failure, so only it carries ErrTurnNotInLog; read and decode faults must
+// A missing turn is the one caller-caused failure, so only it carries errTurnNotInLog; read and decode faults must
 // reach the 500 arm, not tell the client a real turn does not exist.
 func TestEntryLog_AMissingTurnCarriesTheSentinel(t *testing.T) {
 	f := newLogFixture(t)
 	turn := f.prompt("hello")
 	f.closeTurn(turn, marotte.TurnOutcomeCompleted)
 
-	if _, err := turnRange(f.log, "t-nosuchturn", 0); !errors.Is(err, ErrTurnNotInLog) {
-		t.Errorf("TurnRange(unknown, 0) = %v, want ErrTurnNotInLog", err)
+	if _, err := turnRange(f.log, "t-nosuchturn", 0); !errors.Is(err, errTurnNotInLog) {
+		t.Errorf("TurnRange(unknown, 0) = %v, want errTurnNotInLog", err)
 	}
-	if _, err := turnRange(f.log, "t-nosuchturn", 3); !errors.Is(err, ErrTurnNotInLog) {
-		t.Errorf("TurnRange(unknown, from 3) = %v, want ErrTurnNotInLog", err)
+	if _, err := turnRange(f.log, "t-nosuchturn", 3); !errors.Is(err, errTurnNotInLog) {
+		t.Errorf("TurnRange(unknown, from 3) = %v, want errTurnNotInLog", err)
 	}
-	if _, _, err := f.log.TurnPage("t-nosuchturn", 0); !errors.Is(err, ErrTurnNotInLog) {
-		t.Errorf("TurnPage(unknown) = %v, want ErrTurnNotInLog", err)
+	if _, _, err := f.log.TurnPage("t-nosuchturn", 0); !errors.Is(err, errTurnNotInLog) {
+		t.Errorf("TurnPage(unknown) = %v, want errTurnNotInLog", err)
 	}
 	// The other direction, so a sentinel on every read fails.
 	if _, err := turnRange(f.log, turn, 0); err != nil {
@@ -821,7 +821,7 @@ func TestEntryLog_ARewriteMissingATurnOpenIsRefused(t *testing.T) {
 	turn := f.prompt("one")
 	f.append(turn, "", "say-1", marotte.EntryKindText, marotte.EntryText{Text: "p"})
 	f.closeTurn(turn, marotte.TurnOutcomeCompleted)
-	merged, err := f.log.window(10, "")
+	merged, err := f.log.window(10, "", noByteBound)
 	if err != nil {
 		t.Fatalf("read the whole log: %v", err)
 	}
@@ -864,7 +864,7 @@ func TestEntryLog_RewriteMakesTurnsContiguous(t *testing.T) {
 	f.closeTurn(second, marotte.TurnOutcomeCompleted)
 	f.closeTurn(first, marotte.TurnOutcomeCompleted)
 
-	merged, err := f.log.window(10, "")
+	merged, err := f.log.window(10, "", noByteBound)
 	if err != nil {
 		t.Fatalf("read the whole log: %v", err)
 	}
@@ -872,7 +872,7 @@ func TestEntryLog_RewriteMakesTurnsContiguous(t *testing.T) {
 		t.Fatalf("rewrite: %v", err)
 	}
 
-	after, err := f.log.window(10, "")
+	after, err := f.log.window(10, "", noByteBound)
 	if err != nil {
 		t.Fatalf("read the rewritten log: %v", err)
 	}

@@ -50,10 +50,18 @@ RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 
 
 # The @cplieger libraries publish TS source only; each is extracted into
 # static-src/node_modules/@cplieger/<lib>/ for tsc and cmd/bundle to resolve.
-# css/ui-primitives.css is concatenated into static/style.css by cmd/bundle.
+# This pin and static-src/package.json's track the same exact version.
+# renovate: datasource=npm depName=@cplieger/reactive
+ARG CPLIEGER_REACTIVE_VERSION=2.4.0
+RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
+    curl -fsSL "https://registry.npmjs.org/@cplieger/reactive/-/reactive-${CPLIEGER_REACTIVE_VERSION}.tgz" \
+      | tar -xz -C static-src/node_modules/@cplieger/reactive --strip-components=1
+
+# Only ./markdown, ./highlight and css/system.css are used; cmd/bundle copies the
+# fonts and icons the stylesheet names, with their notices, into static/vendor/ui/.
 # This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=@cplieger/ui
-ARG CPLIEGER_UI_VERSION=1.2.0-dev.7
+ARG CPLIEGER_UI_VERSION=1.3.0-dev.20
 RUN mkdir -p static-src/node_modules/@cplieger/ui && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/ui/-/ui-${CPLIEGER_UI_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/ui --strip-components=1
@@ -79,7 +87,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/keyenc && \
 
 # This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=@cplieger/sse
-ARG CPLIEGER_SSE_VERSION=2.0.0
+ARG CPLIEGER_SSE_VERSION=2.2.0
 RUN mkdir -p static-src/node_modules/@cplieger/sse && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/sse/-/sse-${CPLIEGER_SSE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/sse --strip-components=1
@@ -190,7 +198,12 @@ RUN CGO_ENABLED=0 go build \
 COPY scripts/collect-licenses.sh scripts/
 RUN sh scripts/collect-licenses.sh --name marotte . && \
     mkdir -p /out/usr/share/licenses/pele && \
-    cp static-src/node_modules/pele/LICENSE /out/usr/share/licenses/pele/LICENSE
+    cp static-src/node_modules/pele/LICENSE /out/usr/share/licenses/pele/LICENSE && \
+    mkdir -p /out/usr/share/licenses/cplieger-ui && \
+    cp static-src/node_modules/@cplieger/ui/LICENSE static-src/node_modules/@cplieger/ui/NOTICE \
+      static-src/node_modules/@cplieger/ui/THIRD_PARTY_NOTICES.md \
+      static-src/node_modules/@cplieger/ui/fonts/LICENSE-* static-src/node_modules/@cplieger/ui/icons/LICENSE-* \
+      /out/usr/share/licenses/cplieger-ui/
 
 FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 
@@ -270,9 +283,10 @@ WORKDIR /workspace
 EXPOSE 9847
 
 # start-period=300s: a first boot downloads and verifies kiro-cli (~528 MB), and
-# /healthz answers 503 until the pinned version is installed.
+# /healthz answers 503 until the pinned version is installed. An absolute path,
+# because PATH starts with the user-writable /config/tools/bin.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=300s \
-    CMD ["curl", "-sf", "http://127.0.0.1:9847/healthz"]
+    CMD ["/app/marotte", "health"]
 # tini is PID 1 so orphans are reaped: marotte waits only the children it
 # started, and its git and kiro-cli grandchildren otherwise piled up as zombies
 # (1,172 of 1,246 processes measured). entrypoint.sh keeps its `exec`, so the

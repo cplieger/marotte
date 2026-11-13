@@ -14,7 +14,7 @@ import {
 import { KEYED_PUSH_KINDS } from "./push-kinds.js";
 import { newestSettings, patchSettings, settingsAsShown } from "./persist.js";
 import type { EffectiveSettings, PatchAnswer, SettingsSwitch } from "./persist.js";
-import { createDisclosure } from "@cplieger/ui/disclosure";
+import { createDisclosure } from "./legacy-ui/disclosure.js";
 import { $, byId, maybeEl } from "./dom.js";
 import { isIOS, isStandalone } from "./platform.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";

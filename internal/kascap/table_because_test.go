@@ -128,7 +128,9 @@ reads into clientMeta (the sqlite chat.enableCodeIntelligence
 setting does NOT apply to acp mode); lab-verified against 2.13.0.
 Costs nothing when unused: with no lsp.json and no servers on
 PATH the LSP operations degrade gracefully and tree-sitter still
-works.`,
+works. So it has no switch: installing a language server in
+Settings > Tools is the control, and the Code intelligence row
+in Agent capabilities shows which languages have one.`,
 	"setting.knowledge": `_meta.kiro.settings.knowledge is the THIRD part of the knowledge
 gate, and without it the other two are decoration.
 isSettingEnabled(settings, "knowledge") treats an absent key as
@@ -147,7 +149,18 @@ member name is the only thing this key shares with the index CONFIG KAS
 reads off the same object: ResolvedKnowledgeConfig.resolve reads
 indexType, includePatterns, excludePatterns, maxFiles and chunking and
 never touches enabled, so sending {"enabled": false} withdraws the tool
-without disturbing how the store is built.`,
+without disturbing how the store is built.
+
+The index config rides here too, from the Knowledge base indexing rows
+(knowledge_index_type, knowledge_include_patterns,
+knowledge_exclude_patterns, knowledge_max_files, knowledge_chunking),
+in both states of enabled, since the Knowledge bases panel indexes
+through _kiro/knowledge either way. Each member is withheld at kiro-cli's
+own default (best, every indexed file type, no exclusion, 10000 files,
+512/128 words), and an empty include list is withheld because KAS's
+matchesInclude includes nothing for one. KAS reads the members from the
+initialize block only (the kiroAgent table) and builds its knowledge
+registry once per process, so a change applies on engine restart.`,
 	"setting.toolSearch": `WITHHELD. KAS defers every MCP tool behind tool_load or load_resource, then tool_call, with no gate,
 and the only member it still reads here is neverDefer, a list of server::tool ids
 kept in the always-loaded belt (session tool assembly, 2.31.0 @11,676,859).
@@ -198,7 +211,45 @@ Driven by the "Workflows" setting (workflows_enabled, default on), which
 gates what the AGENT can reach: KAS's workflowsGatedOn hides the run tool,
 the chat workflow tools and the steering doc, while _kiro/workflow/new reads
 no workflowsEnabled, so marotte's own run surfaces work either way. An
-observer pass resolves no setting and sends false.`,
+observer pass resolves no setting and sends false.
+
+With workflows on, "Workflow planning effort" (workflow_creator_effort, unset by
+default) adds creatorEffort, one of KAS's low, medium, high, xhigh or max. KAS
+reads it as settings.workflows.creatorEffort on session/new and session/load
+(readSessionCreatorEffort, recorded as workflowsCreatorEffort): a workflows
+object without the member records no effort, so unset leaves the planning step
+of a run started from a prose request (wf-workflow-creator) at that agent's own
+effortLevel, and a stated value replaces the record on load.`,
+	"setting-object.sessionTools": `SENT on both session doors as {"messaging": {"enabled": bool},
+"awareness": {"enabled": bool}}. messaging is the Messages between chats
+setting (chat_messaging_enabled, default off, kiro-cli's own
+sessionToolsMessaging default); awareness is Search other chats
+(chat_awareness_enabled, default off, kiro-cli's own sessionToolsAwareness
+default), which gives the session list_sessions, search_sessions and
+get_session_summary (createSessionAwarenessTools) and pushes it
+session_index_update progress while KAS indexes. Both switches are SessionToolSwitch
+rows with the same reader and record shape. KAS's session-tools reader takes
+settings.sessionTools and reads each switch's .enabled as a boolean, a
+non-boolean being malformed and dropped. With it on, the agent's send_message
+can target another session as a peer. A chat gets send_message only inside
+workflowChatTools, pushed while workflowsGatedOn holds: workflowsEnabled on and
+a mode other than plan, autonomous, spec, quick-spec or bug-fix. Receiving
+reads only the target's messaging flag; KAS authorizes that only when the
+workspace is trusted, both sessions have messaging on, the target is not a
+workflow step and the two sessions' workspace paths overlap, so every chat door
+carries it. The delivered message is a _kiro/session/notify with sender peer,
+which marotte renders as the From and To rows. Always present because on load a
+stated value replaces the persisted sessionMessagingEnabled
+(saveSessionMessaging) while an absent one leaves it in force, so withholding
+off would leave a chat once opened with it on still reachable; awareness
+persists the same way (saveSessionAwareness).`,
+	"setting-object.sendMessage": `SENT on the engine's initialize as {"deliveryLimit": n} when "Messages per
+exchange" (chat_message_delivery_limit) holds a value other than kiro-cli's own
+default, 50; the default withholds it. KAS reads settings.sendMessage.deliveryLimit
+from the initialize block only (the kiroAgent table, readPeerDeliveryLimit off the
+startup configuration), clamps it into 1..500, and refuses a peer send_message once
+one exchange between two sessions passes it, until either side's user sends a new
+prompt. Initialize-only, so a change applies when the engine restarts.`,
 	"setting.backgroundExecution": `SENT {"enabled": true} on both session doors, so every session marotte
 creates (chat, run host, observer) and every workflow step (KAS copies the
 parent's resolved value into run state) uses KAS's control_process class: a start
@@ -391,18 +442,19 @@ substantial, under-verified change. Both session doors: KAS re-reads and persist
 it on load, so a choice reaches a resumed chat. fta (the workflow coder's twin)
 stays withheld.`,
 	"setting.infraSafetyMonitor": `SENT only when the user has chosen ("AWS CloudFormation safety check",
-cloudformation_safety_check: "on" or "off"); the default sends nothing, so the
-KIRO_INFRA_SAFETY_MONITOR experiment decides, as in kiro-cli. Read inside
+cloudformation_safety_check: "on", "enforce" or "off"; enforce sends true); the
+default sends nothing, so the KIRO_INFRA_SAFETY_MONITOR experiment decides, as in
+kiro-cli. Read inside
 initialize (Object.hasOwn on the settings), and honoured only on a connection
 that declares hooks and the infrastructureSafety capability: on a CloudFormation
 template write or a cdk deploy/destroy, Kiro's service derives safety properties
 and reports a would-violate as a safety status. Monitor mode never blocks.`,
-	"setting.steeringSupervisor": `SENT as a compiled {"enabled": false} on both session doors: a veto.
-vGt reads it with the experiment as fallback (N??K), so an explicit false holds
-against AB_STEERING_SUPERVISOR. In 2.27.x the supervisor runs in shadow mode only
-(buildPreToolUseGate logs "shadow: non-blocking, verdict not applied"): one fast
-model call per allow-listed tool call whose verdict is discarded, so enabling it
-buys cost and nothing else. Revisit when verdicts are applied.`,
+	"setting.steeringSupervisor": `WITHHELD, matching kiro-cli (a hidden setting no client sends), so the
+AB_STEERING_SUPERVISOR experiment decides: session/new resolves Y??experiment, and
+session/load resolves the setting, then the record's steeringSupervisorEnabled,
+then the experiment. A chat created while marotte sent {"enabled": false} keeps
+that persisted false on resume; a client cannot clear a record field by omission.
+In 3.2.0 the supervisor is shadow-only (buildPreToolUseGate: "verdict not applied").`,
 	"setting._providerPowers": `SENT as a compiled {"enabled": false} on both session doors, matching
 KAS's own default (km("_providerPowers","off",{hidden:true})). On, KAS drops
 installed Powers' MCP tools from the direct list and serves them only through
@@ -413,9 +465,15 @@ Sent so every session states KAS's default.`,
 	"setting.fta": `WITHHELD, matching kiro-cli (no client sends it; default off). fta's prompt
 arms live only in the bundled workflow coder agents, so it is the workflow twin of
 validation and has no chat behaviour of its own.`,
-	"setting.infraSafetyEnforce": `WITHHELD so only an account-level governance setting can turn it on.
-Enforce mode blocks infrastructure writes remotely and asks for an override;
-pinning it false would override an organization that requires it.`,
+	"setting.infraSafetyEnforce": `SENT {"enabled": true} only when the CloudFormation check is set to enforce
+(cloudformation_safety_check "enforce"); every other choice withholds it. KAS reads
+it in initialize through the bridged feature lookup, which answers a key absent
+from the settings block from the model config provider, and that provider's
+isFeatureEnabled is the constant false, so withholding gives the same off as a
+false and leaves the value to kiro-cli. With it on the gate runs even
+with monitor off, and a change that breaks a rule is held behind a permission ask
+(requestSafetyOverridePermission: Keep blocked or Allow anyway), which an unattended
+run never approves.`,
 	"setting-object.terminal": `SENT when "Shell command timeout" is set (terminal_command_timeout_ms).
 initialize stores wGt(settings), which returns commandTimeoutMs only while
 enabled is true, and the shell tool uses it as the DEFAULT when the model passes
@@ -459,6 +517,15 @@ a checkpoint card the dock already draws.
 Both spec capabilities are sent together for the reason they were
 withheld together: they are two thirds of one spec-mode prompt arm, and
 neither is a security decision.`,
+	"object-list.customAgents": `customAgents registers client custom agents in the one session that sends them
+(validateAndConvertClientCustomAgents, then the session registry's client scope): a Bot's chat
+carries its role, marotte-bot, built by internal/bot from the chat record, and every other session
+sends no key. Both doors: session/load rebuilds the session's registry from that call's list, so a
+load without it cannot resolve the restored marotte-bot mode, falls back to vibe and queues
+_kiro/customAgent/not_found, and an edited role reaches KAS only on the next door. A session agent
+rather than a file under agents/: a file agent would be listed in every chat's mode pill and in
+kiro-cli's TUI, and would be a second copy of the record. KAS drops an invalid entry with only a log
+line, so a malformed role shows as that same not_found fallback.`,
 	"enum-list.policyPreset": `policyPreset restores the fs_read floor that KAS grants a bundled mode
 and denies a custom one, which kiro-cli 2.19.1 turned from a latent asymmetry
 into a silent capability loss.
@@ -532,7 +599,8 @@ excludePercent and excludeMessages, the object's other members, are declared in
 KAS's schema with no reader and stay unsent.
 
 thinking, tangentMode, checkpoint, _subagent and _delegate are declared in KAS's
-schema with zero readers, so this table has no row for them.`,
+schema with zero readers, so this table has no row for them. marotte's fork and
+Rewind need neither tangentMode nor checkpoint: TestTangentModeAndCheckpointHaveNoReader.`,
 	"setting-object.memory": `SENT on both session doors, from the Memory dropdown (settings.KeyMemoryMode),
 always explicit. KAS reads it through U$ (data.memory), not isSettingEnabled, so its
 value is {mode, reflection} and not the {enabled} object. mode is disabled, read_only
@@ -555,13 +623,16 @@ config option after a load.
 An empty mode is sent as disabled, so a session that resolves no setting (an observer
 pass) fails closed. Sending any memory field flips the source to explicit, which
 is also what makes KAS stop reading userMemoryOptIn.`,
-	"setting.userMemoryOptIn": `WITHHELD since the memory row went out. It was the legacy veto
-({"enabled": false} on every session). Any settings.memory field on the session
-door makes KAS's memory config source explicit, and an explicit session no longer
-reads this key, so it would veto nothing. Sending it would still refuse the
-sessionless _kiro/memory/* calls the Memories tab makes: without a sessionId KAS
-resolves memory through the legacy path, which reads this key. Kept as a row so
-the census keeps it claimed.`,
+	"setting.userMemoryOptIn": `WITHHELD since the memory row went out, and no Settings row: it is no
+user choice. It was the legacy veto ({"enabled": false} on every session). Any
+settings.memory field on the session door makes KAS's memory config source
+explicit, and an explicit session no longer reads this key, so it would veto
+nothing; true grants nothing either, since eligibility is the memory
+experiment's. Sending false would still refuse the sessionless _kiro/memory/*
+calls the Memories tab makes: without a sessionId KAS resolves memory through
+the legacy path, which reads this key. The Memory dropdown is the user's control.
+TestUserMemoryOptInIsALegacyVeto pins each fact; kept as a row so the census
+keeps it claimed.`,
 	"setting.memoryEnable": `WITHHELD, like its sibling userMemoryOptIn but for a different reason:
 that key is redundant beside the explicit memory row and would refuse sessionless
 CRUD, while this one must not be sent in either direction, because it is read at
@@ -669,6 +740,15 @@ tool description and schema to every turn and let the model draw diagrams the us
 never sees, while the tool's result tells the model the user sees the drawing.
 Sending it needs that renderer, a session-confined read of the file and a card keyed
 on _meta.kiro.diagram first.`,
+	"capability.approveForMeOption": `WITHHELD. kiro-cli 3.2.1 reads _meta.kiro.approveForMeOption === true and,
+with KIRO_TRUST_CLASSIFIER_MODE=enforce, offers an "Approve for me" select (files, on,
+off) in every top-level session's configOptions and in the config template.
+Its default is "files", and approveForMePolicy's "files" and "off" arms drop the
+approve-for-me id from the session's policyPreset, so declaring it would strip the
+classifier from every chat on marotte's Approve for me profile until the user picked
+"on". Sending it needs a per-chat Approve for me choice in marotte first; until then
+the Approve for me profile's approve-for-me preset is the control, and the absent
+option leaves it untouched.`,
 	"setting.c2s": `WITHHELD: code-to-spec is declined until Go is analysable end-to-end, a shipped
 client exposes its toggle, or KAS defers the c2s tools behind load_resource. KAS reads c2s
 through its feature proxy to register the Explore subagent and the code_index tools,
@@ -724,6 +804,16 @@ anything is sent is the telemetryEnabled row, which the Data sharing switch driv
 The external memory eligibility arm. marotte used to write it from the memory
 setting; the session-door memory row's explicit mode replaces that, and mode
 "disabled" holds whatever the arm says.`,
+	"env.KIRO_FEATURE_MEMORY_IMPORT_FEATURE_EXTERNAL_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+The memory_import_feature_external_enabled experiment (default off). Either import arm on
+admits _kiro/memory/import, _kiro/memory/export and _kiro/memory/getImportPrompt on a chat
+whose memory is on; off they refuse. marotte calls none of the three.`,
+	"env.KIRO_FEATURE_MEMORY_IMPORT_FEATURE_INTERNAL_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+The memory_import_feature_internal_enabled experiment (default off), the internal cohort's twin
+of the external import arm: either on admits the memory import, export and import-prompt
+methods.`,
 	"env.KIRO_FEATURE_MEMORY_QUALITY_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 The memory_quality_enabled experiment (default off): on, KAS scores memories by access and use,
@@ -735,15 +825,15 @@ The experiment value of the memorySync setting (memory_sync_enabled, default off
 syncs a signed-in user's memories to a cloud store when an endpoint is configured.`,
 	"env.KIRO_FEATURE_MODEL_FALLBACK_AUTO_REFUSAL_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
-The model_fallback_auto_refusal flag (default off). A refusal on a turn whose model is Auto
-falls back only with it on, so with "Model fallback" on such a refusal is still declined
-(autoRefusalDisabled) until AWS ramps the flag.`,
-	"env.KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED": `SENT as "true" only when "Model fallback" (model_fallback_enabled, default off as in
-kiro-cli) is on; off writes nothing, so KAS's default and any ramp stay in force rather than an
-explicit off. Lets a turn whose model is unavailable move to the next model of the chain
+The model_fallback_auto_refusal flag (default on in 3.2.0). While "Model fallback" is on, a
+refusal on a turn whose model is Auto and has no chain of its own is retried server-side with it
+on, and declined (autoRefusalDisabled) with it off.`,
+	"env.KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED": `SENT as "true" or "false" as "Model fallback" (model_fallback_enabled, default on as
+in kiro-cli 3.2.0's FEATURES model_fallback_availability) says; off must be explicit, since KAS
+reads an absent value as its default, on. Lets a turn whose model is unavailable move to the next model of the chain
 getModelFallbacks serves; marotte records the move as a model_fallback entry.`,
-	"env.KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED": `SENT as "true" only when "Model fallback" (model_fallback_enabled, default off as in
-kiro-cli) is on; off writes nothing. Lets a turn whose model refused move to the next model of
+	"env.KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED": `SENT as "true" or "false" as "Model fallback" (model_fallback_enabled, default on as
+in kiro-cli 3.2.0's FEATURES model_fallback_refusal) says; off must be explicit. Lets a turn whose model refused move to the next model of
 the chain getModelFallbacks serves, and KAS then pins the chat to that model unless the user
 picked a different one explicitly.`,
 	"env.KIRO_FEATURE_SESSION_TITLE_LLM_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
@@ -759,8 +849,8 @@ which qualifies same-named skills with their layer or owner.`,
 Continues a turn stalled after a tool result (default on).`,
 	"env.KIRO_FEATURE_STEERING_SUPERVISOR_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
-The steering supervisor; the steeringSupervisor settings row vetoes it on the
-session door, which the client value does without pinning the env arm.`,
+The steering supervisor's experiment arm; the steeringSupervisor settings row is
+withheld too, so this arm decides for every new chat.`,
 	"env.KIRO_FEATURE_STREAM_IDLE_WATCHDOG_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 The 60s/300s stream-idle watchdog and its _kiro/system/notify text (default on).`,

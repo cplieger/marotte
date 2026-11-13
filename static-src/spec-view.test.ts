@@ -1,7 +1,7 @@
 // Tests for spec-view.ts: the spec tab's page.
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
-import { signal } from "@cplieger/ui";
+import { signal } from "@cplieger/reactive";
 import type { Spec, SpecDoc, SpecTaskNode } from "./wire/types.gen.js";
 import type * as StoreModule from "./store.js";
 import type * as ApiModule from "./api-client.js";
@@ -108,7 +108,7 @@ const bus = await import("./bus.js");
 const dock = await import("./decision-dock.js");
 const openers = await import("./editor-openers.js");
 const navigate = await import("./navigate.js");
-const { tableObservationCount } = await import("./table-scroll.js");
+const { liveRenderCount } = await import("./markdown.js");
 
 const DIR = ".kiro/specs/demo";
 
@@ -714,11 +714,12 @@ describe("fetch and state", () => {
     ];
     view.showSpec(DIR);
     await settle();
-    expect(body().querySelector(".spec-prose h1")?.textContent).toBe("Reqs body");
+    // A document sits under the page's own h2, so `#` is an h3.
+    expect(body().querySelector(".spec-prose h3")?.textContent).toBe("Reqs body");
     view.refreshSpec(DIR);
     await settle();
     expect(m.requests.map((r) => r.etag)).toEqual(["", '"v1"']);
-    expect(body().querySelector(".spec-prose h1")?.textContent).toBe("Reqs body");
+    expect(body().querySelector(".spec-prose h3")?.textContent).toBe("Reqs body");
     expect(view._stateOf(DIR)?.spec).not.toBeNull();
   });
 
@@ -734,7 +735,7 @@ describe("fetch and state", () => {
   });
 
   it("lets go of a document's tables when the pane repaints and when the page is released", async () => {
-    const before = tableObservationCount();
+    const before = liveRenderCount();
     openParented();
     const withTable = { ...prose("design.md", "design", "| a | b |\n|---|---|\n| 1 | 2 |\n") };
     m.replies = [
@@ -744,24 +745,22 @@ describe("fetch and state", () => {
     view.showSpec(DIR);
     await settle();
     expect(body().querySelectorAll("table").length, "table rendered").toBe(1);
-    expect(tableObservationCount() - before, "one watched").toBe(1);
+    expect(liveRenderCount() - before, "its render held").toBe(1);
 
-    // Microtasks only: a frame would let the resize observer's own report of the removed table
-    // release it, which is not the mechanism under test.
     view.refreshSpec(DIR);
     await flush();
     expect(body().querySelector("table")).toBeNull();
-    expect(tableObservationCount() - before, "pane repaint").toBe(0);
+    expect(liveRenderCount() - before, "pane repaint").toBe(0);
 
     m.replies = [reply(spec([withTable]), '"v3"')];
     view.refreshSpec(DIR);
     await flush();
-    expect(tableObservationCount() - before).toBe(1);
+    expect(liveRenderCount() - before).toBe(1);
     m.specTabs.delete(DIR);
     tabsVersion.value++;
     await flush();
     expect(view._openStates()).toEqual([]);
-    expect(tableObservationCount() - before, "page release").toBe(0);
+    expect(liveRenderCount() - before, "page release").toBe(0);
   });
 
   it("refetches on a spec_changed frame for its own ref only", async () => {

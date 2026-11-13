@@ -1,4 +1,4 @@
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 
 import { setBusy } from "./dom.js";
 import { KEY_ATTR } from "./reconcile.js";
@@ -56,10 +56,6 @@ function skeletonText(opts: {
   return wrap;
 }
 
-/** The transcript placeholder's element id. The renderer drops it by this id when real turns
- *  land, so the placeholder and the conversation can never share the container. */
-export const CHAT_SKELETON_ID = "chat-skeleton";
-
 /** One placeholder turn: a short request over a longer reply, as bar widths. */
 interface SkeletonTurnShape {
   readonly prompt: readonly string[];
@@ -114,16 +110,13 @@ function skeletonTurnCard(shape: SkeletonTurnShape): HTMLDivElement {
   return card;
 }
 
-/** The transcript's placeholder: N turn cards inside a `display: contents` wrap. */
+/** The transcript's placeholder, the transcript cover's content: N turn cards inside a
+ *  `display: contents` wrap. */
 export function chatSkeleton(): HTMLDivElement {
   const wrap = el("div", {
     className: "skeleton-rows",
     "aria-hidden": "true",
   }) as HTMLDivElement;
-  // Carries its id from here rather than from the caller (unlike `load-more-skeleton`, which
-  // scroll.ts stamps) because TWO modules address it: chat.ts mounts it and messages.ts drops it
-  // the moment real turns land. A literal in both would be a coupling that can drift silently.
-  wrap.id = CHAT_SKELETON_ID;
   for (const shape of CHAT_SKELETON) {
     wrap.appendChild(skeletonTurnCard(shape));
   }

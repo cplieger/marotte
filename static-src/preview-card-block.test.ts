@@ -40,7 +40,7 @@ function prose(md: string, mode: Mode): HTMLElement {
   } else {
     const stream = createMarkdownStream(host, { flushIntervalMs: 0 });
     for (const ch of md) {
-      stream.writeDelta(ch);
+      stream.write(ch);
     }
     stream.end();
   }

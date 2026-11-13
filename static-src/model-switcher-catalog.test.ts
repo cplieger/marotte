@@ -25,7 +25,7 @@ interface TestSession {
 }
 
 vi.mock("./store.js", async () => {
-  const { signal } = (await vi.importActual("@cplieger/ui")) as { signal: SignalFactory };
+  const { signal } = (await vi.importActual("@cplieger/reactive")) as { signal: SignalFactory };
   const activeSession = signal<TestSession | undefined>(undefined);
   return {
     activeSession,
@@ -71,7 +71,7 @@ vi.mock("./strings.js", async (importOriginal) => ({
 }));
 vi.mock("./icon-el.js", () => ({ iconEl: () => document.createElement("span") }));
 vi.mock("./icons.js", () => ({ ICON_MODEL: "" }));
-vi.mock("@cplieger/ui/roving-focus", () => ({
+vi.mock("./legacy-ui/roving-focus.js", () => ({
   rovingFocus: () => ({ refresh: vi.fn(), focusFirst: vi.fn(), dispose: vi.fn() }),
 }));
 
@@ -107,7 +107,7 @@ describe("the model card with no models", () => {
     retried.calls = 0;
     (activeSession as unknown as { value: TestSession }).value = {
       id: "c1",
-      model: "opus-4.7",
+      model: "model-a-4.7",
       effort: "",
     };
   });
@@ -142,7 +142,7 @@ describe("the model card with no models", () => {
   });
 
   it("stops being a listbox when a re-read answers with no models", () => {
-    cachedModels = [model("opus-4.7")];
+    cachedModels = [model("model-a-4.7")];
     onExpand.fn?.();
     expect(scroller().getAttribute("role")).toBe("listbox");
 
@@ -157,7 +157,7 @@ describe("the model card with no models", () => {
   it("becomes a labelled listbox again once a catalog arrives", () => {
     notice = { text: "Loading models…", busy: true, retry: false };
     onExpand.fn?.();
-    cachedModels = [model("opus-4.7")];
+    cachedModels = [model("model-a-4.7")];
     notice = null;
     onExpand.fn?.();
 
@@ -197,7 +197,7 @@ describe("the model card with no models", () => {
     onExpand.fn?.();
     expect(retryBtn()).not.toBe(null);
 
-    cachedModels = [model("opus-4.7")];
+    cachedModels = [model("model-a-4.7")];
     notice = null;
     onExpand.fn?.();
 

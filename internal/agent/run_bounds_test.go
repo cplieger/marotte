@@ -57,19 +57,13 @@ func undurableLeaseStore(t *testing.T) *runlease.Store {
 func TestArmRunDeadline_FeedsTheLeasesSlotIntoTheOneDeadline(t *testing.T) {
 	for name, tc := range map[string]struct {
 		slotIn time.Duration
-		// spent is the only input that can make the backstop the tightest.
-		spent  time.Duration
 		wantIn time.Duration
 	}{
-		"no slot: the idle window is the whole bound":  {0, 0, runIdleWindow},
-		"a slot inside the window wins":                {10 * time.Minute, 0, 10 * time.Minute},
-		"a slot beyond the window loses":               {24 * time.Hour, 0, runIdleWindow},
-		"a slot inside the floor is floored up":        {30 * time.Second, 0, minRunBudget},
-		"a slot already gone is floored, not honoured": {-time.Minute, 0, minRunBudget},
-		// The remainder is above minRunBudget deliberately: below it the floor answers.
-		"a nearly-spent backstop wins over the window": {0, runBackstop - 7*time.Minute, 7 * time.Minute},
-		// Deliberately in the PAST: the floor may not lift a spent backstop.
-		"a spent backstop is honoured, not floored": {0, runBackstop + time.Hour, -time.Hour},
+		"no slot: the idle window is the whole bound":  {0, runIdleWindow},
+		"a slot inside the window wins":                {10 * time.Minute, 10 * time.Minute},
+		"a slot beyond the window loses":               {24 * time.Hour, runIdleWindow},
+		"a slot inside the floor is floored up":        {30 * time.Second, minRunBudget},
+		"a slot already gone is floored, not honoured": {-time.Minute, minRunBudget},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := boundsRuns(t)
@@ -79,13 +73,6 @@ func TestArmRunDeadline_FeedsTheLeasesSlotIntoTheOneDeadline(t *testing.T) {
 				o = scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Now().Add(tc.slotIn))
 			}
 			h.grantLease(t.Context(), id, "publish", o, hostSec())
-			if tc.spent != 0 {
-				h.bounds.executed = map[string]time.Duration{id: tc.spent}
-			}
-			// The spent backstop's timer fires at once; claiming first makes it refuse, so the stamped value is readable.
-			if !h.claimTermination(id) {
-				t.Fatal("the fresh run already held a termination claim")
-			}
 
 			before := time.Now()
 			h.armDeadline(t.Context(), id)
@@ -1152,7 +1139,7 @@ func TestDecodeLifecycleFrame(t *testing.T) {
 }
 
 // TestRunBoundConstants_HoldTheirRelationships pins the constants' relationships, each derived from
-// outside this file. A user-raisable backstop is none, so they stay constants.
+// outside this file.
 func TestRunBoundConstants_HoldTheirRelationships(t *testing.T) {
 	t.Parallel()
 
@@ -1172,11 +1159,6 @@ func TestRunBoundConstants_HoldTheirRelationships(t *testing.T) {
 		t.Errorf("unattendedApprovalBudget = %v, not below the floor %v; the tightest slot "+
 			"cuts a scheduled run before the floor records the approval it needed",
 			unattendedApprovalBudget, minRunBudget)
-	}
-	// The backstop must be the loosest bound.
-	if runBackstop <= runIdleWindow {
-		t.Errorf("runBackstop = %v, not above the idle window %v; it would fire first and no "+
-			"run could ever stall", runBackstop, runIdleWindow)
 	}
 	// A granularity at or above the window means no refill ever lands.
 	if refillGranularity >= runIdleWindow {

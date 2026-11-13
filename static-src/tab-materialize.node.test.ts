@@ -82,6 +82,7 @@ function subject(over: Partial<TabSubject> & { kind: TabKind }): TabSubject {
 
 interface Spies {
   chatShow: Mock<TabOpeners["chat"]["show"]>;
+  chatPrefetch: Mock<TabOpeners["chat"]["prefetch"]>;
   chatRefresh: Mock<TabOpeners["chat"]["refresh"]>;
   chatClose: Mock<TabOpeners["chat"]["close"]>;
   chatDot: Mock<TabOpeners["chat"]["dot"]>;
@@ -94,13 +95,19 @@ interface Spies {
   subagentRefresh: Mock<TabOpeners["subagent"]["refresh"]>;
   specShow: Mock<TabOpeners["spec"]["show"]>;
   specRefresh: Mock<TabOpeners["spec"]["refresh"]>;
+  chatSelect: Mock<TabOpeners["chat"]["select"]>;
+  chatLoadFailed: Mock<TabOpeners["chat"]["loadFailed"]>;
 }
+
+/** The signal a refresh is handed; its identity is what reaches the opener. */
+const signal = new AbortController().signal;
 
 let spies: Spies;
 
 function register(dot: TabDotStatus | "" = ""): void {
   spies = {
     chatShow: vi.fn<TabOpeners["chat"]["show"]>(),
+    chatPrefetch: vi.fn<TabOpeners["chat"]["prefetch"]>(),
     chatRefresh: vi.fn<TabOpeners["chat"]["refresh"]>(),
     chatClose: vi.fn<TabOpeners["chat"]["close"]>(),
     chatDot: vi.fn<TabOpeners["chat"]["dot"]>(() => dot),
@@ -113,11 +120,16 @@ function register(dot: TabDotStatus | "" = ""): void {
     subagentRefresh: vi.fn<TabOpeners["subagent"]["refresh"]>(),
     specShow: vi.fn<TabOpeners["spec"]["show"]>(),
     specRefresh: vi.fn<TabOpeners["spec"]["refresh"]>(),
+    chatSelect: vi.fn<TabOpeners["chat"]["select"]>(),
+    chatLoadFailed: vi.fn<TabOpeners["chat"]["loadFailed"]>(),
   };
   const openers: TabOpeners = {
     chat: {
+      select: spies.chatSelect,
       show: spies.chatShow,
+      prefetch: spies.chatPrefetch,
       refresh: spies.chatRefresh,
+      loadFailed: spies.chatLoadFailed,
       close: spies.chatClose,
       dot: spies.chatDot,
     },
@@ -337,14 +349,43 @@ describe("the injected behaviours receive the subject's ref", () => {
   // dispatcher, and a show that fetched would double every activation.
   it("chat refresh", () => {
     register();
-    materializeTab(subject({ kind: "chat", ref: "c-9" })).refresh();
-    expect(spies.chatRefresh).toHaveBeenCalledWith("c-9");
+    materializeTab(subject({ kind: "chat", ref: "c-9" })).refresh(signal);
+    expect(spies.chatRefresh).toHaveBeenCalledWith("c-9", signal);
     expect(spies.chatShow).not.toHaveBeenCalled();
+  });
+
+  it("chat prefetch", () => {
+    register();
+    materializeTab(subject({ kind: "chat", ref: "c-9" })).prefetch?.(signal);
+    expect(spies.chatPrefetch).toHaveBeenCalledWith("c-9", signal);
+    expect(spies.chatRefresh).not.toHaveBeenCalled();
+    expect(spies.chatShow).not.toHaveBeenCalled();
+  });
+
+  // The gesture half and the failure painter reach their own opener, never the show beside them.
+  it("chat select and load failure", () => {
+    register();
+    const spec = materializeTab(subject({ kind: "chat", ref: "c-9" }));
+    spec.onSelect?.();
+    spec.onLoadFailed?.();
+    expect(spies.chatSelect).toHaveBeenCalledWith("c-9");
+    expect(spies.chatLoadFailed).toHaveBeenCalledWith("c-9");
+    expect(spies.chatShow).not.toHaveBeenCalled();
+  });
+
+  // Only a chat can be left blank by a failed load; every other kind's loader paints its own
+  // placeholder and error row, so its refresh has nothing to wait on.
+  it("a kind with its own placeholder resolves its refresh at once", async () => {
+    register();
+    for (const kind of ["editor", "run", "spec", "subagent"] as const) {
+      const ref = kind === "subagent" ? "c-3/task-8" : "x";
+      await expect(materializeTab(subject({ kind, ref })).refresh(signal)).resolves.toBeUndefined();
+    }
   });
 
   it("editor refresh", () => {
     register();
-    materializeTab(subject({ kind: "editor", ref: "/w/x.ts" })).refresh();
+    materializeTab(subject({ kind: "editor", ref: "/w/x.ts" })).refresh(signal);
     expect(spies.editorRefresh).toHaveBeenCalledWith("/w/x.ts");
     expect(spies.editorShow).not.toHaveBeenCalled();
   });
@@ -353,14 +394,14 @@ describe("the injected behaviours receive the subject's ref", () => {
     register();
     const spec = materializeTab(subject({ kind: "spec", ref: ".kiro/specs/x" }));
     spec.onShow?.();
-    spec.refresh();
+    spec.refresh(signal);
     expect(spies.specShow).toHaveBeenCalledWith(".kiro/specs/x");
     expect(spies.specRefresh).toHaveBeenCalledWith(".kiro/specs/x");
   });
 
   it("run refresh", () => {
     register();
-    materializeTab(subject({ kind: "run", ref: "wf-7" })).refresh();
+    materializeTab(subject({ kind: "run", ref: "wf-7" })).refresh(signal);
     expect(spies.runRefresh).toHaveBeenCalledWith("wf-7");
     expect(spies.runShow).not.toHaveBeenCalled();
   });
@@ -368,8 +409,8 @@ describe("the injected behaviours receive the subject's ref", () => {
   // Both halves of the composite ref, split by the factory's own codec.
   it("subagent refresh", () => {
     register();
-    materializeTab(subject({ kind: "subagent", ref: "c-3/task-8" })).refresh();
-    expect(spies.subagentRefresh).toHaveBeenCalledWith("c-3", "task-8");
+    materializeTab(subject({ kind: "subagent", ref: "c-3/task-8" })).refresh(signal);
+    expect(spies.subagentRefresh).toHaveBeenCalledWith("c-3", "task-8", signal);
     expect(spies.subagentShow).not.toHaveBeenCalled();
   });
 });
@@ -646,7 +687,7 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
   // the loader beside it.
   it("settings refresh loads the active panel", async () => {
     register();
-    materializeTab(subject({ kind: "settings" })).refresh();
+    materializeTab(subject({ kind: "settings" })).refresh(signal);
     await settle();
     expect(refreshSettingsPanel).toHaveBeenCalled();
     expect(loadSettingsTabData).not.toHaveBeenCalled();
@@ -654,7 +695,7 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
 
   it("git refresh dispatches the active sub-tab", async () => {
     register();
-    materializeTab(subject({ kind: "git" })).refresh();
+    materializeTab(subject({ kind: "git" })).refresh(signal);
     await settle();
     expect(refreshGitView).toHaveBeenCalled();
   });
@@ -664,14 +705,14 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
   // what says which one.
   it("files refresh binds and loads the tab it names", async () => {
     register();
-    materializeTab(subject({ kind: "files", ref: "/workspace/x" })).refresh();
+    materializeTab(subject({ kind: "files", ref: "/workspace/x" })).refresh(signal);
     await settle();
     expect(showFilesTab).toHaveBeenCalledWith("/workspace/x");
   });
 
   it("history refresh refetches the list", async () => {
     register();
-    materializeTab(subject({ kind: "history" })).refresh();
+    materializeTab(subject({ kind: "history" })).refresh(signal);
     await settle();
     expect(refreshHistoryView).toHaveBeenCalled();
     expect(loadHistoryView).not.toHaveBeenCalled();
@@ -681,7 +722,7 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
   // canonical panel would discard the reader's own on every gap.
   it("docs refresh refetches the inventory", async () => {
     register();
-    materializeTab(subject({ kind: "docs" })).refresh();
+    materializeTab(subject({ kind: "docs" })).refresh(signal);
     await settle();
     expect(refreshDocsView).toHaveBeenCalled();
     expect(forceDocsTab).not.toHaveBeenCalled();
@@ -717,7 +758,7 @@ describe("a non-canonical files ref resolves to ONE folder", () => {
       const spec = materializeTab(subject({ kind: "files", ref }));
       expect(spec.route).toEqual({ kind: "files", path: "/workspace/x" });
       expect(spec.name).toBe("x");
-      spec.refresh();
+      spec.refresh(signal);
       await settle();
       expect(showFilesTab).toHaveBeenCalledWith("/workspace/x");
     });

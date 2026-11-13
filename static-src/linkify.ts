@@ -1,7 +1,7 @@
 // `src/foo.ts:42` in rendered prose becomes a button opening the editor at that line. Any SKIP_TAGS ancestor skips a
 // text node (the streamer wraps a link label in a span); <a>/<button> skip since a control inside a control is broken.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { fileIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { FILE_EXTS } from "./file-extensions.js";
@@ -57,8 +57,9 @@ function sameRoots(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((r, i) => r === b[i]);
 }
 
-/** `svg`: a drawn diagram's label is SVG `<text>`, which cannot hold the HTML button a path becomes. */
-const SKIP_TAGS = "code, pre, a, button, svg";
+/** `svg`: a drawn diagram's label is SVG `<text>`, which cannot hold the HTML button a path becomes. `.cp-code`: a
+ *  code block's bar label is chrome. */
+const SKIP_TAGS = "code, pre, a, button, svg, .cp-code";
 
 /**
  * Injected, like `initAttachmentPillCallbacks`: importing the opener would close a ring through the editor. A no-op

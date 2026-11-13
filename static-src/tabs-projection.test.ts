@@ -100,6 +100,7 @@ vi.mock("./store.js", () =>
 // The composer half of the close gesture (tabs.ts reaches it for the rollback's
 // draft restore); inert here, per-chat state this suite does not stage.
 vi.mock("./composer-state.js", () => ({
+  adoptUnownedComposer: vi.fn(),
   retargetComposer: vi.fn(),
   restoreFailedSend: vi.fn(),
   saveComposerState: vi.fn(),
@@ -194,10 +195,13 @@ function registerOpeners(): void {
   };
   registerTabOpeners({
     chat: {
+      prefetch: vi.fn(),
+      select: vi.fn(),
+      loadFailed: vi.fn(),
       show: (ref) => {
         record("chat", ref);
       },
-      refresh: vi.fn(),
+      refresh: vi.fn(() => Promise.resolve()),
       close: vi.fn(),
       dot: () => "",
     },
@@ -232,6 +236,9 @@ function registerOpeners(): void {
 /** Two channels: injected openers, or the singletons' lazy loaders (for settings, its REFRESH via
  *  the gate). */
 async function expectActivated(kind: TabKind, ref: string): Promise<void> {
+  // The activation half runs in a task after the frame that painted the strip.
+  await paint();
+  await new Promise((r) => setTimeout(r, 0));
   if (kind === "chat" || kind === "editor" || kind === "run") {
     expect(shown.at(-1)).toEqual({ kind, ref, rowPresent: true });
     return;
@@ -250,12 +257,13 @@ function paint(): Promise<void> {
 }
 
 /** The strip as REFS, which is what makes an order assertion readable when the
- *  ids are opaque. A singleton's ref is empty, so it reads as its kind. */
+ *  ids are opaque. A singleton's ref is empty, so it reads as its kind. Departing rows are
+ *  excluded: no stylesheet runs their exit. */
 async function rowRefs(): Promise<string[]> {
   await paint();
   const byID = new Map(tabServer.subjects().map((s) => [s.id, s.ref === "" ? s.kind : s.ref]));
   const list = document.getElementById("tab-list");
-  return [...(list?.querySelectorAll<HTMLElement>("[data-tab-id]") ?? [])].map(
+  return [...(list?.querySelectorAll<HTMLElement>("[data-tab-id]:not(.exiting)") ?? [])].map(
     (n) => byID.get(n.dataset["tabId"] ?? "") ?? n.dataset["tabId"] ?? "",
   );
 }
@@ -385,7 +393,7 @@ describe("response-first: the response beats the frame (response-adopted opens)"
 
     // The GET left before the open committed and answers the pre-commit empty set; the pending adopt
     // merges the row back until the watermark catches up.
-    tabServer.queueList({ tabs: [], version: 0 });
+    tabServer.queueList({ tabs: [], recent: [], version: 0 });
     await listTabs();
     expect(hasTab("chat", "c-1")).toBe(true);
     expect(await rowRefs()).toEqual(["c-1"]);
@@ -466,7 +474,7 @@ describe("a stale GET /api/tabs", () => {
 
     // The snapshot the in-flight GET was already carrying: the collection as it was
     // BEFORE that open committed.
-    tabServer.queueList({ tabs: [], version: versionBefore - 1 });
+    tabServer.queueList({ tabs: [], recent: [], version: versionBefore - 1 });
     await listTabs();
 
     expect(hasTab("chat", "c-old")).toBe(true);
@@ -483,7 +491,7 @@ describe("a stale GET /api/tabs", () => {
     expect.assertions(2);
     tabServer.setMode("event-first");
     await openTab({ kind: "chat", ref: "c-old" });
-    tabServer.queueList({ tabs: [], version: tabsVersion() + 5 });
+    tabServer.queueList({ tabs: [], recent: [], version: tabsVersion() + 5 });
     await listTabs();
     expect(hasTab("chat", "c-old")).toBe(false);
     expect(await rowRefs()).toEqual([]);

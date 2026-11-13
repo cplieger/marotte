@@ -2361,11 +2361,15 @@
           "live_runs_stated": {
             "type": "boolean"
           },
+          "live_runs_version": {
+            "type": "string"
+          },
           "workspace": {
             "type": "string"
           }
         },
         "required": [
+          "live_runs_version",
           "busy_stated",
           "live_runs_stated"
         ],
@@ -2761,6 +2765,15 @@
           "auto_routing": {
             "type": "string"
           },
+          "chat_awareness_enabled": {
+            "type": "boolean"
+          },
+          "chat_message_delivery_limit": {
+            "type": "integer"
+          },
+          "chat_messaging_enabled": {
+            "type": "boolean"
+          },
           "chat_retention_days": {
             "type": "integer"
           },
@@ -2794,8 +2807,35 @@
               "null"
             ]
           },
+          "knowledge_chunking": {
+            "$ref": "#/components/schemas/KnowledgeChunking"
+          },
           "knowledge_enabled": {
             "type": "boolean"
+          },
+          "knowledge_exclude_patterns": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "knowledge_include_patterns": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "knowledge_index_type": {
+            "type": "string"
+          },
+          "knowledge_max_files": {
+            "type": "integer"
           },
           "last_effort_by_model": {
             "additionalProperties": {
@@ -2883,6 +2923,9 @@
           "work_validation": {
             "type": "string"
           },
+          "workflow_creator_effort": {
+            "type": "string"
+          },
           "workflow_launch": {
             "type": "string"
           },
@@ -2905,6 +2948,10 @@
           "auto_delegation",
           "output_style",
           "workflow_launch",
+          "workflow_creator_effort",
+          "knowledge_index_type",
+          "knowledge_include_patterns",
+          "knowledge_exclude_patterns",
           "agent_ignore_files",
           "additional_directories",
           "rejected_keys",
@@ -2915,6 +2962,9 @@
           "engine_heap_mib",
           "trigger_max_live_runs",
           "trigger_max_launches_per_hour",
+          "chat_message_delivery_limit",
+          "knowledge_max_files",
+          "knowledge_chunking",
           "settings_epoch",
           "settings_revision",
           "auto_compaction_enabled",
@@ -2929,6 +2979,8 @@
           "spec_planning_ask_first",
           "steering_reminders_enabled",
           "workflows_enabled",
+          "chat_messaging_enabled",
+          "chat_awareness_enabled",
           "supervised_default",
           "scheduled_auto_approve",
           "debug_logs",
@@ -3552,6 +3604,9 @@
             },
             "type": "array"
           },
+          "automatic": {
+            "type": "boolean"
+          },
           "caller": {
             "$ref": "#/components/schemas/Caller"
           },
@@ -4101,6 +4156,9 @@
           "stop_reason_raw": {
             "type": "string"
           },
+          "stopped_to_compact": {
+            "type": "boolean"
+          },
           "truncated": {
             "type": "boolean"
           },
@@ -4225,9 +4283,11 @@
           "compaction_failed",
           "mode_not_applied",
           "supervised_not_applied",
+          "memory_not_loaded",
           "model_not_served",
           "auth_token_unavailable",
-          "tangent_merge_failed"
+          "tangent_merge_failed",
+          "resume_not_sent"
         ],
         "type": "string"
       },
@@ -5138,6 +5198,9 @@
       },
       "Hit": {
         "properties": {
+          "automatic": {
+            "type": "boolean"
+          },
           "caller": {
             "$ref": "#/components/schemas/Caller"
           },
@@ -5942,6 +6005,21 @@
         ],
         "type": "object"
       },
+      "KnowledgeChunking": {
+        "properties": {
+          "overlap": {
+            "type": "integer"
+          },
+          "size": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "size",
+          "overlap"
+        ],
+        "type": "object"
+      },
       "KnowledgeContext": {
         "properties": {
           "description": {
@@ -6273,6 +6351,29 @@
         ],
         "type": "object"
       },
+      "LiveRunPayload": {
+        "properties": {
+          "chat_id": {
+            "type": "string"
+          },
+          "executing": {
+            "type": "boolean"
+          },
+          "live": {
+            "type": "boolean"
+          },
+          "workflow_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflow_id",
+          "chat_id",
+          "live",
+          "executing"
+        ],
+        "type": "object"
+      },
       "LiveRunsResponse": {
         "properties": {
           "runs": {
@@ -6397,57 +6498,6 @@
         },
         "required": [
           "output"
-        ],
-        "type": "object"
-      },
-      "MCPConnectedPayload": {
-        "properties": {
-          "server": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "server"
-        ],
-        "type": "object"
-      },
-      "MCPDisconnectedPayload": {
-        "properties": {
-          "server": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "server"
-        ],
-        "type": "object"
-      },
-      "MCPFailedPayload": {
-        "properties": {
-          "error": {
-            "type": "string"
-          },
-          "server": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "server",
-          "error"
-        ],
-        "type": "object"
-      },
-      "MCPOAuthPayload": {
-        "properties": {
-          "error": {
-            "type": "string"
-          },
-          "server": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "server"
         ],
         "type": "object"
       },
@@ -6635,62 +6685,7 @@
         ],
         "type": "object"
       },
-      "MCPSignInClosedPayload": {
-        "properties": {
-          "flow_id": {
-            "type": "string"
-          },
-          "server": {
-            "type": "string"
-          },
-          "success": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "server",
-          "flow_id",
-          "success"
-        ],
-        "type": "object"
-      },
-      "MCPSignInOpenPayload": {
-        "properties": {
-          "server": {
-            "type": "string"
-          },
-          "url": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "server",
-          "url"
-        ],
-        "type": "object"
-      },
-      "MCPSignInStarted": {
-        "properties": {},
-        "type": "object"
-      },
-      "MCPStatus": {
-        "properties": {
-          "servers": {
-            "items": {
-              "$ref": "#/components/schemas/MCPStatusServer"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "servers"
-        ],
-        "type": "object"
-      },
-      "MCPStatusServer": {
+      "MCPServerStatus": {
         "properties": {
           "error": {
             "type": "string"
@@ -6748,6 +6743,63 @@
           "name",
           "state",
           "origin"
+        ],
+        "type": "object"
+      },
+      "MCPSignInClosedPayload": {
+        "properties": {
+          "flow_id": {
+            "type": "string"
+          },
+          "server": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "server",
+          "flow_id",
+          "success"
+        ],
+        "type": "object"
+      },
+      "MCPSignInStarted": {
+        "properties": {},
+        "type": "object"
+      },
+      "MCPStatusPayload": {
+        "properties": {
+          "server": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MCPServerStatus"
+          }
+        },
+        "required": [
+          "server"
+        ],
+        "type": "object"
+      },
+      "MCPStatusResponse": {
+        "properties": {
+          "servers": {
+            "items": {
+              "$ref": "#/components/schemas/MCPServerStatus"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "subject": {
+            "$ref": "#/components/schemas/SubjectStamp"
+          }
+        },
+        "required": [
+          "servers"
         ],
         "type": "object"
       },
@@ -6908,9 +6960,6 @@
           "account": {
             "type": "boolean"
           },
-          "device": {
-            "type": "boolean"
-          },
           "enabled": {
             "type": "boolean"
           },
@@ -6920,8 +6969,7 @@
         },
         "required": [
           "enabled",
-          "account",
-          "device"
+          "account"
         ],
         "type": "object"
       },
@@ -6970,7 +7018,6 @@
           }
         },
         "required": [
-          "scope",
           "on"
         ],
         "type": "object"
@@ -7113,6 +7160,28 @@
         ],
         "type": "string"
       },
+      "NoticeOutcome": {
+        "enum": [
+          "shown",
+          "declined"
+        ],
+        "type": "string"
+      },
+      "NoticeReport": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/NoticeOutcome"
+          }
+        },
+        "required": [
+          "id",
+          "outcome"
+        ],
+        "type": "object"
+      },
       "NotificationPayload": {
         "properties": {
           "body": {
@@ -7121,8 +7190,17 @@
           "chat_id": {
             "type": "string"
           },
+          "id": {
+            "type": "string"
+          },
           "kind": {
             "$ref": "#/components/schemas/PushKind"
+          },
+          "show_in": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "subject": {
             "type": "string"
@@ -7134,7 +7212,8 @@
         "required": [
           "kind",
           "title",
-          "body"
+          "body",
+          "id"
         ],
         "type": "object"
       },
@@ -7542,6 +7621,38 @@
         "required": [
           "intent",
           "head_sha"
+        ],
+        "type": "object"
+      },
+      "PageViewInput": {
+        "properties": {
+          "closed": {
+            "type": "boolean"
+          },
+          "focused": {
+            "type": "boolean"
+          },
+          "page": {
+            "type": "string"
+          },
+          "tab": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TabRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "visible": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "page",
+          "visible",
+          "focused"
         ],
         "type": "object"
       },
@@ -8329,6 +8440,9 @@
           "stamp": {
             "type": "string"
           },
+          "tab_url": {
+            "type": "string"
+          },
           "url": {
             "type": "string"
           }
@@ -8336,6 +8450,7 @@
         "required": [
           "expires_at",
           "url",
+          "tab_url",
           "base",
           "epoch",
           "stamp"
@@ -8595,6 +8710,45 @@
           "unavailable"
         ],
         "type": "string"
+      },
+      "RecentClose": {
+        "properties": {
+          "closed_at": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pinned": {
+            "type": "boolean"
+          },
+          "ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref",
+          "name",
+          "closed_at"
+        ],
+        "type": "object"
+      },
+      "RecentList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RecentClose"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
       },
       "Recipe": {
         "properties": {
@@ -9612,7 +9766,8 @@
           "unread",
           "retry",
           "compaction",
-          "revert"
+          "revert",
+          "resume"
         ],
         "type": "string"
       },
@@ -9631,7 +9786,8 @@
           "threshold",
           "turn_end",
           "context_limit",
-          "rewind"
+          "rewind",
+          "failsafe"
         ],
         "type": "string"
       },
@@ -9824,7 +9980,8 @@
           "loop_iteration",
           "watch_poll",
           "paused",
-          "steps_queued"
+          "steps_queued",
+          "silence"
         ],
         "type": "string"
       },
@@ -9903,6 +10060,25 @@
         ],
         "type": "object"
       },
+      "RunRevPayload": {
+        "properties": {
+          "rev": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "workflow_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflow_id",
+          "rev"
+        ],
+        "type": "object"
+      },
       "RunStanding": {
         "properties": {
           "kind": {
@@ -9959,6 +10135,24 @@
           "cancelled"
         ],
         "type": "string"
+      },
+      "RunStepCapture": {
+        "properties": {
+          "captured_output": {
+            "type": "string"
+          },
+          "node_path": {
+            "type": "string"
+          },
+          "workflow_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflow_id",
+          "node_path"
+        ],
+        "type": "object"
       },
       "RunStepEnd": {
         "properties": {
@@ -10064,7 +10258,16 @@
           "ended": {
             "type": "boolean"
           },
+          "open": {
+            "$ref": "#/components/schemas/OpenEntry"
+          },
           "started_at": {
+            "type": "string"
+          },
+          "tail": {
+            "type": "string"
+          },
+          "turn": {
             "type": "string"
           }
         },
@@ -11743,6 +11946,15 @@
       },
       "TabList": {
         "properties": {
+          "recent": {
+            "items": {
+              "$ref": "#/components/schemas/RecentClose"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "subject": {
             "$ref": "#/components/schemas/SubjectStamp"
           },
@@ -11762,7 +11974,23 @@
         },
         "required": [
           "tabs",
+          "recent",
           "version"
+        ],
+        "type": "object"
+      },
+      "TabRef": {
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/TabKind"
+          },
+          "ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "ref"
         ],
         "type": "object"
       },
@@ -11826,6 +12054,9 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "recent": {
+            "$ref": "#/components/schemas/RecentList"
           },
           "removed_ids": {
             "items": {
@@ -12818,6 +13049,9 @@
       },
       "Usage": {
         "properties": {
+          "context_compacted": {
+            "type": "boolean"
+          },
           "context_pct": {
             "type": "number"
           },
@@ -13474,9 +13708,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -13676,10 +13911,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, always_rule_not_saved, busy, chat_closed, chat_gone, chat_not_found, consumed, full, held, in_progress, no_turn, not_user, prompt_only, sending, settling, starting, tabs_full, too_many_specs, turn_open",
+            "description": "Conflict: agent_rows_waiting, always_rule_not_saved, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, full, held, in_progress, no_turn, not_user, prompt_only, sending, settling, starting, tabs_full, too_many_specs, turn_open",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "always_rule_not_saved": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -14052,10 +14288,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, always_rule_not_saved, busy, chat_closed, chat_gone, chat_not_found, consumed, full, held, in_progress, no_turn, not_user, prompt_only, sending, settling, starting, tabs_full, too_many_specs, turn_open",
+            "description": "Conflict: agent_rows_waiting, always_rule_not_saved, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, full, held, in_progress, no_turn, not_user, prompt_only, sending, settling, starting, tabs_full, too_many_specs, turn_open",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "always_rule_not_saved": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -14122,9 +14359,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -14266,9 +14504,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -14449,9 +14688,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -14593,9 +14833,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -14752,6 +14993,17 @@
               "pattern": "^[\\x20-\\x7E]*$",
               "type": "string"
             }
+          },
+          {
+            "in": "header",
+            "name": "SSE-Topics",
+            "required": false,
+            "schema": {
+              "maxLength": 4096,
+              "minLength": 2,
+              "pattern": "^[\\x20-\\x7E]*$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -14816,17 +15068,8 @@
                   "knowledge_indexing": {
                     "$ref": "#/components/schemas/KnowledgeIndexingPayload"
                   },
-                  "mcp_connected": {
-                    "$ref": "#/components/schemas/MCPConnectedPayload"
-                  },
-                  "mcp_disconnected": {
-                    "$ref": "#/components/schemas/MCPDisconnectedPayload"
-                  },
-                  "mcp_failed": {
-                    "$ref": "#/components/schemas/MCPFailedPayload"
-                  },
-                  "mcp_oauth_needed": {
-                    "$ref": "#/components/schemas/MCPOAuthPayload"
+                  "live_run": {
+                    "$ref": "#/components/schemas/LiveRunPayload"
                   },
                   "mcp_prewarm": {
                     "$ref": "#/components/schemas/MCPPrewarmPayload"
@@ -14834,8 +15077,8 @@
                   "mcp_sign_in_closed": {
                     "$ref": "#/components/schemas/MCPSignInClosedPayload"
                   },
-                  "mcp_sign_in_open": {
-                    "$ref": "#/components/schemas/MCPSignInOpenPayload"
+                  "mcp_status": {
+                    "$ref": "#/components/schemas/MCPStatusPayload"
                   },
                   "notification": {
                     "$ref": "#/components/schemas/NotificationPayload"
@@ -14860,6 +15103,9 @@
                   },
                   "run_progress": {
                     "$ref": "#/components/schemas/RunProgressPayload"
+                  },
+                  "run_rev": {
+                    "$ref": "#/components/schemas/RunRevPayload"
                   },
                   "run_started": {
                     "$ref": "#/components/schemas/RunStartedPayload"
@@ -14934,9 +15180,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -15090,9 +15337,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -15207,6 +15455,363 @@
           }
         ],
         "summary": "Acknowledge the event stream, for push presence",
+        "x-marotte-access": {
+          "class": "session"
+        }
+      }
+    },
+    "/api/events/notice": {
+      "post": {
+        "operationId": "postEventsNotice",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "SSE-Client",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[\\x20-\\x7E]*$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NoticeReport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request: alive_invalid, event_report_invalid",
+            "x-error-codes": {
+              "alive_invalid": {},
+              "event_report_invalid": {}
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found: not_waiting",
+            "x-error-codes": {
+              "not_waiting": {}
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method Not Allowed: method_not_allowed",
+            "x-error-codes": {
+              "method_not_allowed": {}
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "x-error-codes": {
+              "already_paused": {},
+              "already_running": {},
+              "ask_branch_running": {},
+              "ask_gone": {},
+              "ask_pending": {},
+              "ask_settling": {},
+              "ask_stale": {},
+              "ask_stopping": {},
+              "ask_unnamed": {},
+              "ask_unsettled": {},
+              "awaiting_answer": {},
+              "busy": {},
+              "finished": {},
+              "full": {},
+              "locked": {},
+              "not_enabled": {},
+              "not_started": {},
+              "run_answer_pending": {},
+              "run_paused": {},
+              "sign_in_required": {},
+              "step_not_paused": {},
+              "step_unnamed": {},
+              "unavailable": {},
+              "waits_on_run": {}
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway: render_failed",
+            "x-error-codes": {
+              "render_failed": {}
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable: ask_unreadable, engine_slow, identity_provider_unreachable, model_list_unreadable, recipe_list_slow",
+            "x-error-codes": {
+              "ask_unreadable": {},
+              "engine_slow": {},
+              "identity_provider_unreachable": {},
+              "model_list_unreadable": {},
+              "recipe_list_slow": {}
+            }
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Gateway Timeout: still_applying",
+            "x-error-codes": {
+              "still_applying": {}
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Report that a page showed or declined a notice",
+        "x-marotte-access": {
+          "class": "session"
+        }
+      }
+    },
+    "/api/events/scope": {
+      "post": {
+        "operationId": "postEventsScope",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {}
+            },
+            "description": "OK"
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method Not Allowed: method_not_allowed",
+            "x-error-codes": {
+              "method_not_allowed": {}
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Replace the topics a live event stream receives",
+        "x-marotte-access": {
+          "class": "session"
+        }
+      }
+    },
+    "/api/events/view": {
+      "post": {
+        "operationId": "postEventsView",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "SSE-Client",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[\\x20-\\x7E]*$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PageViewInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request: alive_invalid, event_report_invalid",
+            "x-error-codes": {
+              "alive_invalid": {},
+              "event_report_invalid": {}
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found: not_waiting",
+            "x-error-codes": {
+              "not_waiting": {}
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method Not Allowed: method_not_allowed",
+            "x-error-codes": {
+              "method_not_allowed": {}
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "x-error-codes": {
+              "already_paused": {},
+              "already_running": {},
+              "ask_branch_running": {},
+              "ask_gone": {},
+              "ask_pending": {},
+              "ask_settling": {},
+              "ask_stale": {},
+              "ask_stopping": {},
+              "ask_unnamed": {},
+              "ask_unsettled": {},
+              "awaiting_answer": {},
+              "busy": {},
+              "finished": {},
+              "full": {},
+              "locked": {},
+              "not_enabled": {},
+              "not_started": {},
+              "run_answer_pending": {},
+              "run_paused": {},
+              "sign_in_required": {},
+              "step_not_paused": {},
+              "step_unnamed": {},
+              "unavailable": {},
+              "waits_on_run": {}
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway: render_failed",
+            "x-error-codes": {
+              "render_failed": {}
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable: ask_unreadable, engine_slow, identity_provider_unreachable, model_list_unreadable, recipe_list_slow",
+            "x-error-codes": {
+              "ask_unreadable": {},
+              "engine_slow": {},
+              "identity_provider_unreachable": {},
+              "model_list_unreadable": {},
+              "recipe_list_slow": {}
+            }
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Gateway Timeout: still_applying",
+            "x-error-codes": {
+              "still_applying": {}
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Report which tab a page shows, for push presence",
         "x-marotte-access": {
           "class": "session"
         }
@@ -15464,9 +16069,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -25787,9 +26393,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -25931,9 +26538,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -26095,9 +26703,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -26381,9 +26990,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -26523,9 +27133,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -26675,9 +27286,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -26829,9 +27441,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -26983,9 +27596,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -27137,9 +27751,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -27281,9 +27896,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -27322,7 +27938,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -27337,6 +27953,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -27452,9 +28069,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -27493,7 +28111,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -27508,6 +28126,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -27625,9 +28244,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -27666,7 +28286,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -27681,6 +28301,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -27806,9 +28427,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -27847,7 +28469,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -27862,6 +28484,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -27979,9 +28602,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -28020,7 +28644,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -28035,6 +28659,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -28423,9 +29048,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -28577,9 +29203,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -28724,9 +29351,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -28935,9 +29563,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -29065,7 +29694,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MCPStatus"
+                  "$ref": "#/components/schemas/MCPStatusResponse"
                 }
               }
             },
@@ -29079,9 +29708,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -29433,9 +30063,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -29577,9 +30208,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -29729,9 +30361,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -29883,9 +30516,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -30035,9 +30669,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -30197,9 +30832,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -30574,9 +31210,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -30728,9 +31365,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -30882,9 +31520,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -31036,9 +31675,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -31415,9 +32055,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -31456,7 +32097,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -31471,6 +32112,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -31594,9 +32236,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -31635,7 +32278,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -31650,6 +32293,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -31763,9 +32407,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -31804,7 +32449,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -31819,6 +32464,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -31942,9 +32588,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -31983,7 +32630,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -31998,6 +32645,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -32098,6 +32746,22 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "view",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -32115,9 +32779,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -32156,7 +32821,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -32171,6 +32836,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -32304,9 +32970,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -32345,7 +33012,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -32360,6 +33027,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -32483,9 +33151,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -32524,7 +33193,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -32539,6 +33208,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -32662,9 +33332,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -32703,7 +33374,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -32718,6 +33389,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -32851,9 +33523,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -32892,7 +33565,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -32907,6 +33580,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -33040,9 +33714,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -33081,7 +33756,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -33096,6 +33771,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -33219,9 +33895,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -33260,7 +33937,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -33275,6 +33952,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -33398,9 +34076,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -33439,7 +34118,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -33454,6 +34133,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -33577,9 +34257,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -33618,7 +34299,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -33633,6 +34314,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -33764,9 +34446,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -33805,7 +34488,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -33820,6 +34503,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -33911,6 +34595,195 @@
         }
       }
     },
+    "/api/runs/{id}/steps/{path}/capture": {
+      "get": {
+        "operationId": "getRunsByIdStepsByPathCapture",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunStepCapture"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
+            "x-error-codes": {
+              "alive_invalid": {},
+              "event_report_invalid": {},
+              "invalid_hash": {},
+              "invalid_phase": {}
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found: not_waiting",
+            "x-error-codes": {
+              "not_waiting": {}
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method Not Allowed: method_not_allowed",
+            "x-error-codes": {
+              "method_not_allowed": {}
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "x-error-codes": {
+              "agent_rows_waiting": {},
+              "already_paused": {},
+              "already_running": {},
+              "always_rule_not_saved": {},
+              "ask_branch_running": {},
+              "ask_gone": {},
+              "ask_pending": {},
+              "ask_settling": {},
+              "ask_stale": {},
+              "ask_stopping": {},
+              "ask_unnamed": {},
+              "ask_unsettled": {},
+              "awaiting_answer": {},
+              "bot_mode": {},
+              "busy": {},
+              "chat_closed": {},
+              "chat_gone": {},
+              "chat_not_found": {},
+              "consumed": {},
+              "finished": {},
+              "full": {},
+              "held": {},
+              "in_progress": {},
+              "locked": {},
+              "no_turn": {},
+              "not_enabled": {},
+              "not_started": {},
+              "not_user": {},
+              "prompt_only": {},
+              "run_answer_pending": {},
+              "run_paused": {},
+              "sending": {},
+              "settling": {},
+              "sign_in_required": {},
+              "starting": {},
+              "step_not_paused": {},
+              "step_unnamed": {},
+              "tabs_full": {},
+              "too_many_specs": {},
+              "turn_open": {},
+              "unavailable": {},
+              "waits_on_run": {}
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway: render_failed",
+            "x-error-codes": {
+              "render_failed": {}
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable: ask_unreadable, engine_slow, identity_provider_unreachable, model_list_unreadable, recipe_list_slow",
+            "x-error-codes": {
+              "ask_unreadable": {},
+              "engine_slow": {},
+              "identity_provider_unreachable": {},
+              "model_list_unreadable": {},
+              "recipe_list_slow": {}
+            }
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Gateway Timeout: still_applying",
+            "x-error-codes": {
+              "still_applying": {}
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiKey": [
+              "runs:read"
+            ]
+          }
+        ],
+        "summary": "One run step's whole captured output",
+        "x-marotte-access": {
+          "class": "key_scope",
+          "key_scope": "runs:read"
+        }
+      }
+    },
     "/api/runs/{id}/steps/{path}/end": {
       "post": {
         "operationId": "postRunsByIdStepsByPathEnd",
@@ -33961,9 +34834,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -34002,7 +34876,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -34017,6 +34891,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -34158,9 +35033,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -34199,7 +35075,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -34214,6 +35090,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -34345,9 +35222,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -34386,7 +35264,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -34401,6 +35279,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -34542,9 +35421,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -34583,7 +35463,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -34598,6 +35478,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -34737,9 +35618,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid, invalid_hash, invalid_phase",
+            "description": "Bad Request: alive_invalid, event_report_invalid, invalid_hash, invalid_phase",
             "x-error-codes": {
               "alive_invalid": {},
+              "event_report_invalid": {},
               "invalid_hash": {},
               "invalid_phase": {}
             }
@@ -34778,7 +35660,7 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
@@ -34793,6 +35675,7 @@
               "ask_unnamed": {},
               "ask_unsettled": {},
               "awaiting_answer": {},
+              "bot_mode": {},
               "busy": {},
               "chat_closed": {},
               "chat_gone": {},
@@ -34906,9 +35789,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -35214,9 +36098,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -35358,9 +36243,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -35661,9 +36547,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {
@@ -35801,9 +36688,10 @@
                 }
               }
             },
-            "description": "Bad Request: alive_invalid",
+            "description": "Bad Request: alive_invalid, event_report_invalid",
             "x-error-codes": {
-              "alive_invalid": {}
+              "alive_invalid": {},
+              "event_report_invalid": {}
             }
           },
           "404": {

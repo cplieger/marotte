@@ -67,7 +67,7 @@ vi.mock("./decision-dock.js", () => ({
 // NAME, so only a genuine dispatch flips the button. Each one parks until the test resolves it,
 // which is what a slow engine handshake looks like from the button's seat.
 vi.mock("./actions/runs.js", async () => {
-  const { defineAction } = await import("@cplieger/ui/actions");
+  const { defineAction } = await import("@cplieger/reactive/actions");
   const verb = (name: string) =>
     defineAction<string, null>({
       name: `runs.${name}`,
@@ -92,8 +92,6 @@ vi.mock("./actions/runs.js", async () => {
     messageRunStep: verb("message"),
     removeRunStepSteer: verb("steer_remove"),
     clearRunStepSteers: verb("steer_clear"),
-    // Linked by the step transcript read; no case here reads a step.
-    runStepURL: undefined,
   };
 });
 

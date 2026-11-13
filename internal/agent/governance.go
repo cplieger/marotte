@@ -22,7 +22,7 @@ import (
 )
 
 // governanceWarmTimeout bounds the cold GET /api/governance: an observer pass's door plus the first push. A var so
-// the package's cold-governance tests, whose fake engine pushes no profile, do not hold the boot pass for it.
+// the package's cold-governance tests, whose fake engine pushes no profile, do not wait it out.
 var governanceWarmTimeout = 12 * time.Second
 
 // warm closes once, on the first profile.

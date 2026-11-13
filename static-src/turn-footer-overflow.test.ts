@@ -143,6 +143,7 @@ async function paint(turnEntries: readonly Entry[][], watermark?: string): Promi
     },
   ]);
   store.setActive(id);
+  store.setPainted(id);
   await until(() => cards().length === turnEntries.length, `${String(turnEntries.length)} cards`);
   await until(
     () =>

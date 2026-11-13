@@ -3,7 +3,7 @@
 // anchor, not a fetch: api-client.ts discards non-2xx bodies and cannot stream to disk, and
 // the anchor carries the session cookie.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 
 import { exportFilename } from "./export-filename.js";
 import { getChatsByIdExportEndpoint } from "./wire/client.gen.js";

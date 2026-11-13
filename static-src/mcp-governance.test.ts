@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isPending } from "@cplieger/ui/actions";
+import { isPending } from "@cplieger/reactive/actions";
 import {
   applyMcpGovernance,
   applyMcpRowPolicy,

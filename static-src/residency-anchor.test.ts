@@ -25,7 +25,7 @@ const messagesEl = document.createElement("div");
 messagesEl.id = "messages";
 scrollerEl.appendChild(messagesEl);
 
-const { setSessions, setActive, bumpMessages } = await import("./store.js");
+const { setSessions, setActive, setPainted, bumpMessages } = await import("./store.js");
 const { mountChatView, activeTranscriptView } = await import("./messages.js");
 const { scrollToBottom } = await import("./scroll.js");
 const { restAtLiveEdge } = await import("./__test-helpers__/scroll-rest.js");
@@ -148,6 +148,7 @@ function activate(chat: string, turnEntries: readonly (readonly Entry[])[]): voi
     },
   ]);
   setActive(chat);
+  setPainted(chat);
   bumpMessages(chat, "load");
 }
 
@@ -233,6 +234,7 @@ describe("the residency anchor under a reader's own scroll", () => {
     resetFoldState();
     setSessions([]);
     setActive("");
+    setPainted("");
   });
 
   /** `count` heavy turns of `perRun` entries per run, all but the newest explicitly OPEN so

@@ -3,8 +3,8 @@
 // while Escape, which saved to a local first, worked.
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
-import { signal } from "@cplieger/ui";
-import { createPopup } from "@cplieger/ui/popup";
+import { signal } from "@cplieger/reactive";
+import { createPopup } from "./legacy-ui/popup.js";
 import { initPromptInput, sendComposer, setSendState } from "./prompt-input.js";
 import { refreshContextUI } from "./context-ui.js";
 import { setSessions, setActive, upsertHeader } from "./store.js";
@@ -627,7 +627,7 @@ describe("Escape mid-turn", () => {
     expect(cancelled).not.toHaveBeenCalled();
   });
 
-  it("yields to a real ui-primitives popup, which closes, then cancels on the next press", async () => {
+  it("yields to a real legacy-ui popup, which closes, then cancels on the next press", () => {
     const panel = document.createElement("div");
     panel.setAttribute("data-escape-probe", "");
     panel.hidden = true;
@@ -635,8 +635,6 @@ describe("Escape mid-turn", () => {
     const popup = createPopup(panel);
     setSendState({ kind: "streaming" });
     popup.show();
-    // The library installs its document listeners one macrotask after show().
-    await new Promise((r) => setTimeout(r, 0));
     press("Escape");
     expect(popup.isOpen).toBe(false);
     expect(cancelled).not.toHaveBeenCalled();

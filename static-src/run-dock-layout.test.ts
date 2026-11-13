@@ -45,7 +45,6 @@ function fan(): ExecNode[] {
     kind: "step",
     state: "running",
     children: [],
-    tail: "Reading the diff",
     start: new Date(Date.parse("2026-10-07T10:00:00Z") + i * 60_000).toISOString(),
     startGen: i + 1,
   }));
@@ -103,6 +102,8 @@ function mountPage(byId: (id: string) => HTMLElement, controls: HTMLElement): Ex
     controls: () => controls,
     follow: "newest",
   });
+  // Every fan step reports an activity, which the dock keeps for the rows it mounts.
+  view.paintTails(new Map(fan().map((n) => [n.path, "Reading the diff"])));
   byId("run-body").append(view.root);
   return view;
 }

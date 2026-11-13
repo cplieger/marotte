@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect } from "vitest";
-import { exfilShaped, rewriteServedImageSrc, servedFileRoute } from "./utils-url.js";
+import { rewriteServedImageSrc, servedFileRoute } from "./utils-url.js";
 import { setAdditionalDirectories, _resetForTest as resetWorkspace } from "./workspace.js";
 import { asked } from "./__test-helpers__/url.js";
 describe("rewriteServedImageSrc", () => {
@@ -84,46 +84,5 @@ describe("servedFileRoute: additional directories", () => {
     expect(servedFileRoute("/data/../config/x.md")).toBeNull();
     setAdditionalDirectories([]);
     expect(servedFileRoute("/data/plan.md")).toBeNull();
-  });
-});
-
-describe("exfilShaped", () => {
-  const prose = "word ".repeat(44); // 220 chars of plain prose, the issue-prefill body
-  it.each([
-    ["a query of 200 characters", `https://e.example/?q=${"a.".repeat(99)}`],
-    ["21 consecutive percent escapes", `https://e.example/?d=${"%41".repeat(21)}`],
-    ["a 40-character base64 run", `https://e.example/?d=${"Q".repeat(40)}`],
-    ["an AWS access key id", `https://e.example/?k=${"AKIA"}ABCDEFGHIJKLMNOP`],
-    ["an ssh key marker", "https://e.example/?k=ssh-ed25519%20AAAA"],
-    ["a private key header", "https://e.example/?k=BEGIN+RSA+PRIVATE+KEY"],
-    ["a Slack token", "https://e.example/?t=xoxb-123-abc"],
-    ["a classic GitHub token", `https://e.example/?t=ghp_${"a1B2c3".repeat(6)}`],
-    ["a fine-grained GitHub token", `https://e.example/?t=github_pat_${"a1_B2".repeat(5)}`],
-    ["an issue-prefill link", `https://github.com/o/r/issues/new?title=x&body=${prose}`],
-    ["a payload in a fragment with no query", `https://e.example/page#${"%41".repeat(21)}`],
-    ["a token in a fragment with no query", `https://e.example/#ghp_${"a1B2c3".repeat(6)}`],
-    ["a protocol-relative link", `//e.example/?d=${"Q".repeat(40)}`],
-    ["a payload behind C0 controls", `\x01https://e.example/?d=${"Q".repeat(40)}`],
-  ])("flags %s", (_name, url) => {
-    expect(exfilShaped(url)).toBe(true);
-  });
-
-  it.each([
-    ["no query", "https://github.com/o/r"],
-    ["a short query", "https://e.example/search?q=marotte&page=2"],
-    ["a 199-character query", `https://e.example/?q=${"a.".repeat(98)}a`],
-    ["a long path and no query", `https://e.example/${"segment/".repeat(40)}`],
-    [
-      "a commit SHA in the path",
-      `https://github.com/o/r/commit/${"0123456789abcdef0123".repeat(2)}`,
-    ],
-    ["20 percent escapes", `https://e.example/?d=${"%41".repeat(20)}`],
-    ["a 39-character run with no padding", `https://e.example/?d=${"Q".repeat(39)}`],
-    ["a ghp_ prefix one character short", `https://e.example/?t=ghp_${"a".repeat(35)}`],
-    ["a short fragment", "https://e.example/docs#section-2"],
-    ["a mailto with a long body", `mailto:a@b.example?body=${"Q".repeat(60)}`],
-    ["a relative path", `/api/file?path=${"Q".repeat(60)}`],
-  ])("passes %s", (_name, url) => {
-    expect(exfilShaped(url)).toBe(false);
   });
 });

@@ -93,15 +93,11 @@ func stageFlow(t *testing.T, h *Runtime, server, listenerURL, state string) {
 	}
 }
 
+// relayState is server's served row's relay latch and whether it is signing in.
 func relayState(t *testing.T, h *Runtime, server string) (relayed, pending bool) {
 	t.Helper()
-	for _, s := range h.mcpRegistry.snapshot() {
-		if s.Name == server {
-			return s.Relayed, s.State == mcpStateSigningIn
-		}
-	}
-	t.Fatalf("server %q is not in the registry snapshot", server)
-	return false, false
+	row := rowOf(t, h, server)
+	return row.Relayed, row.State == mcpStateSigningIn
 }
 
 func TestOAuthRelay_DeliversAStrandedCallback(t *testing.T) {
@@ -390,7 +386,7 @@ func TestOAuthRelay_ALazySignInEnds(t *testing.T) {
 			clock.advance(lazySignInTTL)
 		},
 		"at the engine's end": func(t *testing.T, h *Runtime, _ *fakeClock, _ string) {
-			h.mcpRegistry.clearAll(t.Context())
+			h.mcpRegistry.clearAll()
 		},
 		"past the cap": func(t *testing.T, h *Runtime, _ *fakeClock, listenerURL string) {
 			for i := range maxConsentAnchors {

@@ -41,6 +41,7 @@ import {
   addAttachmentTo,
   attachmentGeneration,
 } from "./attachments.js";
+import { onComposerWrite } from "./composer-value.js";
 import { setSessions } from "./store.js";
 import type { Session } from "./types.js";
 
@@ -169,16 +170,50 @@ describe("draft text across a chat switch", () => {
       });
     });
 
-    it("leaves a draft the chat already holds in place of the box's text", () => {
+    it("keeps the chat's own draft and the box's text after it, a blank line between", () => {
       restoreComposerState("c2");
       type("c2's own draft");
       saveComposerState();
       input().value = "typed with no chat open";
+      mockDispatch.mockClear();
 
       retargetComposer("c2");
 
-      expect(input().value).toBe("c2's own draft");
-      expect(composerDraft("c2")).toBe("c2's own draft");
+      const kept = "c2's own draft\n\ntyped with no chat open";
+      expect(input().value).toBe(kept);
+      expect(composerDraft("c2")).toBe(kept);
+      expect(mockDispatch).toHaveBeenLastCalledWith({ chatID: "c2", text: kept });
+    });
+
+    it("keeps the server's stored draft of a chat not yet typed into on this device", () => {
+      setSessions([makeSession("c2", "the stored draft")]);
+      input().value = "typed with no chat open";
+
+      retargetComposer("c2");
+
+      expect(input().value).toBe("the stored draft\n\ntyped with no chat open");
+    });
+
+    it("hands files staged with no chat open to the chat it opens, after the chat's own", () => {
+      restoreComposerState("c2");
+      addAttachment("/w/own.png");
+      saveComposerState();
+      addAttachment("/w/staged.png");
+
+      retargetComposer("c2");
+
+      expect(takeAttachments().map((a) => a.path)).toEqual(["/w/own.png", "/w/staged.png"]);
+    });
+
+    it("leaves text typed with no chat open in the box when no chat takes it", () => {
+      saveComposerState();
+      type("typed on the empty strip");
+
+      retargetComposer("");
+
+      expect(input().value).toBe("typed on the empty strip");
+      retargetComposer("c2");
+      expect(composerDraft("c2")).toBe("typed on the empty strip");
     });
   });
 
@@ -213,6 +248,37 @@ describe("draft text across a chat switch", () => {
     noteComposerText("same");
     noteComposerText("same");
     expect(mockDispatch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("which restores count as an edit of the box (onComposerWrite)", () => {
+  function writesDuring(fn: () => void): number {
+    let n = 0;
+    onComposerWrite(() => {
+      n++;
+    });
+    try {
+      fn();
+    } finally {
+      onComposerWrite(() => undefined);
+    }
+    return n;
+  }
+
+  it("treats putting the parked chat's own draft back as no edit", () => {
+    restoreComposerState("c1");
+    type("my draft");
+    saveComposerState();
+    expect(writesDuring(() => restoreComposerState("c1"))).toBe(0);
+    expect(input().value).toBe("my draft");
+  });
+
+  it("treats showing another chat's draft as an edit", () => {
+    restoreComposerState("c1");
+    type("my draft");
+    saveComposerState();
+    expect(writesDuring(() => restoreComposerState("c2"))).toBe(1);
+    expect(input().value).toBe("");
   });
 });
 
@@ -271,7 +337,7 @@ describe("flushing a pending save", () => {
     // The textarea is a display surface: ArrowUp shows a submitted prompt without an `input` event, so the map is the draft.
     restoreComposerState("c1");
     type("the real draft");
-    input().value = "a prompt from the history"; // silent, like setInputValue
+    input().value = "a prompt from the history"; // silent, like recallComposerValue
     mockPending.mockReturnValue(true);
     flushComposerDraft();
     expect(mockFlush).toHaveBeenCalledWith({ chatID: "c1", text: "the real draft" });

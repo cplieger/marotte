@@ -3,6 +3,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -10,21 +11,13 @@ import (
 	"time"
 
 	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/sse/v2"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/preview"
 	"github.com/cplieger/marotte/internal/push"
 	"github.com/cplieger/marotte/internal/route"
 )
-
-// The browser-mode suite starts one beside whatever already holds the default port.
-const testPortEnv = "MAROTTE_TEST_PORT"
-
-func init() {
-	if p := os.Getenv(testPortEnv); p != "" {
-		listenPort = p
-	}
-}
 
 // sseProbe is the runtime as the SSE control surface reads it. *agent.Runtime
 // satisfies it; a server wired to a narrower engine mounts no hooks.
@@ -68,11 +61,23 @@ type SSECloseAfter struct {
 	After int `json:"after"`
 }
 
+// runLogProbe publishes a run's log frames with no engine. *agent.Runtime satisfies it in this build.
+type runLogProbe interface {
+	PublishRunLog(ctx context.Context, runID string)
+}
+
+// SSERunLog is POST /api/test/sse/run-log's body.
+type SSERunLog struct {
+	Run string `json:"run"`
+}
+
 // registerTestHooks binds the SSE control surface the browser-mode suite drives (connection
-// census with presence, the close-after cut) plus the preview controls. Test builds only. Every
-// hook is bound on every test boot; one whose dependency is absent answers the fallback's 404.
+// census with presence, the close-after cut, a run's log frames) plus the preview controls. Test
+// builds only. Every hook is bound on every test boot; one whose dependency is absent answers the
+// fallback's 404.
 func (s *Server) registerTestHooks(m routeMux) {
 	s.registerPreviewTestHook(m)
+	s.registerRunLogTestHook(m)
 	probe, ok := s.agent.(sseProbe)
 	if ok {
 		slog.Warn("test-only SSE control surface mounted under /api/test/; this is a marotte_test build")
@@ -118,6 +123,26 @@ func (s *Server) registerTestHooks(m routeMux) {
 			return
 		}
 		probe.CloseNextSSEAfter(req.After)
+		w.WriteHeader(http.StatusNoContent)
+	})), http.StatusNoContent))
+}
+
+// registerRunLogTestHook binds the run-log publish, which answers the fallback's 404 unless the
+// engine answers runLogProbe.
+func (s *Server) registerRunLogTestHook(m routeMux) {
+	runLog, ok := s.agent.(runLogProbe)
+	m.Bind(route.WithStatus(route.JSON[SSERunLog, struct{}]("POST /api/test/sse/run-log", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !ok {
+			httpreply.UnknownEndpoint(w, r)
+			return
+		}
+		var req SSERunLog
+		err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req)
+		if err != nil || req.Run == "" || !sse.ValidTopic(marotte.RunTopic(req.Run)) {
+			httpreply.BadRequest(w, "run must be a workflow id its run topic admits")
+			return
+		}
+		runLog.PublishRunLog(r.Context(), req.Run)
 		w.WriteHeader(http.StatusNoContent)
 	})), http.StatusNoContent))
 }

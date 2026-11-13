@@ -7,6 +7,7 @@ import { toggleSettingsView, toggleGitView } from "./tabs.js";
 import { initGitBadge } from "./git-badge.js";
 import { getGitTab } from "./git-tabs.js";
 import { initTools, loadToolsList } from "./tools.js";
+import { initCodeIntelStatus, loadCodeIntelStatus } from "./code-intel-status.js";
 import { restoreNotifications } from "./notify.js";
 import { adoptWriteAnswer, patchSettings, refreshSettings, settingsAsShown } from "./persist.js";
 import type { SettingsSwitch } from "./persist.js";
@@ -15,18 +16,20 @@ import type { KiroDefault } from "./wire/types.gen.js";
 import { cacheTheme, cachedTheme } from "./device-view.js";
 import type { ThemeChoice } from "./device-view.js";
 import { applyThemeChoice, initThemeToggle } from "./theme.js";
-import type { ThemeStorage } from "@cplieger/ui/theme";
+import type { ThemeStorage } from "./legacy-ui/theme.js";
 import { initSettingsTabs } from "./settings-tabs.js";
 import type { IdentityVerdict } from "./identity.js";
 import { initPermissionsUI, initNativePolicyUI, loadNativePolicy } from "./permissions-ui.js";
 import { applyAgentDirs, initAgentDirsUI } from "./agent-dirs-ui.js";
 import { initMCP } from "./mcp-ui.js";
 import { initKnowledge, loadKnowledge } from "./knowledge.js";
+import { initKnowledgeTuningControls, paintKnowledgeTuning } from "./knowledge-tuning.js";
+import { saveControl } from "./save-control.js";
 import { apiGet } from "./api-client.js";
 import { loadVersions, getVersions } from "./versions.js";
 import { openConfigFile } from "./editor-openers.js";
 import { $, maybeEl } from "./dom.js";
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { initNotificationToggles } from "./settings-notifications.js";
 
 import { showSaving, showSaved, showError } from "./save-indicator.js";
@@ -152,7 +155,7 @@ function setTheme(choice: ThemeChoice): void {
   });
 }
 
-/** The adapter @cplieger/ui/theme's createTheme persists through. Built here and INJECTED
+/** The adapter legacy-ui/theme's createTheme persists through. Built here and INJECTED
  *  into initThemeToggle rather than reached from theme.ts, because this module already imports
  *  that one — a reverse import would be a cycle, and the direction is the reason this is a
  *  parameter. */
@@ -313,6 +316,7 @@ function loadInstructionsPanel(): void {
 /** Fired once, on the panel's first activation, via the settings-tabs loader map. */
 function loadGeneralPanel(): void {
   initExperimentalToggles();
+  loadCodeIntelStatus();
 }
 
 export function initUI(): void {
@@ -340,6 +344,7 @@ export function initUI(): void {
   initDiagnostics();
 
   initTools();
+  initCodeIntelStatus();
   initMCP();
   initKnowledge();
   initAllModals();
@@ -718,6 +723,8 @@ const agentCapabilities: readonly {
     | "spec_planning_ask_first"
     | "steering_reminders_enabled"
     | "workflows_enabled"
+    | "chat_messaging_enabled"
+    | "chat_awareness_enabled"
     | "content_collection_enabled";
   inputID: string;
 }[] = [
@@ -726,6 +733,8 @@ const agentCapabilities: readonly {
   { key: "spec_planning_ask_first", inputID: "flag-spec-ask-first" },
   { key: "steering_reminders_enabled", inputID: "flag-steering-reminders" },
   { key: "workflows_enabled", inputID: "flag-workflows" },
+  { key: "chat_messaging_enabled", inputID: "flag-chat-messaging" },
+  { key: "chat_awareness_enabled", inputID: "flag-chat-awareness" },
   { key: "content_collection_enabled", inputID: "flag-content-collection" },
 ];
 
@@ -733,7 +742,7 @@ const agentCapabilities: readonly {
  *  (settings.ValidSpecPlanning and its siblings). A value outside the list, from a newer build,
  *  leaves the control as it is. */
 const agentChoices: readonly {
-  key: "spec_planning" | "workflow_launch";
+  key: "spec_planning" | "workflow_launch" | "workflow_creator_effort" | "knowledge_index_type";
   selectID: string;
   values: readonly string[];
 }[] = [
@@ -743,29 +752,39 @@ const agentChoices: readonly {
     selectID: "workflow-launch",
     values: ["when-asked", "large-tasks", "delegate-all"],
   },
-];
-
-/** Unset ("") sends nothing, so kiro-cli's own rollout decides; it renders as off, kiro-cli's
- *  shipped default. A flip always stores "on" or "off", never "". */
-const agentFeatureSwitches: readonly {
-  key: "cloudformation_safety_check";
-  inputID: string;
-}[] = [{ key: "cloudformation_safety_check", inputID: "flag-cloudformation-safety" }];
-
-/** The three-state agent features as a Default / On / Off select: Default ("") sends nothing, so
- *  kiro-cli decides, and stays reachable after a choice. `defaultID` names the line stating what
- *  Default resolves to, for a key the server reports in `kiro_defaults`. */
-const agentFeatureChoices: readonly {
-  key: "work_validation" | "auto_routing" | "auto_delegation";
-  selectID: string;
-  defaultID?: string;
-}[] = [
-  { key: "work_validation", selectID: "work-validation", defaultID: "work-validation-default" },
-  { key: "auto_routing", selectID: "auto-routing" },
-  { key: "auto_delegation", selectID: "auto-delegation" },
+  {
+    key: "workflow_creator_effort",
+    selectID: "workflow-creator-effort",
+    values: ["", "low", "medium", "high", "xhigh", "max"],
+  },
+  { key: "knowledge_index_type", selectID: "knowledge-index-type", values: ["", "fast", "best"] },
 ];
 
 const FEATURE_CHOICES = ["", "on", "off"] as const;
+
+/** The follow-kiro-cli agent features as a Default / On / Off select (CloudFormation adds enforce):
+ *  Default ("") sends nothing, so kiro-cli decides, and stays reachable after a choice. `defaultID`
+ *  names the line stating what Default resolves to, for a key the server reports in `kiro_defaults`. */
+const agentFeatureChoices: readonly {
+  key: "work_validation" | "auto_routing" | "auto_delegation" | "cloudformation_safety_check";
+  selectID: string;
+  values: readonly string[];
+  defaultID?: string;
+}[] = [
+  {
+    key: "work_validation",
+    selectID: "work-validation",
+    values: FEATURE_CHOICES,
+    defaultID: "work-validation-default",
+  },
+  { key: "auto_routing", selectID: "auto-routing", values: FEATURE_CHOICES },
+  { key: "auto_delegation", selectID: "auto-delegation", values: FEATURE_CHOICES },
+  {
+    key: "cloudformation_safety_check",
+    selectID: "cloudformation-safety",
+    values: [...FEATURE_CHOICES, "enforce"],
+  },
+];
 
 function kiroDefaultLine(d: KiroDefault): string {
   return d.layer === ""
@@ -779,7 +798,7 @@ function paintFeatureChoice(
 ): void {
   const select = maybeEl<HTMLSelectElement>(choice.selectID);
   const value = s[choice.key];
-  if (select !== null && (FEATURE_CHOICES as readonly string[]).includes(value)) {
+  if (select !== null && choice.values.includes(value)) {
     select.value = value;
   }
   if (choice.defaultID === undefined) {
@@ -810,26 +829,28 @@ export function shellTimeoutMs(raw: string): number {
   return Math.min(s, SHELL_TIMEOUT_MAX_S) * 1000;
 }
 
-/** The triggered-run caps' bounds, mirroring settings.ValidateTriggerCapsPatch. */
-const TRIGGER_CAP_MAX = 100;
-
-/** The cap a typed number asks for, clamped into 1..100; null for an empty or unreadable entry,
- *  which sends nothing because the setting has no unset value. */
-function triggerCap(raw: string): number | null {
+/** The count a typed number asks for, clamped into 1..max; null for an empty or unreadable entry,
+ *  which sends nothing because these settings have no unset value. */
+function boundedCount(raw: string, max: number): number | null {
   const n = Math.round(Number(raw.trim()));
   if (raw.trim() === "" || !Number.isFinite(n)) {
     return null;
   }
-  return Math.min(Math.max(n, 1), TRIGGER_CAP_MAX);
+  return Math.min(Math.max(n, 1), max);
 }
 
-const triggerCapInputs = [
-  { inputID: "trigger-max-live-runs", key: "trigger_max_live_runs" },
-  { inputID: "trigger-max-launches-per-hour", key: "trigger_max_launches_per_hour" },
+/** Each max mirrors the server's check: settings.validTriggerCap for the trigger caps,
+ *  settings.ValidChatMessageDeliveryLimit (kiro-cli's own bound) for the delivery limit, and
+ *  settings.ValidKnowledgeMaxFiles, which has no upper bound, for the knowledge file limit. */
+const countInputs = [
+  { inputID: "trigger-max-live-runs", key: "trigger_max_live_runs", max: 100 },
+  { inputID: "trigger-max-launches-per-hour", key: "trigger_max_launches_per_hour", max: 100 },
+  { inputID: "chat-message-delivery-limit", key: "chat_message_delivery_limit", max: 500 },
+  { inputID: "knowledge-max-files", key: "knowledge_max_files", max: Number.MAX_SAFE_INTEGER },
 ] as const;
 
-function paintTriggerCaps(s: EffectiveSettings): void {
-  for (const cap of triggerCapInputs) {
+function paintCountInputs(s: EffectiveSettings): void {
+  for (const cap of countInputs) {
     const input = maybeEl<HTMLInputElement>(cap.inputID);
     if (input !== null && document.activeElement !== input) {
       input.value = String(s[cap.key]);
@@ -837,11 +858,11 @@ function paintTriggerCaps(s: EffectiveSettings): void {
   }
 }
 
-function initTriggerCapControls(): void {
-  for (const cap of triggerCapInputs) {
+function initCountControls(): void {
+  for (const cap of countInputs) {
     const input = maybeEl<HTMLInputElement>(cap.inputID);
     input?.addEventListener("change", () => {
-      const n = triggerCap(input.value);
+      const n = boundedCount(input.value, cap.max);
       if (n === null) {
         const shown = settingsAsShown();
         if (shown !== null) {
@@ -862,10 +883,14 @@ function paintSpecPlanning(mode: string): void {
   maybeEl("spec-planning-ask-row")?.classList.toggle("hidden", mode === "off");
 }
 
-/** Workflow use only means something while the Workflows switch shows on, a lock's value included. */
-function paintWorkflowLaunchRow(): void {
-  const workflows = maybeEl<HTMLInputElement>("flag-workflows");
-  maybeEl("workflow-launch-row")?.classList.toggle("hidden", workflows?.checked !== true);
+/** Each sub-row only means something while its parent switch shows on, a lock's value included:
+ *  Workflow use and planning effort under Workflows, the delivery limit under Messages between chats. */
+function paintSubRows(): void {
+  const workflows = maybeEl<HTMLInputElement>("flag-workflows")?.checked === true;
+  maybeEl("workflow-launch-row")?.classList.toggle("hidden", !workflows);
+  maybeEl("workflow-creator-effort-row")?.classList.toggle("hidden", !workflows);
+  const messaging = maybeEl<HTMLInputElement>("flag-chat-messaging")?.checked === true;
+  maybeEl("chat-message-limit-row")?.classList.toggle("hidden", !messaging);
 }
 
 /** The Memory dropdown's values, mirroring settings.MemoryOff and its siblings. */
@@ -882,12 +907,6 @@ function applyAgentCapabilities(s: EffectiveSettings): void {
       writeSwitch(input, s[cap.key]);
     }
   }
-  for (const sw of agentFeatureSwitches) {
-    const input = maybeEl<HTMLInputElement>(sw.inputID);
-    if (input !== null) {
-      input.checked = s[sw.key] === "on";
-    }
-  }
   for (const choice of agentFeatureChoices) {
     paintFeatureChoice(choice, s);
   }
@@ -902,10 +921,11 @@ function applyAgentCapabilities(s: EffectiveSettings): void {
   if (timeout !== null && document.activeElement !== timeout) {
     paintShellTimeout(timeout, s);
   }
-  paintTriggerCaps(s);
+  paintCountInputs(s);
+  paintKnowledgeTuning(s);
   applyAutoCompaction(s);
   paintSettingLocks();
-  paintWorkflowLaunchRow();
+  paintSubRows();
 }
 
 function paintMemory(s: EffectiveSettings): void {
@@ -933,23 +953,6 @@ function paintShellTimeout(timeout: HTMLInputElement, s: EffectiveSettings): voi
     s.terminal_command_timeout_ms > 0 ? String(s.terminal_command_timeout_ms / 1000) : "";
 }
 
-/** Send patch from control, a control persist holds no switch for. Once the write settles the
- *  control shows the settings as shown, through paint, unless the reader changed it since: a
- *  refused write leaves no unsaved value on screen. */
-function saveControl(
-  control: HTMLInputElement | HTMLSelectElement,
-  patch: Partial<EffectiveSettings>,
-  paint: (shown: EffectiveSettings) => void,
-): void {
-  const sent = control.value;
-  void patchSettings(patch).then(() => {
-    const shown = settingsAsShown();
-    if (shown !== null && control.value === sent) {
-      paint(shown);
-    }
-  });
-}
-
 function initAgentCapabilityControls(): void {
   for (const cap of agentCapabilities) {
     const input = maybeEl<HTMLInputElement>(cap.inputID);
@@ -957,23 +960,14 @@ function initAgentCapabilityControls(): void {
       continue;
     }
     input.addEventListener("change", () => {
-      paintWorkflowLaunchRow();
+      paintSubRows();
       // The settled write may have repainted the switch.
       void patchSettings({ [cap.key]: input.checked }, { el: input, key: cap.key, on: true }).then(
-        paintWorkflowLaunchRow,
+        paintSubRows,
       );
     });
   }
-  onGovernanceChange(paintWorkflowLaunchRow);
-  for (const sw of agentFeatureSwitches) {
-    const input = maybeEl<HTMLInputElement>(sw.inputID);
-    input?.addEventListener("change", () => {
-      void patchSettings(
-        { [sw.key]: input.checked ? "on" : "off" },
-        { el: input, key: sw.key, on: "on" },
-      );
-    });
-  }
+  onGovernanceChange(paintSubRows);
   for (const choice of agentFeatureChoices) {
     const select = maybeEl<HTMLSelectElement>(choice.selectID);
     select?.addEventListener("change", () => {
@@ -989,7 +983,9 @@ function initAgentCapabilityControls(): void {
   for (const choice of agentChoices) {
     const select = maybeEl<HTMLSelectElement>(choice.selectID);
     select?.addEventListener("change", () => {
-      paintSpecPlanning(select.value);
+      if (choice.key === "spec_planning") {
+        paintSpecPlanning(select.value);
+      }
       saveControl(select, { [choice.key]: select.value }, (shown) => {
         paintAgentChoice(choice, shown);
         paintSpecPlanning(shown.spec_planning);
@@ -1011,7 +1007,8 @@ function initAgentCapabilityControls(): void {
       paintShellTimeout(timeout, shown);
     });
   });
-  initTriggerCapControls();
+  initCountControls();
+  initKnowledgeTuningControls();
   initAutoCompactionControls();
 }
 

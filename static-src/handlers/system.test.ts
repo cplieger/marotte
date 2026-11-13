@@ -3,6 +3,9 @@
 // is opened and a settled chat carries `last_turn_outcome`. store-load.ts and tabs.ts stay mocked.
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
+// First: the run store links the bus (its live-runs mirror), whose mock factory below reads this
+// helper while the imports after it are still evaluating.
+import { fireSSE, createBusMock } from "./__test-helpers__/sse-capture.js";
 import {
   setSessions,
   setActive,
@@ -25,6 +28,7 @@ import {
 } from "../workspace.js";
 import { settingsPayload } from "../__test-helpers__/settings.js";
 import { liveRunsForChat, registerLiveRunObserver, runChatID } from "../run-store.js";
+import { nextRunsVersion } from "../__test-helpers__/live-runs.js";
 import type { Session } from "../types.js";
 import type { Entry, RunAsk, RunAsksPayload, SteerQueuedPayload } from "../wire/types.gen.js";
 import { _resetRunAsksForTest, runAskPosition, runAsksOf } from "../run-asks.js";
@@ -113,16 +117,12 @@ vi.mock("../engine-status.js", () => ({
   reconcileEngineStatus: mockReconcileEngineStatus,
 }));
 
-// PARTIAL: rebuildLiveRuns and rereadHeldRuns are spies, so a read the reconcile issues (or must not)
-// is observable, while `adoptConnectRuns` is REAL, since the state it seeds is what the connect door
-// owns. `vi.hoisted` for the api-client pair's reason below.
-const { mockRebuildLiveRuns, mockRereadHeldRuns } = vi.hoisted(() => ({
-  mockRebuildLiveRuns: vi.fn(),
-  mockRereadHeldRuns: vi.fn(),
-}));
+// PARTIAL: rereadHeldRuns is a spy, so a read the reconcile must not issue is observable, while
+// `adoptConnectRuns` is REAL, since the state it seeds is what the connect door owns. `vi.hoisted`
+// for the api-client pair's reason below.
+const { mockRereadHeldRuns } = vi.hoisted(() => ({ mockRereadHeldRuns: vi.fn() }));
 vi.mock("../run-store.js", async (importOriginal) => ({
   ...(await importOriginal<typeof RunStore>()),
-  rebuildLiveRuns: mockRebuildLiveRuns,
   rereadHeldRuns: mockRereadHeldRuns,
 }));
 
@@ -153,7 +153,6 @@ vi.mock("../turn-rail.js", () => ({
 
 // `decodeEnvelope` and `dispatch` are REAL: pending_snapshot's job is pushing each item through
 // that door.
-import { fireSSE, createBusMock } from "./__test-helpers__/sse-capture.js";
 import type * as Bus from "../bus.js";
 const busHandlers = new Map<string, (...args: unknown[]) => void>();
 const dispatched: unknown[] = [];
@@ -352,6 +351,7 @@ function fireConnected(over: Record<string, unknown> = {}): void {
     busy_stated: true,
     live_runs_stated: true,
     live_runs: [],
+    live_runs_version: nextRunsVersion(),
     ...over,
   });
 }
@@ -466,11 +466,23 @@ describe("the connect handshake adopts the live-run inventory off the frame", ()
 
   it("falls back to the endpoint when the inventory was WITHHELD", () => {
     // `live_runs_stated: false` means the lease store held more rows than the frame will
-    // carry, so the list is withheld rather than truncated — and the adoption CLEARS before
-    // it repopulates, so reading a withheld list as empty would drop every live run.
+    // carry, so the list is withheld rather than truncated, and reading a withheld list as
+    // empty would drop every live run.
     setSessions([makeSession("a")]);
     fireConnected({ live_runs_stated: false });
     expect(mockApiGetTyped).toHaveBeenCalledWith("/api/runs/live", expect.any(Function), undefined);
+  });
+
+  // A handshake can trail a frame the inventory already applied: its rows were read before it.
+  it("changes nothing when its version is below what the inventory holds", () => {
+    setSessions([makeSession("a")]);
+    fireConnected({ live_runs: [{ workflow_id: "wf-new", chat_id: "a", executing: true }] });
+    const held = liveRunsForChat("a");
+
+    fireConnected({ live_runs: [], live_runs_version: "1" });
+
+    expect(liveRunsForChat("a")).toEqual(held);
+    expect(held).toEqual([{ id: "wf-new", chat: "a", executing: true }]);
   });
 });
 
@@ -511,22 +523,20 @@ describe("BUS_RECONCILE handler", () => {
     expect(mockScheduleListRetry).not.toHaveBeenCalled();
   });
 
-  it("rebuilds the live-runs inventory from the endpoint", () => {
-    // Events were lost both ways during the gap, so the presence projection is re-read (the degrade
-    // rule is run-store.test.ts's).
+  // The live-runs mirror re-reads itself on the reconcile (mirror.test.ts), so a read here would be
+  // a second one.
+  it("leaves the live-runs inventory's re-read to its mirror", () => {
     setSessions([makeSession("a")]);
     fireReconcile();
-    expect(mockRebuildLiveRuns).toHaveBeenCalledTimes(1);
+    expect(mockApiGetTyped.mock.calls.map((c) => c[0])).not.toContain("/api/runs/live");
   });
 
   // The revalidation that emitted the reconcile already re-read every held run (sse-adapter.test.ts).
   it("a reconcile re-reads no run itself", () => {
     setSessions([makeSession("a")]);
-    const signal = fireReconcile();
+    fireReconcile();
 
     expect(mockRereadHeldRuns).not.toHaveBeenCalled();
-    expect(mockRebuildLiveRuns).toHaveBeenCalledTimes(1);
-    expect(mockRebuildLiveRuns.mock.calls[0]).toEqual([signal]);
   });
 
   it("passes the run's signal to the list read and the catalog read", () => {
@@ -835,7 +845,7 @@ describe("pending_snapshot handler", () => {
 // question leaves the store and both of its banners close.
 
 describe("a client that missed a run's final run_asks", () => {
-  /** A page notification as `notifyOffScreen` raises one, recorded so its close is observable. */
+  /** A page notification as `showNotice` raises one, recorded so its close is observable. */
   class PageNotification {
     static readonly permission = "granted";
     static readonly raised: PageNotification[] = [];
@@ -854,13 +864,14 @@ describe("a client that missed a run's final run_asks", () => {
   }
 
   let tray: { tag: string; closed: boolean }[] = [];
+  /** A fresh notice id per hold: a page decides one id once. */
+  let held = 0;
 
   beforeEach(async () => {
     const notify = await import("../notify.js");
     PageNotification.raised.length = 0;
     vi.stubGlobal("Notification", PageNotification);
     notify.setNotificationsEnabled(true);
-    notify.setOnScreen(() => false);
     tray = [];
     notify._setRegistrationForTest(() =>
       Promise.resolve({
@@ -886,20 +897,25 @@ describe("a client that missed a run's final run_asks", () => {
     const notify = await import("../notify.js");
     notify._setRegistrationForTest(null);
     notify.setNotificationsEnabled(false);
-    notify.setOnScreen(() => document.visibilityState === "visible");
     vi.unstubAllGlobals();
   });
 
   /** Hold ask A of wf_1, launched from c1, with its page banner and its tray banner up. */
   async function holdAskA(): Promise<RunAsk> {
-    const { notifyOffScreen } = await import("../notify.js");
+    const { showNotice } = await import("../notify.js");
     setSessions([makeSession("c1")]);
     const a = stepAsk("wf_1");
     fireSSE("run_asks", "c1", runAsksFrame("wf_1", [a], "c1"));
     const subject = `runask:${runAskPosition("wf_1", a)}`;
-    expect(notifyOffScreen({ kind: "permission", title: "c1", body: "Ship it?", subject })).toBe(
-      true,
-    );
+    expect(
+      showNotice({
+        id: `n-c1-${String(++held)}`,
+        kind: "permission",
+        title: "c1",
+        body: "Ship it?",
+        subject,
+      }),
+    ).toBe(true);
     tray.push({ tag: askTag("wf_1", a), closed: false });
     return a;
   }

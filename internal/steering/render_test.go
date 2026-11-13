@@ -107,7 +107,9 @@ func (f *renderFixture) build(t *testing.T) rendered {
 		}
 		forges.Providers = append(forges.Providers, p)
 	}
-	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
+	g := New(Config{
+		WorkDir: workDir, ConfigDir: configDir, ToolsDir: filepath.Join(configDir, "tools"), ServerAddr: "127.0.0.1:9847",
+	})
 	out := string(g.render(t.Context(), mcp, f.mcp > 0, forges, true, f.tools, true))
 	return rendered{out: out, workDir: workDir, configDir: configDir}
 }
@@ -335,7 +337,7 @@ func TestRender_Fixtures(t *testing.T) {
 				t.Errorf("the Debian slim line calls the installed file missing:\n%s", tools)
 			}
 			if !strings.Contains(tools, "\n6 more installed packages ship no command (mostly libraries): "+
-				"`dpkg -l` or `curl -s localhost:9847/api/tools` lists them.\n") {
+				"`dpkg -l` or `curl -s 127.0.0.1:9847/api/tools` lists them.\n") {
 				t.Errorf("Installed tools lacks the no-command count line:\n%s", tools)
 			}
 			if !strings.Contains(out, "  - **Skills** (`kirotwo/.kiro/skills/`; read a SKILL.md when its description matches the task):\n"+
@@ -393,7 +395,7 @@ func checkLarge(t *testing.T, r rendered) {
 	if !ok || len(strings.Split(head, ", ")) != 120 || strings.Contains(head, "aux") {
 		t.Errorf("Commands line does not name exactly 120 engine commands then an overflow: %q", commands)
 	}
-	if want := "90 more (`command -v <name>` checks one; `curl -s localhost:9847/api/tools` lists every row's commands)"; tail != want {
+	if want := "90 more (`command -v <name>` checks one; `curl -s 127.0.0.1:9847/api/tools` lists every row's commands)"; tail != want {
 		t.Errorf("Commands overflow = %q, want %q", tail, want)
 	}
 	if !strings.Contains(out, "\n400 more installed packages ship no command") {
@@ -508,7 +510,7 @@ func TestRender_LargeSetupIsBounded(t *testing.T) {
 
 func TestRender_ToolsSnapshotNotOKListsNothingAsPresent(t *testing.T) {
 	workDir, configDir := t.TempDir(), t.TempDir()
-	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
+	g := New(Config{WorkDir: workDir, ConfigDir: configDir, ToolsDir: filepath.Join(configDir, "tools")})
 	snap := ToolsSnapshot{Tools: engineRows(2, "tool"), System: []string{"git"}}
 	out := string(g.render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, snap, false))
 	want := "\nThe image is Debian slim: its base userland (coreutils, util-linux, findutils, grep, sed, awk, diff, gzip, " +
@@ -517,5 +519,31 @@ func TestRender_ToolsSnapshotNotOKListsNothingAsPresent(t *testing.T) {
 		"engine below.\n\n"
 	if got := sectionOf(out, "## Installed tools"); got != want {
 		t.Errorf("Installed tools with the engine down =\n%q\nwant\n%q", got, want)
+	}
+}
+
+// Every line that tells an agent where marotte's server answers names the configured address, so
+// a LISTEN_ADDR on another loopback host or port leaves no line pointing at the default.
+func TestRender_EveryServerLineNamesTheServerAddress(t *testing.T) {
+	workDir, configDir := t.TempDir(), t.TempDir()
+	g := New(Config{
+		WorkDir: workDir, ConfigDir: configDir, ToolsDir: filepath.Join(configDir, "tools"), ServerAddr: "127.0.0.2:9000",
+	})
+	tools := append(engineRows(maxCommands+1, "tool"), InstalledTool{Version: "2.0", Apt: true})
+	out := string(g.render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, ToolsSnapshot{Tools: tools}, true))
+	for _, want := range []string{
+		"marotte's own HTTP server answers on `127.0.0.2:9000` inside the container",
+		"`curl -s '127.0.0.2:9000/api/tools/search?q=<name>'`",
+		"`curl -s -X POST 127.0.0.2:9000/api/tools ",
+		"`GET 127.0.0.2:9000/api/tools/jobs` lists jobs",
+		"`dpkg -l` or `curl -s 127.0.0.2:9000/api/tools` lists them",
+		"`curl -s 127.0.0.2:9000/api/tools` lists every row's commands",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("environment.md does not say %q", want)
+		}
+	}
+	if strings.Contains(out, ":9847") {
+		t.Errorf("environment.md still names the default port with ServerAddr 127.0.0.2:9000:\n%s", out)
 	}
 }

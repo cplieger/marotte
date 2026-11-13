@@ -126,6 +126,15 @@ type turnState struct {
 	emptySteer bool
 }
 
+// logBytes is the size of the turn's lines in the log, which bounds what a page serves of it from above.
+func (st *turnState) logBytes() int64 {
+	var n int64
+	for _, r := range st.ranges {
+		n += r.to - r.from
+	}
+	return n
+}
+
 // unsettled are the turn's tool_calls neither appended settled nor answered by a tool_result, in open order, which a
 // close aborts them in.
 func (st *turnState) unsettled() []entryCall {
@@ -397,7 +406,7 @@ func (l *EntryLog) Revert(ctx context.Context, from string, cause marotte.TurnRe
 func (l *EntryLog) appendRevertLocked(ctx context.Context, from string, cause marotte.TurnRevertCause, kasMessageID string) (record *marotte.Entry, minted []*marotte.Entry, err error) {
 	st := l.turns[from]
 	if st == nil || st.reverted {
-		return nil, nil, fmt.Errorf("%w: %q", ErrTurnNotInLog, from)
+		return nil, nil, fmt.Errorf("%w: %q", errTurnNotInLog, from)
 	}
 	window, through := l.revertWindowLocked(from)
 	carrier, held := l.newestSurvivingLocked(window)
@@ -1355,10 +1364,10 @@ type window struct {
 	HasMore bool
 }
 
-// window reads the `turns` surviving turns with the highest n, or the `turns` surviving turns below before when it
-// names a surviving turn here. `turns` is a page size: the read is a set of whole turns, never split. One pread per
-// byte range; lines of turns outside the set are skipped.
-func (l *EntryLog) window(turns int, before string) (window, error) {
+// window reads the newest surviving turns, or those below before when it names a surviving turn here: at most `turns`
+// of them, contiguous, and no more than maxBytes of log lines, except that the newest one is always served whole
+// however large. A turn is never split. One pread per byte range; lines of turns outside the set are skipped.
+func (l *EntryLog) window(turns int, before string, maxBytes int64) (window, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	// One slice for resolution, selection and HasMore: resolving `before` against l.order would accept a reverted id
@@ -1372,7 +1381,16 @@ func (l *EntryLog) window(turns int, before string) (window, error) {
 		}
 		upper = i
 	}
-	lower := max(upper-max(turns, 0), 0)
+	lower := upper
+	var taken int64
+	for lower > 0 && upper-lower < turns {
+		size := l.turns[order[lower-1]].logBytes()
+		if lower < upper && taken+size > maxBytes {
+			break
+		}
+		taken += size
+		lower--
+	}
 	entries, err := l.readSurvivingLocked(order[lower:upper])
 	if err != nil {
 		return window{}, err
@@ -1578,15 +1596,15 @@ func (l *EntryLog) unadoptedSessionLocked() string {
 	return s
 }
 
-// ErrTurnNotInLog is the one TurnPage failure a caller can cause: an id with no turn here. Other errors mean the log
+// errTurnNotInLog is the one TurnPage failure a caller can cause: an id with no turn here. Other errors mean the log
 // is unreadable, a 500.
-var ErrTurnNotInLog = errors.New("chat: turn is not in this log")
+var errTurnNotInLog = errors.New("chat: turn is not in this log")
 
 // turnRangeLocked returns turn's entries from seq from inclusive, in seq order; from == 0 is the whole turn. The
 // wire's exclusive ?after= is translated at the door. A reverted turn returns the sentinel like an absent one.
 func (l *EntryLog) turnRangeLocked(turn string, from uint64) ([]marotte.Entry, error) {
 	if st := l.turns[turn]; st == nil || st.reverted {
-		return nil, fmt.Errorf("%w: %q", ErrTurnNotInLog, turn)
+		return nil, fmt.Errorf("%w: %q", errTurnNotInLog, turn)
 	}
 	entries, err := l.readSurvivingLocked([]string{turn})
 	if err != nil {
@@ -1598,9 +1616,9 @@ func (l *EntryLog) turnRangeLocked(turn string, from uint64) ([]marotte.Entry, e
 	return slices.DeleteFunc(entries, func(e marotte.Entry) bool { return e.Seq < from }), nil
 }
 
-// TurnPage is the read both roots share: turn's entries from from inclusive, plus the seq the page speaks for; each
-// root stamps its own subject kind. newestSeq is the page's newest entry, or from - 1 for an empty page, never the
-// log's counter, which a concurrent seal could advance past the page. A held turn always has its turn_open.
+// TurnPage is a chat turn's page: turn's entries from from inclusive, plus the seq the page speaks for. newestSeq is
+// the page's newest entry, or from - 1 for an empty page, never the log's counter, which a concurrent seal could
+// advance past the page. A held turn always has its turn_open.
 func (l *EntryLog) TurnPage(turn string, from uint64) (entries []marotte.Entry, newestSeq uint64, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -1614,12 +1632,58 @@ func (l *EntryLog) TurnPage(turn string, from uint64) (entries []marotte.Entry, 
 	return entries, from - 1, nil
 }
 
-// A span from lowest to highest offset would read every reverted byte up to the carrier's record at
-// the file's tail.
-func (l *EntryLog) readSetLocked(set []string) ([]marotte.Entry, error) {
-	if len(set) == 0 {
+// TurnRead is a read of whole turns taken under the log's lock and decoded outside it, so an append to the log never
+// waits on the decode. It holds the file open: a Rewrite replaces the file by rename, so the read still decodes the
+// sealed bytes its ranges name.
+type TurnRead struct {
+	f      *os.File
+	want   map[string]struct{}
+	ranges []byteRange
+	fold   marotte.WorkflowMessageFold
+	from   uint64
+}
+
+// SnapshotTurns takes a read of turns' surviving lines from seq from inclusive (0 the whole turn), the turns this log
+// does not hold or a rewind took left out. It answers nil with no such turn; a non-nil read must be decoded once with
+// Entries, which closes it.
+func (l *EntryLog) SnapshotTurns(turns []string, from uint64) (*TurnRead, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	held := slices.DeleteFunc(slices.Clone(turns), func(id string) bool {
+		st := l.turns[id]
+		return st == nil || st.reverted
+	})
+	if len(held) == 0 {
 		return nil, nil
 	}
+	f, _, err := openChatFile(l.path(), "entry log "+l.root)
+	if err != nil {
+		return nil, err
+	}
+	want, ranges := l.rangesLocked(held)
+	return &TurnRead{f: f, want: want, ranges: ranges, fold: l.messagesLocked(), from: from}, nil
+}
+
+// Entries decodes the read's lines in file order, each workflow-message row carrying the take-up it had at the
+// snapshot, and closes the file.
+func (r *TurnRead) Entries() ([]marotte.Entry, error) {
+	defer func() { _ = r.f.Close() }()
+	out, err := decodeRanges(r.f, r.ranges, r.want)
+	if err != nil {
+		return nil, err
+	}
+	if r.from > 0 {
+		out = slices.DeleteFunc(out, func(e marotte.Entry) bool { return e.Seq < r.from })
+	}
+	for i := range out {
+		r.fold.Settle(&out[i])
+	}
+	return out, nil
+}
+
+// rangesLocked is set's byte ranges in file order. A span from lowest to highest offset would read every reverted byte
+// up to the carrier's record at the file's tail.
+func (l *EntryLog) rangesLocked(set []string) (map[string]struct{}, []byteRange) {
 	want := make(map[string]struct{}, len(set))
 	var ranges []byteRange
 	for _, id := range set {
@@ -1627,11 +1691,23 @@ func (l *EntryLog) readSetLocked(set []string) ([]marotte.Entry, error) {
 		ranges = append(ranges, l.turns[id].ranges...)
 	}
 	slices.SortFunc(ranges, func(a, b byteRange) int { return cmp.Compare(a.from, b.from) })
+	return want, ranges
+}
+
+func (l *EntryLog) readSetLocked(set []string) ([]marotte.Entry, error) {
+	if len(set) == 0 {
+		return nil, nil
+	}
+	want, ranges := l.rangesLocked(set)
 	f, _, err := openChatFile(l.path(), "entry log "+l.root)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
+	return decodeRanges(f, ranges, want)
+}
+
+func decodeRanges(f *os.File, ranges []byteRange, want map[string]struct{}) ([]marotte.Entry, error) {
 	r := readEntries(f)
 	var out []marotte.Entry
 	for _, rng := range ranges {

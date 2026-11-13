@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-import { getActionLog as recentLog } from "@cplieger/ui/actions";
+import { getActionLog as recentLog } from "@cplieger/reactive/actions";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { downloadKiroSession } from "./chat.js";
 import { exportFilename } from "../export-filename.js";

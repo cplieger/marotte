@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cplieger/marotte/internal/chat/archive"
+	"github.com/cplieger/marotte/internal/coalesce"
 	"github.com/cplieger/marotte/internal/filemode"
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/logsafe"
@@ -78,6 +79,8 @@ type Store struct {
 	listScans       listFlight
 	dir             string
 	index           searchIndex
+	// headers folds a chat's header saves into one chat_updated per window (publishHeader).
+	headers *coalesce.Notifier[marotte.ChatID]
 	// boot is minted once per process; a process-scope keep fact under another boot id is dead.
 	boot    string
 	fileCap chatFileCap
@@ -87,6 +90,12 @@ type Store struct {
 // tombstoneTTL is how long a deleted chat id blocks re-creation via Mutate: longer
 // than any real prompt roundtrip, short enough not to blacklist a recycled id.
 const tombstoneTTL = 10 * time.Minute
+
+// headerPublishWindow is how long a chat's header saves coalesce before one chat_updated goes out.
+// A prompt's open and its close each save the header three to five times within about 6 ms; 25 ms
+// folds each burst into one frame and is below a visible delay. A var so the marotte_test fixture
+// can widen it.
+var headerPublishWindow = 25 * time.Millisecond
 
 // tombstone keeps the display name a deleted chat had, because the record goes before
 // its bridge's teardown and a notice that bridge raises meanwhile still names it.
@@ -123,6 +132,7 @@ func NewStore(dir string, opts ...StoreOption) (*Store, error) {
 		keep:      newKeepSets(),
 		boot:      randomHex(16),
 	}
+	s.headers = coalesce.New(headerPublishWindow, s.publishHeader)
 	// Options land AFTER the derivation so an option overrides it, and the
 	// derivation's own log line still records what the container asked for.
 	for _, opt := range opts {
@@ -231,9 +241,10 @@ func (s *Store) restStamp(kind subject.Kind, ref, version string) *marotte.Subje
 	return stamp
 }
 
-// Mutate is the header's mutation primitive: load → apply → save → broadcast, under the per-chat
-// mutex, on the current header or a fresh zero-value chat. Returning false aborts without side
-// effects; a write to a recently deleted id is refused with ErrTombstoned.
+// Mutate is the header's mutation primitive: load → apply → save under the per-chat mutex, on the
+// current header or a fresh zero-value chat, then chat_created at once or one coalesced
+// chat_updated (publishHeader). Returning false aborts without side effects; a write to a recently
+// deleted id is refused with ErrTombstoned.
 //
 // A mutator must not overwrite c.ID (refused); c.CreatedAt is restored. The returned version is the
 // `chat:<id>` version this save minted, or "" when the mutator declined.
@@ -253,12 +264,16 @@ func (s *Store) mutateLocked(ctx context.Context, chatID marotte.ChatID, mutate 
 	if err != nil || c == nil {
 		return version, err
 	}
-	s.broadcastMutation(ctx, chatID, c, exists)
+	if exists {
+		s.headers.Mark(chatID)
+	} else {
+		s.announceCreated(ctx, chatID, c)
+	}
 	return version, nil
 }
 
-// saveLocked is mutateLocked without the broadcast: it answers the saved header, nil when nothing
-// was saved, so a caller that announces the header itself sends one frame.
+// saveLocked is mutateLocked without the announce: it answers the saved header, nil when nothing
+// was saved, and leaves the publish to the caller.
 func (s *Store) saveLocked(ctx context.Context, chatID marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (version string, saved *marotte.Chat, exists bool, err error) {
 	c, err := s.load(ctx, chatID)
 	exists = err == nil
@@ -342,19 +357,42 @@ func validateChatUTF8(c *marotte.Chat) error {
 	return nil
 }
 
-// broadcastMutation mints the `chats` version for a successful Mutate and emits chat_created or
-// chat_updated stamped with it. Every save bumps `chats`, broadcaster or not, because title,
-// updated_at and sort order move on each.
-func (s *Store) broadcastMutation(ctx context.Context, chatID marotte.ChatID, c *marotte.Chat, exists bool) {
+// announceCreated mints the `chats` version for a created record and emits chat_created stamped
+// with it, at once: a create is never coalesced, so no later frame can reach a page before it.
+func (s *Store) announceCreated(ctx context.Context, chatID marotte.ChatID, c *marotte.Chat) {
 	chatsVersion := s.versions.BumpCounter(subject.KindChats, "")
 	if s.broadcast == nil {
 		return
 	}
-	evt := marotte.EventChatUpdated
-	if !exists {
-		evt = marotte.EventChatCreated
+	frame := marotte.NewEvent(marotte.EventChatCreated, chatID, s.wireHeader(chatID, c))
+	frame.Subject = marotte.NewSubjectStamp(string(subject.KindChats), "", chatsVersion)
+	s.broadcast.Broadcast(ctx, frame)
+}
+
+// publishHeader is the header coalescer's flush: it mints one `chats` version covering every save
+// the window absorbed and emits one chat_updated carrying the header as it is now. It runs under the
+// chat's lock, so a Delete either lands first, leaving no record and no frame, or lands after,
+// its chat_deleted following this frame. A flush bumps `chats` unless the record is gone,
+// broadcaster or not, because title, updated_at and sort order moved.
+func (s *Store) publishHeader(chatID marotte.ChatID) {
+	ctx := context.Background()
+	m := s.lock(chatID)
+	m.Lock()
+	defer m.Unlock()
+	c, err := s.load(ctx, chatID)
+	if errors.Is(err, os.ErrNotExist) {
+		return
 	}
-	frame := marotte.NewEvent(evt, chatID, s.wireHeader(chatID, c))
+	chatsVersion := s.versions.BumpCounter(subject.KindChats, "")
+	if err != nil {
+		slog.Warn("chat header publish: header unreadable, list version bumped without a frame",
+			"chat_id", logsafe.Field(string(chatID)), "error", err)
+		return
+	}
+	if s.broadcast == nil {
+		return
+	}
+	frame := marotte.NewEvent(marotte.EventChatUpdated, chatID, s.wireHeader(chatID, c))
 	frame.Subject = marotte.NewSubjectStamp(string(subject.KindChats), "", chatsVersion)
 	s.broadcast.Broadcast(ctx, frame)
 }

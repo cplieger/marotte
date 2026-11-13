@@ -1,11 +1,11 @@
 // The activity dot and the NAME of a workflow run's tab row: one effect writes both, because a
 // `tabs_changed` frame carries no label. The dot is the harder half.
 
-import { effect, signal, touch } from "@cplieger/ui";
+import { effect, signal, touch } from "@cplieger/reactive";
 import { openRunRefs, renameTab, setTabStatus, tabIdFor, tabSetVersion } from "./tabs.js";
 import { runStatusFor } from "./store.js";
 import { runPendingAsks } from "./decision-dock.js";
-import { invalidateRun, registerLiveRunObserver, runLabelOf, runState } from "./run-store.js";
+import { drawRun, registerLiveRunObserver, runLabelOf, runState } from "./run-store.js";
 
 /** The runs this client has seen an event for, and the version counter that makes the effect
  *  depend on the set. */
@@ -48,7 +48,7 @@ function seedOpenRunTabs(): void {
     // Neither call alone: repaint never visits an untracked run, and a tracked run with no fetch
     // behind it never gets state.
     trackRun(ref);
-    invalidateRun(ref);
+    drawRun(ref);
   }
 }
 

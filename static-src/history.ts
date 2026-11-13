@@ -2,8 +2,8 @@
 // picker over `GET /api/sessions`. A chat row opens its chat or adopts it via `resume_session`; a run row opens the
 // read-only run view.
 
-import { el, signal, subscribe, effect } from "@cplieger/ui";
-import { skeletonTiming } from "@cplieger/ui/skeleton";
+import { el, signal, subscribe, effect } from "@cplieger/reactive";
+import { skeletonTiming } from "./legacy-ui/skeleton.js";
 import { $, maybeEl, queryAll } from "./dom.js";
 import {
   activeChatRef,
@@ -48,7 +48,7 @@ import { applyOutcome } from "./tool-card.js";
 import type { ToolRenderInfo } from "./tool-schema.js";
 import { ICON_TAB_RUN, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import { sentBy } from "./sent-by.js";
+import { senderWords } from "./sent-by.js";
 import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
 import { registerFind } from "./find-registry.js";
@@ -168,8 +168,8 @@ type RunVerdict = "completed" | "failed" | "aborted";
  * `aborted` for both; this is where the difference is stated.
  */
 const END_REASON_TEXT: Readonly<Record<string, string>> = {
-  overran: "stopped: it ran past its time limit",
-  stalled: "stopped: no activity and no live shell within its idle window",
+  overran: "stopped: its recipe's next scheduled slot came due",
+  stalled: "stopped: it showed no activity for too long",
   orphaned: "stopped: the server restarted while it was running",
   unattended: "stopped: it paused with nobody to resume it",
 };
@@ -851,14 +851,15 @@ async function openMatch(match: Match, query: string): Promise<void> {
 
 /** The hit count borrows the time slot as text: a count has no absolute form. */
 function buildMatchRow(m: Match, query: string): HTMLElement {
-  // A title-only match has no hit: say why it matched. Words another program sent say so before the excerpt.
+  // A title-only match has no hit: say why it matched. Words the reader did not send name their sender first.
   const best = m.best;
+  const sender = senderWords(best);
   const line =
     best === undefined
       ? "matches the conversation name"
-      : best.caller === undefined
+      : sender === undefined
         ? best.excerpt
-        : `${sentBy(best.caller)}: ${best.excerpt}`;
+        : `${sender}: ${best.excerpt}`;
   // No one message holds every word: the row says so before the line from one of them.
   const detail = m.spread ? `Words spread across messages: ${line}` : line;
   const more = m.hits > 1 ? `${String(m.hits)} matches` : m.hits === 1 ? "1 match" : "";

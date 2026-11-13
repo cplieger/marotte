@@ -121,8 +121,7 @@ type chatStore interface {
 	// Lookup is Get keeping missing apart from unreadable: found is false with
 	// a nil error only when no record exists.
 	Lookup(ctx context.Context, id marotte.ChatID) (c *marotte.Chat, found bool, err error)
-	// Mutate is the header write primitive: load, apply, save, broadcast
-	// chat_created / chat_updated.
+	// Mutate is the header write primitive (chat.Store.Mutate owns what it announces).
 	Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error)
 	// Revert appends the log's record of a rewind: turn and everything after it
 	// become unreadable rather than absent, so nothing is cut and nothing is
@@ -797,6 +796,12 @@ type modeRecorder interface {
 // lease was still held when the wait ran out.
 var ErrRunStillLive = errors.New("the run was told to stop but has not stopped yet")
 
+// noticeLedger is what the tab set tells the notice ledger: an ack's stored marker, and a tab no open tab shows.
+type noticeLedger interface {
+	Seen(kind marotte.TabKind, ref string, marker uint64)
+	TabClosed(kind marotte.TabKind, ref string)
+}
+
 // Roles is the wiring-time role set: the host names which interface answers each role once, at
 // registration, and RegisterDefaults hands every handler only the roles its signature declares. A
 // plain struct no handler takes, so nothing widens as the host grows.
@@ -819,6 +824,8 @@ type Roles struct {
 	Profiles  profileSwitcher
 	Terminals terminalAccess
 	Stops     turnStopper
+	// Notices is the notice ledger: a tab's ack ends what it covers, and a tab's last close forgets it.
+	Notices noticeLedger
 	// Tabs is the open-tab set, and it may be nil: a build with no config
 	// dir has no store to persist an arrangement to. The coordinator
 	// answers the tab half of every operation with a 503 in that state.

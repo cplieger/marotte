@@ -6,11 +6,13 @@
 // (`attention-no-dom.node.test.ts` asserts its premise). `*.fuzz.test.ts` is ts-ci's fuzz axis. `channel: "chromium"` is the real
 // browser, not headless-shell: `npx playwright install --with-deps chromium`.
 import { configDefaults, defineConfig, type TestProjectInlineConfiguration } from "vitest/config";
+import type { BrowserCommand } from "vitest/node";
 import { playwright } from "@vitest/browser-playwright";
 import type { CDPSession } from "playwright";
 import { msw } from "msw/vite";
 
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
+import { CostSequencer } from "./__test-helpers__/shard-sequencer.js";
 
 // Exclude compiled output and node_modules. `**/.stryker-tmp/**` keeps Stryker's `inPlace` backup
 // copy from being collected twice (its fixtures are missing, so it fails). Every unit project needs
@@ -33,6 +35,16 @@ const traceView = process.env["VITEST_TRACE"] === "1";
 
 const dprSessions = new WeakMap<object, { cdp: CDPSession; initialDpr: number }>();
 
+/** A real tap through Playwright's touchscreen, which every engine implements, unlike CDP input. */
+const tapCommand: BrowserCommand<[selector: string]> = async ({ iframe }, selector) => {
+  await iframe.locator(selector).tap();
+};
+
+/** Move the real pointer to (-1, -1), outside the viewport, where it hovers nothing. */
+const parkPointerCommand: BrowserCommand<[]> = async ({ page }) => {
+  await page.mouse.move(-1, -1);
+};
+
 // A test needing a coarse pointer is `*.touch.test.ts` and runs in `browser-touch`, whose pages are
 // touch devices from creation: touch emulation switched off inside a page leaves headless Chromium
 // reporting no pointer at all, not the mouse a page starts with, and every later file inherits it.
@@ -50,7 +62,7 @@ function browserProject(
       exclude,
       // Merged with the root list (`extends: true` merges arrays). Browser-only: both read `window`,
       // and a `ResizeObserver` loop is a real engine's verdict.
-      setupFiles: ["./ro-loop-gate.ts", "./storage-reset-setup.ts"],
+      setupFiles: ["./ro-loop-gate.ts", "./storage-reset-setup.ts", "./pointer-park-setup.ts"],
       // Files run in parallel because each worker session opens its own Playwright context, and the
       // mocker's routes live on the context: two concurrent files never share one
       // (https://github.com/vitest-dev/vitest/issues/8339).
@@ -78,6 +90,8 @@ function browserProject(
         // `commands` is a `test.browser` option and NOT a `test` option; the
         // two nest one line apart and the wrong one type-checks nowhere.
         commands: {
+          tap: tapCommand,
+          parkPointer: parkPointerCommand,
           /** Emulate the two accessibility media features this app has arms for, per page and per test:
            *  the provider's `contextOptions` is project-global and would invert the `tab-dot.test.ts` family.
            *  Playwright's typed `emulateMedia` rather than `cdp()`, whose `CDPSession` is typed empty; one
@@ -131,6 +145,64 @@ function browserProject(
               );
             }
           },
+          /** Real mouse clicks at `points` (CSS px in a tester frame `frameWidth` wide), each pressed
+           *  `gapMs` after the last one's release and released `holdMs` after its press; answers once
+           *  they are scheduled. Raw CDP input, unawaited: Playwright's `mouse` waits for each
+           *  event's ack, and a move is acked only after a busy main thread frees, so its press would
+           *  reach the page after the long task instead of waiting in the input queue behind it. */
+          async queueClicks(
+            { page, frame },
+            points: readonly { readonly x: number; readonly y: number }[],
+            gapMs: number,
+            holdMs: number,
+            frameWidth: number,
+          ) {
+            const box = await (await (await frame()).frameElement()).boundingBox();
+            if (box === null) {
+              throw new Error("the tester frame has no box");
+            }
+            const scale = box.width / frameWidth;
+            const cdp = await page.context().newCDPSession(page);
+            const sent: Promise<unknown>[] = [];
+            const send = (
+              type: "mouseMoved" | "mousePressed" | "mouseReleased",
+              x: number,
+              y: number,
+            ): void => {
+              const pressed = type === "mousePressed";
+              const ack = cdp
+                .send("Input.dispatchMouseEvent", {
+                  type,
+                  x,
+                  y,
+                  button: type === "mouseMoved" ? "none" : "left",
+                  buttons: pressed ? 1 : 0,
+                  clickCount: type === "mouseMoved" ? 0 : 1,
+                })
+                .catch((e: unknown) => {
+                  console.error("queueClicks", type, e);
+                });
+              sent.push(ack);
+            };
+            const sleep = (ms: number): Promise<void> =>
+              new Promise((resolve) => setTimeout(resolve, ms));
+            void (async () => {
+              for (const p of points) {
+                await sleep(gapMs);
+                const x = box.x + p.x * scale;
+                const y = box.y + p.y * scale;
+                send("mouseMoved", x, y);
+                send("mousePressed", x, y);
+                await sleep(holdMs);
+                send("mouseReleased", x, y);
+              }
+              // Detach only once every event is acked, so no event is still in flight on the session.
+              await Promise.all(sent);
+              await cdp.detach().catch((e: unknown) => {
+                console.error("queueClicks detach", e);
+              });
+            })();
+          },
         },
       },
     },
@@ -155,6 +227,10 @@ const engineInstances = (
   viewport: { width, height },
   provider: playwright({ contextOptions: { deviceScaleFactor: dpr, hasTouch: touch } }),
 }));
+
+/** The touch files whose taps go through `tap` rather than CDP, run again in WebKit on a phone's
+ *  viewport. Opt-in (`TOUCH_ENGINES=1`): it needs `npx playwright install webkit`, which CI does not. */
+const touchEngineFiles = ["slash-menu.touch.test.ts"];
 
 export default defineConfig({
   // Serves the MSW worker script from the package for the browser tests that mock the network;
@@ -203,9 +279,10 @@ export default defineConfig({
         },
       },
       {
-        // The SSE lifecycle against the REAL server: `SSE_FIXTURE` names a `-tags marotte_test` binary the
-        // globalSetup starts on a scratch dir and free port; every file skips when it is unset. Node, not
-        // the browser: the fixture refuses cross-site POSTs and sends no CORS header.
+        // Suites against the REAL server (the SSE lifecycle, a preview's own tab driven through Playwright):
+        // `SSE_FIXTURE` names a `-tags marotte_test` binary the globalSetup starts on a scratch dir and free
+        // port; every file skips when it is unset. Node, not the browser: the fixture refuses cross-site
+        // POSTs and sends no CORS header.
         extends: true,
         test: {
           name: "e2e-sse",
@@ -238,13 +315,44 @@ export default defineConfig({
                 name: "browser-engines",
                 include: engineFiles,
                 exclude: sharedExclude,
-                setupFiles: ["./ro-loop-gate.ts", "./storage-reset-setup.ts"],
+                setupFiles: [
+                  "./ro-loop-gate.ts",
+                  "./storage-reset-setup.ts",
+                  "./pointer-park-setup.ts",
+                ],
                 browser: {
                   enabled: true,
                   headless: true,
                   screenshotFailures: false,
                   provider: playwright(),
                   instances: engineInstances,
+                  commands: { parkPointer: parkPointerCommand },
+                },
+              },
+            } satisfies TestProjectInlineConfiguration,
+          ]
+        : []),
+      ...(process.env["TOUCH_ENGINES"] === "1"
+        ? [
+            {
+              extends: true,
+              test: {
+                name: "browser-touch-webkit",
+                include: touchEngineFiles,
+                exclude: sharedExclude,
+                setupFiles: [
+                  "./ro-loop-gate.ts",
+                  "./storage-reset-setup.ts",
+                  "./pointer-park-setup.ts",
+                ],
+                browser: {
+                  enabled: true,
+                  headless: true,
+                  screenshotFailures: false,
+                  provider: playwright({ contextOptions: { hasTouch: true } }),
+                  instances: [{ browser: "webkit" }],
+                  viewport: { width: 390, height: 844 },
+                  commands: { tap: tapCommand, parkPointer: parkPointerCommand },
                 },
               },
             } satisfies TestProjectInlineConfiguration,
@@ -299,6 +407,7 @@ export default defineConfig({
     // Reproducible ordering. hooks: "stack" = afterEach/afterAll run in
     // reverse definition order (correct teardown semantics).
     sequence: {
+      sequencer: CostSequencer,
       shuffle: { files: false, tests: false },
       concurrent: false,
       hooks: "stack",

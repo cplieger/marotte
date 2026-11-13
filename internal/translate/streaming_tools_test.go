@@ -2077,3 +2077,35 @@ func TestLateStepResult_ADelegatesStopGradesTheLateResult(t *testing.T) {
 		t.Errorf("late tool_result status, delegate_stop = %q, %q; want failed, refusal", res.Status, res.DelegateStop)
 	}
 }
+
+// The compactor hears a tool call of the chat's own agent, its delegation to a subagent included, since that is what
+// says its turn goes on past the reading; a subagent's own call and a workflow step's are not the chat's turn.
+func TestHandleToolCall_TheChatsOwnCallReachesTheCompactor(t *testing.T) {
+	const runID, nodePath = "wf_1", "wf_1/build"
+	for _, tc := range []struct {
+		meta map[string]any
+		attr FrameAttribution
+		name string
+		want int
+	}{
+		{name: "the agent's own call", want: 1},
+		{name: "the agent's delegation", meta: map[string]any{"kind": "agent-subtask", "agentSubtaskId": "sub-1"}, want: 1},
+		{name: "a subagent's call", meta: map[string]any{"agentSubtaskId": "sub-1"}, want: 0},
+		{name: "a step's call", attr: FrameAttribution{Step: true, RunID: runID, NodePath: nodePath}, want: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deps := newBaseDeps()
+			deps.turns.runTurn(runID, nodePath)
+			call := map[string]any{"toolCallId": "tc-1", "title": "readFile", "kind": "read", "status": "pending"}
+			if tc.meta != nil {
+				call["_meta"] = map[string]any{"kiro": tc.meta}
+			}
+
+			New(rolesOf(deps)).HandleToolCall(t.Context(), "c1", mustJSON(t, call), tc.attr)
+
+			if got := len(deps.compactorHeard); got != tc.want {
+				t.Errorf("tool calls heard = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}

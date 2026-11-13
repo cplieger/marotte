@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -65,6 +66,10 @@ func failHeaderWrites(t *testing.T, id marotte.ChatID) (repair func()) {
 }
 
 func TestHold_WritesAFactWithAFreshTokenAndTheKeysPrior(t *testing.T) {
+	synctest.Test(t, testHoldWritesAFactWithAFreshTokenAndTheKeysPrior)
+}
+
+func testHoldWritesAFactWithAFreshTokenAndTheKeysPrior(t *testing.T) {
 	s, b := newTestStore(t)
 	seedChat(t, s, "c1")
 	before := readChat(t, s, "c1").UpdatedAt
@@ -95,6 +100,7 @@ func TestHold_WritesAFactWithAFreshTokenAndTheKeysPrior(t *testing.T) {
 	if c.UpdatedAt != before {
 		t.Errorf("UpdatedAt moved %d -> %d: a hold is not use", before, c.UpdatedAt)
 	}
+	synctest.Sleep(headerPublishWindow)
 	if n := len(b.snapshot()); n != 0 {
 		t.Errorf("Hold broadcast %d frames, want none", n)
 	}

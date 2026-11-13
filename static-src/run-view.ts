@@ -3,8 +3,8 @@
 // workflow knows — the status's verbs, what an empty step body means, and which of the run's own
 // log turns each step renders.
 
-import { batch, el, effect, signal, touch } from "@cplieger/ui";
-import { announce } from "@cplieger/ui/announce";
+import { batch, el, effect, signal, touch, untracked } from "@cplieger/reactive";
+import { announce } from "./legacy-ui/announce.js";
 import { join } from "@cplieger/keyenc";
 import { openRunTab, openTab, parentChatRef, tabIdFor } from "./tabs.js";
 import { mountRunDecisionDock, rerenderDocks, runPendingAsks } from "./decision-dock.js";
@@ -34,28 +34,41 @@ import { get } from "./store.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
 import { inFlight, neverRan, settled } from "./exec-view/status.js";
 import { flatten, workNodes, type ExecNode } from "./exec-view/model.js";
-import { runToExec, type StepEnds } from "./run-exec-source.js";
-import { lastPrintedLine } from "./run-step-tail.js";
+import { runToExec, type ExecFoldMemo, type StepEnds } from "./run-exec-source.js";
+import { lastPrintedLine, leaveStepTails, stepTail } from "./run-step-tail.js";
+import { afterScopeAnswer, scopeReady, setRunContentScope } from "./run-content-scope.js";
 import type { RunStepPaint, RunStepStream } from "./run-chat-steps.js";
 import {
   clearStepTranscripts,
+  requestStepCapture,
   requestStepTranscript,
   rereadStepTranscript,
+  stepCapture,
   stepRead,
   stepTranscriptVersion,
 } from "./run-step-transcript.js";
 import {
+  forgetRunTurnStamps,
   noteRunChat,
   readRunUnlessOut,
-  runState,
+  registerRunStateDemand,
+  rereadRun,
+  runStateAs,
+  runHoldsEveryPass,
   runChatID,
   runPlan,
   runStepEnds,
-  runTurnHoles,
-  runTurns,
+  runStepHoles,
+  widenRun,
+  runStepTurns,
+  runOpenTurnIDs,
+  runTurnHeldSeq,
+  runTurnSource,
   type RunState,
 } from "./run-store.js";
-import { payloadOf, projectTurn, turnOpenOf, type TurnSource } from "./turns.js";
+import { requestRunTurnRange } from "./run-turn-range.js";
+import { onViewHidden } from "./view-swap.js";
+import { payloadOf, projectTurn, turnOpenOf } from "./turns.js";
 import type { TurnState } from "./types.js";
 import type { EntryTurnClose, RunStepEnd } from "./wire/types.gen.js";
 import { refreshRunDots, trackRun } from "./run-dots.js";
@@ -70,6 +83,58 @@ let shownRun = "";
 /** Bumped by every `showRun` and TOUCHED first in the view effect, before `paint`'s early
  *  returns: the only read that re-points the effect whatever its last pass read. */
 const shownVersion = signal(0);
+
+/** Whether `#run-view` is the visible view: `showRun` sets it and the view swap clears it, so a
+ *  hidden run tab paints nothing for its run's frames or its clock. */
+const runViewShown = signal(false);
+onViewHidden("run-view", () => {
+  runViewShown.value = false;
+  publishScope();
+});
+/** Whether the shown page's dock lists every step (its panel is open), the one part of the page
+ *  that draws earlier passes. */
+const dockPanelOpen = signal(false);
+registerRunStateDemand((id) => id === shownRun && runViewShown.peek(), "glance");
+// A door naming a step may name one of an earlier pass, which only the tree holds.
+registerRunStateDemand(
+  (id) =>
+    id === shownRun &&
+    runViewShown.peek() &&
+    (dockPanelOpen.peek() || focusRequest?.workflowID === id),
+  "tree",
+);
+
+/** Tell the page's content scope which run and step this view draws. A run leaving it stops
+ *  receiving its step content, so its stamps and tails go stale and are released; a run entering
+ *  it, once the stream delivers the run's frames, catches each turn its log holds open up from the
+ *  held seq, one range read each, and is read again: a read answered or out while the scope was
+ *  asked may hold step rows older than the first frame delivered. */
+function publishScope(): void {
+  const run = runViewShown.peek() ? shownRun : "";
+  const before = setRunContentScope(run, shownStep.peek());
+  if (before === run) {
+    return;
+  }
+  if (before !== "") {
+    forgetRunTurnStamps(before);
+    leaveStepTails(before);
+  }
+  if (run !== "") {
+    void scopeReady(run).then((ready) => {
+      if (!ready) {
+        return;
+      }
+      rereadRun(run);
+      for (const turnID of runOpenTurnIDs(run)) {
+        requestRunTurnRange(run, turnID, runTurnHeldSeq(run, turnID));
+      }
+    });
+  }
+}
+
+/** The run whose page was mounted when the view was hidden, so its first pass on screen again
+ *  catches the shown step up. "" when nothing is owed. */
+let hiddenPageRun = "";
 
 /** Whether the shown run was launched by an AGENT, from the run's own state (`paint` sets it
  *  from `inspect`'s `parentSessionId`). It decides what the empty-step note says and whether the
@@ -106,8 +171,12 @@ export function showRun(workflowID: string): void {
   // One batch, so the view effect repaints once for the two bumps it may read.
   batch(() => {
     shownVersion.value = shownVersion.peek() + 1;
+    runViewShown.value = true;
     rerenderDocks();
   });
+  publishScope();
+  // The tab's dot held only the run's header while the tab was hidden.
+  widenRun(workflowID);
   mountBottomBar();
   // Before any read resolves: until this run's page publishes a step, Send and the step dock address
   // nothing rather than the run shown before.
@@ -126,13 +195,30 @@ export function showRun(workflowID: string): void {
 
 /** Refetch this run's state and its controls. A run tab's `refresh`. */
 export function refreshRun(workflowID: string): void {
-  // The wake and the reconcile run this right after the revalidation's own read of the run.
-  readRunUnlessOut(workflowID);
+  // The wake and the reconcile run this right after the revalidation's own read of the run. A run
+  // entering the scope is read once its ask answers, since a read out when the stream delivers the
+  // run is read again (`publishScope`).
+  afterScopeAnswer(workflowID, () => {
+    readRunUnlessOut(workflowID);
+  });
   // NO chat refresh: a step's entries are the RUN's, so a chat's window cannot move this pane. The
   // step transcript's refresh is the step GET, armed by `armStepRead`.
 }
 
-/** The view's single subscription to the store. */
+/** The shown transcript step's path, "" for none: `armStepRead` writes it beside `shownNode`. */
+const shownStep = signal("");
+
+/** Bumped once per run paint, so the shown step's pane re-projects against the run it drew. */
+const paintGen = signal(0);
+
+/** The dock's step rows as the last run paint drew them, whose lines the third effect keeps. */
+const dockRows = signal<readonly string[]>([], {
+  equals: (a, b) => a.length === b.length && a.every((p, i) => p === b[i]),
+});
+
+/** The view's three subscriptions, one per clock: the run's state paints the page, the shown
+ *  step's log its pane, and the dock steps' logs their rows' lines. A frame of one step re-runs
+ *  only the last two, and only for that step. */
 let viewEffectInstalled = false;
 function installViewEffect(): void {
   if (viewEffectInstalled) {
@@ -141,20 +227,80 @@ function installViewEffect(): void {
   viewEffectInstalled = true;
   effect(() => {
     touch(shownVersion);
+    if (!runViewShown.value) {
+      // Nothing else is read, so no frame of the run re-runs this pass until the tab is shown.
+      page?.pause();
+      if (page !== undefined) {
+        hiddenPageRun = pageRun;
+      }
+      return;
+    }
     const id = shownRun;
-    // Every entry of this run's log bumps its own log version, which is how a step's content
-    // arrives. Read BEFORE the early returns so the effect stays subscribed on the passes that
-    // bail; `paint` returns early on an unresolved `inspect`.
-    const turns = id === "" ? [] : runTurns(id);
-    // A resolved step GET repaints the page. ONE signal for every step: this page shows one node at
-    // a time, so a coarse bump costs one repaint. It carries the VERDICT only — the entries that
-    // answer adopted arrive on the log version above.
+    // A resolved step GET repaints the page: the shown step's empty note reads its verdict.
     touch(stepTranscriptVersion);
     if (id === "") {
       return;
     }
-    paint(id, runState(id), turns);
+    // One batch, so the pane and the dock lines run once after the page they read is drawn.
+    batch(() => {
+      paint(id, runStateAs(id, "glance"));
+    });
+    if (hiddenPageRun !== "") {
+      const owed = hiddenPageRun === id;
+      hiddenPageRun = "";
+      if (owed) {
+        untracked(() => {
+          catchUpShownStep(id);
+        });
+      }
+    }
   });
+  effect(() => {
+    touch(shownVersion);
+    if (!runViewShown.value) {
+      return;
+    }
+    touch(paintGen);
+    const path = shownStep.value;
+    const id = shownRun;
+    if (id === "" || pageRun !== id) {
+      return;
+    }
+    projectStepTranscripts(id, path, path === "" ? [] : runStepTurns(id, path));
+    // After the projection, so the repair is asked over the entries this pass rendered.
+    armShownStepHole(id, path === "" ? [] : runStepHoles(id, path));
+    armShownStepRetry(id);
+  });
+  effect(() => {
+    touch(shownVersion);
+    if (!runViewShown.value) {
+      return;
+    }
+    const rows = dockRows.value;
+    const id = shownRun;
+    if (id === "" || pageRun !== id || page === undefined) {
+      return;
+    }
+    const tails = new Map<string, string>();
+    for (const path of rows) {
+      const held = lastPrintedLine(runStepTurns(id, path).map(([, t]) => t));
+      const tail = held === "" ? stepTail(id, path) : held;
+      if (tail !== "") {
+        tails.set(path, tail);
+      }
+    }
+    page.paintTails(tails);
+  });
+}
+
+/** Bring the shown step current after its tab was hidden when its log holds no live turn: the read
+ *  `armStepRead` owes. A held live turn is caught up by `publishScope`, and the tree needs nothing,
+ *  since the run's lifecycle frames reach every page. */
+function catchUpShownStep(workflowID: string): void {
+  const node = shownNode;
+  if (node !== undefined && !runStepTurns(workflowID, node.path).some(([, t]) => turnIsLive(t))) {
+    armStepRead(node);
+  }
 }
 
 /** The one door a run's tab opens through: the Workflows tab's Run button, a History row, the run
@@ -370,8 +516,10 @@ function stepRefused(workflowID: string, message: string): void {
 /** The step transcript, LAZILY loaded — ONE stream now, because there is one source. */
 let stepStream: RunStepStream | undefined;
 let stepStreamLoading = false;
-/** The newest paint's nodes, which the stream's first apply projects once its chunk loads. */
-let streamNodes: readonly ExecNode[] = [];
+/** The step whose host the stream paints into, "" for none. */
+let projectedPath = "";
+/** The shown run's fold memory, so a paint after a frame rebuilds only the nodes it moved. */
+let foldMemo: ExecFoldMemo = {};
 
 /** The cached "Open the conversation" anchor, per (run, chat). Cached because `detail.ts` guards
  *  its slot on element IDENTITY: `render` runs on every store invalidation, and re-seating a
@@ -398,18 +546,28 @@ function mountPage(
     dock: dockHost,
     controls: () => verbs.current(),
     notes: () => verbs.refusals(),
+    // The pane's effect projects the step this names.
     onShowNode: armStepRead,
+    output: (node) => stepCapture(workflowID, node.path),
     // Never another run's page: `showRun` repaints at once, and that paint drops this page.
     onSelect: (node) => {
       pushStepTarget(workflowID, node);
     },
     follow: "newest",
+    onPanel: (open) => {
+      dockPanelOpen.value = open;
+      if (open) {
+        widenRun(workflowID);
+      }
+    },
   });
   page = built;
   pageRun = workflowID;
   stepStream?.dispose();
   stepStream = undefined;
   stepStreamLoading = false;
+  projectedPath = "";
+  foldMemo = {};
   // The on-demand reads go with the page, which is this cache's whole bound: a run tab retargeting
   // or closing is the one moment a step's answer stops being wanted, and there is no other moment
   // it becomes wrong.
@@ -418,10 +576,11 @@ function mountPage(
   // Beside them, and for their reason: a stale selection would intersect this run's holes with
   // another run's path, and a stale answer would swallow the first hole here.
   shownNode = undefined;
+  shownStep.value = "";
   holesAnswered = "";
   cancelStepRetry();
-  cancelDockCatchUps();
   catchUpsOwed.clear();
+  publishScope();
   // Beside the other per-run caches, and for their reason: a retarget must not carry another run's
   // pick into the page it is about to build.
   if (focusRequest !== undefined && focusRequest.workflowID !== workflowID) {
@@ -433,6 +592,7 @@ function mountPage(
 
 /** Release the page, its dock and its verbs. */
 function dropPage(): void {
+  dockPanelOpen.value = false;
   page?.dispose();
   page = undefined;
   pageRun = "";
@@ -440,20 +600,6 @@ function dropPage(): void {
   controls = undefined;
   stepEnds?.dispose();
   stepEnds = undefined;
-}
-
-/** A `TurnSource` over one run's log, so `turns.ts`'s pure projection reads it unchanged. Built
- *  per call from the array `runTurns` hands back rather than held, because that array IS the
- *  store's order and a cached copy would be a second answer about it. */
-function runSource(turns: readonly [string, TurnState][]): TurnSource {
-  return { turns: new Map(turns), turn_order: turns.map(([id]) => id) };
-}
-
-function turnsForStep(
-  turns: readonly [string, TurnState][],
-  nodePath: string,
-): [string, TurnState][] {
-  return turns.filter(([, t]) => turnOpenOf(t)?.node_path === nodePath);
 }
 
 /** The turns with each step's newest closed turn reading its `step_ends` row: the step's grade the
@@ -536,16 +682,31 @@ let holesAnswered = "";
  *  and moves neither the path nor the state. */
 function armStepRead(node: ExecNode | undefined): void {
   shownNode = node?.transcript === true ? node : undefined;
+  shownStep.value = shownNode?.path ?? "";
+  publishScope();
+  if (node?.deferredOutput === true && settled(node.state) && shownRun !== "") {
+    requestStepCapture(shownRun, node.path);
+  }
   if (node?.transcript !== true || shownRun === "") {
     return;
   }
-  switch (stepReadVerb(shownRun, node)) {
+  const run = shownRun;
+  void scopeReady(run).then((ready) => {
+    // A read that settles before the stream delivers the run would miss the frames between.
+    if (ready && shownRun === run && shownNode === node) {
+      readShownStep(run, node);
+    }
+  });
+}
+
+function readShownStep(workflowID: string, node: ExecNode): void {
+  switch (stepReadVerb(workflowID, node)) {
     case "request":
-      catchUpsOwed.add(join(shownRun, node.path));
-      requestStepTranscript(shownRun, node.path);
+      catchUpsOwed.add(join(workflowID, node.path));
+      requestStepTranscript(workflowID, node.path);
       return;
     case "reread":
-      rereadStepTranscript(shownRun, node.path);
+      rereadStepTranscript(workflowID, node.path);
       return;
     case undefined:
       return;
@@ -578,7 +739,8 @@ function stepReadVerb(workflowID: string, node: ExecNode): "request" | "reread" 
   if (catchUpsOwed.has(join(workflowID, node.path))) {
     return "request";
   }
-  const mine = turnsForStep(runTurns(workflowID), node.path);
+  // Untracked: the run paint asks this, and a step's frames must not re-run it.
+  const mine = untracked(() => runStepTurns(workflowID, node.path));
   if (!settled(node.state)) {
     // Live frames carry only what is appended from now on, and a missed entry is noticed at the
     // next one, which a stalled step (a model throttled for minutes) never sends: a running step
@@ -649,92 +811,12 @@ function armShownStepRetry(workflowID: string): void {
   }, delay);
 }
 
-/** The run dock's catch-up reads, per in-flight step path. The shown step's read and ladder are
- *  `armStepRead`'s and `armShownStepRetry`'s, so this owns only the siblings the dock rows summarise. */
-const dockCatchUps = new Map<
-  string,
-  { attempts: number; timer: ReturnType<typeof setTimeout> | undefined }
->();
-
-function cancelDockCatchUps(): void {
-  for (const c of dockCatchUps.values()) {
-    if (c.timer !== undefined) {
-      clearTimeout(c.timer);
-    }
-  }
-  dockCatchUps.clear();
-}
-
-/** Read, once per page, each in-flight step the dock summarises that the log holds nothing of, then
- *  re-ask on the shown step's bounded ladder until a read settles it, live output or not. Live
- *  frames carry only what is appended from now on, so without it a sibling's row stays blank until
- *  the step prints again. */
-function catchUpDockSteps(
-  workflowID: string,
-  nodes: readonly ExecNode[],
-  turns: readonly [string, TurnState][],
-): void {
-  const wanted = new Set<string>();
-  for (const node of nodes) {
-    const path = node.path;
-    const owed = catchUpsOwed.has(join(workflowID, path));
-    if (
-      node.transcript !== true ||
-      !inFlight(node.state) ||
-      path === shownNode?.path ||
-      (!owed && turnsForStep(turns, path).length > 0)
-    ) {
-      continue;
-    }
-    wanted.add(path);
-    const c = dockCatchUps.get(path);
-    if (c === undefined) {
-      dockCatchUps.set(path, { attempts: 0, timer: undefined });
-      catchUpsOwed.add(join(workflowID, path));
-      requestStepTranscript(workflowID, path);
-      continue;
-    }
-    if (stepRead(workflowID, path)?.state !== "unavailable") {
-      // Another read answered or is out, so a rung armed by the last miss would only repeat it.
-      if (c.timer !== undefined) {
-        clearTimeout(c.timer);
-        c.timer = undefined;
-      }
-      continue;
-    }
-    if (c.timer !== undefined || c.attempts >= STEP_RETRY_LIMIT) {
-      continue;
-    }
-    c.timer = setTimeout(
-      () => {
-        c.timer = undefined;
-        // Re-pointing the tab at another run repaints nothing until that run's state lands.
-        if (shownRun !== workflowID) {
-          return;
-        }
-        c.attempts++;
-        requestStepTranscript(workflowID, path);
-      },
-      STEP_RETRY_BASE_MS * 2 ** c.attempts,
-    );
-  }
-  // A step whose catch-up settled, or that settled or became the shown one, needs no rung of this
-  // ladder.
-  for (const [path, c] of dockCatchUps) {
-    if (!wanted.has(path) && c.timer !== undefined) {
-      clearTimeout(c.timer);
-      c.timer = undefined;
-    }
-  }
-}
-
 /** Whether the pane still lacks what a read would bring: a gate of `stepReadVerb`, or a holed turn. */
 function stepStillMissing(node: ExecNode): boolean {
   if (stepReadVerb(shownRun, node) !== undefined) {
     return true;
   }
-  const holes = new Set(runTurnHoles(shownRun));
-  return turnsForStep(runTurns(shownRun), node.path).some(([id]) => holes.has(id));
+  return untracked(() => runStepHoles(shownRun, node.path)).length > 0;
 }
 
 /** Re-ask for the shown step whose turn the store marked a HOLE, once per hole. The arm the
@@ -742,16 +824,12 @@ function stepStillMissing(node: ExecNode): boolean {
  *  state)` never moves and `onShowNode` never fires again — while `appendRunEntry` rejects every
  *  later entry of that turn, so the reader watches a FROZEN live step until it settles or they
  *  click away and back. */
-function armShownStepHole(workflowID: string, turns: readonly [string, TurnState][]): void {
+function armShownStepHole(workflowID: string, holes: readonly string[]): void {
   const node = shownNode;
   if (node === undefined) {
     return;
   }
-  const holes = new Set(runTurnHoles(workflowID));
-  const holed = turnsForStep(turns, node.path)
-    .map(([id]) => id)
-    .filter((id) => holes.has(id))
-    .sort();
+  const holed = [...holes].sort();
   const answered = holed.length === 0 ? "" : join(node.path, ...holed);
   if (answered === holesAnswered) {
     return;
@@ -853,11 +931,7 @@ function stepEmptyAction(node: ExecNode): HTMLElement | null {
 /** `undefined` means the first fetch has not resolved, which is the ONLY case that shows a loading
  *  row: a refetch driven by an invalidation must not blank a run the reader is looking at, several
  *  times a minute on a busy one. */
-function paint(
-  workflowID: string,
-  state: RunState | undefined,
-  turns: readonly [string, TurnState][],
-): void {
+function paint(workflowID: string, state: RunState | undefined): void {
   const container = maybeEl("run-body");
   const dockHost = maybeEl("run-exec-dock");
   if (container === null || dockHost === null) {
@@ -895,17 +969,16 @@ function paint(
     runPendingAsks(workflowID),
     focus,
     runStepEnds(workflowID),
+    foldMemo,
   );
-  for (const node of workNodes(run.nodes)) {
-    const tail = lastPrintedLine(turnsForStep(turns, node.path).map(([, t]) => t));
-    if (tail !== "") {
-      node.tail = tail;
-    }
+  if (!runHoldsEveryPass(workflowID)) {
+    run.partial = true;
   }
+  const work = workNodes(run.nodes);
   // Before the render, whose repaint publishes the selection with them.
   runFlags = { live: run.live, paused: state.status === "paused" };
   // Before the render too, whose `onShowNode` arms reads from what is still owed.
-  settleCatchUps(workflowID, workNodes(run.nodes));
+  settleCatchUps(workflowID, work);
   view.render(run);
   if (!mounted) {
     // After the first render, or a parked position lands on an empty page and clamps. The replace
@@ -917,29 +990,25 @@ function paint(
   if (focus !== "" && flatten(run.nodes).some((n) => n.path === focus)) {
     focusRequest = undefined;
   }
-  projectStepTranscripts(workflowID, run.nodes, turns);
-  // After the projection, so the repair is asked over the entries this frame rendered.
-  armShownStepHole(workflowID, turns);
-  armShownStepRetry(workflowID);
-  // After the render, whose `onShowNode` names the shown step this leaves to its own read.
-  catchUpDockSteps(workflowID, workNodes(run.nodes), turns);
+  paintGen.value = paintGen.peek() + 1;
+  dockRows.value = view.dockRowPaths();
 }
 
+/** Project the shown step's turns, and only its: a step stops costing anything once another is
+ *  shown, and showing it again rebuilds its body from the log. */
 function projectStepTranscripts(
   workflowID: string,
-  nodes: readonly ExecNode[],
+  path: string,
   turns: readonly [string, TurnState][],
 ): void {
-  streamNodes = nodes;
-  const paints = leafPaints(nodes, turns, runStepEnds(workflowID));
-  if (paints.size === 0) {
-    return;
-  }
+  const paints = leafPaints(workflowID, path, turns);
   if (stepStream !== undefined) {
     stepStream.apply(paints);
+    releaseProjectedBody(path);
     return;
   }
-  if (stepStreamLoading) {
+  releaseProjectedBody(path);
+  if (paints.size === 0 || stepStreamLoading) {
     return;
   }
   stepStreamLoading = true;
@@ -953,12 +1022,16 @@ function projectStepTranscripts(
         return;
       }
       const host = page;
-      const stream = createRunStepStream((nodePath) => host.bodyFor(nodePath));
+      const stream = createRunStepStream((nodePath) => host.bodyFor(nodePath), follower);
       stepStream = stream;
-      // RE-PROJECTED from the newest paint rather than replayed: the load is async, so the plan and
-      // the log may both have grown past what was captured, and a paint during the load projects
-      // nothing. Outside the view effect, so `runTurns`' own touch registers nothing.
-      stream.apply(leafPaints(streamNodes, runTurns(workflowID), runStepEnds(workflowID)));
+      // RE-PROJECTED rather than replayed: the load is async, so the selection and the log may both
+      // have moved past what was captured, and a paint during the load projects nothing. Outside
+      // the view effects, so `runStepTurns`' own touch registers nothing.
+      const shown = shownNode?.path ?? "";
+      stream.apply(
+        leafPaints(workflowID, shown, shown === "" ? [] : runStepTurns(workflowID, shown)),
+      );
+      projectedPath = shown;
     })
     .catch(() => {
       // The step transcript is an enhancement over a page already rendering the plan,
@@ -969,26 +1042,36 @@ function projectStepTranscripts(
     });
 }
 
+/** Hand the page back the host of a step no longer projected. Its renders went with the apply. */
+function releaseProjectedBody(path: string): void {
+  if (projectedPath !== "" && projectedPath !== path) {
+    page?.releaseBody(projectedPath);
+  }
+  projectedPath = path;
+}
+
+/** The shown step's turns (`logged`, that step's alone) as the stream paints them; empty for no
+ *  shown step. Each is projected in the whole log's context, which its rewind and run names read. */
 function leafPaints(
-  nodes: readonly ExecNode[],
+  workflowID: string,
+  path: string,
   logged: readonly [string, TurnState][],
-  ends: StepEnds,
 ): Map<string, RunStepPaint[]> {
-  const turns = gradedTurns(logged, ends);
-  const src = runSource(turns);
   const out = new Map<string, RunStepPaint[]>();
-  for (const node of workNodes(nodes)) {
-    const painted: RunStepPaint[] = [];
-    for (const [id, state] of turnsForStep(turns, node.path)) {
-      const turn = projectTurn(src, id);
-      if (turn === undefined) {
-        continue;
-      }
-      painted.push({ turn, live: turnIsLive(state) });
+  if (path === "") {
+    return out;
+  }
+  const src = runTurnSource(workflowID);
+  const painted: RunStepPaint[] = [];
+  for (const [id, state] of gradedTurns(logged, runStepEnds(workflowID))) {
+    const turn = projectTurn(src, id, state);
+    if (turn === undefined) {
+      continue;
     }
-    if (painted.length > 0) {
-      out.set(node.path, painted);
-    }
+    painted.push({ turn, live: turnIsLive(state) });
+  }
+  if (painted.length > 0) {
+    out.set(path, painted);
   }
   return out;
 }

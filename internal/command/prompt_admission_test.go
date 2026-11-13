@@ -19,7 +19,7 @@ import (
 // errBusy is the cause a fake refusal carries; the tests read only its status and reason.
 var errBusy = errors.New("busy")
 
-// clientAPITimeout reads the shared fixture pinning @cplieger/ui/fetch's
+// clientAPITimeout reads the shared fixture pinning @cplieger/reactive/fetch's
 // API_TIMEOUT_MS — the timeout every client action dispatches under. The TS
 // half (static-src/api-timeout.node.test.ts) asserts the fixture equals the
 // INSTALLED library's constant, so a library bump fails that gate and forces a

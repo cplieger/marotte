@@ -3,7 +3,7 @@
 // Position carries the interaction type: a disclosing chevron leads its header and rotates, a navigating one
 // trails and never rotates. A link that leaves the app keeps `ICON_EXTERNAL`.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
 import { ICON_CHEVRON_DOWN } from "./icons.js";
 

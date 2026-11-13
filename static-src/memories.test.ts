@@ -14,7 +14,7 @@ interface ListReply {
 let listReply: ListReply;
 let oneReply: ListReply;
 let syncReply: ListReply;
-const syncWrites: { scope: string; on: boolean }[] = [];
+const syncWrites: { on: boolean }[] = [];
 let confirmAnswer = true;
 const deleted: string[] = [];
 const refusedDeletes = new Set<string>();
@@ -41,7 +41,7 @@ vi.mock("./actions/memory.js", async (importOriginal) => ({
     }),
   },
   setMemorySync: {
-    dispatch: vi.fn(async (args: { scope: string; on: boolean }) => {
+    dispatch: vi.fn(async (args: { on: boolean }) => {
       syncWrites.push(args);
       return {};
     }),
@@ -134,7 +134,7 @@ beforeEach(() => {
   oneReply = ok({ memory: { ...record("b", "repo:org/one", "Newer"), content: "full text" } });
   syncReply = ok({
     status: { state: "off" },
-    choice: { enabled: false, account: false, device: false },
+    choice: { enabled: false, account: false },
   });
   syncWrites.length = 0;
 });
@@ -356,45 +356,42 @@ describe("the Cloud sync section", () => {
   function status(): string {
     return panel.querySelector(".memories-cloud-status")?.textContent ?? "";
   }
-  function cloudBox(scope: string): HTMLInputElement {
-    const b = panel.querySelector<HTMLInputElement>(
-      `.memories-cloud-switch[data-scope="${scope}"]`,
-    );
-    if (b === null) {
-      throw new Error(`no ${scope} switch`);
+  function cloudBoxes(): HTMLInputElement[] {
+    return [...panel.querySelectorAll<HTMLInputElement>(".memories-cloud-switch")];
+  }
+  function cloudBox(): HTMLInputElement {
+    const [b, ...rest] = cloudBoxes();
+    if (b === undefined || rest.length > 0) {
+      throw new Error(`want one sync switch, found ${String(cloudBoxes().length)}`);
     }
     return b;
   }
 
-  it("states the sync and holds the device switch until the account syncs", async () => {
+  it("states the sync and offers the account's switch alone", async () => {
     await mount();
     expect(status()).toBe("Cloud sync: off");
-    expect(cloudBox("account").checked).toBe(false);
-    expect(cloudBox("account").disabled).toBe(false);
-    expect(cloudBox("device").disabled).toBe(true);
-    expect(panel.querySelector(".memories-cloud-hint")?.textContent).toBe(
-      "Turn on account sync to sync this device",
-    );
+    expect(cloudBoxes()).toHaveLength(1);
+    expect(cloudBox().checked).toBe(false);
+    expect(cloudBox().disabled).toBe(false);
+    expect(panel.querySelector(".memories-cloud-hint")).toBeNull();
   });
 
-  it("counts what is waiting to upload, and offers the device switch once the account syncs", async () => {
+  it("counts what is waiting to upload, and shows the account's choice", async () => {
     syncReply = ok({
       status: { state: "synced", last_sync_at: "2026-11-06T10:00:00.000Z", pending: 3 },
-      choice: { enabled: true, account: true, device: false },
+      choice: { enabled: true, account: true },
     });
     await mount();
     expect(status()).toBe("Cloud sync: synced, 3 not uploaded yet");
-    expect(cloudBox("account").checked).toBe(true);
-    expect(cloudBox("device").disabled).toBe(false);
+    expect(cloudBox().checked).toBe(true);
   });
 
-  it("names the layer that locks the choice and offers neither switch", async () => {
+  it("names the layer that locks the choice and holds the switch", async () => {
     syncReply = ok({
       status: { state: "off" },
       choice: {
         enabled: false,
         account: false,
-        device: false,
         lock: { layer: "organization", name: "Your organization" },
       },
     });
@@ -402,24 +399,23 @@ describe("the Cloud sync section", () => {
     expect(panel.querySelector(".memories-cloud-hint")?.textContent).toBe(
       "Locked by Your organization",
     );
-    expect(cloudBox("account").disabled).toBe(true);
-    expect(cloudBox("device").disabled).toBe(true);
+    expect(cloudBox().disabled).toBe(true);
   });
 
   it("writes the account's choice when its switch moves", async () => {
     await mount();
-    const box = cloudBox("account");
+    const box = cloudBox();
     box.checked = true;
     box.dispatchEvent(new Event("change"));
     await settle();
-    expect(syncWrites).toEqual([{ scope: "account", on: true }]);
+    expect(syncWrites).toEqual([{ on: true }]);
   });
 
   it("refetches when KAS reports the sync moved", async () => {
     await mount();
     syncReply = ok({
       status: { state: "unavailable", reason: "notSignedIn" },
-      choice: { enabled: false, account: false, device: false },
+      choice: { enabled: false, account: false },
     });
     dispatch({ type: "memory_sync_changed", chat_id: "" });
     await settle();

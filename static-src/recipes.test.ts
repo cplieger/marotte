@@ -70,7 +70,7 @@ vi.mock("./confirm.js", () => ({ confirm: vi.fn(async () => true) }));
 
 const standing = vi.hoisted(() => ({ files: new Map<string, ConfigStanding>() }));
 vi.mock("./config-standing.js", async (importOriginal) => {
-  const { signal } = await import("@cplieger/ui");
+  const { signal } = await import("@cplieger/reactive");
   const view = signal({ files: standing.files, servers: new Map(), loadErrors: new Map() });
   return {
     ...(await importOriginal<typeof ConfigStandingModule>()),
@@ -274,7 +274,9 @@ describe("the Run ⇄ Cancel row", () => {
   });
 
   it("launches with the model and effort picked on the form", async () => {
-    catalog.models = [{ model_id: "opus", model_name: "Opus", effort_tiers: ["low", "high"] }];
+    catalog.models = [
+      { model_id: "model-a", model_name: "Model A", effort_tiers: ["low", "high"] },
+    ];
     recipesReply = { recipes: [recipe("picked")] };
     const panel = await render();
     buttonFor(panel, "bundled://picked")?.click();
@@ -282,7 +284,7 @@ describe("the Run ⇄ Cancel row", () => {
     if (model === undefined || effort === undefined) {
       throw new Error("the Run form has no Model or no Effort select");
     }
-    model.value = "opus";
+    model.value = "model-a";
     model.dispatchEvent(new Event("change"));
     effort.value = "high";
     effort.dispatchEvent(new Event("change"));
@@ -291,7 +293,7 @@ describe("the Run ⇄ Cancel row", () => {
     expect(vi.mocked(launchRun.dispatch).mock.calls[0]?.[0]).toEqual({
       source: "bundled://picked",
       inputs: {},
-      model: "opus",
+      model: "model-a",
       effort: "high",
     });
   });
@@ -303,10 +305,10 @@ describe("the Run ⇄ Cancel row", () => {
     buttonFor(panel, "bundled://late")?.click();
     const model = panel.querySelector<HTMLSelectElement>(".run-pick-select");
     expect([...(model?.options ?? [])].map((o) => o.value)).toEqual([""]);
-    catalog.models = [{ model_id: "opus", model_name: "Opus" }];
+    catalog.models = [{ model_id: "model-a", model_name: "Model A" }];
     emitBus(BUS_CATALOG_MODELS);
     catalog.models = [];
-    expect([...(model?.options ?? [])].map((o) => o.value)).toEqual(["", "opus"]);
+    expect([...(model?.options ?? [])].map((o) => o.value)).toEqual(["", "model-a"]);
   });
 
   it("cancels the LIVE run on click, whoever launched it", async () => {
@@ -929,10 +931,10 @@ describe("the Run when… popup", () => {
     await openPopup();
     popupButton("On a schedule").click();
     expect([...scheduleModel().options].map((o) => o.value)).toEqual([""]);
-    catalog.models = [{ model_id: "opus", model_name: "Opus" }];
+    catalog.models = [{ model_id: "model-a", model_name: "Model A" }];
     emitBus(BUS_CATALOG_MODELS);
     catalog.models = [];
-    expect([...scheduleModel().options].map((o) => o.value)).toEqual(["", "opus"]);
+    expect([...scheduleModel().options].map((o) => o.value)).toEqual(["", "model-a"]);
   });
 
   it("stays open with the reader's edits when the save is refused", async () => {
@@ -1012,7 +1014,7 @@ describe("the Run when… popup", () => {
   });
 
   it("pauses a rule from its switch, keeping the rest of it", async () => {
-    rulesReply = { rules: [clockRule("c1", { inputs: { tag: "v1" }, model: "opus" })] };
+    rulesReply = { rules: [clockRule("c1", { inputs: { tag: "v1" }, model: "model-a" })] };
     await openPopup({ tag: "string" });
     const box = document.querySelector<HTMLInputElement>(".rw-rule input[type=checkbox]");
     box!.checked = false;
@@ -1026,7 +1028,7 @@ describe("the Run when… popup", () => {
       enabled: false,
       when: { clock: daily },
       inputs: { tag: "v1" },
-      model: "opus",
+      model: "model-a",
     });
   });
 

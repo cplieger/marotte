@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"time"
 
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -26,10 +25,10 @@ type OwedRelease struct {
 	ClosedAt int64           `json:"closed_at"`
 }
 
-// owedFor is the releases closing closed owes against what stays open: one per closed subject no remaining tab shows.
-func owedFor(closed, remaining []marotte.TabSubject) []OwedRelease {
+// owedFor is the releases closing closed owes against what stays open, at now (Unix ms): one per closed subject no
+// remaining tab shows.
+func owedFor(closed, remaining []marotte.TabSubject, now int64) []OwedRelease {
 	var out []OwedRelease
-	now := time.Now().UnixMilli()
 	for _, t := range closed {
 		if !ids.ValidChatID(t.Ref) || indexOfSubject(remaining, t.Kind, t.Ref) >= 0 {
 			continue

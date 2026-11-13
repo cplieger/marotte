@@ -338,8 +338,7 @@ func TestHandleSessionInfoUpdate_ActivityReachesTheTurnLifecycle(t *testing.T) {
 	}
 }
 
-// The compactor judges a compaction by the lowest reading after it, so it hears every reading, a sub-point move the
-// stored usage drops included, from both usage channels.
+// The compactor hears every live reading, a sub-point move the stored usage drops included, from both usage channels.
 func TestPersistUsage_EveryReadingReachesTheObserver(t *testing.T) {
 	deps, _, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -352,6 +351,85 @@ func TestPersistUsage_EveryReadingReachesTheObserver(t *testing.T) {
 
 	if want := []float64{50, 50.4, 40}; !slices.Equal(deps.usageReadings, want) {
 		t.Errorf("observed readings = %v, want %v", deps.usageReadings, want)
+	}
+}
+
+// publishedUsageInfo is KAS publishing its stored figure (publishContextUsage: a prompt's end, a refresh, a load),
+// which carries the summarization threshold nested and flat; a model response's own reading carries none.
+func publishedUsageInfo(t *testing.T, pct float64) json.RawMessage {
+	t.Helper()
+	return mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": map[string]any{
+		"kind": "context_usage", "usagePercentage": pct, "summarizationThreshold": 80,
+		"contextUsage": map[string]any{"usagePercentage": pct, "summarizationThreshold": 80},
+	}}})
+}
+
+// KAS's published figure is its stored one, which a compaction leaves at the context before it: it never reaches
+// the compactor, and it is shown only while no compaction waits on a live reading. A replayed reading is history.
+func TestContextUsage_APublishedFigureFeedsNoCompactor(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", publishedUsageInfo(t, 12), FrameAttribution{})
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": map[string]any{
+		"kind": "context_usage", "replay": true, "contextUsage": map[string]any{"usagePercentage": 30.0},
+	}}}), FrameAttribution{})
+
+	if len(deps.usageReadings) != 0 {
+		t.Errorf("observed readings = %v, want none for a published or replayed figure", deps.usageReadings)
+	}
+	if c, _ := store.Get(t.Context(), "c1"); c.Usage.ContextPct != 30 || !c.Usage.HasRealData {
+		t.Errorf("usage = %+v, want the newest figure shown (30) with no compaction waiting", c.Usage)
+	}
+}
+
+// KAS sends a response's reading twice, the plain frame then a twin with its breakdown, and the twin can land after
+// the next response's frames: only the plain frame reaches the compactor, while the twin's figure is still shown.
+func TestContextUsage_ABreakdownTwinFeedsNoCompactor(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", contextUsageInfo(t, "contextUsage", 20), FrameAttribution{})
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": map[string]any{
+		"kind": "context_usage", "usagePercentage": 40.0, "contextUsage": map[string]any{"usagePercentage": 40.0},
+		"breakdown": map[string]any{"tools": map[string]any{"tokens": 7131, "percent": 0.7}},
+	}}}), FrameAttribution{})
+
+	if want := []float64{20}; !slices.Equal(deps.usageReadings, want) {
+		t.Errorf("observed readings = %v, want only the plain frame's %v", deps.usageReadings, want)
+	}
+	if c, _ := store.Get(t.Context(), "c1"); c.Usage.ContextPct != 40 {
+		t.Errorf("usage = %+v, want the twin's figure (40) shown", c.Usage)
+	}
+}
+
+// After a summary lands, KAS republishes its pre-summary figure until its next live reading: that figure is not
+// shown, a live reading is and ends the wait, and a figure published after it is shown again.
+func TestContextUsage_ACompactionWaitsForALiveReading(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Usage = marotte.Usage{ContextPct: 96, HasRealData: true}
+		return true
+	}); err != nil {
+		t.Fatalf("seed usage: %v", err)
+	}
+	tr := New(rolesOf(deps))
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), FrameAttribution{})
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", publishedUsageInfo(t, 96), FrameAttribution{})
+	if c, _ := store.Get(t.Context(), "c1"); c.Usage.ContextPct != 0 || c.Usage.HasRealData || !c.Usage.ContextCompacted {
+		t.Errorf("usage after the republished figure = %+v, want the cleared figure kept, still waiting", c.Usage)
+	}
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", contextUsageInfo(t, "contextUsage", 31), FrameAttribution{})
+	if c, _ := store.Get(t.Context(), "c1"); c.Usage.ContextPct != 31 || !c.Usage.HasRealData || c.Usage.ContextCompacted {
+		t.Errorf("usage after a live reading = %+v, want 31 shown and the wait over", c.Usage)
+	}
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", publishedUsageInfo(t, 33), FrameAttribution{})
+	if c, _ := store.Get(t.Context(), "c1"); c.Usage.ContextPct != 33 {
+		t.Errorf("usage after a later published figure = %+v, want 33 shown", c.Usage)
+	}
+	if want := []float64{31}; !slices.Equal(deps.usageReadings, want) {
+		t.Errorf("observed readings = %v, want only the live %v", deps.usageReadings, want)
 	}
 }
 
@@ -740,22 +818,22 @@ func TestHandleConfigOptionUpdate_RefreshesTheEntitlementSet(t *testing.T) {
 func TestHandleConfigOptionUpdate_AColdCatalogPinChangesNothing(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
-	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelAndEffortUpdate(t, "opus", "high"), FrameAttribution{})
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelAndEffortUpdate(t, "model-a", "high"), FrameAttribution{})
 	before, _ := store.Get(t.Context(), "c1")
 
 	tr.HandleConfigOptionUpdate(t.Context(), "c1", mustJSON(t, map[string]any{
 		"configOptions": []map[string]any{
-			{"id": "model", "type": "select", "currentValue": "opus", "options": []map[string]any{{"value": "opus", "name": "Opus"}}},
+			{"id": "model", "type": "select", "currentValue": "model-a", "options": []map[string]any{{"value": "model-a", "name": "Model A"}}},
 			{"id": "effortLevel", "type": "select", "currentValue": "high", "options": []map[string]any{{"value": "high", "name": "High"}}},
 		},
 	}), FrameAttribution{})
 
 	c, _ := store.Get(t.Context(), "c1")
-	if !slices.Equal(c.ServedModelIDs, []string{"opus", "fable"}) {
-		t.Errorf("ServedModelIDs = %v, want [opus fable] kept", c.ServedModelIDs)
+	if !slices.Equal(c.ServedModelIDs, []string{"model-a", "model-d"}) {
+		t.Errorf("ServedModelIDs = %v, want [model-a model-d] kept", c.ServedModelIDs)
 	}
-	if !slices.Equal(modelIDs(deps.catalogModels), []string{"opus", "fable"}) {
-		t.Errorf("catalog = %v, want [opus fable] kept", modelIDs(deps.catalogModels))
+	if !slices.Equal(modelIDs(deps.catalogModels), []string{"model-a", "model-d"}) {
+		t.Errorf("catalog = %v, want [model-a model-d] kept", modelIDs(deps.catalogModels))
 	}
 	if !sameEffortLevels(c.EffortLevels, before.EffortLevels) || len(c.EffortLevels) != 2 {
 		t.Errorf("EffortLevels = %v, want the two tiers kept", c.EffortLevels)
@@ -788,7 +866,7 @@ func configModelAndEffortUpdate(t *testing.T, model, effort string) []byte {
 				"id":           "model",
 				"type":         "select",
 				"currentValue": model,
-				"options":      []map[string]any{{"value": "opus", "name": "Opus"}, {"value": "fable", "name": "Fable"}},
+				"options":      []map[string]any{{"value": "model-a", "name": "Model A"}, {"value": "model-d", "name": "Model D"}},
 			},
 			{
 				"id":           "effortLevel",
@@ -806,7 +884,7 @@ func TestHandleConfigOptionUpdate_AStepsFrameRefreshesTheCatalogAndWritesNoSessi
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 	_, _ = store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Model = "opus"
+		c.Model = "model-a"
 		c.EffortActive = "max"
 		c.EffortLevels = []marotte.SessionEffortLevel{{ID: "max", Name: "Max"}}
 		return true
@@ -815,11 +893,11 @@ func TestHandleConfigOptionUpdate_AStepsFrameRefreshesTheCatalogAndWritesNoSessi
 	for _, attr := range []FrameAttribution{
 		{Step: true, SessionID: "sess-step", RunID: "wf_1", NodePath: "wf_1/step"},
 	} {
-		tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelAndEffortUpdate(t, "fable", "high"), attr)
+		tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelAndEffortUpdate(t, "model-d", "high"), attr)
 
 		c, _ := store.Get(t.Context(), "c1")
-		if c.Model != "opus" {
-			t.Errorf("attr %+v: Model = %q, want opus (a foreign session's current model stays off the chat)", attr, c.Model)
+		if c.Model != "model-a" {
+			t.Errorf("attr %+v: Model = %q, want model-a (a foreign session's current model stays off the chat)", attr, c.Model)
 		}
 		if c.EffortActive != "max" {
 			t.Errorf("attr %+v: EffortActive = %q, want max", attr, c.EffortActive)
@@ -827,19 +905,19 @@ func TestHandleConfigOptionUpdate_AStepsFrameRefreshesTheCatalogAndWritesNoSessi
 		if len(c.EffortLevels) != 1 || c.EffortLevels[0].ID != "max" {
 			t.Errorf("attr %+v: EffortLevels = %v, want the chat's own [max]", attr, c.EffortLevels)
 		}
-		if !slices.Equal(c.ServedModelIDs, []string{"opus", "fable"}) {
-			t.Errorf("attr %+v: ServedModelIDs = %v, want [opus fable] (the catalog half applies)", attr, c.ServedModelIDs)
+		if !slices.Equal(c.ServedModelIDs, []string{"model-a", "model-d"}) {
+			t.Errorf("attr %+v: ServedModelIDs = %v, want [model-a model-d] (the catalog half applies)", attr, c.ServedModelIDs)
 		}
 	}
 	if len(deps.catalogModels) != 2 {
 		t.Errorf("catalog models = %+v, want the two the step reported", deps.catalogModels)
 	}
 
-	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelAndEffortUpdate(t, "fable", "high"), FrameAttribution{})
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelAndEffortUpdate(t, "model-d", "high"), FrameAttribution{})
 
 	c, _ := store.Get(t.Context(), "c1")
-	if c.Model != "fable" {
-		t.Errorf("own frame: Model = %q, want fable", c.Model)
+	if c.Model != "model-d" {
+		t.Errorf("own frame: Model = %q, want model-d", c.Model)
 	}
 	if c.EffortActive != "high" {
 		t.Errorf("own frame: EffortActive = %q, want high", c.EffortActive)
@@ -877,22 +955,22 @@ func TestHandleConfigOptionUpdate_AnUnsolicitedRepinIsRecorded(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 	_, _ = store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Model = "opus"
+		c.Model = "model-a"
 		c.Effort = "max"
 		return true
 	})
 
-	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelOffering(t, "fable", "fable", marotte.ModelAuto), FrameAttribution{})
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelOffering(t, "model-d", "model-d", marotte.ModelAuto), FrameAttribution{})
 
 	c, _ := store.Get(t.Context(), "c1")
-	if c.Model != "fable" {
-		t.Errorf("Model = %q, want fable", c.Model)
+	if c.Model != "model-d" {
+		t.Errorf("Model = %q, want model-d", c.Model)
 	}
 	if c.Effort != "" {
-		t.Errorf("Effort = %q, want empty (the tier was chosen for opus)", c.Effort)
+		t.Errorf("Effort = %q, want empty (the tier was chosen for model-a)", c.Effort)
 	}
 	got := modelSwitchesOf(t, deps.between["c1"])
-	want := []marotte.EntryModelSwitched{{From: "opus", To: "fable", Reason: marotte.ModelSwitchReasonUnavailable}}
+	want := []marotte.EntryModelSwitched{{From: "model-a", To: "model-d", Reason: marotte.ModelSwitchReasonUnavailable}}
 	if !slices.Equal(got, want) {
 		t.Errorf("model_switched entries = %+v, want %+v", got, want)
 	}
@@ -905,10 +983,10 @@ func TestHandleConfigOptionUpdate_AdoptsTheRunningLevelWhenTheRecordHoldsNone(t 
 		model, effort, session string
 		want                   string
 	}{
-		"a session with no level adopts the reported one": {model: "fable", session: "sess-1", want: "medium"},
-		"a repin replaces the old model's tier":           {model: "opus", effort: "max", session: "sess-1", want: "medium"},
-		"a level the record holds stands":                 {model: "fable", effort: "max", session: "sess-1", want: "max"},
-		"a session still opening adopts nothing":          {model: "fable", want: ""},
+		"a session with no level adopts the reported one": {model: "model-d", session: "sess-1", want: "medium"},
+		"a repin replaces the old model's tier":           {model: "model-a", effort: "max", session: "sess-1", want: "medium"},
+		"a level the record holds stands":                 {model: "model-d", effort: "max", session: "sess-1", want: "max"},
+		"a session still opening adopts nothing":          {model: "model-d", want: ""},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -920,7 +998,7 @@ func TestHandleConfigOptionUpdate_AdoptsTheRunningLevelWhenTheRecordHoldsNone(t 
 				return true
 			})
 			raw := mustJSON(t, map[string]any{"configOptions": []map[string]any{
-				{"id": "model", "type": "select", "currentValue": "fable", "options": []map[string]any{{"value": "fable", "name": "fable"}, {"value": "opus", "name": "opus"}}},
+				{"id": "model", "type": "select", "currentValue": "model-d", "options": []map[string]any{{"value": "model-d", "name": "model-d"}, {"value": "model-a", "name": "model-a"}}},
 				{"id": "effortLevel", "type": "select", "currentValue": "medium", "options": []map[string]any{{"value": "medium", "name": "Medium"}}},
 			}})
 
@@ -937,27 +1015,27 @@ func TestHandleConfigOptionUpdate_AMoveWhileTheOldModelIsOfferedIsStillARepin(t 
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 	_, _ = store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Model = "opus"
+		c.Model = "model-a"
 		c.Effort = "max"
 		return true
 	})
 
-	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelOffering(t, "fable", "opus", "fable"), FrameAttribution{})
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelOffering(t, "model-d", "model-a", "model-d"), FrameAttribution{})
 
 	got := modelSwitchesOf(t, deps.between["c1"])
-	want := []marotte.EntryModelSwitched{{From: "opus", To: "fable", Reason: marotte.ModelSwitchReasonUnavailable}}
+	want := []marotte.EntryModelSwitched{{From: "model-a", To: "model-d", Reason: marotte.ModelSwitchReasonUnavailable}}
 	if !slices.Equal(got, want) {
 		t.Errorf("model_switched entries = %+v, want %+v", got, want)
 	}
 	if c, _ := store.Get(t.Context(), "c1"); c.Effort != "" {
-		t.Errorf("Effort = %q, want empty (the tier was chosen for opus)", c.Effort)
+		t.Errorf("Effort = %q, want empty (the tier was chosen for model-a)", c.Effort)
 	}
 }
 
 type writeFailingStore struct{ nopChatRecords }
 
 func (writeFailingStore) Mutate(_ context.Context, _ marotte.ChatID, fn func(*marotte.Chat, bool) bool) (string, error) {
-	fn(&marotte.Chat{Model: "opus"}, true)
+	fn(&marotte.Chat{Model: "model-a"}, true)
 	return "", errBoom
 }
 
@@ -966,7 +1044,7 @@ func TestHandleConfigOptionUpdate_AFailedWriteRecordsNoRepin(t *testing.T) {
 	deps.store = writeFailingStore{}
 	tr := New(rolesOf(deps))
 
-	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelOffering(t, "fable", "fable", marotte.ModelAuto), FrameAttribution{})
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelOffering(t, "model-d", "model-d", marotte.ModelAuto), FrameAttribution{})
 
 	if got := modelSwitchesOf(t, deps.between["c1"]); len(got) != 0 {
 		t.Errorf("model_switched entries = %+v, want none", got)
@@ -983,10 +1061,10 @@ func TestHandleConfigOptionUpdate_RecordsNoRepinWhenTheMoveIsNotKASs(t *testing.
 	}{
 		{name: "from_empty", model: ""},
 		{name: "from_auto", model: marotte.ModelAuto},
-		{name: "same_model", model: "fable"},
-		{name: "pending_pick", model: "opus", pending: "fable"},
-		{name: "step_frame", model: "opus", attr: FrameAttribution{Step: true, SessionID: "sess-step", RunID: "wf_1", NodePath: "wf_1/step"}},
-		{name: "no_model_option", model: "opus", effortOnly: true},
+		{name: "same_model", model: "model-d"},
+		{name: "pending_pick", model: "model-a", pending: "model-d"},
+		{name: "step_frame", model: "model-a", attr: FrameAttribution{Step: true, SessionID: "sess-step", RunID: "wf_1", NodePath: "wf_1/step"}},
+		{name: "no_model_option", model: "model-a", effortOnly: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -999,7 +1077,7 @@ func TestHandleConfigOptionUpdate_RecordsNoRepinWhenTheMoveIsNotKASs(t *testing.
 				return true
 			})
 
-			frame := configModelAndEffortUpdate(t, "fable", "high")
+			frame := configModelAndEffortUpdate(t, "model-d", "high")
 			if tc.effortOnly {
 				frame = configEffortUpdate(t, "high", []map[string]any{{"value": "high", "name": "High"}})
 			}
@@ -1079,13 +1157,13 @@ func TestHandleConfigOptionUpdate_ReportedEffortIsTheNamedModels(t *testing.T) {
 		wantActive string
 		wantLevels int
 	}{
-		{name: "a move onto auto", model: "opus", frame: func(t *testing.T) []byte {
-			return configModelOffering(t, marotte.ModelAuto, marotte.ModelAuto, "opus")
+		{name: "a move onto auto", model: "model-a", frame: func(t *testing.T) []byte {
+			return configModelOffering(t, marotte.ModelAuto, marotte.ModelAuto, "model-a")
 		}},
-		{name: "the current model, now tierless", model: "opus", frame: func(t *testing.T) []byte {
-			return configModelOffering(t, "opus", "opus", marotte.ModelAuto)
+		{name: "the current model, now tierless", model: "model-a", frame: func(t *testing.T) []byte {
+			return configModelOffering(t, "model-a", "model-a", marotte.ModelAuto)
 		}},
-		{name: "a frame naming no model", model: "opus", wantActive: "high", wantLevels: 2, frame: func(t *testing.T) []byte {
+		{name: "a frame naming no model", model: "model-a", wantActive: "high", wantLevels: 2, frame: func(t *testing.T) []byte {
 			return mustJSON(t, map[string]any{"configOptions": []map[string]any{
 				{"id": "thinking", "type": "select", "currentValue": "on"},
 			}})

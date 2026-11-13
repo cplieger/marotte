@@ -40,6 +40,11 @@ export class SharedScroll {
     box.scrollTop = this.offsets.get(key) ?? 0;
   }
 
+  /** The offset recorded for `key`, or undefined when none is. */
+  saved(key: string): number | undefined {
+    return this.offsets.get(key);
+  }
+
   forget(key: string): void {
     this.offsets.delete(key);
   }

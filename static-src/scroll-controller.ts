@@ -1,14 +1,14 @@
 // The one owner of a transcript scroller's position. No import-time state: a second follower imports this module,
 // never scroll.ts, which binds the chat's controller at load.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import {
   ENTRY_STAMP,
   layoutDrift,
-  lineDrift,
   readingAnchor,
   readingLineOffset,
   resolveAnchor,
+  screenDrift,
   viewOffset,
   type AnchorScope,
   type ReadingAnchor,
@@ -102,6 +102,8 @@ export class ScrollController {
   private viewEl: HTMLElement;
   /** Whether `viewEl` came from `attach`: only an attached view holds the clamp floor. */
   private attached = false;
+  /** What `attach` recorded and `applyPendingRestore` has not landed yet (null = none). */
+  private pendingRestore: ViewAttachHandle | null = null;
 
   private state: ReadingState = "following";
   private readonly gesture: GestureTracker;
@@ -140,6 +142,8 @@ export class ScrollController {
   private loadingMore = false;
   private onLoadMore: (() => void) | null = null;
   private pendingLoad: (() => void) | null = null;
+  /** A view's own door to its older content (`setPageIn`), which outranks `onLoadMore`. */
+  private pageIn: (() => boolean) | null = null;
 
   /** Mutations postponed while Reading, applied in arrival order on the return to Following. */
   private deferred: (() => void)[] = [];
@@ -184,6 +188,9 @@ export class ScrollController {
   private topSentinel: HTMLElement | null = null;
   private topObserver: IntersectionObserver | null = null;
   private topNear = false;
+  /** Whether the reader moved since the view attached: until they do, the history edge asks for nothing, so opening a
+   *  chat costs one page. `fillViewport` and the explicit pagers do not wait for it. */
+  private edgeArmed = false;
 
   private readonly resumeBtn: () => HTMLElement;
   private readonly publishesGutter: boolean;
@@ -606,7 +613,10 @@ export class ScrollController {
       view.style.minBlockSize = `${String(size)}px`;
       this.floorPx = size;
     }
-    view.setAttribute("data-scroll-floor", "");
+    // A same-value attribute write still queues a mutation, which dirties the next read.
+    if (!view.hasAttribute("data-scroll-floor")) {
+      view.setAttribute("data-scroll-floor", "");
+    }
   }
 
   private clearFloor(): void {
@@ -786,11 +796,11 @@ export class ScrollController {
       return false;
     }
     // Layout drift first, as a hold booked into `takenTop`: unbooked, the resize delivery after this frame's callbacks
-    // would read the same change as drift again and move the text twice. What the line still shows is the platform's.
+    // would read the same change as drift again and move the text twice. What drift is left is the platform's.
     const before = viewOffset(this.scope);
     this.holdAnchor();
     const a = this.anchor;
-    const drift = a === null ? null : lineDrift(this.scope, a);
+    const drift = a === null ? null : screenDrift(this.scope, a);
     const held = viewOffset(this.scope) !== before;
     if (drift === null) {
       return held;
@@ -920,6 +930,19 @@ export class ScrollController {
     }
   }
 
+  /** End a flight unlanded without touching the view. */
+  private leaveFlight(): void {
+    const f = this.flight;
+    if (f === null) {
+      return;
+    }
+    this.flight = null;
+    clearTimeout(f.timer);
+    for (const done of f.done) {
+      done(false);
+    }
+  }
+
   jumpInFlight(): boolean {
     return this.flight !== null;
   }
@@ -946,6 +969,7 @@ export class ScrollController {
    *  jump has landed, false when the reader's input or another jump took the scroller first. */
   jumpToOffset(px: number, behavior: "instant" | "smooth"): Promise<boolean> {
     this.dropMotion();
+    this.edgeArmed = true;
     const max = this.max();
     const landing = Math.max(0, Math.min(Math.round(px), max));
     this.setState(landing >= max - edgeSlack() ? "following" : "reading");
@@ -953,6 +977,7 @@ export class ScrollController {
     if (b === "instant" || Math.abs(landing - this.scrollEl.scrollTop) <= edgeSlack()) {
       this.writeTop(landing);
       this.retake();
+      this.pokeTop();
       return Promise.resolve(true);
     }
     const landed = this.openFlight();
@@ -964,6 +989,8 @@ export class ScrollController {
    *  reader Following rather than parking them on a guess. */
   jumpTo(target: HTMLElement, opts: ScrollIntoViewOptions = {}): void {
     this.dropMotion();
+    // A jump is the reader moving; a flight's held-back page is asked when it ends (`endFlight`).
+    this.edgeArmed = true;
     const behavior = this.behaviorFor(opts.behavior ?? "smooth");
     const before = this.scrollEl.scrollTop;
     target.scrollIntoView({ block: "start", ...opts, behavior });
@@ -987,6 +1014,7 @@ export class ScrollController {
       this.noteOwnWrite();
     }
     this.retake();
+    this.pokeTop();
   }
 
   /** Where `target`'s landing stands now; a target rebuilt meanwhile (find re-marking its hits) is found through the
@@ -1054,8 +1082,13 @@ export class ScrollController {
       fn();
       return;
     }
-    this.attributePending();
-    if (this.holding() && this.anchor === null) {
+    // A pending restore takes the anchor at its own write; a hold before it reads the view at a position the reader
+    // is not at, forcing a layout per read.
+    const restoring = this.pendingRestore !== null;
+    if (!restoring) {
+      this.attributePending();
+    }
+    if (!restoring && this.holding() && this.anchor === null) {
       this.retake();
     }
     this.mutating = true;
@@ -1063,6 +1096,9 @@ export class ScrollController {
       fn();
     } finally {
       this.mutating = false;
+    }
+    if (restoring) {
+      return;
     }
     if (this.holding()) {
       this.holdAnchor();
@@ -1109,18 +1145,40 @@ export class ScrollController {
 
   // ---- attach and detach ----
 
-  /** Hand the scroller to a transcript view and restore its saved state; a fresh view attaches with
-   *  `{scrollTop: 0, readingState: "following"}`. */
+  /** Hand the scroller to a transcript view and take its saved reading state, reading no layout. Its scroll position
+   *  lands in `applyPendingRestore`, which the caller runs after its last DOM write of the task. A fresh view attaches
+   *  with `{scrollTop: 0, readingState: "following"}`. */
   attach(handle: ViewAttachHandle): void {
     this.dropMotion();
     this.clearFloor();
     this.observeView(handle.el);
     this.attached = true;
+    this.edgeArmed = false;
     this.setState(handle.readingState);
-    this.writeTop(handle.scrollTop);
+    this.pendingRestore = handle;
+  }
+
+  /** Land the attached view on its saved position, or a Following view on its follow position. The saved position is
+   *  one scroll write and a Following view's pin a second, both after every DOM write of the task; the reads between
+   *  them find the layout the first write laid out. The attach listeners run last, at the restored position. A no-op
+   *  with none pending. */
+  applyPendingRestore(): void {
+    const handle = this.pendingRestore;
+    if (handle === null) {
+      return;
+    }
+    this.pendingRestore = null;
+    // The write before any read: `writeTop` measures the end first, which would force the task's layout ahead of it.
+    this.scrollEl.scrollTo({ top: Math.max(0, Math.round(handle.scrollTop)), behavior: "instant" });
+    this.noteOwnWrite();
+    // A Following view pins here, before the near marks: a pin left to the first content delivery would move farther
+    // than the size change it answers (`correct`'s resize-loop invariant).
+    if (this.state === "following") {
+      this.correct();
+    }
     const saved = handle.anchor;
     if (
-      handle.readingState === "reading" &&
+      this.state === "reading" &&
       saved !== undefined &&
       resolveAnchor(handle.el, saved) !== null
     ) {
@@ -1128,39 +1186,69 @@ export class ScrollController {
     } else {
       this.retake();
     }
+    // Every read before the floor's and the near marks' writes, which would dirty the layout the reads take.
+    this.lastT = this.clampedTop();
+    const near = this.nearJumpBoxes();
+    this.nearQueued = false;
     this.openSettle();
     this.holdFloor();
-    this.lastT = this.clampedTop();
+    this.markNear(near);
     for (const cb of [...this.attachListeners]) {
       cb();
     }
   }
 
-  /** Take the scroller from the current view: snapshot its state, abandon the older-page pass, drop the deferred
-   *  folds, and disconnect the observers so the parked view produces no callback. */
-  detach(): ViewScrollState {
-    // Read before the abandoned pass takes its skeleton out from above the reader.
+  /** The state `detach` parks the current view with, from layout reads alone, so a caller can take it at a clean
+   *  layout ahead of the writes before its detach. It stays true while the view neither scrolls nor changes above the
+   *  reader. */
+  snapshot(): ViewScrollState {
     const anchor = this.state === "reading" ? readingAnchor(this.scope) : null;
-    this.abandonLoadPass();
-    const drift = anchor === null ? null : lineDrift(this.scope, anchor);
-    const snapshot: ViewScrollState = {
-      scrollTop: Math.max(0, Math.min(this.scrollEl.scrollTop + (drift ?? 0), this.max())),
+    // The detach takes the older-page skeleton out from above the reader, moving their text up by its slot. The end
+    // is read with the skeleton in: the held floor keeps it across the removal.
+    const shift = anchor === null ? 0 : this.loadSkeletonSlot();
+    return {
+      scrollTop: Math.max(0, Math.min(this.scrollEl.scrollTop - shift, this.max())),
       readingState: this.state,
       ...(anchor === null ? {} : { anchor }),
     };
+  }
+
+  /** How far the content after the older-page skeleton moves up when it is removed; 0 with none in the view. */
+  private loadSkeletonSlot(): number {
+    const skel = this.viewEl.querySelector(`[id="${SKELETON_ID}"]`);
+    if (skel === null) {
+      return 0;
+    }
+    let next = skel.nextElementSibling;
+    // The top sentinel follows the prepended skeleton but is drawn at its top (`order: -1`).
+    while (next !== null && (next === this.topSentinel || next.getClientRects().length === 0)) {
+      next = next.nextElementSibling;
+    }
+    return next === null ? 0 : next.getBoundingClientRect().top - skel.getBoundingClientRect().top;
+  }
+
+  /** Take the scroller from the current view and park it with `taken`, by default its `snapshot` now: abandon the
+   *  older-page pass, drop the deferred folds, and disconnect the observers so the parked view produces no callback. */
+  detach(taken: ViewScrollState = this.snapshot()): ViewScrollState {
+    this.abandonLoadPass();
+    // Both ahead of `dropMotion`, which would read the scroller for `lastT` and land a flight with its corrections and
+    // its older-page request, for a view that is leaving.
+    this.lastT = -1;
+    this.leaveFlight();
+    this.pendingRestore = null;
     this.deferred = [];
     this.dropMotion();
     this.cancelScrollbarWidth();
     this.cancelFollowFrame();
     this.clearFloor();
     this.attached = false;
-    this.lastT = -1;
     this.rest = -1;
     this.onLoadMore = null;
     this.hasMoreMessages = false;
+    this.pageIn = null;
     this.disconnectView();
     this.setState("following");
-    return snapshot;
+    return taken;
   }
 
   resetScrollState(): void {
@@ -1173,6 +1261,8 @@ export class ScrollController {
     this.lastT = -1;
     this.rest = -1;
     this.topNear = false;
+    this.edgeArmed = false;
+    this.pageIn = null;
     this.setLoadMore(null, false);
     this.setState("following");
   }
@@ -1260,41 +1350,58 @@ export class ScrollController {
     }
     this.nearQueued = true;
     queueMicrotask(() => {
+      // Cleared by a caller that ran the pass itself (`applyPendingRestore`).
+      if (!this.nearQueued) {
+        return;
+      }
       this.nearQueued = false;
-      this.markNearJump();
+      this.markNear(this.nearJumpBoxes());
     });
   }
 
-  /** After a move past `NEAR_JUMP`, mark the boxes now inside the near band in this task, then re-observe each so the
-   *  observer's next notification confirms or clears the mark. Gecko re-determines `content-visibility: auto` proximity
+  /** After a move past `NEAR_JUMP`, the unmarked boxes now inside the near band, which `markNear` marks in this task
+   *  and re-observes so the observer's next notification confirms or clears the mark. Gecko re-determines `content-visibility: auto` proximity
    *  inside the resize loop and any layout read applies it (`DetermineProximityToViewport`, `DoFlushPendingNotifications`
    *  in https://github.com/mozilla-firefox/firefox/blob/main/layout/base/PresShell.cpp), so a box the observer has not
    *  marked yet lays out mid-loop and resizes a turn already delivered. Never inside the content delivery, whose loop
    *  the marks' layout would be, nor in a microtask after it, which still runs inside that loop: a write the delivery
    *  makes is marked at its scroll event, before the next frame's loop. */
-  private markNearJump(): void {
+  private nearJumpBoxes(): Element[] {
     const t = this.scrollEl.scrollTop;
     if (this.delivering || Math.abs(t - this.nearTop) <= this.scrollEl.clientHeight * NEAR_JUMP) {
-      return;
+      return [];
     }
     this.nearTop = t;
-    const observer = this.nearObserver;
-    if (observer === null) {
-      return;
+    if (this.nearObserver === null) {
+      return [];
     }
     const port = this.scrollEl.getBoundingClientRect();
     const top = port.top - this.nearMargin;
     const bottom = port.bottom + this.nearMargin;
+    const near: Element[] = [];
     for (const box of this.nearTargets) {
       if (box.hasAttribute("data-near")) {
         continue;
       }
       const r = box.getBoundingClientRect();
       if (r.bottom >= top && r.top <= bottom) {
-        box.setAttribute("data-near", "");
-        observer.unobserve(box);
-        observer.observe(box);
+        near.push(box);
       }
+    }
+    return near;
+  }
+
+  /** The write half of the near jump, apart from its reads (`nearJumpBoxes`): a mark changes the box's size, so a
+   *  mark between two reads forces a layout per box. */
+  private markNear(boxes: readonly Element[]): void {
+    const observer = this.nearObserver;
+    if (observer === null) {
+      return;
+    }
+    for (const box of boxes) {
+      box.setAttribute("data-near", "");
+      observer.unobserve(box);
+      observer.observe(box);
     }
   }
 
@@ -1321,9 +1428,62 @@ export class ScrollController {
     this.pokeTop();
   }
 
+  /** The reader moved since the view attached; an edge already inside the lead owes its page from here on. */
+  private armEdge(): void {
+    if (!this.edgeArmed) {
+      this.edgeArmed = true;
+      // Measured, not the observer's last report: a page that landed since pushed the edge away, and the report of
+      // that arrives a frame after the scroll that arms it.
+      this.topNear = this.historyEdgeNear();
+      this.pokeTop();
+    }
+  }
+
+  /** Whether the history edge stands inside the lead above the scrollport now; the observer's last report before
+   *  its lead is sized. */
+  private historyEdgeNear(): boolean {
+    const edge = this.topSentinel;
+    if (this.nearMargin < 0) {
+      return this.topNear;
+    }
+    if (edge?.isConnected !== true || edge.getClientRects().length === 0) {
+      return false;
+    }
+    return (
+      edge.getBoundingClientRect().top >=
+      this.scrollEl.getBoundingClientRect().top - this.nearMargin
+    );
+  }
+
   private pokeTop(): void {
-    if (this.topNear) {
+    if (!this.topNear) {
+      return;
+    }
+    if (this.pageIn !== null) {
+      this.seatOlder(this.pageIn);
+      return;
+    }
+    if (this.edgeArmed) {
       this.maybeLoadMore();
+    }
+  }
+
+  /** Seat one older slice through the view's door, holding the reader's text. A Following reader over content that
+   *  already overflows asked for nothing older; Reading re-asks (`setState`). */
+  private seatOlder(older: () => boolean): void {
+    if (this.state === "following" && this.scrollEl.scrollHeight > this.scrollEl.clientHeight) {
+      return;
+    }
+    const seat = { seated: false };
+    this.heldMutation(() => {
+      seat.seated = older();
+    });
+    // `topNear` is the delivery before the seat; re-observing asks for one measured after it, so the next slice
+    // waits for this one's layout instead of seating the whole history in one task.
+    const sentinel = this.topSentinel;
+    if (seat.seated && sentinel !== null) {
+      this.topObserver?.unobserve(sentinel);
+      this.topObserver?.observe(sentinel);
     }
   }
 
@@ -1429,6 +1589,15 @@ export class ScrollController {
     return this.state;
   }
 
+  /** Where the scroller stands once the owner answers this frame's layout, writing nothing: the follow position while
+   *  Following with no gesture or flight holding the write back, else where it stands now. */
+  landingTop(): number {
+    if (this.state === "following" && this.flight === null && !this.gesture.isOpen()) {
+      return this.followPosition();
+    }
+    return this.clampedTop();
+  }
+
   /** Whether a reader gesture is open on this scroller. */
   gestureOpen(): boolean {
     return this.gesture.isOpen();
@@ -1454,6 +1623,7 @@ export class ScrollController {
   }
 
   private publishReaderGesture(): void {
+    this.armEdge();
     for (const cb of this.readerGestureListeners) {
       cb();
     }
@@ -1522,6 +1692,20 @@ export class ScrollController {
     this.pokeTop();
   }
 
+  /** Give the attached view a door it seats older content through itself: `older` seats one slice in this task and
+   *  says whether it seated any. Asked whenever the history edge nears; null closes it. */
+  setPageIn(older: (() => boolean) | null): void {
+    this.pageIn = older;
+    this.pokeTop();
+  }
+
+  /** The client-space y above which content sits past the history edge's lead and then some, so unmounting it
+   *  asks the door for nothing back. */
+  keepsFrom(): number {
+    const top = this.scrollEl.getBoundingClientRect().top;
+    return top - 2 * NEAR_LEAD * this.scrollEl.clientHeight;
+  }
+
   /** Fetch until the scroller overflows. */
   fillViewport(): void {
     if (this.scrollEl.scrollHeight > this.scrollEl.clientHeight) {
@@ -1547,6 +1731,8 @@ export class ScrollController {
     this.resumeBtn().classList.toggle("hidden", next === "following");
     if (next === "following") {
       this.flushDeferred();
+    } else if (this.topNear && this.pageIn !== null) {
+      this.seatOlder(this.pageIn);
     }
     for (const cb of this.stateListeners) {
       cb(next);
@@ -1603,10 +1789,14 @@ export class ScrollController {
     const observer = new MutationObserver(() => {
       if (maybeEl(SKELETON_ID) === null) {
         this.endLoadPass();
-        // A short page may leave the edge inside the lead; an empty one stays quiet until the edge re-enters, or the
-        // same failing request would loop.
+        // A short page may leave the edge inside the lead, and before the reader moves only an underfilled window asks
+        // again; an empty one stays quiet until the edge re-enters, or the same failing request would loop.
         if (firstContent() !== ref) {
-          this.pokeTop();
+          if (this.edgeArmed) {
+            this.pokeTop();
+          } else {
+            this.fillViewport();
+          }
         }
       }
     });
@@ -1648,10 +1838,16 @@ function register<T>(list: T[], cb: T): () => void {
 /** A second scroll-follow over another transcript-shaped view, with the chat's reading rules: it follows the live
  *  edge until the reader scrolls up, and `resumeBtn` takes them back. */
 export interface FollowScroller {
-  /** Hand the scroller to a view with the state it was parked in. */
+  /** Hand the scroller to a view with the state it was parked in, landing it at once. */
   attach(handle: ViewAttachHandle): void;
-  /** Take the scroller from the current view and return the state to park it with. */
+  /** Take the scroller from the current view and return the state to park it with; closes its page-in door. */
   detach(): ViewScrollState;
+  /** Whether the reader follows the live edge. */
+  following(): boolean;
+  /** `ScrollController.setPageIn` for the attached view. */
+  setPageIn(older: (() => boolean) | null): void;
+  /** `ScrollController.keepsFrom`. */
+  keepsFrom(): number;
 }
 
 /** Build a follower over `view` inside `scroller`. It never publishes `--scrollbar-w`, which the chat owns. */
@@ -1665,7 +1861,13 @@ export function createFollowScroller(
   return {
     attach: (handle) => {
       c.attach(handle);
+      c.applyPendingRestore();
     },
     detach: () => c.detach(),
+    following: () => c.readingState() === "following",
+    setPageIn: (older) => {
+      c.setPageIn(older);
+    },
+    keepsFrom: () => c.keepsFrom(),
   };
 }

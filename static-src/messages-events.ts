@@ -8,7 +8,7 @@ import type {
   ModelSwitchReason,
   TurnRevertCause,
 } from "./types.js";
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { chevronEl } from "./chevron.js";
 import { iconEl } from "./icon-el.js";
@@ -186,7 +186,7 @@ function switchedBase(p: {
   if (tier === "") {
     return `Switched to ${p.to}`;
   }
-  // "Switched to opus-5" beside an unchanged model would read as a model switch.
+  // "Switched to <model>" beside an unchanged model would read as a model switch.
   return p.from === p.to ? `Reasoning effort: ${tier}` : `Switched to ${p.to} (${tier})`;
 }
 

@@ -603,7 +603,7 @@ describe("pausing a schedule", () => {
 
 describe("the run's model and effort pick", () => {
   const models = [
-    { model_id: "opus", model_name: "Opus", effort_tiers: ["low", "high"] },
+    { model_id: "model-a", model_name: "Model A", effort_tiers: ["low", "high"] },
     { model_id: "auto", model_name: "Auto" },
   ];
 
@@ -635,19 +635,19 @@ describe("the run's model and effort pick", () => {
   }
 
   it("opens on the stored pick and saves it unchanged", () => {
-    const { body, saved } = build({ model: "opus", effort: "high" });
+    const { body, saved } = build({ model: "model-a", effort: "high" });
     const [model, effort] = [...body.querySelectorAll<HTMLSelectElement>(".run-pick-select")];
-    expect(model?.value).toBe("opus");
+    expect(model?.value).toBe("model-a");
     expect(effort?.value).toBe("high");
     clickSave(body);
-    expect(saved()).toEqual({ model: "opus", effort: "high" });
+    expect(saved()).toEqual({ model: "model-a", effort: "high" });
   });
 
   // The server refuses the tier at save; the form dropping it would save a different schedule.
   it("saves a stored tier its model no longer offers, for the server to refuse", () => {
-    const { body, saved } = build({ model: "opus", effort: "max" });
+    const { body, saved } = build({ model: "model-a", effort: "max" });
     clickSave(body);
-    expect(saved()).toEqual({ model: "opus", effort: "max" });
+    expect(saved()).toEqual({ model: "model-a", effort: "max" });
   });
 
   it("saves nothing for a schedule left on Default", () => {

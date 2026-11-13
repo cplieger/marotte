@@ -44,7 +44,7 @@ func TestEntryLogCrashLeavesEverySealedEntry(t *testing.T) {
 		}
 		defer func() { _ = lg.Close() }()
 
-		survived, err := lg.window(len(written)+8, "")
+		survived, err := lg.window(len(written)+8, "", noByteBound)
 		if err != nil {
 			rt.Fatalf("read the surviving log: %v", err)
 		}
@@ -62,7 +62,7 @@ func writeUnterminatedLog(rt *rapid.T, ctx context.Context, root string, h Entry
 		rt.Fatalf("open entry log: %v", err)
 	}
 	defer func() { _ = lg.Close() }()
-	if err := h.write(ctx, &marotte.Chat{ID: "c-abcdef01", Model: "opus"}); err != nil {
+	if err := h.write(ctx, &marotte.Chat{ID: "c-abcdef01", Model: "model-a"}); err != nil {
 		rt.Fatalf("write header: %v", err)
 	}
 
@@ -182,7 +182,7 @@ func checkEveryTurnIsClosed(rt *rapid.T, entries []marotte.Entry) {
 				rt.Fatalf("the synthesized closer of %s is (%q, %q), want (interrupted, unterminated)",
 					e.Turn, footer.Outcome, footer.StopReasonRaw)
 			}
-			if footer.Model != "opus" {
+			if footer.Model != "model-a" {
 				rt.Fatalf("the closer of %s stamped model %q, want the header's", e.Turn, footer.Model)
 			}
 		case marotte.EntryKindToolCall:
@@ -649,7 +649,7 @@ func (s *revertScene) betweenTurns(tag string) {
 	if !holdsEntryID(entries, e.ID) {
 		s.rt.Fatalf("%s: All() does not hold the between-turns entry %q, so it landed where no reader looks", tag, e.ID)
 	}
-	w, err := s.log.window(len(s.order)+1, "")
+	w, err := s.log.window(len(s.order)+1, "", noByteBound)
 	if err != nil {
 		s.rt.Fatalf("%s: Window: %v", tag, err)
 	}
@@ -685,7 +685,7 @@ func (s *revertScene) check(when string) {
 		s.rt.Fatalf("%s: openTurnsLocked() names %v, want none: every generated turn is closed and no carrier is left open",
 			when, open)
 	}
-	w, err := s.log.window(len(s.order)+1, "")
+	w, err := s.log.window(len(s.order)+1, "", noByteBound)
 	if err != nil {
 		s.rt.Fatalf("%s: Window: %v", when, err)
 	}
@@ -696,10 +696,10 @@ func (s *revertScene) check(when string) {
 		s.rt.Fatalf("%s: HasMore is true over a page of every one of the %d surviving turns", when, len(surviving))
 	}
 	for id := range s.reverted {
-		if _, err := turnRange(s.log, id, 0); !errors.Is(err, ErrTurnNotInLog) {
-			s.rt.Fatalf("%s: TurnRange(%q) = %v, want ErrTurnNotInLog for a reverted turn", when, id, err)
+		if _, err := turnRange(s.log, id, 0); !errors.Is(err, errTurnNotInLog) {
+			s.rt.Fatalf("%s: TurnRange(%q) = %v, want errTurnNotInLog for a reverted turn", when, id, err)
 		}
-		if _, err := s.log.window(1, id); err == nil {
+		if _, err := s.log.window(1, id, noByteBound); err == nil {
 			s.rt.Fatalf("%s: Window(1, %q) refused nothing, want the refusal the chat route renders as 400", when, id)
 		}
 	}

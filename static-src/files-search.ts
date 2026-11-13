@@ -1,8 +1,8 @@
 // Find in files, server-side by necessity: the client holds one listing and the server owns confinement.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
-import { rovingFocus, type RovingFocusController } from "@cplieger/ui/roving-focus";
+import { rovingFocus, type RovingFocusController } from "./legacy-ui/roving-focus.js";
 import { $, byId, maybeEl } from "./dom.js";
 import { apiGetTypedOrError } from "./api-client.js";
 import { openAtLine, openFileOrPage } from "./navigate.js";

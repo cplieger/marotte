@@ -31,7 +31,7 @@ func TestWriteTools(t *testing.T) {
 		System: []string{"git", "curl"},
 	}
 	var b strings.Builder
-	writeTools(&b, snap, true)
+	writeTools(&b, snap, true, "localhost:9847")
 
 	want := "## Installed tools\n\n" +
 		"Commands: go 1.26.2, gofmt 1.26.2, goimports v0.30.0, rg 14.1.1-1\n\n" +
@@ -47,7 +47,7 @@ func TestWriteTools(t *testing.T) {
 
 func TestWriteTools_AnUnrecordedVersionIsLeftOut(t *testing.T) {
 	var b strings.Builder
-	writeTools(&b, ToolsSnapshot{Tools: []InstalledTool{{Commands: []string{"fd"}}}}, true)
+	writeTools(&b, ToolsSnapshot{Tools: []InstalledTool{{Commands: []string{"fd"}}}}, true, "localhost:9847")
 	if got := lineWithPrefix(b.String(), "Commands: "); got != "Commands: fd" {
 		t.Errorf("Commands line = %q, want no placeholder for the empty version", got)
 	}
@@ -59,7 +59,7 @@ func TestWriteTools_ACommandTwoRowsShipIsListedOnce(t *testing.T) {
 		{Version: "1.0.0", Commands: []string{"tsc"}},
 	}}
 	var b strings.Builder
-	writeTools(&b, snap, true)
+	writeTools(&b, snap, true, "localhost:9847")
 	if got := strings.Count(b.String(), "tsc "); got != 1 {
 		t.Errorf("tsc listed %d times, want once: PATH holds one:\n%s", got, b.String())
 	}
@@ -72,7 +72,7 @@ func TestWriteTools_AnEngineRowsVersionWinsOverAnAptRows(t *testing.T) {
 		{Version: "24.0.0", Commands: []string{"node"}},
 	}}
 	var b strings.Builder
-	writeTools(&b, snap, true)
+	writeTools(&b, snap, true, "localhost:9847")
 	if got := lineWithPrefix(b.String(), "Commands: "); got != "Commands: node 24.0.0" {
 		t.Errorf("Commands line = %q, want the engine row's version", got)
 	}
@@ -102,7 +102,7 @@ func TestWriteTools_AnInstalledUtilityIsNotCalledMissing(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var b strings.Builder
-			writeTools(&b, tc.snap, true)
+			writeTools(&b, tc.snap, true, "localhost:9847")
 			want := "is present and not listed here." + tc.missing + " Check any other command with `command -v`"
 			if !strings.Contains(b.String(), want) {
 				t.Errorf("writeTools lacks %q:\n%s", want, b.String())
@@ -117,7 +117,7 @@ func TestWriteTools_ABakedNameAnInstalledRowShipsIsListedOnce(t *testing.T) {
 		System: []string{"git", "ssh"},
 	}
 	var b strings.Builder
-	writeTools(&b, snap, true)
+	writeTools(&b, snap, true, "localhost:9847")
 	if got := lineWithPrefix(b.String(), "Baked into the image: "); got != "Baked into the image: git" {
 		t.Errorf("Baked line = %q, want ssh only under Commands", got)
 	}
@@ -129,7 +129,7 @@ func TestWriteTools_TheCommandsCapKeepsEngineCommandsFirst(t *testing.T) {
 	tools := []InstalledTool{{Version: "14", Commands: []string{"aux-a", "aux-b"}, Apt: true}}
 	tools = append(tools, engineRows(maxCommands, "tool")...)
 	var b strings.Builder
-	writeTools(&b, ToolsSnapshot{Tools: tools}, true)
+	writeTools(&b, ToolsSnapshot{Tools: tools}, true, "localhost:9847")
 	commands := lineWithPrefix(b.String(), "Commands: ")
 	if strings.Contains(commands, "aux-") {
 		t.Errorf("an apt row's command took a slot from an engine command: %q", commands)
@@ -258,7 +258,7 @@ func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
+	g := New(Config{WorkDir: workDir, ConfigDir: configDir, ToolsDir: filepath.Join(configDir, "tools")})
 	g.SetMCPSnapshot(func() MCPSnapshot {
 		return MCPSnapshot{Servers: []marotte.MCPSnapshotServer{{Name: "github"}}}
 	})
@@ -339,7 +339,7 @@ func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 // a fileMatch or manual doc would never load, and a section dropped in the move
 // would reach no session at all.
 func TestChatDocs_CarriesTheChatSections(t *testing.T) {
-	g := New("/ws", "/cfg", "/cfg/tools")
+	g := New(Config{WorkDir: "/ws", ConfigDir: "/cfg", ToolsDir: "/cfg/tools"})
 	g.SetForgeSnapshot(func() ForgeSnapshot {
 		return ForgeSnapshot{Providers: []ForgeProvider{{Kind: "github", Host: "github.com", User: "alice"}}}
 	})
@@ -372,7 +372,7 @@ func TestChatDocs_CarriesTheChatSections(t *testing.T) {
 func TestChatDocs_WritesNothing(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	New(t.TempDir(), t.TempDir(), t.TempDir()).ChatDocs(t.Context())
+	New(Config{WorkDir: t.TempDir(), ConfigDir: t.TempDir(), ToolsDir: t.TempDir()}).ChatDocs(t.Context())
 	entries, err := os.ReadDir(filepath.Join(home, ".kiro", "steering"))
 	if err == nil && len(entries) > 0 {
 		t.Errorf("ChatDocs wrote %d steering file(s); want none", len(entries))
@@ -388,7 +388,7 @@ func TestGenerate_NoMCPSnapshotOmitsSection(t *testing.T) {
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
-	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
+	g := New(Config{WorkDir: workDir, ConfigDir: configDir, ToolsDir: filepath.Join(configDir, "tools")})
 	// Deliberately do NOT call SetMCPSnapshot.
 	g.Generate(t.Context())
 
@@ -407,7 +407,7 @@ func TestGenerate_EmptyMCPSnapshotOmitsSection(t *testing.T) {
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
-	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
+	g := New(Config{WorkDir: workDir, ConfigDir: configDir, ToolsDir: filepath.Join(configDir, "tools")})
 	g.SetMCPSnapshot(func() MCPSnapshot { return MCPSnapshot{} })
 	g.Generate(t.Context())
 
@@ -424,7 +424,7 @@ func TestGenerate_RendersForgeSection(t *testing.T) {
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
-	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
+	g := New(Config{WorkDir: workDir, ConfigDir: configDir, ToolsDir: filepath.Join(configDir, "tools")})
 	g.SetForgeSnapshot(func() ForgeSnapshot {
 		return ForgeSnapshot{Providers: []ForgeProvider{
 			{Kind: "github", Host: "github.com", User: "alice"},
@@ -457,7 +457,7 @@ func TestChatDocs_GitPanelFollowsTheForgeSnapshot(t *testing.T) {
 		{"no provider", nil, none, connected},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			g := New(t.TempDir(), t.TempDir(), t.TempDir())
+			g := New(Config{WorkDir: t.TempDir(), ConfigDir: t.TempDir(), ToolsDir: t.TempDir()})
 			g.SetForgeSnapshot(func() ForgeSnapshot { return ForgeSnapshot{Providers: tc.providers} })
 			docs := g.ChatDocs(t.Context())
 			if len(docs) != 1 {
@@ -478,7 +478,7 @@ func TestGenerate_IdempotentSkipsRewrite(t *testing.T) {
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
-	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
+	g := New(Config{WorkDir: workDir, ConfigDir: configDir, ToolsDir: filepath.Join(configDir, "tools")})
 	g.Generate(t.Context())
 
 	steeringPath := filepath.Join(home, ".kiro", "steering", "environment.md")
@@ -509,7 +509,7 @@ func TestGenerate_LogsWroteOnSuccess(t *testing.T) {
 	var buf bytes.Buffer
 	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
-	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
+	g := New(Config{WorkDir: workDir, ConfigDir: configDir, ToolsDir: filepath.Join(configDir, "tools")})
 	g.Generate(t.Context())
 
 	if _, err := os.Stat(steeringPath); err != nil {
@@ -529,7 +529,7 @@ func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
-	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
+	g := New(Config{WorkDir: workDir, ConfigDir: configDir, ToolsDir: filepath.Join(configDir, "tools")})
 	g.SetMCPSnapshot(func() MCPSnapshot {
 		return MCPSnapshot{Servers: []marotte.MCPSnapshotServer{{Name: "github"}}}
 	})
@@ -565,7 +565,7 @@ func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 func TestGenerate_AnOlderGenerationNeverOverwritesANewerOne(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	g := New(t.TempDir(), t.TempDir(), "")
+	g := New(Config{WorkDir: t.TempDir(), ConfigDir: t.TempDir()})
 	entered, release := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32
 	g.SetToolsSnapshot(func() (ToolsSnapshot, bool) {
@@ -609,7 +609,7 @@ func TestGenerate_AnOlderGenerationNeverOverwritesANewerOne(t *testing.T) {
 func TestGenerate_ACancelledContextRunsNoSnapshot(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	g := New(t.TempDir(), t.TempDir(), "")
+	g := New(Config{WorkDir: t.TempDir(), ConfigDir: t.TempDir()})
 	var calls atomic.Int32
 	g.SetMCPSnapshot(func() MCPSnapshot { calls.Add(1); return MCPSnapshot{} })
 	g.SetForgeSnapshot(func() ForgeSnapshot { calls.Add(1); return ForgeSnapshot{} })
@@ -658,7 +658,7 @@ func (c *cancelAfterChecks) Done() <-chan struct{} { return c.done }
 func TestGenerate_CancelledDuringItsRenderReturnsTheCtxError(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	g := New(t.TempDir(), t.TempDir(), "")
+	g := New(Config{WorkDir: t.TempDir(), ConfigDir: t.TempDir()})
 	if err := g.Generate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -685,7 +685,7 @@ func TestGenerate_ReturnsAFailedWriteWhileItsCtxIsLive(t *testing.T) {
 	var buf bytes.Buffer
 	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	mustWriteFile(t, filepath.Join(home, ".kiro"), "not a folder")
-	g := New(t.TempDir(), t.TempDir(), "")
+	g := New(Config{WorkDir: t.TempDir(), ConfigDir: t.TempDir()})
 
 	err := g.Generate(t.Context())
 
@@ -720,7 +720,7 @@ func TestGenerate_ReturnsAFailedWriteThatRacesACancel(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	mustWriteFile(t, filepath.Join(home, ".kiro"), "not a folder")
-	g := New(t.TempDir(), t.TempDir(), "")
+	g := New(Config{WorkDir: t.TempDir(), ConfigDir: t.TempDir()})
 	ctx := &cancelAfterTheWritesCheck{Context: t.Context()}
 
 	err := g.Generate(ctx)
@@ -736,7 +736,7 @@ func TestGenerate_ReturnsAFailedWriteThatRacesACancel(t *testing.T) {
 func TestCustomPath_UsesHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	g := New("/some/work", "/some/config", "/some/config/tools")
+	g := New(Config{WorkDir: "/some/work", ConfigDir: "/some/config", ToolsDir: "/some/config/tools"})
 	got := g.CustomPath()
 	want := filepath.Join(home, ".kiro", "steering", "custom.md")
 	if got != want {
@@ -749,7 +749,7 @@ func TestCustomPath_HomeUnsetFallback(t *testing.T) {
 	t.Setenv("KIRO_HOME", "")
 	os.Unsetenv("HOME")
 	os.Unsetenv("KIRO_HOME")
-	g := New("/some/work", "/some/config", "/some/config/tools")
+	g := New(Config{WorkDir: "/some/work", ConfigDir: "/some/config", ToolsDir: "/some/config/tools"})
 	// With KIRO_HOME and HOME unset, KiroHome() falls back to ".kiro", as kiro-cli does.
 	if got := g.CustomPath(); got != ".kiro/steering/custom.md" {
 		t.Errorf("CustomPath() with no HOME = %q, want \".kiro/steering/custom.md\"", got)

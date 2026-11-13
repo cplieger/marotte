@@ -2,7 +2,7 @@
 // the run's log or the `removed` frame that retires them. `run-store.ts` reports each such entry and
 // each forgotten run.
 
-import { signal, touch } from "@cplieger/ui";
+import { signal, touch } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import { payloadOf } from "./turns.js";
 import {

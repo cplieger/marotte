@@ -90,7 +90,8 @@ console.error(
       .map(([name, ms]) => `  ${seconds(ms).padStart(8)}  ${name}`)
       .join("\n") +
     "\n\nDo not raise the bound. Check the flag is still in the launch args, then fix\n" +
-    "the frame waits or add a shard (`cplieger.vitestShards` in package.json).",
+    "the frame waits, re-measure FILE_SECONDS in __test-helpers__/shard-sequencer.ts\n" +
+    "from this log, or add a shard (`cplieger.vitestShards` in package.json).",
 );
 
 if (process.env["CI"] === undefined) {

@@ -51,7 +51,7 @@
         "name": "twin",
         "path": "ws/.kiro/agents/twin.md",
         "description": "Even-cycle twin of the other reviewer.",
-        "model": "claude-opus-5",
+        "model": "model-a-5",
         "tools": [
           "read",
           "write"

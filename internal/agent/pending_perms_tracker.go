@@ -424,6 +424,10 @@ func (b *bus) cancelAsk(ctx context.Context, chatID marotte.ChatID, ref askRef) 
 // it before reading the session/cancel, and the Stop's own answers have gone (kiro-cli's TUI does the same).
 func (b *bus) PendingPermsAdd(ctx context.Context, acpID int64, evt marotte.ServerEvent, origin translate.AskOrigin) (marotte.ServerEvent, bool) {
 	evt = b.pendingPerms.add(acpID, evt, origin)
+	// Before the stop check, whose cancel settles the ask.
+	if run := marotte.DecisionRunID(evt.Payload); run != "" && b.runAsk != nil {
+		b.runAsk.askOpened(run, marotte.DecisionNodeID(evt.Payload), marotte.DecisionRequestID(evt.Payload))
+	}
 	// Filed before the stop check, so a racing Stop either answers it among its own asks or is seen here.
 	if !inScope(&evt, evt.ChatID, command.ScopeChatSession) || !b.ownStopped(evt.ChatID) {
 		return evt, true
@@ -576,5 +580,12 @@ func (b *bus) announceDecisionSettled(evt marotte.ServerEvent, askID int64, sett
 		Kind:      kind,
 		SettledBy: settledBy,
 	}))
-	b.retractPush(notice.AskSubject(evt.ChatID, marotte.DecisionRunID(evt.Payload)), notice.AskKey(askID))
+	run := marotte.DecisionRunID(evt.Payload)
+	b.settleNotice(notice.AskSubject(evt.ChatID, run), notice.AskKey(askID))
+	if run != "" && b.runAsk != nil {
+		b.runAsk.askSettled(run, marotte.DecisionNodeID(evt.Payload), askID)
+	}
+	if inScope(&evt, evt.ChatID, command.ScopeChatSession) {
+		b.askSettled(evt.ChatID)
+	}
 }

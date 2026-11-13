@@ -20,7 +20,8 @@ const api = vi.hoisted(() => ({ getTyped: vi.fn() }));
 
 vi.mock("./api-client.js", async (importOriginal) => {
   const orig = await importOriginal<typeof ApiClient>();
-  return { ...orig, apiGetTyped: api.getTyped };
+  const { orErrorOver } = await import("./__test-helpers__/api-result.js");
+  return { ...orig, apiGetTyped: api.getTyped, apiGetTypedOrError: orErrorOver(api.getTyped) };
 });
 
 // Nothing else is mocked: the store, the loader, the map and the adapter ARE the subject, and
@@ -34,6 +35,16 @@ import { hasSubject, versionMap, _resetForTest as resetVersions } from "./subjec
 import { clearAllEntrySigs } from "./store-signals.js";
 import { createScriptedFetch, json, type ScriptedFetch } from "./__test-helpers__/sse-fetch.js";
 import { IDLE_RUN } from "./run-order.js";
+
+// The composer's controls, which the send button's effect repaints when the active chat's turn state moves.
+for (const [tag, id] of [
+  ["button", "send-btn"],
+  ["textarea", "prompt-input"],
+] as const) {
+  const node = document.createElement(tag);
+  node.id = id;
+  document.body.appendChild(node);
+}
 
 const CHAT = "c";
 const TURN = "t1";
@@ -61,7 +72,8 @@ function serverLog(): void {
 /** Seal the open tail as the turn's next entry: the one thing that happens while the client
  *  holds a window and receives no frame. The turn stays OPEN. */
 function sealDuringGap(): void {
-  log = [...log, entry(4, "text", { text: "three" })];
+  // Sealed under its open id, as the server seals every streamed entry.
+  log = [...log, { ...entry(4, "text", { text: "three" }), id: `${TURN}-open4` }];
   tail = undefined;
 }
 
@@ -236,7 +248,7 @@ afterEach(() => {
 
 describe("a reload with one entry sealed in the gap", () => {
   it("records the window GET's own two stamps and asks the digest about both", async () => {
-    expect(await loadMessages(CHAT)).toBe(true);
+    expect(await loadMessages(CHAT)).toEqual({ kind: "loaded" });
 
     expect(hasSubject("chat", CHAT)).toBe(true);
     expect(hasSubject("live_turn", TURN)).toBe(true);
@@ -260,7 +272,7 @@ describe("a reload with one entry sealed in the gap", () => {
   });
 
   it("names the live_turn mismatch alone and repairs that turn with ONE range read", async () => {
-    expect(await loadMessages(CHAT)).toBe(true);
+    expect(await loadMessages(CHAT)).toEqual({ kind: "loaded" });
     sealDuringGap();
 
     await _revalidateForTest(ctx());
@@ -273,7 +285,7 @@ describe("a reload with one entry sealed in the gap", () => {
   });
 
   it("restores a state equal to the undropped fold", async () => {
-    expect(await loadMessages(CHAT)).toBe(true);
+    expect(await loadMessages(CHAT)).toEqual({ kind: "loaded" });
     sealDuringGap();
 
     await _revalidateForTest(ctx());
@@ -290,7 +302,7 @@ describe("a reload with one entry sealed in the gap", () => {
   });
 
   it("records nothing for an OLDER page, so the digest is not asked about an edge it served", async () => {
-    expect(await loadMessages(CHAT, "t0")).toBe(true);
+    expect(await loadMessages(CHAT, "t0")).toEqual({ kind: "loaded" });
 
     // An older page extended the window rather than adopting it, so its stamps certify no
     // edge this client can be asked about.

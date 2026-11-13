@@ -36,7 +36,7 @@ import {
   parentPath,
   FB_ROOT,
   normalizeDirPath,
-  listNotice,
+  errorNotice,
   FB_NOTICE,
   sortEntries,
   initEditablePath,
@@ -50,7 +50,7 @@ import {
 } from "./files-shared.js";
 import { fetchDir, type DirResult, type FetchDirOpts } from "./files-fetch.js";
 import { fileRowsSkeleton, paintPlaceholder } from "./skeleton.js";
-import { skeletonTiming } from "@cplieger/ui/skeleton";
+import { skeletonTiming } from "./legacy-ui/skeleton.js";
 import { setOnUploadComplete } from "./files-picker.js";
 import {
   createFile,
@@ -61,7 +61,7 @@ import {
   downloadFiles,
 } from "./actions/files.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { join as joinKey } from "@cplieger/keyenc";
 import { KEY_ATTR, reconcile } from "./reconcile.js";
 import { replaceRoute } from "./router.js";
@@ -586,22 +586,10 @@ function mountFbEntry(e: FbEntry): HTMLElement {
     case "entry":
       return entryRow(e.entry);
     case "error":
-      return errorNotice(e.message);
-  }
-}
-
-function errorNotice(message: string): HTMLDivElement {
-  const actions = [{ label: "Retry", run: retryListing }];
-  // Off the root, offer the way back (a nested granted root's parent is not browsable; a deleted directory).
-  if (cur().currentPath !== FB_ROOT) {
-    actions.push({
-      label: "Go to root",
-      run: () => {
+      return errorNotice(e.message, cur().currentPath, retryListing, () => {
         navigate(FB_ROOT);
-      },
-    });
+      });
   }
-  return listNotice(message, actions);
 }
 
 /** Middle-click opens in the background; no engine emits `click` for it. The `mousedown` companion cancels autoscroll. */

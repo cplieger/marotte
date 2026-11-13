@@ -118,6 +118,8 @@ type chatLifecycle struct {
 	// life's work selects on it.
 	ctx   context.Context
 	steps map[string]struct{}
+	// role holds a Bot chat's session on its role; only keepRoleLocked changes it.
+	role botRoleKeeper
 	// reloadFor is the entry a reload is marked for (markReload), so a later generation never inherits the mark.
 	reloadFor *sharedBridge
 	// call is the sent prompt whose session/prompt is unanswered, from its send to endPromptCall; it outlives the
@@ -158,7 +160,9 @@ type chatLifecycle struct {
 	closedIDs [recentCloses]string
 	// admissionMessage is the prompt message id of the held reservation, "" for none.
 	admissionMessage string
-	chatID           marotte.ChatID
+	// toolCallTurn is the turn the chat's own agent opened a tool call in since the last live reading, "" for none.
+	toolCallTurn string
+	chatID       marotte.ChatID
 	// runFinal is the list the life's end left, owed to the record once the ending caller released its locks
 	// (writeFinalRun); runWritten is the record version this life last wrote.
 	runFinal []marotte.RunEntry
@@ -246,6 +250,12 @@ type turnRegistry struct {
 	// tailHook runs in a close tail just before its end (ended false), where the run list takes what runs next, and
 	// again once a live life's tail ended (ended true); nil in production, set as claimHook is.
 	tailHook func(chatID marotte.ChatID, ended bool)
+	// sendRole runs a Bot role keeper's claimed set_mode (chatLifecycle.sendRoleLocked); nil claims none. Set once at
+	// construction.
+	sendRole roleSender
+	// spawnRole starts sendRole's work unless Shutdown began, reporting whether it did; nil claims none. Set with
+	// sendRole.
+	spawnRole func(work func()) bool
 	// closerHook runs in a chat's closer once it took a grant, before its re-check; nil in production, set as
 	// claimHook is.
 	closerHook func(marotte.ChatID)
@@ -415,6 +425,7 @@ func (r *turnRegistry) forgetIfIdle(chatID marotte.ChatID) {
 func (lc *chatLifecycle) wakeLocked() {
 	lc.decideLocked()
 	lc.advanceLocked()
+	lc.feedRoleIdleLocked()
 	close(lc.changed)
 	lc.changed = make(chan struct{})
 }
@@ -499,17 +510,19 @@ func (t *activeTurn) awaitsSend() bool { return t.Source.Acknowledgeable() && !t
 type sendStep int
 
 const (
-	sendWait      sendStep = iota // KAS reports a run, a frame is mid-fold, a stop holds sends, or another turn holds own
-	sendNow                       // t owns the chat and is marked sent
-	sendCloseFold                 // own was a fold-opened wire turn, now claimed; the caller closes it, then asks again
-	sendStopped                   // the reader's stop keeps t unsent, or keeps a later attempt of it unwritten
+	sendWait       sendStep = iota // KAS reports a run, a frame is mid-fold, a stop holds sends, or another turn holds own
+	sendNow                        // t owns the chat and is marked sent
+	sendCloseFold                  // own was a fold-opened wire turn, now claimed; the caller closes it, then asks again
+	sendStopped                    // the reader's stop keeps t unsent, or keeps a later attempt of it unwritten
+	sendRoleFailed                 // a Bot's session did not take its role back, so t is refused unsent (botRoleKeeper)
+	sendRoleCut                    // a Bot's role keeper let its session go, so t is refused unsent to be sent again
 )
 
 // markSentLocked lets t's send through only once t owns the chat (caller holds mu, t live and unclaimed), since t's
 // run may stream before its turn_start and those frames fold into own. By own's state, while KAS admits a
 // session/prompt, no frame is being consumed (inFrame: it may be folding into own, or parked behind a close and due
 // before the send) and no stop's session/cancel is still to go out (stops), a later stop being the write commit's:
-//   - nil or t: t takes own and is let through.
+//   - nil or t: t takes own and is let through, once a Bot's role keeper lets it (roleSendStepLocked).
 //   - a fold-opened wire turn: no turn_end is owed for it, so it is claimed here, in the section that read the
 //     verdict's state, and returned for the caller to close (sendCloseFold).
 //   - anything else, or a turn another closer claimed: wait for its close.
@@ -520,6 +533,8 @@ func (lc *chatLifecycle) markSentLocked(t *activeTurn) (sendStep, *activeTurn) {
 		return sendStopped, nil
 	case !lc.kas.may().admit, lc.inFrame, len(lc.stops) > 0:
 		return sendWait, nil
+	case (o == nil || o == t) && lc.roleSendStepLocked() != sendNow:
+		return lc.roleSendStepLocked(), nil
 	case o == nil || o == t:
 		t.sendStops = lc.stopCount.Load()
 		t.sent = true

@@ -91,8 +91,8 @@ type PromptCommand struct {
 	Model       string       `json:"model,omitempty"`
 	DisplayText string       `json:"display_text,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
-	// PromptOnly marks text only a prompt carries (a catalog command, a context reference): it is never steered,
-	// and never queued behind a running turn.
+	// PromptOnly marks text only a prompt carries (a catalog command, a context reference): it is never steered.
+	// A queued row is sent as its own prompt, so it may queue.
 	PromptOnly bool `json:"prompt_only,omitempty"`
 	// ForAgent marks a server-authored prompt whose answer an agent reads, so the user's output
 	// style is withheld from it. Server-only: no client payload can set it.

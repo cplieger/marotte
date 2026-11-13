@@ -184,7 +184,7 @@ groups:
       - alert: MarotteUnattendedRunStopped
         expr: |
           increase(marotte_unattended_run_failures_total{
-            reason=~"overran|backstop|stalled|paused|orphaned"}[24h]) >= 1
+            reason=~"overran|stalled|paused|orphaned"}[24h]) >= 1
         for: 0m
         labels:
           severity: warning
@@ -192,9 +192,8 @@ groups:
           summary: "marotte stopped an unattended run"
           description: >
             A {{ $labels.origin }} run ended as {{ $labels.reason }}. overran
-            outlived its slot, backstop spent its time budget, stalled stopped
-            making progress, paused had nobody to resume it, and orphaned was
-            cut off by a restart.
+            outlived its slot, stalled stopped making progress, paused had
+            nobody to resume it, and orphaned was cut off by a restart.
 
       - alert: MarotteUnattendedRunCancelFailed
         expr: increase(marotte_unattended_run_failures_total{reason="cancel_given_up"}[24h]) >= 1

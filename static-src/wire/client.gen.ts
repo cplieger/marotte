@@ -2,8 +2,8 @@
 
 import { clientRequest } from "../api-client.js";
 import type { ApiResult, EndpointSpec } from "../api-client.js";
-import { decodeAccountUsage, decodeBranchCommits, decodeBranches, decodeCapabilities, decodeCatalogInfo, decodeChangeResult, decodeChatList, decodeChatPage, decodeChatTurnRange, decodeChatTurns, decodeCommandOutput, decodeCommitChecks, decodeConfigStandingResponse, decodeConfigTemplateResponse, decodeConfiguredForge, decodeDelivery, decodeDetection, decodeDeviceFlowResponse, decodeDiagnosticsReport, decodeEffectiveSettings, decodeEngineRestartAccepted, decodeEngineStatus, decodeFileChanges, decodeFileList, decodeFileRead, decodeFileSearchResult, decodeFileStat, decodeFileWriteResult, decodeForgeList, decodeGovernanceStatePayload, decodeHooksList, decodeImportResults, decodeInventory, decodeInventoryList, decodeInventoryRefresh, decodeIssue, decodeIssueList, decodeJobResponse, decodeJobsResponse, decodeKiroDocNewResult, decodeKiroDocsResponse, decodeKiroSettings, decodeKnowledgeList, decodeKnowledgeMessage, decodeLabelList, decodeLaunchRuleList, decodeLaunchRuleView, decodeLiveRunsResponse, decodeLog, decodeLoginOptions, decodeLoginResponse, decodeLoginResult, decodeLogoutResult, decodeMCPOAuthRelayResult, decodeMCPPool, decodeMCPSignInStarted, decodeMCPStatus, decodeMemoryList, decodeMemoryOne, decodeMemorySync, decodeMemorySyncChoice, decodeMergeResult, decodeMergeStatus, decodeOKBody, decodeOKResponse, decodeOwnerScopes, decodePR, decodePRChanged, decodePRDetail, decodePRList, decodePolicyExplainResult, decodePolicyView, decodePollResult, decodePowerServers, decodePowersList, decodePreviewGrant, decodePreviewStamp, decodeProbeResult, decodePullAll, decodeRecipesResponse, decodeRegistrySearchResult, decodeRelease, decodeReleaseList, decodeRemoveResponse, decodeRepoAffordances, decodeRepoList, decodeRepoNames, decodeRescanResult, decodeRunControlsResponse, decodeRunLaunchedResponse, decodeRunRetriedResponse, decodeRunStepMessageResponse, decodeRunStepSteerRemoved, decodeRunStepTranscript, decodeRunTurnRange, decodeSearchAllResult, decodeSearchResponse, decodeSearchResult, decodeServer, decodeServerList, decodeSessionListResponse, decodeShowResponse, decodeSlashCommandsResponse, decodeSpec, decodeStatus, decodeStatusAll, decodeSteeringDoc, decodeSteeringIssuesResponse, decodeSteeringSave, decodeTabList, decodeTangentMergeStatus, decodeToolCallBulk, decodeToolPresence, decodeUploadResult, decodeVAPIDKey, decodeVersionInfo, decodeWhoamiResponse } from "./decoders.gen.js";
-import type { AccountUsage, AddRequest, BranchCommits, Branches, Capabilities, CatalogInfo, ChangeResult, ChatList, ChatPage, ChatTurnRange, ChatTurns, CheckoutRequest, ClientCommand, CloneRequest, CommandOutput, CommitChecks, CommitRequest, ConfigStandingResponse, ConfigTemplateResponse, ConfiguredForge, Delivery, DetectRequest, Detection, DeviceFlowResponse, DiagnosticsReport, EffectiveSettings, EnabledPatch, EngineRestartAccepted, EngineStatus, FileAction, FileChanges, FileList, FileRead, FileSearchResult, FileStat, FileWrite, FileWriteResult, FilesRequest, ForgeList, GovernanceStatePayload, GrantRef, GrantStart, HookEnabledWrite, HooksList, ImportBlock, ImportResults, Inventory, InventoryList, InventoryRefresh, InventoryWatch, Issue, IssueCreate, IssueList, JobResponse, JobsResponse, KiroDocNewRequest, KiroDocNewResult, KiroDocsResponse, KiroSettingWrite, KiroSettings, KnowledgeAdd, KnowledgeList, KnowledgeMessage, LabelList, LaunchRuleList, LaunchRuleReplace, LaunchRuleView, LaunchRuleWrite, LiveRunsResponse, Log, LoginOptions, LoginRequest, LoginResponse, LoginResult, LogoutResult, MCPOAuthRelay, MCPOAuthRelayResult, MCPPool, MCPServerRef, MCPSignInStarted, MCPStatus, MemoryList, MemoryOne, MemorySync, MemorySyncChoice, MemorySyncUpdate, MemoryUpdate, MergeResult, MergeStatus, OKBody, OKResponse, OwnerScopes, OwnersWrite, PR, PRChanged, PRCreate, PRDetail, PRFetchRequest, PRList, PRMerge, PatchRequest, PolicyExplainRequest, PolicyExplainResult, PolicyProfileWrite, PolicyRuleWrite, PolicyView, PollResult, PowerServers, PowersList, PreviewGrant, PreviewGrantRequest, PreviewStamp, ProbeResult, PullAll, PushSubscription, RecipesResponse, RegistrySearchResult, Release, ReleaseCreate, ReleaseList, RemoveResponse, RepoAffordances, RepoList, RepoNames, RepoRequest, Request, RescanResult, RunAnswerRequest, RunControlsResponse, RunExtendRequest, RunFinishLoopRequest, RunLaunchRequest, RunLaunchedResponse, RunRetriedResponse, RunStepEndRequest, RunStepMessageRequest, RunStepMessageResponse, RunStepSteerRemoved, RunStepSteerRequest, RunStepTranscript, RunTurnRange, SearchAllResult, SearchResponse, SearchResult, Server, ServerList, SessionListResponse, SettingsPatch, ShowResponse, SlashCommandsResponse, Spec, Status, StatusAll, SteeringDoc, SteeringIssuesResponse, SteeringSave, SteeringWrite, TabList, TangentMergeStatus, TokenLogin, ToolCallBulk, ToolPresence, Unsubscribe, UpdateRequest, UploadResult, VAPIDKey, VersionInfo, WhoamiResponse, ZipRequest } from "./types.gen.js";
+import { decodeAccountUsage, decodeBranchCommits, decodeBranches, decodeCapabilities, decodeCatalogInfo, decodeChangeResult, decodeChatList, decodeChatPage, decodeChatTurnRange, decodeChatTurns, decodeCommandOutput, decodeCommitChecks, decodeConfigStandingResponse, decodeConfigTemplateResponse, decodeConfiguredForge, decodeDelivery, decodeDetection, decodeDeviceFlowResponse, decodeDiagnosticsReport, decodeEffectiveSettings, decodeEngineRestartAccepted, decodeEngineStatus, decodeFileChanges, decodeFileList, decodeFileRead, decodeFileSearchResult, decodeFileStat, decodeFileWriteResult, decodeForgeList, decodeGovernanceStatePayload, decodeHooksList, decodeImportResults, decodeInventory, decodeInventoryList, decodeInventoryRefresh, decodeIssue, decodeIssueList, decodeJobResponse, decodeJobsResponse, decodeKiroDocNewResult, decodeKiroDocsResponse, decodeKiroSettings, decodeKnowledgeList, decodeKnowledgeMessage, decodeLabelList, decodeLaunchRuleList, decodeLaunchRuleView, decodeLiveRunsResponse, decodeLog, decodeLoginOptions, decodeLoginResponse, decodeLoginResult, decodeLogoutResult, decodeMCPOAuthRelayResult, decodeMCPPool, decodeMCPSignInStarted, decodeMCPStatusResponse, decodeMemoryList, decodeMemoryOne, decodeMemorySync, decodeMemorySyncChoice, decodeMergeResult, decodeMergeStatus, decodeOKBody, decodeOKResponse, decodeOwnerScopes, decodePR, decodePRChanged, decodePRDetail, decodePRList, decodePolicyExplainResult, decodePolicyView, decodePollResult, decodePowerServers, decodePowersList, decodePreviewGrant, decodePreviewStamp, decodeProbeResult, decodePullAll, decodeRecipesResponse, decodeRegistrySearchResult, decodeRelease, decodeReleaseList, decodeRemoveResponse, decodeRepoAffordances, decodeRepoList, decodeRepoNames, decodeRescanResult, decodeRunControlsResponse, decodeRunLaunchedResponse, decodeRunRetriedResponse, decodeRunStepCapture, decodeRunStepMessageResponse, decodeRunStepSteerRemoved, decodeRunStepTranscript, decodeRunTurnRange, decodeSearchAllResult, decodeSearchResponse, decodeSearchResult, decodeServer, decodeServerList, decodeSessionListResponse, decodeShowResponse, decodeSlashCommandsResponse, decodeSpec, decodeStatus, decodeStatusAll, decodeSteeringDoc, decodeSteeringIssuesResponse, decodeSteeringSave, decodeTabList, decodeTangentMergeStatus, decodeToolCallBulk, decodeToolPresence, decodeUploadResult, decodeVAPIDKey, decodeVersionInfo, decodeWhoamiResponse } from "./decoders.gen.js";
+import type { AccountUsage, AddRequest, BranchCommits, Branches, Capabilities, CatalogInfo, ChangeResult, ChatList, ChatPage, ChatTurnRange, ChatTurns, CheckoutRequest, ClientCommand, CloneRequest, CommandOutput, CommitChecks, CommitRequest, ConfigStandingResponse, ConfigTemplateResponse, ConfiguredForge, Delivery, DetectRequest, Detection, DeviceFlowResponse, DiagnosticsReport, EffectiveSettings, EnabledPatch, EngineRestartAccepted, EngineStatus, FileAction, FileChanges, FileList, FileRead, FileSearchResult, FileStat, FileWrite, FileWriteResult, FilesRequest, ForgeList, GovernanceStatePayload, GrantRef, GrantStart, HookEnabledWrite, HooksList, ImportBlock, ImportResults, Inventory, InventoryList, InventoryRefresh, InventoryWatch, Issue, IssueCreate, IssueList, JobResponse, JobsResponse, KiroDocNewRequest, KiroDocNewResult, KiroDocsResponse, KiroSettingWrite, KiroSettings, KnowledgeAdd, KnowledgeList, KnowledgeMessage, LabelList, LaunchRuleList, LaunchRuleReplace, LaunchRuleView, LaunchRuleWrite, LiveRunsResponse, Log, LoginOptions, LoginRequest, LoginResponse, LoginResult, LogoutResult, MCPOAuthRelay, MCPOAuthRelayResult, MCPPool, MCPServerRef, MCPSignInStarted, MCPStatusResponse, MemoryList, MemoryOne, MemorySync, MemorySyncChoice, MemorySyncUpdate, MemoryUpdate, MergeResult, MergeStatus, NoticeReport, OKBody, OKResponse, OwnerScopes, OwnersWrite, PR, PRChanged, PRCreate, PRDetail, PRFetchRequest, PRList, PRMerge, PageView, PatchRequest, PolicyExplainRequest, PolicyExplainResult, PolicyProfileWrite, PolicyRuleWrite, PolicyView, PollResult, PowerServers, PowersList, PreviewGrant, PreviewGrantRequest, PreviewStamp, ProbeResult, PullAll, PushSubscription, RecipesResponse, RegistrySearchResult, Release, ReleaseCreate, ReleaseList, RemoveResponse, RepoAffordances, RepoList, RepoNames, RepoRequest, Request, RescanResult, RunAnswerRequest, RunControlsResponse, RunExtendRequest, RunFinishLoopRequest, RunLaunchRequest, RunLaunchedResponse, RunRetriedResponse, RunStepCapture, RunStepEndRequest, RunStepMessageRequest, RunStepMessageResponse, RunStepSteerRemoved, RunStepSteerRequest, RunStepTranscript, RunTurnRange, SearchAllResult, SearchResponse, SearchResult, Server, ServerList, SessionListResponse, SettingsPatch, ShowResponse, SlashCommandsResponse, Spec, Status, StatusAll, SteeringDoc, SteeringIssuesResponse, SteeringSave, SteeringWrite, TabList, TangentMergeStatus, TokenLogin, ToolCallBulk, ToolPresence, Unsubscribe, UpdateRequest, UploadResult, VAPIDKey, VersionInfo, WhoamiResponse, ZipRequest } from "./types.gen.js";
 
 /** Options accepted by every generated client function. */
 export interface ClientOpts {
@@ -32,9 +32,10 @@ export interface GetEventsArgs {
   readonly sseClient?: string;
   readonly sseWire?: string;
   readonly lastEventId?: string;
+  readonly sseTopics?: string;
 }
 
-const getEventsCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const getEventsCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type GetEventsError = (typeof getEventsCodes)[number];
 
@@ -56,6 +57,9 @@ export const getEventsEndpoint = {
     if (args.lastEventId !== undefined) {
       headers["Last-Event-ID"] = args.lastEventId;
     }
+    if (args.sseTopics !== undefined) {
+      headers["SSE-Topics"] = args.sseTopics;
+    }
     return {
       method: "GET",
       path: "/api/events",
@@ -69,7 +73,7 @@ export interface PostCommandArgs {
   readonly body: ClientCommand;
 }
 
-const postCommandCodes = ["agent_rows_waiting", "always_rule_not_saved", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "full", "held", "in_progress", "invalid_hash", "invalid_phase", "method_not_allowed", "no_turn", "not_user", "not_waiting", "prompt_only", "sending", "settling", "starting", "still_applying", "tabs_full", "too_many_specs", "turn_open"] as const;
+const postCommandCodes = ["agent_rows_waiting", "always_rule_not_saved", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "full", "held", "in_progress", "invalid_hash", "invalid_phase", "method_not_allowed", "no_turn", "not_user", "not_waiting", "prompt_only", "sending", "settling", "starting", "still_applying", "tabs_full", "too_many_specs", "turn_open"] as const;
 
 export type PostCommandError = (typeof postCommandCodes)[number];
 
@@ -100,7 +104,7 @@ export function postCommand(args: PostCommandArgs, opts?: ClientOpts): globalThi
   return clientRequest<globalThis.Blob, PostCommandError>(postCommandEndpoint.request(args), postCommandEndpoint.decode, opts);
 }
 
-const postSyncCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const postSyncCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type PostSyncError = (typeof postSyncCodes)[number];
 
@@ -134,7 +138,7 @@ export interface PostEventsAliveArgs {
   readonly sseClient: string;
 }
 
-const postEventsAliveCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const postEventsAliveCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type PostEventsAliveError = (typeof postEventsAliveCodes)[number];
 
@@ -165,7 +169,111 @@ export function postEventsAlive(args: PostEventsAliveArgs, opts?: ClientOpts): g
   return clientRequest<void, PostEventsAliveError>(postEventsAliveEndpoint.request(args), postEventsAliveEndpoint.decode, opts);
 }
 
-const postShellRestartCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+export interface PostEventsViewArgs {
+  readonly body: PageView;
+  readonly sseClient: string;
+}
+
+const postEventsViewCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+
+export type PostEventsViewError = (typeof postEventsViewCodes)[number];
+
+/**
+ * Report which tab a page shows, for push presence
+ */
+export const postEventsViewEndpoint = {
+  method: "POST",
+  path: "/api/events/view",
+  codes: postEventsViewCodes,
+  request(args: PostEventsViewArgs): EndpointSpec {
+    const headers: globalThis.Record<string, string> = {};
+    headers["SSE-Client"] = args.sseClient;
+    return {
+      method: "POST",
+      path: "/api/events/view",
+      body: args.body,
+      headers,
+      codes: postEventsViewCodes,
+    };
+  },
+  decode: (): void => undefined,
+} as const;
+
+/**
+ * Report which tab a page shows, for push presence
+ */
+export function postEventsView(args: PostEventsViewArgs, opts?: ClientOpts): globalThis.Promise<ApiResult<void, PostEventsViewError>> {
+  return clientRequest<void, PostEventsViewError>(postEventsViewEndpoint.request(args), postEventsViewEndpoint.decode, opts);
+}
+
+export interface PostEventsNoticeArgs {
+  readonly body: NoticeReport;
+  readonly sseClient: string;
+}
+
+const postEventsNoticeCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+
+export type PostEventsNoticeError = (typeof postEventsNoticeCodes)[number];
+
+/**
+ * Report that a page showed or declined a notice
+ */
+export const postEventsNoticeEndpoint = {
+  method: "POST",
+  path: "/api/events/notice",
+  codes: postEventsNoticeCodes,
+  request(args: PostEventsNoticeArgs): EndpointSpec {
+    const headers: globalThis.Record<string, string> = {};
+    headers["SSE-Client"] = args.sseClient;
+    return {
+      method: "POST",
+      path: "/api/events/notice",
+      body: args.body,
+      headers,
+      codes: postEventsNoticeCodes,
+    };
+  },
+  decode: (): void => undefined,
+} as const;
+
+/**
+ * Report that a page showed or declined a notice
+ */
+export function postEventsNotice(args: PostEventsNoticeArgs, opts?: ClientOpts): globalThis.Promise<ApiResult<void, PostEventsNoticeError>> {
+  return clientRequest<void, PostEventsNoticeError>(postEventsNoticeEndpoint.request(args), postEventsNoticeEndpoint.decode, opts);
+}
+
+const postEventsScopeCodes = ["method_not_allowed"] as const;
+
+export type PostEventsScopeError = (typeof postEventsScopeCodes)[number];
+
+/**
+ * Replace the topics a live event stream receives
+ */
+export const postEventsScopeEndpoint = {
+  method: "POST",
+  path: "/api/events/scope",
+  codes: postEventsScopeCodes,
+  contentType: "application/json",
+  request(): EndpointSpec {
+    return {
+      method: "POST",
+      path: "/api/events/scope",
+      raw: true,
+      codes: postEventsScopeCodes,
+    };
+  },
+  decode: decodeBlob,
+} as const;
+
+/**
+ * Replace the topics a live event stream receives
+ */
+export function postEventsScope(opts?: ClientOpts): globalThis.Promise<ApiResult<globalThis.Blob, PostEventsScopeError>> {
+  return clientRequest<globalThis.Blob, PostEventsScopeError>(postEventsScopeEndpoint.request(), postEventsScopeEndpoint.decode, opts);
+}
+
+const postShellRestartCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type PostShellRestartError = (typeof postShellRestartCodes)[number];
 
@@ -198,7 +306,7 @@ export interface GetFileChangesArgs {
   readonly path: string;
 }
 
-const getFileChangesCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const getFileChangesCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type GetFileChangesError = (typeof getFileChangesCodes)[number];
 
@@ -226,7 +334,7 @@ export function getFileChanges(args: GetFileChangesArgs, opts?: ClientOpts): glo
   return clientRequest<FileChanges, GetFileChangesError>(getFileChangesEndpoint.request(args), getFileChangesEndpoint.decode, opts);
 }
 
-const getKnowledgeCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const getKnowledgeCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type GetKnowledgeError = (typeof getKnowledgeCodes)[number];
 
@@ -258,7 +366,7 @@ export interface PostKnowledgeArgs {
   readonly body: KnowledgeAdd;
 }
 
-const postKnowledgeCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const postKnowledgeCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type PostKnowledgeError = (typeof postKnowledgeCodes)[number];
 
@@ -287,7 +395,7 @@ export function postKnowledge(args: PostKnowledgeArgs, opts?: ClientOpts): globa
   return clientRequest<KnowledgeMessage, PostKnowledgeError>(postKnowledgeEndpoint.request(args), postKnowledgeEndpoint.decode, opts);
 }
 
-const deleteKnowledgeCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const deleteKnowledgeCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type DeleteKnowledgeError = (typeof deleteKnowledgeCodes)[number];
 
@@ -319,7 +427,7 @@ export interface DeleteKnowledgeByNameArgs {
   readonly name: string;
 }
 
-const deleteKnowledgeByNameCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const deleteKnowledgeByNameCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type DeleteKnowledgeByNameError = (typeof deleteKnowledgeByNameCodes)[number];
 
@@ -351,7 +459,7 @@ export interface PostKnowledgeByNameReindexArgs {
   readonly name: string;
 }
 
-const postKnowledgeByNameReindexCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const postKnowledgeByNameReindexCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type PostKnowledgeByNameReindexError = (typeof postKnowledgeByNameReindexCodes)[number];
 
@@ -383,7 +491,7 @@ export interface PostKnowledgeByNameCancelArgs {
   readonly name: string;
 }
 
-const postKnowledgeByNameCancelCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const postKnowledgeByNameCancelCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type PostKnowledgeByNameCancelError = (typeof postKnowledgeByNameCancelCodes)[number];
 
@@ -411,7 +519,7 @@ export function postKnowledgeByNameCancel(args: PostKnowledgeByNameCancelArgs, o
   return clientRequest<KnowledgeMessage, PostKnowledgeByNameCancelError>(postKnowledgeByNameCancelEndpoint.request(args), postKnowledgeByNameCancelEndpoint.decode, opts);
 }
 
-const getMemoryCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const getMemoryCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type GetMemoryError = (typeof getMemoryCodes)[number];
 
@@ -439,7 +547,7 @@ export function getMemory(opts?: ClientOpts): globalThis.Promise<ApiResult<Memor
   return clientRequest<MemoryList, GetMemoryError>(getMemoryEndpoint.request(), getMemoryEndpoint.decode, opts);
 }
 
-const getMemorySyncCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const getMemorySyncCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type GetMemorySyncError = (typeof getMemorySyncCodes)[number];
 
@@ -471,7 +579,7 @@ export interface PutMemorySyncArgs {
   readonly body: MemorySyncUpdate;
 }
 
-const putMemorySyncCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const putMemorySyncCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type PutMemorySyncError = (typeof putMemorySyncCodes)[number];
 
@@ -504,7 +612,7 @@ export interface GetMemoryByIdArgs {
   readonly id: string;
 }
 
-const getMemoryByIdCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const getMemoryByIdCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type GetMemoryByIdError = (typeof getMemoryByIdCodes)[number];
 
@@ -537,7 +645,7 @@ export interface PatchMemoryByIdArgs {
   readonly body: MemoryUpdate;
 }
 
-const patchMemoryByIdCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const patchMemoryByIdCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type PatchMemoryByIdError = (typeof patchMemoryByIdCodes)[number];
 
@@ -570,7 +678,7 @@ export interface DeleteMemoryByIdArgs {
   readonly id: string;
 }
 
-const deleteMemoryByIdCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const deleteMemoryByIdCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type DeleteMemoryByIdError = (typeof deleteMemoryByIdCodes)[number];
 
@@ -598,7 +706,7 @@ export function deleteMemoryById(args: DeleteMemoryByIdArgs, opts?: ClientOpts):
   return clientRequest<OKBody, DeleteMemoryByIdError>(deleteMemoryByIdEndpoint.request(args), deleteMemoryByIdEndpoint.decode, opts);
 }
 
-const getHooksCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const getHooksCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type GetHooksError = (typeof getHooksCodes)[number];
 
@@ -631,7 +739,7 @@ export interface PostHooksByIdEnabledArgs {
   readonly body: HookEnabledWrite;
 }
 
-const postHooksByIdEnabledCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const postHooksByIdEnabledCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type PostHooksByIdEnabledError = (typeof postHooksByIdEnabledCodes)[number];
 
@@ -660,7 +768,7 @@ export function postHooksByIdEnabled(args: PostHooksByIdEnabledArgs, opts?: Clie
   return clientRequest<OKBody, PostHooksByIdEnabledError>(postHooksByIdEnabledEndpoint.request(args), postHooksByIdEnabledEndpoint.decode, opts);
 }
 
-const getGovernanceCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const getGovernanceCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type GetGovernanceError = (typeof getGovernanceCodes)[number];
 
@@ -688,7 +796,7 @@ export function getGovernance(opts?: ClientOpts): globalThis.Promise<ApiResult<G
   return clientRequest<GovernanceStatePayload, GetGovernanceError>(getGovernanceEndpoint.request(), getGovernanceEndpoint.decode, opts);
 }
 
-const getPowersCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const getPowersCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type GetPowersError = (typeof getPowersCodes)[number];
 
@@ -720,7 +828,7 @@ export interface GetPowersByNameServersArgs {
   readonly name: string;
 }
 
-const getPowersByNameServersCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const getPowersByNameServersCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type GetPowersByNameServersError = (typeof getPowersByNameServersCodes)[number];
 
@@ -752,7 +860,7 @@ export interface PostPowersByNameInstallArgs {
   readonly name: string;
 }
 
-const postPowersByNameInstallCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const postPowersByNameInstallCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type PostPowersByNameInstallError = (typeof postPowersByNameInstallCodes)[number];
 
@@ -784,7 +892,7 @@ export interface DeletePowersByNameArgs {
   readonly name: string;
 }
 
-const deletePowersByNameCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const deletePowersByNameCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type DeletePowersByNameError = (typeof deletePowersByNameCodes)[number];
 
@@ -814,9 +922,11 @@ export function deletePowersByName(args: DeletePowersByNameArgs, opts?: ClientOp
 
 export interface GetRunsByIdArgs {
   readonly id: string;
+  readonly view?: string;
+  readonly since?: string;
 }
 
-const getRunsByIdCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const getRunsByIdCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type GetRunsByIdError = (typeof getRunsByIdCodes)[number];
 
@@ -831,7 +941,7 @@ export const getRunsByIdEndpoint = {
   request(args: GetRunsByIdArgs): EndpointSpec {
     return {
       method: "GET",
-      path: `/api/runs/${globalThis.encodeURIComponent(globalThis.String(args.id))}`,
+      path: `/api/runs/${globalThis.encodeURIComponent(globalThis.String(args.id))}` + qs([["view", args.view], ["since", args.since]]),
       raw: true,
       codes: getRunsByIdCodes,
     };
@@ -850,7 +960,7 @@ export interface GetRunsByIdControlsArgs {
   readonly id: string;
 }
 
-const getRunsByIdControlsCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const getRunsByIdControlsCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type GetRunsByIdControlsError = (typeof getRunsByIdControlsCodes)[number];
 
@@ -878,7 +988,7 @@ export function getRunsByIdControls(args: GetRunsByIdControlsArgs, opts?: Client
   return clientRequest<RunControlsResponse, GetRunsByIdControlsError>(getRunsByIdControlsEndpoint.request(args), getRunsByIdControlsEndpoint.decode, opts);
 }
 
-const getRunsLiveCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const getRunsLiveCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type GetRunsLiveError = (typeof getRunsLiveCodes)[number];
 
@@ -911,7 +1021,7 @@ export interface GetRunsByIdStepsByPathArgs {
   readonly path: string;
 }
 
-const getRunsByIdStepsByPathCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const getRunsByIdStepsByPathCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type GetRunsByIdStepsByPathError = (typeof getRunsByIdStepsByPathCodes)[number];
 
@@ -939,13 +1049,46 @@ export function getRunsByIdStepsByPath(args: GetRunsByIdStepsByPathArgs, opts?: 
   return clientRequest<RunStepTranscript, GetRunsByIdStepsByPathError>(getRunsByIdStepsByPathEndpoint.request(args), getRunsByIdStepsByPathEndpoint.decode, opts);
 }
 
+export interface GetRunsByIdStepsByPathCaptureArgs {
+  readonly id: string;
+  readonly path: string;
+}
+
+const getRunsByIdStepsByPathCaptureCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+
+export type GetRunsByIdStepsByPathCaptureError = (typeof getRunsByIdStepsByPathCaptureCodes)[number];
+
+/**
+ * One run step's whole captured output
+ */
+export const getRunsByIdStepsByPathCaptureEndpoint = {
+  method: "GET",
+  path: "/api/runs/{id}/steps/{path}/capture",
+  codes: getRunsByIdStepsByPathCaptureCodes,
+  request(args: GetRunsByIdStepsByPathCaptureArgs): EndpointSpec {
+    return {
+      method: "GET",
+      path: `/api/runs/${globalThis.encodeURIComponent(globalThis.String(args.id))}/steps/${globalThis.encodeURIComponent(globalThis.String(args.path))}/capture`,
+      codes: getRunsByIdStepsByPathCaptureCodes,
+    };
+  },
+  decode: decodeRunStepCapture,
+} as const;
+
+/**
+ * One run step's whole captured output
+ */
+export function getRunsByIdStepsByPathCapture(args: GetRunsByIdStepsByPathCaptureArgs, opts?: ClientOpts): globalThis.Promise<ApiResult<RunStepCapture, GetRunsByIdStepsByPathCaptureError>> {
+  return clientRequest<RunStepCapture, GetRunsByIdStepsByPathCaptureError>(getRunsByIdStepsByPathCaptureEndpoint.request(args), getRunsByIdStepsByPathCaptureEndpoint.decode, opts);
+}
+
 export interface GetRunsByIdTurnsByTurnArgs {
   readonly id: string;
   readonly turn: string;
   readonly after?: string;
 }
 
-const getRunsByIdTurnsByTurnCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const getRunsByIdTurnsByTurnCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type GetRunsByIdTurnsByTurnError = (typeof getRunsByIdTurnsByTurnCodes)[number];
 
@@ -977,7 +1120,7 @@ export interface PostRunsArgs {
   readonly body: RunLaunchRequest;
 }
 
-const postRunsCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const postRunsCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type PostRunsError = (typeof postRunsCodes)[number];
 
@@ -1010,7 +1153,7 @@ export interface PostRunsByIdCancelArgs {
   readonly id: string;
 }
 
-const postRunsByIdCancelCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const postRunsByIdCancelCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type PostRunsByIdCancelError = (typeof postRunsByIdCancelCodes)[number];
 
@@ -1042,7 +1185,7 @@ export interface PostRunsByIdPauseArgs {
   readonly id: string;
 }
 
-const postRunsByIdPauseCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const postRunsByIdPauseCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type PostRunsByIdPauseError = (typeof postRunsByIdPauseCodes)[number];
 
@@ -1074,7 +1217,7 @@ export interface PostRunsByIdResumeArgs {
   readonly id: string;
 }
 
-const postRunsByIdResumeCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const postRunsByIdResumeCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type PostRunsByIdResumeError = (typeof postRunsByIdResumeCodes)[number];
 
@@ -1106,7 +1249,7 @@ export interface PostRunsByIdRetryArgs {
   readonly id: string;
 }
 
-const postRunsByIdRetryCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const postRunsByIdRetryCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type PostRunsByIdRetryError = (typeof postRunsByIdRetryCodes)[number];
 
@@ -1138,7 +1281,7 @@ export interface DeleteRunsByIdArgs {
   readonly id: string;
 }
 
-const deleteRunsByIdCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const deleteRunsByIdCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type DeleteRunsByIdError = (typeof deleteRunsByIdCodes)[number];
 
@@ -1171,7 +1314,7 @@ export interface PostRunsByIdExtendArgs {
   readonly body: RunExtendRequest;
 }
 
-const postRunsByIdExtendCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const postRunsByIdExtendCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type PostRunsByIdExtendError = (typeof postRunsByIdExtendCodes)[number];
 
@@ -1205,7 +1348,7 @@ export interface PostRunsByIdFinishLoopArgs {
   readonly body: RunFinishLoopRequest;
 }
 
-const postRunsByIdFinishLoopCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const postRunsByIdFinishLoopCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type PostRunsByIdFinishLoopError = (typeof postRunsByIdFinishLoopCodes)[number];
 
@@ -1239,7 +1382,7 @@ export interface PostRunsByIdAnswerArgs {
   readonly body: RunAnswerRequest;
 }
 
-const postRunsByIdAnswerCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const postRunsByIdAnswerCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type PostRunsByIdAnswerError = (typeof postRunsByIdAnswerCodes)[number];
 
@@ -1274,7 +1417,7 @@ export interface PostRunsByIdStepsByPathMessageArgs {
   readonly body: RunStepMessageRequest;
 }
 
-const postRunsByIdStepsByPathMessageCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const postRunsByIdStepsByPathMessageCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type PostRunsByIdStepsByPathMessageError = (typeof postRunsByIdStepsByPathMessageCodes)[number];
 
@@ -1309,7 +1452,7 @@ export interface PostRunsByIdStepsByPathSteerRemoveArgs {
   readonly body: RunStepSteerRequest;
 }
 
-const postRunsByIdStepsByPathSteerRemoveCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const postRunsByIdStepsByPathSteerRemoveCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type PostRunsByIdStepsByPathSteerRemoveError = (typeof postRunsByIdStepsByPathSteerRemoveCodes)[number];
 
@@ -1343,7 +1486,7 @@ export interface PostRunsByIdStepsByPathSteerClearArgs {
   readonly path: string;
 }
 
-const postRunsByIdStepsByPathSteerClearCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const postRunsByIdStepsByPathSteerClearCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type PostRunsByIdStepsByPathSteerClearError = (typeof postRunsByIdStepsByPathSteerClearCodes)[number];
 
@@ -1377,7 +1520,7 @@ export interface PostRunsByIdStepsByPathEndArgs {
   readonly body: RunStepEndRequest;
 }
 
-const postRunsByIdStepsByPathEndCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const postRunsByIdStepsByPathEndCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type PostRunsByIdStepsByPathEndError = (typeof postRunsByIdStepsByPathEndCodes)[number];
 
@@ -1406,7 +1549,7 @@ export function postRunsByIdStepsByPathEnd(args: PostRunsByIdStepsByPathEndArgs,
   return clientRequest<OKBody, PostRunsByIdStepsByPathEndError>(postRunsByIdStepsByPathEndEndpoint.request(args), postRunsByIdStepsByPathEndEndpoint.decode, opts);
 }
 
-const getRecipesCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const getRecipesCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type GetRecipesError = (typeof getRecipesCodes)[number];
 
@@ -1434,7 +1577,7 @@ export function getRecipes(opts?: ClientOpts): globalThis.Promise<ApiResult<Reci
   return clientRequest<RecipesResponse, GetRecipesError>(getRecipesEndpoint.request(), getRecipesEndpoint.decode, opts);
 }
 
-const getLaunchRulesCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const getLaunchRulesCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type GetLaunchRulesError = (typeof getLaunchRulesCodes)[number];
 
@@ -1466,7 +1609,7 @@ export interface PostLaunchRulesArgs {
   readonly body: LaunchRuleWrite;
 }
 
-const postLaunchRulesCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const postLaunchRulesCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type PostLaunchRulesError = (typeof postLaunchRulesCodes)[number];
 
@@ -1500,7 +1643,7 @@ export interface PutLaunchRulesByIdArgs {
   readonly body: LaunchRuleReplace;
 }
 
-const putLaunchRulesByIdCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const putLaunchRulesByIdCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type PutLaunchRulesByIdError = (typeof putLaunchRulesByIdCodes)[number];
 
@@ -1533,7 +1676,7 @@ export interface DeleteLaunchRulesByIdArgs {
   readonly id: string;
 }
 
-const deleteLaunchRulesByIdCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const deleteLaunchRulesByIdCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type DeleteLaunchRulesByIdError = (typeof deleteLaunchRulesByIdCodes)[number];
 
@@ -1565,7 +1708,7 @@ export interface PostLaunchRulesByIdDismissGapArgs {
   readonly id: string;
 }
 
-const postLaunchRulesByIdDismissGapCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
+const postLaunchRulesByIdDismissGapCodes = ["agent_rows_waiting", "alive_invalid", "already_paused", "already_running", "always_rule_not_saved", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "engine_slow", "event_report_invalid", "finished", "full", "held", "identity_provider_unreachable", "in_progress", "invalid_hash", "invalid_phase", "locked", "method_not_allowed", "model_list_unreadable", "no_turn", "not_enabled", "not_started", "not_user", "not_waiting", "prompt_only", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sending", "settling", "sign_in_required", "starting", "step_not_paused", "step_unnamed", "still_applying", "tabs_full", "too_many_specs", "turn_open", "unavailable", "waits_on_run"] as const;
 
 export type PostLaunchRulesByIdDismissGapError = (typeof postLaunchRulesByIdDismissGapCodes)[number];
 
@@ -1593,7 +1736,7 @@ export function postLaunchRulesByIdDismissGap(args: PostLaunchRulesByIdDismissGa
   return clientRequest<LaunchRuleView, PostLaunchRulesByIdDismissGapError>(postLaunchRulesByIdDismissGapEndpoint.request(args), postLaunchRulesByIdDismissGapEndpoint.decode, opts);
 }
 
-const getEngineCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const getEngineCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type GetEngineError = (typeof getEngineCodes)[number];
 
@@ -1621,7 +1764,7 @@ export function getEngine(opts?: ClientOpts): globalThis.Promise<ApiResult<Engin
   return clientRequest<EngineStatus, GetEngineError>(getEngineEndpoint.request(), getEngineEndpoint.decode, opts);
 }
 
-const postEngineRestartCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const postEngineRestartCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type PostEngineRestartError = (typeof postEngineRestartCodes)[number];
 
@@ -1649,7 +1792,7 @@ export function postEngineRestart(opts?: ClientOpts): globalThis.Promise<ApiResu
   return clientRequest<EngineRestartAccepted, PostEngineRestartError>(postEngineRestartEndpoint.request(), postEngineRestartEndpoint.decode, opts);
 }
 
-const getConfigStandingCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const getConfigStandingCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type GetConfigStandingError = (typeof getConfigStandingCodes)[number];
 
@@ -1677,7 +1820,7 @@ export function getConfigStanding(opts?: ClientOpts): globalThis.Promise<ApiResu
   return clientRequest<ConfigStandingResponse, GetConfigStandingError>(getConfigStandingEndpoint.request(), getConfigStandingEndpoint.decode, opts);
 }
 
-const getConfigTemplateCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const getConfigTemplateCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type GetConfigTemplateError = (typeof getConfigTemplateCodes)[number];
 
@@ -1705,7 +1848,7 @@ export function getConfigTemplate(opts?: ClientOpts): globalThis.Promise<ApiResu
   return clientRequest<ConfigTemplateResponse, GetConfigTemplateError>(getConfigTemplateEndpoint.request(), getConfigTemplateEndpoint.decode, opts);
 }
 
-const getSessionsCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const getSessionsCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type GetSessionsError = (typeof getSessionsCodes)[number];
 
@@ -1737,7 +1880,7 @@ export interface GetChatsByIdKiroSessionArgs {
   readonly id: string;
 }
 
-const getChatsByIdKiroSessionCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const getChatsByIdKiroSessionCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type GetChatsByIdKiroSessionError = (typeof getChatsByIdKiroSessionCodes)[number];
 
@@ -1772,7 +1915,7 @@ export interface GetChatsByIdMergesByOpArgs {
   readonly op: string;
 }
 
-const getChatsByIdMergesByOpCodes = ["agent_rows_waiting", "always_rule_not_saved", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "full", "held", "in_progress", "invalid_hash", "invalid_phase", "method_not_allowed", "no_turn", "not_user", "not_waiting", "prompt_only", "sending", "settling", "starting", "still_applying", "tabs_full", "too_many_specs", "turn_open"] as const;
+const getChatsByIdMergesByOpCodes = ["agent_rows_waiting", "always_rule_not_saved", "bot_mode", "busy", "chat_closed", "chat_gone", "chat_not_found", "consumed", "full", "held", "in_progress", "invalid_hash", "invalid_phase", "method_not_allowed", "no_turn", "not_user", "not_waiting", "prompt_only", "sending", "settling", "starting", "still_applying", "tabs_full", "too_many_specs", "turn_open"] as const;
 
 export type GetChatsByIdMergesByOpError = (typeof getChatsByIdMergesByOpCodes)[number];
 
@@ -1800,7 +1943,7 @@ export function getChatsByIdMergesByOp(args: GetChatsByIdMergesByOpArgs, opts?: 
   return clientRequest<TangentMergeStatus, GetChatsByIdMergesByOpError>(getChatsByIdMergesByOpEndpoint.request(args), getChatsByIdMergesByOpEndpoint.decode, opts);
 }
 
-const getSlashCommandsCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const getSlashCommandsCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type GetSlashCommandsError = (typeof getSlashCommandsCodes)[number];
 
@@ -1828,7 +1971,7 @@ export function getSlashCommands(opts?: ClientOpts): globalThis.Promise<ApiResul
   return clientRequest<SlashCommandsResponse, GetSlashCommandsError>(getSlashCommandsEndpoint.request(), getSlashCommandsEndpoint.decode, opts);
 }
 
-const getSteeringIssuesCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const getSteeringIssuesCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type GetSteeringIssuesError = (typeof getSteeringIssuesCodes)[number];
 
@@ -3908,7 +4051,7 @@ export function deleteMcpByName(args: DeleteMcpByNameArgs, opts?: ClientOpts): g
   return clientRequest<OKBody, DeleteMcpByNameError>(deleteMcpByNameEndpoint.request(args), deleteMcpByNameEndpoint.decode, opts);
 }
 
-const getMcpStatusCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const getMcpStatusCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type GetMcpStatusError = (typeof getMcpStatusCodes)[number];
 
@@ -3926,21 +4069,21 @@ export const getMcpStatusEndpoint = {
       codes: getMcpStatusCodes,
     };
   },
-  decode: decodeMCPStatus,
+  decode: decodeMCPStatusResponse,
 } as const;
 
 /**
  * The MCP servers' runtime status
  */
-export function getMcpStatus(opts?: ClientOpts): globalThis.Promise<ApiResult<MCPStatus, GetMcpStatusError>> {
-  return clientRequest<MCPStatus, GetMcpStatusError>(getMcpStatusEndpoint.request(), getMcpStatusEndpoint.decode, opts);
+export function getMcpStatus(opts?: ClientOpts): globalThis.Promise<ApiResult<MCPStatusResponse, GetMcpStatusError>> {
+  return clientRequest<MCPStatusResponse, GetMcpStatusError>(getMcpStatusEndpoint.request(), getMcpStatusEndpoint.decode, opts);
 }
 
 export interface GetMcpPoolArgs {
   readonly chat_id?: string;
 }
 
-const getMcpPoolCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const getMcpPoolCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type GetMcpPoolError = (typeof getMcpPoolCodes)[number];
 
@@ -3972,7 +4115,7 @@ export interface PostMcpReconnectArgs {
   readonly body: MCPServerRef;
 }
 
-const postMcpReconnectCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const postMcpReconnectCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type PostMcpReconnectError = (typeof postMcpReconnectCodes)[number];
 
@@ -4005,7 +4148,7 @@ export interface PostMcpSignInArgs {
   readonly body: MCPServerRef;
 }
 
-const postMcpSignInCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const postMcpSignInCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type PostMcpSignInError = (typeof postMcpSignInCodes)[number];
 
@@ -4038,7 +4181,7 @@ export interface PostMcpOauthRelayArgs {
   readonly body: MCPOAuthRelay;
 }
 
-const postMcpOauthRelayCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
+const postMcpOauthRelayCodes = ["alive_invalid", "already_paused", "already_running", "ask_branch_running", "ask_gone", "ask_pending", "ask_settling", "ask_stale", "ask_stopping", "ask_unnamed", "ask_unreadable", "ask_unsettled", "awaiting_answer", "busy", "engine_slow", "event_report_invalid", "finished", "full", "identity_provider_unreachable", "locked", "method_not_allowed", "model_list_unreadable", "not_enabled", "not_started", "not_waiting", "recipe_list_slow", "render_failed", "run_answer_pending", "run_paused", "sign_in_required", "step_not_paused", "step_unnamed", "still_applying", "unavailable", "waits_on_run"] as const;
 
 export type PostMcpOauthRelayError = (typeof postMcpOauthRelayCodes)[number];
 

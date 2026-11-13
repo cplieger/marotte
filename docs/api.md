@@ -7,7 +7,7 @@ This page is for a developer who calls marotte's HTTP API from a script or anoth
 - [`docs/openapi.json`](openapi.json) in this repository is the document for the code at that commit.
 - A running server serves its own copy at `GET /api/openapi.json`.
 
-Each operation lists the query arguments it reads and the error codes it can answer, each code with its one status. A code that is not listed for an operation is never sent by it, with two exceptions. `POST /api/sync` also answers the library codes that [Errors](#errors) lists, and any operation answers `500` with the code `internal_error` when its handler fails unexpectedly.
+Each operation lists the query arguments it reads and the error codes it can answer, each code with its one status. A code that is not listed for an operation is never sent by it, with two exceptions. `POST /api/sync` and `POST /api/events/scope` also answer the library codes that [Errors](#errors) lists, and any operation answers `500` with the code `internal_error` when its handler fails unexpectedly.
 
 ## Authentication
 
@@ -49,11 +49,11 @@ Some replies carry more fields beside `error` and `code`:
 - `/api/file` and `/api/file/download` add `file_id`, `size`, `content_kind` and, for a stale save, `content`, so a client can show what is on disk.
 - The `/api/forges` routes add `kind`, the forge's own class of failure, and, when the forge sent them, `retry_after_s`, `diag_id`, `successor` (a renamed or moved repository) and `capability` (what the forge could not do). A relayed forge code is answered with one status whatever path the forge took to it.
 
-Four codes on `POST /api/sync` come from the event-stream library, not marotte, and are not in the document yet: `digest_method` (405), `digest_content_type` (415), `digest_too_large` (413) and `digest_invalid` (400). A digest that takes too long answers `timeout` (503).
+Two operations answer codes that come from the event-stream library, not marotte, and are not in the document yet. `POST /api/sync` answers `digest_content_type` (415), `digest_too_large` (413) and `digest_invalid` (400), and a digest that takes too long answers `timeout` (503). `POST /api/events/scope` answers `scope_invalid` (400), `sse_scope` (400), `scope_forbidden` (403), `scope_conn` (404), `scope_stale` (409), `scope_too_large` (413) and `scope_content_type` (415).
 
 ## Live updates and the terminal
 
-`GET /api/events` is a server-sent event stream. `POST /api/sync` tells a client that reconnects which of the subjects it holds changed.
+`GET /api/events` is a server-sent event stream. Its `SSE-Topics` header, or a later `POST /api/events/scope` naming the stream by the `conn` its hello carries, limits the stream to those topics plus the events every client receives. `POST /api/sync` tells a client that reconnects which of the subjects it holds changed.
 
 The Shell panel's terminal is a WebSocket at `/api/shell/ws`. OpenAPI cannot describe a socket's frames, so the document has no operation for it.
 

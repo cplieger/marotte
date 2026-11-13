@@ -1,7 +1,7 @@
 // The activity dot on a workflow run's tab.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { signal } from "@cplieger/ui";
+import { signal } from "@cplieger/reactive";
 import type { RunState } from "./run-store.js";
 
 const m = {
@@ -16,8 +16,8 @@ const m = {
   /** The run refs the projection holds, as `openRunRefs` answers them. Separate from `tabs`
    *  above, which is keyed by the readable TAB id the fake resolves. */
   runTabs: new Set<string>(),
-  /** One entry per `invalidateRun` call, in order, so the seed's bound is assertable. */
-  invalidated: [] as string[],
+  /** One entry per `drawRun` call, in order, so the seed's bound is assertable. */
+  drawn: [] as string[],
 };
 
 const tabsVersion = signal(0);
@@ -75,7 +75,7 @@ vi.mock("./run-store.js", () => ({
   // The label, resolved by the store over the same cell. Untracked in production, which costs
   // nothing here: the status read above is already the subscription.
   runLabelOf: vi.fn((id: string) => m.states.get(id)?.displayName ?? ""),
-  // The store's seam for "this client now knows about this run", which the live-runs rebuild
+  // The store's seam for "this client now knows about this run", which the live-runs inventory
   // reports each row to. Recorded rather than inert: whether a consumer registers at all is the
   // half a store-side test cannot see.
   registerLiveRunObserver: vi.fn((fn: (workflowID: string) => void) => {
@@ -83,8 +83,8 @@ vi.mock("./run-store.js", () => ({
   }),
   // Recorded rather than resolved: a case drives the cell write itself, so the request and its
   // answer are separately assertable.
-  invalidateRun: vi.fn((id: string) => {
-    m.invalidated.push(id);
+  drawRun: vi.fn((id: string) => {
+    m.drawn.push(id);
   }),
 }));
 
@@ -113,7 +113,7 @@ beforeEach(() => {
   m.states.clear();
   m.names.clear();
   m.runTabs.clear();
-  m.invalidated.length = 0;
+  m.drawn.length = 0;
   if (!installed) {
     installRunDotSubscriber();
     installed = true;
@@ -324,13 +324,13 @@ describe("a tracked run without a tab keeps its place and paints on arrival", ()
   });
 });
 
-// The live-runs rebuild is the THIRD door into "this client knows about this run", and it is the
+// The live-runs inventory is the THIRD door into "this client knows about this run", and it is the
 // only one a PAUSED run restored on boot reaches: such a run emits no frame at all and nothing
 // paints its view, so without a consumer on the store's seam its row keeps the factory's
 // placeholder and its dot stays blank for the life of the pause.
 
-describe("the live-runs rebuild reaches the dot, which a boot-restored run needs", () => {
-  it("registers with the store, so the rebuild has something to report to", () => {
+describe("the live-runs inventory reaches the dot, which a boot-restored run needs", () => {
+  it("registers with the store, so the inventory has something to report to", () => {
     expect(typeof observer).toBe("function");
   });
 
@@ -361,7 +361,7 @@ describe("an open run tab seeds its own run state, with no activation", () => {
     m.runTabs.add("wf_resumed");
     tabsChanged();
 
-    expect(m.invalidated).toEqual(["wf_resumed"]);
+    expect(m.drawn).toEqual(["wf_resumed"]);
     // Nothing is claimed before the fetch answers, which is run-dots' own rule.
     expect(m.named).toEqual([]);
     expect(m.painted.at(-1)).toEqual({ id: "run:wf_resumed", status: "" });
@@ -385,12 +385,12 @@ describe("an open run tab seeds its own run state, with no activation", () => {
     m.tabs.add("run:wf_bounded");
     m.runTabs.add("wf_bounded");
     tabsChanged();
-    expect(m.invalidated).toEqual(["wf_bounded"]);
+    expect(m.drawn).toEqual(["wf_bounded"]);
 
     tabsChanged();
     tabsChanged();
     tabsChanged();
-    expect(m.invalidated).toHaveLength(1);
+    expect(m.drawn).toHaveLength(1);
   });
 });
 

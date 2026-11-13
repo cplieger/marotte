@@ -46,10 +46,10 @@ const TOOLBAR = [
 /** Icon-only by construction, so square at the reference; the context pie carries its percentage. */
 const SQUARE = ["chat-options-btn", "task-list-pill", "midturn-send-btn", "scroll-bottom"];
 
-/** The widest pills kiro-cli's catalog renders: its widest model with its widest tier label, and its widest built-in
- *  mode. The fit thresholds in `15-input.css` are decided on them. */
-const MODEL_ID = "claude-sonnet-5.5";
-const MODEL = "claude sonnet 5.5";
+/** The widest pills kiro-cli's catalog renders: a stand-in with as many characters as its widest model's name,
+ *  with its widest tier label, and its widest built-in mode. The fit thresholds in `15-input.css` are decided on them. */
+const MODEL_ID = "model-charlie-5.5";
+const MODEL = "model charlie 5.5";
 const EFFORT = "medium";
 const MODE_ID = "semantic_reviewer";
 const MODE = "Semantic Reviewer";
@@ -679,6 +679,13 @@ const CENSUS: readonly Family[] = [
       "18-pages.css `--toggle-w`/`--toggle-h`: a switch track at the platform shape, its target the label",
   },
   {
+    name: "code block bar",
+    selector: '.cp-code [data-part="actions"] > .cp-button',
+    kind: "own-size",
+    documented:
+      '@cplieger/ui css/system.css `.cp-button[data-size="sm"]`: the library\'s code block bar, `--cp-control-h-sm` on a mouse and 44px on touch',
+  },
+  {
     name: "segment",
     selector: ".seg",
     kind: "own-size",
@@ -713,9 +720,9 @@ const CENSUS: readonly Family[] = [
     documented: "01-tokens.css `--menu-row-h` and `--menu-row-pad`, held by the popup menu case",
   },
   {
-    name: "turn footer and code actions",
+    name: "turn footer actions",
     selector:
-      ".turn-action-btn:not(.turn-actions-more[open] > .turn-actions-group > *), .turn-action-more, .turn-rewind, .turn-ledger-summary, .code-act-btn, .tool-group-hooks",
+      ".turn-action-btn:not(.turn-actions-more[open] > .turn-actions-group > *), .turn-action-more, .turn-rewind, .turn-ledger-summary, .tool-group-hooks",
     kind: "dense",
     paint: "--btn-h-sm",
     documented:
@@ -879,7 +886,7 @@ const MOUNTED: Readonly<Record<string, readonly string[]>> = {
   "the file browser's toolbar": ["#fb-back", "#fb-upload", "#fb-delete"],
   "the editor": ["#editor-edit-btn", ".conflict-hunk-row .btn-small"],
   "the editor's go-to bar": [".editor-goto-submit", "#editor-goto-close"],
-  "the web preview's bar": ["#web-reload-btn"],
+  "the web preview's bar": ["#web-reload-btn", "#web-open-btn"],
   "a run card": ["a.run-open"],
   "the shell panel's header": [".shell-header-btn"],
   "the sign-in dialog": ["#modal-sso-submit"],
@@ -906,7 +913,7 @@ const MOUNTED: Readonly<Record<string, readonly string[]>> = {
   "the confirm dialog": [".uip-ask-ok"],
   "the steer dock": [".steer-act"],
   "the Spec tab": [".spec-toggle"],
-  "a reply": [".code-act-btn"],
+  "a reply": ['.cp-code [data-part="actions"] > .cp-button'],
   "the run tab": [".run-icon-btn"],
   "the History page": [".entry-delete"],
   "the git page": ["#git-pull-all-btn"],

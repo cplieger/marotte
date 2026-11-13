@@ -8,10 +8,9 @@ package marotte
 // error and the full event vocabulary discoverable via IDE completion.
 type EventType string
 
-// ServerEvent is the server→client event envelope broadcast to every SSE
-// client: {type, chat_id, payload}. Payload is the event-specific JSON
-// object; handlers type-assert based on Type. Construct it through NewEvent,
-// which keeps the payload typed at the emit site.
+// ServerEvent is the server→client event envelope: {type, chat_id, payload}.
+// Payload is the event-specific JSON object; handlers type-assert based on Type.
+// Construct it through NewEvent, which keeps the payload typed at the emit site.
 type ServerEvent struct {
 	Payload any `json:"payload,omitempty"`
 	// Subject is the version stamp of the projection this frame COMPLETES, set by
@@ -20,12 +19,23 @@ type ServerEvent struct {
 	Subject *SubjectStamp `json:"subject,omitempty"`
 	Type    EventType     `json:"type"`
 	ChatID  ChatID        `json:"chat_id,omitempty"`
+	// Topic is the hub topic the frame publishes on, never on the wire: "" reaches every
+	// connection, RunTopic(id) only a connection scoped to that run or to everything.
+	Topic string `json:"-"`
+}
+
+// RunTopic is the hub topic of one run's log frames, the one Go spelling of "run:<workflowID>".
+func RunTopic(workflowID string) string {
+	return "run:" + workflowID
 }
 
 // SubjectStamp names one digest subject at one version. Kind and Ref spell the
-// subject the way internal/subject does; Version is opaque to the client and
-// compared by equality only. Epoch is filled by REST responses alone, so a
-// response issued under a previous hub epoch is refused by the client's map.
+// subject the way internal/subject does; Version is opaque decimal, compared by
+// equality, except a subject a client mirror holds (`runs`, `mcp_status`), which
+// is minted by subject.Versions.BumpCounter so its versions strictly increase
+// within an epoch and the mirror orders them as numbers. Epoch is filled by REST
+// responses alone, so a response issued under a previous hub epoch is refused by
+// the client.
 type SubjectStamp struct {
 	Kind    string `json:"kind"`
 	Ref     string `json:"ref"`
@@ -114,16 +124,14 @@ const (
 	EventElicitationNeeded EventType = "elicitation_needed"
 	EventUserInputNeeded   EventType = "user_input_needed"
 	EventMCPConfigChanged  EventType = "mcp_config_changed"
-	EventMCPConnected      EventType = "mcp_connected"
-	EventMCPDisconnected   EventType = "mcp_disconnected"
-	EventMCPFailed         EventType = "mcp_failed"
-	EventMCPOAuthNeeded    EventType = "mcp_oauth_needed"
 	// EventMCPPoolChanged is an empty refetch signal for GET /api/mcp/pool: a
 	// session's pool was replaced or dropped.
 	EventMCPPoolChanged  EventType = "mcp_pool_changed"
 	EventMCPPrewarm      EventType = "mcp_prewarm"
-	EventMCPSignInOpen   EventType = "mcp_sign_in_open"
 	EventMCPSignInClosed EventType = "mcp_sign_in_closed"
+	// EventMCPStatus is one row change of GET /api/mcp/status, stamped with the
+	// `mcp_status` version.
+	EventMCPStatus       EventType = "mcp_status"
 	EventModeChanged     EventType = "mode_changed"
 	EventOpenExternalURL EventType = "open_external_url"
 	// EventPermissionNeeded carries a turn's verdict as well as an individual
@@ -131,8 +139,8 @@ const (
 	// staged writes are KAS's.
 	EventPermissionNeeded   EventType = "permission_needed"
 	EventPermissionsChanged EventType = "permissions_changed"
-	// EventNotification is the in-page twin of a Web Push: the page shows it while
-	// that chat or run is not on screen.
+	// EventNotification is the in-page twin of a Web Push, shown only by the pages
+	// its show_in names.
 	EventNotification EventType = "notification"
 	// EventPendingSnapshot is the whole pending set (permissions, run asks,
 	// steers, across every chat) as ONE frame on a v3 connect, stamped with the
@@ -146,8 +154,13 @@ const (
 	EventRunStarted  EventType = "run_started"
 	EventRunProgress EventType = "run_progress"
 	EventRunFinished EventType = "run_finished"
+	// EventLiveRun is one row change of the live-runs inventory, stamped with the `runs`
+	// version the lease store minted for it. Workspace-wide: no chat id.
+	EventLiveRun EventType = "live_run"
 	// EventRunAsks is one run's steps waiting on a person, replaced whole (RunAsksPayload).
-	EventRunAsks         EventType = "run_asks"
+	EventRunAsks EventType = "run_asks"
+	// EventRunRev is a run read's new revision (RunRevPayload).
+	EventRunRev          EventType = "run_rev"
 	EventForgesChanged   EventType = "forges_changed"
 	EventGovernanceState EventType = "governance_state"
 	EventHooksChanged    EventType = "hooks_changed"

@@ -79,7 +79,7 @@ export function noticeSubject(chatID: string, chatName = ""): NoticeSubject {
     open: {
       label: OPEN_LABEL,
       onClick: () => {
-        activateTab(tabID);
+        void activateTab(tabID);
       },
     },
   };
@@ -115,7 +115,7 @@ async function openRunEnd(
   if (chat !== undefined) {
     const tabID = tabIdFor("chat", parentChatID);
     if (tabID !== "") {
-      activateTab(tabID);
+      void activateTab(tabID);
       return;
     }
     // A 404 falls back to the run tab; any other refusal has raised its own toast and ends here.

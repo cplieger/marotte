@@ -1,9 +1,9 @@
 // The page-level search box: `search-shell.ts`'s field under the transcript's reveal, for every
 // page whose search narrows or re-scopes a LIST.
 
-import { el } from "@cplieger/ui";
-import { createPopup } from "@cplieger/ui/popup";
-import type { PopupController } from "@cplieger/ui/popup";
+import { el } from "@cplieger/reactive";
+import { createPopup } from "./legacy-ui/popup.js";
+import type { PopupController } from "./legacy-ui/popup.js";
 import { createSearchShell } from "./search-shell.js";
 import type { SearchShell, SearchShellSpec } from "./search-shell.js";
 import { findGlyph } from "./icons.js";

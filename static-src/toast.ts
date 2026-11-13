@@ -1,9 +1,9 @@
-// Ephemeral toasts: a thin wrapper over @cplieger/ui/toast's default `toast` singleton keeping marotte's
+// Ephemeral toasts: a thin wrapper over legacy-ui/toast's default `toast` singleton keeping marotte's
 // surface (`info` / `success` / `error` / `showToast`). Announcement goes through the shared
 // announce() live region, not a role on the stack. Visuals: the .uip-toast skin (04-uip-skin.css).
 
-import { toast, _resetForTest as uipResetToast } from "@cplieger/ui/toast";
-import type { ToastLevel, ToastRetry } from "@cplieger/ui/toast";
+import { toast, _resetForTest as uipResetToast } from "./legacy-ui/toast/index.js";
+import type { ToastLevel, ToastRetry } from "./legacy-ui/toast/index.js";
 import type { NoticeLevel } from "./wire/types.gen.js";
 import { queryAll } from "./dom.js";
 
@@ -19,12 +19,12 @@ export function success(message: string): () => void {
   return track(null, () => toast.success(message));
 }
 
-/** How long an error toast stays up; the library's default (sticky) would stack unread errors for
+/** How long an error toast stays up; legacy-ui's default (sticky) would stack unread errors for
  *  the session. The stack pauses on hover/focus. A RETRYABLE error stays sticky: its button is the
  *  only way to take the action. MAX_STICKY bounds those. */
 const ERROR_DURATION_MS = 12_000;
 
-/** How many sticky toasts may be live at once. The stack shows 3 (@cplieger/ui's
+/** How many sticky toasts may be live at once. The stack shows 3 (legacy-ui/toast's
  *  DEFAULT_MAX_VISIBLE, unexported, restated) and promotes only on dismiss or expiry, so a third
  *  sticky holds the last slot and queues everything else unseen. One fault is reported per chat, so
  *  three chats raise three copies. */
@@ -34,14 +34,14 @@ const MAX_STICKY = 2;
  *  and costs a no-op eviction. */
 const sticky: (() => void)[] = [];
 
-/** The library has no warning level, so `info` and `warning` notices ride its info
+/** legacy-ui has no warning level, so `info` and `warning` notices ride its info
  *  level and take a marotte class. */
 const NOTICE_CLASS: Record<Exclude<NoticeLevel, "error">, string> = {
   info: "uip-toast--notice-info",
   warning: "uip-toast--notice-warning",
 };
 
-/** The library's DEFAULT_MAX_QUEUE, restated because it is not exported: past it
+/** legacy-ui's DEFAULT_MAX_QUEUE, restated because it is not exported: past it
  *  the stack drops its oldest queued toast, which then never mounts. */
 const MAX_QUEUE = 20;
 

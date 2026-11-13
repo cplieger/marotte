@@ -39,7 +39,7 @@ vi.mock("./api-client.js", async () => ({
 }));
 
 const { mountChatView, revealRunCard, activeTranscriptView } = await import("./messages.js");
-const { setSessions, setActive, bumpMessages, removeChat } = await import("./store.js");
+const { setSessions, setActive, setPainted, bumpMessages, removeChat } = await import("./store.js");
 const { setTurnOpen, resetFoldState } = await import("./fold-state.js");
 const { RESIDENT_ENTRIES } = await import("./block-window.js");
 const { resetTurnRail } = await import("./turn-rail.js");
@@ -124,6 +124,7 @@ function activate(chat: string, turnEntries: readonly (readonly Entry[])[]): voi
     },
   ]);
   setActive(chat);
+  setPainted(chat);
   bumpMessages(chat, "load");
 }
 

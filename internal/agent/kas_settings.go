@@ -8,9 +8,8 @@ import (
 // Settings whose value must reach the agent, resolved into EngineOpts per spawn or SessionOpts per door. KAS's ACP path
 // never reads kiro-cli's settings store (2.19.2), so these ride levers it does read.
 
-// knowledgeEnabled reports whether a session gets the knowledge index in msg0 and KAS's
-// Knowledge tool. On by default (settings.Default() matches) so existing installs keep it. It
-// gates the agent only, never `_kiro/knowledge` or the panel.
+// knowledgeEnabled reports whether a session gets the knowledge index in msg0 and KAS's Knowledge tool. On by default,
+// as settings.Default() is. It gates the agent only, never `_kiro/knowledge` or the panel.
 func knowledgeEnabled(d settings.Document) bool {
 	var b bool
 	if !d.Into(settings.KeyKnowledgeEnabled, &b) {
@@ -49,7 +48,10 @@ func sessionFeatures(d settings.Document) marotte.SessionFeatures {
 		if f.WorkflowLaunch == "" {
 			f.WorkflowLaunch = settings.DefaultWorkflowLaunch
 		}
+		f.WorkflowCreatorEffort = settingString(d, settings.KeyWorkflowCreatorEffort, settings.ValidWorkflowCreatorEffort)
 	}
+	f.Messaging = settingBool(d, settings.KeyChatMessaging)
+	f.Awareness = settingBool(d, settings.KeyChatAwareness)
 	f.WorkValidation = settingString(d, settings.KeyWorkValidation, settings.ValidFeatureChoice)
 	return f
 }
@@ -58,12 +60,62 @@ func sessionFeatures(d settings.Document) marotte.SessionFeatures {
 func engineFeatures(d settings.Document) marotte.EngineFeatures {
 	return marotte.EngineFeatures{
 		SteeringReminders:        settingBool(d, settings.KeySteeringReminders),
-		InfraSafetyMonitor:       settingString(d, settings.KeyCloudFormationSafety, settings.ValidFeatureChoice),
+		InfraSafety:              settingString(d, settings.KeyCloudFormationSafety, settings.ValidCloudFormationChoice),
 		AutoRouting:              settingString(d, settings.KeyAutoRouting, settings.ValidFeatureChoice),
 		AutoDelegation:           settingString(d, settings.KeyAutoDelegation, settings.ValidFeatureChoice),
-		ModelFallback:            settingBool(d, settings.KeyModelFallback),
+		ModelFallback:            modelFallbackEnabled(d),
 		TerminalCommandTimeoutMs: terminalCommandTimeoutMs(d),
+		MessageDeliveryLimit:     messageDeliveryLimit(d),
+		Knowledge:                knowledgeTuning(d),
 	}
+}
+
+// knowledgeTuning reads the Knowledge base indexing settings. Each absent, invalid or default value is the zero
+// member, which withholds it, so saving kiro-cli's own value changes no engine fingerprint. An empty include list is
+// withheld too: KAS includes nothing for one, where an absent list includes every file it indexes.
+func knowledgeTuning(d settings.Document) marotte.KnowledgeTuning {
+	t := marotte.KnowledgeTuning{
+		IndexType:       settingString(d, settings.KeyKnowledgeIndexType, settings.ValidKnowledgeIndexType),
+		IncludePatterns: knowledgePatterns(d, settings.KeyKnowledgeIncludePatterns),
+		ExcludePatterns: knowledgePatterns(d, settings.KeyKnowledgeExcludePatterns),
+	}
+	var n int
+	if d.Into(settings.KeyKnowledgeMaxFiles, &n) && settings.ValidKnowledgeMaxFiles(n) && n != settings.DefaultKnowledgeMaxFiles {
+		t.MaxFiles = n
+	}
+	if c, ok := settings.KnowledgeChunkingIn(d); ok && c != settings.DefaultKnowledgeChunking() {
+		t.Chunking = c
+	}
+	return t
+}
+
+// knowledgePatterns reads a knowledge glob list; nil for absent, invalid or empty.
+func knowledgePatterns(d settings.Document, key string) []string {
+	var p []string
+	if d.Into(key, &p) && len(p) > 0 && settings.ValidKnowledgePatterns(p) {
+		return p
+	}
+	return nil
+}
+
+// messageDeliveryLimit reads the peer-message delivery limit; 0, which withholds it, for absent, invalid or kiro-cli's
+// own default, so saving the default changes no engine fingerprint.
+func messageDeliveryLimit(d settings.Document) int {
+	var n int
+	if d.Into(settings.KeyChatMessageDeliveryLimit, &n) && settings.ValidChatMessageDeliveryLimit(n) &&
+		n != settings.DefaultChatMessageDeliveryLimit {
+		return n
+	}
+	return 0
+}
+
+// modelFallbackEnabled reads the default-on Model fallback switch; absent or invalid is on.
+func modelFallbackEnabled(d settings.Document) bool {
+	var b bool
+	if !d.Into(settings.KeyModelFallback, &b) {
+		return true
+	}
+	return b
 }
 
 // terminalCommandTimeoutMs reads the shell tool's default timeout; 0 is unset.

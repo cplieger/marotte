@@ -28,6 +28,8 @@ type Presence struct {
 // A row is created by whichever feed arrives first, since the first acknowledgement can race the
 // hook's connected.
 type presenceRow struct {
+	// pages are the tag's page views (pages.go), cleared when its last connection has left.
+	pages       map[string]*pageRow
 	lastAliveAt time.Time
 	// leftAt is when connected last fell to zero; the zero time while the tag has
 	// a connection, or has never had one.
@@ -65,6 +67,10 @@ func (p *Presence) Observe(ev *sse.PresenceEvent) {
 	row := p.row(ev.Tag)
 	switch ev.Kind {
 	case sse.PresenceConnected:
+		// A departure nobody judged before this reconnect still drops the old pages.
+		if departed(row, now) {
+			row.pages = nil
+		}
 		row.connected++
 		row.leftAt = time.Time{}
 		// The hello just completed a request round trip, at least as good a receipt
@@ -175,9 +181,13 @@ func (p *Presence) row(tag string) *presenceRow {
 // is gone at once.
 func (p *Presence) judge(row *presenceRow, now time.Time) bool {
 	silent := now.Sub(row.lastAliveAt) > liveness.AliveWindow
-	left := row.connected == 0 &&
-		(row.leftAt.IsZero() || now.Sub(row.leftAt) >= liveness.ReconnectDelay)
+	left := departed(row, now)
 	gone := silent || left
+	// Only a departure clears the pages: a reconnect's connected frame makes each re-report, while acks resuming
+	// on the same socket bring no frame, and a hidden page re-reports only on a change.
+	if left {
+		row.pages = nil
+	}
 	if gone == row.gone {
 		return gone
 	}
@@ -189,6 +199,11 @@ func (p *Presence) judge(row *presenceRow, now time.Time) bool {
 		p.expired++
 	}
 	return gone
+}
+
+// departed reports whether row's last connection left at least one retry interval ago, or it never had one.
+func departed(row *presenceRow, now time.Time) bool {
+	return row.connected == 0 && (row.leftAt.IsZero() || now.Sub(row.leftAt) >= liveness.ReconnectDelay)
 }
 
 // sweep drops every row with no connection whose last acknowledgement is older

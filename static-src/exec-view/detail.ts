@@ -1,7 +1,7 @@
-// The exec view's detail pane: one node's facts, failure, interruption, hand end, and the transcript host it
+// The exec view's detail pane: one node's facts, failure, interruption, silence, hand end, and the transcript host it
 // hands OUT (`bodyFor`). No capture: the page's per-step results region renders that.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { formatElapsed } from "../strings.js";
 import { elapsed, type ExecNode } from "./model.js";
 import { ENDED_BY_HAND, STATE_WORD } from "./status.js";
@@ -11,9 +11,11 @@ export interface ExecDetailView {
   readonly root: HTMLElement;
   /** Show one node. `undefined` renders the empty state. */
   render(node: ExecNode | undefined): void;
-  /** The element this node's live transcript renders into, created on demand and kept per PATH for
-   *  the pane's life: frames are live-only and cannot be replayed. */
+  /** The element this node's live transcript renders into, created on demand and kept per PATH
+   *  until `releaseBody`. */
   bodyFor(path: string): HTMLElement;
+  /** Remove a node's host; its consumer has disposed what it rendered there. */
+  releaseBody(path: string): void;
   /** Advance the duration of a node still running. */
   tick(): void;
 }
@@ -48,6 +50,7 @@ export function buildExecDetail(
   const facts = el("dl", { className: "ev-d-facts" });
   const failure = el("div", { className: "ev-d-fail", role: "status" });
   const interruption = el("div", { className: "ev-d-interrupted", role: "status" });
+  const silence = el("div", { className: "ev-d-silent", role: "status" });
   const byHand = el("div", { className: "ev-d-by-hand", role: "status" }, ENDED_BY_HAND);
   const bodies = el("div", { className: "ev-d-bodies" });
   const empty = el("div", { className: "ev-d-empty" });
@@ -59,6 +62,7 @@ export function buildExecDetail(
     facts,
     failure,
     interruption,
+    silence,
     byHand,
     bodies,
     empty,
@@ -80,6 +84,7 @@ export function buildExecDetail(
       facts.hidden = true;
       failure.hidden = true;
       interruption.hidden = true;
+      silence.hidden = true;
       byHand.hidden = true;
       bodies.hidden = true;
       empty.hidden = false;
@@ -115,10 +120,11 @@ export function buildExecDetail(
     failure.textContent = node.failure ?? "";
     interruption.hidden = node.interruption === undefined;
     interruption.textContent = node.interruption ?? "";
+    silence.hidden = node.silence === undefined;
+    silence.textContent = node.silence ?? "";
     byHand.hidden = node.endedByHand !== true;
 
-    // Only ONE node's transcript is on screen; the rest stay in the DOM since
-    // their live content cannot be replayed.
+    // Only ONE node's transcript is on screen; a host the consumer has not released stays hidden.
     let anyShown = false;
     for (const [path, host] of hosts) {
       const isShown = path === node.path;
@@ -160,6 +166,10 @@ export function buildExecDetail(
         emptyAct.hidden = true;
       }
       return host;
+    },
+    releaseBody(path) {
+      hosts.get(path)?.remove();
+      hosts.delete(path);
     },
     tick() {
       if (shown === undefined || shown.end !== undefined) {

@@ -1,9 +1,10 @@
 // The run store: the fetch discipline, and the derived reads over one state.
 
 import { describe, it, expect, beforeEach, afterEach, onTestFinished, vi } from "vitest";
-import { effect, untracked } from "@cplieger/ui";
+import { effect, untracked } from "@cplieger/reactive";
 import { nodePathKey } from "./run-node-key.js";
 import type { RunNode, RunState } from "./run-store.js";
+import { frameRunGone, frameRunLive, runsStamp } from "./__test-helpers__/live-runs.js";
 import type { RunControlsResponse } from "./wire/types.gen.js";
 
 const fetches: string[] = [];
@@ -36,6 +37,7 @@ let replyExtra: Record<string, unknown> = {};
 let failStatuses: number[] = [];
 let liveRunsReply: {
   runs: { workflow_id: string; chat_id: string; executing: boolean }[];
+  subject?: { kind: string; ref: string; version: string };
 } | null = null;
 
 vi.mock("./api-client.js", () => ({
@@ -67,15 +69,29 @@ vi.mock("./api-client.js", () => ({
       error: "",
     };
   }),
-  // The live-runs rebuild goes through the typed GET; the decoder is the generated one and is not
-  // under test here, so the mock answers typed values directly (null is the degrade arm).
+  // The live-runs read goes through the typed GET; the decoder is the generated one and is not
+  // under test here, so the mock answers typed values directly (null is the degrade arm), stamped
+  // at the file's next `runs` version unless the case names one.
   apiGetTyped: vi.fn(async (path: string) => {
     fetches.push(path);
-    return liveRunsReply;
+    return liveRunsReply === null ? null : { subject: runsStamp(), ...liveRunsReply };
   }),
 }));
 
 const store = await import("./run-store.js");
+
+/** The cases read whole trees, which only a tree reader's demand asks for; a run no reader holds
+ *  is read as its header. A case about releasing a run turns this off. */
+let holdTrees = true;
+store.registerRunStateDemand(() => holdTrees, "tree");
+
+/** `forgetRun` with the cases' own demand off for the call. */
+function forget(id: string): void {
+  const was = holdTrees;
+  holdTrees = false;
+  store.forgetRun(id);
+  holdTrees = was;
+}
 
 async function settle(): Promise<void> {
   for (const r of resolvers.splice(0)) {
@@ -96,8 +112,9 @@ beforeEach(() => {
   resolvers = [];
   failStatuses = [];
   liveRunsReply = null;
+  holdTrees = true;
   for (const id of ["r1", "r2", "r3", "r4"]) {
-    store.forgetRun(id);
+    forget(id);
   }
 });
 
@@ -204,7 +221,7 @@ describe("the reply's read position travels beside the state", () => {
     store.invalidateRun("rp");
     await settle();
     expect(store.peekRunState("rp")?.readPosition).toBe(want);
-    store.forgetRun("rp");
+    forget("rp");
   });
 
   // Only a read names a run's position: a retry's frames arrive before the run settles again.
@@ -223,13 +240,13 @@ describe("the reply's read position travels beside the state", () => {
       store.applyRunProgress({ workflow_id: "rp", node_path: ["rp", "build"], status: "running" }),
     ).toBe(true);
     expect(store.peekRunState("rp")?.readPosition).toBe(3);
-    store.forgetRun("rp");
+    forget("rp");
   });
 });
 
 describe("a step's credits", () => {
   afterEach(() => {
-    store.forgetRun("cr");
+    forget("cr");
   });
 
   it.each([
@@ -303,7 +320,23 @@ describe("the reply's auto_resume_stopped_at travels beside the state", () => {
     store.invalidateRun("ars");
     await settle();
     expect(store.peekRunState("ars")?.autoResumeStoppedAt).toBe(want);
-    store.forgetRun("ars");
+    forget("ars");
+  });
+});
+
+describe("the reply's silent_since travels beside the state", () => {
+  it.each([
+    ["a timestamp", "2026-11-12T00:00:00Z", "2026-11-12T00:00:00Z"],
+    ["an empty string", "", undefined],
+    ["a number", 4, undefined],
+    ["nothing", undefined, undefined],
+  ])("reads %s as %s", async (_label, raw, want) => {
+    responses = [{ workflowId: "sil", status: "running" }];
+    replyExtra = raw === undefined ? {} : { silent_since: raw };
+    store.invalidateRun("sil");
+    await settle();
+    expect(store.peekRunState("sil")?.silentSince).toBe(want);
+    forget("sil");
   });
 });
 
@@ -625,7 +658,7 @@ describe("runLabelOf", () => {
 
   it("drops the frame's label with the rest of the run", () => {
     store.noteRunLabel("r2", "sweep.yaml");
-    store.forgetRun("r2");
+    forget("r2");
     expect(store.runLabelOf("r2")).toBe("");
   });
 });
@@ -638,21 +671,21 @@ function executingForChat(chatID: string): boolean {
 }
 
 describe("the live-runs inventory", () => {
-  it("answers by chat for runs the lifecycle events fed in", () => {
-    store.noteRunLive("wf-live-1", "chat-a", true);
+  it("answers by chat for runs the live_run frames fed in", () => {
+    frameRunLive("wf-live-1", "chat-a", true);
     expect(executingForChat("chat-a")).toBe(true);
     expect(executingForChat("chat-b")).toBe(false);
 
-    store.noteRunSettled("wf-live-1");
+    frameRunGone("wf-live-1");
     expect(executingForChat("chat-a")).toBe(false);
   });
 
   // The narrowing Stage 2 exists for, and it is the whole reason the row carries two facts.
   it("clears executing for a chat whose run parked, and keeps the run in the inventory", () => {
-    store.noteRunLive("wf-parked", "chat-parked", true);
+    frameRunLive("wf-parked", "chat-parked", true);
     expect(executingForChat("chat-parked")).toBe(true);
 
-    store.noteRunLive("wf-parked", "chat-parked", false);
+    frameRunLive("wf-parked", "chat-parked", false);
 
     expect(
       executingForChat("chat-parked"),
@@ -662,22 +695,22 @@ describe("the live-runs inventory", () => {
       store.hasLiveRunForChat("chat-parked"),
       "the row must survive: the dot painter and the ask sweep both still need it",
     ).toBe(true);
-    store.noteRunSettled("wf-parked");
+    frameRunGone("wf-parked");
     expect(store.hasLiveRunForChat("chat-parked")).toBe(false);
   });
 
   it("reports no executing chat for a parentless run, and never answers for the empty chat", () => {
-    store.noteRunLive("wf-parentless", "", true);
+    frameRunLive("wf-parentless", "", true);
     expect(executingForChat("")).toBe(false);
     expect(store.hasLiveRunForChat("")).toBe(false);
-    store.noteRunSettled("wf-parentless");
+    frameRunGone("wf-parentless");
   });
 
   // The ROW reader C2's floor is built on.
   it("answers a row per matching run, carrying the id the map holds it under", () => {
-    store.noteRunLive("wf-a", "chat-x", true);
-    store.noteRunLive("wf-b", "chat-x", false);
-    store.noteRunLive("wf-c", "chat-y", true);
+    frameRunLive("wf-a", "chat-x", true);
+    frameRunLive("wf-b", "chat-x", false);
+    frameRunLive("wf-c", "chat-y", true);
 
     const rows = store.liveRunsForChat("chat-x");
 
@@ -698,9 +731,9 @@ describe("the live-runs inventory", () => {
     // Three callers ask only how many or which (`run-bar.ts` twice, `chat-settled.ts`'s `.length`),
     // and the wrapper exists so they do not each map the rows themselves. It reads THROUGH the row
     // reader, so the two cannot disagree about which runs belong to a chat.
-    store.noteRunLive("wf-a", "chat-x", true);
-    store.noteRunLive("wf-b", "chat-x", false);
-    store.noteRunLive("wf-c", "chat-y", true);
+    frameRunLive("wf-a", "chat-x", true);
+    frameRunLive("wf-b", "chat-x", false);
+    frameRunLive("wf-c", "chat-y", true);
 
     expect([...store.liveRunIDsForChat("chat-x")].sort()).toEqual(["wf-a", "wf-b"]);
     expect(store.liveRunIDsForChat("chat-y")).toEqual(["wf-c"]);
@@ -711,16 +744,16 @@ describe("the live-runs inventory", () => {
     // The disposed-run-card case: forgetRun is the CACHE's bound (last card unmounted), and a run
     // does not stop being live because nothing renders it — the row must survive for a chat nobody
     // is looking at.
-    store.noteRunLive("wf-carded", "chat-carded", true);
-    store.forgetRun("wf-carded");
+    frameRunLive("wf-carded", "chat-carded", true);
+    forget("wf-carded");
     expect(executingForChat("chat-carded")).toBe(true);
-    store.noteRunSettled("wf-carded");
+    frameRunGone("wf-carded");
   });
 
-  it("rebuilds from the endpoint, replacing the event-fed view", async () => {
-    // Event-fed state is stale in both directions: wf-stale settled while this client was away,
-    // wf-missed started then.
-    store.noteRunLive("wf-stale", "chat-stale", true);
+  it("a read newer than every frame replaces the frame-fed view", async () => {
+    // Frame-fed state is stale in both directions after a gap: wf-stale settled while this client
+    // was away, wf-missed started then.
+    frameRunLive("wf-stale", "chat-stale", true);
     liveRunsReply = {
       runs: [
         { workflow_id: "wf-missed", chat_id: "chat-missed", executing: true },
@@ -728,13 +761,13 @@ describe("the live-runs inventory", () => {
       ],
     };
 
-    await store.rebuildLiveRuns();
+    await store.refetchLiveRuns();
 
     expect(fetches).toContain("/api/runs/live");
     expect(executingForChat("chat-missed")).toBe(true);
     expect(executingForChat("chat-stale")).toBe(false);
-    store.noteRunSettled("wf-missed");
-    store.noteRunSettled("wf-parentless");
+    frameRunGone("wf-missed");
+    frameRunGone("wf-parentless");
   });
 
   // The endpoint's own answer for a parked run, which is the case a boot lands in: a run paused
@@ -745,7 +778,7 @@ describe("the live-runs inventory", () => {
       runs: [{ workflow_id: "wf-boot-parked", chat_id: "chat-boot", executing: false }],
     };
 
-    await store.rebuildLiveRuns();
+    await store.refetchLiveRuns();
 
     expect(executingForChat("chat-boot")).toBe(false);
     expect(
@@ -756,7 +789,7 @@ describe("the live-runs inventory", () => {
       store.runChatID("wf-boot-parked"),
       "a parked run's tab still nests under the chat that launched it",
     ).toBe("chat-boot");
-    store.noteRunSettled("wf-boot-parked");
+    frameRunGone("wf-boot-parked");
   });
 
   // This endpoint is the only place the (run, launching chat) pairing arrives outside an SSE frame,
@@ -772,14 +805,14 @@ describe("the live-runs inventory", () => {
       ],
     };
 
-    await store.rebuildLiveRuns();
+    await store.refetchLiveRuns();
 
     expect(store.runChatID("wf-reloaded")).toBe("chat-reloaded");
     // A parentless run has no launching chat, so there is nothing to seed and nothing for a tab to
     // nest under.
     expect(store.runChatID("wf-scheduled")).toBe("");
-    store.noteRunSettled("wf-reloaded");
-    store.noteRunSettled("wf-scheduled");
+    frameRunGone("wf-reloaded");
+    frameRunGone("wf-scheduled");
   });
 
   // The other half a seeded pairing does not cover: a tab row's NAME comes from the run's own
@@ -787,7 +820,7 @@ describe("the live-runs inventory", () => {
   // none at all, so its row kept the factory's placeholder until a reader opened the run view.
   it("resolves each live run's cell, and reports each to the painter", async () => {
     // The run tabs whose rows the label paints hold the two runs.
-    const unhold = store.registerRunStateDemand((id) => id === "r1" || id === "r2");
+    const unhold = store.registerRunStateDemand((id) => id === "r1" || id === "r2", "tree");
     onTestFinished(unhold);
     const reported: string[] = [];
     store.registerLiveRunObserver((id) => reported.push(id));
@@ -802,30 +835,46 @@ describe("the live-runs inventory", () => {
       { workflowId: "r2", displayName: "sweep.yaml" },
     ];
 
-    await store.rebuildLiveRuns();
+    await store.refetchLiveRuns();
     expect(fetches).toEqual(["/api/runs/live", "/api/runs/r1", "/api/runs/r2"]);
     expect(reported).toEqual(["r1", "r2"]);
 
     await settle();
     expect(store.runLabelOf("r1")).toBe("nightly sweep");
     expect(store.runLabelOf("r2")).toBe("sweep.yaml");
-    store.noteRunSettled("r1");
-    store.noteRunSettled("r2");
+    frameRunGone("r1");
+    frameRunGone("r2");
   });
 
-  it("KEEPS the event-fed state when the rebuild fails, and retries later", async () => {
-    store.noteRunLive("wf-kept", "chat-kept", true);
+  // `forgetRun` drops the pairing while the row stays live, and no frame comes for a run whose row
+  // does not move, so an unchanged row has to seed it again.
+  it("seeds the pairing again for a row a read lists unchanged", async () => {
+    frameRunLive("wf-paired", "chat-paired", true);
+    forget("wf-paired");
+    expect(store.runChatID("wf-paired"), "the cache's bound took the pairing").toBe("");
+    liveRunsReply = {
+      runs: [{ workflow_id: "wf-paired", chat_id: "chat-paired", executing: true }],
+    };
+
+    await store.refetchLiveRuns();
+
+    expect(store.runChatID("wf-paired")).toBe("chat-paired");
+    frameRunGone("wf-paired");
+  });
+
+  it("KEEPS the frame-fed state when the read fails, and retries later", async () => {
+    frameRunLive("wf-kept", "chat-kept", true);
     liveRunsReply = null; // endpoint unreachable / non-2xx / undecodable
 
-    await store.rebuildLiveRuns();
+    await store.refetchLiveRuns();
     expect(
       executingForChat("chat-kept"),
-      "a failed rebuild must never clear to empty — degrade toward keeping",
+      "a failed read must never clear to empty — degrade toward keeping",
     ).toBe(true);
 
-    // The next rebuild (gap or boot) applies the server's answer.
+    // The next read (gap or verdict) applies the server's answer.
     liveRunsReply = { runs: [] };
-    await store.rebuildLiveRuns();
+    await store.refetchLiveRuns();
     expect(executingForChat("chat-kept")).toBe(false);
   });
 });
@@ -1287,7 +1336,7 @@ describe("the run read carries the run's verbs", () => {
 
   it("forgets the verbs with the run", async () => {
     await readWith("r1", { workflowId: "r1", status: "paused" }, paused);
-    store.forgetRun("r1");
+    forget("r1");
     expect(store.runControls("r1")).toBeUndefined();
   });
 });
@@ -1456,7 +1505,7 @@ describe("the retry ladder behind a run read that produced nothing", () => {
     await settle();
     expect(store.runGone("r1")).toBe(true);
     stop();
-    store.forgetRun("r1");
+    forget("r1");
     expect(store.runGone("r1")).toBe(false);
   });
 
@@ -1478,25 +1527,28 @@ describe("the retry ladder behind a run read that produced nothing", () => {
     await settle();
     expect(fetches).toHaveLength(1);
 
-    store.forgetRun("r2");
+    forget("r2");
     await vi.advanceTimersByTimeAsync(60_000);
     expect(fetches).toHaveLength(1);
   });
 });
 
 describe("forgetRun asks the registered demands before it drops anything", () => {
+  beforeEach(() => {
+    holdTrees = false;
+  });
   const unregisters: (() => void)[] = [];
 
   function demand(fn: (workflowID: string) => boolean): void {
-    unregisters.push(store.registerRunStateDemand(fn));
+    unregisters.push(store.registerRunStateDemand(fn, "tree"));
   }
 
   afterEach(() => {
     for (const un of unregisters.splice(0)) {
       un();
     }
-    store.forgetRun("r1");
-    store.forgetRun("r2");
+    forget("r1");
+    forget("r2");
   });
 
   it("keeps the cell a demand claims, and asks it about the RUN", async () => {
@@ -1504,7 +1556,7 @@ describe("forgetRun asks the registered demands before it drops anything", () =>
     const claim = vi.fn(() => true);
     demand(claim);
 
-    store.forgetRun("r1");
+    forget("r1");
 
     expect(store.peekRunState("r1")?.status).toBe("running");
     expect(claim).toHaveBeenCalledWith("r1");
@@ -1515,8 +1567,8 @@ describe("forgetRun asks the registered demands before it drops anything", () =>
     await seedRun("r2", { workflowId: "r2", status: "running" });
     demand((id) => id === "r1");
 
-    store.forgetRun("r1");
-    store.forgetRun("r2");
+    forget("r1");
+    forget("r2");
 
     expect(store.peekRunState("r1")?.status, "claimed").toBe("running");
     expect(store.peekRunState("r2"), "unclaimed, so the cache is still bounded").toBeUndefined();
@@ -1524,13 +1576,13 @@ describe("forgetRun asks the registered demands before it drops anything", () =>
 
   it("drops the run once its demand unregisters", async () => {
     await seedRun("r1", { workflowId: "r1", status: "running" });
-    const un = store.registerRunStateDemand(() => true);
+    const un = store.registerRunStateDemand(() => true, "tree");
 
-    store.forgetRun("r1");
+    forget("r1");
     expect(store.peekRunState("r1")?.status).toBe("running");
 
     un();
-    store.forgetRun("r1");
+    forget("r1");
 
     expect(store.peekRunState("r1")).toBeUndefined();
   });
@@ -1626,15 +1678,18 @@ describe("a run's log orders its turns by the run's own ordinal", () => {
     store.openRunTurn("r-order", opened("t-second", 2));
     store.openRunTurn("r-order", opened("t-first", 1));
     store.openRunTurn("r-order", opened("t-third", 3));
-    expect(store.runTurns("r-order").map(([id]) => id)).toEqual(["t-first", "t-second", "t-third"]);
+    expect(store.runTurnSource("r-order").turn_order).toEqual(["t-first", "t-second", "t-third"]);
   });
 });
 
 describe("rereadHeldRuns re-reads every run a reader holds", () => {
+  beforeEach(() => {
+    holdTrees = false;
+  });
   const unregisters: (() => void)[] = [];
 
   function hold(...ids: string[]): void {
-    unregisters.push(store.registerRunStateDemand((id) => ids.includes(id)));
+    unregisters.push(store.registerRunStateDemand((id) => ids.includes(id), "tree"));
   }
 
   afterEach(async () => {
@@ -1643,8 +1698,8 @@ describe("rereadHeldRuns re-reads every run a reader holds", () => {
       un();
     }
     for (const id of ["wf_1", "wf_2", "wf_3"]) {
-      store.forgetRun(id);
-      store.noteRunSettled(id);
+      forget(id);
+      frameRunGone(id);
     }
   });
 
@@ -1667,7 +1722,7 @@ describe("rereadHeldRuns re-reads every run a reader holds", () => {
     await settle();
     expect(fetches).toEqual([]);
 
-    store.forgetRun("wf_1");
+    forget("wf_1");
     hold("wf_2");
     store.rereadHeldRuns();
     await settle();
@@ -1707,6 +1762,7 @@ describe("rereadHeldRuns re-reads every run a reader holds", () => {
   });
 
   it("readRunUnlessOut asks nothing while a read is out", async () => {
+    hold("wf_1");
     responses = [{ workflowId: "wf_1", status: "running" }];
     store.invalidateRun("wf_1");
     store.readRunUnlessOut("wf_1");
@@ -1721,7 +1777,7 @@ describe("rereadHeldRuns re-reads every run a reader holds", () => {
     expect(fetches).toEqual(["/api/runs/wf_1"]);
   });
 
-  it("the live-run rebuild reads only a held run with no state", async () => {
+  it("the live-run read reads only a held run with no state", async () => {
     await seedRun("wf_1", { workflowId: "wf_1", status: "running" });
     hold("wf_1", "wf_2");
     liveRunsReply = {
@@ -1733,8 +1789,28 @@ describe("rereadHeldRuns re-reads every run a reader holds", () => {
     };
     responses = [{ workflowId: "wf_2", status: "running" }];
 
-    await store.rebuildLiveRuns();
+    await store.refetchLiveRuns();
 
     expect(fetches.filter((p) => p !== "/api/runs/live")).toEqual(["/api/runs/wf_2"]);
+  });
+
+  it("an inventory read that lists a held run unchanged reads it when it has no state", async () => {
+    liveRunsReply = { runs: [{ workflow_id: "wf_1", chat_id: "", executing: true }] };
+    await store.refetchLiveRuns();
+    expect(fetches, "nobody holds the run yet").toEqual(["/api/runs/live"]);
+
+    hold("wf_1");
+    fetches.length = 0;
+    liveRunsReply = {
+      runs: [
+        { workflow_id: "wf_1", chat_id: "", executing: true },
+        { workflow_id: "wf_2", chat_id: "", executing: true },
+      ],
+    };
+    responses = [{ workflowId: "wf_1", status: "running" }];
+
+    await store.refetchLiveRuns();
+
+    expect(fetches.filter((p) => p !== "/api/runs/live")).toEqual(["/api/runs/wf_1"]);
   });
 });

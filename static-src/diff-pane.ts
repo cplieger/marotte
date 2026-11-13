@@ -2,8 +2,8 @@
 // previews, the editor's diff mode, the conflict popup.
 
 import { lineDiff, wordMarks, type CharRange, type DiffLine } from "./diff.js";
-import { highlightMarked, resolveLangHint } from "./highlight.js";
-import { el } from "@cplieger/ui";
+import { highlightInto, resolveLanguage } from "@cplieger/ui/highlight";
+import { el } from "@cplieger/reactive";
 import { CHROME_ATTR } from "./chrome-attr.js";
 
 interface DiffPaneOpts {
@@ -22,7 +22,7 @@ interface DiffPaneOpts {
    * and `+`/`-` marker, since text colour belongs to highlighting.
    */
   unified?: boolean;
-  /** Highlighting hint (path, extension or language id; `resolveLangHint`), applied to both shapes, deletions included. */
+  /** Highlighting hint (path, extension or language id; `resolveLanguage`), applied to both shapes, deletions included. */
   lang?: string;
   /** Source texts; when supplied the pane owns an "Ignore whitespace" toggle that re-diffs in place. */
   source?: { oldText: string; newText: string };
@@ -39,7 +39,7 @@ const CHROME_ROWS = ".diff-pane-toolbar";
 export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTMLDivElement {
   const lineNumbers = opts.lineNumbers !== false;
   const syncScroll = opts.syncScroll !== false;
-  const container = el("div", { className: "diff-pane" }) as HTMLDivElement;
+  const container = el("div", { className: "diff-pane cp-syntax" }) as HTMLDivElement;
 
   // A toolbar control, not a caption: sharing the label row made captions shrink off their columns.
   if (opts.source !== undefined || opts.onToggleWhitespace !== undefined) {
@@ -60,7 +60,7 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
 
   const unified = opts.unified === true;
   const limit = opts.maxRows ?? Number.POSITIVE_INFINITY;
-  const lang = opts.lang !== undefined && opts.lang !== "" ? resolveLangHint(opts.lang) : "";
+  const lang = resolveLanguage(opts.lang ?? "");
   let rowCount = 0;
 
   // An all-context diff renders a no-changes state; reachable once a chat's write is committed.
@@ -197,8 +197,8 @@ function lineText(
     text.textContent = line.text;
     return text;
   }
-  const wordClass = line.kind === "del" ? "diff-word-del" : "diff-word-add";
-  text.innerHTML = highlightMarked(line.text, lang, spans, wordClass);
+  const markClass = line.kind === "del" ? "diff-word-del" : "diff-word-add";
+  highlightInto(text, line.text, lang, { marks: spans, markClass });
   return text;
 }
 

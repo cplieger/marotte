@@ -11,7 +11,6 @@
 capability helpDocs
 capability specLinks
 capability telemetry
-session customAgents
 session filter
 session firstMessageWaitMs
 session idempotent
@@ -26,7 +25,16 @@ session repositories
 session rootConversationId
 session titleSetByUser
 session workflow
+setting _delegate
+setting _parallelTasks
+setting _quickSpec
+setting _requirementAnalyzer
+setting _subagent
 setting _suggestedPrompts
+setting checkpoint
+setting evalStrategy
+setting evalTreatments
 setting sessionRecap
+setting tangentMode
 setting universalBackgroundTool
 setting verifyFirstWorkflow

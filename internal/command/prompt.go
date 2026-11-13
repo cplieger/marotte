@@ -245,8 +245,10 @@ func openPromptTurn(ctx context.Context, roles *promptRoles, chatID marotte.Chat
 		c.Model = p.Model
 		c.SupervisedMode = supervisedDefault
 	}
+	prompt := promptEntry(p, l.resends)
+	prompt.Automatic = l.automatic
 	return roles.turnOutcome.OpenTurn(ctx, chatID, TurnOpen{
-		Source: marotte.TurnSourcePrompt, Prompt: promptEntry(p, l.resends), Init: init, Awaited: l.awaited,
+		Source: marotte.TurnSourcePrompt, Prompt: prompt, Init: init, Awaited: l.awaited,
 		Admission: l.res.Token, Fence: l.fence,
 	})
 }
@@ -309,8 +311,8 @@ const reasonChatGone = "chat_not_found"
 // close ended it. The client keeps the text as the chat's draft.
 const reasonChatClosed = "chat_closed"
 
-// reasonPromptOnly is the 409 refusal class for prompt-only text that would be steered or wait behind a running
-// turn. The client keeps the text in the composer.
+// reasonPromptOnly is the 409 refusal class for prompt-only text that would be steered. The client keeps the text
+// in the composer.
 const reasonPromptOnly = "prompt_only"
 
 // promptAck is the prompt's answer: where the message went (As) and the run order after it.
@@ -433,6 +435,8 @@ type launch struct {
 	// fence is the take's: a re-fence since (a shutdown, a teardown) refuses the open.
 	fence   TurnFence
 	awaited bool
+	// automatic marks the turn_open's prompt as marotte's own (EntryPrompt.Automatic).
+	automatic bool
 }
 
 // errLaunchUnreserved fails a prompt launched with no reservation, a wiring error.

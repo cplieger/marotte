@@ -37,7 +37,7 @@
 
 .ev-tl-lane {
   display: grid;
-  /* 12rem holds an included step's whole id (`review/code-adversary-claude`, 28
+  /* 12rem holds an included step's whole id (`review/code-adversary-seat-a`, 28
      mono characters at `--fs-xs`); the 40% keeps a phone's track readable. */
   grid-template-columns: minmax(4rem, min(12rem, 40%)) minmax(0, 1fr) 3.5rem;
   align-items: center;
@@ -185,6 +185,13 @@
 
 .ev-kids[hidden] {
   display: none;
+}
+
+/* The tree's and the timeline's stand-in for the rows their window skips
+   (`exec-view/row-window.ts`): it holds their height so the scroll range is the
+   whole list's. */
+.ev-spacer {
+  flex: none;
 }
 
 /* THE GROUP BOX: a top-level container (a `sequence` / `repeat` / `parallel` /
@@ -456,25 +463,29 @@
   border-radius: 50%;
 }
 
-/* Painted arc, still box — see `--vk-spin-arc` (00-header.css). The border above
-   is neutralised rather than dropped: the still `waiting` and `unknown` rings share
-   that rule and DRAW with it, and it also reserves this ring's band inside
-   `--dot-size`, which the mask then paints over. */
+/* Still host, turning disc (00-header.css "A RING THAT SPINS WHILE WORK RUNS"): the
+   slot holds the ring's shape at `--dot-size`, so the disc below may outgrow it. A
+   running slot holds no mark of its own (`STATE_MARK`), so the clip hides nothing. */
+.ev-row[data-state="running"] > .ev-row-main > .ev-state,
+.ev-dock-row[data-state="running"] > .ev-state {
+  clip-path: circle(calc(var(--dot-size) / 2));
+  mask: radial-gradient(
+    circle,
+    transparent calc(var(--dot-size) / 2 - 0.125rem),
+    #000 calc(var(--dot-size) / 2 - 0.125rem)
+  );
+}
+
+/* The border above is neutralised rather than dropped: the still `waiting` and
+   `unknown` rings share that rule and DRAW with it, and it keeps this box the
+   column's `--dot-size`. */
 .ev-row[data-state="running"] > .ev-row-main > .ev-state::before,
 .ev-dock-row[data-state="running"] > .ev-state::before {
   border-color: transparent;
-  background: conic-gradient(
-      from var(--vk-spin-arc),
-      transparent 0deg 90deg,
-      var(--c-accent) 90deg 360deg
-    )
+  background: conic-gradient(from -45deg, transparent 0deg 90deg, var(--c-accent) 90deg 360deg)
     border-box;
-  mask: radial-gradient(
-    closest-side,
-    transparent calc(100% - 0.125rem),
-    #000 calc(100% - 0.125rem)
-  );
-  animation: vk-spin var(--spin-dur) linear infinite;
+  scale: 1.5;
+  animation: vk-spin-rotate var(--spin-dur) linear infinite;
 }
 
 .ev-row[data-state="waiting"] > .ev-row-main > .ev-state::before,
@@ -654,10 +665,10 @@
      `text-overflow: ellipsis` requires `overflow: hidden`, which makes the flex item's
      height its line box — and the mono stack's `normal` resolved to 16px at a 14px
      font, exactly the em box, so anything reaching below the baseline was cut. Measured
-     in the sidecar: a node labelled `review_gpt` rendered as `review gpt`, its
+     in the sidecar: a node labelled `review_b` rendered as `review b`, its
      underscore invisible. The sans-font sibling `.ev-name` escapes it only by accident
      (its `normal` is 22px at 16px), so this is not a rule that could be shared.
-     Underscores are common in a delegate's stage names (`review_gpt`, `perf_hotfix`)
+     Underscores are common in a delegate's stage names (`review_b`, `perf_hotfix`)
      and rare in a workflow's node ids, which is why the second consumer found it. */
   line-height: 1.4;
 }
@@ -772,6 +783,7 @@
 
 /* Neutral: an engine end interrupted the step, or a person or its parent ended it; neither is the step's failure. */
 .ev-d-interrupted,
+.ev-d-silent,
 .ev-d-by-hand {
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r);
@@ -782,6 +794,7 @@
 }
 
 .ev-d-interrupted[hidden],
+.ev-d-silent[hidden],
 .ev-d-by-hand[hidden] {
   display: none;
 }

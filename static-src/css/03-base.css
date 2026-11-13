@@ -151,6 +151,15 @@
   }
 }
 
+/* One full turn of a box, run by the compositor: a ring's arc disc under its still
+   host (00-header.css "A RING THAT SPINS WHILE WORK RUNS") and the stroked
+   `.icon-spinner`. */
+@keyframes vk-spin-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes vk-breathe {
   0%,
   100% {

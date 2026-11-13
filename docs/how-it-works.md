@@ -39,11 +39,11 @@ On every start, marotte runs the installed kiro-cli to confirm it is the expecte
 
 Attempts wait 30 seconds, then double each time up to 10 minutes. The page shows a banner when the first reason in the list is a kiro-cli or sign-in reason, and only chats wait. Starting up or shutting down shows no banner. The `sign-in required` banner has a **Sign in** button.
 
-To repair an install by hand, fix `kiro-cli-versions` in the tools folder (by default `/config/tools`) inside the container, then run `curl -X POST localhost:9847/api/kiro-cli/rescan` from inside the container. marotte picks it up without a container restart. When the rescan activates another version, the agent engine moves to it at its next restart. The command works only from inside the container.
+To repair an install by hand, fix `kiro-cli-versions` in the tools folder (by default `/config/tools`) inside the container, then run `curl -X POST localhost:9847/api/kiro-cli/rescan` (if you set `LISTEN_ADDR`, use its port, and its host too when that is a loopback address other than `localhost`) from inside the container. marotte picks it up without a container restart. When the rescan activates another version, the agent engine moves to it at its next restart. The command works only from inside the container.
 
 ## Language servers and code intelligence
 
-Turning on a language server in **Settings** also turns on kiro-cli code intelligence for the workspace, in live chats too. The first activation saves the detected languages to `/workspace/.kiro/settings/lsp.json`. After you add a language to the workspace, delete that file, and marotte writes it again on the next start.
+Turning on a language server in **Settings** also turns on kiro-cli code intelligence for the workspace, in live chats too. marotte always tells kiro-cli that code intelligence is allowed, so an installed, enabled language server is what turns it on, and **Code intelligence** under **Agent capabilities** shows the languages it covers. The first activation saves the detected languages to `/workspace/.kiro/settings/lsp.json`. After you add a language to the workspace, delete that file, and marotte writes it again on the next start.
 
 ## Leftover processes
 

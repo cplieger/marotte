@@ -32,11 +32,13 @@ export function tabsMock(): Record<string, unknown> {
     toggleHistoryView: vi.fn(async () => {}),
 
     adoptSubject: vi.fn(),
-    activateTab: vi.fn(),
+    // Resolves like the real door, whose promise settles once the activation half has run.
+    activateTab: vi.fn(async () => {}),
     claimNavigation: vi.fn(() => 0),
     // Held: no user move since the claim, so a late open takes the view.
     navigationHeld: vi.fn(() => true),
     activateRestoredTab: vi.fn(),
+    showUnshownTab: vi.fn(),
     refreshActiveView: vi.fn(),
     paintProvisionalTabs: vi.fn(),
     renameTab: vi.fn(),
@@ -79,5 +81,7 @@ export function tabsMock(): Record<string, unknown> {
     setChatSettledProbe: vi.fn(),
 
     _resetForTest: vi.fn(),
+    flushActivationForTest: vi.fn(),
+    setSwitchBoundForTest: vi.fn(),
   };
 }

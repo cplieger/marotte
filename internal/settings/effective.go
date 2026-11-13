@@ -16,8 +16,8 @@ import (
 // and why that key was refused is the same answer either way.
 var errStoredNull = errors.New("settings: stored value is null")
 
-// defaultKnowledgeEnabled is TRUE, shared with internal/agent's knowledgeEnabled: the
-// knowledge tool predates the switch, so absent must not read as off.
+// defaultKnowledgeEnabled is TRUE, unlike kiro-cli, and shared with internal/agent's knowledgeEnabled: the agent
+// searches only folders the user indexed under Knowledge bases, so indexing one is the opt-in.
 const defaultKnowledgeEnabled = true
 
 // DefaultContentCollectionEnabled is the content-collection switch's default: off,
@@ -95,6 +95,14 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		SpecPlanningAskFirst:      defaultSpecPlanningAskFirst,
 		SteeringReminders:         defaultSteeringReminders,
 		WorkflowsEnabled:          DefaultWorkflowsEnabled,
+		ChatMessaging:             defaultChatMessaging,
+		ChatAwareness:             defaultChatAwareness,
+		ChatMessageDeliveryLimit:  DefaultChatMessageDeliveryLimit,
+		WorkflowCreatorEffort:     defaultWorkflowCreatorEffort,
+		KnowledgeIncludePatterns:  []string{},
+		KnowledgeExcludePatterns:  []string{},
+		KnowledgeMaxFiles:         DefaultKnowledgeMaxFiles,
+		KnowledgeChunking:         DefaultKnowledgeChunking(),
 		WorkflowLaunch:            DefaultWorkflowLaunch,
 		ModelFallback:             defaultModelFallback,
 		WorkValidation:            defaultWorkValidation,
@@ -205,12 +213,33 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 		KeySpecPlanningAskFirst: func(r json.RawMessage) error { return decodeInto(&out.SpecPlanningAskFirst, r) },
 		KeySteeringReminders:    func(r json.RawMessage) error { return decodeInto(&out.SteeringReminders, r) },
 		KeyWorkflowsEnabled:     func(r json.RawMessage) error { return decodeInto(&out.WorkflowsEnabled, r) },
-		KeyModelFallback:        func(r json.RawMessage) error { return decodeInto(&out.ModelFallback, r) },
+		KeyChatMessaging:        func(r json.RawMessage) error { return decodeInto(&out.ChatMessaging, r) },
+		KeyChatAwareness:        func(r json.RawMessage) error { return decodeInto(&out.ChatAwareness, r) },
+		KeyChatMessageDeliveryLimit: func(r json.RawMessage) error {
+			return decodeChecked(&out.ChatMessageDeliveryLimit, r, KeyChatMessageDeliveryLimit, ValidChatMessageDeliveryLimit)
+		},
+		KeyWorkflowCreatorEffort: func(r json.RawMessage) error {
+			return decodeChecked(&out.WorkflowCreatorEffort, r, KeyWorkflowCreatorEffort, ValidWorkflowCreatorEffort)
+		},
+		KeyKnowledgeIndexType: func(r json.RawMessage) error {
+			return decodeChecked(&out.KnowledgeIndexType, r, KeyKnowledgeIndexType, ValidKnowledgeIndexType)
+		},
+		KeyKnowledgeIncludePatterns: func(r json.RawMessage) error {
+			return decodeChecked(&out.KnowledgeIncludePatterns, r, KeyKnowledgeIncludePatterns, ValidKnowledgePatterns)
+		},
+		KeyKnowledgeExcludePatterns: func(r json.RawMessage) error {
+			return decodeChecked(&out.KnowledgeExcludePatterns, r, KeyKnowledgeExcludePatterns, ValidKnowledgePatterns)
+		},
+		KeyKnowledgeMaxFiles: func(r json.RawMessage) error {
+			return decodeChecked(&out.KnowledgeMaxFiles, r, KeyKnowledgeMaxFiles, ValidKnowledgeMaxFiles)
+		},
+		KeyKnowledgeChunking: func(r json.RawMessage) error { return decodeKnowledgeChunking(&out.KnowledgeChunking, r) },
+		KeyModelFallback:     func(r json.RawMessage) error { return decodeInto(&out.ModelFallback, r) },
 		KeyWorkValidation: func(r json.RawMessage) error {
 			return decodeChecked(&out.WorkValidation, r, KeyWorkValidation, ValidFeatureChoice)
 		},
 		KeyCloudFormationSafety: func(r json.RawMessage) error {
-			return decodeChecked(&out.CloudFormationSafetyCheck, r, KeyCloudFormationSafety, ValidFeatureChoice)
+			return decodeChecked(&out.CloudFormationSafetyCheck, r, KeyCloudFormationSafety, ValidCloudFormationChoice)
 		},
 		KeyAutoRouting: func(r json.RawMessage) error {
 			return decodeChecked(&out.AutoRouting, r, KeyAutoRouting, ValidFeatureChoice)

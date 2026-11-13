@@ -1,12 +1,15 @@
 // A markdown table inside an assistant reply is sized by its content, and a split word is never the
-// price of fitting: `.message`'s `overflow-wrap: anywhere` is reset on the table, because `anywhere`
-// counts every character boundary toward a cell's min-content and auto layout would crush short
-// columns to a letter. Measured on real layout over the shipped stylesheet and the production renderer.
+// price of fitting: a table too wide for the reply scrolls in its `.cp-table-scroll` region instead.
+// Measured on real layout over the shipped stylesheet and the production renderer.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
-import { createMarkdownStream, renderMarkdownInto } from "./markdown.js";
+import {
+  createMarkdownStream,
+  liveRenderCount,
+  releaseMarkdownIn,
+  renderMarkdownInto,
+} from "./markdown.js";
 import { userEvent } from "vitest/browser";
-import { releaseScrollableTablesIn, tableObservationCount } from "./table-scroll.js";
 
 // A model reply as stored: three columns, a long prose cell and three empty third cells.
 const LANES = `| Lane | Findings | Main points |
@@ -27,7 +30,7 @@ const WIDE = `| Service | Region | Status | Owner | Last deploy | Latency | Note
 
 const ALIGNED = `| Name | Count | Note |
 |:---|---:|:---:|
-| alpha | 12 | ok |
+| a | 12 | ok |
 `;
 
 let style: HTMLStyleElement;
@@ -52,9 +55,30 @@ afterAll(() => {
 /** Render `md` into an assistant reply `width` px wide and return its table. */
 function renderTable(md: string, width: number): HTMLTableElement {
   row.style.inlineSize = `${width}px`;
+  releaseMarkdownIn(bubble);
   bubble.replaceChildren();
   renderMarkdownInto(bubble, md);
   return bubble.querySelector("table")!;
+}
+
+/** The box a table scrolls in. */
+function regionOf(table: HTMLTableElement): HTMLElement {
+  const region = table.parentElement;
+  expect(region?.classList.contains("cp-table-scroll"), "the table's region").toBe(true);
+  return region!;
+}
+
+/** The gaps between a cell's content box and its text, in px. */
+function textGaps(cell: HTMLTableCellElement): { start: number; end: number } {
+  const range = document.createRange();
+  range.selectNodeContents(cell);
+  const text = range.getBoundingClientRect();
+  const box = cell.getBoundingClientRect();
+  const cs = getComputedStyle(cell);
+  return {
+    start: text.left - box.left - parseFloat(cs.paddingLeft),
+    end: box.right - parseFloat(cs.paddingRight) - text.right,
+  };
 }
 
 /** Every run of letters and digits in `root` that sits on more than one line; a hyphen or slash is a
@@ -122,10 +146,11 @@ describe.each([
 describe("a markdown table too wide for the reply", () => {
   it("scrolls inside its own box instead of crushing the columns", () => {
     const table = renderTable(WIDE, 366);
+    const region = regionOf(table);
 
-    expect(table.getBoundingClientRect().width).toBeLessThanOrEqual(366);
-    expect(table.scrollWidth).toBeGreaterThan(table.clientWidth);
-    expect(getComputedStyle(table).overflowX).toBe("auto");
+    expect(region.getBoundingClientRect().width).toBeLessThanOrEqual(366);
+    expect(region.scrollWidth).toBeGreaterThan(region.clientWidth);
+    expect(getComputedStyle(region).overflowX).toBe("auto");
     expect(bubble.scrollWidth).toBeLessThanOrEqual(bubble.clientWidth);
     expect(brokenWords(table)).toEqual([]);
   });
@@ -148,13 +173,18 @@ describe("a markdown table's cell alignment", () => {
     }
   });
 
-  it("gives a column's header and body the alignment its delimiter cell names", () => {
+  // `:---` left, `---:` right, `:---:` centred (GFM tables). Each body cell is narrower than its
+  // header, so its text shows where the column puts it.
+  it("puts a body cell's text where its column's delimiter cell says", () => {
     const table = renderTable(ALIGNED, 936);
-    const head = [...table.querySelectorAll("th")].map((c) => getComputedStyle(c).textAlign);
-    const body = [...table.querySelectorAll("td")].map((c) => getComputedStyle(c).textAlign);
+    const [left, right, centre] = [...table.querySelectorAll("td")].map(textGaps);
 
-    expect(head).toEqual(["left", "right", "center"]);
-    expect(body).toEqual(head);
+    expect(left!.start, "left column").toBeLessThan(1);
+    expect(left!.end, "left column").toBeGreaterThan(5);
+    expect(right!.end, "right column").toBeLessThan(1);
+    expect(right!.start, "right column").toBeGreaterThan(5);
+    expect(centre!.start, "centred column").toBeGreaterThan(5);
+    expect(Math.abs(centre!.start - centre!.end), "centred column").toBeLessThan(1.5);
   });
 });
 
@@ -186,105 +216,109 @@ describe("a markdown table's keyboard reach", () => {
     const before = document.createElement("button");
     row.before(before);
     try {
-      const table = renderTable(WIDE, 366);
+      const region = regionOf(renderTable(WIDE, 366));
       await settled();
-      expect(table.getAttribute("tabindex")).toBe("0");
-      expect(table.getAttribute("aria-label")).toBe("Scrollable table");
+      expect(region.getAttribute("tabindex")).toBe("0");
+      expect(region.getAttribute("role")).toBe("region");
+      expect(region.getAttribute("aria-label")).toBe("Table");
 
       before.focus();
       await userEvent.tab();
-      expect(document.activeElement).toBe(table);
+      expect(document.activeElement).toBe(region);
       await userEvent.keyboard("{ArrowRight}");
       // Chromium animates a keyboard scroll, so the offset is polled, not read once.
-      await expect.poll(() => table.scrollLeft).toBeGreaterThan(0);
+      await expect.poll(() => region.scrollLeft).toBeGreaterThan(0);
     } finally {
       before.remove();
     }
   });
 
   it("is left out of the tab order when it fits", async () => {
-    const table = renderTable(ALIGNED, 936);
+    const region = regionOf(renderTable(ALIGNED, 936));
     await settled();
 
-    expect(table.hasAttribute("tabindex")).toBe(false);
-    expect(table.hasAttribute("aria-label")).toBe(false);
+    expect(region.hasAttribute("tabindex")).toBe(false);
+    expect(region.hasAttribute("role")).toBe(false);
+    expect(region.hasAttribute("aria-label")).toBe(false);
   });
 
   it("follows the reply's width as it changes", async () => {
-    const table = renderTable(WIDE, 366);
+    const region = regionOf(renderTable(WIDE, 366));
     await settled();
-    expect(table.getAttribute("tabindex")).toBe("0");
+    expect(region.getAttribute("tabindex")).toBe("0");
 
     row.style.inlineSize = "1400px";
     await settled();
-    expect(table.hasAttribute("tabindex")).toBe(false);
+    expect(region.hasAttribute("tabindex")).toBe(false);
 
     row.style.inlineSize = "366px";
     await settled();
-    expect(table.getAttribute("tabindex")).toBe("0");
+    expect(region.getAttribute("tabindex")).toBe("0");
   });
 
-  it("is settled when a streamed reply ends", () => {
+  it("is a tab stop once a streamed reply ends", async () => {
     row.style.inlineSize = "366px";
+    releaseMarkdownIn(bubble);
     bubble.replaceChildren();
     const stream = createMarkdownStream(bubble, { flushIntervalMs: 0 });
-    stream.writeDelta(WIDE);
+    stream.write(WIDE);
     stream.end();
+    await settled();
 
-    expect(bubble.querySelector("table")?.getAttribute("tabindex")).toBe("0");
+    expect(bubble.querySelector(".cp-table-scroll")?.getAttribute("tabindex")).toBe("0");
   });
 });
 
+// Each render holding a table keeps its overflow observer until `releaseMarkdownIn` aborts it.
 describe("a markdown table's observation", () => {
-  it("is released with the root that held it, attached or detached", () => {
-    const base = tableObservationCount();
-
-    // A reply with two tables, left to the page: a nested root.
+  it("is released with a root that holds the render, attached or detached", () => {
+    // A reply with two tables, released through the row that holds it.
+    releaseMarkdownIn(bubble);
     bubble.replaceChildren();
+    const base = liveRenderCount();
     renderMarkdownInto(bubble, `${ALIGNED}\n${WIDE}`);
-    expect(tableObservationCount() - base, "both tables watched").toBe(2);
-    releaseScrollableTablesIn(bubble);
-    expect(tableObservationCount() - base, "none after the sweep").toBe(0);
+    expect(liveRenderCount() - base, "the reply's render held").toBe(1);
+    releaseMarkdownIn(row);
+    expect(liveRenderCount() - base, "none after the sweep").toBe(0);
 
     // A reply rendered detached, never laid out: no resize entry will ever arrive for it.
     const detached = document.createElement("div");
     renderMarkdownInto(detached, ALIGNED);
-    expect(tableObservationCount() - base, "detached table watched").toBe(1);
-    releaseScrollableTablesIn(detached);
-    expect(tableObservationCount() - base, "none after the detached sweep").toBe(0);
-
-    // The table itself as the root.
-    const alone = document.createElement("div");
-    renderMarkdownInto(alone, ALIGNED);
-    releaseScrollableTablesIn(alone.querySelector("table")!);
-    expect(tableObservationCount() - base, "none after releasing the table itself").toBe(0);
+    expect(liveRenderCount() - base, "detached render held").toBe(1);
+    releaseMarkdownIn(detached);
+    expect(liveRenderCount() - base, "none after the detached sweep").toBe(0);
   });
 
-  it("leaves a table outside the swept root watched", () => {
-    const base = tableObservationCount();
+  it("leaves a render outside the swept root held", () => {
+    const base = liveRenderCount();
     const kept = document.createElement("div");
     const swept = document.createElement("div");
     renderMarkdownInto(kept, ALIGNED);
     renderMarkdownInto(swept, ALIGNED);
 
-    releaseScrollableTablesIn(swept);
+    releaseMarkdownIn(swept);
 
-    expect(tableObservationCount() - base).toBe(1);
-    releaseScrollableTablesIn(kept);
+    expect(liveRenderCount() - base).toBe(1);
+    releaseMarkdownIn(kept);
   });
 
-  it("is let go of when a laid-out table leaves the page without a sweep", async () => {
-    // Tables an earlier test left in the reply are dropped, and let go of, first.
-    bubble.replaceChildren();
-    await settled();
-    const base = tableObservationCount();
-    renderTable(ALIGNED, 936);
-    await settled();
-    expect(tableObservationCount() - base).toBe(1);
+  it("holds nothing for a render with no table or code block", () => {
+    const base = liveRenderCount();
+    const prose = document.createElement("div");
+    renderMarkdownInto(prose, "Just a paragraph, with *emphasis*.\n");
 
-    bubble.replaceChildren();
+    expect(liveRenderCount() - base).toBe(0);
+  });
+
+  it("stops following the width once released", async () => {
+    const region = regionOf(renderTable(WIDE, 366));
+    await settled();
+    expect(region.getAttribute("tabindex")).toBe("0");
+
+    releaseMarkdownIn(bubble);
+    row.style.inlineSize = "1400px";
     await settled();
 
-    expect(tableObservationCount() - base).toBe(0);
+    expect(region.getAttribute("tabindex"), "the observer is gone").toBe("0");
   });
 });

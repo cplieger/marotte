@@ -21,17 +21,31 @@ import {
 import { registerCleanup } from "./actions/index.js";
 import { BUS_PAGE_RESUMED, BUS_RECONCILE, decodeEnvelope, emitBus } from "./bus.js";
 import { inventoryHeld } from "./git-prs-state.js";
-import { peekRunState, rebuildLiveRuns, rereadHeldRuns, runTurnHeldSeq } from "./run-store.js";
+import { mcpState } from "./mcp-state.js";
+import { isMirrorKind } from "./mirror.js";
+import { rawWorkflowID, runContentOf, runScopeOf } from "./run-content-frame.js";
+import { refetchLiveRuns, rereadHeldRuns, runTurnHeldSeq } from "./run-store.js";
+import {
+  rescopeOwed,
+  runContentScoped,
+  setScopePresenter,
+  type ScopeOutcome,
+} from "./run-content-scope.js";
 import { requestRunTurnRange } from "./run-turn-range.js";
 import { setSSEStatus } from "./send-state.js";
 import { fetchCatalog } from "./session-catalog.js";
 import { chatHoldingTurn, get } from "./store.js";
 import { loadList, loadMessages, requestTurnRange } from "./store-load.js";
-import { adoptSubscriptionTag, persistedTag } from "./sse-tag.js";
+import { adoptSubscriptionTag, persistedTag, tagWrittenElsewhere } from "./sse-tag.js";
 import { observeStamp, setObserveSink, versionMap } from "./subject-versions.js";
 import { listTabs } from "./tabs-sync.js";
 import type { ConnectionStatus, ServerEvent, SubjectStamp } from "./types.js";
-import { getEventsEndpoint, postEventsAliveEndpoint, postSyncEndpoint } from "./wire/client.gen.js";
+import {
+  getEventsEndpoint,
+  postEventsAliveEndpoint,
+  postEventsScopeEndpoint,
+  postSyncEndpoint,
+} from "./wire/client.gen.js";
 
 type MsgHandler = (evt: ServerEvent) => void;
 type StatusHandler = (s: ConnectionStatus) => void;
@@ -63,6 +77,9 @@ let attachment: TabAttachment | null = null;
 /** The SSE-Client tag this tab presents for the profile, whichever seat it holds. */
 let presented = "";
 
+/** Removes the `storage` listener that keeps `presented` on the profile's persisted tag. */
+let storageListener: AbortController | null = null;
+
 /** A worker spawner standing in for `new SharedWorker(...)`, so a suite can attach this tab to a
  *  host it holds in the page. */
 let spawnOverride: (() => SharedWorkerLike) | null = null;
@@ -91,12 +108,22 @@ function onLifecycle(ev: LifecycleEvent): void {
   switch (ev.kind) {
     case "state":
       onStatus(statusOf(ev.to));
+      if (ev.to === "open") {
+        rescopeOwed();
+      }
       return;
     case "frame_rejected": {
       const msg = ev.error instanceof Error ? ev.error.message : String(ev.error);
       console.error(`sse: decoder rejected ${ev.type}:`, msg);
       return;
     }
+    case "scope_refused":
+    case "deliver_failed":
+    case "auth_lost":
+      // The stream fell back to every run's frames (each tab's predicate still drops a run it does
+      // not show), a tab's predicate threw, or the stream stopped.
+      console.warn("[sse]", JSON.stringify(ev));
+      return;
     default:
       console.debug("[sse]", JSON.stringify(ev));
   }
@@ -180,14 +207,23 @@ function deliver(evt: ServerEvent): void {
     void runStampAction(evt.subject);
     return;
   }
+  const run = runContentOf(evt);
+  if (run !== "" && !runContentScoped(run)) {
+    // Its stamp is not observed either: nothing here holds what it would certify.
+    return;
+  }
   onMsg(evt);
   if (evt.subject !== undefined && projectionHeld(evt.subject)) {
     observeStamp(evt.subject);
   }
 }
 
-/** Whether this client holds the projection a stamp certifies. */
+/** Whether this client holds the projection a stamp certifies. A mirror observes its own
+ *  subject's stamps, after it applied the frame, so a frame it refused records nothing. */
 function projectionHeld(stamp: SubjectStamp): boolean {
+  if (isMirrorKind(stamp.kind)) {
+    return false;
+  }
   switch (stamp.kind) {
     case "chat":
       return get(stamp.ref)?.residency === "loaded";
@@ -196,7 +232,7 @@ function projectionHeld(stamp: SubjectStamp): boolean {
       return chatID !== "" && get(chatID)?.residency === "loaded";
     }
     case "run_turn":
-      return peekRunState(runTurnWorkflow(stamp.ref)) !== undefined;
+      return runTurnHeldSeq(runTurnWorkflow(stamp.ref), runTurnID(stamp.ref)) !== undefined;
     case "forge_inventory":
       return inventoryHeld();
     default:
@@ -250,17 +286,6 @@ function rawTurnID(payload: unknown): string {
   return "";
 }
 
-/** The workflow id an entry frame carries, read off the RAW payload because nothing decoded. It
- *  sits beside `turn` on every run-scoped entry frame, which is the same field
- *  `handlers/entries.ts` routes on, and is absent on a chat's. */
-function rawWorkflowID(payload: unknown): string {
-  if (typeof payload !== "object" || payload === null) {
-    return "";
-  }
-  const id = (payload as Record<string, unknown>)["workflow_id"];
-  return typeof id === "string" ? id : "";
-}
-
 /** Ask for the turn an undecodable frame named, on whichever log holds it: a chat's frame
  *  carries a chat id and a run's carries an empty one plus its own `workflow_id`, and each has a
  *  range read of its own. A frame naming no turn at all is warned about and dropped. */
@@ -289,6 +314,11 @@ function salvageUndecodable(data: string, err: unknown): void {
   if (chatID !== "") {
     console.warn(`sse: ${type} did not decode (${why}), asking for turn ${turnID} of ${chatID}`);
     requestTurnRange(chatID, turnID);
+    return;
+  }
+  if (workflowID !== "" && !runContentScoped(workflowID)) {
+    // The run's entry into the scope catches its open turns up.
+    console.warn(`sse: ${type} did not decode (${why}), run ${workflowID} is not shown here`);
     return;
   }
   // A run's frame: the whole turn, because a frame that did not decode says nothing about what this
@@ -340,7 +370,9 @@ function runStampAction(stamp: SubjectStamp | undefined, signal?: AbortSignal): 
       return Promise.resolve(false);
     }
     case "runs":
-      return rebuildLiveRuns(signal).then(() => false);
+      return refetchLiveRuns(signal).then(() => false);
+    case "mcp_status":
+      return mcpState.refetchStatus(signal).then(() => false);
     case "catalog":
       return fetchCatalog(signal === undefined ? {} : { signal }).then(() => false);
     case "forge_inventory":
@@ -507,6 +539,7 @@ function createTabStream(): TabFallback {
     // The receipt for every keepalive received, carrying SSE-Client: what lets the server read a
     // suspended or half-open profile gone at the alive window.
     alive: { url: postEventsAliveEndpoint.path },
+    scopeUrl: postEventsScopeEndpoint.path,
   });
   return { stream, versions, headers };
 }
@@ -520,6 +553,9 @@ export function init(msg: MsgHandler, status: StatusHandler): void {
   };
   holdUntilHydrated();
   presented = persistedTag();
+  storageListener?.abort();
+  storageListener = new AbortController();
+  window.addEventListener("storage", onStorage, { signal: storageListener.signal });
   // Every stamp this tab records is the profile's too: under the host it reaches the host's map
   // (one digest per profile), in fallback mode the attachment's own map is this one already.
   setObserveSink((subject, version, epoch) => {
@@ -535,22 +571,68 @@ export function init(msg: MsgHandler, status: StatusHandler): void {
     onLifecycle,
     revalidate: tabRevalidate,
     tag: presented,
+    // Broadcasts only until a run tab scopes the page to its run.
+    scope: [],
   });
 }
+
+/** Ask the stream to deliver `run`'s topic to this tab ("" for broadcasts only). Never rejects:
+ *  a rejected ask answers `owed` (a `superseded` one is only ever an ask `run-content-scope.ts`
+ *  has already replaced), and before `init` there is no stream to ask yet. */
+export function setPageScope(run: string): Promise<ScopeOutcome> {
+  if (attachment === null) {
+    return Promise.resolve("owed");
+  }
+  // An older host answers null and delivers everything, which covers the run too.
+  return attachment.setScope(runScopeOf(run)).then(
+    (): ScopeOutcome => "covered",
+    (): ScopeOutcome => "owed",
+  );
+}
+setScopePresenter(setPageScope);
 
 /** The tag presented on the current connection. */
 export function presentedTag(): string {
   return presented;
 }
 
+const presentedListeners = new Set<(tag: string) => void>();
+
+/** Call `listener` with each new tag this page presents; returns its removal. */
+export function onPresentedTag(listener: (tag: string) => void): () => void {
+  presentedListeners.add(listener);
+  return () => {
+    presentedListeners.delete(listener);
+  };
+}
+
 /** Adopt the tag of the push subscription this profile holds (sse-tag.ts). */
 export async function adoptPushSubscription(
   sub: { readonly endpoint: string } | null,
 ): Promise<void> {
-  await adoptSubscriptionTag(sub, presented, (tag) => {
-    presented = tag;
-    attachment?.setTag(tag);
-  });
+  await adoptSubscriptionTag(sub, presented, present);
+}
+
+/** The one writer of `presented` after `init`. */
+function present(tag: string): void {
+  if (tag === presented) {
+    return;
+  }
+  presented = tag;
+  attachment?.setTag(tag);
+  for (const listener of presentedListeners) {
+    listener(tag);
+  }
+}
+
+/** Another page of the profile moved the persisted tag: in SharedWorker mode the host already
+ *  reconnected, but this page's own reports still carry the old tag; in fallback mode its stream
+ *  does too. */
+function onStorage(event: StorageEvent): void {
+  const tag = tagWrittenElsewhere(event);
+  if (tag !== null) {
+    present(tag);
+  }
 }
 
 /** Undo `init` completely, for tests that boot the module more than once. `vi.resetModules()`
@@ -560,6 +642,8 @@ export async function adoptPushSubscription(
 export function _resetForTest(): void {
   attachment?.detach();
   attachment = null;
+  storageListener?.abort();
+  storageListener = null;
   spawnOverride = null;
   setObserveSink(null);
   if (hydrateTimer !== null) {

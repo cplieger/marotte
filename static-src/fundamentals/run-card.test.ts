@@ -1008,7 +1008,7 @@ describe("the card shows the run's structure, and only steps and watches as work
                     type: "step",
                     status: "running",
                     agentName: "wf-coder",
-                    modelId: "claude-opus-5.5",
+                    modelId: "model-a-5.5",
                     iteration: 0,
                     startedAt: STARTED,
                   },
@@ -1044,7 +1044,7 @@ describe("the card shows the run's structure, and only steps and watches as work
       type: "repeat",
       maxIterations: 3,
       steps: [
-        { nodeId: "code", type: "step", agentName: "wf-coder", modelId: "claude-opus-5.5" },
+        { nodeId: "code", type: "step", agentName: "wf-coder", modelId: "model-a-5.5" },
         {
           nodeId: "reviews",
           type: "parallel",
@@ -1256,9 +1256,7 @@ describe("the card shows the run's structure, and only steps and watches as work
     expect(loop?.querySelector(".run-group-meta")?.textContent).toBe("pass 1 of 3");
     // The pass belongs to the loop, so a step inside it does not restate it.
     const code = c.root.querySelector<HTMLElement>(".run-step");
-    expect(code?.querySelector(".run-step-meta")?.textContent).toBe(
-      "wf-coder \u00b7 claude-opus-5.5",
-    );
+    expect(code?.querySelector(".run-step-meta")?.textContent).toBe("wf-coder \u00b7 model-a-5.5");
     // A container is structure: it carries no state mark and no clock.
     expect(c.root.querySelector(".run-group .run-group-head .run-step-glyph")).toBeNull();
     expect(c.root.querySelector(".run-group-head .run-step-dur")).toBeNull();

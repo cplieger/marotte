@@ -13,16 +13,27 @@ import {
   noteRunChat,
   noteRunLabel,
   noteRunResumed,
-  noteRunLive,
-  noteRunSettled,
+  applyLiveRunFrame,
   hasLiveRunForChat,
   openRunEntry,
   runChatID,
   openRunTurn,
+  reviseRun,
   runLabelOf,
+  runRevHeld,
   runStepEnds,
+  runTurnHeldSeq,
   sealRunEntry,
 } from "../run-store.js";
+import { scopedStep } from "../run-content-scope.js";
+import {
+  noteStepTurn,
+  stepTurnPath,
+  tailAppended,
+  tailDelta,
+  tailOpened,
+  tailSealed,
+} from "../run-step-tail.js";
 import { isBroken } from "../turn-severity.js";
 import { payloadOf } from "../turns.js";
 import { isBusy } from "../store.js";
@@ -102,9 +113,6 @@ onSSE("run_started", (chatID, p) => {
   noteRunChat(p.workflow_id, chatID);
   noteRunLabel(p.workflow_id, p.name);
   noteRunResumed(p.workflow_id, p.initiator ?? "", p.initiator_reason ?? "");
-  // A start frame is proof of execution: it fires on the launch and again on every
-  // resume, so it is exactly the moment frames begin arriving into this chat.
-  noteRunLive(p.workflow_id, chatID, true);
   invalidateRun(p.workflow_id);
   emitBus(BUS_RUNS_CHANGED);
   const kind = startKind(p.unattended);
@@ -114,27 +122,25 @@ onSSE("run_started", (chatID, p) => {
   }
 });
 
+onSSE("live_run", (_chatID, p, subject) => {
+  applyLiveRunFrame(p, subject);
+});
+
 onSSE("run_finished", (chatID, p) => {
   trackRun(p.workflow_id);
   // Recorded even here: a later re-open nests under the launching chat.
   noteRunChat(p.workflow_id, chatID);
   noteRunLabel(p.workflow_id, p.name);
-  // `paused` stays live: stopped waiting for something, not over. Anything
-  // else is an ending.
-  if (p.status === "paused") {
-    // A policy stop (`onMaxIterations`) reports through this same frame, so the run
-    // is resumable and its row stays — but it has stopped executing, which is what
-    // lets its chat's message window be reclaimed while it sits.
-    noteRunLive(p.workflow_id, chatID, false);
-  } else {
-    noteRunSettled(p.workflow_id);
+  // `paused` is stopped waiting for something, not over. Anything else is an ending.
+  if (p.status !== "paused") {
     // A run that is over cannot still be waiting on a person; its step questions leave with the
     // server's final `run_asks`, its requests here.
     dropRunRequests(p.workflow_id);
     // The ORPHANS: a step's ask with an EMPTY `run_id` is reachable only by the turn-scoped sweep,
     // whose `turn_closed` trigger never fires for a step-driven turn. Gate 1 spares the turn of a user
     // who prompted meanwhile (a live JSON-RPC request); gate 2 spares a still-running sibling run's
-    // orphan. An empty chat id is a parentless run, already reached through `run:<id>`.
+    // orphan. An empty chat id is a parentless run, already reached through `run:<id>`. The server
+    // sends this run's `live_run` removal before this frame, so gate 2 no longer counts it.
     if (chatID !== "" && !isBusy(chatID) && !hasLiveRunForChat(chatID)) {
       dropTurnDecisions(chatID);
     }
@@ -148,71 +154,149 @@ onSSE("run_finished", (chatID, p) => {
 });
 
 // The run's LOG: each event into a run-store operation behind the workflow-id guard, mirroring
-// `handlers/entries.ts`.
+// `handlers/entries.ts`. The SSE adapter delivers only the scoped run's frames, and `routeOf` sends
+// each to the log or to its step's tail cell.
+
+/** Where a frame of `turnID` goes: the log for a turn it holds or one of the shown step's, the tail
+ *  cell for another step's turn, nowhere for a turn no read or `turn_opened` named, which the next
+ *  run read maps (its deltas wait for that read in `tailDelta`). */
+function routeOf(runID: string, turnID: string): "log" | "tail" | "none" {
+  if (runTurnHeldSeq(runID, turnID) !== undefined) {
+    return "log";
+  }
+  const path = stepTurnPath(runID, turnID);
+  if (path === undefined) {
+    return "none";
+  }
+  return path === scopedStep(runID) ? "log" : "tail";
+}
 
 onSSE("turn_opened", (_chatID, p) => {
   const runID = forRun(p);
-  if (runID !== "") {
+  if (runID === "") {
+    return;
+  }
+  const path = payloadOf(p.entry, "turn_open")?.node_path ?? "";
+  if (path === "") {
     openRunTurn(runID, p.entry);
-    // A step's turn after an interruption is its resume, which only a run read's `step_ends` names.
-    const path = payloadOf(p.entry, "turn_open")?.node_path ?? "";
-    const end = path === "" ? undefined : runStepEnds(runID).get(path);
-    if (end?.outcome === "interrupted" && end.resumed !== true) {
-      invalidateRun(runID);
-    }
+    return;
+  }
+  noteStepTurn(runID, p.entry.turn, path);
+  if (routeOf(runID, p.entry.turn) === "log") {
+    openRunTurn(runID, p.entry);
+  }
+  // A step's turn after an interruption is its resume, which only a run read's `step_ends` names.
+  const end = runStepEnds(runID).get(path);
+  if (end?.outcome === "interrupted" && end.resumed !== true) {
+    readUnlessRevised(runID);
   }
 });
 
 onSSE("entry_opened", (_chatID, p) => {
   const runID = forRun(p);
-  if (runID !== "") {
-    openRunEntry(runID, p.open);
+  if (runID === "") {
+    return;
+  }
+  switch (routeOf(runID, p.open.turn)) {
+    case "log":
+      openRunEntry(runID, p.open);
+      return;
+    case "tail":
+      tailOpened(runID, p.open);
+      return;
+    case "none":
+      return;
   }
 });
 
 onSSE("entry_delta", (_chatID, p) => {
   const runID = forRun(p);
-  if (runID !== "") {
-    applyRunDelta(runID, p.turn, p.entry_id, p.lane, p.n, p.delta);
+  if (runID === "") {
+    return;
+  }
+  switch (routeOf(runID, p.turn)) {
+    case "log":
+      applyRunDelta(runID, p.turn, p.entry_id, p.lane, p.n, p.delta);
+      return;
+    case "tail":
+    case "none":
+      tailDelta(runID, p.turn, p.entry_id, p.lane, p.n, p.delta);
+      return;
   }
 });
 
 onSSE("entry_sealed", (_chatID, p) => {
   const runID = forRun(p);
-  if (runID !== "") {
-    sealRunEntry(runID, p.turn, p.entry_id, p.lane, p.seq, p.ts, p.n);
+  if (runID === "") {
+    return;
+  }
+  switch (routeOf(runID, p.turn)) {
+    case "log":
+      sealRunEntry(runID, p.turn, p.entry_id, p.lane, p.seq, p.ts, p.n);
+      return;
+    case "tail":
+      tailSealed(runID, p.turn, p.entry_id, p.n);
+      return;
+    case "none":
+      return;
   }
 });
 
 onSSE("entry_appended", (_chatID, p) => {
   const runID = forRun(p);
-  if (runID !== "") {
-    appendRunEntry(runID, p.entry);
-    if (p.entry.kind === "step_graded") {
-      // Both views read a step's grade from the run read's `step_ends`, which projects this entry.
-      invalidateRun(runID);
-    }
+  if (runID === "") {
+    return;
+  }
+  switch (routeOf(runID, p.entry.turn)) {
+    case "log":
+      appendRunEntry(runID, p.entry);
+      break;
+    case "tail":
+      tailAppended(runID, p.entry);
+      break;
+    case "none":
+      break;
+  }
+  if (p.entry.kind === "step_graded") {
+    // Both views read a step's grade from the run read's `step_ends`, which projects this entry.
+    readUnlessRevised(runID);
   }
 });
 
 onSSE("turn_closed", (_chatID, p) => {
   const runID = forRun(p);
-  if (runID !== "") {
-    // A step reads settled from its own `turn_close` rather than from a flag.
+  if (runID === "") {
+    return;
+  }
+  // A step reads settled from its own `turn_close` rather than from a flag; a tail keeps its line.
+  if (routeOf(runID, p.entry.turn) === "log") {
     appendRunEntry(runID, p.entry);
-    // The tree grades a broken step from the run read's `step_ends`, and the applied
-    // `node_complete` still says KAS's `completed`, so only a refetch turns the row red live. A
-    // grade under KAS's record arrives as its own `step_graded` entry.
-    const close = payloadOf(p.entry, "turn_close");
-    if (isBroken(close?.outcome)) {
-      invalidateRun(runID);
-    }
+  }
+  // The tree grades a broken step from the run read's `step_ends`, and the applied
+  // `node_complete` still says KAS's `completed`, so only a refetch turns the row red live. A
+  // grade under KAS's record arrives as its own `step_graded` entry.
+  const close = payloadOf(p.entry, "turn_close");
+  if (isBroken(close?.outcome)) {
+    readUnlessRevised(runID);
   }
 });
 
 function forRun(p: { workflow_id?: string }): string {
   return p.workflow_id ?? "";
 }
+
+/** Read the run for what a frame moved in its read, unless a held revision means the server's
+ *  `run_rev` carries the move. */
+function readUnlessRevised(workflowID: string): void {
+  if (!runRevHeld(workflowID)) {
+    invalidateRun(workflowID);
+  }
+}
+
+// The run read moved: a held run reads what changed since its held revision.
+onSSE("run_rev", (_chatID, p) => {
+  reviseRun(p.workflow_id, p.rev, p.status);
+});
 
 // Which steps of one run wait on a person, replacing the store's snapshot of that run whole. A
 // reachable snapshot is the whole truth about the run's waits, so a banner for a wait it does not
@@ -235,16 +319,14 @@ onSSE("run_asks", (chatID, p) => {
   }
 });
 
-// The one lifecycle frame carrying CONTENT: applied to the cached tree, refetching only when it
-// cannot be (`loop_iteration` and `steps_queued` reshape the tree, `paused` is run-level, or no
-// state is held). A refetch per node event is a KAS round trip for the whole tree.
+// The one lifecycle frame carrying CONTENT: applied to the cached tree. A frame it cannot apply
+// (`loop_iteration` and `steps_queued` reshape the tree, `paused` is run-level, a new iteration's
+// path, or no state held) waits for the `run_rev` the server's re-read publishes, or reads the run
+// when no revision is held.
 onSSE("run_progress", (chatID, p) => {
   trackRun(p.workflow_id);
   noteRunChat(p.workflow_id, chatID);
-  // Proof of life; proof of EXECUTION unless run-level `paused`. A node-level `node_paused` is a step
-  // waiting inside a running run, so it reads as executing.
-  noteRunLive(p.workflow_id, chatID, p.kind !== "paused");
   if (!applyRunProgress(p)) {
-    invalidateRun(p.workflow_id);
+    readUnlessRevised(p.workflow_id);
   }
 });

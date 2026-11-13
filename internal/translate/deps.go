@@ -37,6 +37,10 @@ type RunStep struct {
 	RunID     string
 	NodePath  string
 	SessionID string
+	// NodeType is KAS's node type off node_start, empty when a step frame opened the turn first.
+	NodeType string
+	// NodeID is the step's node id, which its asks name it by; empty when the frame's source knew none.
+	NodeID string
 	// Path is NodePath's segments when the opening frame carried them, since the key is never split back.
 	Path []string
 }
@@ -152,7 +156,7 @@ type steerBuffer interface {
 type chatRecords interface {
 	// Get returns the chat header at id, or false if it does not exist or could not be read.
 	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
-	// Mutate is the header write primitive: load, apply, save, broadcast.
+	// Mutate is the header write primitive (chat.Store.Mutate owns what it announces).
 	Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error)
 	// PromptTexts is every prompt the chat's log holds, in turn order: what KAS
 	// derives a session title from, so the focus filter can tell a derivation
@@ -218,7 +222,7 @@ type Roles struct {
 	TurnInterrupt turnInterruptAccess
 	// Metering is the per-turn accounting a turn_completion frame writes.
 	Metering turnMetering
-	// Usage hears every context reading, which queues the compaction at the point.
+	// Usage hears every live context reading and tool call, which drive the chat's compactor.
 	Usage usageObserver
 	// WorkDir is the workspace root. Last for fieldalignment.
 	WorkDir string
@@ -422,9 +426,13 @@ type turnInterruptAccess interface {
 	CompactionFailed(chatID marotte.ChatID, turnID, detail string)
 }
 
-// usageObserver hears each context reading KAS reports for a chat, whether or not it moved the stored one.
+// usageObserver hears a chat's in-turn signals for its compactor, whether or not they moved the stored figure.
 type usageObserver interface {
+	// ObserveContextUsage hears each live reading: a model response's own, never KAS's published figure.
 	ObserveContextUsage(ctx context.Context, chatID marotte.ChatID, pct float64)
+	// ObserveToolCall hears each tool call the chat's own agent opens. KAS sends a response's tool_call
+	// frames before that response's reading, so a call since the last reading means the turn goes on.
+	ObserveToolCall(chatID marotte.ChatID)
 }
 
 // turnMetering is the per-turn accounting a turn_completion frame writes, split

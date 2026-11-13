@@ -1,7 +1,7 @@
 import { fold } from "./fold.js";
 
 /** A query prepared once per search. */
-export interface Needle {
+interface Needle {
   /** The query as it is compared: folded for a case-insensitive scan, literal
    *  for a case-sensitive one. Its length is the query's length, so a hit spans
    *  `[at, at + text.length)` in the original. */

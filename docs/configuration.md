@@ -8,6 +8,7 @@ Variables go in the `environment:` block of `compose.yaml` and are read at start
 
 | Variable | Description | Default |
 | --- | --- | --- |
+| `LISTEN_ADDR` | Address the server listens on, as `host:port`. The host may be empty, `0.0.0.0` or `::`, which listen on every address, or `localhost` or a loopback address such as `127.0.0.1` or `::1` (without a `%zone`, and not `127.255.255.255`); any other host stops startup, because the healthcheck and the in-container API reach the server on loopback. Change it on a host-network install (`network_mode: host`) when another service on the host holds port 9847; `ports:` does not apply there. On the default network, change the host side of `ports:` instead. A value without a port number from 1 to 65535 stops startup. | `:9847` |
 | `ALLOWED_HOSTS` | Hostnames and IPs you open marotte at, comma-separated. Any other address gets `403`. | _(unset)_ |
 | `TRUSTED_PROXIES` | Address ranges of your reverse proxy, so the logs record the real client address. | _(unset)_ |
 | `TRUSTED_INSTALL_UIDS` | User IDs that may write to the tools folder (`MAROTTE_TOOLS_DIR`, by default `/config/tools`) without marotte refusing to install kiro-cli or start the tools engine. Only for shared or network volumes. | _(unset)_ |
@@ -71,7 +72,7 @@ Mount each folder with `volumes:` first. Credential and internal files under `/c
 
 The agent's file tools read and write `/workspace` only, and read `/uploads`. To give the agent another folder, add it under **Additional directories** on the **Permissions** tab in **Settings**. The agent can then read, write and delete files there and start shell commands in it, and the file browser shows it. Mount the folder with `volumes:` first.
 
-Each entry is the absolute path of an existing folder, written without a symbolic link. The filesystem root, `/config`, the workspace, and any folder inside or holding either of them are refused, with the reason beside the field. A listed folder that later stops qualifying, because it was deleted or `config.json` was edited by hand, is marked **not granted** with its reason and gives the agent nothing until it qualifies again.
+Each entry is the absolute path of an existing folder, written without a symbolic link. The filesystem root, `/config`, the workspace, and any folder inside or holding either of them are refused, with the reason beside the field. A listed folder that later stops qualifying, because it was deleted or `config.json` was edited by hand, is marked **not granted** with its reason and gives the agent nothing until it qualifies again. A `KIRO_HOME` moved into the workspace or into a listed folder is not refused, but every chat's file tools then reach all of kiro-cli's state there, every chat's session files included, so keep `KIRO_HOME` outside them.
 
 A change reaches the agent's file tools, the folder a shell command may start in, and the file browser at once. The file tools refuse a removed folder from their next operation in every chat and run. Shell commands themselves are not confined to these folders, so one can still `cd` into a removed folder or write to it. kiro-cli takes the current list whenever marotte opens or reloads a chat's session: a new chat with its first message, an open or resumed chat at its next message, and a chat you fork or rewind as you do it. A workflow run keeps the list it started with for every step, even after an engine restart.
 
@@ -79,11 +80,37 @@ A change reaches the agent's file tools, the folder a shell command may start in
 
 Whether the chat agent can start and manage workflow runs is a setting, not a variable: **Workflows** under **Agent capabilities** on the **General** tab in **Settings**, on by default. With it on, a request like "run the publish workflow" starts the run instead of describing it. On: the agent can start workflows that run in the background while you keep chatting. Off: it uses subagents instead and waits for each to finish before it continues. Runs you start yourself from **Workflows** on the `/docs` page work either way.
 
-**Workflow use**, below the switch and shown while it is on, says when the agent starts a workflow on its own. With **Only when asked**, the default, the agent does the work in the chat unless you ask for a workflow. With **Only for large tasks**, it starts one for multi-step work or work that would fill the chat's context. With **As much as possible**, it hands reading code, writing it, testing and review to workflows. A chat started on an older kiro-cli, one without this choice, keeps handing all work to workflows whatever you pick, because kiro-cli does not offer the choice on it. A change to either setting reaches new chats, and an open chat picks it up at its next message.
+**Workflow use**, below the switch and shown while it is on, says when the agent starts a workflow on its own. With **Only when asked**, the default, the agent does the work in the chat unless you ask for a workflow. With **Only for large tasks**, it starts one for multi-step work or work that would fill the chat's context. With **As much as possible**, it hands reading code, writing it, testing and review to workflows. A chat started on an older kiro-cli, one without this choice, keeps handing all work to workflows whatever you pick, because kiro-cli does not offer the choice on it.
+
+**Workflow planning effort**, also shown while **Workflows** is on, is how much reasoning kiro-cli spends planning a workflow the agent starts from a description rather than a saved workflow: **Default**, which lets kiro-cli decide, or low to max. A change to any of these settings reaches new chats, and an open chat picks it up at its next message.
 
 When a loop in a run the agent started stops at its pass limit, kiro-cli tells the agent, which then asks you whether to give the loop more passes or end it.
 
 A workflow can also start itself on a schedule or when something happens on a forge, through **Run when…** on its row on the **Workflows** panel. [Event triggers](triggers.md) describes the forge rules and the two settings that cap the runs they start.
+
+## Messages between chats
+
+Whether the agent in one chat can send a message to another chat is a setting, not a variable: **Messages between chats** under **Agent capabilities** on the **General** tab in **Settings**, off by default, as in kiro-cli. With it on, the agent can message another chat, which shows the message with the chat it came from, while the sending chat shows it with the chat it went to. The message starts a reply from the receiving chat's agent, even in a chat you do not have open. The agent names the other chat by its session ID. With **Search other chats** on, it can look the chat up itself; otherwise, tell it which chat to reach. A chat's agent can read its own ID as `KIRO_SESSION_ID` in its shell commands, except in a forked or branched chat, where that variable names the chat it came from ([a known kiro-cli issue](known-upstream-issues.md#a-forked-or-branched-chat-carries-the-id-of-the-chat-it-came-from)). Both chats need the setting in force, and a workflow step cannot receive a message. Sending also needs **Workflows** on and a mode other than Plan, Autonomous, Spec, Quick Spec or Bug Fix, because kiro-cli gives a chat the tool that sends only then; a chat receives in any mode, with **Workflows** on or off. A change reaches new chats, and any other chat takes it at its next message or when you open it. So after turning it on, send each chat you want to reach one message first; after turning it off, two chats that have not had a message or been opened since can still exchange messages until they do.
+
+**Messages per exchange**, below the switch and shown while it is on, caps how many messages two chats' agents can pass back and forth in one exchange, from 1 to 500, 50 by default as in kiro-cli. A change applies after the agent engine restarts.
+
+**Search other chats**, the next switch, lets the agent browse and search your other chats by branch, file or topic and read each one's saved summary: what it decided, which files it changed and what its workflows produced. It is off by default, as in kiro-cli, and a change reaches a chat at its next message or when you open it.
+
+## Knowledge index settings
+
+Five rows under **Knowledge base search** on the **General** tab in **Settings** shape how kiro-cli indexes the folders you add under **Knowledge bases**, whether or not the search is on. Each starts at kiro-cli's own default, and a change applies after the agent engine restarts.
+
+- **Knowledge index type**: **Best**, kiro-cli's default, finds passages by meaning; **Fast** matches words only and indexes faster. **Default** follows kiro-cli.
+- **Knowledge files to include**: glob patterns, separated by commas and matched against each file's path inside the folder, such as `docs/**, **/*.{md,txt}`. A comma inside braces belongs to its pattern. Empty, the default, indexes every file kiro-cli can read.
+- **Knowledge files to skip**: patterns in the same form for files to leave out. Hidden folders and folders such as `node_modules`, `build`, `dist` and `target` are always left out.
+- **Knowledge file limit**: the most files indexed from one folder, 10000 by default; kiro-cli skips the rest.
+- **Knowledge passage size**: how many words each indexed passage holds, 512 by default, and **Overlap**, how many of those words repeat the end of the passage before, 128 by default. The size is at least 64 words and the overlap stays below it.
+
+A knowledge base keeps the index type and patterns it was added with, so remove it and add it again to apply new ones. The file limit and passage size apply whenever you add or reindex a knowledge base.
+
+## AWS CloudFormation safety check
+
+**AWS CloudFormation safety check** under **Agent capabilities** on the **General** tab in **Settings** checks a change against your Kiro account's safety rules when the agent edits a CloudFormation template or runs a CDK deploy or destroy. The check sends the template and recent chat to Kiro's service. **Default** follows kiro-cli. **Warn** tells you when a change breaks a rule and lets it through. **Block until you allow** stops the change and asks whether to keep it blocked or allow it; a scheduled or triggered run, with nobody to ask, keeps it blocked even with **Approve tool requests in scheduled and triggered runs instead of refusing them** on. **Off** turns the check off. A change applies after the agent engine restarts.
 
 ## kiro-cli telemetry
 
@@ -141,7 +168,7 @@ secrets:
 
 `MAROTTE_NOTIFY_TOKEN` set to the value itself works too. A token outside 32 to 512 of the characters `A-Z a-z 0-9 - . _ ~ + /`, with optional trailing `=`, or a `_FILE` that is blank or cannot be read, stops startup with a message naming the variable. Unset, startup logs one line saying the route is off. marotte keeps only a hash of the token and never logs it. kiro-cli does not get `MAROTTE_NOTIFY_TOKEN`, because its name ends in `_TOKEN`, but the shell commands the agent runs [inherit the container's environment](#credentials-in-the-container-environment-marotte_allow_bridge_env), so the `_FILE` form keeps the value out of their reach unless they open the file.
 
-The request names the chat by its session ID, which the agent's shell commands carry as `KIRO_SESSION_ID`:
+The request names the chat by its session ID, which the agent's shell commands carry as `KIRO_SESSION_ID`, except in a forked or branched chat, where that variable names the chat it came from ([a known kiro-cli issue](known-upstream-issues.md#a-forked-or-branched-chat-carries-the-id-of-the-chat-it-came-from)):
 
 ```sh
 curl -X POST http://marotte:9847/api/sessions/$SESSION/notify \
@@ -186,6 +213,7 @@ Files you attach to a message, by drag and drop, paste or the composer's **Chat 
 | `/config/signin.json` | marotte's Kiro sign-in, readable only by the container's user |
 | `/config/home/` | The container's home folder: SSH keys, git settings, build caches, and the separate sign-in of a `kiro-cli` you run in the terminal |
 | `/config/home/.kiro/` | kiro-cli's sessions, settings, steering, agents and logs |
+| `/config/home/.kiro/bots/` | One folder per Bot, named by its chat, holding the Bot's notes in `memory.md` while its memory is on. Only that Bot's own sessions can read or write it through the agent's file tools. Turning memory off keeps the notes. A folder whose Bot no longer exists is removed the next time marotte starts |
 | `/config/tools/` | Installed tools. `bin/` and `go/bin/` are on the `PATH` of the server and the agent, so link any other binary into `bin/`. A login shell searches them only when the container runs as root and marotte's `/etc/profile.d` file holds that start's PATH ([How kiro-cli is installed](how-it-works.md#how-kiro-cli-is-installed)) |
 | `/config/*.json` | marotte's settings, the tools list and its state, and the MCP server list |
 | `marotte.lock` in `/config`, `/config/home/.kiro` and `/config/tools` | Holds the process ID of the marotte using the folder. marotte locks the folder itself as well as this file, so deleting the file does not let a second marotte start on the same host, but deleting or replacing the whole folder does. A marotte that crashed leaves no lock behind. Between two hosts sharing a network folder only the lock on this file counts, so leave it in place, and the share must support file locks |

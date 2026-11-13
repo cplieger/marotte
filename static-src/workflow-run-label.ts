@@ -1,7 +1,7 @@
 // The run label on a workflow-update note: what the dock row calls the run, kept current as the
 // run's state arrives, so a step card says which run it belongs to.
 
-import { effect } from "@cplieger/ui";
+import { effect } from "@cplieger/reactive";
 import { setSteerNoteRunLabel } from "./fundamentals/steer-note.js";
 import {
   forgetRun,
@@ -27,7 +27,7 @@ export function runLabelText(workflowID: string): string {
 const holds = new Map<string, number>();
 const watches = new WeakMap<HTMLElement, () => void>();
 
-registerRunStateDemand((workflowID) => holds.has(workflowID));
+registerRunStateDemand((workflowID) => holds.has(workflowID), "header");
 
 /**
  * Keep `note`'s run label equal to the run's name for as long as the note is mounted. The note reads the

@@ -28,7 +28,7 @@ vi.mock("./pill-expand.js", () => ({
   },
   collapseAll: vi.fn(),
 }));
-vi.mock("@cplieger/ui/roving-focus", () => ({
+vi.mock("./legacy-ui/roving-focus.js", () => ({
   rovingFocus: () => ({ refresh: vi.fn() }),
 }));
 vi.mock("./icon-el.js", () => ({ iconEl: () => document.createElement("span") }));

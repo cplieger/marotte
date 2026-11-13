@@ -38,12 +38,16 @@ export const ERROR_ROUTES: Readonly<Partial<Record<ErrorCode, ErrorRoute>>> = {
   },
   rate_limit: { surface: "toast" },
   compaction_failed: { surface: "toast" },
+  // marotte stopped a turn to compact and will not continue it on its own; the toast says to send a message.
+  resume_not_sent: { surface: "toast" },
   // The chat is running, just not in the mode that was asked for, and the fix is
   // one click on the mode pill, so this reports without blocking the composer.
   mode_not_applied: { surface: "toast" },
   // Reports without blocking the composer. REQUIRED, not left to the fallthrough: an unmapped code
   // on a generic failure surface would claim the turn failed.
   supervised_not_applied: { surface: "toast" },
+  // A Bot running without its memory file is still a working chat, so this reports without blocking the composer.
+  memory_not_loaded: { surface: "toast" },
   // kiro-cli could not vend a KAS access token, so service-backed surfaces will fail. Sticky, with
   // the login modal as CTA; turn-scoped AND actionable, so the toast is raised beside the turn's
   // inline reason.

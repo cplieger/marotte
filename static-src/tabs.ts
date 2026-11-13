@@ -7,17 +7,24 @@
 // pinned-first PARTITION, and the DOM.
 
 import { pushRoute } from "./router.js";
+import { parseRoute } from "./route-path.js";
 import type { Route, SettingsTab, GitTab, DocsTab, HistoryTab } from "./route-path.js";
 // The kinds' one definition is the Go const block (internal/marotte/domain_tabs.go), emitted as a
 // registered enum, so per-kind handling is TOTAL.
 import type { TabKind, TabSubject, TabsChangedPayload } from "./types.js";
 // The DOM-free per-kind tables live in tab-view.ts; this file owns the STORE and the DOM.
-import { TAB_ICONS, TAB_VIEWS, type TabDotStatus, type TabViewSpec } from "./tab-view.js";
+import {
+  TAB_ICONS,
+  TAB_VIEWS,
+  SWITCH_LOAD_MS,
+  type TabDotStatus,
+  type TabViewSpec,
+} from "./tab-view.js";
 import { materializeTab, subagentRef, subjectForRoute } from "./tab-materialize.js";
 import { viewStale } from "./view-freshness.js";
 // A PATH-SPACE normaliser rather than a feature behaviour. router.ts refuses the same
 // import because a route table sits UNDER the feature line and this file does not.
-// Acyclic: files-shared.ts imports only @cplieger/ui.
+// Acyclic: files-shared.ts imports only @cplieger/reactive and locale-time.ts.
 import { normalizeDirPath } from "./files-shared.js";
 import {
   registerTabsTarget,
@@ -46,8 +53,27 @@ import {
   reparentTabCommand,
   reorderTabsCommand,
   REORDER_STALE,
+  defineSwitchCommand,
+  switchRetryable,
+  type SwitchArgs,
+  type SwitchHooks,
+  type SwitchOp,
+  type SwitchVerdict,
 } from "./actions/tabs.js";
-import { retryNetwork } from "./actions/index.js";
+import {
+  coverHeld,
+  dropCover,
+  hideTranscript,
+  holdCover,
+  moveFocusOffTranscript,
+  releaseCover,
+  releaseCoverExceptFor,
+  showTranscript,
+  takeParkReads,
+  transcriptHidden,
+} from "./transcript-cover.js";
+import { afterNextPaint } from "./next-paint.js";
+import { ActionError, retryNetwork, type ActionErrorLike } from "./actions/index.js";
 import { CLOSE_IMPACT_CHANGED, serverImpactOf } from "./actions/close-impact.js";
 import { newOpID } from "./transport.js";
 import { join as joinKey } from "@cplieger/keyenc";
@@ -56,7 +82,7 @@ import { iconEl } from "./icon-el.js";
 import { activeView, setActiveView } from "./device-view.js";
 import { $, queryEl, setAttr, setText } from "./dom.js";
 import { showOnlyView } from "./view-swap.js";
-import { signal, effect, el } from "@cplieger/ui";
+import { signal, effect, el } from "@cplieger/reactive";
 import {
   attachDrag,
   dragOwnsStrip,
@@ -66,16 +92,16 @@ import {
   setReorderCallback,
   setReprojectCallback,
 } from "./tabs-drag.js";
-import { announce } from "@cplieger/ui/announce";
+import { announce } from "./legacy-ui/announce.js";
 import type { ViewportBox } from "./viewport-frame.js";
 import { viewportBox, viewportMoved } from "./viewport-frame.js";
 import { showContextMenu } from "./context-menu.js";
 import type { ContextMenuItem } from "./context-menu.js";
 import { downloadChatExport } from "./chat-export.js";
 import { MAX_CHAT_NAME_UNITS, downloadKiroSession, renameChat } from "./actions/chat.js";
-import { getActiveId, getSessions, setActive } from "./store.js";
+import { get, getActiveId, getPaintedId, isEmptyChat, removeChat, setActive } from "./store.js";
 import { relativeTime } from "./relative-time.js";
-import { restoreFailedSend, retargetComposer } from "./composer-state.js";
+import { adoptUnownedComposer, retargetComposer } from "./composer-state.js";
 import { info, error as toastError } from "./toast.js";
 import { BUS_TAB_CHANGED, emitBus } from "./bus.js";
 import { setPageTitle, clearPageTitle } from "./page-title.js";
@@ -153,7 +179,6 @@ export interface OpenTabArgs {
 // --- Store ---
 
 interface Callbacks {
-  onActivate: ((id: string) => void) | null;
   onEmpty: (() => void) | null;
 }
 
@@ -167,6 +192,19 @@ interface Internal {
   /** The DOM subscriber keys its no-op on this rather than on an empty store, because the two differ
    *  on exactly one transition: the one INTO empty. See the render effect. */
   everOpened: boolean;
+  /** The strip scroll a refused close puts back, written by the next renderDOM after the rows
+   *  return. */
+  stripRestore: StripScroll | null;
+  /** Bumped by every reader gesture that can scroll the strip. */
+  stripGestures: number;
+  /** The active tab boot pointed the strip at whose `onShow` has not run, or "". Its view is not
+   *  swapped in and an activation of it is not swallowed by the already-active guard. */
+  unshown: string;
+}
+
+interface StripScroll {
+  top: number;
+  left: number;
 }
 
 interface State {
@@ -175,12 +213,15 @@ interface State {
 }
 
 const state: State = { tabs: [], active: "" };
-const callbacks: Callbacks = { onActivate: null, onEmpty: null };
+const callbacks: Callbacks = { onEmpty: null };
 const internal: Internal = {
   emptyTimer: null,
   emptyDeferred: false,
   renderQueued: false,
   everOpened: false,
+  stripRestore: null,
+  stripGestures: 0,
+  unshown: "",
 };
 
 /** Caller-supplied names keyed by `(kind, ref)`: a name arrives before the server mints an id, so
@@ -188,7 +229,8 @@ const internal: Internal = {
 const nameOverrides = new Map<string, string>();
 
 /** Tab ids in ACTIVATION order, most recent first, for a close's hand-over. In memory only (a cold
- *  strip falls back to position 0) and non-reactive. Head is `state.active`; no closed id is held
+ *  strip falls back to position 0) and non-reactive. Head is the last settled tab
+ *  (`settleActivation`), so a burst hands a close to a tab that loaded; no closed id is held
  *  (`forgetRow`). */
 const activationHistory: string[] = [];
 
@@ -451,9 +493,10 @@ function reset(subjects: readonly TabSubject[]): void {
     const saved = activeView();
     state.active = saved !== "" && hasRow(saved) ? saved : (state.tabs[0]?.subject.id ?? "");
     if (state.active !== "") {
-      // The one place a real id reaches `state.active` without activateTab, so the MRU invariant is
-      // restored by hand.
+      // The one place a real id reaches `state.active` without an activation, so it heads the MRU
+      // by hand until boot's activation settles it.
       noteActivation(state.active);
+      internal.unshown = state.active;
     }
     emit();
     return;
@@ -556,21 +599,293 @@ function revealActiveView(): void {
 
 /** THE one caller of `viewStale`, so all ten kinds are gated in one place and none can answer it by
  *  accident from its own `onShow`. */
-function refreshRow(row: TabRow): void {
-  if (viewStale(row.subject.kind, row.subject.ref)) {
-    row.spec.refresh();
+function rowStale(row: TabRow): boolean {
+  return viewStale(row.subject.kind, row.subject.ref);
+}
+
+/** A fresh view resolves at once; the promise is the spec's `refresh` contract. */
+function refreshRow(row: TabRow, signal: AbortSignal): Promise<void> {
+  return rowStale(row) ? row.spec.refresh(signal) : Promise.resolve();
+}
+
+/** The newest activation: scheduled, running or finished. KEPT until a newer activation replaces
+ *  it, so a retry of its refresh and the abort of its load both find it. */
+interface ActivationRecord {
+  readonly gen: number;
+  /** The tab. */
+  readonly id: string;
+  /** Started by a consequence (a close's successor, a rollback, boot), not a reader's switch, so no
+   *  action owns its failure and `watchRefresh` paints it. */
+  readonly quiet: boolean;
+  /** A fresh activation of the tab already active, which shows its view again. */
+  readonly again: boolean;
+  /** Aborted when a newer activation replaces this one, which stops its load. */
+  readonly controller: AbortController;
+  /** Resolves when the half has run, or was superseded before running. */
+  readonly done: Promise<void>;
+  readonly resolveDone: () => void;
+  /** The activation half has run. */
+  ran: boolean;
+  /** The latest refresh rejected. */
+  failed: boolean;
+  /** The latest refresh, set when the half runs and replaced by a retry. */
+  refresh: Promise<void> | null;
+}
+
+/** Bumped by every activation request; a deferred half runs only while its generation is the
+ *  newest. */
+let switchGen = 0;
+let currentActivation: ActivationRecord | null = null;
+/** The tab whose activation last settled: where a failed switch returns. */
+let settledActive = "";
+/** The chat whose view an activation last showed. */
+let shownChat = "";
+
+function recordOf(gen: number): ActivationRecord | undefined {
+  return currentActivation?.gen === gen ? currentActivation : undefined;
+}
+
+function activationPending(): boolean {
+  return currentActivation !== null && !currentActivation.ran;
+}
+
+/** Record `id` as visited and as a failed switch's return target once its activation's refresh
+ *  resolved, only for the newest generation: a tab that never loaded is neither. */
+function settleActivation(gen: number, id: string): void {
+  if (gen !== switchGen) {
+    return;
+  }
+  noteActivation(id);
+  settledActive = id;
+}
+
+/** The chat row the composer should act for while a non-chat tab is shown: the painted chat's,
+ *  else the most recently settled chat tab's. */
+function chatRowToReselect(): TabRow | undefined {
+  const painted = getPaintedId();
+  const paintedRow = painted === "" ? undefined : rowOfID(tabIdFor("chat", painted));
+  if (paintedRow !== undefined) {
+    return paintedRow;
+  }
+  for (const id of activationHistory) {
+    const row = rowOfID(id);
+    if (row?.subject.kind === "chat") {
+      return row;
+    }
+  }
+  return undefined;
+}
+
+/** A non-chat target's gesture: point the active chat back at the one on screen, so a burst
+ *  A, B, Settings leaves the reader acting for A, never for B, which never painted. */
+function reselectPaintedChat(): void {
+  const row = chatRowToReselect();
+  if (row !== undefined) {
+    if (row.subject.ref !== getActiveId()) {
+      row.spec.onSelect?.();
+    }
+    return;
+  }
+  if (getActiveId() !== "") {
+    setActive("");
+    retargetComposer("");
   }
 }
 
-/** The active row's refresh, for the two invalidation triggers. A no-op on an
- *  empty strip and mid-swap, where there is no view on screen to refresh and the
- *  successor activation runs its own gate a moment later. Emits nothing, pushes no
- *  route and touches no state. */
+function hasResidentTurns(chatID: string): boolean {
+  return (get(chatID)?.turn_order.length ?? 0) > 0;
+}
+
+interface ActivationOpts {
+  readonly quiet: boolean;
+  /** Start a fresh activation of the tab already active (a Retry after a failed load). */
+  readonly again?: boolean;
+  /** Run the activation half in this task: boot, where nothing has painted that could go first,
+   *  and a refused switch's revert or a close's put-back, whose notice is raised when it returns. */
+  readonly now?: boolean;
+}
+
+/** The GESTURE half, run inside the click: the outgoing chat's park reads at the clean layout the
+ *  click starts from, then only writes that read no layout. The strip, the device view, the active
+ *  chat and the cover move now; `runActivation` shows the view after this frame paints, or in this
+ *  task for `now` and an empty chat, which gets no cover. Answers the record installed, or
+ *  undefined when nothing changed. */
+function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | undefined {
+  const row = rowOfID(id);
+  if (
+    row === undefined ||
+    (id === state.active && opts.again !== true && internal.unshown !== id)
+  ) {
+    return undefined;
+  }
+  internal.unshown = "";
+  const ref = row.subject.kind === "chat" ? row.subject.ref : "";
+  if (ref !== "" && ref !== getPaintedId()) {
+    takeParkReads();
+  }
+  // At the clean style the click starts from, so its focusability check forces nothing.
+  moveFocusOffTranscript();
+  state.active = id;
+  setActiveView(id);
+  switchGen += 1;
+  let now = opts.now === true;
+  if (ref !== "") {
+    if (ref !== getActiveId()) {
+      row.spec.onSelect?.();
+    }
+    const session = get(ref);
+    if (session !== undefined && isEmptyChat(session)) {
+      // Its page is local and loads nothing, so it shows in this task and a cover would only flash.
+      dropCover();
+      now = true;
+    } else if (
+      ref !== getPaintedId() ||
+      (opts.again === true && !hasResidentTurns(ref)) ||
+      !viewLaidOut(row)
+    ) {
+      // A painted chat coming back from another view kind is covered too: its transcript stays out
+      // of layout until the activation, and the cover is what this frame shows in its place.
+      holdCover(ref);
+    } else {
+      releaseCoverExceptFor(ref);
+    }
+  } else {
+    reselectPaintedChat();
+  }
+  if (currentActivation !== null) {
+    currentActivation.controller.abort();
+    currentActivation.resolveDone();
+  }
+  let resolveDone: () => void = () => undefined;
+  const done = new Promise<void>((resolve) => {
+    resolveDone = resolve;
+  });
+  const record: ActivationRecord = {
+    gen: switchGen,
+    id,
+    quiet: opts.quiet,
+    again: opts.again === true,
+    controller: new AbortController(),
+    done,
+    resolveDone,
+    ran: false,
+    failed: false,
+    refresh: null,
+  };
+  currentActivation = record;
+  emit();
+  if (row.subject.kind !== "chat") {
+    // After `emit`'s `holdView` hid the chat view: a cover lifted while it shows starts a fade-out
+    // that a hidden view never ends, which would then play over the chat's next show.
+    dropCover();
+  }
+  paintStripNow();
+  const gen = record.gen;
+  if (now) {
+    runActivation(gen);
+  } else {
+    afterNextPaint(() => {
+      runActivation(gen);
+    });
+  }
+  return record;
+}
+
+/** The ACTIVATION half, in its own task: show the view and start its refresh, only while `gen` is
+ *  the newest. A superseded target runs nothing: no `onShow`, no fetch, no paint. */
+function runActivation(gen: number): void {
+  const record = recordOf(gen);
+  if (record === undefined || record.ran) {
+    return;
+  }
+  const row = rowOfID(record.id);
+  record.ran = true;
+  if (row === undefined) {
+    record.resolveDone();
+    return;
+  }
+  try {
+    // First: a chat's restore writes the scroll offset, which a scroller with no box cannot take.
+    revealView(row);
+    // A chat this file showed and that is still painted is mounted; showing it again would re-key
+    // its rail and clear what it painted. One painted only because `removeChat` moved the pointer
+    // onto it was never shown. A Retry's fresh activation clears its own failure box.
+    const chat = row.subject.kind === "chat" ? row.subject.ref : "";
+    const mounted = chat !== "" && chat === shownChat && chat === getPaintedId();
+    if (mounted && !record.again) {
+      // No paint follows for a mounted chat, so the gesture's cover lifts over the revealed transcript.
+      releaseCover(chat);
+    }
+    if (!mounted || record.again) {
+      if (rowStale(row)) {
+        row.spec.prefetch?.(record.controller.signal);
+      }
+      row.spec.onShow?.();
+      if (chat !== "") {
+        shownChat = chat;
+      }
+    }
+    record.refresh = refreshRow(row, record.controller.signal);
+  } catch (e) {
+    // A defect in showing the view or starting its refresh must never leave the cover up or the
+    // record unwatched; a paint that throws lifts its own cover (messages.ts `paint`).
+    console.error("tab activation failed", record.id, e);
+    dropCover();
+    record.refresh = Promise.reject(
+      new ActionError("Could not show that tab", { code: "show_failed" }),
+    );
+  }
+  pushRoute(row.spec.route);
+  watchRefresh(record, row);
+  // Last, so a caller awaiting `done` resumes after a refresh that already resolved has settled.
+  record.resolveDone();
+}
+
+/** Attach both handlers to the record's current refresh, so no refresh promise goes unobserved: a
+ *  resolve settles the activation, a rejection marks it failed and, for a quiet activation still
+ *  current, paints the in-view failure (a reader's switch leaves its failure to `tabs.switch`). */
+function watchRefresh(record: ActivationRecord, row: TabRow): void {
+  const p = record.refresh;
+  p?.then(
+    () => {
+      if (record.refresh === p) {
+        record.failed = false;
+        settleActivation(record.gen, record.id);
+      }
+    },
+    () => {
+      if (record.refresh !== p) {
+        return; // a retry replaced this attempt; its own watch decides
+      }
+      record.failed = true;
+      if (record.gen === switchGen && record.quiet) {
+        showLoadFailure(row);
+      }
+    },
+  );
+}
+
+function showLoadFailure(row: TabRow): void {
+  dropCover();
+  row.spec.onLoadFailed?.();
+}
+
+/** The active row's refresh, for the two invalidation triggers (an SSE gap's reconcile, a page
+ *  resume). A no-op on an empty strip and while an activation is pending, whose own refresh runs a
+ *  moment later. Owns its failure; emits nothing, pushes no route and touches no state. */
 export function refreshActiveView(): void {
   const row = rowOfID(state.active);
-  if (row !== undefined) {
-    refreshRow(row);
+  if (row === undefined || activationPending()) {
+    return;
   }
+  const bound = AbortSignal.timeout(SWITCH_LOAD_MS);
+  const record = currentActivation?.id === row.subject.id ? currentActivation : null;
+  const signal = record === null ? bound : AbortSignal.any([bound, record.controller.signal]);
+  refreshRow(row, signal).catch(() => {
+    if (state.active === row.subject.id && !activationPending()) {
+      showLoadFailure(row);
+    }
+  });
 }
 
 /** Advanced by every navigation request and by every user move to a different tab, never by a
@@ -588,40 +903,39 @@ export function navigationHeld(ticket: number): boolean {
   return ticket === navigationSeq;
 }
 
-/** Activate an existing tab, and reveal it: this is the reader picking a
- *  destination. Every gesture door lands here — a row tap, Enter on a focused
- *  row, and `openTab`, which is what the five singleton buttons dispatch. */
-export function activateTab(id: string): void {
+/** Advanced by every close of the active tab that hands the view to another tab, the reader's
+ *  act. */
+let activeCloses = 0;
+
+/** Activate an existing tab, and reveal it: this is the reader picking a destination. Every gesture
+ *  door lands here: a row tap, Enter on a focused row, and `openTab`. Resolves once the activation
+ *  half has run (or was superseded); the tab already active starts nothing and resolves with its
+ *  own activation. */
+export function activateTab(id: string): Promise<void> {
   if (state.active !== id && rowOfID(id) !== undefined) {
     navigationSeq++;
   }
   revealActiveView();
-  activateTabQuietly(id);
-}
-
-/** Activate a tab WITHOUT dismissing the drawer: the app moved the view, the
- *  reader did not. Two callers, and both are consequences rather than gestures —
- *  a close handing the view to its successor, and a rollback restoring the tab a
- *  refused close had already taken away. Boot's one activation goes through it
- *  too, where the drawer is closed anyway and there is nothing to reveal. */
-function activateTabQuietly(id: string): void {
+  if (id === state.active && internal.unshown !== id) {
+    return currentActivation?.id === id ? currentActivation.done : Promise.resolve();
+  }
   const row = rowOfID(id);
   if (row === undefined) {
-    return;
+    return Promise.resolve();
   }
-  if (state.active === id) {
-    return;
-  }
-  state.active = id;
-  setActiveView(id);
-  noteActivation(id);
-  emit();
-  row.spec.onShow?.();
-  refreshRow(row);
-  callbacks.onActivate?.(id);
+  // The gesture half runs inside this call (the action's `optimistic`), so the record is current.
+  void switchCommand.dispatch({ to: id, subject: noticeSubjectOf(row) });
+  return currentActivation?.id === id ? currentActivation.done : Promise.resolve();
 }
 
-/** Hand the active view to a departed tab's successor: the most recently visited open tab, else the
+/** Activate a tab WITHOUT dismissing the drawer: the app moved the view, the reader did not (a
+ *  close handing the view to its successor). Deferred like a switch, but it never reverts: its
+ *  failure is painted in the view. */
+function activateTabQuietly(id: string): void {
+  beginActivation(id, { quiet: true });
+}
+
+/** Hand the active view to a departed tab's successor: the most recently settled open tab, else the
  *  first. Recency, not position: a pin or a sub-tab routinely puts a stranger first.
  *
  *  `local` gates the empty-strip respawn: a chat minted for ANOTHER device's close propagates back
@@ -636,23 +950,229 @@ function activateSuccessor(local: boolean): void {
   }
   state.active = "";
   setActiveView("");
+  dropCover();
+  // The departed tab's activation must not count as binding the row a re-list or rollback puts back.
+  if (currentActivation !== null) {
+    currentActivation.controller.abort();
+    currentActivation.resolveDone();
+    currentActivation = null;
+  }
   if (local) {
     scheduleEmpty();
   }
 }
 
-/** Point the strip at the tab this SCREEN was last on, and run its `onShow`: boot's one activation,
- *  after `listTabs()`. Separate from `reset`, which also runs on every re-list where a re-fetch
- *  would be a round trip for nothing. */
+/** Boot's one activation, after `listTabs()`: runs both activation halves at once for the tab this
+ *  SCREEN was last on when the URL is the root or names that tab. A URL naming another tab leaves it
+ *  unshown for the URL's own route to replace, so a hidden view never fetches or paints at boot.
+ *  Separate from `reset`, which also runs on every re-list where a re-fetch would be a round trip
+ *  for nothing. */
 export function activateRestoredTab(): void {
   const id = state.active;
   if (id === "") {
     return;
   }
-  // Cleared so the already-active guard does not swallow the onShow that is the
-  // whole point of this call.
-  state.active = "";
-  activateTabQuietly(id);
+  internal.unshown = id;
+  const route = parseRoute(location.pathname, location.hash);
+  const root = route.kind === "chat" && route.id === "";
+  if (root || tabIdForRoute(route) === id) {
+    beginActivation(id, { quiet: true, now: true });
+  }
+}
+
+/** Show the tab boot left unshown, when it is still the active one: the fallback for a URL whose
+ *  route could not open its own view. A no-op once any activation has run. */
+export function showUnshownTab(): void {
+  if (internal.unshown !== "" && internal.unshown === state.active) {
+    beginActivation(internal.unshown, { quiet: true });
+  }
+}
+
+/** Run the pending activation half now, as its scheduled task would. */
+// deadset:ignore DS1102 -- test seam: flushes the deferred activation half
+export function flushActivationForTest(): void {
+  if (currentActivation !== null) {
+    runActivation(currentActivation.gen);
+  }
+}
+
+// --- The reader's switch (`tabs.switch`) ---
+
+/** Pauses between a failed load and its retry; two retries in all. */
+const SWITCH_BACKOFF_MS = [300, 600] as const;
+
+/** Each dispatch's generation, keyed by its args object: the framework hands `optimistic` and `run`
+ *  the same one. */
+const genOfArgs = new WeakMap<SwitchArgs, number>();
+
+function beginSwitch(args: SwitchArgs): SwitchOp {
+  const from = settledActive;
+  let record: ActivationRecord | undefined;
+  if (args.to !== state.active || internal.unshown === args.to) {
+    record = beginActivation(args.to, { quiet: false });
+  } else if (currentActivation?.id === args.to && !currentActivation.failed) {
+    // A toast's Retry pressed after the reader came back to that tab: join its activation.
+    record = currentActivation;
+  } else {
+    // A toast's Retry on the failed tab the reader stayed on: load it again.
+    record = beginActivation(args.to, { quiet: false, again: true });
+  }
+  if (record === undefined) {
+    return { gen: switchGen, from }; // no row: `settle` finds no generation and answers superseded
+  }
+  genOfArgs.set(args, record.gen);
+  return { gen: record.gen, from };
+}
+
+/** Resolve or reject with `p`, or reject with `signal.reason` once `signal` aborts first. */
+function untilAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+  let onAbort = (): void => undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = (): void => {
+      const reason: unknown = signal.reason;
+      reject(reason instanceof Error ? reason : new DOMException("aborted", "AbortError"));
+    };
+    if (signal.aborted) {
+      onAbort();
+    } else {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  });
+  return Promise.race([p, aborted]).finally(() => {
+    signal.removeEventListener("abort", onAbort);
+  });
+}
+
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTimeout(reason: unknown): boolean {
+  return reason instanceof DOMException && reason.name === "TimeoutError";
+}
+
+const switchTimeout = (): ActionError => new ActionError("timeout", { code: "timeout" });
+
+/** The verdict of a switch: up to three loads of the target's view, re-checking after every wait
+ *  that the switch is still the newest and still the tab on screen, so one the reader left never
+ *  reverts or toasts. Attempt 1 is the activation half's own refresh; a retry re-runs only the
+ *  refresh, against the same record. */
+async function settleSwitch(args: SwitchArgs, signal: AbortSignal): Promise<SwitchVerdict> {
+  const gen = genOfArgs.get(args);
+  const live = (): boolean => gen === switchGen && state.active === args.to;
+  const rec = gen === undefined ? undefined : recordOf(gen);
+  if (rec === undefined || !live()) {
+    return "superseded";
+  }
+  for (let n = 1; ; n++) {
+    try {
+      let attempt: Promise<void>;
+      if (n === 1) {
+        await untilAborted(rec.done, signal);
+        if (!live() || rec.refresh === null) {
+          return "superseded";
+        }
+        attempt = rec.refresh;
+      } else {
+        const row = rowOfID(args.to);
+        if (row === undefined) {
+          return "superseded";
+        }
+        attempt = refreshRow(row, AbortSignal.any([signal, rec.controller.signal]));
+        rec.refresh = attempt;
+        watchRefresh(rec, row);
+      }
+      await untilAborted(attempt, signal);
+      return live() ? "shown" : "superseded";
+    } catch (e) {
+      if (!live()) {
+        return "superseded";
+      }
+      if (isTimeout(signal.reason)) {
+        throw switchTimeout();
+      }
+      if (signal.aborted) {
+        throw e; // the dispatch's own cancel: the framework records it as cancelled
+      }
+      if (!(e instanceof ActionError)) {
+        throw e;
+      }
+      if (e.code === "aborted") {
+        return "superseded"; // the record's controller: a newer activation took over
+      }
+      const backoff = SWITCH_BACKOFF_MS[n - 1];
+      if (backoff === undefined || !switchRetryable(e)) {
+        throw e;
+      }
+      try {
+        // Also cut short by a newer activation, so a superseded switch settles at once.
+        await untilAborted(pause(backoff), AbortSignal.any([signal, rec.controller.signal]));
+      } catch (cut) {
+        if (!live()) {
+          return "superseded";
+        }
+        if (isTimeout(signal.reason)) {
+          throw switchTimeout();
+        }
+        throw cut; // the dispatch's own cancel
+      }
+      if (!live()) {
+        return "superseded";
+      }
+    }
+  }
+}
+
+/** The tab a failed switch to `to` returns to: the last settled one, else the most recent open
+ *  one, else any; "" when `to` is the only tab left. Never a tab another device closed. */
+function revertTarget(to: string, from: string): string {
+  if (from !== to && hasRow(from)) {
+    return from;
+  }
+  return (
+    activationHistory.find((id) => id !== to && hasRow(id)) ??
+    state.tabs.find((t) => t.subject.id !== to)?.subject.id ??
+    ""
+  );
+}
+
+function revertSwitch(args: SwitchArgs, op: SwitchOp, err: ActionErrorLike): boolean {
+  if (op.gen !== switchGen || state.active !== args.to) {
+    return false;
+  }
+  const row = rowOfID(args.to);
+  const gone = err.status === 404;
+  const failedEl = elementOf(args.to);
+  const focusOnRow = failedEl !== null && document.activeElement === failedEl;
+  const target = revertTarget(args.to, op.from);
+  let stays = false;
+  if (target !== "") {
+    beginActivation(target, { quiet: true, now: true });
+    if (focusOnRow) {
+      elementOf(target)?.focus();
+    }
+  } else if (!gone && row !== undefined) {
+    // Nowhere to return to: stay, stop a load a timeout left running, and paint the in-view Retry.
+    currentActivation?.controller.abort();
+    showLoadFailure(row);
+    stays = true;
+  }
+  if (gone && row?.subject.kind === "chat") {
+    // Before the notice, so it resolves the chat as gone and offers no Open. A gone chat has
+    // nothing running to gate, so the close skips the person's close gate.
+    removeChat(row.subject.ref);
+    void closeTab(args.to);
+  }
+  return stays;
+}
+
+const switchHooks: SwitchHooks = { begin: beginSwitch, settle: settleSwitch, revert: revertSwitch };
+let switchCommand = defineSwitchCommand(switchHooks, SWITCH_LOAD_MS);
+
+/** Rebuild the switch action with a shorter bound; `null` restores `SWITCH_LOAD_MS`. */
+// deadset:ignore DS1102 -- test seam: the switch action's time bound
+export function setSwitchBoundForTest(ms: number | null): void {
+  switchCommand = defineSwitchCommand(switchHooks, ms ?? SWITCH_LOAD_MS);
 }
 
 // --- Mutations: every one is a dispatch ---
@@ -730,7 +1250,7 @@ export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
   adoptSubject(reply.subject);
   adoptCommitted(opID, reply.subject, reply.version, reply.created);
   if (args.activate !== false && navigationHeld(ticket)) {
-    activateTab(reply.subject.id);
+    void activateTab(reply.subject.id);
   }
   return "opened";
 }
@@ -742,23 +1262,35 @@ export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
  *  along — and the projection retains nothing else about a departed tab. */
 interface CapturedClose {
   rows: TabRow[];
-  /** The parent's index in the projection at capture, so a rollback restores
-   *  the subtree in place rather than at the end. */
+  /** The id of the row ahead of the parent at capture ("" = the head): a rollback puts the subtree
+   *  back behind it, so a row restored or closed meanwhile does not shift it. */
+  after: string;
+  /** The parent's index at capture, the fallback when `after` has closed since. */
   at: number;
   overrides: Map<string, string>;
   /** The MRU entries the gesture's forgetRow dropped, each ANCHORED on the id ahead of it
    *  (`""` = the head) and ordered by original slot, so a removed anchor is back before its
    *  follower. Exact behind a SURVIVING anchor; a vanished one appends, understating recency. */
   history: { id: string; after: string }[];
-  /** The active tab, when it was inside the subtree; "" otherwise. What a
-   *  rollback re-activates. */
+  /** The active tab, when it was inside the subtree; "" otherwise. A rollback re-activates it only
+   *  while the reader has not moved to another tab or opened one since the close: `navigation` is
+   *  still held and no later close handed the view on (`handoff` is still `activeCloses`). */
   activeTabID: string;
-  /** The store's active chat at gesture time, when the gesture moved it; ""
-   *  otherwise. The rollback's fallback when no tab re-activation happens. */
+  /** `navigationSeq` at the gesture, read without claiming. */
+  navigation: number;
+  /** `activeCloses` once this close of the active tab ran; 0 for a close of a background tab. */
+  handoff: number;
+  /** The store's active chat at gesture time, when it was a chat this close took out; ""
+   *  otherwise. The draft owner of text typed with no chat active, and the sign that the rollback
+   *  re-selects. */
   storeActive: string;
-  /** Set when the server ANSWERED an error: the framework's toast already ran,
-   *  so the rollback stays quiet. A verify-settled restore has no toast of its
-   *  own and says "not confirmed" instead. */
+  /** The strip's scroll at the gesture, read before any write of the close. */
+  stripScroll: StripScroll;
+  /** `internal.stripGestures` at the gesture: a later value means the reader scrolled the strip. */
+  stripGestures: number;
+  /** Set when the server ANSWERED an error: closeTab's refusal arm raises the
+   *  toast, so the rollback stays quiet. A verify-settled restore has no toast of
+   *  its own and says "not confirmed" instead. */
   refused: boolean;
 }
 
@@ -869,20 +1401,31 @@ function captureClose(row: TabRow): CapturedClose {
       history.push({ id, after: activationHistory[at - 1] ?? "" });
     }
   }
+  const storeActive = getActiveId();
+  const list = $.tabList;
+  const at = state.tabs.findIndex((t) => t.subject.id === row.subject.id);
   return {
     rows,
-    at: state.tabs.findIndex((t) => t.subject.id === row.subject.id),
+    after: state.tabs[at - 1]?.subject.id ?? "",
+    at,
     overrides,
     history,
     activeTabID: ids.has(state.active) ? state.active : "",
-    storeActive: "",
+    navigation: navigationSeq,
+    handoff: 0,
+    storeActive: rows.some((r) => r.subject.kind === "chat" && r.subject.ref === storeActive)
+      ? storeActive
+      : "",
+    stripScroll: { top: list.scrollTop, left: list.scrollLeft },
+    stripGestures: internal.stripGestures,
     refused: false,
   };
 }
 
 /** The REVERSIBLE half of a close, applied at gesture time: the subtree leaves the projection,
- *  row-scoped forgets run, activation falls back, and the store's active pointer moves with it.
- *  Nothing here destroys state a rollback cannot restore; that is confirmClose's and the server's. */
+ *  row-scoped forgets run, and the successor is selected; its view paints after the frame, so the
+ *  painted chat stays the closed one until then. Nothing here destroys state a rollback cannot
+ *  restore; that is confirmClose's and the server's. */
 function applyGestureRemoval(c: CapturedClose): void {
   const ids = new Set(c.rows.map((r) => r.subject.id));
   state.tabs = state.tabs.filter((t) => !ids.has(t.subject.id));
@@ -890,35 +1433,18 @@ function applyGestureRemoval(c: CapturedClose): void {
     forgetRow(r);
   }
   if (c.activeTabID !== "") {
-    // Reversible: a chat successor's own activation moves the store pointer,
-    // and the empty strip renders the empty-state surface (the view effect).
     // scheduleEmpty defers itself while this remove is pending.
     activateSuccessor(true);
+    // An emptying close shows no tab, so it is no move away from an earlier close's tab.
+    c.handoff = state.active === "" ? activeCloses : ++activeCloses;
   }
-  syncStoreActive(c);
+  // The store row survives to onConfirm, and a reader acting for the user must never act for a
+  // chat whose tab is gone: a non-chat tab was shown, or the strip emptied.
+  if (c.storeActive !== "" && getActiveId() === c.storeActive) {
+    reselectPaintedChat();
+  }
   emit();
-}
-
-/** Move the store's active chat off a chat this close made tabless, as removeChat would at
- *  teardown. Run EARLY because the store row survives to onConfirm, and getActiveId() readers must
- *  never see a closed chat in the window. */
-function syncStoreActive(c: CapturedClose): void {
-  const closedRefs = new Set(
-    c.rows
-      .filter((r) => r.subject.kind === "chat" && tabIdFor("chat", r.subject.ref) === "")
-      .map((r) => r.subject.ref),
-  );
-  const active = getActiveId();
-  if (active === "" || !closedRefs.has(active)) {
-    return;
-  }
-  c.storeActive = active;
-  // The next chat that still HAS a tab, in store order — the tab set is the
-  // truth of "still around", since closed rows linger until confirmation.
-  const next =
-    getSessions().find((s) => !closedRefs.has(s.id) && tabIdFor("chat", s.id) !== "")?.id ?? "";
-  setActive(next);
-  retargetComposer(next);
+  paintStripNow();
 }
 
 /** The deferred client-local teardown, run once per closed row when the close is CONFIRMED
@@ -933,6 +1459,29 @@ function confirmClose(c: CapturedClose): void {
     }
     tearDown(r);
   }
+  settleCloseView("");
+}
+
+/** The last step of every close outcome: show `pick` (the navigation-ticket rule's choice, ""
+ *  for none) when it is open, else keep a bound active tab, else bind one, so a strip with rows
+ *  always shows one and Send acts for it. Answers whether it started an activation. */
+function settleCloseView(pick: string): boolean {
+  const bound = state.active !== "" && currentActivation?.id === state.active;
+  let target = pick !== "" && hasRow(pick) ? pick : "";
+  if (target === "" && !bound) {
+    const recent = hasRow(state.active) ? state.active : mostRecentOpenTab();
+    target = recent !== "" ? recent : (state.tabs[0]?.subject.id ?? "");
+  }
+  if (target === "" || (target === state.active && bound)) {
+    return false;
+  }
+  // reset's boot branch points `state.active` at a row with no activation, which the
+  // already-active guard would swallow.
+  if (target === state.active) {
+    state.active = "";
+  }
+  beginActivation(target, { quiet: true, now: true });
+  return true;
 }
 
 /** Restore a captured subtree: the definitive-failure rollback and the verify-settled restore. A
@@ -945,7 +1494,7 @@ function rollbackClose(c: CapturedClose): void {
     (r) => !hasRow(r.subject.id) && tabIdFor(r.subject.kind, r.subject.ref) === "",
   );
   if (restorable.length > 0) {
-    state.tabs.splice(Math.min(Math.max(c.at, 0), state.tabs.length), 0, ...restorable);
+    state.tabs.splice(restoreIndex(c), 0, ...restorable);
     internal.everOpened = true;
     applyPinOrder();
   }
@@ -957,28 +1506,41 @@ function rollbackClose(c: CapturedClose): void {
     }
     restoreActivation(id, after);
   }
-  // Empty-state composer text lives only in the box, so it is filed as the restored chat's draft
-  // BEFORE re-activation repaints the box: restoreComposerState would CLEAR a draftless chat's box.
+  // What the reader typed or staged on the emptied strip lives only in the box: it joins the
+  // restored chat's draft BEFORE the re-activation's restore writes that draft over the box.
   const restoredChat =
     c.rows.find((r) => r.subject.id === c.activeTabID && r.subject.kind === "chat")?.subject.ref ??
     c.storeActive;
-  if (restoredChat !== "" && state.active === "" && getActiveId() === "") {
-    const typed = $.promptInput.value;
-    if (typed !== "") {
-      restoreFailedSend(restoredChat, typed);
-    }
+  adoptUnownedComposer(restoredChat);
+  // Also when the verify re-list already put the rows back: its render did not restore the scroll.
+  if (internal.stripGestures === c.stripGestures && c.rows.some((r) => hasRow(r.subject.id))) {
+    internal.stripRestore = c.stripScroll;
   }
   emit();
-  if (c.activeTabID !== "" && hasRow(c.activeTabID)) {
-    activateTabQuietly(c.activeTabID);
-  } else if (c.storeActive !== "" && getActiveId() === "") {
-    setActive(c.storeActive);
-    retargetComposer(c.storeActive);
+  const stillThere =
+    c.activeTabID !== "" && navigationHeld(c.navigation) && c.handoff === activeCloses;
+  if (
+    !settleCloseView(stillThere ? c.activeTabID : "") &&
+    c.storeActive !== "" &&
+    getActiveTabKind() !== "chat"
+  ) {
+    reselectPaintedChat();
   }
   if (!c.refused) {
     notifyAboutRow(c.rows[0], "Close not confirmed, so the tab was restored.", "info");
   }
 }
+
+/** Where a rollback splices its subtree back: behind its captured anchor while that row is open. */
+function restoreIndex(c: CapturedClose): number {
+  if (c.after === "") {
+    return 0;
+  }
+  const anchor = state.tabs.findIndex((t) => t.subject.id === c.after);
+  return anchor >= 0 ? anchor + 1 : Math.min(Math.max(c.at, 0), state.tabs.length);
+}
+
+const CLOSE_PUT_BACK = "Could not close that tab, so it was put back.";
 
 /** Close a tab and its descendants as ONE server-side mutation, applied optimistically: reversible
  *  effects at the gesture, teardown on confirmation. A committed response feeds the pending-op
@@ -1004,7 +1566,7 @@ export async function closeTab(id: string, impact?: CloseImpact): Promise<void> 
   const captured = captureClose(row);
   beginRemove(opID, {
     id,
-    capturedTabIDs: captured.rows.map((r) => r.subject.id),
+    captured: captured.rows.map((r) => r.subject),
     onConfirm: () => {
       confirmClose(captured);
     },
@@ -1029,7 +1591,7 @@ export async function closeTab(id: string, impact?: CloseImpact): Promise<void> 
     const server = serverImpactOf(outcome.error);
     if (opFailed(opID)) {
       if (impact === undefined || server === undefined) {
-        notifyAboutRow(captured.rows[0], "Could not close that tab", "error");
+        notifyAboutRow(captured.rows[0], CLOSE_PUT_BACK, "error");
       } else {
         requestCloseTab(id, () => undefined, { sent: impact, server });
       }
@@ -1041,12 +1603,12 @@ export async function closeTab(id: string, impact?: CloseImpact): Promise<void> 
     // proves the close committed. The toast is this branch's: the action itself stays quiet.
     captured.refused = true;
     if (opFailed(opID)) {
-      notifyAboutRow(captured.rows[0], "Could not close that tab", "error");
+      notifyAboutRow(captured.rows[0], CLOSE_PUT_BACK, "error");
     }
     return;
   }
-  // No verdict: CLOSE_CONFIRM_MS elapsed, the request was lost, the dispatch was aborted or a retry found the
-  // first attempt still running. The machine verifies rather than guessing in either direction.
+  // No verdict: the transport's deadline elapsed, the request was lost, the dispatch was aborted or a retry found
+  // the first attempt still running. The machine verifies rather than guessing in either direction.
   opTimedOut(opID);
 }
 
@@ -1696,10 +2258,10 @@ function registerModuleSubscribers(): void {
       return;
     }
     const active = rowOfID(s.active);
-    if (active !== undefined) {
-      showView(active);
-    } else {
+    if (active === undefined) {
       syncSidebarButtons(null);
+    } else if (internal.unshown !== s.active) {
+      showView(active);
     }
     // Announce a REAL switch only: this effect re-runs on every projection mutation. Emitted here, not
     // in showView, whose DOM swap runs inside a view transition.
@@ -1721,10 +2283,21 @@ function registerModuleSubscribers(): void {
     }
     internal.renderQueued = true;
     requestAnimationFrame(() => {
-      internal.renderQueued = false;
-      renderDOM();
+      if (internal.renderQueued) {
+        internal.renderQueued = false;
+        renderDOM();
+      }
     });
   });
+}
+
+/** Run the queued strip render in this task: a gesture's row changes paint in its own frame, not
+ *  one frame behind the cover. renderDOM reads no layout, so this forces none. */
+function paintStripNow(): void {
+  if (internal.renderQueued) {
+    internal.renderQueued = false;
+    renderDOM();
+  }
 }
 
 // --- View / route (subscriber) ---
@@ -1749,8 +2322,14 @@ function syncSidebarButtons(activeKind: TabKind | null): void {
 }
 
 function showView(row: TabRow): void {
-  // Read from the DOM, not a cached selector, so a second writer of these classes can never leave a view hidden.
-  showOnlyView(queryEl<HTMLElement>(row.spec.view));
+  // A pending activation reveals its own view and pushes its own route once, when it runs, so a
+  // superseded switch shows nothing and leaves no history entry.
+  if (activationPending()) {
+    holdView(row);
+  } else {
+    revealView(row);
+    pushRoute(row.spec.route);
+  }
 
   // The tab's name IS the page title; the kind lets the heading recover a subtitle (page-title.ts).
   setPageTitle(row.name, row.subject.kind);
@@ -1759,17 +2338,65 @@ function showView(row: TabRow): void {
   // `revealActiveView` belongs to the navigation gesture.
 
   syncSidebarButtons(row.subject.kind);
+}
 
-  pushRoute(row.spec.route);
+/** Show the row's view alone, with its transcript laid out. Read from the DOM, not a cached
+ *  selector, so a second writer of these classes can never leave a view hidden. */
+function revealView(row: TabRow): void {
+  showTranscript();
+  showOnlyView(queryEl<HTMLElement>(row.spec.view));
+}
+
+/** The row's view is not hidden and its transcript is laid out. Reads classes only. */
+function viewLaidOut(row: TabRow): boolean {
+  const target = queryEl<HTMLElement>(row.spec.view);
+  return target?.classList.contains("hidden") !== true && !transcriptHidden();
+}
+
+/** The gesture form of `revealView`, which never leaves the view area empty. A non-chat view shows
+ *  now, its entry fade starting with the click. A chat view not laid out shows under the cover
+ *  (`beginActivation` holds it) with its transcript out of layout, which the activation lays out;
+ *  a laid-out chat view is already the one shown. */
+function holdView(row: TabRow): void {
+  if (row.subject.kind !== "chat") {
+    showOnlyView(queryEl<HTMLElement>(row.spec.view));
+  } else if (coverHeld() && !viewLaidOut(row)) {
+    hideTranscript();
+    showOnlyView(queryEl<HTMLElement>(row.spec.view));
+  }
 }
 
 /** Show the EMPTY-STATE surface: the chat view with no active chat, whose Send creates a fresh one.
  *  HIDES the other views without disposing anything, so a rollback finds state intact. No
  *  pushRoute: the settlement's own activation corrects the URL. */
 function showEmptySurface(): void {
+  showTranscript();
   showOnlyView(queryEl<HTMLElement>(TAB_VIEWS.chat));
   clearPageTitle();
   syncSidebarButtons(null);
+}
+
+/** The strips whose reader gestures `internal.stripGestures` counts. */
+const watchedStrips = new WeakSet<HTMLElement>();
+
+/** Count the gestures that scroll the strip: a wheel, a touch drag, a press on its scrollbar (the
+ *  list itself, not a row) and a key, whose roving focus scrolls a row into view. */
+function watchStripGestures(list: HTMLElement): void {
+  if (watchedStrips.has(list)) {
+    return;
+  }
+  watchedStrips.add(list);
+  const bump = (): void => {
+    internal.stripGestures += 1;
+  };
+  list.addEventListener("wheel", bump, { passive: true });
+  list.addEventListener("touchmove", bump, { passive: true });
+  list.addEventListener("keydown", bump);
+  list.addEventListener("pointerdown", (e) => {
+    if (e.target === list) {
+      bump();
+    }
+  });
 }
 
 function renderDOM(): void {
@@ -1777,6 +2404,7 @@ function renderDOM(): void {
   if (!list.hasAttribute("role")) {
     list.setAttribute("role", "tablist");
   }
+  watchStripGestures(list);
 
   const existing = new Map<string, HTMLElement>();
   for (const node of [...list.children]) {
@@ -1798,13 +2426,12 @@ function renderDOM(): void {
       if (parent !== undefined && activeIDs.has(parent)) {
         node.classList.add("exiting-merge");
       }
-      node.addEventListener(
-        "animationend",
-        () => {
+      node.addEventListener("animationend", () => {
+        // A row that came back during its exit (a refused close) reuses this node.
+        if (node.classList.contains("exiting")) {
           node.remove();
-        },
-        { once: true },
-      );
+        }
+      });
       existing.delete(id);
     }
   }
@@ -1824,6 +2451,7 @@ function renderDOM(): void {
       }
       node.classList.add("entering");
     } else {
+      node.classList.remove("exiting", "exiting-merge");
       const nameEl = node.querySelector(".tab-name");
       if (nameEl !== null && nameEl.textContent !== row.name) {
         nameEl.textContent = row.name;
@@ -1867,6 +2495,12 @@ function renderDOM(): void {
       node.dataset["parentId"] = row.subject.parent;
     }
     prev = node;
+  }
+  const restore = internal.stripRestore;
+  if (restore !== null) {
+    internal.stripRestore = null;
+    list.scrollTop = restore.top;
+    list.scrollLeft = restore.left;
   }
 }
 
@@ -2187,7 +2821,7 @@ function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean)
     if ((e.target as HTMLElement).closest(".tab-close") !== null) {
       return;
     }
-    activateTab(id);
+    void activateTab(id);
   });
 
   // Middle-click to close.
@@ -2204,7 +2838,7 @@ function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean)
       case "Enter":
       case " ":
         e.preventDefault();
-        activateTab(id);
+        void activateTab(id);
         break;
       case "F2":
         if (rowOfID(id)?.subject.kind === "chat") {
@@ -2288,8 +2922,12 @@ export async function toggleSettingsView(tab: SettingsTab = "general"): Promise<
 /** Open Settings on the given sub-tab (default: General). NEVER closes it, which
  *  is why it exists beside the toggle: navigation, routing and a link out of a
  *  modal express an intent to OPEN, and a toggle would dismiss the panel it was
- *  pointing at. */
+ *  pointing at. The panel store moves first, as in route-apply.ts, so the tab's refresh loads the
+ *  named panel; a route correction alone leaves the shown panel where it was. */
 export async function openSettingsView(tab: SettingsTab = "general"): Promise<void> {
+  // Lazy for the same reason as tab-materialize.ts: settings-tabs.ts imports this module.
+  const { forceSettingsTab } = await import("./settings-tabs.js");
+  forceSettingsTab(tab);
   await openTab({ kind: "settings" });
   setSettingsTab(tab);
 }
@@ -2306,8 +2944,10 @@ export async function toggleGitView(tab: GitTab = "changes"): Promise<void> {
 }
 
 /** Open the git view on the given sub-tab (default: Changes). NEVER closes it;
- *  the twin of openSettingsView, for the same reason. */
+ *  the twin of openSettingsView, for the same reasons. */
 export async function openGitView(tab: GitTab = "changes"): Promise<void> {
+  const { forceGitTab } = await import("./git-tabs.js");
+  forceGitTab(tab);
   await openTab({ kind: "git" });
   setGitTab(tab);
 }
@@ -2326,7 +2966,7 @@ export async function toggleFilesView(openAt: string): Promise<void> {
     if (state.active === row.subject.id) {
       await closeTab(row.subject.id);
     } else {
-      activateTab(row.subject.id);
+      void activateTab(row.subject.id);
     }
     return;
   }
@@ -2340,7 +2980,7 @@ export async function openFilesView(openAt: string): Promise<void> {
   const row = activeOrRecentFilesTab();
   if (row !== undefined) {
     if (state.active !== row.subject.id) {
-      activateTab(row.subject.id);
+      void activateTab(row.subject.id);
     }
     return;
   }
@@ -2485,7 +3125,6 @@ export function _resetForTest(): void {
   tabNotice = bareTabNotice;
   state.tabs = [];
   state.active = "";
-  callbacks.onActivate = null;
   callbacks.onEmpty = null;
   chatSettledProbe = null;
   closeGate = openGate;
@@ -2496,9 +3135,15 @@ export function _resetForTest(): void {
   internal.emptyDeferred = false;
   internal.renderQueued = false;
   internal.everOpened = false;
+  internal.unshown = "";
+  internal.stripRestore = null;
   nameOverrides.clear();
   activationHistory.length = 0;
   navigationSeq = 0;
+  activeCloses = 0;
+  currentActivation = null;
+  settledActive = "";
+  shownChat = "";
   lastAnnouncedTab = "";
   // Re-register the target: a test that reset tabs-sync dropped it.
   registerTabsTarget(target);

@@ -19,7 +19,7 @@
      "type": "step",
      "status": "paused",
      "agentName": "replier",
-     "modelId": "claude-sonnet-5.5",
+     "modelId": "model-b-5.5",
      "effortLevel": "high",
      "startedAt": "2026-11-01T09:58:55.539Z",
      "sessionId": "sess_746a39f5-fb36-487e-a2a3-5335af805af4",
@@ -45,7 +45,7 @@
   },
   "memoryConfigSource": "legacy",
   "backgroundExecution": false,
-  "parentModelId": "claude-sonnet-5.5",
+  "parentModelId": "model-b-5.5",
   "parentEffortLevel": "high",
   "pauseReason": "Step 'gated' is waiting for the next user message.",
   "attention": [
@@ -66,7 +66,7 @@
    "nodeId": "gated",
    "type": "step",
    "agentName": "replier",
-   "modelId": "claude-sonnet-5.5",
+   "modelId": "model-b-5.5",
    "effortLevel": "high"
   }
  ]

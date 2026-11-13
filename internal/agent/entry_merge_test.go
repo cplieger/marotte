@@ -98,7 +98,7 @@ func closeRow(id string, conclusion marotte.EntryTurnClose) entryRow {
 
 // liveClose is a process-written closer, which the union must leave alone.
 func liveClose(id string, outcome marotte.TurnOutcome, raw marotte.StopReason) entryRow {
-	return closeRow(id, marotte.EntryTurnClose{Outcome: outcome, StopReasonRaw: string(raw), Model: "opus"})
+	return closeRow(id, marotte.EntryTurnClose{Outcome: outcome, StopReasonRaw: string(raw), Model: "model-a"})
 }
 
 // placeholderClose is the store's synthesized closer, which KAS's account may replace.
@@ -106,7 +106,7 @@ func placeholderClose(id string) entryRow {
 	return closeRow(id, marotte.EntryTurnClose{
 		Outcome:       marotte.TurnOutcomeInterrupted,
 		StopReasonRaw: string(marotte.StopReasonUnterminated),
-		Model:         "opus",
+		Model:         "model-a",
 	})
 }
 
@@ -426,7 +426,7 @@ func TestMergeEntries_ASynthesizedCloserYieldsToKASsOwnAccount(t *testing.T) {
 	if closer.Outcome != marotte.TurnOutcomeCancelled || closer.StopReasonRaw != "cancelled" {
 		t.Errorf("closer = %+v, want KAS's own cancelled account", closer)
 	}
-	if closer.Model != "opus" {
+	if closer.Model != "model-a" {
 		t.Errorf("model = %q, want the record's — the replay carries none", closer.Model)
 	}
 	var res marotte.EntryToolResult
@@ -808,14 +808,14 @@ func TestMergeEntries_ARecordSaySplitAtAnAckKeepsEverySegment(t *testing.T) {
 // message leaves: its row ahead of the whole say, which KAS's replay holds as one message with
 // the row after it. Both pair, nothing is inserted and the say is one entry.
 func TestMergeEntries_AMessageAheadOfAWholeSayPairsBoth(t *testing.T) {
-	const words = "Task 12 round 3, Claude seat: APPROVE."
+	const words = "Task 12 round 3, seat A: APPROVE."
 	thinking := func(text string) entryRow {
 		return entryRow{kind: marotte.EntryKindThinking, id: "S", payload: marotte.EntryThinking{Text: text}}
 	}
 	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),
 		steerRow(marotte.WorkflowMessageIDPrefix+"1", marotte.EntrySteer{
-			Text: words, Origin: marotte.SteerOriginStep, Step: "review-claude", ProducedTs: 5,
+			Text: words, Origin: marotte.SteerOriginStep, Step: "review-a", ProducedTs: 5,
 		}),
 		entryRow{
 			kind: marotte.EntryKindSteerDelivered, id: marotte.SteerDeliveredID(marotte.WorkflowMessageIDPrefix + "1"),

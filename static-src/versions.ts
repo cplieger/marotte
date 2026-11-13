@@ -1,4 +1,4 @@
-import { signal, type Signal } from "@cplieger/ui";
+import { signal, type Signal } from "@cplieger/reactive";
 import { apiGet } from "./api-client.js";
 import { getVersionEndpoint } from "./wire/client.gen.js";
 

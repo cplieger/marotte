@@ -1,12 +1,13 @@
 // Service-worker push messages:
-//   "arrived"  landed on a focused page, so the worker showed no OS notification: the page
-//              delivers it as it delivers its own `notification` frame.
+//   "arrived"  landed while this page was focused, so the worker showed no OS notification and
+//              posted it here alone: the page shows it unless its chat or run is on screen.
 //   "clicked"  the subject becomes a route through push-subject.ts (the worker's own).
 //   "subscription_changed"  the endpoint rotated, so the derived presence tag moved.
 
-import { deliverNotification } from "../agent-finished-cue.js";
 import { openPushTarget } from "../notification-open.js";
-import { type PushPageMessage, parsePushTarget } from "../push-subject.js";
+import { showNotice } from "../notify.js";
+import { type PushPageMessage, type PushTarget, parsePushTarget } from "../push-subject.js";
+import { getActiveTabId, tabIdFor } from "../tabs.js";
 import type { NotificationPayload, PushKind } from "../wire/types.gen.js";
 
 /** Every kind `marotte.PushKind` sends, a missing one a type error; an arrival of any other is
@@ -30,6 +31,7 @@ function isPushMessage(d: unknown): d is PushPageMessage {
   return (
     m.type === "push" &&
     (m.reason === "clicked" || m.reason === "arrived" || m.reason === "subscription_changed") &&
+    (m.id === undefined || typeof m.id === "string") &&
     typeof m.chatId === "string" &&
     (m.subject === undefined || typeof m.subject === "string") &&
     (m.kind === undefined || typeof m.kind === "string") &&
@@ -44,7 +46,12 @@ function arrivedNotice(msg: PushPageMessage): NotificationPayload | null {
   if (!isPushKind(kind)) {
     return null;
   }
-  const notice: NotificationPayload = { kind, title: msg.title ?? "", body: msg.body ?? "" };
+  const notice: NotificationPayload = {
+    id: msg.id ?? "",
+    kind,
+    title: msg.title ?? "",
+    body: msg.body ?? "",
+  };
   if (msg.chatId !== "") {
     notice.chat_id = msg.chatId;
   }
@@ -52,6 +59,32 @@ function arrivedNotice(msg: PushPageMessage): NotificationPayload | null {
     notice.subject = msg.subject;
   }
   return notice;
+}
+
+/** The open tab `target` names, "" when it names none or that tab is closed. */
+function tabOf(target: PushTarget): string {
+  switch (target.kind) {
+    case "chat":
+      return tabIdFor("chat", target.chatID);
+    case "run":
+    case "run_ask":
+      return tabIdFor("run", target.workflowID);
+    case "pr":
+    case "rule":
+    case "workspace":
+      return "";
+  }
+}
+
+/** True only while the page is visible AND `target`'s tab is the active one. The one screen check
+ *  a page still makes: the server pushed after judging this profile without a page on that tab,
+ *  so nobody judged this page's screen. */
+function targetOnScreen(target: PushTarget): boolean {
+  if (document.visibilityState !== "visible") {
+    return false;
+  }
+  const tab = tabOf(target);
+  return tab !== "" && tab === getActiveTabId();
 }
 
 /** Where a clicked notification goes. */
@@ -79,8 +112,9 @@ export function initPushMessages(onSubscriptionChanged: () => void): void {
         return;
       case "arrived": {
         const notice = arrivedNotice(msg);
-        if (notice !== null) {
-          deliverNotification(msg.chatId, notice);
+        const target = parsePushTarget({ chatId: msg.chatId, subject: msg.subject ?? "" });
+        if (notice !== null && !targetOnScreen(target)) {
+          showNotice(notice);
         }
         return;
       }

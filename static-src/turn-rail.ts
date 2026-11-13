@@ -1,4 +1,4 @@
-import { el, KEY_ATTR, reconcile } from "@cplieger/ui";
+import { el, KEY_ATTR, reconcile } from "@cplieger/reactive";
 import { apiGet } from "./api-client.js";
 import { ICON_STEP_NEXT, ICON_STEP_PREV } from "./icons.js";
 import { iconEl } from "./icon-el.js";
@@ -154,6 +154,8 @@ let inView: ReadonlySet<string> = new Set();
 let rovingKey: string | undefined;
 let shown: readonly TurnBin[] = [];
 let shownSlots = 0;
+/** The chat whose rows the stack holds, which tells a re-point's repaint from an in-place one. */
+let stackChatID = "";
 
 /** The one writer of the turn set: the resident window merged into the fetched
  *  index, so the newest turn appears the moment its card mounts and the index only
@@ -270,8 +272,9 @@ export function pointTurnRail(id: string): void {
   mergedFrom = [];
   residentCards = [];
   setTurns();
-  render();
-  repick();
+  // In a frame: the activation's paint renders the rail anyway, and a write here would come before the outgoing
+  // view's park reads, forcing a layout.
+  scheduleRailRender();
 }
 
 /** The activation entry: point the map at the chat, then fetch its index only when
@@ -376,9 +379,9 @@ function repick(): void {
   schedulePick();
 }
 
-/** Defer the resize-driven render one frame, behind a single slot. NEVER inside the track's own
- *  resize delivery: a render there that resized an observed box would make the engine report
- *  "ResizeObserver loop completed with undelivered notifications". Other renders stay sync. */
+/** Defer a render one frame, behind a single slot: the resize-driven one, and a re-point's. NEVER render inside the
+ *  track's own resize delivery: a render there that resized an observed box would make the engine report
+ *  "ResizeObserver loop completed with undelivered notifications". */
 function scheduleRailRender(): void {
   if (renderFrame !== 0) {
     return;
@@ -583,7 +586,24 @@ function paintMap(
   setAttr(m.nav, "aria-busy", pending.size > 0 ? "true" : null);
   setStyleVar(m.stack, "--turn-map-slots", String(Math.max(1, layout.slots)));
   dropScrubbedRow(m, rows);
+  // WebKit restyles every row on each row insertion or removal once a hover has matched the
+  // fisheye's sibling rules (29-turns.css), so a re-point swaps the whole rail off the document.
+  // A focused row stays in place: removal would blur it.
+  const focused = m.stack.contains(document.activeElement);
+  const offDocument = stackChatID !== chatID && !focused;
+  stackChatID = chatID;
+  if (offDocument) {
+    m.stack.remove();
+  }
   reconcile(m.stack, rows, { key: (r) => r.bin.key, mount: mountPill, update: paintPill });
+  if (offDocument) {
+    m.track.append(m.stack);
+  }
+  if (focused && !m.stack.contains(document.activeElement)) {
+    // The focused row is gone: the reader stays on the map's tab stop, else the transcript, never <body>.
+    const stop = m.stack.querySelector<HTMLElement>('.turn-pill-link[tabindex="0"]');
+    (stop ?? getScrollEl()).focus({ preventScroll: true });
+  }
   if (scrubPointer !== undefined) {
     scrubTo(m, scrubY);
   }
@@ -1089,12 +1109,12 @@ async function pageIn(s: TurnSummary): Promise<boolean> {
 /** Page backwards until the target turn is in the store, through the one older-page door. A page that moves nothing
  *  or a spent wall-clock budget ends it; `?before=<turn_id>` pages by whole turns. */
 async function loadUntilResident(s: TurnSummary, deadline: number): Promise<boolean> {
-  const [{ getActive }, { loadOlderTurns }] = await Promise.all([
+  const [{ getPainted }, { loadOlderTurns }] = await Promise.all([
     import("./store.js"),
     import("./store-load.js"),
   ]);
   for (;;) {
-    const session = getActive();
+    const session = getPainted();
     if (session?.id !== chatID) {
       return false;
     }

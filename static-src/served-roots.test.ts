@@ -104,9 +104,10 @@ describe("under a / work dir", () => {
     );
   });
 
+  // @cplieger/ui's markdown docs, "Safety": the gate reads `//host/x` as https:.
   it("leaves a protocol-relative link pointing off-site", () => {
     setWorkspaceRoot("/");
-    expect(href("[doc](//example.com/docs/a.md)")).toBe("//example.com/docs/a.md");
+    expect(href("[doc](//example.com/docs/a.md)")).toBe("https://example.com/docs/a.md");
   });
 });
 
@@ -264,7 +265,11 @@ describe("rendered under one root when a later handshake names another", () => {
       "/api/file/download?path=%2Fsrv%2Fproj%2Fout%2Fshot.png",
     );
     setWorkspaceRoot("/srv/other");
-    expect(host.querySelector("img")?.getAttribute("src")).toBe("/srv/proj/out/shot.png");
+    const src = host.querySelector("img")?.getAttribute("src") ?? "";
+    // The page's own path again, as the library resolves it.
+    expect(new URL(src, location.href).href).toBe(
+      new URL("/srv/proj/out/shot.png", location.href).href,
+    );
   });
 
   it("routes a link again when the root comes back", () => {

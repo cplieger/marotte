@@ -87,7 +87,7 @@ function stepRow(i: number): HTMLElement {
 
   const meta = document.createElement("span");
   meta.className = "run-step-meta";
-  meta.textContent = "general-task-execution \u00b7 claude-sonnet-5";
+  meta.textContent = "general-task-execution \u00b7 model-b-5";
 
   const dur = document.createElement("span");
   dur.className = "run-step-dur";

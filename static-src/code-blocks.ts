@@ -1,19 +1,17 @@
-// Code-block decoration: title bar (language + actions), highlighting, and Run for shell blocks (a callback,
-// to avoid a static cycle with shell.ts). One idempotent path, `decorateBlock`, decorates a still-streaming fence
-// provisionally and upgrades it on close. The provisional sweep is the only thing that decorates a fence the model
-// never closed: the renderer's per-block callback fires only on close, and `parser_end` closes no open token.
+// What marotte adds to @cplieger/ui/markdown's code block: Run for a shell fence (a callback, to avoid a static
+// cycle with shell.ts), the closed state the streaming dot reads, and the bar's button family. The library builds
+// the block, its label and its Copy.
 
-import { el } from "@cplieger/ui";
-import { highlightByLang, normalizeLang } from "./highlight.js";
+import { el } from "@cplieger/reactive";
+import { detectLanguage } from "@cplieger/ui/highlight";
 import { ICON_COPY, ICON_PLAY } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import { CHROME_ATTR } from "./chrome-attr.js";
 import { confirm } from "./confirm.js";
 
-const SHELL_LANGS = new Set(["", "sh", "bash", "zsh", "shell", "console", "terminal"]);
+const SHELL_LANGS = new Set(["sh", "bash", "zsh", "ksh", "shell", "console", "terminal"]);
 
-/** On the wrapper so a second pass knows what is left: `streaming` has chrome, `final` adds highlighting. */
-const STATE_ATTR = "data-code-state";
+/** `final` once the block's `code` hook ran; a block without it is still streaming (13-messages.css's dot). */
+export const CODE_STATE_ATTR = "data-code-state";
 
 type ShellRunCb = (cmd: string) => void;
 let shellRunCb: ShellRunCb | null = null;
@@ -31,113 +29,48 @@ export function setCopyCallback(cb: CopyCb): void {
   copyCb = cb;
 }
 
-/** Decorate every code block under `root` as final. Also run when a stream ends, so an unclosed fence is finished. */
-export function decorateCodeBlocks(root: HTMLElement): void {
-  for (const pre of root.querySelectorAll("pre")) {
-    decorateBlock(pre, false);
+/** The fence tag of a `.cp-code` block as the library classed its `code`, lowercased; "" with none. */
+export function codeLang(block: Element): string {
+  const code = block.querySelector(":scope > pre > code");
+  return /(?:^|\s)language-(\S+)/.exec(code?.className ?? "")?.[1]?.toLowerCase() ?? "";
+}
+
+/** The bar's actions slot of a `.cp-code` block. */
+export function codeActions(block: Element): Element | null {
+  return block.querySelector(':scope > [data-part="bar"] > [data-part="actions"]');
+}
+
+/** A button in the code bar's family (the library's Copy): quiet, small, its label in a tooltip. */
+export function barButton(label: string, icon: string): HTMLButtonElement {
+  return el(
+    "button",
+    {
+      type: "button",
+      className: "cp-button",
+      "data-variant": "quiet",
+      "data-size": "sm",
+      "data-tooltip": label,
+      "aria-label": label,
+    },
+    iconEl(icon),
+  ) as HTMLButtonElement;
+}
+
+/** Mark the block closed and give a shell fence Run. Its text is final: the hook runs only at the close or the end. */
+export function finishCodeBlock(block: HTMLElement, lang: string, text: string): void {
+  block.setAttribute(CODE_STATE_ATTR, "final");
+  if (isRunnableShell(lang, text)) {
+    codeActions(block)?.append(makeRunButton(block, text));
   }
 }
 
 /**
- * Decorate the block currently streaming in, if any: the last `<pre>` (the parser is append-only). A `final`
- * wrapper is left alone, so this is safe after every parse slice. Returns that `<pre>` while it is still
- * provisional, else null.
+ * Whether a finished fence earns Run: a non-empty shell block that is not a `#!` script, of any line count. An
+ * untagged fence counts as shell unless it reads as another language, the one the library's bar then names.
  */
-export function decorateStreamingCodeTail(root: HTMLElement): HTMLElement | null {
-  const pres = root.querySelectorAll("pre");
-  const last = pres[pres.length - 1];
-  if (last === undefined) {
-    return null;
-  }
-  return decorateBlock(last, true) ? last : null;
-}
-
-/**
- * `provisional`: chrome only. No highlight (a half-written statement highlights wrong) and no Run (an incomplete
- * command must not reach a shell). False when the block was already final.
- */
-function decorateBlock(pre: HTMLElement, provisional: boolean): boolean {
-  const existing = pre.parentElement;
-  const wrapped = existing?.classList.contains("code-wrap") === true ? existing : null;
-  if (wrapped?.getAttribute(STATE_ATTR) === "final") {
-    return false;
-  }
-  const wrap = wrapped ?? wrapBlock(pre);
-  if (provisional) {
-    wrap.setAttribute(STATE_ATTR, "streaming");
-    return true;
-  }
-  finalizeBlock(wrap, pre);
-  return true;
-}
-
-/** Copy reads the text at click time, so one button serves a streaming block and a finished one. */
-function wrapBlock(pre: HTMLElement): HTMLElement {
-  const wrap = el("div", { className: "code-wrap" });
-  pre.parentElement?.insertBefore(wrap, pre);
-
-  const actions = el(
-    "div",
-    { className: "code-actions" },
-    makeCopyButton(() => blockText(pre)),
-  );
-  const head = el(
-    "div",
-    { className: "code-head", [CHROME_ATTR]: "" },
-    el("span", { className: "code-lang" }, extractLang(pre, pre.querySelector("code"))),
-    actions,
-  );
-  wrap.appendChild(head);
-  wrap.appendChild(pre);
-  return wrap;
-}
-
-function finalizeBlock(wrap: HTMLElement, pre: HTMLElement): void {
-  wrap.setAttribute(STATE_ATTR, "final");
-  const codeEl = pre.querySelector("code");
-  const lang = extractLang(pre, codeEl);
-  const text = blockText(pre);
-
-  const label = wrap.querySelector(":scope > .code-head > .code-lang");
-  if (label !== null) {
-    label.textContent = lang;
-  }
-
-  // Unknown languages keep the already-escaped text; innerHTML is swapped only when highlighting succeeds.
-  const hlLang = normalizeLang(lang);
-  if (codeEl !== null && hlLang !== "") {
-    codeEl.innerHTML = highlightByLang(text, hlLang);
-  }
-
-  const actions = wrap.querySelector(":scope > .code-head > .code-actions");
-  if (actions !== null && isRunnableShell(lang, text)) {
-    actions.appendChild(makeRunButton(pre, text));
-  }
-}
-
-function blockText(pre: HTMLElement): string {
-  const codeEl = pre.querySelector("code");
-  return (codeEl ?? pre).textContent ?? ""; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
-}
-
-/** The fence tag as written, lowercased: the `<pre>`'s class, else the `<code>`'s `language-*` (what smd-renderer writes). */
-export function extractLang(pre: HTMLElement, code: HTMLElement | null): string {
-  const preMatch = /(?:^|\s)code\s+(\S+)/.exec(pre.className);
-  if (preMatch?.[1] !== undefined && preMatch[1] !== "") {
-    return preMatch[1].toLowerCase();
-  }
-  if (code !== null) {
-    const codeMatch = /language-(\S+)/.exec(code.className);
-    if (codeMatch?.[1] !== undefined) {
-      return codeMatch[1].toLowerCase();
-    }
-  }
-  return "";
-}
-
-/** Whether a finished fence earns Run: a non-empty shell block that is not a `#!` script, of any line count. */
 export function isRunnableShell(lang: string, text: string): boolean {
-  if (!SHELL_LANGS.has(lang)) {
+  const shell = lang === "" ? ["", "sh"].includes(detectLanguage(text)) : SHELL_LANGS.has(lang);
+  if (!shell) {
     return false;
   }
   const trimmed = text.trim();
@@ -148,10 +81,7 @@ export function isRunnableShell(lang: string, text: string): boolean {
 }
 
 /** Copy reads `getText` at click time; `className` is the button family of the row it joins. */
-export function makeCopyButton(
-  getText: () => string,
-  className = "code-act-btn",
-): HTMLButtonElement {
+export function makeCopyButton(getText: () => string, className: string): HTMLButtonElement {
   const btn = el(
     "button",
     { className, "data-tooltip": "Copy", "aria-label": "Copy" },
@@ -179,19 +109,15 @@ export function makeCopyButton(
 const HIDDEN_RUNE =
   /[\p{Cc}\p{Cf}\p{Co}\p{Cs}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]|[^\P{Zs} ]/u;
 
-function makeRunButton(pre: HTMLElement, text: string): HTMLButtonElement {
-  const btn = el("button", { className: "code-act-btn" }, iconEl(ICON_PLAY)) as HTMLButtonElement;
+function makeRunButton(block: HTMLElement, text: string): HTMLButtonElement {
   const cmd = text.trim().replaceAll("\r\n", "\n");
   const refusal = runRefusal(cmd);
+  const btn = barButton(refusal ?? "Run in shell", ICON_PLAY);
   if (refusal !== null) {
-    btn.setAttribute("data-tooltip", refusal);
-    btn.setAttribute("aria-label", refusal);
     btn.disabled = true;
   } else {
-    btn.setAttribute("data-tooltip", "Run in shell");
-    btn.setAttribute("aria-label", "Run in shell");
     btn.addEventListener("click", () => {
-      void runSeen(pre, cmd);
+      void runSeen(block, cmd);
     });
   }
   return btn;
@@ -207,13 +133,15 @@ function runRefusal(cmd: string): string | null {
 }
 
 /**
- * A block of several lines, or a line wider than `pre`'s box, runs only after the dialog shows all of it: a
+ * A block of several lines, or a line wider than its `pre`'s box, runs only after the dialog shows all of it: a
  * one-line click is consent to what it shows, a block's is not.
  */
-async function runSeen(pre: HTMLElement, cmd: string): Promise<void> {
+async function runSeen(block: HTMLElement, cmd: string): Promise<void> {
   const lines = cmd.includes("\n");
+  const pre = block.querySelector(":scope > pre");
+  const clipped = pre !== null && pre.scrollWidth > pre.clientWidth;
   if (
-    (lines || pre.scrollWidth > pre.clientWidth) &&
+    (lines || clipped) &&
     !(await confirm({
       title: lines ? "Run these lines in the shell?" : "Run this command?",
       body: lines ? cmd : `Part of it was out of view:\n\n${cmd}`,

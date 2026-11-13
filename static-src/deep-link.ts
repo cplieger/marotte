@@ -5,9 +5,9 @@ import { resolveUnknownChat } from "./chat.js";
 import { chatListLoaded, serverMayAnswer } from "./store-load.js";
 import { parseRoute } from "./route-path.js";
 import type { Route } from "./route-path.js";
-import { replaceRoute } from "./router.js";
+import { replaceRoute, suppressPush } from "./router.js";
 import type { RouteOrigin } from "./router.js";
-import { getActiveTabRoute, tabIdForRoute } from "./tabs.js";
+import { getActiveTabRoute, showUnshownTab, tabIdForRoute } from "./tabs.js";
 import { error as toastError } from "./toast.js";
 
 /** What settling did, for a test: `held` and `stale` look identical from outside. */
@@ -34,8 +34,20 @@ function stillNames(id: string): boolean {
   return now.kind === "chat" && now.id === id;
 }
 
+/** Puts the tab boot left unshown on screen when this location cannot open its own view. Its activation
+ *  pushes nothing: the URL is replaced or held by the caller. */
+function showRemembered(): void {
+  suppressPush(true);
+  try {
+    showUnshownTab();
+  } finally {
+    suppressPush(false);
+  }
+}
+
 /** Points the URL at what is on screen (`getActiveTabRoute()`), else the empty chat route, as boot does for "/". */
 function canonicalize(): void {
+  showRemembered();
   replaceRoute(getActiveTabRoute() ?? { kind: "chat", id: "" });
 }
 
@@ -66,6 +78,7 @@ export function admitLocation(route: Route, origin: RouteOrigin): LocationVerdic
  */
 export async function settleDeepLinkedChat(id: string): Promise<DeepLinkOutcome> {
   if (!serverMayAnswer()) {
+    showRemembered();
     return "held";
   }
   const verdict = await resolveUnknownChat(id);
@@ -81,6 +94,7 @@ export async function settleDeepLinkedChat(id: string): Promise<DeepLinkOutcome>
     toastError("That conversation no longer exists.");
     return "gone";
   }
+  showRemembered();
   if (!chatListLoaded()) {
     return "held";
   }

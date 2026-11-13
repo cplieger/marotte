@@ -2,7 +2,7 @@
 // and every event rule's row state.
 
 import { join as joinKey } from "@cplieger/keyenc";
-import type { RequestSpec } from "@cplieger/ui/actions";
+import type { RequestSpec } from "@cplieger/reactive/actions";
 import { apiAction, fromEndpoint, retryNetwork, RETRY_STANDARD } from "./index.js";
 import {
   deleteLaunchRulesByIdEndpoint,

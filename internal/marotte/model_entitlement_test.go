@@ -12,15 +12,15 @@ import (
 // "use the backend default".
 func TestModelServed(t *testing.T) {
 	t.Parallel()
-	served := []string{"claude-sonnet-4", "claude-haiku-4", "auto"}
+	served := []string{"model-b-4", "model-c-4", "auto"}
 	cases := []struct {
 		name   string
 		id     string
 		served []string
 		want   bool
 	}{
-		{"a served id", "claude-sonnet-4", served, true},
-		{"an unserved id", "claude-opus-9", served, false},
+		{"a served id", "model-b-4", served, true},
+		{"an unserved id", "model-a-9", served, false},
 		{"an empty id means inherit the default", "", served, true},
 		{"auto is judged like any id", ModelAuto, []string{"only-this"}, false},
 		{"auto listed is served", ModelAuto, served, true},
@@ -33,7 +33,7 @@ func TestModelServed(t *testing.T) {
 			// the UNFILTERED set, and this pins that a present-but-different id is
 			// refused so the distinction is not silently lost.
 			"an id absent from the set is refused even when the set looks complete",
-			"claude-legacy-1", served, false,
+			"model-legacy-1", served, false,
 		},
 	}
 	for _, c := range cases {
@@ -50,7 +50,7 @@ func TestModelServed(t *testing.T) {
 // input, so no id can pass by a normalisation or comparison quirk. An entitlement
 // check that answers yes for an id the account does not have is the whole bug.
 func FuzzModelServed(f *testing.F) {
-	f.Add("claude-sonnet-4", "claude-sonnet-4,claude-haiku-4")
+	f.Add("model-b-4", "model-b-4,model-c-4")
 	f.Add("", "a,b")
 	f.Add("x", "")
 	f.Add("AUTO", "auto")

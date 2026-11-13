@@ -145,6 +145,8 @@ type fakeBridge struct {
 	account *fakeAccount
 	// noGovernance withholds the governance frame an observer's door delivers, leaving the cache cold.
 	noGovernance bool
+	// noDoorSeeds withholds the slash menu and steering documents an observer's door delivers.
+	noDoorSeeds bool
 }
 
 // ungovernedAccount is KAS 2.37.1's profile for an ungoverned account: MCP, web tools, autonomous agents and content
@@ -169,6 +171,21 @@ func governanceFrame(sid string, p marotte.GovernanceStatePayload) *marotte.RPCR
 		},
 	})
 	return &marotte.RPCResponse{JSONRPC: "2.0", Method: methodV3Governance, Params: params}
+}
+
+// doorSeedFrames are the slash menu and steering document list KAS sends at every session/new: one builtin command,
+// which the menu leaves out, and no documents.
+func doorSeedFrames(sid string) []*marotte.RPCResponse {
+	commands, _ := json.Marshal(map[string]any{"sessionId": sid, "update": map[string]any{
+		"sessionUpdate": "available_commands_update", "availableCommands": []any{map[string]any{
+			"name": "clear", "description": "Clear the conversation", "_meta": map[string]any{"kiro": map[string]any{"type": "builtin"}},
+		}},
+	}})
+	documents, _ := json.Marshal(map[string]any{"sessionId": sid, "status": "success", "documents": []any{}})
+	return []*marotte.RPCResponse{
+		{JSONRPC: "2.0", Method: marotte.MethodSessionUpdate, Params: commands},
+		{JSONRPC: "2.0", Method: methodV3SteeringDocs, Params: documents},
+	}
 }
 
 // fakeAccount is the account profile the fake engine reports at every door, ungovernedAccount until set.
@@ -251,10 +268,16 @@ func (b *fakeBridge) door(ctx context.Context, so *marotte.SessionOpts, eo *maro
 	notifs := b.notifsOnStart
 	keep := len(notifs) - min(b.withholdReplay, len(notifs))
 	governance := !load && so.Role == marotte.SessionRoleObserver && !b.noGovernance
+	seeds := !load && so.Role == marotte.SessionRoleObserver && !b.noDoorSeeds
 	sid, account := b.sessionID, b.account
 	b.mu.Unlock()
 	if governance {
 		b.deliver(governanceFrame(sid, account.current()))
+	}
+	if seeds {
+		for _, f := range doorSeedFrames(sid) {
+			b.deliver(f)
+		}
 	}
 	if !load {
 		return nil
@@ -436,6 +459,22 @@ func (b *fakeBridge) PromptAt(ctx context.Context, params any, commit func() err
 	return resp, b.seqNow(), err
 }
 
+// paramsMap is a call's params as the wire carries them: a typed params struct is read back through its JSON.
+func paramsMap(params any) (map[string]any, bool) {
+	if p, ok := params.(map[string]any); ok {
+		return p, true
+	}
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return nil, false
+	}
+	var p map[string]any
+	if json.Unmarshal(raw, &p) != nil || p == nil {
+		return nil, false
+	}
+	return p, true
+}
+
 // callScript answers one call from the script, pushing the frames it carries through deliver before returning.
 func (b *fakeBridge) callScript(
 	ctx context.Context, method string, params any, deliver func(*marotte.RPCResponse), commit func() error,
@@ -451,7 +490,7 @@ func (b *fakeBridge) callScript(
 	}
 	b.mu.Lock()
 	b.calls = append(b.calls, method)
-	if p, ok := params.(map[string]any); ok {
+	if p, ok := paramsMap(params); ok {
 		if b.lastParams == nil {
 			b.lastParams = map[string]map[string]any{}
 		}
@@ -475,6 +514,9 @@ func (b *fakeBridge) callScript(
 		// KAS lists no runs as an empty array; a reply without one is a partial list (errRunListPartial).
 		res = json.RawMessage(`{"runs":[]}`)
 	}
+	if method == marotte.MethodSessionContext {
+		res = json.RawMessage(`{"success":true}`)
+	}
 	if r, ok := b.callResults[method]; ok {
 		res = r
 	}
@@ -487,7 +529,7 @@ func (b *fakeBridge) callScript(
 	refusal := b.refuseAfterCall[method]
 	failure := b.failAfterCall[method]
 	b.mu.Unlock()
-	p, _ := params.(map[string]any)
+	p, _ := paramsMap(params)
 	if hook != nil {
 		if r, hooked, ok := hook(method, p); ok {
 			res, frames = r, hooked
@@ -1004,6 +1046,8 @@ type testChatStore struct {
 	onGet atomic.Pointer[func(id marotte.ChatID)]
 	// Gets counts Get calls, for a test about how often the store is read.
 	Gets atomic.Int64
+	// runtime receives the store's broadcasts once wire names it (storeRelay).
+	runtime atomic.Pointer[Runtime]
 	// tornDown names sessions SessionInTeardown reports in teardown besides the store's own, set through tearDown.
 	tornDown   map[string]bool
 	tornDownMu sync.Mutex
@@ -1042,16 +1086,29 @@ var (
 
 func newTestChatStore() *testChatStore {
 	dir := filepath.Join(testChatRoot, strconv.FormatInt(testChatSeq.Add(1), 10))
-	s, err := chat.NewStore(dir)
+	s := &testChatStore{}
+	st, err := chat.NewStore(dir, chat.WithBroadcaster(storeRelay{s}))
 	if err != nil {
 		panic("test chat store: " + err.Error())
 	}
-	return &testChatStore{Store: s}
+	s.Store = st
+	return s
+}
+
+// storeRelay is the store's broadcaster from construction, forwarding to the runtime wire names. A test seeds the
+// store before its runtime exists, and the seed's coalesced header publish reads the broadcaster on a timer, so wire
+// must not write the store's field under it.
+type storeRelay struct{ s *testChatStore }
+
+func (r storeRelay) Broadcast(ctx context.Context, e marotte.ServerEvent) {
+	if h := r.s.runtime.Load(); h != nil {
+		h.Broadcast(ctx, e)
+	}
 }
 
 // wire hands the store the runtime seams the composition root wires after New.
 func (s *testChatStore) wire(h *Runtime) {
-	chat.WithBroadcaster(h)(s.Store)
+	s.runtime.Store(h)
 	chat.WithLiveTurn(h.TurnLive)(s.Store)
 	chat.WithOpenTurns(h.OpenTurns)(s.Store)
 }

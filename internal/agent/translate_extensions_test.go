@@ -45,7 +45,7 @@ func TestTranslateMCPStatus(t *testing.T) {
 					t.Errorf("error = %q", snap[0].Error)
 				}
 			},
-			wantEvents: []string{"mcp_failed"},
+			wantEvents: []string{"mcp_status"},
 		},
 		{
 			// The status entry's URL belongs to an attempt whose listener KAS closed, so it is no relay anchor.
@@ -57,7 +57,7 @@ func TestTranslateMCPStatus(t *testing.T) {
 					t.Errorf("snapshot = %+v, want needs_auth with no URL", snap)
 				}
 			},
-			wantEvents: []string{"mcp_oauth_needed"},
+			wantEvents: []string{"mcp_status"},
 		},
 	}
 
@@ -151,7 +151,7 @@ func TestSteeringDocumentsChanged_ProducesIssuesKeyedByDocsPath(t *testing.T) {
 
 // Not ready until KAS sends a catalog; an empty one still counts, letting the client release unknown names.
 func TestSlashCatalog_ReadyOnlyAfterAKASCatalog(t *testing.T) {
-	var c slashCatalog
+	c := newSlashCatalog()
 	if cmds, ready := c.snapshot(); ready || len(cmds) != 0 {
 		t.Fatalf("Snapshot() before any frame = (%+v, %v), want ([], false)", cmds, ready)
 	}
@@ -168,7 +168,7 @@ func TestSlashCatalog_ReadyOnlyAfterAKASCatalog(t *testing.T) {
 
 // Every session shares the engine's one MCP pool, so the newest list from any session is the workspace's.
 func TestSlashCatalog_TheNewestListFromAnySessionWins(t *testing.T) {
-	var c slashCatalog
+	c := newSlashCatalog()
 	first := []marotte.SlashCommand{{Name: "a", Kind: marotte.SlashKindPrompt}}
 	second := []marotte.SlashCommand{{Name: "b", Kind: marotte.SlashKindPrompt}}
 	c.Set(first)
@@ -184,7 +184,7 @@ func TestSlashCatalog_TheNewestListFromAnySessionWins(t *testing.T) {
 }
 
 func TestHandleSlashCommands_ReportsReadiness(t *testing.T) {
-	h, _, _ := newTestHub()
+	h := &Runtime{slash: newSlashCatalog()}
 	get := func() marotte.SlashCommandsResponse {
 		t.Helper()
 		rec := httptest.NewRecorder()

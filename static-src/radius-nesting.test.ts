@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, beforeAll, afterAll } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { releaseMarkdownIn, renderMarkdownInto } from "./markdown.js";
 
 // Pinned because the arithmetic lives in a `calc()` on a custom property and a missing declaration
 // fails SILENTLY: `var(--menu-radius)` with nothing behind it is an invalid value and the corner
@@ -162,30 +163,23 @@ describe("the footer's ledger keeps ONE radius on every corner", () => {
 });
 
 describe("a box with a header at its top has ONE radius owner", () => {
-  it("leaves a code block's pre square so its wrapper draws every corner", () => {
-    // The prose skin gave the pre `--r` on all four, and the wrapper's `overflow: hidden` does not
-    // square a child's own corners — it removes only what falls outside — so the top pair painted a
-    // notch of card background at each end of the head's seam.
+  // A nested corner is concentric: inner radius = outer radius - border - inset.
+  it("squares a code block's pre under its bar and rounds it concentric below", () => {
     const msg = document.createElement("div");
     msg.className = "message assistant";
-    const wrap = document.createElement("div");
-    wrap.className = "code-wrap";
-    const head = document.createElement("div");
-    head.className = "code-head";
-    const pre = document.createElement("pre");
-    wrap.append(head, pre);
-    msg.appendChild(wrap);
     host.appendChild(msg);
+    renderMarkdownInto(msg, "```go\npackage main\n```\n");
+    const block = msg.querySelector(".cp-code") as HTMLElement;
+    const pre = block.querySelector(":scope > pre") as HTMLElement;
 
-    expect(radiusOf(wrap), "the wrapper draws the box").toBeCloseTo(6, 1);
+    const outer = radiusOf(block);
+    expect(outer, "the block draws the box").toBeGreaterThan(0);
+    const inner = outer - parseFloat(getComputedStyle(block).borderBottomWidth);
     const s = getComputedStyle(pre);
-    for (const [corner, value] of Object.entries({
-      "top-left": s.borderTopLeftRadius,
-      "top-right": s.borderTopRightRadius,
-      "bottom-right": s.borderBottomRightRadius,
-      "bottom-left": s.borderBottomLeftRadius,
-    })) {
-      expect(parseFloat(value), `pre ${corner} must be square`).toBe(0);
-    }
+    expect(parseFloat(s.borderTopLeftRadius), "under the bar").toBe(0);
+    expect(parseFloat(s.borderTopRightRadius), "under the bar").toBe(0);
+    expect(parseFloat(s.borderBottomLeftRadius), "concentric").toBeCloseTo(inner, 1);
+    expect(parseFloat(s.borderBottomRightRadius), "concentric").toBeCloseTo(inner, 1);
+    releaseMarkdownIn(msg);
   });
 });

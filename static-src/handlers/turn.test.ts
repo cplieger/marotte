@@ -1,7 +1,7 @@
 // ERROR_ROUTES, the three asks, decision_settled, the error handler and turn_closed, over the REAL
 // handlers and store. Liveness is the LOG; sibling subsystems stay mocked (a call is a command).
 
-import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
+import { vi, describe, it, expect, beforeEach } from "vitest";
 // FIRST, above every import: the factory below closes over `createBusMock`, and the mocker
 // resolves it while linking `../store.js`'s graph.
 import { fireSSE, createBusMock } from "./__test-helpers__/sse-capture.js";
@@ -18,9 +18,8 @@ import {
   setAgentStatus,
   tabStatusFor,
 } from "../store.js";
-import { noteRunLive, noteRunSettled } from "../run-store.js";
 import type { Session } from "../types.js";
-import type { Entry, EntryTurnClose, NotificationPayload, TurnOutcome } from "../wire/types.gen.js";
+import type { Entry, EntryTurnClose } from "../wire/types.gen.js";
 import type * as ApiClient from "../api-client.js";
 import type * as ChatActions from "../actions/chat.js";
 
@@ -51,7 +50,7 @@ vi.mock(
   async () => (await import("../__test-helpers__/scroll-mock.js")).scrollMock,
 );
 
-// Through `vi.hoisted` for the reason the notify trio below states: the mocker resolves
+// Through `vi.hoisted`: the mocker resolves
 // these factories during LINKING, above this file's own top-level initializers, where a
 // plain `const` is still in its temporal dead zone.
 const { mockCollapseSettled, mockHasPendingDecision, mockDropTurnDecisions, mockPushDecision } =
@@ -106,18 +105,13 @@ vi.mock("../failure-notice.js", () => ({
   clearFailure: undefined,
 }));
 
-// A HOLDER so the agent-finished notification can be on in one block only (the permission block
-// needs the contrast). `vi.hoisted` because the factory closes over it.
-const { mockNotifyOffScreen, mockCloseNotificationsFor, notifyGate } = vi.hoisted(() => ({
-  mockNotifyOffScreen: vi.fn(),
+const { mockCloseNotificationsFor } = vi.hoisted(() => ({
   mockCloseNotificationsFor: vi.fn(() => Promise.resolve()),
-  notifyGate: { agentFinished: false },
 }));
 vi.mock("../notify.js", () => ({
-  notifyOffScreen: mockNotifyOffScreen,
+  showNotice: vi.fn(),
   closeNotificationsFor: mockCloseNotificationsFor,
   setBadge: vi.fn(),
-  isAgentFinishedEnabled: () => notifyGate.agentFinished,
 }));
 
 const { mockOpenSetting } = vi.hoisted(() => ({ mockOpenSetting: vi.fn() }));
@@ -148,11 +142,6 @@ import { refreshTurnRail } from "../turn-rail.js";
 // Import after mocks so turn.ts registers its handlers against the bus mock.
 await import("./turn.js");
 const { ERROR_ROUTES } = await import("./error-routing.js");
-// After the mocks for the same reason turn.ts is: the cue module imports ../notify.js,
-// so a STATIC import here links it against the real module before the mocker is ready
-// and the whole file dies in module linking.
-const { forgetDeferredCue, hasDeferredCue } = await import("../agent-finished-cue.js");
-await import("./notification.js");
 
 function makeSession(id: string, over: Partial<Session> = {}): Session {
   return {
@@ -327,6 +316,7 @@ describe("ERROR_ROUTES", () => {
     ],
     ["rate_limit", { surface: "toast" }],
     ["compaction_failed", { surface: "toast" }],
+    ["resume_not_sent", { surface: "toast" }],
     // The four failed-ATTEMPT codes leave a promptable chat, so none reaches the send button.
     ["switch_failed", { surface: "toast" }],
     ["prompt_failed", { surface: "toast" }],
@@ -334,6 +324,8 @@ describe("ERROR_ROUTES", () => {
     // which is the other half of choosing a model.
     ["model_not_served", { surface: "toast" }],
     ["tangent_merge_failed", { surface: "toast" }],
+    // A Bot whose memory file did not load still answers, so the composer stays open.
+    ["memory_not_loaded", { surface: "toast" }],
     // Empty-turn recovery could not respawn or resend. Routed explicitly rather
     // than left to the unknown-code fallthrough, on the one error whose meaning is
     // "the automatic repair failed".
@@ -809,108 +801,6 @@ describe("turn_closed for a carrier turn no agent ran", () => {
     expect(mockClearAgentDown).toHaveBeenCalled();
   });
 });
-// A chat that launched a workflow must not raise the cue when `run_workflow` returns, only when the
-// work is done: the server's notification frame goes through `agent-finished-cue.ts`. The real
-// live-run inventory.
-
-describe("the notification waits for the work, not just the turn", () => {
-  beforeEach(() => {
-    notifyGate.agentFinished = true;
-  });
-  afterEach(() => {
-    notifyGate.agentFinished = false;
-    for (const id of liveRunsSeeded) {
-      noteRunSettled(id);
-    }
-    liveRunsSeeded.length = 0;
-  });
-
-  const liveRunsSeeded: string[] = [];
-  function seedLiveRun(workflowID: string, chatID: string, executing = true): void {
-    liveRunsSeeded.push(workflowID);
-    noteRunLive(workflowID, chatID, executing);
-  }
-
-  /** A settled chat with one closed turn and the server's notification about it. */
-  function closeOn(chatID: string, outcome: TurnOutcome = "completed"): NotificationPayload {
-    setSessions([makeSession(chatID)]);
-    openTurnOn(chatID);
-    fireClose(chatID, { payload: { outcome } });
-    const notice: NotificationPayload = {
-      chat_id: chatID,
-      kind: "agent_finished",
-      title: "seeded",
-      body: outcome === "completed" ? "Response complete" : "Turn failed",
-    };
-    fireSSE("notification", chatID, notice);
-    return notice;
-  }
-
-  it("says nothing when a run this chat launched is still live", () => {
-    seedLiveRun("wf-defer-clean", "defer-clean");
-    closeOn("defer-clean");
-    expect(mockNotifyOffScreen).not.toHaveBeenCalled();
-  });
-
-  // The withhold is about the reader's attention rather than the turn's verdict, so a
-  // broken turn that launched a still-running run makes the same false claim.
-  it("says nothing for a BROKEN turn while a run is live", () => {
-    seedLiveRun("wf-defer-broken", "defer-broken");
-    closeOn("defer-broken", "failed");
-    expect(mockNotifyOffScreen).not.toHaveBeenCalled();
-  });
-
-  // A run stopped on a person is exactly what a "finished" notification must not
-  // claim is over, and it is the case the narrow store-eviction predicate answers
-  // the wrong way.
-  it("says nothing while the run is merely PAUSED", () => {
-    seedLiveRun("wf-defer-parked", "defer-parked", false);
-    closeOn("defer-parked");
-    expect(mockNotifyOffScreen).not.toHaveBeenCalled();
-  });
-
-  it("notifies immediately when nothing is outstanding", () => {
-    const notice = closeOn("defer-none");
-    expect(mockNotifyOffScreen).toHaveBeenCalledWith(notice);
-  });
-
-  // One busy conversation must not mute the rest of the workspace.
-  it("notifies when the live run belongs to another chat", () => {
-    seedLiveRun("wf-defer-other", "some-other-chat");
-    const notice = closeOn("defer-other");
-    expect(mockNotifyOffScreen).toHaveBeenCalledWith(notice);
-  });
-
-  // A manual or scheduled launch is parentless, so its lease names no chat and its
-  // outcome travels on its own push rather than on a chat's.
-  it("notifies when the live run is PARENTLESS", () => {
-    seedLiveRun("wf-defer-parentless", "");
-    const notice = closeOn("defer-parentless");
-    expect(mockNotifyOffScreen).toHaveBeenCalledWith(notice);
-  });
-
-  // The switch decides WHETHER the reader is told; the deferral decides WHEN. A cue
-  // must not be parked for a channel that is off, or switching it back on would
-  // deliver a notification about work that finished while it was off.
-  it("parks nothing at all when the master switch is off", () => {
-    notifyGate.agentFinished = false;
-    seedLiveRun("wf-defer-gate-off", "defer-gate-off");
-    closeOn("defer-gate-off");
-    expect(mockNotifyOffScreen).not.toHaveBeenCalled();
-    expect(hasDeferredCue("defer-gate-off")).toBe(false);
-  });
-
-  // The positive half of the withhold: a cue IS parked, so the release effect the
-  // composition root installs has something to fire. Without this the two silent
-  // cases above pass equally for a handler that dropped the notification entirely.
-  it("parks the cue rather than dropping it", () => {
-    seedLiveRun("wf-defer-parked-cue", "defer-parked-cue");
-    closeOn("defer-parked-cue");
-    expect(hasDeferredCue("defer-parked-cue")).toBe(true);
-    forgetDeferredCue("defer-parked-cue");
-  });
-});
-
 describe("decision_settled handler", () => {
   it("hands the settled request to the dock, kind and attribution intact", () => {
     fireSSE("decision_settled", "chat-1", {

@@ -453,6 +453,9 @@ func TestSignInGate_AWaitingFlushEndsWithItsStep(t *testing.T) {
 	waitingRow(t, h)
 	wireGate(h, signin.NeedsSignIn)
 	h.lifecycle.inflight.Wait()
+	// inflight stands for the flush's slot below, and a Wait beside the run-read work closeRun's frames start is a
+	// WaitGroup reuse the race detector reports.
+	h.bus.observe = nil
 
 	h.runStepSteerJob(command.SteerJob{Chat: stepKey})
 	ended := make(chan struct{})

@@ -25,6 +25,7 @@ vi.mock("./confirm.js", () => ({ confirm: mocks.confirmMock }));
 vi.mock("./composer-value.js", () => ({ setComposerValue: mocks.setComposerValueMock }));
 // Every export is present so real-ESM linking succeeds; no case here restores a draft.
 vi.mock("./composer-state.js", () => ({
+  adoptUnownedComposer: vi.fn(),
   initComposerState: vi.fn(),
   noteComposerText: vi.fn(),
   flushComposerDraft: vi.fn(),

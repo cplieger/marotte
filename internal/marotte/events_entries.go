@@ -88,8 +88,7 @@ type ToolProgressPayload struct {
 	OutputDelta string `json:"output_delta,omitempty"`
 	// TerminalID, AgentSubtaskID and WorkflowID are late identity attachments, each
 	// adopted once. AgentSubtaskID is informational: the card's lane is its
-	// tool_call's, and a disagreeing value is logged rather than adopted. WorkflowID
-	// doubles as the run scope on a run's frame.
+	// tool_call's, and a disagreeing value is logged rather than adopted.
 	TerminalID     string `json:"terminal_id,omitempty"`
 	AgentSubtaskID string `json:"agent_subtask_id,omitempty"`
 	WorkflowID     string `json:"workflow_id,omitempty"`

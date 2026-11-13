@@ -111,3 +111,9 @@ func pushSubscriptionWithValidKeys(t *testing.T, endpoint string) marotte.PushSu
 	sub.Keys.Auth = base64.RawURLEncoding.EncodeToString(authSecret)
 	return sub
 }
+
+// send raises n at position 0 and runs the push fan-out Raise returned, as the coordinator does.
+func send(t *testing.T, s *Service, n *marotte.NotificationPayload) {
+	t.Helper()
+	s.Raise(t.Context(), n.ChatID, n, 0)(t.Context())
+}

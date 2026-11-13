@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/tabs"
@@ -76,6 +78,69 @@ func TestPruneTabs_DropsAChatTabWhoseChatIsGoneAndKeepsTheRest(t *testing.T) {
 				t.Errorf("%s kept = %v, want %v (set: %+v)", tc.key, kept[tc.key], tc.want, open)
 			}
 		})
+	}
+}
+
+// A crash between a delete's record removal and its Forget, or a hand-removed chats/<id>, leaves an entry naming a
+// chat that is gone; the next boot's prune drops it and keeps the entry whose record only could not be read.
+func TestPruneTabs_DropsARecentlyClosedEntryWhoseChatIsGone(t *testing.T) {
+	const keptWarn = "tab prune kept a chat whose record could not be read"
+	chatsDir := filepath.Join(t.TempDir(), "chats")
+	writer, err := chat.NewStore(chatsDir)
+	if err != nil {
+		t.Fatalf("Setup: chat store: %v", err)
+	}
+	tabsDir := t.TempDir()
+	first, err := tabs.NewStore(tabsDir)
+	if err != nil {
+		t.Fatalf("Setup: tab store: %v", err)
+	}
+	for _, ref := range []string{"c-kept", "c-removed", "c-unread"} {
+		if _, err := writer.Mutate(t.Context(), marotte.ChatID(ref), func(c *marotte.Chat, _ bool) bool {
+			c.Name = ref
+			return true
+		}); err != nil {
+			t.Fatalf("Setup: seed %s: %v", ref, err)
+		}
+		sub, _, _, err := first.Open(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: ref})
+		if err != nil {
+			t.Fatalf("Setup: open %s: %v", ref, err)
+		}
+		if _, _, _, err := first.Close(t.Context(), sub.ID, nil, map[string]tabs.RecentFacts{ref: {Name: ref}}); err != nil {
+			t.Fatalf("Setup: close %s: %v", ref, err)
+		}
+	}
+	if err := os.RemoveAll(filepath.Join(chatsDir, "c-removed")); err != nil {
+		t.Fatalf("Setup: remove c-removed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(chatsDir, "c-unread", "chat.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("Setup: corrupt c-unread: %v", err)
+	}
+	chatStore, err := chat.NewStore(chatsDir)
+	if err != nil {
+		t.Fatalf("Setup: reopen chat store: %v", err)
+	}
+	tabStore, err := tabs.NewStore(tabsDir)
+	if err != nil {
+		t.Fatalf("Setup: reopen tab store: %v", err)
+	}
+	_, before := tabStore.List()
+	logs := capture.Default(t)
+
+	pruneTabs(t.Context(), tabStore, chatStore)
+
+	var got []string
+	for _, e := range tabStore.Recent() {
+		got = append(got, e.Ref)
+	}
+	if want := []string{"c-unread", "c-kept"}; !slices.Equal(got, want) {
+		t.Errorf("Recent() after the boot prune = %v, want %v", got, want)
+	}
+	if _, after := tabStore.List(); after != before+1 {
+		t.Errorf("version after a prune that dropped only an entry = %d, want %d", after, before+1)
+	}
+	if n := logs.CountExact(keptWarn); n != 1 {
+		t.Errorf("Warn %q logged %d times, want 1 for c-unread's entry", keptWarn, n)
 	}
 }
 

@@ -3,6 +3,7 @@
 // Events requires only boundary events for it). `visualViewport` is a fake recording listeners;
 // every gesture states `buttons`. The harness's `reorder`/`reproject` stand in for the projection.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type * as Announce from "./legacy-ui/announce.js";
 
 import {
   isDragHandled,
@@ -23,10 +24,13 @@ import {
   REORDER_SETTLE_MS,
   REORDER_SLOT_FADE_MS,
 } from "./tabs-drag.js";
-import { announce } from "@cplieger/ui/announce";
+import { announce } from "./legacy-ui/announce.js";
 import shellCss from "./css/10-shell-app.css?raw";
 
-vi.mock("@cplieger/ui/announce", () => ({ announce: vi.fn() }));
+vi.mock("./legacy-ui/announce.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Announce>()),
+  announce: vi.fn(),
+}));
 
 const MOUSE_SLOP = MOUSE_DRAG.slopPx;
 const TOUCH_HOLD = TOUCH_DRAG.holdMs;
@@ -329,6 +333,22 @@ describe("what may start a drag", () => {
 
     expectStripQuiet(START);
     expect(isDragHandled()).toBe(false);
+  });
+
+  it("gives the window only passive pointermove listeners for a press and a drag", () => {
+    // Why passive: the comment at `arm` in tabs-drag.ts.
+    const add = vi.spyOn(window, "addEventListener");
+    const row = rows["b"] as HTMLElement;
+    startRealDrag(row);
+    row.dispatchEvent(ptr("pointerup", { clientY: mid(row) }));
+    const moves = add.mock.calls.filter(([type]) => type === "pointermove");
+    add.mockRestore();
+    expect(moves, "the press and the drag each listen for moves").toHaveLength(2);
+    for (const [, , opts] of moves) {
+      expect(typeof opts === "object" && opts.passive === true, "a blocking move listener").toBe(
+        true,
+      );
+    }
   });
 
   it("does not arm from a press that started on the ×", () => {

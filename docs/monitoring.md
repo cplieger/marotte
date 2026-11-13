@@ -6,7 +6,7 @@ marotte serves a Prometheus metrics page and ships metric alert rules in [`alert
 
 | You run | You get | You set up |
 | --- | --- | --- |
-| Prometheus, Mimir or VictoriaMetrics, with Alertmanager | Every alert below, `up` for a dead container, and graphs of every series | A scrape job named `marotte` on port 9847, a scraper name in `ALLOWED_HOSTS`, and `alerts/promql.yaml` in your ruler |
+| Prometheus, Mimir or VictoriaMetrics, with Alertmanager | Every alert below, `up` for a dead container, and graphs of every series | A scrape job named `marotte` on port 9847 (or the port `LISTEN_ADDR` names), a scraper name in `ALLOWED_HOSTS`, and `alerts/promql.yaml` in your ruler |
 | Loki and Alertmanager, no metric store | No alerts: marotte's rules need a metric store | Push notifications, below |
 | Grafana-managed alerting only | The same alerts, imported into Grafana | A Prometheus data source that scrapes marotte, and the rules imported from `alerts/promql.yaml` |
 | Docker or Unraid only | Push notifications for finished turns and workflow runs and for permission requests, and Docker health | An uptime prober on `/healthz`, or something that watches Docker health |
@@ -15,16 +15,17 @@ Push notifications need marotte installed as an app over HTTPS, as [Features](fe
 
 ## Metrics
 
-The page is always on at `http://<host>:9847/metrics`, on the same port as the web page, and answers `GET` only. It has no setting to turn it off.
+The page is always on at `http://<host>:9847/metrics` (or the port `LISTEN_ADDR` names), on the same port as the web page, and answers `GET` only. It has no setting to turn it off.
 
 When `ALLOWED_HOSTS` is set, the scraper must call marotte by a name in that list, or marotte answers `403`. A Docker network name such as `marotte` works once you add it to the list. [Host allowlist](configuration.md#host-allowlist-allowed_hosts) explains the setting.
 
-The page has no login, and marotte has none of its own. If you put marotte behind a reverse proxy that asks for a login, exempt `/metrics` at the proxy. Otherwise, scrape the container directly, but only from a network you already trust with the whole agent, because anyone who reaches port 9847 can use it.
+The page has no login, and marotte has none of its own. If you put marotte behind a reverse proxy that asks for a login, exempt `/metrics` at the proxy. Otherwise, scrape the container directly, but only from a network you already trust with the whole agent, because anyone who reaches port 9847 (or the port `LISTEN_ADDR` names) can use it.
 
 Labels carry fixed values only, with one exception. `rule_id` is the random id marotte gives a schedule or an event rule, and it names no workflow, path, repository or command.
 
 | Series | Type | Labels | Meaning |
 | --- | --- | --- | --- |
+| `marotte_build_info` | gauge | `version` | Always 1. `version` is the release tag the image was built from, or `dev` for a build without one |
 | `marotte_engine_up` | gauge | none | 1 while the agent engine is ready to take prompts, else 0 |
 | `marotte_engine_exits_total` | counter | `cause` | Agent engine exits, by cause |
 | `marotte_engine_resident_memory_bytes` | gauge | none | The running engine's resident memory at its last sample, taken every 60 seconds. Absent while no engine runs |
@@ -34,7 +35,7 @@ Labels carry fixed values only, with one exception. `rule_id` is the random id m
 | `marotte_schedule_failed_slots` | gauge | `rule_id` | Consecutive slots of an enabled schedule that ended without a completed run. A completed run resets it to 0 |
 | `marotte_schedule_next_due_timestamp_seconds` | gauge | `rule_id` | When an enabled schedule's next slot falls due, in Unix seconds. A slot waiting on a busy agent engine reads the end of its wait, the schedule's next slot |
 | `marotte_schedule_slots_not_started_total` | counter | `event` | Schedule slots that started no run, by `launch_failed`, `signin_held` or `engine_busy` |
-| `marotte_unattended_run_failures_total` | counter | `origin`, `reason` | Scheduled and triggered runs that failed with nobody watching. `origin` is `scheduled` or `triggered`. `reason` is `needs_approval`, `overran`, `backstop`, `stalled`, `paused`, `orphaned` or `cancel_given_up` |
+| `marotte_unattended_run_failures_total` | counter | `origin`, `reason` | Scheduled and triggered runs that failed with nobody watching. `origin` is `scheduled` or `triggered`. `reason` is `needs_approval`, `overran`, `stalled`, `paused`, `orphaned` or `cancel_given_up` |
 | `marotte_unattended_approvals_total` | counter | `origin` | Tool requests of scheduled and triggered runs approved with nobody watching |
 | `marotte_trigger_rule_blocked` | gauge | `rule_id`, `reason` | 1 while an enabled event rule launches nothing until someone acts, else 0, for each `reason`: `launch_failed`, `unnamed_run`, `too_many_items`, `state_unreadable` or `state_unwritten` |
 | `marotte_trigger_queue_full` | gauge | `rule_id` | 1 while an enabled event rule's last poll left an event at the forge because its queue was full, else 0 |
@@ -73,7 +74,7 @@ Load [`alerts/promql.yaml`](../alerts/promql.yaml) into Prometheus, Mimir or vma
 | `MarotteScheduleStalled` | A schedule slot has been overdue by more than 10 minutes for 5 minutes | warning |
 | `MarotteScheduleSlotNotStarted` | A schedule slot started no run in the last 24 hours | warning |
 | `MarotteUnattendedRunNeedsApproval` | An unattended run failed on a refused permission request in the last 24 hours | warning |
-| `MarotteUnattendedRunStopped` | marotte stopped an unattended run that overran, stalled, spent its time budget, paused or was orphaned, in the last 24 hours | warning |
+| `MarotteUnattendedRunStopped` | marotte stopped an unattended run that overran its slot, stalled, paused or was orphaned, in the last 24 hours | warning |
 | `MarotteUnattendedRunCancelFailed` | kiro-cli refused every cancel of an unattended run in the last 24 hours | critical |
 | `MarotteUnattendedRunSelfApproved` | A tool request of an unattended run was approved with nobody watching in the last 24 hours | warning |
 | `MarotteTriggerRuleBlocked` | An event rule launches nothing until someone acts: its launches kept failing, a run it has no record of holds its workflow, it matches more than 5,000 open items, or its saved state does not load | warning |
@@ -99,12 +100,12 @@ A requested engine restart is back within seconds, and a first start can spend u
 
 | Route | Method | Port | Login | Answers |
 | --- | --- | --- | --- | --- |
-| `/healthz` | `GET` or `HEAD` | 9847 | none. `ALLOWED_HOSTS` applies, and requests from inside the container are always allowed | `200 {"status":"ok"}`, or `503 {"status":"unhealthy","reasons":["..."]}`. Any other method gets `405` |
-| `/metrics` | `GET` | 9847 | none. Keep the port on your network | Prometheus text format |
+| `/healthz` | `GET` or `HEAD` | 9847, or the port `LISTEN_ADDR` names | none. `ALLOWED_HOSTS` applies, and requests from inside the container are always allowed | `200 {"status":"ok"}`, or `503 {"status":"unhealthy","reasons":["..."]}`. Any other method gets `405` |
+| `/metrics` | `GET` | 9847, or the port `LISTEN_ADDR` names | none. Keep the port on your network | Prometheus text format |
 
 **What healthy means.** The server is up and not shutting down, the pinned kiro-cli is installed at its exact version with its self-update off, and marotte is signed in to Kiro. [Health and repair](how-it-works.md#health-and-repair) lists each reason. The agent engine's state is not part of it, so `MarotteEngineDown` covers an engine that stays down.
 
-**Docker health.** The image checks itself every 30 seconds with `curl -sf http://127.0.0.1:9847/healthz`. Docker marks the container unhealthy after 3 failures, and allows 5 minutes after a start for the kiro-cli download. Docker's health status notifies nobody on its own, and Docker does not restart an unhealthy container. The example `compose.yaml` restarts a container that exits.
+**Docker health.** The image checks itself every 30 seconds with `marotte health`, which asks `/healthz` on the port `LISTEN_ADDR` names and prints why when the answer is not 200. Docker marks the container unhealthy after 3 failures, and allows 5 minutes after a start for the kiro-cli download. Docker's health status notifies nobody on its own, and Docker does not restart an unhealthy container. The example `compose.yaml` restarts a container that exits.
 
 **Who is told.**
 
@@ -114,4 +115,4 @@ A requested engine restart is back within seconds, and a first start can spend u
 | Loki only | an uptime prober on `/healthz` | the same prober, which sees a broken kiro-cli install but not a wedged engine |
 | Docker or Unraid only | an uptime prober on `/healthz`, or something that watches Docker health | the same |
 
-**Probing from outside.** Check `GET http://<host>:9847/healthz` and pass on status 200 only. Do not match the body. Use a 5-second timeout, check every 60 seconds, alert after 3 failures, and wait 5 minutes after a first start. When `ALLOWED_HOSTS` is set, address marotte by a name in the list, or it answers `403`. A Kubernetes liveness probe that must ignore readiness uses a `tcpSocket` probe on port 9847.
+**Probing from outside.** Check `GET http://<host>:9847/healthz` (or the port `LISTEN_ADDR` names) and pass on status 200 only. Do not match the body. Use a 5-second timeout, check every 60 seconds, alert after 3 failures, and wait 5 minutes after a first start. When `ALLOWED_HOSTS` is set, address marotte by a name in the list, or it answers `403`. A Kubernetes liveness probe that must ignore readiness uses a `tcpSocket` probe on port 9847 (or the port `LISTEN_ADDR` names).

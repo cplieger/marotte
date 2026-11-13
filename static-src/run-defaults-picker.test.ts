@@ -4,12 +4,12 @@ import type { ModelInfo } from "./types.js";
 
 const MODELS: readonly ModelInfo[] = [
   {
-    model_id: "opus",
-    model_name: "Opus",
+    model_id: "model-a",
+    model_name: "Model A",
     effort_tiers: ["low", "high", "xhigh"],
     default_effort_level: "high",
   },
-  { model_id: "sonnet", model_name: "Sonnet", effort_tiers: ["low", "medium"] },
+  { model_id: "model-b", model_name: "Model B", effort_tiers: ["low", "medium"] },
   { model_id: "auto", model_name: "Auto" },
 ];
 
@@ -41,8 +41,8 @@ describe("the run's Model and Effort picker", () => {
     expect(model.value).toBe("");
     expect([...model.options].map((o) => o.textContent)).toEqual([
       "Default",
-      "Opus",
-      "Sonnet",
+      "Model A",
+      "Model B",
       "Auto",
     ]);
     expect(effortField(effort).hidden).toBe(true);
@@ -52,7 +52,7 @@ describe("the run's Model and Effort picker", () => {
   it("lists the chosen model's tiers, labelled, under its own default", () => {
     const p = buildRunDefaultsPicker({ models: MODELS, initial: {} });
     const { model, effort } = selects(p.el);
-    choose(model, "opus");
+    choose(model, "model-a");
     expect(effortField(effort).hidden).toBe(false);
     expect([...effort.options].map((o) => o.textContent)).toEqual([
       "Default (high)",
@@ -60,27 +60,30 @@ describe("the run's Model and Effort picker", () => {
       "high",
       "x-high",
     ]);
-    expect(p.value()).toEqual({ model: "opus" });
+    expect(p.value()).toEqual({ model: "model-a" });
     choose(effort, "xhigh");
-    expect(p.value()).toEqual({ model: "opus", effort: "xhigh" });
+    expect(p.value()).toEqual({ model: "model-a", effort: "xhigh" });
   });
 
   it("keeps a tier the next model offers and drops one it does not", () => {
-    const p = buildRunDefaultsPicker({ models: MODELS, initial: { model: "opus", effort: "low" } });
+    const p = buildRunDefaultsPicker({
+      models: MODELS,
+      initial: { model: "model-a", effort: "low" },
+    });
     const { model, effort } = selects(p.el);
-    choose(model, "sonnet");
-    expect(p.value()).toEqual({ model: "sonnet", effort: "low" });
-    choose(model, "opus");
+    choose(model, "model-b");
+    expect(p.value()).toEqual({ model: "model-b", effort: "low" });
+    choose(model, "model-a");
     choose(effort, "xhigh");
-    choose(model, "sonnet");
+    choose(model, "model-b");
     expect(effort.value).toBe("");
-    expect(p.value()).toEqual({ model: "sonnet" });
+    expect(p.value()).toEqual({ model: "model-b" });
   });
 
   it("hides Effort for a model with no tiers and sends none for it", () => {
     const p = buildRunDefaultsPicker({
       models: MODELS,
-      initial: { model: "opus", effort: "high" },
+      initial: { model: "model-a", effort: "high" },
     });
     const { model, effort } = selects(p.el);
     choose(model, "auto");
@@ -101,31 +104,34 @@ describe("the run's Model and Effort picker", () => {
     const { model, effort } = selects(p.el);
     expect([...model.options].map((o) => o.value)).toEqual([""]);
     p.setModels(MODELS);
-    choose(model, "opus");
+    choose(model, "model-a");
     choose(effort, "low");
-    p.setModels([...MODELS, { model_id: "haiku", model_name: "Haiku" }]);
+    p.setModels([...MODELS, { model_id: "model-c", model_name: "Model C" }]);
     expect(model.options).toHaveLength(5);
-    expect(p.value()).toEqual({ model: "opus", effort: "low" });
+    expect(p.value()).toEqual({ model: "model-a", effort: "low" });
   });
 
   it("repaints a catalog that changes only a model's default tier", () => {
-    const p = buildRunDefaultsPicker({ models: MODELS, initial: { model: "opus" } });
+    const p = buildRunDefaultsPicker({ models: MODELS, initial: { model: "model-a" } });
     const { effort } = selects(p.el);
     expect(effort.options[0]?.textContent).toBe("Default (high)");
     p.setModels(
-      MODELS.map((m) => (m.model_id === "opus" ? { ...m, default_effort_level: "low" } : m)),
+      MODELS.map((m) => (m.model_id === "model-a" ? { ...m, default_effort_level: "low" } : m)),
     );
     expect(effort.options[0]?.textContent).toBe("Default (low)");
   });
 
   it("keeps a stored tier its model no longer offers, so the save sends it", () => {
-    const p = buildRunDefaultsPicker({ models: MODELS, initial: { model: "opus", effort: "max" } });
+    const p = buildRunDefaultsPicker({
+      models: MODELS,
+      initial: { model: "model-a", effort: "max" },
+    });
     const { effort } = selects(p.el);
     expect(effortField(effort).hidden).toBe(false);
     expect(effort.value).toBe("max");
-    expect(p.value()).toEqual({ model: "opus", effort: "max" });
-    p.setModels([...MODELS, { model_id: "haiku", model_name: "Haiku" }]);
-    expect(p.value()).toEqual({ model: "opus", effort: "max" });
+    expect(p.value()).toEqual({ model: "model-a", effort: "max" });
+    p.setModels([...MODELS, { model_id: "model-c", model_name: "Model C" }]);
+    expect(p.value()).toEqual({ model: "model-a", effort: "max" });
   });
 
   it("keeps a stored tier under a stored model the catalog no longer offers", () => {
@@ -139,10 +145,13 @@ describe("the run's Model and Effort picker", () => {
   });
 
   it("drops a stored tier its model no longer offers once the reader picks another model", () => {
-    const p = buildRunDefaultsPicker({ models: MODELS, initial: { model: "opus", effort: "max" } });
+    const p = buildRunDefaultsPicker({
+      models: MODELS,
+      initial: { model: "model-a", effort: "max" },
+    });
     const { model, effort } = selects(p.el);
-    choose(model, "sonnet");
+    choose(model, "model-b");
     expect([...effort.options].map((o) => o.value)).toEqual(["", "low", "medium"]);
-    expect(p.value()).toEqual({ model: "sonnet" });
+    expect(p.value()).toEqual({ model: "model-b" });
   });
 });

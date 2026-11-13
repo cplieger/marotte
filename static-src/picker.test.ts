@@ -1,12 +1,14 @@
 // The picker's visibility is an EFFECT over store state, so these tests drive the store and read
 // the `hidden` class the way a person reads the screen.
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import type * as Announce from "./legacy-ui/announce.js";
 
 // The shared live region, captured rather than driven: `announce()` clears and then sets its region
 // behind a 100ms timer, so reading the DOM would be asserting on that timer instead of on what the
 // picker decided to say.
 const { announced } = vi.hoisted(() => ({ announced: { said: [] as string[] } }));
-vi.mock("@cplieger/ui/announce", () => ({
+vi.mock("./legacy-ui/announce.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Announce>()),
   announce: (message: string) => {
     announced.said.push(message);
   },
@@ -25,7 +27,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   return {
     id: "chat-1",
     name: "test",
-    model: "claude-opus",
+    model: "model-a",
     acp_session_id: "",
     current_mode_id: "",
     supervised_mode: false,
@@ -87,8 +89,8 @@ describe("model picker visibility", () => {
         <div class="picker-grid"></div>
       </div>`;
     setPickerModels([
-      { model_id: "claude-opus", model_name: "Claude Opus", rate_multiplier: 1 },
-      { model_id: "claude-sonnet", model_name: "Claude Sonnet", rate_multiplier: 1 },
+      { model_id: "model-a", model_name: "Model A", rate_multiplier: 1 },
+      { model_id: "model-b", model_name: "Model B", rate_multiplier: 1 },
     ]);
     initModelPicker(
       () => {
@@ -275,7 +277,7 @@ describe("the model picker with no models", () => {
     // The catalog lands DURING the read, which is the only arrangement that can tell "read the
     // notice back afterwards" from "read it at the press": at the press the line still says the
     // list is empty.
-    nextReadLands = [{ model_id: "claude-opus", model_name: "Claude Opus", rate_multiplier: 1 }];
+    nextReadLands = [{ model_id: "model-a", model_name: "Model A", rate_multiplier: 1 }];
 
     grid().querySelector<HTMLButtonElement>("button.picker-retry")?.click();
 
@@ -320,7 +322,7 @@ describe("the model picker with no models", () => {
   it("keeps a cached catalog on screen when a later read fails or lands nothing", () => {
     // The second half of "a degraded read replaces nothing": app.ts installs no empty list over a
     // populated one, and the notice stands down while there is a list to show.
-    setPickerModels([{ model_id: "claude-opus", model_name: "Claude Opus", rate_multiplier: 1 }]);
+    setPickerModels([{ model_id: "model-a", model_name: "Model A", rate_multiplier: 1 }]);
 
     setCatalogPhase("ready");
     refreshPickerIfVisible();
@@ -336,7 +338,7 @@ describe("the model picker with no models", () => {
   });
 
   it("is a labelled listbox of real buttons once a catalog lands", () => {
-    setPickerModels([{ model_id: "claude-opus", model_name: "Claude Opus", rate_multiplier: 1 }]);
+    setPickerModels([{ model_id: "model-a", model_name: "Model A", rate_multiplier: 1 }]);
     setCatalogPhase("ready");
     refreshPickerIfVisible();
 

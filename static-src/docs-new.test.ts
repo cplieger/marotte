@@ -164,6 +164,21 @@ describe("the New button", () => {
     }
   });
 
+  it("says how to use a saved prompt beside it on Prompts, and nowhere else", () => {
+    sync("prompts");
+    const hint = slot.querySelector(".docs-new-hint");
+    expect(hint?.textContent).toContain("Type / in a chat and pick the prompt");
+    expect(hint?.textContent).toContain("$ARGUMENTS");
+    expect(slot.firstElementChild).toBe(hint);
+    expect(slot.lastElementChild).toBe(button());
+    sync("skills");
+    expect(slot.querySelector(".docs-new-hint")).toBeNull();
+    expect(button()).not.toBeNull();
+    sync("prompts");
+    sync("memories");
+    expect(slot.childElementCount).toBe(0);
+  });
+
   it("closes an open form when the tab changes", () => {
     openForm("steering");
     sync("skills");

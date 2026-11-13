@@ -580,7 +580,7 @@ func TestHandleSessionUpdate_StepFrameIsAttributedWithoutAMetaBlock(t *testing.T
 	if !called {
 		t.Fatal("handleSessionUpdate did not invoke the sub-handler (sub-dispatch returned early)")
 	}
-	want := translate.FrameAttribution{SessionID: stepSID, RunID: "wf_1", NodePath: "wf_1/build", Step: true}
+	want := translate.FrameAttribution{SessionID: stepSID, RunID: "wf_1", NodePath: "wf_1/build", NodeID: "build", Step: true}
 	if got != want {
 		t.Errorf("handleSessionUpdate(step session %q, no _meta.kiro.workflow) attribution = %+v, want %+v",
 			stepSID, got, want)
@@ -597,26 +597,26 @@ func TestHandleSessionUpdate_AStepsConfigFrameLeavesTheChatsModelAlone(t *testin
 	defer shutdownHub(t, h)
 	registerParentSession(t, h, chatID, "parent-A")
 	h.translator.RecordStepSession(stepSID, "wf_1", "build", "wf_1/build")
-	cs.seed(t, chatID, func(c *marotte.Chat) { c.Model = "opus" })
+	cs.seed(t, chatID, func(c *marotte.Chat) { c.Model = "model-a" })
 
 	update := mustJSON(t, map[string]any{
 		"sessionUpdate": string(marotte.ACPUpdateConfigOption),
 		"configOptions": []map[string]any{{
 			"id":           "model",
 			"type":         "select",
-			"currentValue": "fable",
-			"options":      []map[string]any{{"value": "opus", "name": "Opus"}, {"value": "fable", "name": "Fable"}},
+			"currentValue": "model-d",
+			"options":      []map[string]any{{"value": "model-a", "name": "Model A"}, {"value": "model-d", "name": "Model D"}},
 		}},
 	})
 	params := mustJSON(t, map[string]any{"sessionId": stepSID, "update": update})
 	h.handleSessionUpdate(t.Context(), chatID, &marotte.RPCResponse{Params: params})
 
 	c, _ := cs.Get(t.Context(), chatID)
-	if c.Model != "opus" {
-		t.Errorf("after a step's config frame Model = %q, want opus", c.Model)
+	if c.Model != "model-a" {
+		t.Errorf("after a step's config frame Model = %q, want model-a", c.Model)
 	}
-	if !slices.Equal(c.ServedModelIDs, []string{"opus", "fable"}) {
-		t.Errorf("ServedModelIDs = %v, want [opus fable] (the catalog half still applies)", c.ServedModelIDs)
+	if !slices.Equal(c.ServedModelIDs, []string{"model-a", "model-d"}) {
+		t.Errorf("ServedModelIDs = %v, want [model-a model-d] (the catalog half still applies)", c.ServedModelIDs)
 	}
 }
 

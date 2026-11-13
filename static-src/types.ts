@@ -91,10 +91,6 @@ export type {
   GovernanceMCPRegistry,
   GovernanceStatePayload,
   KnowledgeIndexingPayload,
-  MCPConnectedPayload,
-  MCPDisconnectedPayload,
-  MCPFailedPayload,
-  MCPOAuthPayload,
   OpenExternalURLPayload,
   PermissionConsent,
   PermissionNeededPayload,
@@ -115,6 +111,7 @@ export type {
   RunStartedPayload,
   RunProgressPayload,
   RunFinishedPayload,
+  LiveRunPayload,
   Recipe,
   RecipesResponse,
   RunLaunchRequest,
@@ -412,7 +409,7 @@ export interface Session {
   thinking_active?: string;
   /** The SERVER's copy of the composer draft, from the single-chat GET. A SEED only: composer-state.ts
    *  adopts it once per chat, since a fetch can land mid-typing. Off the header (no per-frame cost),
-   *  so an empty chat with a record needs activateChatView's own fetch to get one. */
+   *  so an empty chat with a record needs refreshChatView's own fetch to get one. */
   draft?: string;
   /** The SERVER's copy of the staged paths, a SEED like `draft`; off the header because both save on
    *  one 600ms debounce. */

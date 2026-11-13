@@ -127,6 +127,7 @@ async function paint(chatID: string, turnID: string, entries: Entry[]): Promise<
   const turns = new Map<string, TurnState>([[turnID, { entries, openEntries: new Map() }]]);
   store.setSessions([session(chatID, { turns, turn_order: [turnID], turn_count: 1 })]);
   store.setActive(chatID);
+  store.setPainted(chatID);
   store.bumpMessages(chatID, "load");
   await flushed();
   return viewOf(chatID);
@@ -145,6 +146,7 @@ beforeEach(() => {
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
+  store.setPainted("");
 });
 
 describe("a persisted steer the agent read", () => {

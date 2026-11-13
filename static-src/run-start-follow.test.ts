@@ -4,6 +4,7 @@ import type { RunNode, RunProgressFrame, RunState } from "./run-store.js";
 import type { RunAsks } from "./run-asks.js";
 import type { ExecNode } from "./exec-view/model.js";
 import { nodePathKey } from "./run-node-key.js";
+import { openDockPanel } from "./__test-helpers__/exec-dock.js";
 
 let responses: RunState[] = [];
 let resolvers: (() => void)[] = [];
@@ -21,6 +22,11 @@ vi.mock("./api-client.js", async (importOriginal) => ({
 }));
 
 const store = await import("./run-store.js");
+
+/** The page draws the run's tree, which only a tree reader's demand reads; off while the run is
+ *  forgotten between cases. */
+let drawsTree = true;
+store.registerRunStateDemand(() => drawsTree, "tree");
 const { runToExec } = await import("./run-exec-source.js");
 const { buildExecPage } = await import("./exec-view/page.js");
 
@@ -101,6 +107,7 @@ async function play(events: readonly Event[]): Promise<void> {
     } else if ("frame" in e) {
       land(e.frame);
     } else {
+      openDockPanel(dock);
       dock.querySelector<HTMLElement>(`.ev-row[data-path="${e.pick}"] > .ev-row-main`)?.click();
       expect(selected?.path, "the pick took").toBe(e.pick);
       continue;
@@ -116,7 +123,9 @@ beforeEach(() => {
   responses = [];
   resolvers = [];
   selected = undefined;
+  drawsTree = false;
   store.forgetRun("wf");
+  drawsTree = true;
   dock = document.createElement("div");
   page = buildExecPage({
     emptyNote: () => "",

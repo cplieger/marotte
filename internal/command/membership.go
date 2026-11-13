@@ -73,10 +73,14 @@ var (
 // since internal/tabs exports no interface of its own. List is here beyond the
 // mutations because the capacity reservation needs the count and every event
 // needs the expanded order, which no mutation returns; Subtree is what a Close
-// of an id will remove, asked before that close commits.
+// of an id will remove, asked before that close commits. Recent is read before
+// and after each mutation, because no mutation reports whether the list changed.
 type TabSet interface {
 	Open(ctx context.Context, spec marotte.OpenTab) (subject marotte.TabSubject, created bool, version uint64, err error)
-	Close(ctx context.Context, id string) ([]marotte.TabSubject, []tabs.OwedRelease, uint64, error)
+	Close(ctx context.Context, id string, unlisted []string, facts map[string]tabs.RecentFacts) ([]marotte.TabSubject, []tabs.OwedRelease, uint64, error)
+	Forget(ctx context.Context, ref string) (uint64, error)
+	ExpireRecent(ctx context.Context) (uint64, error)
+	Recent() []marotte.RecentClose
 	Reorder(ctx context.Context, ids []string) (uint64, error)
 	SetPinned(ctx context.Context, id string, pinned bool) (uint64, error)
 	SetSeen(ctx context.Context, id string, seen uint64) (uint64, error)
@@ -178,6 +182,8 @@ type Membership struct {
 	teardowns teardownQueue
 	// impact reads what a close stops, for the check of a confirmation; nil leaves every close unchecked.
 	impact closeImpactReader
+	// notices hears each ack's stored marker and each tab no open tab shows any more; nil hears nothing.
+	notices noticeLedger
 	// runs answers a run's owners and a session's runs. Nil refuses every new run tab
 	// and every create that claims a session, since neither can then be checked.
 	runs runOwner
@@ -198,6 +204,8 @@ type Membership struct {
 	// those no chat claimed; CreateChatAndOpen refuses to bind one. Both guarded by mu.
 	purgingRuns     map[string]struct{}
 	purgingSessions map[string]int
+	// recentWake tells RunRecentExpiry the list changed, so it re-reads the oldest expiry. Coalescing, buffer 1.
+	recentWake chan struct{}
 	// mu is THE operation lock, held across the reservation, the mint, both
 	// durable writes and the event. Order: mu -> chat record lock -> tabs writeMu.
 	mu sync.Mutex
@@ -229,6 +237,8 @@ type membershipDeps struct {
 	Teardowns teardownQueue
 	// Impact reads what a close stops; nil leaves every close unchecked.
 	Impact closeImpactReader
+	// Notices nil tells no ledger about acks and closes.
+	Notices noticeLedger
 }
 
 // newMembership builds the coordinator.
@@ -247,8 +257,10 @@ func newMembership(deps *membershipDeps) *Membership {
 		ops:               newCreateLedger(),
 		purgingRuns:       map[string]struct{}{},
 		purgingSessions:   map[string]int{},
+		recentWake:        make(chan struct{}, 1),
 		teardowns:         deps.Teardowns,
 		impact:            deps.Impact,
+		notices:           deps.Notices,
 	}
 	if m.teardowns == nil {
 		m.teardowns = newTeardownRunner(deps.Lifecycle, m.runJob)
@@ -644,7 +656,7 @@ func (m *Membership) launcherTab(ctx context.Context, launcher marotte.ChatID) (
 // the close left tabless. An id that is not open closes nothing and is not an error.
 //
 // Under mu it holds each closed chat's life gate, refuses a stale impact with 409
-// close_impact_changed (holds released, nothing committed), then commits with tabs.Close,
+// close_impact_changed (holds released, nothing committed), then commits with tabs.Close (the doomed chats unlisted),
 // swaps a person's close's tab facts for stop holds, deletes the doomed records and enqueues
 // each chat's teardown; it answers without waiting for the teardowns (teardownRunner.enqueue
 // owns the draining exception). Past the commit there is no rollback, only roll-forward.
@@ -663,7 +675,8 @@ func (m *Membership) closeTab(ctx context.Context, id, opID string, byPerson boo
 		return nil, 0, check.refusal(errCloseImpactChanged, "tab", id)
 	}
 	doomed := m.doomedChats(ctx, id)
-	closed, owed, version, err := m.tabs.Close(ctx, id)
+	before := m.tabs.Recent()
+	closed, owed, version, err := m.tabs.Close(ctx, id, chatRefs(doomed), m.recentFacts(ctx, chats))
 	if err != nil {
 		releaseAll(holds)
 		m.mu.Unlock()
@@ -682,9 +695,11 @@ func (m *Membership) closeTab(ctx context.Context, id, opID string, byPerson boo
 	m.emit(rollCtx, &marotte.TabsChangedPayload{
 		RemovedIDs: subjectIDs(closed),
 		Order:      m.order(),
+		Recent:     m.recentChange(before),
 		Version:    version,
 		OpID:       opID,
 	})
+	m.noticeClosed(closed)
 	stops := m.releaseForClosed(rollCtx, owed, "", byPerson && m.closeChat != nil)
 	deleted := m.deleteDoomedRecords(rollCtx, doomed)
 	jobs, retentionTabClosed := jobsFor(closed, deleted, holds, stops, byPerson)
@@ -862,6 +877,7 @@ func (m *Membership) reorderTabs(ctx context.Context, ids []string, opID string)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	before := m.version()
+	recent := m.tabs.Recent()
 	version, err := m.tabs.Reorder(ctx, ids)
 	if err != nil {
 		return 0, tabStatus(err)
@@ -869,7 +885,7 @@ func (m *Membership) reorderTabs(ctx context.Context, ids []string, opID string)
 	// An order identical to the one already held commits nothing and must
 	// emit nothing.
 	if version != before {
-		m.emit(ctx, &marotte.TabsChangedPayload{Order: m.order(), Version: version, OpID: opID})
+		m.emit(ctx, &marotte.TabsChangedPayload{Order: m.order(), Recent: m.recentChange(recent), Version: version, OpID: opID})
 	}
 	return version, nil
 }
@@ -889,13 +905,14 @@ func (m *Membership) setPinned(ctx context.Context, id string, pinned bool, opID
 	if indexOfTab(open, id) < 0 {
 		return 0, StatusError(http.StatusNotFound, errTabUnknown)
 	}
+	recent := m.tabs.Recent()
 	version, err := m.tabs.SetPinned(ctx, id, pinned)
 	if err != nil {
 		return 0, StatusError(http.StatusInternalServerError, err)
 	}
 	if version != before {
 		if changed, ok := m.subject(id); ok {
-			m.emit(ctx, &marotte.TabsChangedPayload{Changed: &changed, Version: version, OpID: opID})
+			m.emit(ctx, &marotte.TabsChangedPayload{Changed: &changed, Recent: m.recentChange(recent), Version: version, OpID: opID})
 		}
 	}
 	return version, nil
@@ -939,6 +956,7 @@ func (m *Membership) ackTab(ctx context.Context, id string, seen uint64, opID st
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	before := m.version()
+	recent := m.tabs.Recent()
 	version, err = m.tabs.SetSeen(ctx, id, min(seen, bound))
 	if err != nil {
 		slog.Warn("tab ack not persisted", "tab", id, "error", err)
@@ -946,7 +964,10 @@ func (m *Membership) ackTab(ctx context.Context, id string, seen uint64, opID st
 	}
 	changed, ok := m.subject(id)
 	if version != before && ok {
-		m.emit(ctx, &marotte.TabsChangedPayload{Changed: &changed, Version: version, OpID: opID})
+		m.emit(ctx, &marotte.TabsChangedPayload{Changed: &changed, Recent: m.recentChange(recent), Version: version, OpID: opID})
+	}
+	if ok && changed.Seen > 0 && m.notices != nil {
+		m.notices.Seen(changed.Kind, changed.Ref, changed.Seen)
 	}
 	return version, changed.Seen, nil
 }
@@ -971,6 +992,7 @@ func (m *Membership) reparent(ctx context.Context, id, parent, opID string) (mar
 	if p := indexOfTab(open, parent); p < 0 || open[p].Kind != marotte.TabKindChat {
 		return marotte.TabSubject{}, 0, StatusError(http.StatusConflict, errParentNotChat)
 	}
+	recent := m.tabs.Recent()
 	version, err := m.tabs.Reparent(ctx, id, parent)
 	if err != nil {
 		if errors.Is(err, tabs.ErrCycle) {
@@ -983,7 +1005,9 @@ func (m *Membership) reparent(ctx context.Context, id, parent, opID string) (mar
 		return marotte.TabSubject{}, 0, StatusError(http.StatusInternalServerError, errTabUnknown)
 	}
 	if version != before {
-		m.emit(ctx, &marotte.TabsChangedPayload{Changed: &changed, Order: m.order(), Version: version, OpID: opID})
+		m.emit(ctx, &marotte.TabsChangedPayload{
+			Changed: &changed, Order: m.order(), Recent: m.recentChange(recent), Version: version, OpID: opID,
+		})
 	}
 	return changed, version, nil
 }
@@ -1425,6 +1449,7 @@ func (m *Membership) sessionPurging(sessionID string) bool {
 
 // openTab opens and, when something was committed, emits. Caller holds mu.
 func (m *Membership) openTab(ctx context.Context, spec marotte.OpenTab, opID string) (TabOpened, error) {
+	recent := m.tabs.Recent()
 	subject, created, version, err := m.tabs.Open(ctx, spec)
 	if err != nil {
 		return TabOpened{}, tabStatus(err)
@@ -1434,6 +1459,7 @@ func (m *Membership) openTab(ctx context.Context, spec marotte.OpenTab, opID str
 		m.emit(ctx, &marotte.TabsChangedPayload{
 			Changed: &subject,
 			Order:   m.order(),
+			Recent:  m.recentChange(recent),
 			Version: version,
 			OpID:    opID,
 		})
@@ -1445,30 +1471,28 @@ func (m *Membership) openTab(ctx context.Context, spec marotte.OpenTab, opID str
 // that fails too the removal is emitted ANYWAY, stamped one past the current version: the chat being gone is worse
 // to leave unstated than the next real mutation being read as a duplicate. Each closed tab's descendant chats close
 // as closing that tab would: their holds in held are committed and a close job returned for each, which the caller
-// enqueues in the same section; a hold no close committed is released uncommitted. Caller holds mu.
+// enqueues in the same section; a hold no close committed is released uncommitted. chatID's Recently closed entry
+// is forgotten first and chatID is never listed; the cascade's chats are listed only with retention on. Caller holds mu.
 func (m *Membership) closeTabsFor(ctx context.Context, chatID marotte.ChatID, opID string, held map[marotte.ChatID]ChatHold) []teardownJob {
 	defer releaseAll(held)
 	if m.tabs == nil {
 		return nil
 	}
 	var jobs []teardownJob
+	m.forgetRecent(ctx, chatID, opID)
 	open, _ := m.tabs.List()
-	for _, doomed := range tabsForChat(open, chatID) {
+	removing := tabsForChat(open, chatID)
+	// Retention off keeps no closed chat to list again, so the cascade then lists none of the chats it closes.
+	listUnder := m.retention == nil || m.retention(ctx)
+	for _, doomed := range removing {
 		under := m.subtreeChats(doomed.ID)
-		closed, owed, version, err := m.tabs.Close(ctx, doomed.ID)
-		if err != nil {
-			slog.Warn("tab close failed after its chat was removed, retrying",
-				"chat_id", chatID, "tab", doomed.ID, keyError, err)
-			closed, owed, version, err = m.tabs.Close(ctx, doomed.ID)
+		unlisted := []string{string(chatID)}
+		if !listUnder {
+			unlisted = append(unlisted, chatRefs(under)...)
 		}
-		if err != nil {
-			slog.Error("tab close still failing after its chat was removed; announcing the removal anyway",
-				"chat_id", chatID, "tab", doomed.ID, keyError, err)
-			m.emit(ctx, &marotte.TabsChangedPayload{
-				RemovedIDs: []string{doomed.ID},
-				Version:    m.version() + 1,
-				OpID:       opID,
-			})
+		recent := m.tabs.Recent()
+		closed, owed, version, ok := m.closeRemovedTab(ctx, chatID, doomed.ID, opID, unlisted, m.recentFacts(ctx, under))
+		if !ok {
 			continue
 		}
 		if len(closed) == 0 {
@@ -1484,12 +1508,51 @@ func (m *Membership) closeTabsFor(ctx context.Context, chatID marotte.ChatID, op
 		m.emit(ctx, &marotte.TabsChangedPayload{
 			RemovedIDs: subjectIDs(closed),
 			Order:      m.order(),
+			Recent:     m.recentChange(recent),
 			Version:    version,
 			OpID:       opID,
 		})
+		m.noticeClosed(closed)
 		m.releaseForClosed(ctx, owed, chatID, false)
 	}
 	return jobs
+}
+
+// closeRemovedTab closes tabID for closeTabsFor, retrying once; when both tries fail it emits the removal anyway
+// and reports false. Caller holds mu.
+func (m *Membership) closeRemovedTab(ctx context.Context, chatID marotte.ChatID, tabID, opID string, unlisted []string,
+	facts map[string]tabs.RecentFacts,
+) (closed []marotte.TabSubject, owed []tabs.OwedRelease, version uint64, ok bool) {
+	closed, owed, version, err := m.tabs.Close(ctx, tabID, unlisted, facts)
+	if err != nil {
+		slog.Warn("tab close failed after its chat was removed, retrying",
+			"chat_id", chatID, "tab", tabID, keyError, err)
+		closed, owed, version, err = m.tabs.Close(ctx, tabID, unlisted, facts)
+	}
+	if err != nil {
+		slog.Error("tab close still failing after its chat was removed; announcing the removal anyway",
+			"chat_id", chatID, "tab", tabID, keyError, err)
+		m.emit(ctx, &marotte.TabsChangedPayload{
+			RemovedIDs: []string{tabID},
+			Version:    m.version() + 1,
+			OpID:       opID,
+		})
+		return nil, nil, 0, false
+	}
+	return closed, owed, version, true
+}
+
+// noticeClosed tells the notice ledger each closed subject no open tab still shows. Caller holds mu.
+func (m *Membership) noticeClosed(closed []marotte.TabSubject) {
+	if m.notices == nil {
+		return
+	}
+	open, _ := m.tabs.List()
+	for _, t := range closed {
+		if indexOfSubject(open, t.Kind, t.Ref) < 0 {
+			m.notices.TabClosed(t.Kind, t.Ref)
+		}
+	}
 }
 
 // holdDescendants holds every chat whose tab sits under a tab showing chatID, chatID itself excluded, once per

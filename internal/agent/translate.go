@@ -38,7 +38,7 @@ func (rt *Runtime) initDispatch() {
 		marotte.MethodSessionUpdate: rt.handleSessionUpdate,
 		// v3 _kiro/* notifications.
 		methodV3RateLimit:            rt.translator.HandleRateLimit,
-		methodV3CustomAgentNotFound:  rt.translator.HandleAgentNotFound,
+		methodV3CustomAgentNotFound:  rt.coord.noteBotRoleMissing(rt.translator.HandleAgentNotFound),
 		methodV3CustomAgentConfigErr: rt.translator.HandleAgentConfigError,
 		methodV3MCPStatus:            rt.translator.HandleMCPStatus,
 		methodV3CodeReferences:       rt.translator.HandleCodeReferences,
@@ -82,6 +82,13 @@ func (rt *Runtime) initDispatch() {
 		rt.chatHandlers[method] = rt.runs.asksOnFrame(rt.chatHandlers[method])
 	}
 	rt.chatHandlers[methodWFWatchPoll] = rt.runs.asksOnMotion(rt.chatHandlers[methodWFWatchPoll])
+	// Every workflow frame is the run's activity, which its silence is measured from (run_silence.go).
+	for _, method := range []string{
+		methodWFRunStart, methodWFRunComplete, methodWFNodeStart, methodWFNodeComplete,
+		methodWFNodePaused, methodWFPaused, methodWFLoopIteration, methodWFStepsQueued, methodWFWatchPoll,
+	} {
+		rt.chatHandlers[method] = rt.runs.framed(rt.chatHandlers[method])
+	}
 	// Recognised and ignored, kept out of the Debug log.
 	rt.noopMethods = map[string]struct{}{
 		methodV3SessionsChanged:    {},
@@ -100,7 +107,7 @@ func (rt *Runtime) initDispatch() {
 		marotte.ACPUpdateToolCall:   rt.translator.HandleToolCall,
 		marotte.ACPUpdateToolUpdate: rt.translator.HandleToolCallUpdate,
 		marotte.ACPUpdatePlan:       rt.translator.HandlePlan,
-		marotte.ACPUpdateModeChange: ignoreAttribution(rt.translator.HandleModeUpdate),
+		marotte.ACPUpdateModeChange: rt.coord.keepBotRole(ignoreAttribution(rt.translator.HandleModeUpdate)),
 		// The metadata channels.
 		marotte.ACPUpdateSessionInfo: rt.translator.HandleSessionInfoUpdate,
 		marotte.ACPUpdateUsage:       ignoreAttribution(rt.translator.HandleUsageUpdate),

@@ -12,15 +12,21 @@ Reported as [kirodotdev/Kiro#11995](https://github.com/kirodotdev/Kiro/issues/11
 
 ### The agent stalls during a file search
 
-kiro-cli runs its own ripgrep when the agent searches the workspace. When ripgrep fails, kiro-cli falls back to a slow listing with no time limit, and every chat and workflow its engine hosts waits while it runs, sometimes for over an hour. ripgrep fails on a dangling symbolic link or a link loop anywhere in the workspace, and on a tree too large to search in 30 seconds.
+kiro-cli runs its own ripgrep when the agent searches the workspace. When ripgrep fails, kiro-cli falls back to a slow listing with no time limit, and every chat and workflow its engine hosts waits while it runs, sometimes for over an hour. A text search falls back when ripgrep reports any error, such as a dangling symbolic link or a link loop anywhere in the workspace. From kiro-cli 3.2.1 a file search keeps ripgrep's results in that case and falls back only when ripgrep found nothing. Both fall back on a tree too large to search in 30 seconds.
 
 Reported as [kirodotdev/Kiro#11957](https://github.com/kirodotdev/Kiro/issues/11957), open. marotte runs the agent's `grep_search` and `file_search` itself, so kiro-cli's own search and its fallback never run. marotte searches the workspace and the additional directories with ripgrep, honours `.gitignore`, never follows symbolic links, and keeps ripgrep's results when it skips an unreadable path. A search that names a folder, such as `marotte/internal/**/*.go`, reads only that folder. Each search ends after 15 seconds, or when you stop the reply, and the agent receives what was found by then: at most 100 files for a text search.
 
 ### A reply hangs after a failed compaction
 
-When kiro-cli's own automatic compaction fails, the reply can stay open with nothing more arriving. marotte turns kiro-cli's automatic compaction off in every chat and compacts at the end of a reply instead, so a chat no longer meets this. A workflow step, which kiro-cli still compacts by itself, can.
+When kiro-cli's own automatic compaction fails, the reply can stay open with nothing more arriving. marotte turns kiro-cli's automatic compaction off in every chat and compacts at the end of a reply instead, so a chat no longer meets this. A workflow step, which kiro-cli still compacts by itself, can. marotte marks a step that shows no activity for an hour and notifies you, and stops the run instead when no chat started it.
 
 Reported in the Kiro Crew tracker as [kirodotdev/KiroCrew#3583](https://github.com/kirodotdev/KiroCrew/issues/3583), closed after Kiro Crew added a time limit in its own client. kiro-cli itself still leaves the reply open. After a failed compaction, marotte ends a reply that shows no new activity for 60 seconds and marks it interrupted.
+
+### Context use reads the figure from before a compaction
+
+After a compaction, kiro-cli keeps reporting the context use from before it until the model's next reply measures it again. A chat at 96% before `/compact` can still read 96% at about 30% real use. A client that compacts or warns at a context limit then acts on a figure that is no longer true.
+
+Reported as [kirodotdev/Kiro#12392](https://github.com/kirodotdev/Kiro/issues/12392), open. After a compaction, marotte clears the chat's context use and ignores the figure kiro-cli repeats until the model's next reply measures it. The **Compact at** point and the 95% stop act only on a figure a model reply measured. marotte therefore does not stop a turn on the old figure.
 
 ### Replies slow down when many chats and workflow steps run at once
 
@@ -80,6 +86,18 @@ A message another service sends through the [notify route](configuration.md#waki
 
 Reported as [kirodotdev/Kiro#12325](https://github.com/kirodotdev/Kiro/issues/12325), open. kiro-cli offers no way to name a message's sender. The chat shows "Sent by" and the caller's `source` on the message, but the agent does not read the `source`. Until kiro-cli supports a sender label, start the message's text by naming the service that sent it.
 
+### A saved prompt shows as the command you typed
+
+When you send a saved prompt, such as `/chat-extract`, your message in the chat shows the command you typed, not the prompt's text that the agent received. A reload shows the same.
+
+Reported as [kirodotdev/Kiro#12398](https://github.com/kirodotdev/Kiro/issues/12398), open. kiro-cli sends the prompt's text to the model but reports only the typed command to marotte, live and on reload. marotte has no workaround, because it shows what kiro-cli reports rather than reading the prompt file itself. To see what the agent received, open the prompt on the `/docs` page.
+
+### A forked or branched chat carries the ID of the chat it came from
+
+The agent's shell commands carry the chat's session ID as `KIRO_SESSION_ID`. In a chat started with **Fork a tangent** or **Branch from here**, that variable holds the ID of the chat it was forked from, not the new chat's own. A [notify request](configuration.md#waking-a-chat-from-another-service-marotte_notify_token) or a [message between chats](configuration.md#messages-between-chats) addressed with it reaches the chat it came from. kiro-cli sets the variable from the conversation's root, which a fork keeps from its source chat.
+
+Reported as [kirodotdev/Kiro#12427](https://github.com/kirodotdev/Kiro/issues/12427), open. marotte has no workaround, because kiro-cli sets the variable itself. Until it changes, a forked or branched chat cannot read its own ID, so address requests and messages only to chats that were not forked or branched.
+
 ## Skills
 
 ### A skill with a long description or an underscore in its name never loads
@@ -132,11 +150,11 @@ When a workflow step asks a question, gets its answer while its turn is still ru
 
 Reported as [kirodotdev/Kiro#12326](https://github.com/kirodotdev/Kiro/issues/12326), open. When marotte's record of every waiting step shows that the step's question was answered and its turn then failed on a model error a retry can clear, such as a throttle, marotte answers the question itself with kiro-cli's own message for continuing an interrupted turn, and the step carries on. The answer shows in the step as sent by marotte. **Resume** on the run's tab sends the same answer in your name. marotte's own answers count toward its limit of 3 automatic resumes with no progress in between, after which it stops resuming the run as described in the entry above. A step whose turn failed before its question was answered keeps waiting for your answer.
 
-### A step on grok-4.7 can end with kiro-cli's placeholder as its answer
+### A step can end with kiro-cli's placeholder as its answer
 
-When a turn fails on a model throttle before the model replies, kiro-cli puts a placeholder reply in its place in every later request to the model. The placeholder starts "(No assistant response was recorded for the preceding turn." Later in such a session, grok-4.7 sometimes answers with that exact text and ends its turn. In a workflow step, kiro-cli then counts the step as completed with the placeholder as its output, and the run moves on. On one host this happened in about 1 in 10 grok-4.7 sessions with a throttled turn, and in no Claude session.
+When a turn fails on a model throttle before the model replies, kiro-cli puts a placeholder reply in its place in every later request to the model. The placeholder starts "(No assistant response was recorded for the preceding turn." Later in such a session, a model can answer with that exact text and end its turn. In a workflow step, kiro-cli then counts the step as completed with the placeholder as its output, and the run moves on.
 
-Reported as [kirodotdev/Kiro#12327](https://github.com/kirodotdev/Kiro/issues/12327), open. marotte marks a step failed when kiro-cli completes it with no completion signal and the step's answer after its last tool call is empty or is the placeholder. The run's tab shows the step as failed with the reason "The step ended with an empty model turn and no completion signal, so its work may be unfinished." A **Workflow runs** notification says the step failed, and the agent that started the run is told which step failed and how to run its work again. kiro-cli has already moved the run past the step, so marotte does not re-run it.
+Not tracked upstream: the report was withdrawn and its issue closed. kiro-cli 3.2.1 still inserts the placeholder. marotte marks a step failed when kiro-cli completes it with no completion signal and the step's answer after its last tool call is empty or is the placeholder. The run's tab shows the step as failed with the reason "The step ended with an empty model turn and no completion signal, so its work may be unfinished." A **Workflow runs** notification says the step failed, and the agent that started the run is told which step failed and how to run its work again. kiro-cli has already moved the run past the step, so marotte does not re-run it.
 
 ### A step that finished inside a parallel group holds up the steps after it
 

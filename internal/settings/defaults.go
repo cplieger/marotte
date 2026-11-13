@@ -82,12 +82,15 @@ const (
 	// internal/agent's agentFeatures (values in agent_features.go).
 	// KeyWorkValidation, KeyCloudFormationSafety, KeyAutoRouting and
 	// KeyAutoDelegation are three-state: empty sends nothing, so kiro-cli's own
-	// experiment decides. KeyModelFallback on sends KAS's refusal and availability
-	// fallback flags; off sends nothing, leaving kiro-cli's default (off) in force.
+	// experiment decides; KeyCloudFormationSafety also takes "enforce". KeyModelFallback
+	// sends KAS's refusal and availability fallback flags as true or false; it defaults
+	// on, as kiro-cli does.
 	KeySpecPlanning         = "spec_planning"
 	KeySpecPlanningAskFirst = "spec_planning_ask_first"
 	KeySteeringReminders    = "steering_reminders_enabled"
 	KeyWorkflowsEnabled     = "workflows_enabled"
+	KeyChatMessaging        = "chat_messaging_enabled"
+	KeyChatAwareness        = "chat_awareness_enabled"
 	KeyWorkValidation       = "work_validation"
 	KeyCloudFormationSafety = "cloudformation_safety_check"
 	KeyAutoRouting          = "auto_routing"
@@ -96,7 +99,19 @@ const (
 	// KeyWorkflowLaunch is asserted at the session doors as KAS's workflowLaunch option, and
 	// read only while KeyWorkflowsEnabled is on.
 	KeyWorkflowLaunch = "workflow_launch"
-
+	// KeyWorkflowCreatorEffort is the effort of the step KAS runs to draft a workflow from a prose request, sent in
+	// the session doors' workflows object and read only while KeyWorkflowsEnabled is on; empty sends nothing.
+	KeyWorkflowCreatorEffort = "workflow_creator_effort"
+	// KeyChatMessageDeliveryLimit caps one agent-to-agent exchange between two chats (KAS's
+	// sendMessageDeliveryLimit), sent at initialize, so it applies when the engine restarts.
+	KeyChatMessageDeliveryLimit = "chat_message_delivery_limit"
+	// The Knowledge base indexing settings (knowledge_tuning.go), sent in the initialize block's knowledge object, so
+	// each applies when the engine restarts.
+	KeyKnowledgeIndexType       = "knowledge_index_type"
+	KeyKnowledgeIncludePatterns = "knowledge_include_patterns"
+	KeyKnowledgeExcludePatterns = "knowledge_exclude_patterns"
+	KeyKnowledgeMaxFiles        = "knowledge_max_files"
+	KeyKnowledgeChunking        = "knowledge_chunking"
 	// KeyOutputStyle, a KAS output style id, rides each chat prompt as _meta.kiro.outputStyle.
 	// KeyTerminalCommandTimeoutMs is the shell tool's default timeout (0 = KAS's
 	// 120 s), sent at initialize and pushed live to the engine.
@@ -164,9 +179,18 @@ var KnownKeys = map[string]struct{}{
 	KeyTerminalCommandTimeoutMs: {},
 	KeyWorkValidation:           {},
 	KeyWorkflowsEnabled:         {},
+	KeyChatMessaging:            {},
+	KeyChatAwareness:            {},
+	KeyChatMessageDeliveryLimit: {},
 	KeyWorkflowLaunch:           {},
+	KeyWorkflowCreatorEffort:    {},
 	KeyGuardPayloadLinks:        {},
 	KeyKnowledgeEnabled:         {},
+	KeyKnowledgeIndexType:       {},
+	KeyKnowledgeIncludePatterns: {},
+	KeyKnowledgeExcludePatterns: {},
+	KeyKnowledgeMaxFiles:        {},
+	KeyKnowledgeChunking:        {},
 	KeyModelFallback:            {},
 	KeyContentCollectionEnabled: {},
 	KeyLastEffortByModel:        {},

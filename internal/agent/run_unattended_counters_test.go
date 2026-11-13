@@ -13,7 +13,7 @@ import (
 
 // unattendedFailureReasons are the reasons an unattended run's failure is counted under.
 var unattendedFailureReasons = []string{
-	"needs_approval", "overran", "backstop", "stalled", "paused", "orphaned", "cancel_given_up",
+	"needs_approval", "overran", "stalled", "paused", "orphaned", "cancel_given_up",
 }
 
 // failureCounts reads marotte_unattended_run_failures_total for every unattended origin and reason, keyed

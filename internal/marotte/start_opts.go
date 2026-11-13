@@ -74,17 +74,32 @@ type EngineOpts struct {
 	HighThroughput bool
 }
 
-// EngineFeatures are the Agent-capabilities settings KAS reads per engine. InfraSafetyMonitor,
-// AutoRouting and AutoDelegation are "" (send nothing, kiro-cli's experiment decides), "on" or "off".
+// EngineFeatures are the Agent-capabilities settings KAS reads per engine. InfraSafety, AutoRouting and
+// AutoDelegation are "" (send nothing, kiro-cli's experiment decides), "on" or "off"; InfraSafety also "enforce".
 type EngineFeatures struct {
-	InfraSafetyMonitor string
-	AutoRouting        string
-	AutoDelegation     string
+	InfraSafety    string
+	AutoRouting    string
+	AutoDelegation string
+	// Knowledge is how KAS builds a knowledge base.
+	Knowledge KnowledgeTuning
 	// TerminalCommandTimeoutMs is the shell tool's default timeout; 0 is unset.
 	TerminalCommandTimeoutMs int
-	SteeringReminders        bool
+	// MessageDeliveryLimit is KAS's sendMessageDeliveryLimit; 0 withholds it.
+	MessageDeliveryLimit int
+	SteeringReminders    bool
 	// ModelFallback sends KAS's refusal and availability fallback flags.
 	ModelFallback bool
+}
+
+// KnowledgeTuning is how KAS builds a knowledge base, sent inside the knowledge setting at initialize whether or not
+// the agent's Knowledge tool is on, since the Knowledge bases panel indexes either way. A zero member is withheld, so
+// kiro-cli's own default applies; Chunking is withheld whole.
+type KnowledgeTuning struct {
+	IndexType       string
+	IncludePatterns []string
+	ExcludePatterns []string
+	MaxFiles        int
+	Chunking        KnowledgeChunking
 }
 
 // SessionRole names what a session is for: a chat's, a parentless run's host, or an observer
@@ -119,6 +134,9 @@ type SessionOpts struct {
 	// Steering is the chat's client steering, sent on both doors; nil sends no key. Chat sessions
 	// only: it carries chat-user guidance a workflow host and an observer have no use for.
 	Steering []ClientSteeringDoc
+	// CustomAgents are the session-scoped client custom agents, sent on both doors: KAS rebuilds the session's
+	// registry from each call's list. A started Bot's chat carries its role; every other session none.
+	CustomAgents []ClientCustomAgent
 	// AdditionalDirectories are the directories beyond the workspace the session may reach, sent
 	// on BOTH doors: KAS adopts the list per call, so a door without it drops them.
 	AdditionalDirectories []string
@@ -144,8 +162,14 @@ type SessionFeatures struct {
 	// WorkflowLaunch is the workflowLaunch value the session doors assert where KAS offers the
 	// option; empty asserts nothing.
 	WorkflowLaunch string
+	// WorkflowCreatorEffort is the effort level of the step KAS runs to draft a workflow; empty sends none.
+	WorkflowCreatorEffort string
 	// Workflows gives the agent its workflow tools; the zero value withholds them.
-	Workflows            bool
+	Workflows bool
+	// Messaging is KAS's sessionToolsMessaging switch; KAS delivers only between sessions that both have it on.
+	Messaging bool
+	// Awareness is KAS's sessionToolsAwareness switch, which gives the session the tools that list and search others.
+	Awareness            bool
 	SpecAskClarification bool
 }
 

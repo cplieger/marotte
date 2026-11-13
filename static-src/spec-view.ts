@@ -1,7 +1,7 @@
 // The spec tab's page: one Kiro spec's documents, tasks.md as a live checklist.
 
-import { effect, el, signal, touch } from "@cplieger/ui";
-import { createDisclosure } from "@cplieger/ui/disclosure";
+import { effect, el, signal, touch } from "@cplieger/reactive";
+import { createDisclosure } from "./legacy-ui/disclosure.js";
 import { apiGetConditional } from "./api-client.js";
 import { BUS_USER_INPUT_ANSWERED, onBus, onSSE } from "./bus.js";
 import { sendPromptTo, type SendPromptResult } from "./chat-commands.js";
@@ -11,13 +11,12 @@ import { approveSpecPhase } from "./actions/spec.js";
 import { renderMarkdownDoc } from "./editor-markdown.js";
 import { openFile } from "./editor-openers.js";
 import { paintStatus } from "./fundamentals/work-status.js";
-import { renderMarkdownInto } from "./markdown.js";
+import { releaseMarkdownIn, renderMarkdownInto } from "./markdown.js";
 import { paintIfChanged, sigChanged } from "./paint-sig.js";
 import { initSegmentedBar } from "./segmented-bar.js";
 import { editorDocSkeleton } from "./skeleton.js";
 import { get, isBusy, watchBusy } from "./store.js";
 import { openChatRefs, openSpecRefs, parentChatRef, setTabParent, tabIdFor } from "./tabs.js";
-import { releaseScrollableTablesIn } from "./table-scroll.js";
 import { SharedScroll } from "./view-scroll.js";
 import { swapViews } from "./view-swap.js";
 import { decodeSpec } from "./wire/decoders.gen.js";
@@ -179,7 +178,7 @@ function release(ref: string): void {
     unmountDecisionDock(st.page.dockHost);
   }
   if (st.page !== null) {
-    releaseScrollableTablesIn(st.page.root);
+    releaseMarkdownIn(st.page.root);
     st.page.root.remove();
   }
   states.delete(ref);
@@ -991,9 +990,9 @@ function paint(ref: string): void {
   }
 }
 
-/** Swap the pane's content, letting go of the markdown tables it held before their DOM is discarded. */
+/** Swap the pane's content, letting go of the markdown renders it held before their DOM is discarded. */
 function replacePane(pane: HTMLElement, content: readonly Node[]): void {
-  releaseScrollableTablesIn(pane);
+  releaseMarkdownIn(pane);
   pane.replaceChildren(...content);
 }
 
@@ -1207,7 +1206,7 @@ function buildPane(
   }
   if (doc.role !== "tasks") {
     const host = el("div", { className: "spec-prose" });
-    renderMarkdownDoc(host, doc.content);
+    renderMarkdownDoc(host, doc.content, 3);
     return [
       el("div", { className: "spec-doc-actions" }, ...docActions(ref, st, spec, seg, doc)),
       host,
@@ -1409,7 +1408,7 @@ function renderTaskNode(node: SpecTaskNode, depth: number, ctx: NodeCtx): HTMLEl
         className: "spec-node-detail message assistant",
         style: `${DEPTH_PROP}:${String(depth)}`,
       });
-      renderMarkdownInto(detail, node.detail);
+      renderMarkdownInto(detail, node.detail, { headingLevel: 3 });
       body.appendChild(detail);
     }
     if (hasKids) {

@@ -13,7 +13,7 @@ import type {
 import type { PermissionCommand, RejectionNote } from "./wire/types.gen.js";
 import { decodeToolCallBulk } from "./wire/decoders.gen.js";
 import { apiGetTyped } from "./api-client.js";
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { formatMCPToolName } from "./tool-schema.js";
 import { openChange } from "./navigate.js";
 import { openSetting } from "./settings-highlight.js";

@@ -1,7 +1,7 @@
 // One bindList over `servers` (keyed by id), so a row element persists across changes and keeps toggle focus. Each
 // row's one effect reads its server, status and prewarm signals and patches the row surgically.
 
-import { el, bindList, effect, signal } from "@cplieger/ui";
+import { el, bindList, effect, signal } from "@cplieger/reactive";
 
 import { $, maybeEl, setControlBusy } from "./dom.js";
 import { reconcile } from "./reconcile.js";
@@ -26,6 +26,7 @@ import {
   unconfiguredNames,
   unreadableEntries,
   mcpState,
+  adaptStatus,
   standingFor,
   statusSignalFor,
   prewarmSignalFor,
@@ -214,7 +215,7 @@ async function addRegistryServer(name: string): Promise<void> {
     return;
   }
   mcpState.refetchServers();
-  mcpState.refetchStatus();
+  void mcpState.refetchStatus();
 }
 
 /**
@@ -510,8 +511,8 @@ export function mountRow(s: Server, id: string): HTMLElement {
         silent: true,
         onSuccess: () => {
           mcpState.refetchServers();
-          // A toggle changes what KAS runs, so status is re-read; both fetches coalesce per microtask.
-          mcpState.refetchStatus();
+          // A toggle changes what KAS runs, so status is re-read.
+          void mcpState.refetchStatus();
         },
       },
     );
@@ -967,7 +968,7 @@ export function renderOAuthRelay(serverName: string): HTMLDetailsElement {
             // Delivered, not connected: the token exchange is KAS's to finish, and only `_kiro/mcp/status` reports it.
             setNote("Delivered. Waiting for the server to finish signing in…", "ok");
             input.value = "";
-            mcpState.refetchStatus();
+            void mcpState.refetchStatus();
           },
           // Only the server can name which part was wrong; the client never sees the stored authorization URL.
           onError: (err) => {
@@ -1037,7 +1038,7 @@ function renderDeleteBtn(s: Server, cleanups: (() => void)[]): HTMLButtonElement
         {
           onSuccess: () => {
             mcpState.refetchServers();
-            mcpState.refetchStatus();
+            void mcpState.refetchStatus();
           },
         },
       );
@@ -1066,7 +1067,7 @@ function renderReconnectBtn(label: string, serverName: () => string): HTMLButton
         {
           onSuccess: () => {
             // The reset re-emits _kiro/mcp/status; refetch for the dot and discovery.
-            mcpState.refetchStatus();
+            void mcpState.refetchStatus();
           },
         },
       )
@@ -1173,37 +1174,26 @@ export function initMCP(): void {
   // Status and config flow through the per-server signals; rows re-render reactively.
   onSSE("mcp_config_changed", () => {
     mcpState.refetchServers();
-    mcpState.refetchStatus();
+    void mcpState.refetchStatus();
   });
-  onSSE("mcp_connected", (_chat, p) => {
-    mcpState.setStatusFromEvent(p.server, { name: p.server, state: "connected" });
-    // Prompts and resources ride /api/mcp/status, and so does a foreign server's origin.
-    mcpState.refetchStatus();
-  });
-  onSSE("mcp_oauth_needed", (_chat, p) => {
-    if (p.error === undefined || p.error === "") {
-      mcpState.setStatusFromEvent(p.server, { name: p.server, state: "needs_auth" });
+  onSSE("mcp_status", (_chat, p, subject) => {
+    // Toasts fire from the change the mirror applied, so a frame older than the row held raises none.
+    const c = mcpState.applyStatusFrame(p.server, p.status, subject);
+    const next = c?.next;
+    if (next === undefined) {
       return;
     }
-    showToast(signInFailureText(p.server, p.error), "error");
-    mcpState.setStatusFromEvent(p.server, { name: p.server, state: "needs_auth", error: p.error });
-  });
-  onSSE("mcp_sign_in_open", (_chat, p) => {
-    mcpState.setStatusFromEvent(p.server, {
-      name: p.server,
-      state: "signing_in",
-      oauth_url: p.url,
-      // A fresh attempt clears the relay latch: a stale `true` hides the paste box for an undelivered code.
-      relayed: false,
-    });
-  });
-  onSSE("mcp_failed", (_chat, p) => {
-    // Read the previous state first: the toast fires on the transition into `failed`.
-    announceMCPFailure(p.server, p.error, statusSignalFor(p.server).peek().state);
-    mcpState.setStatusFromEvent(p.server, { name: p.server, state: "failed", error: p.error });
-  });
-  onSSE("mcp_disconnected", (_chat, p) => {
-    mcpState.deleteStatus(p.server);
+    const prev = c?.prev === undefined ? undefined : adaptStatus(c.prev);
+    if (next.state === "failed") {
+      announceMCPFailure(p.server, next.error ?? "", prev?.state ?? "idle");
+    } else if (
+      next.state === "needs_auth" &&
+      next.error !== undefined &&
+      next.error !== "" &&
+      (prev?.state !== "needs_auth" || prev.error !== next.error)
+    ) {
+      showToast(signInFailureText(p.server, next.error), "error");
+    }
   });
   onSSE("mcp_prewarm", (_chat, p) => {
     for (const id of p.server_ids) {
@@ -1215,7 +1205,7 @@ export function initMCP(): void {
   onGovernanceChange(applyGovernance);
 
   mcpState.refetchServers();
-  mcpState.refetchStatus();
+  void mcpState.refetchStatus();
   refreshConfigStanding();
 }
 

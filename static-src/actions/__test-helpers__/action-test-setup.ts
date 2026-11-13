@@ -1,7 +1,7 @@
-/** Shared action-test setup over @cplieger/ui/actions' internals. `vi.mock()` calls stay at the top
+/** Shared action-test setup over @cplieger/reactive/actions' internals. `vi.mock()` calls stay at the top
  *  of each test file (hoisting); pass these factories as the implementation argument. */
-import { configure, configureTransport } from "@cplieger/ui/actions";
-import { resetActionFramework as resetFramework } from "@cplieger/ui/actions/testing";
+import { configure, configureTransport } from "@cplieger/reactive/actions";
+import { resetActionFramework as resetFramework } from "@cplieger/reactive/actions/testing";
 import { error as toastError, success as toastSuccess } from "../../toast.js";
 import { send as transportSend } from "../../transport.js";
 import { forAction } from "../transport-result.js";

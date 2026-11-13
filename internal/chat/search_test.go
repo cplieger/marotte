@@ -870,14 +870,14 @@ func TestSearch_CompactionFailedAndSafetyBlockedAreNotices(t *testing.T) {
 // A model fallback is a notice found by the model ids its row draws; KAS's codes the row words are not searched.
 func TestSearch_ModelFallbackIsANotice(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
-		add("", "fb-1", marotte.EntryKindModelFallback, marotte.EntryModelFallback{From: "opus-5", To: "sonnet-5", Trigger: "availability", Reason: "chainExhausted"}).
-		add("", "fb-2", marotte.EntryKindModelFallback, marotte.EntryModelFallback{From: "opus-5", To: "sonnet-5", Trigger: "refusal"}))
-	assertHits(t, searchHits(entries, drawn, "opus"), []wantHit{
+		add("", "fb-1", marotte.EntryKindModelFallback, marotte.EntryModelFallback{From: "model-a-5", To: "model-b-5", Trigger: "availability", Reason: "chainExhausted"}).
+		add("", "fb-2", marotte.EntryKindModelFallback, marotte.EntryModelFallback{From: "model-a-5", To: "model-b-5", Trigger: "refusal"}))
+	assertHits(t, searchHits(entries, drawn, "model-a"), []wantHit{
 		{entry: "fb-1", kind: itemNotice, segs: []SegmentKind{segmentContent}},
 		{entry: "fb-2", kind: itemNotice, segs: []SegmentKind{segmentContent}},
 	})
 	// A decline names no target, so only the retry's row holds the model it moved to.
-	assertHits(t, searchHits(entries, drawn, "sonnet"), []wantHit{
+	assertHits(t, searchHits(entries, drawn, "model-b"), []wantHit{
 		{entry: "fb-2", kind: itemNotice, segs: []SegmentKind{segmentContent}},
 	})
 	for _, q := range []string{"exhausted", "refusal", "availability"} {
@@ -1138,6 +1138,26 @@ func TestSearch_NamesTheAPICallerWhoseWordsMatched(t *testing.T) {
 		w := want[h.EntryID]
 		if (h.Caller == nil) != (w == nil) || (w != nil && h.Caller.Label != w.Label) {
 			t.Errorf("hit on %s caller = %+v, want %+v", h.EntryID, h.Caller, w)
+		}
+	}
+}
+
+// A hit in marotte's own resume prompt says so, so a result never names the reader as its sender.
+func TestSearch_MarksAHitInMarottesResumeAsAutomatic(t *testing.T) {
+	resume := prompt("m-r", "the context window was nearly full")
+	resume.Automatic = true
+	entries, drawn := chatOf(
+		openTurn("t-1", 1, prompt("m-1", "watch the context window")),
+		openTurn("t-2", 2, resume),
+	)
+
+	hits := searchHits(entries, drawn, "context")
+	if len(hits) != 2 {
+		t.Fatalf("Search = %d hits, want 2: %+v", len(hits), hits)
+	}
+	for _, h := range hits {
+		if want := h.EntryID == "t-2"; h.Automatic != want {
+			t.Errorf("hit on %s automatic = %v, want %v", h.EntryID, h.Automatic, want)
 		}
 	}
 }

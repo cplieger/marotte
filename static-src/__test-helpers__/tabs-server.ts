@@ -587,7 +587,11 @@ export function tabListRead(): (path: string) => Promise<TabList | null> {
     if (queued !== undefined) {
       return Promise.resolve(queued);
     }
-    return Promise.resolve({ tabs: state.subjects.map((s) => ({ ...s })), version: state.version });
+    return Promise.resolve({
+      tabs: state.subjects.map((s) => ({ ...s })),
+      recent: [],
+      version: state.version,
+    });
   });
 }
 

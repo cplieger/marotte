@@ -75,13 +75,28 @@ function paint(title: string, subtitle: string): void {
   const subtitleEl = byId<HTMLElement>("titlebar-subtitle");
   // Guarded because this runs from the view effect, which re-runs on every projection mutation: a
   // rename, a dot change and a background tab's close all repaint the same two strings, and
-  // `fitHeading` forces layout to read `scrollWidth`.
+  // `fitHeading` lays out to read `scrollWidth`.
   const moved = titleEl.textContent !== title || subtitleEl.textContent !== subtitle;
   titleEl.textContent = title;
   subtitleEl.textContent = subtitle;
   if (moved) {
-    fitHeading();
+    queueFit();
   }
+}
+
+let fitQueued = false;
+
+/** Fit in the next frame, before it paints: read in the writer's task, `scrollWidth` would force a layout of
+ *  whatever else that task wrote (a whole transcript on a tab switch). One frame callback serves every write. */
+function queueFit(): void {
+  if (fitQueued) {
+    return;
+  }
+  fitQueued = true;
+  requestAnimationFrame(() => {
+    fitQueued = false;
+    fitHeading();
+  });
 }
 
 /** Show `title`, with whatever subtitle `kind` last recorded. */
@@ -103,7 +118,7 @@ export function setPageSubtitle(kind: string, subtitle: string): void {
     return;
   }
   el.textContent = subtitle;
-  fitHeading();
+  queueFit();
 }
 
 /** Clear the heading. Used when no tab is open, where a stale title would name a view that is no

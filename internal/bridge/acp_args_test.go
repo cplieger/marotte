@@ -55,12 +55,12 @@ func TestFilterACPArgs(t *testing.T) {
 		{
 			// Fatal: kiro-cli rejects these with --agent-engine=v3 and exits before initialize, stopping the agent engine.
 			name: "refuses model and its value",
-			in:   []string{"--model", "claude-opus-5", "-v"},
+			in:   []string{"--model", "model-a-5", "-v"},
 			want: []string{"-v"},
 		},
 		{
 			name: "refuses model inline without eating the next token",
-			in:   []string{"--model=claude-opus-5", "-v"},
+			in:   []string{"--model=model-a-5", "-v"},
 			want: []string{"-v"},
 		},
 		{

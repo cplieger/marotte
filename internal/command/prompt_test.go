@@ -23,7 +23,7 @@ func TestValidatePromptPayload(t *testing.T) {
 		wantErr    bool
 	}{
 		{"valid minimal", valid("hello", "msg-1", ""), 0, false},
-		{"valid with model", valid("hi", "msg-2", "claude"), 0, false},
+		{"valid with model", valid("hi", "msg-2", "model-x"), 0, false},
 		{"empty text", valid("", "msg-1", ""), http.StatusBadRequest, true},
 		{"empty text with an attachment", attachmentOnly(t), 0, false},
 		{"empty text with an empty attachment path", withAttachments(t, "", []string{""}), http.StatusBadRequest, true},

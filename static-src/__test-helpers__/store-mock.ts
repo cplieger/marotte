@@ -4,7 +4,7 @@
 //     ...(await import("../__test-helpers__/store-mock.js")).storeMock, get: mockGet }));
 // `store-mock.test.ts` is the drift guard.
 import { vi } from "vitest";
-import { computed, SignalMap, type Signal } from "@cplieger/ui";
+import { computed, SignalMap, type Signal } from "@cplieger/reactive";
 
 import type { Session } from "../types.js";
 import type { ToolStatus } from "../wire/types.gen.js";
@@ -30,10 +30,14 @@ export const storeMock = {
   getSessions: vi.fn(() => []),
   getActiveId: vi.fn(() => ""),
   getActive: vi.fn((): undefined => undefined),
+  getPaintedId: vi.fn(() => ""),
+  watchPaintedId: vi.fn(() => ""),
+  getPainted: vi.fn((): undefined => undefined),
   get: vi.fn((): undefined => undefined),
   watchSession: vi.fn((): undefined => undefined),
   setSessions: vi.fn(),
   setActive: vi.fn(),
+  setPainted: vi.fn(),
   // Not the real -1, which is no position for the `reinsertSession` path suites reach.
   indexOfSession: vi.fn(() => 0),
   reinsertSession: vi.fn(),

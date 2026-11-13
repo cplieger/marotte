@@ -22,9 +22,10 @@ afterAll(() => {
 });
 
 afterEach(async () => {
-  await userEvent.hover(park);
+  // Removed first: a hover that times out must not leave this fixture for every later case to match.
   area?.remove();
   area = undefined;
+  await userEvent.hover(park);
 });
 
 /** A token's computed value for `prop`, so a comparison is computed against computed. */
@@ -506,7 +507,40 @@ describe("the fisheye moves width by transform alone, behind a hover gate", () =
       expect(chunk.trimStart().startsWith("(any-hover: hover)")).toBe(true);
     }
   });
+
+  // WebKit re-tests a sibling-relative `:has()` against every sibling on each row insertion or
+  // removal, so an unscoped rule makes a 300-row rail repaint cost over half a second there.
+  it("tests a row's next siblings only inside a hovered, focused or scrubbed map", () => {
+    const sheet = manifestSheets().find((s) => s.name === "29-turns.css")?.css ?? "";
+    const siblingHas = allRules(sheet)
+      .flatMap((r) => topLevelSelectors(r.selector.replace(/\s+/g, " ")))
+      .filter((s) => s.includes(".turn-pill") && /:has\(\s*[+~]/.test(s));
+    expect(siblingHas.length).toBeGreaterThan(0);
+    for (const s of siblingHas) {
+      expect(s, s).toMatch(/^\.turn-map-stack:(hover|focus-within|has\(> \[data-scrub\]\)) > /);
+    }
+  });
 });
+
+/** A selector list split at its top-level commas, leaving the commas inside `:is()` and kin. */
+function topLevelSelectors(list: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < list.length; i++) {
+    const c = list[i];
+    if (c === "(") {
+      depth++;
+    } else if (c === ")") {
+      depth--;
+    } else if (c === "," && depth === 0) {
+      out.push(list.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  out.push(list.slice(start).trim());
+  return out;
+}
 
 describe("the step buttons rest invisible with their boxes reserved", () => {
   function glyph(b: HTMLElement): SVGElement {

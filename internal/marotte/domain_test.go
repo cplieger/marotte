@@ -10,7 +10,7 @@ func TestChatHeader_copies_metadata(t *testing.T) {
 	c := &Chat{
 		ID:              "c1",
 		Name:            "Hello",
-		Model:           "claude",
+		Model:           "model-x",
 		ACPSessionID:    "acp-1",
 		CurrentModeID:   "plan",
 		Usage:           Usage{ContextPct: 50, ContextSize: 200000, HasRealData: true},
@@ -22,8 +22,8 @@ func TestChatHeader_copies_metadata(t *testing.T) {
 
 	h := c.Header()
 
-	if h.ID != "c1" || h.Name != "Hello" || h.Model != "claude" {
-		t.Errorf("header identity fields = %+v, want id=c1 name=Hello model=claude", h)
+	if h.ID != "c1" || h.Name != "Hello" || h.Model != "model-x" {
+		t.Errorf("header identity fields = %+v, want id=c1 name=Hello model=model-x", h)
 	}
 	if h.ACPSessionID != "acp-1" {
 		t.Errorf("ACPSessionID = %q, want acp-1", h.ACPSessionID)

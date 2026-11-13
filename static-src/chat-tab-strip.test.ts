@@ -4,7 +4,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Type-only, for the `importOriginal` below.
-import type * as Skeleton from "./skeleton.js";
 
 const h = vi.hoisted(() => ({
   renameTab: vi.fn(),
@@ -19,13 +18,14 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("./tabs.js", async () => {
-  const { signal } = await import("@cplieger/ui");
+  const { signal } = await import("@cplieger/reactive");
   const { tabsMock } = await import("./__test-helpers__/tabs-mock.js");
   h.openRefs = signal<string[]>([]);
   return {
     ...tabsMock(),
     // A TRACKED read of which chat refs have an open tab; a test write stands in for the emit.
     openChatRefs: () => h.openRefs.value,
+    refreshActiveView: vi.fn(),
     tabIdFor: h.tabIdFor,
     renameTab: h.renameTab,
     setTabStatus: h.setTabStatus,
@@ -35,7 +35,7 @@ vi.mock("./tabs.js", async () => {
 // The dock, shaped like the real module: one version signal, per-chat queues,
 // so a row effect's read subscribes it to decisions arriving anywhere.
 vi.mock("./decision-dock.js", async () => {
-  const { signal } = await import("@cplieger/ui");
+  const { signal } = await import("@cplieger/reactive");
   h.dockVersion = signal(0);
   return {
     hasPendingDecision: (chatID: string): boolean => {
@@ -58,13 +58,6 @@ vi.mock("./store-load.js", () => ({
 }));
 vi.mock("./banner-stack.js", () => ({ ensureBound: vi.fn() }));
 vi.mock("./submit.js", () => ({ submitPrompt: vi.fn(), submitLabelled: vi.fn() }));
-vi.mock("./skeleton.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof Skeleton>()),
-  chatSkeleton: vi.fn(() => document.createElement("div")),
-}));
-vi.mock("@cplieger/ui/skeleton", () => ({
-  skeletonTiming: vi.fn(() => ({ commit: vi.fn(), cancel: vi.fn() })),
-}));
 vi.mock("./messages.js", () => ({
   mountChatView: vi.fn(),
   setLoadMore: vi.fn(),
@@ -74,6 +67,14 @@ vi.mock("./messages.js", () => ({
   activeTranscriptView: vi.fn(() => null),
   transcriptViewFor: vi.fn(() => null),
   disposeChatView: vi.fn(),
+  parkPaintedView: vi.fn(),
+}));
+vi.mock("./transcript-cover.js", () => ({
+  dropCover: vi.fn(),
+  holdCover: vi.fn(),
+  releaseCover: vi.fn(),
+  releaseCoverExceptFor: vi.fn(),
+  moveFocusOffTranscript: vi.fn(),
 }));
 vi.mock("./attachments.js", () => ({
   addAttachment: vi.fn(),
@@ -82,6 +83,7 @@ vi.mock("./attachments.js", () => ({
   unownedAttachmentPaths: vi.fn(() => []),
 }));
 vi.mock("./composer-state.js", () => ({
+  adoptUnownedComposer: vi.fn(),
   saveComposerState: vi.fn(),
   restoreComposerState: vi.fn(),
   retargetComposer: vi.fn(),
@@ -108,13 +110,13 @@ vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) 
 vi.mock("./bus.js", () => ({
   onBus: vi.fn(),
   onSSE: undefined,
-  BUS_ACTIVATE_CHAT: "activate-chat",
 }));
 vi.mock("./transport.js", () => ({ newOpID: () => "op-test" }));
 vi.mock("./actions/chat.js", () => ({
   setMode: { dispatch: vi.fn() },
   forkChat: { dispatch: vi.fn() },
   createChat: { dispatch: vi.fn() },
+  cancelTurn: { dispatch: vi.fn() },
 }));
 
 import { installStoreSubscribers } from "./chat.js";

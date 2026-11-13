@@ -54,6 +54,27 @@ type kasCorpusFile struct {
 	Live, Replay []kasLine
 }
 
+// loadKASCorpusLines is every line of a capture after its provenance header, in order.
+func loadKASCorpusLines(t *testing.T, name string) []kasLine {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(kasCorpusDir, name+".jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc := bufio.NewScanner(bytes.NewReader(raw))
+	sc.Buffer(nil, 4<<20)
+	sc.Scan()
+	var out []kasLine
+	for sc.Scan() {
+		var l kasLine
+		if err := json.Unmarshal(sc.Bytes(), &l); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
 func loadKASCorpusFile(t *testing.T, name string) kasCorpusFile {
 	t.Helper()
 	path := filepath.Join(kasCorpusDir, name+".jsonl")

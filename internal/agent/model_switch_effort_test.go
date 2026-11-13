@@ -15,7 +15,7 @@ import (
 const fiveTiersMeta = `{"kiro":{"hasEffort":true,"defaultEffortLevel":"medium","effortLevels":["low","medium","high","xhigh","max"]}}`
 
 // switchFixture is a started chat on fake-model at medium with a live idle bridge, whose catalog
-// offers fake-model and opus the five tiers, and whose seed for opus is medium: another chat's
+// offers fake-model and model-a the five tiers, and whose seed for model-a is medium: another chat's
 // pick, which a switch must not read over the level this chat picked.
 func switchFixture(t *testing.T) (*effortDrift, *Runtime) {
 	t.Helper()
@@ -26,7 +26,7 @@ func switchFixture(t *testing.T) (*effortDrift, *Runtime) {
 func switchFixtureOver(t *testing.T, over func(*testChatStore) chatRecords) (*effortDrift, *Runtime) {
 	t.Helper()
 	d := newEffortDrift(t)
-	writeEffortSeed(t, d.dir, map[string]string{"fake-model": "medium", "opus": "medium"})
+	writeEffortSeed(t, d.dir, map[string]string{"fake-model": "medium", "model-a": "medium"})
 	h := d.bootOver(t, over(d.cs))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	finishedTurn(t, h, "c1")
@@ -35,8 +35,8 @@ func switchFixtureOver(t *testing.T, over func(*testChatStore) chatRecords) (*ef
 	}
 	h.coord.catalog.SetModels([]marotte.SessionModel{
 		catalogModel(t, "fake-model", fiveTiersMeta),
-		catalogModel(t, "opus", fiveTiersMeta),
-		catalogModel(t, "gpt", `{"kiro":{"hasEffort":true,"defaultEffortLevel":"medium","effortLevels":["low","medium","high"]}}`),
+		catalogModel(t, "model-a", fiveTiersMeta),
+		catalogModel(t, "model-e", `{"kiro":{"hasEffort":true,"defaultEffortLevel":"medium","effortLevels":["low","medium","high"]}}`),
 	})
 	if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Model, c.Effort = "fake-model", "medium"
@@ -67,22 +67,22 @@ func TestSwitchModel_ATierPickedWithTheSwitchIsWhatTheNewSessionRuns(t *testing.
 	d, h := switchFixture(t)
 	br := fakeOf(h.coord.bridgeFor("c1"))
 
-	postOK(t, h, "switch_model", `{"model":"opus","effort":"high"}`)
+	postOK(t, h, "switch_model", `{"model":"model-a","effort":"high"}`)
 
 	if got := br.lastEffort(); got != "high" {
-		t.Errorf("the switch asserted %q, want high: the tier picked with it, not opus's seed", got)
+		t.Errorf("the switch asserted %q, want high: the tier picked with it, not model-a's seed", got)
 	}
-	want := []marotte.EntryModelSwitched{{From: "fake-model", To: "opus", Effort: "high"}}
+	want := []marotte.EntryModelSwitched{{From: "fake-model", To: "model-a", Effort: "high"}}
 	if got := switchEntries(t, d); len(got) != 1 || got[0] != want[0] {
 		t.Errorf("model_switched rows = %+v, want exactly %+v", got, want)
 	}
 	c, _ := d.cs.Get(t.Context(), "c1")
-	if c.Model != "opus" || c.Effort != "high" || c.PendingModel != "" || c.PendingEffort != "" {
-		t.Errorf("header = {Model %q, Effort %q, PendingModel %q, PendingEffort %q}, want {opus, high, \"\", \"\"}",
+	if c.Model != "model-a" || c.Effort != "high" || c.PendingModel != "" || c.PendingEffort != "" {
+		t.Errorf("header = {Model %q, Effort %q, PendingModel %q, PendingEffort %q}, want {model-a, high, \"\", \"\"}",
 			c.Model, c.Effort, c.PendingModel, c.PendingEffort)
 	}
-	if got := h.coord.effortSeedFor(t.Context(), "opus"); got != "high" {
-		t.Errorf("opus's new-chat seed = %q, want high: the pick was made for opus", got)
+	if got := h.coord.effortSeedFor(t.Context(), "model-a"); got != "high" {
+		t.Errorf("model-a's new-chat seed = %q, want high: the pick was made for model-a", got)
 	}
 
 	crash(t, h)
@@ -98,20 +98,20 @@ func TestSwitchModel_AModelSwitchCarriesTheLevelThePickSet(t *testing.T) {
 	br := fakeOf(h.coord.bridgeFor("c1"))
 
 	postOK(t, h, "set_effort", `{"level":"high"}`)
-	postOK(t, h, "switch_model", `{"model":"opus"}`)
+	postOK(t, h, "switch_model", `{"model":"model-a"}`)
 
 	if got := br.lastEffort(); got != "high" {
 		t.Errorf("the switch asserted %q, want high", got)
 	}
 	got := switchEntries(t, d)
-	if len(got) != 2 || got[1] != (marotte.EntryModelSwitched{From: "fake-model", To: "opus", Effort: "high"}) {
-		t.Errorf("model_switched rows = %+v, want the effort row then {fake-model opus high}", got)
+	if len(got) != 2 || got[1] != (marotte.EntryModelSwitched{From: "fake-model", To: "model-a", Effort: "high"}) {
+		t.Errorf("model_switched rows = %+v, want the effort row then {fake-model model-a high}", got)
 	}
 	if c, _ := d.cs.Get(t.Context(), "c1"); c.Effort != "high" {
 		t.Errorf("record level = %q, want high", c.Effort)
 	}
-	if seed := h.coord.effortSeedFor(t.Context(), "opus"); seed != "medium" {
-		t.Errorf("opus's seed = %q, want medium untouched: a carried level is no pick for opus", seed)
+	if seed := h.coord.effortSeedFor(t.Context(), "model-a"); seed != "medium" {
+		t.Errorf("model-a's seed = %q, want medium untouched: a carried level is no pick for model-a", seed)
 	}
 }
 
@@ -121,20 +121,20 @@ func TestSwitchModel_ATierTheNewModelLacksFallsBackAndTheRowSaysSo(t *testing.T)
 	d, h := switchFixture(t)
 	br := fakeOf(h.coord.bridgeFor("c1"))
 
-	postOK(t, h, "switch_model", `{"model":"gpt","effort":"max"}`)
+	postOK(t, h, "switch_model", `{"model":"model-e","effort":"max"}`)
 
 	if got := br.lastEffort(); got != "medium" {
-		t.Errorf("the switch asserted %q, want gpt's default, medium", got)
+		t.Errorf("the switch asserted %q, want model-e's default, medium", got)
 	}
-	want := marotte.EntryModelSwitched{From: "fake-model", To: "gpt", Effort: "medium", Unoffered: "max"}
+	want := marotte.EntryModelSwitched{From: "fake-model", To: "model-e", Effort: "medium", Unoffered: "max"}
 	if got := switchEntries(t, d); len(got) != 1 || got[0] != want {
 		t.Errorf("model_switched rows = %+v, want exactly %+v", got, want)
 	}
 	if c, _ := d.cs.Get(t.Context(), "c1"); c.Effort != "medium" {
-		t.Errorf("record level = %q, want medium: a tier gpt lacks is never stored for it", c.Effort)
+		t.Errorf("record level = %q, want medium: a tier model-e lacks is never stored for it", c.Effort)
 	}
-	if seed := h.coord.effortSeedFor(t.Context(), "gpt"); seed != "" {
-		t.Errorf("gpt's seed = %q, want none: max never landed on gpt", seed)
+	if seed := h.coord.effortSeedFor(t.Context(), "model-e"); seed != "" {
+		t.Errorf("model-e's seed = %q, want none: max never landed on model-e", seed)
 	}
 }
 
@@ -143,14 +143,14 @@ func TestSwitchModel_ATierTheNewModelLacksFallsBackAndTheRowSaysSo(t *testing.T)
 func TestSwitchModel_AStaleSeedTheNewModelLacksIsNotItsFallback(t *testing.T) {
 	d, h := switchFixture(t)
 	br := fakeOf(h.coord.bridgeFor("c1"))
-	writeEffortSeed(t, d.dir, map[string]string{"gpt": "max"})
+	writeEffortSeed(t, d.dir, map[string]string{"model-e": "max"})
 
-	postOK(t, h, "switch_model", `{"model":"gpt","effort":"max"}`)
+	postOK(t, h, "switch_model", `{"model":"model-e","effort":"max"}`)
 
 	if got := br.lastEffort(); got != "medium" {
-		t.Errorf("the switch asserted %q, want gpt's default, medium: its seed max is a tier gpt lacks", got)
+		t.Errorf("the switch asserted %q, want model-e's default, medium: its seed max is a tier model-e lacks", got)
 	}
-	want := marotte.EntryModelSwitched{From: "fake-model", To: "gpt", Effort: "medium", Unoffered: "max"}
+	want := marotte.EntryModelSwitched{From: "fake-model", To: "model-e", Effort: "medium", Unoffered: "max"}
 	if got := switchEntries(t, d); len(got) != 1 || got[0] != want {
 		t.Errorf("model_switched rows = %+v, want exactly %+v", got, want)
 	}
@@ -166,10 +166,10 @@ func TestSwitchModel_APickTheCatalogCannotJudgeKeepsItsTier(t *testing.T) {
 	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 	h.coord.catalog.SetModels([]marotte.SessionModel{catalogModel(t, "fake-model", fiveTiersMeta)})
 
-	postOK(t, h, "switch_model", `{"model":"opus","effort":"xhigh"}`)
+	postOK(t, h, "switch_model", `{"model":"model-a","effort":"xhigh"}`)
 
-	if c, _ := d.cs.Get(t.Context(), "c1"); c.Model != "opus" || c.Effort != "xhigh" {
-		t.Errorf("header = {Model %q, Effort %q}, want {opus, xhigh}: not opus's seed, medium", c.Model, c.Effort)
+	if c, _ := d.cs.Get(t.Context(), "c1"); c.Model != "model-a" || c.Effort != "xhigh" {
+		t.Errorf("header = {Model %q, Effort %q}, want {model-a, xhigh}: not model-a's seed, medium", c.Model, c.Effort)
 	}
 	if opts := reopenSessionOpts(t, h); opts.Effort != "xhigh" {
 		t.Errorf("the next session asked effort %q, want xhigh", opts.Effort)
@@ -183,19 +183,19 @@ func TestSwitchModel_AModelOnlyRepickKeepsTheParkedTier(t *testing.T) {
 	br := fakeOf(h.coord.bridgeFor("c1"))
 	id, _ := h.stagePromptTurn(t, "c1")
 
-	postOK(t, h, "switch_model", `{"model":"opus","effort":"high"}`)
-	postOK(t, h, "switch_model", `{"model":"opus"}`)
+	postOK(t, h, "switch_model", `{"model":"model-a","effort":"high"}`)
+	postOK(t, h, "switch_model", `{"model":"model-a"}`)
 
-	if c, _ := d.cs.Get(t.Context(), "c1"); c.PendingModel != "opus" || c.PendingEffort != "high" {
-		t.Errorf("mid-turn pending = {%q, %q}, want {opus, high}", c.PendingModel, c.PendingEffort)
+	if c, _ := d.cs.Get(t.Context(), "c1"); c.PendingModel != "model-a" || c.PendingEffort != "high" {
+		t.Errorf("mid-turn pending = {%q, %q}, want {model-a, high}", c.PendingModel, c.PendingEffort)
 	}
 	endTurn(t, h, "c1", id)
-	awaitModel(t, d.cs, "c1", "opus")
+	awaitModel(t, d.cs, "c1", "model-a")
 
 	if got := br.lastEffort(); got != "high" {
 		t.Errorf("the switch at the close asserted %q, want high", got)
 	}
-	want := marotte.EntryModelSwitched{From: "fake-model", To: "opus", Effort: "high"}
+	want := marotte.EntryModelSwitched{From: "fake-model", To: "model-a", Effort: "high"}
 	if got := switchEntries(t, d); len(got) != 1 || got[0] != want {
 		t.Errorf("model_switched rows = %+v, want exactly %+v", got, want)
 	}
@@ -208,17 +208,17 @@ func TestSwitchModel_ARepickBackToTheChatsTierReplacesTheParkedTier(t *testing.T
 	br := fakeOf(h.coord.bridgeFor("c1"))
 	id, _ := h.stagePromptTurn(t, "c1")
 
-	postOK(t, h, "switch_model", `{"model":"opus","effort":"high"}`)
-	postOK(t, h, "switch_model", `{"model":"opus","effort":"medium"}`)
+	postOK(t, h, "switch_model", `{"model":"model-a","effort":"high"}`)
+	postOK(t, h, "switch_model", `{"model":"model-a","effort":"medium"}`)
 
-	if c, _ := d.cs.Get(t.Context(), "c1"); c.PendingModel != "opus" || c.PendingEffort != "medium" {
-		t.Errorf("mid-turn pending = {%q, %q}, want {opus, medium}", c.PendingModel, c.PendingEffort)
+	if c, _ := d.cs.Get(t.Context(), "c1"); c.PendingModel != "model-a" || c.PendingEffort != "medium" {
+		t.Errorf("mid-turn pending = {%q, %q}, want {model-a, medium}", c.PendingModel, c.PendingEffort)
 	}
 	br.mu.Lock()
 	br.effort = ""
 	br.mu.Unlock()
 	endTurn(t, h, "c1", id)
-	awaitModel(t, d.cs, "c1", "opus")
+	awaitModel(t, d.cs, "c1", "model-a")
 	if got := br.lastEffort(); got != "medium" {
 		t.Errorf("the switch at the close asserted %q, want medium", got)
 	}
@@ -230,11 +230,11 @@ func TestSwitchModel_ARepickOfAnotherModelDropsTheParkedTier(t *testing.T) {
 	d, h := switchFixture(t)
 	h.stagePromptTurn(t, "c1")
 
-	postOK(t, h, "switch_model", `{"model":"opus","effort":"high"}`)
-	postOK(t, h, "switch_model", `{"model":"gpt"}`)
+	postOK(t, h, "switch_model", `{"model":"model-a","effort":"high"}`)
+	postOK(t, h, "switch_model", `{"model":"model-e"}`)
 
-	if c, _ := d.cs.Get(t.Context(), "c1"); c.PendingModel != "gpt" || c.PendingEffort != "" {
-		t.Errorf("mid-turn pending = {%q, %q}, want {gpt, \"\"}", c.PendingModel, c.PendingEffort)
+	if c, _ := d.cs.Get(t.Context(), "c1"); c.PendingModel != "model-e" || c.PendingEffort != "" {
+		t.Errorf("mid-turn pending = {%q, %q}, want {model-e, \"\"}", c.PendingModel, c.PendingEffort)
 	}
 }
 
@@ -249,7 +249,7 @@ func TestSwitchModel_OffOverAParkedTierDropsIt(t *testing.T) {
 			br := fakeOf(h.coord.bridgeFor("c1"))
 			h.coord.catalog.SetModels([]marotte.SessionModel{
 				catalogModel(t, "fake-model", toggleable),
-				catalogModel(t, "opus", toggleable),
+				catalogModel(t, "model-a", toggleable),
 			})
 			if !thinkingWasOn {
 				if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -261,15 +261,15 @@ func TestSwitchModel_OffOverAParkedTierDropsIt(t *testing.T) {
 			}
 			id, _ := h.stagePromptTurn(t, "c1")
 
-			postOK(t, h, "switch_model", `{"model":"opus","effort":"high"}`)
-			postOK(t, h, "switch_model", `{"model":"opus","effort":"thinking:off"}`)
+			postOK(t, h, "switch_model", `{"model":"model-a","effort":"high"}`)
+			postOK(t, h, "switch_model", `{"model":"model-a","effort":"thinking:off"}`)
 
-			if c, _ := d.cs.Get(t.Context(), "c1"); c.PendingModel != "opus" || c.PendingEffort != "" || c.Thinking != marotte.ThinkingOff {
-				t.Errorf("mid-turn header = {pending %q/%q, thinking %q}, want {opus, \"\", off}",
+			if c, _ := d.cs.Get(t.Context(), "c1"); c.PendingModel != "model-a" || c.PendingEffort != "" || c.Thinking != marotte.ThinkingOff {
+				t.Errorf("mid-turn header = {pending %q/%q, thinking %q}, want {model-a, \"\", off}",
 					c.PendingModel, c.PendingEffort, c.Thinking)
 			}
 			endTurn(t, h, "c1", id)
-			awaitModel(t, d.cs, "c1", "opus")
+			awaitModel(t, d.cs, "c1", "model-a")
 
 			br.mu.Lock()
 			thinking := br.thinking
@@ -277,15 +277,15 @@ func TestSwitchModel_OffOverAParkedTierDropsIt(t *testing.T) {
 			if thinking == marotte.ThinkingOn || br.lastEffort() != "medium" {
 				t.Errorf("the switch asserted {thinking %q, effort %q}, want thinking left off at medium", thinking, br.lastEffort())
 			}
-			want := marotte.EntryModelSwitched{From: "fake-model", To: "opus", Effort: "medium"}
+			want := marotte.EntryModelSwitched{From: "fake-model", To: "model-a", Effort: "medium"}
 			if got := switchEntries(t, d); len(got) != 1 || got[0] != want {
 				t.Errorf("model_switched rows = %+v, want exactly %+v", got, want)
 			}
 			if c, _ := d.cs.Get(t.Context(), "c1"); c.Thinking != marotte.ThinkingOff || c.Effort != "medium" {
 				t.Errorf("header = {Thinking %q, Effort %q}, want {off, medium}", c.Thinking, c.Effort)
 			}
-			if seed := h.coord.effortSeedFor(t.Context(), "opus"); seed != "medium" {
-				t.Errorf("opus's seed = %q, want medium untouched: the dropped high never landed", seed)
+			if seed := h.coord.effortSeedFor(t.Context(), "model-a"); seed != "medium" {
+				t.Errorf("model-a's seed = %q, want medium untouched: the dropped high never landed", seed)
 			}
 		})
 	}
@@ -325,7 +325,7 @@ func TestSwitchModel_AStopKeptOnTheRunningModelCancelsAParkedSwitch(t *testing.T
 			d, h := switchFixture(t)
 			h.coord.catalog.SetModels([]marotte.SessionModel{
 				catalogModel(t, "fake-model", toggleable),
-				catalogModel(t, "opus", toggleable),
+				catalogModel(t, "model-a", toggleable),
 			})
 			if tc.thinkingWasOff {
 				if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -337,12 +337,12 @@ func TestSwitchModel_AStopKeptOnTheRunningModelCancelsAParkedSwitch(t *testing.T
 			}
 			id, _ := h.stagePromptTurn(t, "c1")
 
-			postOK(t, h, "switch_model", `{"model":"opus","effort":"high"}`)
+			postOK(t, h, "switch_model", `{"model":"model-a","effort":"high"}`)
 			postOK(t, h, "switch_model", `{"model":"fake-model","effort":"`+tc.effort+`"}`)
 
 			if c, _ := d.cs.Get(t.Context(), "c1"); c.PendingModel != "" || c.PendingEffort != "" ||
 				c.Effort != tc.wantEffort || c.Thinking != tc.wantThinking {
-				t.Errorf("mid-turn header = {pending %q/%q, effort %q, thinking %q}, want no pending at {%s, %q}: the stop lands at once and cancels opus",
+				t.Errorf("mid-turn header = {pending %q/%q, effort %q, thinking %q}, want no pending at {%s, %q}: the stop lands at once and cancels model-a",
 					c.PendingModel, c.PendingEffort, c.Effort, c.Thinking, tc.wantEffort, tc.wantThinking)
 			}
 			endTurn(t, h, "c1", id)
@@ -357,8 +357,8 @@ func TestSwitchModel_AStopKeptOnTheRunningModelCancelsAParkedSwitch(t *testing.T
 			if got := switchEntries(t, d); !slices.Equal(got, tc.rows) {
 				t.Errorf("model_switched rows = %+v, want %+v", got, tc.rows)
 			}
-			if seed := h.coord.effortSeedFor(t.Context(), "opus"); seed != "medium" {
-				t.Errorf("opus's seed = %q, want medium untouched: the cancelled high never landed", seed)
+			if seed := h.coord.effortSeedFor(t.Context(), "model-a"); seed != "medium" {
+				t.Errorf("model-a's seed = %q, want medium untouched: the cancelled high never landed", seed)
 			}
 		})
 	}
@@ -449,11 +449,11 @@ func parkOnBridgelessChat(t *testing.T, d *effortDrift, h *Runtime, pair pending
 }
 
 // A session open's fold waits for a switch being admitted, so it lands the pair that switch parked, not
-// the one parked before it. gpt lacks max, so the landing takes gpt's default.
+// the one parked before it. model-e lacks max, so the landing takes model-e's default.
 func TestSwitchModel_TheSpawnsFoldWaitsForASwitchBeingAdmitted(t *testing.T) {
 	d, h := heldSwitchFixture(t)
-	parkOnBridgelessChat(t, d, h, pendingPair{model: "gpt", effort: "low"})
-	finish := admitHeld(t, h, marotte.SwitchModelCommand{Model: "gpt", Effort: "max"})
+	parkOnBridgelessChat(t, d, h, pendingPair{model: "model-e", effort: "low"})
+	finish := admitHeld(t, h, marotte.SwitchModelCommand{Model: "model-e", Effort: "max"})
 
 	folded := make(chan struct{})
 	go func() {
@@ -465,8 +465,8 @@ func TestSwitchModel_TheSpawnsFoldWaitsForASwitchBeingAdmitted(t *testing.T) {
 	case <-folded:
 	case <-time.After(100 * time.Millisecond):
 	}
-	if c, _ := d.cs.Get(t.Context(), "c1"); c.Model != "fake-model" || c.PendingModel != "gpt" || c.PendingEffort != "low" {
-		t.Errorf("mid-admission header = {Model %q, PendingModel %q, PendingEffort %q}, want {fake-model, gpt, low}: "+
+	if c, _ := d.cs.Get(t.Context(), "c1"); c.Model != "fake-model" || c.PendingModel != "model-e" || c.PendingEffort != "low" {
+		t.Errorf("mid-admission header = {Model %q, PendingModel %q, PendingEffort %q}, want {fake-model, model-e, low}: "+
 			"the fold landed between the admission's read and its park", c.Model, c.PendingModel, c.PendingEffort)
 	}
 	if err := finish(); err != nil {
@@ -474,8 +474,8 @@ func TestSwitchModel_TheSpawnsFoldWaitsForASwitchBeingAdmitted(t *testing.T) {
 	}
 	<-folded
 
-	if c, _ := d.cs.Get(t.Context(), "c1"); c.Model != "gpt" || c.Effort != "medium" || c.PendingModel != "" || c.PendingEffort != "" {
-		t.Errorf("header = {Model %q, Effort %q, PendingModel %q, PendingEffort %q}, want {gpt, medium, \"\", \"\"}",
+	if c, _ := d.cs.Get(t.Context(), "c1"); c.Model != "model-e" || c.Effort != "medium" || c.PendingModel != "" || c.PendingEffort != "" {
+		t.Errorf("header = {Model %q, Effort %q, PendingModel %q, PendingEffort %q}, want {model-e, medium, \"\", \"\"}",
 			c.Model, c.Effort, c.PendingModel, c.PendingEffort)
 	}
 }
@@ -484,12 +484,12 @@ func TestSwitchModel_TheSpawnsFoldWaitsForASwitchBeingAdmitted(t *testing.T) {
 // switch lock orders, does not turn the request into an OK that parks nothing.
 func TestSwitchModel_AnAdmissionParksWhatItDecidedWhenTheModelMovesMeanwhile(t *testing.T) {
 	d, h := heldSwitchFixture(t)
-	parkOnBridgelessChat(t, d, h, pendingPair{model: "gpt", effort: "low"})
-	finish := admitHeld(t, h, marotte.SwitchModelCommand{Model: "gpt", Effort: "max"})
+	parkOnBridgelessChat(t, d, h, pendingPair{model: "model-e", effort: "low"})
+	finish := admitHeld(t, h, marotte.SwitchModelCommand{Model: "model-e", Effort: "max"})
 
-	// config_option_update's move onto gpt at low.
+	// config_option_update's move onto model-e at low.
 	if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.MoveToModel("gpt")
+		c.MoveToModel("model-e")
 		c.Effort = "low"
 		return true
 	}); err != nil {
@@ -499,8 +499,8 @@ func TestSwitchModel_AnAdmissionParksWhatItDecidedWhenTheModelMovesMeanwhile(t *
 		t.Fatalf("admission: %v", err)
 	}
 
-	if c, _ := d.cs.Get(t.Context(), "c1"); c.PendingModel != "gpt" || c.PendingEffort != "max" {
-		t.Errorf("parked = {%q, %q}, want {gpt, max}", c.PendingModel, c.PendingEffort)
+	if c, _ := d.cs.Get(t.Context(), "c1"); c.PendingModel != "model-e" || c.PendingEffort != "max" {
+		t.Errorf("parked = {%q, %q}, want {model-e, max}", c.PendingModel, c.PendingEffort)
 	}
 }
 
@@ -509,7 +509,7 @@ func TestSwitchModel_AnAdmissionParksWhatItDecidedWhenTheModelMovesMeanwhile(t *
 func TestSwitchModel_AStopThatLandedKeepsItsParkWhenTheClientWalksAway(t *testing.T) {
 	d, h := heldSwitchFixture(t)
 	if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.PendingModel, c.PendingEffort = "opus", "high"
+		c.PendingModel, c.PendingEffort = "model-a", "high"
 		return true
 	}); err != nil {
 		t.Fatalf("park the pair: %v", err)
@@ -537,11 +537,11 @@ func TestSwitchModel_ABusyChatParksTheTierWithThePick(t *testing.T) {
 	id, _ := h.stagePromptTurn(t, "c1")
 	before := br.lastEffort()
 
-	postOK(t, h, "switch_model", `{"model":"opus","effort":"high"}`)
+	postOK(t, h, "switch_model", `{"model":"model-a","effort":"high"}`)
 
 	c, _ := d.cs.Get(t.Context(), "c1")
-	if c.Model != "fake-model" || c.Effort != "medium" || c.PendingModel != "opus" || c.PendingEffort != "high" {
-		t.Errorf("mid-turn header = {Model %q, Effort %q, PendingModel %q, PendingEffort %q}, want {fake-model, medium, opus, high}",
+	if c.Model != "fake-model" || c.Effort != "medium" || c.PendingModel != "model-a" || c.PendingEffort != "high" {
+		t.Errorf("mid-turn header = {Model %q, Effort %q, PendingModel %q, PendingEffort %q}, want {fake-model, medium, model-a, high}",
 			c.Model, c.Effort, c.PendingModel, c.PendingEffort)
 	}
 	if got := br.lastEffort(); got != before {
@@ -549,12 +549,12 @@ func TestSwitchModel_ABusyChatParksTheTierWithThePick(t *testing.T) {
 	}
 
 	endTurn(t, h, "c1", id)
-	awaitModel(t, d.cs, "c1", "opus")
+	awaitModel(t, d.cs, "c1", "model-a")
 
 	if got := br.lastEffort(); got != "high" {
 		t.Errorf("the switch at the close asserted %q, want high", got)
 	}
-	want := marotte.EntryModelSwitched{From: "fake-model", To: "opus", Effort: "high"}
+	want := marotte.EntryModelSwitched{From: "fake-model", To: "model-a", Effort: "high"}
 	if got := switchEntries(t, d); len(got) != 1 || got[0] != want {
 		t.Errorf("model_switched rows = %+v, want exactly %+v", got, want)
 	}
@@ -569,10 +569,10 @@ func TestSwitchModel_ABridgelessPickOpensItsSessionAtTheTier(t *testing.T) {
 	d, h := switchFixture(t)
 	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 
-	postOK(t, h, "switch_model", `{"model":"opus","effort":"xhigh"}`)
+	postOK(t, h, "switch_model", `{"model":"model-a","effort":"xhigh"}`)
 
-	if c, _ := d.cs.Get(t.Context(), "c1"); c.Model != "opus" || c.Effort != "xhigh" || c.PendingModel != "" {
-		t.Errorf("header = {Model %q, Effort %q, PendingModel %q}, want {opus, xhigh, \"\"}", c.Model, c.Effort, c.PendingModel)
+	if c, _ := d.cs.Get(t.Context(), "c1"); c.Model != "model-a" || c.Effort != "xhigh" || c.PendingModel != "" {
+		t.Errorf("header = {Model %q, Effort %q, PendingModel %q}, want {model-a, xhigh, \"\"}", c.Model, c.Effort, c.PendingModel)
 	}
 	if opts := reopenSessionOpts(t, h); opts.Effort != "xhigh" {
 		t.Errorf("the next session asked effort %q, want xhigh", opts.Effort)
@@ -585,7 +585,7 @@ func TestSwitchModel_TheSpawnLandsAParkedPair(t *testing.T) {
 	d, h := switchFixture(t)
 	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 	if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.PendingModel, c.PendingEffort = "opus", "xhigh"
+		c.PendingModel, c.PendingEffort = "model-a", "xhigh"
 		return true
 	}); err != nil {
 		t.Fatalf("park the pair: %v", err)
@@ -593,8 +593,8 @@ func TestSwitchModel_TheSpawnLandsAParkedPair(t *testing.T) {
 
 	opts := reopenSessionOpts(t, h)
 
-	if opts.Model != "opus" || opts.Effort != "xhigh" {
-		t.Errorf("the session = {Model %q, Effort %q}, want {opus, xhigh}", opts.Model, opts.Effort)
+	if opts.Model != "model-a" || opts.Effort != "xhigh" {
+		t.Errorf("the session = {Model %q, Effort %q}, want {model-a, xhigh}", opts.Model, opts.Effort)
 	}
 	if c, _ := d.cs.Get(t.Context(), "c1"); c.Effort != "xhigh" || c.PendingModel != "" || c.PendingEffort != "" {
 		t.Errorf("header = {Effort %q, PendingModel %q, PendingEffort %q}, want {xhigh, \"\", \"\"}",
@@ -614,13 +614,13 @@ func TestSwitchModel_ASwitchByRestartCarriesTheChatsLevel(t *testing.T) {
 		t.Fatalf("seed the level: %v", err)
 	}
 
-	sb, err := h.coord.openReleased(t.Context(), "c1", "opus")
+	sb, err := h.coord.openReleased(t.Context(), "c1", "model-a")
 	if err != nil {
-		t.Fatalf("open on opus: %v", err)
+		t.Fatalf("open on model-a: %v", err)
 	}
 
-	if opts := fakeOf(sb).lastSessionOpts(); opts == nil || opts.Model != "opus" || opts.Effort != "high" {
-		t.Errorf("the session = %+v, want one on opus at high, not opus's seed, medium", opts)
+	if opts := fakeOf(sb).lastSessionOpts(); opts == nil || opts.Model != "model-a" || opts.Effort != "high" {
+		t.Errorf("the session = %+v, want one on model-a at high, not model-a's seed, medium", opts)
 	}
 }
 
@@ -631,7 +631,7 @@ func TestSwitchModel_ATierPickedWithTheSwitchTurnsThinkingOn(t *testing.T) {
 	br := fakeOf(h.coord.bridgeFor("c1"))
 	h.coord.catalog.SetModels([]marotte.SessionModel{
 		catalogModel(t, "fake-model", fiveTiersMeta),
-		catalogModel(t, "opus", `{"kiro":{"hasEffort":true,"thinkingToggleable":true,"effortLevels":["low","medium","high","xhigh","max"]}}`),
+		catalogModel(t, "model-a", `{"kiro":{"hasEffort":true,"thinkingToggleable":true,"effortLevels":["low","medium","high","xhigh","max"]}}`),
 	})
 	if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Thinking = marotte.ThinkingOff
@@ -640,7 +640,7 @@ func TestSwitchModel_ATierPickedWithTheSwitchTurnsThinkingOn(t *testing.T) {
 		t.Fatalf("choose thinking off: %v", err)
 	}
 
-	postOK(t, h, "switch_model", `{"model":"opus","effort":"max"}`)
+	postOK(t, h, "switch_model", `{"model":"model-a","effort":"max"}`)
 
 	br.mu.Lock()
 	thinking := br.thinking
@@ -660,7 +660,7 @@ func TestSwitchModel_TheRowNamesTheCappedTierAndTheRecordThePreference(t *testin
 	br := fakeOf(h.coord.bridgeFor("c1"))
 	h.coord.catalog.SetModels([]marotte.SessionModel{
 		catalogModel(t, "fake-model", fiveTiersMeta),
-		catalogModel(t, "opus", `{"kiro":{"hasEffort":true,"thinkingToggleable":true,"defaultThinkingEnabled":false,`+
+		catalogModel(t, "model-a", `{"kiro":{"hasEffort":true,"thinkingToggleable":true,"defaultThinkingEnabled":false,`+
 			`"effortLevels":["low","medium","high","xhigh","max"]}}`),
 	})
 	if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -670,12 +670,12 @@ func TestSwitchModel_TheRowNamesTheCappedTierAndTheRecordThePreference(t *testin
 		t.Fatalf("seed the level: %v", err)
 	}
 
-	postOK(t, h, "switch_model", `{"model":"opus"}`)
+	postOK(t, h, "switch_model", `{"model":"model-a"}`)
 
 	if got := br.lastEffort(); got != "high" {
-		t.Errorf("the switch asserted %q, want high: max capped while opus's thinking stays off", got)
+		t.Errorf("the switch asserted %q, want high: max capped while model-a's thinking stays off", got)
 	}
-	want := marotte.EntryModelSwitched{From: "fake-model", To: "opus", Effort: "high"}
+	want := marotte.EntryModelSwitched{From: "fake-model", To: "model-a", Effort: "high"}
 	if got := switchEntries(t, d); len(got) != 1 || got[0] != want {
 		t.Errorf("model_switched rows = %+v, want exactly %+v", got, want)
 	}
@@ -692,10 +692,10 @@ func TestSwitchModel_ACarriedLevelRidesAPickTheCatalogCannotJudge(t *testing.T) 
 	h.coord.catalog.SetModels([]marotte.SessionModel{catalogModel(t, "fake-model", fiveTiersMeta)})
 
 	postOK(t, h, "set_effort", `{"level":"high"}`)
-	postOK(t, h, "switch_model", `{"model":"opus"}`)
+	postOK(t, h, "switch_model", `{"model":"model-a"}`)
 
-	if c, _ := d.cs.Get(t.Context(), "c1"); c.Model != "opus" || c.Effort != "high" {
-		t.Errorf("header = {Model %q, Effort %q}, want {opus, high}: not opus's seed, medium", c.Model, c.Effort)
+	if c, _ := d.cs.Get(t.Context(), "c1"); c.Model != "model-a" || c.Effort != "high" {
+		t.Errorf("header = {Model %q, Effort %q}, want {model-a, high}: not model-a's seed, medium", c.Model, c.Effort)
 	}
 	if opts := reopenSessionOpts(t, h); opts.Effort != "high" {
 		t.Errorf("the next session asked effort %q, want high", opts.Effort)
@@ -750,8 +750,8 @@ func TestSwitchModel_ARetryOfALandedSwitchIsOK(t *testing.T) {
 		payload string
 		row     marotte.EntryModelSwitched
 	}{
-		"an offered tier":   {`{"model":"opus","effort":"high"}`, marotte.EntryModelSwitched{From: "fake-model", To: "opus", Effort: "high"}},
-		"an unoffered tier": {`{"model":"gpt","effort":"max"}`, marotte.EntryModelSwitched{From: "fake-model", To: "gpt", Effort: "medium", Unoffered: "max"}},
+		"an offered tier":   {`{"model":"model-a","effort":"high"}`, marotte.EntryModelSwitched{From: "fake-model", To: "model-a", Effort: "high"}},
+		"an unoffered tier": {`{"model":"model-e","effort":"max"}`, marotte.EntryModelSwitched{From: "fake-model", To: "model-e", Effort: "medium", Unoffered: "max"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			d, h := switchFixture(t)
@@ -770,14 +770,14 @@ func TestSwitchModel_ARetryOfALandedSwitchIsOK(t *testing.T) {
 func TestSwitchModel_RefusesAnEffortItCannotCarry(t *testing.T) {
 	d, h := switchFixture(t)
 	if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Model, c.Effort = "gpt", "low"
+		c.Model, c.Effort = "model-e", "low"
 		return true
 	}); err != nil {
-		t.Fatalf("run gpt: %v", err)
+		t.Fatalf("run model-e: %v", err)
 	}
 	for name, payload := range map[string]string{
-		"a tier the model in force lacks": `{"model":"gpt","effort":"max"}`,
-		"a malformed tier":                `{"model":"opus","effort":"not a tier"}`,
+		"a tier the model in force lacks": `{"model":"model-e","effort":"max"}`,
+		"a malformed tier":                `{"model":"model-a","effort":"not a tier"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			rec := postCmd(t, h, marotte.ClientCommand{Type: "switch_model", ChatID: "c1", Payload: json.RawMessage(payload)})
@@ -813,10 +813,10 @@ func TestSwitchModel_ATurnCloseCannotLandBetweenAStopAndItsCancel(t *testing.T) 
 	br := fakeOf(h.coord.bridgeFor("c1"))
 	h.coord.catalog.SetModels([]marotte.SessionModel{
 		catalogModel(t, "fake-model", toggleable),
-		catalogModel(t, "opus", toggleable),
+		catalogModel(t, "model-a", toggleable),
 	})
 	id, _ := h.stagePromptTurn(t, "c1")
-	postOK(t, h, "switch_model", `{"model":"opus","effort":"high"}`)
+	postOK(t, h, "switch_model", `{"model":"model-a","effort":"high"}`)
 
 	// The stop's set_config_option holds the request between its stop and its park.
 	release := make(chan struct{})
@@ -873,6 +873,6 @@ func TestSwitchModel_ATurnCloseCannotLandBetweenAStopAndItsCancel(t *testing.T) 
 			c.Model, c.Effort, c.Thinking, c.PendingModel)
 	}
 	if got := switchEntries(t, d); len(got) != 0 {
-		t.Errorf("model_switched rows = %+v, want none: opus never landed", got)
+		t.Errorf("model_switched rows = %+v, want none: model-a never landed", got)
 	}
 }

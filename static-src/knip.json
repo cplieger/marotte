@@ -10,7 +10,6 @@
     "eslint.config.base.mjs",
     "**/*.test.ts",
     "**/*.node.test.ts",
-    "**/*.fuzz.test.ts",
     "**/*.property.test.ts"
   ],
   "project": ["**/*.ts", "!**/*.d.ts", "!node_modules/**"],

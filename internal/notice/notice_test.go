@@ -1,6 +1,7 @@
 package notice
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -65,9 +66,9 @@ func TestBuilders_titleIsTheTabAndBodyIsPhraseThenDetail(t *testing.T) {
 			PushSubject: marotte.RuleSubject("r1"), Kind: marotte.PushKindRunOutcome,
 			Title: "nightly", Body: "Workflow did not start · engine busy",
 		}},
-		{"a step that ended on an empty model turn", StepEmptyAnswer(run, "wf1:seat-grok"), marotte.NotificationPayload{
+		{"a step that ended on an empty model turn", StepEmptyAnswer(run, "wf1:seat-b"), marotte.NotificationPayload{
 			PushSubject: marotte.RunSubject("wf1"), Kind: marotte.PushKindRunOutcome,
-			Title: "nightly · scheduled", Body: "Step failed · wf1:seat-grok: ended with an empty model turn and no completion signal",
+			Title: "nightly · scheduled", Body: "Step failed · wf1:seat-b: ended with an empty model turn and no completion signal",
 		}},
 		{"pr flip", PRStatus(marotte.PRSubject("github:github.com", "r1", 7), "acme/web", 7, "Add login", true), marotte.NotificationPayload{
 			PushSubject: marotte.PRSubject("github:github.com", "r1", 7), Kind: marotte.PushKindPRStatus,
@@ -76,7 +77,7 @@ func TestBuilders_titleIsTheTabAndBodyIsPhraseThenDetail(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.got != tc.want {
+			if !reflect.DeepEqual(tc.got, tc.want) {
 				t.Errorf("got %+v, want %+v", tc.got, tc.want)
 			}
 		})

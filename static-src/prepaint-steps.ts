@@ -2,7 +2,7 @@
 // (storage reads, root attribute writes): this graph is bundled into the blocking /prepaint.js, so
 // pulling in a DOM-registry or feature module would put the app in front of the first frame.
 
-import { createTheme } from "@cplieger/ui/theme";
+import { createTheme } from "./legacy-ui/theme.js";
 import { cachedTheme } from "./device-view.js";
 import { applyFocusZoomGuard } from "./focus-zoom.js";
 import { LS_UI_STATE_KEY, THEME_ATTRIBUTE } from "./ls-keys.js";

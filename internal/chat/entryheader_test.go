@@ -23,11 +23,11 @@ func newHeaderFixture(t *testing.T) (EntryHeader, string) {
 func TestEntryHeader_RoundTripsEveryField(t *testing.T) {
 	h, root := newHeaderFixture(t)
 	want := &marotte.Chat{
-		ID: "c-abcdef01", Name: "a chat", Model: "opus", ACPSessionID: "sess-1",
+		ID: "c-abcdef01", Name: "a chat", Model: "model-a", ACPSessionID: "sess-1",
 		PriorACPSessionIDs: []string{"sess-0"}, Draft: "half a sentence",
 		Attachments: []string{"/workspace/a.go"}, Effort: "high",
 		CompactionWatermark: "compaction-abc", TurnCount: 7,
-		LastTurnOutcome: marotte.TurnOutcomeFailed, PendingModel: "sonnet",
+		LastTurnOutcome: marotte.TurnOutcomeFailed, PendingModel: "model-b",
 		SupervisedMode: true,
 	}
 	if err := h.write(t.Context(), want); err != nil {
@@ -76,14 +76,14 @@ func TestEntryHeader_UpdateAppliesEveryChangeInOneWrite(t *testing.T) {
 	}
 	applied, err := h.Update(t.Context(), func(c *marotte.Chat) bool {
 		c.ACPSessionID = "sess-1"
-		c.PendingModel = "sonnet"
+		c.PendingModel = "model-b"
 		return true
 	})
 	if err != nil || !applied {
 		t.Fatalf("update reported (%v, %v), want applied", applied, err)
 	}
 	got := mustReadHeader(t, h)
-	if got.ACPSessionID != "sess-1" || got.PendingModel != "sonnet" {
+	if got.ACPSessionID != "sess-1" || got.PendingModel != "model-b" {
 		t.Errorf("the header holds %+v, want both fields from one write", got)
 	}
 	stamp := backdate(t, filepath.Join(root, headerFileName))
@@ -101,7 +101,7 @@ func TestEntryHeader_UpdateCreatesAnAbsentHeader(t *testing.T) {
 	applied, err := h.Update(t.Context(), func(c *marotte.Chat) bool {
 		c.ID = "c-abcdef01"
 		c.Name = "from the prompt"
-		c.Model = "opus"
+		c.Model = "model-a"
 		c.SupervisedMode = true
 		return true
 	})
@@ -109,7 +109,7 @@ func TestEntryHeader_UpdateCreatesAnAbsentHeader(t *testing.T) {
 		t.Fatalf("update reported (%v, %v), want applied", applied, err)
 	}
 	got := mustReadHeader(t, h)
-	if got.ID != "c-abcdef01" || got.Name != "from the prompt" || got.Model != "opus" || !got.SupervisedMode {
+	if got.ID != "c-abcdef01" || got.Name != "from the prompt" || got.Model != "model-a" || !got.SupervisedMode {
 		t.Errorf("the created header is %+v, want the record the caller supplied", got)
 	}
 }

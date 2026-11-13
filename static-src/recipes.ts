@@ -1,7 +1,7 @@
 // The Workflows sub-tab of the configuration browser (/docs/workflows): the launchable recipes,
 // each with the app's ONE run affordance — Run ⇄ Cancel.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { join as joinKey } from "@cplieger/keyenc";
 import { onBus, onSSE, BUS_CATALOG_MODELS, BUS_RUNS_CHANGED } from "./bus.js";
 import { reconcile } from "./reconcile.js";
@@ -1010,6 +1010,7 @@ function buildPlanPreview(launch: HTMLElement): PlanPreview {
   tree.root.setAttribute("aria-label", "Planned steps");
   // A tab stop, because no row is one and the box scrolls (WCAG 2.1.1).
   const steps = el("div", { className: "recipe-plan-steps", tabindex: "0" }, tree.root);
+  tree.attach(steps);
   return { region: el("div", { className: "recipe-plan" }, head, steps), head, tree, launch };
 }
 

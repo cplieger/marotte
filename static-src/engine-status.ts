@@ -1,7 +1,7 @@
 // The one agent engine's status (GET /api/engine and the engine_status event), its banner, the confirmed restart,
 // and the restart hints on the engine-wide Settings rows.
 
-import { signal } from "@cplieger/ui";
+import { signal } from "@cplieger/reactive";
 import { apiGetTyped } from "./api-client.js";
 import { GLOBAL_BANNER, clearBannerCodes, showBanner } from "./banner-stack.js";
 import { confirm } from "./confirm.js";
@@ -26,6 +26,17 @@ interface EngineRow {
 /** Each engine-wide Settings row, keyed by the setting key the server names as a restart reason. */
 const ENGINE_ROWS: ReadonlyMap<string, EngineRow> = new Map([
   ["knowledge_enabled", { label: "Knowledge base search", controlID: "flag-knowledge" }],
+  ["knowledge_index_type", { label: "Knowledge index type", controlID: "knowledge-index-type" }],
+  [
+    "knowledge_include_patterns",
+    { label: "Knowledge files to include", controlID: "knowledge-include-patterns" },
+  ],
+  [
+    "knowledge_exclude_patterns",
+    { label: "Knowledge files to skip", controlID: "knowledge-exclude-patterns" },
+  ],
+  ["knowledge_max_files", { label: "Knowledge file limit", controlID: "knowledge-max-files" }],
+  ["knowledge_chunking", { label: "Knowledge passage size", controlID: "knowledge-chunk-size" }],
   ["model_fallback_enabled", { label: "Model fallback", controlID: "flag-model-fallback" }],
   [
     "steering_reminders_enabled",
@@ -35,7 +46,11 @@ const ENGINE_ROWS: ReadonlyMap<string, EngineRow> = new Map([
   ["auto_delegation", { label: "Smart helper models", controlID: "auto-delegation" }],
   [
     "cloudformation_safety_check",
-    { label: "AWS CloudFormation safety check", controlID: "flag-cloudformation-safety" },
+    { label: "AWS CloudFormation safety check", controlID: "cloudformation-safety" },
+  ],
+  [
+    "chat_message_delivery_limit",
+    { label: "Messages per exchange", controlID: "chat-message-delivery-limit" },
   ],
   ["telemetry.enabled", { label: "kiro-cli telemetry", controlID: "flag-telemetry" }],
   ["engine_heap_mib", { label: "Agent engine memory limit", controlID: "engine-heap-mib" }],
@@ -215,11 +230,9 @@ export function paintEngineRows(s: EngineStatus | null): void {
     let hint = maybeEl(hintID);
     const control = maybeEl(row.controlID);
     if (hint === null && control !== null) {
-      const hints = [
-        ...(control.closest(".section-option")?.querySelectorAll(".section-hint") ?? []),
-      ];
-      const anchor = hints.at(-1);
-      if (anchor === undefined) {
+      const option = control.closest(".section-option");
+      const anchor = [...(option?.querySelectorAll(".section-hint") ?? [])].at(-1);
+      if (option === null || anchor === undefined) {
         continue;
       }
       hint = document.createElement("p");
@@ -236,11 +249,14 @@ export function paintEngineRows(s: EngineStatus | null): void {
       });
       hint.append(text, btn);
       anchor.after(hint);
-      const described = control.getAttribute("aria-describedby");
-      control.setAttribute(
-        "aria-describedby",
-        described === null ? hintID : `${described} ${hintID}`,
-      );
+      // Every box of the row, as the passage size row saves one setting from two.
+      for (const box of option.querySelectorAll("input, select")) {
+        const described = box.getAttribute("aria-describedby");
+        box.setAttribute(
+          "aria-describedby",
+          described === null ? hintID : `${described} ${hintID}`,
+        );
+      }
     }
     hint?.querySelector(".engine-restart-now")?.classList.toggle("hidden", !pending.includes(key));
   }

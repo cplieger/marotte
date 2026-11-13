@@ -131,6 +131,7 @@ function load(chatID: string, turns: readonly (readonly Entry[])[]): void {
   s.turn_count = s.turn_order.length;
   store.setSessions([s]);
   store.setActive(chatID);
+  store.setPainted(chatID);
   store.bumpMessages(chatID, "load");
 }
 
@@ -172,6 +173,7 @@ beforeEach(() => {
   resetFoldState();
   store.setSessions([]);
   store.setActive("");
+  store.setPainted("");
   copied.length = 0;
 });
 
@@ -195,6 +197,7 @@ describe("two messages in one turn's body", () => {
     const chat = "tlm-live";
     store.setSessions([makeSession({ id: chat, name: chat, thinking: true })]);
     store.setActive(chat);
+    store.setPainted(chat);
     store.openTurn(chat, turnOpen(TURN, 1));
     store.appendEntry(chat, callEntry(TURN, 1));
     store.appendEntry(chat, resultEntry(TURN, 2));
@@ -233,6 +236,7 @@ describe("two messages in one turn's body", () => {
     const chat = "tlm-segments";
     store.setSessions([makeSession({ id: chat, name: chat, thinking: true })]);
     store.setActive(chat);
+    store.setPainted(chat);
     store.openTurn(chat, turnOpen(TURN, 1));
     store.appendEntry(chat, callEntry(TURN, 1));
     store.openEntry(chat, { turn: TURN, id: SAY_A, kind: "text", text: "one **tw", n: 1 });
@@ -260,6 +264,7 @@ describe("two messages in one turn's body", () => {
     s.turn_count = 1;
     store.setSessions([s]);
     store.setActive(s.id);
+    store.setPainted(s.id);
     store.bumpMessages(s.id, "load");
     await vi.waitFor(() => {
       expect(card(TURN).querySelector(".turn-body .message.assistant strong")?.textContent).toBe(
@@ -425,6 +430,7 @@ describe("a minted segment between two messages", () => {
     const chat = "tlm-minted-live";
     store.setSessions([makeSession({ id: chat, name: chat, thinking: true })]);
     store.setActive(chat);
+    store.setPainted(chat);
     store.openTurn(chat, turnOpen(TURN, 1));
     store.appendEntry(chat, callEntry(TURN, 1));
     store.appendEntry(chat, resultEntry(TURN, 2));

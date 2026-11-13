@@ -1,6 +1,6 @@
 package push
 
-// The debounce window belongs to a KIND AND A SUBJECT, asserted on the integrated Send path, where
+// The debounce window belongs to a KIND AND A SUBJECT, asserted on the integrated Raise path, where
 // the defect lived, rather than through the poller's fake notifier.
 
 import (
@@ -37,7 +37,7 @@ func (c *countingTransport) count() int {
 }
 
 // newCountingService returns a service with one subscriber whose deliveries are
-// counted, so a Send that passes preflight is observable as an HTTP attempt.
+// counted, so a Raise that passes preflight is observable as an HTTP attempt.
 //
 // pr_status is switched ON explicitly because these tests are about the
 // per-subject debounce rather than the kind's default, which is OFF: SetPreferences
@@ -61,8 +61,8 @@ func TestSend_TwoSubjectsInOneWindowBothDeliver(t *testing.T) {
 	first := marotte.PRSubject("github:github.com", "cplieger/marotte", 1)
 	second := marotte.PRSubject("github:github.com", "cplieger/marotte", 2)
 
-	s.Send(t.Context(), &marotte.NotificationPayload{PushSubject: first, Kind: marotte.PushKindPRStatus, Title: "Marotte", Body: "#1 checks passed"})
-	s.Send(t.Context(), &marotte.NotificationPayload{PushSubject: second, Kind: marotte.PushKindPRStatus, Title: "Marotte", Body: "#2 checks failed"})
+	send(t, s, &marotte.NotificationPayload{PushSubject: first, Kind: marotte.PushKindPRStatus, Title: "Marotte", Body: "#1 checks passed"})
+	send(t, s, &marotte.NotificationPayload{PushSubject: second, Kind: marotte.PushKindPRStatus, Title: "Marotte", Body: "#2 checks failed"})
 
 	if got := rt.count(); got != 2 {
 		t.Errorf("deliveries = %d, want 2: a second pull request settling inside the "+
@@ -78,7 +78,7 @@ func TestSend_RepeatsOfOneSubjectStillCoalesce(t *testing.T) {
 	subject := marotte.PRSubject("github:github.com", "cplieger/marotte", 7)
 
 	for range 3 {
-		s.Send(t.Context(), &marotte.NotificationPayload{PushSubject: subject, Kind: marotte.PushKindPRStatus, Title: "Marotte", Body: "#7 checks passed"})
+		send(t, s, &marotte.NotificationPayload{PushSubject: subject, Kind: marotte.PushKindPRStatus, Title: "Marotte", Body: "#7 checks passed"})
 	}
 
 	if got := rt.count(); got != 1 {
@@ -93,8 +93,8 @@ func TestSend_SubjectWindowsAreKindScoped(t *testing.T) {
 	s, rt := newCountingService(t)
 	chat := marotte.ChatSubject("c-abc")
 
-	s.Send(t.Context(), &marotte.NotificationPayload{PushSubject: chat, Kind: marotte.PushKindAgentFinished, Title: "Marotte", Body: "finished"})
-	s.Send(t.Context(), &marotte.NotificationPayload{PushSubject: chat, Kind: marotte.PushKindPermission, Title: "Marotte", Body: "may I"})
+	send(t, s, &marotte.NotificationPayload{PushSubject: chat, Kind: marotte.PushKindAgentFinished, Title: "Marotte", Body: "finished"})
+	send(t, s, &marotte.NotificationPayload{PushSubject: chat, Kind: marotte.PushKindPermission, Title: "Marotte", Body: "may I"})
 
 	if got := rt.count(); got != 2 {
 		t.Errorf("deliveries = %d, want 2: one kind's window suppressed another's on the same chat", got)

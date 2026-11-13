@@ -1,7 +1,7 @@
 // The "Run when…" popup on /docs/workflows: a recipe's launch rules as lines, and the form of a
 // rule that launches the recipe when something happens on a forge.
 
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { split as splitKey } from "@cplieger/keyenc";
 import { scheduleViewOf } from "./launch-rule-types.js";
 import type {

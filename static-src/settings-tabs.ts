@@ -2,7 +2,7 @@
 // mirrors tabs.ts: one state primitive, subscribers that reflect state in the DOM and the URL;
 // setSettingsTab() also pushes the URL so deep-linking and Back work.
 
-import { signal, subscribe } from "@cplieger/ui";
+import { signal, subscribe } from "@cplieger/reactive";
 import { $, queryAll } from "./dom.js";
 import { swapViews } from "./view-swap.js";
 import type { SettingsTab } from "./route-path.js";

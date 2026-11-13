@@ -86,20 +86,20 @@ type Service struct {
 	prefs         map[marotte.PushKind]bool
 	keys          vapidKeys
 	vapidPriv     *ecdsa.PrivateKey
-	// presence is the send filter's input: a subscription whose profile reads
-	// present is receiving the event on its stream and is not pushed. nil sends
-	// to every subscription, which is the fail-open direction.
+	// presence is the ledger's input: each profile's liveness and its pages' views. nil reads
+	// every profile gone, so every subscription is pushed at raise: the fail-open direction.
 	presence *Presence
-	// suppressed counts filter skips per kind for the test-only probe; zero while presence
-	// shows attended profiles means the tags are not matching.
+	// suppressed counts per kind, for the test-only probe, the notices a present profile was not
+	// pushed at raise; zero while presence shows attended profiles means the tags are not matching.
 	suppressed map[marotte.PushKind]*atomic.Uint64
 	subject    string
 	dir        string
-	// deferred is the held set of the deferred-send variant (deferred.go); empty
-	// for the life of the process while that switch is off.
-	deferred deferred
-	mu       sync.Mutex
-	healthy  bool
+	// frames publishes the page's notification frame; set once before the first Raise.
+	frames func(marotte.ChatID, marotte.NotificationPayload)
+	// ledger holds every undelivered notice (ledger.go).
+	ledger  ledger
+	mu      sync.Mutex
+	healthy bool
 	// keysGenerated records that loadKeys minted a new keypair (every stored subscription is
 	// now undeliverable). Unguarded: New sets and reads it before the write loop starts.
 	keysGenerated bool
@@ -115,8 +115,7 @@ type saveRequest struct {
 // Option configures a Service at construction.
 type Option func(*Service)
 
-// WithPresence wires the presence table the send filter reads. Absent, nothing is
-// filtered and every subscription is pushed.
+// WithPresence wires the presence table the ledger reads. Absent, every subscription is pushed at raise.
 func WithPresence(p *Presence) Option {
 	return func(s *Service) { s.presence = p }
 }
@@ -181,7 +180,7 @@ func New(ctx context.Context, configDir, subject string, opts ...Option) *Servic
 // Close cancels in-flight pushes and waits for the write loop to drain pending saves.
 func (s *Service) Close() {
 	s.cancel()
-	s.deferred.stop()
+	s.ledger.stop()
 	<-s.writeLoopDone
 }
 

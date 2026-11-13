@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // rowID is a row's identity: a key alone is not unique, because "knowledge" is
@@ -200,7 +202,6 @@ func TestTable_GateMatchesDoor(t *testing.T) {
 // false otherwise, so every sent settings value must be {"enabled": …}.
 func TestSettingRowsCarryTheEnabledObject(t *testing.T) {
 	vetoRows := map[string]bool{
-		"steeringSupervisor": true,
 		// KAS's own default, sent so every session states it.
 		"_providerPowers": true,
 	}
@@ -282,6 +283,12 @@ func valueShapeFault(r resolver, v any) string {
 		if !ok || len(ids) == 0 || slices.Contains(ids, "") {
 			return fmt.Sprintf("is %#v; an enum-list key is a non-empty array of non-empty ids", v)
 		}
+	case resolverObjectList:
+		raw, err := json.Marshal(v)
+		var objs []map[string]any
+		if err != nil || json.Unmarshal(raw, &objs) != nil || len(objs) == 0 || slices.ContainsFunc(objs, func(o map[string]any) bool { return len(o) == 0 }) {
+			return fmt.Sprintf("is %#v; an object-list key is a non-empty array of non-empty objects", v)
+		}
 	default:
 		return fmt.Sprintf("has no shape rule for resolver %q", r)
 	}
@@ -327,6 +334,9 @@ func TestRowValuesMatchTheirResolver(t *testing.T) {
 			{resolverText, ""},
 			{resolverEnumList, "read-all"},
 			{resolverEnumList, []string{}},
+			{resolverObjectList, []string{"marotte-bot"}},
+			{resolverObjectList, []marotte.ClientCustomAgent{}},
+			{resolverObjectList, map[string]any{"id": "marotte-bot"}},
 			{"", true},
 		} {
 			if valueShapeFault(tc.r, tc.v) == "" {
@@ -353,12 +363,16 @@ var (
 	}{
 		{"with every gate field off", EngineSpawn{}},
 		{"with every gate field on", EngineSpawn{
-			SecretStorage: true, Knowledge: true, InfraSafetyMonitor: "on",
+			SecretStorage: true, Knowledge: true, InfraSafety: "enforce",
 			AutoRouting: "on", AutoDelegation: "on",
 			TerminalCommandTimeoutMs: 300000, SteeringReminders: true,
-			DisableTelemetry: true, ModelFallback: true,
+			DisableTelemetry: true, ModelFallback: true, MessageDeliveryLimit: 12,
+			KnowledgeTuning: marotte.KnowledgeTuning{
+				IndexType: "fast", IncludePatterns: []string{"**/*.md"}, ExcludePatterns: []string{"drafts/**"},
+				MaxFiles: 200, Chunking: marotte.KnowledgeChunking{Size: 256, Overlap: 32},
+			},
 		}},
-		{"with every choice off", EngineSpawn{AutoRouting: "off", AutoDelegation: "off", InfraSafetyMonitor: "off"}},
+		{"with every choice off", EngineSpawn{AutoRouting: "off", AutoDelegation: "off", InfraSafety: "off"}},
 	}
 	sessionStates = []struct {
 		name  string
@@ -370,7 +384,9 @@ var (
 			Presets:           []string{"read-workspace"},
 			SpecPlan:          "full", SpecAskClarification: true, WorkValidation: "on",
 			MemoryMode: "read_write", MemoryReflection: true,
-			Workflows: true, DisableAutoCompaction: true, ProfileAgentTurns: true,
+			Workflows: true, WorkflowCreatorEffort: "high", Messaging: true, Awareness: true,
+			DisableAutoCompaction: true, ProfileAgentTurns: true,
+			CustomAgents: []marotte.ClientCustomAgent{probeAgent},
 		}},
 		{"with every choice off", SessionSpawn{WorkValidation: "off"}},
 	}

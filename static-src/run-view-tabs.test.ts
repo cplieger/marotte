@@ -27,7 +27,6 @@ vi.mock("./deep-link.js", async (importOriginal) => ({
   admitLocation: vi.fn(() => "opens"),
 }));
 vi.mock("./chat.js", { spy: true });
-vi.mock("./agent-finished-cue.js", { spy: true });
 vi.mock("./dom.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Dom>()),
   $: new Proxy(
@@ -58,7 +57,7 @@ vi.mock("./api-client.js", async (importOriginal) => ({
   apiGetTyped: (await import("./__test-helpers__/tabs-server.js")).tabListRead(),
   apiGetTypedOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
   apiGetOrError: vi.fn((path: string) => {
-    const data = m.replies.get(path);
+    const data = m.replies.get(path.split("?")[0] ?? path);
     return Promise.resolve(
       data === undefined
         ? { ok: false, status: 404, data: null, error: "not found" }
@@ -82,6 +81,7 @@ import { openRunView, refreshRun, showRun } from "./run-view.js";
 import { forgetRun, noteRunChat } from "./run-store.js";
 
 import { installRunDotSubscriber } from "./run-dots.js";
+import { openDockPanel } from "./__test-helpers__/exec-dock.js";
 
 bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
 let dotsInstalled = false;
@@ -125,9 +125,9 @@ function seedRuns(): void {
         status: "running",
         children: [
           step("advisor", "completed"),
-          step("code-claude", "completed"),
-          step("adversary-claude", "running"),
-          step("adversary-grok", "running"),
+          step("code-a", "completed"),
+          step("adversary-a", "running"),
+          step("adversary-b", "running"),
         ],
       },
     ]),
@@ -152,7 +152,15 @@ beforeEach(async () => {
   _resetTabsSyncForTest();
   _resetTabOpenersForTest();
   registerTabOpeners({
-    chat: { show: vi.fn(), refresh: vi.fn(), close: vi.fn(), dot: () => "" },
+    chat: {
+      prefetch: vi.fn(),
+      select: vi.fn(),
+      loadFailed: vi.fn(),
+      show: vi.fn(),
+      refresh: vi.fn(() => Promise.resolve()),
+      close: vi.fn(),
+      dot: () => "",
+    },
     editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn() },
     // The composition root's run half (app.ts).
     run: {
@@ -189,6 +197,10 @@ afterEach(() => {
 });
 
 function shown(): { head: string; title: string; rows: string[]; composer: string } {
+  const dock = document.getElementById("run-exec-dock");
+  if (dock?.querySelector(".ev-box-toggle") != null) {
+    openDockPanel(dock);
+  }
   return {
     composer: document.querySelector<HTMLTextAreaElement>("#run-composer-input")?.placeholder ?? "",
     head: document.querySelector("#run-exec-dock .ev-dock-head")?.textContent ?? "",
@@ -206,7 +218,7 @@ const SHOWS = {
   [SEATS]: {
     name: "review-seats-r2",
     status: "running",
-    steps: ["seats", "advisor", "code-claude", "adversary-claude", "adversary-grok"],
+    steps: ["seats", "advisor", "code-a", "adversary-a", "adversary-b"],
   },
   [OTHER]: { name: "subflux-build", status: "running", steps: ["implement", "verify"] },
 };

@@ -111,25 +111,25 @@ describe("model_fallback", () => {
     labelOf(buildEvent(event("model_fallback", payload)));
 
   it.each([
-    ["refusal", "opus-5 refused this request, retried on sonnet-5"],
-    ["availability", "opus-5 was unavailable, retried on sonnet-5"],
-    ["latency", "opus-5 stopped for an unknown reason, retried on sonnet-5"],
+    ["refusal", "model-a-5 refused this request, retried on model-b-5"],
+    ["availability", "model-a-5 was unavailable, retried on model-b-5"],
+    ["latency", "model-a-5 stopped for an unknown reason, retried on model-b-5"],
   ])("names the %s cause and the model the turn moved to", (trigger, want) => {
-    expect(label({ from: "opus-5", to: "sonnet-5", scope: "turn", trigger })).toBe(want);
+    expect(label({ from: "model-a-5", to: "model-b-5", scope: "turn", trigger })).toBe(want);
   });
 
   it("says a session-wide fallback's model now serves the session, in the same row", () => {
     const node = buildEvent(
       event("model_fallback", {
-        from: "opus-5",
-        to: "sonnet-5",
+        from: "model-a-5",
+        to: "model-b-5",
         scope: "session",
         trigger: "refusal",
       }),
     );
     expect(node.className).toContain("boundary-switched");
     expect(labelOf(node)).toBe(
-      "opus-5 refused this request, retried on sonnet-5, which now serves this session",
+      "model-a-5 refused this request, retried on model-b-5, which now serves this session",
     );
   });
 
@@ -145,14 +145,14 @@ describe("model_fallback", () => {
     ["unsafeToReissue", "the turn had already run tools, so a retry could repeat them"],
     ["raceLost", "the model changed while Kiro was switching"],
   ])("words the %s decline", (reason, why) => {
-    expect(label({ from: "opus-5", trigger: "availability", reason })).toBe(
-      `opus-5 was unavailable, no fallback model available \u00b7 ${why}`,
+    expect(label({ from: "model-a-5", trigger: "availability", reason })).toBe(
+      `model-a-5 was unavailable, no fallback model available \u00b7 ${why}`,
     );
   });
 
   it("names a decline's cause from its trigger", () => {
-    expect(label({ from: "opus-5", trigger: "refusal", reason: "chainExhausted" })).toBe(
-      "opus-5 refused this request, no fallback model available \u00b7 every fallback model was already tried",
+    expect(label({ from: "model-a-5", trigger: "refusal", reason: "chainExhausted" })).toBe(
+      "model-a-5 refused this request, no fallback model available \u00b7 every fallback model was already tried",
     );
   });
 
@@ -160,43 +160,43 @@ describe("model_fallback", () => {
   it("reads a reason as a decline even when a model is named", () => {
     expect(
       label({
-        from: "opus-5",
-        to: "sonnet-5",
+        from: "model-a-5",
+        to: "model-b-5",
         scope: "session",
         trigger: "availability",
         reason: "raceLost",
       }),
     ).toBe(
-      "opus-5 was unavailable, no fallback model available \u00b7 the model changed while Kiro was switching",
+      "model-a-5 was unavailable, no fallback model available \u00b7 the model changed while Kiro was switching",
     );
   });
 
   it("shows a decline code it does not know as sent, and an inherited name as a code", () => {
-    expect(label({ from: "opus-5", trigger: "availability", reason: "quotaGone" })).toBe(
-      "opus-5 was unavailable, no fallback model available \u00b7 quotaGone",
+    expect(label({ from: "model-a-5", trigger: "availability", reason: "quotaGone" })).toBe(
+      "model-a-5 was unavailable, no fallback model available \u00b7 quotaGone",
     );
-    expect(label({ from: "opus-5", trigger: "availability", reason: "constructor" })).toBe(
-      "opus-5 was unavailable, no fallback model available \u00b7 constructor",
+    expect(label({ from: "model-a-5", trigger: "availability", reason: "constructor" })).toBe(
+      "model-a-5 was unavailable, no fallback model available \u00b7 constructor",
     );
   });
 
   it("names the cause alone with no target", () => {
-    expect(label({ from: "opus-5", trigger: "refusal" })).toBe("opus-5 refused this request");
+    expect(label({ from: "model-a-5", trigger: "refusal" })).toBe("model-a-5 refused this request");
   });
 });
 
 describe("model_switched", () => {
   it("names the model the turn continued on and the tier it continued at", () => {
     const node = buildEvent(
-      event("model_switched", { from: "sonnet-5", to: "opus-5", effort: "high" }),
+      event("model_switched", { from: "model-b-5", to: "model-a-5", effort: "high" }),
     );
-    expect(labelOf(node)).toBe("Switched to opus-5 (high)");
+    expect(labelOf(node)).toBe("Switched to model-a-5 (high)");
   });
 
   // `from === to` is the effort-only discriminator.
   it("names the tier rather than the model when only the effort changed", () => {
     const node = buildEvent(
-      event("model_switched", { from: "opus-5", to: "opus-5", effort: "high" }),
+      event("model_switched", { from: "model-a-5", to: "model-a-5", effort: "high" }),
     );
     expect(labelOf(node)).toBe("Reasoning effort: high");
   });
@@ -204,54 +204,56 @@ describe("model_switched", () => {
   it("names the unavailable model, the one now running and why", () => {
     const node = buildEvent(
       event("model_switched", {
-        from: "opus-9",
-        to: "sonnet-5",
+        from: "model-a-9",
+        to: "model-b-5",
         effort: "high",
         reason: "unavailable",
       }),
     );
-    expect(labelOf(node)).toBe("Switched from opus-9 to sonnet-5 · not available for this account");
+    expect(labelOf(node)).toBe(
+      "Switched from model-a-9 to model-b-5 · not available for this account",
+    );
   });
 
   it("says so when the new model does not offer the tier the chat wanted", () => {
     const node = buildEvent(
       event("model_switched", {
-        from: "opus-5",
-        to: "gpt-5.6-sol",
+        from: "model-a-5",
+        to: "model-e-5.6",
         effort: "high",
         unoffered: "max",
       }),
     );
-    expect(labelOf(node)).toBe("Switched to gpt-5.6-sol (high; max is not offered)");
+    expect(labelOf(node)).toBe("Switched to model-e-5.6 (high; max is not offered)");
   });
 
   it("names the unoffered tier alone when the new model runs at none", () => {
     const node = buildEvent(
-      event("model_switched", { from: "opus-5", to: "gpt-5.6-sol", unoffered: "xhigh" }),
+      event("model_switched", { from: "model-a-5", to: "model-e-5.6", unoffered: "xhigh" }),
     );
-    expect(labelOf(node)).toBe("Switched to gpt-5.6-sol (x-high is not offered)");
+    expect(labelOf(node)).toBe("Switched to model-e-5.6 (x-high is not offered)");
   });
 
   it("names the model alone when the entry carries no tier", () => {
-    const node = buildEvent(event("model_switched", { from: "sonnet-5", to: "opus-5" }));
-    expect(labelOf(node)).toBe("Switched to opus-5");
+    const node = buildEvent(event("model_switched", { from: "model-b-5", to: "model-a-5" }));
+    expect(labelOf(node)).toBe("Switched to model-a-5");
   });
 
   it("names the model when neither the model nor a tier moved", () => {
-    const node = buildEvent(event("model_switched", { from: "opus-5", to: "opus-5" }));
-    expect(labelOf(node)).toBe("Switched to opus-5");
+    const node = buildEvent(event("model_switched", { from: "model-a-5", to: "model-a-5" }));
+    expect(labelOf(node)).toBe("Switched to model-a-5");
   });
 
   it("spells the tier the way the effort vocabulary does", () => {
     const node = buildEvent(
-      event("model_switched", { from: "sonnet-5", to: "opus-5", effort: "xhigh" }),
+      event("model_switched", { from: "model-b-5", to: "model-a-5", effort: "xhigh" }),
     );
-    expect(labelOf(node)).toBe("Switched to opus-5 (x-high)");
+    expect(labelOf(node)).toBe("Switched to model-a-5 (x-high)");
   });
 
   // A reset has its own kind, so an empty target is never read as one.
   it("never words an empty target as a context reset", () => {
-    const node = buildEvent(event("model_switched", { from: "sonnet-5", to: "" }));
+    const node = buildEvent(event("model_switched", { from: "model-b-5", to: "" }));
     expect(labelOf(node)).not.toContain("Context reset");
   });
 });
@@ -349,8 +351,9 @@ describe("compaction", () => {
 
     (node as HTMLDetailsElement).open = true;
     // `toggle` is queued, not dispatched synchronously.
+    // The summary sits under the chat's title, so `#` is an h2 and `##` an h3.
     await vi.waitFor(() => {
-      expect(body?.querySelector("h2")?.textContent).toBe("Goal");
+      expect(body?.querySelector("h3")?.textContent).toBe("Goal");
     });
     expect(body?.querySelector("code")?.textContent).toBe("auth");
     expect(body?.textContent ?? "").not.toContain("##");

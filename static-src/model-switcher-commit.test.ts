@@ -34,7 +34,7 @@ interface TestSession {
 }
 
 vi.mock("./store.js", async (importOriginal) => {
-  const { signal } = (await vi.importActual("@cplieger/ui")) as { signal: SignalFactory };
+  const { signal } = (await vi.importActual("@cplieger/reactive")) as { signal: SignalFactory };
   const activeSession = signal<TestSession | undefined>(undefined);
   return {
     ...(await importOriginal<typeof Store>()),
@@ -107,11 +107,9 @@ function option(id: string): HTMLElement {
   return el as HTMLElement;
 }
 
-/** The popup arms its Escape and outside-click listeners a task after it opens. */
 async function open(): Promise<void> {
   await userEvent.click(pill());
   expect(pill().getAttribute("aria-expanded"), "the card opened").toBe("true");
-  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 async function keys(...pressed: readonly string[]): Promise<void> {
@@ -149,10 +147,10 @@ describe("the model card sends once, when it closes", () => {
   beforeEach(() => {
     // A failed case can leave the card open; its close must not count against the next case.
     collapseAll();
-    cachedModels = [model("opus-5"), model("sonnet-5")];
+    cachedModels = [model("model-a-5"), model("model-b-5")];
     (activeSession as unknown as { value: TestSession }).value = {
       id: "c1",
-      model: "opus-5",
+      model: "model-a-5",
       effort: "medium",
       effort_levels: FIVE,
     };
@@ -167,11 +165,11 @@ describe("the model card sends once, when it closes", () => {
     expect(knob().dataset["level"], "the card previews the pick at once").toBe("max");
     noSend();
 
-    await userEvent.click(option("sonnet-5"));
+    await userEvent.click(option("model-b-5"));
 
     expect(closed(), "a model click closes the card").toBe(true);
     expect(switchDispatch.mock.calls).toEqual([
-      [{ chatID: "c1", model: "sonnet-5", effort: "max" }],
+      [{ chatID: "c1", model: "model-b-5", effort: "max" }],
     ]);
     expect(
       effortDispatch,
@@ -219,7 +217,7 @@ describe("the model card sends once, when it closes", () => {
   it("sends a tier alone when the model clicked is the one the chat runs", async () => {
     await open();
     await keys("{End}");
-    await userEvent.click(option("opus-5"));
+    await userEvent.click(option("model-a-5"));
 
     expect(effortDispatch.mock.calls).toEqual([[{ chatID: "c1", level: "max" }]]);
     expect(switchDispatch).not.toHaveBeenCalled();
@@ -227,9 +225,9 @@ describe("the model card sends once, when it closes", () => {
 
   it("sends a model alone, with no tier, when the knob did not move", async () => {
     await open();
-    await userEvent.click(option("sonnet-5"));
+    await userEvent.click(option("model-b-5"));
 
-    expect(switchDispatch.mock.calls).toEqual([[{ chatID: "c1", model: "sonnet-5" }]]);
+    expect(switchDispatch.mock.calls).toEqual([[{ chatID: "c1", model: "model-b-5" }]]);
     expect(effortDispatch).not.toHaveBeenCalled();
   });
 
@@ -238,19 +236,19 @@ describe("the model card sends once, when it closes", () => {
   it("opens on a parked tier and sends the chat's own tier picked back over it", async () => {
     (activeSession as unknown as { value: TestSession }).value = {
       id: "c1",
-      model: "opus-5",
+      model: "model-a-5",
       effort: "medium",
       effort_levels: FIVE,
-      pending_model: "sonnet-5",
+      pending_model: "model-b-5",
       pending_effort: "high",
     };
     await open();
     expect(knob().dataset["level"], "the knob shows the parked tier").toBe("high");
     await keys("{ArrowLeft}");
-    await userEvent.click(option("sonnet-5"));
+    await userEvent.click(option("model-b-5"));
 
     expect(switchDispatch.mock.calls).toEqual([
-      [{ chatID: "c1", model: "sonnet-5", effort: "medium" }],
+      [{ chatID: "c1", model: "model-b-5", effort: "medium" }],
     ]);
     expect(effortDispatch).not.toHaveBeenCalled();
   });
@@ -263,10 +261,10 @@ describe("the model card sends once, when it closes", () => {
   }
 
   it("sends Off picked with a model as that one switch", async () => {
-    cachedModels = [model("opus-5", true), model("sonnet-5", true)];
+    cachedModels = [model("model-a-5", true), model("model-b-5", true)];
     (activeSession as unknown as { value: TestSession }).value = {
       id: "c1",
-      model: "opus-5",
+      model: "model-a-5",
       effort: "medium",
       effort_levels: FIVE,
       thinking_active: "on",
@@ -274,20 +272,20 @@ describe("the model card sends once, when it closes", () => {
     await open();
     await keys("{Home}");
     expect(knob().dataset["level"]).toBe("thinking:off");
-    await userEvent.click(option("sonnet-5"));
+    await userEvent.click(option("model-b-5"));
 
-    sentOnly({ model: "sonnet-5", effort: "thinking:off" });
+    sentOnly({ model: "model-b-5", effort: "thinking:off" });
   });
 
   function parkHigh(thinkingActive: "on" | "off"): void {
-    cachedModels = [model("opus-5", true), model("sonnet-5", true), model("haiku-5", true)];
+    cachedModels = [model("model-a-5", true), model("model-b-5", true), model("model-c-5", true)];
     (activeSession as unknown as { value: TestSession }).value = {
       id: "c1",
-      model: "opus-5",
+      model: "model-a-5",
       effort: "medium",
       effort_levels: FIVE,
       thinking_active: thinkingActive,
-      pending_model: "sonnet-5",
+      pending_model: "model-b-5",
       pending_effort: "high",
     };
   }
@@ -306,9 +304,9 @@ describe("the model card sends once, when it closes", () => {
     parkHigh("on");
     await open();
     expect(knob().dataset["level"]).toBe("high");
-    await userEvent.click(option("haiku-5"));
+    await userEvent.click(option("model-c-5"));
 
-    sentOnly({ model: "haiku-5", effort: "high" });
+    sentOnly({ model: "model-c-5", effort: "high" });
   });
 
   it("drops a parked tier with one switch when the knob moves to Off", async () => {
@@ -320,7 +318,7 @@ describe("the model card sends once, when it closes", () => {
       expect(knob().dataset["level"]).toBe("thinking:off");
       await userEvent.keyboard("{Escape}");
 
-      sentOnly({ model: "sonnet-5", effort: "thinking:off" });
+      sentOnly({ model: "model-b-5", effort: "thinking:off" });
     }
   });
 
@@ -340,9 +338,9 @@ describe("the model card sends once, when it closes", () => {
       await open();
       await keys(c.key);
       expect(knob().dataset["level"], JSON.stringify(c)).toBe(c.effort);
-      await userEvent.click(option("opus-5"));
+      await userEvent.click(option("model-a-5"));
 
-      sentOnly({ model: "opus-5", effort: c.effort });
+      sentOnly({ model: "model-a-5", effort: c.effort });
     }
   });
 });

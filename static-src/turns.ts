@@ -311,13 +311,17 @@ export function projectTurns(src: TurnSource): Turn[] {
 }
 
 /** ONE turn of the source, or undefined when absent or not drawn. For a keyed pass that knows which
- *  turn moved, so a per-frame tool update builds no whole projection; `rewindTo` is resolved too. */
-export function projectTurn(src: TurnSource, turnID: string): Turn | undefined {
+ *  turn moved, so a per-frame tool update builds no whole projection; `rewindTo` is resolved too.
+ *  `state` stands in for the source's own copy of that turn (a graded close), leaving the rest. */
+export function projectTurn(
+  src: TurnSource,
+  turnID: string,
+  state: TurnState | undefined = src.turns.get(turnID),
+): Turn | undefined {
   const at = src.turn_order.indexOf(turnID);
   if (at < 0) {
     return undefined;
   }
-  const state = src.turns.get(turnID);
   if (state === undefined) {
     return undefined;
   }
@@ -513,18 +517,20 @@ export function turnAnchorID(n: number): string {
 }
 
 /** What a turn that did not end cleanly SAYS; "" for clean or running. A CANCELLED turn says
- *  nothing (its footer reads "Cancelled"); tested on the OUTCOME, since `unknown` shares its
- *  severity and must keep speaking. `failure_reason` first, then the outcome's default sentence.
- *  This notice owns the prose, present in both fold states. */
+ *  nothing (its footer reads "Cancelled") unless marotte's failsafe stopped it (`stopped_to_compact`),
+ *  whose reason is the only account of a stop the reader did not make; tested on the OUTCOME, since
+ *  `unknown` shares its severity and must keep speaking. `failure_reason` first, then the outcome's
+ *  default sentence. This notice owns the prose, present in both fold states. */
 export function turnFailureText(t: Turn): string {
   const severity = severityOf(t.outcome);
   if (severity === "clean" || severity === "running") {
     return "";
   }
+  const close = closeOfBody(t.body);
   if (t.outcome === "cancelled") {
-    return "";
+    return close?.stopped_to_compact === true ? (close.failure_reason ?? "").trim() : "";
   }
-  const reason = (closeOfBody(t.body)?.failure_reason ?? "").trim();
+  const reason = (close?.failure_reason ?? "").trim();
   return reason !== "" ? reason : defaultFailureReason(t.outcome);
 }
 

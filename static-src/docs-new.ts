@@ -1,5 +1,5 @@
-import { el } from "@cplieger/ui";
-import { createPopover } from "@cplieger/ui/popover";
+import { el } from "@cplieger/reactive";
+import { createPopover } from "./legacy-ui/popover.js";
 import { createDoc, type NewDocRequest } from "./actions/docs.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_PLUS_UI } from "./icons.js";
@@ -16,6 +16,12 @@ const NEW_LABEL: Readonly<Record<NewDocTab, string>> = {
   hooks: "New hook",
 };
 
+/** A tab's one-line usage note, shown beside its New button: a saved prompt's use is nowhere else on the page. */
+const USAGE_HINT: Readonly<Partial<Record<NewDocTab, string>>> = {
+  prompts:
+    "Type / in a chat and pick the prompt. The whole file is the message; $ARGUMENTS takes what you type after its name.",
+};
+
 function isCreatable(tab: DocsTab): tab is NewDocTab {
   return Object.hasOwn(NEW_LABEL, tab);
 }
@@ -27,7 +33,8 @@ interface NewDocForm {
 
 /**
  * Mount the button into `slot`. The returned function follows the active tab: the button is
- * present only on a creatable one, and a tab switch closes its form. `onCreated` gets the new
+ * present only on a creatable one, with the tab's usage note before it when it has one, and a
+ * tab switch closes its form. `onCreated` gets the new
  * file's path in the inventory rows' spelling; `startSpec` gets the spec chat's prompt and the
  * message shown for it.
  */
@@ -41,6 +48,7 @@ export function mountNewDocButton(
     { type: "button", className: "action-pill docs-new-btn", "aria-haspopup": "dialog" },
     iconEl(ICON_PLUS_UI),
   ) as HTMLButtonElement;
+  const hint = el("p", { className: "section-hint docs-new-hint" });
   let tab: NewDocTab | null = null;
   const panel = el("div", { className: "docs-new-popover", role: "dialog" });
   const ctl = createPopover(btn, panel, {
@@ -79,8 +87,16 @@ export function mountNewDocButton(
     close();
     tab = isCreatable(next) ? next : null;
     if (tab === null) {
+      hint.remove();
       btn.remove();
       return;
+    }
+    const usage = USAGE_HINT[tab];
+    if (usage === undefined) {
+      hint.remove();
+    } else {
+      hint.textContent = usage;
+      slot.prepend(hint);
     }
     btn.setAttribute("aria-label", NEW_LABEL[tab]);
     btn.setAttribute("data-tooltip", NEW_LABEL[tab]);

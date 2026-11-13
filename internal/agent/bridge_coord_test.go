@@ -54,46 +54,56 @@ func newRecordingStartHub(t *testing.T) (*Runtime, *testChatStore, *recordingSta
 	return h, cs, rb
 }
 
-// recordingPush records each Send's body on a channel, plus the latest subject and chat
-// name, read only after a body arrives.
+// recordingPush records each delivered notice's body on a channel, plus the latest subject and chat
+// name (last). Deliveries run on concurrent goroutines, so every field but sends is read under mu.
 type recordingPush struct {
+	pushStub
 	sends chan string
 	// noSubs flips HasSubscribers to false; the zero value keeps a subscriber.
 	noSubs  atomic.Bool
 	subject marotte.PushSubject
 	title   string
-	// retracted records each Retract call's subject and ask, in order; asks records each Send's ask.
+	// retracted records each Settled call's subject and ask, in order; asks records each delivery's ask.
 	retracted []retraction
 	asks      []string
 	mu        sync.Mutex
 }
 
-// retraction is one Retract call.
+// retraction is one Settled call.
 type retraction struct {
 	subject marotte.PushSubject
 	ask     string
 }
 
-func (p *recordingPush) HasSubscribers() bool                   { return !p.noSubs.Load() }
-func (*recordingPush) SetPreferences(map[marotte.PushKind]bool) {}
-func (*recordingPush) Preferences() map[marotte.PushKind]bool   { return nil }
-func (*recordingPush) Close()                                   {}
-func (p *recordingPush) Retract(subj marotte.PushSubject, ask string) {
+func (p *recordingPush) HasSubscribers() bool { return !p.noSubs.Load() }
+func (p *recordingPush) Settled(subj marotte.PushSubject, ask string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.retracted = append(p.retracted, retraction{subject: subj, ask: ask})
 }
 
-func (p *recordingPush) Send(_ context.Context, n *marotte.NotificationPayload) {
-	p.mu.Lock()
-	p.asks = append(p.asks, n.Ask)
-	p.mu.Unlock()
-	p.subject = n.PushSubject
-	p.title = n.Title
-	select {
-	case p.sends <- n.Body:
-	default:
+func (p *recordingPush) Raise(_ context.Context, _ marotte.ChatID, n *marotte.NotificationPayload, _ uint64) func(context.Context) {
+	return func(context.Context) {
+		if p.noSubs.Load() {
+			return
+		}
+		p.mu.Lock()
+		p.asks = append(p.asks, n.Ask)
+		p.subject = n.PushSubject
+		p.title = n.Title
+		p.mu.Unlock()
+		select {
+		case p.sends <- n.Body:
+		default:
+		}
 	}
+}
+
+// last is the latest delivered notice's subject and title.
+func (p *recordingPush) last() (marotte.PushSubject, string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.subject, p.title
 }
 
 // On session/new the override model wins over the stored value, and the persisted model comes from the opened session.
@@ -450,9 +460,9 @@ func TestNoticeTarget_TitlesTheTabTheClickOpens(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatalf("no push sent for %q/%q", tc.chatID, tc.runID)
 		}
-		if fp.title != tc.want || fp.subject != tc.wantSubjs {
+		if subj, title := fp.last(); title != tc.want || subj != tc.wantSubjs {
 			t.Errorf("NoticeTarget(%q, %q) pushed title %q under %+v, want %q under %+v",
-				tc.chatID, tc.runID, fp.title, fp.subject, tc.want, tc.wantSubjs)
+				tc.chatID, tc.runID, title, subj, tc.want, tc.wantSubjs)
 		}
 	}
 }
@@ -529,17 +539,36 @@ func TestPersistModelSwitch_RecordsTheSwitchAndClearsThePendingPick(t *testing.T
 	}
 }
 
+// A switch resets the figures but not a compaction's wait for a live reading: KAS's figure is still the context
+// before the compaction, and the switched session publishes it again.
+func TestPersistModelSwitch_KeepsACompactionsWaitForALiveReading(t *testing.T) {
+	h, cs, _ := newTestHub()
+	ctx := t.Context()
+	finishedTurn(t, h, "c1")
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Model = "m-old"
+		c.Usage = marotte.Usage{ContextSize: 100, ContextCompacted: true}
+		return true
+	})
+
+	h.coord.persistModelSwitch(ctx, "c1", &effortDecision{from: "m-old", to: "m-new"}, 1234)
+
+	if c, _ := cs.Get(ctx, "c1"); !c.Usage.ContextCompacted || c.Usage.ContextSize != 1234 {
+		t.Errorf("Usage after the switch = %+v, want ContextSize 1234 and the compaction's wait kept", c.Usage)
+	}
+}
+
 // Picked between turns, the effort change is appended alone; From == To marks it as not a model switch.
 func TestPersistEffortChange_AppendsTheTierBetweenTurns(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "opus-5"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "model-a-5"; return true })
 	finishedTurn(t, h, "c1")
 
-	h.coord.PersistEffortChange(ctx, "c1", "opus-5", marotte.EffortMax)
+	h.coord.PersistEffortChange(ctx, "c1", "model-a-5", marotte.EffortMax)
 
 	switches := switchesOf(t, logOf(t, cs, "c1"))
-	want := marotte.EntryModelSwitched{From: "opus-5", To: "opus-5", Effort: "max"}
+	want := marotte.EntryModelSwitched{From: "model-a-5", To: "model-a-5", Effort: "max"}
 	if len(switches) != 1 || switches[0] != want {
 		t.Errorf("model_switched entries = %+v, want one %+v", switches, want)
 	}
@@ -552,12 +581,12 @@ func TestPersistEffortChange_OnAnEmptyLogAnnouncesAClosedCarrier(t *testing.T) {
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
-		c.Model = "opus-5"
+		c.Model = "model-a-5"
 		c.TurnCount = 1
 		return true
 	})
 
-	h.coord.PersistEffortChange(ctx, "c1", "opus-5", marotte.EffortLevel("medium"))
+	h.coord.PersistEffortChange(ctx, "c1", "model-a-5", marotte.EffortLevel("medium"))
 
 	var kinds []string
 	for _, e := range logOf(t, cs, "c1") {
@@ -582,14 +611,14 @@ func TestPersistEffortChange_OnAnEmptyLogAnnouncesAClosedCarrier(t *testing.T) {
 func TestPersistEffortChange_FoldsTheTierIntoAnOpenTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "opus-5"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "model-a-5"; return true })
 	turnID, _ := streamingPromptTurn(t, h, "c1", "the reply")
 
-	h.coord.PersistEffortChange(ctx, "c1", "opus-5", "high")
+	h.coord.PersistEffortChange(ctx, "c1", "model-a-5", "high")
 
 	entries := logOf(t, cs, "c1")
 	switches := switchesOf(t, entries)
-	want := marotte.EntryModelSwitched{From: "opus-5", To: "opus-5", Effort: "high"}
+	want := marotte.EntryModelSwitched{From: "model-a-5", To: "model-a-5", Effort: "high"}
 	if len(switches) != 1 || switches[0] != want {
 		t.Fatalf("model_switched entries = %+v, want one %+v", switches, want)
 	}
@@ -628,20 +657,20 @@ func finishedTurn(t *testing.T, h *Runtime, chatID marotte.ChatID) {
 func TestPersistSwitches_RecordNothingBeforeTheFirstPrompt(t *testing.T) {
 	tests := map[string]func(h *Runtime){
 		"effort": func(h *Runtime) {
-			h.coord.PersistEffortChange(t.Context(), "c1", "opus-5", "high")
+			h.coord.PersistEffortChange(t.Context(), "c1", "model-a-5", "high")
 		},
 		"mode": func(h *Runtime) {
 			h.coord.PersistModeSwitch(t.Context(), "c1",
 				marotte.EntryModeSwitched{From: "", To: "spec", Source: marotte.ModeSwitchSourceUser})
 		},
 		"model": func(h *Runtime) {
-			h.coord.persistModelSwitch(t.Context(), "c1", &effortDecision{from: "opus-5", to: "sonnet-5"}, 1234)
+			h.coord.persistModelSwitch(t.Context(), "c1", &effortDecision{from: "model-a-5", to: "model-b-5"}, 1234)
 		},
 	}
 	for name, persist := range tests {
 		t.Run(name, func(t *testing.T) {
 			h, cs, _ := newTestHub()
-			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "opus-5"; return true })
+			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "model-a-5"; return true })
 
 			persist(h)
 
@@ -659,16 +688,16 @@ func TestPersistModelSwitch_UnstartedChatTakesThePickOnTheHeader(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
-		c.Model = "opus-5"
-		c.PendingModel = "sonnet-5"
+		c.Model = "model-a-5"
+		c.PendingModel = "model-b-5"
 		return true
 	})
 
-	h.coord.persistModelSwitch(t.Context(), "c1", &effortDecision{from: "opus-5", to: "sonnet-5"}, 1234)
+	h.coord.persistModelSwitch(t.Context(), "c1", &effortDecision{from: "model-a-5", to: "model-b-5"}, 1234)
 
 	c, _ := cs.Get(t.Context(), "c1")
-	if c.Model != "sonnet-5" || c.PendingModel != "" || c.Usage.ContextSize != 1234 {
-		t.Errorf("header = {Model %q, PendingModel %q, ContextSize %d}, want {sonnet-5, \"\", 1234}",
+	if c.Model != "model-b-5" || c.PendingModel != "" || c.Usage.ContextSize != 1234 {
+		t.Errorf("header = {Model %q, PendingModel %q, ContextSize %d}, want {model-b-5, \"\", 1234}",
 			c.Model, c.PendingModel, c.Usage.ContextSize)
 	}
 }

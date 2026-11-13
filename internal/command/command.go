@@ -132,6 +132,8 @@ type Dispatcher struct {
 	prompts *promptRoles
 	// merges is bound at registration, like prompts.
 	merges *tangentMerges
+	// carryStop is cmdCancel's carrying out of a stop, bound at registration like prompts.
+	carryStop func(ctx context.Context, chatID marotte.ChatID, rs RunStop) error
 	// changes is bound at registration, like prompts.
 	changes detachedChange
 	mu      sync.RWMutex

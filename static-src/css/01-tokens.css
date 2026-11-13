@@ -126,12 +126,6 @@
     --c-glow-moon: oklch(80% 0.05 260deg / 30%);
     --c-glow-system: oklch(80% 0.11 300deg / 40%);
 
-    /* ---- SEEDS: syntax + bubbles ------------------------------------------ */
-    /* Split because a pastel that reads on the dark inset wash vanishes on the
-     * light one. The keyword IS the accent, so it derives. */
-    --c-hl-string: oklch(75% 0.14 145deg);
-    --c-hl-number: oklch(78% 0.13 60deg);
-
     /* ---- SEEDS: the live terminal's own surfaces -------------------------- *
      * These reach the live terminal through shell.ts's SHELL_THEME. The engine
      * paints each ANSI run inline from server-resolved RGB, so it reads none of
@@ -355,7 +349,6 @@
      * a wash of the INK under the ink can only cost that ink contrast. Chroma at
      * the band's lightness instead; the badge is a hue, not a step. */
     --c-band-added: oklch(from var(--c-bg-tertiary) l 0.05 142.7deg);
-    --c-hl-keyword: var(--c-accent);
 
     /* ---- Type, space, size ----------------------------------------------- */
     --font-sans: system-ui, sans-serif;
@@ -737,8 +730,6 @@
     --c-danger: oklch(45.4% 0.14 25deg);
     --c-warning: oklch(43.9% 0.091 80deg);
     --c-link: oklch(44.5% 0.12 277.3deg);
-    --c-hl-string: oklch(42% 0.12 145deg);
-    --c-hl-number: oklch(44% 0.1 60deg);
     --c-term-bg: oklch(98% 0.005 283deg);
     --c-term-fg: oklch(25% 0.01 283deg);
     --c-term-selection: oklch(0% 0 none / 15%);

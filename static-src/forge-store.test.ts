@@ -1,7 +1,7 @@
 // The store is the one client copy of the forge rows and Sources' listings. The network is faked at the actions and
 // the client; the store itself, its signals and its effects run for real.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { effect } from "@cplieger/ui";
+import { effect } from "@cplieger/reactive";
 import type * as ModStore from "./forge-store.js";
 import type { ConfiguredForge, RepoList } from "./wire/types.gen.js";
 import { forgeRow, forgesList } from "./__test-helpers__/forge-rows.js";

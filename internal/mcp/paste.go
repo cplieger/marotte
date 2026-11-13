@@ -1,6 +1,6 @@
 package mcp
 
-// Pasting a publisher's block: the Claude-Desktop/KAS-family JSON map of servers a README hands
+// Pasting a publisher's block: the `mcpServers`-style JSON map of servers a README hands
 // out, translated into marotte's records as the inverse of kasfile.go's renderKASServers. Keys fall
 // in three classes: consumed, known-but-unmodelled (accepted with a note), and unknown (400 naming
 // the key and its nearest match), since encoding/json would silently drop a typo like "comand".

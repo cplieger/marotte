@@ -5,7 +5,7 @@
 // and a labelled request's full text shows only while open; attachment chips stay outside the clamp.
 
 import { join } from "@cplieger/keyenc";
-import { el } from "@cplieger/ui";
+import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
 import { selectableButton } from "../disclosure-row.js";
 import { iconEl } from "../icon-el.js";
@@ -20,7 +20,7 @@ import { buildQuoteBand, drawParts } from "../quote-band.js";
 import { OUTCOME_LABEL, OUTCOME_TOOLTIP, severityOf } from "../turn-severity.js";
 import type { TurnOutcome } from "../turns.js";
 import { WAKE_FALLBACK_LINE, type WakeLine, type WakeRow, type WakeRun } from "../turn-wake.js";
-import { sentBy } from "../sent-by.js";
+import { senderWords, type Sender } from "../sent-by.js";
 import type { Caller } from "../types.js";
 import { formatClock } from "../locale-time.js";
 
@@ -38,6 +38,10 @@ export interface TurnHeaderData {
   /** The program that sent the request through the API: a "Sent by" line over it, and the header reads as that
    *  program's request, not the user's. Undefined for the user's own. */
   caller?: Caller | undefined;
+  /** marotte sent the request on its own: a "Sent by marotte" line over it, as an API caller's has. */
+  automatic?: boolean | undefined;
+  /** The turn's cancelled close is marotte's failsafe stop, not the reader's, so the dot says marotte stopped it. */
+  stoppedToCompact?: boolean | undefined;
   /** Files the user attached to this request. Drawn as the composer's own pill,
    *  read-only (a sent attachment cannot be un-sent), and OUTSIDE the clamp. */
   attachments: readonly AttachmentRef[];
@@ -88,7 +92,7 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
       toggle.setAttribute("aria-label", cut ? `${FOLD_LABEL}, message truncated` : FOLD_LABEL);
     },
     () => {
-      syncWakeRowRuns(header);
+      queueWakeRowSync(header);
     },
   );
 
@@ -97,20 +101,22 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
 }
 
 const FOLD_LABEL = "Expand or collapse this turn";
+const STOPPED_TO_COMPACT_TOOLTIP = "marotte stopped this turn to compact the context";
 
 /** The request band alone, for a turn drawn without card chrome: a run step's turn that a message resumed,
- *  headed by its Sent-by line when `caller` sent it through the API. */
-export function buildRequestHeader(request: string, caller?: Caller): HTMLElement {
+ *  headed by its Sent-by line when the reader did not send it. */
+export function buildRequestHeader(request: string, from?: Sender): HTMLElement {
+  const words = senderWords(from);
   const { lead, rest } = leadQuote(request);
   const text = el("div", { className: "turn-req-text" });
   setRequestParts(text, rest);
   const header = el(
     "div",
-    { className: "turn-header", "data-trigger": caller === undefined ? "user" : "caller" },
+    { className: "turn-header", "data-trigger": words === undefined ? "user" : "caller" },
     el("div", { className: "turn-req", "data-find-unit": "header" }, text),
   );
   syncQuote(header, lead ?? undefined);
-  syncSentBy(header, caller);
+  syncSentBy(header, words);
   return header;
 }
 
@@ -129,7 +135,10 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   const dot = header.querySelector<HTMLElement>(":scope > .turn-head-row > .turn-dot");
   if (dot !== null) {
     dot.setAttribute("aria-label", OUTCOME_LABEL[d.outcome]);
-    dot.setAttribute("data-tooltip", OUTCOME_TOOLTIP[d.outcome]);
+    dot.setAttribute(
+      "data-tooltip",
+      d.stoppedToCompact === true ? STOPPED_TO_COMPACT_TOOLTIP : OUTCOME_TOOLTIP[d.outcome],
+    );
   }
 
   const time = header.querySelector<HTMLTimeElement>(":scope > .turn-head-row > .turn-ts");
@@ -161,16 +170,17 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
     }
     text.hidden = d.wake.body === "";
     syncFullText(header, undefined);
-    syncWakeRowRuns(header);
+    queueWakeRowSync(header);
     return;
   }
   syncWakeLabel(header, undefined, undefined);
   text.hidden = false;
 
-  if (d.request === undefined && d.caller !== undefined) {
+  const sender = senderWords(d);
+  if (d.request === undefined && sender !== undefined) {
     // A caller's prompt with no words (attachments only): its Sent-by line and attachment row are the header.
     header.dataset["trigger"] = "caller";
-    syncSentBy(header, d.caller);
+    syncSentBy(header, sender);
     setRequestText(text, "");
     text.hidden = true;
     syncQuote(header, undefined);
@@ -188,12 +198,12 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
     return;
   }
 
-  header.dataset["trigger"] = d.caller === undefined ? "user" : "caller";
+  header.dataset["trigger"] = sender === undefined ? "user" : "caller";
   const body = d.request.trim();
   const label = d.label?.trim() ?? "";
   const { lead, rest } = label === "" ? leadQuote(body) : { lead: null, rest: [] };
   syncQuote(header, lead ?? undefined);
-  syncSentBy(header, d.caller);
+  syncSentBy(header, sender);
   if (label === "") {
     setRequestParts(text, rest);
   } else {
@@ -265,19 +275,18 @@ function setWakeRows(
   text.replaceChildren(...parts);
 }
 
-/** Who sent a request an API caller posted, one line above the request text and outside its clamp, so a folded turn
- *  still says the user did not write it; `caller` undefined removes it. */
-function syncSentBy(header: HTMLElement, caller: Caller | undefined): void {
+/** Who sent a request the user did not write, one line above the request text and outside its clamp, so a folded
+ *  turn still says so; `words` undefined removes it. */
+function syncSentBy(header: HTMLElement, words: string | undefined): void {
   const req = header.querySelector<HTMLElement>(":scope > .turn-req");
   if (req === null) {
     return;
   }
   let line = req.querySelector<HTMLElement>(":scope > .turn-sent-by");
-  if (caller === undefined) {
+  if (words === undefined) {
     line?.remove();
     return;
   }
-  const words = sentBy(caller);
   line ??= el("div", { className: "turn-sent-by" });
   // First in the band, above a quote band drawn after it.
   if (req.firstElementChild !== line) {
@@ -359,25 +368,56 @@ function wakeRunEl(
 
 /**
  * Make each re-delivery row's run button inert while the request text's clamp hides any of it, so it takes no focus,
- * and live while all of it shows. Runs after each header update and each clamp measurement; a fold change calls
- * it. With no layout to measure, a folded card keeps only the first row's live.
+ * and live while all of it shows. Queued after each header update, clamp measurement and fold change, and measured in
+ * the next frame for every queued header at once, so a paint forces no layout. With no layout to measure, a folded
+ * card keeps only the first row's live.
  */
-export function syncWakeRowRuns(header: HTMLElement): void {
-  const text = header.querySelector<HTMLElement>(":scope > .turn-req > .turn-req-text");
-  if (text === null) {
+export function queueWakeRowSync(header: HTMLElement): void {
+  if (wakeRowRuns(header).length === 0) {
     return;
   }
-  const clip = text.getBoundingClientRect();
-  const folded = text.closest(".turn[data-folded]") !== null;
-  const buttons = text.querySelectorAll<HTMLElement>('.turn-wake-row-run[role="button"]');
-  buttons.forEach((btn, i) => {
-    if (clip.height <= 0) {
-      btn.inert = folded && i > 0;
-      return;
+  wakeRowQueue.add(header);
+  if (!wakeRowFrame) {
+    wakeRowFrame = true;
+    requestAnimationFrame(flushWakeRowSync);
+  }
+}
+
+const wakeRowQueue = new Set<HTMLElement>();
+let wakeRowFrame = false;
+
+function wakeRowRuns(header: HTMLElement): NodeListOf<HTMLElement> {
+  return header.querySelectorAll<HTMLElement>(
+    ':scope > .turn-req > .turn-req-text .turn-wake-row-run[role="button"]',
+  );
+}
+
+function flushWakeRowSync(): void {
+  wakeRowFrame = false;
+  const headers = [...wakeRowQueue];
+  wakeRowQueue.clear();
+  // Every rect read before any `inert` write: interleaving forces a layout per header.
+  const writes: { btn: HTMLElement; inert: boolean }[] = [];
+  for (const header of headers) {
+    const text = header.querySelector<HTMLElement>(":scope > .turn-req > .turn-req-text");
+    if (text === null) {
+      continue;
     }
-    const box = btn.getBoundingClientRect();
-    btn.inert = box.top < clip.top - CLIP_EPSILON || box.bottom > clip.bottom + CLIP_EPSILON;
-  });
+    const folded = text.closest(".turn[data-folded]") !== null;
+    const clip = header.isConnected ? text.getBoundingClientRect() : undefined;
+    wakeRowRuns(header).forEach((btn, i) => {
+      if (clip === undefined || clip.height <= 0) {
+        writes.push({ btn, inert: folded && i > 0 });
+        return;
+      }
+      const box = btn.getBoundingClientRect();
+      const inert = box.top < clip.top - CLIP_EPSILON || box.bottom > clip.bottom + CLIP_EPSILON;
+      writes.push({ btn, inert });
+    });
+  }
+  for (const { btn, inert } of writes) {
+    btn.inert = inert;
+  }
 }
 
 /** Sub-pixel slack (px) for a run name whose box rounds onto the clip edge. */

@@ -4,6 +4,8 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { userEvent } from "vitest/browser";
 
 import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
+import { setShellRunCallback } from "./code-blocks.js";
+import { renderMarkdownInto } from "./markdown.js";
 
 const a11y = loadCSS("40-a11y.css");
 
@@ -12,6 +14,7 @@ const MEMBERS = [
   "a.subagent-header",
   ".subagent-foot > .subagent-footer > .turn-ledger-summary",
   ".pill-account",
+  '.cp-code > [data-part="bar"] > [data-part="actions"] > button',
   ".run-head",
   ".run-step-head",
   ".tool-group-header",
@@ -27,6 +30,7 @@ let host: HTMLElement;
 let sentinel: HTMLButtonElement;
 
 beforeAll(() => {
+  setShellRunCallback(() => undefined);
   style = mountAppCSS();
   document.body.style.margin = "0";
   host = document.createElement("div");
@@ -266,21 +270,19 @@ function toolGroup(): { clipper: HTMLElement; head: HTMLElement; hooks: HTMLElem
   return { clipper: mount(clipper), head, hooks };
 }
 
-/** `.code-head`'s row height, taller than its buttons, is what keeps them off the clip. */
+/** A reply row holding a rendered shell fence: the row's paint containment is the clip its bar's buttons meet. */
 function codeBlock(): { clipper: HTMLElement; copy: HTMLElement; run: HTMLElement } {
-  const copy = node("button", "code-act-btn", { type: "button", "aria-label": "Copy" });
-  copy.appendChild(glyph());
-  const run = node("button", "code-act-btn", { type: "button", "aria-label": "Type in shell" });
-  run.appendChild(glyph());
-  const actions = node("div", "code-actions");
-  actions.append(copy, run);
-  const head = node("div", "code-head");
-  head.append(span("code-lang", "bash"), actions);
-  const pre = document.createElement("pre");
-  pre.appendChild(document.createElement("code")).textContent = "echo one\necho two\n";
-  const clipper = node("div", "code-wrap", { "data-code-state": "final" });
-  clipper.append(head, pre);
-  return { clipper: mount(clipper), copy, run };
+  const reply = node("div", "message assistant");
+  renderMarkdownInto(reply, "```bash\necho one\necho two\n```\n");
+  const clipper = node("div", "msg-row");
+  clipper.append(reply);
+  mount(clipper);
+  const copy = reply.querySelector<HTMLElement>(".cp-copy");
+  const run = reply.querySelector<HTMLElement>('[aria-label="Run in shell"]');
+  if (copy === null || run === null) {
+    throw new Error("the fence rendered no Copy and Run");
+  }
+  return { clipper, copy, run };
 }
 
 function gitRepoSection(): { clipper: HTMLElement; head: HTMLElement } {
@@ -569,8 +571,8 @@ describe("the premise: every one of these cards clips at its padding box", () =>
     }
   });
 
-  it("by overflow alone, on the five whose corners the clip rounds", () => {
-    for (const build of [runStep, toolGroup, codeBlock, gitRepoSection, forgeAccountRow]) {
+  it("by overflow alone, on the four whose corners the clip rounds", () => {
+    for (const build of [runStep, toolGroup, gitRepoSection, forgeAccountRow]) {
       const { clipper } = build();
       expect(getComputedStyle(clipper).overflow, clipper.className).toBe("hidden");
     }
@@ -619,6 +621,19 @@ describe("the ring is painted inside the card that clips it", () => {
       1,
     );
     expectRingInside("foot ledger", ledger, clipper);
+  });
+
+  it("on a code block's bar buttons, under the reach off a reply row the block opens", async () => {
+    // @cplieger/ui's bar inset is the block radius less its border and the button radius: 6 - 1 - 4 = 1px, plus the
+    // block's 1px border.
+    const { clipper, copy, run } = codeBlock();
+    expect(getComputedStyle(clipper).contentVisibility, "the row's paint containment").toBe("auto");
+    await focusByTab(copy);
+    expect(inset(copy, clipper).top).toBe(2);
+    expectRingInside("code copy button", copy, clipper);
+    await focusByTab(run);
+    expect(inset(run, clipper).top).toBe(2);
+    expectRingInside("code run button", run, clipper);
   });
 
   it("on a run card's head", async () => {
@@ -795,15 +810,6 @@ describe("the exclusions: a focusable whose clipper clears the reach", () => {
     await focusByTab(discard);
     expect(inset(discard, clipper).top).toBe(8);
     expectClears("git file Discard", discard, clipper);
-  });
-
-  it("pins a code block's header buttons, centred in a row taller than they are", async () => {
-    const { clipper, copy, run } = codeBlock();
-    await focusByTab(copy);
-    expect(inset(copy, clipper).top, "half the head's spare block room").toBe(4);
-    expectClears("code copy button", copy, clipper);
-    await focusByTab(run);
-    expectClears("code run button", run, clipper);
   });
 
   it("pins the run card's Open run, centred in a foot band taller than it", async () => {

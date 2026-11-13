@@ -42,9 +42,8 @@ describe("the spinner period", () => {
           continue;
         }
         consumers++;
-        // `vk-spin[\w-]*` rather than `vk-spin`, because the idiom has two keyframes now: `vk-spin`
-        // turns a ring's painted arc and `vk-spin-dash` marches the one mark that is a stroked arc
-        // instead. One period for both is the rule; which property carries it is not.
+        // `vk-spin[\w-]*` rather than `vk-spin`: `vk-spin` turns a painted arc and `vk-spin-rotate`
+        // turns a box. One period for both is the rule; which property carries it is not.
         if (!/animation:\s*vk-spin[\w-]*\s+var\(--spin-dur\)/.test(body)) {
           offenders.push(`${path} { ${selector} }`);
         }
@@ -65,13 +64,13 @@ describe("the spinner period", () => {
     el.className = "spinner";
     stage.appendChild(el);
 
-    const [anim] = el.getAnimations();
+    const [anim] = el.getAnimations({ subtree: true });
     expect(anim, "the .spinner ring is animating").toBeDefined();
     // `animationName` is CSSAnimation's, not the Animation base's — narrowing also asserts this is
     // a CSS animation rather than a WAAPI one.
     expect(anim).toBeInstanceOf(CSSAnimation);
     if (anim instanceof CSSAnimation) {
-      expect(anim.animationName).toBe("vk-spin");
+      expect(anim.animationName).toBe("vk-spin-rotate");
     }
     expect(anim?.effect?.getTiming().duration).toBe(600);
     expect(anim?.effect?.getTiming().iterations).toBe(Infinity);
@@ -87,7 +86,7 @@ describe("the spinner period", () => {
     stage.append(big, small);
 
     const durOf = (e: Element): EffectTiming["duration"] =>
-      e.getAnimations()[0]?.effect?.getTiming().duration;
+      e.getAnimations({ subtree: true })[0]?.effect?.getTiming().duration;
 
     // Both halves stated, or the case passes vacuously the moment the token goes missing and each
     // ring reports `undefined` — equal, and both stopped.

@@ -90,15 +90,26 @@ type Generator struct {
 	workDir       string
 	configDir     string
 	toolsDir      string
+	serverAddr    string
 	mu            sync.Mutex // guards the snapshot callbacks only
 	// genMu is held from the snapshots to the write, so an older generation never overwrites a newer one.
 	genMu sync.Mutex
 }
 
-// New returns a Generator. Each directory must pass CheckPath; toolsDir is the tools engine's root,
-// which need not sit under configDir, or "" when the engine has no usable one.
-func New(workDir, configDir, toolsDir string) *Generator {
-	return &Generator{workDir: workDir, configDir: configDir, toolsDir: toolsDir}
+// Config is what a Generator writes about this install.
+type Config struct {
+	WorkDir   string
+	ConfigDir string
+	// ToolsDir is the tools engine's root, which need not sit under ConfigDir, or "" when the
+	// engine has no usable one.
+	ToolsDir string
+	// ServerAddr is the host:port a process in the container reaches marotte's server at.
+	ServerAddr string
+}
+
+// New returns a Generator. Each directory must pass CheckPath.
+func New(c Config) *Generator {
+	return &Generator{workDir: c.WorkDir, configDir: c.ConfigDir, toolsDir: c.ToolsDir, serverAddr: c.ServerAddr}
 }
 
 // SetMCPSnapshot wires a snapshot callback (unset omits the MCP section).
@@ -196,9 +207,9 @@ func (g *Generator) render(ctx context.Context, mcp MCPSnapshot, hasMCP bool, fo
 ) []byte {
 	var b strings.Builder
 	writeIntro(&b, g.workDir)
-	writeTools(&b, tools, toolsOK)
+	writeTools(&b, tools, toolsOK, g.serverAddr)
 	writeRuntime(&b, g.configDir, g.toolsDir)
-	writeToolsEngine(&b, g.configDir, g.toolsDir)
+	writeToolsEngine(&b, g.configDir, g.toolsDir, g.serverAddr)
 	if hasMCP {
 		writeMCP(&b, mcp)
 	}
@@ -267,7 +278,7 @@ func (*Generator) CustomPath() string {
 // writeTools lists commands, not packages: an apt package's commands need not match its name
 // (ripgrep ships rg). With ok false the engine did not answer: no snapshot command is listed, and
 // the base-userland sentence still says that userland is present.
-func writeTools(b *strings.Builder, snap ToolsSnapshot, ok bool) {
+func writeTools(b *strings.Builder, snap ToolsSnapshot, ok bool, serverAddr string) {
 	b.WriteString("## Installed tools\n\n")
 	if !ok {
 		b.WriteString(debianBase + " The tools engine did not answer, so the commands installed or baked in are not " +
@@ -280,7 +291,7 @@ func writeTools(b *strings.Builder, snap ToolsSnapshot, ok bool) {
 		present[c.name] = true
 	}
 	if len(cmds) > 0 {
-		writeCommands(b, cmds)
+		writeCommands(b, cmds, serverAddr)
 	}
 	var baked []string
 	for _, n := range defusedSorted(snap.System) {
@@ -295,7 +306,7 @@ func writeTools(b *strings.Builder, snap ToolsSnapshot, ok bool) {
 	writeAbsentLine(b, present)
 	if libraries > 0 {
 		fmt.Fprintf(b, "%d more installed packages ship no command (mostly libraries): ", libraries)
-		b.WriteString("`dpkg -l` or `curl -s localhost:9847/api/tools` lists them.\n\n")
+		b.WriteString("`dpkg -l` or `curl -s " + serverAddr + "/api/tools` lists them.\n\n")
 	}
 }
 
@@ -357,7 +368,7 @@ func appendNewCommands(cmds []command, seen map[string]bool, t InstalledTool) []
 
 // writeCommands fills the cap in listCommands' order, engine commands first: the user picked each
 // engine row, while an apt package also ships auxiliaries (gcc's gcov-dump).
-func writeCommands(b *strings.Builder, cmds []command) {
+func writeCommands(b *strings.Builder, cmds []command, serverAddr string) {
 	kept := slices.Clone(cmds[:min(len(cmds), maxCommands)])
 	slices.SortFunc(kept, func(x, y command) int { return strings.Compare(x.name, y.name) })
 	entries := make([]string, 0, len(kept))
@@ -366,8 +377,8 @@ func writeCommands(b *strings.Builder, cmds []command) {
 	}
 	b.WriteString("Commands: " + strings.Join(entries, ", "))
 	if extra := len(cmds) - maxCommands; extra > 0 {
-		fmt.Fprintf(b, ", … and %d more (`command -v <name>` checks one; `curl -s localhost:9847/api/tools` "+
-			"lists every row's commands)", extra)
+		fmt.Fprintf(b, ", … and %d more (`command -v <name>` checks one; `curl -s %s/api/tools` "+
+			"lists every row's commands)", extra, serverAddr)
 	}
 	b.WriteString("\n\n")
 }

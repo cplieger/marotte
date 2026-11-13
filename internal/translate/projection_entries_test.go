@@ -1180,38 +1180,40 @@ func TestEntryProjection_ToolCallCarriesMCPIdentity(t *testing.T) {
 	}
 }
 
-// TestEntryProjection_ACallTheLiveWireNeverOpenedIsDropped pins that a call KAS sent live only as
-// a bare update, which the live fold drops, is not restored from its replay either.
+// TestEntryProjection_ACallTheLiveWireNeverOpenedIsDropped pins that a call KAS replays already settled, which
+// reached the live chat only as a bare update the live fold drops, is not restored from its replay either; an
+// unsettled call beside it is.
 func TestEntryProjection_ACallTheLiveWireNeverOpenedIsDropped(t *testing.T) {
-	c := loadKASCapture(t, "delegate")
-	opened := map[string]bool{}
-	var bare []string
-	for _, u := range c.Live {
-		var call struct {
-			ToolCallID string `json:"toolCallId"`
-		}
-		if err := json.Unmarshal(u.Update, &call); err != nil {
-			t.Fatal(err)
-		}
-		switch u.Kind {
-		case marotte.ACPUpdateToolCall:
-			opened[call.ToolCallID] = true
-		case marotte.ACPUpdateToolUpdate:
-			if !opened[call.ToolCallID] && !slices.Contains(bare, call.ToolCallID) {
-				bare = append(bare, call.ToolCallID)
-			}
+	settled := toolCallFrame(t, "call-settled", nil)
+	var call map[string]any
+	if err := json.Unmarshal(settled[1].(json.RawMessage), &call); err != nil {
+		t.Fatal(err)
+	}
+	call["status"] = "completed"
+	settled[1] = mustJSON(t, call)
+
+	turns := entryProject([][2]any{
+		turnStartFrame(t),
+		settled,
+		toolUpdateFrame(t, "call-settled", "completed", nil),
+		toolCallFrame(t, "call-open", nil),
+		toolUpdateFrame(t, "call-open", "completed", nil),
+		turnEndFrame(t, "end_turn"),
+	})
+	if len(turns) != 1 {
+		t.Fatalf("turns = %d, want 1:\n%s", len(turns), dumpTurns(turns))
+	}
+	var sawOpen bool
+	for _, e := range turns[0].Entries {
+		switch e.ID {
+		case "call-settled", marotte.ToolResultID("call-settled"):
+			t.Errorf("the projection holds %s %q, which the live chat never showed:\n%s", e.Kind, e.ID, dumpTurns(turns))
+		case "call-open":
+			sawOpen = true
 		}
 	}
-	if len(bare) == 0 {
-		t.Fatal("the live capture holds no bare tool_call_update")
-	}
-	turns := projectUpdates(c.Replay)
-	for _, id := range bare {
-		for _, e := range turns[0].Entries {
-			if e.ID == id || e.ID == marotte.ToolResultID(id) {
-				t.Errorf("the projection holds %s %q, which the live chat never showed:\n%s", e.Kind, e.ID, dumpTurns(turns))
-			}
-		}
+	if !sawOpen {
+		t.Errorf("the projection lost the unsettled call:\n%s", dumpTurns(turns))
 	}
 }
 

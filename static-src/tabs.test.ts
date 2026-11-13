@@ -4,14 +4,25 @@
 // `tabs-projection.test.ts`'s subject.
 
 import type * as Dom from "./dom.js";
+import type * as GitTabs from "./git-tabs.js";
+import type * as SettingsTabs from "./settings-tabs.js";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { CloseImpact } from "./wire/types.gen.js";
 import type { Mock } from "vitest";
-import { effect } from "@cplieger/ui";
-import { mountLiveRegions } from "@cplieger/ui/announce";
+import { effect } from "@cplieger/reactive";
+import { mountLiveRegions } from "./legacy-ui/announce.js";
 
 // Mock dependencies that tabs.ts imports at module level.
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
+// The sub-tab panel stores the view openers move; real otherwise, so the factory's lazy loaders run.
+vi.mock("./settings-tabs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof SettingsTabs>()),
+  forceSettingsTab: vi.fn(),
+}));
+vi.mock("./git-tabs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof GitTabs>()),
+  forceGitTab: vi.fn(),
+}));
 vi.mock("./icons.js", () => ({
   ICON_MODEL_UI: "",
   ICON_CLOSE: "",
@@ -131,6 +142,7 @@ vi.mock("./run-store.js", () => ({
 // The composer half of the close gesture: retargeting and the failed-send
 // restore are per-chat state this suite does not stage, so both are inert.
 vi.mock("./composer-state.js", () => ({
+  adoptUnownedComposer: vi.fn(),
   retargetComposer: vi.fn(),
   restoreFailedSend: vi.fn(),
   saveComposerState: vi.fn(),
@@ -166,6 +178,8 @@ import {
   openTab,
   openEditorView,
   openRunTab,
+  activateRestoredTab,
+  showUnshownTab,
   closeTab,
   activateTab,
   renameTab,
@@ -188,14 +202,23 @@ import {
   registerCloseGate,
   claimNavigation,
   navigationHeld,
+  setSettingsTab,
+  openSettingsView,
+  openGitView,
   _resetForTest,
 } from "./tabs.js";
+import { forceSettingsTab } from "./settings-tabs.js";
+import { forceGitTab } from "./git-tabs.js";
+// The namespace, for the activation seam: a named import of an export a build lacks fails the
+// whole file's linking in Browser Mode rather than only the case that calls it.
+import * as tabsModule from "./tabs.js";
+import { pushRoute } from "./router.js";
 // The REAL freshness leaf: `viewStale` is what the dispatcher spends, so a case
 // that wants a FRESH view records a load the way `loadMessages` does rather than
 // faking the verdict. `chat` is the one kind whose ledger can answer "fresh" at all.
 import { observeStamp, _resetForTest as _resetFreshnessForTest } from "./subject-versions.js";
 import { closeTabCommand } from "./actions/tabs.js";
-import { restoreFailedSend, retargetComposer } from "./composer-state.js";
+import { adoptUnownedComposer, retargetComposer } from "./composer-state.js";
 import { info as toastInfo, error as toastErrorFn } from "./toast.js";
 import { attachDrag, pointerDragActivation, setReorderCallback } from "./tabs-drag.js";
 import { $ } from "./dom.js";
@@ -250,7 +273,7 @@ let openers: Openers;
 function registerOpeners(): void {
   openers = {
     chatShow: vi.fn<TabOpeners["chat"]["show"]>(),
-    chatRefresh: vi.fn<TabOpeners["chat"]["refresh"]>(),
+    chatRefresh: vi.fn<TabOpeners["chat"]["refresh"]>(() => Promise.resolve()),
     chatClose: vi.fn<TabOpeners["chat"]["close"]>(),
     editorShow: vi.fn<TabOpeners["editor"]["show"]>(),
     editorRefresh: vi.fn<TabOpeners["editor"]["refresh"]>(),
@@ -264,6 +287,9 @@ function registerOpeners(): void {
   };
   registerTabOpeners({
     chat: {
+      prefetch: vi.fn(),
+      select: vi.fn(),
+      loadFailed: vi.fn(),
       show: openers.chatShow,
       refresh: openers.chatRefresh,
       close: openers.chatClose,
@@ -282,12 +308,24 @@ function registerOpeners(): void {
 
 // --- Openers the cases below drive ---
 
-/** Open a chat tab for `ref`. Awaited, because the row lands with the frame. */
-function openChat(
+/** Open a chat tab for `ref`. Awaited, because the row lands with the frame, and its activation
+ *  runs and settles before the case goes on, as a visit the reader waited out. */
+async function openChat(
   ref: string,
   opts: { activate?: boolean; parent?: string; owns?: boolean } = {},
 ): Promise<OpenTabOutcome> {
-  return openTab({ kind: "chat", ref, ...opts });
+  const outcome = await openTab({ kind: "chat", ref, ...opts });
+  await visited();
+  return outcome;
+}
+
+/** Run the deferred activation half now and let its refresh settle, inside the task, so no strip
+ *  frame paints in between. */
+async function visited(): Promise<void> {
+  tabsModule.flushActivationForTest();
+  // The settle is the refresh promise's reaction, a microtask or two behind it.
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 /** The projection's id for a chat, read back rather than composed. */
@@ -318,9 +356,12 @@ function rows(): HTMLElement[] {
   return [...(list?.querySelectorAll<HTMLElement>("[data-tab-id]") ?? [])];
 }
 
+/** The rows on the strip, departing ones excluded: no stylesheet runs their exit. */
 async function rowIDs(): Promise<string[]> {
   await paint();
-  return rows().map((e) => e.dataset["tabId"] ?? "");
+  return rows()
+    .filter((e) => !e.classList.contains("exiting"))
+    .map((e) => e.dataset["tabId"] ?? "");
 }
 
 /** The rendered strip as REFS rather than opaque ids, which is what makes an
@@ -469,7 +510,7 @@ describe("closeTab", () => {
   ])("$desc", async ({ setup, activate, close, expectActive, expectHas, expectGone }) => {
     expect.assertions(1 + expectHas.length + expectGone.length);
     await openChats(...setup);
-    activateTab(chatID(activate));
+    await activateTab(chatID(activate));
     await closeTab(chatID(close));
     expect(getActiveTabId()).toBe(expectActive === "" ? "" : chatID(expectActive));
     for (const ref of expectHas) {
@@ -616,7 +657,7 @@ describe("closing the last tab", () => {
     const onConfirm = vi.fn();
     beginRemove("op-held", {
       id: chatID("held"),
-      capturedTabIDs: [chatID("held")],
+      captured: tabServer.subjects().filter((s) => s.id === chatID("held")),
       onConfirm,
       rollback: vi.fn(),
     });
@@ -647,7 +688,7 @@ describe("closing the last tab", () => {
     await openChats("held", "mine");
     beginRemove("op-held", {
       id: chatID("held"),
-      capturedTabIDs: [chatID("held")],
+      captured: tabServer.subjects().filter((s) => s.id === chatID("held")),
       onConfirm: vi.fn(),
       rollback: vi.fn(),
     });
@@ -677,7 +718,7 @@ describe("closing the last tab", () => {
     const rollback = vi.fn();
     beginRemove("op-held", {
       id: chatID("held"),
-      capturedTabIDs: [chatID("held")],
+      captured: tabServer.subjects().filter((s) => s.id === chatID("held")),
       onConfirm: vi.fn(),
       rollback,
     });
@@ -706,6 +747,90 @@ describe("closing the last tab", () => {
   });
 });
 
+describe("boot's one activation is the tab the URL names", () => {
+  let origin = "";
+
+  beforeEach(() => {
+    origin = location.pathname + location.search + location.hash;
+  });
+
+  afterEach(() => {
+    history.replaceState(null, "", origin);
+  });
+
+  /** The boot shape: a strip the server holds, this screen's remembered tab, a fresh projection
+   *  that has run no `onShow`, and the URL the page loaded at. */
+  async function bootAt(path: string, remembered: () => string): Promise<void> {
+    await openRunTab("wf-r", "run R", { owns: false });
+    await openChat("x");
+    const id = remembered();
+    _resetTabsSyncForTest();
+    _resetForTest();
+    const { setActiveView } = await import("./device-view.js");
+    setActiveView(id);
+    await listTabs();
+    openers.runShow.mockClear();
+    openers.chatShow.mockClear();
+    history.replaceState(null, "", path);
+  }
+
+  it("leaves a remembered run tab unshown when the URL names another chat", async () => {
+    await bootAt("/chat/other", () => tabIdFor("run", "wf-r"));
+    expect(getActiveTabId()).not.toBe("");
+    expect(getActiveTabId()).toBe(tabIdFor("run", "wf-r"));
+
+    activateRestoredTab();
+
+    expect(openers.runShow).not.toHaveBeenCalled();
+  });
+
+  it("shows the remembered chat when the URL names it", async () => {
+    await bootAt("/chat/x", () => chatID("x"));
+
+    activateRestoredTab();
+
+    expect(openers.chatShow.mock.calls).toEqual([["x"]]);
+  });
+
+  it("shows the remembered tab on the root URL", async () => {
+    await bootAt("/", () => tabIdFor("run", "wf-r"));
+    activateRestoredTab();
+
+    expect(openers.runShow).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the unshown remembered tab when the URL's route falls back to it", async () => {
+    await bootAt("/chat/other", () => tabIdFor("run", "wf-r"));
+    activateRestoredTab();
+
+    showUnshownTab();
+    tabsModule.flushActivationForTest();
+
+    expect(openers.runShow).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the unshown remembered tab when the reader clicks it", async () => {
+    await bootAt("/chat/other", () => tabIdFor("run", "wf-r"));
+    activateRestoredTab();
+
+    await activateTab(tabIdFor("run", "wf-r"));
+
+    expect(openers.runShow).toHaveBeenCalledTimes(1);
+  });
+
+  it("has no fallback left once the URL's route activated its own tab", async () => {
+    await bootAt("/chat/x", () => tabIdFor("run", "wf-r"));
+    activateRestoredTab();
+    await activateTab(chatID("x"));
+
+    showUnshownTab();
+    tabsModule.flushActivationForTest();
+
+    expect(openers.chatShow.mock.calls).toEqual([["x"]]);
+    expect(openers.runShow).not.toHaveBeenCalled();
+  });
+});
+
 describe("activateTab", () => {
   it.each([
     { desc: "activates existing tab", target: "a", expectActive: "a" },
@@ -713,7 +838,7 @@ describe("activateTab", () => {
   ])("$desc", async ({ target, expectActive }) => {
     expect.assertions(1);
     await openChats("a", "b");
-    activateTab(chatID(target));
+    await activateTab(chatID(target));
     expect(getActiveTabId()).toBe(chatID(expectActive));
   });
 
@@ -729,7 +854,7 @@ describe("activateTab", () => {
     const sidebar = $.sidebar;
     sidebar.classList.add("open");
 
-    activateTab(chatID("b"));
+    await activateTab(chatID("b"));
 
     expect(getActiveTabId()).toBe(chatID("b"));
     expect(sidebar.classList.contains("open")).toBe(false);
@@ -802,9 +927,10 @@ describe("MRU activation history", () => {
     await openChats("first", "a");
     await openChat("p");
     await openTab({ kind: "chat", ref: "c", parent: chatID("p") });
+    await visited();
     // History: [c, p, a, first]. Re-activating the parent puts it at the head, so
     // the subtree holds the two most recent entries.
-    activateTab(chatID("p"));
+    await activateTab(chatID("p"));
 
     await closeTab(chatID("p"));
 
@@ -831,7 +957,7 @@ describe("MRU activation history", () => {
   it("closing a non-active tab leaves active alone", async () => {
     expect.assertions(2);
     await openChats("a", "b", "c", "d");
-    activateTab(chatID("b")); // history [b, d, c, a]
+    await activateTab(chatID("b")); // history [b, d, c, a]
 
     await closeTab(chatID("d"));
     expect(getActiveTabId()).toBe(chatID("b"));
@@ -846,7 +972,7 @@ describe("MRU activation history", () => {
   it("is not affected by a reorder", async () => {
     expect.assertions(2);
     await openChats("a", "b", "c");
-    activateTab(chatID("a")); // history [a, c, b]
+    await activateTab(chatID("a")); // history [a, c, b]
     commitDrop?.([chatID("b"), chatID("a"), chatID("c")]);
     await settleTabs();
     expect(await rowRefs()).toEqual(["b", "a", "c"]);
@@ -860,7 +986,7 @@ describe("MRU activation history", () => {
   it("hands over to the most recent survivor when another device closes the active tab", async () => {
     expect.assertions(2);
     await openChats("a", "b", "c");
-    activateTab(chatID("b")); // history [b, c, a]
+    await activateTab(chatID("b")); // history [b, c, a]
 
     tabServer.closeRemotely(chatID("b"));
     await settleTabs();
@@ -877,7 +1003,8 @@ describe("MRU activation history", () => {
     await openChats("first", "a");
     await openChat("p");
     await openTab({ kind: "chat", ref: "c", parent: chatID("p") });
-    activateTab(chatID("p")); // history [p, c, a, first]
+    await visited();
+    await activateTab(chatID("p")); // history [p, c, a, first]
 
     tabServer.closeRemotely(chatID("p"));
     await settleTabs();
@@ -890,8 +1017,8 @@ describe("MRU activation history", () => {
   it("a refused close restores the closed tab's place in the history", async () => {
     expect.assertions(4);
     await openChats("a", "b", "c");
-    activateTab(chatID("b"));
-    activateTab(chatID("a")); // history [a, b, c]
+    await activateTab(chatID("b"));
+    await activateTab(chatID("a")); // history [a, b, c]
     tabServer.failNext("close_tab");
 
     // Non-active, so the rollback restores the row without moving the active tab.
@@ -927,7 +1054,7 @@ describe("MRU activation history", () => {
       .subjects()
       .map((s) => ({ ...s }))
       .concat([{ id: doomedTab, kind: "chat", ref: "x", parent: "", pinned: false, owns: true }]);
-    tabServer.queueList({ tabs: held, version: tabServer.version() + 1 });
+    tabServer.queueList({ tabs: held, recent: [], version: tabServer.version() + 1 });
     await listTabs();
     expect(hasTab("chat", "x")).toBe(true);
 
@@ -943,8 +1070,8 @@ describe("MRU activation history", () => {
     expect.assertions(5);
     await openChat("first", { activate: false });
     await openChats("a", "b", "c"); // history [c, b, a]
-    activateTab(chatID("a"));
-    activateTab(chatID("b")); // history [b, a, c] — `c` is the tail, behind `a`
+    await activateTab(chatID("a"));
+    await activateTab(chatID("b")); // history [b, a, c] — `c` is the tail, behind `a`
     tabServer.failNext("close_tab");
     tabServer.holdResponses();
 
@@ -985,6 +1112,7 @@ describe("MRU activation history", () => {
     await openChat("a");
     await openChat("p");
     await openTab({ kind: "chat", ref: "c", parent: chatID("p") });
+    await visited();
     await openChat("b"); // history [b, c, p, a] — the pair, adjacent, mid-history
     await openChat("d", { activate: false });
     tabServer.failNext("close_tab");
@@ -992,7 +1120,7 @@ describe("MRU activation history", () => {
 
     const closing = closeTab(chatID("p"));
     // The reader's gesture inside the window, synchronous: history [d, b, a].
-    activateTab(chatID("d"));
+    await activateTab(chatID("d"));
     tabServer.releaseResponses();
     await closing;
     expect(hasTab("chat", "p")).toBe(true);
@@ -1018,7 +1146,7 @@ describe("MRU activation history", () => {
 
     const closing = closeTab(chatID("c")); // anchored on `s`
     tabServer.closeRemotely(chatID("s")); // and `s` goes, mid-window
-    activateTab(chatID("d")); // history [d, b, a]
+    await activateTab(chatID("d")); // history [d, b, a]
     tabServer.releaseResponses();
     await closing;
     expect(hasTab("chat", "c")).toBe(true);
@@ -1040,6 +1168,7 @@ describe("a resync that drops the active tab", () => {
   async function resyncWithout(...gone: readonly string[]): Promise<void> {
     tabServer.queueList({
       tabs: tabServer.subjects().filter((s) => !gone.includes(s.id)),
+      recent: [],
       version: tabServer.version() + 1,
     });
     await listTabs();
@@ -1064,6 +1193,7 @@ describe("a resync that drops the active tab", () => {
     const ids = await openChats("a", "c", "b"); // history [b, c, a]
 
     await resyncWithout(ids["b"] ?? "");
+    await visited();
 
     expect(getActiveTabId()).toBe(ids["c"]);
     expect(openers.chatShow).toHaveBeenLastCalledWith("c");
@@ -1391,9 +1521,8 @@ describe("keyboard navigation (real tabs.ts handler via rendered tab nodes)", ()
     expect(getActiveTabId()).toBe(chatID("a"));
   });
 
-  // A close is a ROUND TRIP now, so focus has to move before the dispatch: waiting
-  // for the removal to land would leave focus on <body> for the whole flight, and
-  // the row the keyboard user is standing on is the element being removed.
+  // The row the keyboard user stands on leaves the strip inside the keydown, so focus moves
+  // first or it falls to <body>.
   it("Delete moves focus to a surviving sibling before the close lands", async () => {
     expect.assertions(2);
     const nodes = await renderTabs("a", "b", "c");
@@ -1401,9 +1530,7 @@ describe("keyboard navigation (real tabs.ts handler via rendered tab nodes)", ()
     tabServer.setMode("manual");
     nodes[1]?.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
     expect(document.activeElement).toBe(nodes[2]);
-    // The strip is untouched until the frame arrives, which is the honest surface
-    // for a close that might be refused.
-    expect(await rowIDs()).toHaveLength(3);
+    expect(await rowIDs()).toEqual([chatID("a"), chatID("c")]);
     tabServer.setMode("event-first");
     tabServer.flushFrames();
     await settleTabs();
@@ -2780,7 +2907,9 @@ describe("the file browser is multi-instance", () => {
   it("falls back to the MOST RECENT browser when the active tab is not one", async () => {
     expect.assertions(1);
     await openTab({ kind: "files", ref: "/a" });
+    await visited();
     await openTab({ kind: "files", ref: "/b" });
+    await visited();
     await settleTabs();
     await openChat("c-1");
     expect(filesTabForRoute("/somewhere/else")).toEqual({
@@ -2930,6 +3059,8 @@ describe("the visible view is only swapped when it actually changes", () => {
     watch();
 
     await openTab({ kind: "settings", ref: "" });
+    // The activation half shows the view, after the gesture's frame.
+    await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
 
     // A real navigation: settings has its own view element, so the swap has to
     // run — and this is the case the guard must not swallow.
@@ -3011,11 +3142,12 @@ describe("optimistic close: the reversible gesture", () => {
   it("a definitive refusal restores the chat row in place, re-activates it, and toasts", async () => {
     expect.assertions(6);
     await openChats("a", "b", "c");
-    activateTab(chatID("b"));
+    await activateTab(chatID("b"));
     vi.mocked(openers.chatShow).mockClear();
     tabServer.failNext("close_tab");
 
     await closeTab(chatID("b"));
+    await visited();
 
     expect(hasTab("chat", "b")).toBe(true);
     expect(await rowRefs()).toEqual(["a", "b", "c"]);
@@ -3024,7 +3156,9 @@ describe("optimistic close: the reversible gesture", () => {
     expect(openers.chatShow).toHaveBeenCalledWith("b");
     // …and none of the chat's client state was torn down in between.
     expect(openers.chatClose).not.toHaveBeenCalled();
-    expect(vi.mocked(toastErrorFn)).toHaveBeenCalledWith("Could not close that tab");
+    expect(vi.mocked(toastErrorFn)).toHaveBeenCalledWith(
+      "Could not close that tab, so it was put back.",
+    );
   });
 
   it("a definitive refusal names the chat by the row's name at the gesture", async () => {
@@ -3038,7 +3172,9 @@ describe("optimistic close: the reversible gesture", () => {
 
     await closeTab(chatID("b"));
 
-    expect(notices).toEqual([["b", "Fix the parser", "Could not close that tab", "error"]]);
+    expect(notices).toEqual([
+      ["b", "Fix the parser", "Could not close that tab, so it was put back.", "error"],
+    ]);
   });
 
   it("a definitive refusal leaves a dirty editor's state untouched", async () => {
@@ -3112,8 +3248,8 @@ describe("optimistic close: the reversible gesture", () => {
 });
 
 describe("optimistic close: timeout, verifying, and authoritative settlement", () => {
-  // The 5s deadline (CLOSE_CONFIRM_MS) is an AbortSignal.timeout, which fake timers do not advance, so a
-  // cancellation stands in for it and lands on opTimedOut too; the next block covers the timeout itself.
+  // A cancellation ends the dispatch with no answer and lands on opTimedOut before the op's own deadline; the last
+  // case here covers that deadline, and the next block the transport's AbortSignal.timeout.
 
   /** A close whose dispatch ends with NO answer: response held, then the
    *  in-flight dispatch canceled. The op lands in `verifying`. */
@@ -3151,7 +3287,7 @@ describe("optimistic close: timeout, verifying, and authoritative settlement", (
       .subjects()
       .map((s) => ({ ...s }))
       .concat([{ id: doomedTab, kind: "chat", ref: "a", parent: "", pinned: false, owns: true }]);
-    tabServer.queueList({ tabs: held, version: tabServer.version() + 1 });
+    tabServer.queueList({ tabs: held, recent: [], version: tabServer.version() + 1 });
     await listTabs();
 
     expect(hasTab("chat", "a")).toBe(true);
@@ -3160,6 +3296,31 @@ describe("optimistic close: timeout, verifying, and authoritative settlement", (
     // so the ordinary failure toast stays silent.
     expect(vi.mocked(toastInfo)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+  });
+
+  it("verifies and restores a close whose dispatch never settles, on the op's own clock", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    await openChats("a", "keep");
+    const doomedTab = chatID("a");
+    tabServer.setMode("manual");
+    tabServer.holdResponses();
+    try {
+      void closeTab(doomedTab);
+      const held = tabServer
+        .subjects()
+        .map((s) => ({ ...s }))
+        .concat([{ id: doomedTab, kind: "chat", ref: "a", parent: "", pinned: false, owns: true }]);
+      tabServer.queueList({ tabs: held, recent: [], version: tabServer.version() + 1 });
+      const listsBefore = tabServer.listCalls();
+
+      await vi.advanceTimersByTimeAsync(5_000 + 1_000);
+
+      expect(tabServer.listCalls(), "the verifying re-list went out").toBeGreaterThan(listsBefore);
+      expect(hasTab("chat", "a")).toBe(true);
+      expect(vi.mocked(toastInfo)).toHaveBeenCalledTimes(1);
+    } finally {
+      tabServer.releaseResponses();
+    }
   });
 });
 
@@ -3373,14 +3534,14 @@ describe("optimistic close: the last tab and the empty-state surface", () => {
     const input = $.promptInput;
     input.value = "half a thought";
     await closing;
+    await visited();
 
-    // The subtree is back, re-activated, and the typed text was filed as the
-    // restored chat's draft through the failed-send primitive (which writes the
-    // draft map and only ever an EMPTY box).
+    // The subtree is back, re-activated, and the composer's unowned text went to the
+    // restored chat (tab-close-draft.test.ts pins what that keeps).
     expect(hasTab("chat", "solo")).toBe(true);
     expect(getActiveTabId()).toBe(solo);
     expect(openers.chatShow).toHaveBeenCalledWith("solo");
-    expect(vi.mocked(restoreFailedSend)).toHaveBeenCalledWith("solo", "half a thought");
+    expect(vi.mocked(adoptUnownedComposer)).toHaveBeenCalledWith("solo");
     expect(vi.mocked(retargetComposer)).not.toHaveBeenCalled();
   });
 
@@ -3401,6 +3562,7 @@ describe("optimistic close: the last tab and the empty-state surface", () => {
 describe("the freshness dispatcher", () => {
   it("refreshes the row an activation activated, after its onShow", async () => {
     await openEditorView("/w/a.ts");
+    await visited();
     expect(openers.editorRefresh).toHaveBeenCalledWith("/w/a.ts");
     // The kind's VIEW activation first, then the data half: a refresh that ran
     // ahead of the show would fetch into a surface pointing at another subject.
@@ -3418,16 +3580,19 @@ describe("the freshness dispatcher", () => {
 
   it("the already-active early return runs neither half", async () => {
     await openEditorView("/w/a.ts");
+    await visited();
     openers.editorShow.mockClear();
     openers.editorRefresh.mockClear();
-    activateTab(tabIdFor("editor", "/w/a.ts"));
+    await activateTab(tabIdFor("editor", "/w/a.ts"));
     expect(openers.editorShow).not.toHaveBeenCalled();
     expect(openers.editorRefresh).not.toHaveBeenCalled();
   });
 
   it("refreshActiveView refreshes the active row and no other", async () => {
     await openEditorView("/w/a.ts");
+    await visited();
     await openEditorView("/w/b.ts");
+    await visited();
     openers.editorRefresh.mockClear();
     refreshActiveView();
     expect(openers.editorRefresh.mock.calls).toEqual([["/w/b.ts"]]);
@@ -3438,6 +3603,7 @@ describe("the freshness dispatcher", () => {
   // URL could move through from here.
   it("refreshActiveView emits nothing and pushes no route", async () => {
     await openEditorView("/w/a.ts");
+    await visited();
     await paint();
     const version = tabSetVersion();
     const painted = $.tabList.innerHTML;
@@ -3507,6 +3673,7 @@ describe("a drop is shown before the server confirms it", () => {
     await threeChatsHeld();
     const before = {
       tabs: tabServer.subjects().map((s) => ({ ...s })),
+      recent: [],
       version: tabServer.version(),
     };
     commitDrop?.([chatID("c"), chatID("a"), chatID("b")]);
@@ -3775,5 +3942,67 @@ describe("in-place chat rename", () => {
     const items = vi.mocked(showContextMenu).mock.lastCall?.[0] ?? [];
     items.find((i) => i.label === "Rename\u2026")?.action();
     expect(row.querySelector(".tab-name-input")).not.toBeNull();
+  });
+});
+
+// The URL follows the tab the reader is shown. A switch defers its activation past the gesture's
+// frame, so `showView` (which re-runs on every emit) must not push the target's route before the
+// activation does, and the activation pushes it once.
+describe("routes follow the activation", () => {
+  it("a sub-tab change on the active settings tab pushes its route", async () => {
+    await openTab({ kind: "settings" });
+    tabsModule.flushActivationForTest();
+    vi.mocked(pushRoute).mockClear();
+
+    setSettingsTab("tools");
+
+    expect(vi.mocked(pushRoute).mock.calls).toEqual([[{ kind: "settings", tab: "tools" }]]);
+  });
+
+  it("a pending switch pushes no route until its activation runs, then pushes it once", async () => {
+    await openChats("a", "b");
+    vi.mocked(pushRoute).mockClear();
+
+    activateTab(chatID("a"));
+
+    expect(vi.mocked(pushRoute), "pushed while the activation is pending").not.toHaveBeenCalled();
+    tabsModule.flushActivationForTest();
+    expect(vi.mocked(pushRoute).mock.calls).toEqual([[{ kind: "chat", id: "a" }]]);
+  });
+
+  it("a route change on a target whose activation has run pushes the new route", async () => {
+    await openChats("a");
+    await openTab({ kind: "settings" });
+    activateTab(chatID("a"));
+    tabsModule.flushActivationForTest();
+    activateTab(tabIdFor("settings"));
+    tabsModule.flushActivationForTest();
+    vi.mocked(pushRoute).mockClear();
+
+    setSettingsTab("tools");
+
+    expect(vi.mocked(pushRoute).mock.calls).toEqual([[{ kind: "settings", tab: "tools" }]]);
+  });
+});
+
+// A link to a sub-tab (Code intelligence's Install, a recipe's Permissions, Connect GitHub) must
+// show that panel, whether its view is closed or already on another sub-tab.
+describe("a view opener shows the sub-tab it names", () => {
+  it("Settings, closed and then already open", async () => {
+    await openSettingsView("tools");
+    tabsModule.flushActivationForTest();
+    expect(vi.mocked(forceSettingsTab).mock.calls).toEqual([["tools"]]);
+    expect(vi.mocked(pushRoute)).toHaveBeenLastCalledWith({ kind: "settings", tab: "tools" });
+
+    await openSettingsView("permissions");
+    expect(vi.mocked(forceSettingsTab)).toHaveBeenLastCalledWith("permissions");
+    expect(vi.mocked(pushRoute)).toHaveBeenLastCalledWith({ kind: "settings", tab: "permissions" });
+  });
+
+  it("the git view", async () => {
+    await openGitView("sources");
+    tabsModule.flushActivationForTest();
+    expect(vi.mocked(forceGitTab).mock.calls).toEqual([["sources"]]);
+    expect(vi.mocked(pushRoute)).toHaveBeenLastCalledWith({ kind: "git", tab: "sources" });
   });
 });

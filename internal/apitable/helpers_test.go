@@ -106,7 +106,7 @@ func composedServer(t *testing.T, entries []route.Entry) *server.Server {
 		server.WithPreview(preview.New(workDir, sensitive, signer, nil)),
 		server.WithMetrics(obs.Handler()),
 		server.WithTools(noTools{}),
-		server.WithSteering(steering.New(workDir, configDir, t.TempDir())),
+		server.WithSteering(steering.New(steering.Config{WorkDir: workDir, ConfigDir: configDir, ToolsDir: t.TempDir()})),
 		server.WithAccountUsage(rt),
 		server.WithPolicy(rt.Config()),
 		server.WithGovernanceLocks(rt.Config()),

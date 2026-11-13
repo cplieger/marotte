@@ -30,8 +30,8 @@ type runEffectsHost interface {
 	writeRun(chatID marotte.ChatID, mutate func(c *marotte.Chat) bool) error
 	// startEntry carries out a take on its own goroutine: a launch, or a compaction's start.
 	startEntry(lc *chatLifecycle, e *runEntry)
-	// compactionFailed tells the chat's pages a compaction the dock showed did not run.
-	compactionFailed(chatID marotte.ChatID)
+	// toast tells the chat's pages, in detail's words, of a run-list outcome the dock alone does not explain.
+	toast(chatID marotte.ChatID, code marotte.ErrorCode, detail string)
 	// spawnRun runs fn on the process's in-flight count, refused once shutdown began.
 	spawnRun(fn func())
 }
@@ -63,7 +63,14 @@ func (lc *chatLifecycle) flushRunLocked() {
 		host.startEntry(lc, e)
 	}
 	if len(fx.toast) > 0 {
-		host.spawnRun(func() { host.compactionFailed(lc.chatID) })
+		detail := compactFailed
+		if slices.ContainsFunc(fx.toast, func(e *runEntry) bool { return e.origin == marotte.RunFromFailsafe }) {
+			detail = compactFailsafeFailed
+		}
+		host.spawnRun(func() { host.toast(lc.chatID, marotte.ErrCodeCompactionFailed, detail) })
+	}
+	for _, detail := range fx.notices {
+		host.spawnRun(func() { host.toast(lc.chatID, marotte.ErrCodeResumeNotSent, detail) })
 	}
 }
 
@@ -135,7 +142,7 @@ func sourceOfEntry(e *runEntry) marotte.TurnOpenSource {
 		return marotte.TurnSourceEmptyRetry
 	case marotte.RunKindRevert:
 		return marotte.TurnSourceRevert
-	case marotte.RunKindTurn, marotte.RunKindRow, marotte.RunKindUnread, marotte.RunKindCompaction:
+	case marotte.RunKindTurn, marotte.RunKindRow, marotte.RunKindUnread, marotte.RunKindCompaction, marotte.RunKindResume:
 	}
 	return marotte.TurnSourcePrompt
 }
@@ -236,9 +243,9 @@ func (bc *bridgeCoordinator) writeRun(chatID marotte.ChatID, mutate func(c *maro
 	return err
 }
 
-func (bc *bridgeCoordinator) compactionFailed(chatID marotte.ChatID) {
-	if bc.autoCompact != nil && bc.autoCompact.failed != nil {
-		bc.autoCompact.failed(context.Background(), chatID, compactFailed)
+func (bc *bridgeCoordinator) toast(chatID marotte.ChatID, code marotte.ErrorCode, detail string) {
+	if bc.autoCompact != nil && bc.autoCompact.toast != nil {
+		bc.autoCompact.toast(context.Background(), chatID, code, detail)
 	}
 }
 
@@ -290,6 +297,15 @@ func (bc *bridgeCoordinator) spawnRun(fn func()) {
 	if !bc.lifecycle.goUnlessDraining(fn) {
 		slog.Debug("run list: a take was not started, the server is shutting down")
 	}
+}
+
+// spawnRole runs a Bot role keeper's set_mode on inflight unless Shutdown began (chatLifecycle.sendRoleLocked).
+func (bc *bridgeCoordinator) spawnRole(work func()) bool {
+	if bc.lifecycle == nil {
+		go work()
+		return true
+	}
+	return bc.lifecycle.goUnlessDraining(work)
 }
 
 // entryLaunched applies a launch's result to the list (runList.launched). A tangent delivery opened with a receipt
@@ -460,24 +476,21 @@ func submitVerb(entries []marotte.RunEntry, s *command.Submission, mode marotte.
 			return verb, command.ErrSubmitNoTurn
 		}
 	case marotte.SendQueue:
-		return verb, queueRefusal(entries, &s.Row, s.PromptOnly)
+		return verb, queueRefusal(entries, &s.Row)
 	}
 	return verb, nil
 }
 
-// queueRefusal is why row may not queue behind entries: past the draft cap or prompt-only behind a running turn of
-// marotte's, or past the queue's caps. Nil when it may.
-func queueRefusal(entries []marotte.RunEntry, row *marotte.QueuedPrompt, promptOnly bool) error {
+// queueRefusal is why row may not queue behind entries: past the draft cap behind a running turn of marotte's, or
+// past the queue's caps. Nil when it may.
+func queueRefusal(entries []marotte.RunEntry, row *marotte.QueuedPrompt) error {
 	for _, h := range marotte.LivePrefix(entries) {
 		if !h.Kind.TurnKind() || h.Origin == marotte.RunFromRun ||
 			(h.State != marotte.RunRunning && h.State != marotte.RunStarting) {
 			continue
 		}
-		switch {
-		case len(row.Text) > marotte.MaxDraftBytes:
+		if len(row.Text) > marotte.MaxDraftBytes {
 			return command.ErrSubmitTooBig
-		case promptOnly:
-			return command.ErrSubmitPromptOnly
 		}
 		break
 	}
@@ -656,7 +669,7 @@ func (bc *bridgeCoordinator) SendNow(ctx context.Context, chatID marotte.ChatID,
 		err = nil
 	case h != nil:
 		token := bc.turns.stopTokens.Add(1)
-		rs, post = bc.turns.carryStopLocked(lc, lc.run.stopHead(h.id, token), token)
+		rs, post = bc.turns.carryStopLocked(lc, lc.run.readerStop(h.id, token), token, marotte.TurnStopReader)
 	}
 	lc.wakeLocked()
 	lc.mu.Unlock()
@@ -702,7 +715,7 @@ func (bc *bridgeCoordinator) Stop(_ context.Context, chatID marotte.ChatID, targ
 	}
 	lc.mu.Lock()
 	token := bc.turns.stopTokens.Add(1)
-	rs, post := bc.turns.carryStopLocked(lc, lc.run.stopHead(target, token), token)
+	rs, post := bc.turns.carryStopLocked(lc, lc.run.readerStop(target, token), token, marotte.TurnStopReader)
 	lc.wakeLocked()
 	lc.mu.Unlock()
 	if post != nil {
@@ -713,8 +726,10 @@ func (bc *bridgeCoordinator) Stop(_ context.Context, chatID marotte.ChatID, targ
 
 // carryStopLocked does a stop plan's lifecycle part in its section: a withdrawn take's reservation is given back
 // (post runs its idle report once mu is released), an opened unsent turn is kept unsent, and a running turn or
-// kiro-cli's run gets the stop record its session/cancel goes out under. Caller holds lc.mu.
-func (r *turnRegistry) carryStopLocked(lc *chatLifecycle, plan stopPlan, token uint64) (rs command.RunStop, post func()) {
+// kiro-cli's run gets the stop record, under cause, its session/cancel goes out under. Caller holds lc.mu.
+func (r *turnRegistry) carryStopLocked(
+	lc *chatLifecycle, plan stopPlan, token uint64, cause marotte.TurnStopCause,
+) (rs command.RunStop, post func()) {
 	switch plan.arm {
 	case stopNothing:
 		return command.RunStop{Arm: command.StopNothing}, nil
@@ -722,14 +737,14 @@ func (r *turnRegistry) carryStopLocked(lc *chatLifecycle, plan stopPlan, token u
 		post := r.releaseReservationLocked(lc, plan.res)
 		return command.RunStop{Arm: command.StopQuiet, Stop: &command.TurnStop{Chat: lc.chatID}}, post
 	case stopUnsent:
-		stop := r.requestStopLocked(lc, token, marotte.TurnStopReader)
+		stop := r.requestStopLocked(lc, token, cause)
 		if t := lc.liveLocked(plan.entry.turnID); t != nil && t.awaitsSend() && !t.finalizing {
 			t.stopped = true
 		}
 		return command.RunStop{Arm: command.StopQuiet, Stop: stop}, nil
 	case stopRunning, stopRun, stopSession:
 	}
-	return command.RunStop{Arm: command.StopCancel, Stop: r.requestStopLocked(lc, token, marotte.TurnStopReader)}, nil
+	return command.RunStop{Arm: command.StopCancel, Stop: r.requestStopLocked(lc, token, cause)}, nil
 }
 
 // StopUndone restores what a stop whose session/cancel was not delivered marked.

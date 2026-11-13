@@ -118,6 +118,7 @@ async function paint(chatID: string, held: [string, Entry[]][]): Promise<HTMLEle
   };
   store.setSessions([s]);
   store.setActive(chatID);
+  store.setPainted(chatID);
   store.bumpMessages(chatID, "load");
   await Promise.resolve();
   const view = messages.transcriptViewFor(chatID);
@@ -139,6 +140,7 @@ beforeEach(() => {
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
+  store.setPainted("");
 });
 
 describe("a dropped twin of a workflow result the turn read", () => {

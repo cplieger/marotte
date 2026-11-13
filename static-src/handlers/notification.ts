@@ -1,9 +1,13 @@
 // The server's `notification` frame: the in-page twin of its Web Push, words and subject
-// included, delivered by agent-finished-cue.ts.
+// included. Every page gets it; the server's notice ledger names the one page per profile that
+// shows it (`show_in`).
 
 import { onSSE } from "../bus.js";
-import { deliverNotification } from "../agent-finished-cue.js";
+import { showNotice } from "../notify.js";
+import { pageID } from "../page-view.js";
 
-onSSE("notification", (chatID, p) => {
-  deliverNotification(p.chat_id ?? chatID, p);
+onSSE("notification", (_chatID, p) => {
+  if (p.show_in?.includes(pageID()) === true) {
+    showNotice(p);
+  }
 });

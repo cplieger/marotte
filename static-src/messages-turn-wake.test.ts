@@ -194,6 +194,7 @@ function load(chatID: string, turns: readonly (readonly Entry[])[]): void {
   settleWorkflowMessages(turnsInOrder(s.turn_order, s.turns));
   store.setSessions([s]);
   store.setActive(chatID);
+  store.setPainted(chatID);
   store.bumpMessages(chatID, "load");
 }
 
@@ -259,6 +260,7 @@ beforeEach(() => {
   resetFoldState();
   store.setSessions([]);
   store.setActive("");
+  store.setPainted("");
   copied.length = 0;
 });
 

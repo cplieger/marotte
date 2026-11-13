@@ -385,8 +385,8 @@ export function initPostAuth(): void {
   // A step's entries are the RUN's, so only the delegate page pins a chat's window.
   registerEvictionExemption(subagentTabProjectsChat);
   // Who still needs a run's state cell, so `forgetRun` needs no enumeration of its readers.
-  registerRunStateDemand((id) => hasTab("run", id));
-  registerRunStateDemand(chatTabFoldsRun);
+  registerRunStateDemand((id) => hasTab("run", id), "header");
+  registerRunStateDemand(chatTabFoldsRun, "header");
   startEvictionSweep();
   // Logout leaves the page running, so stop the debounce writing the workspace; keyed on
   // `logout.name` so every door and a rename are covered.

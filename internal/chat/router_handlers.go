@@ -99,8 +99,8 @@ func (rt *router) handleList(w http.ResponseWriter, r *http.Request) {
 
 // serveChatPage serves /api/chats/{id}: a window of whole turns, its open tails, the liveness verdict and the stamps
 // certifying those bytes. `?limit=` counts turns; `?before=<turn_id>` pages older (no tails, the `chat` stamp only).
-// Tool payloads are bounded to the preview budget with has_full; a page is never bounded by bytes, since turns are
-// never split.
+// Tool payloads are bounded to the preview budget with has_full; a page is at most `limit` whole turns, sized by
+// pageBytes.
 func (rt *router) serveChatPage(w http.ResponseWriter, r *http.Request) {
 	id := marotte.ChatID(r.PathValue("id"))
 	if !chatIDPattern(id) {
@@ -169,7 +169,7 @@ func (rt *router) handleTurnRange(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Only a missing turn is the caller's 404; an unreadable log is the server's fault.
-		if errors.Is(err, ErrTurnNotInLog) {
+		if errors.Is(err, errTurnNotInLog) {
 			httpreply.NotFound(w, "unknown turn")
 			return
 		}

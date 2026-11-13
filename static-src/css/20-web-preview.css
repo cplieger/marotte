@@ -73,6 +73,16 @@
   gap: var(--sp-2);
 }
 
+/* Open in browser before its page has a grant: a link cannot be `:disabled`. */
+.web-open-btn[aria-disabled="true"] {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+
+  &:hover {
+    background: none;
+  }
+}
+
 /* One row of icon segments; the bar's height and each target's expander are
    the shared `.seg`'s (11-page-lists.css). */
 .web-viewport {
@@ -103,7 +113,7 @@
 /* The transcript card a markdown link to a workspace page becomes. A button, so it
    is phrasing content and legal inside the paragraph it replaces a link in, laid out
    as a full-width block there: the sentence breaks above and below it, never onto
-   the card's line (its trailing punctuation is smd-renderer.ts `holdObjectTail`'s). */
+   the card's line (its trailing punctuation is markdown.ts `holdObjectTail`'s). */
 .preview-card {
   display: flex;
   align-items: center;

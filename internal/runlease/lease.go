@@ -160,28 +160,35 @@ func (l *Lease) check() error {
 // Bounded reports whether marotte believes the run to be EXECUTING under a deadline it set.
 func (l *Lease) Bounded() bool { return !l.Deadline.IsZero() }
 
+// Row is one lease as the live-runs inventory shows it.
+type Row struct {
+	WorkflowID string
+	ChatID     string
+	Executing  bool
+}
+
+// Row projects the lease onto its inventory row; every reader of the inventory projects through it.
+func (l *Lease) Row() Row {
+	return Row{WorkflowID: l.WorkflowID, ChatID: l.ChatID, Executing: l.Bounded()}
+}
+
 // Bounds is the input set NextDeadline composes. A struct, so two same-typed durations
 // cannot be transposed. Field order is govet fieldalignment's.
 type Bounds struct {
 	// SlotAt is when the run's next slot comes due. Zero means "no slot to respect".
 	SlotAt time.Time
-	// BackstopAt is when the run's absolute EXECUTING-time budget is spent; zero does not bound.
-	// An instant rather than a duration, because an omitted duration would read as spent.
-	BackstopAt time.Time
 	// Idle is how long a run may execute without observable progress; a refill rolls it
 	// forward, which makes the primary bound a STALL bound, not a total-duration one.
 	Idle time.Duration
-	// Floor is the smallest budget any run gets. It outranks the idle window and the slot, not
-	// a tighter BackstopAt: the floor is what a run should get, the backstop what is left.
+	// Floor is the smallest budget any run gets. It outranks the idle window and the slot.
 	Floor time.Duration
 }
 
 // NextDeadline computes the ONE deadline a run gets (one timer, one instant):
 //
-//	min(now+Idle, SlotAt?) -> max(that, now+Floor) -> min(that, BackstopAt?)
+//	min(now+Idle, SlotAt?) -> max(that, now+Floor)
 //
-// The order is the precedence. Clamping the backstop LAST keeps it terminal; otherwise
-// each progress frame hands out a fresh floor and the absolute bound becomes a rolling one.
+// The order is the precedence.
 func NextDeadline(now time.Time, b Bounds) time.Time {
 	deadline := now.Add(b.Idle)
 	if !b.SlotAt.IsZero() && b.SlotAt.Before(deadline) {
@@ -189,9 +196,6 @@ func NextDeadline(now time.Time, b Bounds) time.Time {
 	}
 	if minimum := now.Add(b.Floor); deadline.Before(minimum) {
 		deadline = minimum
-	}
-	if !b.BackstopAt.IsZero() && b.BackstopAt.Before(deadline) {
-		deadline = b.BackstopAt
 	}
 	return deadline
 }

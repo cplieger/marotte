@@ -25,7 +25,7 @@ type loggingTabs struct {
 	mu         sync.Mutex
 }
 
-func (l *loggingTabs) Close(ctx context.Context, id string) ([]marotte.TabSubject, []tabs.OwedRelease, uint64, error) {
+func (l *loggingTabs) Close(ctx context.Context, id string, unlisted []string, facts map[string]tabs.RecentFacts) ([]marotte.TabSubject, []tabs.OwedRelease, uint64, error) {
 	l.log.add("tabs.Close " + id)
 	l.mu.Lock()
 	fail, gone := l.failCloses > 0, l.gone[id]
@@ -39,7 +39,7 @@ func (l *loggingTabs) Close(ctx context.Context, id string) ([]marotte.TabSubjec
 	if gone {
 		return nil, nil, 0, nil
 	}
-	return l.Store.Close(ctx, id)
+	return l.Store.Close(ctx, id, unlisted, facts)
 }
 
 // logTabs wraps the store in a loggingTabs on the host's log, storing it in *out when out is non-nil.
