@@ -17,6 +17,7 @@ import {
   initSlashMenu,
 } from "./slash-menu.js";
 import { setActive, setSessions, setTurnOpen } from "./store.js";
+import { adoptInterruptDefault } from "./interrupt-default.js";
 import { _resetAttachmentsForTest, addAttachment, removeAttachmentFrom } from "./attachments.js";
 import type { RunView, SendVerb } from "./wire/types.gen.js";
 import { makeSession } from "./__test-helpers__/model.js";
@@ -98,7 +99,7 @@ describe("a tap on a menu row", () => {
 
   it("takes the tap on a row a running turn greyed as soon as that turn ends", async () => {
     setSessions([
-      makeSession({ id: CHAT, turn_open: true, interrupt_mode: "steer", run: runningRun("steer") }),
+      makeSession({ id: CHAT, turn_open: true, run: runningRun("steer") }),
     ]);
     await userEvent.keyboard("/chat");
     expect(greyedRows()).toEqual(["/chat-extract"]);
@@ -112,7 +113,7 @@ describe("a tap on a menu row", () => {
 
   it("takes the tap on a saved prompt mid-turn when a staged file makes the message queue", async () => {
     setSessions([
-      makeSession({ id: CHAT, turn_open: true, interrupt_mode: "steer", run: runningRun("steer") }),
+      makeSession({ id: CHAT, turn_open: true, run: runningRun("steer") }),
     ]);
     addAttachment("docs/plan.md");
     await userEvent.keyboard("/chat");
@@ -123,7 +124,7 @@ describe("a tap on a menu row", () => {
 
   it("greys an open saved-prompt row once the staged file is removed mid-turn", async () => {
     setSessions([
-      makeSession({ id: CHAT, turn_open: true, interrupt_mode: "steer", run: runningRun("steer") }),
+      makeSession({ id: CHAT, turn_open: true, run: runningRun("steer") }),
     ]);
     addAttachment("docs/plan.md");
     await userEvent.keyboard("/chat");
@@ -135,12 +136,23 @@ describe("a tap on a menu row", () => {
   });
 
   it("takes the tap on a saved prompt mid-turn when the message would queue", async () => {
-    setSessions([
-      makeSession({ id: CHAT, turn_open: true, interrupt_mode: "queue", run: runningRun("queue") }),
-    ]);
+    setSessions([makeSession({ id: CHAT, turn_open: true, run: runningRun("queue") })]);
     await userEvent.keyboard("/chat");
     expect(greyedRows()).toEqual([]);
     await tap(row("/chat-extract"));
     expect(input.value).toBe("/chat-extract ");
+  });
+
+  it("takes the tap on a saved prompt beside a steerable turn when Queue is the default", async () => {
+    adoptInterruptDefault({ interrupt_mode: "queue" });
+    try {
+      setSessions([makeSession({ id: CHAT, turn_open: true, run: runningRun("steer") })]);
+      await userEvent.keyboard("/chat");
+      expect(greyedRows()).toEqual([]);
+      await tap(row("/chat-extract"));
+      expect(input.value).toBe("/chat-extract ");
+    } finally {
+      adoptInterruptDefault({ interrupt_mode: "steer" });
+    }
   });
 });

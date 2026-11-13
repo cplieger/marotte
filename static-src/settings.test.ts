@@ -893,6 +893,33 @@ describe("initPostAuthUI", () => {
 // NOT TESTED, and the absence is deliberate rather than an oversight: that `initUI` issues no `GET
 // /api/steering`.
 
+// What a message sent while a turn runs does, for every chat: steer, the default, or queue.
+describe("the mid-turn send choice", () => {
+  const select = (): HTMLSelectElement =>
+    document.getElementById("interrupt-mode") as HTMLSelectElement;
+
+  beforeEach(() => {
+    document.body.innerHTML = `<select id="interrupt-mode">
+      <option value="steer">Steer the running turn</option>
+      <option value="queue">Queue for after the turn</option>
+    </select>`;
+  });
+
+  it.each(["steer", "queue"] as const)("seeds the choice from interrupt_mode = %s", (mode) => {
+    select().value = mode === "steer" ? "queue" : "steer";
+    applyGeneralPanel(settingsPayload({ interrupt_mode: mode }));
+    expect(select().value).toBe(mode);
+  });
+
+  it("writes interrupt_mode when the reader picks the other", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload({ interrupt_mode: "steer" }));
+    select().value = "queue";
+    select().dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenCalledExactlyOnceWith({ interrupt_mode: "queue" });
+  });
+});
+
 describe("the payload-link guard switch", () => {
   const box = (): HTMLInputElement =>
     document.getElementById("flag-guard-payload-links") as HTMLInputElement;

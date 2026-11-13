@@ -7,7 +7,8 @@ import { page } from "vitest/browser";
 import indexHtml from "../static/index.html?raw";
 
 import { buildAttachmentPill } from "./attachment-pill.js";
-import { ICON_SEND } from "./icons.js";
+import { el } from "@cplieger/reactive";
+import { ICON_QUEUE_UI, ICON_SEND } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { BUTTON_BOX } from "./__test-helpers__/button-reference.js";
 import {
@@ -439,6 +440,94 @@ describe("the composer, measured at real viewport sizes", () => {
         px(getComputedStyle(cancel).borderLeftWidth) +
         px(getComputedStyle(cancel, "::after").left);
       expect(cReach - mReach, `${at}: the two targets meet without overlapping`).toBeCloseTo(0, 1);
+    }
+  });
+
+  /** The split pill as prompt-input.ts paints it beside a steerable turn: the default half with its word and glyph,
+   *  then the other action's glyph alone. */
+  function withSplitPill(): { group: HTMLElement; main: HTMLElement; alt: HTMLElement; cancel: HTMLElement } {
+    const cancel = withSendGlyph();
+    const group = document.getElementById("midturn-send");
+    const main = document.getElementById("midturn-send-btn");
+    const alt = document.getElementById("midturn-alt-btn");
+    if (group === null || main === null || alt === null) {
+      throw new Error("the composer subtree has no split pill");
+    }
+    main.replaceChildren(el("span", { className: "send-btn-label" }, "Steer"), iconEl(ICON_SEND));
+    alt.replaceChildren(iconEl(ICON_QUEUE_UI));
+    group.hidden = false;
+    main.hidden = false;
+    alt.hidden = false;
+    return { group, main, alt, cancel };
+  }
+
+  it("fits the split pill beside Cancel at every width, both halves one touch box under a coarse pointer", async () => {
+    for (const [w, h, tier] of [
+      [320, 568, "coarse"],
+      [360, 740, "coarse"],
+      [390, 844, "coarse"],
+      [820, 1180, "coarse"],
+      [1180, 820, "fine"],
+      [1440, 900, "fine"],
+    ] as const) {
+      await bandsAt(w, h, tier);
+      document.getElementById("task-list-pill")?.classList.remove("hidden");
+      const model = document.getElementById("ctx-model-pill");
+      if (model !== null) {
+        model.textContent = "model-alpha-4.5-thinking";
+      }
+      const row = document.querySelector<HTMLElement>(".prompt-pills");
+      if (row === null) {
+        throw new Error("the composer subtree did not mount");
+      }
+      const at = `${String(w)}x${String(h)} ${tier}`;
+      const before = row.getBoundingClientRect().height;
+      const { main, alt, cancel } = withSplitPill();
+      const m = main.getBoundingClientRect();
+      const a = alt.getBoundingClientRect();
+      const c = cancel.getBoundingClientRect();
+      expect(row.scrollWidth, `${at}: nothing overflows the row`).toBeLessThanOrEqual(row.clientWidth);
+      expect(row.getBoundingClientRect().height, `${at}: the row keeps its height`).toBe(before);
+      expect(a.left - m.right, `${at}: the halves touch, one shape`).toBeCloseTo(0, 1);
+      expect(a.right, `${at}: the pill sits left of Cancel`).toBeLessThanOrEqual(c.left);
+      expect([m.height, a.height], `${at}: one control height`).toEqual([c.height, c.height]);
+      expect(a.width, `${at}: the icon half is Cancel's square`).toBeCloseTo(c.height, 1);
+      const label = main.querySelector(".send-btn-label");
+      if (label === null) {
+        throw new Error("the main half has no word");
+      }
+      if (tier === "coarse") {
+        // The touch tier is the rule that makes Return a new line (composer-touch.ts), so the word goes with it.
+        expect(getComputedStyle(label).display, `${at}: the default half is its glyph alone`).toBe("none");
+        expect(m.width, `${at}: the default half is a touch box`).toBeGreaterThanOrEqual(BUTTON_BOX.coarse);
+        expect(a.width, `${at}: the icon half is a touch box`).toBeGreaterThanOrEqual(BUTTON_BOX.coarse);
+      } else {
+        expect(getComputedStyle(label).display, `${at}: the default half shows its word`).not.toBe("none");
+        expect(m.width, `${at}: the word widens the default half`).toBeGreaterThan(a.width);
+      }
+    }
+  });
+
+  it("draws the split pill as one outline: rounded outer corners, square seam, a thin line between", async () => {
+    const px = (v: string): number => Number.parseFloat(v);
+    for (const tier of ["fine", "coarse"] as const) {
+      await bandsAt(1440, 900, tier);
+      const { main, alt, cancel } = withSplitPill();
+      const ms = getComputedStyle(main);
+      const as = getComputedStyle(alt);
+      const radius = getComputedStyle(cancel).borderTopRightRadius;
+      expect([ms.borderTopLeftRadius, ms.borderBottomLeftRadius], `${tier}: the pill's start corners`).toEqual([
+        radius,
+        radius,
+      ]);
+      expect([as.borderTopRightRadius, as.borderBottomRightRadius], `${tier}: the pill's end corners`).toEqual([
+        radius,
+        radius,
+      ]);
+      expect([px(ms.borderTopRightRadius), px(as.borderTopLeftRadius)], `${tier}: a square seam`).toEqual([0, 0]);
+      const seam = px(ms.borderRightWidth) + px(as.borderLeftWidth);
+      expect(seam, `${tier}: one thin line at the seam, not two borders`).toBeGreaterThan(0);
+      expect(seam, `${tier}: one thin line at the seam, not two borders`).toBeLessThanOrEqual(1);
     }
   });
 
