@@ -2023,3 +2023,193 @@ describe("the refetch-outcome line", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 });
+
+describe("loadMissingChats and the list read in flight", () => {
+  /** One `/api/chats` read the case answers by hand; an abort answers null, as `apiGetTyped`
+   *  collapses one. */
+  interface HeldRead {
+    readonly signal: AbortSignal | undefined;
+    readonly answer: (...ids: string[]) => void;
+    readonly fail: () => void;
+  }
+
+  let reads: HeldRead[];
+
+  beforeEach(() => {
+    reads = [];
+    mockApiGetTyped.mockImplementation(
+      (path: string, _decode: unknown, signal?: AbortSignal): Promise<unknown> => {
+        expect(path).toBe("/api/chats");
+        return new Promise((resolve) => {
+          signal?.addEventListener(
+            "abort",
+            () => {
+              resolve(null);
+            },
+            { once: true },
+          );
+          reads.push({
+            signal,
+            answer: (...ids) => {
+              resolve({ chats: ids.map((id) => header(id)) });
+            },
+            fail: () => {
+              resolve(null);
+            },
+          });
+        });
+      },
+    );
+    // The real store's commit: what a read lands is what `get` answers next.
+    mockSetSessions.mockImplementation((next: Session[]) => {
+      sessions.clear();
+      for (const s of next) {
+        sessions.set(s.id, s);
+      }
+    });
+  });
+
+  afterEach(() => {
+    mockApiGetTyped.mockReset();
+    mockSetSessions.mockReset();
+  });
+
+  function read(i: number): HeldRead {
+    const r = reads[i];
+    if (r === undefined) {
+      throw new Error(`no read ${String(i)}; ${String(reads.length)} ran`);
+    }
+    return r;
+  }
+
+  /** The flush is a microtask and each read's settle a few more; one macrotask covers both. */
+  async function tick(): Promise<void> {
+    await new Promise((r) => setTimeout(r, 0));
+  }
+
+  it("runs one read for the ids of every call in one task", async () => {
+    const loader = await freshLoader();
+    loader.loadMissingChats(["a"]);
+    loader.loadMissingChats(["b"]);
+    await tick();
+    expect(reads).toHaveLength(1);
+    read(0).answer("a", "b");
+    await tick();
+    expect(reads).toHaveLength(1);
+    expect([...sessions.keys()]).toEqual(["a", "b"]);
+  });
+
+  it("joins a call made from a microtask of the same task into the same read", async () => {
+    const loader = await freshLoader();
+    loader.loadMissingChats(["a"]);
+    // An effect re-run lands here, in a microtask after the first call.
+    queueMicrotask(() => {
+      loader.loadMissingChats(["b"]);
+    });
+    await tick();
+    expect(reads).toHaveLength(1);
+    read(0).answer("a");
+    await tick();
+    expect(reads).toHaveLength(1);
+  });
+
+  it("runs no read for a chat the store holds", async () => {
+    const loader = await freshLoader();
+    seedSession("a");
+    loader.loadMissingChats(["a"]);
+    await tick();
+    expect(reads).toHaveLength(0);
+  });
+
+  it("waits for a read in flight, aborts nothing, and reads nothing when that read named the chat", async () => {
+    const loader = await freshLoader();
+    const boot = loader.loadList();
+    loader.loadMissingChats(["a"]);
+    await tick();
+    expect(reads).toHaveLength(1);
+    expect(read(0).signal?.aborted).toBe(false);
+    read(0).answer("a");
+    expect(await boot).toBe(true);
+    await tick();
+    expect(reads).toHaveLength(1);
+  });
+
+  it("reads once after the read in flight when the chat is still missing", async () => {
+    const loader = await freshLoader();
+    const boot = loader.loadList();
+    loader.loadMissingChats(["a"]);
+    await tick();
+    read(0).answer();
+    await boot;
+    await tick();
+    expect(reads).toHaveLength(2);
+    read(1).answer("a");
+    await tick();
+    expect(reads).toHaveLength(2);
+    expect(sessions.has("a")).toBe(true);
+  });
+
+  it("drops a chat its own read did not name, with no second read", async () => {
+    const loader = await freshLoader();
+    loader.loadMissingChats(["gone"]);
+    await tick();
+    read(0).answer("other");
+    await tick();
+    await tick();
+    expect(reads).toHaveLength(1);
+  });
+
+  it("drops a chat its own failed read could not name, with no retry", async () => {
+    const loader = await freshLoader();
+    loader.loadMissingChats(["a"]);
+    await tick();
+    read(0).fail();
+    await tick();
+    await tick();
+    expect(reads).toHaveLength(1);
+  });
+
+  it("takes ids added during its own read in the next pass, after that read", async () => {
+    const loader = await freshLoader();
+    loader.loadMissingChats(["a"]);
+    await tick();
+    loader.loadMissingChats(["b"]);
+    await tick();
+    expect(reads).toHaveLength(1);
+    expect(read(0).signal?.aborted).toBe(false);
+    read(0).answer("a");
+    await tick();
+    expect(reads).toHaveLength(2);
+    read(1).answer("a", "b");
+    await tick();
+    expect(reads).toHaveLength(2);
+    expect([...sessions.keys()]).toEqual(["a", "b"]);
+  });
+
+  it("waits for the newer read when the superseded one settles first, and aborts nothing", async () => {
+    const loader = await freshLoader();
+    const a = loader.loadList();
+    const b = loader.loadList();
+    expect(read(0).signal?.aborted).toBe(true);
+    expect(await a).toBe(false);
+    loader.loadMissingChats(["x"]);
+    await tick();
+    expect(reads).toHaveLength(2);
+    expect(read(1).signal?.aborted).toBe(false);
+    read(1).answer();
+    expect(await b).toBe(true);
+    await tick();
+    expect(reads).toHaveLength(3);
+  });
+
+  it("aborts the newer read when a third starts after the superseded one settled", async () => {
+    // Two reads in flight would let the older commit after the newer.
+    const loader = await freshLoader();
+    const a = loader.loadList();
+    void loader.loadList();
+    await a;
+    void loader.loadList();
+    expect(read(1).signal?.aborted).toBe(true);
+    expect(read(2).signal?.aborted).toBe(false);
+  });
+});

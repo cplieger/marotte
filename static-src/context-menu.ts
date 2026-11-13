@@ -17,10 +17,12 @@ interface ContextMenuPosition {
   y: number;
 }
 
-/** Show a menu at a viewport point; dismisses on outside click or Escape. Returns a dismiss function. */
+/** Show a menu at a viewport point; dismisses on outside click or Escape. Returns a dismiss function.
+ *  `returnFocus` takes focus back when the menu closes with focus inside it (Escape, an item). */
 export function showContextMenu(
   items: ContextMenuItem[],
   position: ContextMenuPosition,
+  opts?: { returnFocus?: HTMLElement },
 ): () => void {
   const menu = el("div", { className: "tab-context-menu", role: "menu" });
 
@@ -29,6 +31,7 @@ export function showContextMenu(
     placement: "bottom",
     align: "start",
     offset: 0,
+    ...(opts?.returnFocus === undefined ? {} : { returnFocus: opts.returnFocus }),
     onClose: () => {
       menu.remove();
     },

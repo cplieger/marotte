@@ -65,6 +65,7 @@ import { initTerminalStream } from "./terminal-stream.js";
 import { initTooltips } from "./tooltip.js";
 import { guardBackspaceChars } from "./backspace-char.js";
 import { initSidebarHistory } from "./sidebar-history.js";
+import { initRecentClosed } from "./recent-closed.js";
 import { initNewChatControl } from "./new-chat-control.js";
 import { initKeyboardShortcuts } from "./keys.js";
 import { openShortcutsSheet } from "./shortcuts.js";
@@ -315,6 +316,7 @@ function init(): void {
     void toggleDocsView();
   });
   initSidebarHistory();
+  initRecentClosed();
   initTerminalStream();
   initTooltips();
   guardBackspaceChars();

@@ -726,6 +726,47 @@ describe("the keyboard across sections", () => {
   });
 });
 
+describe("focusTabRow", () => {
+  beforeEach(() => {
+    stubReducedMotion();
+  });
+
+  const focusTabRow = (id: string): boolean =>
+    (tabsModule as unknown as { focusTabRow: (id: string) => boolean }).focusTabRow(id);
+  const rowOf = (ref: string): HTMLElement | null =>
+    shell.querySelector<HTMLElement>(`[data-tab-id="${chatID(ref)}"]`);
+
+  it("focuses a shown row and answers true", async () => {
+    await openChats("a", "b");
+    expect(focusTabRow(chatID("a"))).toBe(true);
+    expect(document.activeElement).toBe(rowOf("a"));
+  });
+
+  it("draws a queued render first, so a row adopted this task is focused", async () => {
+    await openChats("a");
+    await openTab({ kind: "chat", ref: "b" });
+    expect(focusTabRow(chatID("b"))).toBe(true);
+    expect(document.activeElement).toBe(rowOf("b"));
+  });
+
+  it("answers false and moves nothing for a row its folded section hides", async () => {
+    await openChats("a", "b");
+    toggle("open").click();
+    await paint();
+    expect(rowOf("a")?.hidden).toBe(true);
+    const before = document.activeElement;
+    expect(focusTabRow(chatID("a"))).toBe(false);
+    expect(document.activeElement).toBe(before);
+  });
+
+  it("answers false for a tab with no row", async () => {
+    await openChats("a");
+    const before = document.activeElement;
+    expect(focusTabRow("tb_none")).toBe(false);
+    expect(document.activeElement).toBe(before);
+  });
+});
+
 /** A hidden row runs no animation, so its `animationend` never comes; none of these cases sends one. */
 describe("a departing row", () => {
   beforeEach(() => {

@@ -122,6 +122,17 @@
           </h2>
           <div id="pinned-list" class="side-section-list" role="tablist" aria-label="Pinned" aria-orientation="vertical"></div>
         </section>
+        <section id="recent-section" class="side-section" aria-labelledby="recent-section-name" hidden>
+          <h2 class="side-section-h">
+            <button type="button" class="side-section-toggle" aria-expanded="false" aria-controls="recent-list" aria-labelledby="recent-section-name" aria-describedby="recent-section-desc">
+              <span class="disclosure-chevron side-section-chevron" aria-hidden="true"><svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+              <span class="side-section-name" id="recent-section-name">Recently closed</span>
+              <span class="side-section-count" aria-hidden="true"></span>
+              <span class="sr-only" id="recent-section-desc"></span>
+            </button>
+          </h2>
+          <ul id="recent-list" class="recent-list" hidden></ul>
+        </section>
         <button type="button" id="history-btn" class="side-history-row" aria-pressed="false">
           <svg class="ic-ui" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
           <span class="side-history-label">History</span>

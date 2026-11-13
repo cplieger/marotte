@@ -474,6 +474,7 @@ export function serverMayAnswer(): boolean {
 registerCleanup(() => {
   listController?.abort();
   cancelListRetry();
+  missingChats.clear();
 });
 registerCleanup(() => {
   for (const c of msgControllers.values()) {
@@ -482,9 +483,25 @@ registerCleanup(() => {
   msgControllers.clear();
 });
 
+/** The newest `loadList` read in flight, null once it settled; `loadMissingChats` waits on it. */
+let listRead: Promise<boolean> | null = null;
+
 /** `signal`, when given, is the revalidation's: it cancels this read beside the loader's own
  *  supersede-the-previous controller. */
-export async function loadList(signal?: AbortSignal): Promise<boolean> {
+export function loadList(signal?: AbortSignal): Promise<boolean> {
+  const p = readChatList(signal);
+  listRead = p;
+  const settle = (): void => {
+    // A superseded read settles after its successor stored its own promise.
+    if (listRead === p) {
+      listRead = null;
+    }
+  };
+  p.then(settle, settle);
+  return p;
+}
+
+async function readChatList(signal?: AbortSignal): Promise<boolean> {
   listController?.abort();
   const controller = new AbortController();
   listController = controller;
@@ -503,7 +520,7 @@ export async function loadList(signal?: AbortSignal): Promise<boolean> {
     // `listReach` is deliberately NOT written here. This request was superseded — by a `connected`
     // refetch, or by the page unloading — and it never learned anything about the server, so
     // recording a verdict would put the abort's own false return in front of every later reader.
-    listController = null;
+    releaseListController(controller);
     return false;
   }
   if (d?.chats === undefined) {
@@ -511,7 +528,7 @@ export async function loadList(signal?: AbortSignal): Promise<boolean> {
     // explanation. See `serverMayAnswer` for the one case this over-attributes (an undecodable
     // body) and why the fold is safe.
     listReach = "unreachable";
-    listController = null;
+    releaseListController(controller);
     return false;
   }
   const next: Session[] = [];
@@ -585,7 +602,7 @@ export async function loadList(signal?: AbortSignal): Promise<boolean> {
     }
   }
   setSessions(next);
-  listController = null;
+  releaseListController(controller);
   // Latched HERE and nowhere else: this is the one point at which the store holds a row for every
   // chat the server named, which is exactly the claim `chatListLoaded` makes. Every earlier return
   // above is an abort or a failed decode and leaves it as it was.
@@ -598,6 +615,67 @@ export async function loadList(signal?: AbortSignal): Promise<boolean> {
   // AFTER the commit: the version certifies the list the store now holds.
   observeStamp(d.subject);
   return true;
+}
+
+/** Forget a finished read's controller, but only its own: a superseded read settles after its
+ *  successor stored one, and clearing that would let the next `loadList` abort nothing. */
+function releaseListController(controller: AbortController): void {
+  if (listController === controller) {
+    listController = null;
+  }
+}
+
+/** Chats an open tab names that the store lacks, waiting for the next flush. */
+const missingChats = new Set<string>();
+let missingFlushing = false;
+
+/** Read the chat list once for chats whose tab another device opened. Every call in one task
+ *  joins one read; a chat still missing after it is dropped, so activation's heal is the fallback. */
+export function loadMissingChats(ids: readonly string[]): void {
+  for (const id of ids) {
+    missingChats.add(id);
+  }
+  if (missingFlushing || missingChats.size === 0) {
+    return;
+  }
+  missingFlushing = true;
+  queueMicrotask(() => {
+    void flushMissingChats();
+  });
+}
+
+/** Resolves once no `loadList` read is in flight, a newer one started meanwhile included. */
+async function listSettled(): Promise<void> {
+  while (listRead !== null) {
+    await listRead;
+  }
+}
+
+/** Never starts a read while one is in flight: `loadList` aborts it, and boot awaits its own. */
+async function flushMissingChats(): Promise<void> {
+  try {
+    for (;;) {
+      await listSettled();
+      for (const id of missingChats) {
+        if (get(id) !== undefined) {
+          missingChats.delete(id);
+        }
+      }
+      if (missingChats.size === 0) {
+        return;
+      }
+      const asked = [...missingChats];
+      await loadList();
+      // A newer read that superseded this one answers for it.
+      await listSettled();
+      for (const id of asked) {
+        missingChats.delete(id);
+      }
+    }
+  } finally {
+    // Cleared in the step that saw the set empty, so an id added after it starts a new flush.
+    missingFlushing = false;
+  }
 }
 
 /** The read position a reply issued at `mark` applies (header-frames.ts `framedSince` owns why). */

@@ -58,6 +58,7 @@ export function tabsMock(): Record<string, unknown> {
     tabIdForRoute: vi.fn(() => ""),
     filesTabForRoute: vi.fn(() => ({ id: "", ref: "" })),
     getActiveTabId: vi.fn(() => ""),
+    focusTabRow: vi.fn(() => false),
     getActiveTabRoute: vi.fn(() => null),
     subTabOf: vi.fn(() => null),
     getActiveTabKind: vi.fn(() => null),
@@ -70,6 +71,7 @@ export function tabsMock(): Record<string, unknown> {
     openRunRefs: vi.fn(() => []),
     openSpecRefs: vi.fn(() => []),
     openTabSubjects: vi.fn(() => []),
+    recentClosed: vi.fn(() => []),
     cueCandidates: vi.fn(() => []),
 
     // Hands back an unsubscribe so a caller's cleanup does not throw on undefined.
