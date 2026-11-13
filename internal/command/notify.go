@@ -2,7 +2,6 @@ package command
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -17,16 +16,18 @@ type NotifyDelivery string
 const (
 	NotifyPrompt NotifyDelivery = "prompt"
 	NotifySteer  NotifyDelivery = "steer"
+	NotifyQueued NotifyDelivery = "queued"
 )
 
 // errNotifyMention refuses a context-mention token: the prompt path would read the named resource into the chat on
 // an outside caller's word.
 var errNotifyMention = errors.New(`a "#[[kind:query]]" context-mention token is not accepted from an outside caller`)
 
-// Notify delivers text from an outside caller into chatID the way the page's Send does: one prompt, which the chat's
-// run order steers into a steerable turn, starts, or queues. from must be non-nil: a caller-sent prompt neither ends
-// the chat's waiting_on_user claim nor touches its composer. A refusal is a 400 StatusError for text that reads as a
-// system notice or holds a context-mention token, else the prompt's StatusError.
+// Notify places text from an outside caller on chatID's run order as the notify door's entry (RunFromNotify) and
+// answers where it went: steered into the running turn, started, or queued, which includes a caller's earlier entry
+// still waiting taking the text. from must be non-nil: a caller's message neither ends the chat's waiting_on_user
+// claim nor touches its composer. A refusal is a 400 StatusError for text that reads as a system notice or holds a
+// context-mention token, else Submit's refusal as HTTP.
 func (d *Dispatcher) Notify(ctx context.Context, chatID marotte.ChatID, text string, from *marotte.Caller) (NotifyDelivery, error) {
 	switch {
 	case notificationPrefix.MatchString(text):
@@ -34,22 +35,24 @@ func (d *Dispatcher) Notify(ctx context.Context, chatID marotte.ChatID, text str
 	case mentionRe.MatchString(text):
 		return "", StatusError(http.StatusBadRequest, errNotifyMention)
 	}
-	payload, err := json.Marshal(map[string]string{"text": text, "message_id": ids.NewMessageID()})
+	roles := d.prompts
+	s := Submission{
+		Row:    marotte.QueuedPrompt{ID: ids.NewMessageID(), Text: text, Caller: from},
+		Origin: marotte.RunFromNotify, Kind: marotte.SendPlain,
+		Wait: true, Retry: !kasClaimsPromptText(text),
+	}
+	ans, err := roles.runq.Submit(ctx, chatID, roles.admission.LifeStamp(), &s)
 	if err != nil {
-		return "", err
+		return "", submitRefusal(err)
 	}
-	fn, ok := d.handler(marotte.CmdPrompt)
-	if !ok {
-		return "", StatusError(http.StatusInternalServerError, errors.New("unknown command: "+string(marotte.CmdPrompt)))
-	}
-	out, err := fn(inProcess(ctx), &marotte.ClientCommand{Type: marotte.CmdPrompt, ChatID: chatID, Payload: payload, From: from})
-	if err != nil {
-		return "", err
-	}
-	if ack, ok := out.(promptAck); ok && ack.As == submitSteered {
+	switch ans.As {
+	case SubmitStarted:
+		return NotifyPrompt, nil
+	case SubmitSteered:
 		return NotifySteer, nil
+	case SubmitQueued:
 	}
-	return NotifyPrompt, nil
+	return NotifyQueued, nil
 }
 
 // NotifyRefusal is what a Notify error means to its outside caller.
@@ -60,7 +63,8 @@ const (
 	NotifyFailed NotifyRefusal = iota
 	NotifyUnknownChat
 	// NotifyRetryLater is a refusal the same message can pass shortly: a chat starting, closing or busy again, a full
-	// steer buffer, or an engine call that did not land.
+	// steer buffer, an engine call that did not land, or a message past the draft cap that would wait behind a running
+	// turn.
 	NotifyRetryLater
 	NotifyBadText
 )
@@ -74,7 +78,8 @@ func ClassifyNotifyError(err error) NotifyRefusal {
 	switch code {
 	case http.StatusBadRequest:
 		return NotifyBadText
-	case http.StatusConflict, http.StatusServiceUnavailable, http.StatusBadGateway, http.StatusGatewayTimeout:
+	case http.StatusConflict, http.StatusServiceUnavailable, http.StatusBadGateway, http.StatusGatewayTimeout,
+		http.StatusRequestEntityTooLarge:
 		return NotifyRetryLater
 	}
 	return NotifyFailed

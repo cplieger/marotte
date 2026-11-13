@@ -38,16 +38,17 @@ const REGISTRY_FAILURE_REASONS = ["rate_limited", "rejected", "unavailable"] as 
 const REJECTION_NOTES = ["reason", "plan_edits"] as const;
 const RUN_ASK_BLOCKERS = ["stopping", "pending", "branch_running", "unsettled", "settling"] as const;
 const RUN_ASK_TEXTS = ["asked", "last_message", "unseen"] as const;
-const RUN_ENTRY_KINDS = ["turn", "row", "unread", "retry", "compaction", "revert", "resume"] as const;
-const RUN_ENTRY_ORIGINS = ["prompt", "queue", "tangent", "summary", "unread", "retry", "wire", "run", "carried", "request", "threshold", "turn_end", "context_limit", "rewind", "failsafe"] as const;
-const RUN_ENTRY_STATES = ["pending", "paused", "held", "starting", "running", "stopping", "closing"] as const;
+const RUN_ENTRY_KINDS = ["turn", "row", "retry", "compaction", "revert", "resume"] as const;
+const RUN_ENTRY_ORIGINS = ["prompt", "queue", "tangent", "summary", "retry", "wire", "run", "carried", "request", "threshold", "turn_end", "context_limit", "rewind", "failsafe", "notify"] as const;
+const RUN_ENTRY_STATES = ["pending", "paused", "held", "offered", "in_kas", "starting", "running", "stopping", "closing"] as const;
 const RUN_PROGRESS_KINDS = ["node_start", "node_complete", "node_paused", "loop_iteration", "watch_poll", "paused", "steps_queued", "silence"] as const;
 const RUN_STANDING_KINDS = ["step", "watch", "pass_limit"] as const;
 const RUN_STATUSS = ["running", "paused", "completed", "failed", "aborted", "cancelled"] as const;
 const RUN_STEP_END_STATUSS = ["completed", "failed"] as const;
 const RUN_STEP_MESSAGE_VERBS = ["steer", "answer", "prompt"] as const;
 const RUN_STEP_TRANSCRIPT_STATES = ["ready", "gone", "unavailable"] as const;
-const RUN_WAIT_AFTERS = ["running", "starting", "next", "compaction", "turns", "held"] as const;
+const RUN_WAIT_AFTERS = ["running", "starting", "next", "compaction", "turns", "held", "paused"] as const;
+const RUN_WANTS = ["either", "prompt"] as const;
 const SAFETY_STATUSS = ["idle", "formalizing", "evaluating", "blocked", "error"] as const;
 const SEGMENT_KINDS = ["content", "reasoning", "tool_title", "tool_disclosed", "tool_diff", "tool_denial", "tool_input", "tool_output", "steer", "prompt", "plan", "attachment", "turn_failure", "wake"] as const;
 const SEND_NOW_KINDS = ["stop", "stop_then_compaction", "after_compaction", "now"] as const;
@@ -3787,8 +3788,16 @@ export const decodeRunEntry: Decoder<RunEntry> = (v) => {
     if ($v !== undefined && $v !== null) out.turn = reqStr(o, "turn", "$.run_entry");
   }
   {
+    const $v = own(o, "want");
+    if ($v !== undefined && $v !== null) out.want = reqOneOf(o, "want", RUN_WANTS, "$.run_entry");
+  }
+  {
     const $v = own(o, "next");
     if ($v !== undefined && $v !== null) out.next = reqBool(o, "next", "$.run_entry");
+  }
+  {
+    const $v = own(o, "unread");
+    if ($v !== undefined && $v !== null) out.unread = reqBool(o, "unread", "$.run_entry");
   }
   {
     const $v = own(o, "steerable");
@@ -3801,6 +3810,10 @@ export const decodeRunEntry: Decoder<RunEntry> = (v) => {
   {
     const $v = own(o, "admits");
     if ($v !== undefined && $v !== null) out.admits = reqBool(o, "admits", "$.run_entry");
+  }
+  {
+    const $v = own(o, "stop_paused");
+    if ($v !== undefined && $v !== null) out.stop_paused = reqBool(o, "stop_paused", "$.run_entry");
   }
   return out;
 };
@@ -3827,8 +3840,16 @@ export const decodeRunEntryView: Decoder<RunEntryView> = (v) => {
     if ($v !== undefined && $v !== null) out.turn = reqStr(o, "turn", "$.run_entry_view");
   }
   {
+    const $v = own(o, "want");
+    if ($v !== undefined && $v !== null) out.want = reqOneOf(o, "want", RUN_WANTS, "$.run_entry_view");
+  }
+  {
     const $v = own(o, "next");
     if ($v !== undefined && $v !== null) out.next = reqBool(o, "next", "$.run_entry_view");
+  }
+  {
+    const $v = own(o, "unread");
+    if ($v !== undefined && $v !== null) out.unread = reqBool(o, "unread", "$.run_entry_view");
   }
   {
     const $v = own(o, "steerable");
@@ -3843,8 +3864,16 @@ export const decodeRunEntryView: Decoder<RunEntryView> = (v) => {
     if ($v !== undefined && $v !== null) out.admits = reqBool(o, "admits", "$.run_entry_view");
   }
   {
+    const $v = own(o, "stop_paused");
+    if ($v !== undefined && $v !== null) out.stop_paused = reqBool(o, "stop_paused", "$.run_entry_view");
+  }
+  {
     const $v = own(o, "carries_unread");
     if ($v !== undefined && $v !== null) out.carries_unread = reqBool(o, "carries_unread", "$.run_entry_view");
+  }
+  {
+    const $v = own(o, "steer_in_flight");
+    if ($v !== undefined && $v !== null) out.steer_in_flight = reqBool(o, "steer_in_flight", "$.run_entry_view");
   }
   return out;
 };

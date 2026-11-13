@@ -193,7 +193,7 @@ func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, res Reservati
 		roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, retryTurn, stop, reason, "", 0)
 		return retryTurn, nil
 	}
-	deliverParkedSteers(callCtx, roles, chatID, retryTurn)
+	settleSteersAtStart(callCtx, roles, chatID, retryTurn)
 	setPromptMeta(callCtx, params, roles.workspace.ConfigDir, p, retryTurn)
 	reply, retryErr := sendTurnPrompt(callCtx, roles.sendGate, sb2, params, turn)
 	roles.turnOutcome.EndPromptCall(turn)
@@ -327,8 +327,8 @@ type promptAck struct {
 }
 
 // cmdPrompt handles the prompt command: validate, then place it on the chat's run order, which steers it into the
-// running turn, starts it, or queues it (VerbFor). A started turn runs on its own goroutine (runPromptTurn), so the
-// POST answers at its turn open, or as queued past AdmissionWait.
+// running turn, starts it, or queues it. A started turn runs on its own goroutine (runPromptTurn), so the POST answers
+// at its turn open or once kiro-cli holds its steer, or as queued past AdmissionWait.
 func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
 	if cmd.ChatID == "" {
 		return nil, StatusError(http.StatusBadRequest, ErrMissingChatID)
@@ -346,29 +346,21 @@ func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 			Model: p.Model,
 		},
 		Origin: marotte.RunFromPrompt, Kind: sendKindOf(&p), Mode: p.InterruptMode, PromptOnly: p.PromptOnly,
-		Wait: true, Composer: true, Retry: !kasClaimsPromptText(p.Text),
+		// KAS files such text under a notify- id no row carries.
+		NoSteer: notificationPrefix.MatchString(p.Text),
+		Wait:    true, Composer: true, Retry: !kasClaimsPromptText(p.Text),
 	}
-	for {
-		ans, err := roles.runq.Submit(ctx, cmd.ChatID, stamp, &s)
-		if err != nil {
-			return nil, submitRefusal(err)
-		}
-		if ans.Steer {
-			steered, err := steerPrompt(ctx, roles, cmd.ChatID, &p)
-			if err != nil {
-				return nil, err
-			}
-			if !steered {
-				s.NoSteer = true
-				continue
-			}
-			ans = SubmitAnswer{As: submitSteered, Run: roles.runq.RunView(ctx, cmd.ChatID)}
-		}
-		if ans.Settle {
-			settleComposerOnPrompt(ctx, roles.chats, roles.bus, cmd.ChatID, &p)
-		}
-		return promptAck{Accepted: true, MessageID: p.MessageID, As: ans.As, Run: ans.Run}, nil
+	ans, err := roles.runq.Submit(ctx, cmd.ChatID, stamp, &s)
+	if err != nil {
+		return nil, submitRefusal(err)
 	}
+	if ans.As == SubmitSteered {
+		slog.Info("prompt steered into the running turn", "chat", cmd.ChatID, "message_id", p.MessageID)
+	}
+	if ans.Settle {
+		settleComposerOnPrompt(ctx, roles.chats, roles.bus, cmd.ChatID, &p)
+	}
+	return promptAck{Accepted: true, MessageID: p.MessageID, As: ans.As, Run: ans.Run}, nil
 }
 
 // sendKindOf is what a send can be: display text or attachments are a prompt's alone, which a steer cannot carry.
@@ -379,44 +371,19 @@ func sendKindOf(p *marotte.PromptCommand) marotte.SendKind {
 	return marotte.SendPlain
 }
 
-// steerPrompt routes a prompt the run order steers into the running turn, reporting false when that turn is gone
-// (the record refused it no_turn) or the text reads as a KAS notification (filed under a notify- id no row
-// carries), which the caller places again with steering ruled out.
-func steerPrompt(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, p *marotte.PromptCommand) (bool, error) {
-	if notificationPrefix.MatchString(p.Text) {
-		return false, nil
-	}
-	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
-	if err != nil {
-		return false, StatusError(http.StatusServiceUnavailable, err)
-	}
-	defer unlock()
-	steerID := marotte.SteerIDFor(p.MessageID)
-	switch refuse, sendErr := steerOne(ctx, roles, chatID, steerID, p.Text, "", p.Caller); {
-	case refuse == SteerRefuseFull:
-		return false, StatusErrorReason(http.StatusConflict, reasonFull, errSteerFull)
-	case refuse != "":
-		return false, nil
-	case sendErr != nil:
-		return false, StatusError(http.StatusBadGateway, sendErr)
-	}
-	slog.Info("prompt steered into the running turn", "chat", chatID, "steer_id", steerID)
-	return true, nil
-}
-
 // submitRefusal answers a Submit error as HTTP; a status error passes through.
 func submitRefusal(err error) error {
 	if _, ok := errors.AsType[*statusError](err); ok {
 		return err
 	}
 	switch {
-	case errors.Is(err, ErrSubmitNoTurn):
+	case errors.Is(err, ErrSubmitNoTurn), errors.Is(err, ErrSubmitNoSteer):
 		return StatusErrorReason(http.StatusConflict, reasonNoTurn, err)
 	case errors.Is(err, ErrSubmitTooBig):
 		return StatusError(http.StatusRequestEntityTooLarge, err)
 	case errors.Is(err, ErrSubmitPromptOnly):
 		return StatusErrorReason(http.StatusConflict, reasonPromptOnly, err)
-	case errors.Is(err, errSubmitFull):
+	case errors.Is(err, errSubmitFull), errors.Is(err, ErrSteerFull):
 		return StatusErrorReason(http.StatusConflict, reasonFull, err)
 	case errors.Is(err, ErrSubmitStarting):
 		return StatusErrorReason(http.StatusConflict, reasonStarting, err)
@@ -515,7 +482,7 @@ func closedBeforeStart(ctx context.Context, roles *promptRoles, chatID marotte.C
 }
 
 // closeBeforeStart runs the turn end rule on a prompt's turn that never reached
-// StartTurn. Its parked steers are the turn end's to resend, like any turn's.
+// StartTurn; the steers offered into it come back as any turn end's do.
 func closeBeforeStart(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, turnID string, stop marotte.StopReason, reason string) {
 	roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, turnID, stop, reason, "", 0)
 }
@@ -551,7 +518,7 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, res 
 		}
 		return
 	}
-	deliverParkedSteers(callCtx, roles, chatID, turnID)
+	settleSteersAtStart(callCtx, roles, chatID, turnID)
 	slog.Info("prompt", "chat_id", chatID, "len", len(p.Text))
 	start := time.Now()
 	promptParams, inlinedImage := buildPromptParams(callCtx, roles.workspace, sb, p, turnID, historyInlineImages(callCtx, roles.chats, chatID))
@@ -578,12 +545,10 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, res 
 	roles.admission.ReleaseTurnReservation(res)
 }
 
-// deliverParkedSteers runs between StartTurn and session/prompt under the chat's steer lock, which
-// orders delivery against a delete; a later delete's clear reply and read-loop barrier decide
-// whether it removed the steer or lost to KAS's read. Pending turn ends resolve into this turn
-// first; a clear owed for KAS's load re-injection goes next, and if skipped or lost those rows
-// stay unsent, never sent beside KAS's copies.
-func deliverParkedSteers(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, turnID string) {
+// settleSteersAtStart runs between StartTurn and session/prompt under the chat's steer lock: pending turn ends
+// resolve first, then a clear owed for KAS's load re-injection goes, so a steer offered into this turn never sits
+// beside a copy KAS would queue again.
+func settleSteersAtStart(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, turnID string) {
 	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
 	if err != nil {
 		return
@@ -598,26 +563,6 @@ func deliverParkedSteers(ctx context.Context, roles *promptRoles, chatID marotte
 	if roles.jobs.NeedsPostLoadClear(chatID) {
 		cleared, landed := clearSteerBuffer(ctx, roles.steerTarget(chatID))
 		roles.jobs.PostLoadCleared(chatID, cleared, landed)
-	}
-	deliverUnread(ctx, roles, chatID, turnID)
-}
-
-// deliverUnread parks the chat's unread rows for turnID and sends them into it,
-// the lead first, then in acceptance order. The record parks and routes a row only
-// while it names turnID as starting or bound, so a turn that ends mid-loop stops
-// the loop with the rest still unsent. The caller holds the steer lock.
-func deliverUnread(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, turnID string) {
-	seen := map[string]bool{}
-	for {
-		key, text, ok := roles.jobs.NextParked(chatID, turnID)
-		if !ok || seen[key] {
-			return
-		}
-		seen[key] = true
-		if refuse, _ := steerOne(ctx, roles, chatID, key, text, turnID, nil); refuse != "" {
-			slog.Warn("steer: a parked steer could not be delivered", "chat_id", chatID, "steer_id", key, "reason", refuse)
-			return
-		}
 	}
 }
 

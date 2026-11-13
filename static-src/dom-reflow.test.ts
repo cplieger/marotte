@@ -2,7 +2,6 @@
 // an animation only with a layout read between. Real Chromium.
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { forceReflow } from "./dom.js";
-import { framesBudgetMs, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 
 const ANIM = "reflow-probe";
 
@@ -23,56 +22,46 @@ afterEach(() => {
   }
 });
 
-function mountProbe(): { el: HTMLElement; starts: () => number } {
+function mountProbe(): HTMLElement {
   const el = document.createElement("div");
   el.style.inlineSize = "40px";
   el.style.blockSize = "20px";
   document.body.append(el);
   hosts.push(el);
-  let starts = 0;
-  el.addEventListener("animationstart", () => {
-    starts += 1;
-  });
-  return { el, starts: () => starts };
+  return el;
 }
 
-function nextFrame(): Promise<void> {
-  return new Promise((resolve) => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        resolve();
-      });
-    });
-  });
+// The element's one running animation. getAnimations() flushes style itself, so it is read only after the class is
+// back; a restart replaces the CSSAnimation object (CSS Animations 1, "Animations"), which no frame wait can race.
+function animationOf(el: HTMLElement): Animation {
+  const all = el.getAnimations();
+  expect(all).toHaveLength(1);
+  return all[0] as Animation;
 }
 
-describe("forceReflow", { timeout: testTimeoutFor(framesBudgetMs(10)) }, () => {
-  it("restarts an animation that a bare remove-then-add does not", async () => {
+describe("forceReflow", () => {
+  it("restarts an animation that a bare remove-then-add does not", () => {
     const withoutFlush = mountProbe();
-    withoutFlush.el.classList.add(`${ANIM}-on`);
-    await nextFrame();
-    expect(withoutFlush.starts()).toBe(1);
+    withoutFlush.classList.add(`${ANIM}-on`);
+    const first = animationOf(withoutFlush);
 
     // Coalesced: the browser never sees the element without the class.
-    withoutFlush.el.classList.remove(`${ANIM}-on`);
-    withoutFlush.el.classList.add(`${ANIM}-on`);
-    await nextFrame();
-    expect(withoutFlush.starts()).toBe(1);
+    withoutFlush.classList.remove(`${ANIM}-on`);
+    withoutFlush.classList.add(`${ANIM}-on`);
+    expect(animationOf(withoutFlush)).toBe(first);
 
     const withFlush = mountProbe();
-    withFlush.el.classList.add(`${ANIM}-on`);
-    await nextFrame();
-    expect(withFlush.starts()).toBe(1);
+    withFlush.classList.add(`${ANIM}-on`);
+    const before = animationOf(withFlush);
 
-    withFlush.el.classList.remove(`${ANIM}-on`);
-    forceReflow(withFlush.el);
-    withFlush.el.classList.add(`${ANIM}-on`);
-    await nextFrame();
-    expect(withFlush.starts()).toBe(2);
+    withFlush.classList.remove(`${ANIM}-on`);
+    forceReflow(withFlush);
+    withFlush.classList.add(`${ANIM}-on`);
+    expect(animationOf(withFlush)).not.toBe(before);
+    expect(before.playState).toBe("idle");
   });
 
   it("reads a real measurement, so the call cannot be elided", () => {
-    const { el } = mountProbe();
-    expect(forceReflow(el)).toBe(20);
+    expect(forceReflow(mountProbe())).toBe(20);
   });
 });

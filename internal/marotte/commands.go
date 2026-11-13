@@ -37,6 +37,7 @@ const (
 	CmdQueuePrompt         CommandType = "queue_prompt"
 	CmdUnqueuePrompt       CommandType = "unqueue_prompt"
 	CmdSendQueuedNow       CommandType = "send_queued_now"
+	CmdResumeQueue         CommandType = "resume_queue"
 	CmdRenameChat          CommandType = "rename_chat"
 	// CmdSteerRemove drops ONE waiting steer: KAS has no per-steer verb, so the
 	// server clears the buffer and resends the others together, in order.
@@ -351,9 +352,11 @@ type SteerCommand struct {
 }
 
 // SteerRemoveCommand is the payload for type="steer_remove". SteerID is the key of
-// a dock row the user sent; the rows they kept are resent together, in order.
+// a dock row the user sent; the user's rows kept are resent together, in order.
+// Queue moves the row to the chat's queue instead of deleting it.
 type SteerRemoveCommand struct {
 	SteerID string `json:"steer_id"`
+	Queue   bool   `json:"queue,omitempty"`
 }
 
 // CancelCommand is the payload for type="cancel". Target is the run entry the stop is for (RunView.Cancel); a

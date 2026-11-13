@@ -976,12 +976,31 @@
   white-space: nowrap;
 }
 
-/* Below the pill row's container width the label is the first thing to go: the
-   glyph and the colour still carry the state, and the message is what the row
-   is for. */
+/* Below the pill row's container width the state word is the first thing to go:
+   the glyph and the colour still carry the state, and the message is what the row
+   is for. A row someone else sent keeps its sender, capped so the message stays
+   the wider column. */
 @media (width < 30rem) {
-  .steer-state-label {
+  .steer-state-label:not(:has(> .steer-state-sender)),
+  .steer-state-word {
     display: none;
+  }
+
+  .steer-row:has(.steer-state-sender) {
+    grid-template-columns: fit-content(35%) minmax(0, 1fr) auto;
+  }
+
+  /* Zero minimums down the chain, so the track's cap, not the label's
+     unwrapped width, sizes the column and the sender ellipsises. */
+  .steer-state,
+  .steer-state-label {
+    min-inline-size: 0;
+  }
+
+  .steer-state-sender {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }
 

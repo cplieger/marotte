@@ -781,9 +781,7 @@ func TestSteerRecords_ATurnEndingUnderTheOpRecordsTheEndWithItsLead(t *testing.T
 	if res.Resend != nil {
 		t.Errorf("resend = %+v, want none into a closed turn", res.Resend)
 	}
-	if reroute := s.q.EndOp(s.chat, op); reroute {
-		t.Error("EndOp answered reroute for a close end, which its pipeline resolves")
-	}
+	s.q.EndOp(s.chat, op)
 
 	if jobs := s.spy.takeJobs(); len(jobs) != 0 {
 		t.Errorf("the turn end also queued a job for the op's rows: %+v", jobs)
@@ -853,9 +851,7 @@ func TestSteerRecords_ATurnEndingUnderADeleteHandsItTheParkedRowsToo(t *testing.
 		t.Errorf("ends before the op lets go = %+v, want the op alone to hold the turn's rows", ends)
 	}
 	s.q.RemoveCleared(s.chat, op, s.clearKAS(), true)
-	if reroute := s.q.EndOp(s.chat, op); reroute {
-		t.Error("EndOp answered reroute for a close end, which its pipeline resolves")
-	}
+	s.q.EndOp(s.chat, op)
 	ends := s.q.Ends(s.chat)
 	if len(ends) != 1 {
 		t.Fatalf("ends = %+v, want the turn's rows as one pending end", ends)
@@ -932,55 +928,8 @@ func TestSteerRecords_ABridgeGoneWithNoTurnLeavesTheRowsUnsent(t *testing.T) {
 	}
 }
 
-// A resolved end leaves its rows unsent for the drain, lead first, and they stay on
-// the dock until the prompt carrying them has opened: only then does each leave on a
-// removed frame, with no entry beside that prompt.
-func TestSteerRecords_ResolvedRowsStayUntilDelivered(t *testing.T) {
-	s := newSteerHarness(t)
-	s.bind()
-	s.steer("steer-a", "first")
-	s.steer("steer-b", "second")
-	undo, _ := s.q.SetSteerLead(s.chat, "steer-b")
-	defer undo()
-	s.endTurn()
-	ends := s.q.Ends(s.chat)
-	if len(ends) != 1 {
-		t.Fatalf("ends = %+v, want one", ends)
-	}
-	s.q.StraysCleared(s.chat, ends[0].Owner, nil, true)
-	s.q.EndUnsent(s.chat, ends[0].Owner)
-
-	rows := s.q.UnsentRows(s.chat, false)
-	keys := make([]string, 0, len(rows))
-	for _, r := range rows {
-		keys = append(keys, r.Key)
-	}
-	if !slices.Equal(keys, []string{"steer-b", "steer-a"}) {
-		t.Fatalf("unsent rows = %v, want the lead first, then arrival order", keys)
-	}
-	for _, k := range keys {
-		if n := s.spy.note(k); n != nil {
-			t.Errorf("entry %s = %+v before its prompt opened, want none", k, n)
-		}
-	}
-
-	s.q.Delivered(s.chat, keys)
-
-	for _, k := range keys {
-		if n := s.spy.note(k); n != nil {
-			t.Errorf("entry %s = %+v, want none: the prompt carries its words", k, n)
-		}
-		if f := s.spy.framesFor(k); len(f) == 0 || f[len(f)-1].State != marotte.SteerRowRemoved {
-			t.Errorf("frames for %s = %+v, want the last one removed", k, f)
-		}
-		if _, live := s.state(k); live {
-			t.Errorf("row %s is still held after its prompt opened", k)
-		}
-	}
-}
-
-// The send-now arrow's row leads only while it waits in the dock: once the prompt carrying it opened, or the
-// agent read it, the arrow has nothing left to send first.
+// The send-now arrow's row leads only while it waits in the dock: once the agent read it, the arrow has nothing left
+// to send first.
 func TestSteerRecords_ALeadIsWaitingOnlyWhileItsRowIsInTheDock(t *testing.T) {
 	s := newSteerHarness(t)
 	s.bind()
@@ -994,75 +943,9 @@ func TestSteerRecords_ALeadIsWaitingOnlyWhileItsRowIsInTheDock(t *testing.T) {
 	if _, waiting := s.q.SetSteerLead(s.chat, "steer-a"); waiting {
 		t.Error("SetSteerLead(steer-a) answered waiting, want the row the agent read not led")
 	}
-	s.q.Delivered(s.chat, []string{"steer-b"})
-	if _, waiting := s.q.SetSteerLead(s.chat, "steer-b"); waiting {
-		t.Error("SetSteerLead(steer-b) answered waiting after its prompt opened, want nothing led")
-	}
 	if _, waiting := s.q.SetSteerLead(s.chat, "steer-z"); waiting {
 		t.Error("SetSteerLead(steer-z) answered waiting for a key no row has")
 	}
-}
-
-// A drain whose prompt could not open leaves the rows unsent; the next prompt
-// parks them and a delivery to it goes under a fresh id.
-func TestSteerRecords_UndeliveredRowsGoToTheNextPrompt(t *testing.T) {
-	s := newSteerHarness(t)
-	s.bind()
-	s.steer("steer-a", "first")
-	s.endTurn()
-	ends := s.q.Ends(s.chat)
-	s.q.StraysCleared(s.chat, ends[0].Owner, nil, true)
-	s.q.EndUnsent(s.chat, ends[0].Owner)
-	s.mustState("steer-a", rowUnsent)
-
-	s.recs.turnStarted(s.chat, "t-next")
-	key, _, ok := s.q.NextParked(s.chat, "t-next")
-	if !ok || key != "steer-a" {
-		t.Fatalf("NextParked = %q %v, want steer-a for the next prompt", key, ok)
-	}
-	sends, _ := s.q.RouteSteer(s.chat, "steer-a", "first", nil,
-		command.SteerHolder{Held: true, PromptClass: true, Live: true, Delivering: true, Turn: "t-next"})
-	if len(sends) != 1 || sends[0].ID == "steer-a" || !slices.Equal(sends[0].Keys, []string{"steer-a"}) {
-		t.Errorf("sends = %+v, want one under a fresh id carrying steer-a", sends)
-	}
-}
-
-// A delivery aimed at a turn the record no longer names is refused and leaves the
-// row unsent, so a superseded prompt cannot take it.
-func TestSteerRecords_ADeliveryToAnUnnamedTurnIsRefused(t *testing.T) {
-	s := newSteerHarness(t)
-	s.recs.turnStarted(s.chat, "t-next")
-	s.q.RouteSteer(s.chat, "steer-a", "first", nil, command.SteerHolder{Held: true, PromptClass: true})
-
-	_, refuse := s.q.RouteSteer(s.chat, "steer-a", "first", nil,
-		command.SteerHolder{Held: true, PromptClass: true, Live: true, Delivering: true, Turn: "t-gone"})
-
-	if refuse != command.SteerRefuseNoTurn {
-		t.Errorf("delivery to t-gone = %q, want no_turn", refuse)
-	}
-	s.mustState("steer-a", rowUnsent)
-}
-
-// A refused re-route (nothing holds the chat) leaves the row unsent, and the next
-// prompt's drain parks every unsent row so that prompt carries it.
-func TestSteerRecords_UnsentRowsAreParkedForTheNextPrompt(t *testing.T) {
-	s := newSteerHarness(t)
-	s.q.RouteSteer(s.chat, "steer-a", "first", nil, command.SteerHolder{Held: true, PromptClass: true})
-	if _, refuse := s.q.RouteSteer(s.chat, "steer-a", "first", nil, command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
-		t.Fatalf("re-route with no holder = %q, want no_turn", refuse)
-	}
-	s.mustState("steer-a", rowUnsent)
-
-	if _, _, ok := s.q.NextParked(s.chat, "t-next"); ok {
-		t.Fatal("NextParked answered for a turn the record does not name")
-	}
-	s.recs.turnStarted(s.chat, "t-next")
-	key, text, ok := s.q.NextParked(s.chat, "t-next")
-
-	if !ok || key != "steer-a" || text != "first" {
-		t.Errorf("NextParked = %q %q %v, want steer-a", key, text, ok)
-	}
-	s.mustState("steer-a", rowParked)
 }
 
 // A steer sent while the prompt waited for MCP is in KAS when the post-load clear
@@ -1205,42 +1088,6 @@ func TestSteerRecords_BeginTeardownWaitsForAnActivePublication(t *testing.T) {
 	}
 }
 
-// A tab close leaves each unread row its boundary note; a delete writes none.
-func TestBeginChatTeardown_ACloseNotesEveryUnreadRow(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		keep bool
-	}{{"close", true}, {"delete", false}} {
-		t.Run(tc.name, func(t *testing.T) {
-			h, cs, _ := newTestHub()
-			seedChat(t, cs, "c1")
-			s := harnessOn(h, "c1", t.Fatalf)
-			s.recs.note = func(ctx context.Context, chatID marotte.ChatID, id string, steer *marotte.EntrySteer) {
-				h.coord.recordSteer(ctx, chatID, id, steer)
-			}
-			s.bind()
-			s.steer("steer-a", "first")
-
-			h.BeginChatTeardown("c1", tc.keep)
-
-			var got []marotte.EntrySteer
-			for _, e := range logOf(t, cs, "c1") {
-				if e.Kind == marotte.EntryKindSteer && e.ID == "steer-a" {
-					var steer marotte.EntrySteer
-					decodePayload(t, e, &steer)
-					got = append(got, steer)
-				}
-			}
-			if tc.keep && (len(got) != 1 || got[0].Reason != marotte.SteerReasonBoundary || got[0].Text != "first") {
-				t.Errorf("close notes = %+v, want one boundary note carrying the text", got)
-			}
-			if !tc.keep && len(got) != 0 {
-				t.Errorf("delete notes = %+v, want none", got)
-			}
-		})
-	}
-}
-
 // The connect replay lists every held row with its wire state, then a batch frame
 // for every id a row is held under that is not its key, so a reconnecting dock
 // rebuilds its batch map.
@@ -1271,14 +1118,14 @@ func TestSteerRecords_TheReplayListsEachRowWithItsBatch(t *testing.T) {
 	}
 }
 
-// While KAS may still hold copies of a dead buffer's rows, the next prompt's drain does not
-// send them: a clear that never answered and a clear an agent row blocked both
-// leave them unsent, and a clear that lands releases them.
-func TestSteerRecords_AnUnsettledPostLoadClearHoldsTheReloadedRows(t *testing.T) {
+// While KAS may still hold copies of a dead buffer's rows, an offered entry's words do not go back to the run list:
+// a clear that never answered and a clear an agent row blocked both keep it, and a clear that lands gives it back,
+// still a steer for the turn whose start ran the clear.
+func TestSteerRecords_AnUnsettledPostLoadClearHoldsTheReloadedEntry(t *testing.T) {
 	for _, tc := range []struct {
 		settle   func(s *steerHarness)
 		name     string
-		wantSent bool
+		wantBack bool
 	}{
 		{name: "the clear had no reply", settle: func(s *steerHarness) {
 			s.q.PostLoadCleared(s.chat, nil, false)
@@ -1289,27 +1136,39 @@ func TestSteerRecords_AnUnsettledPostLoadClearHoldsTheReloadedRows(t *testing.T)
 				s.fatalf("a clear that would drop an agent row is still owed")
 			}
 		}},
-		{name: "the clear landed", wantSent: true, settle: func(s *steerHarness) {
+		{name: "the clear landed", wantBack: true, settle: func(s *steerHarness) {
 			s.q.PostLoadCleared(s.chat, nil, true)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newSteerHarness(t)
-			s.steer("steer-a", "first")
+			s.offerEntry("m-a")
 			s.recs.bridgeGone(s.chat)
 			tc.settle(s)
-			s.recs.turnStarted(s.chat, "t-next")
 
-			_, _, ok := s.q.NextParked(s.chat, "t-next")
-
-			if ok != tc.wantSent {
-				t.Errorf("NextParked answered a row = %v, want %v", ok, tc.wantSent)
+			fs := s.recs.takeEntryFates(s.chat)
+			if got := fatedAs(fs, "m-a", fateCleared); got != tc.wantBack {
+				t.Errorf("m-a went back to the list as a steer = %v, want %v (fates %+v)", got, tc.wantBack, fs)
 			}
-			if !tc.wantSent {
-				s.mustState("steer-a", rowUnsent)
+			if fatedAs(fs, "m-a", fateUnread) {
+				t.Errorf("m-a went back unread (fates %+v), want it a steer still", fs)
 			}
 		})
 	}
+}
+
+// offerEntry steers the run-list entry id into the session while no turn is bound, as the list offers it into a turn
+// that has not bracketed yet, and has KAS queue it.
+func (s *steerHarness) offerEntry(id string) {
+	sends, refuse := s.q.RouteEntry(s.chat, &command.EntrySteer{Entry: id, Text: id, Offer: 1}, promptHolder)
+	if refuse != "" {
+		s.fatalf("RouteEntry(%s) refused %q", id, refuse)
+	}
+	s.kas(sends)
+}
+
+func fatedAs(fs []entryFate, id string, fate steerFate) bool {
+	return slices.ContainsFunc(fs, func(f entryFate) bool { return f.id == id && f.fate == fate })
 }
 
 // Steps publish in the order they took the lock: a later step's frame waits behind
@@ -1602,77 +1461,27 @@ func (s *steerHarness) replayed(key string) marotte.SteerQueuedPayload {
 	return marotte.SteerQueuedPayload{}
 }
 
-// An opened prompt's start delivery takes the unsent rows into its turn, so until it runs they
-// await that prompt rather than a close of their own; the delivery parks them.
-func TestSteerRecords_AnOpenedPromptMarksTheUnsentRowsAsAwaitingIt(t *testing.T) {
+// While KAS may re-inject a dead bridge's rows, an offered entry's row awaits the next prompt's post-load clear and
+// stays on the dock; a landed clear retires it, its words the run list's again as a steer.
+func TestSteerRecords_AReinjectedEntryAwaitsAPromptUntilThePostLoadClear(t *testing.T) {
 	s := newSteerHarness(t)
-	s.idleUnsent("steer-a")
-	if f := s.lastFrame("steer-a"); f.State != marotte.SteerRowUnsent || f.AwaitsPrompt {
-		t.Fatalf("idle frame = %+v, want unsent and not awaiting a prompt", f)
-	}
-
-	s.recs.turnOpened(s.chat, "t-p")
-
-	if f := s.lastFrame("steer-a"); f.State != marotte.SteerRowUnsent || !f.AwaitsPrompt {
-		t.Errorf("frame after the open = %+v, want unsent and awaiting the prompt", f)
-	}
-	if f := s.replayed("steer-a"); !f.AwaitsPrompt {
-		t.Errorf("replayed frame = %+v, want it awaiting the prompt", f)
-	}
-
-	s.recs.turnStarted(s.chat, "t-p")
-	if _, _, ok := s.q.NextParked(s.chat, "t-p"); !ok {
-		t.Fatal("the start delivery parked nothing")
-	}
-
-	s.mustState("steer-a", rowParked)
-	if f := s.lastFrame("steer-a"); f.State != marotte.SteerRowQueued {
-		t.Errorf("frame after the delivery = %+v, want queued", f)
-	}
-	if _, refuse := s.q.RouteSteer(s.chat, "steer-a", "words", nil, command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
-		t.Fatalf("RouteSteer with no holder refused %q, want no_turn", refuse)
-	}
-	if f := s.lastFrame("steer-a"); f.State != marotte.SteerRowUnsent || f.AwaitsPrompt {
-		t.Errorf("a row unsent after the delivery = %+v, want it not awaiting a prompt", f)
-	}
-}
-
-// A prompt that closes before its start delivery takes nothing, so its rows stop awaiting it.
-func TestSteerRecords_APromptClosedBeforeItsDeliveryReleasesTheAwait(t *testing.T) {
-	s := newSteerHarness(t)
-	s.idleUnsent("steer-a")
-	s.recs.turnOpened(s.chat, "t-p")
-
-	s.recs.turnEnded(s.chat, command.SteerTurnEnd{TurnID: "t-p", Source: marotte.TurnSourcePrompt})
-
-	if f := s.lastFrame("steer-a"); f.State != marotte.SteerRowUnsent || f.AwaitsPrompt {
-		t.Errorf("frame after the close = %+v, want unsent and not awaiting a prompt", f)
-	}
-}
-
-// While KAS may re-inject a dead bridge's rows, UnsentRows answers none, so no close sends them;
-// a landed post-load clear lets the next close send them again.
-func TestSteerRecords_ReinjectedRowsAwaitAPromptUntilThePostLoadClear(t *testing.T) {
-	s := newSteerHarness(t)
-	s.recs.turnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
-	sends, _ := s.q.RouteSteer(s.chat, "steer-a", "first", nil, promptHolder)
-	s.kas(sends)
+	s.offerEntry("m-a")
 	s.recs.bridgeGone(s.chat)
 
-	if f := s.lastFrame("steer-a"); f.State != marotte.SteerRowUnsent || !f.AwaitsPrompt {
+	if f := s.lastFrame("steer-m-a"); f.State != marotte.SteerRowUnsent || !f.AwaitsPrompt {
 		t.Errorf("frame after the death = %+v, want unsent and awaiting a prompt", f)
 	}
-	if rows := s.q.UnsentRows(s.chat, false); len(rows) != 0 {
-		t.Errorf("UnsentRows = %+v, want none while KAS may re-inject", rows)
+	if fs := s.recs.takeEntryFates(s.chat); fatedAs(fs, "m-a", fateUnread) || fatedAs(fs, "m-a", fateCleared) {
+		t.Errorf("m-a went back to the list while KAS may re-inject it (fates %+v)", fs)
 	}
 
 	s.q.PostLoadCleared(s.chat, nil, true)
 
-	if f := s.lastFrame("steer-a"); f.State != marotte.SteerRowUnsent || f.AwaitsPrompt {
-		t.Errorf("frame after the clear = %+v, want unsent and not awaiting a prompt", f)
+	if f := s.lastFrame("steer-m-a"); f.State != marotte.SteerRowRemoved {
+		t.Errorf("frame after the clear = %+v, want removed", f)
 	}
-	if rows := s.q.UnsentRows(s.chat, false); len(rows) != 1 {
-		t.Errorf("UnsentRows = %+v, want steer-a for the next close", rows)
+	if fs := s.recs.takeEntryFates(s.chat); !fatedAs(fs, "m-a", fateCleared) {
+		t.Errorf("m-a did not go back to the list as a steer once the clear landed (fates %+v)", fs)
 	}
 }
 
@@ -1688,5 +1497,62 @@ func TestSteerRecords_ADeleteBeforeTheStartingTurnReportsGoesToTheClear(t *testi
 	needsClear, refuse := s.q.BeginRemove(s.chat, "steer-late", "op-1")
 	if refuse != "" || !needsClear {
 		t.Errorf("BeginRemove before any report = %v %q, want a clear and resubmit", needsClear, refuse)
+	}
+}
+
+// An owed probe carries one sender's waiting rows: grelot's words and the user's never go to the agent as one steer.
+func TestSteerRecords_AnOwedProbeJoinsOneSendersRows(t *testing.T) {
+	s := newSteerHarness(t)
+	s.bind()
+	s.steer("steer-a", "first")
+	s.recs.SteerCleared(s.chat, []string{"steer-a"})
+	sends, _ := s.q.RouteSteer(s.chat, "steer-b", "second", nil, promptHolder)
+	if len(sends) != 1 || s.channel() != chanProbing {
+		t.Fatalf("Setup: sends %+v, channel %v, want steer-b as the probe", sends, s.channel())
+	}
+	s.kas(sends)
+	grelot := &marotte.Caller{Label: "grelot"}
+	for _, r := range []struct {
+		from      *marotte.Caller
+		key, text string
+	}{{grelot, "steer-g", "1 new"}, {nil, "steer-c", "third"}} {
+		if more, _ := s.q.RouteSteer(s.chat, r.key, r.text, r.from, promptHolder); len(more) != 0 {
+			t.Fatalf("Setup: %s went out behind the outstanding probe: %+v", r.key, more)
+		}
+	}
+
+	s.recs.SteerForgotten(s.chat, []string{sends[0].ID})
+	flush := s.q.PlanFlush(s.chat)
+
+	if len(flush) != 1 || flush[0].Text != "1 new" || !slices.Equal(flush[0].Keys, []string{"steer-g"}) {
+		t.Errorf("owed probe = %+v, want grelot's row alone", flush)
+	}
+	s.mustState("steer-c", rowWaiting)
+}
+
+// A run-list entry offered again into the next turn after kiro-cli refused it goes out under a fresh id that carries
+// its key, since its key may already be in kiro-cli's log; the refusal itself takes it off the dock, the list holding
+// its words again.
+func TestSteerRecords_AnEntryOfferedAgainGoesOutUnderAFreshID(t *testing.T) {
+	s := newSteerHarness(t)
+	s.bind()
+	first, refuse := s.q.RouteEntry(s.chat, &command.EntrySteer{Entry: "n-1", Text: "1 new", Offer: 1}, promptHolder)
+	if refuse != "" || len(first) != 1 || first[0].ID != "steer-n-1" {
+		t.Fatalf("Setup: first offer = %+v %q, want one send under steer-n-1", first, refuse)
+	}
+	s.q.SteerSent(s.chat, first[0], false, nil)
+	if f := s.lastFrame("steer-n-1"); f.State != marotte.SteerRowRemoved {
+		t.Errorf("dock frame after the refusal = %q, want removed", f.State)
+	}
+	s.endTurn()
+	s.bind()
+
+	again, refuse := s.q.RouteEntry(s.chat, &command.EntrySteer{Entry: "n-1", Text: "1 new", Offer: 2, Resent: true}, promptHolder)
+
+	switch {
+	case refuse != "" || len(again) != 1:
+		t.Fatalf("second offer = %+v %q, want one send", again, refuse)
+	case again[0].ID == "steer-n-1" || !slices.Equal(again[0].Keys, []string{"steer-n-1"}):
+		t.Errorf("second offer = %+v, want a fresh id carrying steer-n-1", again[0])
 	}
 }

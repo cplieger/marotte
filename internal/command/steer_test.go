@@ -194,15 +194,21 @@ func TestCmdSteer_ValidatesTheMessage(t *testing.T) {
 	}
 }
 
-func TestCmdSteer_TransportFailureIsABadGateway(t *testing.T) {
+// A steer whose call failed may still be in KAS's buffer, so it is accepted and the record keeps it: the failed
+// outcome is reported to the record, whose turn end decides what became of it.
+func TestCmdSteer_ATransportFailureLeavesTheSteerToTheRecord(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	b := &recordingBridge{callErr: errors.New("pipe closed"), sessionID: "sess-1"}
 	host := newBridgeHost(store, b)
+	q := newStubSteerQueue()
 
-	_, err := cmdSteer(t.Context(), steerRolesOf(host, NewSteerLedger(), newStubSteerQueue()), steerReq(t, "c1", "hello", "m-1"))
+	_, err := cmdSteer(t.Context(), steerRolesOf(host, NewSteerLedger(), q), steerReq(t, "c1", "hello", "m-1"))
 
-	if statusOf(err) != http.StatusBadGateway {
-		t.Errorf("status = %d, want 502", statusOf(err))
+	if statusOf(err) != http.StatusOK {
+		t.Errorf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
+	}
+	if len(q.sent) != 1 || q.sent[0].err == nil {
+		t.Errorf("record told %+v, want the one failed send", q.sent)
 	}
 }
 

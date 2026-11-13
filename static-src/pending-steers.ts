@@ -3,18 +3,18 @@ import { join } from "@cplieger/keyenc";
 import { announce } from "./legacy-ui/announce.js";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { $ } from "./dom.js";
-import { activeSession, getActiveId, hasMessage, hasQueued } from "./store.js";
+import { activeSession, getActiveId } from "./store.js";
 import {
   cancelCompact,
   cancelTurn,
   clearSteers,
-  queuePrompt,
   removeSteer,
+  resumeQueue,
   sendQueuedNow,
   unqueuePrompt,
 } from "./actions/chat.js";
 import { setComposerValue } from "./composer-value.js";
-import { composerDraft, restoreFailedSend, restoreRefusedEdit } from "./composer-state.js";
+import { composerDraft, restoreRefusedEdit } from "./composer-state.js";
 import { addAttachmentTo, removeAttachmentFrom } from "./attachments.js";
 import { confirm } from "./confirm.js";
 import { chatNotice, subjectName } from "./notice-subject.js";
@@ -23,15 +23,17 @@ import {
   ICON_COMPACT,
   ICON_HOURGLASS,
   ICON_EDIT,
+  ICON_PAUSE,
   ICON_QUEUE,
+  ICON_RESUME,
   ICON_TRASH,
 } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import { SENT_BY_MAROTTE, sentBy } from "./sent-by.js";
+import { SENT_BY_MAROTTE, callerName, sentBy } from "./sent-by.js";
 import { wireSignature } from "./paint-sig.js";
-import { dockEntries, entryLive, waitWords } from "./run-order.js";
+import { dockEntries, entryLive, rowIsSteer, waitWords } from "./run-order.js";
+import { pendingSteerRow, steerIDFor } from "./steer-rows.js";
 import { truncate } from "./strings.js";
-import { newMessageID } from "./transport.js";
 import type { PendingSteer, QueuedPrompt, RunEntryView, RunView, RunWait } from "./types.js";
 import type { SendNowKind } from "./wire/types.gen.js";
 import { readQuoted, splitQuotes } from "./message-quote.js";
@@ -41,13 +43,14 @@ import { drawParts } from "./quote-band.js";
  *  (none carries it yet), or, for a dock with no run order (a run step's), as the next prompt. */
 type SteerPlace = RunWait | "next_message" | undefined;
 
-/** One dock row: a steer the agent has not read, a compaction entry, the failsafe's resume, or a
- *  message the server holds. */
+/** One dock row: a steer the agent has not read, a compaction entry, the failsafe's resume, a
+ *  message the server holds, or the head of the rows the reader's stop paused. */
 type DockRow =
   | { kind: "steer"; steer: PendingSteer; place: SteerPlace }
   | { kind: "compact"; entry: RunEntryView }
   | { kind: "resume"; entry: RunEntryView }
-  | { kind: "queued"; entry: RunEntryView; stop: string | undefined };
+  | { kind: "queued"; entry: RunEntryView; stop: string | undefined }
+  | { kind: "paused" };
 
 export interface SteerStackSource {
   /** What the dock is about (a chat id, or a run step's key), its steers and, for a chat, its run
@@ -75,6 +78,8 @@ export interface SteerStackSource {
 
 interface StackState {
   waiting: number;
+  /** The reader's own steers among `waiting`: the ones a send-now sends together. */
+  ownWaiting: number;
   /** No workflow result is in the dock, so each row can go on its own: the server refuses a
    *  one-row delete beside an agent row (`agent_rows_waiting`). */
   perRow: boolean;
@@ -139,8 +144,10 @@ function render(
 ): void {
   const { id, steers, run } = untracked(() => src.read());
   const stopTarget = run === undefined ? undefined : runningTarget(run);
+  const waitingRows = steers.filter((e) => e.pending !== true);
   const state: StackState = {
-    waiting: steers.filter((e) => e.pending !== true).length,
+    waiting: waitingRows.length,
+    ownWaiting: waitingRows.filter(byReader).length,
     perRow: steers.every((e) => e.origin === "user"),
     clearable: !steers.some((e) => e.delivering === true),
     canStop: run === undefined || stopTarget !== undefined,
@@ -190,9 +197,10 @@ function runningTarget(run: RunView): string | undefined {
 }
 
 /** Top to bottom is send order, all of it the server's: steers not yet unsent sit under the running
- *  turn, above every entry; the entries follow in run order; an unsent steer sits with the unread
- *  entry, else where `unread_wait` places it, and one awaiting a prompt with the entry that carries
- *  it. A dock with no run order lists its steers alone. */
+ *  turn, above every entry; the entries follow in run order, the first row the reader's stop paused
+ *  led by the paused queue's head; an unsent steer sits where `unread_wait` places it, and one
+ *  awaiting a prompt with the entry that carries it. A dock with no run order lists its steers
+ *  alone. */
 function dockRows(steers: readonly PendingSteer[], run: RunView | undefined): DockRow[] {
   const steerRows = (list: readonly PendingSteer[], place: SteerPlace): DockRow[] =>
     list.map((steer) => ({ kind: "steer", steer, place }));
@@ -205,20 +213,22 @@ function dockRows(steers: readonly PendingSteer[], run: RunView | undefined): Do
   if (run === undefined) {
     return [...out, ...steerRows([...plain, ...awaiting], undefined)];
   }
+  out.push(...steerRows(unframedSteers(steers, run), undefined));
   const drawn = new Set(dockEntries(run));
-  const unread = run.entries.find((e) => e.kind === "unread");
-  const afterCompaction = unread === undefined && run.unread_wait.after === "compaction";
+  const afterCompaction = run.unread_wait.after === "compaction";
   let plainDone = plain.length === 0;
   let awaitingDone = awaiting.length === 0;
+  let pausedDone = false;
   for (const e of run.entries) {
-    if (!plainDone && unread === undefined && !afterCompaction && !entryLive(e)) {
+    if (!plainDone && !afterCompaction && !entryLive(e)) {
       out.push(...steerRows(plain, run.unread_wait));
       plainDone = true;
     }
-    if (e === unread) {
-      out.push(...steerRows(plain, e.wait));
-      plainDone = true;
-    } else if (drawn.has(e)) {
+    if (drawn.has(e)) {
+      if (!pausedDone && e.stop_paused === true) {
+        out.push({ kind: "paused" });
+        pausedDone = true;
+      }
       out.push(
         e.kind === "compaction"
           ? { kind: "compact", entry: e }
@@ -245,6 +255,26 @@ function dockRows(steers: readonly PendingSteer[], run: RunView | undefined): Do
   return out;
 }
 
+/** The run order's steers no frame has drawn yet, each as a row still sending under the key its frame
+ *  will carry: a steer held behind the one kiro-cli is answering has no dock row until it is offered. */
+function unframedSteers(steers: readonly PendingSteer[], run: RunView): PendingSteer[] {
+  const framed = new Set(steers.map((s) => s.id));
+  const out: PendingSteer[] = [];
+  for (const e of run.entries) {
+    const id = steerIDFor(e.id);
+    if (rowIsSteer(e) && e.row !== undefined && !framed.has(id)) {
+      const caller = e.row.caller;
+      out.push({ ...pendingSteerRow(id, e.row.text), ...(caller !== undefined && { caller }) });
+    }
+  }
+  return out;
+}
+
+/** The reader's own steer: a steer an API caller sent carries its `caller`. */
+function byReader(steer: PendingSteer): boolean {
+  return steer.origin === "user" && steer.caller === undefined;
+}
+
 /** KEYED BY THE ROW'S ID, which is stable from send to read: `.steer-row`'s `@starting-style`
  *  entry (26-dock.css) re-fires on a REBUILT node, so a re-keyed row would vanish and fade back
  *  in. The spec is built per render because `state` is stack-wide. */
@@ -262,6 +292,8 @@ function rowSpec(state: StackState): ReconcileSpec<DockRow> {
           return `r:${r.entry.id}`;
         case "queued":
           return `q:${r.entry.id}`;
+        case "paused":
+          return "p";
       }
     },
     mount: (r) => {
@@ -274,6 +306,8 @@ function rowSpec(state: StackState): ReconcileSpec<DockRow> {
           return buildResumeRow(r.entry);
         case "queued":
           return buildQueuedRow(r.entry, r.stop);
+        case "paused":
+          return buildPausedRow();
       }
     },
     update: (el, r) => {
@@ -289,6 +323,9 @@ function rowSpec(state: StackState): ReconcileSpec<DockRow> {
           return;
         case "queued":
           updateQueuedRow(el, r.entry, r.stop);
+          return;
+        case "paused":
+          return;
       }
     },
   };
@@ -320,7 +357,7 @@ function updateRow(
 
   const label = row.querySelector(".steer-state-label");
   if (label !== null) {
-    label.textContent = stateWord(steer, place);
+    setStateLabel(label, stateWords(steer, place));
   }
 
   syncText(row, steer.text);
@@ -357,7 +394,9 @@ function syncActions(row: HTMLElement, steer: PendingSteer, state: StackState): 
   const sig = [
     rowState(steer),
     steer.origin,
+    steer.caller === undefined ? "" : "1",
     String(state.waiting),
+    String(state.ownWaiting),
     state.perRow ? "1" : "0",
     state.clearable ? "1" : "0",
     state.canStop ? "1" : "0",
@@ -378,10 +417,12 @@ function buildRow(steer: PendingSteer, place: SteerPlace, state: StackState): HT
     "span",
     { className: "steer-state" },
     el("span", { className: "steer-state-icon", "aria-hidden": "true" }, iconEl(ICON_HOURGLASS)),
-    // The word, not only the glyph. "Sent" is the fact this stack states: the message has left,
-    // it is not a draft, and it is waiting.
-    el("span", { className: "steer-state-label" }, stateWord(steer, place)),
   );
+  // The word, not only the glyph. "Sent" is the fact this stack states: the message has left,
+  // it is not a draft, and it is waiting.
+  const label = el("span", { className: "steer-state-label" });
+  setStateLabel(label, stateWords(steer, place));
+  stateEl.append(label);
 
   // Collapsed to one line and clipped to four lines in CSS, each quote band counting as one, never
   // truncated here: the whole message stays in the DOM, and it stays reachable through the row's
@@ -428,7 +469,7 @@ function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState
     return;
   }
   const { waiting, perRow, clearable, src } = state;
-  const user = steer.origin === "user";
+  const user = byReader(steer);
   const controls: HTMLElement[] = [];
   // Send now LEADS, and the destructive control stays last. Not on an unsent row (Edit already sends
   // it), nor while no running turn is there to stop.
@@ -440,7 +481,7 @@ function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState
         ICON_ARROW_UP,
         "Send this message now",
         // Names what it does AND what it costs: no wire verb injects mid-turn.
-        waiting === 1
+        state.ownWaiting === 1
           ? "Stops the turn and sends this message as a new one"
           : "Stops the turn and sends this message first, then the others",
         () => {
@@ -454,7 +495,7 @@ function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState
   if (perRow && (clearable || steer.unsent === true)) {
     // An unsent row already goes as the next prompt, which is what queueing it would do.
     const queueInstead = src.queueInstead;
-    if (steer.unsent !== true && queueInstead !== undefined) {
+    if (user && steer.unsent !== true && queueInstead !== undefined) {
       controls.push(
         actionButton(
           ICON_QUEUE,
@@ -466,15 +507,19 @@ function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState
         ),
       );
     }
+    if (user) {
+      controls.push(
+        actionButton(
+          ICON_EDIT,
+          "Edit this message",
+          "Take it back and put it in the message box",
+          () => {
+            void src.edit(steer);
+          },
+        ),
+      );
+    }
     controls.push(
-      actionButton(
-        ICON_EDIT,
-        "Edit this message",
-        "Take it back and put it in the message box",
-        () => {
-          void src.edit(steer);
-        },
-      ),
       actionButton(
         ICON_TRASH,
         `Delete "${preview(steer.text)}"`,
@@ -555,7 +600,7 @@ async function sendSteerNow(steerID: string, target: string | undefined): Promis
   if (chatID === "") {
     return;
   }
-  const waiting = (activeSession.peek()?.steers ?? []).filter((e) => e.origin === "user").length;
+  const waiting = (activeSession.peek()?.steers ?? []).filter(byReader).length;
   announce(
     waiting <= 1
       ? "Stopping the turn and sending this message"
@@ -604,9 +649,9 @@ async function editSteer(steer: PendingSteer): Promise<void> {
   reportRefusal(chatID, name, "Could not confirm the message was taken back");
 }
 
-/** Delete the steer, then queue its words under a new id: the steer's own id is keyed on its steer
- *  entries. Once the delete may have happened, every failure leaves the words in the chat's
- *  composer, except a queued row that landed despite a lost reply. */
+/** One removal that hands the steer back to the chat's queue as a follow-up (`steer_remove {queue}`).
+ *  The server keeps the words in either outcome, in the dock or on the list, so no failure puts them
+ *  in the composer. */
 async function queueSteerInstead(steer: PendingSteer): Promise<void> {
   const chatID = getActiveId();
   if (chatID === "") {
@@ -614,33 +659,17 @@ async function queueSteerInstead(steer: PendingSteer): Promise<void> {
   }
   const name = subjectName(chatID);
   announce("Moving the message to the queue");
-  const removed = await removeSteer.dispatch({ chatID, steerID: steer.id }).outcome;
-  if (removed.status === "error") {
-    if (DEFINITE_REFUSALS.has(removed.error.status ?? 0)) {
-      reportRefusal(chatID, name, removed.error.message);
-      return;
-    }
-    restoreFailedSend(chatID, steer.text);
-    reportRefusal(chatID, name, "Could not confirm the message was moved");
+  const moved = await removeSteer.dispatch({ chatID, steerID: steer.id, queue: true }).outcome;
+  if (moved.status !== "error") {
     return;
   }
-  const messageID = newMessageID();
-  const queued = await queuePrompt.dispatch({ chatID, text: steer.text, messageID }).outcome;
-  if (queued.status !== "error") {
-    return;
-  }
-  if (queued.error.code === "no_turn") {
-    // The turn ended between the two calls, so the words go as the next prompt. Imported lazily so
-    // the run tab, which mounts this stack too, does not load the send pipeline.
-    const { submitPrompt } = await import("./submit.js");
-    await submitPrompt(chatID, steer.text, { attachments: [] });
-    return;
-  }
-  if (hasQueued(chatID, messageID) || hasMessage(chatID, messageID)) {
-    return;
-  }
-  restoreFailedSend(chatID, steer.text);
-  reportRefusal(chatID, name, queued.error.message);
+  reportRefusal(
+    chatID,
+    name,
+    DEFINITE_REFUSALS.has(moved.error.status ?? 0)
+      ? moved.error.message
+      : "Could not confirm the message was moved",
+  );
 }
 
 async function deleteSteer(steerID: string): Promise<void> {
@@ -720,6 +749,45 @@ const chatSource: SteerStackSource = {
   discard: discardSteers,
   waitingFor: "the agent",
 };
+
+const PAUSED_TEXT = "Stopped. The messages below wait for your next message or Resume";
+
+/** The head of the rows the reader's stop paused: what holds them, and Resume, which sends them in
+ *  order with no message of the reader's. Nothing in it changes while it stands, so it has no update. */
+function buildPausedRow(): HTMLElement {
+  return el(
+    "li",
+    {
+      className: "steer-row",
+      "data-kind": "paused",
+      "data-state": "paused",
+      "aria-label": `Paused: ${PAUSED_TEXT}`,
+    },
+    el(
+      "span",
+      { className: "steer-state" },
+      el("span", { className: "steer-state-icon", "aria-hidden": "true" }, iconEl(ICON_PAUSE)),
+      el("span", { className: "steer-state-label" }, "Paused"),
+    ),
+    el("span", { className: "steer-text" }, PAUSED_TEXT),
+    el(
+      "span",
+      { className: "steer-actions" },
+      actionButton(ICON_RESUME, "Resume the queue", "Send the paused messages in order", () => {
+        void resumeStoppedQueue();
+      }),
+    ),
+  );
+}
+
+async function resumeStoppedQueue(): Promise<void> {
+  const chatID = getActiveId();
+  if (chatID === "") {
+    return;
+  }
+  announce("Resuming the queue");
+  await resumeQueue.dispatch({ chatID }).outcome;
+}
 
 const COMPACT_TEXT = "Compact the context";
 const COMPACTING_TEXT = "Compacting the context\u2026";
@@ -873,18 +941,18 @@ async function removeResume(id: string): Promise<void> {
 }
 
 /** A queued row's state in words, and the ONE spelling of it, led by who sent the row when an API
- *  caller did, as stateWord leads a steer's. */
-function queuedWord(entry: RunEntryView): string {
+ *  caller did, as stateWords leads a steer's. */
+function queuedWords(entry: RunEntryView): StateWords {
   const word = waitWords(entry.wait);
   const caller = entry.row?.caller;
   if (caller === undefined) {
-    return word;
+    return { rest: word };
   }
-  return `${sentBy(caller)} \u00b7 ${lowerFirst(word)}`;
+  return { sender: sentBy(caller), rest: ` \u00b7 ${lowerFirst(word)}` };
 }
 
 function queuedName(entry: RunEntryView, row: QueuedPrompt): string {
-  return `${queuedWord(entry)}: ${queuedShown(row)}`;
+  return `${joined(queuedWords(entry))}: ${queuedShown(row)}`;
 }
 
 function queuedShown(row: QueuedPrompt): string {
@@ -892,22 +960,43 @@ function queuedShown(row: QueuedPrompt): string {
 }
 
 /** What Discard does to this row, which differs by kind: a carried row was already sent once as
- *  a steer the agent never read. */
-function discardHint(row: QueuedPrompt): string {
-  return (row.resends ?? []).length > 0 ? "It will not be sent again" : "It has not been sent";
+ *  a steer the agent never read, and the notify door's caller sends again while its news is unread. */
+function discardHint(entry: RunEntryView, row: QueuedPrompt): string {
+  if ((row.resends ?? []).length > 0) {
+    return "It will not be sent again";
+  }
+  if (entry.origin === "notify" && row.caller !== undefined) {
+    return `It has not been sent. ${callerName(row.caller)} may send it again while it stays unread`;
+  }
+  return "It has not been sent";
 }
 
-/** A carried row can absorb a later carry under the same id, so its text changes in place and the
+/** A wake's row takes its caller's next wake under the same id, so its text changes in place and the
  *  controls read it from here, with the stop its arrow was last drawn against. */
 const queuedRowOf = new WeakMap<
   HTMLElement,
   { row: QueuedPrompt; entry: RunEntryView; stop: string | undefined }
 >();
 
-/** Edit and Discard on every row: each is one `unqueue_prompt` addressing this row alone. The
- *  send-now arrow leads them where the server offers one (`send_now`, syncQueuedArrow). */
+/** Discard on every row and Edit on the reader's own: each is one `unqueue_prompt` addressing this
+ *  row alone. The send-now arrow leads them where the server offers one (`send_now`,
+ *  syncQueuedArrow). An API caller's words are never the reader's to edit. */
 function buildQueuedRow(entry: RunEntryView, stop: string | undefined): HTMLElement {
   const row = entry.row ?? { id: entry.id, text: "" };
+  const caller = row.caller;
+  const edit =
+    caller === undefined
+      ? [
+          actionButton(
+            ICON_EDIT,
+            "Edit this follow-up",
+            "Take it back and put it in the message box",
+            () => {
+              void editQueued(queuedRowOf.get(li)?.row ?? row);
+            },
+          ),
+        ]
+      : [];
   const li = el(
     "li",
     { className: "steer-row", "data-state": "queued" },
@@ -921,18 +1010,13 @@ function buildQueuedRow(entry: RunEntryView, stop: string | undefined): HTMLElem
     el(
       "span",
       { className: "steer-actions" },
-      actionButton(
-        ICON_EDIT,
-        "Edit this follow-up",
-        "Take it back and put it in the message box",
-        () => {
-          void editQueued(queuedRowOf.get(li)?.row ?? row);
-        },
-      ),
+      ...edit,
       actionButton(
         ICON_TRASH,
-        "Discard this follow-up",
-        discardHint(row),
+        caller === undefined
+          ? "Discard this follow-up"
+          : `Discard this message from ${callerName(caller)}`,
+        discardHint(entry, row),
         () => {
           void discardQueued(row.id);
         },
@@ -958,7 +1042,7 @@ function updateQueuedRow(li: HTMLElement, entry: RunEntryView, stop: string | un
   }
   const label = li.querySelector(".steer-state-label");
   if (label !== null) {
-    label.textContent = queuedWord(entry);
+    setStateLabel(label, queuedWords(entry));
   }
   const text = li.querySelector<HTMLElement>(".steer-text");
   if (text !== null) {
@@ -1115,24 +1199,58 @@ function placeWords(place: SteerPlace): string {
   return lowerFirst(waitWords(place));
 }
 
-// stateWord is the row's state in words, and the ONE spelling of it: the label and the accessible
+/** A state label's words: the sender of a row someone else sent, and the state after it. */
+interface StateWords {
+  readonly sender?: string;
+  readonly rest: string;
+}
+
+function joined(w: StateWords): string {
+  return `${w.sender ?? ""}${w.rest}`;
+}
+
+/** The sender gets its own element because a phone row keeps it when it drops the state word (26-dock.css). */
+function setStateLabel(label: Element, w: StateWords): void {
+  if (w.sender === undefined) {
+    label.textContent = w.rest;
+    return;
+  }
+  label.replaceChildren(
+    el("span", { className: "steer-state-sender" }, w.sender),
+    ...(w.rest === "" ? [] : [el("span", { className: "steer-state-word" }, w.rest)]),
+  );
+}
+
+// stateWords is the row's state in words, and the ONE spelling of it: the label and the accessible
 // name both read it. An unsent steer reads where the run order puts it.
-function stateWord(steer: PendingSteer, place: SteerPlace): string {
+function stateWords(steer: PendingSteer, place: SteerPlace): StateWords {
   if (steer.pending === true) {
-    return "Sending";
+    return { rest: "Sending" };
   }
   if (steer.delivering === true) {
-    return "Delivering";
+    return { rest: "Delivering" };
   }
-  const sent = steer.caller === undefined ? "Sent" : sentBy(steer.caller);
-  if (steer.unsent === true) {
-    const where = placeWords(place);
-    if (steer.caller !== undefined) {
-      return `${sent} \u00b7 unread \u00b7 ${where}`;
+  const compacted = steer.compacted === true ? ", context compacted since" : "";
+  if (steer.caller === undefined) {
+    if (steer.unsent === true) {
+      return {
+        rest:
+          place === "next_message"
+            ? "With your next message"
+            : `Unread \u00b7 ${placeWords(place)}`,
+      };
     }
-    return place === "next_message" ? "With your next message" : `Unread \u00b7 ${where}`;
+    return { rest: `Sent${compacted}` };
   }
-  return steer.compacted === true ? `${sent}, context compacted since` : sent;
+  const sender = sentBy(steer.caller);
+  if (steer.unsent === true) {
+    return { sender, rest: ` \u00b7 unread \u00b7 ${placeWords(place)}` };
+  }
+  return { sender, rest: compacted };
+}
+
+function stateWord(steer: PendingSteer, place: SteerPlace): string {
+  return joined(stateWords(steer, place));
 }
 
 function lowerFirst(word: string): string {

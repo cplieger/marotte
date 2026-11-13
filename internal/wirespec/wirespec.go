@@ -419,6 +419,7 @@ var wireEnums = []wiregen.EnumRef{
 	wiregen.StringEnum[marotte.RunEntryKind](),
 	wiregen.StringEnum[marotte.RunEntryState](),
 	wiregen.StringEnum[marotte.RunEntryOrigin](),
+	wiregen.StringEnum[marotte.RunWant](),
 	wiregen.StringEnum[marotte.RunWaitAfter](),
 	wiregen.StringEnum[marotte.SendVerb](),
 	wiregen.StringEnum[marotte.SendNowKind](),

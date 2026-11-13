@@ -157,6 +157,7 @@ func TestNotifyDoor_AnswersTheRouteSpelling(t *testing.T) {
 	for verb, want := range map[command.NotifyDelivery]string{
 		command.NotifySteer:  notify.DeliveredSteer,
 		command.NotifyPrompt: notify.DeliveredPrompt,
+		command.NotifyQueued: notify.DeliveredQueued,
 	} {
 		rig := newDoorRig(header("c1", "s1"))
 		rig.verb = verb
@@ -165,7 +166,7 @@ func TestNotifyDoor_AnswersTheRouteSpelling(t *testing.T) {
 		}
 	}
 	rig := newDoorRig(header("c1", "s1"))
-	rig.verb = "queued"
+	rig.verb = "parked"
 	if got, err := rig.door.Deliver(t.Context(), "s1", "wake", "grelot"); err == nil {
 		t.Errorf("Deliver after an unknown delivery = %q, nil; want an error, not a verb grelot cannot read", got)
 	}

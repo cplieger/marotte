@@ -65,23 +65,6 @@ func (lc *chatLifecycle) holderSourceLocked() (marotte.TurnOpenSource, bool) {
 	return 0, false
 }
 
-// promptHolder names the prompt-class turn holding admission: the bracket-owed one, else a non-finalizing own one.
-func (r *turnRegistry) promptHolder(chatID marotte.ChatID) (string, bool) {
-	lc, ok := r.lookup(chatID)
-	if !ok {
-		return "", false
-	}
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	switch {
-	case lc.pending != nil && !lc.pending.finalizing:
-		return lc.pending.ID, true
-	case lc.own != nil && !lc.own.finalizing && lc.own.Source.PromptClass():
-		return lc.own.ID, true
-	}
-	return "", false
-}
-
 // releaseReservation frees the admission slot res holds and wakes every parked waiter, of which at most one
 // acquires. A slot another reservation holds is left alone.
 func (r *turnRegistry) releaseReservation(res command.Reservation) {
@@ -159,11 +142,6 @@ func (bc *bridgeCoordinator) LifeStamp() uint64 { return bc.turns.gates.stamp() 
 // AwaitNoClose waits until no close of chatID is held (chatGates.awaitNoClose).
 func (bc *bridgeCoordinator) AwaitNoClose(ctx context.Context, chatID marotte.ChatID) (bool, error) {
 	return bc.turns.gates.awaitNoClose(ctx, chatID)
-}
-
-// PromptHolder names the prompt-class turn holding the chat's admission.
-func (bc *bridgeCoordinator) PromptHolder(chatID marotte.ChatID) (string, bool) {
-	return bc.turns.promptHolder(chatID)
 }
 
 // ReleaseTurnReservation frees the admission slot res took, waking every waiter.
@@ -394,14 +372,33 @@ func (lc *chatLifecycle) sendAttempt(
 
 // sendCommitLocked is the write commit of an attempt markSentLocked just let t's send go for: a stop requested since
 // t's first attempt was let through (sendStops) refuses the frame with command.ErrPromptStopped, and a stop requested
-// once it passed writes its session/cancel behind the frame, since both take the engine's write lock. Caller holds mu.
+// once it passed writes its session/cancel behind the frame, since both take the engine's write lock. A frame let
+// through marks t's entry prompted (runList.turnPrompted). Caller holds mu.
 func (lc *chatLifecycle) sendCommitLocked(t *activeTurn) func() error {
 	base := t.sendStops
 	return func() error {
 		if lc.stopCount.Load() != base {
 			return command.ErrPromptStopped
 		}
+		lc.markPrompted(t.ID)
 		return nil
+	}
+}
+
+// markPrompted marks turnID's entry prompted on another goroutine, so the commit, which runs under the engine's write
+// lock, takes no lifecycle lock; a steer the list then offers waits on that write lock behind the prompt's frame.
+func (lc *chatLifecycle) markPrompted(turnID string) {
+	mark := func() {
+		lc.mu.Lock()
+		defer lc.mu.Unlock()
+		if lc.ended {
+			return
+		}
+		lc.run.turnPrompted(turnID)
+		lc.wakeLocked()
+	}
+	if lc.reg != nil && lc.reg.runHost != nil {
+		lc.reg.runHost.spawnRun(mark)
 	}
 }
 

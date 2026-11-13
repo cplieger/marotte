@@ -2,10 +2,15 @@
 
 import type { Caller } from "./types.js";
 
+/** The caller's label, or "an API caller" when the program gave none. */
+export function callerName(caller: Caller): string {
+  const label = caller.label?.trim() ?? "";
+  return label === "" ? "an API caller" : label;
+}
+
 /** "Sent by <label>", or "Sent by an API caller" when the program gave no label. */
 export function sentBy(caller: Caller): string {
-  const label = caller.label?.trim() ?? "";
-  return label === "" ? "Sent by an API caller" : `Sent by ${label}`;
+  return `Sent by ${callerName(caller)}`;
 }
 
 /** The sender fields a prompt and a search hit carry: an API caller's, or `automatic` for a prompt marotte sent

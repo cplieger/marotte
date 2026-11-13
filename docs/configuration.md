@@ -153,7 +153,13 @@ environment:
 
 ## Waking a chat from another service (`MAROTTE_NOTIFY_TOKEN`)
 
-A service on your network, such as a mail or job server for your agents, can hand a chat a message with one request. marotte places the message the way **Send** on the page does: into the chat's running reply, or as a new message. A new message waits in the chat's queue while a compaction runs, or while a reply runs that it cannot join or that **Sending while a turn runs** set to Queue in Settings → General keeps it out of, and goes when what runs ends. The message box, its draft and a question the chat is waiting on you for are left as they are. The delivered message shows "Sent by" and the caller's `source`.
+A service on your network, such as a mail or job server for your agents, can hand a chat a message with one request. With nothing of yours waiting, marotte places the message the way **Send** on the page does: into the chat's running reply, or as a new message. The message box, its draft and a question the chat is waiting on you for are left as they are. The message shows "Sent by" and the caller's `source`.
+
+Your own messages go first. The service's message waits in the chat's queue, above the message box, behind every message of yours still waiting there and every message you sent into the running reply that the agent has not read yet. It also waits while a compaction runs, or while a reply runs that it cannot join or that **Sending while a turn runs** set to Queue in Settings → General keeps it out of. It then goes in order: into the reply running at that point, or as the next new message. Pressing the up arrow on one of your messages sends yours in the next turn, and the waiting message goes after that turn. A message of yours shown as "Not sent · the server restarted" does not hold it back: that row is never sent on its own, so waiting for it would leave the service's message unsent until you discard the row.
+
+Pressing **Stop** pauses the chat's whole queue, your messages and every service's alike, and drops none of them. A service's message whose reply was still starting goes back to the queue, and a message the agent had not read in the stopped reply comes back to it; both wait there paused. A service's message whose reply you stopped was delivered, so it is not sent again. A message a service sends while the queue is paused, or while the stopped reply is still ending, joins the queue paused and is answered `queued`. Nothing in a paused queue goes on its own: not on a later message from a service, not after a reply the agent starts by itself, nor when you close and reopen the chat. The queue goes on in order once the reply to a message you send, or to one of yours you send ahead with its up arrow, ends without an error, or when you press **Resume the queue** on the **Paused** row above the paused messages. A reply that ends in an error is not a Stop: the messages of yours it left waiting go after the next turn, and the service's message waits behind them until they have gone or you remove them. Nor is a reply that fails to start: its message waits in the queue until the next reply ends without an error, so a lasting failure is not retried over and over.
+
+While it waits, its row reads "Sent by" and the `source`, with no edit button and no up arrow. Its trash button discards it, and the service may send it again while the agent has not read it. Once the agent holds it in the running reply, its row keeps only the trash button. While it waits, paused or not, a later message from the same `source` replaces its text and keeps its place, so the chat holds one waiting message per `source`. While an earlier message from the same `source` is in the running reply and not read yet, a new one adds nothing and is answered `steer`. So send text that a later message can stand in for, such as a count of what is new. A message still waiting when marotte stops is not sent after the restart: the chat shows it as not read, and the service sends it again while the agent has not read it. Closing the chat keeps it in the queue, paused if it was.
 
 The agent is not told who sent the message. kiro-cli presents a message steered into a running reply as a new message from the user, and a new message as one the user typed. marotte also gives kiro-cli the `source` with a new message, and kiro-cli keeps it with that message in the session's history, but the agent does not read it there. So start `text` by naming the sender, as the example below does.
 
@@ -181,17 +187,18 @@ curl -X POST http://marotte:9847/api/sessions/$SESSION/notify \
 | --- | --- |
 | `text` | The message. Required, not only whitespace, at most 64 KiB. It may not start with `[notification/...]` or hold a `#[[kind:query]]` context reference. |
 | `source` | Who sent it, shown on the message. 1 to 32 characters of `A-Z a-z 0-9 . _ -`. |
-| `dedupe_key` | 1 to 128 printable ASCII characters. A second request for the same chat with the same key within 10 minutes of the first delivery is not delivered again. |
+| `dedupe_key` | 1 to 128 printable ASCII characters. A second request for the same chat with the same key within 10 minutes of the first answer that took the message, `queued` included, is not delivered again. Past the 10 minutes, a repeat while the message still waits replaces its text and adds no second message, as any later message from the same `source` does. |
 
 | Answer | Meaning |
 | --- | --- |
-| `200 {"delivered":"steer"}` or `200 {"delivered":"prompt"}` | Delivered into the running reply, or as a new message, now or once what runs ends. |
-| `200 {"duplicate":true}` | The same `dedupe_key` was delivered to this chat in the last 10 minutes. |
+| `200 {"delivered":"steer"}` or `200 {"delivered":"prompt"}` | Delivered into the running reply, or as a new message. |
+| `200 {"delivered":"queued"}` | Waiting in the chat's queue, as above, paused while a Stop holds the queue, and goes in order. A later message from the same `source` that replaced a waiting one's text is answered this too. |
+| `200 {"duplicate":true}` | The same `dedupe_key` was delivered or queued for this chat in the last 10 minutes. |
 | `400` | A field is missing or breaks its rule, and the error names it, or `body` when the body is not a JSON object. |
 | `401` | The token is missing or wrong, or the route is off. The off answer names `MAROTTE_NOTIFY_TOKEN`. |
 | `404` | No chat holds this session. |
 | `413` | The body is over 512 KiB. |
-| `503` with `Retry-After` | The agent engine is starting, stopping or cannot take a message now, or a request with the same key is still being delivered. Retry with the same `dedupe_key`. |
+| `503` with `Retry-After` | The agent engine is starting, stopping or cannot take a message now, a request with the same key is still being delivered, or a message over 16 KiB would have to wait behind a running reply. Retry with the same `dedupe_key`. |
 
 The token opens this route and nothing else: a request that carries it to any other address is answered `403`. This one route also skips the `ALLOWED_HOSTS` check, so a service in the same compose network can call `http://marotte:9847` without adding `marotte` to the list. Every other route keeps the check.
 

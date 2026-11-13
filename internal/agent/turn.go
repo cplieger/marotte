@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -166,6 +167,8 @@ type chatLifecycle struct {
 	// runFinal is the list the life's end left, owed to the record once the ending caller released its locks
 	// (writeFinalRun); runWritten is the record version this life last wrote.
 	runFinal []marotte.RunEntry
+	// runSteers are the steers the life's end took off the list (takeEndedSteers).
+	runSteers []marotte.RunEntry
 	// run is the chat's one ordered list of what runs next (run_list.go); only its advance takes an entry.
 	run runList
 	// work counts the life's running goroutines by kind (beginWork).
@@ -203,6 +206,8 @@ type chatLifecycle struct {
 	// without mu (sendCommitLocked).
 	stopCount atomic.Uint64
 	mu        sync.Mutex
+	// factsMu pairs each take of the steer record's facts with its apply to run (bridgeCoordinator.endsApplied).
+	factsMu sync.Mutex
 	// closer is whether a closer goroutine runs for this life; only the request that set it starts one (askClose).
 	closer bool
 	// ended is set once, when the life ends (endLifeLocked); an ended life admits nothing.
@@ -268,7 +273,9 @@ type turnRegistry struct {
 	fwdGens atomic.Uint64
 	// stopTokens mints each stop's send-hold token.
 	stopTokens atomic.Uint64
-	mu         sync.Mutex
+	// offerTokens mints each steer offer's token (orderFacts.newOffer).
+	offerTokens atomic.Uint64
+	mu          sync.Mutex
 }
 
 // turnRecords is the chat store as the turn registry writes the turn keep fact: held with the reservation, released
@@ -980,6 +987,13 @@ func (r *turnRegistry) ownTurns() map[marotte.ChatID]*activeTurn {
 		lc.mu.Unlock()
 	}
 	return out
+}
+
+// chatIDs is every chat with a life.
+func (r *turnRegistry) chatIDs() []marotte.ChatID {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Collect(maps.Keys(r.chats))
 }
 
 // busyChatIDs is every chat with a turn in flight, the only population a stale-`thinking` retraction spares; live's predicate.

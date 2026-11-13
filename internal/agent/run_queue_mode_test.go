@@ -58,16 +58,19 @@ func TestSubmit_ASendsModeDecidesBesideASteerableTurn(t *testing.T) {
 			if got := lc.runViewLocked().Send; got != marotte.SendSteer {
 				t.Fatalf("RunView.Send = %q, want steer whatever the default", got)
 			}
-			ans, _, err := lc.submitLocked(h.coord.LifeStamp(), s, mode)
-			if err != nil {
+			if _, _, err := lc.submitLocked(h.coord.LifeStamp(), s, mode); err != nil {
 				t.Fatalf("submit = %v", err)
 			}
+			_, e := lc.run.find("m-new")
+			if e == nil {
+				t.Fatal("the send is not on the list")
+			}
 			placed := marotte.SendQueue
-			if ans.Steer {
+			if e.state == marotte.RunOffered {
 				placed = marotte.SendSteer
 			}
 			if placed != tc.want {
-				t.Errorf("placed as %q (answer %+v), want %q", placed, ans, tc.want)
+				t.Errorf("placed as %q (entry %s), want %q", placed, e.state, tc.want)
 			}
 		})
 	}

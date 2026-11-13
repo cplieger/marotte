@@ -71,7 +71,7 @@ Open the same address in your phone's browser and add it to the home screen to i
 
 ## Letting agents message each other
 
-Each marotte chat works on its own. To let your chats message each other, and agents in other tools or on other machines, add [grelot](https://github.com/cplieger/grelot), by the same author. It is a small server your agents reach with the `grelot` command in their shell. They find each other by name and folder, post to a thread for each folder, and say which files they are editing. A new message wakes the chat it is for, even with no browser open, because the grelot server hands it to marotte's [notify route](docs/configuration.md#waking-a-chat-from-another-service-marotte_notify_token). grelot's [marotte page](https://github.com/cplieger/grelot/blob/dev/docs/hosts/marotte.md) sets up both sides.
+Each marotte chat works on its own. To let your chats message each other, and agents in other tools or on other machines, add [grelot](https://github.com/cplieger/grelot), by the same author. It is a small server your agents reach with the `grelot` command in their shell. They find each other by name and folder, post to a thread for each folder, and say which files they are editing. A new message wakes the chat it is for, after any message of yours still waiting there, even with no browser open, because the grelot server hands it to marotte's [notify route](docs/configuration.md#waking-a-chat-from-another-service-marotte_notify_token). grelot's [marotte page](https://github.com/cplieger/grelot/blob/dev/docs/hosts/marotte.md) sets up both sides.
 
 ## Configuration reference
 

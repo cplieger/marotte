@@ -41,16 +41,26 @@ func (q steerQueue) AwaitReadLoop(ctx context.Context, chatID marotte.ChatID, se
 
 func (q steerQueue) OnSteerJob(run func(command.SteerJob)) { q.recs.runJob = run }
 
+// SetSteerLead also marks a row the run list handed over as send-now's on the list, which owns its words once the
+// turn end returns it.
 func (q steerQueue) SetSteerLead(chatID marotte.ChatID, key string) (func(), bool) {
-	return q.recs.setLead(chatID, key)
+	undo, waiting, entry := q.recs.setLead(chatID, key)
+	if !waiting || entry == "" || !q.coord.leadSteer(chatID, entry) {
+		return undo, waiting
+	}
+	return func() {
+		undo()
+		q.coord.ClearNext(chatID, entry)
+	}, true
 }
 
 func (q steerQueue) NeedsPostLoadClear(chatID marotte.ChatID) bool {
 	return q.recs.needsPostLoadClear(chatID)
 }
 
-// PostLoadCleared parks again a row sent before the clear (one that arrived during the MCP wait), so the
-// following drain resends it in order under a fresh id.
+// PostLoadCleared: a landed clear leaves kiro-cli holding none of the record's rows. An entry row waiting for it goes
+// back to the run list still a steer, for the turn whose start ran the clear (settleEntries); any other row the clear
+// named is parked again, and a later send goes under a fresh id.
 func (q steerQueue) PostLoadCleared(chatID marotte.ChatID, cleared []string, landed bool) {
 	if !landed {
 		return
@@ -58,7 +68,12 @@ func (q steerQueue) PostLoadCleared(chatID marotte.ChatID, cleared []string, lan
 	q.do(chatID, func(rec *steerRecord, fx *steerFx) {
 		rec.reinject = false
 		rec.live(func(w *dockRow) {
-			if w.owner == "" && slices.Contains(cleared, w.kasID) && rowRuleFor(w.state, evPostLoadClear) == rPark {
+			switch {
+			case w.owner != "":
+			case w.entry != "" && (w.state == rowUnsent || w.state == rowParked):
+				w.back = fateCleared
+				fx.changed = true
+			case slices.Contains(cleared, w.kasID) && rowRuleFor(w.state, evPostLoadClear) == rPark:
 				setState(w, rowParked, fx)
 			}
 		})
@@ -95,14 +110,6 @@ func (rec *steerRecord) routeSteerLocked(
 	key, text string, from *marotte.Caller, h command.SteerHolder, fx *steerFx,
 ) (sends []command.SteerSend, refuse string) {
 	w := rec.row(key)
-	if h.Delivering && h.Turn != "" && !rec.names(h.Turn) {
-		// The turn the delivery was aimed at is no longer starting or bound.
-		if w != nil {
-			w.owner = ""
-			setState(w, rowUnsent, fx)
-		}
-		return nil, command.SteerRefuseNoTurn
-	}
 	if w == nil {
 		if w, refuse = rec.newRow(key, text, from, h.Held, fx); w == nil {
 			return nil, refuse
@@ -113,7 +120,7 @@ func (rec *steerRecord) routeSteerLocked(
 		setState(w, rowUnsent, fx)
 		return nil, command.SteerRefuseNoTurn
 	}
-	if h.PromptClass && (!h.Live || (!h.Delivering && rec.parkedBesides(w))) {
+	if h.PromptClass && (!h.Live || rec.parkedBesides(w)) {
 		setState(w, rowParked, fx)
 		return nil, ""
 	}
@@ -121,6 +128,35 @@ func (rec *steerRecord) routeSteerLocked(
 		sends = rec.routeLocked(w, fx)
 	}
 	return sends, ""
+}
+
+// RouteEntry routes a steer the chat's run list offered, under the entry's key. It is never parked: with no turn
+// holding admission, or no live bridge, it is refused, and the list takes the entry as a prompt.
+func (q steerQueue) RouteEntry(chatID marotte.ChatID, s *command.EntrySteer, h command.SteerHolder) (sends []command.SteerSend, refuse string) {
+	if _, step := chatID.StepSession(); step {
+		return nil, command.SteerRefuseNoTurn
+	}
+	if !q.recs.step(chatID, true, func(rec *steerRecord, fx *steerFx) {
+		sends, refuse = rec.routeEntryLocked(s, h, fx)
+	}) {
+		return nil, command.SteerRefuseNoTurn
+	}
+	return sends, refuse
+}
+
+func (rec *steerRecord) routeEntryLocked(
+	s *command.EntrySteer, h command.SteerHolder, fx *steerFx,
+) (sends []command.SteerSend, refuse string) {
+	key := marotte.SteerIDFor(s.Entry)
+	if !h.Held || !h.Live || rec.row(key) != nil {
+		return nil, command.SteerRefuseNoTurn
+	}
+	w, refuse := rec.newRow(key, s.Text, s.Caller, true, fx)
+	if w == nil {
+		return nil, refuse
+	}
+	w.entry, w.offer, w.sent = s.Entry, s.Offer, s.Resent
+	return rec.routeLocked(w, fx), ""
 }
 
 func (rec *steerRecord) newRow(key, text string, from *marotte.Caller, held bool, fx *steerFx) (w *dockRow, refuse string) {
@@ -208,15 +244,27 @@ func (*steerRecord) combine(id string, rows []*dockRow, s rowState, fx *steerFx)
 // SteerSent: an errored send leaves its rows where KAS may hold them, so their fate
 // is observed; only queued:false moves them.
 func (q steerQueue) SteerSent(chatID marotte.ChatID, s command.SteerSend, queued bool, err error) {
-	if err != nil || queued {
-		return
+	q.do(chatID, func(rec *steerRecord, fx *steerFx) {
+		if err != nil || queued {
+			rec.ackedLocked(s.ID)
+			return
+		}
+		rec.refusedLocked(s.ID, fx)
+	})
+}
+
+func (rec *steerRecord) ackedLocked(id string) {
+	for _, w := range rec.under(id) {
+		if w.state.inKAS() {
+			w.acked = true
+		}
 	}
-	q.do(chatID, func(rec *steerRecord, fx *steerFx) { rec.refusedLocked(s.ID, fx) })
 }
 
 func (rec *steerRecord) refusedLocked(id string, fx *steerFx) {
 	for _, w := range rec.under(id) {
 		if w.state.inKAS() && rowRuleFor(w.state, evRefused) == rCleared {
+			w.refused = true
 			setState(w, rowCleared, fx)
 		}
 	}
@@ -235,8 +283,17 @@ func (rec *steerRecord) refusedLocked(id string, fx *steerFx) {
 // BeginRemove deletes a row KAS cannot hold at once, and marks the op's rows for a clear when it may. A
 // job-held row is taken over when KAS does not hold it, refused while it might.
 func (q steerQueue) BeginRemove(chatID marotte.ChatID, key, opID string) (needsClear bool, refuse string) {
+	return q.beginRemove(chatID, key, opID, false)
+}
+
+// BeginQueueInstead is BeginRemove whose target's words go back to the run list as the user's queued row.
+func (q steerQueue) BeginQueueInstead(chatID marotte.ChatID, key, opID string) (needsClear bool, refuse string) {
+	return q.beginRemove(chatID, key, opID, true)
+}
+
+func (q steerQueue) beginRemove(chatID marotte.ChatID, key, opID string, queue bool) (needsClear bool, refuse string) {
 	if !q.do(chatID, func(rec *steerRecord, fx *steerFx) {
-		needsClear, refuse = rec.beginRemoveLocked(key, opID, fx)
+		needsClear, refuse = rec.beginRemoveLocked(key, opID, queue, fx)
 	}) {
 		refuse = command.SteerRefuseNotWaiting
 		if q.recs.gone(chatID) {
@@ -297,25 +354,45 @@ func (rec *steerRecord) clearRaces() bool {
 	return races
 }
 
-func (rec *steerRecord) beginRemoveLocked(key, opID string, fx *steerFx) (needsClear bool, refuse string) {
+func (rec *steerRecord) beginRemoveLocked(key, opID string, queue bool, fx *steerFx) (needsClear bool, refuse string) {
 	w, rule, refuse := rec.removePlanLocked(key)
-	if refuse != "" {
+	switch {
+	case refuse != "":
 		return false, refuse
+	case queue && (w.entry == "" || w.caller != nil):
+		return false, command.SteerRefuseNotQueueable
 	}
 	w.owner = ""
 	ev := deleteEvent(w.state)
 	switch rule {
 	case rDeleted:
-		retire(w, nil, fx)
+		rec.takeOut(w, queue, fx)
 		if channelRule(rec.channel, ev) == cOwed && rec.probe == "" && len(rec.unownedWaiting()) == 0 {
 			rec.channel = chanUnconfirmed
 		}
 	case rResubmit:
 		rec.mark(opID, key)
+		rec.opQueue = queue
 		return true, ""
 	case rUnhandled, rImpossible, rKeep, rRead, rCleared, rDiscarded, rCollect, rJoinProbe, rRoute, rDrop, rPark:
 	}
 	return false, ""
+}
+
+// takeOut ends a delete's target: deleted, or for a queue-instead handed back to the run list as the user's row
+// that waits for a turn of its own (fateBack).
+func (*steerRecord) takeOut(w *dockRow, queue bool, fx *steerFx) {
+	if queue {
+		handBack(w, fateBack, fx)
+		return
+	}
+	retire(w, nil, fx)
+}
+
+// handBack leaves entry row w's words to the run list under fate f; settleEntries retires the row.
+func handBack(w *dockRow, f steerFate, fx *steerFx) {
+	w.owner, w.back = "", f
+	setState(w, rowCleared, fx)
 }
 
 func deleteEvent(s rowState) steerEvent {
@@ -367,7 +444,7 @@ func (q steerQueue) RemoveCleared(chatID marotte.ChatID, opID string, cleared []
 			res.Reason = command.SteerRefuseConsumed
 		}
 		if rec.opEnd == nil {
-			res.Resend = rec.resubmitLocked(kept, fx)
+			res.Resend = rec.resubmitLocked(handBackCallers(kept, fx), fx)
 		}
 	})
 	return res
@@ -387,7 +464,7 @@ func (rec *steerRecord) keepOwnedLocked(opID string, cleared []string, fx *steer
 			w.owner = ""
 			consumed = true
 		case w.key == rec.opTarget:
-			retire(w, nil, fx)
+			rec.takeOut(w, rec.opQueue, fx)
 		case w.state == rowRead:
 			w.owner = ""
 		default:
@@ -395,6 +472,18 @@ func (rec *steerRecord) keepOwnedLocked(opID string, cleared []string, fx *steer
 		}
 	}
 	return kept, consumed
+}
+
+// handBackCallers hands each kept row of a caller's run-list entry back to the list, which places it behind the
+// user's (fateCleared), and answers the rest: one resubmit never joins a caller's words to the user's.
+func handBackCallers(kept []*dockRow, fx *steerFx) []*dockRow {
+	return slices.DeleteFunc(kept, func(w *dockRow) bool {
+		if w.entry == "" || w.caller == nil {
+			return false
+		}
+		handBack(w, fateCleared, fx)
+		return true
+	})
 }
 
 // resubmitLocked: the op's channel decides probe or plain send, unless its turn has
@@ -427,7 +516,7 @@ func (rec *steerRecord) release(opID string) {
 }
 
 func (rec *steerRecord) clearOp() {
-	rec.op, rec.opTarget, rec.opEnd, rec.opEndStale = "", "", nil, false
+	rec.op, rec.opTarget, rec.opEnd, rec.opEndStale, rec.opQueue = "", "", nil, false, false
 }
 
 func (q steerQueue) OpSent(chatID marotte.ChatID, opID string, s command.SteerSend, queued bool, err error) {
@@ -439,8 +528,8 @@ func (q steerQueue) OpSent(chatID marotte.ChatID, opID string, s command.SteerSe
 }
 
 // EndOp is the op's last look at its turn, in the step that releases it. A close hands the unread rows to a
-// pending end; a stale bind settles them here and answers reroute.
-func (q steerQueue) EndOp(chatID marotte.ChatID, opID string) (reroute bool) {
+// pending end; a stale bind settles them here.
+func (q steerQueue) EndOp(chatID marotte.ChatID, opID string) {
 	q.do(chatID, func(rec *steerRecord, fx *steerFx) {
 		if rec.op != opID {
 			return
@@ -455,13 +544,12 @@ func (q steerQueue) EndOp(chatID marotte.ChatID, opID string) (reroute bool) {
 		}
 		unread := rec.takeUnread(opID)
 		rec.clearOp()
-		reroute = q.settleOpUnread(rec, unread, end, stale, fx)
+		q.settleOpUnread(rec, unread, end, stale, fx)
 	})
-	return reroute
 }
 
 // A step's rows go "not read" at the boundary because a finished step carries nothing.
-func (q steerQueue) settleOpUnread(rec *steerRecord, unread []*dockRow, end *command.SteerTurnEnd, stale bool, fx *steerFx) (reroute bool) {
+func (q steerQueue) settleOpUnread(rec *steerRecord, unread []*dockRow, end *command.SteerTurnEnd, stale bool, fx *steerFx) {
 	switch {
 	case rec.noCarry:
 		for _, w := range unread {
@@ -472,11 +560,9 @@ func (q steerQueue) settleOpUnread(rec *steerRecord, unread []*dockRow, end *com
 		for _, w := range unread {
 			settleStaleLocked(w, fx)
 		}
-		return true
 	case len(unread) > 0:
 		q.recs.pendEndLocked(rec, unread, *end, fx)
 	}
-	return false
 }
 
 // takeUnread answers the rows owner still holds that the agent has not read,
@@ -503,7 +589,7 @@ func (q steerQueue) BeginDiscard(chatID marotte.ChatID, opID string) (needsClear
 			refuse = command.SteerRefuseSettling
 			return
 		}
-		rec.op, rec.opTarget, rec.opEnd, rec.opEndStale, rec.opChannel = opID, "", nil, false, rec.channel
+		rec.op, rec.opTarget, rec.opEnd, rec.opEndStale, rec.opChannel, rec.opQueue = opID, "", nil, false, rec.channel, false
 		rec.live(func(w *dockRow) { w.owner = opID })
 		needsClear = userInKAS || len(rec.others) > 0
 		if !needsClear {
@@ -603,6 +689,14 @@ func (q steerQueue) Release(chatID marotte.ChatID, owner string, inKASOnly bool)
 	})
 }
 
+func (q steerQueue) DeathDrained(chatID marotte.ChatID, owner string) {
+	q.do(chatID, func(rec *steerRecord, _ *steerFx) {
+		for _, w := range rec.owned(owner) {
+			w.drained = true
+		}
+	})
+}
+
 // EndUnsent makes every row the end still owns unsent and unowned, KAS-held ones
 // released where they are, and drops the end.
 func (q steerQueue) EndUnsent(chatID marotte.ChatID, owner string) {
@@ -615,43 +709,6 @@ func (q steerQueue) EndUnsent(chatID marotte.ChatID, owner string) {
 		}
 		rec.ends = slices.DeleteFunc(rec.ends, func(e pendingEnd) bool { return e.owner == owner })
 		fx.changed = true
-	})
-}
-
-// UnsentRows answers the unowned unread rows a drain may send as one prompt, lead first; none while KAS may
-// hold copies, unless the drain follows a drained bridge death, whose prompt clears KAS first.
-func (q steerQueue) UnsentRows(chatID marotte.ChatID, deathDrained bool) []command.SteerRow {
-	var out []command.SteerRow
-	q.do(chatID, func(rec *steerRecord, _ *steerFx) {
-		if rec.reinject && !deathDrained {
-			return
-		}
-		var rows []*dockRow
-		rec.live(func(w *dockRow) {
-			if w.owner == "" && w.state == rowUnsent {
-				rows = append(rows, w)
-			}
-		})
-		sortLeadFirst(rows, rec.lead)
-		for _, w := range rows {
-			out = append(out, command.SteerRow{Key: w.key, Text: w.text, Caller: w.caller})
-		}
-	})
-	return out
-}
-
-// Delivered retires the named rows once the prompt carrying them has opened: each
-// leaves the dock on a removed frame and writes no entry, since its words are that prompt's.
-func (q steerQueue) Delivered(chatID marotte.ChatID, keys []string) {
-	q.do(chatID, func(rec *steerRecord, fx *steerFx) {
-		for _, k := range keys {
-			w := rec.row(k)
-			if w == nil || w.state == rowRead {
-				continue
-			}
-			w.owner = ""
-			retire(w, nil, fx)
-		}
 	})
 }
 
@@ -670,37 +727,20 @@ func (q steerQueue) PlanFlush(chatID marotte.ChatID) (sends []command.SteerSend)
 			return
 		}
 		if rec.probe == "" {
-			sends = append(sends, rec.probeOf(waiting, fx))
+			sends = append(sends, rec.probeOf(oneSender(waiting), fx))
 		}
 	})
 	return sends
 }
 
-// NextParked parks every un-owned unsent row for turnID and answers its head (lead, else oldest), only when
-// the record names turnID; while KAS may hold copies unsent rows stay unsent.
-func (q steerQueue) NextParked(chatID marotte.ChatID, turnID string) (key, text string, ok bool) {
-	q.do(chatID, func(rec *steerRecord, fx *steerFx) {
-		if !rec.names(turnID) {
-			return
+// oneSender is the rows of the first row's sender, in order: one probe never joins two senders' words, and the rest
+// wait for the channel the probe confirms.
+func oneSender(rows []*dockRow) []*dockRow {
+	first := rows[0].caller
+	return slices.DeleteFunc(slices.Clone(rows), func(w *dockRow) bool {
+		if w.caller == nil || first == nil {
+			return w.caller != first
 		}
-		rec.absorbed(turnID)
-		var parked []*dockRow
-		rec.live(func(w *dockRow) {
-			if w.owner != "" {
-				return
-			}
-			if w.state == rowUnsent && !rec.reinject {
-				setState(w, rowParked, fx)
-			}
-			if w.state == rowParked {
-				parked = append(parked, w)
-			}
-		})
-		if len(parked) == 0 {
-			return
-		}
-		sortLeadFirst(parked, rec.lead)
-		key, text, ok = parked[0].key, parked[0].text, true
+		return w.caller.Label != first.Label
 	})
-	return key, text, ok
 }

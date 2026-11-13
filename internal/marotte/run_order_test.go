@@ -2,6 +2,7 @@ package marotte
 
 import (
 	"slices"
+	"strconv"
 	"testing"
 )
 
@@ -283,6 +284,276 @@ func TestVerbFor_Labelled(t *testing.T) {
 	}
 }
 
+// A user's send beside wakes (PROPOSAL rules 1 to 3): it outranks a wake for the running turn, rides the running turn
+// once its prompt is written and the steer offered ahead of it is answered, and is taken on an idle chat whose only
+// waiting wake is held behind the user's paused row.
+func TestVerbFor_AUserSendBesideWakes(t *testing.T) {
+	cases := []struct {
+		name    string
+		entries []RunEntry
+		mode    InterruptMode
+		kind    SendKind
+		want    SendVerb
+	}{
+		{
+			name:    "a user send steers ahead of a waiting wake",
+			entries: list(turn("A", RunRunning), d("d", RunPending)), want: SendSteer,
+		},
+		{
+			name:    "a user send steers while the wake's steer is out",
+			entries: list(turn("A", RunRunning), d("d", RunOffered)), want: SendSteer,
+		},
+		{
+			name:    "a user send rides behind the user's steer in flight",
+			entries: list(turn("A", RunRunning), u("u1", RunOffered, RunWantEither)), want: SendSteer,
+		},
+		{
+			name: "a user send steers into the wake's turn", entries: list(dTurn("D", RunRunning)), want: SendSteer,
+		},
+		{
+			name:    "a labelled send waits for a turn of its own behind the wake's",
+			entries: list(dTurn("D", RunRunning)), kind: SendLabelled, want: SendQueue,
+		},
+		{
+			name:    "a user send queues in queue mode beside a waiting wake",
+			entries: list(turn("A", RunRunning), d("d", RunPending)), mode: InterruptQueue, want: SendQueue,
+		},
+		{
+			name: "a user send waits behind the wake an idle chat takes first", entries: list(d("d", RunPending)),
+			want: SendQueue,
+		},
+		{
+			name:    "a user send is taken past a wake held behind the user's paused row",
+			entries: list(u("u1", RunPaused, RunWantPrompt), d("d", RunPending)), want: SendPrompt,
+		},
+		{
+			name:    "a queue_prompt past a held wake has nothing to queue behind",
+			entries: list(u("u1", RunPaused, RunWantPrompt), d("d", RunPending)), kind: SendQueuePrompt,
+			want: SendPrompt,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := VerbFor(tc.entries, tc.mode, tc.kind); got != tc.want {
+				t.Errorf("VerbFor = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The header's send verb is Deliver's answer for a new user send on every delivery-table shape: steer when the
+// running turn would take the user's steers once its prompt is written and the steer offered is answered, prompt when
+// the send itself is taken, else queue.
+func TestRunViewOf_SendIsDeliversAnswerForAUserSend(t *testing.T) {
+	const probe = "the-user's-new-send"
+	for _, tc := range deliverRows() {
+		t.Run(tc.name, func(t *testing.T) {
+			with := slices.Clone(tc.entries)
+			for i := range with {
+				if with[i].State == RunOffered {
+					with[i].State = RunInKAS
+				}
+			}
+			with = slices.Insert(with, insertAt(with), u(probe, RunPending, RunWantEither))
+			dl := Deliver(with, HeadFacts{Mode: tc.facts.Mode, Prompted: true})
+			want := SendQueue
+			switch {
+			case dl.Kind == DeliverSteer && userIDs(with)[dl.IDs[0]]:
+				want = SendSteer
+			case dl.Kind == DeliverPrompt && dl.IDs[0] == probe:
+				want = SendPrompt
+			}
+			if got := VerbFor(tc.entries, tc.facts.Mode, SendPlain); got != want {
+				t.Errorf("send = %q, want %q (Deliver: %s %v)", got, want, deliverKindName[dl.Kind], dl.IDs)
+			}
+		})
+	}
+}
+
+func userIDs(entries []RunEntry) map[string]bool {
+	out := map[string]bool{}
+	for i := range entries {
+		if entries[i].ByUser() {
+			out[entries[i].ID] = true
+		}
+	}
+	return out
+}
+
+// A wake's row can be discarded but never sent now (PROPOSAL rule 4). A steer offered or in kiro-cli, and a user steer
+// waiting only for the turn's prompt or the one steer offered, ride the running turn: no queue row, no arrow, and no
+// turn counted for what waits behind them. A wake behind the user's paused row waits for it.
+func TestRunViewOf_WakesAndSteers(t *testing.T) {
+	type want struct {
+		waits    map[string]RunWait
+		arrows   map[string]SendNowKind
+		inFlight []string
+		next     RunWait
+	}
+	cases := []struct {
+		name    string
+		entries []RunEntry
+		want    want
+	}{
+		{
+			name:    "a wake's row has no send-now arrow",
+			entries: list(turn("A", RunRunning), u("u", RunPending, RunWantPrompt), d("d", RunPending)),
+			want: want{
+				waits:  map[string]RunWait{"u": thisTurn(), "d": turns(2)},
+				arrows: map[string]SendNowKind{"u": sendNowStop}, next: turns(3),
+			},
+		},
+		{
+			name:    "a wake waiting for the running turn has no arrow either",
+			entries: list(turn("A", RunRunning), d("d", RunPending)),
+			want:    want{waits: map[string]RunWait{"d": thisTurn()}, arrows: map[string]SendNowKind{}, next: turns(2)},
+		},
+		{
+			name: "R42 a user send behind the steer in flight is a sending steer",
+			entries: list(
+				turn("A", RunRunning), u("u1", RunOffered, RunWantEither), u("u2", RunPending, RunWantEither),
+			),
+			want: want{
+				waits:  map[string]RunWait{"u1": thisTurn(), "u2": thisTurn()},
+				arrows: map[string]SendNowKind{}, inFlight: []string{"u2"}, next: thisTurn(),
+			},
+		},
+		{
+			name: "R43 a steer in kiro-cli counts no turn for the row behind it",
+			entries: list(
+				turn("A", RunRunning), u("u1", RunInKAS, RunWantEither), u("u2", RunPending, RunWantPrompt),
+			),
+			want: want{
+				waits:  map[string]RunWait{"u1": thisTurn(), "u2": thisTurn()},
+				arrows: map[string]SendNowKind{"u2": sendNowStop}, next: turns(2),
+			},
+		},
+		{
+			name:    "R22 a user steer waiting for the wake's turn to be prompted is a sending steer",
+			entries: list(dTurn("D", RunRunning), u("u", RunPending, RunWantEither)),
+			want: want{
+				waits:  map[string]RunWait{"u": thisTurn()},
+				arrows: map[string]SendNowKind{}, inFlight: []string{"u"}, next: thisTurn(),
+			},
+		},
+		{
+			name: "rows the reader's stop paused wait for the reader, the user's with an arrow",
+			entries: list(
+				turn("A", RunStopping), stopPaused(u("u1", RunPaused, RunWantPrompt)), stopPaused(d("d", RunPaused)),
+			),
+			want: want{
+				waits:  map[string]RunWait{"u1": waitOf(waitPaused), "d": waitOf(waitPaused)},
+				arrows: map[string]SendNowKind{"u1": sendNowNow}, next: waitOf(waitNext),
+			},
+		},
+		{
+			name:    "R12 a wake waits for the user's paused row",
+			entries: list(turn("A", RunStopping), u("u1", RunPaused, RunWantPrompt), d("d", RunPending)),
+			want: want{
+				waits:  map[string]RunWait{"u1": turns(1), "d": turns(1)},
+				arrows: map[string]SendNowKind{"u1": sendNowNow}, next: waitOf(waitNext),
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v := RunViewOf(tc.entries, 0)
+			var inFlight []string
+			for _, e := range v.Entries {
+				if w, ok := tc.want.waits[e.ID]; ok && e.Wait != w {
+					t.Errorf("%s wait: got %+v, want %+v", e.ID, e.Wait, w)
+				}
+				if e.SendNow != tc.want.arrows[e.ID] {
+					t.Errorf("%s send_now: got %q, want %q", e.ID, e.SendNow, tc.want.arrows[e.ID])
+				}
+				if e.SteerInFlight {
+					inFlight = append(inFlight, e.ID)
+				}
+			}
+			if !slices.Equal(inFlight, tc.want.inFlight) {
+				t.Errorf("steers in flight: got %v, want %v", inFlight, tc.want.inFlight)
+			}
+			if v.NextWait != tc.want.next {
+				t.Errorf("next_wait: got %+v, want %+v", v.NextWait, tc.want.next)
+			}
+		})
+	}
+}
+
+// A queue row is a row waiting to be sent as its own turn: pending, paused or held, the user's or a wake. A steer
+// offered, in kiro-cli or in flight is drawn as a steer, and a live or non-row entry is no queue row.
+func TestRunEntryView_WaitingToSend(t *testing.T) {
+	inFlight := RunEntryView{RunEntry: u("u", RunPending, RunWantEither), SteerInFlight: true}
+	for _, tc := range []struct {
+		name string
+		view RunEntryView
+		want bool
+	}{
+		{name: "a pending row", view: RunEntryView{RunEntry: u("u", RunPending, RunWantPrompt)}, want: true},
+		{name: "a paused row", view: RunEntryView{RunEntry: u("u", RunPaused, RunWantPrompt)}, want: true},
+		{name: "a held row", view: RunEntryView{RunEntry: u("u", RunHeld, RunWantPrompt)}, want: true},
+		{name: "a pending wake", view: RunEntryView{RunEntry: d("d", RunPending)}, want: true},
+		{name: "a steer offered", view: RunEntryView{RunEntry: u("u", RunOffered, RunWantEither)}, want: false},
+		{name: "a steer in kiro-cli", view: RunEntryView{RunEntry: d("d", RunInKAS)}, want: false},
+		{name: "a steer in flight", view: inFlight, want: false},
+		{name: "a starting row", view: RunEntryView{RunEntry: u("u", RunStarting, RunWantPrompt)}, want: false},
+		{name: "a pending compaction", view: RunEntryView{RunEntry: compaction(RunPending)}, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.view.WaitingToSend(); got != tc.want {
+				t.Errorf("WaitingToSend = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// A row offered to kiro-cli as a steer, or held in its buffer, is a send not yet delivered: it never holds the chat.
+func TestLivePrefix_EndsBeforeASteerInFlight(t *testing.T) {
+	for _, s := range []RunEntryState{RunOffered, RunInKAS} {
+		t.Run(string(s), func(t *testing.T) {
+			got := LivePrefix([]RunEntry{turn("A", RunRunning), row("m-s", s)})
+			if len(got) != 1 || got[0].ID != "A" {
+				t.Errorf("live prefix = %+v, want only the running turn A", got)
+			}
+		})
+	}
+}
+
+// A user's send may later be steered only when it is a plain send that meets a running turn taking steers (DESIGN
+// section 2 "Want"); every send that would queue behind anything else stays a turn of its own ("two prompts, in
+// order"), even once a steerable turn runs.
+func TestWantFor(t *testing.T) {
+	notSteerable := turn("A", RunRunning)
+	notSteerable.Steerable = false
+	cases := []struct {
+		name    string
+		entries []RunEntry
+		mode    InterruptMode
+		kind    SendKind
+		want    RunWant
+	}{
+		{name: "a plain send against a running steerable turn", entries: list(turn("A", RunRunning)), want: RunWantEither},
+		{name: "a plain send against kiro-cli's bracketed turn", entries: list(wire("w", RunRunning)), want: RunWantEither},
+		{name: "a plain send on an idle list", want: RunWantPrompt},
+		{name: "a labelled send", entries: list(turn("A", RunRunning)), kind: SendLabelled, want: RunWantPrompt},
+		{name: "a queue_prompt", entries: list(turn("A", RunRunning)), kind: SendQueuePrompt, want: RunWantPrompt},
+		{name: "queue mode", entries: list(turn("A", RunRunning)), mode: InterruptQueue, want: RunWantPrompt},
+		{name: "behind a running compaction", entries: list(compaction(RunRunning)), want: RunWantPrompt},
+		{name: "against a stopping turn", entries: list(turn("A", RunStopping)), want: RunWantPrompt},
+		{name: "against a starting turn", entries: list(turn("A", RunStarting)), want: RunWantPrompt},
+		{name: "against a turn that takes no steers", entries: list(notSteerable), want: RunWantPrompt},
+		{name: "against kiro-cli's run with no turn here", entries: list(runEntry()), want: RunWantPrompt},
+		{name: "beside a yielding fold turn", entries: list(fold("f", true)), want: RunWantPrompt},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := WantFor(tc.entries, tc.mode, tc.kind); got != tc.want {
+				t.Errorf("WantFor = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestInsertAt_BeforeTheFirstPausedRow(t *testing.T) {
 	entries := []RunEntry{turn("A", RunStopping), row("m-q1", RunPending), row("m-q0", RunPaused)}
 	if got := insertAt(entries); got != 2 {
@@ -300,7 +571,8 @@ func TestSanitizeRun(t *testing.T) {
 	next.Next = true
 	in := []RunEntry{
 		wire("w", RunRunning), compaction(RunPending), opened, taken, row("m-q1", RunPending),
-		{ID: "u-1", Kind: RunKindUnread, State: RunPending, Row: &QueuedPrompt{ID: "u-1"}},
+		// A kind an earlier build stored and this one no longer writes.
+		{ID: "u-1", Kind: "unread", State: RunPending, Row: &QueuedPrompt{ID: "u-1"}},
 		{ID: "r-1", Kind: RunKindRetry, State: RunPending, Row: &QueuedPrompt{ID: "r-1"}},
 		next, row("m-q0", RunPaused), row("m-h", RunHeld), carried, failsafeResume(),
 	}
@@ -331,6 +603,60 @@ func TestSanitizeRun(t *testing.T) {
 			}
 		}
 	})
+}
+
+// A wake from before a restart is never sent (grelot sends again while it stays unread); a later life of the chat in
+// the same process keeps a waiting wake as it was: pending, or paused by a stop, which a close never undoes. A steer
+// kiro-cli holds or was handed is no queue row in any life.
+func TestSanitizeRun_DropsNotifyRowsOnAProcessStart(t *testing.T) {
+	in := list(
+		u("m-u1", RunPending, RunWantPrompt), d("n-1", RunPending), unread(u("m-u2", RunPending, RunWantPrompt)),
+		u("m-k", RunInKAS, RunWantEither), u("m-o", RunOffered, RunWantEither), d("n-k", RunInKAS),
+		caller(d("n-o", RunOffered), "ci"), caller(d("n-p", RunPaused), "ci"),
+	)
+	states := func(es []RunEntry) (out []string) {
+		for _, e := range es {
+			out = append(out, e.ID+":"+string(e.State))
+		}
+		return out
+	}
+	t.Run("a process's first life", func(t *testing.T) {
+		got := states(SanitizeRun(in, true))
+		want := []string{"m-u1:held", "m-u2:held"}
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v: only the user's queued words, held", got, want)
+		}
+	})
+	t.Run("a later life", func(t *testing.T) {
+		got := states(SanitizeRun(in, false))
+		want := []string{"m-u1:paused", "n-1:pending", "m-u2:paused", "n-p:paused"}
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v: the user's rows paused, each wake as it waited", got, want)
+		}
+	})
+}
+
+// A row the reader's stop paused keeps the mark into a later life of the chat, so the queue stays paused there; a row
+// a process start holds is no longer paused and loses it.
+func TestSanitizeRun_KeepsTheStopPauseOnAPausedRow(t *testing.T) {
+	in := list(stopPaused(u("m-u", RunPaused, RunWantPrompt)), caller(stopPaused(d("n-1", RunPaused)), "ci"))
+	marks := func(es []RunEntry) (out []string) {
+		for _, e := range es {
+			out = append(out, e.ID+":"+string(e.State)+":"+strconv.FormatBool(e.StopPaused))
+		}
+		return out
+	}
+	if got, want := marks(SanitizeRun(in, false)), []string{"m-u:paused:true", "n-1:paused:true"}; !slices.Equal(got, want) {
+		t.Errorf("a later life: got %v, want %v", got, want)
+	}
+	if got, want := marks(SanitizeRun(in, true)), []string{"m-u:held:false"}; !slices.Equal(got, want) {
+		t.Errorf("a process's first life: got %v, want %v", got, want)
+	}
+}
+
+func stopPaused(e RunEntry) RunEntry {
+	e.StopPaused = true
+	return e
 }
 
 // KAS re-prompts what a session/cancel cleared whoever sent the cancel, so marotte's failsafe stop reads as the

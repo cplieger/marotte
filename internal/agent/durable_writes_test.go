@@ -115,11 +115,6 @@ var durableWriteSites = []durableSite{{
 	because: "where a receiver's steering epoch ended, which no replay carries and the next clear's settling reads",
 }, {
 	file:    "internal/agent/run_queue.go",
-	fn:      "holdCarried",
-	calls:   []string{"Mutate"},
-	because: "a shutdown's unread steers as the Held row the next process shows",
-}, {
-	file:    "internal/agent/run_queue.go",
 	fn:      "writeRun",
 	calls:   []string{"Mutate"},
 	because: "the run list's projection: the messages waiting to be sent, which a reload and the next process show",

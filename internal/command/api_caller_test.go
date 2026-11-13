@@ -82,6 +82,7 @@ func newCallerFixture(t *testing.T) *callerFixture {
 
 	d := New()
 	d.status = &fakeChatStatus{}
+	d.prompts = roles
 	d.register(marotte.CmdPrompt, func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
 		return cmdPrompt(ctx, roles, cmd)
 	})
