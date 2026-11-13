@@ -64,7 +64,7 @@
       "sites": [
         "internal/agent/run_appender.go:201",
         "internal/agent/run_bounds.go:473",
-        "internal/agent/run_plan.go:116",
+        "internal/agent/run_plan.go:138",
         "internal/translate/steering.go:130",
         "internal/translate/steering.go:272"
       ]
@@ -288,7 +288,7 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/run_plan.go:116",
+      "site": "internal/agent/run_plan.go:138",
       "form": "literal",
       "origin": "agent",
       "state": "read",
