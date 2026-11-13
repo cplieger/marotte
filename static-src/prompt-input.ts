@@ -12,14 +12,7 @@ import { activeSession, getActive, getActiveId } from "./store.js";
 import { afterWords } from "./run-order.js";
 import { payloadOf, turnOpenOf } from "./turns.js";
 import { fixIOSViewport } from "./platform.js";
-import {
-  ICON_SEND,
-  ICON_CANCEL,
-  ICON_ALERT,
-  ICON_QUEUE_UI,
-  ICON_MIC,
-  ICON_MIC_STOP,
-} from "./icons.js";
+import { ICON_SEND, ICON_CANCEL, ICON_ALERT, ICON_QUEUE_UI, ICON_MIC } from "./icons.js";
 import { interruptDefault, otherInterrupt } from "./interrupt-default.js";
 import { sendFaces, type Faces } from "./send-faces.js";
 import { NO_DICTATION, type Dictation } from "./dictation.js";
@@ -148,7 +141,7 @@ function paintDictate(btn: HTMLButtonElement, listening: boolean): void {
     : ["Dictate", "Stop", "Dictate"];
   btn.replaceChildren(
     el("span", { className: "send-btn-label", "data-reserve": other }, el("span", {}, word)),
-    iconEl(listening ? ICON_MIC_STOP : ICON_MIC),
+    iconEl(listening ? ICON_CANCEL : ICON_MIC),
   );
   btn.setAttribute("aria-label", name);
   btn.setAttribute("data-tooltip", name);
