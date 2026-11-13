@@ -43,7 +43,6 @@ type memoryImportLine struct {
 type memoryImportReport struct {
 	Skipped    []memoryImportLine `json:"skipped"`
 	Failed     []memoryImportLine `json:"failed"`
-	TotalLines int                `json:"total_lines"`
 	Added      int                `json:"added"`
 	Duplicates int                `json:"duplicates"`
 }
@@ -58,14 +57,13 @@ func decodeMemoryImportReport(raw json.RawMessage) (memoryImportReport, error) {
 		Duplicates []json.RawMessage  `json:"duplicates"`
 		Skipped    []memoryImportLine `json:"skipped"`
 		Failed     []memoryImportLine `json:"failed"`
-		TotalLines int                `json:"totalLines"`
 	}
 	if err := json.Unmarshal(raw, &res); err != nil {
 		return memoryImportReport{}, err
 	}
 	return memoryImportReport{
 		Skipped: boundedImportLines(res.Skipped), Failed: boundedImportLines(res.Failed),
-		TotalLines: res.TotalLines, Added: len(res.Added), Duplicates: len(res.Duplicates),
+		Added: len(res.Added), Duplicates: len(res.Duplicates),
 	}, nil
 }
 

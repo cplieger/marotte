@@ -66,7 +66,13 @@ vi.mock("./actions/memory.js", async (importOriginal) => ({
   },
 }));
 
+// Called through, so the toast and the announcement an import raises are observable.
+vi.mock("./toast.js", { spy: true });
+vi.mock("./legacy-ui/announce.js", { spy: true });
+
 import { renderMemoriesPanel, setMemoryCountsListener, _resetMemoriesForTest } from "./memories.js";
+import * as toast from "./toast.js";
+import { announce } from "./legacy-ui/announce.js";
 import { confirm } from "./confirm.js";
 import { apiGetTypedOrError } from "./api-client.js";
 import { BUS_ENGINE_READY, dispatch, emitBus } from "./bus.js";
@@ -538,6 +544,8 @@ describe("Import and Export", () => {
 
   beforeEach(() => {
     sent.length = 0;
+    vi.mocked(toast.error).mockClear();
+    vi.mocked(announce).mockClear();
     answer = () => new Response("{}", { status: 200 });
     vi.stubGlobal(
       "fetch",
@@ -623,7 +631,6 @@ describe("Import and Export", () => {
     answer = () =>
       new Response(
         JSON.stringify({
-          total_lines: 5,
           added: 2,
           duplicates: 1,
           skipped: [{ line: 2, reason: "duplicate_in_file" }],
@@ -653,19 +660,79 @@ describe("Import and Export", () => {
     ]);
   });
 
-  it("reads a chosen file into the paste box", async () => {
-    await openImport();
+  /** Answers the next file dialog with `file`, and returns the inputs it opened on. */
+  function pickWith(file: File): HTMLInputElement[] {
+    const opened: HTMLInputElement[] = [];
     vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(function (
       this: HTMLInputElement,
     ) {
+      opened.push(this);
       const dt = new DataTransfer();
-      dt.items.add(new File(['{"from":"file"}'], "memories.jsonl"));
+      dt.items.add(file);
       this.files = dt.files;
       this.dispatchEvent(new Event("change"));
     });
+    return opened;
+  }
+
+  it("reads a chosen file into the paste box", async () => {
+    await openImport();
+    pickWith(new File(['{"from":"file"}'], "memories.jsonl"));
     maybeButton(dialog(), "Choose file")?.click();
     await settle();
     expect(pasteBox().value).toBe('{"from":"file"}');
+  });
+
+  it("offers one file to choose", async () => {
+    await openImport();
+    const opened = pickWith(new File(["{}"], "memories.jsonl"));
+    maybeButton(dialog(), "Choose file")?.click();
+    await settle();
+    expect(opened).toHaveLength(1);
+    expect(opened[0]?.multiple).toBe(false);
+  });
+
+  it("refuses a chosen file over kiro-cli's 10 MiB limit without reading it", async () => {
+    await openImport();
+    pickWith(new File([new Uint8Array(10 * 1024 * 1024 + 1).fill(0x61)], "big.jsonl"));
+    maybeButton(dialog(), "Choose file")?.click();
+    await settle();
+    expect(pasteBox().value).toBe("");
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+      "The import is over kiro-cli's 10 MiB limit.",
+    );
+  });
+
+  it("says when the chosen file cannot be read", async () => {
+    await openImport();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(Blob.prototype, "text").mockRejectedValue(
+      new DOMException("gone", "NotReadableError"),
+    );
+    pickWith(new File(["{}"], "memories.jsonl"));
+    maybeButton(dialog(), "Choose file")?.click();
+    await settle();
+    expect(pasteBox().value).toBe("");
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith("Couldn't read the chosen file.");
+  });
+
+  it("says when the import's report cannot be read, and moves focus to it", async () => {
+    answer = () =>
+      new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await openImport();
+    pasteBox().value = '{"a":1}';
+    pasteBox().dispatchEvent(new Event("input"));
+    maybeButton(dialog(), "Import")?.click();
+    await settle();
+
+    const sentence =
+      "The import was sent, but its report could not be read. The list shows what landed.";
+    const report = dialog().querySelector<HTMLElement>(".cp-batch-report");
+    expect(report?.hidden).toBe(false);
+    expect(report?.textContent).toBe(sentence);
+    expect(document.activeElement).toBe(report);
+    expect(vi.mocked(announce)).toHaveBeenCalledWith(sentence);
   });
 
   it("Export downloads the document", async () => {

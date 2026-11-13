@@ -99,8 +99,8 @@ func TestMemoryImport_SendsTheBodyAsContentAndReportsPerLine(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.TotalLines != 4 || got.Added != 1 || got.Duplicates != 1 {
-		t.Errorf("report = %+v, want 4 lines, 1 added, 1 duplicate", got)
+	if got.Added != 1 || got.Duplicates != 1 {
+		t.Errorf("report = %+v, want 1 added, 1 duplicate", got)
 	}
 	if len(got.Skipped) != 1 || got.Skipped[0] != (memoryImportLine{Line: 3, Reason: "validation", Detail: "title: title is empty"}) {
 		t.Errorf("skipped = %+v, want line 3 validation with its detail", got.Skipped)
@@ -137,6 +137,37 @@ func TestMemoryImport_KASContentRefusalIs400WithItsText(t *testing.T) {
 	rec := serveMemoryRoute(h, httptest.NewRequest(http.MethodPost, "/api/memory/import", strings.NewReader("  \n")))
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "import content is empty.") {
 		t.Errorf("POST = %d %s, want 400 with KAS's text", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMemoryImport_UnreadableReportStillRefetches(t *testing.T) {
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	// KAS answered, so lines may have landed, but added is a count where the report carries records.
+	br.setCallResult(methodKiroMemoryImport, json.RawMessage(`{"added":3}`))
+	before := len(eventsOfType(h, marotte.EventMemoriesChanged))
+
+	rec := serveMemoryRoute(h, httptest.NewRequest(http.MethodPost, "/api/memory/import", strings.NewReader("{}\n")))
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("POST = %d %s, want 502 for an unreadable report", rec.Code, rec.Body.String())
+	}
+	awaitEventCount(t, h, marotte.EventMemoriesChanged, before+1)
+	if got := len(eventsOfType(h, marotte.EventMemoriesChanged)); got != before+1 {
+		t.Errorf("memories_changed events = %d, want exactly %d", got, before+1)
+	}
+}
+
+func TestMemoryExport_NoContentIs502(t *testing.T) {
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br.setCallResult(methodKiroMemoryExport, json.RawMessage(`{"format":"json"}`))
+
+	rec := serveMemoryRoute(h, httptest.NewRequest(http.MethodGet, "/api/memory/export", nil))
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("GET /api/memory/export = %d %s, want 502 for a reply with no content", rec.Code, rec.Body.String())
+	}
+	if cd := rec.Header().Get("Content-Disposition"); cd != "" {
+		t.Errorf("Content-Disposition = %q, want none on a failure", cd)
 	}
 }
 

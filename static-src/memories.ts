@@ -24,6 +24,7 @@ import { createModal } from "./legacy-ui/modal.js";
 import { announce } from "./legacy-ui/announce.js";
 import { makeCopyButton } from "./code-blocks.js";
 import { openFileDialog } from "./file-dialog.js";
+import * as toast from "./toast.js";
 
 interface MemoryRecord {
   readonly id: string;
@@ -499,6 +500,9 @@ function transferButtons(): HTMLElement[] {
   return [imp, exp];
 }
 
+/** The server's memoryImportMaxBytes, kiro-cli's own import limit, so an oversize file is never read. */
+const IMPORT_MAX_BYTES = 10 * 1024 * 1024;
+
 function importDialog(prompt: string): void {
   // The text as the default value keeps the caret at the start; assigning .value puts it at the
   // end and Chromium scrolls the box to it on open.
@@ -528,16 +532,30 @@ function importDialog(prompt: string): void {
   syncSubmit();
   paste.addEventListener("input", syncSubmit);
   choose.addEventListener("click", () => {
-    openFileDialog(choose, (files) => {
-      const file = files[0];
-      if (file === undefined) {
-        return;
-      }
-      void file.text().then((text) => {
-        paste.value = text;
-        syncSubmit();
-      });
-    });
+    openFileDialog(
+      choose,
+      (files) => {
+        const file = files[0];
+        if (file === undefined) {
+          return;
+        }
+        if (file.size > IMPORT_MAX_BYTES) {
+          toast.error("The import is over kiro-cli's 10 MiB limit.");
+          return;
+        }
+        void file
+          .text()
+          .then((text) => {
+            paste.value = text;
+            syncSubmit();
+          })
+          .catch((err: unknown) => {
+            console.error("memory import: reading the chosen file failed", err);
+            toast.error("Couldn't read the chosen file.");
+          });
+      },
+      { multiple: false },
+    );
   });
   submit.addEventListener("click", () => {
     busy = true;
@@ -584,14 +602,12 @@ function showImportReport(report: HTMLElement, res: unknown): void {
     r = decodeImportReport(res);
   } catch (err) {
     console.error("memory import: unreadable report", err);
-    report.replaceChildren(
-      el(
-        "p",
-        {},
-        "The import was sent, but its report could not be read. The list shows what landed.",
-      ),
-    );
+    const sentence =
+      "The import was sent, but its report could not be read. The list shows what landed.";
+    report.replaceChildren(el("p", {}, sentence));
     report.hidden = false;
+    report.focus();
+    announce(sentence);
     return;
   }
   const n = (v: number): string => v.toLocaleString("en-US");
