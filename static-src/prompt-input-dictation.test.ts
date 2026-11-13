@@ -1042,7 +1042,7 @@ describe("where focus goes when dictation ends (rule 9)", () => {
     });
   });
 
-  describe("after a finger's tap starts it, the press that stops it decides", () => {
+  describe("a finger's tap", () => {
     /** A finger's tap on `btn`, focusing it as a touch engine does. */
     function fingerTap(btn: HTMLButtonElement): void {
       btn.dispatchEvent(
@@ -1053,47 +1053,67 @@ describe("where focus goes when dictation ends (rule 9)", () => {
       clickAt(btn, 1);
     }
 
-    async function tapToDictate(): Promise<void> {
-      fingerTap(sendBtn());
-      await settle();
-      speech.last().begin();
-      speech.last().hear(["hello", true]);
-      expect(document.activeElement, "the tap that starts it").toBe(sendBtn());
-    }
-
     afterEach(() => {
       // The next case's presses are a mouse's.
       pressDown(sendBtn());
       release(sendBtn(), false);
     });
 
-    it.each([
-      ["Escape", "{Escape}"],
-      ["Space", " "],
-      ["Enter", "{Enter}"],
-    ])("a keyboard's %s on the focused Stop leaves focus in the box", async (_, key) => {
-      await underFinger(async () => {
-        await tapToDictate();
-        await userEvent.keyboard(key);
-        speech.last().finish();
+    describe("after a finger's tap starts it, the press that stops it decides", () => {
+      async function tapToDictate(): Promise<void> {
+        fingerTap(sendBtn());
         await settle();
-        expect(dictation.listening.value).toBe(false);
-        expect(document.activeElement).toBe(input());
-        expect(input().value).toBe("hello");
-        expect(submitted).toEqual([]);
-        expect(cancelled).not.toHaveBeenCalled();
+        speech.last().begin();
+        speech.last().hear(["hello", true]);
+        expect(document.activeElement, "the tap that starts it").toBe(sendBtn());
+      }
+
+      it.each([
+        ["Escape", "{Escape}"],
+        ["Space", " "],
+        ["Enter", "{Enter}"],
+      ])("a keyboard's %s on the focused Stop leaves focus in the box", async (_, key) => {
+        await underFinger(async () => {
+          await tapToDictate();
+          await userEvent.keyboard(key);
+          speech.last().finish();
+          await settle();
+          expect(dictation.listening.value).toBe(false);
+          expect(document.activeElement).toBe(input());
+          expect(input().value).toBe("hello");
+          expect(submitted).toEqual([]);
+          expect(cancelled).not.toHaveBeenCalled();
+        });
+      });
+
+      it("a second tap leaves focus off the box and off the button", async () => {
+        await underFinger(async () => {
+          await tapToDictate();
+          fingerTap(sendBtn());
+          speech.last().finish();
+          await settle();
+          expect(dictation.listening.value).toBe(false);
+          expect([input(), sendBtn()]).not.toContain(document.activeElement);
+          expect(input().value).toBe("hello");
+        });
       });
     });
 
-    it("a second tap leaves focus off the box and off the button", async () => {
+    it("that stops a mouse's session puts focus in the box, where the last phrase lands", async () => {
       await underFinger(async () => {
-        await tapToDictate();
+        sendBtn().focus();
+        await startFrom(sendBtn());
+        speech.last().hear(["hello", false]);
         fingerTap(sendBtn());
-        speech.last().finish();
         await settle();
         expect(dictation.listening.value).toBe(false);
-        expect([input(), sendBtn()]).not.toContain(document.activeElement);
-        expect(input().value).toBe("hello");
+        expect(document.activeElement, "the tap that stops it").toBe(input());
+        speech.last().hear(["hello there", true]);
+        speech.last().finish();
+        await settle();
+        expect(document.activeElement).toBe(input());
+        expect(input().value).toBe("hello there");
+        expect(submitted).toEqual([]);
       });
     });
   });

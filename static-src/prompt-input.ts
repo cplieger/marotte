@@ -161,7 +161,8 @@ class PromptInputController {
   private midTurn: HTMLButtonElement | null = null;
   /** The `pointerType` of the last pointer press on a slot button. */
   private pressPointer = "";
-  /** Whether the press that last started or stopped dictation was a finger's, which never moves focus. */
+  /** Whether the press that last started or stopped dictation was a finger's; focusAfterDictation then never focuses
+   *  the box. */
   private fingerDictation = false;
   private readonly press = pressOwner((btn) => this.actOf(btn));
   /** Each chat whose send is in flight, by the token of that send. */
