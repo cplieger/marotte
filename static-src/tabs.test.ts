@@ -4,25 +4,14 @@
 // `tabs-projection.test.ts`'s subject.
 
 import type * as Dom from "./dom.js";
-import type * as GitTabs from "./git-tabs.js";
-import type * as SettingsTabs from "./settings-tabs.js";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { CloseImpact } from "./wire/types.gen.js";
 import type { Mock } from "vitest";
-import { effect } from "@cplieger/reactive";
+import { computed, effect } from "@cplieger/reactive";
 import { mountLiveRegions } from "./legacy-ui/announce.js";
 
 // Mock dependencies that tabs.ts imports at module level.
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
-// The sub-tab panel stores the view openers move; real otherwise, so the factory's lazy loaders run.
-vi.mock("./settings-tabs.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof SettingsTabs>()),
-  forceSettingsTab: vi.fn(),
-}));
-vi.mock("./git-tabs.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof GitTabs>()),
-  forceGitTab: vi.fn(),
-}));
 vi.mock("./icons.js", () => ({
   ICON_MODEL_UI: "",
   ICON_CLOSE: "",
@@ -205,10 +194,11 @@ import {
   setSettingsTab,
   openSettingsView,
   openGitView,
+  toggleSettingsView,
+  getActiveTabRoute,
+  subTabOf,
   _resetForTest,
 } from "./tabs.js";
-import { forceSettingsTab } from "./settings-tabs.js";
-import { forceGitTab } from "./git-tabs.js";
 // The namespace, for the activation seam: a named import of an export a build lacks fails the
 // whole file's linking in Browser Mode rather than only the case that calls it.
 import * as tabsModule from "./tabs.js";
@@ -4008,18 +3998,75 @@ describe("a view opener shows the sub-tab it names", () => {
   it("Settings, closed and then already open", async () => {
     await openSettingsView("tools");
     tabsModule.flushActivationForTest();
-    expect(vi.mocked(forceSettingsTab).mock.calls).toEqual([["tools"]]);
+    expect(getActiveTabRoute()).toEqual({ kind: "settings", tab: "tools" });
+    expect(subTabOf("settings")).toBe("tools");
     expect(vi.mocked(pushRoute)).toHaveBeenLastCalledWith({ kind: "settings", tab: "tools" });
 
     await openSettingsView("permissions");
-    expect(vi.mocked(forceSettingsTab)).toHaveBeenLastCalledWith("permissions");
+    expect(subTabOf("settings")).toBe("permissions");
     expect(vi.mocked(pushRoute)).toHaveBeenLastCalledWith({ kind: "settings", tab: "permissions" });
   });
 
   it("the git view", async () => {
     await openGitView("sources");
     tabsModule.flushActivationForTest();
-    expect(vi.mocked(forceGitTab).mock.calls).toEqual([["sources"]]);
+    expect(getActiveTabRoute()).toEqual({ kind: "git", tab: "sources" });
+    expect(subTabOf("git")).toBe("sources");
     expect(vi.mocked(pushRoute)).toHaveBeenLastCalledWith({ kind: "git", tab: "sources" });
+  });
+
+  it("a row the frame builds while the response is held is born on the door's route", async () => {
+    tabServer.holdResponses();
+    const opening = openSettingsView("instructions");
+    await vi.waitFor(() => {
+      expect(tabIdFor("settings")).not.toBe("");
+    });
+    expect(subTabOf("settings")).toBe("instructions");
+    tabServer.releaseResponses();
+    await opening;
+    expect(subTabOf("settings")).toBe("instructions");
+  });
+
+  it("a row the response builds is born on the door's route", async () => {
+    tabServer.setMode("response-first");
+    await openSettingsView("instructions");
+    expect(subTabOf("settings")).toBe("instructions");
+  });
+
+  it("a failed open leaves no route for a later row", async () => {
+    tabServer.failNext("open_tab");
+    await openSettingsView("tools");
+    expect(tabIdFor("settings")).toBe("");
+    tabServer.openElsewhere({ kind: "settings" });
+    tabServer.flushFrames();
+    expect(subTabOf("settings")).toBe("general");
+  });
+
+  it("a toggle onto an open background tab keeps its sub-tab", async () => {
+    await openSettingsView("tools");
+    await openChats("a");
+    await toggleSettingsView();
+    tabsModule.flushActivationForTest();
+    expect(getActiveTabRoute()).toEqual({ kind: "settings", tab: "tools" });
+  });
+});
+
+describe("subTabOf", () => {
+  it("answers null with no row and follows a background row's route", async () => {
+    const seen: (string | null)[] = [];
+    const shown = computed(() => subTabOf("settings"));
+    const stop = effect(() => {
+      seen.push(shown.value);
+    });
+    await openTab({ kind: "settings", activate: false });
+    setSettingsTab("permissions");
+    await closeTab(tabIdFor("settings"));
+    stop();
+    expect(seen).toEqual([null, "general", "permissions", null]);
+  });
+
+  it("reads History's absent tab as Chats", async () => {
+    await openTab({ kind: "history" });
+    expect(subTabOf("history")).toBe("chats");
   });
 });

@@ -108,6 +108,9 @@ export type Route =
   | RouteSettings
   | RouteWeb;
 
+/** The routes of the singletons whose row's route names a sub-tab. */
+export type SubTabRoute = RouteSettings | RouteGit | RouteDocs | RouteHistory;
+
 /** Wrapper around decodeURIComponent that returns the raw input on malformed percent-encoded
  *  sequences instead of throwing. Browsers can navigate to URLs with bare `%` characters (e.g.
  *  pasted from external tools), and popstate fires with the raw pathname. */

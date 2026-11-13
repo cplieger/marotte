@@ -59,6 +59,7 @@ export function tabsMock(): Record<string, unknown> {
     filesTabForRoute: vi.fn(() => ({ id: "", ref: "" })),
     getActiveTabId: vi.fn(() => ""),
     getActiveTabRoute: vi.fn(() => null),
+    subTabOf: vi.fn(() => null),
     getActiveTabKind: vi.fn(() => null),
     activeChatRef: vi.fn(() => ""),
     parentChatRef: vi.fn(() => ""),
