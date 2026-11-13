@@ -40,9 +40,10 @@ vi.mock("./icons.js", () => ({
   ICON_PIN_FILLED: "",
   ICON_CHEVRON_DOWN: "",
 }));
-vi.mock("./device-view.js", () => {
+vi.mock("./device-view.js", async (importOriginal) => {
   let active = "";
   return {
+    ...(await importOriginal<Record<string, unknown>>()),
     activeView: vi.fn(() => active),
     setActiveView: vi.fn((id: string) => {
       active = id;

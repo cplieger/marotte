@@ -10,7 +10,7 @@ import { page } from "vitest/browser";
 import indexHtml from "../static/index.html?raw";
 import { buildAttachmentPill } from "./attachment-pill.js";
 import { iconEl } from "./icon-el.js";
-import { ICON_CANCEL, ICON_CLOSE, ICON_HOURGLASS, ICON_MODEL, ICON_SEND } from "./icons.js";
+import { ICON_CANCEL, ICON_CLOSE, ICON_MODEL, ICON_QUEUE_UI, ICON_SEND } from "./icons.js";
 import { setActive, setSessions } from "./store.js";
 import type { updateContextBar as updateContextBarFn } from "./status.js";
 import { makeSession } from "./__test-helpers__/model.js";
@@ -44,7 +44,13 @@ const TOOLBAR = [
 ];
 
 /** Icon-only by construction, so square at the reference; the context pie carries its percentage. */
-const SQUARE = ["chat-options-btn", "task-list-pill", "midturn-send-btn", "scroll-bottom"];
+const SQUARE = [
+  "chat-options-btn",
+  "task-list-pill",
+  "midturn-send-btn",
+  "midturn-alt-btn",
+  "scroll-bottom",
+];
 
 /** The widest pills kiro-cli's catalog renders: a stand-in with as many characters as its widest model's name,
  *  with its widest tier label, and its widest built-in mode. The fit thresholds in `15-input.css` are decided on them. */
@@ -141,11 +147,17 @@ async function dress(state: State): Promise<void> {
   } else {
     send.replaceChildren(label("Cancel"), iconEl(ICON_CANCEL));
     const midTurn = byId("midturn-send-btn");
+    byId("midturn-send").hidden = false;
     midTurn.hidden = false;
     midTurn.replaceChildren(
       label(state === "steer" ? "Steer" : "Queue"),
-      iconEl(state === "steer" ? ICON_SEND : ICON_HOURGLASS),
+      iconEl(state === "steer" ? ICON_SEND : ICON_QUEUE_UI),
     );
+    // Beside a steerable turn the pill's second half offers the other action; a queue-only turn has none.
+    const alt = byId("midturn-alt-btn");
+    alt.hidden = state !== "steer";
+    byId("midturn-send").classList.toggle("send-split-both", state === "steer");
+    alt.replaceChildren(iconEl(ICON_QUEUE_UI));
     byId("task-list-pill").classList.remove("hidden");
   }
   const row = byId("attachment-row");
@@ -337,8 +349,10 @@ describe("the composer's controls and the resume button, against the toolbar's b
       const off: string[] = [];
       for (const el of controls()) {
         const hit = hitRect(el);
-        // A pill row control reaches half the row's gap past each side, so its width is the toolbar's plus one gap.
-        const reach = el.closest(".prompt-pills") === null ? 0 : rowGap();
+        // A pill row control reaches half the row's gap past each side, so its width is the toolbar's plus one gap; the
+        // send pill's first half reaches only to its seam on the side it shares with the second.
+        const seam = el.matches(".send-split > :has(+ :not([hidden]))");
+        const reach = el.closest(".prompt-pills") === null ? 0 : seam ? rowGap() / 2 : rowGap();
         if (Math.abs(height(hit) - ref.hit.h) > SLACK) {
           off.push(`${nameOf(el)} reaches ${String(height(hit))}px tall`);
         }
@@ -459,8 +473,9 @@ describe("the model and mode pills, by the room the row has", () => {
   });
 
   it("drops the text exactly where the fullest labelled row stops fitting", async () => {
-    // The fullest row (mid-turn, a plan filed) decides, so the labels do not come and go as a turn starts. A phone-shaped
-    // screen hides Send's word and the tier, a wider one shows them, so each regime has its own fit.
+    // The fullest row (mid-turn beside a steerable turn, both halves of the pill, a plan filed) decides, so the labels
+    // do not come and go as a turn starts. A phone-shaped screen hides Send's word and the tier, a wider one shows
+    // them, so each regime has its own fit.
     const box = (): HTMLElement => byId("prompt-box");
     for (const [viewport, pointer] of [
       [[768, 1024], "coarse"],
@@ -468,7 +483,7 @@ describe("the model and mode pills, by the room the row has", () => {
       [IPAD, "coarse"],
       [IPAD, "fine"],
     ] as const) {
-      await mount(viewport, pointer, "queue");
+      await mount(viewport, pointer, "steer");
       const row = document.querySelector<HTMLElement>(".prompt-pills");
       if (row === null) {
         throw new Error("no pill row");
@@ -587,7 +602,7 @@ const CENSUS: readonly Family[] = [
   },
   {
     name: "tab row",
-    selector: "#tab-list .tab",
+    selector: ".side-section-list .tab",
     kind: "row",
     documented: "10-shell-app.css `.tab`: `--tab-row-h`",
   },
@@ -694,7 +709,7 @@ const CENSUS: readonly Family[] = [
   {
     name: "disclosure and list rows",
     selector:
-      ".chat-opt-strip-btn, .run-bar-open, .run-bar-toggle, .tool-group-header, .reasoning-summary, .run-head, .run-step-head, .subagent-header, .tool-diff-stats, .native-explain-summary, .turn-file-row, .turn-info-dbtn, .turn-info-link, .turn-review-all, .entry, .entry-open, .fb-row, .ev-dock-row, .ev-tl-lane, .ev-dock-more, .ev-dock-ask-more, .dock-ask-more, .user-input-option, .git-repo-section-header, .git-file-path, .git-pr-row-title, .git-recent-commits-summary, .code-refs-summary, .forge-options-summary, .rw-more-summary, .mcp-result-summary, .always-choice-option, .compaction-head, .mcp-discovery-summary, .forge-account-repos-summary, .git-repo-section-header-toggle",
+      ".chat-opt-strip-btn, .run-bar-open, .run-bar-toggle, .tool-group-header, .reasoning-summary, .run-head, .run-step-head, .subagent-header, .tool-diff-stats, .native-explain-summary, .turn-file-row, .turn-info-dbtn, .turn-info-link, .turn-review-all, .entry, .entry-open, .fb-row, .ev-dock-row, .ev-tl-lane, .ev-dock-more, .ev-dock-ask-more, .dock-ask-more, .user-input-option, .git-repo-section-header, .git-file-path, .git-pr-row-title, .git-recent-commits-summary, .code-refs-summary, .forge-options-summary, .rw-more-summary, .mcp-result-summary, .always-choice-option, .compaction-head, .mcp-discovery-summary, .forge-account-repos-summary, .git-repo-section-header-toggle, .side-section-toggle",
     kind: "row",
     documented: "each family's `--row-tap*` rule: a row, its own target",
   },
@@ -874,7 +889,13 @@ const COVERS: Readonly<Record<Surface, readonly string[]>> = {
     ".attachment-open",
     ".attachment-close",
   ],
-  "chat steer": ["#midturn-send-btn", "#task-list-pill", "#send-btn", ".attachment-close"],
+  "chat steer": [
+    "#midturn-send-btn",
+    "#midturn-alt-btn",
+    "#task-list-pill",
+    "#send-btn",
+    ".attachment-close",
+  ],
   "chat queue": ["#midturn-send-btn", "#task-list-pill", "#send-btn", "#scroll-bottom"],
   run: ["#settings-btn", "#run-send-btn", "#run-scroll-bottom"],
 };

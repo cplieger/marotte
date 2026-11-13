@@ -382,8 +382,6 @@ export interface ChatHeader {
   compaction_watermark?: string;
   /** PriorACPSessionIDs mirrors Chat's: the retention sweep reads headers only. */
   prior_acp_session_ids?: string[];
-  /** InterruptMode mirrors Chat's for the composer. */
-  interrupt_mode?: InterruptMode;
   /** Run is Chat.Run as the dock and the composer draw it. */
   run: RunView;
   /** Bot is the Bot's summary; absent on a regular chat. */
@@ -767,6 +765,8 @@ export interface EffectiveSettings {
  * siblings); it defaults to settings.DefaultMemoryMode, kiro-cli's own.
  */
   memory_mode: string;
+  /** InterruptMode is the composer's default beside a running turn, steer unless queue was chosen. */
+  interrupt_mode: InterruptMode;
   /** SpecPlanning is "off", "quick" or "full"; default off, matching kiro-cli. */
   spec_planning: string;
   /**
@@ -4234,9 +4234,9 @@ export interface TabSubject {
  */
   seen?: number;
   /**
- * Pinned sorts a tab ahead of every unpinned one. The partition is applied
- * by the client when it renders (applyPinOrder); the stored slice keeps the
- * order it was given.
+ * Pinned seats a tab in the sidebar's Pinned section. The sections are drawn
+ * by the client (applySectionOrder); the stored slice keeps the order it was
+ * given.
  */
   pinned: boolean;
   /**

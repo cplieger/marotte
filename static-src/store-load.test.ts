@@ -459,13 +459,6 @@ describe("loadList rebuilds each row from the header", () => {
     expect((await rebuild(header("c1"))).pending_model).toBeUndefined();
   });
 
-  it("replaces the interrupt mode, an absent one reading as steer", async () => {
-    seedSession("c1", { interrupt_mode: "queue" });
-    expect((await rebuild(header("c1"))).interrupt_mode).toBe("steer");
-    const fresh = await rebuild(header("c1", { interrupt_mode: "queue" }));
-    expect(fresh.interrupt_mode).toBe("queue");
-  });
-
   it("replaces the run order from the reloaded list only with a newer version", async () => {
     seedSession("c1", { run: runAt(2, [rowEntry("m-old")]) });
     const older = await rebuild(header("c1", { run: runAt(1, [rowEntry("m-stale")]) }));

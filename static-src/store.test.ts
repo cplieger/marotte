@@ -1082,15 +1082,6 @@ describe("upsertHeader re-syncs an existing row", () => {
     expect(get("a")?.supervised_mode).toBe(false);
   });
 
-  // The mode is header-authoritative: a header without it is steer.
-  it("takes the interrupt mode in both directions", () => {
-    resetStore("a");
-    upsertHeader({ ...headerFor("a"), interrupt_mode: "queue" });
-    expect(get("a")?.interrupt_mode).toBe("queue");
-    upsertHeader(headerFor("a"));
-    expect(get("a")?.interrupt_mode).toBe("steer");
-  });
-
   // A header frame and an answer race; the run order with the higher version wins either way.
   it("takes a header's run order only when its version is newer than the one held", () => {
     resetStore("a");
@@ -1125,10 +1116,9 @@ describe("upsertHeader seeds a brand-new row", () => {
     expect(s.turn_order).toEqual([]);
   });
 
-  it("seeds the interrupt mode and the run order from the header", () => {
+  it("seeds the run order from the header", () => {
     setSessions([]);
-    upsertHeader({ ...headerFor("a"), interrupt_mode: "queue", run: runOfRows(2, ["m-q1"]) });
-    expect(get("a")?.interrupt_mode).toBe("queue");
+    upsertHeader({ ...headerFor("a"), run: runOfRows(2, ["m-q1"]) });
     expect(get("a")?.run?.entries.map((e) => e.id)).toEqual(["m-q1"]);
   });
 

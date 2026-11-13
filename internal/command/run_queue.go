@@ -18,8 +18,10 @@ import (
 // Submission is one sent message for the chat's run order (runQueue.Submit).
 type Submission struct {
 	Origin marotte.RunEntryOrigin
-	Row    marotte.QueuedPrompt
-	Kind   marotte.SendKind
+	// Mode is what the send does beside a steerable turn; empty takes the interrupt_mode setting.
+	Mode marotte.InterruptMode
+	Row  marotte.QueuedPrompt
+	Kind marotte.SendKind
 	// NoSteer rules steering out: a steer that lost its turn is placed again as a prompt or a row.
 	NoSteer bool
 	// PromptOnly is text only a prompt carries (PromptCommand.PromptOnly).
@@ -142,9 +144,6 @@ type runQueue interface {
 	StopUndone(chatID marotte.ChatID, stop *TurnStop)
 	// RunView is the chat's run order as the header draws it.
 	RunView(ctx context.Context, chatID marotte.ChatID) marotte.RunView
-	// ModeChanged republishes the chat's run order once its interrupt mode is stored, since the header's send reads
-	// the mode.
-	ModeChanged(chatID marotte.ChatID)
 }
 
 // CarryOutStop carries out a stop the run order applied outside a command, as a Cancel does: answered asks, one

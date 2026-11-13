@@ -47,12 +47,14 @@ mode=$(stat -c %a "$ROOT/home/.ssh" 2>/dev/null)
   && ok "HOME/.ssh is created 700 and HOME keeps the umask's 755" \
   || no "HOME/.ssh mode" "HOME/.ssh $mode, HOME $(stat -c %a "$ROOT/home")"
 
-# internal/composition/boot_modes.go owns folder modes. The boot creates ~/.ssh at 700 when it is
-# missing and sets no other mode; the drop-in's temp file is a file.
-stray=$(grep -nE 'chmod|mkdir[^#]* -m|--mode|install [^#]*-m' "$ENTRYPOINT" \
-  | grep -vF 'chmod 644 "$tmp"' | grep -vF 'mkdir -m 700 "$HOME/.ssh"')
+# internal/composition/boot_modes.go owns the modes of marotte's own folders. The boot creates
+# ~/.ssh at 700 when it is missing and restores the system's /tmp to 1777 (tmp_mode_test.sh), and
+# sets no other mode; the drop-in's temp file is a file.
+stray=$(grep -nE 'chmod|mkdir[^#]* -m|--mode|install [^#]*-m' "$ENTRYPOINT" | grep -vE '^[0-9]+:[[:space:]]*#' \
+  | grep -vF 'chmod 644 "$tmp"' | grep -vF 'mkdir -m 700 "$HOME/.ssh"' \
+  | grep -vF 'chmod 01777 "$dir"')
 [ -z "$stray" ] \
-  && ok "the boot script sets no folder mode beyond creating ~/.ssh at 700" \
+  && ok "the boot script sets no folder mode beyond creating ~/.ssh at 700 and restoring /tmp to 1777" \
   || no "folder mode set in entrypoint.sh" "$stray"
 
 # Its own assertion: the only entry the SERVER writes into, and a missing parent fails the first

@@ -37,6 +37,10 @@ const PATH_PIN = '<path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3
 const PATH_LIBRARY_BIG =
   '<rect width="8" height="18" x="3" y="3" rx="1"/><path d="M7 3v18"/><path d="M20.4 18.9c.2.5-.1 1.1-.6 1.3l-1.9.7c-.5.2-1.1-.1-1.3-.6L11.1 5.1c-.2-.5.1-1.1.6-1.3l1.9-.7c.5-.2 1.1.1 1.3.6Z"/>';
 
+/** Lucide `list-end`: a message moved to the end of the line, after the turn. */
+const PATH_LIST_END =
+  '<path d="M16 12H3M16 6H3M10 18H3M21 6v10a2 2 0 0 1-2 2h-5"/><path d="m16 16-2 2 2 2"/>';
+
 /** Lucide `eye`. */
 const PATH_EYE =
   '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/>' +
@@ -184,11 +188,9 @@ export const ICON_ALERT = svg(
 );
 // Lucide `arrow-up`, a direction primitive: the dock's send-now control.
 export const ICON_ARROW_UP = svg("ui", '<path d="M12 19V5M5 12l7-7 7 7"/>');
-// Lucide `list-end`: the dock's Queue instead, which moves a steer to the end of the line, after the turn.
-export const ICON_QUEUE = svg(
-  "inline",
-  '<path d="M16 12H3M16 6H3M10 18H3M21 6v10a2 2 0 0 1-2 2h-5"/><path d="m16 16-2 2 2 2"/>',
-);
+// The dock's Queue instead, which moves a steer after the turn; the composer's Queue half draws the `_UI` size.
+export const ICON_QUEUE = svg("inline", PATH_LIST_END);
+export const ICON_QUEUE_UI = svg("ui", PATH_LIST_END);
 // Lucide `arrow-right`: the turn panel's "Review all changes", which leaves the panel for the git view.
 export const ICON_ARROW_RIGHT = svg("ui", '<path d="M5 12h14M13 6l6 6-6 6"/>');
 // Go to line (Lucide "hash").

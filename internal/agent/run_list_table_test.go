@@ -354,7 +354,7 @@ func TestRunList_Table(t *testing.T) {
 				_, e := w.l.find("m-a")
 				w.l.turnClosed(listClose{turnID: e.turnID, seq: w.nextSeq, compact: marotte.RunFromTurnEnd}, w.facts())
 				w.send("m-q1", marotte.SendQueuePrompt, "")
-				return string(marotte.RunViewOf(w.l.project(), 0, "").Entries[2].Wait.After)
+				return string(marotte.RunViewOf(w.l.project(), 0).Entries[2].Wait.After)
 			},
 			wantVerb: "compaction", wantOrder: "m-a:closing compact-1:pending m-q1:pending m-q0:paused",
 		},

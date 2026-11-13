@@ -524,7 +524,6 @@ export async function loadList(signal?: AbortSignal): Promise<boolean> {
       acp_session_id: h.acp_session_id ?? "",
       current_mode_id: h.current_mode_id ?? "",
       supervised_mode: h.supervised_mode ?? false,
-      interrupt_mode: h.interrupt_mode ?? "steer",
       run: newerRun(existing?.run, h.run),
       tangent: h.tangent ?? false,
       effort: h.effort ?? "",

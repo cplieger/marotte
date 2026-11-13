@@ -6,6 +6,7 @@ import { computed, effect, el, signal, touch, untracked } from "@cplieger/reacti
 import { ask } from "./legacy-ui/ask.js";
 import { apiGetTyped } from "./api-client.js";
 import { stagedAttachment } from "./attachments.js";
+import { interruptDefault } from "./interrupt-default.js";
 import { onBus, onSSE, BUS_RECONCILE } from "./bus.js";
 import { $ } from "./dom.js";
 import { setComposerValue } from "./composer-value.js";
@@ -19,7 +20,7 @@ import { chatNotice, subjectName } from "./notice-subject.js";
 import { MAROTTE_COMMANDS } from "./typed-commands.js";
 import { decodeSlashCommandsResponse } from "./wire/decoders.gen.js";
 import type { Session } from "./types.js";
-import type { SlashCommand, SlashCommandKind } from "./wire/types.gen.js";
+import type { InterruptMode, SlashCommand, SlashCommandKind } from "./wire/types.gen.js";
 
 /** One menu row. `kind` is `marotte` for a verb typed-commands.ts handles. */
 interface MenuEntry {
@@ -29,9 +30,10 @@ interface MenuEntry {
   readonly hint: string;
 }
 
-/** Why a server-resolved row is greyed while a send would steer. */
+/** Why a server-resolved row is greyed while a send would steer: only with Steer the default, so Queue is the icon
+ *  half beside it. */
 export const BUSY_REASON =
-  "A steer cannot run this. Send it when the turn ends, or turn on Queue messages";
+  "A steer cannot run this. Press Queue instead, beside Steer, to queue it, or send it when the turn ends";
 
 const catalog = signal<readonly SlashCommand[]>([]);
 
@@ -155,15 +157,18 @@ function close(): void {
   $.promptInput.removeAttribute("aria-activedescendant");
 }
 
-/** Whether a send from the composer would steer the chat's running turn. `run.send` is the
- *  server's verb for a plain send; a staged file makes the send labelled, which never steers. */
-function steers(s: Session | undefined, attached: boolean): boolean {
-  return !attached && s !== undefined && sessionBusy(s) && s.run?.send === "steer";
+/** Whether Enter in the composer would steer the chat's running turn. `run.send` is the server's verb for a plain
+ *  send naming steer, and the default decides what Enter names; a staged file makes the send labelled, which never
+ *  steers. */
+function steers(s: Session | undefined, attached: boolean, mode: InterruptMode): boolean {
+  return (
+    mode === "steer" && !attached && s !== undefined && sessionBusy(s) && s.run?.send === "steer"
+  );
 }
 
 function slashRows(query: string): Row[] {
   const id = getActiveId();
-  const steering = id !== "" && steers(get(id), stagedAttachment.peek());
+  const steering = id !== "" && steers(get(id), stagedAttachment.peek(), interruptDefault.peek());
   return matchEntries(query, menuEntries(catalog.value)).map((e) => {
     const enabled = entryEnabled(e, steering);
     return {
@@ -467,12 +472,16 @@ export function initSlashMenu(openPicker: () => void): void {
     render();
   });
   input.addEventListener("blur", close);
-  // An open `/` menu greys its catalog rows by the chat's send verb, so a turn ending, a mode
-  // switch, a staged file or a new catalog re-renders it; else a greyed row ignores taps until the
+  // An open `/` menu greys its catalog rows by the chat's send verb, so a turn ending, a change of
+  // the default, a staged file or a new catalog re-renders it; else a greyed row ignores taps until the
   // next keystroke.
   const steering = computed(() => {
     const id = watchActiveId();
-    return id !== "" && watchBusy(id) && steers(watchSession(id), stagedAttachment.value);
+    return (
+      id !== "" &&
+      watchBusy(id) &&
+      steers(watchSession(id), stagedAttachment.value, interruptDefault.value)
+    );
   });
   stopVerbRender?.();
   stopVerbRender = effect(() => {

@@ -254,6 +254,3 @@ func (rt *Runtime) StopUndone(chatID marotte.ChatID, stop *command.TurnStop) {
 func (rt *Runtime) RunView(ctx context.Context, chatID marotte.ChatID) marotte.RunView {
 	return rt.coord.RunView(ctx, chatID)
 }
-
-// ModeChanged republishes the chat's run list after its interrupt mode changed.
-func (rt *Runtime) ModeChanged(chatID marotte.ChatID) { rt.coord.ModeChanged(chatID) }

@@ -87,14 +87,13 @@ import {
   resident,
 } from "./__test-helpers__/tab-switch-mocks.js";
 import type { Session } from "./types.js";
+import { stripRows } from "./__test-helpers__/tab-sections-markup.js";
 
 installSwitchSuite();
 
 /** The rows on the strip, departing ones excluded: no stylesheet runs their exit. */
 function rowIDs(): string[] {
-  return [...document.querySelectorAll<HTMLElement>("#tab-list [data-tab-id]:not(.exiting)")].map(
-    (e) => e.dataset["tabId"] ?? "",
-  );
+  return stripRows("[data-tab-id]:not(.exiting)").map((e) => e.dataset["tabId"] ?? "");
 }
 
 /** Strip b, a, c with C active and pinned, MRU C, A, B; the store lists B first. */
@@ -150,7 +149,7 @@ describe("a close shows at once", () => {
 
     expect(rowIDs(), "the closed row left the strip inside the click").not.toContain(c);
     const successor = document.querySelector<HTMLElement>(
-      `#tab-list [data-tab-id="${CSS.escape(a)}"]`,
+      `#tab-sections [data-tab-id="${CSS.escape(a)}"]`,
     );
     expect(successor?.classList.contains("active")).toBe(true);
     expect(successor?.getAttribute("aria-selected")).toBe("true");
@@ -159,24 +158,24 @@ describe("a close shows at once", () => {
   });
 });
 
-/** A strip three 20 px rows tall in a 24 px box, so it scrolls; removed after each case. Scroll
+/** A strip three 20 px rows tall in a 24 px scroller, so it scrolls; removed after each case. Scroll
  *  anchoring is off: it moves the offset back by a row put back above the visible ones, which
  *  would hide a missing restore. */
 function scrollableStrip(): { list: HTMLElement; dispose: () => void } {
   const style = document.createElement("style");
   style.textContent =
-    "#tab-list{display:block;height:24px;overflow:auto;overflow-anchor:none} #tab-list .tab{display:block;height:20px}";
+    "#tab-sections{display:block;height:24px;overflow:auto;overflow-anchor:none} #tab-sections .tab{display:block;height:20px}";
   document.head.appendChild(style);
-  const list = document.getElementById("tab-list");
+  const list = document.getElementById("tab-sections");
   if (list === null) {
-    throw new Error("no #tab-list");
+    throw new Error("no #tab-sections");
   }
   return { list, dispose: () => style.remove() };
 }
 
 /** End the exit of every departing row, as its animation would. */
 function endExits(): void {
-  for (const r of document.querySelectorAll<HTMLElement>("#tab-list .exiting")) {
+  for (const r of document.querySelectorAll<HTMLElement>("#tab-sections .exiting")) {
     r.dispatchEvent(new Event("animationend"));
   }
 }
@@ -200,7 +199,9 @@ describe("a refused close", () => {
     expect(rowIDs()).toEqual(before);
     expect(tabServer.subjects().find((s) => s.id === c)?.pinned).toBe(true);
     expect(
-      document.querySelector(`#tab-list [data-tab-id="${c}"]`)?.classList.contains("tab-pinned"),
+      document
+        .querySelector(`#tab-sections [data-tab-id="${c}"]`)
+        ?.classList.contains("tab-pinned"),
     ).toBe(true);
     expect(getActiveTabId()).toBe(c);
     expect(pointers.active).toBe("c");
@@ -398,15 +399,16 @@ describe("a refused close", () => {
   );
 
   it("keeps a row whose refusal lands during its exit", async () => {
+    // B, because the last pinned row's exit never plays: its emptied section hides with it.
     const ids = await closing();
-    const c = ids["c"] ?? "";
+    const b = ids["b"] ?? "";
     await frame();
     tabServer.holdResponses();
     tabServer.failNext("close_tab", 500);
 
-    const done = closeTab(c);
+    const done = closeTab(b);
     await frame();
-    const node = document.querySelector<HTMLElement>(`#tab-list [data-tab-id="${c}"]`);
+    const node = document.querySelector<HTMLElement>(`#tab-sections [data-tab-id="${b}"]`);
     expect(node?.classList.contains("exiting")).toBe(true);
     tabServer.releaseResponses();
     await done;
@@ -416,7 +418,7 @@ describe("a refused close", () => {
 
     expect(node?.isConnected, "the exit's end removed the restored row").toBe(true);
     expect(node?.classList.contains("exiting")).toBe(false);
-    expect(rowIDs()).toContain(c);
+    expect(rowIDs()).toContain(b);
   });
 
   it("restores the strip's scroll offset the removal clamped", async () => {

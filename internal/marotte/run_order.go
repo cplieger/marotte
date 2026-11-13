@@ -386,12 +386,13 @@ func waitIfInserted(entries []RunEntry, at int, e *RunEntry) RunWait {
 	return RunWait{After: waitNext}
 }
 
-// RunViewOf is the header's run order for a chat's list, its version and its interrupt mode.
-func RunViewOf(entries []RunEntry, version uint64, mode InterruptMode) RunView {
+// RunViewOf is the header's run order for a chat's list and its version. Its Send is what a plain send naming steer
+// does, so steer means both halves are open to the composer.
+func RunViewOf(entries []RunEntry, version uint64) RunView {
 	v := RunView{
 		Entries: make([]RunEntryView, len(entries)),
 		Version: version,
-		Send:    VerbFor(entries, mode, SendPlain),
+		Send:    VerbFor(entries, InterruptSteer, SendPlain),
 		Cancel:  CancelTarget(entries),
 	}
 	order := waitOrder(entries)

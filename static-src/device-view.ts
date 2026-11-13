@@ -109,6 +109,25 @@ export function setRunBarOpen(open: boolean): void {
   writeBlob({ run_bar_open: open });
 }
 
+/** Whether this screen folded the sidebar section `key`; false (open) when nothing valid is stored. */
+export function sectionFolded(key: string): boolean {
+  const folds = readBlob()["sidebar_folds"];
+  if (typeof folds !== "object" || folds === null || Array.isArray(folds)) {
+    return false;
+  }
+  return (folds as Record<string, unknown>)[key] === true;
+}
+
+/** Record one section's fold; keys this build does not know are kept. */
+export function setSectionFolded(key: string, folded: boolean): void {
+  const folds = readBlob()["sidebar_folds"];
+  const kept =
+    typeof folds === "object" && folds !== null && !Array.isArray(folds)
+      ? (folds as Record<string, unknown>)
+      : {};
+  writeBlob({ sidebar_folds: { ...kept, [key]: folded } });
+}
+
 /** The cached theme choice or null; a cache of `config.json`'s value that never outranks it. */
 export function cachedTheme(): ThemeChoice | null {
   const t = readBlob()["theme"];

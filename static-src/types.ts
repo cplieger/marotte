@@ -8,7 +8,6 @@ export type {
   // Enums
   AlwaysAllowBlock,
   EntryKind,
-  InterruptMode,
   ModelSwitchReason,
   PlanStatus,
   RunStepTranscriptState,
@@ -166,7 +165,6 @@ import type {
   EntryTurnClose,
   EntryTurnOpen,
   EntryTurnRevert,
-  InterruptMode,
   OpenEntry,
   RunView,
   SessionEffortLevel,
@@ -391,9 +389,6 @@ export interface Session {
   /** The tier parked with `pending_model` (`ChatHeader.pending_effort`); empty carries `effort`. */
   pending_effort?: string;
   supervised_mode?: boolean;
-  /** What Send means while a turn runs: a steer into it, or a follow-up held for its
-   *  end. From `ChatHeader.interrupt_mode`; absent is steer. */
-  interrupt_mode?: InterruptMode;
   /** The chat's run order (`ChatHeader.run`): what runs next, each entry's wait and the composer's
    *  verb. The server's statement; `newerRun` keeps the highest `version`. */
   run?: RunView;

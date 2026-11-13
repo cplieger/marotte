@@ -20,7 +20,6 @@ import { mayStillApply, retryUnlessStill, stillOr } from "./still-applying.js";
 import type { AttachedFile } from "../attachments.js";
 import type {
   ChatHeader,
-  InterruptMode,
   PendingSteer,
   Session,
   SessionListResponse,
@@ -36,7 +35,6 @@ import {
   getActiveId,
   setActive,
   setSupervisedMode,
-  setChatInterruptMode,
   removeChat,
   reinsertSession,
   indexOfSession,
@@ -51,7 +49,7 @@ import {
 } from "../store.js";
 import { runOfAnswer } from "../run-order.js";
 import { send as transportSend, type SendResult } from "../transport.js";
-import type { CloseImpact } from "../wire/types.gen.js";
+import type { CloseImpact, InterruptMode } from "../wire/types.gen.js";
 import { impactRefusal } from "./close-impact.js";
 
 const onChat = ({ chatID }: { readonly chatID: string }): string => chatID;
@@ -220,39 +218,6 @@ export const setSupervised = transportAction<
     onChat,
     stillOr("updating supervised mode", "Could not update supervised mode", "chat"),
   ),
-});
-
-/** What Send means while a turn runs on this chat. It touches no turn: a switch
- *  mid-turn leaves sent steers and queued rows where they are. */
-export const setInterruptMode = transportAction<
-  { chatID: string; mode: InterruptMode },
-  { prev: InterruptMode }
->({
-  name: "chat.set_interrupt_mode",
-  networkMode: "always",
-  scope: ({ chatID }) => `chat:${chatID}`,
-  command: ({ chatID, mode }) => ({
-    type: "set_interrupt_mode",
-    chat_id: chatID,
-    payload: { mode },
-  }),
-  optimistic: ({ chatID, mode }) => {
-    const session = get(chatID);
-    if (session === undefined) {
-      return undefined;
-    }
-    const prev: InterruptMode = session.interrupt_mode ?? "steer";
-    setChatInterruptMode(chatID, mode);
-    return { prev };
-  },
-  rollback: ({ chatID }, op) => {
-    if (op !== undefined) {
-      setChatInterruptMode(chatID, op.prev);
-    }
-  },
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  error: errorAbout(onChat, "Could not change what Send does mid-turn"),
 });
 
 /** The longest name the server accepts, in UTF-16 units (`marotte.MaxUserChatNameUnits`). */
@@ -854,6 +819,8 @@ interface SendPromptArgs {
   displayText?: string;
   /** The text is resolved only by a turn of its own (a catalog command, a context reference). */
   promptOnly?: boolean;
+  /** What the prompt does beside a running turn; absent leaves it to the instance's setting. */
+  interruptMode?: InterruptMode;
 }
 
 export type SendPromptAnswer =
@@ -870,7 +837,8 @@ export const sendPrompt = defineAction<SendPromptArgs, SendPromptAnswer>({
   scope: ({ chatID }) => `chat:${chatID}`,
   idempotencyKey: true,
   run: async (args, signal, ctx) => {
-    const { chatID, text, messageID, model, attachments, displayText, promptOnly } = args;
+    const { chatID, text, messageID, model, attachments, displayText, promptOnly, interruptMode } =
+      args;
     const r = await transportSend(
       {
         type: "prompt",
@@ -886,6 +854,7 @@ export const sendPrompt = defineAction<SendPromptArgs, SendPromptAnswer>({
           model,
           display_text: displayText,
           prompt_only: promptOnly === true ? true : undefined,
+          interrupt_mode: interruptMode,
           attachments:
             attachments !== undefined && attachments.length > 0 ? attachments : undefined,
         },

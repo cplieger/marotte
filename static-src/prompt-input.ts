@@ -3,8 +3,9 @@
 // send-state.ts drives three button faces: idle sends, streaming cancels, error retries; the error
 // face means there is nothing to send TO, so every other failure reports through a toast and the
 // turn's own divider. While a turn streams and the composer holds a send (text or a staged file), a
-// second button beside Cancel sends it, because a touch Return is a new line. With nothing to send,
-// a microphone takes Send's or that button's slot (send-faces.ts decides which face shows).
+// pill beside Cancel sends it, because a touch Return is a new line: its first half does the
+// interrupt_mode default, as Enter does, and its second the other action. With nothing to send, a
+// microphone takes Send's or the pill's slot (send-faces.ts decides which face shows).
 
 import { $, byId, maybeEl, queryEl } from "./dom.js";
 import { activeSession, getActive, getActiveId } from "./store.js";
@@ -15,13 +16,14 @@ import {
   ICON_SEND,
   ICON_CANCEL,
   ICON_ALERT,
-  ICON_HOURGLASS,
+  ICON_QUEUE_UI,
   ICON_MIC,
   ICON_MIC_STOP,
 } from "./icons.js";
+import { interruptDefault, otherInterrupt } from "./interrupt-default.js";
 import { sendFaces, type Faces } from "./send-faces.js";
 import { NO_DICTATION, type Dictation } from "./dictation.js";
-import { pressOwner, type Act } from "./send-press.js";
+import { isSendAct, pressOwner, type Act, type SendAct } from "./send-press.js";
 import { iconEl } from "./icon-el.js";
 import { collapseAll } from "./pill-expand.js";
 import {
@@ -38,9 +40,9 @@ import { continueList } from "./list-continue.js";
 import { applyEdit } from "./text-edit.js";
 import { sigChanged } from "./paint-sig.js";
 import { computed, effect, el, signal, touch, type ReadonlySignal } from "@cplieger/reactive";
-import type { SendVerb } from "./wire/types.gen.js";
+import type { InterruptMode, SendVerb } from "./wire/types.gen.js";
 
-/** What Send does with the text now, from the server's run order (`RunView.send`). */
+/** What a plain send naming steer does now, from the server's run order (`RunView.send`). */
 const sendVerb = computed<SendVerb>(() => activeSession.value?.run?.send ?? "prompt");
 
 /** How long a message queued now would wait, in the dock's words, so the two agree. */
@@ -63,23 +65,45 @@ function placeholderFor(verb: SendVerb, wait: string): string {
   }
 }
 
-/** The mid-turn Send's face per verb. The word is a word of the name (WCAG 2.5.3). */
+/** The mid-turn pill's faces per verb. The word is a word of the name (WCAG 2.5.3). */
 const MIDTURN_FACE: Record<
   SendVerb,
   { label: string; name: (wait: string) => string; icon: string }
 > = {
   prompt: { label: "Send", name: () => "Send", icon: ICON_SEND },
   steer: { label: "Steer", name: () => "Steer the running turn", icon: ICON_SEND },
-  queue: { label: "Queue", name: (wait) => `Queue for after ${wait}`, icon: ICON_HOURGLASS },
+  queue: { label: "Queue", name: (wait) => `Queue for after ${wait}`, icon: ICON_QUEUE_UI },
 };
+
+/** The second half's name, which it shows as the glyph alone. */
+const INSTEAD: Record<InterruptMode, string> = { steer: "Steer instead", queue: "Queue instead" };
+
+/** What the pill's halves do: the first follows the default, the second is the other action, or null where only
+ *  one can go. Beside a steerable turn a staged file queues, since a labelled send never steers. */
+function midTurnVerbs(staged: boolean): { main: SendVerb; alt: InterruptMode | null } {
+  const verb = sendVerb.peek();
+  if (verb !== "steer") {
+    return { main: verb, alt: null };
+  }
+  if (staged) {
+    return { main: "queue", alt: null };
+  }
+  const mode = interruptDefault.peek();
+  return { main: mode, alt: otherInterrupt(mode) };
+}
+
+/** The mode a send of `verb` names: a prompt names the default, for a turn that opens before it lands. */
+function modeOf(verb: SendVerb): InterruptMode {
+  return verb === "prompt" ? interruptDefault.peek() : verb;
+}
 
 /** Appended to every error tooltip. A fixed suffix rather than a test against the reason's
  *  wording, which is upstream prose. */
 const RETRY_HINT = "Send again to retry.";
 
-/** Sends the text; a send that answers later returns its result, and the composer holds the text,
- *  read-only, until then. */
-type Submit = (text: string) => Promise<unknown> | undefined;
+/** Sends the text naming what it does beside a running turn; a send that answers later returns its
+ *  result, and the composer holds the text, read-only, until then. */
+type Submit = (text: string, mode: InterruptMode) => Promise<unknown> | undefined;
 type Cancel = () => void;
 type EditLast = () => void;
 type Staged = ReadonlySignal<boolean>;
@@ -158,7 +182,9 @@ class PromptInputController {
   private onEditLast: EditLast = () => undefined;
   private staged: Staged = signal(false);
   private dictation: Dictation = NO_DICTATION;
+  private midTurnGroup: HTMLElement | null = null;
   private midTurn: HTMLButtonElement | null = null;
+  private midTurnAlt: HTMLButtonElement | null = null;
   /** The `pointerType` of the last pointer press on a slot button. */
   private pressPointer = "";
   /** Whether the press that last started or stopped dictation was a finger's; focusAfterDictation then never focuses
@@ -169,9 +195,10 @@ class PromptInputController {
   private readonly held = new Map<string, object>();
 
   /** Send whatever is in the composer. THE send path: the form's submit handler, Enter, the
-   *  mid-turn Send and the keyboard shortcut all call this, and the server's run order decides
-   *  where the prompt goes. Neither of the two ways of going through the form works. */
-  sendComposer(): void {
+   *  mid-turn pill and the keyboard shortcut all call this, and the server's run order decides
+   *  where the prompt goes; `mode` is what it does beside a running turn, the pill's first half
+   *  unless a press named the other. Neither of the two ways of going through the form works. */
+  sendComposer(mode: InterruptMode = this.enterMode()): void {
     const raw = $.promptInput.value;
     const text = raw.trim();
     if (this.heldHere() || !isSendable(text, this.staged.peek())) {
@@ -181,7 +208,7 @@ class PromptInputController {
     this.dictation.drop();
     this.exitCycling();
     const chatID = getActiveId();
-    const sending = this.onSubmit(text);
+    const sending = this.onSubmit(text, mode);
     if (sending === undefined) {
       setComposerValue("");
       return;
@@ -221,6 +248,11 @@ class PromptInputController {
       this.held.delete(chatID);
       this.applyHeld();
     }
+  }
+
+  /** What Enter does: the pill's first half. */
+  private enterMode(): InterruptMode {
+    return modeOf(midTurnVerbs(this.staged.peek()).main);
   }
 
   /** Whether the active chat's send is in flight. */
@@ -313,26 +345,39 @@ class PromptInputController {
     return !el.value.slice(pos).includes("\n");
   }
 
-  /** `hidden`, not opacity, so a hidden one leaves the tab order and the accessibility tree. */
+  /** `hidden`, not opacity, so a hidden half leaves the tab order and the accessibility tree. */
   private applyMidTurnSend(): void {
+    const group = this.midTurnGroup;
     const btn = this.midTurn;
-    if (btn === null) {
+    const alt = this.midTurnAlt;
+    if (group === null || btn === null || alt === null) {
       return;
     }
     const side = this.faces().side;
     if (side === "hidden") {
       // Its own send or the turn's end hides it under a keyboard user, who keeps their place in
       // the composer rather than falling to <body>. A tap's focus is left to the platform.
-      const keyboard = !btn.hidden && btn.matches(":focus-visible");
+      const keyboard =
+        (!btn.hidden && btn.matches(":focus-visible")) ||
+        (!alt.hidden && alt.matches(":focus-visible"));
+      group.hidden = true;
       btn.hidden = true;
+      alt.hidden = true;
+      group.classList.remove("send-split-both");
       if (keyboard) {
         $.promptInput.focus();
       }
       return;
     }
+    group.hidden = false;
     btn.hidden = false;
+    const verbs = midTurnVerbs(this.staged.peek());
+    const other = side === "dictate" ? null : verbs.alt;
+    // Before the main half's paint, so a hidden half never holds focus while the other repaints.
+    this.paintMidTurnAlt(alt, other);
+    group.classList.toggle("send-split-both", other !== null);
     const pressed = this.dictation.listening.peek();
-    const face = MIDTURN_FACE[sendVerb.peek()];
+    const face = MIDTURN_FACE[verbs.main];
     const name = face.name(queueWait.peek());
     const parts = side === "dictate" ? [side, String(pressed)] : [side, face.label, name];
     if (!sigChanged(btn, parts)) {
@@ -348,6 +393,24 @@ class PromptInputController {
     btn.setAttribute("aria-label", name);
   }
 
+  /** The pill's second half: the other action as a glyph, named by its tooltip; hidden where only one can go. */
+  private paintMidTurnAlt(alt: HTMLButtonElement, other: InterruptMode | null): void {
+    if (other === null) {
+      if (!alt.hidden && alt.matches(":focus-visible")) {
+        this.midTurn?.focus();
+      }
+      alt.hidden = true;
+      return;
+    }
+    alt.hidden = false;
+    if (!sigChanged(alt, [other])) {
+      return;
+    }
+    alt.replaceChildren(iconEl(MIDTURN_FACE[other].icon));
+    alt.setAttribute("data-tooltip", INSTEAD[other]);
+    alt.setAttribute("aria-label", INSTEAD[other]);
+  }
+
   private faces(): Faces {
     return sendFaces({
       turn: this.state.kind,
@@ -361,6 +424,13 @@ class PromptInputController {
   /** What a press on `btn` would do on the face it shows now. */
   private actOf(btn: HTMLButtonElement): Act {
     const f = this.faces();
+    if (btn === this.midTurnAlt) {
+      return midTurnVerbs(this.staged.peek()).alt ?? "send";
+    }
+    if (btn === this.midTurn && f.side === "send") {
+      const main = midTurnVerbs(this.staged.peek()).main;
+      return main === "prompt" ? "send" : main;
+    }
     const face = btn === this.midTurn ? f.side : f.main;
     switch (face) {
       case "dictate":
@@ -381,7 +451,9 @@ class PromptInputController {
 
   /** The slot button `t` is, or null. */
   private slotOf(t: EventTarget | null): HTMLButtonElement | null {
-    return t === $.sendBtn || t === this.midTurn ? (t as HTMLButtonElement) : null;
+    return t === $.sendBtn || t === this.midTurn || t === this.midTurnAlt
+      ? (t as HTMLButtonElement)
+      : null;
   }
 
   /** Every press listener below only feeds `press`, the one owner of a press; the buttons' keydown runs Escape. */
@@ -472,7 +544,7 @@ class PromptInputController {
 
   /** `start` and `stop` do nothing once the session is already in that state, so a run's later clicks cannot
    *  undo its first. */
-  private perform(act: Exclude<Act, "send">, finger: boolean): void {
+  private perform(act: Exclude<Act, SendAct>, finger: boolean): void {
     const listening = this.dictation.listening.peek();
     switch (act) {
       case "cancel":
@@ -541,7 +613,10 @@ class PromptInputController {
     // Unconditional, so nothing that ever set them can leave the composer off.
     $.sendBtn.disabled = false;
     $.promptInput.disabled = false;
-    $.promptInput.placeholder = placeholderFor(sendVerb.peek(), queueWait.peek());
+    $.promptInput.placeholder = placeholderFor(
+      midTurnVerbs(this.staged.peek()).main,
+      queueWait.peek(),
+    );
     this.applyMidTurnSend();
   }
 
@@ -580,11 +655,14 @@ class PromptInputController {
       dictation.drop();
     });
     const midTurn = byId<HTMLButtonElement>("midturn-send-btn");
+    const midTurnAlt = byId<HTMLButtonElement>("midturn-alt-btn");
+    this.midTurnGroup = byId("midturn-send");
     this.midTurn = midTurn;
-    this.wirePresses([$.sendBtn, midTurn]);
+    this.midTurnAlt = midTurnAlt;
+    this.wirePresses([$.sendBtn, midTurn, midTurnAlt]);
     $.sendBtn.addEventListener("click", (e: MouseEvent) => {
       const act = this.press({ k: "click", on: $.sendBtn, e });
-      if (act === "send") {
+      if (act !== null && isSendAct(act)) {
         // A face painted since the press (Dictate, Cancel) is type=button, so the form would not submit.
         if ($.sendBtn.type !== "submit") {
           e.preventDefault();
@@ -598,21 +676,30 @@ class PromptInputController {
         this.perform(act, this.byFinger(e));
       }
     });
-    midTurn.addEventListener("click", (e: MouseEvent) => {
-      const act = this.press({ k: "click", on: midTurn, e });
-      if (act === "send") {
-        this.sendComposer();
-      } else if (act !== null) {
-        this.perform(act, this.byFinger(e));
-      }
-    });
+    for (const half of [midTurn, midTurnAlt]) {
+      half.addEventListener("click", (e: MouseEvent) => {
+        const act = this.press({ k: "click", on: half, e });
+        if (act === null) {
+          return;
+        }
+        if (!isSendAct(act)) {
+          this.perform(act, this.byFinger(e));
+        } else if (act === "send") {
+          this.sendComposer();
+        } else {
+          this.sendComposer(act);
+        }
+      });
+    }
 
     syncComposerText();
-    // Follows the active chat's mode and queue; setSendState() paints the other input directly,
-    // because `state` is not a signal.
+    // Follows the active chat's run order and the instance's default; setSendState() paints the
+    // other input directly, because `state` is not a signal.
     effect(() => {
       touch(sendVerb);
       touch(queueWait);
+      touch(interruptDefault);
+      touch(staged);
       this.applyButtonState();
     });
     effect(() => {

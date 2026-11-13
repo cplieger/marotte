@@ -39,7 +39,6 @@ vi.mock("./toast.js", async (importOriginal) => ({
 vi.mock("./actions/chat.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ChatActions>()),
   setSupervised: { dispatch: setSupervisedDispatch },
-  setInterruptMode: { dispatch: vi.fn() },
   compactChat: { dispatch: vi.fn() },
   renameChat: { dispatch: vi.fn() },
   downloadKiroSession: { dispatch: vi.fn() },

@@ -332,10 +332,6 @@ export const decodeChatHeader: Decoder<ChatHeader> = (v) => {
     if ($v !== undefined && $v !== null) out.prior_acp_session_ids = own(o, "prior_acp_session_ids") === null ? [] : decodeArray(own(o, "prior_acp_session_ids"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.chat_header.prior_acp_session_ids");
   }
   {
-    const $v = own(o, "interrupt_mode");
-    if ($v !== undefined && $v !== null) out.interrupt_mode = reqOneOf(o, "interrupt_mode", INTERRUPT_MODES, "$.chat_header");
-  }
-  {
     const $v = own(o, "bot");
     if ($v !== undefined && $v !== null) out.bot = decodeBotSummary(own(o, "bot"));
   }
@@ -706,6 +702,7 @@ export const decodeEffectiveSettings: Decoder<EffectiveSettings> = (v) => {
     last_model: reqStr(o, "last_model", "$.effective_settings"),
     last_merge_method: reqStr(o, "last_merge_method", "$.effective_settings"),
     memory_mode: reqStr(o, "memory_mode", "$.effective_settings"),
+    interrupt_mode: reqOneOf(o, "interrupt_mode", INTERRUPT_MODES, "$.effective_settings"),
     spec_planning: reqStr(o, "spec_planning", "$.effective_settings"),
     work_validation: reqStr(o, "work_validation", "$.effective_settings"),
     cloudformation_safety_check: reqStr(o, "cloudformation_safety_check", "$.effective_settings"),

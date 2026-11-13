@@ -304,6 +304,8 @@ var configWrites = []struct {
 	{key: "trigger_max_live_runs", value: 4, reach: reachNoChat},
 	{key: "trigger_max_launches_per_hour", value: 4, reach: reachNoChat},
 	{key: settings.KeyGuardPayloadLinks, value: false, reach: reachNoChat},
+	// Read by each send that names no mode of its own, never at a session door.
+	{key: settings.KeyInterruptMode, value: "queue", reach: reachNoChat},
 	{key: settings.KeyNotificationsEnabled, value: false, reach: reachNoChat},
 	{key: settings.KeyNotifyAgentFinished, value: false, reach: reachNoChat},
 	{key: settings.KeyNotifyPRStatus, value: false, reach: reachNoChat},

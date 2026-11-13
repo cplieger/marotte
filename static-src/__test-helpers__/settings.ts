@@ -17,6 +17,7 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     knowledge_enabled: true,
     content_collection_enabled: false,
     guard_payload_links: true,
+    interrupt_mode: "steer",
     model_fallback_enabled: true,
     memory_mode: "off",
     auto_compaction_enabled: true,

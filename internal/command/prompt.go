@@ -51,6 +51,9 @@ func validatePromptPayload(cmd *marotte.ClientCommand) (marotte.PromptCommand, i
 	if !validIdent(p.Model) {
 		return p, http.StatusBadRequest, ErrInvalidPayload
 	}
+	if p.InterruptMode != "" && !p.InterruptMode.Valid() {
+		return p, http.StatusBadRequest, errUnknownInterruptMode
+	}
 	p.DisplayText = displayLabel(p.DisplayText)
 	return p, 0, nil
 }
@@ -342,7 +345,7 @@ func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 			ID: p.MessageID, Text: p.Text, Label: p.DisplayText, Attachments: p.Attachments, Caller: p.Caller,
 			Model: p.Model,
 		},
-		Origin: marotte.RunFromPrompt, Kind: sendKindOf(&p), PromptOnly: p.PromptOnly,
+		Origin: marotte.RunFromPrompt, Kind: sendKindOf(&p), Mode: p.InterruptMode, PromptOnly: p.PromptOnly,
 		Wait: true, Composer: true, Retry: !kasClaimsPromptText(p.Text),
 	}
 	for {

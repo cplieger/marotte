@@ -86,6 +86,7 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		HighThroughput:        defaultHighThroughput,
 		// kiro-cli's own default for hooks.showStatus, until a reader says otherwise.
 		HookStatusShown:   true,
+		InterruptMode:     defaultInterruptMode,
 		KnowledgeEnabled:  defaultKnowledgeEnabled,
 		ContentCollection: DefaultContentCollectionEnabled,
 		MemoryMode:        DefaultMemoryMode,
@@ -198,6 +199,7 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 			return decodeInto(&out.ContentCollection, r)
 		},
 		KeyGuardPayloadLinks:    func(r json.RawMessage) error { return decodeInto(&out.GuardPayloadLinks, r) },
+		KeyInterruptMode:        func(r json.RawMessage) error { return decodeInterruptMode(&out.InterruptMode, r) },
 		KeyMemoryMode:           func(r json.RawMessage) error { return decodeMemoryMode(&out.MemoryMode, r) },
 		KeyMCPWaitForReady:      func(r json.RawMessage) error { return decodeInto(&out.MCPWaitForReady, r) },
 		KeyNotificationsEnabled: func(r json.RawMessage) error { return decodeInto(&out.NotificationsEnabled, r) },
