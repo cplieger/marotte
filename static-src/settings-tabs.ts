@@ -1,13 +1,10 @@
-// Settings tab bar: an observable store of which panel is active, plus the DOM sync. Architecture
-// mirrors tabs.ts: one state primitive, subscribers that reflect state in the DOM and the URL;
-// setSettingsTab() also pushes the URL so deep-linking and Back work.
+// Settings tab bar: paints the panel, the pill and the subtitle the Settings row's route names.
 
-import { signal, subscribe } from "@cplieger/reactive";
+import { computed, subscribe } from "@cplieger/reactive";
 import { $, queryAll } from "./dom.js";
 import { swapViews } from "./view-swap.js";
 import type { SettingsTab } from "./route-path.js";
-import { pushRoute } from "./router.js";
-import { getActiveTabRoute, setSettingsTab as setTabRoute } from "./tabs.js";
+import { getActiveTabRoute, setSettingsTab, subTabOf } from "./tabs.js";
 import { initSegmentedBar } from "./segmented-bar.js";
 import { setPageSubtitle } from "./page-title.js";
 
@@ -25,33 +22,16 @@ export const TAB_LABELS: Readonly<Record<SettingsTab, string>> = {
   instructions: "Custom instructions",
 };
 
-type Listener = (tab: SettingsTab) => void;
-// Deduped signal: a same-value write is a no-op, so forcing the already-active tab no longer
-// re-swaps panels (which caused a double swap on first load and spurious view-transitions on
-// same-tab popstate).
-const activeTab = signal<SettingsTab>("general");
-
-function onTabChange(fn: Listener): void {
-  subscribe(activeTab, fn);
-}
-
-/** Switch to a tab. No-op if already active. Updates URL and notifies subscribers (DOM panel
- *  visibility, load callbacks, etc). */
-function setSettingsTab(tab: SettingsTab): void {
-  if (tab === activeTab.peek()) {
-    return;
-  }
-  setTabRoute(tab);
-  pushRoute({ kind: "settings", tab });
-  activeTab.value = tab;
-}
+/** Null while no Settings row is open; a computed, so a write that names the shown tab fires
+ *  nothing. */
+const shownTab = computed(() => subTabOf("settings"));
 
 // Two doors reach a loader: the tab's own ACTIVATION, through `refreshSettingsPanel`, and a sub-tab
 // SWITCH, through the subscriber below. Both are gated there rather than latched here, because a
 // panel loads once per activation and once per switch rather than once per page.
 const tabLoaders = new Map<SettingsTab, () => void>();
 
-/** Whether the subscribe-time paint has run. See the `painted` gate below. */
+/** Whether a first paint has run. See the `painted` gate below. */
 let painted = false;
 
 /** Run the tab's registered loader. `?.` is defensive rather than a tolerance for a missing
@@ -60,10 +40,12 @@ export function loadSettingsTabData(tab: SettingsTab): void {
   tabLoaders.get(tab)?.();
 }
 
-/** Reload the panel the reader is looking at. A settings tab's `refresh`, and it lives here
- *  because this module owns the private `activeTab` and exports no getter. */
+/** Reload the panel the reader is looking at: a settings tab's `refresh`. */
 export function refreshSettingsPanel(): void {
-  loadSettingsTabData(activeTab.peek());
+  const tab = shownTab.peek();
+  if (tab !== null) {
+    loadSettingsTabData(tab);
+  }
 }
 
 /** Build the tab bar and wire panel visibility. Called once from settings.ts initUI, which
@@ -84,8 +66,12 @@ export function initSettingsTabs(loaders?: Partial<Record<SettingsTab, () => voi
     onSelect: setSettingsTab,
   });
 
-  // Sync pill + panel visibility on every tab change.
-  onTabChange((tab) => {
+  subscribe(shownTab, (tab) => {
+    // No row: nothing is on screen, and a repaint of the hidden view would run a swap the
+    // successor's entry fade is using.
+    if (tab === null) {
+      return;
+    }
     paint(tab);
     const swap = (): HTMLElement | null => {
       let active: HTMLElement | null = null;
@@ -108,20 +94,12 @@ export function initSettingsTabs(loaders?: Partial<Record<SettingsTab, () => voi
     // too, so 12-chat.css suppresses this while that control shows its labels and reveals it when
     // tab-bar-fit.ts drops them.
     setPageSubtitle("settings", TAB_LABELS[tab]);
-    // TWO gates, and neither subsumes the other. `painted` refuses the SUBSCRIBE-TIME fire whatever
-    // is on screen — that is `initSettingsTabs` painting the default panel at boot, and a loader
-    // there is what put General's `kiro-cli settings` spawns on the boot path.
+    // TWO gates, and neither subsumes the other. `painted` refuses the FIRST paint whatever is on
+    // screen: a row's birth or the subscribe-time fire, which the activation's `refresh` loads. The
+    // route gate refuses a door aimed at a background row, which loads when it is activated.
     if (painted && getActiveTabRoute()?.kind === "settings") {
       loadSettingsTabData(tab);
     }
     painted = true;
   });
-}
-
-/** Externally force the active tab without pushing a URL — used by the router when back/forward
- *  navigation lands on a /settings/<tab> URL. Safe to call even if Settings isn't currently the
- *  active app tab; the tab state is preserved for when it opens. */
-export function forceSettingsTab(tab: SettingsTab): void {
-  setTabRoute(tab);
-  activeTab.value = tab;
 }

@@ -65,8 +65,9 @@ const deleteRunDispatch = vi.fn(async () => ({ ok: true }));
 const confirmMock = vi.fn(async (_q: Confirmation) => true);
 const closeTab = vi.fn();
 /** The History row's route as the strip holds it: null while no row is open. A signal, since the real `subTabOf` is
- *  a tracked read. */
-const historyRoute = signal<HistoryTab | null>(null);
+ *  a tracked read, and a fresh one per case: every re-imported module instance stays subscribed to the cell it first
+ *  read. */
+let historyRoute = signal<HistoryTab | null>("chats");
 // The real setter's no-op while no row is open.
 const setHistoryTab = vi.fn((tab: HistoryTab) => {
   if (historyRoute.peek() !== null) {
@@ -134,7 +135,7 @@ vi.mock("./tabs.js", () => ({
   subTabOf: (kind: string) => (kind === "history" ? historyRoute.value : null),
   tabSetVersion: () => tabsVersion.value,
 }));
-// The pane switch pushes its URL; a forced switch (the router's) must not.
+// The strip pushes the URL, never the page: a spy, so a push from this graph fails the switch cases.
 vi.mock("./router.js", () => ({ pushRoute }));
 vi.mock("./legacy-ui/skeleton.js", () => ({
   // A spy: whether the arm fires is what the settled-empty case pins.
@@ -249,7 +250,7 @@ function resetAll(): void {
   vi.resetModules();
   bootSeq++;
   hasTab.mockReturnValue(false);
-  historyRoute.value = null;
+  historyRoute = signal<HistoryTab | null>("chats");
   asking.value = new Set();
   forgetRun("wf_1");
 }
@@ -286,7 +287,7 @@ describe("history: two panes behind one bar", () => {
     expect(runsPanel.classList.contains("hidden")).toBe(true);
   });
 
-  it("switches panes from the bar, and the switch is what pushes the URL", async () => {
+  it("switches panes from the bar by writing the row's route, and pushes no URL of its own", async () => {
     const view = await render({ sessions: [chatRow], runs: [runRow] });
     view.querySelector<HTMLElement>('[data-history-tab="runs"]')!.click();
     expect(view.querySelector('[data-history-panel="runs"]')!.classList.contains("hidden")).toBe(
@@ -299,7 +300,7 @@ describe("history: two panes behind one bar", () => {
       "true",
     );
     expect(setHistoryTab).toHaveBeenCalledWith("runs");
-    expect(pushRoute).toHaveBeenCalledWith({ kind: "history", tab: "runs" });
+    expect(pushRoute).not.toHaveBeenCalled();
   });
 
   it("re-selecting the active pane pushes nothing", async () => {
@@ -308,17 +309,16 @@ describe("history: two panes behind one bar", () => {
     expect(pushRoute).not.toHaveBeenCalled();
   });
 
-  it("forceHistoryTab swaps the pane WITHOUT a push, for the router", async () => {
+  it("paints a row born on Runs on the first paint, without a push", async () => {
     const view = mountView();
     dispatch.mockResolvedValue({ sessions: [chatRow], runs: [runRow] });
-    const { forceHistoryTab, loadHistoryView } = await freshModule();
-    // Before the page is wired, as a deep link arrives: the choice survives into the first paint.
-    forceHistoryTab("runs");
+    const { loadHistoryView } = await freshModule();
+    // Before the page is wired, as a deep link's row arrives.
+    historyRoute.value = "runs";
     loadHistoryView();
     expect(view.querySelector('[data-history-panel="runs"]')!.classList.contains("hidden")).toBe(
       false,
     );
-    expect(setHistoryTab).toHaveBeenCalledWith("runs");
     expect(pushRoute).not.toHaveBeenCalled();
   });
 
@@ -449,7 +449,7 @@ describe("history: opening a row", () => {
 
   it("keeps a failed reload's Retry on the Runs pane when the filter is typed", async () => {
     await failReload();
-    current!.forceHistoryTab("runs");
+    historyRoute.value = "runs";
     await openFind();
     const input = document.getElementById("hist-run-search-input") as HTMLInputElement;
     input.value = "feature";
@@ -1423,8 +1423,8 @@ describe("history: the runs search", () => {
   async function filter(query: string): Promise<{ runs: HTMLElement; find: PageFind }> {
     const view = mountView();
     dispatch.mockResolvedValue({ sessions: [], runs: [nightly, lint] });
-    const { forceHistoryTab, loadHistoryView, refreshHistoryView } = await freshModule();
-    forceHistoryTab("runs");
+    const { loadHistoryView, refreshHistoryView } = await freshModule();
+    historyRoute.value = "runs";
     loadHistoryView();
     refreshHistoryView();
     await vi.waitFor(() => {
@@ -1497,12 +1497,12 @@ describe("history: the runs search", () => {
   it("keeps the page's find kind through a pane switch, so the toolbar glyph does not change", async () => {
     mountView();
     dispatch.mockResolvedValue({ sessions: [], runs: [] });
-    const { forceHistoryTab, loadHistoryView } = await freshModule();
+    const { loadHistoryView } = await freshModule();
     loadHistoryView();
     const { pageFind } = await import("./find-registry.js");
     const find = pageFind("history")!;
     expect(find.kind()).toBe("search");
-    forceHistoryTab("runs");
+    historyRoute.value = "runs";
     expect(find.kind()).toBe("search");
   });
 });

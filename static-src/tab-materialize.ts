@@ -334,13 +334,11 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         name: "Settings",
         icon: TAB_ICONS.settings,
         view: TAB_VIEWS.settings,
-        // The CANONICAL sub-tab (a singleton's Ref is empty); setSettingsTab / applyRoute correct it.
+        // The default for an open that names no sub-tab; a door's `openTab` route replaces it at birth.
         route: { kind: "settings", tab: "general" },
         owns: subject.owns,
         ...parentOf(subject),
-        // No onShow: this tab's whole activation was the data half, which is now
-        // `refresh`. The panel it loads is the ACTIVE one, so a deep link's own
-        // forceSettingsTab has already landed by the time the dispatcher calls it.
+        // No onShow: the activation is all data. `refresh` loads the panel the row's route names.
         refresh: () => {
           lazily(
             import("./settings-tabs.js").then(({ refreshSettingsPanel }) => {

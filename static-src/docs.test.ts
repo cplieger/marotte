@@ -45,11 +45,11 @@ function serveDocsPage(
           ? Promise.resolve(standing).then(decode)
           : Promise.resolve({ hooks: [] });
 }
-/** The docs row's route as the strip holds it: null while no row is open. A signal, since the real `subTabOf` is a
- *  tracked read. */
+/** The docs row's route as the strip holds it: null while no row is open, and open on its default otherwise. A signal,
+ *  since the real `subTabOf` is a tracked read. */
 const docsRoute = await vi.hoisted(async () => {
   const { signal } = await import("@cplieger/reactive");
-  return signal<DocsTab | null>(null);
+  return signal<DocsTab | null>("steering");
 });
 // toggleDocsView runs onShow, which wires and loads the page; swallowing it leaves the SSE cases on an unopened page.
 vi.mock("./tabs.js", () => ({
@@ -888,10 +888,10 @@ describe("the Hooks tab: staying current", () => {
     const { apiGetTyped } = await import("./api-client.js");
     vi.mocked(apiGetTyped).mockImplementation(serveDocsPage());
     const { onSSE } = await import("./bus.js");
-    // Activation init, sub-tab correction and fetch are separate doors; `toggleDocsView` only toggles the tab.
-    const { showDocsTab, forceDocsTab, refreshDocsView } = await import("./docs.js");
+    // Activation init, the row's sub-tab and the fetch are separate doors; `toggleDocsView` only toggles the tab.
+    const { showDocsTab, refreshDocsView } = await import("./docs.js");
     showDocsTab();
-    forceDocsTab("hooks");
+    docsRoute.value = "hooks";
     refreshDocsView();
     sseHandlers = new Map(vi.mocked(onSSE).mock.calls.map((c) => [c[0], c[1] as () => void]));
     busHandlers = busCapture;
@@ -914,8 +914,8 @@ describe("the Hooks tab: staying current", () => {
           },
         ),
       );
-    const { forceDocsTab, refreshDocsView } = await import("./docs.js");
-    forceDocsTab("steering");
+    const { refreshDocsView } = await import("./docs.js");
+    docsRoute.value = "steering";
     refreshDocsView();
     sseHandlers.get("steering_issues_changed")?.();
     const panel = document.querySelector('[data-docs-panel="steering"]');
@@ -926,7 +926,7 @@ describe("the Hooks tab: staying current", () => {
       "Fix the #[[file:x]] path",
     );
     expect(vi.mocked(apiGetTyped)).toHaveBeenCalledWith(ISSUES_PATH, expect.anything());
-    forceDocsTab("hooks");
+    docsRoute.value = "hooks";
   });
 
   it("standing badge: names the layer that replaced a row, on that row only, and follows config_standing_changed", async () => {
@@ -941,8 +941,8 @@ describe("the Hooks tab: staying current", () => {
       truncated: false,
     };
     vi.mocked(apiGetTyped).mockClear().mockImplementation(serveDocsPage(inventory));
-    const { forceDocsTab, refreshDocsView } = await import("./docs.js");
-    forceDocsTab("steering");
+    const { refreshDocsView } = await import("./docs.js");
+    docsRoute.value = "steering";
     refreshDocsView();
     const panel = document.querySelector('[data-docs-panel="steering"]');
     const row = (path: string): Element | null | undefined =>
@@ -984,7 +984,7 @@ describe("the Hooks tab: staying current", () => {
     await vi.waitFor(() => {
       expect(panel?.querySelector(".docs-badge-standing")).toBeNull();
     });
-    forceDocsTab("hooks");
+    docsRoute.value = "hooks";
   });
 
   it("agent load error under the badge: shown on its row whatever the row's standing", async () => {
@@ -1022,8 +1022,8 @@ describe("the Hooks tab: staying current", () => {
     document
       .getElementById("docs-view")
       ?.insertAdjacentHTML("beforeend", '<div data-docs-panel="agents" class="docs-panel"></div>');
-    const { forceDocsTab, refreshDocsView } = await import("./docs.js");
-    forceDocsTab("agents");
+    const { refreshDocsView } = await import("./docs.js");
+    docsRoute.value = "agents";
     refreshDocsView();
     const panel = document.querySelector('[data-docs-panel="agents"]');
     const row = (path: string): Element | null | undefined =>
@@ -1040,7 +1040,7 @@ describe("the Hooks tab: staying current", () => {
     expect(errorLine(both)).toBe("kiro-cli could not load this agent: expected value at line 1");
     expect(row(both)?.querySelector(".docs-badge-standing")?.textContent).toBe("Off by Workspace");
     panel?.remove();
-    forceDocsTab("hooks");
+    docsRoute.value = "hooks";
   });
 
   it("subscribes to hooks_changed, not only to settings_updated", () => {
@@ -1174,8 +1174,8 @@ describe("showDocsTab and refreshDocsView", () => {
   });
 
   it("a re-activation leaves the reader's sub-tab where it was", async () => {
-    const { showDocsTab, forceDocsTab } = await import("./docs.js");
-    forceDocsTab("hooks");
+    const { showDocsTab } = await import("./docs.js");
+    docsRoute.value = "hooks";
     expect(panel("hooks")?.classList.contains("hidden")).toBe(false);
 
     showDocsTab();
@@ -1216,8 +1216,8 @@ describe("showDocsTab and refreshDocsView", () => {
     );
     vi.useFakeTimers();
     try {
-      const { refreshDocsView, forceDocsTab } = await import("./docs.js");
-      forceDocsTab("steering");
+      const { refreshDocsView } = await import("./docs.js");
+      docsRoute.value = "steering";
       refreshDocsView();
       await vi.advanceTimersByTimeAsync(150);
 
@@ -1239,15 +1239,14 @@ describe("grouped tabs render one section per group", () => {
   }
 
   it("labels each hook file and gives it its own list card", async () => {
-    const { _setDocsForTest, _setHooksForTest, forceDocsTab, _renderActiveForTest } =
-      await import("./docs.js");
+    const { _setDocsForTest, _setHooksForTest, _renderActiveForTest } = await import("./docs.js");
     _setHooksForTest([]);
     _setDocsForTest([
       wsHookDoc({ name: "first", group: "a.json", path: "workspace/.kiro/hooks/a.json" }),
       wsHookDoc({ name: "second", group: "a.json", path: "workspace/.kiro/hooks/a.json" }),
       wsHookDoc({ name: "third", group: "b.json", path: "workspace/.kiro/hooks/b.json" }),
     ]);
-    forceDocsTab("hooks");
+    docsRoute.value = "hooks";
     _renderActiveForTest();
 
     const out = [...panel("hooks").querySelectorAll<HTMLElement>(":scope > .docs-section")].map(
@@ -1264,12 +1263,12 @@ describe("grouped tabs render one section per group", () => {
   });
 
   it("renders a flat category as one unlabelled section", async () => {
-    const { _setDocsForTest, forceDocsTab, _renderActiveForTest } = await import("./docs.js");
+    const { _setDocsForTest, _renderActiveForTest } = await import("./docs.js");
     _setDocsForTest([
       { category: "steering", name: "alpha", path: "workspace/.kiro/steering/alpha.md" },
       { category: "steering", name: "beta", path: "workspace/.kiro/steering/beta.md" },
     ]);
-    forceDocsTab("steering");
+    docsRoute.value = "steering";
     _renderActiveForTest();
 
     const secs = panel("steering").querySelectorAll(":scope > .docs-section");
@@ -1280,13 +1279,13 @@ describe("grouped tabs render one section per group", () => {
 
   it("keeps a root-level spec out of the feature above it", async () => {
     // "." marks a document in the category root; two unlabelled runs are two sections.
-    const { _setDocsForTest, forceDocsTab, _renderActiveForTest } = await import("./docs.js");
+    const { _setDocsForTest, _renderActiveForTest } = await import("./docs.js");
     _setDocsForTest([
       { category: "spec", name: "Loose", path: "workspace/.kiro/specs/loose.md", group: "." },
       { category: "spec", name: "Design", path: "workspace/.kiro/specs/f/design.md", group: "f" },
       { category: "spec", name: "Notes", path: "workspace/.kiro/specs/notes.md", group: "." },
     ]);
-    forceDocsTab("specs");
+    docsRoute.value = "specs";
     _renderActiveForTest();
 
     const labels = [...panel("specs").querySelectorAll<HTMLElement>(":scope > .docs-section")].map(
@@ -1298,11 +1297,10 @@ describe("grouped tabs render one section per group", () => {
   });
 
   it("repaints a kept row in place when its state moves", async () => {
-    const { _setDocsForTest, _setHooksForTest, forceDocsTab, _renderActiveForTest } =
-      await import("./docs.js");
+    const { _setDocsForTest, _setHooksForTest, _renderActiveForTest } = await import("./docs.js");
     _setDocsForTest([wsHookDoc()]);
     _setHooksForTest([wsHook({ enabled: true })]);
-    forceDocsTab("hooks");
+    docsRoute.value = "hooks";
     _renderActiveForTest();
     const row = panel("hooks").querySelector<HTMLElement>(".entry");
     expect((row?.querySelector(".hook-toggle") as HTMLInputElement).checked).toBe(true);
@@ -1322,7 +1320,7 @@ describe("the docs page's sub-tab is its row's", () => {
   }
 
   afterEach(() => {
-    docsRoute.value = null;
+    docsRoute.value = "steering";
   });
 
   it("a row born on Steering after one closed on Hooks shows Steering", async () => {

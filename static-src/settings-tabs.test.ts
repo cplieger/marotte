@@ -2,6 +2,7 @@ import type * as Dom from "./dom.js";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { TABS, TAB_LABELS } from "./settings-tabs.js";
 import type * as ModSettingsTabs from "./settings-tabs.js";
+import type { SettingsTab } from "./route-path.js";
 
 /** Cache-buster for the re-imports below. */
 let bootSeq = 0;
@@ -20,9 +21,22 @@ const { swapViewsSpy, route } = vi.hoisted(() => ({
 vi.mock("./view-swap.js", () => ({
   swapViews: swapViewsSpy,
 }));
+/** The Settings row's route as the strip holds it, null while no row is open. A fresh signal per
+ *  case: every re-imported module instance stays subscribed to the cell it first read. */
+const settingsRoute = await vi.hoisted(async () => {
+  const { signal } = await import("@cplieger/reactive");
+  return { cell: signal<SettingsTab | null>(null) };
+});
 vi.mock("./tabs.js", async () => ({
   ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
   getActiveTabRoute: () => route.current,
+  subTabOf: (kind: string) => (kind === "settings" ? settingsRoute.cell.value : null),
+  // The real setter's no-op while no row is open.
+  setSettingsTab: (tab: SettingsTab) => {
+    if (settingsRoute.cell.peek() !== null) {
+      settingsRoute.cell.value = tab;
+    }
+  },
 }));
 
 // Mock ./dom.js so `$` resolves against the test-built DOM. The registry resolves the tab bar /
@@ -84,7 +98,7 @@ describe("settings-tabs TAB_LABELS coverage", () => {
   });
 });
 
-describe("settings-tabs forceSettingsTab dedup", () => {
+describe("settings-tabs paints the Settings row's sub-tab", () => {
   // Build the panel layout contract initSettingsTabs() expects: a tab bar with one button per tab,
   // one panel per tab, and a page title.
   function buildSettingsDom(): void {
@@ -104,8 +118,22 @@ describe("settings-tabs forceSettingsTab dedup", () => {
     document.body.append(bar, title);
   }
 
-  beforeEach(() => {
+  function shownPanels(): string[] {
+    return [...document.querySelectorAll<HTMLElement>("[data-settings-panel]")]
+      .filter((p) => !p.classList.contains("hidden"))
+      .map((p) => p.dataset["settingsPanel"] ?? "");
+  }
+
+  async function boot(): Promise<typeof ModSettingsTabs> {
+    return (await import(
+      /* @vite-ignore */ `./settings-tabs.ts?boot=${bootSeq}`
+    )) as typeof ModSettingsTabs;
+  }
+
+  beforeEach(async () => {
     route.current = { kind: "settings" };
+    const { signal } = await import("@cplieger/reactive");
+    settingsRoute.cell = signal<SettingsTab | null>("general");
     vi.resetModules();
     bootSeq++;
     buildSettingsDom();
@@ -116,65 +144,83 @@ describe("settings-tabs forceSettingsTab dedup", () => {
     document.body.replaceChildren();
   });
 
-  it("forceSettingsTab on already-active tab does not re-run the panel swap", async () => {
-    const { initSettingsTabs, forceSettingsTab } = (await import(
-      /* @vite-ignore */ `./settings-tabs.ts?boot=${bootSeq}`
-    )) as typeof ModSettingsTabs;
-    initSettingsTabs(); // subscribe fires immediately → one swap for the default "general" tab
+  it("a route write naming the shown tab does not re-run the panel swap", async () => {
+    const { initSettingsTabs } = await boot();
+    initSettingsTabs(); // subscribe fires immediately → one swap for the row's "general"
     swapViewsSpy.mockClear();
 
-    forceSettingsTab("general"); // already active → deduped signal → no notify → no swap
+    settingsRoute.cell.value = "general";
 
     expect(swapViewsSpy).not.toHaveBeenCalled();
   });
 
-  it("fires no panel loader on the subscribe-time paint, and each one on its first activation", async () => {
-    const { initSettingsTabs, forceSettingsTab } = (await import(
-      /* @vite-ignore */ `./settings-tabs.ts?boot=${bootSeq}`
-    )) as typeof ModSettingsTabs;
+  it("fires no panel loader on the first paint, and one on each switch", async () => {
+    const { initSettingsTabs } = await boot();
     const general = vi.fn();
     const tools = vi.fn();
 
-    // initUI runs at BOOT, with Settings not on screen.
+    // The subscribe-time paint is the open row's; its activation's `refresh` loads it.
     initSettingsTabs({ general, tools });
     expect(general).not.toHaveBeenCalled();
     expect(tools).not.toHaveBeenCalled();
 
-    // A sub-tab SWITCH is a subject change, so it refetches every time. The sequence has to
-    // ALTERNATE: `activeTab` is deduped, so two consecutive writes of one value notify once and
-    // would make a repeated switch look like a latch.
-    forceSettingsTab("tools");
+    // A sub-tab SWITCH is a subject change, so it refetches every time. The sequence ALTERNATES:
+    // the read is deduped, so two consecutive writes of one value notify once.
+    settingsRoute.cell.value = "tools";
     expect(tools).toHaveBeenCalledTimes(1);
-    forceSettingsTab("general");
+    settingsRoute.cell.value = "general";
     expect(general).toHaveBeenCalledTimes(1);
-    forceSettingsTab("tools");
+    settingsRoute.cell.value = "tools";
     expect(tools).toHaveBeenCalledTimes(2);
   });
 
+  it("paints nothing with no row, and a row's birth paints its tab without a load", async () => {
+    settingsRoute.cell.value = null;
+    const { initSettingsTabs } = await boot();
+    const tools = vi.fn();
+    initSettingsTabs({ tools });
+    expect(swapViewsSpy).not.toHaveBeenCalled();
+
+    route.current = { kind: "chat" };
+    settingsRoute.cell.value = "tools";
+
+    expect(shownPanels()).toEqual(["tools"]);
+    expect(tools).not.toHaveBeenCalled();
+  });
+
+  it("a close repaints nothing", async () => {
+    const { initSettingsTabs } = await boot();
+    const general = vi.fn();
+    initSettingsTabs({ general });
+    swapViewsSpy.mockClear();
+
+    settingsRoute.cell.value = null;
+
+    expect(swapViewsSpy).not.toHaveBeenCalled();
+    expect(shownPanels()).toEqual(["general"]);
+    expect(general).not.toHaveBeenCalled();
+  });
+
   it("refuses a switch while the panel is OFF screen — that load is the activation's", async () => {
-    const { initSettingsTabs, forceSettingsTab } = (await import(
-      /* @vite-ignore */ `./settings-tabs.ts?boot=${bootSeq}`
-    )) as typeof ModSettingsTabs;
+    const { initSettingsTabs } = await boot();
     const tools = vi.fn();
     initSettingsTabs({ tools });
     route.current = { kind: "chat" };
 
-    // `applyRoute`'s settings case is `forceSettingsTab(route.tab)` then `openTab`, so without this
-    // term the router's own order loads the panel twice — and for General that loader is a
-    // server-side `kiro-cli settings` spawn.
-    forceSettingsTab("tools");
+    // A door aimed at a background Settings row writes its route before the activation, so without
+    // this term the panel loads twice — and for General that loader is a server-side
+    // `kiro-cli settings` spawn.
+    settingsRoute.cell.value = "tools";
 
     expect(tools).not.toHaveBeenCalled();
   });
 
-  it("refreshSettingsPanel loads the ACTIVE panel, not the canonical one", async () => {
-    const { initSettingsTabs, forceSettingsTab, refreshSettingsPanel } = (await import(
-      /* @vite-ignore */ `./settings-tabs.ts?boot=${bootSeq}`
-    )) as typeof ModSettingsTabs;
+  it("refreshSettingsPanel loads the panel the row names, not the canonical one", async () => {
+    const { initSettingsTabs, refreshSettingsPanel } = await boot();
     const general = vi.fn();
     const tools = vi.fn();
     initSettingsTabs({ general, tools });
-    forceSettingsTab("tools");
+    settingsRoute.cell.value = "tools";
     tools.mockClear();
 
     refreshSettingsPanel();
@@ -183,10 +229,31 @@ describe("settings-tabs forceSettingsTab dedup", () => {
     expect(general).not.toHaveBeenCalled();
   });
 
+  it("refreshSettingsPanel loads nothing with no row", async () => {
+    settingsRoute.cell.value = null;
+    const { initSettingsTabs, refreshSettingsPanel } = await boot();
+    const general = vi.fn();
+    initSettingsTabs({ general });
+
+    refreshSettingsPanel();
+
+    expect(general).not.toHaveBeenCalled();
+  });
+
+  it("a pill click writes the row's route and loads its panel", async () => {
+    const { initSettingsTabs } = await boot();
+    const tools = vi.fn();
+    initSettingsTabs({ tools });
+
+    document.querySelector<HTMLElement>('[data-settings-tab="tools"]')?.click();
+
+    expect(settingsRoute.cell.peek()).toBe("tools");
+    expect(shownPanels()).toEqual(["tools"]);
+    expect(tools).toHaveBeenCalledTimes(1);
+  });
+
   it("loads the General panel through the door the tab factory uses", async () => {
-    const { initSettingsTabs, loadSettingsTabData } = (await import(
-      /* @vite-ignore */ `./settings-tabs.ts?boot=${bootSeq}`
-    )) as typeof ModSettingsTabs;
+    const { initSettingsTabs, loadSettingsTabData } = await boot();
     const general = vi.fn();
     initSettingsTabs({ general });
 
@@ -196,15 +263,13 @@ describe("settings-tabs forceSettingsTab dedup", () => {
     expect(general).toHaveBeenCalledTimes(1);
   });
 
-  it("two consecutive forceSettingsTab(tools) swap once", async () => {
-    const { initSettingsTabs, forceSettingsTab } = (await import(
-      /* @vite-ignore */ `./settings-tabs.ts?boot=${bootSeq}`
-    )) as typeof ModSettingsTabs;
+  it("two consecutive route writes of tools swap once", async () => {
+    const { initSettingsTabs } = await boot();
     initSettingsTabs();
     swapViewsSpy.mockClear();
 
-    forceSettingsTab("tools"); // general → tools: one swap
-    forceSettingsTab("tools"); // tools → tools: deduped, no swap
+    settingsRoute.cell.value = "tools"; // general → tools: one swap
+    settingsRoute.cell.value = "tools"; // tools → tools: deduped, no swap
 
     expect(swapViewsSpy).toHaveBeenCalledTimes(1);
   });

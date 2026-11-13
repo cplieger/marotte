@@ -397,6 +397,31 @@ describe("a door's sub-tab", () => {
   });
 });
 
+describe("a pill click", () => {
+  it("on the active Git points the row and the URL at the sub-tab", async () => {
+    await gitOn("prs");
+
+    expect(shownPanel("git")).toBe("prs");
+    expect(getActiveTabRoute()).toEqual({ kind: "git", tab: "prs" });
+    expect(lastPush()).toEqual({ kind: "git", tab: "prs" });
+
+    click("git", "changes");
+
+    expect(shownPanel("git")).toBe("changes");
+    expect(lastPush()).toEqual({ kind: "git", tab: "changes" });
+  });
+
+  it("on the active Settings loads that panel once and pushes it", async () => {
+    await settingsOn("tools");
+    await quiet();
+
+    expect(shownPanel("settings")).toBe("tools");
+    expect(spies.loaders.tools).toHaveBeenCalledTimes(1);
+    expect(getActiveTabRoute()).toEqual({ kind: "settings", tab: "tools" });
+    expect(lastPush()).toEqual({ kind: "settings", tab: "tools" });
+  });
+});
+
 describe("a close repaints nothing", () => {
   it("closing Git on Sources fetches nothing and leaves its panel as it was", async () => {
     await gitOn("sources");

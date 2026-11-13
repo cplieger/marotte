@@ -93,9 +93,6 @@ vi.mock("./versions.js", () => ({
   getVersions: () => ({ marotte: "", kiroCli: "" }),
 }));
 vi.mock("./editor-openers.js", () => ({ openConfigFile: H.mockOpenConfigFile }));
-vi.mock("./git-tabs.js", () => ({
-  getGitTab: undefined,
-}));
 vi.mock("./editor-core.js", () => ({
   restoreEditorTabs: undefined,
 }));

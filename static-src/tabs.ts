@@ -3048,7 +3048,7 @@ export async function toggleFilesView(openAt: string): Promise<void> {
 
 /** Bring the file browser forward, opening at `openAt` when none is open. NEVER
  *  closes it, which is the whole reason this exists beside the toggle: "go to" and
- *  "toggle" are different verbs, as setSettingsTab/setGitTab/setDocsTab already are. */
+ *  "toggle" are different verbs, as openSettingsView and openGitView already are. */
 export async function openFilesView(openAt: string): Promise<void> {
   const row = activeOrRecentFilesTab();
   if (row !== undefined) {

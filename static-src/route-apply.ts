@@ -1,26 +1,14 @@
 import { get, getActiveId } from "./store.js";
 import { admitLocation, settleDeepLinkedChat } from "./deep-link.js";
 import { switchSession } from "./chat.js";
-import {
-  activateTab,
-  filesTabForRoute,
-  openTab,
-  setSettingsTab,
-  setGitTab,
-  setDocsTab,
-  setHistoryTab,
-  showUnshownTab,
-  tabIdFor,
-} from "./tabs.js";
+import { activateTab, filesTabForRoute, openTab, showUnshownTab, tabIdFor } from "./tabs.js";
 import { replaceRoute } from "./router.js";
 import type { RouteOrigin } from "./router.js";
 import type { Route } from "./route-path.js";
 import { openFile } from "./editor-openers.js";
 import { pointFilesTab } from "./files.js";
 import { normalizeDirPath } from "./files-shared.js";
-import { forceSettingsTab } from "./settings-tabs.js";
 import { flushURLHighlight } from "./settings-highlight.js";
-import { forceGitTab } from "./git-tabs.js";
 
 /** Apply a route. RESOLVES when the view it names is open, which is what lets the router hold
  *  its claim on the location for the whole application: the `run` and `subagent` arms reach
@@ -63,12 +51,10 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
       }
       break;
     }
-    // The FOUR singleton routes open their tab and then CORRECT its sub-tab, which a subject cannot
-    // carry (its `ref` is empty).
+    // The FOUR singleton routes name their sub-tab in the open, which a subject cannot carry (its
+    // `ref` is empty).
     case "settings":
-      forceSettingsTab(route.tab);
-      void openTab({ kind: "settings" }).then(() => {
-        setSettingsTab(route.tab);
+      void openTab({ kind: "settings", route }).then(() => {
         // A `?highlight=` fires after the panel's loader, so the control it names exists by the
         // time we look for it. One-shot, so a later popstate does not re-flash it.
         flushURLHighlight();
@@ -80,9 +66,8 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
       // at a call inside the `.then()` and `requestPRFocus(identity: string)` rejects it under
       // `strict`.
       const pr = route.tab === "prs" ? (route.pr ?? "") : "";
-      forceGitTab(route.tab);
-      void openTab({ kind: "git" }).then(() => {
-        setGitTab(route.tab);
+      // The row's route carries no `pr`: router.ts's fragment-drop rule replaces it away.
+      void openTab({ kind: "git", route: { kind: "git", tab: route.tab } }).then(() => {
         if (pr !== "") {
           // Dynamic, like the `docs` and `run` arms: the PRs tab must not join the boot bundle.
           void import("./git-prs-tab.js").then(({ requestPRFocus }) => {
@@ -117,30 +102,18 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
       openFile(openedFilePath(route.path), route.line);
       break;
     case "docs":
-      // The sub-tab is forced BEFORE the open, matching its settings and git siblings: this tab's
-      // refresh loads the ACTIVE panel, so forcing afterwards fetched Steering and then painted
-      // Hooks.
+      // Through docs.js: only the page knows whether the Memory setting withdrew the category.
       return import("./docs.js")
-        .then(({ forceDocsTab }) => {
-          const tab = forceDocsTab(route.tab);
-          void openTab({ kind: "docs" }).then(() => {
-            setDocsTab(tab);
-          });
+        .then(({ resolveDocsTab }) => {
+          const tab = resolveDocsTab(route.tab);
+          void openTab({ kind: "docs", route: { kind: "docs", tab } });
         })
         .catch(showUnshownTab);
-    case "history": {
-      // The docs arm's shape: the pane is forced BEFORE the open, because this tab's refresh loads
-      // the ACTIVE pane. Hoisted for the reason the git arm hoists `pr`.
-      const tab = route.tab ?? "chats";
-      return import("./history.js")
-        .then(({ forceHistoryTab }) => {
-          forceHistoryTab(tab);
-          void openTab({ kind: "history" }).then(() => {
-            setHistoryTab(tab);
-          });
-        })
+    case "history":
+      // Returned so the location claim stands until the open's round trip settles.
+      return openTab({ kind: "history", route: { kind: "history", tab: route.tab ?? "chats" } })
+        .then(() => undefined)
         .catch(showUnshownTab);
-    }
     case "run":
       // RETURNED rather than voided: the router's claim on this location stands until it resolves,
       // so no unrelated projection emit can write the URL while the chunk loads.
