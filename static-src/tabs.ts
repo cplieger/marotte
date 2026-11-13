@@ -507,6 +507,7 @@ function reset(subjects: readonly TabSubject[]): void {
     activateSuccessor(false);
     return;
   }
+  reselectAfterRemoval();
   emit();
 }
 
@@ -553,6 +554,7 @@ function apply(delta: TabsChangedPayload, local: boolean): void {
     // tab still open, which is the same rule every other removal path applies.
     activateSuccessor(local);
   }
+  reselectAfterRemoval();
   emit();
 }
 
@@ -693,6 +695,14 @@ function reselectPaintedChat(): void {
   }
 }
 
+/** A removal left a non-chat tab shown and the store naming no chat: act for the one the reader was
+ *  last on, as that tab's own activation did. */
+function reselectAfterRemoval(): void {
+  if (getActiveId() === "" && rowOfID(state.active)?.subject.kind !== "chat") {
+    reselectPaintedChat();
+  }
+}
+
 function hasResidentTurns(chatID: string): boolean {
   return (get(chatID)?.turn_order.length ?? 0) > 0;
 }
@@ -809,8 +819,8 @@ function runActivation(gen: number): void {
     // First: a chat's restore writes the scroll offset, which a scroller with no box cannot take.
     revealView(row);
     // A chat this file showed and that is still painted is mounted; showing it again would re-key
-    // its rail and clear what it painted. One painted only because `removeChat` moved the pointer
-    // onto it was never shown. A Retry's fresh activation clears its own failure box.
+    // its rail and clear what it painted. One whose removal cleared the painted chat and that is
+    // shown again is not mounted. A Retry's fresh activation clears its own failure box.
     const chat = row.subject.kind === "chat" ? row.subject.ref : "";
     const mounted = chat !== "" && chat === shownChat && chat === getPaintedId();
     if (mounted && !record.again) {
@@ -1444,6 +1454,7 @@ function applyGestureRemoval(c: CapturedClose): void {
   if (c.storeActive !== "" && getActiveId() === c.storeActive) {
     reselectPaintedChat();
   }
+  reselectAfterRemoval();
   emit();
   paintStripNow();
 }
