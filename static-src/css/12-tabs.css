@@ -977,3 +977,112 @@
   color: var(--c-text-tertiary);
   cursor: default;
 }
+
+/* THE SIDEBAR'S SECTIONS (Open, Pinned): a disclosure header over each list, and
+   History as one row at their foot. A section carries no block padding, border or
+   gap of its own, so its header's height is the whole section while its rows are
+   folded away. */
+.side-section + .side-section {
+  margin-block-start: var(--sp-1);
+}
+
+.side-section-h {
+  margin: 0;
+  padding-inline: var(--sp-2);
+  font: inherit;
+}
+
+/* The tab row's inline padding and reserved border, so the chevron and the name
+   start where a row's dot and name do. */
+.side-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  inline-size: 100%;
+  block-size: var(--row-tap-dense);
+  padding: 0 var(--sp-2) 0 var(--sp-3);
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--c-text-secondary);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  text-align: start;
+  cursor: pointer;
+  transition: background var(--dur-micro);
+
+  @media (any-hover: hover) {
+    &:hover {
+      background: var(--c-hover);
+    }
+  }
+
+  &[hidden] {
+    display: none;
+  }
+}
+
+.side-section-toggle[aria-expanded="true"] > .side-section-chevron {
+  --chev-turn: 0deg;
+}
+
+.side-section-chevron {
+  transition: transform var(--dur-micro) var(--ease-standard);
+
+  &[hidden] {
+    display: none;
+  }
+}
+
+/* The tab dot's `[data-status]` reveal would outrank the UA's `[hidden]`. */
+.side-section-dot[hidden] {
+  display: none;
+}
+
+.side-section-name {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-section-count {
+  margin-inline-start: auto;
+  color: var(--c-text-tertiary);
+  font-weight: var(--fw-normal);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A tab row's geometry, so History lines up with the rows above it. */
+.side-history-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0.125rem var(--sp-2) 0;
+  padding-block: var(--sp-2);
+  padding-inline: var(--sp-3) var(--sp-2);
+  min-block-size: var(--tab-row-h);
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--c-text-secondary);
+  font-size: var(--fs-sm);
+  text-align: start;
+  cursor: pointer;
+  transition: background var(--dur-micro);
+
+  & > svg {
+    flex-shrink: 0;
+  }
+
+  @media (any-hover: hover) {
+    &:hover {
+      background: var(--c-hover);
+      color: var(--c-text-primary);
+    }
+  }
+
+  &[hidden] {
+    display: none;
+  }
+}

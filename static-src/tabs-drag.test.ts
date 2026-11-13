@@ -124,6 +124,7 @@ let vv: FakeViewport;
 function buildStrip(): void {
   list = document.createElement("div");
   list.id = "tab-list";
+  list.className = "side-section-list";
   list.style.cssText = "position:absolute;top:0;left:0;width:200px";
   rows = {};
   for (const [id, child] of [
@@ -132,21 +133,25 @@ function buildStrip(): void {
     ["b", false],
     ["c", false],
   ] as const) {
-    const row = document.createElement("div");
-    row.dataset["tabId"] = id;
-    row.className = child ? "tab tab-child" : "tab";
-    row.style.cssText = `display:block;height:${String(ROW_H)}px`;
-    const name = document.createElement("span");
-    name.className = "tab-name";
-    name.textContent = id;
-    row.appendChild(name);
-    list.appendChild(row);
-    rows[id] = row;
-    attachDrag(row);
-    stubPointerCapture(row);
+    addRow(list, id, child);
   }
   stubPointerCapture(list);
   document.body.appendChild(list);
+}
+
+function addRow(into: HTMLElement, id: string, child = false): void {
+  const row = document.createElement("div");
+  row.dataset["tabId"] = id;
+  row.className = child ? "tab tab-child" : "tab";
+  row.style.cssText = `display:block;height:${String(ROW_H)}px`;
+  const name = document.createElement("span");
+  name.className = "tab-name";
+  name.textContent = id;
+  row.appendChild(name);
+  into.appendChild(row);
+  rows[id] = row;
+  attachDrag(row);
+  stubPointerCapture(row);
 }
 
 /** `renderDOM`'s re-seat: ascending, and a row already in place is not touched. */
@@ -971,7 +976,7 @@ describe("sweep, rest, drop", () => {
     vi.advanceTimersByTime(100);
   });
 
-  // The projection's pin partition can undo a drop: what it applied is what the
+  // The projection can undo a drop: what it applied is what the
   // reader hears, and the rows slide back rather than jump.
   it("announces a drop the projection refused as cancelled and slides the row home", () => {
     reorder.mockImplementation((): readonly string[] | null => null);
@@ -1238,5 +1243,230 @@ describe("ending a live drag", () => {
     expectStripQuiet(START);
     expect(reorder).not.toHaveBeenCalled();
     expect(isDragHandled(), "a spent drag is not re-ended by a later release").toBe(false);
+  });
+});
+
+/** The sectioned column (`design.md` §16.1, §16.4): `#tab-sections` scrolls and holds
+ *  `#open-section` (the harness strip under a header) above `#pinned-section` (p and q
+ *  under a header), then the History row, then empty tail down to 500px. */
+describe("a strip split into sections", () => {
+  let sections: HTMLElement;
+  let pinnedSection: HTMLElement;
+  let pinnedList: HTMLElement;
+  let pinnedHead: HTMLElement;
+  let historyRow: HTMLElement;
+  let transcript: HTMLElement;
+  let committedPinned: string[];
+
+  function sectionOf(id: string, into: HTMLElement, name: string): HTMLElement {
+    const section = document.createElement("section");
+    section.id = id;
+    section.className = "side-section";
+    const head = document.createElement("h2");
+    head.className = "side-section-head";
+    head.style.cssText = `margin:0;height:${String(ROW_H)}px`;
+    head.textContent = name;
+    section.append(head, into);
+    return section;
+  }
+
+  /** `renderDOM`'s per-list re-seat, from each list's committed order. */
+  function reseat(into: HTMLElement, order: readonly string[]): void {
+    order.forEach((id, i) => {
+      const row = rows[id] as HTMLElement;
+      if (into.children[i] !== row) {
+        into.insertBefore(row, into.children[i] ?? null);
+      }
+    });
+  }
+
+  const pinnedOrder = (): string[] =>
+    [...pinnedList.children].map((r) => (r as HTMLElement).dataset["tabId"] ?? "");
+  const tailY = 400;
+
+  function build(withPinned: boolean): void {
+    sections = document.createElement("div");
+    sections.id = "tab-sections";
+    sections.style.cssText =
+      "position:absolute;top:0;left:0;width:200px;height:500px;overflow-y:auto";
+    list.style.cssText = "display:block";
+    pinnedList = document.createElement("div");
+    pinnedList.id = "pinned-list";
+    pinnedList.style.cssText = "display:block";
+    stubPointerCapture(pinnedList);
+    if (withPinned) {
+      addRow(pinnedList, "p");
+      addRow(pinnedList, "q");
+    }
+    pinnedSection = sectionOf("pinned-section", pinnedList, "Pinned");
+    pinnedSection.hidden = !withPinned;
+    pinnedHead = pinnedSection.firstElementChild as HTMLElement;
+    historyRow = document.createElement("button");
+    historyRow.id = "history-btn";
+    historyRow.className = "side-history-row";
+    historyRow.style.cssText = `display:block;width:100%;height:${String(ROW_H)}px`;
+    sections.append(sectionOf("open-section", list, "Open"), pinnedSection, historyRow);
+    document.body.appendChild(sections);
+    transcript = document.createElement("div");
+    transcript.style.cssText =
+      "position:absolute;top:0;left:300px;width:200px;height:100px;overflow-y:auto";
+    document.body.appendChild(transcript);
+    committedPinned = pinnedOrder();
+    reorder.mockImplementation((order: string[]): readonly string[] | null => {
+      if (order.includes("p")) {
+        committedPinned = order;
+      } else {
+        committed = order.flatMap((id) => (id === "a" ? ["a", "s"] : [id]));
+      }
+      return order;
+    });
+    reproject.mockImplementation(() => {
+      reseat(list, committed);
+      reseat(pinnedList, committedPinned);
+    });
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    // Ends a drag a failed case left live and runs out its click window under the
+    // fake clock, so one failure does not time out every later case.
+    window.dispatchEvent(new Event("blur"));
+    vi.advanceTimersByTime(100);
+    vi.useRealTimers();
+    sections.remove();
+    transcript.remove();
+  });
+
+  describe("the release hit test", () => {
+    const aboveA = (): number => mid(rows["a"] as HTMLElement) - 1;
+
+    function previewToTop(): void {
+      const row = rows["c"] as HTMLElement;
+      startRealDrag(row, aboveA());
+      vi.advanceTimersByTime(REORDER_STILL_MS);
+      expect(domOrder(), "the preview moved the row").toEqual(["c", "a", "s", "b"]);
+    }
+
+    it.each([
+      { over: "a pinned row", y: (): number => mid(rows["p"] as HTMLElement) },
+      { over: "the Pinned header", y: (): number => mid(pinnedHead) },
+      { over: "the column's foot, outside #tab-sections", y: (): number => 520 },
+    ])("cancels an Open row released over $over", ({ y }) => {
+      build(true);
+      previewToTop();
+      document.body.dispatchEvent(ptr("pointerup", { clientX: 10, clientY: y() }));
+
+      expectStripQuiet(START);
+      expect(reorder).not.toHaveBeenCalled();
+      expect(vi.mocked(announce)).toHaveBeenLastCalledWith("Move cancelled");
+    });
+
+    it("cancels a pinned row released over an Open row", () => {
+      build(true);
+      const row = rows["q"] as HTMLElement;
+      startRealDrag(row, mid(rows["p"] as HTMLElement) - 1);
+      vi.advanceTimersByTime(REORDER_STILL_MS);
+      expect(pinnedOrder(), "the preview moved the row").toEqual(["q", "p"]);
+      document.body.dispatchEvent(
+        ptr("pointerup", { clientX: 10, clientY: mid(rows["b"] as HTMLElement) }),
+      );
+
+      expect(pinnedOrder()).toEqual(["p", "q"]);
+      expect(reorder).not.toHaveBeenCalled();
+      expect(vi.mocked(announce)).toHaveBeenLastCalledWith("Move cancelled");
+    });
+
+    it.each([
+      { on: "the empty tail below the rows", y: (): number => tailY },
+      { on: "the History row", y: (): number => mid(historyRow) },
+    ])("commits the top Open row last on a release in $on", ({ y }) => {
+      build(false);
+      const row = rows["a"] as HTMLElement;
+      startRealDrag(row, y());
+      row.dispatchEvent(ptr("pointerup", { clientX: 10, clientY: y() }));
+
+      expect(reorder.mock.calls).toEqual([[["b", "c", "a"]]]);
+      expect(domOrder()).toEqual(["b", "c", "a", "s"]);
+      expect(vi.mocked(announce)).not.toHaveBeenCalledWith("Move cancelled");
+      expect(vi.mocked(announce)).toHaveBeenLastCalledWith("Moved a to position 3");
+    });
+
+    it("lands a pinned row released in the tail last among the pinned rows", () => {
+      build(true);
+      const row = rows["p"] as HTMLElement;
+      startRealDrag(row, tailY);
+      row.dispatchEvent(ptr("pointerup", { clientX: 10, clientY: tailY }));
+
+      expect(reorder.mock.calls).toEqual([[["q", "p"]]]);
+      expect(row.parentElement, "it stays pinned").toBe(pinnedList);
+      expect(pinnedOrder()).toEqual(["q", "p"]);
+      expect(domOrder(), "Open is untouched").toEqual(START);
+      expect(vi.mocked(announce)).toHaveBeenLastCalledWith("Moved p to position 2");
+    });
+
+    it("lands a release on its own header first in its section", () => {
+      build(true);
+      const row = rows["q"] as HTMLElement;
+      startRealDrag(row, mid(pinnedHead));
+      row.dispatchEvent(ptr("pointerup", { clientX: 10, clientY: mid(pinnedHead) }));
+
+      expect(reorder.mock.calls).toEqual([[["q", "p"]]]);
+      expect(vi.mocked(announce)).toHaveBeenLastCalledWith("Moved q to position 1");
+    });
+  });
+
+  describe("the press guards", () => {
+    it("drops a held press when #tab-sections scrolls, though the row's list never does", () => {
+      build(true);
+      const row = rows["b"] as HTMLElement;
+      row.dispatchEvent(
+        ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType: "touch" }),
+      );
+      sections.dispatchEvent(new Event("scroll"));
+      vi.advanceTimersByTime(TOUCH_HOLD);
+      expect(ghost()).toBeNull();
+    });
+
+    it("keeps a held press through another scroller's scroll, so a streaming reply blocks no drag", () => {
+      build(true);
+      const row = rows["b"] as HTMLElement;
+      row.dispatchEvent(
+        ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType: "touch" }),
+      );
+      transcript.dispatchEvent(new Event("scroll"));
+      vi.advanceTimersByTime(TOUCH_HOLD);
+      expect(ghost(), "the hold lifted").not.toBeNull();
+    });
+
+    it("still lifts a mouse drag past the slop while another scroller scrolls", () => {
+      build(true);
+      const row = rows["b"] as HTMLElement;
+      row.dispatchEvent(ptr("pointerdown", { clientY: mid(row), buttons: 1 }));
+      for (let i = 0; i < 3; i++) {
+        transcript.dispatchEvent(new Event("scroll"));
+      }
+      row.dispatchEvent(ptr("pointermove", { clientY: mid(row) + MOUSE_SLOP + 1, buttons: 1 }));
+      expect(ghost()).not.toBeNull();
+    });
+
+    it("starts nothing from a long press on a folded section's row and leaves no press pending", () => {
+      build(true);
+      pinnedList.dataset["folded"] = "";
+      const row = rows["p"] as HTMLElement;
+      const added = vi.spyOn(window, "addEventListener");
+      row.dispatchEvent(
+        ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType: "touch" }),
+      );
+      expect(added, "an armed press listens on the window").not.toHaveBeenCalled();
+      vi.advanceTimersByTime(TOUCH_HOLD);
+      expect(ghost()).toBeNull();
+      row.dispatchEvent(ptr("pointerdown", { clientY: mid(row), buttons: 1 }));
+      row.dispatchEvent(ptr("pointermove", { clientY: mid(row) + MOUSE_SLOP + 1, buttons: 1 }));
+      expect(ghost(), "a mouse drag is off too").toBeNull();
+      added.mockRestore();
+    });
   });
 });

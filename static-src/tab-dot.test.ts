@@ -258,6 +258,7 @@ vi.mock("./router.js", () => ({
 // Type-only, for the `importOriginal` below.
 import type * as TabsDrag from "./tabs-drag.js";
 import { IDLE_RUN } from "./run-order.js";
+import { TAB_SECTIONS_HTML } from "./__test-helpers__/tab-sections-markup.js";
 // `exceedsSlop` stays real: `tabs.ts` reads it, so a partial factory would fail
 // this whole file at link time.
 vi.mock("./tabs-drag.js", async (importOriginal) => ({
@@ -272,9 +273,10 @@ vi.mock("./tabs-drag.js", async (importOriginal) => ({
 vi.mock("./transport.js", () =>
   import("./__test-helpers__/tabs-server.js").then((m) => m.tabTransportMock()),
 );
-vi.mock("./device-view.js", () => {
+vi.mock("./device-view.js", async (importOriginal) => {
   let active = "";
   return {
+    ...(await importOriginal<Record<string, unknown>>()),
     activeView: vi.fn(() => active),
     setActiveView: vi.fn((id: string) => {
       active = id;
@@ -345,11 +347,16 @@ vi.mock("./dom.js", async (importOriginal) => {
       {},
       {
         get(_t, prop: string) {
-          if (prop === "tabList") {
-            let list = cache.get("tabList");
+          const ids: Record<string, string> = {
+            tabList: "tab-list",
+            pinnedList: "pinned-list",
+            tabSections: "tab-sections",
+          };
+          if (Object.hasOwn(ids, prop)) {
+            let list = cache.get(prop);
             if (list === undefined || !list.isConnected) {
-              list = document.getElementById("tab-list") ?? document.createElement("div");
-              cache.set("tabList", list);
+              list = document.getElementById(ids[prop] ?? "") ?? document.createElement("div");
+              cache.set(prop, list);
             }
             return list;
           }
@@ -435,7 +442,7 @@ async function resetProjection(): Promise<void> {
   });
   resetActionFramework();
   _resetForTest();
-  document.body.innerHTML = '<div id="tab-list"></div>';
+  document.body.innerHTML = TAB_SECTIONS_HTML;
 }
 
 async function openSubject(

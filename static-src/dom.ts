@@ -183,8 +183,16 @@ class Elements {
   get sidebar(): HTMLElement {
     return byId("sidebar");
   }
+  /** The Open section's rows. */
   get tabList(): HTMLDivElement {
     return byId("tab-list");
+  }
+  get pinnedList(): HTMLDivElement {
+    return byId("pinned-list");
+  }
+  /** The scroller holding every tab section and the History row. */
+  get tabSections(): HTMLDivElement {
+    return byId("tab-sections");
   }
   get newChatBtn(): HTMLButtonElement {
     return byId("new-chat");

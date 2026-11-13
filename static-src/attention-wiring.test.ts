@@ -85,9 +85,10 @@ vi.mock("./api-client.js", async (importOriginal) => ({
   apiGet: vi.fn(() => Promise.resolve(null)),
 }));
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
-vi.mock("./device-view.js", () => {
+vi.mock("./device-view.js", async (importOriginal) => {
   let active = "";
   return {
+    ...(await importOriginal<Record<string, unknown>>()),
     activeView: vi.fn(() => active),
     setActiveView: vi.fn((id: string) => {
       active = id;
@@ -142,8 +143,14 @@ vi.mock("./dom.js", async (importOriginal) => ({
     {},
     {
       get: (_t, prop: string) => {
-        if (prop === "sidebar" || prop === "tabList") {
-          const id = prop === "sidebar" ? "sidebar" : "tab-list";
+        const ids: Record<string, string> = {
+          sidebar: "sidebar",
+          tabList: "tab-list",
+          pinnedList: "pinned-list",
+          tabSections: "tab-sections",
+        };
+        if (Object.hasOwn(ids, prop)) {
+          const id = ids[prop] ?? prop;
           let node = document.getElementById(id);
           if (node === null) {
             node = document.createElement("div");
@@ -488,7 +495,7 @@ describe("rowsInView", () => {
   });
 
   it("KEEPS a scrolled-out row out of view", () => {
-    // The case the whole rule exists for: `#tab-list` is overflow-y:auto, so the
+    // The case the whole rule exists for: `#tab-sections` is overflow-y:auto, so the
     // forgotten background chat is precisely the one below the fold.
     const { sidebar, tabList } = buildSidebar([
       { id: "a", top: 110, height: 40 },
@@ -656,15 +663,19 @@ describe("initAttention", () => {
     document.head.innerHTML = '<link rel="icon" href="/favicon.svg">';
     document.title = "Marotte for Kiro";
     vi.stubGlobal("navigator", {});
-    // The persistent desktop sidebar, clipping to 100..600; rows are placed per test.
+    // The persistent desktop sidebar, its sections' scroller clipping to 100..600; rows are
+    // placed per test.
     const sidebar = document.createElement("div");
     sidebar.id = "sidebar";
+    const sections = document.createElement("div");
+    sections.id = "tab-sections";
     const tabList = document.createElement("div");
     tabList.id = "tab-list";
-    sidebar.appendChild(tabList);
+    sections.appendChild(tabList);
+    sidebar.appendChild(sections);
     document.body.appendChild(sidebar);
     place(sidebar, rect(0, 700));
-    place(tabList, rect(100, 500));
+    place(sections, rect(100, 500));
     dispose = initAttention();
   });
 

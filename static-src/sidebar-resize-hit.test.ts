@@ -78,6 +78,7 @@ interface Shell {
   sidebar: HTMLElement;
   handle: HTMLElement;
   tabList: HTMLElement;
+  scroller: HTMLElement;
   chat: HTMLElement;
 }
 
@@ -168,7 +169,13 @@ function mountApp(tier: Tier, widened: boolean): Shell {
   term.appendChild(row);
   root.appendChild(term);
 
-  return { sidebar: q("#sidebar"), handle, tabList, chat: q("#chat-area") };
+  return {
+    sidebar: q("#sidebar"),
+    handle,
+    tabList,
+    scroller: q("#tab-sections"),
+    chat: q("#chat-area"),
+  };
 }
 
 /** The border's inner edge: where the handle starts. */
@@ -360,9 +367,9 @@ describe.each(CASES)("at the %s tier, widened %s", (tier, widened) => {
   it("reaches nothing inside the sidebar: not the scrollbar column, not a row", () => {
     const s = mountApp(tier, widened);
     const b = edge(s);
-    const list = s.tabList.getBoundingClientRect();
-    expect(s.tabList.scrollHeight, "premise: the list overflows").toBeGreaterThan(
-      s.tabList.clientHeight,
+    const list = s.scroller.getBoundingClientRect();
+    expect(s.scroller.scrollHeight, "premise: the sections overflow").toBeGreaterThan(
+      s.scroller.clientHeight,
     );
     for (const dx of [1, 8]) {
       const hit = document.elementFromPoint(b - dx, list.top + list.height / 2);

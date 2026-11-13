@@ -63,7 +63,7 @@ function mk(tag: string, id?: string, cls?: string): HTMLElement {
 }
 
 /** The shell as `static/index.html` authors it, down to the two LAST children the clip is about.
- *  The growing middles (`#tab-list`, `#messages-wrap-outer`) are `flex: 1`, so the two last
+ *  The growing middles (`#tab-sections`, `#messages-wrap-outer`) are `flex: 1`, so the two last
  *  children sit at the bottom of their panels. */
 function mountShell(): {
   app: HTMLElement;
@@ -76,7 +76,7 @@ function mountShell(): {
   const sidebar = mk("nav", "sidebar");
   const footer = mk("div", undefined, "sidebar-footer");
   footer.append(mk("button", undefined, "account-btn"));
-  sidebar.append(mk("div", undefined, "sidebar-header"), mk("div", "tab-list"), footer);
+  sidebar.append(mk("div", undefined, "sidebar-header"), mk("div", "tab-sections"), footer);
 
   const area = mk("main", "chat-area");
   const form = mk("form", "prompt-form", "bottom-bar");

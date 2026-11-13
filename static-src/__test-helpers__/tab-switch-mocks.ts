@@ -6,6 +6,7 @@
 // chat, `show` moves the painted chat, and the store mock reads both back through `pointers`.
 // chat.ts's own suites pin the real halves.
 import { vi } from "vitest";
+import { TAB_SECTIONS_HTML } from "./tab-sections-markup.js";
 import type { Mock } from "vitest";
 
 /** The store's two chat pointers, as the chat opener's fake halves write them. */
@@ -66,6 +67,8 @@ export function deviceViewMock(): { activeView: Mock; setActiveView: Mock } {
 
 const ELEMENT_IDS: Readonly<Record<string, string>> = {
   tabList: "tab-list",
+  pinnedList: "pinned-list",
+  tabSections: "tab-sections",
   sidebar: "sidebar",
   promptInput: "prompt-input",
   messages: "messages",
@@ -77,7 +80,7 @@ const ELEMENT_IDS: Readonly<Record<string, string>> = {
  *  composer, attached, with a focusable button inside the outgoing transcript. */
 export function mountShell(): void {
   document.body.innerHTML =
-    '<aside id="sidebar"><div id="tab-list"></div></aside>' +
+    `<aside id="sidebar">${TAB_SECTIONS_HTML}</aside>` +
     '<div id="messages-wrap-outer" style="position:relative;height:400px">' +
     '<div id="messages-wrap"><div id="messages"><button id="in-transcript">copy</button></div></div>' +
     "</div>" +
@@ -280,7 +283,7 @@ export async function activationRan(): Promise<void> {
 
 /** The row element for a tab id. */
 export function rowEl(id: string): HTMLElement {
-  const el = document.querySelector<HTMLElement>(`#tab-list [data-tab-id="${id}"]`);
+  const el = document.querySelector<HTMLElement>(`#tab-sections [data-tab-id="${id}"]`);
   if (el === null) {
     throw new Error(`no row for ${id}`);
   }

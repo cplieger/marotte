@@ -151,7 +151,7 @@ body.sidebar-resizing {
 /* A PURE LAYOUT ROW: the CHROME lives on the buttons, so the row's outer edges are a
  * tab's border-box edges; a border or inset here would widen the row past a tab.
  *
- * The inset is ONE value, `--sp-2`, read here and by `#tab-list` below: a
+ * The inset is ONE value, `--sp-2`, read here and by `.side-section-list` below: a
  * sidebar row sits that far in from the sidebar's edges, and the two cannot disagree
  * without the arithmetic being visible in one place. */
 .sidebar-actions {
@@ -222,30 +222,30 @@ body.sidebar-resizing {
   }
 }
 
-.sidebar-history-btn {
-  flex: none;
-  inline-size: var(--tab-row-h);
-  min-block-size: var(--tab-row-h);
-  padding: 0;
-}
-
-[id="tab-list"] {
+/* The sidebar's one scroll region: every section, its header and the History row
+ * scroll together, so no section hides another's rows behind a nested scrollbar. */
+[id="tab-sections"] {
   flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
-
-  /* THE SAME INSET `.sidebar-actions` TAKES, so a tab's border box and the New chat
-   button's are the same box. `--sp-2` is the whole value now: the wrapper carries no
-   border and no inset of its own, so there is nothing left for this to compensate
-   for and no second expression to keep in step. Two earlier spellings both had one
-   edge wrong — a flat `var(--sp-1)` put the tabs flush with the wrapper's border and
-   the button 3px inside them, and `calc(var(--sp-1) + 1px + 0.125rem)` lined the
-   BUTTON up and left the wrapper's border overhanging by the same 3px. */
-  padding: var(--sp-1) var(--sp-2);
   min-height: 0;
   display: flex;
   flex-direction: column;
+  padding-block-end: var(--sp-1);
+}
+
+.side-section-list {
+  /* THE SAME INSET `.sidebar-actions` TAKES, so a tab's border box and the New chat
+   button's are the same box: the list carries no border and no inset of its own
+   beyond this, so there is no second expression to keep in step. */
+  padding: var(--sp-1) var(--sp-2) 0;
+  display: flex;
+  flex-direction: column;
   gap: 0.125rem;
+
+  &[hidden] {
+    display: none;
+  }
 }
 
 .tab {
@@ -290,6 +290,11 @@ body.sidebar-resizing {
     border-color var(--dur-micro),
     opacity var(--dur-micro),
     transform var(--dur-micro) var(--ease-standard);
+
+  /* A folded section's rows other than the active one. */
+  &[hidden] {
+    display: none;
+  }
 
   &.entering {
     animation: vk-slide-in-x var(--dur-micro) var(--ease-standard);
@@ -389,7 +394,7 @@ body.sidebar-resizing {
    `margin-inline-start`, so the `margin: 0` this used to open with reset the
    indent on frame one: the row jumped a full 1rem wider and left before it
    swiped, which is exactly what a sub-tab close looked like. The vertical
-   margins the reset was written for are gone — `#tab-list` spaces its rows
+   margins the reset was written for are gone — `.side-section-list` spaces its rows
    with `gap` now — so there is nothing left for it to collapse. */
   0% {
     opacity: 1;
@@ -486,7 +491,7 @@ body.sidebar-resizing {
 /* The dragged row IS the slot: it keeps its full size and its place in the flow,
  * and the preview moves it. Dashes on the 1px border every row already reserves, so
  * nothing moves; (0,4,0) beats every tab hover, press and selected rule. */
-[id="tab-list"] > .tab.dragging[data-tab-id] {
+.side-section-list > .tab.dragging[data-tab-id] {
   background: color-mix(in srgb, var(--c-accent) 12%, transparent);
   border-color: color-mix(in srgb, var(--c-accent) 40%, transparent);
   border-style: dashed;
@@ -494,7 +499,7 @@ body.sidebar-resizing {
 
 /* On the children rather than the row, so the dashes stay at full strength and the
  * dot's pseudo-elements go quiet with their element. */
-[id="tab-list"] > .tab.dragging[data-tab-id] > * {
+.side-section-list > .tab.dragging[data-tab-id] > * {
   opacity: 0;
 }
 

@@ -4232,9 +4232,9 @@ export interface TabSubject {
  */
   seen?: number;
   /**
- * Pinned sorts a tab ahead of every unpinned one. The partition is applied
- * by the client when it renders (applyPinOrder); the stored slice keeps the
- * order it was given.
+ * Pinned seats a tab in the sidebar's Pinned section. The sections are drawn
+ * by the client (applySectionOrder); the stored slice keeps the order it was
+ * given.
  */
   pinned: boolean;
   /**

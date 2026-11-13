@@ -397,17 +397,17 @@ function surfaceVisible(el: HTMLElement): boolean {
 }
 
 /**
- * The chat ids whose sidebar row is FULLY inside `#tab-list`'s box, with the sidebar
+ * The chat ids whose sidebar row is FULLY inside the strip's scroller box, with the sidebar
  * presented. Fully: a lingering count is dismissible, a cue blanked unseen is not. The test
  * is transform-invariant, so it holds while the drawer animates.
  */
-export function rowsInView(sidebar: HTMLElement, tabList: HTMLElement): string[] {
+export function rowsInView(sidebar: HTMLElement, strip: HTMLElement): string[] {
   if (!surfaceVisible(sidebar)) {
     return [];
   }
-  const clip = tabList.getBoundingClientRect();
+  const clip = strip.getBoundingClientRect();
   const ids: string[] = [];
-  for (const row of tabList.querySelectorAll<HTMLElement>("[data-tab-id]")) {
+  for (const row of strip.querySelectorAll<HTMLElement>("[data-tab-id]")) {
     const id = row.dataset["tabId"] ?? "";
     if (id === "") {
       continue;
@@ -542,7 +542,7 @@ export function initAttention(): () => void {
     candidates: positionedCandidates,
     activeTabID: getActiveTabId,
     pageVisible,
-    rowsInView: () => rowsInView($.sidebar, $.tabList),
+    rowsInView: () => rowsInView($.sidebar, $.tabSections),
     retract: retractTab,
     sendAck,
     surfaces,
