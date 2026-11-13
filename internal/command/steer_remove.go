@@ -40,15 +40,15 @@ var (
 func steerRefusal(reason string) error {
 	switch reason {
 	case SteerRefuseNotUser:
-		return StatusErrorReason(http.StatusConflict, reason, errSteerRemoveNotUser)
+		return StatusErrorReason(http.StatusConflict, SteerRefuseNotUser, errSteerRemoveNotUser)
 	case SteerRefuseAgentRows:
-		return StatusErrorReason(http.StatusConflict, reason, errSteerRemoveAgentRows)
+		return StatusErrorReason(http.StatusConflict, SteerRefuseAgentRows, errSteerRemoveAgentRows)
 	case SteerRefuseSettling:
-		return StatusErrorReason(http.StatusConflict, reason, errSteerRemoveSettling)
+		return StatusErrorReason(http.StatusConflict, SteerRefuseSettling, errSteerRemoveSettling)
 	case SteerRefuseChatGone:
-		return StatusErrorReason(http.StatusConflict, reason, errSteerChatGone)
+		return StatusErrorReason(http.StatusConflict, SteerRefuseChatGone, errSteerChatGone)
 	case SteerRefuseConsumed:
-		return StatusErrorReason(http.StatusConflict, SteerRefuseNotWaiting, errSteerRemoveConsumed)
+		return StatusErrorReason(http.StatusConflict, SteerRefuseConsumed, errSteerRemoveConsumed)
 	case SteerRefuseNoReply:
 		return StatusError(http.StatusBadGateway, errSteerNoReply)
 	default:

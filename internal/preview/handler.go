@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route"
 	"golang.org/x/sys/unix"
 )
 
@@ -77,12 +79,22 @@ func New(workDir string, sensitive filebrowse.Sensitive, s *Signer, log *slog.Lo
 	return h
 }
 
-// RegisterRoutes mounts the three preview routes. Each gates its own method,
-// because the "/" SPA mount absorbs a ServeMux 405.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	mux.Handle(PathPrefix, h)
-	mux.HandleFunc("/api/preview/grant", h.handleGrant)
-	mux.HandleFunc("/api/preview/stamp", h.handleStamp)
+// routeMux is what a route registration needs: the server's registrar, or a test's mux. An alias, so
+// RegisterRoutes has the server's routeHandler signature.
+type routeMux = interface{ Bind(route.Binding) }
+
+// StampQuery is GET /api/preview/stamp's query.
+type StampQuery struct {
+	Path string `json:"path"`
+}
+
+// RegisterRoutes binds the three preview routes as plain paths, so the registrar answers a wrong method.
+func (h *Handler) RegisterRoutes(m routeMux) {
+	m.Bind(route.Raw(PathPrefix, h))
+	m.Bind(route.Methods("/api/preview/grant", http.HandlerFunc(h.handleGrant),
+		route.Typed[marotte.PreviewGrantRequest, marotte.PreviewGrant](http.MethodPost)))
+	m.Bind(route.Methods("/api/preview/stamp", http.HandlerFunc(h.handleStamp),
+		route.Typed[struct{}, marotte.PreviewStamp](http.MethodGet).WithQuery(reflect.TypeFor[StampQuery]())))
 }
 
 type pageError struct {
@@ -161,7 +173,7 @@ func (h *Handler) readHead(pg *page) ([]byte, error) {
 	if err != nil {
 		return nil, h.resolveError(err, "no such page")
 	}
-	f := os.NewFile(uintptr(fd), pg.name)
+	f := os.NewFile(uintptr(fd), "preview")
 	head, rerr := io.ReadAll(io.LimitReader(f, hintScanBytes))
 	_ = f.Close()
 	if rerr != nil {
@@ -241,9 +253,6 @@ var grantStamped = func() {}
 var evalSymlinks = filepath.EvalSymlinks
 
 func (h *Handler) handleGrant(w http.ResponseWriter, r *http.Request) {
-	if !httpreply.RequireMethod(w, r, http.MethodPost) {
-		return
-	}
 	var req marotte.PreviewGrantRequest
 	if !httpreply.DecodeBody(w, r, &req, "bad request") {
 		return
@@ -257,9 +266,6 @@ func (h *Handler) handleGrant(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleStamp(w http.ResponseWriter, r *http.Request) {
-	if !httpreply.RequireMethod(w, r, http.MethodGet) {
-		return
-	}
 	pg, err := h.openPage(r.URL.Query().Get("path"))
 	if err != nil {
 		writePageError(w, err)

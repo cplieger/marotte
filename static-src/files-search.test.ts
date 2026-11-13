@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { FileMatch, FileSearchResult } from "./wire/types.gen.js";
+import { asked } from "./__test-helpers__/url.js";
 
 /** A non-2xx answer: what the mocked transport resolves to when the server refuses the query. */
 class HttpStatus {
@@ -218,9 +219,10 @@ afterEach(() => {
 
 describe("searchURL", () => {
   it("asks the files search endpoint with the encoded root and query", () => {
-    expect(searchURL("workspace/a b", "func Foo")).toBe(
-      "/api/files/search?path=workspace%2Fa+b&q=func+Foo",
-    );
+    expect(asked(searchURL("workspace/a b", "func Foo"))).toEqual({
+      path: "/api/files/search",
+      query: { path: "workspace/a b", q: "func Foo" },
+    });
   });
 
   it("omits case unless asked, so an unset toggle keeps the server default", () => {
@@ -230,7 +232,10 @@ describe("searchURL", () => {
 
   it("sends mode, files and ignored only when set", () => {
     const bare = searchURL("workspace", "x", { mode: "names", files: "", ignored: false });
-    expect(bare).toBe("/api/files/search?path=workspace&q=x");
+    expect(asked(bare)).toEqual({
+      path: "/api/files/search",
+      query: { path: "workspace", q: "x" },
+    });
     const full = searchURL("workspace", "x", {
       mode: "contents",
       files: "*.css, !node_modules",

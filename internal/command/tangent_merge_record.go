@@ -42,7 +42,8 @@ type mergeKey struct {
 	op      string
 }
 
-type mergeStatus struct {
+// TangentMergeStatus is GET /api/chats/{id}/merges/{op}'s body: where one merge_tangent attempt stands.
+type TangentMergeStatus struct {
 	State        string         `json:"state"`
 	ParentChatID marotte.ChatID `json:"parent_chat_id,omitempty"`
 	Message      string         `json:"message,omitempty"`
@@ -145,13 +146,13 @@ func (m *tangentMerges) settle(ctx context.Context, k mergeKey, state marotte.Ta
 	return settled && err == nil, err
 }
 
-func (m *tangentMerges) status(ctx context.Context, k mergeKey) mergeStatus {
+func (m *tangentMerges) status(ctx context.Context, k mergeKey) TangentMergeStatus {
 	rec, ok := m.record(ctx, k)
 	switch {
 	case !ok && m.claimed(k):
-		return mergeStatus{State: mergeAdmitting}
+		return TangentMergeStatus{State: mergeAdmitting}
 	case !ok:
-		return mergeStatus{State: mergeAbsent}
+		return TangentMergeStatus{State: mergeAbsent}
 	case rec.State == marotte.TangentMergeRunning && m.claim(k):
 		m.resume(ctx, k, &rec)
 	}
@@ -320,8 +321,8 @@ func (m *tangentMerges) conclude(ctx context.Context, k mergeKey, parent marotte
 		marotte.TangentMergedPayload{ParentChatID: string(parent), OpID: k.op}))
 }
 
-func mergeStatusOf(r *marotte.TangentMerge) mergeStatus {
-	return mergeStatus{State: string(r.State), ParentChatID: r.Parent, Message: r.Message}
+func mergeStatusOf(r *marotte.TangentMerge) TangentMergeStatus {
+	return TangentMergeStatus{State: string(r.State), ParentChatID: r.Parent, Message: r.Message}
 }
 
 // ServeMergeStatus answers GET /api/chats/{id}/merges/{op}: where the merge_tangent attempt with

@@ -1,4 +1,16 @@
-import { ActionError, apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+import { ActionError, apiAction, fromEndpoint, retryNetwork, RETRY_STANDARD } from "./index.js";
+import {
+  deleteMcpByNameEndpoint,
+  getMcpByNameEndpoint,
+  getMcpRegistrySearchEndpoint,
+  patchMcpByNameEndpoint,
+  postMcpEndpoint,
+  postMcpImportEndpoint,
+  postMcpOauthRelayEndpoint,
+  postMcpReconnectEndpoint,
+  postMcpSignInEndpoint,
+  putMcpByNameEndpoint,
+} from "../wire/client.gen.js";
 import type { ApiErrorInfo, ApiErrorDecision } from "./index.js";
 
 import {
@@ -8,10 +20,11 @@ import {
   insertConfiguredEntry,
 } from "../mcp-state.js";
 import { decodeRegistrySearchFailure, decodeRegistrySearchResult } from "../wire/decoders.gen.js";
-import type { RegistrySearchFailure, RegistrySearchResult } from "../wire/types.gen.js";
-
-/** Base path for MCP API endpoints. */
-export const MCP_API = "/api/mcp";
+import type {
+  RegistrySearchFailure,
+  RegistrySearchResult,
+  Server as WireServer,
+} from "../wire/types.gen.js";
 
 /** One validation failure attributed to its wire field (`internal/mcp.fieldError`). The server
  *  accumulates across checks, so one response carries every bad field. */
@@ -86,11 +99,8 @@ export const toggleServer = apiAction<ToggleArgs, void, Server>({
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   scope: (args) => "mcp:" + args.id,
-  request: ({ id, enabled }) => ({
-    method: "PATCH",
-    path: `${MCP_API}/${encodeURIComponent(id)}`,
-    body: { enabled },
-  }),
+  request: ({ id, enabled }) =>
+    fromEndpoint(patchMcpByNameEndpoint.request({ name: id, body: { enabled } })),
   optimistic: ({ id, enabled }) => {
     return updateConfiguredEntry(id, { enabled });
   },
@@ -112,10 +122,7 @@ export const deleteServer = apiAction<DeleteArgs, void, [Server, number]>({
   name: "mcp.delete_server",
   dedupe: (args) => `mcp.delete:${args.id}`,
   scope: (args) => "mcp:" + args.id,
-  request: ({ id }) => ({
-    method: "DELETE",
-    path: `${MCP_API}/${encodeURIComponent(id)}`,
-  }),
+  request: ({ id }) => fromEndpoint(deleteMcpByNameEndpoint.request({ name: id })),
   optimistic: ({ id }) => {
     return removeConfiguredEntry(id);
   },
@@ -133,10 +140,7 @@ export const openEdit = apiAction<string, Server>({
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   dedupe: (id) => id,
-  request: (id) => ({
-    method: "GET",
-    path: `${MCP_API}/${encodeURIComponent(id)}`,
-  }),
+  request: (id) => fromEndpoint(getMcpByNameEndpoint.request({ name: id })),
   error: "Could not load integration details",
 });
 
@@ -152,11 +156,16 @@ export const saveServer = apiAction<SaveArgs, Server>({
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   scope: (args) => "mcp:" + args.id,
-  request: ({ id, body }) => ({
-    method: id === "" ? "POST" : "PUT",
-    path: id === "" ? MCP_API : `${MCP_API}/${encodeURIComponent(id)}`,
-    body,
-  }),
+  request: ({ id, body }) => {
+    // The store decodes the body into a whole Server and reads an absent field as its zero or as
+    // unchanged; the wire type is the stored Server's, every non-omitempty field required.
+    const server = body as WireServer;
+    return fromEndpoint(
+      id === ""
+        ? postMcpEndpoint.request({ body: server })
+        : putMcpByNameEndpoint.request({ name: id, body: server }),
+    );
+  },
   decodeError: decodeValidationError,
   error: false,
 });
@@ -181,11 +190,7 @@ export const importServers = apiAction<Record<string, unknown>, ImportServersRes
   idempotencyKey: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  request: (block) => ({
-    method: "POST",
-    path: `${MCP_API}/import`,
-    body: block,
-  }),
+  request: (block) => fromEndpoint(postMcpImportEndpoint.request({ body: block })),
   decodeError: decodeValidationError,
   success: (_args, res) => summariseImport(res),
   // Rendered inline beside the textarea, not as a toast.
@@ -257,10 +262,7 @@ export function registryFailureOf(
 export const searchRegistry = apiAction<SearchRegistryArgs, RegistrySearchResult>({
   name: "mcp.search_registry",
   dedupe: (args) => args.q,
-  request: ({ q }) => ({
-    method: "GET",
-    path: `${MCP_API}/registry/search?q=${encodeURIComponent(q)}&limit=20`,
-  }),
+  request: ({ q }) => fromEndpoint(getMcpRegistrySearchEndpoint.request({ q, limit: 20 })),
   decode: decodeRegistrySearchResult,
   decodeError: decodeRegistryFailure,
   error: false,
@@ -274,11 +276,7 @@ export const reconnectServer = apiAction<{ server: string }, void>({
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   scope: (args) => "mcp-reconnect:" + args.server,
-  request: ({ server }) => ({
-    method: "POST",
-    path: `${MCP_API}/reconnect`,
-    body: { server },
-  }),
+  request: ({ server }) => fromEndpoint(postMcpReconnectEndpoint.request({ body: { server } })),
   error: "Could not reconnect integration",
 });
 
@@ -289,11 +287,7 @@ export const signInServer = apiAction<{ server: string }, void>({
   name: "mcp.sign_in",
   // NO retry: a second sign-in discards the credentials the first one is creating.
   scope: (args) => "mcp-sign-in:" + args.server,
-  request: ({ server }) => ({
-    method: "POST",
-    path: `${MCP_API}/sign-in`,
-    body: { server },
-  }),
+  request: ({ server }) => fromEndpoint(postMcpSignInEndpoint.request({ body: { server } })),
   error: "Could not start the sign-in",
 });
 
@@ -305,11 +299,8 @@ export const relayOAuthCallback = apiAction<{ server: string; redirect_url: stri
   name: "mcp.relay_oauth_callback",
   // NO retry: an authorization code is single-use, and a replay would spend it twice.
   scope: (args) => "mcp-oauth-relay:" + args.server,
-  request: ({ server, redirect_url }) => ({
-    method: "POST",
-    path: `${MCP_API}/oauth-relay`,
-    body: { server, redirect_url },
-  }),
+  request: ({ server, redirect_url }) =>
+    fromEndpoint(postMcpOauthRelayEndpoint.request({ body: { server, redirect_url } })),
   // Shown inline beside the pasted box: every rejection names the wrong part of the address.
   error: false,
 });

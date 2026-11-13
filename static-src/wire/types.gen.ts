@@ -147,6 +147,49 @@ export type WakeReason = "step_message" | "run_finished" | "rewake" | "unknown";
 export type WhoamiState = "signed_in" | "signed_out" | "unavailable";
 
 /**
+ * ClientCommand is the envelope for every command the browser posts. Type
+ * determines how Payload unmarshals; idempotency is the Idempotency-Key header
+ * (internal/server/idempotency.go), never a body field. A payload's own
+ * request_id means something else: the id of the ask being answered.
+ */
+export type ClientCommand =
+  | { type: "ack_tab"; chat_id?: string; caller?: string; payload?: AckTabCommand }
+  | { type: "approve_spec_phase"; chat_id?: string; caller?: string; payload?: ApproveSpecPhaseCommand }
+  | { type: "cancel"; chat_id?: string; caller?: string; payload?: CancelCommand }
+  | { type: "cancel_compact"; chat_id?: string; caller?: string }
+  | { type: "close_tab"; chat_id?: string; caller?: string; payload?: CloseTabCommand }
+  | { type: "compact"; chat_id?: string; caller?: string }
+  | { type: "create_chat"; chat_id?: string; caller?: string; payload?: CreateChatCommand }
+  | { type: "delete_chat"; chat_id?: string; caller?: string; payload?: CloseTabCommand }
+  | { type: "elicitation_response"; chat_id?: string; caller?: string; payload?: ElicitationResponseCommand }
+  | { type: "fork_chat"; chat_id?: string; caller?: string; payload?: ForkChatCommand }
+  | { type: "merge_tangent"; chat_id?: string; caller?: string; payload?: MergeTangentCommand }
+  | { type: "open_tab"; chat_id?: string; caller?: string; payload?: OpenTabCommand }
+  | { type: "permission_response"; chat_id?: string; caller?: string; payload?: PermissionResponseCommand }
+  | { type: "pin_tab"; chat_id?: string; caller?: string; payload?: PinTabCommand }
+  | { type: "prompt"; chat_id?: string; caller?: string; payload?: PromptCommand }
+  | { type: "queue_prompt"; chat_id?: string; caller?: string; payload?: QueuePromptCommand }
+  | { type: "rename_chat"; chat_id?: string; caller?: string; payload?: RenameChatCommand }
+  | { type: "reorder_tabs"; chat_id?: string; caller?: string; payload?: ReorderTabsCommand }
+  | { type: "reparent_tab"; chat_id?: string; caller?: string; payload?: ReparentTabCommand }
+  | { type: "resume_session"; chat_id?: string; caller?: string; payload?: ResumeSessionCommand }
+  | { type: "rewind_chat"; chat_id?: string; caller?: string; payload?: RewindChatCommand }
+  | { type: "send_queued_now"; chat_id?: string; caller?: string; payload?: SendQueuedNowCommand }
+  | { type: "set_attachments"; chat_id?: string; caller?: string; payload?: SetAttachmentsCommand }
+  | { type: "set_draft"; chat_id?: string; caller?: string; payload?: SetDraftCommand }
+  | { type: "set_effort"; chat_id?: string; caller?: string; payload?: SetEffortCommand }
+  | { type: "set_interrupt_mode"; chat_id?: string; caller?: string; payload?: SetInterruptModeCommand }
+  | { type: "set_mode"; chat_id?: string; caller?: string; payload?: SetModeCommand }
+  | { type: "set_supervised_mode"; chat_id?: string; caller?: string; payload?: SetSupervisedModeCommand }
+  | { type: "set_thinking"; chat_id?: string; caller?: string; payload?: SetThinkingCommand }
+  | { type: "steer"; chat_id?: string; caller?: string; payload?: SteerCommand }
+  | { type: "steer_clear"; chat_id?: string; caller?: string }
+  | { type: "steer_remove"; chat_id?: string; caller?: string; payload?: SteerRemoveCommand }
+  | { type: "switch_model"; chat_id?: string; caller?: string; payload?: SwitchModelCommand }
+  | { type: "unqueue_prompt"; chat_id?: string; caller?: string; payload?: UnqueuePromptCommand }
+  | { type: "user_input_response"; chat_id?: string; caller?: string; payload?: UserInputResponseCommand };
+
+/**
  * AccountUsage is the account/subscription usage snapshot for the
  * signed-in identity.
  */
@@ -211,6 +254,42 @@ export interface AccountUsageBreakdown {
 }
 
 /**
+ * AckTabCommand is the payload for type="ack_tab": the reader has seen a chat or run tab up to
+ * Seen, a read position the server sent. The server clamps Seen to the position the tab's state
+ * names now, and a value not past the stored one is a no-op; the reply's `seen` is what is stored.
+ */
+export interface AckTabCommand {
+  id: string;
+  op_id?: string;
+  seen: number;
+}
+
+/**
+ * AddRequest is the Add call's body: intent for a new tool. Every field
+ * except Name is optional when the catalog knows the name.
+ */
+export interface AddRequest {
+  name: string;
+  source?: string;
+  version?: string;
+  description?: string;
+  origin?: string;
+  install?: string;
+  uninstall?: string;
+  probe?: string;
+  python?: string;
+  requires?: string[];
+  /** VersionArgs sets Tool.VersionArgs; empty takes the catalog's. */
+  version_args?: string[];
+  pin?: boolean;
+  /**
+ * Disabled adds the entry as a template: recorded, not installed,
+ * no job enqueued (Add then returns a nil Job).
+ */
+  disabled?: boolean;
+}
+
+/**
  * Affordance is whether one thing can be done, and what said so: something a
  * repository allows, or a capability of a connection or of its credential.
  */
@@ -256,6 +335,17 @@ export interface ApprovalFile {
 }
 
 /**
+ * ApproveSpecPhaseCommand is the payload for type="approve_spec_phase": a human approved Phase of
+ * the spec at Dir, as it was at Hash. Hash is a compare-and-swap precondition the handler
+ * re-checks, not a value it trusts.
+ */
+export interface ApproveSpecPhaseCommand {
+  dir: string;
+  phase: string;
+  hash: string;
+}
+
+/**
  * AptPackage is one installed Debian package this engine does not
  * manage: something a user or an agent installed in the shell.
  * Read-only, with no manifest row behind it. Reported so a consumer's
@@ -281,12 +371,46 @@ export interface BotSummary {
   state: BotState;
 }
 
+/** Branch is one row of GET /api/git/branches. */
+export interface Branch {
+  name: string;
+  current: boolean;
+}
+
+/** BranchCommits is GET /api/git/branch-commits' body. */
+export interface BranchCommits {
+  subjects: string[];
+}
+
+/** BranchCommitsQuery is GET /api/git/branch-commits' query. */
+export interface BranchCommitsQuery {
+  repo?: string;
+  base: string;
+  head?: string;
+}
+
+/** Branches is GET /api/git/branches' body. */
+export interface Branches {
+  current: string;
+  branches: Branch[];
+}
+
 /**
  * Caller marks a message a program sent through marotte's API rather than one the user typed in its page; a message
  * with no Caller is the user's own. Label is the name the program gave itself, "" when it gave none.
  */
 export interface Caller {
   label?: string;
+}
+
+/**
+ * CancelCommand is the payload for type="cancel". Target is the run entry the stop is for (RunView.Cancel); a
+ * target that is not a live turn starting or running stops nothing, and an absent one stops what RunView.Cancel
+ * names. Lead is the key of the dock row the stop is for: the unread steers the stop resends go out with it first.
+ */
+export interface CancelCommand {
+  target?: string;
+  lead?: string;
 }
 
 /**
@@ -350,9 +474,20 @@ export interface CatalogInfo {
   scheduled: boolean;
 }
 
+/** ChangeResult is a change's 200 answer: ok, or the error git gave. */
+export interface ChangeResult {
+  error?: string;
+  ok?: boolean;
+}
+
 /** ChatDeletedPayload is the payload for type="chat_deleted". */
 export interface ChatDeletedPayload {
   id: string;
+}
+
+/** ExportQuery is GET /api/chats/{id}/export's query: md (the default) or json. */
+export interface ChatExportQuery {
+  format?: string;
 }
 
 /** ChatHeader is the metadata-only view of a Chat; field order is fieldalignment's. */
@@ -402,6 +537,57 @@ export interface ChatHeader {
   tangent?: boolean;
 }
 
+/** List is GET /api/chats' body. */
+export interface ChatList {
+  subject?: SubjectStamp;
+  chats: ChatHeader[];
+}
+
+/** Page is GET /api/chats/{id}'s body. */
+export interface ChatPage {
+  draft: string;
+  entries: Entry[];
+  open_entries: OpenEntry[];
+  subject: (SubjectStamp | null)[];
+  chat: ChatHeader;
+  has_more: boolean;
+  live: boolean;
+}
+
+/** PageQuery is GET /api/chats/{id}'s query: how many turns, and the turn to page older from. */
+export interface ChatPageQuery {
+  before?: string;
+  limit?: number;
+}
+
+/** SearchAllQuery is GET /api/chats/search's query. */
+export interface ChatSearchAllQuery {
+  q?: string;
+}
+
+/** InChatSearchQuery is GET /api/chats/{id}/search's query; Case "1" matches case. */
+export interface ChatSearchQuery {
+  q?: string;
+  case?: string;
+}
+
+/** TurnQuery is GET /api/chats/{id}/turns/{turn}'s query: the exclusive sequence to read after. */
+export interface ChatTurnQuery {
+  after?: string;
+}
+
+/** TurnRange is GET /api/chats/{id}/turns/{turn}'s body. */
+export interface ChatTurnRange {
+  entries: Entry[];
+  open_entries: OpenEntry[];
+  subject: (SubjectStamp | null)[];
+}
+
+/** Turns is GET /api/chats/{id}/turns' body. */
+export interface ChatTurns {
+  turns: TurnSummary[];
+}
+
 /**
  * ChatWork names what closing one chat stops, every item by its id: a count could not tell the reply a dialog
  * named from another device's new reply in the same chat.
@@ -425,6 +611,49 @@ export interface Check {
   url?: string;
 }
 
+/** CheckoutRequest is POST /api/git/checkout's body. */
+export interface CheckoutRequest {
+  repo: string;
+  branch: string;
+  create: boolean;
+}
+
+/** ChecksQuery is GET .../checks' query: the branch or SHA to fold. */
+export interface ChecksQuery {
+  ref: string;
+}
+
+/**
+ * ClockSpec is one clock rule's recurrence, a subset of RFC 5545's recurrence rule rather than a
+ * cron expression: it maps one-to-one onto the UI's choices and needs no parser. Everything is
+ * LOCAL time, by decision: there is no per-rule timezone. Only the fields its freq uses are
+ * read, so a stored spec keeps the others at zero.
+ */
+export interface ClockSpec {
+  freq: string;
+  /** Weekdays are the days FreqWeekly fires on, as time.Weekday (0=Sunday). */
+  weekdays?: number[];
+  /**
+ * Interval is the step in its freq's unit: hours for FreqHourly (1-24), minutes for
+ * FreqMinutely (minMinuteInterval..maxMinuteInterval). Anchored to local midnight, so a step
+ * that does not divide the day has a short final gap (every 5 hours: 00,05,10,15,20, midnight).
+ */
+  interval?: number;
+  /**
+ * MonthDay is the day FreqMonthly fires on: 1-31, or LastDay. A value past
+ * the end of a short month is CLAMPED to that month's last day rather than
+ * skipping the month, so "day 31" still fires in February.
+ */
+  month_day?: number;
+  /**
+ * Hour and Minute are the local time of day. FreqHourly ignores Hour and uses Minute as
+ * the offset past each stepped hour; FreqMinutely uses Minute % Interval as the PHASE, so the
+ * chosen minute is always a fire time.
+ */
+  hour: number;
+  minute: number;
+}
+
 /** CloneRepo is one workspace clone joined to the connection that serves it. */
 export interface CloneRepo {
   dir: string;
@@ -433,12 +662,31 @@ export interface CloneRepo {
   repo_id: string;
 }
 
+/** CloneRequest is POST /api/git/clone's body. */
+export interface CloneRequest {
+  url: string;
+}
+
 /**
  * CloseImpact is the work a close stops, one entry per chat tab it takes. delete_chat carries it too, for the
  * chats under the deleted chat's tabs.
  */
 export interface CloseImpact {
   chats: ChatWork[];
+}
+
+/**
+ * CloseTabCommand is the payload for type="close_tab". Closing an id that is not open is not an
+ * error. For a CHAT tab it also runs the chat teardown and keeps the record under retention.
+ */
+export interface CloseTabCommand {
+  /**
+ * Impact is what the page's confirmation named; when present the close commits only if it covers what the
+ * close stops, else it answers 409 close_impact_changed with the server's impact. Absent is unchecked.
+ */
+  impact?: CloseImpact;
+  id: string;
+  op_id?: string;
 }
 
 /**
@@ -466,6 +714,16 @@ export interface CodeReferencesPayload {
 }
 
 /**
+ * CommandOutput is a git command's 200 answer: its output on success, or the error, errMsg being the
+ * subprocess output when non-empty, else err.Error(). Output is absent on failure so partial stdout
+ * is not mistaken for success.
+ */
+export interface CommandOutput {
+  output?: string;
+  error?: string;
+}
+
+/**
  * CommitChecks is a commit's folded CI verdict and the contexts it was folded
  * from. The verdict and every count are required, as on PRAction.
  */
@@ -481,6 +739,12 @@ export interface CommitChecks {
   checks_neutral: number;
   checks_unknown: number;
   checks_total: number;
+}
+
+/** CommitRequest is POST /api/git/commit's body. */
+export interface CommitRequest {
+  repo: string;
+  message: string;
 }
 
 /**
@@ -675,6 +939,39 @@ export interface ContextPart {
 }
 
 /**
+ * CreateChatCommand is the payload for type="create_chat".
+ * //
+ * Name is optional, capped at maxChatNameBytes, defaulting to "New
+ * conversation". Model is optional (validIdent). Invalid input returns HTTP 400.
+ */
+export interface CreateChatCommand {
+  name?: string;
+  model?: string;
+  /**
+ * OpID correlates every attempt of one create gesture, so a repeat resolves
+ * to the chat the first attempt made. Optional; unlike Idempotency-Key it
+ * covers the fall-through past that cache's TTL (command/create_ledger.go).
+ */
+  op_id?: string;
+}
+
+/** CursorSummary is an event rule's cursor as the rule list shows it: counts and sentences, never item lists. */
+export interface CursorSummary {
+  /** Blocked is why the poller holds the rule's launches, empty when nothing does. */
+  blocked?: string;
+  /** Notes name the watched runs the row should mention. */
+  notes?: string[];
+  /** Items counts a labeled rule's tracked items. */
+  items?: number;
+  /** Floor is an opened rule's floor: every item at or below it is accounted for. */
+  floor?: number;
+  /** Watching and Fired count a run rule's runs still to be decided and runs already queued. */
+  watching?: number;
+  fired?: number;
+  baselined: boolean;
+}
+
+/**
  * DecisionSettledPayload is the payload for type="decision_settled": the request named
  * here was answered, and not by the surface reading this. A decision is offered on EVERY
  * surface at once while only one answer is accepted, so without this event the losers keep
@@ -684,6 +981,27 @@ export interface DecisionSettledPayload {
   kind: DecisionKind;
   settled_by: SettledBy;
   request_id: number;
+}
+
+/** Delivery is the route's 200 body: what the delivery became, or that its dedupe_key was delivered already. */
+export interface Delivery {
+  delivered?: string;
+  duplicate?: boolean;
+}
+
+/**
+ * DetectRequest is an address and the token the connect after it will use: no
+ * family constructor builds a client without a credential.
+ */
+export interface DetectRequest {
+  token: string;
+  web_base_url: string;
+  ca_pem?: string;
+  client_cert_pem?: string;
+  client_key_pem?: string;
+  proxy?: string;
+  private_addresses?: boolean;
+  plaintext_http?: boolean;
 }
 
 /** Detection is the forge kind whose API answers at an address. */
@@ -702,6 +1020,22 @@ export interface DeviceFlowResponse {
   grant_id: string;
   interval: number;
   expires_in: number;
+}
+
+/** DiagnosticsReport is POST /api/diagnostics' body. */
+export interface DiagnosticsReport {
+  report: string;
+}
+
+/** DirPath is a route's {dir}. */
+export interface DirPath {
+  dir: string;
+}
+
+/** DownloadQuery is GET /api/file/download's query: the path, and the identity it was read under. */
+export interface DownloadQuery {
+  path: string;
+  file_id?: string;
 }
 
 /**
@@ -1014,6 +1348,25 @@ export interface ElicitationRequestSchema {
   required?: string[];
 }
 
+/**
+ * ElicitationResponseCommand is the payload for type="elicitation_response".
+ * RequestID echoes the elicitation_needed event. Action is "accept" | "decline"
+ * | "cancel"; Content carries the filled form values on accept only. Content is
+ * decoded and re-encoded, never relayed as bytes: kiro-cli answers nothing to a
+ * line holding a lone surrogate escape or an invalid UTF-8 byte, and decoding
+ * turns both into U+FFFD.
+ */
+export interface ElicitationResponseCommand {
+  content?: { [key: string]: unknown };
+  action: string;
+  request_id: number;
+}
+
+/** EnabledPatch is PATCH /api/mcp/{name}'s body. */
+export interface EnabledPatch {
+  enabled?: boolean;
+}
+
 /** EngineBusy is what a restart now would interrupt. */
 export interface EngineBusy {
   turns: EngineBusyTurn[];
@@ -1052,6 +1405,10 @@ export interface EngineRestart {
  * Reasons stay queued.
  */
   config_unreadable: boolean;
+}
+
+/** EngineRestartAccepted is POST /api/engine/restart's 202 body, which carries no field. */
+export interface EngineRestartAccepted {
 }
 
 /** EngineStatus is GET /api/engine's answer and the engine_status event's payload. */
@@ -1591,6 +1948,35 @@ export interface ErrorPayload {
 }
 
 /**
+ * ErrorResponse is the JSON error envelope written by WriteError. Code and
+ * RequestID are omitted from the output when empty.
+ */
+export interface ErrorResponse {
+  /** Error is the human-readable error message. */
+  error: string;
+  /** Code is an optional machine-readable error code. */
+  code?: string;
+  /** RequestID is the request id for log correlation, when available. */
+  request_id?: string;
+}
+
+/**
+ * EventSpec is an event rule's `when`: one kind of event on one repository, read through one forge connection.
+ * The store fills IntervalMin, Hold and a run rule's Filter.RunTriggers with their defaults when unset.
+ */
+export interface EventSpec {
+  hold?: Hold;
+  /** Concurrency and CooldownMin are reserved: a body carrying either is refused by name rather than ignored. */
+  concurrency?: unknown;
+  cooldown_min?: unknown;
+  connection: string;
+  repo: string;
+  kind: string;
+  filter: Filter;
+  interval_min?: number;
+}
+
+/**
  * FieldFill is why an inventory row holds the value it does for one field its
  * family's list does not carry.
  */
@@ -1611,11 +1997,46 @@ export interface FieldFill {
   as_of?: number;
 }
 
+/** FileAction is POST /api/files/action's body. */
+export interface FileAction {
+  action: string;
+  path: string;
+  /** Name is optional at the wire level and enforced per action: actionRename rejects an empty one. */
+  name?: string;
+}
+
 /** FileChange tracks per-file change stats during a turn. */
 export interface FileChange {
   lines_added: number;
   lines_removed: number;
   is_new_file?: boolean;
+}
+
+/** FileChanges is GET /api/file-changes' body. */
+export interface FileChanges {
+  changes: LineRange[];
+}
+
+/** FileChangesQuery is GET /api/file-changes' query. */
+export interface FileChangesQuery {
+  chat_id: string;
+  path: string;
+}
+
+/** FileEntry is one GET /api/files row. */
+export interface FileEntry {
+  name: string;
+  mode: string;
+  size: number;
+  modTime: number;
+  isDir: boolean;
+}
+
+/** FileList is GET /api/files' body. */
+export interface FileList {
+  path: string;
+  files: FileEntry[];
+  writable: boolean;
 }
 
 /**
@@ -1713,6 +2134,16 @@ export interface FileStat {
   read_only: boolean;
 }
 
+/** FileWrite is PUT /api/file's body. */
+export interface FileWrite {
+  /**
+ * FileID is the identity the client's buffer was read under. Absent (or null) writes
+ * unconditionally, for non-editor writers and the editor's explicit Overwrite.
+ */
+  file_id?: string;
+  content: string;
+}
+
 /**
  * FileWriteResult is PUT /api/file's success reply; FileID is the identity of the bytes
  * this request wrote.
@@ -1723,6 +2154,36 @@ export interface FileWriteResult {
   file_id: string;
   size: number;
   ok: boolean;
+}
+
+/** FilesRequest is a stage, unstage or discard body. */
+export interface FilesRequest {
+  repo: string;
+  files: string[];
+}
+
+/**
+ * FilesSearchQuery is GET /api/files/search's query; Case, Ignored and Deep are "1" to match case,
+ * to search ignored files and to search with the deep budget.
+ */
+export interface FilesSearchQuery {
+  q?: string;
+  path?: string;
+  mode?: string;
+  files?: string;
+  case?: string;
+  ignored?: string;
+  deep?: string;
+}
+
+/** Filter narrows the events of a kind; which fields a kind takes is EventSpec's validation. */
+export interface Filter {
+  label?: string;
+  branch?: string;
+  workflow?: string;
+  authors?: string[];
+  result?: string[];
+  run_triggers?: string[];
 }
 
 /**
@@ -1738,6 +2199,55 @@ export interface ForgeError {
  * Unix milliseconds; absent when the forge named no wait.
  */
   retry_at?: number;
+}
+
+/**
+ * ForgeList is GET /api/forges' body: the connections, the kinds, and per public kind whether
+ * Marotte's own OAuth application signs it in.
+ */
+export interface ForgeList {
+  oauth: { [key: string]: boolean };
+  forges: ConfiguredForge[];
+  kinds: ForgeKind[];
+}
+
+/**
+ * ForkChatCommand is the payload for type="fork_chat": a TANGENT that starts with the parent's
+ * conversation up to its head or up to a named turn, and diverges, nothing syncing the two
+ * afterwards. The new chat's id is minted server-side and returned.
+ */
+export interface ForkChatCommand {
+  parent_chat_id: string;
+  title?: string;
+  /**
+ * MessageID, when set, is the user prompt whose turn the tangent ends after (Branch from
+ * here); empty forks at the head.
+ */
+  message_id?: string;
+  /**
+ * OpID correlates every attempt of one fork; without it a retry would fork
+ * again, producing a second session and chat. See CreateChatCommand.OpID.
+ */
+  op_id?: string;
+}
+
+/**
+ * Gap is one stretch in which an event rule may have missed a run: no complete check for longer than the read
+ * window reaches (outage), a run that reached the read horizon before it was seen to end or launched (aged_out),
+ * or more runs created in one second than the forge lists (result_window).
+ */
+export interface Gap {
+  from: string;
+  to: string;
+  /** CreatedBefore is an outage's read horizon: a run created before it that ended in the gap was not checked. */
+  created_before?: string;
+  cause: string;
+  /** RunID names the aged_out run. */
+  run_id?: number;
+  /** OmittedAtLeast is a result_window's lower bound on the runs the forge did not list. */
+  omitted_at_least?: number;
+  /** QueueFull marks an aged_out run that matched while the queue was full, rather than one still running. */
+  queue_full?: boolean;
 }
 
 /** GitHubRateLimit is the wire form of a [GitHubRateLimitError]. */
@@ -1862,6 +2372,34 @@ export interface GovernanceStatePayload {
   admin_restricted?: boolean;
 }
 
+/** GrantRef is a device grant's poll or cancel body. */
+export interface GrantRef {
+  grant_id: string;
+}
+
+/**
+ * GrantStart is a device-grant start: the instance, and the OAuth application
+ * it signs in with when the instance is not the public one.
+ */
+export interface GrantStart {
+  host: string;
+  client_id?: string;
+  web_base_url?: string;
+  api_base_url?: string;
+  ca_pem?: string;
+  client_cert_pem?: string;
+  client_key_pem?: string;
+  proxy?: string;
+  private_addresses?: boolean;
+  plaintext_http?: boolean;
+}
+
+/** HeldEvent is one held event as the rule list shows it. */
+export interface HeldEvent {
+  observed_at: string;
+  key: string;
+}
+
 /** Hit is one matching item; the client pages its turn in, opens the containers holding it and marks its terms. */
 export interface Hit {
   /** Caller is set on a hit in a prompt or steer an API caller sent, so a result names who sent the words. */
@@ -1887,6 +2425,88 @@ export interface Hit {
   turn: number;
   /** Automatic is set on a hit in a prompt marotte sent on its own (EntryPrompt.Automatic). */
   automatic?: boolean;
+}
+
+/** Hold bounds the events a rule keeps while its recipe cannot launch. */
+export interface Hold {
+  policy: string;
+  cap: number;
+}
+
+/** HookEnabledWrite is POST /api/hooks/{id}/enabled's body. */
+export interface HookEnabledWrite {
+  enabled: boolean;
+}
+
+/**
+ * HookInfo is one GET /api/hooks row.
+ * ID is a base64url handle of the KAS id. Scope is "workspace" or "global" ($HOME/.kiro/hooks,
+ * kiro-cli 2.13+, derived from _meta.filePath). A global FilePath is a ~-prefixed display path
+ * only; filebrowse blocks that tree.
+ */
+export interface HookInfo {
+  id: string;
+  name: string;
+  trigger: string;
+  action_type: string;
+  scope: string;
+  command?: string;
+  prompt?: string;
+  matcher?: string;
+  /**
+ * MatcherWarning is derived by marotte.ClassifyHookMatcher: `missing_tool_matcher` for a tool
+ * trigger without matcher, `ineffective` for a matcher on a trigger with nothing to match.
+ */
+  matcher_warning?: string;
+  file_path?: string;
+  disabled_reason?: string;
+  enabled: boolean;
+}
+
+/** HooksList is GET /api/hooks' body. */
+export interface HooksList {
+  hooks: HookInfo[];
+}
+
+/** IDOpPath is a route's {id} and {op}. */
+export interface IDOpPath {
+  id: string;
+  op: string;
+}
+
+/** IDPath is a route's {id}. */
+export interface IDPath {
+  id: string;
+}
+
+/** IDToolPath is a route's {id} and {tool}. */
+export interface IDToolPath {
+  id: string;
+  tool: string;
+}
+
+/** IDTurnPath is a route's {id} and {turn}. */
+export interface IDTurnPath {
+  id: string;
+  turn: string;
+}
+
+/**
+ * ImportBlock is POST /api/mcp/import's body: a publisher's pasted JSON object, an "mcpServers" block
+ * or one server object, whose keys parseImportBody reads.
+ */
+export type ImportBlock = { [key: string]: unknown };
+
+/** ImportResult is one entry's outcome, in the order the block declared it. */
+export interface ImportResult {
+  name: string;
+  outcome: string;
+}
+
+/** ImportResults is POST /api/mcp/import's answer. */
+export interface ImportResults {
+  results: ImportResult[];
+  notes: string[];
 }
 
 /**
@@ -1991,6 +2611,12 @@ export interface InventoryScope {
   rows: PR[];
 }
 
+/** InventoryWatch is POST /api/forges/inventory/watch's body. */
+export interface InventoryWatch {
+  watching?: boolean;
+  page: string;
+}
+
 /** Issue is one issue row. */
 export interface Issue {
   title: string;
@@ -2004,6 +2630,13 @@ export interface Issue {
   number: number;
   created_at?: number;
   updated_at?: number;
+}
+
+/** IssueCreate is POST .../issues' body. */
+export interface IssueCreate {
+  title: string;
+  body?: string;
+  labels?: string[];
 }
 
 /** IssueList is one page of a repository's issues. */
@@ -2047,6 +2680,11 @@ export interface Job {
   ended_at?: number;
 }
 
+/** JobParams is the cancel route's path. */
+export interface JobParams {
+  id: string;
+}
+
 /** JobResponse is the 202 body of every mutating route. */
 export interface JobResponse {
   job?: Job;
@@ -2059,6 +2697,16 @@ export interface JobResponse {
 export interface JobsResponse {
   active?: Job;
   recent: (Job | null)[];
+}
+
+/**
+ * KeyPair is an ordered env-var or header entry. Ordered (vs map) so
+ * the UI can edit entries without dropping duplicates; the on-wire ACP
+ * format is a JSON object so we flatten on export.
+ */
+export interface KeyPair {
+  name: string;
+  value: string;
 }
 
 /**
@@ -2108,6 +2756,26 @@ export interface KiroDoc {
   delete_protected?: boolean;
 }
 
+/** KiroDocNewRequest is POST /api/workspace/kiro-docs/new's body; each kind reads only its fields. */
+export interface KiroDocNewRequest {
+  /** Timeout is a hook command's limit in seconds; absent leaves KAS's default. */
+  timeout?: number;
+  category: string;
+  name: string;
+  inclusion?: string;
+  description?: string;
+  trigger?: string;
+  matcher?: string;
+  action?: string;
+  /** Content is a hook's command or its instructions, by Action. */
+  content?: string;
+}
+
+/** KiroDocNewResult is the 201 reply: the new file's path in the inventory rows' spelling. */
+export interface KiroDocNewResult {
+  path: string;
+}
+
 /**
  * KiroDocsResponse is GET /api/workspace/kiro-docs's reply. Truncated says a cap
  * or a cancelled request stopped the scan before it read the whole tree, so a
@@ -2116,6 +2784,28 @@ export interface KiroDoc {
 export interface KiroDocsResponse {
   docs: KiroDoc[];
   truncated: boolean;
+}
+
+/** KiroSettingWrite is PUT /api/kiro-settings' body. */
+export interface KiroSettingWrite {
+  key: string;
+  value: string;
+}
+
+/** KiroSettings is GET /api/kiro-settings' body. */
+export interface KiroSettings {
+  settings: { [key: string]: string };
+}
+
+/** KiroSettingsQuery is GET /api/kiro-settings' query: a comma-separated key list, every allowlisted key when absent. */
+export interface KiroSettingsQuery {
+  keys?: string;
+}
+
+/** KnowledgeAdd is POST /api/knowledge's body; an empty name defaults to the path's base name. */
+export interface KnowledgeAdd {
+  path: string;
+  name?: string;
 }
 
 /**
@@ -2128,6 +2818,20 @@ export interface KnowledgeChunking {
 }
 
 /**
+ * KnowledgeContext is one GET /api/knowledge row.
+ * The client keys rows by ID and draws progress from Indexing and ItemsDisplay.
+ */
+export interface KnowledgeContext {
+  name: string;
+  id: string;
+  description?: string;
+  path?: string;
+  items_display?: string;
+  item_count: number;
+  indexing?: boolean;
+}
+
+/**
  * KnowledgeIndexingPayload is the payload for type="knowledge_indexing". FileCount
  * rides the started phase; Status the completed one, with ItemCount on success.
  */
@@ -2137,6 +2841,16 @@ export interface KnowledgeIndexingPayload {
   status?: KnowledgeIndexingStatus;
   file_count?: number;
   item_count?: number;
+}
+
+/** KnowledgeList is GET /api/knowledge's body. */
+export interface KnowledgeList {
+  contexts: KnowledgeContext[];
+}
+
+/** KnowledgeMessage is the POST /api/knowledge success body: KAS's confirmation, verbatim. */
+export interface KnowledgeMessage {
+  message: string;
 }
 
 /** Label is a label a repository defines. */
@@ -2152,6 +2866,81 @@ export interface LabelList {
   successor?: RepoSuccessor;
   next?: string;
   labels: Label[];
+}
+
+/** LaunchRuleList is GET /api/launch-rules' body. */
+export interface LaunchRuleList {
+  rules: LaunchRuleView[];
+}
+
+/**
+ * LaunchRuleReplace is PUT /api/launch-rules/{id}'s body: the rule, plus the held-event count an edit of the
+ * watched population drops, which readRuleBody takes out before the rule decodes.
+ */
+export interface LaunchRuleReplace {
+  inputs?: { [key: string]: string };
+  when: When;
+  source: string;
+  model?: string;
+  effort?: string;
+  enabled: boolean;
+  confirm_drop?: number;
+}
+
+/**
+ * LaunchRuleView is a stored rule with its row, and a clock rule's next run computed server-side so the summary
+ * matches what will happen. Status is absent, and Error set, for a rule whose state file would not load.
+ */
+export interface LaunchRuleView {
+  next_run_at?: string;
+  status?: RuleStatus;
+  /** Set only for event rules. */
+  cursor?: CursorSummary;
+  error?: string;
+  held_events?: HeldEvent[];
+  /** Inputs are fixed inputs sent at each launch; the launch drops those the recipe does not declare. */
+  inputs?: { [key: string]: string };
+  when: When;
+  /** ID is minted by the store on create and never derived from the recipe, so a recipe may own many rules. */
+  id: string;
+  source: string;
+  /** Name is the recipe's name at save, for the row once the recipe is gone. */
+  name?: string;
+  model?: string;
+  effort?: string;
+  enabled: boolean;
+  held: number;
+}
+
+/**
+ * LaunchRuleWrite is POST /api/launch-rules' body: a launchrule.Rule without the id the store mints and the
+ * name prepareRule fills from the recipe. readRuleBody decodes it as a launchrule.Rule.
+ */
+export interface LaunchRuleWrite {
+  inputs?: { [key: string]: string };
+  when: When;
+  source: string;
+  model?: string;
+  effort?: string;
+  enabled: boolean;
+}
+
+/** LineRange is a range of lines modified by the agent. */
+export interface LineRange {
+  kind: string;
+  start_line: number;
+  end_line: number;
+  turn: number;
+}
+
+/**
+ * ListQuery is a list route's query: the state filter, the page cursor, and Refresh "1" to read
+ * past the cache.
+ */
+export interface ListQuery {
+  state?: string;
+  after?: string;
+  refresh?: string;
 }
 
 /**
@@ -2195,6 +2984,14 @@ export interface LiveRunsResponse {
   runs: LiveRun[];
 }
 
+/** Log is GET /api/git/log's body. */
+export interface Log {
+  remote: string;
+  commit_url_prefix: string;
+  entries: string[];
+  behind: number;
+}
+
 /**
  * LoginOptions is GET /api/login/options: which of marotte's two sign-in doors the administrator permits and the
  * start URL to pre-fill.
@@ -2204,6 +3001,12 @@ export interface LoginOptions {
   idc_region?: string;
   builder_id: boolean;
   idc: boolean;
+}
+
+/** LoginRequest is POST /api/login's body. */
+export interface LoginRequest {
+  provider: string;
+  region: string;
 }
 
 /**
@@ -2222,6 +3025,40 @@ export interface LoginResponse {
  */
 export interface LoginResult {
   forge_id: string;
+}
+
+/** LogoutResult is POST /api/logout's body. */
+export interface LogoutResult {
+  output: string;
+}
+
+/** MCPOAuthRelay is POST /api/mcp/oauth-relay's body. */
+export interface MCPOAuthRelay {
+  server: string;
+  redirect_url: string;
+}
+
+/** MCPOAuthRelayResult is POST /api/mcp/oauth-relay's answer. */
+export interface MCPOAuthRelayResult {
+  /** Status is the loopback listener's HTTP status, so the UI says what answered. */
+  status: number;
+}
+
+/** MCPPool is GET /api/mcp/pool's body. */
+export interface MCPPool {
+  servers: MCPPoolServer[];
+}
+
+/** MCPPoolQuery is GET /api/mcp/pool's query. */
+export interface MCPPoolQuery {
+  chat_id?: string;
+}
+
+/** MCPPoolServer is one server of GET /api/mcp/pool. */
+export interface MCPPoolServer {
+  name: string;
+  resources: MCPResourceInfo[];
+  resource_templates: MCPResourceTemplateInfo[];
 }
 
 /**
@@ -2266,6 +3103,11 @@ export interface MCPResourceTemplateInfo {
   mime_type?: string;
 }
 
+/** MCPServerRef names the server POST /api/mcp/reconnect and /api/mcp/sign-in act on. */
+export interface MCPServerRef {
+  server: string;
+}
+
 /** MCPServerStatus is one server's row of GET /api/mcp/status and of an mcp_status frame. */
 export interface MCPServerStatus {
   name: string;
@@ -2298,6 +3140,13 @@ export interface MCPSignInClosedPayload {
   server: string;
   flow_id: string;
   success: boolean;
+}
+
+/**
+ * MCPSignInStarted is POST /api/mcp/sign-in's 202 body, which carries no field: the sign-in's progress
+ * arrives on the event stream.
+ */
+export interface MCPSignInStarted {
 }
 
 /**
@@ -2351,6 +3200,83 @@ export interface MatchRange {
 }
 
 /**
+ * MemoryList is GET /api/memory's body.
+ * Cap feeds the "N of 1,000" label.
+ */
+export interface MemoryList {
+  memories: MemoryRow[];
+  cap: number;
+}
+
+/** MemoryOne is GET /api/memory/{id}'s body. */
+export interface MemoryOne {
+  memory: MemoryRow;
+}
+
+/** MemoryRow is one record on the wire; Content is set only by GET /api/memory/{id}. */
+export interface MemoryRow {
+  id: string;
+  memory_type: string;
+  title: string;
+  summary: string;
+  content?: string;
+  created_at?: unknown;
+  updated_at?: unknown;
+  cloud_state?: string;
+  scopes: string[];
+}
+
+/** MemorySync is GET /api/memory/sync's body. */
+export interface MemorySync {
+  status: MemorySyncStatus;
+  choice: MemorySyncChoice;
+}
+
+/**
+ * MemorySyncChoice is the composed memorySync setting: Enabled is its value, Account whether the account's layer
+ * states it on.
+ */
+export interface MemorySyncChoice {
+  lock?: MemorySyncLock;
+  enabled: boolean;
+  account: boolean;
+}
+
+/** MemorySyncLock is the layer whose lock fixes the choice, with its display name. */
+export interface MemorySyncLock {
+  layer: string;
+  name: string;
+}
+
+/** MemorySyncStatus is KAS's sync state as GET /api/memory/sync reports it. */
+export interface MemorySyncStatus {
+  pending?: number;
+  state: string;
+  reason?: string;
+  last_sync_at?: string;
+}
+
+/**
+ * MemorySyncUpdate is PUT /api/memory/sync's body. Scope is decoded only to refuse it: a page that still names
+ * a layer must not have its write land at the account's.
+ */
+export interface MemorySyncUpdate {
+  scope?: string;
+  on: boolean;
+}
+
+/**
+ * MemoryUpdate is PATCH /api/memory/{id}'s body.
+ * An absent field is left unchanged.
+ */
+export interface MemoryUpdate {
+  title?: string;
+  summary?: string;
+  content?: string;
+  memory_type?: string;
+}
+
+/**
  * MergeOutcome is what happened to one merge request. Code is set on the two
  * states that carry no verdict yet, accepted and in_flight, which the merge
  * status read follows up.
@@ -2378,6 +3304,16 @@ export interface MergeStatus {
 }
 
 /**
+ * MergeTangentCommand is the payload for type="merge_tangent". OpID is required (an identifier,
+ * else 400), client-minted and echoed on the merge's terminal frame (tangent_merged, or its
+ * tangent_merge_failed error), so a device follows only the attempt it asked for. The reply and
+ * GET /api/chats/{id}/merges/{op_id} both answer the op's state (command/tangent_merge_record.go).
+ */
+export interface MergeTangentCommand {
+  op_id: string;
+}
+
+/**
  * MeteringItem is one usage dimension from kiro-cli's meteringUsage array.
  * UnitPlural is the canonical identifier ("credits", "tokens", "requests").
  */
@@ -2385,6 +3321,16 @@ export interface MeteringItem {
   unit_singular: string;
   unit_plural: string;
   value: number;
+}
+
+/** NameParams is the path of the routes under /{name}. */
+export interface NameParams {
+  name: string;
+}
+
+/** NamePath is a route's {name}. */
+export interface NamePath {
+  name: string;
 }
 
 /** NoticeReport is a page's report to POST /api/events/notice about the notice ID. */
@@ -2409,6 +3355,16 @@ export interface NotificationPayload {
   id: string;
   /** ShowIn lists the pages offered the notice, at most one per browser profile; never set on a push. */
   show_in?: string[];
+}
+
+/** OKBody is the {"ok": true} acknowledgement OK writes. */
+export interface OKBody {
+  ok: boolean;
+}
+
+/** OKResponse is the cancel route's body. */
+export interface OKResponse {
+  ok: boolean;
 }
 
 /**
@@ -2443,6 +3399,37 @@ export interface OpenExternalURLPayload {
 }
 
 /**
+ * OpenTabCommand is the payload for type="open_tab": open a tab for something that already exists.
+ * It never mints, so (Kind, Ref) is a key; an already-open (Kind, Ref) mutates nothing and emits no
+ * event.
+ */
+export interface OpenTabCommand {
+  /** Kind must be one of the nine (TabKind.Valid). */
+  kind: TabKind;
+  /**
+ * Ref is required for every kind but a singleton, where it must be empty. A
+ * chat ref is checked against the chat store, which is what makes an open
+ * racing a delete a refusal rather than a tab pointing at nothing.
+ */
+  ref?: string;
+  /**
+ * Parent names an already-open tab to hang this one under; one that is not
+ * open promotes the new tab to top level rather than refusing it.
+ */
+  parent?: string;
+  /**
+ * OpID correlates the frame this open produces with the dispatch that asked
+ * for it. See CreateChatCommand.OpID.
+ */
+  op_id?: string;
+  /**
+ * Owns means closing this tab tears down what it shows. The client decides,
+ * because only the caller knows whether it launched the thing.
+ */
+  owns?: boolean;
+}
+
+/**
  * OutputStyle is one choice of the template's outputStyle select; ID is the value
  * EffectiveSettings.OutputStyle stores.
  */
@@ -2458,6 +3445,11 @@ export interface OutputStyle {
  */
 export interface OwnerScopes {
   owners: string[];
+}
+
+/** OwnersWrite is PUT /api/forges/{id}/owners' body. An empty list clears them. */
+export interface OwnersWrite {
+  owners?: string[];
 }
 
 /** PR is one pull request row. */
@@ -2535,6 +3527,16 @@ export interface PRChanged {
   pr: PR;
 }
 
+/** PRCreate is POST .../prs' body. */
+export interface PRCreate {
+  title: string;
+  body?: string;
+  source_branch: string;
+  target_branch: string;
+  labels?: string[];
+  draft?: boolean;
+}
+
 /**
  * PRDetail is one pull request as a person opens it: the row with its
  * description, and the folded checks of its head commit. Checks is absent
@@ -2543,6 +3545,13 @@ export interface PRChanged {
 export interface PRDetail {
   checks?: CommitChecks;
   pr: PR;
+}
+
+/** PRFetchRequest is POST /api/git/pr-fetch's body. */
+export interface PRFetchRequest {
+  repo: string;
+  head: string;
+  number: number;
 }
 
 /**
@@ -2554,6 +3563,15 @@ export interface PRList {
   successor?: RepoSuccessor;
   next?: string;
   prs: PR[];
+}
+
+/** PRMerge is POST .../prs/{number}/merge's body. */
+export interface PRMerge {
+  intent: string;
+  strategy?: string;
+  head_sha: string;
+  auto?: boolean;
+  delete_branch?: boolean;
 }
 
 /**
@@ -2577,6 +3595,44 @@ export interface PartialResult {
   reason: string;
   fetched: number;
   omitted_at_least: number;
+}
+
+/**
+ * PatchRequest edits an existing tool. Pointer fields distinguish
+ * "absent" from zero values. Disabled is the enable/disable toggle:
+ * false→true uninstalls the engine-owned footprint and keeps the
+ * template; true→false installs.
+ */
+export interface PatchRequest {
+  version?: string;
+  pin?: boolean;
+  disabled?: boolean;
+  description?: string;
+  requires?: string[];
+  install?: string;
+  uninstall?: string;
+  /**
+ * Python sets Tool.Python; "" clears it. A change on an enabled entry
+ * reinstalls it.
+ */
+  python?: string;
+  /**
+ * VersionArgs sets Tool.VersionArgs, taking effect at the next probe with
+ * no job. An empty list clears them, so the probe only requires an answer
+ * to --version (a source-less template takes the catalog's when hydrated).
+ */
+  version_args?: string[];
+  /**
+ * Force permits disabling a tool that enabled entries require,
+ * cascading the disable to every enabled entry that needs it, directly
+ * or through another (the set RemoveWithDependents takes).
+ */
+  force?: boolean;
+}
+
+/** PathQuery is the query of the routes that address one path. */
+export interface PathQuery {
+  path: string;
 }
 
 /** PctRange is a percentage slider's bounds and step. */
@@ -2695,10 +3751,46 @@ export interface PermissionOption {
   kind: string;
 }
 
+/** PermissionResponseCommand is the payload for type="permission_response". */
+export interface PermissionResponseCommand {
+  /**
+ * FileDecisions answers a TURN APPROVAL: action id → accept. KAS treats an
+ * OMITTED id as a reject, so the client sends a decision per offered file.
+ */
+  file_decisions?: { [key: string]: boolean };
+  option_id: string;
+  /**
+ * RejectionReason is the user's note on a deny, at most
+ * MaxRejectionReasonRunes once trimmed. Never paired with FileDecisions.
+ */
+  rejection_reason?: string;
+  /**
+ * AlwaysResource is the pattern an allow_always or reject_always answer saves as a
+ * rule, required with those options and refused with any other.
+ */
+  always_resource?: string;
+  /**
+ * AlwaysScope is where that rule is kept: ConsentScopeUser when empty, or
+ * ConsentScopeSession on an allow_always answer only. Refused with any other answer.
+ */
+  always_scope?: string;
+  request_id: number;
+}
+
 /** PermissionWatch names the workflow run and node a watch command belongs to. */
 export interface PermissionWatch {
   workflow_id: string;
   node_id: string;
+}
+
+/**
+ * PinTabCommand is the payload for type="pin_tab". Idempotent in both
+ * directions: a tab already in that state bumps no version and emits nothing.
+ */
+export interface PinTabCommand {
+  id: string;
+  op_id?: string;
+  pinned: boolean;
 }
 
 /** PlanEntry is one item in an agent-authored plan. */
@@ -2728,6 +3820,18 @@ export interface PolicyErrorPayload {
   errors?: PolicyErrorItem[];
 }
 
+/**
+ * PolicyExplainRequest is the POST /api/permissions/explain body. Exactly
+ * one of Capability / ToolID is required; Resource is the path (fs caps) or
+ * command (shell) being simulated. KAS requires a resource for the shell
+ * capability.
+ */
+export interface PolicyExplainRequest {
+  capability?: string;
+  tool_id?: string;
+  resource?: string;
+}
+
 /** PolicyExplainResult mirrors _kiro/permissions/explain (a pure simulation). */
 export interface PolicyExplainResult {
   capability: string;
@@ -2737,6 +3841,15 @@ export interface PolicyExplainResult {
   scope?: string;
   source?: string;
   is_explicit_ask: boolean;
+}
+
+/**
+ * PolicyProfileWrite is POST /api/permissions/profile's body.
+ * Seed is valid only when switching TO custom, and refused otherwise rather than ignored.
+ */
+export interface PolicyProfileWrite {
+  profile: string;
+  seed: boolean;
 }
 
 /**
@@ -2768,6 +3881,22 @@ export interface PolicyRuleCore {
   effect: string;
   match?: string[];
   exclude?: string[];
+}
+
+/**
+ * PolicyRuleWrite is POST /api/permissions/rules' body.
+ * op is "add", "remove" or "update". An add's empty effect defaults to "ask". For remove and update
+ * the rule fields identify the EXISTING rule; a widening change needs confirm=true.
+ */
+export interface PolicyRuleWrite {
+  op: string;
+  scope: string;
+  capability: string;
+  effect: string;
+  new_effect?: string;
+  match?: string[];
+  exclude?: string[];
+  confirm?: boolean;
 }
 
 /**
@@ -2808,6 +3937,11 @@ export interface PolicyView {
   available: boolean;
 }
 
+/** PolicyViewQuery is GET /api/permissions' query. */
+export interface PolicyViewQuery {
+  scope?: string;
+}
+
 /**
  * PollResult is one poll of a device grant: pending, complete, expired, denied
  * or error, with the refusal's code where there is one. It never carries a
@@ -2819,6 +3953,48 @@ export interface PollResult {
   code?: string;
   /** ForgeID is the id the server minted for the saved connection, on complete. */
   forge_id?: string;
+}
+
+/** PowerLoadError is one `_kiro/powers/list` errors[] entry. Its `source`, a home-tree path, is never decoded or forwarded. */
+export interface PowerLoadError {
+  name: string;
+  message: string;
+}
+
+/** PowerRow is one GET /api/powers row: a catalogue entry, an installed Power, or both. */
+export interface PowerRow {
+  name: string;
+  display_name?: string;
+  description?: string;
+  author?: string;
+  category?: string;
+  publisher_tier?: string;
+  auth_type?: string;
+  origin?: string;
+  mcp_servers?: string[];
+  skills?: string[];
+  issues?: number;
+  installed: boolean;
+  in_catalog: boolean;
+  agent_plugin?: boolean;
+  steering?: boolean;
+}
+
+/** PowerServers is GET /api/powers/{name}/servers' body. */
+export interface PowerServers {
+  servers: string[];
+  known: boolean;
+}
+
+/** PowersList is GET /api/powers' body. */
+export interface PowersList {
+  catalog: string;
+  installed: string;
+  blocked?: string;
+  powers: PowerRow[];
+  load_errors?: PowerLoadError[];
+  /** PolicyPending is true until the administrator rules are read; installs are refused until then. */
+  policy_pending?: boolean;
 }
 
 /**
@@ -2868,12 +4044,77 @@ export interface PreviewStamp {
   truncated: boolean;
 }
 
+/** StampQuery is GET /api/preview/stamp's query. */
+export interface PreviewStampQuery {
+  path: string;
+}
+
 /**
  * ProbeResult is a Check's answer: the row as the check left it, its status
  * and reason included.
  */
 export interface ProbeResult {
   forge?: ConfiguredForge;
+}
+
+/**
+ * PromptCommand is the payload for type="prompt". Text or at least one attachment is required; Text
+ * is capped at 512 KiB (413), Attachments at MaxAttachments (413) of MaxAttachmentPathBytes each
+ * (400), each confined before it is read.
+ * //
+ * DisplayText labels a message marotte wrote on the user's behalf (a spec Run, a deferral, a
+ * tangent merge): the transcript shows it with the text one click away, and KAS records it as the
+ * message's label. A typed message never carries one.
+ */
+export interface PromptCommand {
+  text: string;
+  message_id: string;
+  model?: string;
+  display_text?: string;
+  attachments?: Attachment[];
+  /**
+ * PromptOnly marks text only a prompt carries (a catalog command, a context reference): it is never steered.
+ * A queued row is sent as its own prompt, so it may queue.
+ */
+  prompt_only?: boolean;
+}
+
+/** PullAll is POST /api/git/pull-all's body. */
+export interface PullAll {
+  repos: PullResult[];
+}
+
+/** PullResult is one repo's outcome in POST /api/git/pull-all. */
+export interface PullResult {
+  repo: string;
+  verdict: string;
+  reason?: string;
+  detail?: string;
+}
+
+/** PushSubscription is a Web Push subscription from the browser (RFC 8030). */
+export interface PushSubscription {
+  endpoint: string;
+  keys: PushSubscriptionKeys;
+}
+
+/** PushSubscriptionKeys holds the client-side encryption keys. */
+export interface PushSubscriptionKeys {
+  p256dh: string;
+  auth: string;
+}
+
+/**
+ * QueuePromptCommand is the payload for type="queue_prompt": a message held for
+ * the end of the running turn. Text and MessageID follow PromptCommand's rules;
+ * Attachments are capped at MaxAttachments and read when the row is sent; DisplayText is
+ * PromptCommand's.
+ */
+export interface QueuePromptCommand {
+  text: string;
+  message_id: string;
+  display_text?: string;
+  attachments?: Attachment[];
 }
 
 /**
@@ -2953,6 +4194,11 @@ export interface Recipe {
 /** RecipesResponse is GET /api/recipes's reply. */
 export interface RecipesResponse {
   recipes: Recipe[];
+}
+
+/** RefreshQuery is a cached read's query: Refresh "1" reads past the cache. */
+export interface RefreshQuery {
+  refresh?: string;
 }
 
 /**
@@ -3039,6 +4285,12 @@ export interface RegistrySearchFailure {
   retry_after?: number;
 }
 
+/** RegistrySearchQuery is GET /api/mcp/registry/search's query. */
+export interface RegistrySearchQuery {
+  q?: string;
+  limit?: number;
+}
+
 /** RegistrySearchResult is the browser-facing reply to one search. */
 export interface RegistrySearchResult {
   servers: RegistryEntry[];
@@ -3067,12 +4319,27 @@ export interface Release {
   prerelease?: boolean;
 }
 
+/** ReleaseCreate is POST .../releases' body. */
+export interface ReleaseCreate {
+  tag_name: string;
+  name?: string;
+  body?: string;
+  target?: string;
+  draft?: boolean;
+  prerelease?: boolean;
+}
+
 /** ReleaseList is one page of a repository's releases. */
 export interface ReleaseList {
   partial?: PartialResult;
   successor?: RepoSuccessor;
   next?: string;
   releases: Release[];
+}
+
+/** RemoveQuery is the delete route's query: Force 1 or true cascades. */
+export interface RemoveQuery {
+  force?: string;
 }
 
 /**
@@ -3083,6 +4350,35 @@ export interface ReleaseList {
 export interface RemoveResponse {
   job?: Job;
   dependents?: string[];
+}
+
+/**
+ * RenameChatCommand is the payload for type="rename_chat": the user's own name for
+ * the chat, at most MaxUserChatNameUnits UTF-16 code units after sanitizing.
+ */
+export interface RenameChatCommand {
+  name: string;
+}
+
+/**
+ * ReorderTabsCommand is the payload for type="reorder_tabs": the whole expanded order, every open
+ * tab once. No base-version precondition: the exact-set check is sufficient, and a version one
+ * would discard a valid drag.
+ */
+export interface ReorderTabsCommand {
+  op_id?: string;
+  order: string[];
+}
+
+/**
+ * ReparentTabCommand is the payload for type="reparent_tab": hang an open tab
+ * under an open chat tab. Idempotent when the parent is unchanged; 404 for an
+ * id that is not open, 409 when Parent is not an open chat tab.
+ */
+export interface ReparentTabCommand {
+  id: string;
+  parent: string;
+  op_id?: string;
 }
 
 /** Repo is a repository the connection reaches. */
@@ -3122,6 +4418,13 @@ export interface RepoAffordances {
   merge_strategies: string[];
 }
 
+/** RepoItemPath is a pull request's or an issue's {id}, {repo} and {number}. */
+export interface RepoItemPath {
+  id: string;
+  repo: string;
+  number: string;
+}
+
 /**
  * RepoList is one page of a connection's repositories. Next is the opaque
  * cursor `?after=` takes, absent when the list is complete.
@@ -3134,10 +4437,62 @@ export interface RepoList {
   repos: Repo[];
 }
 
+/** RepoNames is GET /api/git/repos' body. */
+export interface RepoNames {
+  repos: string[];
+}
+
+/** RepoPath is a repository route's {id} and {repo}. */
+export interface RepoPath {
+  id: string;
+  repo: string;
+}
+
+/** RepoQuery is the query of the reads that address one repo; empty is the workspace root. */
+export interface RepoQuery {
+  repo?: string;
+}
+
+/** RepoRequest names the repo a write addresses; empty is the workspace root. */
+export interface RepoRequest {
+  repo: string;
+}
+
+/** RepoStatus is Status plus the repo name, so the dashboard can group. */
+export interface RepoStatus {
+  repo: string;
+  branch: string;
+  remote: string;
+  files: StatusFile[];
+  ahead: number;
+  behind: number;
+  stashes: number;
+  is_repo: boolean;
+  has_dirty: boolean;
+}
+
 /** RepoSuccessor is the repository a stale one moved to. */
 export interface RepoSuccessor {
   repo_id: string;
   display_path: string;
+}
+
+/** Request is the route's body. Each field is a pointer so a missing field is told from an empty one. */
+export interface Request {
+  text?: string;
+  source?: string;
+  dedupe_key?: string;
+}
+
+/** RerunQuery is POST .../rerun's query: the head the caller's row displayed. */
+export interface RerunQuery {
+  head_sha?: string;
+}
+
+/** RescanResult is the repair hook's answer. A struct, not a map, so the key order is fixed. */
+export interface RescanResult {
+  status: string;
+  reason?: string;
 }
 
 /**
@@ -3166,6 +4521,85 @@ export interface ResumableSession {
   turn_count?: number;
   /** Bot labels a Bot's row, from its owning chat's header. */
   bot?: boolean;
+}
+
+/**
+ * ResumeSessionCommand is the payload for type="resume_session": adopt a KAS
+ * session as a new chat, bound to SessionID at creation so the next bridge takes
+ * the session/load path and the replay projection supplies the transcript.
+ */
+export interface ResumeSessionCommand {
+  /** SessionID is the KAS session to adopt. Validated with ids.ValidSessionID. */
+  session_id: string;
+  /** Name seeds the chat title, normally the session title KAS reported. */
+  name?: string;
+  /** OpID correlates every attempt of one resume. See CreateChatCommand.OpID. */
+  op_id?: string;
+}
+
+/**
+ * RewindChatCommand is the payload for type="rewind_chat": revert THIS chat to a past turn,
+ * dropping the addressed message and everything after it and rolling the files back. MessageID must
+ * name a USER message, which KAS's revert verb enforces.
+ */
+export interface RewindChatCommand {
+  message_id: string;
+  /**
+ * Confirmed says the reader was told which live runs the cut would stop and
+ * chose to go on. Without it a cut holding a live run's launch answers 409
+ * naming the runs, and nothing is reverted.
+ */
+  confirmed?: boolean;
+}
+
+/** RuleStatus is a rule's row state. */
+export interface RuleStatus {
+  /** Anchor is a clock rule's next-run origin: its creation, then its last fire or skip. */
+  anchor?: string;
+  /**
+ * LastRunAt is a clock rule's last slot's due time, or its run's start (RecordStart) until the runner records
+ * that slot; an event rule's last confirmed launch.
+ */
+  last_run_at?: string;
+  /**
+ * WaitingFor is a clock rule's due slot whose launch is retried until the agent engine answers; zero when none.
+ * It is persisted so a restart resumes the wait instead of skipping the slot as missed while offline.
+ */
+  waiting_for?: string;
+  /** LastMinted is an event rule's last label-gain instant minted. */
+  last_minted?: string;
+  /** FailingSince starts an event rule's 24-hour failure clock; zero when nothing is failing. */
+  failing_since?: string;
+  /** LastRunID is the only run whose outcome may land on the row. */
+  last_run_id?: string;
+  last_status?: string;
+  last_reason?: string;
+  /** Blocked is why an event rule launches nothing until the operator edits or resumes it; empty when nothing does. */
+  blocked?: string;
+  /** RowText is an event rule's launch state as its row reads it, which the trigger confirmer writes. */
+  row_text?: string;
+  /** LastEvent is the key of an event rule's last confirmed event, which its row names by number or run id. */
+  last_event?: string;
+  /**
+ * CheckedAt is the start of an event rule's last applied poll; the trigger confirmer's View sets it and no write
+ * persists it.
+ */
+  checked_at?: string;
+  /**
+ * BaselineStop is where and why an event rule's last walk stopped short while no baseline is taken; the trigger
+ * confirmer's View sets it and no write persists it.
+ */
+  baseline_stop?: string;
+  /** Paused is why an event rule's reads wait for a forge or trigger budget, and until when; empty while they run. */
+  paused?: string;
+  /** Gaps are an event rule's stretches in which runs may have been missed, kept until the operator dismisses them. */
+  gaps?: Gap[];
+  bound_abandons?: number;
+  /**
+ * FailedSlots is a clock rule's count of consecutive slots that ended other than completed; a completed slot sets
+ * it back to 0. A slot missed while marotte was down records no outcome, so it does not count.
+ */
+  failed_slots?: number;
 }
 
 /** RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step. Empty Text is a 400. */
@@ -3411,6 +4845,15 @@ export interface RunProgressPayload {
 }
 
 /**
+ * RunQuery is GET /api/runs/{id}'s query: View "header" or "glance" reads that form (it wins over
+ * Since), and Since a revision answers only the changes after it.
+ */
+export interface RunQuery {
+  view?: string;
+  since?: string;
+}
+
+/**
  * RunRetriedResponse is POST /api/runs/{id}/retry's reply: KAS's own outcome
  * report, forwarded rather than collapsed to `{"ok":true}`. RetriedNodeIDs is why
  * the route exists — a retry that resets five nodes and one that resets none are
@@ -3516,6 +4959,12 @@ export interface RunStepMessageResponse {
   steer_id?: string;
 }
 
+/** RunStepPath is a run step route's {id} and {path}. */
+export interface RunStepPath {
+  id: string;
+  path: string;
+}
+
 /**
  * RunStepStart is when a node's current attempt began in the run's own log, under `step_starts` in GET /api/runs/{id}
  * keyed by node path. KAS restamps a node's startedAt each time it re-enters it (a resume, a restart), so its tree
@@ -3538,6 +4987,11 @@ export interface RunStepStart {
   turn?: string;
   tail?: string;
   ended: boolean;
+}
+
+/** RunStepSteerRemoved is POST /api/runs/{id}/steps/{path}/steer-remove's body. */
+export interface RunStepSteerRemoved {
+  deleted: string;
 }
 
 /**
@@ -3578,6 +5032,21 @@ export interface RunStepTranscript {
  * the run store's lock with the entries it certifies; empty on a settled path and
  * on the replay source, which no subject versions.
  */
+  subject: SubjectStamp[];
+}
+
+/** RunTurnQuery is GET /api/runs/{id}/turns/{turn}'s query: the exclusive sequence to read after. */
+export interface RunTurnQuery {
+  after?: string;
+}
+
+/**
+ * RunTurnRange is GET /api/runs/{id}/turns/{turn}'s body. The three lists travel as `[]`: a null
+ * fails the client's array decode and loses the page.
+ */
+export interface RunTurnRange {
+  entries: Entry[];
+  open_entries: OpenEntry[];
   subject: SubjectStamp[];
 }
 
@@ -3711,6 +5180,16 @@ export interface SearchHit {
   apt?: boolean;
 }
 
+/** SearchQuery is the search route's query. */
+export interface SearchQuery {
+  q?: string;
+  /**
+ * Unavailable opts into the uninstallable block: present and empty,
+ * 1, true, yes or on.
+ */
+  unavailable?: string;
+}
+
 /**
  * SearchResponse is the search route's body: installable hits merged
  * into one relevance order via [toolbelt.Match] (catalog and Debian, not
@@ -3790,6 +5269,75 @@ export interface SecurityProfile {
 }
 
 /**
+ * SendQueuedNowCommand is the payload for type="send_queued_now": the row goes next,
+ * ahead of the other queued rows, which keep their order. Stop is the run.cancel the
+ * row's arrow was drawn against: that turn is stopped while it is still the lone live
+ * turn, and a stop naming no live entry, or one no longer the lone live turn, stops
+ * nothing. An absent Stop names RunView.Cancel's target under the same rule. With
+ * nothing live the row is sent at once. An id no row carries, or a row already
+ * sending, stops nothing; a held row is a 409 held.
+ */
+export interface SendQueuedNowCommand {
+  message_id: string;
+  stop?: string;
+}
+
+/**
+ * Server is one user-configured MCP server. ID is a short stable
+ * identifier used in URLs and events (generated at create time);
+ * Name is the user-visible label that also becomes the kiro-cli
+ * mcpServer name (must be unique across the configured set).
+ */
+export interface Server {
+  url?: string;
+  name: string;
+  command?: string;
+  oauth_client_id?: string;
+  /**
+ * OAuthClientMetadataURL and OAuthRedirectURI are KAS's other two oauth
+ * members (client-ID metadata document, pinned loopback redirect); not secrets.
+ */
+  oauth_client_metadata_url?: string;
+  oauth_redirect_uri?: string;
+  id: string;
+  transport: Transport;
+  /**
+ * VersionNegotiation empty leaves KAS's `auto`, which starts a stdio server once to send
+ * server/discover and again for the real connection. `legacy` uses the initialize handshake
+ * and starts it once, and fails a server that speaks only the 2026-07-28 protocol. Written
+ * only by a paste or a raw-JSON edit.
+ */
+  version_negotiation?: string;
+  args?: string[];
+  env?: KeyPair[];
+  headers?: KeyPair[];
+  disabled_tools?: string[];
+  /**
+ * OAuthScopes is KAS's oauthScopes (remote only), sent space-joined as the registration scope and used for the
+ * authorization request when the server names none itself.
+ */
+  oauth_scopes?: string[];
+  created_at: number;
+  updated_at: number;
+  /**
+ * TimeoutMS is KAS's per-server connect timeout and MCP wait budget, in
+ * milliseconds; 0 leaves KAS's own default (60 s). WaitForReady makes KAS hold
+ * a prompt for this server even with the global wait setting off. Both are
+ * written only by a paste or a raw-JSON edit.
+ */
+  timeout_ms?: number;
+  prewarm?: boolean;
+  enabled: boolean;
+  wait_for_ready?: boolean;
+}
+
+/** ServerList is GET /api/mcp's body: the masked servers, and how many record entries could not be read. */
+export interface ServerList {
+  servers: (Server | null)[];
+  unreadable: number;
+}
+
+/**
  * SessionEffortLevel is one reasoning-effort tier the running session offers, from the
  * `effortLevel` option's `options[]`. The list IS the capability: a tier absent here is a
  * level the service rejects.
@@ -3852,6 +5400,81 @@ export interface SessionModel {
   thinking_default_off?: boolean;
 }
 
+/** SessionPath is a route's {session}. */
+export interface SessionPath {
+  session: string;
+}
+
+/**
+ * SetAttachmentsCommand is the payload for type="set_attachments": the WHOLE list of paths staged
+ * beside the draft, every time, since a per-file delta would need an ordering the wire lacks. Empty
+ * is a value; a no-op like set_draft.
+ */
+export interface SetAttachmentsCommand {
+  paths: string[];
+}
+
+/**
+ * SetDraftCommand is the payload for type="set_draft": this chat's unsent composer text, capped at
+ * MaxDraftBytes. Empty is a value (how a message clears); a no-op on a chat that is not a server
+ * record yet.
+ */
+export interface SetDraftCommand {
+  text: string;
+}
+
+/**
+ * SetEffortCommand is the payload for type="set_effort", applying a reasoning
+ * effort level to the active session.
+ */
+export interface SetEffortCommand {
+  /**
+ * Level is a tier id from the model's own catalog, shape-validated only:
+ * KAS owns the vocabulary.
+ */
+  level: string;
+}
+
+/** SetInterruptModeCommand is the payload for type="set_interrupt_mode". */
+export interface SetInterruptModeCommand {
+  mode: InterruptMode;
+}
+
+/**
+ * SetModeCommand is the payload for type="set_mode". ModeID names an entry in
+ * the workspace mode catalog — bundled workflow modes and workspace custom agents
+ * alike. Applied to a live session in place; for a chat whose bridge has not
+ * started the mode is persisted and applied at session/new (SessionOpts.Mode).
+ */
+export interface SetModeCommand {
+  mode_id: string;
+}
+
+/**
+ * SetSupervisedModeCommand is the payload for type="set_supervised_mode".
+ * Records the chat's supervised choice and, on a running session, sets KAS's
+ * `autopilot` config option. It gates nothing itself: KAS holds the turn's writes
+ * and asks for one approval, so there is no marotte-side queue to drain.
+ */
+export interface SetSupervisedModeCommand {
+  enabled: boolean;
+}
+
+/**
+ * SetThinkingCommand is the payload for type="set_thinking": the effort slider's
+ * Off stop sends false; picking any effort tier turns thinking back on through
+ * set_effort itself.
+ */
+export interface SetThinkingCommand {
+  enabled: boolean;
+}
+
+/**
+ * SettingsPatch is PATCH /api/settings' body: the keys to change, each with its JSON value. An
+ * unknown key is persisted verbatim, so the body is a map rather than a struct.
+ */
+export type SettingsPatch = { [key: string]: unknown };
+
 /**
  * SettingsUpdatedPayload is the payload for type="settings_updated": config.json's version
  * (EffectiveSettings.SettingsEpoch and SettingsRevision) once the change it announces is stored.
@@ -3861,6 +5484,13 @@ export interface SessionModel {
 export interface SettingsUpdatedPayload {
   settings_epoch: number;
   settings_revision: number;
+}
+
+/** ShowQuery is GET /api/git/show's query. */
+export interface ShowQuery {
+  repo?: string;
+  path: string;
+  ref?: string;
 }
 
 /** ShowRefusal is a refused GET /api/git/show's body; it carries no content. */
@@ -4063,6 +5693,53 @@ export interface SpecTruncated {
   total: number;
 }
 
+/** Status is GET /api/git/status' body. */
+export interface Status {
+  branch: string;
+  remote: string;
+  files: StatusFile[];
+  ahead: number;
+  behind: number;
+  stashes: number;
+  is_repo: boolean;
+  has_dirty: boolean;
+}
+
+/**
+ * StatusAll is the dashboard's answer: the newest completed scan, how old it is,
+ * and whether one is running behind it. The age is what lets the answer be immediate.
+ */
+export interface StatusAll {
+  repos: RepoStatus[];
+  age_ms: number;
+  scanning: boolean;
+}
+
+/** StatusAllQuery is GET /api/git/status-all's query: Fetch "1" fetches first, Paths scopes the scan. */
+export interface StatusAllQuery {
+  fetch?: string;
+  paths?: string;
+}
+
+/**
+ * StatusFile is one changed path of a repository's status.
+ * OrigPath is set only on a rename or copy entry, carrying the path the content came FROM; every
+ * other field describes the path it is at now.
+ */
+export interface StatusFile {
+  path: string;
+  display: string;
+  status: string;
+  orig_path?: string;
+  staged: boolean;
+}
+
+/** StatusQuery is GET /api/git/status' query; any Quick skips the fetch. */
+export interface StatusQuery {
+  repo?: string;
+  quick?: string;
+}
+
 /** StatusRow is one chat's retained status inside a StatusSnapshotPayload. */
 export interface StatusRow {
   chat_id: string;
@@ -4076,6 +5753,15 @@ export interface StatusRow {
  */
 export interface StatusSnapshotPayload {
   rows: StatusRow[];
+}
+
+/**
+ * SteerCommand is the payload for type="steer": a message that joins the RUNNING turn, merged by
+ * KAS at the next node boundary. Text is required, trimmed and capped at maxSteerBytes.
+ */
+export interface SteerCommand {
+  text: string;
+  message_id: string;
 }
 
 /**
@@ -4117,6 +5803,25 @@ export interface SteerQueuedPayload {
   awaits_prompt?: boolean;
 }
 
+/**
+ * SteerRemoveCommand is the payload for type="steer_remove". SteerID is the key of
+ * a dock row the user sent; the rows they kept are resent together, in order.
+ */
+export interface SteerRemoveCommand {
+  steer_id: string;
+}
+
+/**
+ * SteeringDoc is the GET's payload. ETag is the save token, the identity representation's
+ * strong tag, which If-Match matches as a current representation's (RFC 9110 section 13.1.1).
+ * The ETag header is no carrier for it: a gzip-coded answer gets a distinct, weak tag there
+ * (section 8.8.3.3), and a weak tag never passes If-Match.
+ */
+export interface SteeringDoc {
+  content: string;
+  etag: string;
+}
+
 /** SteeringIssue is one configuration problem KAS found in a steering document. */
 export interface SteeringIssue {
   code: string;
@@ -4135,6 +5840,21 @@ export interface SteeringIssuesResponse {
 }
 
 /**
+ * SteeringSave is a PUT's 200 payload: the ack plus the token for what the write left on
+ * disk. "" means no token could be read, and the caller keeps what it had. No ETag header: the
+ * stored document is not the request content (RFC 9110 section 9.3.4).
+ */
+export interface SteeringSave {
+  etag: string;
+  ok: boolean;
+}
+
+/** SteeringWrite is PUT /api/steering's body. */
+export interface SteeringWrite {
+  content: string;
+}
+
+/**
  * SubjectStamp names one digest subject at one version. Kind and Ref spell the
  * subject the way internal/subject does; Version is opaque decimal, compared by
  * equality, except a subject a client mirror holds (`runs`, `mcp_status`), which
@@ -4148,6 +5868,25 @@ export interface SubjectStamp {
   ref: string;
   version: string;
   epoch?: string;
+}
+
+/**
+ * SwitchModelCommand is the payload for type="switch_model". A live session is
+ * switched in place; a chat with no live session records the pick, and its next
+ * session opens on it.
+ */
+export interface SwitchModelCommand {
+  /** Empty names the model in force; "auto" is KAS's Auto model. */
+  model?: string;
+  /**
+ * Effort is the tier this pick sets: empty keeps a tier parked with Model, else the chat's
+ * level; a level replaces it; SwitchEffortOff drops a parked one, turns no thinking on, and
+ * turns the running session's thinking off at once. On the model in force a level is set in
+ * place as set_effort sets it (refused when that model lacks it), and a level or
+ * SwitchEffortOff there cancels a switch parked on another model, in the same request; empty
+ * changes nothing.
+ */
+  effort?: string;
 }
 
 /**
@@ -4295,6 +6034,13 @@ export interface TabsChangedPayload {
   version: number;
 }
 
+/** TangentMergeStatus is GET /api/chats/{id}/merges/{op}'s body: where one merge_tangent attempt stands. */
+export interface TangentMergeStatus {
+  state: string;
+  parent_chat_id?: string;
+  message?: string;
+}
+
 /**
  * TangentMergedPayload is the payload for type="tangent_merged": the summary reached
  * ParentChatID as a prompt or a queued follow-up. OpID echoes the merge_tangent command's.
@@ -4361,6 +6107,24 @@ export interface TextSpan {
  * 32 dim, 64 hidden, 128 blink, 256 overline, 512 double-underline.
  */
   attrs: number;
+}
+
+/**
+ * TokenLogin is a token sign-in: the forge's kind and host, the token, and
+ * for a self-managed instance how to reach it.
+ */
+export interface TokenLogin {
+  kind: ForgeKind;
+  host: string;
+  token: string;
+  web_base_url?: string;
+  api_base_url?: string;
+  ca_pem?: string;
+  client_cert_pem?: string;
+  client_key_pem?: string;
+  proxy?: string;
+  private_addresses?: boolean;
+  plaintext_http?: boolean;
 }
 
 /**
@@ -4659,6 +6423,33 @@ export interface ToolOffload {
 }
 
 /**
+ * ToolPresence is GET /api/tools/status' body: whether PATH has each binary kiro-cli or a feature
+ * panel expects (the MCP add modal gates on node/npx/uv). Each json name is the binary probed, and
+ * the fields are in name order, the order a map of the same keys encodes in.
+ */
+export interface ToolPresence {
+  cargo: boolean;
+  clangd: boolean;
+  go: boolean;
+  gofmt: boolean;
+  gopls: boolean;
+  java: boolean;
+  jdtls: boolean;
+  "kotlin-language-server": boolean;
+  node: boolean;
+  npm: boolean;
+  npx: boolean;
+  pyrefly: boolean;
+  pyright: boolean;
+  "rust-analyzer": boolean;
+  rustc: boolean;
+  tsc: boolean;
+  "typescript-language-server": boolean;
+  uv: boolean;
+  uvx: boolean;
+}
+
+/**
  * ToolProgressPayload is the payload for type="tool_progress": a DELTA on an
  * in-flight tool call, addressed by turn and id, carrying only what this frame
  * changed. Every field is omitempty and means "unchanged" when absent;
@@ -4769,6 +6560,69 @@ export interface TurnOpenedPayload {
   entry: Entry;
 }
 
+/**
+ * TurnSummary is one row of a chat's session-wide turn index: enough to draw a
+ * turn on the turn map and label it, and nothing else. Deliberately NOT the turn's
+ * content — the map spans the whole session while the transcript store holds a
+ * paginated window, so a map built from resident turns would grow rows as the
+ * reader scrolled up.
+ */
+export interface TurnSummary {
+  /**
+ * ID is the turn's opening message id. The client joins on it, so the server
+ * stays the single source of truth for what "turn 14" means.
+ */
+  id: string;
+  /**
+ * FirstLine is the request's first line, whitespace-collapsed and capped, for
+ * the turn-map preview; an agent-initiated turn's is its turn_wake's line
+ * (WakeLine), and empty when it recorded none.
+ */
+  first_line?: string;
+  outcome: TurnOutcome;
+  /** N is the 1-based, session-absolute turn ordinal. */
+  n: number;
+  /**
+ * Ts is the turn's start: its trigger's timestamp, else its first body
+ * message's.
+ */
+  ts: number;
+  /**
+ * AgentInitiated marks a turn with no user trigger, so the map does not imply
+ * the user asked for it.
+ */
+  agent_initiated?: boolean;
+  /** ElapsedMs is the turn_close's own duration; absent while the turn runs. */
+  elapsed_ms?: number;
+}
+
+/**
+ * UnqueuePromptCommand is the payload for type="unqueue_prompt". An id no row
+ * carries is success: two devices can discard one row.
+ */
+export interface UnqueuePromptCommand {
+  message_id: string;
+}
+
+/** Unsubscribe is POST /api/push/unsubscribe's body. */
+export interface Unsubscribe {
+  endpoint: string;
+}
+
+/**
+ * UpdateRequest is the optional body of the update route: the tools to
+ * update, every enabled tool when empty.
+ */
+export interface UpdateRequest {
+  names?: string[];
+}
+
+/** UploadResult is POST /api/file/upload's body: the names written. */
+export interface UploadResult {
+  uploaded: string[];
+  ok: boolean;
+}
+
 /** Usage is a chat's last-known context and billing snapshot. */
 export interface Usage {
   metering_items?: MeteringItem[];
@@ -4816,6 +6670,18 @@ export interface UserInputOption {
 }
 
 /**
+ * UserInputResponseCommand is the payload for type="user_input_response".
+ * RequestID echoes the user_input_needed event. Answer is the answer TEXT
+ * (kiro-cli's contract is a plain string): an option's title, "Title [Sub1,
+ * Sub2]" for sub-options, or the typed text. Required when Action is "answered".
+ */
+export interface UserInputResponseCommand {
+  action: string;
+  answer?: string;
+  request_id: number;
+}
+
+/**
  * UserInputSubOption is one second-level choice under a UserInputOption.
  * Sub-options render as a pre-checked multi-select (the TUI's behavior);
  * the selected titles fold into the answer text as "Parent [Sub1, Sub2]".
@@ -4823,6 +6689,19 @@ export interface UserInputOption {
 export interface UserInputSubOption {
   title: string;
   description?: string;
+}
+
+/** VAPIDKey is GET /api/push/vapid-key's body. */
+export interface VAPIDKey {
+  publicKey: string;
+}
+
+/** VersionInfo is GET /api/version's body. */
+export interface VersionInfo {
+  /** ConfigDir is where the client opens the editable config files, so a moved KIRO_CONFIG_DIR is honoured. */
+  config_dir?: string;
+  kiro_cli?: string;
+  marotte: string;
 }
 
 /**
@@ -4837,6 +6716,12 @@ export interface WakeSteer {
   step?: string;
   severity?: string;
   text: string;
+}
+
+/** When is when a rule launches: exactly one of a clock and a forge event. */
+export interface When {
+  clock?: ClockSpec;
+  event?: EventSpec;
 }
 
 /**
@@ -4896,5 +6781,10 @@ export interface WorkflowRun {
   updated_at: number;
   created_at?: number;
   started_at?: number;
+}
+
+/** ZipRequest is POST /api/files/download's body. */
+export interface ZipRequest {
+  paths: string[];
 }
 

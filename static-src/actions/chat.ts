@@ -7,7 +7,13 @@ import {
   transportAction,
   IDEMPOTENCY_COMMAND_FIELD,
   API_TIMEOUT_MS,
+  fromEndpoint,
 } from "./index.js";
+import {
+  getChatsByIdKiroSessionEndpoint,
+  getChatsByIdMergesByOpEndpoint,
+  getSessionsEndpoint,
+} from "../wire/client.gen.js";
 import type { ActionErrorLike } from "./index.js";
 import { readDownload } from "./download.js";
 import { exportFilename } from "../export-filename.js";
@@ -287,7 +293,7 @@ export const downloadKiroSession = defineAction<{ chatID: string; name: string }
   dedupe: ({ chatID }) => chatID,
   run: async ({ chatID, name }, signal) => {
     const blob = await readDownload(
-      { method: "GET", path: `/api/chats/${encodeURIComponent(chatID)}/kiro-session` },
+      getChatsByIdKiroSessionEndpoint.request({ id: chatID }),
       signal,
       SESSION_DOWNLOAD_TIMEOUT_MS,
     );
@@ -478,10 +484,8 @@ export const readMergeStatus = apiAction<{ chatID: string; opID: string }, Merge
   name: "chat.merge_status",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  request: ({ chatID, opID }) => ({
-    method: "GET",
-    path: `/api/chats/${encodeURIComponent(chatID)}/merges/${encodeURIComponent(opID)}`,
-  }),
+  request: ({ chatID, opID }) =>
+    fromEndpoint(getChatsByIdMergesByOpEndpoint.request({ id: chatID, op: opID })),
   decode: decodeMergeAnswer,
   error: false,
 });
@@ -670,7 +674,7 @@ export const loadSessions = apiAction<
   dedupe: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  request: () => ({ method: "GET", path: "/api/sessions" }),
+  request: () => fromEndpoint(getSessionsEndpoint.request()),
   decode: decodeSessionListResponse,
   error: "Could not load previous sessions",
 });

@@ -1,6 +1,7 @@
 package command
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -23,9 +24,13 @@ var (
 // content once it satisfies the ask's schema. It checks what MCP's primitive schema can state
 // apart from format and pattern, which the card enforces: KAS's SDK defines no pattern, and
 // RE2 cannot compile an ECMAScript one in general. Lengths count code points, as JSON Schema does.
-func elicitationContent(ask *marotte.ElicitationNeededPayload, content map[string]any) (map[string]any, error) {
+func elicitationContent(ask *marotte.ElicitationNeededPayload, raw map[string]json.RawMessage) (map[string]any, error) {
 	if ask.Mode == marotte.ElicitationModeURL {
 		return nil, nil
+	}
+	content, err := decodeElicitationValues(raw)
+	if err != nil {
+		return nil, err
 	}
 	var props map[string]marotte.ElicitationPropertySchema
 	var required []string
@@ -51,6 +56,23 @@ func elicitationContent(ask *marotte.ElicitationNeededPayload, content map[strin
 		}
 	}
 	return content, nil
+}
+
+// decodeElicitationValues decodes each answered value, so numbers are float64, arrays []any and
+// null a nil value; nil stays nil.
+func decodeElicitationValues(raw map[string]json.RawMessage) (map[string]any, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	out := make(map[string]any, len(raw))
+	for name, r := range raw {
+		var v any
+		if err := json.Unmarshal(r, &v); err != nil {
+			return nil, fmt.Errorf("%q: %w", name, errElicitationType)
+		}
+		out[name] = v
+	}
+	return out, nil
 }
 
 func checkElicitationValue(prop *marotte.ElicitationPropertySchema, v any) error {

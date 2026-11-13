@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 // TestRoutePrecedence verifies that the three overlapping route
@@ -14,7 +16,7 @@ import (
 func TestRoutePrecedence(t *testing.T) {
 	mux := http.NewServeMux()
 	s := newTestStore(t)
-	s.RegisterRoutes(mux)
+	s.RegisterRoutes(routetest.On(mux))
 
 	// Also register a stand-in for the registry-proxy path so we can
 	// verify the overlap doesn't resolve to handleOne.

@@ -137,12 +137,7 @@ func readManagedSettings(path string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(f, managedSettingsCap))
 }
 
-func (h *Handler) handleLoginOptions(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", http.MethodGet)
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
+func (h *Handler) handleLoginOptions(w http.ResponseWriter, _ *http.Request) {
 	httpserver.WriteJSON(w, readLoginOptions(h.managedSettingsPath))
 }
 

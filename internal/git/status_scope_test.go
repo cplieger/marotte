@@ -57,7 +57,7 @@ func TestHandleStatusAll_ScopedReadRescansOnlyTheOwningRepo(t *testing.T) {
 	scanned := mkRepo(t, workDir, "scanned")
 	skipped := mkRepo(t, workDir, "skipped")
 	h := newTestHandler(t, workDir)
-	seedSnapshot(&h.statusCache, statusKeyPoll, []allRepoStatus{
+	seedSnapshot(&h.statusCache, statusKeyPoll, []RepoStatus{
 		repoRow("scanned"), repoRow("skipped"), repoRow("seeded"),
 	}, time.Now())
 	for _, dir := range []string{scanned, skipped} {
@@ -93,7 +93,7 @@ func TestHandleStatusAll_AScopedReadAnswersWithItsOwnScan(t *testing.T) {
 	workDir := t.TempDir()
 	repo := mkRepo(t, workDir, "one")
 	h := newTestHandler(t, workDir)
-	seedSnapshot(&h.statusCache, statusKeyPoll, []allRepoStatus{repoRow("one")}, time.Now())
+	seedSnapshot(&h.statusCache, statusKeyPoll, []RepoStatus{repoRow("one")}, time.Now())
 	if err := os.WriteFile(filepath.Join(repo, "f.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatalf("Setup: write: %v", err)
 	}
@@ -128,14 +128,14 @@ func TestStatusCache_AJoiningReadIsReleasedByThePassThatCoversIt(t *testing.T) {
 	} {
 		t.Run(joining.name, func(t *testing.T) {
 			var c statusCache
-			seedSnapshot(&c, statusKeyPoll, []allRepoStatus{repoRow("a"), repoRow("b")}, time.Now())
+			seedSnapshot(&c, statusKeyPoll, []RepoStatus{repoRow("a"), repoRow("b")}, time.Now())
 			running, _ := c.claim(statusKeyPoll, map[string]struct{}{"a": {}})
 			joined, started := c.claim(statusKeyPoll, joining.scope)
 			if started {
 				t.Fatal("Setup: the second read started a scan instead of joining")
 			}
 
-			if _, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("a")}); !run {
+			if _, run := c.finish(statusKeyPoll, []RepoStatus{repoRow("a")}); !run {
 				t.Fatal("Setup: the joining read's pass was not chained")
 			}
 			if !isClosed(running) {
@@ -146,7 +146,7 @@ func TestStatusCache_AJoiningReadIsReleasedByThePassThatCoversIt(t *testing.T) {
 					"so it answers with the repository as that earlier pass read it")
 			}
 
-			c.finish(statusKeyPoll, []allRepoStatus{repoRow("a"), repoRow("b")})
+			c.finish(statusKeyPoll, []RepoStatus{repoRow("a"), repoRow("b")})
 			if !isClosed(joined) {
 				t.Error("the joining read is still blocked after the pass covering it published")
 			}
@@ -162,7 +162,7 @@ func TestHandleStatusAll_AScopedMergeDoesNotFreshenTheSnapshot(t *testing.T) {
 	repo := mkRepo(t, workDir, "one")
 	h := newTestHandler(t, workDir)
 	old := time.Now().Add(-time.Minute)
-	seedSnapshot(&h.statusCache, statusKeyPoll, []allRepoStatus{repoRow("one")}, old)
+	seedSnapshot(&h.statusCache, statusKeyPoll, []RepoStatus{repoRow("one")}, old)
 	if err := os.WriteFile(filepath.Join(repo, "f.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatalf("Setup: write: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestHandleStatusAll_AnUnownedPathScansNothing(t *testing.T) {
 	workDir := t.TempDir()
 	mkRepo(t, workDir, "one")
 	h := newTestHandler(t, workDir)
-	seedSnapshot(&h.statusCache, statusKeyPoll, []allRepoStatus{repoRow("seeded")}, time.Now())
+	seedSnapshot(&h.statusCache, statusKeyPoll, []RepoStatus{repoRow("seeded")}, time.Now())
 
 	got := getStatusAll(t, h, "?paths=nowhere/f.txt,../outside.txt")
 
@@ -223,7 +223,7 @@ func TestHandleStatusAll_AColdScopedReadScansTheWholeTree(t *testing.T) {
 // loses the joining read's work until the next full scan.
 func TestStatusCache_AScopedReadJoiningAScanIsNotDropped(t *testing.T) {
 	var c statusCache
-	seedSnapshot(&c, statusKeyPoll, []allRepoStatus{repoRow("a"), repoRow("b")}, time.Now())
+	seedSnapshot(&c, statusKeyPoll, []RepoStatus{repoRow("a"), repoRow("b")}, time.Now())
 
 	first, started := c.claim(statusKeyPoll, map[string]struct{}{"a": {}})
 	if !started {
@@ -233,7 +233,7 @@ func TestStatusCache_AScopedReadJoiningAScanIsNotDropped(t *testing.T) {
 		t.Error("a second scoped claim started a concurrent scan; the subprocess bound is gone")
 	}
 
-	next, run := c.finish(statusKeyPoll, []allRepoStatus{{Repo: "a", IsRepo: true, Files: []gitFile{{Path: "x"}}}})
+	next, run := c.finish(statusKeyPoll, []RepoStatus{{Repo: "a", IsRepo: true, Files: []StatusFile{{Path: "x"}}}})
 	if !run {
 		t.Fatal("finish ended the chain with a scope still recorded; the joining read's " +
 			"repository was dropped and its rows stay stale")
@@ -250,13 +250,13 @@ func TestStatusCache_AScopedReadJoiningAScanIsNotDropped(t *testing.T) {
 	if _, again := c.claim(statusKeyPoll, map[string]struct{}{"a": {}}); again {
 		t.Error("the slot opened between passes; a third read would start a concurrent scan")
 	}
-	third, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("b")})
+	third, run := c.finish(statusKeyPoll, []RepoStatus{repoRow("b")})
 	if !run || len(third) != 1 {
 		t.Fatalf("finish returned (%v, %v) after a read joined between passes, want its "+
 			"scope drained", third, run)
 	}
 
-	if last, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("a")}); run {
+	if last, run := c.finish(statusKeyPoll, []RepoStatus{repoRow("a")}); run {
 		t.Errorf("finish returned %v after an idle pass, want the chain to end", last)
 	}
 	if _, running := c.read(statusKeyPoll); running != nil {
@@ -269,7 +269,7 @@ func TestStatusCache_AScopedReadJoiningAScanIsNotDropped(t *testing.T) {
 func TestStatusCache_AFullReadJoiningAScopedScanIsNotDropped(t *testing.T) {
 	var c statusCache
 	old := time.Now().Add(-time.Minute)
-	seedSnapshot(&c, statusKeyPoll, []allRepoStatus{repoRow("a")}, old)
+	seedSnapshot(&c, statusKeyPoll, []RepoStatus{repoRow("a")}, old)
 
 	if _, started := c.claim(statusKeyPoll, map[string]struct{}{"a": {}}); !started {
 		t.Fatal("Setup: the scoped claim did not start")
@@ -278,7 +278,7 @@ func TestStatusCache_AFullReadJoiningAScopedScanIsNotDropped(t *testing.T) {
 		t.Fatal("Setup: the unscoped read did not join the running scoped scan")
 	}
 
-	next, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("a")})
+	next, run := c.finish(statusKeyPoll, []RepoStatus{repoRow("a")})
 	if !run {
 		t.Fatal("finish released the slot with a full scan recorded: the whole-tree scan " +
 			"never runs, and the snapshot it would have freshened stays stale forever")
@@ -292,7 +292,7 @@ func TestStatusCache_AFullReadJoiningAScopedScanIsNotDropped(t *testing.T) {
 		t.Errorf("snapshot at = %v, want the original %v after a SCOPED pass", snap.at, old)
 	}
 
-	if _, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("a"), repoRow("b")}); run {
+	if _, run := c.finish(statusKeyPoll, []RepoStatus{repoRow("a"), repoRow("b")}); run {
 		t.Error("the chain did not end after the full pass")
 	}
 	snap, running := c.read(statusKeyPoll)
@@ -320,7 +320,7 @@ func TestStatusCache_AWriteBehindAFullScansCursorIsStillRescanned(t *testing.T) 
 		t.Fatal("Setup: the scoped read did not join the running full scan")
 	}
 
-	next, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("a"), repoRow("b")})
+	next, run := c.finish(statusKeyPoll, []RepoStatus{repoRow("a"), repoRow("b")})
 	if !run {
 		t.Fatal("finish ended the chain after a full scan swallowed a scoped read: the " +
 			"repository that moved keeps its pre-write rows until the next unscoped gesture")
@@ -331,7 +331,7 @@ func TestStatusCache_AWriteBehindAFullScansCursorIsStillRescanned(t *testing.T) 
 	}
 
 	published, _ := c.read(statusKeyPoll)
-	if _, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("a")}); run {
+	if _, run := c.finish(statusKeyPoll, []RepoStatus{repoRow("a")}); run {
 		t.Error("the chain did not end after the scoped follow-up pass")
 	}
 	snap, _ := c.read(statusKeyPoll)
@@ -365,7 +365,7 @@ func TestStatusCache_AFullReadJoiningAFullScanChainsNothing(t *testing.T) {
 			"whole-tree scan, want nothing: the sweep would run twice", pending, pendingFull)
 	}
 
-	if next, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("a"), repoRow("b")}); run {
+	if next, run := c.finish(statusKeyPoll, []RepoStatus{repoRow("a"), repoRow("b")}); run {
 		t.Errorf("finish chained a %v pass after a full scan, want the chain to end", next)
 	}
 }
@@ -374,12 +374,12 @@ func TestStatusCache_AFullReadJoiningAFullScanChainsNothing(t *testing.T) {
 // cloned since the last full scan reaches the answer at all.
 func TestStatusCache_AScopedMergeAppendsAnUnknownRepo(t *testing.T) {
 	var c statusCache
-	seedSnapshot(&c, statusKeyPoll, []allRepoStatus{repoRow("old")}, time.Now())
+	seedSnapshot(&c, statusKeyPoll, []RepoStatus{repoRow("old")}, time.Now())
 	if _, started := c.claim(statusKeyPoll, map[string]struct{}{"fresh": {}}); !started {
 		t.Fatal("Setup: claim did not start")
 	}
 
-	c.finish(statusKeyPoll, []allRepoStatus{repoRow("fresh")})
+	c.finish(statusKeyPoll, []RepoStatus{repoRow("fresh")})
 
 	snap, _ := c.read(statusKeyPoll)
 	names := make([]string, 0, 2)

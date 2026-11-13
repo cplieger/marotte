@@ -70,7 +70,7 @@ func TestLaunchRuleView_CarriesTheWaitOnTheEngine(t *testing.T) {
 	due := time.Date(2026, time.August, 4, 2, 0, 0, 0, time.UTC)
 	r := launchrule.Rule{
 		Source: "bundled://nightly", Enabled: true,
-		When: launchrule.When{Clock: &launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}},
+		When: launchrule.When{Clock: &launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2}},
 	}
 	waitOf := func(st launchrule.State) any {
 		raw, err := json.Marshal(launchRuleViewOf(&r, &st, nil))
@@ -88,7 +88,7 @@ func TestLaunchRuleView_CarriesTheWaitOnTheEngine(t *testing.T) {
 	if got := waitOf(launchrule.State{}); got != nil {
 		t.Errorf("waiting_for = %v on a row with no wait", got)
 	}
-	if got := waitOf(launchrule.State{Status: launchrule.Status{WaitingFor: due}}); got != due.Format(time.RFC3339) {
+	if got := waitOf(launchrule.State{Status: launchrule.RuleStatus{WaitingFor: due}}); got != due.Format(time.RFC3339) {
 		t.Errorf("waiting_for = %v, want %v", got, due.Format(time.RFC3339))
 	}
 }

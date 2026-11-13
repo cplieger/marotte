@@ -103,7 +103,7 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
 	// Every 5 minutes, the schedule floor.
-	spec := launchrule.Spec{Freq: launchrule.FreqMinutely, Interval: 5}
+	spec := launchrule.ClockSpec{Freq: launchrule.FreqMinutely, Interval: 5}
 	anchor := time.Now().Add(-time.Hour)
 	entry := putClockRule(t, st, "bundled://publish", spec, true)
 	anchorClockRule(t, st, entry.Row(), anchor)
@@ -173,7 +173,7 @@ func TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun(t *testing.T) {
 			if err != nil {
 				t.Fatalf("launchrule.NewStore: %v", err)
 			}
-			putClockRule(t, st, rule.source, launchrule.Spec{Freq: launchrule.FreqMinutely, Interval: 5}, rule.enabled)
+			putClockRule(t, st, rule.source, launchrule.ClockSpec{Freq: launchrule.FreqMinutely, Interval: 5}, rule.enabled)
 			h.runs.launchRules = st
 
 			if _, _, lErr := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); lErr != nil {
@@ -552,7 +552,7 @@ func TestLaunchScheduled_ARunOfARecreatedScheduleLeavesTheNewRowAlone(t *testing
 			if _, err := st.Delete(t.Context(), entry.ID); err != nil {
 				t.Errorf("Delete: %v", err)
 			}
-			putClockRule(t, st, entry.Source, launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 5}, true)
+			putClockRule(t, st, entry.Source, launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 5}, true)
 		}
 		return nil, nil, false
 	}

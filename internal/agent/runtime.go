@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,6 +28,7 @@ import (
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/liveness"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/specapproval"
 	"github.com/cplieger/marotte/internal/subject"
@@ -680,39 +682,75 @@ func (rt *Runtime) SetChatSteering(fn func(context.Context) []marotte.ClientStee
 	rt.coord.chatSteering = fn
 }
 
-// RegisterRoutes wires /api/events (SSE), /api/command (POST) and /api/shell/ws (WebSocket PTY).
-func (rt *Runtime) RegisterRoutes(mux *http.ServeMux) {
-	mux.Handle("/api/events", rt.refuseWhenDraining(http.HandlerFunc(rt.handleSSE)))
-	mux.Handle("/api/command", rt.lifecycle.admitUnlessDraining(rt.dispatcher))
+// sseCursorMaxBytes is the longest Last-Event-ID sse.ParseCursor accepts: a 16-hex epoch, a colon
+// and up to 16 offset digits.
+const sseCursorMaxBytes = 16 + 1 + 16
+
+// The request headers the event stream and its presence receipt read.
+var (
+	sseClientHeader         = route.Header{Name: clientTagHeader, Arg: "sseClient", MinBytes: 1, MaxBytes: 64}
+	sseClientRequiredHeader = route.Header{Name: clientTagHeader, Arg: "sseClient", Required: true, MinBytes: 1, MaxBytes: 64}
+	sseWireHeader           = route.Header{Name: wireHeader, Arg: "sseWire", MinBytes: 1, MaxBytes: 20}
+	lastEventIDHeader       = route.Header{Name: "Last-Event-ID", Arg: "lastEventId", MaxBytes: sseCursorMaxBytes}
+	sseTopicsHeader         = route.Header{Name: "SSE-Topics", Arg: "sseTopics", MinBytes: 2, MaxBytes: sse.MaxScopeHeaderBytes}
+)
+
+// FileChangesQuery is GET /api/file-changes' query.
+type FileChangesQuery struct {
+	ChatID string `json:"chat_id"`
+	Path   string `json:"path"`
+}
+
+// FileChanges is GET /api/file-changes' body.
+type FileChanges struct {
+	Changes []buffer.LineRange `json:"changes"`
+}
+
+// RegisterRoutes binds every route the runtime serves: /api/events (SSE), /api/command, /api/shell/ws
+// (WebSocket PTY) and the runtime's own reads and writes.
+func (rt *Runtime) RegisterRoutes(m routeMux) {
+	m.Bind(route.WithHeaders(route.Stream("/api/events", rt.refuseWhenDraining(http.HandlerFunc(rt.handleSSE))),
+		sseClientHeader, sseWireHeader, lastEventIDHeader, sseTopicsHeader))
+	// Each command answers its own body, so the reply is raw JSON; the request is the command union.
+	m.Bind(route.Binding{
+		Pattern: "/api/command", Handler: rt.lifecycle.admitUnlessDraining(rt.dispatcher), Kind: route.KindRaw,
+		Methods: []route.MethodTypes{{Method: http.MethodPost, Request: reflect.TypeFor[marotte.ClientCommand]()}},
+	})
 	// Behind the same drain gate, under a RouteTimeout so a resolution parked on a lock frees its slot.
-	mux.Handle("POST /api/sync", rt.lifecycle.admitUnlessDraining(
+	m.Bind(route.Raw("POST /api/sync", rt.lifecycle.admitUnlessDraining(
 		httpserver.RouteTimeout(rt.digestHandler(), digestTimeout, "digest timed out"),
-	))
+	)))
 	// Not drain-gated: a late receipt changes nothing.
-	mux.HandleFunc("POST /api/events/alive", rt.handleAlive)
-	mux.HandleFunc("POST /api/events/view", rt.handleView)
-	mux.HandleFunc("POST /api/events/notice", rt.handleNotice)
-	// A plain path, so a wrong method gets the scope handler's own 405 (sse docs/wire.md). Not drain-gated: a live
+	m.Bind(route.WithHeaders(route.WithStatus(route.JSON[struct{}, struct{}]("POST /api/events/alive",
+		http.HandlerFunc(rt.handleAlive)), http.StatusNoContent), sseClientRequiredHeader))
+	m.Bind(route.WithHeaders(route.WithStatus(route.JSON[marotte.PageView, struct{}]("POST /api/events/view",
+		http.HandlerFunc(rt.handleView)), http.StatusNoContent), sseClientRequiredHeader))
+	m.Bind(route.WithHeaders(route.WithStatus(route.JSON[marotte.NoticeReport, struct{}]("POST /api/events/notice",
+		http.HandlerFunc(rt.handleNotice)), http.StatusNoContent), sseClientRequiredHeader))
+	// The sse library's scope handler writes its own body and codes (sse docs/wire.md). Not drain-gated: a live
 	// stream may still narrow, and after the hub's Shutdown the handler answers 404 scope_conn.
-	mux.Handle("/api/events/scope", rt.bus.scope)
-	mux.HandleFunc("/api/shell/ws", rt.shellMgr.handleWS)
-	mux.HandleFunc("POST /api/shell/restart", rt.shellMgr.handleRestart)
-	mux.HandleFunc("/api/file-changes", rt.handleFileChanges)
-	rt.config.registerKnowledgeRoutes(mux)
-	rt.config.registerMemoryRoutes(mux)
-	rt.config.registerHooksRoutes(mux)
-	rt.config.registerGovernanceRoutes(mux)
-	rt.powers.register(mux)
-	rt.runRoutes.register(mux)
-	rt.registerEngineRoutes(mux)
+	m.Bind(route.Raw("POST /api/events/scope", rt.bus.scope))
+	m.Bind(route.WebSocket("/api/shell/ws", http.HandlerFunc(rt.shellMgr.handleWS)))
+	m.Bind(route.JSON[struct{}, httpreply.OKBody]("POST /api/shell/restart", http.HandlerFunc(rt.shellMgr.handleRestart)))
+	m.Bind(route.Methods("/api/file-changes", http.HandlerFunc(rt.handleFileChanges),
+		route.Typed[struct{}, FileChanges](http.MethodGet).WithQuery(reflect.TypeFor[FileChangesQuery]())))
+	rt.config.registerKnowledgeRoutes(m)
+	rt.config.registerMemoryRoutes(m)
+	rt.config.registerHooksRoutes(m)
+	rt.config.registerGovernanceRoutes(m)
+	rt.powers.register(m)
+	rt.runRoutes.register(m)
+	rt.registerEngineRoutes(m)
 	// The pre-session catalog (kiro-cli 2.14 _kiro/config/template).
-	mux.HandleFunc("GET /api/config-template", rt.handleConfigTemplate)
-	mux.HandleFunc("GET /api/sessions", rt.handleSessionList)
-	mux.HandleFunc("GET /api/chats/{id}/kiro-session", rt.handleKiroSessionExport)
+	m.Bind(route.JSON[struct{}, marotte.ConfigTemplateResponse]("GET /api/config-template", http.HandlerFunc(rt.handleConfigTemplate)))
+	m.Bind(route.JSON[struct{}, marotte.SessionListResponse]("GET /api/sessions", http.HandlerFunc(rt.handleSessionList)))
+	export := route.WithParams[marotte.IDPath](route.Raw("GET /api/chats/{id}/kiro-session", http.HandlerFunc(rt.handleKiroSessionExport)))
+	m.Bind(export)
 	// A GET, but reading a running merge an ended process left resumes it.
-	mux.Handle("GET /api/chats/{id}/merges/{op}", rt.lifecycle.admitUnlessDraining(http.HandlerFunc(rt.dispatcher.ServeMergeStatus)))
-	mux.HandleFunc("GET /api/slash-commands", rt.handleSlashCommands)
-	mux.HandleFunc("GET /api/steering/issues", rt.handleSteeringIssues)
+	m.Bind(route.WithParams[marotte.IDOpPath](route.JSON[struct{}, command.TangentMergeStatus]("GET /api/chats/{id}/merges/{op}",
+		rt.lifecycle.admitUnlessDraining(http.HandlerFunc(rt.dispatcher.ServeMergeStatus)))))
+	m.Bind(route.JSON[struct{}, marotte.SlashCommandsResponse]("GET /api/slash-commands", http.HandlerFunc(rt.handleSlashCommands)))
+	m.Bind(route.JSON[struct{}, marotte.SteeringIssuesResponse]("GET /api/steering/issues", http.HandlerFunc(rt.handleSteeringIssues)))
 }
 
 // Shutdown drains in-flight prompts and stops the agent engine, bounded by ctx. The engine stops before the

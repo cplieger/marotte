@@ -36,8 +36,8 @@ import { refreshGitStatus } from "./git-status-store.js";
 import { attachSplitter, type Splitter } from "./splitter.js";
 import { touchCapable } from "./pointer-tier.js";
 import { appFieldChord, trackShellPresses } from "./shell-keys.js";
+import { getShellWsPath } from "./wire/sockets.gen.js";
 
-const SHELL_WS_PATH = "/api/shell/ws";
 // Awaited before the first server resize so the PTY is sized on real cell metrics. ONE family — the
 // one the width probe measures — declared in css/00-fonts.css, and never --font-mono's stack:
 // `@cplieger/web-terminal-ui`'s `fontReady` owns why.
@@ -397,7 +397,7 @@ function ensureTerminal(): void {
       return [runQueue(), appChords(), ...presetSingle(), keys];
     },
     layout: "container",
-    wsPath: SHELL_WS_PATH,
+    wsPath: getShellWsPath,
     fontReady: SHELL_FONT_READY,
     theme: SHELL_THEME,
     // On this server that is recoverable (the next connect gets a fresh PTY), so typing `exit` or

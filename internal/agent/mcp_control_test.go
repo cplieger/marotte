@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 	"github.com/cplieger/marotte/internal/translate"
 )
 
@@ -30,7 +31,9 @@ func TestHandleMCPReconnect_MethodNotAllowed(t *testing.T) {
 	h := newHubWithMCPConfig(t, enabledConfig("everything"))
 	req := httptest.NewRequest(http.MethodGet, "/api/mcp/reconnect", nil)
 	rec := httptest.NewRecorder()
-	h.mcpRegistry.handleReconnect(rec, req)
+	mux := http.NewServeMux()
+	h.mcpRegistry.RegisterRoutes(routetest.On(mux))
+	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("code = %d, want 405", rec.Code)
 	}

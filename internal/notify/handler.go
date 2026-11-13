@@ -12,10 +12,30 @@ import (
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route"
 )
 
-// Pattern is the route's ServeMux pattern; the method is checked in the handler, as on every marotte route.
-const Pattern = routePrefix + "{session}" + routeSuffix
+// pattern is the route's path.
+const pattern = routePrefix + "{session}" + routeSuffix
+
+// Request is the route's body. Each field is a pointer so a missing field is told from an empty one.
+type Request struct {
+	Text      *string `json:"text"`
+	Source    *string `json:"source"`
+	DedupeKey *string `json:"dedupe_key"`
+}
+
+// Delivery is the route's 200 body: what the delivery became, or that its dedupe_key was delivered already.
+type Delivery struct {
+	Delivered string `json:"delivered,omitempty"`
+	Duplicate bool   `json:"duplicate,omitempty"`
+}
+
+// Binding binds h at POST pattern.
+func Binding(h http.Handler) route.Binding {
+	return route.WithParams[marotte.SessionPath](route.JSON[Request, Delivery](http.MethodPost+" "+pattern, h))
+}
 
 // What a delivery became: the chat's live turn read it as a steer, or it opened a turn as a prompt.
 const (
@@ -56,7 +76,7 @@ const (
 // steer buffer to drain, short enough that a wake-up stays timely.
 const retryAfterSeconds = "5"
 
-// Handler serves POST Pattern.
+// Handler serves POST pattern.
 type Handler struct {
 	deliv  Deliverer
 	dedupe *dedupeTable
@@ -69,17 +89,7 @@ func NewHandler(gate Gate, deliv Deliverer) *Handler {
 	return &Handler{gate: gate, deliv: deliv, dedupe: newDedupeTable(), now: time.Now}
 }
 
-type requestBody struct {
-	Text      *string `json:"text"`
-	Source    *string `json:"source"`
-	DedupeKey *string `json:"dedupe_key"`
-}
-
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
 	if !h.gate.authorize(w, r) {
 		return
 	}
@@ -89,7 +99,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpserver.LimitBody(w, r, maxBodyBytes)
-	var body requestBody
+	var body Request
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			httpserver.WriteJSONStatus(w, http.StatusRequestEntityTooLarge, httpreply.ErrorJSON("body: over 512 KiB"))
@@ -113,7 +123,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) deliver(ctx context.Context, w http.ResponseWriter, k dedupeKey, text, source string) {
 	switch h.dedupe.reserve(k, h.now()) {
 	case reserveDuplicate:
-		httpserver.WriteJSON(w, map[string]bool{"duplicate": true})
+		httpserver.WriteJSON(w, Delivery{Duplicate: true})
 		return
 	case reserveInFlight:
 		unavailable(w, "a delivery with this dedupe_key is still in progress")
@@ -128,7 +138,7 @@ func (h *Handler) deliver(ctx context.Context, w http.ResponseWriter, k dedupeKe
 	}
 	h.dedupe.commit(k, h.now())
 	slog.Info("notify delivered", "session_id", k.session, "source", source, "delivered", verb)
-	httpserver.WriteJSON(w, map[string]string{"delivered": verb})
+	httpserver.WriteJSON(w, Delivery{Delivered: verb})
 }
 
 func writeDeliveryError(w http.ResponseWriter, session, source string, err error) {
@@ -153,7 +163,7 @@ func unavailable(w http.ResponseWriter, msg string) {
 }
 
 // validBody answers the body's trimmed text, source and dedupe key, or a 400 message naming the first bad field.
-func validBody(b *requestBody) (text, source, key, msg string) {
+func validBody(b *Request) (text, source, key, msg string) {
 	switch {
 	case b.Text == nil || strings.TrimSpace(*b.Text) == "":
 		return "", "", "", "text: required, and not only whitespace"

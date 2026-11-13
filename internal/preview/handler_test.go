@@ -18,6 +18,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 const testHost = "box.test:9847"
@@ -75,7 +76,7 @@ func newFixture(t *testing.T) *fixture {
 	now := time.Unix(1_700_000_000, 0)
 	h := New(ws, filebrowse.Sensitive{}, newTestSigner(t, now), slog.New(slog.DiscardHandler))
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	return &fixture{h: h, mux: mux, ws: ws, demo: demo, now: now}
 }
 
@@ -245,7 +246,7 @@ func TestGrant_WorkspaceRootSpellings(t *testing.T) {
 	for _, root := range []string{"/", f.ws + "/"} {
 		t.Run(strings.ReplaceAll(root, "/", "_"), func(t *testing.T) {
 			g := &fixture{h: New(root, filebrowse.Sensitive{}, newTestSigner(t, f.now), slog.New(slog.DiscardHandler)), mux: http.NewServeMux()}
-			g.h.RegisterRoutes(g.mux)
+			g.h.RegisterRoutes(routetest.On(g.mux))
 			grant := g.grant(t, page)
 			if rec := g.do(http.MethodGet, grant.URL, ""); rec.Code != 200 || !strings.Contains(rec.Body.String(), shimMarker) {
 				t.Errorf("GET page under root %q = %d, want 200 with the shim", root, rec.Code)
@@ -256,7 +257,7 @@ func TestGrant_WorkspaceRootSpellings(t *testing.T) {
 		})
 	}
 	g := &fixture{h: New("/", filebrowse.Sensitive{}, newTestSigner(t, f.now), slog.New(slog.DiscardHandler)), mux: http.NewServeMux()}
-	g.h.RegisterRoutes(g.mux)
+	g.h.RegisterRoutes(routetest.On(g.mux))
 	if code, body := g.grantStatus("/index.html"); code != 400 || !strings.Contains(body, "its own folder under /") {
 		t.Errorf("grant(/index.html) under root / = %d %s, want 400 naming its own folder", code, body)
 	}
@@ -571,7 +572,7 @@ func TestServe_AFileGrowingAfterTheSizeCheckIsServedAtTheCheckedSize(t *testing.
 func TestHandler_UnopenableWorkspaceAnswers503(t *testing.T) {
 	h := New(filepath.Join(t.TempDir(), "missing"), filebrowse.Sensitive{}, newTestSigner(t, time.Now()), slog.New(slog.DiscardHandler))
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	for _, tc := range []struct{ method, target, body string }{
 		{http.MethodGet, PathPrefix + "t/x.html", ""},
 		{http.MethodPost, "/api/preview/grant", `{"path":"/w/d/x.html"}`},
@@ -593,7 +594,7 @@ func TestHandler_AWorkspaceThatOpensButCannotBeResolvedAnswers503(t *testing.T) 
 	var logs bytes.Buffer
 	h := New(t.TempDir(), filebrowse.Sensitive{}, newTestSigner(t, time.Now()), slog.New(slog.NewTextHandler(&logs, nil)))
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/preview/grant", strings.NewReader(`{"path":"/w/d/x.html"}`))
 	req.Host = testHost

@@ -264,7 +264,7 @@ func (tc *testConfirmer) enqueue(ruleID string, entries ...queueEntry) {
 }
 
 // setStatus changes the rule's in-memory status, as earlier rows would have.
-func (tc *testConfirmer) setStatus(ruleID string, set func(st *launchrule.Status)) {
+func (tc *testConfirmer) setStatus(ruleID string, set func(st *launchrule.RuleStatus)) {
 	rv := tc.rule(ruleID)
 	rv.mu.Lock()
 	defer rv.mu.Unlock()
@@ -272,7 +272,7 @@ func (tc *testConfirmer) setStatus(ruleID string, set func(st *launchrule.Status
 }
 
 // memory is a copy of the rule's in-memory queue, launched and superseded lists, and status.
-func (tc *testConfirmer) memory(ruleID string) (eventState, launchrule.Status) {
+func (tc *testConfirmer) memory(ruleID string) (eventState, launchrule.RuleStatus) {
 	rv := tc.rule(ruleID)
 	rv.mu.Lock()
 	defer rv.mu.Unlock()

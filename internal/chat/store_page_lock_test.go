@@ -66,15 +66,20 @@ func (f *pageFixture) appendUnderRegistry(t *testing.T, e *marotte.Entry) {
 // TestStorePage_ReadsTheRegistryOutsideTheStoreLock pins the lock order at the
 // GET: Page and TurnPage read the registry BEFORE taking the chat's lock.
 // A seal that holds the registry lock and appends concurrently must complete;
-// the reverse order deadlocks, which the budget turns into a failure.
+// the reverse order deadlocks, which stall turns into a failure. The budget
+// bounds the wait for the next round, not the whole run, so a loaded runner
+// only slows the test.
 func TestStorePage_ReadsTheRegistryOutsideTheStoreLock(t *testing.T) {
 	f := newPageFixture(t)
 	const rounds = 200
+	const stall = 20 * time.Second
+	progress := make(chan struct{}, 2*rounds)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for i := range rounds {
 			f.appendUnderRegistry(t, entryOf(f.turn, "", "say-"+string(rune('a'+i%26)), marotte.EntryKindText, marotte.EntryText{Text: "x"}))
+			progress <- struct{}{}
 		}
 	}()
 	finished := make(chan struct{})
@@ -89,15 +94,23 @@ func TestStorePage_ReadsTheRegistryOutsideTheStoreLock(t *testing.T) {
 				t.Errorf("TurnPage() error: %v", err)
 				return
 			}
+			progress <- struct{}{}
 		}
 	}()
-	budget := time.NewTimer(20 * time.Second)
-	defer budget.Stop()
-	for _, ch := range []chan struct{}{done, finished} {
+	timer := time.NewTimer(stall)
+	defer timer.Stop()
+	for pending := 2; pending > 0; {
 		select {
-		case <-ch:
-		case <-budget.C:
-			t.Fatal("Page/TurnPage and a registry-held Append did not both finish: the GET is reading the registry from under the store lock, which deadlocks against a seal that holds the registry lock")
+		case <-progress:
+			timer.Reset(stall)
+		case <-done:
+			done = nil
+			pending--
+		case <-finished:
+			finished = nil
+			pending--
+		case <-timer.C:
+			t.Fatalf("no Page/TurnPage round or registry-held Append finished in %s: the GET is reading the registry from under the store lock, which deadlocks against a seal that holds the registry lock", stall)
 		}
 	}
 }

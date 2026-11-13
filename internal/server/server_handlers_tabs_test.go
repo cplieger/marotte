@@ -119,22 +119,6 @@ func TestTabs_AnUnwiredStoreAnswersTheEmptyCollection(t *testing.T) {
 	}
 }
 
-func TestTabs_RejectsEveryMethodButGET(t *testing.T) {
-	s, _ := newTabsServer(t)
-	// Mutations ride POST /api/command, so every write verb is a 405.
-	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
-		t.Run(method, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-
-			s.handleTabs(rec, httptest.NewRequest(method, "/api/tabs", http.NoBody))
-
-			if rec.Code != http.StatusMethodNotAllowed {
-				t.Errorf("status = %d, want 405", rec.Code)
-			}
-		})
-	}
-}
-
 // movingTabs is a tab set that ADVANCES on every Snapshot (call n returns n tabs and n recently
 // closed entries at version n), making a two-call handler's mismatch deterministic.
 type movingTabs struct {

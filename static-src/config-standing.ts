@@ -6,6 +6,7 @@ import { apiGetTyped } from "./api-client.js";
 import { BUS_RECONCILE, onBus, onSSE } from "./bus.js";
 import { decodeConfigStandingResponse } from "./wire/decoders.gen.js";
 import type { AgentLoadError, ConfigStanding, ConfigStandingResponse } from "./wire/types.gen.js";
+import { getConfigStandingEndpoint } from "./wire/client.gen.js";
 
 interface StandingView {
   /** File-backed items, by the Docs row's `path`. */
@@ -36,7 +37,7 @@ export function refreshConfigStanding(): void {
     onBus(BUS_RECONCILE, refreshConfigStanding);
   }
   const read = ++reads;
-  void apiGetTyped("/api/config/standing", decodeConfigStandingResponse).then((d) => {
+  void apiGetTyped(getConfigStandingEndpoint.path, decodeConfigStandingResponse).then((d) => {
     if (read === reads && d !== null) {
       view.value = toView(d);
     }

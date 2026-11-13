@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"net/http"
 
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -23,9 +22,9 @@ type kasMCPRenderer interface {
 	RenderedWaitForReady() (waitForReady, known bool)
 }
 
-// RouteRegistrar mounts its own routes under a sub-tree of /api/*.
+// RouteRegistrar binds its own routes under a sub-tree of /api/*.
 type RouteRegistrar interface {
-	RegisterRoutes(mux *http.ServeMux)
+	RegisterRoutes(m routeMux)
 }
 
 // Delete is absent: only cmdDeleteChat may remove a chat.

@@ -15,13 +15,14 @@ import (
 	"testing"
 
 	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 func ownersRoutes(t *testing.T, recs ...connectionSpec) (*Manager, *http.ServeMux) {
 	t.Helper()
 	m := sourceManager(t, map[string]forgeapi.Core{}, recs...)
 	mux := http.NewServeMux()
-	NewHTTPHandler(m).RegisterRoutes(mux)
+	NewHTTPHandler(m).RegisterRoutes(routetest.On(mux))
 	return m, mux
 }
 
@@ -82,7 +83,7 @@ func TestOwnersRoute_TheRowCarriesTheOwnersAndTheChangeIsAnnounced(t *testing.T)
 	gh := githubRecord()
 	m, changes := sourceManagerLogged(t, map[string]forgeapi.Core{}, gh)
 	mux := http.NewServeMux()
-	NewHTTPHandler(m).RegisterRoutes(mux)
+	NewHTTPHandler(m).RegisterRoutes(routetest.On(mux))
 
 	answeredOwners(t, putOwners(t, mux, gh.ID, ownersBodyOf("acme", "beta")))
 

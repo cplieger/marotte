@@ -15,6 +15,7 @@ import (
 	"github.com/cplieger/go/sse/v2"
 	"github.com/cplieger/go/sse/v2/ssetest"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 // The scope contract is sse's docs/wire.md "Scopes": a connection receives broadcasts (topic "") plus the
@@ -26,7 +27,7 @@ func scopeServer(t *testing.T) (*Runtime, *httptest.Server) {
 	t.Helper()
 	h, _, _ := newTestHub()
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return h, srv
@@ -242,7 +243,7 @@ func TestScopeRoute_AnswersTheWireContractsRefusals(t *testing.T) {
 			t.Errorf("= %d %s, want 400 sse_scope", code, body)
 		}
 	})
-	t.Run("a GET is the handler's own 405, not a missing route", func(t *testing.T) {
+	t.Run("a GET is 405 Allow POST, not a missing route", func(t *testing.T) {
 		resp, err := srv.Client().Get(srv.URL + "/api/events/scope")
 		if err != nil {
 			t.Fatal(err)

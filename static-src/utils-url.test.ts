@@ -1,6 +1,7 @@
 import { afterEach, describe, it, expect } from "vitest";
 import { rewriteServedImageSrc, servedFileRoute } from "./utils-url.js";
 import { setAdditionalDirectories, _resetForTest as resetWorkspace } from "./workspace.js";
+import { asked } from "./__test-helpers__/url.js";
 describe("rewriteServedImageSrc", () => {
   // An agent writes ![shot](/workspace/out/shot.png); asked of the SPA, that path
   // falls back to index.html, a broken image.
@@ -34,9 +35,10 @@ describe("rewriteServedImageSrc", () => {
 
   // A markdown destination is a URL, so `%20` is a space in the filename.
   it("decodes a percent-escaped path once", () => {
-    expect(rewriteServedImageSrc("/workspace/my%20shot.png")).toBe(
-      "/api/file/download?path=%2Fworkspace%2Fmy%20shot.png",
-    );
+    expect(asked(rewriteServedImageSrc("/workspace/my%20shot.png"))).toEqual({
+      path: "/api/file/download",
+      query: { path: "/workspace/my shot.png" },
+    });
   });
 
   // `/workspace/../config/x` passes the prefix test and names a `/config` file.

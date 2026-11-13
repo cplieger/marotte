@@ -147,7 +147,7 @@ var closedGateVerbs = []closedGateVerb{
 		},
 	},
 	{
-		name: "a paused step's end", route: "POST /api/runs/{id}/steps/{path}/{verb}", want: gateRefuses,
+		name: "a paused step's end", route: "POST /api/runs/{id}/steps/{path}/end", want: gateRefuses,
 		hub: pausedStepHub,
 		call: func(ctx context.Context, _ *testing.T, h *Runtime) error {
 			return h.runs.endStep(ctx, "wf_1", reviewPath, runStepCompleted)
@@ -160,14 +160,14 @@ var closedGateVerbs = []closedGateVerb{
 		},
 	},
 	{
-		name: "a running step's steer", route: "POST /api/runs/{id}/steps/{path}/{verb}", want: gateRefuses,
+		name: "a running step's steer", route: "POST /api/runs/{id}/steps/{path}/message", want: gateRefuses,
 		call: func(ctx context.Context, _ *testing.T, h *Runtime) error {
 			_, err := h.runs.messageStep(ctx, "wf_1", reviewPath, "check the logs", "m-1", "", nil)
 			return err
 		},
 	},
 	{
-		name: "a paused step's prompt", route: "POST /api/runs/{id}/steps/{path}/{verb}", want: gateRefuses,
+		name: "a paused step's prompt", route: "POST /api/runs/{id}/steps/{path}/message", want: gateRefuses,
 		hub: pausedStepHub,
 		call: func(ctx context.Context, _ *testing.T, h *Runtime) error {
 			_, err := h.runs.messageStep(ctx, "wf_1", reviewPath, "carry on", "m-1", "", nil)
@@ -175,7 +175,7 @@ var closedGateVerbs = []closedGateVerb{
 		},
 	},
 	{
-		name: "an asking step's answer", route: "POST /api/runs/{id}/steps/{path}/{verb}", want: gateRefuses,
+		name: "an asking step's answer", route: "POST /api/runs/{id}/steps/{path}/message", want: gateRefuses,
 		hub: askHub,
 		call: func(ctx context.Context, _ *testing.T, h *Runtime) error {
 			_, err := h.runs.messageStep(ctx, "wf_1", reviewPath, "the main branch", "m-1", "", nil)
@@ -183,14 +183,14 @@ var closedGateVerbs = []closedGateVerb{
 		},
 	},
 	{
-		name: "a step steer's removal, which resubmits the rows it keeps", route: "POST /api/runs/{id}/steps/{path}/{verb}",
+		name: "a step steer's removal, which resubmits the rows it keeps", route: "POST /api/runs/{id}/steps/{path}/steer-remove",
 		want: gateRefuses, hub: steeredStepHub,
 		call: func(ctx context.Context, _ *testing.T, h *Runtime) error {
 			return h.runs.removeStepSteer(ctx, "wf_1", reviewPath, "steer-m-7")
 		},
 	},
 	{
-		name: "a step's steers cleared", route: "POST /api/runs/{id}/steps/{path}/{verb}", want: gateLetsThrough,
+		name: "a step's steers cleared", route: "POST /api/runs/{id}/steps/{path}/steer-clear", want: gateLetsThrough,
 		hub: steeredStepHub, wrote: marotte.MethodSessionSteerClear,
 		call: func(ctx context.Context, _ *testing.T, h *Runtime) error {
 			return h.runs.clearStepSteers(ctx, "wf_1", reviewPath)
@@ -259,6 +259,18 @@ func TestSignInGate_EveryRunVerbWhileClosed(t *testing.T) {
 	}
 }
 
+// bindingCallee names a binding constructor call, generic instantiations included.
+func bindingCallee(call *ast.CallExpr) string {
+	fn := call.Fun
+	switch x := fn.(type) {
+	case *ast.IndexExpr:
+		fn = x.X
+	case *ast.IndexListExpr:
+		fn = x.X
+	}
+	return calleeName(&ast.CallExpr{Fun: fn})
+}
+
 // The table covers every route that writes to a run.
 func TestSignInGate_EveryRunVerbRouteIsInTheTable(t *testing.T) {
 	f, err := parser.ParseFile(token.NewFileSet(), "run_routes.go", nil, parser.SkipObjectResolution)
@@ -268,7 +280,7 @@ func TestSignInGate_EveryRunVerbRouteIsInTheTable(t *testing.T) {
 	var routes []string
 	ast.Inspect(f, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
-		if !ok || !slices.Contains([]string{"HandleFunc", "Handle", "write"}, calleeName(call)) || len(call.Args) == 0 {
+		if !ok || !slices.Contains([]string{"JSON", "Raw", "ok"}, bindingCallee(call)) || len(call.Args) == 0 {
 			return true
 		}
 		lit, ok := call.Args[0].(*ast.BasicLit)

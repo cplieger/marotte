@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 // partialRecord is a store with an unreadable entry ("args" is a string) between two readable ones.
@@ -49,7 +51,7 @@ func openSeeded(t *testing.T, dir, kas string) *Store {
 func listBody(t *testing.T, s *Store) (names []string, unreadable int) {
 	t.Helper()
 	mux := http.NewServeMux()
-	s.RegisterRoutes(mux)
+	s.RegisterRoutes(routetest.On(mux))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/mcp", http.NoBody))
 	var body struct {

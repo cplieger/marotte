@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 func TestAffordance_AMaxIterationsPauseOffersExtendAndFinishNotResume(t *testing.T) {
@@ -61,7 +62,7 @@ func TestAffordance_AMaxIterationsPauseOffersExtendAndFinishNotResume(t *testing
 func TestMaxIterationsVerbsHaveRoutes(t *testing.T) {
 	h, _, _ := newTestHub()
 	mux := http.NewServeMux()
-	(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(mux)
+	(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(routetest.On(mux))
 	paths := map[string]string{verbExtend: "/api/runs/wf_1/extend", verbFinishLoop: "/api/runs/wf_1/finish-loop"}
 	for _, verb := range maxIterationsVerbs {
 		if verb == verbCancel {

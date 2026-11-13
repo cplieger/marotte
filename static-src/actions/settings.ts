@@ -2,7 +2,15 @@
 // showSaved()/showError() from the result, so no action sets `success`/`error` for the indicator.
 // Saves set no `retryable`: their args hold DOM refs that go stale, and a save is cheap to redo.
 
-import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+import { apiAction, fromEndpoint, retryNetwork, RETRY_STANDARD } from "./index.js";
+import {
+  getSettingsEndpoint,
+  patchSettingsEndpoint,
+  postEngineRestartEndpoint,
+  postLogoutEndpoint,
+  putKiroSettingsEndpoint,
+  putSteeringEndpoint,
+} from "../wire/client.gen.js";
 import { serverSentence } from "./server-sentence.js";
 import { decodeEffectiveSettings } from "../wire/decoders.gen.js";
 import type { EffectiveSettings } from "../wire/types.gen.js";
@@ -18,10 +26,11 @@ export const saveSteering = apiAction<{ content: string; etag: string }, string>
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   scope: "settings",
-  request: ({ content, etag }) =>
-    etag === ""
-      ? { method: "PUT", path: "/api/steering", body: { content } }
-      : { method: "PUT", path: "/api/steering", body: { content }, headers: { "If-Match": etag } },
+  request: ({ content, etag }) => {
+    const spec = putSteeringEndpoint.request({ body: { content }, ifMatch: etag });
+    const { headers: _unsent, ...bare } = spec;
+    return fromEndpoint(etag === "" ? bare : spec);
+  },
   decode: (data) => {
     const etag = (data as { etag?: unknown } | null)?.etag;
     return typeof etag === "string" ? etag : "";
@@ -36,7 +45,7 @@ export const logout = apiAction<
 >({
   name: "settings.logout",
   retryable: retryNetwork,
-  request: () => ({ method: "POST", path: "/api/logout" }),
+  request: () => fromEndpoint(postLogoutEndpoint.request()),
   // INJECTED, not imported: settings.ts imports this action, so importing renderIdentity is a cycle.
   optimistic: ({ render, prev }) => {
     render({ state: "signed_out" });
@@ -61,7 +70,7 @@ export const logout = apiAction<
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
 export const restartEngine = apiAction<void, true>({
   name: "settings.restart_engine",
-  request: () => ({ method: "POST", path: "/api/engine/restart" }),
+  request: () => fromEndpoint(postEngineRestartEndpoint.request()),
   // The 202 has no body; the engine_status event carries what follows.
   decode: () => true,
   error: (_args, err) => serverSentence(err) ?? "Could not restart the agent engine",
@@ -73,11 +82,8 @@ export const restartEngine = apiAction<void, true>({
 export const setEngineHeap = apiAction<{ mib: number }, EffectiveSettings>({
   name: "settings.set_engine_heap",
   scope: "settings",
-  request: ({ mib }) => ({
-    method: "PATCH",
-    path: "/api/settings",
-    body: { engine_heap_mib: mib },
-  }),
+  request: ({ mib }) =>
+    fromEndpoint(patchSettingsEndpoint.request({ body: { engine_heap_mib: mib } })),
   decode: (data) => decodeEffectiveSettings(data),
   error: (_args, err) => serverSentence(err) ?? "Could not save the memory limit",
   success: false,
@@ -87,11 +93,8 @@ export const setEngineHeap = apiAction<{ mib: number }, EffectiveSettings>({
 export const setAdditionalDirectories = apiAction<{ dirs: readonly string[] }, EffectiveSettings>({
   name: "settings.set_additional_directories",
   scope: "settings",
-  request: ({ dirs }) => ({
-    method: "PATCH",
-    path: "/api/settings",
-    body: { additional_directories: dirs },
-  }),
+  request: ({ dirs }) =>
+    fromEndpoint(patchSettingsEndpoint.request({ body: { additional_directories: dirs } })),
   decode: (data) => decodeEffectiveSettings(data),
   error: false,
   success: false,
@@ -110,11 +113,8 @@ interface KiroSettingOp {
 export const setKiroSetting = apiAction<KiroSettingArgs, unknown, KiroSettingOp>({
   name: "settings.set_kiro_setting",
   scope: "settings",
-  request: ({ key, value }) => ({
-    method: "PUT",
-    path: "/api/kiro-settings",
-    body: { key, value },
-  }),
+  request: ({ key, value }) =>
+    fromEndpoint(putKiroSettingsEndpoint.request({ body: { key, value } })),
   // Checkbox-only. A number-valued setting needs a focus-time snapshot for rollback: `input.value`
   // is already the refused value when a change event fires.
   optimistic: ({ input }) => {
@@ -137,7 +137,7 @@ export const setKiroSetting = apiAction<KiroSettingArgs, unknown, KiroSettingOp>
 export const loadSettings = apiAction<void, EffectiveSettings>({
   name: "settings.load",
   retryable: retryNetwork,
-  request: () => ({ method: "GET", path: "/api/settings" }),
+  request: () => fromEndpoint(getSettingsEndpoint.request()),
   decode: (data) => decodeEffectiveSettings(data),
   error: false,
   success: false,
@@ -157,11 +157,7 @@ export const patchAppSettings = apiAction<
     onStart?.();
     return undefined;
   },
-  request: ({ body }) => ({
-    method: "PATCH",
-    path: "/api/settings",
-    body,
-  }),
+  request: ({ body }) => fromEndpoint(patchSettingsEndpoint.request({ body })),
   decode: (data) => decodeEffectiveSettings(data),
   error: "Could not save setting",
 });

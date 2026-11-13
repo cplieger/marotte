@@ -115,8 +115,7 @@ func removeHost(b Bridge) hostDouble {
 	return newBridgeHost(testsupport.NewInMemoryChatStore(), b)
 }
 
-// Every refusal the record can answer reaches the reader as its own class, and the
-// one that means "already read" keeps the not_waiting class the client branches on.
+// Every refusal the record can answer reaches the reader as its own class, each reason at one status.
 func TestCmdSteerRemove_EachRefusalReachesTheReaderAsItsClass(t *testing.T) {
 	cases := []struct {
 		refuse     string
@@ -128,7 +127,7 @@ func TestCmdSteerRemove_EachRefusalReachesTheReaderAsItsClass(t *testing.T) {
 		{refuse: SteerRefuseAgentRows, wantStatus: http.StatusConflict, wantReason: SteerRefuseAgentRows},
 		{refuse: SteerRefuseSettling, wantStatus: http.StatusConflict, wantReason: SteerRefuseSettling},
 		{refuse: SteerRefuseChatGone, wantStatus: http.StatusConflict, wantReason: SteerRefuseChatGone},
-		{refuse: SteerRefuseConsumed, wantStatus: http.StatusConflict, wantReason: SteerRefuseNotWaiting},
+		{refuse: SteerRefuseConsumed, wantStatus: http.StatusConflict, wantReason: SteerRefuseConsumed},
 		{refuse: SteerRefuseNoReply, wantStatus: http.StatusBadGateway},
 	}
 	for _, tc := range cases {
@@ -274,8 +273,8 @@ func TestCmdSteerRemove_AConsumedTargetStillResubmitsTheKeptRows(t *testing.T) {
 
 	_, err := cmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), removeReq(t, "c1", "steer-b"))
 
-	if statusOf(err) != http.StatusConflict || reasonOf(err) != SteerRefuseNotWaiting {
-		t.Errorf("status = %d %q, want 409 %q", statusOf(err), reasonOf(err), SteerRefuseNotWaiting)
+	if statusOf(err) != http.StatusConflict || reasonOf(err) != SteerRefuseConsumed {
+		t.Errorf("status = %d %q, want 409 %q", statusOf(err), reasonOf(err), SteerRefuseConsumed)
 	}
 	if got := b.callsOf(marotte.MethodSessionSteer); len(got) != 1 {
 		t.Errorf("steer calls = %d, want the kept rows resent once", len(got))

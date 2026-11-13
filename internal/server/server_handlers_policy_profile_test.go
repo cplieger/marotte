@@ -32,7 +32,7 @@ type fakeEngine struct {
 	reconciledOnCancellableCtx bool
 }
 
-func (*fakeEngine) RegisterRoutes(*http.ServeMux) {}
+func (*fakeEngine) RegisterRoutes(routeMux) {}
 func (f *fakeEngine) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 	f.events = append(f.events, evt)
 }
@@ -97,7 +97,7 @@ func profileFixture(t *testing.T, live []marotte.PolicyRule) (*Server, *fakeRelo
 	return s, reload, userPath, wsPath
 }
 
-func postProfile(t *testing.T, s *Server, body profileBody) *httptest.ResponseRecorder {
+func postProfile(t *testing.T, s *Server, body PolicyProfileWrite) *httptest.ResponseRecorder {
 	t.Helper()
 	b, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/api/permissions/profile", bytes.NewReader(b))
@@ -166,7 +166,7 @@ func TestPolicyProfile_SelectionWritesNoPolicyFile(t *testing.T) {
 			}
 			before := map[string][]byte{userPath: readBytes(t, userPath), wsPath: readBytes(t, wsPath)}
 
-			if rec := postProfile(t, s, profileBody{Profile: id}); rec.Code != http.StatusOK {
+			if rec := postProfile(t, s, PolicyProfileWrite{Profile: id}); rec.Code != http.StatusOK {
 				t.Fatalf("selecting %q: status = %d, body %s", id, rec.Code, rec.Body)
 			}
 			for path, want := range before {
@@ -184,7 +184,7 @@ func TestPolicyProfile_SelectionWritesNoPolicyFile(t *testing.T) {
 		})
 		t.Run(id+"/absent files stay absent", func(t *testing.T) {
 			s, _, userPath, wsPath := profileFixture(t, nil)
-			if rec := postProfile(t, s, profileBody{Profile: id}); rec.Code != http.StatusOK {
+			if rec := postProfile(t, s, PolicyProfileWrite{Profile: id}); rec.Code != http.StatusOK {
 				t.Fatalf("selecting %q: status = %d, body %s", id, rec.Code, rec.Body)
 			}
 			for _, path := range []string{userPath, wsPath} {
@@ -203,7 +203,7 @@ func TestPolicyProfile_SelectionWritesNoPolicyFile(t *testing.T) {
 		if err := os.WriteFile(userPath, malformed, 0o600); err != nil {
 			t.Fatalf("Setup: %v", err)
 		}
-		if rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileTrusted}); rec.Code != http.StatusOK {
+		if rec := postProfile(t, s, PolicyProfileWrite{Profile: policyfile.ProfileTrusted}); rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200, body %s", rec.Code, rec.Body)
 		}
 		if got := readBytes(t, userPath); !bytes.Equal(got, malformed) {
@@ -233,7 +233,7 @@ func TestPolicyProfile_SeedMaterialisesTheProfileInForce(t *testing.T) {
 		t.Fatalf("Setup: %v", err)
 	}
 
-	if rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileCustom, Seed: true}); rec.Code != http.StatusOK {
+	if rec := postProfile(t, s, PolicyProfileWrite{Profile: policyfile.ProfileCustom, Seed: true}); rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
 	}
 
@@ -275,7 +275,7 @@ func TestPolicyProfile_SeedPersistFailureRestoresTheUserFile(t *testing.T) {
 	}
 	blockConfigDir(t, s)
 
-	rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileCustom, Seed: true})
+	rec := postProfile(t, s, PolicyProfileWrite{Profile: policyfile.ProfileCustom, Seed: true})
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500, body %s", rec.Code, rec.Body)
 	}
@@ -293,7 +293,7 @@ func TestCustomize_AFailedPersistOverANewFileLeavesNoCopiedRule(t *testing.T) {
 	s, _, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", policyfile.PresetReadWorkspace)})
 	blockConfigDir(t, s)
 
-	rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileCustom, Seed: true})
+	rec := postProfile(t, s, PolicyProfileWrite{Profile: policyfile.ProfileCustom, Seed: true})
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500, body %s", rec.Code, rec.Body)
 	}
@@ -358,7 +358,7 @@ func TestPolicyProfile_SeedSurvivesADisconnectAfterTheFirstWrite(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
-	b, _ := json.Marshal(profileBody{Profile: policyfile.ProfileCustom, Seed: true})
+	b, _ := json.Marshal(PolicyProfileWrite{Profile: policyfile.ProfileCustom, Seed: true})
 	ctx := &cancelOnceCopied{Context: t.Context(), done: make(chan struct{}), path: userPath}
 	req := httptest.NewRequest(http.MethodPost, "/api/permissions/profile", bytes.NewReader(b)).WithContext(ctx)
 	rec := httptest.NewRecorder()
@@ -379,7 +379,7 @@ func TestPolicyProfile_SeedSurvivesADisconnectAfterTheFirstWrite(t *testing.T) {
 func TestPolicyProfile_NamedPersistFailureAnswers500(t *testing.T) {
 	s, reload, _, _ := profileFixture(t, nil)
 	blockConfigDir(t, s)
-	if rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileTrusted}); rec.Code != http.StatusInternalServerError {
+	if rec := postProfile(t, s, PolicyProfileWrite{Profile: policyfile.ProfileTrusted}); rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500, body %s", rec.Code, rec.Body)
 	}
 	if reload.profileChanges != 0 {
@@ -403,7 +403,7 @@ func TestPolicyProfile_SeedIntoAFullUserFileIsTheCallersProblem(t *testing.T) {
 		t.Fatalf("Setup: stage the commented file: %v", err)
 	}
 
-	rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileCustom, Seed: true})
+	rec := postProfile(t, s, PolicyProfileWrite{Profile: policyfile.ProfileCustom, Seed: true})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 for a file at the rule cap, body %s", rec.Code, rec.Body)
 	}
@@ -429,7 +429,7 @@ func TestPolicyProfile_SeedRefusesAnUnparseableUserFile(t *testing.T) {
 		t.Fatalf("Setup: stage the malformed file: %v", err)
 	}
 
-	rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileCustom, Seed: true})
+	rec := postProfile(t, s, PolicyProfileWrite{Profile: policyfile.ProfileCustom, Seed: true})
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409, body %s", rec.Code, rec.Body)
 	}
@@ -465,7 +465,7 @@ func TestPolicyProfile_SeedFailsClosed(t *testing.T) {
 				t.Fatalf("stage: %v", err)
 			}
 
-			rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileCustom, Seed: true})
+			rec := postProfile(t, s, PolicyProfileWrite{Profile: policyfile.ProfileCustom, Seed: true})
 			if rec.Code != http.StatusServiceUnavailable {
 				t.Errorf("status = %d, want 503", rec.Code)
 			}
@@ -487,11 +487,11 @@ func TestPolicyProfile_SeedFailsClosed(t *testing.T) {
 func TestPolicyProfile_Refusals(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		body profileBody
+		body PolicyProfileWrite
 	}{
-		{"unknown profile", profileBody{Profile: "yolo"}},
-		{"empty profile", profileBody{}},
-		{"seed on a named profile", profileBody{Profile: policyfile.ProfileTrusted, Seed: true}},
+		{"unknown profile", PolicyProfileWrite{Profile: "yolo"}},
+		{"empty profile", PolicyProfileWrite{}},
+		{"seed on a named profile", PolicyProfileWrite{Profile: policyfile.ProfileTrusted, Seed: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, reload, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", "read-workspace")})
@@ -516,7 +516,7 @@ func TestPolicyProfile_PersistKeepsSiblingSettings(t *testing.T) {
 		t.Fatalf("stage settings: %v", err)
 	}
 
-	if rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileReadOnly}); rec.Code != http.StatusOK {
+	if rec := postProfile(t, s, PolicyProfileWrite{Profile: policyfile.ProfileReadOnly}); rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
 	}
 	var model string

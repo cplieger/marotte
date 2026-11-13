@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func pullAllRepos(t *testing.T, workDir string) map[string]pullResult {
+func pullAllRepos(t *testing.T, workDir string) map[string]PullResult {
 	t.Helper()
 	h := newTestHandler(t, workDir)
 	rec := httptest.NewRecorder()
@@ -21,12 +21,12 @@ func pullAllRepos(t *testing.T, workDir string) map[string]pullResult {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	var body struct {
-		Repos []pullResult `json:"repos"`
+		Repos []PullResult `json:"repos"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v\n%s", err, rec.Body.String())
 	}
-	out := make(map[string]pullResult, len(body.Repos))
+	out := make(map[string]PullResult, len(body.Repos))
 	for _, r := range body.Repos {
 		out[r.Repo] = r
 	}
@@ -206,15 +206,6 @@ func TestPullAll_EveryRowCarriesAVerdict(t *testing.T) {
 		if r.Verdict == "" {
 			t.Errorf("%s: empty verdict", name)
 		}
-	}
-}
-
-func TestPullAll_RefusesANonPOST(t *testing.T) {
-	h := newTestHandler(t, t.TempDir())
-	rec := httptest.NewRecorder()
-	h.handlePullAll(rec, httptest.NewRequest(http.MethodGet, "/api/git/pull-all", nil))
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want 405", rec.Code)
 	}
 }
 

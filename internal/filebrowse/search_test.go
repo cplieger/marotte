@@ -20,6 +20,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/marotte/internal/route/routetest"
 	"github.com/cplieger/marotte/internal/textsearch"
 )
 
@@ -65,7 +66,7 @@ func searchReqCtx(t *testing.T, h *Handler, ctx context.Context, params map[stri
 		q.Set(k, v)
 	}
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/files/search?"+q.Encode(), nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -946,7 +947,7 @@ func TestSearch_MalformedRequestIsRejected(t *testing.T) {
 func TestSearch_OnlyGetIsAllowed(t *testing.T) {
 	h, _, _ := testDir(t)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/files/search?q=x", nil))
 	if rec.Code != http.StatusMethodNotAllowed {

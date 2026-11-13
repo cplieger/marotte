@@ -21,7 +21,7 @@ func bubbleFixture(t *testing.T, anchorOffset time.Duration) (*launchrule.Store,
 	st := mustStore(t)
 	putClock(t, st, clockSeed{
 		Source: "bundled://demo",
-		Spec:   launchrule.Spec{Freq: launchrule.FreqMinutely, Interval: minuteInterval},
+		Spec:   launchrule.ClockSpec{Freq: launchrule.FreqMinutely, Interval: minuteInterval},
 		Anchor: time.Now().Add(anchorOffset),
 	})
 	l := &fakeLauncher{}

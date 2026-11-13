@@ -19,27 +19,30 @@ import (
 	"github.com/cplieger/marotte/internal/version"
 )
 
+// VersionInfo is GET /api/version's body.
+type VersionInfo struct {
+	// ConfigDir is where the client opens the editable config files, so a moved KIRO_CONFIG_DIR is honoured.
+	ConfigDir string `json:"config_dir,omitempty"`
+	KiroCLI   string `json:"kiro_cli,omitempty"`
+	Marotte   string `json:"marotte"`
+}
+
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
-	if !httpreply.RequireMethod(w, r, http.MethodGet) {
-		return
-	}
-	payload := map[string]string{"marotte": version.Build}
-	// The client opens the editable config files under it, so a moved KIRO_CONFIG_DIR is honoured.
-	if s.configDir != "" {
-		payload["config_dir"] = s.configDir
-	}
+	payload := VersionInfo{Marotte: version.Build, ConfigDir: s.configDir}
 	ctx, cancel := context.WithTimeout(r.Context(), s.cliTimeouts.Version)
 	defer cancel()
 	if out, err := s.cliRunner.Run(ctx, "--version"); err == nil {
-		payload["kiro_cli"] = strings.TrimSpace(string(out))
+		payload.KiroCLI = strings.TrimSpace(string(out))
 	}
 	httpserver.WriteJSON(w, payload)
 }
 
+// DiagnosticsReport is POST /api/diagnostics' body.
+type DiagnosticsReport struct {
+	Report string `json:"report"`
+}
+
 func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), s.cliTimeouts.Diagnostics)
 	defer cancel()
 	// STDOUT only (stderr is logged) and capped so a runaway dump cannot bloat the response.
@@ -55,17 +58,31 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	if truncated {
 		report += "\n\n[truncated]"
 	}
-	httpserver.WriteJSON(w, map[string]string{"report": report})
+	httpserver.WriteJSON(w, DiagnosticsReport{Report: report})
+}
+
+// KiroSettingsQuery is GET /api/kiro-settings' query: a comma-separated key list, every allowlisted key when absent.
+type KiroSettingsQuery struct {
+	Keys string `json:"keys,omitempty"`
+}
+
+// KiroSettings is GET /api/kiro-settings' body.
+type KiroSettings struct {
+	Settings map[string]string `json:"settings"`
+}
+
+// KiroSettingWrite is PUT /api/kiro-settings' body.
+type KiroSettingWrite struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 func (s *Server) handleKiroSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
-	case http.MethodGet:
+	case http.MethodGet, http.MethodHead:
 		s.readKiroSettings(w, r)
 	case http.MethodPut:
 		s.writeKiroSetting(w, r)
-	default:
-		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPut)
 	}
 }
 
@@ -96,7 +113,7 @@ func (s *Server) readKiroSettings(w http.ResponseWriter, r *http.Request) {
 		out[key] = value
 	}
 	s.overlayHeldKiroPrefs(out)
-	httpserver.WriteJSON(w, map[string]any{"settings": out})
+	httpserver.WriteJSON(w, KiroSettings{Settings: out})
 }
 
 // overlayHeldKiroPrefs reports the user's own value for each setting a lock
@@ -154,10 +171,7 @@ func (s *Server) readOneKiroSetting(ctx context.Context, key string) string {
 // validated value.
 func (s *Server) writeKiroSetting(w http.ResponseWriter, r *http.Request) {
 	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
-	var body struct {
-		Key   string `json:"key"`
-		Value string `json:"value"`
-	}
+	var body KiroSettingWrite
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpreply.BadRequest(w, "bad request")
 		return
@@ -183,7 +197,7 @@ func (s *Server) writeKiroSetting(w http.ResponseWriter, r *http.Request) {
 		}
 		if _, held := s.heldKiroPrefs.held[key]; held {
 			s.heldKiroPrefs.held[key] = value
-			httpserver.OK(w)
+			httpreply.OK(w)
 			return
 		}
 	}
@@ -200,7 +214,7 @@ func (s *Server) writeKiroSetting(w http.ResponseWriter, r *http.Request) {
 	// The user's write is kiro-cli's value now, so a restore still pending from
 	// a lifted lock must not write the older choice over it.
 	delete(s.heldKiroPrefs.held, key)
-	httpserver.OK(w)
+	httpreply.OK(w)
 	if s.agent != nil {
 		s.agent.ReconcileSessionSettings(durable.Context(r.Context()))
 		// The effective settings mirror this key, so every tab rereads them.

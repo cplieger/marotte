@@ -643,7 +643,7 @@ func TestRecordOutcome_DoesNotMoveTheAnchor(t *testing.T) {
 // anchorAt moves a clock rule's anchor, which the store sets to the rule's creation time.
 func anchorAt(t *testing.T, st *launchrule.Store, row launchrule.Row, anchor time.Time) {
 	t.Helper()
-	if err := st.UpdateClock(t.Context(), row, func(s *launchrule.Status) bool { s.Anchor = anchor; return true }); err != nil {
+	if err := st.UpdateClock(t.Context(), row, func(s *launchrule.RuleStatus) bool { s.Anchor = anchor; return true }); err != nil {
 		t.Fatalf("UpdateClock: %v", err)
 	}
 }
@@ -652,7 +652,7 @@ func anchorAt(t *testing.T, st *launchrule.Store, row launchrule.Row, anchor tim
 type clockSeed struct {
 	Anchor time.Time
 	Source string
-	Spec   launchrule.Spec
+	Spec   launchrule.ClockSpec
 }
 
 func putClock(t *testing.T, st *launchrule.Store, c clockSeed) launchrule.Rule {
@@ -679,7 +679,7 @@ func waitOn(t *testing.T, st *launchrule.Store, row launchrule.Row, due time.Tim
 func dailyAt2(source string) *launchrule.Rule {
 	return &launchrule.Rule{
 		Source: source, Enabled: true,
-		When: launchrule.When{Clock: &launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}},
+		When: launchrule.When{Clock: &launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2}},
 	}
 }
 

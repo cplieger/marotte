@@ -41,10 +41,7 @@ func validateRegion(v string) error {
 // ok=false. An empty body (the default Builder ID flow) yields zero values and ok=true.
 func parseLoginRequest(w http.ResponseWriter, r *http.Request) (provider, region string, ok bool) {
 	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
-	var body struct {
-		Provider string `json:"provider"`
-		Region   string `json:"region"`
-	}
+	var body LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("login: body exceeds limit", "limit_bytes", httpserver.MaxJSONBody)
@@ -80,10 +77,6 @@ const textAPIKeyActive = "marotte signs in with the KIRO_API_KEY environment var
 // handleLogin starts a device sign-in and answers its URL and code; the vault polls under its own lifetime, so the
 // client may leave. One sign-in at a time; a concurrent POST gets 409.
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
 	// Audit trail; client_ip is httpserver.ClientIP's spoof-safe host.
 	slog.Info("login: request received",
 		"client_ip", httpserver.ClientIP(r, h.trusted...),

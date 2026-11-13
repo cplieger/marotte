@@ -284,7 +284,9 @@ function nameMissingImage(img: HTMLImageElement): void {
     () => {
       const src = img.getAttribute("src") ?? "";
       const alt = img.getAttribute("alt") ?? "";
-      const shown = alt !== "" ? alt : decodeURIComponent(src.replace(/^.*[?&]path=/, ""));
+      // The query is form-encoded (a space is "+"), so it is read as a URL's, never decoded by hand.
+      const asked = new URL(src, location.href).searchParams.get("path") ?? src;
+      const shown = alt !== "" ? alt : asked;
       const miss = el("span", { className: "img-missing", [CHROME_ATTR]: "" });
       miss.textContent = `Image not available: ${shown}`;
       img.replaceWith(miss);

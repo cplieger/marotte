@@ -342,7 +342,7 @@ func TestAbandonedAttemptsBlockAfter24h(t *testing.T) {
 	t.Run("a restart keeps the clock", func(t *testing.T) {
 		inBubble(t, func(t *testing.T, tc *testConfirmer) {
 			r := tc.createRule(runSpec("success"))
-			tc.setStatus(r.ID, func(st *launchrule.Status) { st.FailingSince = time.Now().Add(-23 * time.Hour) })
+			tc.setStatus(r.ID, func(st *launchrule.RuleStatus) { st.FailingSince = time.Now().Add(-23 * time.Hour) })
 			tc.persist(r.ID)
 			tc.restart()
 			advance(time.Hour)

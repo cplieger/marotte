@@ -11,11 +11,11 @@ import (
 //go:fix inline
 func floatp(f float64) *float64 { return new(f) }
 
-// decodeContent decodes an answer the way the command door does, so numbers are float64,
-// arrays []any and null a nil value.
-func decodeContent(t *testing.T, raw string) map[string]any {
+// decodeAs decodes an answer into T: the command door's raw values, or the forwarded values,
+// where numbers are float64, arrays []any and null a nil value.
+func decodeAs[T any](t *testing.T, raw string) T {
 	t.Helper()
-	var m map[string]any
+	var m T
 	if err := json.Unmarshal([]byte(raw), &m); err != nil {
 		t.Fatalf("decode %s: %v", raw, err)
 	}
@@ -76,15 +76,13 @@ func TestElicitationContent(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			content := decodeContent(t, tc.content)
-
-			got, err := elicitationContent(&ask, content)
+			got, err := elicitationContent(&ask, decodeAs[map[string]json.RawMessage](t, tc.content))
 
 			if (err == nil) != tc.ok {
 				t.Fatalf("elicitationContent(%s) error = %v, want ok %v", tc.content, err, tc.ok)
 			}
-			if tc.ok && !reflect.DeepEqual(got, content) {
-				t.Errorf("forwarded %v, want the answer unchanged %v", got, content)
+			if want := decodeAs[map[string]any](t, tc.content); tc.ok && !reflect.DeepEqual(got, want) {
+				t.Errorf("forwarded %v, want the answer unchanged %v", got, want)
 			}
 		})
 	}
@@ -93,7 +91,7 @@ func TestElicitationContent(t *testing.T) {
 func TestElicitationContent_URLModeForwardsNothing(t *testing.T) {
 	ask := marotte.ElicitationNeededPayload{Mode: marotte.ElicitationModeURL, URL: "https://example.com/connect"}
 
-	got, err := elicitationContent(&ask, map[string]any{"x": 1.0})
+	got, err := elicitationContent(&ask, map[string]json.RawMessage{"x": json.RawMessage(`1`)})
 
 	if err != nil || got != nil {
 		t.Errorf("elicitationContent(url ask) = %v, %v, want nil, nil", got, err)

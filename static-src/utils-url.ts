@@ -6,6 +6,7 @@ import { isViewableImage } from "./file-extensions.js";
 import type { Route } from "./route-path.js";
 import { UPLOADS_DIR } from "./upload-policy.js";
 import { additionalDirectories, workspaceRootOrDefault } from "./workspace.js";
+import { getFileDownloadEndpoint } from "./wire/client.gen.js";
 
 /** URL safety predicate for a rendered href/src: http, https and mailto are the only absolute
  *  schemes; scheme-less resolves against the document. Strips every C0 control THEN trims, at least
@@ -25,7 +26,7 @@ export function isHttpMailtoOrRelativeURL(url: string): boolean {
  *  `.svg` is served as `image/svg+xml`, script-capable if NAVIGATED to. Never hand this URL to an
  *  anchor, an `<iframe>` or `window.open`. */
 export function fileDownloadURL(path: string): string {
-  return `/api/file/download?path=${encodeURIComponent(path)}`;
+  return getFileDownloadEndpoint.request({ path }).path;
 }
 
 /** The roots a link routes to the byte route (elsewhere the SPA answers index.html): the workspace

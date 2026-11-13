@@ -32,6 +32,7 @@ vi.mock("./actions/index.js", () => ({
     },
   }),
   pollAction: () => undefined,
+  fromEndpoint: (spec: { method: string; path: string }) => spec,
 }));
 vi.mock("./bus.js", () => ({ onSSE: () => undefined }));
 

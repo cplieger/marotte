@@ -1,6 +1,25 @@
 // Git PRs tab actions. generate() (AI PR description) stays inline: its error surfaces in the dialog.
 
-import { apiAction, defineAction, ActionError, retryNetwork, RETRY_STANDARD } from "./index.js";
+import {
+  apiAction,
+  defineAction,
+  ActionError,
+  fromEndpoint,
+  retryNetwork,
+  RETRY_STANDARD,
+} from "./index.js";
+import {
+  getForgesByIdCapabilitiesEndpoint,
+  getForgesByIdReposByRepoAffordancesEndpoint,
+  getForgesByIdReposByRepoPrsByNumberMergeEndpoint,
+  postForgesByIdReposByRepoPrsByNumberCloseEndpoint,
+  postForgesByIdReposByRepoPrsByNumberMergeEndpoint,
+  postForgesByIdReposByRepoPrsByNumberReopenEndpoint,
+  postForgesByIdReposByRepoPrsByNumberRerunEndpoint,
+  postForgesByIdReposByRepoPrsEndpoint,
+  postForgesInventoryRefreshEndpoint,
+  postForgesInventoryWatchEndpoint,
+} from "../wire/client.gen.js";
 import type { ApiErrorInfo } from "./index.js";
 
 import type { ForgeKind } from "../forge-types.js";
@@ -20,6 +39,7 @@ import type {
   MergeStatus,
   PR,
   PRChanged,
+  PRMerge,
   RepoAffordances,
 } from "../wire/types.gen.js";
 
@@ -50,26 +70,20 @@ interface MergePRArgs extends PinnedPRArgs {
 /** GitHub and the Gitea family name the strategy, because their default intent is a merge commit.
  *  GitLab refuses any strategy and merges by the project's own method, so its choice is an intent:
  *  squash, or that method without squashing. */
-function mergeBody(args: MergePRArgs, auto: boolean): Record<string, unknown> {
+function mergeBody(args: MergePRArgs, auto: boolean): PRMerge {
   return { ...mergeChoice(args), head_sha: args.head_sha, ...(auto ? { auto: true } : {}) };
 }
 
-function mergeChoice(args: MergePRArgs): Record<string, string> {
+function mergeChoice(args: MergePRArgs): Pick<PRMerge, "intent" | "strategy"> {
   if (args.forge_kind !== "gitlab") {
     return { intent: "default", strategy: args.strategy };
   }
   return { intent: args.strategy === "squash" ? "squash" : "no_squash" };
 }
 
-function prPath(args: PRArgs, action: string): string {
-  return `/api/forges/${encodeURIComponent(args.forge_id)}/repos/${encodeURIComponent(args.repo_id)}/prs/${args.pr_number}/${action}`;
-}
-
-/** The query string of the re-run route, which carries the head pin. */
-function pinnedQuery(args: PinnedPRArgs): string {
-  return args.head_sha === ""
-    ? ""
-    : "?" + new URLSearchParams({ head_sha: args.head_sha }).toString();
+/** The path arguments every pull-request route takes. */
+function prRoute(args: PRArgs): { id: string; repo: string; number: string } {
+  return { id: args.forge_id, repo: args.repo_id, number: String(args.pr_number) };
 }
 
 /** Merge a pull request with the chosen method, pinned to the row's head commit. No optimistic
@@ -78,11 +92,13 @@ export const mergePR = apiAction<MergePRArgs, MergeResult>({
   name: "git.merge_pr",
   scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
   dedupe: true,
-  request: (args) => ({
-    method: "POST",
-    path: prPath(args, "merge"),
-    body: mergeBody(args, false),
-  }),
+  request: (args) =>
+    fromEndpoint(
+      postForgesByIdReposByRepoPrsByNumberMergeEndpoint.request({
+        ...prRoute(args),
+        body: mergeBody(args, false),
+      }),
+    ),
   decode: (data) => decodeMergeResult(data),
   decodeError: keepMovedBody,
   error: false,
@@ -96,7 +112,13 @@ export const armAutoMerge = apiAction<MergePRArgs, MergeResult>({
   name: "git.arm_auto_merge",
   scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
   dedupe: true,
-  request: (args) => ({ method: "POST", path: prPath(args, "merge"), body: mergeBody(args, true) }),
+  request: (args) =>
+    fromEndpoint(
+      postForgesByIdReposByRepoPrsByNumberMergeEndpoint.request({
+        ...prRoute(args),
+        body: mergeBody(args, true),
+      }),
+    ),
   decode: (data) => decodeMergeResult(data),
   decodeError: keepMovedBody,
   error: false,
@@ -112,7 +134,8 @@ export const closePR = apiAction<PRArgs, PRChanged>({
   name: "git.close_pr",
   scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
   dedupe: true,
-  request: (args) => ({ method: "POST", path: prPath(args, "close"), body: {} }),
+  request: (args) =>
+    fromEndpoint(postForgesByIdReposByRepoPrsByNumberCloseEndpoint.request(prRoute(args))),
   decode: (data) => decodePRChanged(data),
   decodeError: keepMovedBody,
   error: false,
@@ -124,8 +147,9 @@ export const closePR = apiAction<PRArgs, PRChanged>({
 /** Send a held close as the page goes away. The unload cancels an ordinary
  *  request and keeps a keepalive one, and no page is left to show its answer. */
 export function sendCloseOnUnload(args: PRArgs): void {
-  fetch(prPath(args, "close"), {
-    method: "POST",
+  const spec = postForgesByIdReposByRepoPrsByNumberCloseEndpoint.request(prRoute(args));
+  fetch(spec.path, {
+    method: spec.method,
     keepalive: true,
     headers: { "Content-Type": "application/json" },
     body: "{}",
@@ -138,7 +162,8 @@ export const reopenPR = apiAction<PRArgs>({
   name: "git.reopen_pr",
   scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
   dedupe: true,
-  request: (args) => ({ method: "POST", path: prPath(args, "reopen"), body: {} }),
+  request: (args) =>
+    fromEndpoint(postForgesByIdReposByRepoPrsByNumberReopenEndpoint.request(prRoute(args))),
   decodeError: keepMovedBody,
   error: false,
   idempotencyKey: true,
@@ -153,11 +178,12 @@ export const rerunChecks = apiAction<PinnedPRArgs>({
   name: "git.rerun_checks",
   scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
   dedupe: true,
-  request: (args) => ({
-    method: "POST",
-    path: prPath(args, "rerun") + pinnedQuery(args),
-    body: {},
-  }),
+  request: (args) =>
+    fromEndpoint(
+      postForgesByIdReposByRepoPrsByNumberRerunEndpoint.request(
+        args.head_sha === "" ? prRoute(args) : { ...prRoute(args), head_sha: args.head_sha },
+      ),
+    ),
   decodeError: (info) => keepMovedBody(info) ?? capabilityRefusal(info),
   error: false,
   idempotencyKey: true,
@@ -213,10 +239,7 @@ function capabilityDetail(body: unknown): string {
  *  before it. */
 export const readCapabilities = apiAction<{ forge_id: string }, Capabilities>({
   name: "git.read_capabilities",
-  request: (args) => ({
-    method: "GET",
-    path: `/api/forges/${encodeURIComponent(args.forge_id)}/capabilities`,
-  }),
+  request: (args) => fromEndpoint(getForgesByIdCapabilitiesEndpoint.request({ id: args.forge_id })),
   decode: (data) => decodeCapabilities(data),
   error: false,
 });
@@ -227,10 +250,13 @@ export const readCapabilities = apiAction<{ forge_id: string }, Capabilities>({
 export const readAffordances = apiAction<{ forge_id: string; repo_id: string }, RepoAffordances>({
   name: "git.read_affordances",
   dedupe: true,
-  request: (args) => ({
-    method: "GET",
-    path: `/api/forges/${encodeURIComponent(args.forge_id)}/repos/${encodeURIComponent(args.repo_id)}/affordances`,
-  }),
+  request: (args) =>
+    fromEndpoint(
+      getForgesByIdReposByRepoAffordancesEndpoint.request({
+        id: args.forge_id,
+        repo: args.repo_id,
+      }),
+    ),
   decode: (data) => decodeRepoAffordances(data),
   error: false,
 });
@@ -240,7 +266,8 @@ export const readAffordances = apiAction<{ forge_id: string; repo_id: string }, 
 export const readMergeStatus = apiAction<PRArgs, MergeStatus>({
   name: "git.read_merge_status",
   dedupe: true,
-  request: (args) => ({ method: "GET", path: prPath(args, "merge") }),
+  request: (args) =>
+    fromEndpoint(getForgesByIdReposByRepoPrsByNumberMergeEndpoint.request(prRoute(args))),
   decode: (data) => decodeMergeStatus(data),
   error: false,
 });
@@ -273,17 +300,20 @@ export const createPR = apiAction<CreatePRArgs, PR>({
     ">" +
     args.target_branch,
   dedupe: true,
-  request: (args) => ({
-    method: "POST",
-    path: `/api/forges/${encodeURIComponent(args.forge_id)}/repos/${encodeURIComponent(args.repo_id)}/prs`,
-    body: {
-      source_branch: args.source_branch,
-      target_branch: args.target_branch,
-      title: args.title,
-      body: args.body,
-      draft: args.draft,
-    },
-  }),
+  request: (args) =>
+    fromEndpoint(
+      postForgesByIdReposByRepoPrsEndpoint.request({
+        id: args.forge_id,
+        repo: args.repo_id,
+        body: {
+          source_branch: args.source_branch,
+          target_branch: args.target_branch,
+          title: args.title,
+          body: args.body,
+          draft: args.draft,
+        },
+      }),
+    ),
   decode: (data) => decodePR(data),
   error: false,
 });
@@ -295,7 +325,7 @@ export const createPR = apiAction<CreatePRArgs, PR>({
 export const requestPRCycle = apiAction<void, InventoryRefresh>({
   name: "git.request_pr_cycle",
   dedupe: true,
-  request: () => ({ method: "POST", path: "/api/forges/inventory/refresh" }),
+  request: () => fromEndpoint(postForgesInventoryRefreshEndpoint.request()),
   decode: decodeInventoryRefresh,
   error: false,
 });
@@ -313,12 +343,13 @@ interface WatchArgs {
  *  watch costs the list's cadence, not its contents. */
 export const watchPRView = apiAction<WatchArgs>({
   name: "git.watch_prs",
-  request: (args) => ({
-    method: "POST",
-    path: "/api/forges/inventory/watch",
-    body: { watching: args.watching, page: args.page },
-    headers: { "SSE-Client": args.tag },
-  }),
+  request: (args) =>
+    fromEndpoint(
+      postForgesInventoryWatchEndpoint.request({
+        body: { watching: args.watching, page: args.page },
+        sseClient: args.tag,
+      }),
+    ),
   error: false,
 });
 

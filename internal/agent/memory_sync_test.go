@@ -23,37 +23,37 @@ func TestMemorySyncChoiceDecode(t *testing.T) {
 	const none = `[{"layer":"replace-default","compose":"replace"}]`
 	cases := map[string]struct {
 		view json.RawMessage
-		want memorySyncChoice
+		want MemorySyncChoice
 	}{
 		"unset": {
 			view: memorySyncView("off", "replace", `[{"layer":"kiro-agent-defaults","stated":{"value":"off","used":true}}]`, none),
-			want: memorySyncChoice{},
+			want: MemorySyncChoice{},
 		},
 		"account on": {
 			view: memorySyncView("on", "replace", `[{"layer":"user-synced","stated":{"value":"on","used":true}}]`, none),
-			want: memorySyncChoice{Enabled: true, Account: true},
+			want: MemorySyncChoice{Enabled: true, Account: true},
 		},
 		"account on under another layer's off": {
 			view: memorySyncView("off", "replace",
 				`[{"layer":"user-synced","stated":{"value":"on","used":false}},{"layer":"user-local","stated":{"value":"off","used":true}}]`, none),
-			want: memorySyncChoice{Account: true},
+			want: MemorySyncChoice{Account: true},
 		},
 		"on at a layer other than the account's": {
 			view: memorySyncView("on", "replace", `[{"layer":"user-local","stated":{"value":"on","used":true}}]`, none),
-			want: memorySyncChoice{Enabled: true},
+			want: MemorySyncChoice{Enabled: true},
 		},
 		"locked by the organization": {
 			view: memorySyncView("off", "locked", `[{"layer":"organization","stated":{"value":"off","used":true}},{"layer":"user-synced"}]`,
 				`[{"layer":"organization","compose":"locked"}]`),
-			want: memorySyncChoice{Lock: &memorySyncLock{Layer: "organization", Name: "Your organization"}},
+			want: MemorySyncChoice{Lock: &MemorySyncLock{Layer: "organization", Name: "Your organization"}},
 		},
 		"locked by a layer the view does not name": {
 			view: memorySyncView("on", "locked", `[]`, `[{"layer":"replace-default","compose":"replace"},{"layer":"managed","compose":"locked"}]`),
-			want: memorySyncChoice{Enabled: true, Lock: &memorySyncLock{Layer: "managed", Name: "managed"}},
+			want: MemorySyncChoice{Enabled: true, Lock: &MemorySyncLock{Layer: "managed", Name: "managed"}},
 		},
 		"no row": {
 			view: json.RawMessage(`{"layers":[],"settings":[]}`),
-			want: memorySyncChoice{},
+			want: MemorySyncChoice{},
 		},
 	}
 	for name, tc := range cases {
@@ -74,18 +74,18 @@ func TestMemorySyncStatusDecode(t *testing.T) {
 	two := 2
 	cases := map[string]struct {
 		raw  string
-		want memorySyncStatus
+		want MemorySyncStatus
 	}{
-		"not started":          {`{"state":"notStarted"}`, memorySyncStatus{State: "notStarted"}},
-		"off":                  {`{"state":"off"}`, memorySyncStatus{State: "off"}},
-		"signed out":           {`{"state":"unavailable","reason":"notSignedIn"}`, memorySyncStatus{State: "unavailable", Reason: "notSignedIn"}},
-		"suspended":            {`{"state":"suspended","reason":"forbidden","lastSyncAt":"t1"}`, memorySyncStatus{State: "suspended", Reason: "forbidden", LastSyncAt: "t1"}},
-		"syncing":              {`{"state":"syncing"}`, memorySyncStatus{State: "syncing"}},
-		"synced":               {`{"state":"synced","lastSyncAt":"t1","pending":0}`, memorySyncStatus{State: "synced", LastSyncAt: "t1"}},
-		"failed with pending":  {`{"state":"failed","reason":"sync","pending":2}`, memorySyncStatus{State: "failed", Reason: "sync", Pending: &two}},
-		"an unknown state":     {`{"state":"paused"}`, memorySyncStatus{State: "unknown"}},
-		"an unknown reason":    {`{"state":"unavailable","reason":"later"}`, memorySyncStatus{State: "unknown"}},
-		"an unreadable answer": {`[]`, memorySyncStatus{State: "unknown"}},
+		"not started":          {`{"state":"notStarted"}`, MemorySyncStatus{State: "notStarted"}},
+		"off":                  {`{"state":"off"}`, MemorySyncStatus{State: "off"}},
+		"signed out":           {`{"state":"unavailable","reason":"notSignedIn"}`, MemorySyncStatus{State: "unavailable", Reason: "notSignedIn"}},
+		"suspended":            {`{"state":"suspended","reason":"forbidden","lastSyncAt":"t1"}`, MemorySyncStatus{State: "suspended", Reason: "forbidden", LastSyncAt: "t1"}},
+		"syncing":              {`{"state":"syncing"}`, MemorySyncStatus{State: "syncing"}},
+		"synced":               {`{"state":"synced","lastSyncAt":"t1","pending":0}`, MemorySyncStatus{State: "synced", LastSyncAt: "t1"}},
+		"failed with pending":  {`{"state":"failed","reason":"sync","pending":2}`, MemorySyncStatus{State: "failed", Reason: "sync", Pending: &two}},
+		"an unknown state":     {`{"state":"paused"}`, MemorySyncStatus{State: "unknown"}},
+		"an unknown reason":    {`{"state":"unavailable","reason":"later"}`, MemorySyncStatus{State: "unknown"}},
+		"an unreadable answer": {`[]`, MemorySyncStatus{State: "unknown"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

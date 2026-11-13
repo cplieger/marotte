@@ -20,7 +20,6 @@ import (
 
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/filebrowse"
-	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/spec"
 	"github.com/cplieger/marotte/internal/steering"
@@ -119,9 +118,6 @@ type docsCache struct {
 }
 
 func (s *Server) handleKiroDocs(w http.ResponseWriter, r *http.Request) {
-	if !httpreply.RequireMethod(w, r, http.MethodGet) {
-		return
-	}
 	res := s.collectKiroDocs(r.Context())
 	if res.Docs == nil {
 		res.Docs = []KiroDoc{}

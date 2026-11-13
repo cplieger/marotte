@@ -136,7 +136,7 @@ func savePolicy(ctx context.Context, path string, f *policyfile.File) error {
 	})
 }
 
-func postRules(t *testing.T, s *Server, body policyRuleBody) *httptest.ResponseRecorder {
+func postRules(t *testing.T, s *Server, body PolicyRuleWrite) *httptest.ResponseRecorder {
 	t.Helper()
 	b, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/api/permissions/rules", bytes.NewReader(b))
@@ -200,7 +200,7 @@ func TestPolicyRuleAddDefaultsToAsk(t *testing.T) {
 	t.Setenv("HOME", home)
 	s := &Server{workDir: work}
 	// No effect → defaults to ask, never allow.
-	rec := postRules(t, s, policyRuleBody{Op: "add", Scope: "workspace", Capability: "fs_write", Match: []string{"src/**"}})
+	rec := postRules(t, s, PolicyRuleWrite{Op: "add", Scope: "workspace", Capability: "fs_write", Match: []string{"src/**"}})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -219,7 +219,7 @@ func TestPolicyRuleAddExplicitAllow(t *testing.T) {
 	work := t.TempDir()
 	t.Setenv("HOME", home)
 	s := &Server{workDir: work}
-	rec := postRules(t, s, policyRuleBody{Op: "add", Scope: "user", Capability: "web_fetch", Effect: "allow"})
+	rec := postRules(t, s, PolicyRuleWrite{Op: "add", Scope: "user", Capability: "web_fetch", Effect: "allow"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -232,7 +232,7 @@ func TestPolicyRuleAddExplicitAllow(t *testing.T) {
 
 func TestPolicyRuleInvalidScopeRejected(t *testing.T) {
 	s := &Server{workDir: t.TempDir()}
-	rec := postRules(t, s, policyRuleBody{Op: "add", Scope: "agent", Capability: "shell", Effect: "ask"})
+	rec := postRules(t, s, PolicyRuleWrite{Op: "add", Scope: "agent", Capability: "shell", Effect: "ask"})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400 (agent scope not writable)", rec.Code)
 	}
@@ -248,7 +248,7 @@ func TestPolicyRuleUnrecognisedCapabilityRoundTrips(t *testing.T) {
 	s := &Server{workDir: work}
 
 	// "hooks" is the real case: an upstream security report asked for it.
-	rec := postRules(t, s, policyRuleBody{
+	rec := postRules(t, s, PolicyRuleWrite{
 		Op: "add", Scope: "user", Capability: "hooks", Effect: "deny",
 	})
 	if rec.Code != http.StatusOK {
@@ -276,7 +276,7 @@ func TestPolicyRuleMalformedCapabilityRejected(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
 			s := &Server{workDir: t.TempDir()}
-			rec := postRules(t, s, policyRuleBody{
+			rec := postRules(t, s, PolicyRuleWrite{
 				Op: "add", Scope: "user", Capability: capability, Effect: "ask",
 			})
 			if rec.Code != http.StatusBadRequest {
@@ -348,7 +348,7 @@ func TestPolicyRuleRemoveDenyRequiresConfirm(t *testing.T) {
 	s := &Server{workDir: work}
 
 	// Without confirm → 409, rule stays.
-	rec := postRules(t, s, policyRuleBody{Op: "remove", Scope: "workspace", Capability: "shell", Effect: "deny", Match: []string{"rm -rf *"}})
+	rec := postRules(t, s, PolicyRuleWrite{Op: "remove", Scope: "workspace", Capability: "shell", Effect: "deny", Match: []string{"rm -rf *"}})
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 (deny removal needs confirm)", rec.Code)
 	}
@@ -357,7 +357,7 @@ func TestPolicyRuleRemoveDenyRequiresConfirm(t *testing.T) {
 	}
 
 	// With confirm → 200, rule gone.
-	rec = postRules(t, s, policyRuleBody{Op: "remove", Scope: "workspace", Capability: "shell", Effect: "deny", Match: []string{"rm -rf *"}, Confirm: true})
+	rec = postRules(t, s, PolicyRuleWrite{Op: "remove", Scope: "workspace", Capability: "shell", Effect: "deny", Match: []string{"rm -rf *"}, Confirm: true})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("confirmed remove status = %d, want 200", rec.Code)
 	}
@@ -393,7 +393,7 @@ func TestPolicyRuleUpdate_EvaluateRanks(t *testing.T) {
 	} {
 		t.Run(tc.from+"_to_"+tc.to, func(t *testing.T) {
 			s, wp := seed(t, tc.from)
-			rec := postRules(t, s, policyRuleBody{
+			rec := postRules(t, s, PolicyRuleWrite{
 				Op: "update", Scope: "workspace", Capability: "shell",
 				Effect: tc.from, NewEffect: tc.to, Match: []string{"make *"},
 			})
@@ -411,7 +411,7 @@ func TestPolicyRuleUpdate_EvaluateRanks(t *testing.T) {
 	}
 	t.Run("removing_an_evaluate_rule", func(t *testing.T) {
 		s, wp := seed(t, "evaluate")
-		rec := postRules(t, s, policyRuleBody{Op: "remove", Scope: "workspace", Capability: "shell", Effect: "evaluate", Match: []string{"make *"}})
+		rec := postRules(t, s, PolicyRuleWrite{Op: "remove", Scope: "workspace", Capability: "shell", Effect: "evaluate", Match: []string{"make *"}})
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 		}
@@ -425,7 +425,7 @@ func TestPolicyRuleUnknownOp(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	s := &Server{workDir: t.TempDir()}
-	rec := postRules(t, s, policyRuleBody{Op: "frobnicate", Scope: "user", Capability: "shell", Effect: "ask"})
+	rec := postRules(t, s, PolicyRuleWrite{Op: "frobnicate", Scope: "user", Capability: "shell", Effect: "ask"})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400 (unknown op)", rec.Code)
 	}
@@ -484,7 +484,7 @@ func TestPolicyRuleUpdate(t *testing.T) {
 
 	t.Run("narrowing_update_needs_no_confirm", func(t *testing.T) {
 		s, wp := seed(t)
-		rec := postRules(t, s, policyRuleBody{
+		rec := postRules(t, s, PolicyRuleWrite{
 			Op: "update", Scope: "workspace", Capability: "shell",
 			Effect: "ask", NewEffect: "deny", Match: []string{"rm *"},
 		})
@@ -499,7 +499,7 @@ func TestPolicyRuleUpdate(t *testing.T) {
 
 	t.Run("widening_update_requires_confirm", func(t *testing.T) {
 		s, wp := seed(t)
-		rec := postRules(t, s, policyRuleBody{
+		rec := postRules(t, s, PolicyRuleWrite{
 			Op: "update", Scope: "workspace", Capability: "shell",
 			Effect: "ask", NewEffect: "allow", Match: []string{"rm *"},
 		})
@@ -510,7 +510,7 @@ func TestPolicyRuleUpdate(t *testing.T) {
 			t.Error("rule widened without confirm")
 		}
 
-		rec = postRules(t, s, policyRuleBody{
+		rec = postRules(t, s, PolicyRuleWrite{
 			Op: "update", Scope: "workspace", Capability: "shell",
 			Effect: "ask", NewEffect: "allow", Match: []string{"rm *"}, Confirm: true,
 		})
@@ -524,7 +524,7 @@ func TestPolicyRuleUpdate(t *testing.T) {
 
 	t.Run("replay_when_target_already_exists_is_ok", func(t *testing.T) {
 		s, wp := seed(t)
-		body := policyRuleBody{
+		body := PolicyRuleWrite{
 			Op: "update", Scope: "workspace", Capability: "shell",
 			Effect: "ask", NewEffect: "deny", Match: []string{"rm *"},
 		}
@@ -543,7 +543,7 @@ func TestPolicyRuleUpdate(t *testing.T) {
 
 	t.Run("missing_rule_is_404", func(t *testing.T) {
 		s, _ := seed(t)
-		rec := postRules(t, s, policyRuleBody{
+		rec := postRules(t, s, PolicyRuleWrite{
 			Op: "update", Scope: "workspace", Capability: "shell",
 			Effect: "ask", NewEffect: "deny", Match: []string{"never-added *"},
 		})
@@ -554,7 +554,7 @@ func TestPolicyRuleUpdate(t *testing.T) {
 
 	t.Run("invalid_new_effect_is_400", func(t *testing.T) {
 		s, _ := seed(t)
-		rec := postRules(t, s, policyRuleBody{
+		rec := postRules(t, s, PolicyRuleWrite{
 			Op: "update", Scope: "workspace", Capability: "shell",
 			Effect: "ask", NewEffect: "frobnicate", Match: []string{"rm *"},
 		})
@@ -594,7 +594,7 @@ func TestPolicyRuleUpdate_UnchangedEffectNeedsNoConfirm(t *testing.T) {
 	}
 	s := &Server{workDir: work}
 
-	rec := postRules(t, s, policyRuleBody{
+	rec := postRules(t, s, PolicyRuleWrite{
 		Op: "update", Scope: "workspace", Capability: "shell",
 		Effect: "ask", NewEffect: "ask", Match: []string{"rm *"},
 	})

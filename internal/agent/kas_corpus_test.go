@@ -429,7 +429,10 @@ func (d *kasDrive) answerAsk(req kasFrame) {
 		payload, _ := json.Marshal(map[string]any{"request_id": *req.ID, "option_id": r.Outcome.OptionID})
 		cmd = marotte.ClientCommand{Type: marotte.CmdPermissionResponse, ChatID: kasChat, Payload: payload}
 	case marotte.MethodElicitationCreate:
-		var r marotte.ElicitationResult
+		var r struct {
+			Content map[string]json.RawMessage `json:"content"`
+			Action  string                     `json:"action"`
+		}
 		_ = json.Unmarshal(ans.Result, &r)
 		payload, _ := json.Marshal(marotte.ElicitationResponseCommand{RequestID: *req.ID, Action: r.Action, Content: r.Content})
 		cmd = marotte.ClientCommand{Type: marotte.CmdElicitationResponse, ChatID: kasChat, Payload: payload}

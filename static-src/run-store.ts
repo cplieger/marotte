@@ -38,6 +38,7 @@ import {
   type ClassifiedRunNodeStatus,
   type ClassifiedRunStatus,
 } from "./run-status.js";
+import { getRunsByIdEndpoint, getRunsLiveEndpoint } from "./wire/client.gen.js";
 
 /** One node of KAS's execution tree, from `state.root`. */
 export interface RunNode {
@@ -1144,14 +1145,15 @@ export function rereadRun(workflowID: string): void {
 
 /** The URL of a read in `shape`; a tree read with a `since` revision asks only what changed. */
 function readURL(workflowID: string, shape: RunShape, since: number | undefined): string {
-  const url = `/api/runs/${encodeURIComponent(workflowID)}`;
+  const id = { id: workflowID };
   switch (shape) {
     case "header":
-      return `${url}?view=header`;
+      return getRunsByIdEndpoint.request({ ...id, view: "header" }).path;
     case "glance":
-      return `${url}?view=glance`;
+      return getRunsByIdEndpoint.request({ ...id, view: "glance" }).path;
     case "tree":
-      return since === undefined ? url : `${url}?since=${String(since)}`;
+      return getRunsByIdEndpoint.request(since === undefined ? id : { ...id, since: String(since) })
+        .path;
   }
 }
 
@@ -1743,7 +1745,7 @@ function readHeldUnread(): void {
 const liveRuns = createMirror<string, LiveRunRow>({
   kind: "runs",
   async fetch(signal) {
-    const d = await apiGetTyped("/api/runs/live", decodeLiveRunsResponse, signal);
+    const d = await apiGetTyped(getRunsLiveEndpoint.path, decodeLiveRunsResponse, signal);
     if (d?.subject === undefined) {
       return null;
     }

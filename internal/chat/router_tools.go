@@ -15,11 +15,8 @@ import (
 
 // handleToolCall serves GET /api/chats/{id}/tools/{toolCallID}: one tool call's whole persisted input, output and
 // diffs, from its tool_call and the settling tool_result.
-func (rt *router) handleToolCall(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID, toolCallID string) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
+func (rt *router) handleToolCall(w http.ResponseWriter, r *http.Request) {
+	chatID, toolCallID := marotte.ChatID(r.PathValue("id")), r.PathValue("tool")
 	if !chatIDPattern(chatID) {
 		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return

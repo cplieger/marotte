@@ -156,10 +156,6 @@ func parseSearchMode(s string) (searchMode, bool) {
 }
 
 func (h *Handler) handleFilesSearch(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
 	q := r.URL.Query()
 	// Roots first, so a path outside the grants is a 403 whatever else the query carries.
 	roots, ok := h.searchRoots(w, q.Get("path"))

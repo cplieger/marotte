@@ -495,7 +495,7 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+	entry := putClockRule(t, st, "bundled://nightly", launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2}, true)
 	h.runs.launchRules = st
 
 	// A slot INSIDE the floor, so the armed deadline lands later than SlotAt.
@@ -547,7 +547,7 @@ func TestCancelExpiredRun_ARefusedSlotCancelLeavesTheScheduleRowUntouched(t *tes
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+	entry := putClockRule(t, st, "bundled://nightly", launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2}, true)
 	h.runs.launchRules = st
 
 	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch(entry.Row(), time.Now().Add(30*time.Second)), hostSec())

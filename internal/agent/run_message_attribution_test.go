@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 // stepWorkflowInspect is a running run whose one step runs on sess_step, carrying the workflow id KAS's
@@ -75,7 +76,7 @@ func TestStepMessage_AColdRegistryStillAttributesTheStepsSteeringFrames(t *testi
 			}
 			h.runs.RunNodeStart(t.Context(), reviewStep("sess_step"), "")
 			mux := http.NewServeMux()
-			(&runRoutes{runs: h.Runs()}).register(mux)
+			(&runRoutes{runs: h.Runs()}).register(routetest.On(mux))
 
 			rec := postStep(t, mux, "/api/runs/wf_1/steps/"+url.PathEscape(reviewPath)+"/message",
 				marotte.RunStepMessageRequest{Text: "check the logs", MessageID: "m-1"})

@@ -51,8 +51,8 @@ func TestMethodNotAllowedSetsAllow(t *testing.T) {
 			if rec.Code != http.StatusMethodNotAllowed {
 				t.Errorf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
 			}
-			if got := strings.TrimSpace(rec.Body.String()); got != `{"error":"method not allowed"}` {
-				t.Errorf("body = %q, want the unchanged bare error envelope", got)
+			if got := strings.TrimSpace(rec.Body.String()); got != `{"error":"method not allowed","code":"method_not_allowed"}` {
+				t.Errorf("body = %q, want the coded method refusal", got)
 			}
 		})
 	}

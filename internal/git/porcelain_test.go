@@ -41,65 +41,65 @@ func TestParsePorcelainV2_Entries(t *testing.T) {
 	tests := []struct {
 		name string
 		in   []byte
-		want []gitFile
+		want []StatusFile
 	}{
 		{"nil input", nil, nil},
 		{"empty input", []byte(""), nil},
-		{"unstaged modified", nul(changed(".M", "file.go")), []gitFile{
+		{"unstaged modified", nul(changed(".M", "file.go")), []StatusFile{
 			{Path: "file.go", Status: "M", Display: "Modified"},
 		}},
-		{"staged added", nul(changed("A.", "new.go")), []gitFile{
+		{"staged added", nul(changed("A.", "new.go")), []StatusFile{
 			{Path: "new.go", Status: "A", Display: "Added", Staged: true},
 		}},
-		{"staged and unstaged emits two entries", nul(changed("MM", "both.go")), []gitFile{
+		{"staged and unstaged emits two entries", nul(changed("MM", "both.go")), []StatusFile{
 			{Path: "both.go", Status: "M", Display: "Modified", Staged: true},
 			{Path: "both.go", Status: "M", Display: "Modified", Staged: false},
 		}},
-		{"untracked", nul("? newfile.go"), []gitFile{
+		{"untracked", nul("? newfile.go"), []StatusFile{
 			{Path: "newfile.go", Status: "?", Display: "Untracked"},
 		}},
-		{"rename keeps new path, carries origin", nul(renamed("R.", "R100", "new.go", "old.go")), []gitFile{
+		{"rename keeps new path, carries origin", nul(renamed("R.", "R100", "new.go", "old.go")), []StatusFile{
 			{Path: "new.go", Status: "R", Display: "Renamed", Staged: true, OrigPath: "old.go"},
 		}},
-		{"rename plus worktree modify emits two entries", nul(renamed("RM", "R096", "renamed.go", "orig.go")), []gitFile{
+		{"rename plus worktree modify emits two entries", nul(renamed("RM", "R096", "renamed.go", "orig.go")), []StatusFile{
 			{Path: "renamed.go", Status: "R", Display: "Renamed", Staged: true, OrigPath: "orig.go"},
 			{Path: "renamed.go", Status: "M", Display: "Modified", Staged: false},
 		}},
-		{"copy carries origin", nul(renamed("C.", "C100", "copy.go", "src.go")), []gitFile{
+		{"copy carries origin", nul(renamed("C.", "C100", "copy.go", "src.go")), []StatusFile{
 			{Path: "copy.go", Status: "C", Display: "Copied", Staged: true, OrigPath: "src.go"},
 		}},
-		{"unstaged rename carries origin", nul(renamed(".R", "R100", "new.go", "old.go")), []gitFile{
+		{"unstaged rename carries origin", nul(renamed(".R", "R100", "new.go", "old.go")), []StatusFile{
 			{Path: "new.go", Status: "R", Display: "Renamed", OrigPath: "old.go"},
 		}},
-		{"rename with a missing origin record", []byte(renamed("R.", "R100", "new.go", "")[:len(renamed("R.", "R100", "new.go", ""))-1]), []gitFile{
+		{"rename with a missing origin record", []byte(renamed("R.", "R100", "new.go", "")[:len(renamed("R.", "R100", "new.go", ""))-1]), []StatusFile{
 			{Path: "new.go", Status: "R", Display: "Renamed", Staged: true},
 		}},
-		{"unstaged typechange", nul(changed(".T", "link.txt")), []gitFile{
+		{"unstaged typechange", nul(changed(".T", "link.txt")), []StatusFile{
 			{Path: "link.txt", Status: "T", Display: "Typechange"},
 		}},
-		{"staged typechange", nul(changed("T.", "link.txt")), []gitFile{
+		{"staged typechange", nul(changed("T.", "link.txt")), []StatusFile{
 			{Path: "link.txt", Status: "T", Display: "Typechange", Staged: true},
 		}},
-		{"non-ascii filename unquoted", nul(changed(".M", "café.txt")), []gitFile{
+		{"non-ascii filename unquoted", nul(changed(".M", "café.txt")), []StatusFile{
 			{Path: "café.txt", Status: "M", Display: "Modified"},
 		}},
-		{"staged non-ascii rename", nul(renamed("R.", "R100", "café-new.txt", "café-old.txt")), []gitFile{
+		{"staged non-ascii rename", nul(renamed("R.", "R100", "café-new.txt", "café-old.txt")), []StatusFile{
 			{Path: "café-new.txt", Status: "R", Display: "Renamed", Staged: true, OrigPath: "café-old.txt"},
 		}},
-		{"spaced filename with arrow-like substring", nul(changed(".M", "foo -> bar.txt")), []gitFile{
+		{"spaced filename with arrow-like substring", nul(changed(".M", "foo -> bar.txt")), []StatusFile{
 			{Path: "foo -> bar.txt", Status: "M", Display: "Modified"},
 		}},
-		{"rename of spaced paths", nul(renamed("R.", "R100", "new name.txt", "old name.txt")), []gitFile{
+		{"rename of spaced paths", nul(renamed("R.", "R100", "new name.txt", "old name.txt")), []StatusFile{
 			{Path: "new name.txt", Status: "R", Display: "Renamed", Staged: true, OrigPath: "old name.txt"},
 		}},
-		{"unmerged both modified", nul(unmerged("UU", "shared.txt")), []gitFile{
+		{"unmerged both modified", nul(unmerged("UU", "shared.txt")), []StatusFile{
 			{Path: "shared.txt", Status: "U", Display: "Unmerged", Staged: true},
 			{Path: "shared.txt", Status: "U", Display: "Unmerged", Staged: false},
 		}},
-		{"directory entry skipped", nul("? somedir/", "? real.txt"), []gitFile{
+		{"directory entry skipped", nul("? somedir/", "? real.txt"), []StatusFile{
 			{Path: "real.txt", Status: "?", Display: "Untracked"},
 		}},
-		{"malformed records skipped", nul("1 .M", "x", changed(".M", "file.go"), "warning: something"), []gitFile{
+		{"malformed records skipped", nul("1 .M", "x", changed(".M", "file.go"), "warning: something"), []StatusFile{
 			{Path: "file.go", Status: "M", Display: "Modified"},
 		}},
 		{"multiple entries", nul(
@@ -107,13 +107,13 @@ func TestParsePorcelainV2_Entries(t *testing.T) {
 			changed(".M", "unstaged.go"),
 			"? untracked.go",
 			changed("A.", "added.go"),
-		), []gitFile{
+		), []StatusFile{
 			{Path: "staged.go", Status: "M", Display: "Modified", Staged: true},
 			{Path: "unstaged.go", Status: "M", Display: "Modified"},
 			{Path: "untracked.go", Status: "?", Display: "Untracked"},
 			{Path: "added.go", Status: "A", Display: "Added", Staged: true},
 		}},
-		{"no trailing NUL still parses the final record", []byte(changed(".M", "file.go")), []gitFile{
+		{"no trailing NUL still parses the final record", []byte(changed(".M", "file.go")), []StatusFile{
 			{Path: "file.go", Status: "M", Display: "Modified"},
 		}},
 	}
@@ -226,7 +226,7 @@ func TestReadStatus_ReadsTheWholeStatusFromOneInvocation(t *testing.T) {
 	if got.Conflicted {
 		t.Error("Conflicted = true for a repo with no conflict")
 	}
-	byPath := map[string]gitFile{}
+	byPath := map[string]StatusFile{}
 	for _, f := range got.Files {
 		byPath[f.Path] = f
 	}
@@ -270,7 +270,7 @@ func TestReadStatus_UnquotesSpecialFilenames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readStatus: %v", err)
 	}
-	byPath := make(map[string]gitFile, len(st.Files))
+	byPath := make(map[string]StatusFile, len(st.Files))
 	for _, f := range st.Files {
 		byPath[f.Path] = f
 		if strings.HasPrefix(f.Path, `"`) || strings.Contains(f.Path, `\`) {

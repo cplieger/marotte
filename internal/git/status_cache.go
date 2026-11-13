@@ -21,7 +21,7 @@ const (
 
 type statusSnapshot struct {
 	at    time.Time
-	repos []allRepoStatus
+	repos []RepoStatus
 }
 
 // statusCache holds the newest completed scan per variant and admits ONE refresh at
@@ -115,7 +115,7 @@ func (c *statusCache) claim(key string, only map[string]struct{}) (done chan str
 // finish stores a completed scan for key and returns the pass to run next: run false releases the
 // slot, a nil scope with run true is a FULL pass. Callers MUST call it even for an empty scan, or
 // the slot stays claimed. A full pass replaces the snapshot; a scoped one merges.
-func (c *statusCache) finish(key string, rows []allRepoStatus) (next map[string]struct{}, run bool) {
+func (c *statusCache) finish(key string, rows []RepoStatus) (next map[string]struct{}, run bool) {
 	c.mu.Lock()
 	slot := c.slot(key)
 	if slot.full {
@@ -152,7 +152,7 @@ func (c *statusCache) finish(key string, rows []allRepoStatus) (next map[string]
 // mergeRows folds a PARTIAL scan into the snapshot: rows replace their namesakes, unknown repos are
 // appended, the rest survive. `at` does not move: it says when the whole tree was last known.
 // Callers hold c.mu.
-func (s *statusSlot) mergeRows(rows []allRepoStatus) {
+func (s *statusSlot) mergeRows(rows []RepoStatus) {
 	if s.snap == nil {
 		// No snapshot to merge into: the case statusScope refuses to produce, because
 		// publishing a partial scan as a whole one is the harm.
@@ -160,7 +160,7 @@ func (s *statusSlot) mergeRows(rows []allRepoStatus) {
 	}
 	merged := slices.Clone(s.snap.repos)
 	for _, row := range rows {
-		if i := slices.IndexFunc(merged, func(have allRepoStatus) bool {
+		if i := slices.IndexFunc(merged, func(have RepoStatus) bool {
 			return have.Repo == row.Repo
 		}); i >= 0 {
 			merged[i] = row
@@ -186,9 +186,9 @@ func (s *statusSnapshot) age() time.Duration {
 
 // rows is the snapshot's repositories, never nil: the wire contract is a
 // non-nullable array, and the client's `for (const r of repos)` throws on null.
-func (s *statusSnapshot) rows() []allRepoStatus {
+func (s *statusSnapshot) rows() []RepoStatus {
 	if s == nil || s.repos == nil {
-		return []allRepoStatus{}
+		return []RepoStatus{}
 	}
 	return s.repos
 }

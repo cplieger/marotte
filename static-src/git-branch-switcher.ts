@@ -11,6 +11,7 @@ import { iconEl } from "./icon-el.js";
 import { ICON_GIT_BRANCH, ICON_SEND, findGlyph } from "./icons.js";
 import { createPopover, type PopoverController } from "./legacy-ui/popover.js";
 import { rovingFocus, type RovingFocusController } from "./legacy-ui/roving-focus.js";
+import { getGitBranchesEndpoint } from "./wire/client.gen.js";
 
 interface BranchEntry {
   name: string;
@@ -117,7 +118,7 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
   ctl.show();
 
   void apiGet<BranchesResponse>(
-    `/api/git/branches?repo=${encodeURIComponent(repo)}`,
+    getGitBranchesEndpoint.request({ repo }).path,
     root.owner.signal,
   ).then((data) => {
     if (data === null) {

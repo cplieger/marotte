@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 const routeTag = "amxAEqwvwjG23476CxNmK6"
@@ -58,7 +59,7 @@ func newRouteHub(t *testing.T) (*Runtime, *viewPush) {
 
 func postEvent(rt *Runtime, path, tag, body string) *httptest.ResponseRecorder {
 	mux := http.NewServeMux()
-	rt.RegisterRoutes(mux)
+	rt.RegisterRoutes(routetest.On(mux))
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	if tag != "" {
 		req.Header.Set(clientTagHeader, tag)

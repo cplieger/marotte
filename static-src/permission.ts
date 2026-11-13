@@ -22,6 +22,7 @@ import { ensureToolCallSig, peekToolCallSig } from "./store-signals.js";
 import { payloadOf } from "./turns.js";
 import { ICON_DIFF } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { getChatsByIdToolsByToolEndpoint } from "./wire/client.gen.js";
 
 /** One answer to a permission ask. `fileDecisions` rides only a turn approval; `rejectionReason`
  *  only a deny of an ask that accepts a note; `alwaysResource` only an always answer, as the
@@ -323,7 +324,7 @@ function bindToolInput(
     if (call?.has_full === true && !withCommand && !fetched) {
       fetched = true;
       void apiGetTyped(
-        `/api/chats/${encodeURIComponent(chatID)}/tools/${encodeURIComponent(toolCallID)}`,
+        getChatsByIdToolsByToolEndpoint.request({ id: chatID, tool: toolCallID }).path,
         decodeToolCallBulk,
       ).then((bulk) => {
         if (bulk !== null) {

@@ -61,6 +61,7 @@ import {
   pullHeldWord,
 } from "./git-types.js";
 import { maybeEl, queryEl } from "./dom.js";
+import { getGitStatusAllEndpoint } from "./wire/client.gen.js";
 import { setGitTab } from "./tabs.js";
 
 interface StatusAllResponse {
@@ -224,11 +225,9 @@ export async function refreshChanges(
   refreshAbort = ctrl;
   const gen = ++refreshGeneration;
   const signal = AbortSignal.any([ctrl.signal, AbortSignal.timeout(15_000)]);
-  const url = doFetch
-    ? "/api/git/status-all?fetch=1"
-    : moved.length > 0
-      ? `/api/git/status-all?paths=${encodeURIComponent(moved.join(","))}`
-      : "/api/git/status-all";
+  const url = getGitStatusAllEndpoint.request(
+    doFetch ? { fetch: "1" } : moved.length > 0 ? { paths: moved.join(",") } : {},
+  ).path;
 
   // Gated on not-yet-answered, not on an empty container: `status-all` is polled, and a clean worktree is an answer.
   const skeleton = statusAnswered ? null : skeletonTiming(() => gitChangesSkeleton(), { signal });

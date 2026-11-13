@@ -69,6 +69,7 @@ const decodeLocalReposResponse: Decoder<LocalReposResponse> = (v) => {
 
 import { iconEl } from "./icon-el.js";
 import { maybeEl } from "./dom.js";
+import { getGitReposEndpoint } from "./wire/client.gen.js";
 
 /** Why an account's last list-wide press (Load more, Clone all, Delete all) fell
  *  short, by forge ID, until the next one. */
@@ -181,7 +182,7 @@ export async function renderForgesPanel({
 
 /** The workspace's clone names; null when the read failed. */
 async function refreshLocalNames(signal?: AbortSignal): Promise<Set<string> | null> {
-  const r = await apiGetTyped("/api/git/repos", decodeLocalReposResponse, signal);
+  const r = await apiGetTyped(getGitReposEndpoint.path, decodeLocalReposResponse, signal);
   return r === null ? null : new Set(r.repos.filter((n) => n !== "."));
 }
 

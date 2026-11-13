@@ -46,11 +46,12 @@ func newHandlerRig(t *testing.T) *handlerRig {
 	return rig
 }
 
-// serve posts body to session's notify route through a mux holding Pattern, the way the server mounts it.
+// serve posts body to session's notify route through a mux holding its binding's pattern, the way the
+// server binds it.
 func (rig *handlerRig) serve(t *testing.T, session, auth, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.Handle(Pattern, rig.h)
+	mux.Handle(Binding(rig.h).Pattern, rig.h)
 	r := httptest.NewRequest(http.MethodPost, "/api/sessions/"+session+"/notify", strings.NewReader(body))
 	if auth != "" {
 		r.Header.Set("Authorization", auth)
@@ -278,16 +279,6 @@ func TestHandler_BodyValidation(t *testing.T) {
 			strings.Repeat("g", maxSourceBytes), strings.Repeat("k", maxDedupeKeyBytes)))
 		if w.Code != http.StatusOK {
 			t.Errorf("status = %d, want 200 (%s)", w.Code, w.Body.String())
-		}
-	})
-	t.Run("another method is 405", func(t *testing.T) {
-		rig := newHandlerRig(t)
-		mux := http.NewServeMux()
-		mux.Handle(Pattern, rig.h)
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/sessions/sess-1/notify", http.NoBody))
-		if w.Code != http.StatusMethodNotAllowed {
-			t.Errorf("status = %d, want 405", w.Code)
 		}
 	})
 	t.Run("a body past the limit is 413", func(t *testing.T) {

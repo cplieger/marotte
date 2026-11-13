@@ -13,11 +13,14 @@ import (
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route"
 	"github.com/cplieger/marotte/internal/spec"
 	"github.com/cplieger/marotte/internal/specapproval"
 )
 
 const headerIfNoneMatch = "If-None-Match"
+
+var ifNoneMatchHeader = route.Header{Name: headerIfNoneMatch, Arg: "ifNoneMatch", MinBytes: 1, MaxBytes: entityTagsMaxBytes}
 
 // specApprovalReader is the approval record as this endpoint uses it: stored approvals with
 // Stale unset.
@@ -28,9 +31,6 @@ type specApprovalReader interface {
 // handleSpec answers GET /api/specs/{dir}. dir is ONE percent-encoded segment ServeMux has
 // already unescaped; it is never unescaped again, or %252F would resolve too.
 func (s *Server) handleSpec(w http.ResponseWriter, r *http.Request) {
-	if !httpreply.RequireMethod(w, r, http.MethodGet) {
-		return
-	}
 	root, name, ok := spec.Address(spec.Roots(s.workDir), r.PathValue("dir"))
 	if !ok {
 		httpreply.NotFound(w, "spec not found")

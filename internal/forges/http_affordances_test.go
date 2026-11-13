@@ -175,8 +175,8 @@ func TestAffordancesRoute_OnlyGETReads(t *testing.T) {
 
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
 		rec := sendRoute(t, mux, method, affordancesPath, "")
-		if rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Allow") != http.MethodGet {
-			t.Errorf("%s affordances = %d Allow %q, want 405 Allow GET", method, rec.Code, rec.Header().Get("Allow"))
+		if rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Allow") != "GET, HEAD" {
+			t.Errorf("%s affordances = %d Allow %q, want 405 Allow GET, HEAD", method, rec.Code, rec.Header().Get("Allow"))
 		}
 	}
 	if asked, _, _ := core.calls(); len(asked) != 0 {

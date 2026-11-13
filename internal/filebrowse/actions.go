@@ -23,18 +23,18 @@ import (
 
 // --- /api/files/action (POST: mkdir, touch, delete, rename) ---
 
-type fileAction struct {
+// FileAction is POST /api/files/action's body.
+type FileAction struct {
 	Action string `json:"action"`
 	Path   string `json:"path"`
-	// `name` is optional at the wire level and enforced per-action in the
-	// handlers: actionRename rejects an empty one.
-	Name string `json:"name"`
+	// Name is optional at the wire level and enforced per action: actionRename rejects an empty one.
+	Name string `json:"name,omitempty"`
 }
 
 // actionFunc is the signature every file-action handler matches. The
 // request context is threaded through so a handler can respect client
 // cancellation; ctx wraps r.Context() at the caller.
-type actionFunc func(ctx context.Context, w http.ResponseWriter, body fileAction, l loc, h *Handler) error
+type actionFunc func(ctx context.Context, w http.ResponseWriter, body FileAction, l loc, h *Handler) error
 
 var fileActions = map[string]actionFunc{
 	"mkdir":  actionMkdir,
@@ -44,13 +44,9 @@ var fileActions = map[string]actionFunc{
 }
 
 func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
 	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 
-	var body fileAction
+	var body FileAction
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("filebrowse: action body too large",
@@ -87,7 +83,7 @@ func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 			httpreply.ErrorJSON(body.Action+" failed"))
 		return
 	}
-	httpserver.OK(w)
+	httpreply.OK(w)
 }
 
 // ownedActionTarget answers the owned file the action at l would create, delete or rename, or "".
@@ -133,7 +129,7 @@ func refuseTaken(w http.ResponseWriter, action string, l loc) error {
 	return errHandled
 }
 
-func actionMkdir(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, h *Handler) error {
+func actionMkdir(_ context.Context, w http.ResponseWriter, _ FileAction, l loc, h *Handler) error {
 	if h.sensitive.protectedDir(l.abs) {
 		slog.Warn("filebrowse: mkdir blocked on protected dir", "path", l.abs)
 		httpreply.Forbidden(w, "refusing to mkdir protected directory")
@@ -154,7 +150,7 @@ func actionMkdir(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, 
 	return nil
 }
 
-func actionTouch(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, h *Handler) error {
+func actionTouch(_ context.Context, w http.ResponseWriter, _ FileAction, l loc, h *Handler) error {
 	if h.sensitive.Blocks(l.abs) || h.sensitive.protectedDir(l.abs) {
 		slog.Warn("filebrowse: touch blocked on protected path", "path", l.abs)
 		httpreply.Forbidden(w, "refusing to touch protected path")
@@ -180,7 +176,7 @@ func actionTouch(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, 
 	return nil
 }
 
-func actionDelete(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, h *Handler) error {
+func actionDelete(_ context.Context, w http.ResponseWriter, _ FileAction, l loc, h *Handler) error {
 	// Refuse to delete a granted root itself; everything INSIDE a mount is
 	// deletable.
 	if l.isMountPoint() {
@@ -227,7 +223,7 @@ func isSingleSegmentName(name string) bool {
 		!strings.ContainsRune(name, 0)
 }
 
-func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l loc, h *Handler) error {
+func actionRename(_ context.Context, w http.ResponseWriter, body FileAction, l loc, h *Handler) error {
 	if l.isMountPoint() {
 		return refuseMountPoint(w, "rename", l)
 	}

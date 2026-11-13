@@ -8,6 +8,7 @@ import {
   routeForPath,
 } from "./editor-types.js";
 import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
+import { asked } from "./__test-helpers__/url.js";
 
 // There are no isPendingPath / parsePendingPath tests: the `pending:` virtual
 // path family is gone with marotte's staging store. A path is a real file path
@@ -22,7 +23,10 @@ describe("routeForPath", () => {
 
   it("encodes special characters in file paths", () => {
     const r = routeForPath("path with spaces/file#1.ts");
-    expect(r.readURL).toBe("/api/file?path=path%20with%20spaces%2Ffile%231.ts");
+    expect(asked(r.readURL)).toEqual({
+      path: "/api/file",
+      query: { path: "path with spaces/file#1.ts" },
+    });
   });
 
   it("handles empty path", () => {

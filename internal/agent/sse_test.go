@@ -20,6 +20,7 @@ import (
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/liveness"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/subject"
 )
@@ -367,7 +368,7 @@ func TestRegisterRoutes_DrainingGate(t *testing.T) {
 		{"command", http.MethodPost, "/api/command", `{"type":"create_chat","request_id":"r1"}`},
 		{"sync", http.MethodPost, "/api/sync", `{}`},
 		{"run launch", http.MethodPost, "/api/runs", `{}`},
-		{"run step verb", http.MethodPost, "/api/runs/wf_1/steps/a/cancel", ""},
+		{"run step verb", http.MethodPost, "/api/runs/wf_1/steps/a/end", `{"status":"completed"}`},
 		{"run delete", http.MethodDelete, "/api/runs/wf_1", ""},
 		{"launch rule create", http.MethodPost, "/api/launch-rules", `{}`},
 		{"launch rule replace", http.MethodPut, "/api/launch-rules/r1", `{}`},
@@ -378,7 +379,7 @@ func TestRegisterRoutes_DrainingGate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newDrainGateHub(t)
 			mux := http.NewServeMux()
-			h.RegisterRoutes(mux)
+			h.RegisterRoutes(routetest.On(mux))
 			h.lifecycle.draining.Store(true)
 
 			var body io.Reader
@@ -404,7 +405,7 @@ func TestRegisterRoutes_DrainingGate(t *testing.T) {
 	t.Run("an ungated route still answers while draining", func(t *testing.T) {
 		h := newDrainGateHub(t)
 		mux := http.NewServeMux()
-		h.RegisterRoutes(mux)
+		h.RegisterRoutes(routetest.On(mux))
 		h.lifecycle.draining.Store(true)
 
 		for _, path := range []string{"/api/config-template", "/api/runs/live", "/api/launch-rules", "/api/engine"} {

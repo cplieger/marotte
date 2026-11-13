@@ -92,8 +92,6 @@ vi.mock("./actions/runs.js", async () => {
     messageRunStep: verb("message"),
     removeRunStepSteer: verb("steer_remove"),
     clearRunStepSteers: verb("steer_clear"),
-    // Linked by the step transcript read; no case here reads a step.
-    runStepURL: undefined,
   };
 });
 

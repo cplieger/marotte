@@ -17,7 +17,7 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	dir := h.repoDir(repoFromQuery(r))
 	if !IsRepo(ctx, dir) {
-		httpserver.WriteJSON(w, gitStatusResp{IsRepo: false, Files: []gitFile{}})
+		httpserver.WriteJSON(w, Status{IsRepo: false, Files: []StatusFile{}})
 		return
 	}
 	st := collectStatus(ctx, dir, h.timeouts, &h.fetchFlight, r.URL.Query().Get("quick") == "")
@@ -26,11 +26,11 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 // doFetch=false skips the network fetch for the dashboard. The fetch runs BEFORE status, so
 // ahead/behind is measured against the refreshed remote ref.
-func collectStatus(ctx context.Context, dir string, timeouts gitTimeouts, fetchFlight *singleflight.Group, doFetch bool) gitStatusResp {
+func collectStatus(ctx context.Context, dir string, timeouts gitTimeouts, fetchFlight *singleflight.Group, doFetch bool) Status {
 	if !IsRepo(ctx, dir) {
-		return gitStatusResp{IsRepo: false, Files: []gitFile{}}
+		return Status{IsRepo: false, Files: []StatusFile{}}
 	}
-	st := gitStatusResp{IsRepo: true}
+	st := Status{IsRepo: true}
 	if rem, err := gitCmd(ctx, dir, subRemote, "get-url", remoteOrigin); err == nil {
 		st.Remote = clientLine(rem)
 	}
@@ -48,7 +48,7 @@ func collectStatus(ctx context.Context, dir string, timeouts gitTimeouts, fetchF
 	// the Changes tab's `for (const f of r.files)` then throws and blanks the page.
 	st.Files = ps.Files
 	if st.Files == nil {
-		st.Files = []gitFile{}
+		st.Files = []StatusFile{}
 	}
 	st.HasDirty = len(st.Files) > 0
 	return st
@@ -68,14 +68,7 @@ func fetchStatus(ctx context.Context, dir string, timeout time.Duration, fetchFl
 }
 
 func (h *Handler) handleStage(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
-	var body struct {
-		repoBody
-
-		Files []string `json:"files"`
-	}
+	var body FilesRequest
 	if !decodePostBody(w, r, &body, "bad request") {
 		return
 	}
@@ -88,21 +81,14 @@ func (h *Handler) handleStage(w http.ResponseWriter, r *http.Request) {
 	slog.Info("git stage", "repo", body.Repo, "files", len(files))
 	args := append([]string{subAdd, "--"}, files...)
 	if out, err := gitCmd(r.Context(), dir, args...); err != nil {
-		httpserver.WriteJSON(w, httpreply.ErrorJSON(clientBlock(out)))
+		httpserver.WriteJSON(w, ChangeResult{Error: clientBlock(out)})
 		return
 	}
-	httpserver.OK(w)
+	httpserver.WriteJSON(w, ChangeResult{OK: true})
 }
 
 func (h *Handler) handleUnstage(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
-	var body struct {
-		repoBody
-
-		Files []string `json:"files"`
-	}
+	var body FilesRequest
 	if !decodePostBody(w, r, &body, "bad request") {
 		return
 	}
@@ -115,21 +101,14 @@ func (h *Handler) handleUnstage(w http.ResponseWriter, r *http.Request) {
 	slog.Info("git unstage", "repo", body.Repo, "files", len(files))
 	args := append([]string{subReset, refHEAD, "--"}, files...)
 	if out, err := gitCmd(r.Context(), dir, args...); err != nil {
-		httpserver.WriteJSON(w, httpreply.ErrorJSON(clientBlock(out)))
+		httpserver.WriteJSON(w, ChangeResult{Error: clientBlock(out)})
 		return
 	}
-	httpserver.OK(w)
+	httpserver.WriteJSON(w, ChangeResult{OK: true})
 }
 
 func (h *Handler) handleDiscard(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
-	var body struct {
-		repoBody
-
-		Files []string `json:"files"`
-	}
+	var body FilesRequest
 	if !decodePostBody(w, r, &body, "files required") {
 		return
 	}
@@ -168,8 +147,8 @@ func (h *Handler) handleDiscard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(errs) > 0 {
-		httpserver.WriteJSON(w, httpreply.ErrorJSON(clientBlock(strings.Join(errs, "\n"))))
+		httpserver.WriteJSON(w, ChangeResult{Error: clientBlock(strings.Join(errs, "\n"))})
 		return
 	}
-	httpserver.OK(w)
+	httpserver.WriteJSON(w, ChangeResult{OK: true})
 }

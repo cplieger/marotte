@@ -20,6 +20,7 @@ import { MAROTTE_COMMANDS } from "./typed-commands.js";
 import { decodeSlashCommandsResponse } from "./wire/decoders.gen.js";
 import type { Session } from "./types.js";
 import type { SlashCommand, SlashCommandKind } from "./wire/types.gen.js";
+import { getSlashCommandsEndpoint } from "./wire/client.gen.js";
 
 /** One menu row. `kind` is `marotte` for a verb typed-commands.ts handles. */
 interface MenuEntry {
@@ -45,7 +46,7 @@ let catalogReady = false;
 
 /** Refetch the catalog. A failed read keeps the last good one. */
 function loadSlashCatalog(): void {
-  void apiGetTyped("/api/slash-commands", decodeSlashCommandsResponse).then((d) => {
+  void apiGetTyped(getSlashCommandsEndpoint.path, decodeSlashCommandsResponse).then((d) => {
     if (d !== null) {
       catalog.value = d.commands;
       catalogReady = d.ready;

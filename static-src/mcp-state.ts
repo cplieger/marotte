@@ -117,6 +117,7 @@ import type {
   SubjectStamp,
   Transport,
 } from "./wire/types.gen.js";
+import { getMcpEndpoint, getMcpStatusEndpoint } from "./wire/client.gen.js";
 
 /** KAS's per-server `versionNegotiation` enum. */
 type VersionNegotiation = "auto" | "legacy";
@@ -261,7 +262,7 @@ export function adaptStatus(w: MCPServerStatus): RuntimeStatus {
 const mcpStatus = createMirror<string, MCPServerStatus>({
   kind: "mcp_status",
   async fetch(signal) {
-    const d = await apiGetTyped("/api/mcp/status", decodeMCPStatusResponse, signal);
+    const d = await apiGetTyped(getMcpStatusEndpoint.path, decodeMCPStatusResponse, signal);
     if (d?.subject === undefined) {
       return null;
     }
@@ -420,7 +421,7 @@ class MCPStateController {
   private async doRefetchServers(): Promise<void> {
     // Named `abort` to avoid shadowing reactive's `signal`.
     const abort = this.serversSlot.start();
-    const d = await apiGetTyped("/api/mcp", decodeMCPServersResponseLocal, abort);
+    const d = await apiGetTyped(getMcpEndpoint.path, decodeMCPServersResponseLocal, abort);
     if (abort.aborted) {
       return;
     }

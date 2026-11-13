@@ -456,18 +456,6 @@ func TestScanKiroDocs_OversizeReadStillClassifies(t *testing.T) {
 	}
 }
 
-func TestHandleKiroDocs_MethodGuard(t *testing.T) {
-	srv := &Server{}
-	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
-		req := httptest.NewRequest(method, "/api/workspace/kiro-docs", nil)
-		rec := httptest.NewRecorder()
-		srv.handleKiroDocs(rec, req)
-		if rec.Code != http.StatusMethodNotAllowed {
-			t.Errorf("%s returned %d, want 405", method, rec.Code)
-		}
-	}
-}
-
 // TestHandleKiroDocs_EmptyIsArrayNotNull pins the wire form: the client iterates
 // the value, so a null would throw.
 func TestHandleKiroDocs_EmptyIsArrayNotNull(t *testing.T) {

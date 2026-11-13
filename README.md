@@ -136,6 +136,7 @@ marotte serves Prometheus metrics at `/metrics` on port 9847 (or the port `LISTE
 - [Monitoring and alerts](docs/monitoring.md) covers metrics and alerts.
 - [How marotte works](docs/how-it-works.md) explains syncing across devices, the agent engine, and how kiro-cli is installed and repaired.
 - [Launch flags](docs/launch-flags.md) and [OS packages](docs/os-packages.md) cover two less common setups.
+- [The HTTP API](docs/api.md) explains how to call marotte from a script, with the full reference in `docs/openapi.json`.
 - [Known upstream issues](docs/known-upstream-issues.md) lists the upstream issues that affect marotte and what marotte does about each.
 
 ## Credits

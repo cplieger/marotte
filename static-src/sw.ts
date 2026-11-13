@@ -13,6 +13,7 @@ import {
   pushTargetRoute,
   pushTargetTag,
 } from "./push-subject.js";
+import { getPushVapidKeyEndpoint, postPushSubscribeEndpoint } from "./wire/client.gen.js";
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
@@ -282,8 +283,8 @@ sw.addEventListener("pushsubscriptionchange", ((event: PushSubscriptionChangeEve
     resolveSubscribeOptions(old)
       .then((opts) => sw.registration.pushManager.subscribe(opts))
       .then((newSub: PushSubscription) =>
-        fetch("/api/push/subscribe", {
-          method: "POST",
+        fetch(postPushSubscribeEndpoint.path, {
+          method: postPushSubscribeEndpoint.method,
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(newSub.toJSON()),
         }),
@@ -318,7 +319,7 @@ async function resolveSubscribeOptions(
   if (old !== null) {
     return old.options;
   }
-  const r = await fetch("/api/push/vapid-key");
+  const r = await fetch(getPushVapidKeyEndpoint.path);
   if (!r.ok) {
     throw new Error(`vapid-key fetch failed: HTTP ${String(r.status)}`);
   }

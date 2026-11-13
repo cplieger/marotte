@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 // The embedded Core is nil, so any other method panics.
@@ -159,7 +160,7 @@ func onePRPage(n int) map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest] {
 
 func repoRoutes(m *Manager) *http.ServeMux {
 	mux := http.NewServeMux()
-	NewHTTPHandler(m).RegisterRoutes(mux)
+	NewHTTPHandler(m).RegisterRoutes(routetest.On(mux))
 	return mux
 }
 
@@ -219,7 +220,6 @@ func TestRepoRoute_BadRepoIDIs400(t *testing.T) {
 		"another version prefix":     "v2.6f2f72",
 		"an empty selector":          "v1.",
 		"a dot-dot segment":          "v1.2e2e2f72",
-		"owner and name, not an id":  "o/r",
 		"percent-encoded owner/name": "o%2Fr",
 		"a trailing non-hex byte":    "v1.6f2f72x",
 	}
@@ -229,6 +229,12 @@ func TestRepoRoute_BadRepoIDIs400(t *testing.T) {
 			if rec.Code != http.StatusBadRequest || decodeBody(t, rec)["code"] != forgeapi.CodeRepoRefInvalid {
 				t.Errorf("%s: GET %s = %d %s, want 400 %s", name, githubRepoPath(seg, tail), rec.Code, rec.Body, forgeapi.CodeRepoRefInvalid)
 			}
+		}
+	}
+	// An unencoded owner/name is one segment too many: it addresses no route at all.
+	for _, tail := range []string{"prs", "issues"} {
+		if rec := getRoute(t, mux, githubRepoPath("o/r", tail)); rec.Code != http.StatusNotFound {
+			t.Errorf("owner and name, not an id: GET %s = %d, want 404 from no route", githubRepoPath("o/r", tail), rec.Code)
 		}
 	}
 	if asked, _, _ := core.calls(); len(asked) != 0 {
@@ -693,8 +699,8 @@ func TestPRDetailRoute_OnlyGETReads(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodDelete} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), method, githubRepoPath("v1.6f2f72", "prs/15"), nil))
-		if rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Allow") != http.MethodGet {
-			t.Errorf("%s prs/15 = %d Allow %q, want 405 Allow GET", method, rec.Code, rec.Header().Get("Allow"))
+		if rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Allow") != "GET, HEAD" {
+			t.Errorf("%s prs/15 = %d Allow %q, want 405 Allow GET, HEAD", method, rec.Code, rec.Header().Get("Allow"))
 		}
 	}
 	if reads := core.reads(); len(reads) != 0 {
@@ -735,4 +741,25 @@ func TestPRDetailRoute_ErrorsThroughTheEnvelope(t *testing.T) {
 			t.Errorf("a failed checks read still answered the row %v, want the envelope alone", pr)
 		}
 	})
+}
+
+// The collection paths bind GET and POST, so HEAD must take the list arm, never the create arm.
+func TestRepoRoutes_HEADAnswersAsGET(t *testing.T) {
+	for _, tail := range []string{"prs", "issues", "releases"} {
+		t.Run(tail, func(t *testing.T) {
+			core := rolesCore{pagedCore: &pagedCore{prPages: onePRPage(4)}}
+			mux := repoRoutes(recordManager(t, core))
+			path := githubRepoPath("v1.6f2f72", tail)
+
+			head := sendRoute(t, mux, http.MethodHead, path, "")
+			get := getRoute(t, mux, path)
+			if get.Code != http.StatusOK {
+				t.Fatalf("GET %s = %d %s, want 200", tail, get.Code, get.Body)
+			}
+			if head.Code != get.Code || head.Header().Get("Content-Type") != get.Header().Get("Content-Type") {
+				t.Errorf("HEAD %s = %d %q, want GET's %d %q", tail, head.Code, head.Header().Get("Content-Type"),
+					get.Code, get.Header().Get("Content-Type"))
+			}
+		})
+	}
 }

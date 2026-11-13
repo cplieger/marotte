@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 const (
@@ -118,7 +119,7 @@ func newConnectHarness(t *testing.T, wire http.RoundTripper) *connectHarness {
 	m.Load(t.Context())
 	mux := http.NewServeMux()
 	handler := NewHTTPHandler(m)
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(routetest.On(mux))
 	return &connectHarness{m: m, handler: handler, mux: mux, home: filepath.Dir(gitcfg), cfgDir: cfg}
 }
 
@@ -629,7 +630,7 @@ func TestCapabilitiesRoute_AFailedReadAnswersTheEnvelope(t *testing.T) {
 		"the grant scope": {
 			core:   &capsCore{grantErr: &forgeapi.Error{Code: forgeapi.CodeReconnectRequired, Kind: forgeapi.KindUnauthorized}},
 			code:   forgeapi.CodeReconnectRequired,
-			status: http.StatusUnauthorized,
+			status: http.StatusConflict,
 		},
 	}
 	for name, tc := range cases {
@@ -666,8 +667,8 @@ func TestCapabilitiesRoute_OnlyGETReads(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodDelete} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), method, githubCapsPath, nil))
-		if rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Allow") != http.MethodGet {
-			t.Errorf("%s %s = %d Allow %q, want 405 Allow GET", method, githubCapsPath, rec.Code, rec.Header().Get("Allow"))
+		if rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Allow") != "GET, HEAD" {
+			t.Errorf("%s %s = %d Allow %q, want 405 Allow GET, HEAD", method, githubCapsPath, rec.Code, rec.Header().Get("Allow"))
 		}
 	}
 	if core.reads != 0 {

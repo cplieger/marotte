@@ -11,6 +11,7 @@ import {
   IDEMPOTENCY_HEADER,
   IDEMPOTENCY_COMMAND_FIELD,
 } from "./actions/index.js";
+import { postCommandEndpoint } from "./wire/client.gen.js";
 
 type CommandType =
   | "prompt"
@@ -236,8 +237,8 @@ export async function send(cmd: TypedCommand | Command, opts?: SendOptions): Pro
   const combined = AbortSignal.any(signals);
 
   try {
-    const r = await fetch("/api/command", {
-      method: "POST",
+    const r = await fetch(postCommandEndpoint.path, {
+      method: postCommandEndpoint.method,
       headers: {
         "Content-Type": "application/json",
         // A HEADER and never a body field: as a header it reaches the server's

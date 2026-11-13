@@ -10,14 +10,8 @@ import (
 	"github.com/cplieger/marotte/internal/httpreply"
 )
 
-// requirePOST writes a 405 if the method isn't POST and returns false.
-// Returns true when the caller should proceed.
-func requirePOST(w http.ResponseWriter, r *http.Request) bool {
-	return httpreply.RequireMethod(w, r, http.MethodPost)
-}
-
 // decodePostBody enforces the JSON body cap (httpserver.MaxJSONBody) and decodes into v; on failure it
-// writes a 400 with msg and returns false. Method checks are requirePOST's.
+// writes a 400 with msg and returns false.
 func decodePostBody(w http.ResponseWriter, r *http.Request, v any, decodeErrMsg string) bool {
 	return httpreply.DecodeBody(w, r, v, decodeErrMsg)
 }
@@ -29,16 +23,27 @@ func decodePostBodyOptional(w http.ResponseWriter, r *http.Request, v any) bool 
 	return httpreply.DecodeBodyOptional(w, r, v)
 }
 
-// writeCmdResult writes a git-command result: {jsonKeyOutput: clientBlock(out)} on success,
-// {"error": clientBlock(errMsg)} on failure, errMsg being the subprocess output when non-empty,
-// else err.Error(). The output field is omitted on failure so partial stdout is not mistaken for
-// success.
+// CommandOutput is a git command's 200 answer: its output on success, or the error, errMsg being the
+// subprocess output when non-empty, else err.Error(). Output is absent on failure so partial stdout
+// is not mistaken for success.
+type CommandOutput struct {
+	Output *string `json:"output,omitempty"`
+	Error  string  `json:"error,omitempty"`
+}
+
+// ChangeResult is a change's 200 answer: ok, or the error git gave.
+type ChangeResult struct {
+	Error string `json:"error,omitempty"`
+	OK    bool   `json:"ok,omitempty"`
+}
+
 func writeCmdResult(w http.ResponseWriter, out string, err error) {
 	if err != nil {
-		httpserver.WriteJSON(w, httpreply.ErrorJSON(clientBlock(cmdFailure(out, err))))
+		httpserver.WriteJSON(w, CommandOutput{Error: clientBlock(cmdFailure(out, err))})
 		return
 	}
-	httpserver.WriteJSON(w, map[string]string{jsonKeyOutput: clientBlock(out)})
+	text := clientBlock(out)
+	httpserver.WriteJSON(w, CommandOutput{Output: &text})
 }
 
 // cmdFailure names WHY a git subprocess failed, for a caller composing several failures into one

@@ -7,9 +7,11 @@ import {
   RETRY_STANDARD,
   withTimeout,
   API_TIMEOUT_MS,
+  fromEndpoint,
   type ApiErrorDecision,
   type ApiErrorInfo,
 } from "./index.js";
+import { postFilesActionEndpoint, postFilesDownloadEndpoint } from "../wire/client.gen.js";
 
 import { readDownload } from "./download.js";
 import { joinPath } from "../files-shared.js";
@@ -17,8 +19,6 @@ import { uploadFiles } from "../upload.js";
 // `joinKey` (not `joinPath`) builds the dedupe key, so no name's content can forge a component boundary.
 import { join as joinKey } from "@cplieger/keyenc";
 
-const API_FILES_ACTION = "/api/files/action";
-const API_FILES_DOWNLOAD = "/api/files/download";
 /** 2× standard timeout for large workspace archive downloads. */
 const DOWNLOAD_TIMEOUT_MS = 60_000;
 import { truncate } from "../strings.js";
@@ -55,11 +55,12 @@ export const createFile = apiAction<CreateArgs, CreateOutcome>({
   // One key per dispatch, never one per name: the server replays a key's cached answer
   // (idempotency.go idempotencyTTL), and two gestures can ask for the same name.
   idempotencyKey: true,
-  request: (args) => ({
-    method: "POST",
-    path: API_FILES_ACTION,
-    body: { action: "touch", path: joinPath(args.dir, args.name) },
-  }),
+  request: (args) =>
+    fromEndpoint(
+      postFilesActionEndpoint.request({
+        body: { action: "touch", path: joinPath(args.dir, args.name) },
+      }),
+    ),
   ...createdOrTaken,
   error: CREATE_FILE_ERROR,
 });
@@ -70,11 +71,12 @@ export const createFolder = apiAction<CreateArgs, CreateOutcome>({
   retry: RETRY_STANDARD,
   retryable: retryNetwork,
   idempotencyKey: true,
-  request: (args) => ({
-    method: "POST",
-    path: API_FILES_ACTION,
-    body: { action: "mkdir", path: joinPath(args.dir, args.name) },
-  }),
+  request: (args) =>
+    fromEndpoint(
+      postFilesActionEndpoint.request({
+        body: { action: "mkdir", path: joinPath(args.dir, args.name) },
+      }),
+    ),
   ...createdOrTaken,
   error: CREATE_FOLDER_ERROR,
 });
@@ -83,11 +85,12 @@ export const renameFile = apiAction<{ dir: string; original: string; newName: st
   name: "files.rename",
   scope: (args) => "file:" + args.dir + "/" + args.original,
   idempotencyKey: true,
-  request: ({ dir, original, newName }) => ({
-    method: "POST",
-    path: API_FILES_ACTION,
-    body: { action: "rename", path: joinPath(dir, original), name: newName },
-  }),
+  request: ({ dir, original, newName }) =>
+    fromEndpoint(
+      postFilesActionEndpoint.request({
+        body: { action: "rename", path: joinPath(dir, original), name: newName },
+      }),
+    ),
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   error: (args) => `Could not rename "${truncate(args.original)}"`,
@@ -111,13 +114,16 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
     const timedSignal = withTimeout(signal, API_TIMEOUT_MS);
     const results = await Promise.all(
       args.names.map((name) => {
+        const spec = postFilesActionEndpoint.request({
+          body: { action: "delete", path: joinPath(args.dir, name) },
+        });
         const init: RequestInit = {
-          method: "POST",
+          method: spec.method,
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "delete", path: joinPath(args.dir, name) }),
+          body: JSON.stringify(spec.body),
           signal: timedSignal,
         };
-        return fetch(API_FILES_ACTION, init).then(
+        return fetch(spec.path, init).then(
           async (r) => {
             if (!r.ok) {
               let serverError = "";
@@ -201,7 +207,7 @@ export const downloadFiles = defineAction<{ paths: string[] }, void>({
   retryable: retryNetwork,
   run: async (args, signal) => {
     const blob = await readDownload(
-      { method: "POST", path: API_FILES_DOWNLOAD, body: { paths: args.paths } },
+      postFilesDownloadEndpoint.request({ body: { paths: args.paths } }),
       signal,
       DOWNLOAD_TIMEOUT_MS,
     );

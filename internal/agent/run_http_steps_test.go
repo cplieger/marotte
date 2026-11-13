@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/workflow"
 )
@@ -51,7 +52,7 @@ func stepRouteHub(t *testing.T, tc stepRouteCase) (*Runtime, *fakeBridge, *http.
 	br.setCallResult(marotte.MethodSessionSteer, json.RawMessage(`{"queued":true}`))
 	h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: tc.WorkflowID, NodePath: workflow.PathKey(tc.NodePath), SessionID: "sess_step"}, "")
 	mux := http.NewServeMux()
-	(&runRoutes{runs: h.Runs()}).register(mux)
+	(&runRoutes{runs: h.Runs()}).register(routetest.On(mux))
 	return h, br, mux
 }
 
@@ -180,7 +181,7 @@ func TestStepRoutes_APathTheRunsTreeDoesNotHoldIsUnknown(t *testing.T) {
 func TestRunRoutes_NoStepStatusWrite(t *testing.T) {
 	h, _, _ := newTestHub()
 	mux := http.NewServeMux()
-	(&runRoutes{runs: h.Runs()}).register(mux)
+	(&runRoutes{runs: h.Runs()}).register(routetest.On(mux))
 	for _, body := range []string{`{"node_id":"review","status":"running"}`, `{"node_id":"review","status":"completed"}`} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/runs/wf_1/step", strings.NewReader(body)))

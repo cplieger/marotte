@@ -1,4 +1,12 @@
-import { apiAction, defineAction, ActionError, retryNetwork, RETRY_STANDARD } from "./index.js";
+import {
+  apiAction,
+  defineAction,
+  ActionError,
+  fromEndpoint,
+  retryNetwork,
+  RETRY_STANDARD,
+} from "./index.js";
+import { getFileChangesEndpoint } from "../wire/client.gen.js";
 
 import { routeForPath } from "../editor-types.js";
 import { statIdentity } from "../file-identity.js";
@@ -44,10 +52,8 @@ export const fetchAgentLines = apiAction<
 >({
   name: "editor.fetch_agent_lines",
   dedupe: (args) => JSON.stringify([args.chatID, args.path]),
-  request: ({ chatID, path }) => ({
-    method: "GET",
-    path: `/api/file-changes?chat_id=${encodeURIComponent(chatID)}&path=${encodeURIComponent(path)}`,
-  }),
+  request: ({ chatID, path }) =>
+    fromEndpoint(getFileChangesEndpoint.request({ chat_id: chatID, path })),
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   error: false,

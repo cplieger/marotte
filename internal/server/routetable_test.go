@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/marotte/internal/httpreply"
 )
 
 // TestServeMuxMethodPatternCannotAnswer405UnderACatchAll pins the net/http fact the route
@@ -63,99 +65,87 @@ func TestServeMuxMethodPatternCannotAnswer405UnderACatchAll(t *testing.T) {
 	})
 }
 
-// TestPlainPathRoutesRefuseTheWrongMethod pins 405 + Allow from the in-handler gate on
-// plain-path routes; the loopback-gated ones go through loopbackOnly.
-func TestPlainPathRoutesRefuseTheWrongMethod(t *testing.T) {
-	cases := []struct {
-		name      string
-		method    string
-		path      string
-		wantAllow string
-		serve     func(*Server, http.ResponseWriter, *http.Request)
-	}{
-		{
-			name: "policy_view", method: http.MethodPost, path: "/api/permissions", wantAllow: "GET",
-			serve: func(s *Server, w http.ResponseWriter, r *http.Request) { s.handlePolicyView(w, r) },
-		},
-		{
-			name: "account_usage", method: http.MethodDelete, path: "/api/account/usage", wantAllow: "GET",
-			serve: func(s *Server, w http.ResponseWriter, r *http.Request) { s.handleAccountUsage(w, r) },
-		},
-		{
-			name: "tool_status", method: http.MethodPatch, path: "/api/tools/status", wantAllow: "GET",
-			serve: func(_ *Server, w http.ResponseWriter, r *http.Request) { handleToolStatus(w, r) },
-		},
-		{
-			name: "kiro_rescan", method: http.MethodGet, path: kiroRescanPath, wantAllow: "POST",
-			serve: func(s *Server, w http.ResponseWriter, r *http.Request) {
-				loopbackOnly(kiroRescanSurface, http.HandlerFunc(s.handleKiroRescan)).ServeHTTP(w, r)
-			},
-		},
-		{
-			name: "pprof_index", method: http.MethodPost, path: pprofPath + "goroutine", wantAllow: "GET",
-			serve: func(_ *Server, w http.ResponseWriter, r *http.Request) { pprofHandler().ServeHTTP(w, r) },
-		},
-		{
-			name: "spec", method: http.MethodPost, path: "/api/specs/x", wantAllow: "GET",
-			serve: func(s *Server, w http.ResponseWriter, r *http.Request) { s.handleSpec(w, r) },
-		},
+// TestPprofRefusesTheWrongMethod pins pprof's own 405: its catch-all mount has no registrar
+// filter, so the check inside loopbackOnly is the only method gate on the subtree.
+func TestPprofRefusesTheWrongMethod(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:9847"+pprofPath+"goroutine", http.NoBody)
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.Host = "127.0.0.1:9847"
+	rec := httptest.NewRecorder()
+	pprofHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST %s: status = %d, want 405", pprofPath, rec.Code)
 	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Recording the call is the red check that the gate refuses before the subprocess spawns.
-			rescanned := false
-			s := &Server{
-				kiroDocs:   &docsCache{},
-				kiroRescan: func(context.Context) (bool, error) { rescanned = true; return true, nil },
-			}
-
-			req := httptest.NewRequest(tc.method, "http://127.0.0.1:9847"+tc.path, http.NoBody)
-			req.RemoteAddr = "127.0.0.1:54321"
-			req.Host = "127.0.0.1:9847"
-			rec := httptest.NewRecorder()
-			tc.serve(s, rec, req)
-
-			if rec.Code != http.StatusMethodNotAllowed {
-				t.Fatalf("%s %s: status = %d, want 405 (a mismatch used to reach the SPA shell)",
-					tc.method, tc.path, rec.Code)
-			}
-			if got := rec.Header().Get("Allow"); got != tc.wantAllow {
-				t.Errorf("Allow = %q, want %q", got, tc.wantAllow)
-			}
-			if got := strings.TrimSpace(rec.Body.String()); got != `{"error":"method not allowed"}` {
-				t.Errorf("body = %q, want marotte's bare error envelope", got)
-			}
-			if rescanned {
-				t.Error("the refused request still ran the rescan; the method gate is placed after the work")
-			}
-		})
+	if got := rec.Header().Get("Allow"); got != http.MethodGet {
+		t.Errorf("Allow = %q, want GET", got)
 	}
 }
 
-// TestLoopbackGateStillPrecedesTheMethodGate pins the ORDER the two gates run
-// in on the loopback-only routes: a LAN caller with the wrong method gets 403
-// and no Allow header, so the refusal discloses nothing about the method set.
-func TestLoopbackGateStillPrecedesTheMethodGate(t *testing.T) {
-	rescanServer := &Server{kiroRescan: func(context.Context) (bool, error) { return true, nil }}
-	for name, h := range map[string]http.Handler{
-		"kiro_rescan": loopbackOnly(kiroRescanSurface, http.HandlerFunc(rescanServer.handleKiroRescan)),
-		"pprof_index": pprofHandler(),
-	} {
-		t.Run(name, func(t *testing.T) {
-			// Either way, the LAN peer must lose at the outer gate.
-			req := httptest.NewRequest(http.MethodGet, "http://localhost:9847/x", http.NoBody)
-			req.RemoteAddr = "192.168.1.20:54321"
-			req.Host = "localhost:9847"
-			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, req)
+// lanRequest is a request from a LAN peer through the loopback host name.
+func lanRequest(method, path string) *http.Request {
+	req := httptest.NewRequest(method, "http://localhost:9847"+path, http.NoBody)
+	req.RemoteAddr = "192.168.1.20:54321"
+	req.Host = "localhost:9847"
+	return req
+}
 
-			if rec.Code != http.StatusForbidden {
-				t.Fatalf("status = %d, want 403 from the loopback gate", rec.Code)
+// TestLoopbackGateStillPrecedesTheMethodGate pins the ORDER the two gates run in on the
+// loopback-only routes: a LAN caller gets no Allow header whatever its method, so a refusal
+// discloses nothing about the method set.
+func TestLoopbackGateStillPrecedesTheMethodGate(t *testing.T) {
+	t.Run("kiro_rescan", func(t *testing.T) {
+		rescanned := false
+		s := docServer(t.TempDir(), WithKiroRescan(func(context.Context) (bool, error) { rescanned = true; return true, nil }))
+		mux := s.mux()
+
+		cases := []struct {
+			method string
+			want   int
+		}{
+			{http.MethodPost, http.StatusForbidden},
+			{http.MethodGet, http.StatusNotFound},
+		}
+		for _, tc := range cases {
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, lanRequest(tc.method, kiroRescanPath))
+			if rec.Code != tc.want {
+				t.Errorf("LAN %s %s = %d, want %d", tc.method, kiroRescanPath, rec.Code, tc.want)
 			}
 			if got := rec.Header().Get("Allow"); got != "" {
-				t.Errorf("Allow = %q on a 403, want unset: a refused remote caller must not learn the method set", got)
+				t.Errorf("LAN %s Allow = %q, want unset: a refused remote caller must not learn the method set", tc.method, got)
 			}
-		})
-	}
+		}
+		if rescanned {
+			t.Error("a LAN caller ran the rescan")
+		}
+	})
+
+	t.Run("kiro_rescan_unmanaged", func(t *testing.T) {
+		mux := docServer(t.TempDir()).mux()
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, lanRequest(http.MethodPost, kiroRescanPath))
+		if rec.Code != http.StatusForbidden || rec.Header().Get("Allow") != "" {
+			t.Errorf("LAN POST %s with no managed install = %d Allow %q, want the same 403 with no Allow",
+				kiroRescanPath, rec.Code, rec.Header().Get("Allow"))
+		}
+		loop := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:9847"+kiroRescanPath, http.NoBody)
+		loop.RemoteAddr = "127.0.0.1:54321"
+		rec = httptest.NewRecorder()
+		mux.ServeHTTP(rec, loop)
+		if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), httpreply.MsgUnknownEndpoint) {
+			t.Errorf("loopback POST %s with no managed install = %d %s, want the fallback's 404", kiroRescanPath, rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("pprof_index", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		pprofHandler().ServeHTTP(rec, lanRequest(http.MethodPost, pprofPath))
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403 from the loopback gate", rec.Code)
+		}
+		if got := rec.Header().Get("Allow"); got != "" {
+			t.Errorf("Allow = %q on a 403, want unset", got)
+		}
+	})
 }
