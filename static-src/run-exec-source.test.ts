@@ -2,10 +2,11 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import type { ModelInfo } from "./types.js";
+import type * as Picker from "./picker.js";
 
 const catalog = vi.hoisted(() => ({ models: [] as ModelInfo[] }));
 vi.mock("./picker.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./picker.js")>()),
+  ...(await importOriginal<typeof Picker>()),
   getCachedModels: () => catalog.models,
 }));
 afterEach(() => {
