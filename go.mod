@@ -5,6 +5,15 @@ go 1.27.4
 require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
+	github.com/cplieger/go/filesafe v1.1.0 // indirect
+	github.com/cplieger/go/httpclient v1.2.0 // indirect
+	github.com/cplieger/go/httpserver v1.4.0 // indirect
+	github.com/cplieger/go/keyenc v1.3.0 // indirect
+	github.com/cplieger/go/pathinside v1.1.0 // indirect
+	github.com/cplieger/go/scheduler v1.1.0 // indirect
+	github.com/cplieger/go/ssrf v1.1.0 // indirect
+	github.com/cplieger/go/textsafe v1.1.0 // indirect
+	github.com/cplieger/go/urlform v1.2.0 // indirect
 	github.com/cplieger/httpx/v5 v5.3.0 // indirect
 	github.com/cplieger/jsoncap/v2 v2.1.0 // indirect
 	github.com/cplieger/scheduler/v4 v4.3.0 // indirect
@@ -29,8 +38,8 @@ require (
 	github.com/cplieger/slogx v1.8.0
 	github.com/cplieger/sse v1.5.0
 	github.com/cplieger/ssrf/v4 v4.6.0
-	github.com/cplieger/toolbelt/v3 v3.14.0
-	github.com/cplieger/web-terminal-engine/v6 v6.4.0
+	github.com/cplieger/toolbelt/v3 v3.15.0
+	github.com/cplieger/web-terminal-engine/v6 v6.5.0
 	github.com/cplieger/webhttp/v4 v4.1.0
 	github.com/cplieger/wiregen/v4 v4.0.0
 	github.com/evanw/esbuild v0.28.2
