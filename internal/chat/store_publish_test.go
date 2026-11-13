@@ -141,3 +141,24 @@ func TestPublishHeader_ACreateIsAnnouncedAtOnce(t *testing.T) {
 		}
 	})
 }
+
+// The composition root wires the broadcaster after construction, while a header save's flush may already be pending
+// on the coalescer's timer goroutine: the wiring must be safe beside that flush, which then sends its frame.
+func TestWithBroadcaster_Race_WiredWhileAHeaderFlushIsPending(t *testing.T) {
+	s, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	rename(t, s, "created")
+	rename(t, s, "before the wiring")
+	b := &fakeBroadcaster{}
+	WithBroadcaster(b)(s)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for len(framesOf(b, marotte.EventChatUpdated)) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("no chat_updated reached the broadcaster wired after the save")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
