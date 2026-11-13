@@ -83,6 +83,7 @@ import {
   cover,
   coverUp,
   frame,
+  pointers,
 } from "./__test-helpers__/tab-switch-mocks.js";
 
 installSwitchSuite();
