@@ -761,14 +761,14 @@ func (bc *bridgeCoordinator) StopUndone(chatID marotte.ChatID, stop *command.Tur
 
 // runFactsChanged applies the steer queue's pending ends and unsent rows to the chat's list (runList.endsChanged).
 // The steer record's lock is never taken under lc.mu: the death bits are read first, then the record, and a read
-// with other bits than the list's is made again.
+// with other bits than the list's is made again until one matches, since only an applied read sets the unsent count.
 func (bc *bridgeCoordinator) runFactsChanged(chatID marotte.ChatID) {
 	lc, ok := bc.turns.lookup(chatID)
 	if !ok || bc.steerFacts == nil {
 		return
 	}
 	drained := false
-	for range 2 {
+	for {
 		ends, unsent, seq := bc.steerFacts(chatID, drained)
 		live := bc.bridgeLive(chatID)
 		lc.mu.Lock()
@@ -784,11 +784,11 @@ func (bc *bridgeCoordinator) runFactsChanged(chatID marotte.ChatID) {
 }
 
 // closeEndsResolved records a close's steer ends on its closing entry, with the steer queue's facts read first
-// (outside lc.mu, as in runFactsChanged) and read again when the list holds other death bits than the close's.
+// (outside lc.mu, as in runFactsChanged) and read again while the list holds other death bits than the read's.
 func (bc *bridgeCoordinator) closeEndsResolved(lc *chatLifecycle, turnID string, ends command.EndFacts) {
 	drained := ends.Death && !ends.Undrained
 	read := drained
-	for pass := 0; ; pass++ {
+	for {
 		var (
 			n      int
 			unsent []string
@@ -802,7 +802,7 @@ func (bc *bridgeCoordinator) closeEndsResolved(lc *chatLifecycle, turnID string,
 		f := lc.orderFactsLocked()
 		if bc.steerFacts != nil {
 			reread, d := lc.run.endsChanged(seq, n, unsent, read, live, &f)
-			if reread && pass == 0 {
+			if reread {
 				lc.mu.Unlock()
 				read = d
 				continue
