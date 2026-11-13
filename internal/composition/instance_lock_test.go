@@ -227,3 +227,41 @@ func TestClaimRoots_UnlockableFolderWarnsAndBoots(t *testing.T) {
 		t.Error("the lockable root was not claimed beside the unlockable one")
 	}
 }
+
+func TestClaimRoots_RecordsWhichRolesAreFullyHeld(t *testing.T) {
+	captureClaimLogs(t)
+	t.Run("a full claim", func(t *testing.T) {
+		kiro := t.TempDir()
+		held := mustClaim(t, ownedRoot{roleConfigDir, t.TempDir()}, ownedRoot{roleKiroHome, kiro})
+		if dir, ok := held.fullyHeldKiroHome(); !ok || dir != kiro {
+			t.Errorf("fullyHeldKiroHome() = %q, %v; want %q, true", dir, ok, kiro)
+		}
+		held.release()
+		if _, ok := held.fullyHeldKiroHome(); ok {
+			t.Error("fullyHeldKiroHome() = true after release, want false")
+		}
+	})
+	t.Run("an unusable lock file", func(t *testing.T) {
+		kiro := t.TempDir()
+		if err := os.Mkdir(filepath.Join(kiro, lockFileName), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		held := mustClaim(t, ownedRoot{roleKiroHome, kiro})
+		if _, ok := held.fullyHeldKiroHome(); ok {
+			t.Error("fullyHeldKiroHome() = true with only the folder locked, want false")
+		}
+	})
+	t.Run("a folder claimed once under two roles", func(t *testing.T) {
+		shared := t.TempDir()
+		held := mustClaim(t, ownedRoot{roleConfigDir, shared}, ownedRoot{roleKiroHome, shared})
+		if dir, ok := held.fullyHeldKiroHome(); !ok || dir != shared {
+			t.Errorf("fullyHeldKiroHome() = %q, %v; want %q, true from the config_dir claim", dir, ok, shared)
+		}
+	})
+	t.Run("a role never claimed", func(t *testing.T) {
+		held := mustClaim(t, ownedRoot{roleConfigDir, t.TempDir()})
+		if _, ok := held.fullyHeldKiroHome(); ok {
+			t.Error("fullyHeldKiroHome() = true with no kiro_home root, want false")
+		}
+	})
+}

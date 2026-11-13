@@ -2452,6 +2452,7 @@ export const decodeFileSearchResult: Decoder<FileSearchResult> = (v) => {
     matched: reqNum(o, "matched", "$.file_search_result"),
     truncated: reqBool(o, "truncated", "$.file_search_result"),
     root_ignored: reqBool(o, "root_ignored", "$.file_search_result"),
+    can_search_deeper: reqBool(o, "can_search_deeper", "$.file_search_result"),
   };
   return out;
 };
@@ -2536,6 +2537,10 @@ export const decodeFilesSearchQuery: Decoder<FilesSearchQuery> = (v) => {
   {
     const $v = own(o, "ignored");
     if ($v !== undefined && $v !== null) out.ignored = reqStr(o, "ignored", "$.files_search_query");
+  }
+  {
+    const $v = own(o, "deep");
+    if ($v !== undefined && $v !== null) out.deep = reqStr(o, "deep", "$.files_search_query");
   }
   return out;
 };

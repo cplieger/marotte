@@ -1807,10 +1807,13 @@ func (s *discardStatusRecorder) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// actionMkdir creates any path inside a mount; only the mount point
+// actionMkdir creates a folder anywhere inside a mount; only the mount point
 // itself is refused.
 func TestAction_Mkdir_InsideMount(t *testing.T) {
 	h, dir, _ := testDir(t)
+	if err := os.Mkdir(filepath.Join(dir, "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	l := locAt(h, filepath.Join(dir, "a", "b"))
 	err := actionMkdir(t.Context(), httptest.NewRecorder(), FileAction{}, l, h)
 	if err != nil {
@@ -1821,8 +1824,8 @@ func TestAction_Mkdir_InsideMount(t *testing.T) {
 	}
 }
 
-// actionMkdir returns the raw MkdirAll error (MkdirAll under a regular
-// file is ENOTDIR) rather than swallowing it or returning errHandled.
+// actionMkdir returns the raw mkdir error (ENOTDIR under a regular file)
+// rather than swallowing it or returning errHandled.
 func TestAction_Mkdir_PropagatesError(t *testing.T) {
 	h, dir, _ := testDir(t)
 	if err := os.WriteFile(filepath.Join(dir, "afile"), []byte("x"), 0o644); err != nil {
@@ -1831,10 +1834,10 @@ func TestAction_Mkdir_PropagatesError(t *testing.T) {
 	l := locAt(h, filepath.Join(dir, "afile", "sub"))
 	err := actionMkdir(t.Context(), httptest.NewRecorder(), FileAction{}, l, h)
 	if err == nil {
-		t.Fatalf("actionMkdir(%q) = nil, want non-nil (MkdirAll under a regular file must error)", l.abs)
+		t.Fatalf("actionMkdir(%q) = nil, want non-nil (mkdir under a regular file must error)", l.abs)
 	}
 	if errors.Is(err, errHandled) {
-		t.Fatalf("actionMkdir(%q) returned errHandled; expected the raw MkdirAll error", l.abs)
+		t.Fatalf("actionMkdir(%q) returned errHandled; expected the raw mkdir error", l.abs)
 	}
 }
 
@@ -2266,28 +2269,45 @@ func TestWriteFile_StaleWriteGuard(t *testing.T) {
 	})
 }
 
-// touch is a no-op on an entry that already exists: O_EXCL refuses the create
-// with EEXIST, which the action reports as success without disturbing the bytes
-// or the mtime. The doc comment on actionTouch rests on exactly this.
-func TestAction_Touch_ExistingFileSucceedsAndKeepsContent(t *testing.T) {
-	h, dir, prefix := testDir(t)
-	const want = "keep me"
-	existing := filepath.Join(dir, "have.txt")
-	if err := os.WriteFile(existing, []byte(want), 0o600); err != nil {
-		t.Fatal(err)
-	}
+// New file and New folder create the name they show, so touch and mkdir on a name already taken
+// answer 409 and leave what is there alone.
+func TestAction_CreateOnATakenNameConflictsAndKeepsIt(t *testing.T) {
+	for _, tc := range []struct{ name, action, existing string }{
+		{"touch_on_a_file", "touch", "file"},
+		{"touch_on_a_folder", "touch", "dir"},
+		{"mkdir_on_a_folder", "mkdir", "dir"},
+		{"mkdir_on_a_file", "mkdir", "file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, dir, prefix := testDir(t)
+			const want = "keep me"
+			existing := filepath.Join(dir, "have")
+			if tc.existing == "dir" {
+				if err := os.Mkdir(existing, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				writeTestFile(t, filepath.Join(existing, "inner.txt"), want)
+			} else {
+				writeTestFile(t, existing, want)
+			}
 
-	rec := postReq(t, h, "/api/files/action", `{"action":"touch","path":"`+prefix+`/have.txt"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("touch on an existing file: status = %d, want %d; body = %s",
-			rec.Code, http.StatusOK, rec.Body.String())
-	}
-	got, err := os.ReadFile(existing)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != want {
-		t.Errorf("touch on an existing file: content = %q, want %q", got, want)
+			rec := postReq(t, h, "/api/files/action", `{"action":"`+tc.action+`","path":"`+prefix+`/have"}`)
+
+			if rec.Code != http.StatusConflict {
+				t.Errorf("%s on a taken name: status = %d, want 409; body = %s", tc.action, rec.Code, rec.Body.String())
+			}
+			var resp map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || resp["code"] != "name_taken" || resp["error"] != "have already exists" {
+				t.Errorf("%s on a taken name: body = %s (%v), want error %q and code %q", tc.action, rec.Body.String(), err, "have already exists", "name_taken")
+			}
+			kept := existing
+			if tc.existing == "dir" {
+				kept = filepath.Join(existing, "inner.txt")
+			}
+			if got, err := os.ReadFile(kept); err != nil || string(got) != want {
+				t.Errorf("%s on a taken name: %s = %q, %v, want %q untouched", tc.action, kept, got, err, want)
+			}
+		})
 	}
 }
 

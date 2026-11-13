@@ -15,6 +15,9 @@ export const pointers = { active: "", painted: "" };
 export const resident = new Set<string>();
 /** Chat ids with no conversation at all (no turns on the record); a just-created chat. */
 export const emptyChats = new Set<string>();
+/** Chat ids whose transcript view is resident (active or parked); with `resident`, a chat that can
+ *  show its own turns at once. */
+export const residentViews = new Set<string>();
 
 /** Every icon name tabs.ts's graph imports, as "": Browser Mode links real ESM. */
 export function iconsMock(): Record<string, string> {
@@ -240,6 +243,24 @@ export function resetPointers(): void {
   pointers.painted = "";
   resident.clear();
   emptyChats.clear();
+  residentViews.clear();
+}
+
+/** The transcript owner messages.ts registers, over the residency fakes. */
+export function transcriptOwnerFake(): {
+  take: () => void;
+  drop: () => void;
+  painted: (chatID: string) => boolean;
+  current: (chatID: string) => boolean;
+  swap: (chatID: string) => void;
+} {
+  return {
+    take: () => undefined,
+    drop: () => undefined,
+    painted: (chatID) => residentViews.has(chatID) && resident.has(chatID),
+    current: (chatID) => pointers.active === chatID,
+    swap: () => undefined,
+  };
 }
 
 /** One frame: the strip's `renderDOM` is a frame callback. */
@@ -276,8 +297,8 @@ export function cover(): HTMLElement | null {
   return document.getElementById("transcript-cover");
 }
 
-/** The cover is up: present, not hidden, not fading out. */
+/** The switch holds the cover: the transcript is marked busy, whether the cover shows yet or is
+ *  still inside its show window (transcript-cover.ts). */
 export function coverUp(): boolean {
-  const c = cover();
-  return c !== null && !c.hidden && c.getAttribute("data-state") !== "released";
+  return document.getElementById("messages-wrap")?.getAttribute("aria-busy") === "true";
 }

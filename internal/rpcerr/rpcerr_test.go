@@ -313,3 +313,12 @@ func TestAccount(t *testing.T) {
 		})
 	}
 }
+
+// TestKnownClassSessionHeldElsewhere pins the class KAS refuses a write with while another program holds the
+// session's lease, so a broken turn's record names it.
+func TestKnownClassSessionHeldElsewhere(t *testing.T) {
+	t.Parallel()
+	if !KnownClass("SessionHeldElsewhereError") {
+		t.Error(`KnownClass("SessionHeldElsewhereError") = false, want true`)
+	}
+}

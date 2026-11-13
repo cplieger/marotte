@@ -172,9 +172,14 @@ describe("the parked re-show", () => {
  *  at the click's clean layout, then the active chat and the cover. `steerRow` stands for the
  *  target's composer area: a queued prompt's row takes 50 px from the scroller. */
 function click(id: string, steerRow: boolean): void {
+  cover.dropParkReads();
   cover.takeParkReads();
   select(id);
-  cover.holdCover(id);
+  if (cover.transcriptPainted(id)) {
+    cover.dropCover();
+  } else {
+    cover.holdCover(id);
+  }
   outer.style.height = steerRow ? "350px" : "400px";
 }
 
@@ -208,6 +213,9 @@ function runningIn(view: HTMLElement | null): string[] {
 /** The activation half (`tabs.ts` `runActivation`): the transcript back in layout, then the
  *  painted chat moves. */
 async function activate(id: string): Promise<void> {
+  if (!cover.coverHeld()) {
+    cover.takeParkReads();
+  }
   cover.showTranscript();
   show(id);
   await Promise.resolve();
@@ -305,8 +313,9 @@ describe("a chat-to-chat switch whose composer area changes height", () => {
     expect(scroller.scrollTop, "the covered scroller moved under the cover").toBe(top);
     // Back to x before y's activation: x is still the painted, laid-out chat, so the click lifts
     // y's cover over it (`tabs.ts` `beginActivation`).
+    cover.dropParkReads();
     select("pl-x");
-    cover.releaseCoverExceptFor("pl-x");
+    cover.dropCover();
     outer.style.height = "400px";
     await frames();
     expect(readerAnchor(), "the painted chat moved under the cover").toEqual(at);

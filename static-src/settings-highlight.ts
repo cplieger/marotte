@@ -2,13 +2,11 @@
 
 import { openSettingsView } from "./tabs.js";
 import { flashTarget } from "./flash-target.js";
-import { forceSettingsTab } from "./settings-tabs.js";
-import { pushRoute } from "./router.js";
 import type { SettingsTab } from "./route-path.js";
 import { maybeEl } from "./dom.js";
 
-/** The `?highlight=` value this page load carried, read once at import time (see the mechanic
- *  above). Consumed at most once. */
+/** The `?highlight=` value this page load carried, read once at import time. Consumed at most
+ *  once. */
 let pendingTarget: string | null = readTargetFromURL();
 
 function readTargetFromURL(): string | null {
@@ -34,19 +32,11 @@ export function highlightControl(id: string): void {
 /** Open Settings on `tab` and highlight `controlID`. The in-app form of the deep link: what a
  *  message naming a setting calls. */
 export function openSetting(tab: SettingsTab, controlID: string): void {
-  // Awaited through the promise rather than detached, because everything below addresses the panel
-  // the open produces — and the highlight is a DOM write against a view that has to exist first.
+  // Awaited through the promise rather than detached: the highlight is a DOM write against the
+  // panel the open produces, which has to exist first.
   void openSettingsView(tab).then(() => {
-    applySetting(tab, controlID);
+    highlightControl(controlID);
   });
-}
-
-function applySetting(tab: SettingsTab, controlID: string): void {
-  // Swaps the panel and fires the tab's lazy loader; the URL is pushed here rather than by
-  // forceSettingsTab, which is the router's own callee.
-  forceSettingsTab(tab);
-  pushRoute({ kind: "settings", tab });
-  highlightControl(controlID);
 }
 
 /** Fire the `?highlight=` this page load carried, if any. Called from the router's settings

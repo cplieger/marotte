@@ -119,6 +119,8 @@ func (*nameVisitor) leave(*walkDir) {}
 
 func (*nameVisitor) full() bool { return false }
 
+func (*nameVisitor) spent() bool { return false }
+
 // rootFile answers nothing: a root is the frame of a search, never a result inside it.
 func (*nameVisitor) rootFile(*os.File, string, os.FileInfo) bool { return true }
 

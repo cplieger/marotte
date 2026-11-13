@@ -4634,6 +4634,9 @@
       },
       "FileSearchResult": {
         "properties": {
+          "can_search_deeper": {
+            "type": "boolean"
+          },
           "matched": {
             "type": "integer"
           },
@@ -4661,7 +4664,8 @@
           "scanned",
           "matched",
           "truncated",
-          "root_ignored"
+          "root_ignored",
+          "can_search_deeper"
         ],
         "type": "object"
       },
@@ -15876,9 +15880,10 @@
                 }
               }
             },
-            "description": "Conflict: changed",
+            "description": "Conflict: changed, name_taken",
             "x-error-codes": {
-              "changed": {}
+              "changed": {},
+              "name_taken": {}
             }
           },
           "413": {
@@ -15986,9 +15991,10 @@
                 }
               }
             },
-            "description": "Conflict: changed",
+            "description": "Conflict: changed, name_taken",
             "x-error-codes": {
-              "changed": {}
+              "changed": {},
+              "name_taken": {}
             }
           },
           "413": {
@@ -16255,9 +16261,10 @@
                 }
               }
             },
-            "description": "Conflict: changed",
+            "description": "Conflict: changed, name_taken",
             "x-error-codes": {
-              "changed": {}
+              "changed": {},
+              "name_taken": {}
             }
           },
           "413": {
@@ -16357,9 +16364,10 @@
                 }
               }
             },
-            "description": "Conflict: changed",
+            "description": "Conflict: changed, name_taken",
             "x-error-codes": {
-              "changed": {}
+              "changed": {},
+              "name_taken": {}
             }
           },
           "413": {
@@ -16449,9 +16457,10 @@
                 }
               }
             },
-            "description": "Conflict: changed",
+            "description": "Conflict: changed, name_taken",
             "x-error-codes": {
-              "changed": {}
+              "changed": {},
+              "name_taken": {}
             }
           },
           "413": {
@@ -16551,9 +16560,10 @@
                 }
               }
             },
-            "description": "Conflict: changed",
+            "description": "Conflict: changed, name_taken",
             "x-error-codes": {
-              "changed": {}
+              "changed": {},
+              "name_taken": {}
             }
           },
           "413": {
@@ -16653,9 +16663,10 @@
                 }
               }
             },
-            "description": "Conflict: changed",
+            "description": "Conflict: changed, name_taken",
             "x-error-codes": {
-              "changed": {}
+              "changed": {},
+              "name_taken": {}
             }
           },
           "413": {
@@ -16751,9 +16762,10 @@
                 }
               }
             },
-            "description": "Conflict: changed",
+            "description": "Conflict: changed, name_taken",
             "x-error-codes": {
-              "changed": {}
+              "changed": {},
+              "name_taken": {}
             }
           },
           "413": {
@@ -16845,6 +16857,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "deep",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -16893,9 +16913,10 @@
                 }
               }
             },
-            "description": "Conflict: changed",
+            "description": "Conflict: changed, name_taken",
             "x-error-codes": {
-              "changed": {}
+              "changed": {},
+              "name_taken": {}
             }
           },
           "413": {

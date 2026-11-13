@@ -126,7 +126,6 @@ vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
 vi.mock("./settings-tabs.js", () => ({
   loadSettingsTabData: vi.fn(),
   refreshSettingsPanel: vi.fn(),
-  forceSettingsTab: vi.fn(),
   // Present-but-inert so real-ESM linking succeeds: the tab projection widened
   // this graph and these names are imported somewhere in it. No case here calls
   // them.

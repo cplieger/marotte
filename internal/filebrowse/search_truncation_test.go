@@ -236,24 +236,33 @@ func TestLogSearchReadError_ClassifiesLossVersusSkip(t *testing.T) {
 	}
 }
 
-// TestWalkDir_ReadDirFailureMarksTruncated asserts that the chunk in hand is consumed, but the rest of the
-// directory was never listed, so the answer is truncated.
+// TestWalkDir_ReadDirFailureMarksTruncated asserts that a directory whose listing fails leaves the
+// answer truncated while the other roots still answer.
 func TestWalkDir_ReadDirFailureMarksTruncated(t *testing.T) {
-	dir := t.TempDir()
+	dir, good := t.TempDir(), t.TempDir()
 	path := filepath.Join(dir, "notadir.txt")
 	if err := os.WriteFile(path, []byte("needle\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	f, err := os.Open(path)
+	if err := os.WriteFile(filepath.Join(good, "hit.txt"), []byte("needle\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bad, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(good)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	walk, v := contentWalk(t.Context(), "needle", false)
-	if !walk.walk(&walkDir{f: f, abs: dir, pruneGit: true}) {
-		t.Error("walk returned false (stop the whole scan) on one unenumerable directory; the other roots must still answer")
+	walk.walkDirs([]*walkDir{{f: bad, abs: dir, pruneGit: true}, {f: f, abs: good, pruneGit: true}})
+	res := v.result(walk.truncated)
+	if len(res.Matches) != 1 {
+		t.Errorf("matches = %d, want the other root's 1: one unenumerable directory stopped the scan", len(res.Matches))
 	}
-	if !v.result(walk.truncated).Truncated {
+	if !res.Truncated {
 		t.Error("truncated = false after a directory listing failed; the unread remainder is unreported")
 	}
 }
@@ -271,9 +280,7 @@ func TestWalkDir_EndOfDirectoryIsNotTruncation(t *testing.T) {
 	}
 
 	walk, v := contentWalk(t.Context(), "needle", false)
-	if !walk.walk(&walkDir{f: f, abs: dir, pruneGit: true}) {
-		t.Fatal("walk stopped the scan on an ordinary directory")
-	}
+	walk.walkDirs([]*walkDir{{f: f, abs: dir, pruneGit: true}})
 	res := v.result(walk.truncated)
 	if res.Truncated {
 		t.Error("truncated = true after a directory was fully enumerated")

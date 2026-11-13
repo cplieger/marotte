@@ -2,7 +2,6 @@
 
 import { apiAction, fromEndpoint, retryNetwork, RETRY_STANDARD } from "./index.js";
 import { postFilesActionEndpoint, postWorkspaceKiroDocsNewEndpoint } from "../wire/client.gen.js";
-import { join as joinKey } from "@cplieger/keyenc";
 import { asObject, reqStr } from "../wire/validators.gen.js";
 
 /** Delete one `.kiro` document. `path` is the row's `doc.path` verbatim, the spelling `openFile`
@@ -12,7 +11,7 @@ export const deleteDoc = apiAction<{ path: string; name: string }>({
   scope: (args) => "doc:" + args.path,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  idempotencyKey: (args) => joinKey("docs.delete", args.path),
+  idempotencyKey: true,
   // The file browser's own delete: one place for the mount-root and protected-directory refusals.
   request: (args) =>
     fromEndpoint(postFilesActionEndpoint.request({ body: { action: "delete", path: args.path } })),

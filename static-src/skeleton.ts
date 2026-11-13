@@ -56,26 +56,45 @@ function skeletonText(opts: {
   return wrap;
 }
 
-/** One placeholder turn: a short request over a longer reply, as bar widths. */
+/** One placeholder turn: a short request over a longer reply, as bar widths. `fold` reserves the
+ *  head row's fold toggle, which the newest turn never shows (messages.ts fold plan). */
 interface SkeletonTurnShape {
   readonly prompt: readonly string[];
   readonly reply: readonly string[];
+  readonly fold: boolean;
 }
 
-/** The transcript's placeholder shape: three cards, newest last, each a short request over a
- *  longer reply — the real distribution. */
-const CHAT_SKELETON: readonly SkeletonTurnShape[] = [
-  { prompt: ["68%"], reply: ["94%", "88%", "52%"] },
-  { prompt: ["46%"], reply: ["91%", "73%"] },
-  { prompt: ["82%", "37%"], reply: ["96%", "89%", "84%", "41%"] },
+/** The paragraphs a placeholder reply cycles through, a blank line between two. */
+const REPLY_PARAGRAPHS: readonly (readonly string[])[] = [
+  ["94%", "88%", "91%", "52%"],
+  ["96%", "89%", "73%"],
+  ["92%", "95%", "84%", "90%", "41%"],
 ];
+
+/** The supported maximum chat-area height is 2160px, which 96 lines fill; a taller area leaves the
+ *  reply short of the composer. The cover shows only the whole lines that fit (13-messages.css). */
+const REPLY_LINES = 96;
+
+function replyLines(): string[] {
+  const out: string[] = [];
+  for (let p = 0; out.length < REPLY_LINES; p++) {
+    if (out.length > 0) {
+      out.push("");
+    }
+    out.push(...(REPLY_PARAGRAPHS[p % REPLY_PARAGRAPHS.length] ?? []));
+  }
+  return out.slice(0, REPLY_LINES);
+}
+
+/** The transcript's placeholder shape: the one turn a chat opens on, scrolled to its newest. */
+const CHAT_SKELETON: SkeletonTurnShape = { prompt: ["68%"], reply: replyLines(), fold: false };
 
 /** The transcript's own card shape, two cards deep: the reader sees the top edge of the incoming
  *  page and nothing more, and `scroll.ts` corrects the reader's drift again AFTER this comes down,
  *  so its height is not a term in that arithmetic. */
 const LOAD_MORE_SKELETON: readonly SkeletonTurnShape[] = [
-  { prompt: ["54%"], reply: ["92%", "61%"] },
-  { prompt: ["73%"], reply: ["95%", "87%", "48%"] },
+  { prompt: ["54%"], reply: ["92%", "61%"], fold: true },
+  { prompt: ["73%"], reply: ["95%", "87%", "48%"], fold: true },
 ];
 
 /** COMPOSITE — one placeholder turn card, assembled from TEXT BLOCK twice inside the real
@@ -89,11 +108,10 @@ const LOAD_MORE_SKELETON: readonly SkeletonTurnShape[] = [
 function skeletonTurnCard(shape: SkeletonTurnShape): HTMLDivElement {
   const card = el("div", { className: "turn turn-skel" }) as HTMLDivElement;
   const headRow = el("div", { className: "turn-head-row" });
-  headRow.append(
-    el("div", { className: "turn-fold-toggle" }),
-    skelBar("skeleton-line", "1rem"),
-    skelBar("skeleton-line", "1.875rem"),
-  );
+  if (shape.fold) {
+    headRow.appendChild(el("div", { className: "turn-fold-toggle" }));
+  }
+  headRow.append(skelBar("skeleton-line", "1rem"), skelBar("skeleton-line", "1.875rem"));
   const reqText = el("div", { className: "turn-req-text" });
   reqText.appendChild(skeletonText({ widths: shape.prompt }));
   const req = el("div", { className: "turn-req" });
@@ -110,16 +128,16 @@ function skeletonTurnCard(shape: SkeletonTurnShape): HTMLDivElement {
   return card;
 }
 
-/** The transcript's placeholder, the transcript cover's content: N turn cards inside a
- *  `display: contents` wrap. */
+/** The transcript's placeholder, the transcript cover's content: one turn card, ending in the
+ *  real footer band, inside a `display: contents` wrap. */
 export function chatSkeleton(): HTMLDivElement {
   const wrap = el("div", {
     className: "skeleton-rows",
     "aria-hidden": "true",
   }) as HTMLDivElement;
-  for (const shape of CHAT_SKELETON) {
-    wrap.appendChild(skeletonTurnCard(shape));
-  }
+  const card = skeletonTurnCard(CHAT_SKELETON);
+  card.appendChild(el("div", { className: "turn-footer" }));
+  wrap.appendChild(card);
   return wrap;
 }
 

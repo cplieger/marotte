@@ -150,8 +150,8 @@ type DownloadQuery struct {
 	FileID string `json:"file_id,omitempty"`
 }
 
-// FilesSearchQuery is GET /api/files/search's query; Case and Ignored are "1" to match case and to
-// search ignored files.
+// FilesSearchQuery is GET /api/files/search's query; Case, Ignored and Deep are "1" to match case,
+// to search ignored files and to search with the deep budget.
 type FilesSearchQuery struct {
 	Q       string `json:"q,omitempty"`
 	Path    string `json:"path,omitempty"`
@@ -159,6 +159,7 @@ type FilesSearchQuery struct {
 	Files   string `json:"files,omitempty"`
 	Case    string `json:"case,omitempty"`
 	Ignored string `json:"ignored,omitempty"`
+	Deep    string `json:"deep,omitempty"`
 }
 
 // FileList is GET /api/files' body.

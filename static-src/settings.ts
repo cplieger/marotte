@@ -5,7 +5,6 @@
 import { initAllModals } from "./modals.js";
 import { toggleSettingsView, toggleGitView } from "./tabs.js";
 import { initGitBadge } from "./git-badge.js";
-import { getGitTab } from "./git-tabs.js";
 import { initTools, loadToolsList } from "./tools.js";
 import { initCodeIntelStatus, loadCodeIntelStatus } from "./code-intel-status.js";
 import { restoreNotifications } from "./notify.js";
@@ -322,15 +321,11 @@ function loadGeneralPanel(): void {
 export function initUI(): void {
   initThemeToggle(themeStorage);
 
-  // Settings gear opens the tabbed Settings panel. Default tab is General; deep-link URLs (e.g.
-  // /settings/tools) override this via applyRoute.
   $.settingsBtn.addEventListener("click", () => {
-    void toggleSettingsView("general");
+    void toggleSettingsView();
   });
 
-  // Per-tab lazy data loaders: fired by settings-tabs on the first ACTIVATION of each tab, never on
-  // the subscribe-time paint that shows the default panel. Every tab has one now — General's is
-  // what took its three kiro-cli spawns off the boot path.
+  // settings-tabs.ts owns when each panel's loader runs.
   initSettingsTabs({
     general: loadGeneralPanel,
     tools: loadToolsList,
@@ -350,9 +345,7 @@ export function initUI(): void {
   initAllModals();
 
   $.gitBtn.addEventListener("click", () => {
-    // Open to whichever sub-tab is currently active (defaults to "changes" on first open) so the
-    // URL the tab pushes matches the visible panel.
-    void toggleGitView(getGitTab());
+    void toggleGitView();
   });
 }
 

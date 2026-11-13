@@ -219,6 +219,18 @@ a.subagent-header:focus-visible,
   }
   /* stylelint-enable declaration-no-important, time-min-milliseconds */
 
+  /* `transition-property` starts as `all`, so the sweep's duration alone would give every box a
+     transition on every property: a script's size write would then lay out its old value for the
+     rest of the task, and the scroll owner measures right after writing. In the `reset` layer, any
+     rule or inline style that declares a transition still outranks it. */
+  @layer reset {
+    *,
+    *::before,
+    *::after {
+      transition-property: none;
+    }
+  }
+
   /* The interaction dock gates on this preference in JS too, and that gate is
      the one that normally applies: it takes NO phase at all, so there is no
      outgoing card and no timer. This covers the single case the gate cannot —

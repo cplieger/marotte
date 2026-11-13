@@ -35,11 +35,12 @@ interface Row {
   readonly letter: HTMLElement | null;
 }
 
-/** One listing row in the shape `files.ts` `entryRow` renders, in a list `width` px wide. */
+/** One listing row in the shape `files.ts` `entryRow` renders, in a list `width` px wide;
+ *  `editing` swaps the name for the rename field the way `startInlineRename` does. */
 function mount(
   width: number,
   tier: "fine" | "coarse",
-  opts?: { letter?: boolean; meta?: string },
+  opts?: { letter?: boolean; meta?: string; editing?: boolean },
 ): Row {
   document.documentElement.dataset["pointer"] = tier;
   const wrap = document.createElement("div");
@@ -56,9 +57,15 @@ function mount(
   check.className = "fb-check";
   const icon = document.createElement("span");
   icon.className = "fb-icon";
-  const name = document.createElement("span");
-  name.className = "fb-name fb-name-link";
-  name.textContent = "docker-compose.override.yaml";
+  const name = document.createElement(opts?.editing === true ? "input" : "span");
+  if (name instanceof HTMLInputElement) {
+    name.type = "text";
+    name.className = "fb-name-edit";
+    name.value = "docker-compose.override.yaml";
+  } else {
+    name.className = "fb-name fb-name-link";
+    name.textContent = "docker-compose.override.yaml";
+  }
   const meta = document.createElement("span");
   meta.className = "fb-meta";
   meta.textContent = opts?.meta ?? META;
@@ -119,6 +126,25 @@ describe("a file row", () => {
       rect(parent.name).bottom,
     );
     expect(stacked).toBe(rect(parent.row).height);
+  });
+
+  it.each([
+    [366, "fine"],
+    [390, "coarse"],
+  ] as const)("at %ipx on %s gives a rename field the name's width", (w, tier) => {
+    const named = rect(mount(w, tier).name);
+    const r = mount(w, tier, { editing: true });
+    const field = rect(r.name);
+    expect(field.left, "the field starts where the name does").toBeCloseTo(named.left, 0);
+    expect(field.width, "the field spans the name's column").toBeGreaterThanOrEqual(
+      named.width - 0.5,
+    );
+  });
+
+  it("keeps the metadata beside a rename field on a wide mouse list", () => {
+    const r = mount(1024, "fine", { editing: true });
+    expect(r.meta.getBoundingClientRect().width).toBeGreaterThan(0);
+    expect(rect(r.meta).left).toBeGreaterThanOrEqual(rect(r.name).right);
   });
 
   it("keeps a stacked git letter's target inside the row's paint clip", () => {

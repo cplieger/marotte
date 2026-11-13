@@ -26,9 +26,17 @@ import (
 
 const bridgeGroupGrace = 2 * time.Second
 
-// bridgeTeardownGrace is how long a SIGTERMed tree gets before SIGKILL: KAS tears sessions down (SessionEnd hooks
-// included) under its own 4 s cap, so one second more. A var for tests.
-var bridgeTeardownGrace = 5 * time.Second
+// stdinEOFGrace is how long a kiro-cli process whose stdin was closed gets to exit before it is signalled: kiro-cli
+// acp kills an engine still running about 5.5 s after stdin EOF, and KAS's session teardown, its lease release
+// included, runs inside that window. A var for tests.
+var stdinEOFGrace = 6 * time.Second
+
+// bridgeTeardownGrace is how long a SIGTERMed tree gets before SIGKILL: after a SIGTERM kiro-cli ends its node engine
+// in about 0.6 s, and nothing of KAS runs after that. A var for tests.
+var bridgeTeardownGrace = 2 * time.Second
+
+// StopCeiling is the longest Stop waits on the kiro-cli process before it sends SIGKILL.
+func StopCeiling() time.Duration { return stdinEOFGrace + bridgeTeardownGrace }
 
 // waitStatus renders cmd.Wait's error for a log line. nil is a clean exit(0), itself the anomaly for a relay that
 // should outlive its sessions.
@@ -67,26 +75,14 @@ func deathSignalOf(state *os.ProcessState) syscall.Signal {
 
 // reapProcess reaps the kiro-cli process's group, then the node engine's: on 2.18.0 a head-only kill left the kiro-cli
 // process and its node child alive at about 250 MB (procgroup.Kill), and the node engine leads its own group
-// (sweepEngineGroups). stdin is already closed. endedItself is endedOnItsOwn's answer from before that close.
-func (e *Engine) reapProcess(endedItself bool) {
-	// Before the signal empties it (procgroup.GroupOf).
-	pgid, owns := procgroup.GroupOf(e.cmd.Process)
-	e.noteEngineGroups()
-	termErr := procgroup.Kill(e.cmd.Process, syscall.SIGTERM)
-	gone := procgroup.AlreadyGone(termErr)
-	if termErr != nil && !gone {
-		slog.Error("signal kiro-cli", "generation", e.generation, "error", termErr)
+// (sweepEngineGroups). When closed says teardown closed its stdin, a process that had not ended itself gets
+// stdinEOFGrace to exit on that EOF; only one still alive after it does the SIGTERM do real work. pgid and owns are
+// GroupOf's answer and endedItself is endedOnItsOwn's, both from before the stdin close.
+func (e *Engine) reapProcess(pgid int, owns, endedItself, closed bool) {
+	if closed && !endedItself {
+		awaitExit(e.cmd.Process.Pid, stdinEOFGrace)
 	}
-	if !gone && (!owns || !procgroup.WaitGone(pgid, bridgeTeardownGrace)) {
-		// Without a group there is nothing to wait on; kill the head now.
-		if killErr := procgroup.Kill(e.cmd.Process, syscall.SIGKILL); killErr != nil && !procgroup.AlreadyGone(killErr) {
-			slog.Error("kill kiro-cli", "generation", e.generation, "error", killErr)
-		}
-		if owns {
-			slog.Warn("kiro-cli did not exit within the teardown grace; killed",
-				"generation", e.generation, "grace_ms", bridgeTeardownGrace.Milliseconds())
-		}
-	}
+	e.signalTree(pgid, owns)
 	// Wait releases the process entry, so restarts leak no zombies.
 	waitErr := e.cmd.Wait()
 	e.mu.Lock()
@@ -107,6 +103,26 @@ func (e *Engine) reapProcess(endedItself bool) {
 			"generation", e.generation, "pgid", pgid, "grace_ms", bridgeGroupGrace.Milliseconds())
 	}
 	e.sweepEngineGroups()
+}
+
+// signalTree SIGTERMs the kiro-cli process's group, then SIGKILLs it once bridgeTeardownGrace passes with the group
+// still alive, or at once when owns says there is no group of its own to wait on.
+func (e *Engine) signalTree(pgid int, owns bool) {
+	termErr := procgroup.Kill(e.cmd.Process, syscall.SIGTERM)
+	gone := procgroup.AlreadyGone(termErr)
+	if termErr != nil && !gone {
+		slog.Error("signal kiro-cli", "generation", e.generation, "error", termErr)
+	}
+	if gone || (owns && procgroup.WaitGone(pgid, bridgeTeardownGrace)) {
+		return
+	}
+	if killErr := procgroup.Kill(e.cmd.Process, syscall.SIGKILL); killErr != nil && !procgroup.AlreadyGone(killErr) {
+		slog.Error("kill kiro-cli", "generation", e.generation, "error", killErr)
+	}
+	if owns {
+		slog.Warn("kiro-cli did not exit within the teardown grace; killed",
+			"generation", e.generation, "grace_ms", bridgeTeardownGrace.Milliseconds())
+	}
 }
 
 // exitSettle bounds the wait for a kiro-cli process whose stdout reached EOF to become waitable: the kernel closes an
@@ -147,9 +163,24 @@ func exitedUnreaped(pid int) bool {
 	return err == nil && info.Signo == int32(unix.SIGCHLD)
 }
 
+// awaitExit polls exitedUnreaped until pid has exited or d has passed.
+func awaitExit(pid int, d time.Duration) {
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	deadline := time.NewTimer(d)
+	defer deadline.Stop()
+	for !exitedUnreaped(pid) {
+		select {
+		case <-deadline.C:
+			return
+		case <-tick.C:
+		}
+	}
+}
+
 // noteEngineGroups adds the groups below the kiro-cli process to engineGroups. kiro-cli's node engine leads its own
 // group, which its stdio MCP servers join, so the kiro-cli process's group kill misses them. It runs after initialize
-// and again at reap: once the kiro-cli process dies they are init's, and no walk finds them.
+// and again in teardown before the stdin close: once the kiro-cli process exits they are init's, and no walk finds them.
 func (e *Engine) noteEngineGroups() {
 	if e.cmd == nil || e.cmd.Process == nil {
 		return
@@ -228,11 +259,22 @@ func (e *Engine) teardown() {
 		e.dropMemoryGauges()
 		started := e.cmd != nil && e.cmd.Process != nil
 		endedItself := started && e.endedOnItsOwn()
+		var pgid int
+		var owns bool
+		if started {
+			// Before the stdin close: on EOF kiro-cli kills its node engine and exits, after which the node group is
+			// init's and no walk finds it (procgroup.GroupOf).
+			pgid, owns = procgroup.GroupOf(e.cmd.Process)
+			e.noteEngineGroups()
+		}
+		closed := false
 		if p := e.stdin.Load(); p != nil {
+			e.stdinClosed.Store(true)
 			_ = p.w.Close()
+			closed = true
 		}
 		if started {
-			e.reapProcess(endedItself)
+			e.reapProcess(pgid, owns, endedItself, closed)
 		}
 		if !e.readLoopStarted.Load() {
 			e.exitPath()
@@ -336,15 +378,14 @@ func (e *Engine) startProcess() error {
 	// Own process group, so teardown reclaims the whole tree; closing stdin alone does not reclaim it (procgroup.Kill).
 	e.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	e.cmd.Env = e.processEnv()
-	// Backstop when lifecycleCtx ends before Stop: close stdin and SIGTERM the kiro-cli process's group, SIGKILL after
-	// bridgeTeardownGrace. A second Close is expected after Stop, so its error is dropped.
+	// Backstop when lifecycleCtx ends before Stop: the same staged stop Stop runs, recorded as one marotte asked for.
+	// fail tears down on its own goroutine, so os/exec's watcher never blocks on it.
 	e.cmd.Cancel = func() error {
-		if p := e.stdin.Load(); p != nil {
-			_ = p.w.Close()
-		}
-		return procgroup.Kill(e.cmd.Process, syscall.SIGTERM)
+		e.fail(ExitStopped)
+		return nil
 	}
-	e.cmd.WaitDelay = bridgeTeardownGrace
+	// os/exec's own SIGKILL must not land inside the stop's EOF window.
+	e.cmd.WaitDelay = StopCeiling()
 	stdin, err := e.cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("stdin pipe: %w", err)

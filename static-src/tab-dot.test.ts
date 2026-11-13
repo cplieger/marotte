@@ -10,7 +10,13 @@ import type * as Dom from "./dom.js";
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import cssContrastScript from "../scripts/css-contrast.py?raw";
 import chatSrc from "./chat.ts?raw";
-import { allRules, ruleContaining, loadCSS, mountAppCSS } from "./__test-helpers__/css-rules.js";
+import {
+  allRules,
+  atRuleBody,
+  ruleContaining,
+  loadCSS,
+  mountAppCSS,
+} from "./__test-helpers__/css-rules.js";
 import {
   tabStatusFor,
   setSessions,
@@ -804,8 +810,9 @@ describe("prefers-reduced-motion stops the dot's animation", () => {
     // The component rule above owns this; this is the belt. If the global sweep
     // ever narrows to a selector list, an animation added to the dot later would
     // silently keep running.
-    const a11y = loadCSS("40-a11y.css");
-    const global = ruleContaining(a11y, "*", "prefers-reduced-motion");
+    // "top" of the media body: the sweep, not the reset layer's `transition-property` rule.
+    const reduce = atRuleBody(loadCSS("40-a11y.css"), "prefers-reduced-motion");
+    const global = ruleContaining(reduce, "*", "top");
     expect(global.selector).toContain("*::before");
     expect(/animation-iteration-count:\s*1/.test(global.body)).toBe(true);
   });

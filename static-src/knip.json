@@ -15,6 +15,7 @@
   "project": ["**/*.ts", "!**/*.d.ts", "!node_modules/**"],
   "ignore": ["wire/*.gen.ts"],
   "ignoreDependencies": ["stylelint", "stylelint-config-standard"],
+  "ignoreBinaries": ["go"],
   "ignoreMembers": [
     "active",
     "element",

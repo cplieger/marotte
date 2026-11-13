@@ -11,6 +11,7 @@ import type * as Recipes from "./recipes.js";
 import type * as Router from "./router.js";
 import type * as Tabs from "./tabs.js";
 import type * as Toast from "./toast.js";
+import type { DocsTab } from "./route-path.js";
 
 vi.mock("./toast.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Toast>()),
@@ -52,9 +53,17 @@ vi.mock("./memories.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Memories>()),
   renderMemoriesPanel: vi.fn(),
 }));
+/** The docs row's route as the strip holds it: the row a /docs/memories deep link opens. */
+const docsRoute = await vi.hoisted(async () => {
+  const { signal } = await import("@cplieger/reactive");
+  return signal<DocsTab | null>("memories");
+});
 vi.mock("./tabs.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Tabs>()),
-  setDocsTab: vi.fn(),
+  subTabOf: (kind: string) => (kind === "docs" ? docsRoute.value : null),
+  setDocsTab: vi.fn((tab: DocsTab) => {
+    docsRoute.value = tab;
+  }),
 }));
 vi.mock("./bus.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Bus>()),
@@ -80,10 +89,9 @@ beforeAll(() => {
 });
 
 it("opens a deep-linked Memories tab when the settings never answer", async () => {
-  const { forceDocsTab, showDocsTab } = await import("./docs.js");
+  const { showDocsTab } = await import("./docs.js");
   const { renderMemoriesPanel } = await import("./memories.js");
 
-  forceDocsTab("memories");
   showDocsTab();
 
   await vi.waitFor(() => {

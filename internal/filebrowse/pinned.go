@@ -7,10 +7,13 @@ package filebrowse
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -49,6 +52,42 @@ func openChild(dir *os.File, name, displayPath string, flags int) (*os.File, err
 		return nil, &os.PathError{Op: "openat", Path: displayPath, Err: openErr}
 	}
 	return os.NewFile(uintptr(fd), displayPath), nil
+}
+
+// lstatTypeAt looks name up in dir: typ is 0 for a regular file, fs.ModeDir for a directory and
+// fs.ModeIrregular for anything else, a symlink included (not followed). Nothing there is found
+// false with a nil error.
+func lstatTypeAt(dir *os.File, name, displayPath string) (typ fs.FileMode, found bool, err error) {
+	conn, err := dir.SyscallConn()
+	if err != nil {
+		return 0, false, err
+	}
+	var st unix.Stat_t
+	var statErr error
+	if ctlErr := conn.Control(func(dirFD uintptr) {
+		for {
+			statErr = unix.Fstatat(int(dirFD), name, &st, unix.AT_SYMLINK_NOFOLLOW)
+			if !errors.Is(statErr, unix.EINTR) {
+				return
+			}
+		}
+	}); ctlErr != nil {
+		return 0, false, ctlErr
+	}
+	switch {
+	case errors.Is(statErr, unix.ENOENT):
+		return 0, false, nil
+	case statErr != nil:
+		return 0, false, &os.PathError{Op: "fstatat", Path: displayPath, Err: statErr}
+	}
+	switch st.Mode & unix.S_IFMT {
+	case unix.S_IFREG:
+		return 0, true, nil
+	case unix.S_IFDIR:
+		return fs.ModeDir, true, nil
+	default:
+		return fs.ModeIrregular, true, nil
+	}
 }
 
 // openPinnedRoot walks from the mount's root handle down to l one component

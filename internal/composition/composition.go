@@ -136,6 +136,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	if claimErr != nil {
 		return nil, fmt.Errorf("refusing to start: %w", claimErr)
 	}
+	// Before the first engine start, whose own leases carry the same stamp.
+	sweepOwnSessionLeases(roots)
 
 	// Backgrounded: the listener binds first, so a first-boot download is an unready verdict rather
 	// than a missing server. Below Install because its early returns log synchronously.

@@ -34,6 +34,12 @@ const NEAR_LEAD = 1.5;
  *  viewport (`layout.css.content-visibility-relevant-content-margin`), so a move under one scrollport keeps every box
  *  it can reach marked first, and half leaves room for a viewport taller than the scrollport. */
 const NEAR_JUMP = 0.5;
+/** The near-band passes one task may force: the first marks move the band by their growth and the next marks what
+ *  moved in; more means estimates far off everywhere, which the near observer finishes over the next frames. */
+const BAND_PASSES = 3;
+/** The most frames `whenLayoutQuiet` waits, so a turn that keeps growing (a live reply) holds no
+ *  cover past about 100 ms. */
+const QUIET_FRAMES_MAX = 6;
 /** Consecutive frames a settle or a press window must see nothing to do before it lets go. */
 const RESTORE_HOLD_FRAMES = 2;
 /** The frames a settle or a press window may spend before it gives up. */
@@ -183,6 +189,14 @@ export class ScrollController {
   /** The scroll position the near band was last known to match (NaN = none). */
   private nearTop = Number.NaN;
   private nearQueued = false;
+  /** Boxes observed whose first near notification has not come: until it does, a box in the band is
+   *  laid out at its intrinsic size. */
+  private nearUnseen = new Set<Element>();
+  private nearSettledWaiters: (() => void)[] = [];
+  /** Turn resize deliveries so far, which `whenLayoutQuiet` compares across frames. */
+  private childResizes = 0;
+  /** A mutation added skippable boxes since the follow frame last marked the band. */
+  private nearAdded = false;
   private observedChildren = new Set<Element>();
 
   private topSentinel: HTMLElement | null = null;
@@ -571,6 +585,7 @@ export class ScrollController {
   }
 
   private onChildResize(entries: readonly ResizeObserverEntry[]): void {
+    this.childResizes++;
     this.delivering = true;
     this.pressResized = true;
     let shrank = false;
@@ -747,6 +762,7 @@ export class ScrollController {
       this.followFrame = 0;
       if (this.state === "following") {
         this.correct();
+        this.markAddedBand();
       }
     });
   }
@@ -1186,6 +1202,9 @@ export class ScrollController {
     } else {
       this.retake();
     }
+    // The task's own insertions reach the near targets only at the content observer's microtask, after this frame's
+    // proximity is decided: a box built into a fresh view would show at its intrinsic size, then grow.
+    this.observeNear(this.viewEl);
     // Every read before the floor's and the near marks' writes, which would dirty the layout the reads take.
     this.lastT = this.clampedTop();
     const near = this.nearJumpBoxes();
@@ -1304,6 +1323,54 @@ export class ScrollController {
     this.nearObserver?.disconnect();
     this.nearTargets.clear();
     this.nearTop = Number.NaN;
+    this.nearUnseen.clear();
+    this.nearAdded = false;
+    this.flushNearSettled();
+  }
+
+  /** Run `cb` once every box observed so far, the current task's insertions included, has had its
+   *  first near notification and a frame has then laid out with no turn resizing, so the next frame
+   *  shows each box at its real size and moves none. */
+  whenNearSettled(cb: () => void): void {
+    const quiet = (): void => {
+      this.whenLayoutQuiet(cb);
+    };
+    // After the content observer's microtask, which a mutation earlier in the task queued first.
+    queueMicrotask(() => {
+      if (this.nearUnseen.size === 0) {
+        quiet();
+      } else {
+        this.nearSettledWaiters.push(quiet);
+      }
+    });
+  }
+
+  /** Run `cb` in the first animation frame after a frame that resized no turn, or `QUIET_FRAMES_MAX`
+   *  frames on. Chromium decides a `content-visibility: auto` box's proximity after layout
+   *  (third_party/blink/renderer/core/display_lock/display_lock_document_state.cc), so a box it
+   *  starts or stops skipping resizes a frame later, and the pin answers it a frame late. */
+  private whenLayoutQuiet(cb: () => void): void {
+    let seen = -1;
+    let frames = 0;
+    const check = (): void => {
+      // A frame's resize observations run after its animation-frame callbacks: this frame's read
+      // covers the frame before it.
+      if (seen === this.childResizes || ++frames > QUIET_FRAMES_MAX) {
+        cb();
+        return;
+      }
+      seen = this.childResizes;
+      requestAnimationFrame(check);
+    };
+    requestAnimationFrame(check);
+  }
+
+  private flushNearSettled(): void {
+    const waiters = this.nearSettledWaiters;
+    this.nearSettledWaiters = [];
+    for (const cb of waiters) {
+      cb();
+    }
   }
 
   /** Build the near observer for the scrollport's current height, if its lead changed: a rootMargin is fixed for an
@@ -1325,6 +1392,7 @@ export class ScrollController {
     this.nearObserver = observer;
     for (const box of this.nearTargets) {
       observer.observe(box);
+      this.nearUnseen.add(box);
     }
   }
 
@@ -1334,6 +1402,7 @@ export class ScrollController {
     this.nearTop = this.scrollEl.scrollTop;
     for (const entry of entries) {
       entry.target.toggleAttribute("data-near", entry.isIntersecting);
+      this.nearUnseen.delete(entry.target);
       if (!entry.isIntersecting) {
         this.floorStale = true;
       }
@@ -1341,6 +1410,9 @@ export class ScrollController {
     this.holdFloor();
     this.correct();
     this.floorAfter(true);
+    if (this.nearUnseen.size === 0) {
+      this.flushNearSettled();
+    }
   }
 
   /** In a microtask, so the marks' layout lands after the write's own measurements and before the frame's resize loop. */
@@ -1372,6 +1444,11 @@ export class ScrollController {
       return [];
     }
     this.nearTop = t;
+    return this.bandBoxes();
+  }
+
+  /** The unmarked boxes inside the near band at the current layout. */
+  private bandBoxes(): Element[] {
     if (this.nearObserver === null) {
       return [];
     }
@@ -1380,7 +1457,8 @@ export class ScrollController {
     const bottom = port.bottom + this.nearMargin;
     const near: Element[] = [];
     for (const box of this.nearTargets) {
-      if (box.hasAttribute("data-near")) {
+      // A box in a collapsed region is clipped, so the observer would unmark it at once.
+      if (box.hasAttribute("data-near") || box.closest("[inert]") !== null) {
         continue;
       }
       const r = box.getBoundingClientRect();
@@ -1389,6 +1467,36 @@ export class ScrollController {
       }
     }
     return near;
+  }
+
+  /** Mark the band's unmarked boxes and converge, once a mutation added skippable boxes: the near observer meets them
+   *  only after this frame renders, so they would show at their intrinsic estimate and grow a frame later. */
+  private markAddedBand(): void {
+    if (!this.nearAdded) {
+      return;
+    }
+    this.nearAdded = false;
+    const near = this.bandBoxes();
+    if (near.length === 0) {
+      return;
+    }
+    this.markNear(near);
+    this.convergeBand();
+    this.nearTop = this.scrollEl.scrollTop;
+  }
+
+  /** After marks: pin, then mark what the marks' growth moved into the band, until none is left. Each pass forces one
+   *  layout; `BAND_PASSES` bounds them. */
+  private convergeBand(): void {
+    for (let pass = 0; pass < BAND_PASSES; pass++) {
+      this.correct();
+      const near = this.bandBoxes();
+      if (near.length === 0) {
+        return;
+      }
+      this.markNear(near);
+    }
+    this.correct();
   }
 
   /** The write half of the near jump, apart from its reads (`nearJumpBoxes`): a mark changes the box's size, so a
@@ -1499,26 +1607,39 @@ export class ScrollController {
           forEachSkippable(node, (box) => {
             observer.unobserve(box);
             this.nearTargets.delete(box);
+            this.nearUnseen.delete(box);
           });
         }
       }
       for (const node of record.addedNodes) {
-        if (node instanceof Element) {
-          this.observeNear(node);
+        if (node instanceof Element && this.observeNear(node) > 0) {
+          this.nearAdded = true;
         }
       }
     }
+    if (this.nearUnseen.size === 0) {
+      this.flushNearSettled();
+    }
   }
 
-  private observeNear(root: Element): void {
+  /** Observe the skippable boxes under `root` not observed yet, so one seen stays out of `nearUnseen`; returns how
+   *  many. */
+  private observeNear(root: Element): number {
     const observer = this.nearObserver;
     if (observer === null) {
-      return;
+      return 0;
     }
+    let added = 0;
     forEachSkippable(root, (box) => {
+      if (this.nearTargets.has(box)) {
+        return;
+      }
       observer.observe(box);
       this.nearTargets.add(box);
+      this.nearUnseen.add(box);
+      added++;
     });
+    return added;
   }
 
   /** Observe every view child but the history sentinel; returns how many observed children went away. */

@@ -8,7 +8,7 @@
 
 import { pushRoute } from "./router.js";
 import { parseRoute } from "./route-path.js";
-import type { Route, SettingsTab, GitTab, DocsTab, HistoryTab } from "./route-path.js";
+import type { Route, SettingsTab, GitTab, DocsTab, HistoryTab, SubTabRoute } from "./route-path.js";
 // The kinds' one definition is the Go const block (internal/marotte/domain_tabs.go), emitted as a
 // registered enum, so per-kind handling is TOTAL.
 import type { TabKind, TabSubject, TabsChangedPayload } from "./types.js";
@@ -62,15 +62,19 @@ import {
 } from "./actions/tabs.js";
 import {
   coverHeld,
+  coverShown,
+  deferReveal,
   dropCover,
+  dropParkReads,
   hideTranscript,
   holdCover,
   moveFocusOffTranscript,
   releaseCover,
-  releaseCoverExceptFor,
   showTranscript,
+  swapDeferred,
   takeParkReads,
   transcriptHidden,
+  transcriptPainted,
 } from "./transcript-cover.js";
 import { afterNextPaint } from "./next-paint.js";
 import { ActionError, retryNetwork, type ActionErrorLike } from "./actions/index.js";
@@ -81,7 +85,7 @@ import { ICON_CLOSE, ICON_PIN_FILLED, ICON_TAB_SUBTAB } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { activeView, setActiveView } from "./device-view.js";
 import { $, queryEl, setAttr, setText } from "./dom.js";
-import { showOnlyView } from "./view-swap.js";
+import { otherViewShown, showOnlyView } from "./view-swap.js";
 import { signal, effect, el } from "@cplieger/reactive";
 import {
   attachDrag,
@@ -157,8 +161,7 @@ const NO_RUNS: TabRunTally = { total: 0, working: 0, waiting: 0, input: 0 };
 
 /** What `openTab` needs. `kind` plus `ref` names the subject; everything else is
  *  a choice about this particular open. */
-export interface OpenTabArgs {
-  kind: TabKind;
+interface OpenTabFields {
   /** A chat id, an absolute path, a run id. Empty (or absent) for a singleton,
    *  the one kind whose identity is its kind. */
   ref?: string;
@@ -176,6 +179,17 @@ export interface OpenTabArgs {
   /** Raise no toast for a 404, for a caller that falls back on `not-found`. Default false. */
   quietNotFound?: boolean;
 }
+
+type SubTabKind = SubTabRoute["kind"];
+
+/** `route`, a sub-tab singleton's only, names the sub-tab: an open row is pointed at it before the
+ *  dispatch and a new row is born on it. Absent, a new row takes the factory's default and an open
+ *  row keeps its own. */
+export type OpenTabArgs =
+  | (OpenTabFields & { kind: Exclude<TabKind, SubTabKind>; route?: never })
+  | {
+      [K in SubTabKind]: OpenTabFields & { kind: K; route?: Extract<SubTabRoute, { kind: K }> };
+    }[SubTabKind];
 
 // --- Store ---
 
@@ -229,6 +243,15 @@ const internal: Internal = {
  *  the row is BUILT with it, and it survives a re-list. Bounded by `forgetRow`. */
 const nameOverrides = new Map<string, string>();
 
+/** A door's sub-tab for a singleton, held for the length of its open and keyed like `nameOverrides`:
+ *  whichever path builds the row (the open's response, a frame, a re-list) builds it on `route`.
+ *  `reached` names the rows already pointed at it, so the open's end leaves a pill clicked on one. */
+interface DoorRoute {
+  route: SubTabRoute;
+  reached: Set<string>;
+}
+const doorRoutes = new Map<string, DoorRoute>();
+
 /** Tab ids in ACTIVATION order, most recent first, for a close's hand-over. In memory only (a cold
  *  strip falls back to position 0) and non-reactive. Head is the last settled tab
  *  (`settleActivation`), so a burst hands a close to a tab that loaded; no closed id is held
@@ -270,6 +293,10 @@ function mostRecentOpenTab(): string {
 /** Effects subscribed via `tabsEffect()` re-run on every emit(). State is mutated in place; this
  *  counter is the signal those mutations trip. */
 const stateVersion = signal(0);
+
+/** Bumped by every `setTabRoute`, which emits only for the active row: `subTabOf` must also see a
+ *  background row's route move. */
+const routeVersion = signal(0);
 
 /** Reactive counter for DOT writes, which do not `emit()`; only `subscribeTabCues` reads it. */
 const dotVersion = signal(0);
@@ -332,7 +359,11 @@ function nameFor(subject: TabSubject, spec: TabViewSpec): string {
 }
 
 function buildRow(subject: TabSubject): TabRow {
-  const spec = materializeTab(subject);
+  const key = subjectKey(subject.kind, subject.ref);
+  const door = doorRoutes.get(key);
+  door?.reached.add(subject.id);
+  const made = materializeTab(subject);
+  const spec = door === undefined ? made : { ...made, route: door.route };
   const row: TabRow = { subject, spec, name: nameFor(subject, spec) };
   if (spec.dotStatus !== undefined) {
     row.dotStatus = spec.dotStatus;
@@ -703,10 +734,6 @@ function reselectAfterRemoval(): void {
   }
 }
 
-function hasResidentTurns(chatID: string): boolean {
-  return (get(chatID)?.turn_order.length ?? 0) > 0;
-}
-
 interface ActivationOpts {
   readonly quiet: boolean;
   /** Start a fresh activation of the tab already active (a Retry after a failed load). */
@@ -714,6 +741,9 @@ interface ActivationOpts {
   /** Run the activation half in this task: boot, where nothing has painted that could go first,
    *  and a refused switch's revert or a close's put-back, whose notice is raised when it returns. */
   readonly now?: boolean;
+  /** When the reader began waiting for this view (`performance.now()` clock), which the cover's
+   *  show window counts from; the gesture by default. */
+  readonly waitingSince?: number;
 }
 
 /** The GESTURE half, run inside the click: the outgoing chat's park reads at the clean layout the
@@ -731,6 +761,7 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
   }
   internal.unshown = "";
   const ref = row.subject.kind === "chat" ? row.subject.ref : "";
+  dropParkReads();
   if (ref !== "" && ref !== getPaintedId()) {
     takeParkReads();
   }
@@ -749,16 +780,16 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
       // Its page is local and loads nothing, so it shows in this task and a cover would only flash.
       dropCover();
       now = true;
-    } else if (
-      ref !== getPaintedId() ||
-      (opts.again === true && !hasResidentTurns(ref)) ||
-      !viewLaidOut(row)
-    ) {
-      // A painted chat coming back from another view kind is covered too: its transcript stays out
-      // of layout until the activation, and the cover is what this frame shows in its place.
+    } else if (!transcriptPainted(ref)) {
+      holdCover(ref, opts.waitingSince);
+    } else if (coverShown()) {
+      // A slow switch's skeleton already stands over that chat's empty view: the parked chat's
+      // paint lifts it over its own turns.
       holdCover(ref);
     } else {
-      releaseCoverExceptFor(ref);
+      // A parked or mounted view shows its own turns: the outgoing view stays on screen until the
+      // activation swaps them, and a cover held but not shown would only hide them.
+      dropCover();
     }
   } else {
     reselectPaintedChat();
@@ -796,15 +827,16 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
     runActivation(gen);
   } else {
     afterNextPaint(() => {
-      runActivation(gen);
+      runActivation(gen, true);
     });
   }
   return record;
 }
 
 /** The ACTIVATION half, in its own task: show the view and start its refresh, only while `gen` is
- *  the newest. A superseded target runs nothing: no `onShow`, no fetch, no paint. */
-function runActivation(gen: number): void {
+ *  the newest. A superseded target runs nothing: no `onShow`, no fetch, no paint. `deferred` is a
+ *  run after the gesture's frame, whose layout is clean. */
+function runActivation(gen: number, deferred = false): void {
   const record = recordOf(gen);
   if (record === undefined || record.ran) {
     return;
@@ -815,9 +847,18 @@ function runActivation(gen: number): void {
     record.resolveDone();
     return;
   }
+  const target = row.subject.kind === "chat" ? row.subject.ref : "";
+  if (deferred && target !== "" && target !== getPaintedId() && !coverHeld()) {
+    // Uncovered, the outgoing transcript stayed in reach through that frame.
+    takeParkReads();
+  }
   try {
     // First: a chat's restore writes the scroll offset, which a scroller with no box cannot take.
-    revealView(row);
+    if (revealWaits(row)) {
+      revealAtSwap(row);
+    } else {
+      revealView(row);
+    }
     // A chat this file showed and that is still painted is mounted; showing it again would re-key
     // its rail and clear what it painted. One whose removal cleared the painted chat and that is
     // shown again is not mounted. A Retry's fresh activation clears its own failure box.
@@ -987,7 +1028,8 @@ export function activateRestoredTab(): void {
   const route = parseRoute(location.pathname, location.hash);
   const root = route.kind === "chat" && route.id === "";
   if (root || tabIdForRoute(route) === id) {
-    beginActivation(id, { quiet: true, now: true });
+    // The time origin: the reader has watched an empty chat area since the page began loading.
+    beginActivation(id, { quiet: true, now: true, waitingSince: 0 });
   }
 }
 
@@ -995,7 +1037,8 @@ export function activateRestoredTab(): void {
  *  route could not open its own view. A no-op once any activation has run. */
 export function showUnshownTab(): void {
   if (internal.unshown !== "" && internal.unshown === state.active) {
-    beginActivation(internal.unshown, { quiet: true });
+    // Still boot: the reader has watched an empty chat area since the page began loading.
+    beginActivation(internal.unshown, { quiet: true, waitingSince: 0 });
   }
 }
 
@@ -1204,6 +1247,17 @@ export function adoptSubject(subject: TabSubject, name?: string): void {
  *  the chat), a different fact from a network that failed to answer. */
 export type OpenTabOutcome = "opened" | "not-found" | "failed";
 
+/** Hold `route` for this open's rows and point the open row, if any, at it. */
+function holdDoorRoute(key: string, open: string, route: SubTabRoute): DoorRoute {
+  const door: DoorRoute = { route, reached: new Set() };
+  doorRoutes.set(key, door);
+  if (open !== "") {
+    setTabRoute(open, route);
+    door.reached.add(open);
+  }
+  return door;
+}
+
 /** Open a tab for something that already exists, and activate it unless the user moved to another
  *  tab or asked for another navigation meanwhile. Resolves with the row in the projection, adopted
  *  from the RESPONSE, so no frame round trip sits in the gesture's path.
@@ -1218,6 +1272,18 @@ export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
     // beat and then snapping.
     nameOverrides.set(subjectKey(args.kind, ref), args.name);
   }
+  const doorKey = subjectKey(args.kind, ref);
+  const door =
+    args.route === undefined
+      ? undefined
+      : holdDoorRoute(doorKey, tabIdFor(args.kind, ref), args.route);
+  // Only this call's entry: a later door's route for the same row stays for that door's open.
+  const ownsDoor = (): boolean => door !== undefined && doorRoutes.get(doorKey) === door;
+  const dropDoorRoute = (): void => {
+    if (ownsDoor()) {
+      doorRoutes.delete(doorKey);
+    }
+  };
   const ticket = args.activate === false ? 0 : claimNavigation();
   const opID = newOpID();
   markLocalOp(opID);
@@ -1234,6 +1300,7 @@ export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
     // The server answered an error (nothing committed) or the dispatch gave up.
     // Nothing was painted, so the failure transition just retires the op.
     opFailed(opID);
+    dropDoorRoute();
     if (outcome.status !== "error") {
       return "failed";
     }
@@ -1259,6 +1326,11 @@ export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
   }
   const reply = outcome.value;
   adoptSubject(reply.subject);
+  // A refused close's rollback puts the live row back with the route it had, building nothing.
+  if (door !== undefined && ownsDoor() && !door.reached.has(reply.subject.id)) {
+    setTabRoute(reply.subject.id, door.route);
+  }
+  dropDoorRoute();
   adoptCommitted(opID, reply.subject, reply.version, reply.created);
   if (args.activate !== false && navigationHeld(ticket)) {
     void activateTab(reply.subject.id);
@@ -2044,6 +2116,30 @@ export function getActiveTabRoute(): Route | null {
   return rowOfID(state.active)?.spec.route ?? null;
 }
 
+/** The sub-tab the open row of a sub-tab singleton names, or null when no such row is open: the one
+ *  record of what that page shows. Reactive: a row's arrival or departure and every route write. */
+export function subTabOf(kind: "settings"): SettingsTab | null;
+export function subTabOf(kind: "git"): GitTab | null;
+export function subTabOf(kind: "docs"): DocsTab | null;
+export function subTabOf(kind: "history"): HistoryTab | null;
+export function subTabOf(kind: SubTabKind): SettingsTab | GitTab | DocsTab | HistoryTab | null {
+  // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+  stateVersion.value;
+  // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+  routeVersion.value;
+  const route = rowOfID(tabIdFor(kind))?.spec.route;
+  switch (route?.kind) {
+    case "history":
+      return route.tab ?? "chats";
+    case "settings":
+    case "git":
+    case "docs":
+      return route.tab;
+    default:
+      return null;
+  }
+}
+
 /** Kind of the active tab, or null. A key binding scoped BY VIEW reads this; the SUBJECT's kind,
  *  not the route's (an editor tab's route kind is "file"). */
 export function getActiveTabKind(): TabKind | null {
@@ -2339,7 +2435,11 @@ function showView(row: TabRow): void {
   if (activationPending()) {
     holdView(row);
   } else {
-    revealView(row);
+    if (revealWaits(row)) {
+      revealAtSwap(row);
+    } else {
+      revealView(row);
+    }
     pushRoute(row.spec.route);
   }
 
@@ -2365,16 +2465,39 @@ function viewLaidOut(row: TabRow): boolean {
   return target?.classList.contains("hidden") !== true && !transcriptHidden();
 }
 
-/** The gesture form of `revealView`, which never leaves the view area empty. A non-chat view shows
- *  now, its entry fade starting with the click. A chat view not laid out shows under the cover
- *  (`beginActivation` holds it) with its transcript out of layout, which the activation lays out;
- *  a laid-out chat view is already the one shown. */
-function holdView(row: TabRow): void {
-  if (row.subject.kind !== "chat") {
-    showOnlyView(queryEl<HTMLElement>(row.spec.view));
-  } else if (coverHeld() && !viewLaidOut(row)) {
+/** A chat view not laid out whose switch keeps the outgoing view up (transcript-cover.ts
+ *  `deferReveal` runs its reveal). */
+function revealWaits(row: TabRow): boolean {
+  return row.subject.kind === "chat" && swapDeferred(row.subject.ref) && !viewLaidOut(row);
+}
+
+/** Reveal the row's view at its swap, while it is still the active tab. With no other view on
+ *  screen there is nothing to keep, so the chat view shows now with its transcript out of layout. */
+function revealAtSwap(row: TabRow): void {
+  const id = row.subject.id;
+  const target = queryEl<HTMLElement>(row.spec.view);
+  if (!otherViewShown(target)) {
     hideTranscript();
-    showOnlyView(queryEl<HTMLElement>(row.spec.view));
+    showOnlyView(target);
+  }
+  deferReveal(() => {
+    const current = rowOfID(id);
+    if (state.active === id && current !== undefined) {
+      revealView(current);
+    }
+  });
+}
+
+/** The gesture form of `revealView`. A non-chat view shows now. The outgoing view stays until the
+ *  cover shows or the target view is revealed; under a shown cover, or with no other view on
+ *  screen, a chat view not laid out shows with its transcript out of layout. */
+function holdView(row: TabRow): void {
+  const target = queryEl<HTMLElement>(row.spec.view);
+  if (row.subject.kind !== "chat") {
+    showOnlyView(target);
+  } else if (!viewLaidOut(row) && (coverShown() || (coverHeld() && !otherViewShown(target)))) {
+    hideTranscript();
+    showOnlyView(target);
   }
 }
 
@@ -2924,44 +3047,33 @@ async function toggleSingleton(kind: TabKind): Promise<void> {
   await openTab({ kind });
 }
 
-/** Toggle the Settings tab, landing on the given sub-tab (default: General). A singleton's ref is
- *  empty, so the sub-tab is applied AFTER the tab exists, through the router's setter. */
-export async function toggleSettingsView(tab: SettingsTab = "general"): Promise<void> {
+/** Toggle the Settings tab. A new tab opens on General; an open one keeps its sub-tab. */
+export async function toggleSettingsView(): Promise<void> {
   await toggleSingleton("settings");
-  setSettingsTab(tab);
 }
 
-/** Open Settings on the given sub-tab (default: General). NEVER closes it, which
- *  is why it exists beside the toggle: navigation, routing and a link out of a
- *  modal express an intent to OPEN, and a toggle would dismiss the panel it was
- *  pointing at. The panel store moves first, as in route-apply.ts, so the tab's refresh loads the
- *  named panel; a route correction alone leaves the shown panel where it was. */
-export async function openSettingsView(tab: SettingsTab = "general"): Promise<void> {
-  // Lazy for the same reason as tab-materialize.ts: settings-tabs.ts imports this module.
-  const { forceSettingsTab } = await import("./settings-tabs.js");
-  forceSettingsTab(tab);
-  await openTab({ kind: "settings" });
-  setSettingsTab(tab);
+/** Open Settings on the given sub-tab. NEVER closes it, which is why it exists beside the toggle:
+ *  navigation, routing and a link out of a modal express an intent to OPEN, and a toggle would
+ *  dismiss the panel it was pointing at. */
+export async function openSettingsView(tab: SettingsTab): Promise<void> {
+  await openTab({ kind: "settings", route: { kind: "settings", tab } });
 }
 
 /** Switch the Settings panel to a sub-tab; a no-op when Settings is not open. SYNCHRONOUS and not a
- *  collection mutation: the client's own correction channel over the factory's route. */
+ *  collection mutation: the row's route is the panel's only record. */
 export function setSettingsTab(tab: SettingsTab): void {
   setTabRoute(tabIdFor("settings"), { kind: "settings", tab });
 }
 
-export async function toggleGitView(tab: GitTab = "changes"): Promise<void> {
+/** Toggle the git view. A new tab opens on Changes; an open one keeps its sub-tab. */
+export async function toggleGitView(): Promise<void> {
   await toggleSingleton("git");
-  setGitTab(tab);
 }
 
-/** Open the git view on the given sub-tab (default: Changes). NEVER closes it;
- *  the twin of openSettingsView, for the same reasons. */
-export async function openGitView(tab: GitTab = "changes"): Promise<void> {
-  const { forceGitTab } = await import("./git-tabs.js");
-  forceGitTab(tab);
-  await openTab({ kind: "git" });
-  setGitTab(tab);
+/** Open the git view on the given sub-tab. NEVER closes it; the twin of openSettingsView, for the
+ *  same reasons. */
+export async function openGitView(tab: GitTab): Promise<void> {
+  await openTab({ kind: "git", route: { kind: "git", tab } });
 }
 
 /** Switch the git view's sub-tab route. No-op when the git view isn't open.
@@ -2987,7 +3099,7 @@ export async function toggleFilesView(openAt: string): Promise<void> {
 
 /** Bring the file browser forward, opening at `openAt` when none is open. NEVER
  *  closes it, which is the whole reason this exists beside the toggle: "go to" and
- *  "toggle" are different verbs, as setSettingsTab/setGitTab/setDocsTab already are. */
+ *  "toggle" are different verbs, as openSettingsView and openGitView already are. */
 export async function openFilesView(openAt: string): Promise<void> {
   const row = activeOrRecentFilesTab();
   if (row !== undefined) {
@@ -3014,10 +3126,10 @@ export function setDocsTab(tab: DocsTab): void {
   setTabRoute(tabIdFor("docs"), { kind: "docs", tab });
 }
 
-/** Toggle the Kiro configuration browser, landing on the given sub-tab. */
-export async function toggleDocsView(tab: DocsTab = "steering"): Promise<void> {
+/** Toggle the Kiro configuration browser. A new tab opens on Steering; an open one keeps its
+ *  sub-tab. */
+export async function toggleDocsView(): Promise<void> {
   await toggleSingleton("docs");
-  setDocsTab(tab);
 }
 
 /** Point ONE row's LOCAL route somewhere, by id. The readonly spec is replaced, not mutated; emits
@@ -3028,6 +3140,7 @@ function setTabRoute(id: string, route: Route): void {
     return;
   }
   row.spec = { ...row.spec, route };
+  routeVersion.value = routeVersion.peek() + 1;
   if (state.active === id) {
     emit();
   }
@@ -3150,6 +3263,7 @@ export function _resetForTest(): void {
   internal.unshown = "";
   internal.stripRestore = null;
   nameOverrides.clear();
+  doorRoutes.clear();
   activationHistory.length = 0;
   navigationSeq = 0;
   activeCloses = 0;

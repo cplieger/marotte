@@ -207,6 +207,12 @@
   align-self: stretch;
 }
 
+/* The real head row is one line box of its own text tall; fixed-height chrome bars are shorter,
+ * and the newest turn's row has no fold toggle to hold it open. */
+.turn-skel .turn-head-row {
+  min-block-size: 1lh;
+}
+
 .skeleton-line {
   height: 0.75rem;
   border-radius: var(--r-sm);

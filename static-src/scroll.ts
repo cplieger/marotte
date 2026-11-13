@@ -89,6 +89,10 @@ export function readingLineOffset(): number {
 export function onContentResize(cb: () => void): () => void {
   return getInstance().onContentResize(cb);
 }
+/** Run `cb` once the transcript's boxes inserted so far are laid out at their real size. */
+export function whenNearSettled(cb: () => void): void {
+  getInstance().whenNearSettled(cb);
+}
 /** Register `cb` for a view taking the scroller (unpark); returns the unregister. */
 export function onAttach(cb: () => void): () => void {
   return getInstance().onAttach(cb);

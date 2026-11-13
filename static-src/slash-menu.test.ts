@@ -65,6 +65,7 @@ function searchReply(matches: FileMatch[]): FileSearchResult {
     matched: matches.length,
     truncated: false,
     root_ignored: false,
+    can_search_deeper: false,
   };
 }
 

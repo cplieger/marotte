@@ -2,18 +2,18 @@
 // picker over `GET /api/sessions`. A chat row opens its chat or adopts it via `resume_session`; a run row opens the
 // read-only run view.
 
-import { el, signal, subscribe, effect } from "@cplieger/reactive";
+import { computed, el, signal, subscribe, effect } from "@cplieger/reactive";
 import { skeletonTiming } from "./legacy-ui/skeleton.js";
 import { $, maybeEl, queryAll } from "./dom.js";
 import {
   activeChatRef,
   descendantChatsOf,
   hasTab,
-  setHistoryTab as setHistoryTabRoute,
+  setHistoryTab,
+  subTabOf,
   tabSetVersion,
 } from "./tabs.js";
 import type { TabRunDotStatus } from "./tabs.js";
-import { pushRoute } from "./router.js";
 import type { HistoryTab } from "./route-path.js";
 import { onBus, BUS_RUNS_CHANGED } from "./bus.js";
 import { engineRead } from "./engine-read.js";
@@ -346,26 +346,8 @@ function underFloor(q: string): boolean {
 /** The note while the typed text is under the floor. */
 const UNDER_FLOOR_NOTE = "Type 3 characters, or press Enter to search";
 
-// Deduped, like git-tabs.ts: re-selecting the active pane does not re-swap panels.
-const activeTab = signal<HistoryTab>("chats");
-
-/**
- * Set the active pane without pushing a URL, for the router on back/forward to /history/<tab>. Safe before the tab
- * exists.
- */
-export function forceHistoryTab(tab: HistoryTab): void {
-  setHistoryTabRoute(tab);
-  activeTab.value = tab;
-}
-
-function selectTab(tab: HistoryTab): void {
-  if (tab === activeTab.peek()) {
-    return;
-  }
-  setHistoryTabRoute(tab);
-  pushRoute({ kind: "history", tab });
-  activeTab.value = tab;
-}
+/** The pane the history row's route names, null while no history row is open. */
+const shownTab = computed(() => subTabOf("history"));
 
 function chatsContainer(): HTMLElement | null {
   return maybeEl("history-table");
@@ -914,7 +896,7 @@ const historyFind: PageFind = {
 
 function activeFind(): SearchPopup {
   // The reactive read, so the toolbar's affordance effect re-runs on a pane switch.
-  return activeTab.value === "runs" ? historyCtrl.runsFind : historyCtrl.search;
+  return shownTab.value === "runs" ? historyCtrl.runsFind : historyCtrl.search;
 }
 
 let inited = false;
@@ -928,9 +910,13 @@ function initHistoryView(): void {
     attr: "data-history-tab",
     idPrefix: "history",
     tabs: HISTORY_TABS.map((id) => ({ id, label: TAB_LABELS[id] })),
-    onSelect: selectTab,
+    onSelect: setHistoryTab,
   });
-  subscribe(activeTab, (tab) => {
+  subscribe(shownTab, (tab) => {
+    // No row: nothing is on screen to repaint.
+    if (tab === null) {
+      return;
+    }
     paint(tab);
     swapViews(() => {
       let active: HTMLElement | null = null;

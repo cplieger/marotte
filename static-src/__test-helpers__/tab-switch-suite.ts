@@ -15,10 +15,12 @@ import {
   pointers,
   resetPointers,
   resident,
+  residentViews,
+  transcriptOwnerFake,
   type ChatOpenerFake,
 } from "./tab-switch-mocks.js";
 import { recordNotices, type Notice } from "./switch-notices.js";
-import { dropCover } from "../transcript-cover.js";
+import { dropCover, registerTranscriptOwner } from "../transcript-cover.js";
 
 bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
 
@@ -34,6 +36,7 @@ export function installSwitchSuite(): void {
     _resetTabsSyncForTest();
     _resetTabOpenersForTest();
     resetPointers();
+    registerTranscriptOwner(transcriptOwnerFake());
     fx.chat = chatOpenerFake();
     // The chat opener's activation-era shape: `select` is the gesture half, `show` the activation
     // half, `refresh` takes the activation's signal and answers when the view has content.
@@ -68,6 +71,7 @@ export async function strip(...refs: string[]): Promise<Record<string, string>> 
   pointers.active = first;
   pointers.painted = first;
   resident.add(first);
+  residentViews.add(first);
   // The fake opener mounts nothing, so the paint that would release the first chat's cover is
   // stood in for here.
   dropCover();

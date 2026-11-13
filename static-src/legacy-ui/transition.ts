@@ -2,8 +2,8 @@
  * transition.ts — Run one CSS transition on an element and finalize it once it
  * ends. A transition needs its start state flushed before the change, or the
  * browser coalesces both writes into one frame and nothing animates;
- * `runTransition` does that flush. The primitives' fades follow the same
- * settle rule through their own private watcher.
+ * `runTransition` does that flush. The primitives' fades settle through
+ * `watchSettle`.
  * @module
  */
 
@@ -34,9 +34,19 @@ interface TransitionSpec {
  *  so a settle armed against a node that is then dropped retains nothing. */
 const inFlight = new WeakMap<HTMLElement, () => void>();
 
+/** Whether a transition of `property` still runs on `el`. A finished transition's
+ *  `transitionend` is dispatched after its `finished` promise's reactions run
+ *  (https://drafts.csswg.org/web-animations-1/#update-animations-and-send-events), so a settle
+ *  armed by a write in one of them would otherwise take that end for its own. */
+function stillRunning(el: HTMLElement, property: string): boolean {
+  return el
+    .getAnimations()
+    .some((a) => a instanceof CSSTransition && a.transitionProperty === property);
+}
+
 /** @internal Arm one settle on `el`: the first `transitionend` whose target is
- *  `el`, or the fallback ceiling, whichever comes first. Fires once; returns
- *  its cancel. */
+ *  `el` and whose property no newer transition still runs, or the fallback
+ *  ceiling, whichever comes first. Fires once; returns its cancel. */
 export function watchSettle(el: HTMLElement, onSettled: () => void): () => void {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const detach = (): void => {
@@ -53,7 +63,7 @@ export function watchSettle(el: HTMLElement, onSettled: () => void): () => void 
     onSettled();
   };
   const onEnd = (e: TransitionEvent): void => {
-    if (e.target === el) {
+    if (e.target === el && !stillRunning(el, e.propertyName)) {
       fire();
     }
   };
@@ -77,8 +87,8 @@ export function cancelTransition(el: HTMLElement): void {
 }
 
 /**
- * Run one CSS transition on `el`: `settled` runs once, on the first
- * `transitionend` targeting `el` or after the fallback ceiling. `change` and
+ * Run one CSS transition on `el`: `settled` runs once, on the settle
+ * `watchSettle` defines, or after the fallback ceiling. `change` and
  * `settled` are read once, first, and any settle pending on `el` is dropped.
  * A `cancelTransition` or `runTransition` on `el` from inside `change` takes
  * the element and this call arms nothing; a throw from `change` arms nothing.

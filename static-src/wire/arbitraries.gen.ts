@@ -2122,8 +2122,9 @@ const arbModel = fc.letrec<{
       matched: fc.double({ noNaN: true, noDefaultInfinity: true }),
       truncated: fc.boolean(),
       root_ignored: fc.boolean(),
+      can_search_deeper: fc.boolean(),
     },
-    { requiredKeys: ["matches", "scanned", "matched", "truncated", "root_ignored"] },
+    { requiredKeys: ["matches", "scanned", "matched", "truncated", "root_ignored", "can_search_deeper"] },
   ),
   FileStat: fc.record(
     {
@@ -2169,6 +2170,7 @@ const arbModel = fc.letrec<{
       files: fc.string(),
       case: fc.string(),
       ignored: fc.string(),
+      deep: fc.string(),
     },
     { requiredKeys: [] },
   ),

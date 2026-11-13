@@ -1332,8 +1332,8 @@ func TestStartProcess_ReportsSpawnFailure(t *testing.T) {
 	}
 }
 
-// startProcess assigns a 5s WaitDelay before the (failing) Start.
-func TestStartProcess_SetsWaitDelayToFiveSeconds(t *testing.T) {
+// os/exec's own SIGKILL after a lifecycle cancel must not land inside Stop's EOF window.
+func TestStartProcess_SetsWaitDelayToTheStopCeiling(t *testing.T) {
 	bogus := filepath.Join(t.TempDir(), "no-such-kiro-cli")
 	b := NewEngine(bogus, t.TempDir())
 	// Not t.Context(), which is cancelled before cleanups run: lifecycleCtx must outlive t.Cleanup(b.Stop).
@@ -1343,8 +1343,8 @@ func TestStartProcess_SetsWaitDelayToFiveSeconds(t *testing.T) {
 	if b.cmd == nil {
 		t.Fatal("b.cmd is nil; startProcess did not reach CommandContext")
 	}
-	if b.cmd.WaitDelay != 5*time.Second {
-		t.Errorf("b.cmd.WaitDelay = %v, want %v", b.cmd.WaitDelay, 5*time.Second)
+	if b.cmd.WaitDelay != StopCeiling() {
+		t.Errorf("b.cmd.WaitDelay = %v, want StopCeiling() %v", b.cmd.WaitDelay, StopCeiling())
 	}
 }
 
@@ -2484,6 +2484,8 @@ func TestApplySessionResult_TakesFlatMetaTitle(t *testing.T) {
 // write end is what reclaims it; WaitDelay's SIGKILL hits only the head (kiro-cli 2.16.0 leaked about 250 MB in 2/2
 // trials). The head ignores SIGTERM, so only EOF reclaims the grandchild.
 func TestCancelClosesStdinSoTheTreeSeesEOF(t *testing.T) {
+	// The head ignores EOF, so the stop waits out the whole EOF grace.
+	setStdinEOFGrace(t, 200*time.Millisecond)
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "grandchild.pid")
 	// The head ignores SIGTERM and blocks; its child's `head -c 1` returns when the pipe closes, proving EOF reached the

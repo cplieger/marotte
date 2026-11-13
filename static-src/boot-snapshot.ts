@@ -235,7 +235,9 @@ function projectChat(s: Session): SnapshotChat {
 /**
  * The active chat's newest turns as ENTRIES, in file order, capped by dropping WHOLE turns
  * (a body without its `turn_open` is a headerless card). Open tails have no `seq` and are
- * not carried.
+ * not carried. A newest turn over the bounds carries no window at all: the reader lands on a
+ * turn's end, which a prefix (`entries[i].seq === i` cannot seat a tail) does not hold, so it
+ * would paint other rows there and jump when the page lands.
  */
 function newestWindow(chatID: string): SnapshotWindow | null {
   const s = get(chatID);
@@ -253,17 +255,11 @@ function newestWindow(chatID: string): SnapshotWindow | null {
     }
     const whole = state.entries.map(lighten);
     const cost = whole.reduce((n, e) => n + sizeOf(e), 0);
-    if (out.length + whole.length <= SNAPSHOT_MAX_ENTRIES && bytes + cost <= SNAPSHOT_MAX_BYTES) {
-      out.unshift(...whole);
-      bytes += cost;
-      continue;
+    if (out.length + whole.length > SNAPSHOT_MAX_ENTRIES || bytes + cost > SNAPSHOT_MAX_BYTES) {
+      break;
     }
-    if (out.length === 0) {
-      // The newest turn alone over budget is trimmed to a PREFIX from `turn_open`
-      // (`entries[i].seq === i` cannot seat a tail); the activation's refetch fills it.
-      out.push(...admitPrefix(state.entries));
-    }
-    break;
+    out.unshift(...whole);
+    bytes += cost;
   }
   if (out.length === 0) {
     return null;
@@ -277,25 +273,6 @@ function newestWindow(chatID: string): SnapshotWindow | null {
  */
 function sizeOf(e: Entry): number {
   return JSON.stringify(e).length;
-}
-
-/**
- * As much of one turn as both bounds allow, from its `turn_open` forward, stopping at the
- * first entry that does not fit.
- */
-function admitPrefix(entries: readonly Entry[]): Entry[] {
-  const out: Entry[] = [];
-  let bytes = 0;
-  for (const e of entries) {
-    const light = lighten(e);
-    const cost = sizeOf(light);
-    if (out.length + 1 > SNAPSHOT_MAX_ENTRIES || bytes + cost > SNAPSHOT_MAX_BYTES) {
-      break;
-    }
-    out.push(light);
-    bytes += cost;
-  }
-  return out;
 }
 
 /**
@@ -333,7 +310,7 @@ function turnsFromEntries(entries: readonly Entry[]): {
 
 /**
  * One entry with what a first frame does not paint cut down: tool entries trimmed, others
- * returned ITSELF. Nothing here drops an entry; the admission paths price this copy.
+ * returned ITSELF. Nothing here drops an entry; the admission prices this copy.
  */
 function lighten(e: Entry): Entry {
   if (e.kind !== "tool_call" && e.kind !== "tool_result") {

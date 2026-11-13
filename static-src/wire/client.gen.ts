@@ -3343,7 +3343,7 @@ export interface GetFileArgs {
   readonly path: string;
 }
 
-const getFileCodes = ["binary", "changed", "invalid_file_id", "method_not_allowed", "not_a_directory", "too_large"] as const;
+const getFileCodes = ["binary", "changed", "invalid_file_id", "method_not_allowed", "name_taken", "not_a_directory", "too_large"] as const;
 
 export type GetFileError = (typeof getFileCodes)[number];
 
@@ -3376,7 +3376,7 @@ export interface PutFileArgs {
   readonly body: FileWrite;
 }
 
-const putFileCodes = ["binary", "changed", "invalid_file_id", "method_not_allowed", "not_a_directory", "too_large"] as const;
+const putFileCodes = ["binary", "changed", "invalid_file_id", "method_not_allowed", "name_taken", "not_a_directory", "too_large"] as const;
 
 export type PutFileError = (typeof putFileCodes)[number];
 
@@ -3409,7 +3409,7 @@ export interface GetFileStatArgs {
   readonly path: string;
 }
 
-const getFileStatCodes = ["binary", "changed", "invalid_file_id", "method_not_allowed", "not_a_directory", "too_large"] as const;
+const getFileStatCodes = ["binary", "changed", "invalid_file_id", "method_not_allowed", "name_taken", "not_a_directory", "too_large"] as const;
 
 export type GetFileStatError = (typeof getFileStatCodes)[number];
 
@@ -3442,7 +3442,7 @@ export interface GetFileDownloadArgs {
   readonly file_id?: string;
 }
 
-const getFileDownloadCodes = ["binary", "changed", "invalid_file_id", "method_not_allowed", "not_a_directory", "too_large"] as const;
+const getFileDownloadCodes = ["binary", "changed", "invalid_file_id", "method_not_allowed", "name_taken", "not_a_directory", "too_large"] as const;
 
 export type GetFileDownloadError = (typeof getFileDownloadCodes)[number];
 
@@ -3472,7 +3472,7 @@ export function getFileDownload(args: GetFileDownloadArgs, opts?: ClientOpts): g
   return clientRequest<globalThis.Blob, GetFileDownloadError>(getFileDownloadEndpoint.request(args), getFileDownloadEndpoint.decode, opts);
 }
 
-const postFileUploadCodes = ["binary", "changed", "invalid_file_id", "method_not_allowed", "not_a_directory", "too_large"] as const;
+const postFileUploadCodes = ["binary", "changed", "invalid_file_id", "method_not_allowed", "name_taken", "not_a_directory", "too_large"] as const;
 
 export type PostFileUploadError = (typeof postFileUploadCodes)[number];
 
@@ -3504,7 +3504,7 @@ export interface GetFilesArgs {
   readonly path: string;
 }
 
-const getFilesCodes = ["binary", "changed", "invalid_file_id", "method_not_allowed", "not_a_directory", "too_large"] as const;
+const getFilesCodes = ["binary", "changed", "invalid_file_id", "method_not_allowed", "name_taken", "not_a_directory", "too_large"] as const;
 
 export type GetFilesError = (typeof getFilesCodes)[number];
 
@@ -3536,7 +3536,7 @@ export interface PostFilesActionArgs {
   readonly body: FileAction;
 }
 
-const postFilesActionCodes = ["binary", "changed", "invalid_file_id", "method_not_allowed", "not_a_directory", "too_large"] as const;
+const postFilesActionCodes = ["binary", "changed", "invalid_file_id", "method_not_allowed", "name_taken", "not_a_directory", "too_large"] as const;
 
 export type PostFilesActionError = (typeof postFilesActionCodes)[number];
 
@@ -3569,7 +3569,7 @@ export interface PostFilesDownloadArgs {
   readonly body: ZipRequest;
 }
 
-const postFilesDownloadCodes = ["binary", "changed", "invalid_file_id", "method_not_allowed", "not_a_directory", "too_large"] as const;
+const postFilesDownloadCodes = ["binary", "changed", "invalid_file_id", "method_not_allowed", "name_taken", "not_a_directory", "too_large"] as const;
 
 export type PostFilesDownloadError = (typeof postFilesDownloadCodes)[number];
 
@@ -3607,9 +3607,10 @@ export interface GetFilesSearchArgs {
   readonly files?: string;
   readonly case?: string;
   readonly ignored?: string;
+  readonly deep?: string;
 }
 
-const getFilesSearchCodes = ["binary", "changed", "invalid_file_id", "method_not_allowed", "not_a_directory", "too_large"] as const;
+const getFilesSearchCodes = ["binary", "changed", "invalid_file_id", "method_not_allowed", "name_taken", "not_a_directory", "too_large"] as const;
 
 export type GetFilesSearchError = (typeof getFilesSearchCodes)[number];
 
@@ -3623,7 +3624,7 @@ export const getFilesSearchEndpoint = {
   request(args: GetFilesSearchArgs): EndpointSpec {
     return {
       method: "GET",
-      path: "/api/files/search" + qs([["q", args.q], ["path", args.path], ["mode", args.mode], ["files", args.files], ["case", args.case], ["ignored", args.ignored]]),
+      path: "/api/files/search" + qs([["q", args.q], ["path", args.path], ["mode", args.mode], ["files", args.files], ["case", args.case], ["ignored", args.ignored], ["deep", args.deep]]),
       codes: getFilesSearchCodes,
     };
   },

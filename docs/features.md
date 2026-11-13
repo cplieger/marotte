@@ -70,7 +70,7 @@ These settings apply only when the engine restarts, and their rows say so: **Kno
 
 ## Files, editor and terminal
 
-- A file browser with a search that finds files by name, or inside files when you ask. One Files filter narrows either search (`*.css`, `src/**`, `!node_modules`), and files your `.gitignore` excludes stay out unless you include them.
+- A file browser with a search that finds files by name, or inside files when you ask. One Files filter narrows either search (`*.css`, `src/**`, `!node_modules`), and files your `.gitignore` excludes stay out unless you include them. A search reads the folders nearest the one you are in first, so a match near the top is found even in a very large tree. When a search stops before reading everything, it says so, and **Search deeper** runs it again with a larger limit.
 - An editor with syntax highlighting. A link can point at one line with `#L<n>`.
 - A preview tab that shows an HTML page from the workspace in a sandbox, at phone, tablet, desktop or full width. Clicking an `.html` or `.htm` page that sits in its own folder in the file browser opens it there, and so does a link to one in the chat. **Edit** in the tab's bottom bar opens the page's source in the editor, and the editor's **Open preview** button goes back to the page. The preview reloads when the page's files change, and it starts no downloads. **Open in browser** opens the page in a new browser tab, still sandboxed away from marotte, where its download links work over plain HTTP and HTTPS alike. That tab does not reload by itself.
 - Diffs against the last save or against git `HEAD`.

@@ -11,6 +11,7 @@ var Codes = route.CodeSet{
 	{Code: "binary", Status: http.StatusUnsupportedMediaType},
 	{Code: "changed", Status: http.StatusConflict},
 	{Code: "invalid_file_id", Status: http.StatusBadRequest},
+	{Code: codeNameTaken, Status: http.StatusConflict},
 	{Code: "not_a_directory", Status: http.StatusBadRequest},
 	{Code: "too_large", Status: http.StatusRequestEntityTooLarge},
 }

@@ -16,6 +16,8 @@ const apiGet = vi.fn();
 // Typed with the real signature so `mock.calls[0][0]` is the question.
 const confirmDialog = vi.fn(async (_q: Confirmation) => true);
 const openChange = vi.fn();
+const setGitTab = vi.fn();
+const openNewPRForRepo = vi.fn(() => Promise.resolve());
 
 const dispatches: { name: string; args: unknown }[] = [];
 
@@ -62,6 +64,11 @@ vi.mock("./bus.js", () => ({ onSSE: vi.fn() }));
 vi.mock("./forge-store.js", () => ({ forgeRows: () => null, usablePairs: () => [] }));
 vi.mock("./confirm.js", () => ({ confirm: confirmDialog }));
 vi.mock("./navigate.js", () => ({ openChange }));
+vi.mock("./tabs.js", async () => ({
+  ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
+  setGitTab,
+}));
+vi.mock("./git-prs-tab.js", () => ({ openNewPRForRepo }));
 vi.mock("./actions/index.js", () => ({
   registerCleanup: vi.fn(),
   bindLoadingState: vi.fn(() => vi.fn()),
@@ -206,6 +213,8 @@ beforeEach(() => {
   apiGet.mockReset();
   confirmDialog.mockReset();
   confirmDialog.mockResolvedValue(true);
+  setGitTab.mockReset();
+  openNewPRForRepo.mockReset();
   dispatches.length = 0;
   filterSeam = null;
   pullAllResult = [];
@@ -735,6 +744,23 @@ describe("a repo with nothing uncommitted", () => {
     expect(mount.querySelector('[data-repo="two"] .git-repo-action-bar button')?.textContent).toBe(
       "Pull ↓1",
     );
+  });
+});
+
+describe("the open-PR hint after a push", () => {
+  it("moves the git page to Pull requests and opens the new-PR form for the pushed branch", async () => {
+    const mount = await paintRepos([repo([], { branch: "feat/x", ahead: 1, has_dirty: false })]);
+    await clickBtn(mount, "Push");
+    await vi.waitFor(() => {
+      expect(mount.querySelector(".git-open-pr-hint")).not.toBeNull();
+    });
+
+    await clickBtn(mount, "Open PR");
+
+    await vi.waitFor(() => {
+      expect(openNewPRForRepo).toHaveBeenCalledWith("demo", "feat/x");
+    });
+    expect(setGitTab.mock.calls).toEqual([["prs"]]);
   });
 });
 

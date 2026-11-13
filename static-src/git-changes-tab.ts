@@ -62,6 +62,7 @@ import {
 } from "./git-types.js";
 import { maybeEl, queryEl } from "./dom.js";
 import { getGitStatusAllEndpoint } from "./wire/client.gen.js";
+import { setGitTab } from "./tabs.js";
 
 interface StatusAllResponse {
   repos: RepoStatus[];
@@ -1076,7 +1077,6 @@ function renderOpenPRHint(r: RepoStatus): HTMLElement {
   const btn = el("button", { type: "button", className: "btn-small btn-primary" }, "Open PR");
   btn.addEventListener("click", () => {
     void (async () => {
-      const { setGitTab } = await import("./git-tabs.js");
       const { openNewPRForRepo } = await import("./git-prs-tab.js");
       setGitTab("prs");
       await openNewPRForRepo(r.repo, r.branch);

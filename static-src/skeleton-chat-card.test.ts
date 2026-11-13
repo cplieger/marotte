@@ -49,17 +49,23 @@ function cards(wrap: Element): Element[] {
 }
 
 describe("the rebuilt transcript placeholder", () => {
-  it("is a contents wrap carrying the aria marker, over three cards", () => {
+  it("is a contents wrap carrying the aria marker, over the one turn a chat opens on", () => {
     const wrap = chatSkeleton();
     expect(wrap.getAttribute("aria-hidden")).toBe("true");
     expect(wrap.classList.contains("skeleton-rows")).toBe(true);
     // Direct children, all of them cards: a wrap holding furniture beside the cards would be a
     // second thing for `display: contents` to dissolve into the view.
-    expect([...wrap.children].map((c) => c.className)).toEqual([
-      "turn turn-skel",
-      "turn turn-skel",
-      "turn turn-skel",
+    expect([...wrap.children].map((c) => c.className)).toEqual(["turn turn-skel"]);
+  });
+
+  it("ends the transcript placeholder's card in the real footer band, empty", () => {
+    const card = cards(chatSkeleton())[0] as Element;
+    expect([...card.children].map((c) => c.className)).toEqual([
+      "turn-header",
+      "turn-body",
+      "turn-footer",
     ]);
+    expect(card.querySelector(":scope > .turn-footer")?.childElementCount).toBe(0);
   });
 
   it("builds each card's two parent chains, not just the classes", () => {
@@ -67,7 +73,10 @@ describe("the rebuilt transcript placeholder", () => {
       // The head row's two chrome bars must state a width: neither `.turn-n` nor `.turn-ts`
       // declares a box, so a bar there with no width has none.
       const headRow = chain(card, [".turn-header", ".turn-head-row"]);
-      expect(headRow.querySelector(":scope > .turn-fold-toggle")).not.toBeNull();
+      expect(
+        headRow.querySelector(":scope > .turn-fold-toggle"),
+        "the newest turn offers no fold toggle",
+      ).toBeNull();
       // The values are MEASURED on the real cells (see `skeletonTurnCard`), and the two differ by
       // more than a character count because `.turn-n` is mono while `.turn-ts` inherits the head
       // row's `system-ui`.
@@ -138,8 +147,8 @@ describe("the rebuilt transcript placeholder", () => {
     // including the empty-transcript paint where this placeholder is mounted.
     const collected = [...view.children].filter((c) => c.classList.contains("turn"));
     expect(collected).toEqual([]);
-    // Non-vacuity: the cards ARE there, one level in.
-    expect(cards(view)).toHaveLength(3);
+    // Non-vacuity: the card IS there, one level in.
+    expect(cards(view)).toHaveLength(1);
   });
 
   it("gives the load-more placeholder the same card shape and no inline padding", () => {
@@ -158,7 +167,11 @@ describe("the rebuilt transcript placeholder", () => {
     expect(wrap.style.paddingBlock).toBe("");
     expect(wrap.getAttribute("style")).toBeNull();
     for (const card of cards(wrap)) {
-      chain(card, [".turn-header", ".turn-head-row"]);
+      const headRow = chain(card, [".turn-header", ".turn-head-row"]);
+      expect(
+        headRow.querySelector(":scope > .turn-fold-toggle"),
+        "an older turn folds",
+      ).not.toBeNull();
       chain(card, [".turn-body", ".msg-row", ".message.assistant"]);
     }
   });
@@ -267,7 +280,7 @@ describe("the placeholder card is not a pointer target", () => {
 
     const view = document.createElement("div");
     view.className = "transcript-view is-active";
-    view.appendChild(chatSkeleton());
+    view.appendChild(loadMoreSkeleton());
     stage.appendChild(view);
 
     const card = cards(view)[0] as HTMLElement;

@@ -2112,6 +2112,11 @@ export interface FileSearchResult {
  * that includes ignored files never sets it.
  */
   root_ignored: boolean;
+  /**
+ * CanSearchDeeper says a budget or the deadline stopped the walk, so the same request with
+ * deep=1 reads further. A deep search never sets it.
+ */
+  can_search_deeper: boolean;
 }
 
 /** FileStat is GET /api/file/stat's reply: the facts the viewer picks a view from. */
@@ -2158,8 +2163,8 @@ export interface FilesRequest {
 }
 
 /**
- * FilesSearchQuery is GET /api/files/search's query; Case and Ignored are "1" to match case and to
- * search ignored files.
+ * FilesSearchQuery is GET /api/files/search's query; Case, Ignored and Deep are "1" to match case,
+ * to search ignored files and to search with the deep budget.
  */
 export interface FilesSearchQuery {
   q?: string;
@@ -2168,6 +2173,7 @@ export interface FilesSearchQuery {
   files?: string;
   case?: string;
   ignored?: string;
+  deep?: string;
 }
 
 /** Filter narrows the events of a kind; which fields a kind takes is EventSpec's validation. */
