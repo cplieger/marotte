@@ -138,10 +138,16 @@ func decodeOneMemory(raw json.RawMessage) (memoryRow, error) {
 	return rowFromKAS(res.Memory), nil
 }
 
-// writeMemoryErr answers a KAS refusal with KAS's text (409 not_enabled, else 400) and anything else, an answer
-// marotte could not read included, with a generic 502.
+// writeMemoryErr answers a KAS refusal with KAS's text (409 coming_soon for import and export not yet served, 409
+// not_enabled, else 400) and anything else, an answer marotte could not read included, with a generic 502.
 func writeMemoryErr(w http.ResponseWriter, err error) {
 	if _, ok := errors.AsType[*marotte.RPCError](err); ok && !marotte.ReplyUnread(err) {
+		if m, typed := rpcerr.MappedOf(err); typed && m.ErrorType == memoryImportComingSoonClass {
+			httpserver.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(
+				"Memory import and export are not available for this account yet.", memoryImportComingSoonCode,
+			))
+			return
+		}
 		text := rpcerr.Text(err)
 		if strings.Contains(text, "Memory is not enabled") {
 			httpserver.WriteJSONStatus(w, http.StatusConflict,
@@ -194,7 +200,7 @@ func (st *Settings) handleMemoryOne(w http.ResponseWriter, r *http.Request) {
 		}
 		params := map[string]any{"id": id}
 		for key, v := range map[string]*string{
-			"newTitle": body.Title, "summary": body.Summary, "content": body.Content, "memoryType": body.MemoryType,
+			"newTitle": body.Title, "summary": body.Summary, keyContent: body.Content, "memoryType": body.MemoryType,
 		} {
 			if v != nil {
 				params[key] = *v
@@ -251,5 +257,8 @@ func memoryFailure(err error) engineReply {
 func (st *Settings) registerMemoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/memory", st.handleMemoryCollection)
 	mux.HandleFunc("/api/memory/sync", st.handleMemorySync)
+	mux.HandleFunc("/api/memory/import-prompt", st.handleMemoryImportPrompt)
+	mux.HandleFunc("/api/memory/import", st.handleMemoryImport)
+	mux.HandleFunc("/api/memory/export", st.handleMemoryExport)
 	mux.HandleFunc("/api/memory/{id}", st.handleMemoryOne)
 }

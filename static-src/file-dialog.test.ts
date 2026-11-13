@@ -132,6 +132,16 @@ describe("the dialog's input at the moment it opens", () => {
     expect(lastInput().multiple).toBe(true);
   });
 
+  it("is a single-select file input when the caller asks for one file", () => {
+    const btn = document.createElement("button");
+    btn.addEventListener("click", () => {
+      openFileDialog(btn, vi.fn(), { multiple: false });
+    });
+    document.body.appendChild(btn);
+    btn.click();
+    expect(lastInput().multiple).toBe(false);
+  });
+
   it("sits inside the trigger's open modal dialog, which makes the rest of the page inert", () => {
     const dlg = document.createElement("dialog");
     document.body.appendChild(dlg);

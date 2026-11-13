@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import type * as ApiClient from "./api-client.js";
 import type * as Confirm from "./confirm.js";
 import type * as MemoryActions from "./actions/memory.js";
@@ -14,6 +14,7 @@ interface ListReply {
 let listReply: ListReply;
 let oneReply: ListReply;
 let syncReply: ListReply;
+let promptReply: ListReply;
 const syncWrites: { on: boolean }[] = [];
 let confirmAnswer = true;
 const deleted: string[] = [];
@@ -26,7 +27,13 @@ vi.mock("./api-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ApiClient>()),
   apiGetTypedOrError: vi.fn(async (path: string, decode: (v: unknown) => unknown) => {
     const r =
-      path === "/api/memory" ? listReply : path === "/api/memory/sync" ? syncReply : oneReply;
+      path === "/api/memory"
+        ? listReply
+        : path === "/api/memory/sync"
+          ? syncReply
+          : path === "/api/memory/import-prompt"
+            ? promptReply
+            : oneReply;
     if (path === "/api/memory" && holdList !== null) {
       await holdList;
     }
@@ -59,11 +66,18 @@ vi.mock("./actions/memory.js", async (importOriginal) => ({
   },
 }));
 
+// Called through, so the toast and the announcement an import raises are observable.
+vi.mock("./toast.js", { spy: true });
+vi.mock("./legacy-ui/announce.js", { spy: true });
+
 import { renderMemoriesPanel, setMemoryCountsListener, _resetMemoriesForTest } from "./memories.js";
+import * as toast from "./toast.js";
+import { announce } from "./legacy-ui/announce.js";
 import { confirm } from "./confirm.js";
 import { apiGetTypedOrError } from "./api-client.js";
 import { BUS_ENGINE_READY, dispatch, emitBus } from "./bus.js";
 import { confirmText } from "./__test-helpers__/confirm-text.js";
+import { _resetForTest as _resetModalForTest } from "./legacy-ui/modal.js";
 
 function record(id: string, scope: string | null, title: string, updated = 1_700_000_000) {
   return {
@@ -143,7 +157,21 @@ beforeEach(() => {
     choice: { enabled: false, account: false },
   });
   syncWrites.length = 0;
+  promptReply = comingSoon();
 });
+
+function comingSoon(): ListReply {
+  return {
+    ok: false,
+    status: 409,
+    data: null,
+    error: "Memory import and export are not available for this account yet.",
+    body: {
+      error: "Memory import and export are not available for this account yet.",
+      code: "coming_soon",
+    },
+  };
+}
 
 // A read the server refused while no engine was ready is asked again when the engine is back.
 describe("the engine's return", () => {
@@ -151,15 +179,17 @@ describe("the engine's return", () => {
     return vi.mocked(apiGetTypedOrError).mock.calls.filter((c) => c[0] === path).length;
   }
 
-  it("re-asks a refused list and a refused sync state while the tab is on screen", async () => {
+  it("re-asks a refused list, sync state and import probe while the tab is on screen", async () => {
     const answered = listReply;
     const answeredSync = syncReply;
     listReply = { ok: false, status: 502, data: null, error: "engine not ready" };
     syncReply = { ok: false, status: 502, data: null, error: "engine not ready" };
+    promptReply = { ok: false, status: 502, data: null, error: "engine not ready" };
     await mount();
     expect(panel.textContent).toContain("Couldn't load memories.");
     listReply = answered;
     syncReply = answeredSync;
+    promptReply = comingSoon();
     vi.mocked(apiGetTypedOrError).mockClear();
 
     emitBus(BUS_ENGINE_READY);
@@ -167,6 +197,7 @@ describe("the engine's return", () => {
 
     expect(reads("/api/memory")).toBe(1);
     expect(reads("/api/memory/sync")).toBe(1);
+    expect(reads("/api/memory/import-prompt")).toBe(1);
     expect(titlesIn("repo:org/one")).toEqual(["Newer", "Older"]);
     vi.mocked(apiGetTypedOrError).mockClear();
     emitBus(BUS_ENGINE_READY);
@@ -503,5 +534,226 @@ describe("the Cloud sync section", () => {
       (r) => r.querySelector(".memories-pending")?.textContent ?? "",
     );
     expect(marks).toEqual(["Not synced", ""]);
+  });
+});
+
+describe("Import and Export", () => {
+  const PROMPT = "List every fact you remember about me, one JSON object per line.";
+  const sent: { url: string; init: RequestInit | undefined }[] = [];
+  let answer: (url: string) => Response;
+
+  beforeEach(() => {
+    sent.length = 0;
+    vi.mocked(toast.error).mockClear();
+    vi.mocked(announce).mockClear();
+    answer = () => new Response("{}", { status: 200 });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input instanceof Request ? input.url : String(input);
+        sent.push({ url, init });
+        return Promise.resolve(answer(url));
+      }),
+    );
+  });
+
+  afterEach(() => {
+    for (const d of document.querySelectorAll("dialog")) {
+      d.remove();
+    }
+    _resetModalForTest();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function maybeButton(root: ParentNode, text: string): HTMLButtonElement | undefined {
+    return [...root.querySelectorAll("button")].find((x) => x.textContent === text);
+  }
+
+  function dialog(): HTMLDialogElement {
+    const d = document.querySelector<HTMLDialogElement>("dialog[open]");
+    if (d === null) {
+      throw new Error("no open dialog");
+    }
+    return d;
+  }
+
+  function pasteBox(): HTMLTextAreaElement {
+    const box = dialog().querySelector<HTMLTextAreaElement>("textarea:not([readonly])");
+    if (box === null) {
+      throw new Error("no paste box");
+    }
+    return box;
+  }
+
+  async function openImport(): Promise<void> {
+    promptReply = ok({ prompt: PROMPT });
+    await mount();
+    maybeButton(panel, "Import")?.click();
+    await settle();
+  }
+
+  it("hides Import and Export while kiro-cli says coming soon", async () => {
+    await mount();
+    expect(maybeButton(panel, "Import")).toBeUndefined();
+    expect(maybeButton(panel, "Export")).toBeUndefined();
+    promptReply = ok({ prompt: PROMPT });
+    await mount();
+    expect(maybeButton(panel, "Import")).toBeDefined();
+    expect(maybeButton(panel, "Export")).toBeDefined();
+  });
+
+  it("shows kiro-cli's prompt, read-only, to give to the other assistant", async () => {
+    await openImport();
+    const prompt = dialog().querySelector<HTMLTextAreaElement>("textarea[readonly]");
+    expect(prompt?.value).toBe(PROMPT);
+  });
+
+  it("opens a prompt longer than its box at the first line", async () => {
+    const long = Array.from({ length: 20 }, (_, i) => `Rule ${String(i + 1)} of the prompt.`).join(
+      "\n",
+    );
+    promptReply = ok({ prompt: long });
+    await mount();
+    maybeButton(panel, "Import")?.click();
+    await settle();
+    const prompt = dialog().querySelector<HTMLTextAreaElement>("textarea[readonly]");
+    expect(prompt?.scrollHeight).toBeGreaterThan(prompt?.clientHeight ?? Infinity);
+    expect(prompt?.scrollTop).toBe(0);
+  });
+
+  it("the import dialog says an export is not an import file", async () => {
+    await openImport();
+    expect(dialog().textContent).toContain("A file from Export cannot be imported back.");
+  });
+
+  it("imports pasted lines and shows the per-line report", async () => {
+    answer = () =>
+      new Response(
+        JSON.stringify({
+          added: 2,
+          duplicates: 1,
+          skipped: [{ line: 2, reason: "duplicate_in_file" }],
+          failed: [{ line: 3, reason: "parse_error", detail: "Unexpected token" }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    await openImport();
+    const lines = '{"a":1}\n{"a":1}\nnot json\n{"b":2}\n{"c":3}';
+    pasteBox().value = lines;
+    pasteBox().dispatchEvent(new Event("input"));
+    maybeButton(dialog(), "Import")?.click();
+    await settle();
+
+    const post = sent.find((s) => s.url.endsWith("/api/memory/import"));
+    expect(post?.init?.method).toBe("POST");
+    expect(post?.init?.body).toBe(lines);
+    expect(new Headers(post?.init?.headers).get("Content-Type")).toBe("text/plain; charset=utf-8");
+    const report = dialog().querySelector(".cp-batch-report");
+    expect(report?.querySelector("p")?.textContent).toBe("Added 2, 1 already stored.");
+    const rows = [...(report?.querySelectorAll("li") ?? [])].map((li) =>
+      [...li.children].map((c) => c.textContent),
+    );
+    expect(rows).toEqual([
+      ["Line 2", "duplicate in the file"],
+      ["Line 3", "not valid JSON: Unexpected token"],
+    ]);
+  });
+
+  /** Answers the next file dialog with `file`, and returns the inputs it opened on. */
+  function pickWith(file: File): HTMLInputElement[] {
+    const opened: HTMLInputElement[] = [];
+    vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(function (
+      this: HTMLInputElement,
+    ) {
+      opened.push(this);
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      this.files = dt.files;
+      this.dispatchEvent(new Event("change"));
+    });
+    return opened;
+  }
+
+  it("reads a chosen file into the paste box", async () => {
+    await openImport();
+    pickWith(new File(['{"from":"file"}'], "memories.jsonl"));
+    maybeButton(dialog(), "Choose file")?.click();
+    await settle();
+    expect(pasteBox().value).toBe('{"from":"file"}');
+  });
+
+  it("offers one file to choose", async () => {
+    await openImport();
+    const opened = pickWith(new File(["{}"], "memories.jsonl"));
+    maybeButton(dialog(), "Choose file")?.click();
+    await settle();
+    expect(opened).toHaveLength(1);
+    expect(opened[0]?.multiple).toBe(false);
+  });
+
+  it("refuses a chosen file over kiro-cli's 10 MiB limit without reading it", async () => {
+    await openImport();
+    pickWith(new File([new Uint8Array(10 * 1024 * 1024 + 1).fill(0x61)], "big.jsonl"));
+    maybeButton(dialog(), "Choose file")?.click();
+    await settle();
+    expect(pasteBox().value).toBe("");
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+      "The import is over kiro-cli's 10 MiB limit.",
+    );
+  });
+
+  it("says when the chosen file cannot be read", async () => {
+    await openImport();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(Blob.prototype, "text").mockRejectedValue(
+      new DOMException("gone", "NotReadableError"),
+    );
+    pickWith(new File(["{}"], "memories.jsonl"));
+    maybeButton(dialog(), "Choose file")?.click();
+    await settle();
+    expect(pasteBox().value).toBe("");
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith("Couldn't read the chosen file.");
+  });
+
+  it("says when the import's report cannot be read, and moves focus to it", async () => {
+    answer = () =>
+      new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await openImport();
+    pasteBox().value = '{"a":1}';
+    pasteBox().dispatchEvent(new Event("input"));
+    maybeButton(dialog(), "Import")?.click();
+    await settle();
+
+    const sentence =
+      "The import was sent, but its report could not be read. The list shows what landed.";
+    const report = dialog().querySelector<HTMLElement>(".cp-batch-report");
+    expect(report?.hidden).toBe(false);
+    expect(report?.textContent).toBe(sentence);
+    expect(document.activeElement).toBe(report);
+    expect(vi.mocked(announce)).toHaveBeenCalledWith(sentence);
+  });
+
+  it("Export downloads the document", async () => {
+    answer = () =>
+      new Response('{\n  "format": "kiro-memory"\n}', {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    const names: string[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      names.push(this.download);
+    });
+    promptReply = ok({ prompt: PROMPT });
+    await mount();
+    maybeButton(panel, "Export")?.click();
+    await settle();
+    const get = sent.find((s) => s.url.endsWith("/api/memory/export"));
+    expect(get?.init?.method).toBe("GET");
+    expect(names).toHaveLength(1);
+    expect(names[0]).toMatch(/^kiro-memories-\d{4}-\d{2}-\d{2}\.json$/);
   });
 });

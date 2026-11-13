@@ -1,7 +1,8 @@
 // Memory actions (Docs → Memories). kiro-cli's store is refetched after every mutation, so no
 // optimistic state. Addressed by id: a title can repeat across scopes.
 
-import { apiAction } from "./index.js";
+import { API_TIMEOUT_MS, apiAction, defineAction } from "./index.js";
+import { readDownload } from "./download.js";
 import { stillOr } from "./still-applying.js";
 
 const MEMORY_API = "/api/memory";
@@ -54,4 +55,51 @@ export const setMemorySync = apiAction<SyncArgs>({
   dedupe: () => "memory.sync",
   request: (body) => ({ method: "PUT", path: `${MEMORY_API}/sync`, body }),
   error: stillOr("changing memory sync", "Couldn't change memory sync"),
+});
+
+/** Posts another assistant's JSONL answer as the raw body; resolves to the server's import report, unread. */
+export const importMemories = apiAction<{ content: string }>({
+  name: "memory.import",
+  dedupe: () => "memory.import",
+  request: ({ content }) => ({
+    method: "POST",
+    path: `${MEMORY_API}/import`,
+    rawBody: content,
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+  }),
+  error: stillOr("importing memories", "Couldn't import the memories"),
+});
+
+function localDate(d: Date): string {
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return `${String(d.getFullYear())}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Downloads kiro-cli's memory document (`GET /api/memory/export`) through a blob, so a failure is a toast. */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for an action with no result
+export const downloadMemoryExport = defineAction<Record<string, never>, void>({
+  name: "memory.export",
+  dedupe: () => "memory.export",
+  run: async (_args, signal) => {
+    const blob = await readDownload(
+      { method: "GET", path: `${MEMORY_API}/export` },
+      signal,
+      API_TIMEOUT_MS,
+    );
+    if (signal.aborted) {
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    try {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `kiro-memories-${localDate(new Date())}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  },
+  error: (_args, err) => `Couldn't export the memories: ${err.message}`,
 });

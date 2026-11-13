@@ -9,11 +9,22 @@ import { entryDetail, entryList, entryRow } from "./entry-row.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_EDIT, ICON_TRASH } from "./icons.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { deleteMemory, setMemorySync, updateMemory } from "./actions/memory.js";
+import {
+  deleteMemory,
+  downloadMemoryExport,
+  importMemories,
+  setMemorySync,
+  updateMemory,
+} from "./actions/memory.js";
 import type { MemoryEdit } from "./actions/memory.js";
 import { forceReflow } from "./dom.js";
 import { onSSE } from "./bus.js";
 import { engineRead, type EngineRead } from "./engine-read.js";
+import { createModal } from "./legacy-ui/modal.js";
+import { announce } from "./legacy-ui/announce.js";
+import { makeCopyButton } from "./code-blocks.js";
+import { openFileDialog } from "./file-dialog.js";
+import * as toast from "./toast.js";
 
 interface MemoryRecord {
   readonly id: string;
@@ -47,6 +58,26 @@ type LoadState =
   | { readonly kind: "ready" }
   | { readonly kind: "not_enabled"; readonly message: string }
   | { readonly kind: "failed" };
+
+/** Whether kiro-cli serves Import and Export for this account, learned from GET /api/memory/import-prompt. */
+type Transfer =
+  | { readonly kind: "loading" }
+  | { readonly kind: "available"; readonly prompt: string }
+  | { readonly kind: "unavailable" };
+
+interface ImportLine {
+  readonly line: number;
+  readonly reason: string;
+  readonly detail: string;
+}
+
+/** POST /api/memory/import's answer: counts for what landed or was already there, per line for what did not. */
+interface ImportReport {
+  readonly added: number;
+  readonly duplicates: number;
+  readonly skipped: ImportLine[];
+  readonly failed: ImportLine[];
+}
 
 /** How many memories exist and how many the filter shows, for the page's note. */
 interface MemoryCounts {
@@ -123,6 +154,43 @@ function syncWords(s: MemorySync): string {
   return waiting ? `${words}, ${String(s.pending)} not uploaded yet` : words;
 }
 
+function decodeImportPrompt(v: unknown): string {
+  return reqStr(asObject(v), "prompt");
+}
+
+function decodeImportLine(v: unknown): ImportLine {
+  const o = asObject(v);
+  return {
+    line: reqNum(o, "line"),
+    reason: reqStr(o, "reason"),
+    detail: optStr(o, "detail") ?? "",
+  };
+}
+
+function decodeImportReport(v: unknown): ImportReport {
+  const o = asObject(v);
+  return {
+    added: reqNum(o, "added"),
+    duplicates: reqNum(o, "duplicates"),
+    skipped: decodeArray(o["skipped"], decodeImportLine),
+    failed: decodeArray(o["failed"], decodeImportLine),
+  };
+}
+
+/** kiro-cli's reason codes; one it adds later shows as sent. */
+const IMPORT_REASON_WORDS: ReadonlyMap<string, string> = new Map([
+  ["duplicate_in_file", "duplicate in the file"],
+  ["quota", "store full"],
+  ["validation", "invalid record"],
+  ["secret_blocked", "contains a secret"],
+  ["parse_error", "not valid JSON"],
+]);
+
+function importReasonText(l: ImportLine): string {
+  const word = IMPORT_REASON_WORDS.get(l.reason) ?? l.reason;
+  return l.detail === "" ? word : `${word}: ${l.detail}`;
+}
+
 function decodeMemoryList(v: unknown): MemoryList {
   const o = asObject(v);
   return { memories: decodeArray(o["memories"], decodeRecord), cap: reqNum(o, "cap") };
@@ -157,6 +225,9 @@ let cloud: MemorySync | "loading" | "failed" = "loading";
 let listRead: EngineRead | null = null;
 let cloudRead: EngineRead | null = null;
 let cloudGeneration = 0;
+let transfer: Transfer = { kind: "loading" };
+let transferRead: EngineRead | null = null;
+let transferGeneration = 0;
 
 export function setMemoryCountsListener(fn: (c: MemoryCounts) => void): void {
   onCounts = fn;
@@ -182,6 +253,9 @@ export function renderMemoriesPanel(panel: HTMLElement, filter = ""): void {
     cloudRead = engineRead(() => {
       void refreshCloud();
     }, isShowing);
+    transferRead = engineRead(() => {
+      void refreshTransfer();
+    }, isShowing);
     onSSE("memory_sync_changed", () => {
       if (isShowing()) {
         void refreshCloud();
@@ -195,7 +269,22 @@ export function renderMemoriesPanel(panel: HTMLElement, filter = ""): void {
   if (!filterMoved || state.kind === "loading") {
     void refresh();
     void refreshCloud();
+    void refreshTransfer();
   }
+}
+
+/** A 409 is the gate's answer (coming soon or memory off); anything else is a read to ask again. */
+async function refreshTransfer(): Promise<void> {
+  const gen = ++transferGeneration;
+  const settle = transferRead?.begin();
+  const res = await apiGetTypedOrError("/api/memory/import-prompt", decodeImportPrompt);
+  if (gen !== transferGeneration) {
+    return;
+  }
+  transfer =
+    res.ok && res.data !== null ? { kind: "available", prompt: res.data } : { kind: "unavailable" };
+  syncHead();
+  settle?.(res.ok || res.status === 409);
 }
 
 async function refreshCloud(): Promise<void> {
@@ -389,9 +478,165 @@ function headStrip(): HTMLElement {
       "div",
       { className: "memories-head-row" },
       count,
-      el("span", { className: "memories-head-actions" }, delSel, delAll),
+      el("span", { className: "memories-head-actions" }, ...transferButtons(), delSel, delAll),
     ),
   );
+}
+
+/** Drawn only while kiro-cli serves them, so a ramp that turns on shows them at the next read. */
+function transferButtons(): HTMLElement[] {
+  if (transfer.kind !== "available") {
+    return [];
+  }
+  const prompt = transfer.prompt;
+  const imp = el("button", { type: "button", className: "btn-small" }, "Import");
+  imp.addEventListener("click", () => {
+    importDialog(prompt);
+  });
+  const exp = el("button", { type: "button", className: "btn-small" }, "Export");
+  exp.addEventListener("click", () => {
+    void downloadMemoryExport.dispatch({});
+  });
+  return [imp, exp];
+}
+
+/** The server's memoryImportMaxBytes, kiro-cli's own import limit, so an oversize file is never read. */
+const IMPORT_MAX_BYTES = 10 * 1024 * 1024;
+
+function importDialog(prompt: string): void {
+  // The text as the default value keeps the caret at the start; assigning .value puts it at the
+  // end and Chromium scrolls the box to it on open.
+  const promptBox = el(
+    "textarea",
+    { className: "recipe-input memories-textarea", rows: 6 },
+    prompt,
+  ) as HTMLTextAreaElement;
+  promptBox.readOnly = true;
+  const copy = makeCopyButton(() => prompt, "icon-btn");
+  const paste = el("textarea", {
+    className: "recipe-input memories-textarea",
+    rows: 8,
+  }) as HTMLTextAreaElement;
+  const choose = el("button", { type: "button", className: "btn-small" }, "Choose file");
+  const submit = el(
+    "button",
+    { type: "button", className: "btn-small" },
+    "Import",
+  ) as HTMLButtonElement;
+  const close = el("button", { type: "button", className: "btn-small" }, "Close");
+  const report = el("div", { className: "cp-batch-report", tabIndex: -1, hidden: true });
+  let busy = false;
+  const syncSubmit = (): void => {
+    submit.disabled = busy || paste.value.trim() === "";
+  };
+  syncSubmit();
+  paste.addEventListener("input", syncSubmit);
+  choose.addEventListener("click", () => {
+    openFileDialog(
+      choose,
+      (files) => {
+        const file = files[0];
+        if (file === undefined) {
+          return;
+        }
+        if (file.size > IMPORT_MAX_BYTES) {
+          toast.error("The import is over kiro-cli's 10 MiB limit.");
+          return;
+        }
+        void file
+          .text()
+          .then((text) => {
+            paste.value = text;
+            syncSubmit();
+          })
+          .catch((err: unknown) => {
+            console.error("memory import: reading the chosen file failed", err);
+            toast.error("Couldn't read the chosen file.");
+          });
+      },
+      { multiple: false },
+    );
+  });
+  submit.addEventListener("click", () => {
+    busy = true;
+    syncSubmit();
+    void importMemories.dispatch({ content: paste.value }).then((res) => {
+      busy = false;
+      syncSubmit();
+      if (res === null) {
+        return; // The action reported it; the box keeps what was pasted.
+      }
+      showImportReport(report, res);
+    });
+  });
+  const content = el(
+    "div",
+    { className: "memories-import" },
+    el("span", { id: "memories-import-title", className: "modal-title" }, "Import memories"),
+    el(
+      "p",
+      { id: "memories-import-desc", className: "modal-subtitle" },
+      "Give this prompt to the other assistant, then paste its answer below or choose the file it saved. A file from Export cannot be imported back.",
+    ),
+    field("Prompt", promptBox),
+    el("div", { className: "memories-detail-actions" }, copy),
+    field("Its answer", paste),
+    el("div", { className: "memories-detail-actions" }, choose, submit, close),
+    report,
+  );
+  const ctrl = createModal(content, {
+    initialFocus: copy,
+    onClose: () => {
+      ctrl.dispose();
+    },
+  });
+  close.addEventListener("click", () => {
+    ctrl.close();
+  });
+  ctrl.open();
+}
+
+function showImportReport(report: HTMLElement, res: unknown): void {
+  let r: ImportReport;
+  try {
+    r = decodeImportReport(res);
+  } catch (err) {
+    console.error("memory import: unreadable report", err);
+    const sentence =
+      "The import was sent, but its report could not be read. The list shows what landed.";
+    report.replaceChildren(el("p", {}, sentence));
+    report.hidden = false;
+    report.focus();
+    announce(sentence);
+    return;
+  }
+  const n = (v: number): string => v.toLocaleString("en-US");
+  const summary = `Added ${n(r.added)}, ${n(r.duplicates)} already stored.`;
+  const rows = [
+    ...r.skipped.map((l) => ({ l, tone: "warning" })),
+    ...r.failed.map((l) => ({ l, tone: "danger" })),
+  ].sort((a, b) => a.l.line - b.l.line);
+  const parts: HTMLElement[] = [el("p", {}, summary)];
+  if (rows.length > 0) {
+    parts.push(
+      el(
+        "ul",
+        {},
+        ...rows.map(({ l, tone }) =>
+          el(
+            "li",
+            {},
+            el("span", {}, `Line ${n(l.line)}`),
+            el("span", { className: "cp-state", "data-tone": tone }, importReasonText(l)),
+          ),
+        ),
+      ),
+    );
+  }
+  report.replaceChildren(...parts);
+  report.hidden = false;
+  report.focus();
+  announce(rows.length === 0 ? summary : `${summary} ${n(rows.length)} lines were not imported.`);
 }
 
 /** The Cloud sync line and its switch for the account's choice, the one scope kiro-cli lets a client write. */
@@ -816,4 +1061,6 @@ export function _resetMemoriesForTest(): void {
   generation++;
   cloud = "loading";
   cloudGeneration++;
+  transfer = { kind: "loading" };
+  transferGeneration++;
 }
