@@ -2158,8 +2158,34 @@ describe("a tool_load or load_resource card names what it loaded", () => {
       expect(drawing(card.querySelector(".tool-icon")?.innerHTML ?? ""), "once it settles").toBe(
         want,
       );
+      expect(card.dataset["depth1"]).toBe("load");
+      expect(card.classList.contains("tool-depth1-load")).toBe(true);
+      expect(card.dataset["disclosable"]).toBe("1");
+      document.body.appendChild(card);
+      card.querySelector<HTMLElement>(".tool-disclosure")?.click();
+      const rows = [...card.querySelectorAll(".tool-loaded li")].map((li) => li.textContent);
+      card.remove();
+      expect(rows).toEqual([c.id]);
     });
   }
+
+  // The id frame lands on a card the reader already opened: the list joins the open region once.
+  it("adds the loaded id to a card opened before its id arrived", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const { applyToolCallUpdate } = await import("./messages-tools.js");
+    const call = makeToolCall({
+      id: "late-open",
+      title: "Tool Load",
+      kind: "other",
+      status: "in_progress",
+      tool_name: "tool_load",
+    });
+    const card = buildToolCard({ ...toolCardOptsFor(call, true, "c-load"), detailsOpen: true });
+    applyToolCallUpdate(card, { ...call, input: { id: "skill::land" } }, "c-load");
+    applyToolCallUpdate(card, { ...call, input: { id: "skill::land" } }, "c-load");
+    const rows = [...card.querySelectorAll(".tool-loaded li")].map((li) => li.textContent);
+    expect(rows).toEqual(["skill::land"]);
+  });
 
   it("names every id an older tool_load's tool_ids carried", async () => {
     const { buildToolCard } = await import("./tool-card.js");

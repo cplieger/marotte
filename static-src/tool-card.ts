@@ -571,9 +571,11 @@ export function applyOutcome(
   nameTarget.setAttribute("aria-label", `${subject}, ${outcomeWord(state)}`);
 }
 
-/** Re-pick a built card's identity glyph from `info`, for a frame that brings what the build lacked (a load's id).
- *  A slot `applyOutcome` already painted ok or running shows the new glyph at once. */
+/** Re-pick a built card's identity from `info`, for a frame that brings what the build lacked (a load's id): its
+ *  glyph, and for a load its `load` depth and loaded-id list. A slot `applyOutcome` already painted ok or running
+ *  shows the new glyph at once. */
 export function setToolIdentity(card: HTMLElement, info: ToolRenderInfo): void {
+  adoptLoaded(card, info);
   const icon = card.querySelector<HTMLElement>(".tool-icon");
   if (icon === null) {
     return;
@@ -743,7 +745,9 @@ function detailsBody(node: HTMLDivElement, ctx: DeferredCtx): () => void {
         ? `<pre class="tool-input">${escText(JSON.stringify(opts.input, null, 2))}</pre>`
         : "";
     const head =
-      denialBlock(opts.denial ?? heldDenials.get(node)) + loadedBlock(ctx.info) + inputBlock;
+      denialBlock(opts.denial ?? heldDenials.get(node)) +
+      loadedBlock(adoptedInfo.get(node) ?? ctx.info) +
+      inputBlock;
     if (head !== "") {
       details.insertAdjacentHTML("afterbegin", head);
     }
@@ -777,6 +781,44 @@ function loadedBlock(info: ToolRenderInfo): string {
 
 /** Cards whose details region `detailsBody` has filled. */
 const builtDetails = new WeakSet<HTMLElement>();
+/** A load's render info adopted after the build, read by `detailsBody` in place of the build's. */
+const adoptedInfo = new WeakMap<HTMLElement, ToolRenderInfo>();
+
+/** Give a built card the depth and loaded-id list of the load `info` names. Idempotent. */
+function adoptLoaded(card: HTMLElement, info: ToolRenderInfo): void {
+  if (info.loaded === null) {
+    return;
+  }
+  adoptedInfo.set(card, info);
+  const depth1 = cardDepth1(info);
+  const was = card.dataset["depth1"];
+  if (was !== depth1) {
+    card.classList.remove(`tool-depth1-${was ?? ""}`);
+    card.classList.add(`tool-depth1-${depth1}`);
+    card.dataset["depth1"] = depth1;
+    card.querySelector(".tool-summary > .tool-subtitle")?.remove();
+  }
+  const details = card.querySelector(".tool-details");
+  if (details === null) {
+    return;
+  }
+  card.dataset["disclosable"] = "1";
+  if (builtDetails.has(card)) {
+    const list = details.querySelector(".tool-loaded");
+    if (list !== null) {
+      list.outerHTML = loadedBlock(info);
+    } else {
+      // `detailsBody`'s order: the denial block, then the list.
+      const denial = details.querySelector(":scope > .tool-denial");
+      if (denial !== null) {
+        denial.insertAdjacentHTML("afterend", loadedBlock(info));
+      } else {
+        details.insertAdjacentHTML("afterbegin", loadedBlock(info));
+      }
+    }
+  }
+  refreshToolDisclosure(card);
+}
 /** A denial adopted after the build, for a details region first opened later. */
 const heldDenials = new WeakMap<HTMLElement, ToolDenial>();
 
