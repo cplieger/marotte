@@ -52,7 +52,7 @@ func TestLaunch_ReadsTheRecipeNameLiveOverAHold(t *testing.T) {
 	))
 	br.forgetCalls()
 
-	_, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
+	_, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
 	if busy, ok := errors.AsType[*schedule.BusyError](err); !ok || busy.WorkflowID != "wf_live" {
 		t.Errorf("launch = %v, want the live run wf_live to refuse it", err)
 	}
@@ -320,7 +320,7 @@ func TestRecipeLookup_FindsARecipeAddedSinceTheCatalogWasHeld(t *testing.T) {
 		holdCatalog(t, h)
 		addedRecipe(br)
 		br.forgetCalls()
-		if _, name, err := h.runs.launch(t.Context(), "bundled://added", nil, marotte.RunDefaults{}); err != nil || name != "added" {
+		if _, name, _, err := h.runs.launch(t.Context(), "bundled://added", nil, marotte.RunDefaults{}); err != nil || name != "added" {
 			t.Fatalf("launch = (%q, %v), want the added recipe launched", name, err)
 		}
 		if n := listRecipesCalls(br); n != 1 {

@@ -2396,6 +2396,7 @@ const arbModel = fc.letrec<{
     {
       workflow_id: fc.string(),
       name: fc.string(),
+      warnings: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
     },
     { requiredKeys: ["workflow_id", "name"] },
   ),

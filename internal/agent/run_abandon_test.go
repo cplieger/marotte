@@ -155,7 +155,7 @@ func TestAbandonedRunOwner_Concurrent(t *testing.T) {
 			awaitOwnerQueue(t, h.runs, "wf_1", 2)
 		}
 
-		if _, _, err := h.runs.launchAs(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, eventLaunch()); err != nil {
+		if _, _, _, err := h.runs.launchAs(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, eventLaunch()); err != nil {
 			t.Fatalf("launchAs: %v", err)
 		}
 		if err := <-cancelled; err != nil {

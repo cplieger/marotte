@@ -60,7 +60,7 @@ func sessionDoors() []sessionDoor {
 				br.setCallResult(method, reply)
 			}
 			br.setCallResult(methodKiroWorkflowList, json.RawMessage(`{"runs":[]}`))
-			if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
+			if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
 				t.Fatalf("Launch: %v", err)
 			}
 		}},

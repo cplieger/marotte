@@ -237,114 +237,6 @@ func planStep(id, model, effort string) string {
 	return fmt.Sprintf(`{"nodeId":%q,"type":"step","agentName":"worker","modelId":%q,"effortLevel":%q}`, id, model, effort)
 }
 
-// checkPins checks plan against runDefaultsHub's catalog.
-func checkPins(t *testing.T, plan string, defaults marotte.RunDefaults) error {
-	t.Helper()
-	h, _, _ := runDefaultsHub(t)
-	return h.runs.checkRecipePins(t.Context(), json.RawMessage(plan), defaults)
-}
-
-// KAS keeps a step's effortLevel only when its model offers it and otherwise runs the model's
-// default, with no error, so marotte refuses the launch instead.
-func TestCheckRecipePins_RefusesUnofferedStepEffort(t *testing.T) {
-	err := checkPins(t, "["+planStep("review", "model-a", "xhigh")+"]", marotte.RunDefaults{})
-	if !errors.Is(err, errDefaultsRefused) {
-		t.Fatalf("checkRecipePins = %v, want errDefaultsRefused", err)
-	}
-	if got := err.Error(); !strings.Contains(got, `step "review"`) || !strings.Contains(got, `"xhigh"`) {
-		t.Errorf("refusal = %q, want it to name the step and the level", got)
-	}
-	if err := checkPins(t, "["+planStep("review", "model-a", "high")+"]", marotte.RunDefaults{}); err != nil {
-		t.Errorf("checkRecipePins(model-a, high) = %v, want nil for an offered pair", err)
-	}
-}
-
-// A step pinned to a model the account is not served fails at its first model call.
-func TestCheckRecipePins_RefusesUnknownStepModel(t *testing.T) {
-	err := checkPins(t, "["+planStep("build", "model-e-9", "")+"]", marotte.RunDefaults{Model: "model-a"})
-	if !errors.Is(err, errDefaultsRefused) {
-		t.Fatalf("checkRecipePins = %v, want errDefaultsRefused", err)
-	}
-	if got := err.Error(); !strings.Contains(got, `step "build"`) || !strings.Contains(got, `"model-e-9" is not offered`) {
-		t.Errorf("refusal = %q, want it to name the step and the model", got)
-	}
-}
-
-// KAS resolves a step's model and effort from its own pin, else the run's, else the parent
-// session's (resolveModelIdWithSource), with an auto model declaring nothing and the workflow
-// creator step skipping the run's level (workflowLevelReaches). A model marotte cannot resolve
-// leaves only the served vocabulary to check the effort against.
-func TestCheckRecipePins_InheritedModelChecksVocabularyOnly(t *testing.T) {
-	cases := []struct {
-		name     string
-		plan     string
-		defaults marotte.RunDefaults
-		wantText string // empty means taken
-	}{
-		{name: "a level no model offers", plan: "[" + planStep("s", "", "hgih") + "]", wantText: `no model offers the effort level "hgih"`},
-		{name: "a level some model offers", plan: "[" + planStep("s", "", "high") + "]"},
-		{
-			name: "the run's model does not run the level", plan: "[" + planStep("s", "", "high") + "]",
-			defaults: marotte.RunDefaults{Model: "model-c"}, wantText: `"model-c" does not offer the effort level "high"`,
-		},
-		{
-			name: "the run's model runs the level", plan: "[" + planStep("s", "", "high") + "]",
-			defaults: marotte.RunDefaults{Model: "model-a"},
-		},
-		{
-			name: "the run's effort on the step's model", plan: "[" + planStep("s", "model-c", "") + "]",
-			defaults: marotte.RunDefaults{Model: "model-a", Effort: "high"}, wantText: `step "s": the model "model-c" does not offer`,
-		},
-		{
-			name:     "the workflow creator ignores the run's model",
-			plan:     `[{"nodeId":"s","type":"step","agentName":"wf-workflow-creator","effortLevel":"high"}]`,
-			defaults: marotte.RunDefaults{Model: "model-c"},
-		},
-		{
-			name: "a run default of auto declares no model", plan: "[" + planStep("s", "", "high") + "]",
-			defaults: marotte.RunDefaults{Model: "auto"},
-		},
-		{
-			name: "a step on auto takes the run's model", plan: "[" + planStep("s", "auto", "high") + "]",
-			defaults: marotte.RunDefaults{Model: "model-c"}, wantText: `"model-c" does not offer the effort level "high"`,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := checkPins(t, tc.plan, tc.defaults)
-			if tc.wantText == "" {
-				if err != nil {
-					t.Errorf("checkRecipePins = %v, want nil", err)
-				}
-				return
-			}
-			if !errors.Is(err, errDefaultsRefused) || !strings.Contains(err.Error(), tc.wantText) {
-				t.Errorf("checkRecipePins = %v, want a refusal saying %q", err, tc.wantText)
-			}
-		})
-	}
-}
-
-// KAS nests a sequence's and a repeat's body under steps and a parallel's under branches.
-func TestCheckRecipePins_WalksNestedChildren(t *testing.T) {
-	bad := planStep("deep", "model-a", "max")
-	cases := map[string]string{
-		"sequence": `[{"nodeId":"seq","type":"sequence","steps":[` + planStep("ok", "", "") + `,` + bad + `]}]`,
-		"repeat":   `[{"nodeId":"loop","type":"repeat","maxIterations":3,"onMaxIterations":"pause","steps":[` + bad + `]}]`,
-		"parallel": `[{"nodeId":"fan","type":"parallel","branches":[` + planStep("ok", "model-a", "low") + `,` + bad + `]}]`,
-		"parallel in a repeat": `[{"nodeId":"loop","type":"repeat","maxIterations":2,"onMaxIterations":"pause","steps":[` +
-			`{"nodeId":"fan","type":"parallel","branches":[{"nodeId":"seq","type":"sequence","steps":[` + bad + `]}]}]}]`,
-	}
-	for name, plan := range cases {
-		t.Run(name, func(t *testing.T) {
-			err := checkPins(t, plan, marotte.RunDefaults{})
-			if !errors.Is(err, errDefaultsRefused) || !strings.Contains(err.Error(), `step "deep"`) {
-				t.Errorf("checkRecipePins = %v, want the nested step \"deep\" refused", err)
-			}
-		})
-	}
-}
-
 // pinnedRecipe makes the launchable recipe's plan pin one step.
 func pinnedRecipe(br *fakeBridge, step string) {
 	br.setCallResult(methodKiroWorkflowListRecipes, json.RawMessage(
@@ -352,87 +244,82 @@ func pinnedRecipe(br *fakeBridge, step string) {
 	))
 }
 
-// The refusal comes before the run's host session opens or any run is created.
-func TestLaunch_RefusesBadStepPinBeforeWorkflowNew(t *testing.T) {
+// KAS owns a step pin's validation: it launches, warns, then falls back at step start or fails the
+// step at its first model call.
+func TestLaunch_SendsAStepPinTheCatalogDoesNotOffer(t *testing.T) {
 	_, br, mux := runDefaultsHub(t)
-	pinnedRecipe(br, planStep("review", "model-a", "xhigh"))
+	pinnedRecipe(br, planStep("review", "model-e-9", "xhigh"))
 	rec := postRoute(t, mux, "/api/runs", `{"source":"bundled://publish"}`)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("POST /api/runs = %d %s, want 400", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Errorf("POST /api/runs = %d %s, want 200", rec.Code, rec.Body.String())
 	}
-	if got := errorText(t, rec); !strings.Contains(got, `step "review"`) {
-		t.Errorf("refusal = %q, want it to name the step", got)
-	}
-	if slices.Contains(br.callLog(), methodKiroWorkflowNew) {
-		t.Errorf("calls = %v, want no workflow/new for a refused pin", br.callLog())
-	}
-	if so := br.lastSessionOpts(); so != nil && so.Role == marotte.SessionRoleHost {
-		t.Error("a run host session was opened for a launch the pin check refused")
+	if !slices.Contains(br.callLog(), methodKiroWorkflowNew) {
+		t.Errorf("calls = %v, want workflow/new sent", br.callLog())
 	}
 }
 
-// With no catalog to check a pin against, a launch is refused as retryable; a plan with no pins
-// reads no catalog.
-func TestHandleLaunch_UncheckableStepPinsAnswersTryLater(t *testing.T) {
-	newHub := func(t *testing.T, step string) (*fakeBridge, *http.ServeMux) {
-		t.Helper()
-		h, _, br := newTestHub()
-		launchableRecipe(br, "wf_pins")
-		pinnedRecipe(br, step)
-		br.callErrs = map[string]error{methodKiroConfigTemplate: errors.New("engine down")}
-		mux := http.NewServeMux()
-		(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(mux)
-		return br, mux
+// Only the run's own pick reads the model list, so a pinned plan launches while it is unreadable.
+func TestHandleLaunch_PinnedPlanNeedsNoModelList(t *testing.T) {
+	h, _, br := newTestHub()
+	launchableRecipe(br, "wf_pins")
+	pinnedRecipe(br, planStep("review", "model-a", "high"))
+	br.callErrs = map[string]error{methodKiroConfigTemplate: errors.New("engine down")}
+	mux := http.NewServeMux()
+	(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(mux)
+	if rec := postRoute(t, mux, "/api/runs", `{"source":"bundled://publish"}`); rec.Code != http.StatusOK {
+		t.Errorf("POST /api/runs = %d %s, want 200", rec.Code, rec.Body.String())
 	}
-	t.Run("a pinned step", func(t *testing.T) {
-		br, mux := newHub(t, planStep("review", "model-a", "high"))
-		rec := postRoute(t, mux, "/api/runs", `{"source":"bundled://publish"}`)
-		if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" {
-			t.Errorf("POST /api/runs = %d (Retry-After %q) %s, want 503 with Retry-After",
-				rec.Code, rec.Header().Get("Retry-After"), rec.Body.String())
-		}
-		var body struct {
-			Code string `json:"code"`
-		}
-		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.Code != "model_list_unreadable" {
-			t.Errorf("body = %s, want code model_list_unreadable", rec.Body.String())
-		}
-		if slices.Contains(br.callLog(), methodKiroWorkflowNew) {
-			t.Errorf("calls = %v, want no workflow/new for an unchecked pin", br.callLog())
-		}
-	})
-	t.Run("no pinned step", func(t *testing.T) {
-		_, mux := newHub(t, planStep("review", "", ""))
-		if rec := postRoute(t, mux, "/api/runs", `{"source":"bundled://publish"}`); rec.Code != http.StatusOK {
-			t.Errorf("POST /api/runs = %d %s, want 200", rec.Code, rec.Body.String())
-		}
-	})
 }
 
-// A schedule's slot whose pins cannot be checked waits on the engine like any unanswered launch;
-// a refused pin is a plain failure.
-func TestLaunchScheduled_StepPinRefusals(t *testing.T) {
-	t.Run("uncheckable", func(t *testing.T) {
-		h, _, br := newTestHub()
-		launchableRecipe(br, "wf_sched")
-		pinnedRecipe(br, planStep("review", "model-a", "high"))
-		br.callErrs = map[string]error{methodKiroConfigTemplate: errors.New("engine down")}
-		_, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", launchrule.Row{ID: "sched-1"},
-			nil, marotte.RunDefaults{}, time.Now().Add(time.Hour))
-		if !errors.Is(err, schedule.ErrEngineBusy) {
-			t.Errorf("LaunchScheduled = %v, want schedule.ErrEngineBusy", err)
-		}
-	})
-	t.Run("refused", func(t *testing.T) {
-		h, br, _ := runDefaultsHub(t)
-		pinnedRecipe(br, planStep("review", "model-e-9", ""))
-		_, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", launchrule.Row{ID: "sched-1"},
-			nil, marotte.RunDefaults{}, time.Now().Add(time.Hour))
-		if !errors.Is(err, errDefaultsRefused) || errors.Is(err, schedule.ErrEngineBusy) {
-			t.Errorf("LaunchScheduled = %v, want errDefaultsRefused and no engine-busy retry", err)
-		}
-		if slices.Contains(br.callLog(), methodKiroWorkflowNew) {
-			t.Errorf("calls = %v, want no workflow/new for a refused pin", br.callLog())
-		}
-	})
+// A schedule's fire sends a recipe whose step pin the catalog does not offer.
+func TestLaunchScheduled_StepPinsReachWorkflowNew(t *testing.T) {
+	h, br, _ := runDefaultsHub(t)
+	pinnedRecipe(br, planStep("review", "model-e-9", ""))
+	id, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", launchrule.Row{ID: "sched-1"},
+		nil, marotte.RunDefaults{}, time.Now().Add(time.Hour))
+	if err != nil || id != "wf_pick" {
+		t.Errorf("LaunchScheduled = %q, %v, want wf_pick and no error", id, err)
+	}
+	if errors.Is(err, schedule.ErrEngineBusy) || errors.Is(err, errDefaultsRefused) {
+		t.Errorf("LaunchScheduled = %v, want no pin refusal", err)
+	}
+}
+
+// workflow/new's warnings reach the launching browser verbatim.
+func TestHandleLaunch_CarriesWorkflowNewWarnings(t *testing.T) {
+	_, br, mux := runDefaultsHub(t)
+	const warning = "[workflow] step 'a' modelId 'm-x' is not a served model; the step fails at its first model call"
+	br.setCallResult(methodKiroWorkflowNew, json.RawMessage(`{"workflowId":"wf_pick","warnings":["`+warning+`"]}`))
+	rec := postRoute(t, mux, "/api/runs", `{"source":"bundled://publish"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/runs = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	var body marotte.RunLaunchedResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode %s: %v", rec.Body.String(), err)
+	}
+	if !slices.Equal(body.Warnings, []string{warning}) {
+		t.Errorf("warnings = %q, want [%q]", body.Warnings, warning)
+	}
+}
+
+// A launch KAS gave no warning answers no warnings key.
+func TestHandleLaunch_OmitsWarningsWhenKASSentNone(t *testing.T) {
+	for name, answer := range map[string]string{
+		"absent": `{"workflowId":"wf_pick"}`,
+		"empty":  `{"workflowId":"wf_pick","warnings":[]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, br, mux := runDefaultsHub(t)
+			br.setCallResult(methodKiroWorkflowNew, json.RawMessage(answer))
+			rec := postRoute(t, mux, "/api/runs", `{"source":"bundled://publish"}`)
+			var body map[string]json.RawMessage
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode %s: %v", rec.Body.String(), err)
+			}
+			if _, ok := body["warnings"]; ok || rec.Code != http.StatusOK {
+				t.Errorf("POST /api/runs = %d %s, want 200 with no warnings key", rec.Code, rec.Body.String())
+			}
+		})
+	}
 }

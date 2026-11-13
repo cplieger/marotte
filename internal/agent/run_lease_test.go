@@ -39,7 +39,7 @@ func TestLaunchRun_GrantsTheRunsEnvelope(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_manual")
 
-		if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
+		if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
 			t.Fatalf("Launch: %v", err)
 		}
 		l, ok := h.runs.lease("wf_manual")
@@ -110,7 +110,7 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 	h.runs.launchRules = st
 
 	before := time.Now()
-	if _, _, lErr := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); lErr != nil {
+	if _, _, _, lErr := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); lErr != nil {
 		t.Fatalf("Launch: %v", lErr)
 	}
 	wantSlot, err := schedule.NextRunFrom(spec, anchor, before)
@@ -176,7 +176,7 @@ func TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun(t *testing.T) {
 			putClockRule(t, st, rule.source, launchrule.Spec{Freq: launchrule.FreqMinutely, Interval: 5}, rule.enabled)
 			h.runs.launchRules = st
 
-			if _, _, lErr := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); lErr != nil {
+			if _, _, _, lErr := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); lErr != nil {
 				t.Fatalf("Launch: %v", lErr)
 			}
 			l, _ := h.runs.lease("wf_manual")
@@ -190,7 +190,7 @@ func TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun(t *testing.T) {
 	t.Run("no schedule store at all", func(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_manual")
-		if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
+		if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
 			t.Fatalf("Launch: %v", err)
 		}
 		if l, _ := h.runs.lease("wf_manual"); !l.SlotAt.IsZero() {
@@ -206,7 +206,7 @@ func TestLaunchRun_ReleasesTheLeaseWhenInvokeFails(t *testing.T) {
 	delete(br.callResults, methodKiroWorkflowInvoke)
 	br.callErrs = map[string]error{methodKiroWorkflowInvoke: errHoldFault}
 
-	if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err == nil {
+	if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err == nil {
 		t.Fatal("a failed invoke reported success")
 	}
 	if _, ok := h.runs.lease("wf_1"); ok {
@@ -582,7 +582,7 @@ func TestGrantLeaseDoesNotConfirmEvent(t *testing.T) {
 	h, _, br := newTestHub(WithTriggerConfirmer(fc))
 	launchableRecipe(br, "wf_1")
 
-	if _, _, err := h.runs.launchAs(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, eventLaunch()); err != nil {
+	if _, _, _, err := h.runs.launchAs(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, eventLaunch()); err != nil {
 		t.Fatalf("launchAs: %v", err)
 	}
 	l, held := h.runs.lease("wf_1")

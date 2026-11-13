@@ -4,10 +4,13 @@ import { expectAnchored, resizeViewport } from "./__test-helpers__/anchored-pane
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type * as Runs from "./actions/runs.js";
 import type * as RunView from "./run-view.js";
+import type * as Toast from "./toast.js";
 
 const m = vi.hoisted(() => ({
   launched: [] as unknown[],
   opened: [] as string[],
+  warnings: undefined as string[] | undefined,
+  notices: [] as [string, string][],
 }));
 
 vi.mock("./actions/runs.js", async (importOriginal) => ({
@@ -17,14 +20,28 @@ vi.mock("./actions/runs.js", async (importOriginal) => ({
     dispatch: vi.fn(
       (
         args: unknown,
-        opts?: { onSuccess?: (d: { workflow_id: string; name: string }) => void },
+        opts?: {
+          onSuccess?: (d: { workflow_id: string; name: string; warnings?: string[] }) => void;
+        },
       ) => {
         m.launched.push(args);
-        opts?.onSuccess?.({ workflow_id: "wf_9", name: "agent-reviewer" });
+        opts?.onSuccess?.({
+          workflow_id: "wf_9",
+          name: "agent-reviewer",
+          ...(m.warnings === undefined ? {} : { warnings: m.warnings }),
+        });
         return Promise.resolve();
       },
     ),
   },
+}));
+
+vi.mock("./toast.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Toast>()),
+  notice: vi.fn((message: string, level: string) => {
+    m.notices.push([message, level]);
+    return () => undefined;
+  }),
 }));
 
 vi.mock("./run-view.js", async (importOriginal) => ({
@@ -40,6 +57,8 @@ import { agentRunButton } from "./agent-run.js";
 afterEach(() => {
   m.launched.length = 0;
   m.opened.length = 0;
+  m.notices.length = 0;
+  m.warnings = undefined;
   document.body.replaceChildren();
 });
 
@@ -94,6 +113,24 @@ describe("the agent Run control", () => {
     await vi.waitFor(() => {
       expect(m.opened).toEqual(["wf_9"]);
     });
+  });
+
+  it("shows the launch's warnings, and no toast when there are none", () => {
+    const submit = (): void => {
+      const form = openForm("reviewer");
+      const field = form.querySelector("textarea");
+      if (field === null) {
+        throw new Error("no prompt field");
+      }
+      field.value = "check the diff";
+      form.requestSubmit();
+    };
+    submit();
+    expect(m.notices).toEqual([]);
+    document.body.replaceChildren();
+    m.warnings = ["[workflow] step 'a' modelId 'm-x' is not a served model", "second advisory"];
+    submit();
+    expect(m.notices).toEqual([[m.warnings.join("\n"), "warning"]]);
   });
 
   it("sends nothing for a blank prompt", () => {

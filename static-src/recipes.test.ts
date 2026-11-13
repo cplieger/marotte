@@ -13,6 +13,8 @@ const authoredSource = import.meta.glob<string>(
 const dispatched: { name: string; args: unknown }[] = [];
 /** Holds the recipe read until released, with the reply it was asked under. */
 let holdRecipes: Promise<void> | null = null;
+/** The warnings the launch answers with, or none. */
+let launchWarnings: string[] | undefined;
 
 vi.mock("./actions/runs.js", () => ({
   loadRecipes: {
@@ -32,11 +34,18 @@ vi.mock("./actions/runs.js", () => ({
     dispatch: vi.fn(
       (
         args: unknown,
-        opts?: { onSuccess?: (d: { workflow_id: string; name: string }) => void },
+        opts?: {
+          onSuccess?: (d: { workflow_id: string; name: string; warnings?: string[] }) => void;
+        },
       ) => {
         dispatched.push({ name: "launch", args });
-        opts?.onSuccess?.({ workflow_id: "wf_new", name: "goal" });
-        return Promise.resolve({ workflow_id: "wf_new", name: "goal" });
+        const d = {
+          workflow_id: "wf_new",
+          name: "goal",
+          ...(launchWarnings === undefined ? {} : { warnings: launchWarnings }),
+        };
+        opts?.onSuccess?.(d);
+        return Promise.resolve(d);
       },
     ),
   },
@@ -48,6 +57,10 @@ vi.mock("./actions/runs.js", () => ({
   },
 }));
 vi.mock("./run-view.js", () => ({ openRunView: vi.fn() }));
+vi.mock("./toast.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Toast>()),
+  notice: vi.fn(() => () => undefined),
+}));
 const catalog = vi.hoisted(() => ({ models: [] as ModelInfo[] }));
 vi.mock("./picker.js", () => ({ getCachedModels: () => catalog.models }));
 // The unattended note's auto-approve read-out. Unmocked, refreshAutoApprove reaches /api/settings
@@ -92,6 +105,8 @@ import {
 import { confirm } from "./confirm.js";
 import { openRunView } from "./run-view.js";
 import { launchRun, cancelRun, loadRecipes } from "./actions/runs.js";
+import { notice } from "./toast.js";
+import type * as Toast from "./toast.js";
 import type { ModelInfo, RecipesResponse, WorkflowRun, ResumableSession } from "./types.js";
 import type { ConfigStanding, RunStatus } from "./wire/types.gen.js";
 import type { LaunchRulesResponse, LaunchRuleView } from "./launch-rule-types.js";
@@ -156,9 +171,11 @@ function shownText(btn: HTMLElement): string {
 
 beforeEach(() => {
   holdRecipes = null;
+  launchWarnings = undefined;
   document.body.replaceChildren();
   dispatched.length = 0;
   vi.mocked(openRunView).mockClear();
+  vi.mocked(notice).mockClear();
   vi.mocked(launchRun.dispatch).mockClear();
   vi.mocked(cancelRun.dispatch).mockClear();
   recipesReply = { recipes: [] };
@@ -342,6 +359,26 @@ describe("the Run ⇄ Cancel row", () => {
       inputs: {},
     });
     expect(vi.mocked(openRunView)).toHaveBeenCalledWith("wf_new", "goal");
+  });
+
+  it("a launch with warnings shows them", async () => {
+    const warnings = ["[workflow] step 'a' modelId 'm-x' is not a served model", "second advisory"];
+    launchWarnings = warnings;
+    recipesReply = { recipes: [recipe("goal")] };
+    const panel = await render();
+    buttonFor(panel, "bundled://goal")?.click();
+    panel.querySelector<HTMLButtonElement>(".recipe-launch-btn")?.click();
+    expect(vi.mocked(notice)).toHaveBeenCalledWith(warnings.join("\n"), "warning");
+    expect(vi.mocked(openRunView)).toHaveBeenCalledWith("wf_new", "goal");
+  });
+
+  it("a launch with no warnings shows no toast", async () => {
+    recipesReply = { recipes: [recipe("goal")] };
+    const panel = await render();
+    buttonFor(panel, "bundled://goal")?.click();
+    panel.querySelector<HTMLButtonElement>(".recipe-launch-btn")?.click();
+    expect(vi.mocked(openRunView)).toHaveBeenCalledWith("wf_new", "goal");
+    expect(vi.mocked(notice)).not.toHaveBeenCalled();
   });
 
   it("launches with the model and effort picked on the form", async () => {

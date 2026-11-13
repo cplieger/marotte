@@ -100,7 +100,7 @@ func TestLaunch_AManualRunResetsNoMCPServer(t *testing.T) {
 	h, br := resetHub(t, "everything")
 	reportMCP(t, h, "sess_chat", failedMCP("everything", marotte.MCPSource{}, "spawn ENOENT"))
 
-	if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
+	if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
 		t.Fatalf("launch: %v", err)
 	}
 

@@ -409,6 +409,8 @@ type RunDefaults struct {
 type RunLaunchedResponse struct {
 	WorkflowID string `json:"workflow_id"`
 	Name       string `json:"name"`
+	// Warnings are KAS's workflow/new advisories, verbatim.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // Recipe is one launchable workflow definition, projected from
