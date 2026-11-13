@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -244,5 +245,125 @@ func TestSweepEngineGroups_SkipsAnIdALaterGroupHolds(t *testing.T) {
 	}
 	if n := logs.CountExact("kill kiro-cli engine group"); n != 0 {
 		t.Errorf("kill Error logged %d times for a reused id, want 0", n)
+	}
+}
+
+// startEOFFixture is startTeardownFixture with a real stdin pipe published, as startProcess publishes kiro-cli's.
+func startEOFFixture(t *testing.T, script string) *Engine {
+	t.Helper()
+	b := NewEngine("cli", t.TempDir())
+	cmd := exec.Command("/bin/sh", "-c", script)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	w, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("stdin pipe: %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start fixture: %v", err)
+	}
+	b.cmd = cmd
+	b.stdin.Store(&stdinPipe{w: w})
+	t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) })
+	return b
+}
+
+func setStdinEOFGrace(t *testing.T, d time.Duration) {
+	t.Helper()
+	old := stdinEOFGrace
+	stdinEOFGrace = d
+	t.Cleanup(func() { stdinEOFGrace = old })
+}
+
+// kiro-cli ends on stdin EOF, and KAS's teardown runs before it does, so Stop must not signal a process still
+// finishing that exit.
+func TestStop_LetsTheEngineExitOnStdinEOF(t *testing.T) {
+	dir := t.TempDir()
+	termed, done, ready := filepath.Join(dir, "termed"), filepath.Join(dir, "done"), filepath.Join(dir, "ready")
+	b := startEOFFixture(t, `trap ': > "`+termed+`"; exit 0' TERM; : > "`+ready+`"; cat >/dev/null; sleep 0.3; : > "`+done+`"; exit 1`)
+	waitForFile(t, ready)
+
+	b.Stop()
+
+	if _, err := os.Stat(done); err != nil {
+		t.Errorf("Stop() returned before the process finished its EOF exit (marker %s: %v)", done, err)
+	}
+	if _, err := os.Stat(termed); err == nil {
+		t.Errorf("Stop() signalled a process that was exiting on stdin EOF")
+	}
+	exit := b.Exit()
+	if exit.Reason != ExitStopped {
+		t.Errorf("Exit().Reason = %q, want %q", exit.Reason, ExitStopped)
+	}
+	if exit.SidecarExit != "exit_code=1" {
+		t.Errorf("Exit().SidecarExit = %q, want %q", exit.SidecarExit, "exit_code=1")
+	}
+}
+
+// A process that ignores EOF is signalled once the EOF grace has passed, and its SIGTERM exit is no escalation. Not
+// parallel: it reassigns both graces and swaps the slog default.
+func TestStop_SignalsOnlyAfterTheEOFGrace(t *testing.T) {
+	setStdinEOFGrace(t, 300*time.Millisecond)
+	setTeardownGrace(t, 2*time.Second)
+	logs := capture.Default(t)
+	dir := t.TempDir()
+	stamp, ready := filepath.Join(dir, "termed"), filepath.Join(dir, "ready")
+	b := startEOFFixture(t, `trap ': > "`+stamp+`"; exit 0' TERM; : > "`+ready+`"; while :; do sleep 0.05; done`)
+	waitForFile(t, ready)
+
+	start := time.Now()
+	b.Stop()
+
+	info, err := os.Stat(stamp)
+	if err != nil {
+		t.Fatalf("the EOF-ignoring process was never signalled: %v", err)
+	}
+	if after := info.ModTime().Sub(start); after < 300*time.Millisecond {
+		t.Errorf("SIGTERM landed %v after Stop began, want at least the 300ms EOF grace", after)
+	}
+	if n := logs.CountExact("kiro-cli did not exit within the teardown grace; killed"); n != 0 {
+		t.Errorf("teardown-grace Warn logged %d times for a process that exited on SIGTERM, want 0", n)
+	}
+}
+
+// The lifecycle backstop runs the same staged stop, recorded as a stop marotte asked for.
+func TestCancel_StopsThroughTheTeardown(t *testing.T) {
+	dir := t.TempDir()
+	termed, eof, ready := filepath.Join(dir, "termed"), filepath.Join(dir, "eof"), filepath.Join(dir, "ready")
+	script := "#!/bin/sh\ntrap ': > \"" + termed + "\"; exit 0' TERM\n: > \"" + ready + "\"\ncat >/dev/null\n: > \"" + eof + "\"\nexit 0\n"
+	scriptPath := filepath.Join(dir, "fake-kiro-cli")
+	syscall.ForkLock.RLock()
+	err := os.WriteFile(scriptPath, []byte(script), 0o755)
+	syscall.ForkLock.RUnlock()
+	if err != nil {
+		t.Fatalf("Setup: write fake kiro-cli: %v", err)
+	}
+	// Not t.Context(): the cleanup's Stop must outlive it.
+	ctx, cancel := context.WithCancel(context.Background())
+	b := NewEngine(scriptPath, dir)
+	b.lifecycleCtx = ctx
+	if err := b.startProcess(); err != nil {
+		t.Fatalf("Setup: startProcess: %v", err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		b.Stop()
+	})
+	waitForFile(t, ready)
+
+	cancel()
+	select {
+	case <-b.done:
+	case <-time.After(StopCeiling() + 5*time.Second):
+		t.Fatal("the engine never ended after its lifecycle context was cancelled")
+	}
+
+	if got := b.Exit().Reason; got != ExitStopped {
+		t.Errorf("Exit().Reason after a lifecycle cancel = %q, want %q", got, ExitStopped)
+	}
+	if _, err := os.Stat(eof); err != nil {
+		t.Errorf("the fake kiro-cli never saw stdin EOF: %v", err)
+	}
+	if _, err := os.Stat(termed); err == nil {
+		t.Errorf("the lifecycle cancel signalled a process that was exiting on stdin EOF")
 	}
 }

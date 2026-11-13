@@ -20,13 +20,13 @@ func runStateFileRe(file string) *regexp.Regexp {
 	return regexp.MustCompile(`function [\w$]+\(\w+,\w+\)\{return \w+\.join\(([\w$]+)\(\w+,\w+\),"` + regexp.QuoteMeta(file) + `"\)\}`)
 }
 
-// reaperStringConst answers the value of the string constant named constName in kirosession's reaper.go, the
-// reaper's one declaration of that piece of KAS's run-state layout.
-func reaperStringConst(t *testing.T, constName string) string {
+// declaredConst answers the value of the constant named constName in the Go file at path, unquoted when it is a
+// string, so a census compares the bundle against the one declaration marotte reads.
+func declaredConst(t *testing.T, path, constName string) string {
 	t.Helper()
-	file, err := parser.ParseFile(token.NewFileSet(), "../kirosession/reaper.go", nil, 0)
+	file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
 	if err != nil {
-		t.Fatalf("parse reaper.go: %v", err)
+		t.Fatalf("parse %s: %v", path, err)
 	}
 	var value string
 	ast.Inspect(file, func(n ast.Node) bool {
@@ -35,22 +35,28 @@ func reaperStringConst(t *testing.T, constName string) string {
 			return true
 		}
 		if lit, ok := spec.Values[0].(*ast.BasicLit); ok {
-			value, _ = strconv.Unquote(lit.Value)
+			value = lit.Value
+			if unquoted, err := strconv.Unquote(lit.Value); err == nil {
+				value = unquoted
+			}
 		}
 		return false
 	})
 	if value == "" {
-		t.Fatalf("reaper.go declares no %s string constant", constName)
+		t.Fatalf("%s declares no %s literal constant", path, constName)
 	}
 	return value
 }
+
+// reaperPath is kirosession's reaper, the one declaration of the run-state layout it reads.
+const reaperPath = "../kirosession/reaper.go"
 
 // TestRunStateLayoutMatchesBundle pins the layout kirosession.Reaper.RunStates reads: KAS keeps a run's state in
 // sessions/<bucket>/<workflowsDirName>/<workflowId>/<runStateFileName>. If a kiro-cli release moves it, RunStates and
 // runParents answer nothing, the fill-in reads every run record as stateless, and the step-session spare fails too.
 func TestRunStateLayoutMatchesBundle(t *testing.T) {
-	want := reaperStringConst(t, "workflowsDirName")
-	stateFile := reaperStringConst(t, "runStateFileName")
+	want := declaredConst(t, reaperPath, "workflowsDirName")
+	stateFile := declaredConst(t, reaperPath, "runStateFileName")
 	forEachBundle(t, func(t *testing.T, b bundle) {
 		base := runBaseDirRe.FindAllStringSubmatch(b.src, -1)
 		if len(base) != 1 {
@@ -93,7 +99,7 @@ func TestRunStateLayoutExtractors(t *testing.T) {
 // session is reaped again. The second pattern pins that KAS's state reader returns the schema-parsed file whole,
 // so a top-level member of the file is a top-level member of what it reads.
 func TestRunStateParentKeyMatchesBundle(t *testing.T) {
-	want := reaperStringConst(t, "stateParentKey")
+	want := declaredConst(t, reaperPath, "stateParentKey")
 	forEachBundle(t, func(t *testing.T, b bundle) {
 		parent := runStateParentRe.FindAllStringSubmatch(b.src, -1)
 		if len(parent) != 1 {

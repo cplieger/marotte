@@ -167,6 +167,7 @@ var knownClasses = map[string]struct{}{
 	"UnsupportedClientVersionError":     {},
 	"UnsupportedMessageTypeError":       {},
 	"UsageLimitReachedError":            {},
+	"SessionHeldElsewhereError":         {},
 }
 
 // transientClasses are the model-call classes KAS's step error classifier retries or pauses as transient (a
