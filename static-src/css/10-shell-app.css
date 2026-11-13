@@ -291,7 +291,7 @@ body.sidebar-resizing {
     opacity var(--dur-micro),
     transform var(--dur-micro) var(--ease-standard);
 
-  /* A folded section's rows other than the active one. */
+  /* .tab's display: flex outranks the UA [hidden], so a folded row would stay shown. */
   &[hidden] {
     display: none;
   }

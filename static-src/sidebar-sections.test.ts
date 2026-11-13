@@ -461,6 +461,27 @@ describe("folding a tab section", () => {
     expect(description(toggle("open"))).toBe("4 tabs");
   });
 
+  it("shows a hidden editor's unsaved changes on its header, after every other state", async () => {
+    await openChats("a");
+    await openTab({ kind: "editor", ref: "/workspace/x.go" });
+    tabsModule.flushActivationForTest();
+    await activateTab(chatID("a"));
+    await paint();
+    toggle("open").click();
+    await paint();
+    const dot = (): string | undefined =>
+      toggle("open").querySelector<HTMLElement>(".side-section-dot")?.dataset["status"];
+    tabsModule.setTabDirty(tabIdFor("editor", "/workspace/x.go"), true);
+    await paint();
+    expect(dot()).toBe("dirty");
+    expect(description(toggle("open"))).toBe("2 tabs, one has unsaved changes");
+    await openChats("b");
+    await activateTab(chatID("a"));
+    setTabStatus(chatID("b"), "done");
+    await paint();
+    expect(dot(), "a finished chat outranks unsaved changes").toBe("done");
+  });
+
   it("shows no dot on an unfolded header", async () => {
     await openChats("a", "b");
     setTabStatus(chatID("a"), "input");
@@ -592,6 +613,66 @@ describe("the keyboard across sections", () => {
     row("a").focus();
     await press("{Delete}");
     expect(document.activeElement).toBe(el("prompt-input"));
+  });
+
+  it("moves focus to the next section's stop on Delete of a folded section's only row", async () => {
+    await openChats("a", "p");
+    await setTabPinned(chatID("p"), true);
+    await paint();
+    toggle("pinned").click();
+    await paint();
+    row("p").focus();
+    await press("{Delete}");
+    expect(section("pinned").hidden).toBe(true);
+    expect(document.activeElement).toBe(row("a"));
+  });
+
+  it("moves focus to the composer on Delete of the only tab in a folded Open", async () => {
+    await openChats("a");
+    toggle("open").click();
+    await paint();
+    row("a").focus();
+    await press("{Delete}");
+    expect(document.activeElement).toBe(el("prompt-input"));
+  });
+
+  it("moves focus to the composer on Delete of the last pinned tab while an empty Open is folded", async () => {
+    await openChats("p");
+    toggle("open").click();
+    await paint();
+    await setTabPinned(chatID("p"), true);
+    await paint();
+    expect(el("tab-list").hasAttribute("data-folded"), "the fold outlives Open's last row").toBe(
+      true,
+    );
+    row("p").focus();
+    await press("{Delete}");
+    expect(document.activeElement).toBe(el("prompt-input"));
+  });
+
+  it("skips a closing parent's own sub-tabs on Delete", async () => {
+    await openChats("a");
+    await openTab({ kind: "chat", ref: "kid", parent: chatID("a") });
+    await openChats("b");
+    expect(row("a").nextElementSibling).toBe(row("kid"));
+    row("a").focus();
+    await press("{Delete}");
+    expect(document.activeElement).toBe(row("b"));
+  });
+
+  it("walks to the next section on Delete of a folded parent whose hidden sub-tabs are the rest of its section", async () => {
+    await openChats("p");
+    await setTabPinned(chatID("p"), true);
+    await openChats("a");
+    await openTab({ kind: "chat", ref: "kid", parent: chatID("a") });
+    await activateTab(chatID("a"));
+    await paint();
+    toggle("open").click();
+    await paint();
+    expect(hiddenRefs("tab-list")).toEqual(["kid"]);
+    row("a").focus();
+    await press("{Delete}");
+    expect(document.activeElement).toBe(row("p"));
   });
 
   it.each([
@@ -756,6 +837,37 @@ describe("a header's box and motion", () => {
     expect(list.hasAttribute("data-folded")).toBe(false);
     expect(hiddenRefs("tab-list"), "an opening slide shows its rows at once").toEqual([]);
     await slideEnd(list);
+  });
+
+  it("paints the count and the Tab stop of a render that lands during an unfold", async () => {
+    await openChats("a", "b");
+    const list = el("tab-list");
+    toggle("open").click();
+    await slideEnd(list);
+    toggle("open").click();
+    expect(list.getAnimations(), "the list slides open").not.toHaveLength(0);
+    await openTab({ kind: "chat", ref: "c" });
+    tabsModule.flushActivationForTest();
+    await paint();
+    expect(list.getAnimations(), "the render landed mid-slide").not.toHaveLength(0);
+    expect(toggle("open").querySelector(".side-section-count")?.textContent).toBe("3");
+    expect(row("c").tabIndex).toBe(0);
+    expect(row("b").tabIndex).toBe(-1);
+    await slideEnd(list);
+  });
+
+  it("shows a hidden row's new state on the header while the section slides shut", async () => {
+    await openChats("a", "b");
+    const list = el("tab-list");
+    toggle("open").click();
+    expect(list.getAnimations(), "the list slides shut").not.toHaveLength(0);
+    setTabStatus(chatID("a"), "input");
+    expect(toggle("open").querySelector<HTMLElement>(".side-section-dot")?.dataset["status"]).toBe(
+      "input",
+    );
+    expect(hiddenRefs("tab-list"), "the slide still owns the rows").toEqual([]);
+    await slideEnd(list);
+    expect(hiddenRefs("tab-list")).toEqual(["a"]);
   });
 
   it("arms no drag from a press on a row that is sliding shut", async () => {

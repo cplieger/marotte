@@ -2641,13 +2641,15 @@ function liveRows(list: HTMLElement): HTMLElement[] {
   );
 }
 
-/** A folded header's dot: the first state, in `TabDotState`'s precedence, among the rows it hides. */
+/** A folded header's dot: the first state, in `TabDotState`'s precedence and then an editor's
+ *  unsaved changes, among the rows it hides. */
 const FOLD_DOT_PRECEDENCE: readonly TabDotStatus[] = [
   "input",
   "failed",
   "working",
   "waiting",
   "done",
+  "dirty",
 ];
 
 function renderDOM(): void {
@@ -2718,9 +2720,7 @@ function renderDOM(): void {
     bindSectionToggle(list, key, (folded) => {
       paintFold(key, list, folded);
     });
-    if (!isSliding(list)) {
-      paintFold(key, list, sectionFolded(key));
-    }
+    paintFold(key, list, sectionFolded(key), isSliding(list));
   }
 
   // Any re-seat of a node blurs it, so a row the frame moved (a pin, a remote reorder, Move up)
@@ -2813,11 +2813,19 @@ function seatRow(
 
 /** Apply `folded` to one section: every row but the active one hidden when folded, its one Tab
  *  stop, its header and its visibility. The fold's `slideBox` calls this with the state it is
- *  showing, so a closing slide keeps the rows until it ends. */
-function paintFold(key: SectionKey, list: HTMLElement, folded: boolean): void {
+ *  showing, so a closing slide keeps the rows until it ends; `slideOwnsRows` leaves the rows'
+ *  `hidden` to a running slide and paints the rest. */
+function paintFold(
+  key: SectionKey,
+  list: HTMLElement,
+  folded: boolean,
+  slideOwnsRows = false,
+): void {
   const rows = liveRows(list);
-  for (const node of rows) {
-    node.hidden = folded && node.dataset["tabId"] !== state.active;
+  if (!slideOwnsRows) {
+    for (const node of rows) {
+      node.hidden = folded && node.dataset["tabId"] !== state.active;
+    }
   }
   const active = rows.find((n) => n.dataset["tabId"] === state.active);
   const stop = active ?? (folded ? undefined : rows[0]);
@@ -2849,18 +2857,18 @@ function foldDot(rows: readonly HTMLElement[]): SectionHeaderView["dot"] {
   for (const status of FOLD_DOT_PRECEDENCE) {
     const r = hidden.find((h) => h.dotStatus === status);
     if (r !== undefined) {
-      return { status, phrase: dotPhrase(r.subject.kind, status) };
+      // The header reads "one <phrase>", and the dot's own "unsaved changes" is a bare noun.
+      const phrase = status === "dirty" ? "has unsaved changes" : dotPhrase(r.subject.kind, status);
+      return { status, phrase };
     }
   }
   return null;
 }
 
-/** Repaint every section's fold state from what is stored, unless its slide owns it. */
+/** Repaint every section's fold state from what is stored; a running slide keeps its rows. */
 function paintFolds(): void {
   for (const { key, list } of sectionLists()) {
-    if (!isSliding(list)) {
-      paintFold(key, list, sectionFolded(key));
-    }
+    paintFold(key, list, sectionFolded(key), isSliding(list));
   }
 }
 
@@ -3252,25 +3260,46 @@ function shownRows(list: HTMLElement): HTMLElement[] {
   return liveRows(list).filter((n) => !n.hidden);
 }
 
-/** Where a section's Tab stop is, or its folded header when no row shows; null for a hidden or
- *  empty section. */
-function sectionFocusTarget(list: HTMLElement, except: HTMLElement): HTMLElement | null {
+/** Whether `node` is a row that survives a close of the `closing` ids. */
+function survives(node: HTMLElement, closing: ReadonlySet<string>): boolean {
+  return !closing.has(node.dataset["tabId"] ?? "");
+}
+
+/** A folded section's header, while a row outside `closing` keeps it shown once the close lands. */
+function foldedHeaderAfterClose(
+  list: HTMLElement,
+  closing: ReadonlySet<string>,
+): HTMLElement | null {
+  if (!list.hasAttribute("data-folded") || !liveRows(list).some((n) => survives(n, closing))) {
+    return null;
+  }
+  return sectionToggle(list);
+}
+
+const NOTHING_CLOSES: ReadonlySet<string> = new Set();
+
+/** Where another section's Tab stop is, or its folded header while it has a row; null for a
+ *  hidden or empty section. A closing subtree sits in one section, so none of it is here. */
+function sectionFocusTarget(list: HTMLElement): HTMLElement | null {
   if (list.closest<HTMLElement>(".side-section")?.hidden === true) {
     return null;
   }
-  const rows = shownRows(list).filter((n) => n !== except);
+  const rows = shownRows(list);
   const stop = rows.find((n) => n.tabIndex === 0) ?? rows[0];
-  if (stop !== undefined) {
-    return stop;
-  }
-  return list.hasAttribute("data-folded") ? sectionToggle(list) : null;
+  return stop ?? foldedHeaderAfterClose(list, NOTHING_CLOSES);
 }
 
 /** Move focus off a row about to close, or Delete drops the keyboard user onto <body>. The APG puts
  *  it on the tab that took the closed one's place: a shown row after it, then before it in reverse;
  *  then its folded section's header, the next section's stop, the nearest earlier section's, and
- *  on the last tab the composer, the empty-state surface's one control. */
+ *  on the last tab the composer, the empty-state surface's one control. Every row of the closed
+ *  row's subtree closes with it, so none of them is a target. */
 function focusAfterClose(node: HTMLElement): void {
+  const id = node.dataset["tabId"] ?? "";
+  const closed = rowOfID(id);
+  const closing = new Set(
+    closed === undefined ? [id] : subtreeRows(closed).map((r) => r.subject.id),
+  );
   const list = node.parentElement;
   const lists = sectionLists().map((l) => l.list);
   const at = list === null ? -1 : lists.indexOf(list);
@@ -3278,9 +3307,9 @@ function focusAfterClose(node: HTMLElement): void {
     const rows = shownRows(list);
     const self = rows.indexOf(node);
     const successor = [...rows.slice(self + 1), ...rows.slice(0, Math.max(self, 0)).reverse()].find(
-      (n) => n !== node,
+      (n) => survives(n, closing),
     );
-    const target = successor ?? (list.hasAttribute("data-folded") ? sectionToggle(list) : null);
+    const target = successor ?? foldedHeaderAfterClose(list, closing);
     if (target !== null) {
       target.focus();
       return;
@@ -3288,7 +3317,7 @@ function focusAfterClose(node: HTMLElement): void {
   }
   const order = at < 0 ? lists : [...lists.slice(at + 1), ...lists.slice(0, at).reverse()];
   for (const other of order) {
-    const target = sectionFocusTarget(other, node);
+    const target = sectionFocusTarget(other);
     if (target !== null) {
       target.focus();
       return;
