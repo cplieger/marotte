@@ -68,4 +68,18 @@ describe("reduced motion", () => {
     expect(longest(getComputedStyle(subagent, "::before").animationDuration)).toBeLessThan(0.001);
     expect(longest(getComputedStyle(button).transitionDuration)).toBeLessThan(0.001);
   });
+
+  // The scroll owner writes a spacer or floor and measures it in the same task, so a box no rule
+  // gives a transition must lay out the new size at once.
+  it("starts no transition on a box that declares none", async () => {
+    expect.assertions(3);
+    await emulateA11yMedia({ reducedMotion: "reduce" });
+    host.innerHTML = `<div class="turn-space"></div>`;
+    const space = host.querySelector<HTMLElement>(".turn-space") as HTMLElement;
+    space.style.blockSize = "300px";
+    expect(space.offsetHeight).toBe(300);
+    space.style.blockSize = "120px";
+    expect(space.offsetHeight).toBe(120);
+    expect(space.getAnimations()).toHaveLength(0);
+  });
 });
