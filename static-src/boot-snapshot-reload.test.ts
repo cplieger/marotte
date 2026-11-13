@@ -1,6 +1,6 @@
 // A reload paints the boot snapshot, then the server's page lands. The reader opens on the newest
 // turn's end, so neither the snapshot's first frames nor the landing may move what is on screen:
-// layout shift (https://w3c.github.io/layout-instability/) under 0.05 outside the cover. Real
+// layout shift (https://w3c.github.io/layout-instability/) under 0.01 outside the cover. Real
 // store, renderer, scroll controller, cover and the whole app sheet; the snapshot's three reads of
 // `tabs.js` are stubbed, since this page has no tab strip.
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
@@ -196,7 +196,7 @@ async function reload(server: Session, landAfterMs: number): Promise<ReloadRun> 
 
   expect(snapshot.paintBootSnapshot(snap), "the premise: the snapshot paints").toBe(true);
   if (!cover.transcriptPainted(server.id)) {
-    cover.holdCover(server.id);
+    cover.holdCover(server.id, 0);
   }
   store.setActive(server.id);
   store.setPainted(server.id);
@@ -280,7 +280,7 @@ describe("a reload from the boot snapshot moves nothing on screen", () => {
       const run = await reload(s, landAfter);
 
       expect(run.shown, "the premise: the reload ends on visible boxes").toBeGreaterThan(3);
-      expect(run.shift, "layout shift across the reload").toBeLessThan(0.05);
+      expect(run.shift, "layout shift across the reload").toBeLessThan(0.01);
     });
 
     it(`when the newest turns fit, the page landing at ${String(landAfter)} ms`, async () => {
@@ -296,7 +296,7 @@ describe("a reload from the boot snapshot moves nothing on screen", () => {
       const run = await reload(s, landAfter);
 
       expect(run.shown, "the premise: the reload ends on visible boxes").toBeGreaterThan(3);
-      expect(run.shift, "layout shift across the reload").toBeLessThan(0.05);
+      expect(run.shift, "layout shift across the reload").toBeLessThan(0.01);
     });
   }
 });

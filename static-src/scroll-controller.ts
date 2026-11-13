@@ -37,6 +37,9 @@ const NEAR_JUMP = 0.5;
 /** The near-band passes one task may force: the first marks move the band by their growth and the next marks what
  *  moved in; more means estimates far off everywhere, which the near observer finishes over the next frames. */
 const BAND_PASSES = 3;
+/** The most frames `whenLayoutQuiet` waits, so a turn that keeps growing (a live reply) holds no
+ *  cover past about 100 ms. */
+const QUIET_FRAMES_MAX = 6;
 /** Consecutive frames a settle or a press window must see nothing to do before it lets go. */
 const RESTORE_HOLD_FRAMES = 2;
 /** The frames a settle or a press window may spend before it gives up. */
@@ -190,6 +193,8 @@ export class ScrollController {
    *  laid out at its intrinsic size. */
   private nearUnseen = new Set<Element>();
   private nearSettledWaiters: (() => void)[] = [];
+  /** Turn resize deliveries so far, which `whenLayoutQuiet` compares across frames. */
+  private childResizes = 0;
   /** A mutation added skippable boxes since the follow frame last marked the band. */
   private nearAdded = false;
   private observedChildren = new Set<Element>();
@@ -580,6 +585,7 @@ export class ScrollController {
   }
 
   private onChildResize(entries: readonly ResizeObserverEntry[]): void {
+    this.childResizes++;
     this.delivering = true;
     this.pressResized = true;
     let shrank = false;
@@ -1323,16 +1329,40 @@ export class ScrollController {
   }
 
   /** Run `cb` once every box observed so far, the current task's insertions included, has had its
-   *  first near notification, so the frame after it lays each box out at its real size. */
+   *  first near notification and a frame has then laid out with no turn resizing, so the next frame
+   *  shows each box at its real size and moves none. */
   whenNearSettled(cb: () => void): void {
+    const quiet = (): void => {
+      this.whenLayoutQuiet(cb);
+    };
     // After the content observer's microtask, which a mutation earlier in the task queued first.
     queueMicrotask(() => {
       if (this.nearUnseen.size === 0) {
-        cb();
+        quiet();
       } else {
-        this.nearSettledWaiters.push(cb);
+        this.nearSettledWaiters.push(quiet);
       }
     });
+  }
+
+  /** Run `cb` in the first animation frame after a frame that resized no turn, or `QUIET_FRAMES_MAX`
+   *  frames on. Chromium decides a `content-visibility: auto` box's proximity after layout
+   *  (third_party/blink/renderer/core/display_lock/display_lock_document_state.cc), so a box it
+   *  starts or stops skipping resizes a frame later, and the pin answers it a frame late. */
+  private whenLayoutQuiet(cb: () => void): void {
+    let seen = -1;
+    let frames = 0;
+    const check = (): void => {
+      // A frame's resize observations run after its animation-frame callbacks: this frame's read
+      // covers the frame before it.
+      if (seen === this.childResizes || ++frames > QUIET_FRAMES_MAX) {
+        cb();
+        return;
+      }
+      seen = this.childResizes;
+      requestAnimationFrame(check);
+    };
+    requestAnimationFrame(check);
   }
 
   private flushNearSettled(): void {
