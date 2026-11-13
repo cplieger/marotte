@@ -200,7 +200,7 @@
       "label": "Not read · the turn ended first",
       "sites": [
         "internal/agent/command_chat_ops.go:157",
-        "internal/agent/steer_buffer.go:531",
+        "internal/agent/steer_buffer.go:525",
         "internal/translate/steering.go:198"
       ]
     },
@@ -309,7 +309,7 @@
       "reason": "restart"
     },
     {
-      "site": "internal/agent/steer_buffer.go:531",
+      "site": "internal/agent/steer_buffer.go:525",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
