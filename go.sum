@@ -30,8 +30,8 @@ github.com/cplieger/go/scheduler v1.1.0 h1:AzmRDvZ/wEEwK7Ab5Uz0Pa5Xx67oWndalpVkn
 github.com/cplieger/go/scheduler v1.1.0/go.mod h1:PEVHRl8YalcfFnicvMQdoWQKM16Ddrby9GPlG1oxyQI=
 github.com/cplieger/go/slogx v1.1.0 h1:whWmZcNmLuWGFM33SYFR+alUTfEodzBjKju44DHNgPY=
 github.com/cplieger/go/slogx v1.1.0/go.mod h1:N88y5LJZ1aVp++cLFqzEV4WsalaX5YKXoRtXT29Ngkw=
-github.com/cplieger/go/sse/v2 v2.3.0-dev.2 h1:w35VZgJd/mDx2LllhEstQ6IoWwLZlnlp8NgtaZT9glk=
-github.com/cplieger/go/sse/v2 v2.3.0-dev.2/go.mod h1:BPIBSZUvuSRIAVT1LYv0XrUa2zqZYpZtbkJrLC9h/uY=
+github.com/cplieger/go/sse/v2 v2.3.0-dev.3 h1:Y+F/1B/CPF/NKZtmTzQK7cD/ijm3wLMhm03CcHsZU74=
+github.com/cplieger/go/sse/v2 v2.3.0-dev.3/go.mod h1:m/CJ/aIrOfqhhXfhik74lnjW4d/aAqegJBScg9tWde0=
 github.com/cplieger/go/ssrf v1.1.0 h1:gyP7pYm1415RkHmIdod1YCvuX+I1xD1dXiRa8tvz8Bg=
 github.com/cplieger/go/ssrf v1.1.0/go.mod h1:95hUJ04+tP4FHFyd9Vp+egJpNDuf8d+jtgvcxzf7Mkw=
 github.com/cplieger/go/textsafe v1.1.0 h1:D+p7ZDBQmABv/empI2TNMZfvhMXNlfii8E2e5V+dUWE=
