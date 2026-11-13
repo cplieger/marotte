@@ -324,9 +324,7 @@ export function initUI(): void {
     void toggleSettingsView();
   });
 
-  // Per-tab lazy data loaders: fired by settings-tabs on the first ACTIVATION of each tab, never on
-  // the subscribe-time paint that shows the default panel. Every tab has one now — General's is
-  // what took its three kiro-cli spawns off the boot path.
+  // settings-tabs.ts owns when each panel's loader runs.
   initSettingsTabs({
     general: loadGeneralPanel,
     tools: loadToolsList,

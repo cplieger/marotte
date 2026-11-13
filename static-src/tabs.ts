@@ -239,9 +239,14 @@ const internal: Internal = {
  *  the row is BUILT with it, and it survives a re-list. Bounded by `forgetRow`. */
 const nameOverrides = new Map<string, string>();
 
-/** A door's sub-tab for a singleton not yet in the strip, keyed like `nameOverrides`: whichever path
- *  builds the row (the open's response, a frame, a re-list) builds it on this route. */
-const bornRoutes = new Map<string, SubTabRoute>();
+/** A door's sub-tab for a singleton, held for the length of its open and keyed like `nameOverrides`:
+ *  whichever path builds the row (the open's response, a frame, a re-list) builds it on `route`.
+ *  `reached` names the rows already pointed at it, so the open's end leaves a pill clicked on one. */
+interface DoorRoute {
+  route: SubTabRoute;
+  reached: Set<string>;
+}
+const doorRoutes = new Map<string, DoorRoute>();
 
 /** Tab ids in ACTIVATION order, most recent first, for a close's hand-over. In memory only (a cold
  *  strip falls back to position 0) and non-reactive. Head is the last settled tab
@@ -351,10 +356,10 @@ function nameFor(subject: TabSubject, spec: TabViewSpec): string {
 
 function buildRow(subject: TabSubject): TabRow {
   const key = subjectKey(subject.kind, subject.ref);
-  const born = bornRoutes.get(key);
-  bornRoutes.delete(key);
+  const door = doorRoutes.get(key);
+  door?.reached.add(subject.id);
   const made = materializeTab(subject);
-  const spec = born === undefined ? made : { ...made, route: born };
+  const spec = door === undefined ? made : { ...made, route: door.route };
   const row: TabRow = { subject, spec, name: nameFor(subject, spec) };
   if (spec.dotStatus !== undefined) {
     row.dotStatus = spec.dotStatus;
@@ -1226,17 +1231,15 @@ export function adoptSubject(subject: TabSubject, name?: string): void {
  *  the chat), a different fact from a network that failed to answer. */
 export type OpenTabOutcome = "opened" | "not-found" | "failed";
 
-/** Point the open row at `route` and answer "", or hold `route` for the row's birth and answer the
- *  key it is held under. */
-function applyDoorRoute(kind: TabKind, ref: string, route: SubTabRoute): string {
-  const open = tabIdFor(kind, ref);
+/** Hold `route` for this open's rows and point the open row, if any, at it. */
+function holdDoorRoute(key: string, open: string, route: SubTabRoute): DoorRoute {
+  const door: DoorRoute = { route, reached: new Set() };
+  doorRoutes.set(key, door);
   if (open !== "") {
     setTabRoute(open, route);
-    return "";
+    door.reached.add(open);
   }
-  const key = subjectKey(kind, ref);
-  bornRoutes.set(key, route);
-  return key;
+  return door;
 }
 
 /** Open a tab for something that already exists, and activate it unless the user moved to another
@@ -1253,12 +1256,16 @@ export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
     // beat and then snapping.
     nameOverrides.set(subjectKey(args.kind, ref), args.name);
   }
-  const route = args.route;
-  const bornKey = route === undefined ? "" : applyDoorRoute(args.kind, ref, route);
+  const doorKey = subjectKey(args.kind, ref);
+  const door =
+    args.route === undefined
+      ? undefined
+      : holdDoorRoute(doorKey, tabIdFor(args.kind, ref), args.route);
   // Only this call's entry: a later door's route for the same row stays for that door's open.
-  const dropBornRoute = (): void => {
-    if (bornKey !== "" && bornRoutes.get(bornKey) === route) {
-      bornRoutes.delete(bornKey);
+  const ownsDoor = (): boolean => door !== undefined && doorRoutes.get(doorKey) === door;
+  const dropDoorRoute = (): void => {
+    if (ownsDoor()) {
+      doorRoutes.delete(doorKey);
     }
   };
   const ticket = args.activate === false ? 0 : claimNavigation();
@@ -1277,7 +1284,7 @@ export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
     // The server answered an error (nothing committed) or the dispatch gave up.
     // Nothing was painted, so the failure transition just retires the op.
     opFailed(opID);
-    dropBornRoute();
+    dropDoorRoute();
     if (outcome.status !== "error") {
       return "failed";
     }
@@ -1303,7 +1310,11 @@ export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
   }
   const reply = outcome.value;
   adoptSubject(reply.subject);
-  dropBornRoute();
+  // A refused close's rollback puts the live row back with the route it had, building nothing.
+  if (door !== undefined && ownsDoor() && !door.reached.has(reply.subject.id)) {
+    setTabRoute(reply.subject.id, door.route);
+  }
+  dropDoorRoute();
   adoptCommitted(opID, reply.subject, reply.version, reply.created);
   if (args.activate !== false && navigationHeld(ticket)) {
     void activateTab(reply.subject.id);
@@ -2101,10 +2112,7 @@ export function subTabOf(kind: SubTabKind): SettingsTab | GitTab | DocsTab | His
   // eslint-disable-next-line @typescript-eslint/no-unused-expressions
   routeVersion.value;
   const route = rowOfID(tabIdFor(kind))?.spec.route;
-  if (route?.kind !== kind) {
-    return null;
-  }
-  switch (route.kind) {
+  switch (route?.kind) {
     case "history":
       return route.tab ?? "chats";
     case "settings":
@@ -3212,7 +3220,7 @@ export function _resetForTest(): void {
   internal.unshown = "";
   internal.stripRestore = null;
   nameOverrides.clear();
-  bornRoutes.clear();
+  doorRoutes.clear();
   activationHistory.length = 0;
   navigationSeq = 0;
   activeCloses = 0;

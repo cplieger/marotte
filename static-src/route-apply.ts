@@ -55,8 +55,7 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
     // `ref` is empty).
     case "settings":
       void openTab({ kind: "settings", route }).then(() => {
-        // A `?highlight=` fires after the panel's loader, so the control it names exists by the
-        // time we look for it. One-shot, so a later popstate does not re-flash it.
+        // One-shot, so a later popstate does not re-flash the control.
         flushURLHighlight();
       });
       break;

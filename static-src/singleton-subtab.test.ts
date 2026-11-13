@@ -450,3 +450,76 @@ describe("a close repaints nothing", () => {
     expect(shownPanel("settings")).toBe("tools");
   });
 });
+
+describe("a door's sub-tab while the row leaves and returns during its open", () => {
+  /** Start the door with its response held, and wait for its dispatch to reach the server. Boxed:
+   *  an async function returning the door's promise would wait for it. */
+  async function heldDoor(tab: SettingsTab): Promise<{ door: Promise<void> }> {
+    tabServer.holdResponses();
+    const door = openSettingsView(tab);
+    await settled(() => tabServer.sentOfType("open_tab").length > 0, "the door's dispatch");
+    return { door };
+  }
+
+  async function landed(door: Promise<void>): Promise<void> {
+    tabServer.releaseResponses();
+    await door;
+    flushActivationForTest();
+    await settled(() => loaded().length > 0, "the rebuilt row's load");
+  }
+
+  it("an open Settings removed and rebuilt by the response shows the door's sub-tab", async () => {
+    await settingsOn("tools");
+    const { door } = await heldDoor("permissions");
+    tabServer.closeRemotely(tabIdFor("settings"));
+    expect(tabIdFor("settings")).toBe("");
+    clearSpies();
+
+    await landed(door);
+
+    expect(getActiveTabRoute()).toEqual({ kind: "settings", tab: "permissions" });
+    expect(shownPanel("settings")).toBe("permissions");
+  });
+
+  it("a row a frame built, removed and rebuilt by the response shows the door's sub-tab", async () => {
+    const { door } = await heldDoor("permissions");
+    expect(tabIdFor("settings"), "the open's frame built the row").not.toBe("");
+    tabServer.closeRemotely(tabIdFor("settings"));
+    expect(tabIdFor("settings")).toBe("");
+
+    await landed(door);
+
+    expect(getActiveTabRoute()).toEqual({ kind: "settings", tab: "permissions" });
+    expect(shownPanel("settings")).toBe("permissions");
+  });
+
+  it("a refused close's restored row shows the door's sub-tab", async () => {
+    await settingsOn("tools");
+    tabServer.failNext("close_tab", 500);
+    tabServer.answerAfterNext("close_tab", 20, { ok: false, status: 500, error: "nope" });
+    const closing = closeTab(tabIdFor("settings"));
+    expect(tabIdFor("settings"), "the close removed the row at the gesture").toBe("");
+    const { door } = await heldDoor("permissions");
+    await closing;
+    expect(tabIdFor("settings"), "the refusal restored the row").not.toBe("");
+    clearSpies();
+
+    await landed(door);
+
+    expect(getActiveTabRoute()).toEqual({ kind: "settings", tab: "permissions" });
+    expect(shownPanel("settings")).toBe("permissions");
+  });
+
+  it("a pill clicked on the row the door pointed keeps its sub-tab when the response lands", async () => {
+    await settingsOn("tools");
+    const { door } = await heldDoor("permissions");
+    expect(getActiveTabRoute()).toEqual({ kind: "settings", tab: "permissions" });
+    click("settings", "instructions");
+
+    tabServer.releaseResponses();
+    await door;
+
+    expect(getActiveTabRoute()).toEqual({ kind: "settings", tab: "instructions" });
+    expect(shownPanel("settings")).toBe("instructions");
+  });
+});
