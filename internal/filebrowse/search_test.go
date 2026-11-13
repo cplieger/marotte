@@ -1007,6 +1007,7 @@ func TestSearch_SwappedNameIsNotReadAfterAdmission(t *testing.T) {
 		writeTree(t, backing, map[string]string{
 			"chats/c1.json": `{"messages":"` + secret + `"}`,
 			"pub/notes.txt": "needle in a browsable file\n",
+			"docs/a.txt":    "needle after the refused one\n",
 		})
 		root := &walkDir{f: searchDirAt(t, h, "/config"), abs: "/config", pruneGit: true}
 
@@ -1019,12 +1020,9 @@ func TestSearch_SwappedNameIsNotReadAfterAdmission(t *testing.T) {
 		}
 
 		walk, v := contentWalk(t.Context(), "needle", false)
-		queued := &walkDir{parent: root, name: "pub", abs: "/config/pub", srel: "pub", depth: 1, pruneGit: true}
-		if !walk.drain(&dirCursor{}, []*walkDir{queued}) {
-			t.Error("a refused descent must skip the entry, not stop the whole scan")
-		}
-		if len(v.rows) != 0 {
-			t.Fatalf("walked into a swapped ancestor and produced %+v", v.rows)
+		walk.drain(&dirCursor{}, []queuedDir{{parent: root, name: "pub"}, {parent: root, name: "docs"}})
+		if len(v.rows) != 1 || v.rows[0].Path != "/config/docs/a.txt" {
+			t.Fatalf("rows = %+v, want only /config/docs/a.txt: a refused descent skips the entry, never walks the swap nor stops the scan", v.rows)
 		}
 		if walk.truncated {
 			t.Error("truncated = true: a refused swap is the guarantee, not a loss")
@@ -1155,35 +1153,27 @@ func TestContentVisitor_ReplyBudgetIsInclusive(t *testing.T) {
 }
 
 // The directory budget names the last directory the walk still ENTERS: the directory that spends
-// it is listed and its files read, and the one after it is refused before its listing, which is
-// what Truncated reports. Driven at the counter, because the real budget is 20 000 directories.
+// it is listed and its files read, and a subdirectory past it is refused before it is queued,
+// which is what Truncated reports. Driven at the counter, because the real budget is 20 000
+// directories.
 func TestWalkDir_DirectoryBudgetIsInclusive(t *testing.T) {
 	tests := []struct {
 		name          string
 		dirs          int
-		wantWalked    bool
 		wantMatches   int
 		wantTruncated bool
 	}{
-		{name: "the_last_directory_of_the_budget", dirs: maxSearchDirs - 1, wantWalked: true, wantMatches: 1, wantTruncated: false},
-		{name: "one_directory_past_the_budget", dirs: maxSearchDirs, wantWalked: false, wantMatches: 0, wantTruncated: true},
+		{name: "the_subdirectory_is_the_budgets_last", dirs: maxSearchDirs - 2, wantMatches: 1, wantTruncated: false},
+		{name: "the_root_is_the_budgets_last", dirs: maxSearchDirs - 1, wantMatches: 0, wantTruncated: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, "hit.txt"), []byte("needle\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			f, err := os.Open(dir)
-			if err != nil {
-				t.Fatal(err)
-			}
+			h, dir, _ := testDir(t)
+			writeTree(t, dir, map[string]string{"sub/hit.txt": "needle\n"})
 
 			walk, v := contentWalk(t.Context(), "needle", false)
 			walk.dirs = tc.dirs
-			if got := walk.walkDirs([]*walkDir{{f: f, abs: dir, pruneGit: true}}); got != tc.wantWalked {
-				t.Errorf("walk() with dirs=%d = %v, want %v", tc.dirs, got, tc.wantWalked)
-			}
+			walk.walkRoots([]loc{{m: &h.mounts[0], abs: dir}})
 			res := v.result(walk.truncated)
 			if len(res.Matches) != tc.wantMatches {
 				t.Errorf("walk() with dirs=%d found %d rows, want %d: %+v", tc.dirs, len(res.Matches), tc.wantMatches, res.Matches)

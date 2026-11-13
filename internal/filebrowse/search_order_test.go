@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// secretTree is the reported tree in miniature: a 0700 folder and a file whose names hold the
-// query at the top level, a folder and a file holding it two levels down, and names that do not.
+// secretTree holds a 0700 folder and a file whose names hold the query at the top level, a folder
+// and a file holding it two levels down, and names that do not.
 func secretTree(t *testing.T, dir string) {
 	t.Helper()
 	writeTree(t, dir, map[string]string{
@@ -82,9 +82,9 @@ func TestNameSearch_FolderAndFileMatchAtEveryDepth(t *testing.T) {
 	}
 }
 
-// The reported failure: a sibling tree larger than the entry budget sorts first, and the budget
-// must run out inside it, the deepest level, never before the shallow matches are visited.
-// Driven at the counter, as the budget's own tests are.
+// A sibling tree larger than the entry budget sorts first, and the budget must run out inside
+// it, the deepest level, never before the shallow matches are visited. Driven at the counter, as
+// the budget's own tests are.
 func TestNameSearch_ShallowMatchesSurviveASiblingTreeOverTheEntryBudget(t *testing.T) {
 	h, dir, _ := testDir(t)
 	secretTree(t, dir)
@@ -234,8 +234,7 @@ func TestNameSearch_FanOutKeepsALaterMountsShallowMatches(t *testing.T) {
 	}
 }
 
-// The cursor lets go of a directory between its listing and its children's visit; a directory
-// renamed into its name in that gap is refused, not listed under the old path.
+// A directory whose inode changed between two of the cursor's opens is refused.
 func TestDirCursor_RefusesADirectoryReplacedSinceItsFirstOpen(t *testing.T) {
 	h, backing := searchHandlerAt(t, "/config")
 	writeTree(t, backing, map[string]string{"pub/notes.txt": "", "chats/c1.json": ""})
@@ -266,5 +265,87 @@ func TestDirCursor_RefusesADirectoryReplacedSinceItsFirstOpen(t *testing.T) {
 	}
 	if pub.f != nil {
 		t.Error("the replaced directory's handle was kept")
+	}
+}
+
+// A root holding more entries than the budget still offers the ones read within it, the part of
+// the chunk that crossed the budget included, and offers a deeper search for the rest.
+func TestNameSearch_RootOverTheEntryBudgetListsTheEntriesReadWithinIt(t *testing.T) {
+	h, dir, _ := testDir(t)
+	const files, budget = 401, 300
+	tree := make(map[string]string, files)
+	for i := range files {
+		tree[fmt.Sprintf("needle-%03d.txt", i)] = ""
+	}
+	writeTree(t, dir, tree)
+
+	v := newNameVisitor(mustQuery(t, "needle"))
+	walk := newSearchWalk(t.Context(), v, budgetFor(modeNames, false))
+	walk.ignoreRules = true
+	walk.entries = maxNameSearchEntries - budget
+	walk.walkRoots([]loc{{m: &h.mounts[0], abs: dir}})
+	res := v.result(walk.truncated)
+
+	if res.Matched != budget {
+		t.Errorf("matched = %d, want %d: every entry read within the budget is offered", res.Matched, budget)
+	}
+	if len(res.Matches) != maxSearchMatches {
+		t.Errorf("rows = %d, want the reply cap %d", len(res.Matches), maxSearchMatches)
+	}
+	if !res.Truncated || !walk.spent {
+		t.Errorf("truncated = %v spent = %v, want both true: %d entries were never read", res.Truncated, walk.spent, files-budget)
+	}
+}
+
+// An ancestor that failed to reopen is not opened again for its other queued children: here it
+// comes back under its name, and its second child is still skipped.
+func TestDirCursor_SkipsTheChildrenOfAnAncestorThatFailedToReopen(t *testing.T) {
+	h, backing := searchHandlerAt(t, "/config")
+	writeTree(t, backing, map[string]string{"p/d1/a.txt": "", "p/d2/b.txt": "", "q/c.txt": ""})
+	root := &walkDir{f: searchDirAt(t, h, "/config"), abs: "/config"}
+	p := &walkDir{parent: root, name: "p", abs: "/config/p", depth: 1}
+	q := &walkDir{parent: root, name: "q", abs: "/config/q", depth: 1}
+	d1 := &walkDir{parent: p, name: "d1", depth: 2}
+	d2 := &walkDir{parent: p, name: "d2", depth: 2}
+
+	c := &dirCursor{}
+	t.Cleanup(c.close)
+	if _, err := c.open(d1); err != nil {
+		t.Fatalf("first open: %v", err)
+	}
+	if _, err := c.open(q); err != nil {
+		t.Fatalf("moving the cursor to p's sibling: %v", err)
+	}
+	moved := filepath.Join(backing, "p.moved")
+	if err := os.Rename(filepath.Join(backing, "p"), moved); err != nil {
+		t.Fatal(err)
+	}
+	if failed, err := c.open(d2); !errors.Is(err, os.ErrNotExist) || failed != "/config/p" {
+		t.Fatalf("open with p gone: failed %q err %v, want /config/p and ErrNotExist", failed, err)
+	}
+	if err := os.Rename(moved, filepath.Join(backing, "p")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := c.open(d2); !errors.Is(err, errAncestorLost) {
+		t.Errorf("open below an ancestor that failed: err = %v, want errAncestorLost", err)
+	}
+	if d2.f != nil || p.f != nil {
+		t.Error("a handle below the failed ancestor was opened")
+	}
+}
+
+// A failed fstat is an I/O failure, which the walk reports as truncation, not a replaced
+// directory, which it skips as complete.
+func TestDirIdentity_AFailedStatIsNotAReplacement(t *testing.T) {
+	f, err := os.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dirIdentity(f); err == nil || errors.Is(err, errDirReplaced) {
+		t.Errorf("dirIdentity(closed file) err = %v, want an error other than errDirReplaced", err)
 	}
 }

@@ -80,7 +80,7 @@ func TestNameSearch_ReadsNoFileContents(t *testing.T) {
 	}
 }
 
-func mustQuery(t *testing.T, raw string) nameQuery {
+func mustQuery(t testing.TB, raw string) nameQuery {
 	t.Helper()
 	q, err := compileQuery(raw, false)
 	if err != nil {
@@ -228,7 +228,8 @@ func TestNameSearch_EmptyQueryAndFilterDoesNotWalk(t *testing.T) {
 	}
 }
 
-// Driven at the counter, because the real budget is far too large to build a tree for.
+// The entries read within the budget are offered and the rest are not. Driven at the counter,
+// because the real budget is far too large to build a tree for.
 func TestNameSearch_EntryBudgetStopsAndSaysSo(t *testing.T) {
 	h, dir, _ := testDir(t)
 	writeTree(t, dir, map[string]string{"needle-a.txt": "", "needle-b.txt": ""})
@@ -237,7 +238,7 @@ func TestNameSearch_EntryBudgetStopsAndSaysSo(t *testing.T) {
 		spent     int
 		wantRows  int
 		truncated bool
-	}{{spent: maxNameSearchEntries - 2, wantRows: 2, truncated: false}, {spent: maxNameSearchEntries - 1, wantRows: 0, truncated: true}} {
+	}{{spent: maxNameSearchEntries - 2, wantRows: 2, truncated: false}, {spent: maxNameSearchEntries - 1, wantRows: 1, truncated: true}, {spent: maxNameSearchEntries, wantRows: 0, truncated: true}} {
 		v := newNameVisitor(mustQuery(t, "needle"))
 		walk := newSearchWalk(t.Context(), v, budgetFor(modeNames, false))
 		walk.ignoreRules = true
@@ -441,38 +442,35 @@ func TestFilesFilter_PathsAreRelativeToTheSearchedFolder(t *testing.T) {
 	}
 }
 
-// Driven at the counter, because the real budget is too many directories to build.
+// The budget counts the directories entered plus those queued, so the root entered as the
+// budget's last directory queues no subdirectory. Driven at the counter, because the real budget
+// is too many directories to build.
 func TestNameSearch_DirectoryBudgetIsNamesModes(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		dirs       int
-		wantWalked bool
-		wantRows   int
+		name      string
+		dirs      int
+		wantRows  int
+		wantSpent bool
 	}{
-		{name: "past_the_contents_budget", dirs: maxSearchDirs, wantWalked: true, wantRows: 1},
-		{name: "the_last_directory_of_the_budget", dirs: maxNameSearchDirs - 1, wantWalked: true, wantRows: 1},
-		{name: "one_directory_past_the_budget", dirs: maxNameSearchDirs, wantWalked: false, wantRows: 0},
+		{name: "past_the_contents_budget", dirs: maxSearchDirs, wantRows: 1},
+		{name: "the_subdirectory_is_the_budgets_last", dirs: maxNameSearchDirs - 2, wantRows: 1},
+		{name: "the_root_is_the_budgets_last", dirs: maxNameSearchDirs - 1, wantRows: 0, wantSpent: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, "needle.txt"), nil, 0o600); err != nil {
-				t.Fatal(err)
-			}
-			f, err := os.Open(dir)
-			if err != nil {
-				t.Fatal(err)
-			}
+			h, dir, _ := testDir(t)
+			writeTree(t, dir, map[string]string{"sub/needle.txt": ""})
 
 			v := newNameVisitor(mustQuery(t, "needle"))
 			walk := newSearchWalk(t.Context(), v, budgetFor(modeNames, false))
 			walk.ignoreRules = true
 			walk.dirs = tc.dirs
-			if got := walk.walkDirs([]*walkDir{{f: f, abs: dir, pruneGit: true}}); got != tc.wantWalked {
-				t.Errorf("names walk() with dirs=%d = %v, want %v", tc.dirs, got, tc.wantWalked)
-			}
+			walk.walkRoots([]loc{{m: &h.mounts[0], abs: dir}})
 			res := v.result(walk.truncated)
-			if len(res.Matches) != tc.wantRows || res.Truncated == tc.wantWalked {
-				t.Errorf("names walk() with dirs=%d: %d rows, truncated %v; want %d rows, truncated %v", tc.dirs, len(res.Matches), res.Truncated, tc.wantRows, !tc.wantWalked)
+			if len(res.Matches) != tc.wantRows {
+				t.Errorf("dirs=%d: %d rows, want %d", tc.dirs, len(res.Matches), tc.wantRows)
+			}
+			if res.Truncated != tc.wantSpent || walk.spent != tc.wantSpent {
+				t.Errorf("dirs=%d: truncated %v spent %v, want both %v", tc.dirs, res.Truncated, walk.spent, tc.wantSpent)
 			}
 		})
 	}

@@ -40,7 +40,7 @@ const (
 	// a tree of empty directories costs one listing each and never fills the file budget.
 	maxSearchDirs = 20_000
 	// maxSearchDepth bounds how deep the walk descends: the cursor holds one directory handle per
-	// level from the root to the directory it lists, so depth IS the number one search holds.
+	// level below a root, beside the roots' own, so depth bounds the handles a search adds to them.
 	maxSearchDepth = 128
 	// maxSearchMatches caps the reply: past this a search is a listing the reader refines.
 	maxSearchMatches = 200
@@ -277,11 +277,11 @@ type searchVisitor interface {
 	result(truncated bool) FileSearchResult
 }
 
-// walkDir is one directory of the walk: its coordinates and the ignore and filter state its
-// children inherit, plus the open handle that PINS it while the cursor holds it, against which
+// walkDir is one entered directory of the walk: its coordinates and the ignore and filter state
+// its children inherit, plus the open handle that PINS it while the cursor holds it, against which
 // every child is opened by name so no ancestor swap can redirect a read.
 type walkDir struct {
-	// f is nil while the directory waits in the queue.
+	// f is nil while the cursor does not hold the directory.
 	f *os.File
 	// parent is nil at the search root.
 	parent *walkDir
@@ -297,9 +297,11 @@ type walkDir struct {
 	rrel string
 	// depth is 0 at the search root and counts the handles the cursor holds below it.
 	depth int
-	// id is the directory's identity at its first open, which every reopen must match.
+	// id is the directory's identity at the cursor's first open, which every reopen must match.
 	id     dirID
 	opened bool
+	// lost says an open of this directory failed, so the cursor never opens it, or below it, again.
+	lost bool
 	// inRepo says a git repository encloses this directory, so its .gitignore applies.
 	inRepo bool
 	// included says an include pattern matched this directory or an ancestor.
@@ -310,6 +312,29 @@ type walkDir struct {
 
 func (d *walkDir) child(name string) (abs, srel string) {
 	return filepath.Join(d.abs, name), path.Join(d.srel, name)
+}
+
+// queuedDir is a directory waiting for its level: a root, or a name in an entered parent. It
+// carries only what its parent cannot rebuild, since the queue holds up to the directory budget.
+type queuedDir struct {
+	root     *walkDir
+	parent   *walkDir
+	name     string
+	included bool
+}
+
+// dir builds the walkDir q names. Every field it derives from the parent was settled by the
+// parent's enterIgnore before the parent offered q, so it equals what admit saw.
+func (q queuedDir) dir() *walkDir {
+	if q.root != nil {
+		return q.root
+	}
+	p := q.parent
+	abs, srel := p.child(q.name)
+	return &walkDir{
+		parent: p, name: q.name, ign: p.ign, abs: abs, srel: srel, rrel: path.Join(p.rrel, q.name),
+		depth: p.depth + 1, inRepo: p.inRepo, included: q.included, pruneGit: p.pruneGit,
+	}
 }
 
 // walkEntry is one entry every gate admitted.
@@ -441,7 +466,7 @@ func underNodeModules(l loc, isDir bool) bool {
 // a budget or the deadline cuts the deepest unvisited level and never a shallow entry:
 // nameVisitor's depth rank and the contents reply's shallowest-first order rest on it. It closes
 // every root.
-func (w *searchWalk) walkDirs(roots []*walkDir) bool {
+func (w *searchWalk) walkDirs(roots []*walkDir) {
 	c := &dirCursor{}
 	defer func() {
 		c.close()
@@ -449,69 +474,70 @@ func (w *searchWalk) walkDirs(roots []*walkDir) bool {
 			_ = r.f.Close()
 		}
 	}()
-	return w.drain(c, slices.Clone(roots))
+	queue := make([]queuedDir, 0, len(roots))
+	for _, r := range roots {
+		queue = append(queue, queuedDir{root: r})
+	}
+	w.drain(c, queue)
 }
 
 // drain visits queue in order, appending each directory's subdirectories, until it is empty or the
-// walk stops. A root in queue (parent nil) is open already and stays the caller's to close.
-func (w *searchWalk) drain(c *dirCursor, queue []*walkDir) bool {
+// walk stops. Every root is entered; the directory budget refuses a directory when child queues it.
+func (w *searchWalk) drain(c *dirCursor, queue []queuedDir) {
 	for len(queue) > 0 {
-		d := queue[0]
-		queue[0] = nil
+		q := queue[0]
+		queue[0] = queuedDir{}
 		queue = queue[1:]
 		if w.ctx.Err() != nil {
-			return false
+			return
 		}
 		if w.v.full() {
 			w.truncated = true
-			return false
+			return
 		}
-		if w.dirs >= w.maxDirs {
-			w.truncated, w.spent = true, true
-			return false
-		}
-		if !w.enter(c, d) {
+		d, entered := w.enter(c, q)
+		if !entered {
 			continue
 		}
 		w.dirs++
 		next, ok := w.visit(d, len(queue))
 		if !ok {
-			return false
+			return
 		}
 		queue = append(queue, next...)
 	}
-	return true
 }
 
-// enter has the cursor open d; a directory that vanished or was swapped since its listing is
-// skipped, the refusal being the guarantee, and any other failure lost its subtree.
-func (w *searchWalk) enter(c *dirCursor, d *walkDir) bool {
+// enter has the cursor open q's directory. One that vanished, or whose inode changed between two
+// of the cursor's opens, is skipped, the refusal being the guarantee; any other failure lost its
+// subtree and is reported once, the directories queued below it skipping silently.
+func (w *searchWalk) enter(c *dirCursor, q queuedDir) (*walkDir, bool) {
+	d := q.dir()
 	if d.parent == nil {
-		return true
+		return d, true
 	}
 	failed, err := c.open(d)
-	if err == nil {
-		return true
-	}
-	if !errors.Is(err, fs.ErrNotExist) && !isSwapRefusal(err) && !errors.Is(err, errDirReplaced) {
+	switch {
+	case err == nil:
+		return d, true
+	case errors.Is(err, fs.ErrNotExist), isSwapRefusal(err), errors.Is(err, errDirReplaced), errors.Is(err, errAncestorLost):
+	default:
 		w.truncated = true
 		slog.Warn("filebrowse: search opendir failed", "path", logsafe.Field(failed), "error", logsafe.Field(err.Error()))
 	}
-	return false
+	return nil, false
 }
 
 // visit lists d and offers its entries in path order, returning the subdirectories to visit at
-// the next level; queued is how many already wait, which the directory budget counts.
-func (w *searchWalk) visit(d *walkDir, queued int) ([]*walkDir, bool) {
-	entries, ok := w.list(d)
-	if !ok {
-		return nil, false
-	}
+// the next level; queued is how many already wait, which the directory budget counts. After a
+// listing the entry budget cut, it offers what was read and stops the walk.
+func (w *searchWalk) visit(d *walkDir, queued int) ([]queuedDir, bool) {
+	entries, more := w.list(d)
 	if w.ignoreRules && d.pruneGit {
 		w.enterIgnore(d, entries)
 	}
 	slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(pathOrderKey(a), pathOrderKey(b)) })
-	var next []*walkDir
+	var next []queuedDir
 	for _, e := range entries {
 		if w.ctx.Err() != nil {
 			return nil, false
@@ -520,49 +546,48 @@ func (w *searchWalk) visit(d *walkDir, queued int) ([]*walkDir, bool) {
 			w.truncated = true
 			return nil, false
 		}
-		sub, ok := w.offer(d, e, queued+len(next))
+		sub, queue, ok := w.offer(d, e, queued+len(next))
 		if !ok {
 			return nil, false
 		}
-		if sub != nil {
+		if queue {
 			next = append(next, sub)
 		}
 	}
 	w.v.leave(d)
-	return next, true
+	return next, more
 }
 
 // offer hands one entry of d to the visitor and answers the directory to queue for it, if any.
 // A directory is queued whatever the includes say: an include never prunes.
-func (w *searchWalk) offer(d *walkDir, e fs.DirEntry, queued int) (*walkDir, bool) {
+func (w *searchWalk) offer(d *walkDir, e fs.DirEntry, queued int) (sub queuedDir, queue, ok bool) {
 	we, admitted := w.admit(d, e)
 	switch {
 	case !admitted:
-		return nil, true
+		return queuedDir{}, false, true
 	case !e.IsDir():
-		return nil, w.v.file(d, we)
+		return queuedDir{}, false, w.v.file(d, we)
 	case !w.v.dir(d, we):
-		return nil, false
+		return queuedDir{}, false, false
 	}
-	return w.child(d, we, queued), true
+	sub, queue = w.child(d, we, queued)
+	return sub, queue, true
 }
 
-// child is e as a directory to visit, or nil when it lies past the depth cap or the directory
-// budget would refuse it anyway, which bounds the queue by the budget.
-func (w *searchWalk) child(d *walkDir, e *walkEntry, queued int) *walkDir {
+// child is e as a directory to visit, refused past the depth cap or when the directory budget is
+// spent counting the directories already queued: the walk's only directory guard, which also
+// bounds the queue by the budget.
+func (w *searchWalk) child(d *walkDir, e *walkEntry, queued int) (queuedDir, bool) {
 	if d.depth+1 > maxSearchDepth {
 		w.truncated = true
 		slog.Debug("filebrowse: search depth cap reached", "path", logsafe.Field(e.abs))
-		return nil
+		return queuedDir{}, false
 	}
 	if w.dirs+queued >= w.maxDirs {
 		w.truncated, w.spent = true, true
-		return nil
+		return queuedDir{}, false
 	}
-	return &walkDir{
-		parent: d, name: e.name, ign: d.ign, abs: e.abs, srel: e.srel, rrel: e.rrel, depth: d.depth + 1,
-		inRepo: d.inRepo, included: e.included, pruneGit: d.pruneGit,
-	}
+	return queuedDir{parent: d, name: e.name, included: e.included}, true
 }
 
 // dirCursor holds one open handle per level from a search root down to the directory being
@@ -573,8 +598,12 @@ type dirCursor struct {
 	chain []*walkDir
 }
 
-// errDirReplaced is a reopened directory that is no longer the one first listed under its name.
-var errDirReplaced = errors.New("filebrowse: directory replaced since it was listed")
+// errDirReplaced is a directory whose inode changed between two of the cursor's opens.
+var errDirReplaced = errors.New("filebrowse: directory replaced between two opens")
+
+// errAncestorLost is a directory below one whose open already failed, which the cursor skips
+// without opening.
+var errAncestorLost = errors.New("filebrowse: an ancestor failed to open")
 
 // open makes d the cursor's deepest level, or answers the path that failed to open.
 func (c *dirCursor) open(d *walkDir) (failed string, err error) {
@@ -592,7 +621,11 @@ func (c *dirCursor) open(d *walkDir) (failed string, err error) {
 	}
 	c.truncate(keep)
 	for _, next := range line[keep:] {
+		if next.lost {
+			return next.abs, errAncestorLost
+		}
 		if openErr := reopen(c.chain[len(c.chain)-1].f, next); openErr != nil {
+			next.lost = true
 			return next.abs, openErr
 		}
 		c.chain = append(c.chain, next)
@@ -600,20 +633,19 @@ func (c *dirCursor) open(d *walkDir) (failed string, err error) {
 	return "", nil
 }
 
-// reopen opens d by name against its parent's handle and requires the inode it first opened: the
-// cursor lets go of a directory between its listing and its children's visit, and a rename in that
-// gap would otherwise pass one directory's entries off under another's path, which is what
-// Sensitive.Blocks judges.
+// reopen opens d by name against its parent's handle and, from the second open on, refuses a
+// directory whose inode differs from the first open's: the cursor lets go of a directory between
+// its listing and its children's visit, and their names were read from the first one.
 func reopen(parent *os.File, d *walkDir) error {
 	f, err := openChild(parent, d.name, d.abs, pinnedDirFlags)
 	if err != nil {
 		return err
 	}
-	id, ok := dirIdentity(f)
+	id, idErr := dirIdentity(f)
 	switch {
-	case !ok:
+	case idErr != nil:
 		_ = f.Close()
-		return fmt.Errorf("%w: %s", errDirReplaced, d.abs)
+		return idErr
 	case !d.opened:
 		d.id, d.opened = id, true
 	case id != d.id:
@@ -626,16 +658,16 @@ func reopen(parent *os.File, d *walkDir) error {
 
 type dirID struct{ dev, ino uint64 }
 
-func dirIdentity(f *os.File) (dirID, bool) {
+func dirIdentity(f *os.File) (dirID, error) {
 	info, err := f.Stat()
 	if err != nil {
-		return dirID{}, false
+		return dirID{}, err
 	}
 	st, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
-		return dirID{}, false
+		return dirID{}, fmt.Errorf("filebrowse: %s: stat carries no inode", f.Name())
 	}
-	return dirID{dev: st.Dev, ino: st.Ino}, true
+	return dirID{dev: st.Dev, ino: st.Ino}, nil
 }
 
 // truncate closes every level from n down, never the root at 0.
@@ -665,19 +697,21 @@ func pathOrderKey(e fs.DirEntry) string {
 	return e.Name()
 }
 
-// list returns the entries read before a failure with false, so the answer reads truncated.
-func (w *searchWalk) list(d *walkDir) ([]fs.DirEntry, bool) {
+// list returns d's entries, or those read before the entry budget, the context or a read failure
+// stopped it; more is false when the walk must stop after offering them.
+func (w *searchWalk) list(d *walkDir) (entries []fs.DirEntry, more bool) {
 	var all []fs.DirEntry
 	for {
 		if w.ctx.Err() != nil {
-			return nil, false
+			return all, false
 		}
 		chunk, err := d.f.ReadDir(searchReadDirChunk)
-		w.entries += len(chunk)
-		if w.entries > w.maxEntries {
+		if left := w.maxEntries - w.entries; len(chunk) > left {
+			w.entries = w.maxEntries
 			w.truncated, w.spent = true, true
-			return nil, false
+			return append(all, chunk[:max(left, 0)]...), false
 		}
+		w.entries += len(chunk)
 		all = append(all, chunk...)
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
