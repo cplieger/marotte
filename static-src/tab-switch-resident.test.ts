@@ -82,6 +82,7 @@ import { markBootDone, _resetForTest as resetViewSwap } from "./view-swap.js";
 import { registerTranscriptOwner, releaseCover, swapTranscript } from "./transcript-cover.js";
 import { loadCSS } from "./__test-helpers__/css-rules.js";
 import { fx, installSwitchSuite, strip } from "./__test-helpers__/tab-switch-suite.js";
+import { TAB_SECTIONS_HTML } from "./__test-helpers__/tab-sections-markup.js";
 import {
   activationRan,
   clickRow,
@@ -111,7 +112,7 @@ const mounted = new Map<string, HTMLElement>();
 /** The chat view holding a scrollable transcript and the composer, and Settings, hidden. */
 function mountViews(): void {
   document.body.innerHTML =
-    '<aside id="sidebar"><div id="tab-list"></div></aside>' +
+    `<aside id="sidebar">${TAB_SECTIONS_HTML}</aside>` +
     '<div id="chat-view" data-tab-view style="display:flex;flex-direction:column;height:400px">' +
     '<div id="messages-wrap-outer" style="position:relative;flex:1;min-height:0">' +
     '<div id="messages-wrap" style="height:100%;overflow:auto">' +
