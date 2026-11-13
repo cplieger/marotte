@@ -892,6 +892,12 @@
   pointer-events: auto;
 }
 
+/* A closed card's rows stay out of the Tab order: the popup sets `hidden` only once the exit
+   transition ends, and this rule's `display: flex` beats the UA's `[hidden]` on origin. */
+.pill-expand-content[hidden] {
+  display: none;
+}
+
 .pill-sep {
   width: 1px;
   height: 0.75rem;
