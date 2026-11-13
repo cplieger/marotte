@@ -201,10 +201,24 @@ func TestShutdown_WaitsForARunningMCPNotifier(t *testing.T) {
 		t.Fatal("the notifier callback never ran, so the fixture is holding nothing")
 	}
 
-	const budget = 150 * time.Millisecond
-	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	// The budget ends only once the teardown before the loop join is done (the engine stopped, its lanes and
+	// handlers joined, none of which this fixture holds), so a slow host cannot spend it on an earlier wait.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := h.Shutdown(ctx); err == nil {
+	result := make(chan error, 1)
+	go func() { result <- h.Shutdown(ctx) }()
+	select {
+	case <-h.lifecycle.shutdownCtx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("Shutdown never reached its engine stop")
+	}
+	select {
+	case err := <-result:
+		t.Fatalf("Shutdown returned %v while the MCP notifier was still in its callback", err)
+	case <-time.After(time.Second):
+	}
+	cancel()
+	if err := <-result; err == nil {
 		t.Error("Shutdown reported success while the MCP notifier was still in its callback")
 	} else if !strings.Contains(err.Error(), "background loops") {
 		t.Errorf("error %q does not name the background-loop wait", err)
