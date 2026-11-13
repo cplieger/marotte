@@ -58,6 +58,8 @@ type EffectiveSettings struct {
 	// MemoryMode is the Memory dropdown's value ("off" and its three
 	// siblings); it defaults to settings.DefaultMemoryMode, kiro-cli's own.
 	MemoryMode string `json:"memory_mode"`
+	// InterruptMode is the composer's default beside a running turn, steer unless queue was chosen.
+	InterruptMode InterruptMode `json:"interrupt_mode"`
 	// SpecPlanning is "off", "quick" or "full"; default off, matching kiro-cli.
 	SpecPlanning string `json:"spec_planning"`
 	// WorkValidation, CloudFormationSafetyCheck, AutoRouting and AutoDelegation

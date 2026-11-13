@@ -12,7 +12,6 @@ import {
   downloadKiroSession,
   MAX_CHAT_NAME_UNITS,
   renameChat,
-  setInterruptMode,
   setSupervised,
 } from "./actions/chat.js";
 import { copyClipboard } from "./actions/messages.js";
@@ -28,7 +27,7 @@ import { submitPrompt } from "./submit.js";
 import { compactRefusal } from "./typed-commands.js";
 import * as toast from "./toast.js";
 import { chatNotice } from "./notice-subject.js";
-import type { InterruptMode, Session } from "./types.js";
+import type { Session } from "./types.js";
 
 // Local constants rather than icons.ts entries: each is used once, by this module, and `icons.ts`
 // is the shared vocabulary.
@@ -71,7 +70,6 @@ export function initChatOptions(): void {
     mergeRow(),
     compactRow(),
     renameRow(),
-    interruptRow(),
     supervisedRow(),
   );
 
@@ -532,20 +530,6 @@ function switchRow(opts: {
       el("span", { className: "chat-opt-hint" }, opts.hint),
     ),
   );
-}
-
-/** What Send means while a turn runs on this chat: on is queue, off (the default) is steer. */
-function interruptRow(): HTMLElement {
-  return switchRow({
-    id: "chat-opt-queue",
-    name: "Queue messages",
-    hint: "Messages wait for the turn to end and send one per turn. Off, the agent reads them mid-turn",
-    read: (s) => s.interrupt_mode === "queue",
-    write: (chatID, on) => {
-      const mode: InterruptMode = on ? "queue" : "steer";
-      void setInterruptMode.dispatch({ chatID, mode });
-    },
-  });
 }
 
 /** Supervised mode. The default for new chats lives in Settings → Permissions. */

@@ -51,7 +51,6 @@ func TestRunViewOf(t *testing.T) {
 	}
 	cases := []struct {
 		name    string
-		mode    InterruptMode
 		entries []RunEntry
 		want    want
 	}{
@@ -64,7 +63,7 @@ func TestRunViewOf(t *testing.T) {
 			},
 		},
 		{
-			name:    "a running steerable turn in steer mode",
+			name:    "a running steerable turn",
 			entries: []RunEntry{turn("A", RunRunning), row("m-q1", RunPending), row("m-q2", RunPending)},
 			want: want{
 				send: SendSteer, cancel: "A", next: turns(3), unread: thisTurn(),
@@ -72,10 +71,6 @@ func TestRunViewOf(t *testing.T) {
 				arrows:  map[string]SendNowKind{"m-q1": sendNowStop, "m-q2": sendNowStop},
 				carries: "m-q1",
 			},
-		},
-		{
-			name: "a running turn in queue mode", mode: InterruptQueue, entries: []RunEntry{turn("A", RunRunning)},
-			want: want{send: SendQueue, cancel: "A", next: thisTurn(), unread: thisTurn()},
 		},
 		{
 			name: "a starting turn queues", entries: []RunEntry{turn("A", RunStarting)},
@@ -239,7 +234,7 @@ func TestRunViewOf(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			v := RunViewOf(tc.entries, 7, tc.mode)
+			v := RunViewOf(tc.entries, 7)
 			if v.Version != 7 {
 				t.Errorf("version: got %d", v.Version)
 			}

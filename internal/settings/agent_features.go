@@ -200,6 +200,10 @@ var agentPatchChecks = map[string]func(json.RawMessage) error{
 	KeyChatMessaging:        func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
 	KeyChatAwareness:        func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
 	KeyModelFallback:        func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
+	KeyInterruptMode: func(r json.RawMessage) error {
+		var m marotte.InterruptMode
+		return decodeInterruptMode(&m, r)
+	},
 }
 
 // validateAgentPatch refuses a patch whose agent-capability keys carry a value

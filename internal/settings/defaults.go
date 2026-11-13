@@ -172,6 +172,7 @@ var KnownKeys = map[string]struct{}{
 	KeyDebugLogs:                {},
 	KeyEngineHeapMiB:            {},
 	KeyHighThroughput:           {},
+	KeyInterruptMode:            {},
 	KeyOutputStyle:              {},
 	KeySpecPlanning:             {},
 	KeySpecPlanningAskFirst:     {},

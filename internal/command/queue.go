@@ -24,12 +24,6 @@ const reasonSending = "sending"
 // reasonHeld is the 409 refusal class for a send-now of a row no turn end sends.
 const reasonHeld = "held"
 
-// chatMutator is the one chatStore write the record-only queue and mode handlers
-// make.
-type chatMutator interface {
-	Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error)
-}
-
 // cmdQueuePrompt holds a message for the end of what runs. An idle chat is a 409 no_turn, the refusal a steer gives,
 // so the caller sends a prompt instead.
 func cmdQueuePrompt(ctx context.Context, runq runQueue, admission turnAdmission, cmd *marotte.ClientCommand) (any, error) {

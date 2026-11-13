@@ -92,7 +92,10 @@ export function dictationPressSuite({ press: pressNow, finger }: PressSuite): vo
           <textarea id="prompt-input" rows="1" aria-label="Message"></textarea>
           <div class="prompt-pills">
             <div class="pill-spacer"></div>
-            <button type="button" id="midturn-send-btn" class="send-btn" hidden></button>
+            <div id="midturn-send" class="send-split" role="group" aria-label="Send mid-turn" hidden>
+              <button type="button" id="midturn-send-btn" class="send-btn" hidden></button>
+              <button id="midturn-alt-btn" type="button" class="send-btn" hidden></button>
+            </div>
             <button type="submit" id="send-btn" class="send-btn" data-tooltip="Send" aria-label="Send"></button>
           </div>
         </div>

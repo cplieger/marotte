@@ -641,10 +641,10 @@
 }
 
 /* A pill's border is a hairline in the row's tone, so the eye spaces the pills fill to fill;
-   Send's border is its hue, so at the bare gap the mid-turn Send (or Queue) and Cancel read as
-   touching. The pair adds both borders to the gap, and each facing target reaches one border
-   further so the two still meet. */
-.prompt-pills > .send-btn:not([hidden]) + .send-btn {
+   Send's border is its hue, so at the bare gap the mid-turn pill and Cancel read as touching.
+   The pair adds both borders to the gap, and each facing target reaches one border further so
+   the two still meet. The pill's last shown half faces Cancel: the second, or the first alone. */
+.prompt-pills > .send-split:not([hidden]) + .send-btn {
   margin-inline-start: calc(2 * var(--hairline));
 
   &::after {
@@ -652,8 +652,64 @@
   }
 }
 
-.prompt-pills > .send-btn:not([hidden]):has(+ .send-btn)::after {
+.prompt-pills > .send-split > :is(.send-btn:last-child, .send-btn:has(+ [hidden]))::after {
   inset-inline-end: calc(var(--pill-gap) / -2 - 2 * var(--hairline));
+}
+
+/* THE MID-TURN PILL: the default action, then the other as a glyph, joined into one control in
+   the shape of @cplieger/ui's `.cp-group` on Send's own tokens: the outer corners rounded, a
+   square seam, and the first half's edge in the hue as the one line between. The halves'
+   targets meet at that seam. `.send-split-both` is prompt-input.ts's mark that both show. */
+.send-split {
+  display: inline-flex;
+  flex-shrink: 0;
+
+  &[hidden] {
+    display: none;
+  }
+
+  /* A focused half's ring would pass under the other half, which paints later. */
+  & > .send-btn:focus-visible {
+    z-index: 1;
+  }
+}
+
+.send-split-both {
+  & > .send-btn:first-child {
+    border-start-end-radius: 0;
+    border-end-end-radius: 0;
+
+    &::after {
+      inset-inline-end: calc(-1 * var(--hairline));
+    }
+  }
+
+  & > .send-btn:last-child {
+    border-inline-start-width: 0;
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
+    padding-inline: 0;
+
+    &::after {
+      inset-inline-start: 0;
+    }
+  }
+}
+
+/* Under a finger Return is a new line (composer-touch.ts), the rule `data-pointer="coarse"`
+   carries, so there both halves are glyphs, as on a phone. */
+:root[data-pointer="coarse"] .send-split-both .send-btn-label {
+  display: none;
+}
+
+/* A PHONE'S FULL ROW holds both halves at their touch size only once the context pill gives
+   way: a readout, back as soon as the box empties or the turn ends, and the one control in
+   the row whose job a turn in flight does not need. 24rem is the row's need with both
+   halves, the task list and a share's two digits (`composer-row-height-css` sweeps it). */
+@container pill-row (width < 24rem) {
+  .prompt-pills:has(.send-split-both) > .pill-slot:has(> .pill-context) {
+    display: none;
+  }
 }
 
 .pill-spacer {
@@ -834,6 +890,12 @@
   opacity: 1;
   transform: scale(1);
   pointer-events: auto;
+}
+
+/* A closed card's rows stay out of the Tab order: the popup sets `hidden` only once the exit
+   transition ends, and this rule's `display: flex` beats the UA's `[hidden]` on origin. */
+.pill-expand-content[hidden] {
+  display: none;
 }
 
 .pill-sep {
@@ -1847,7 +1909,7 @@
     transition: transform var(--dur-micro) var(--ease-standard);
   }
 
-  /* The `display` above beats the UA's `[hidden]`; `#midturn-send-btn` sits hidden. */
+  /* The `display` above beats the UA's `[hidden]`; the mid-turn pill's halves sit hidden. */
   &[hidden] {
     display: none;
   }
@@ -2027,15 +2089,16 @@
   }
 }
 
-/* The model and mode pills go icon-only where the fullest labelled row (mid-turn, task
-   list shown) stops fitting with the catalog's widest pills, a 17-character model name
-   with its "medium" tier and "Semantic Reviewer": 632px mouse, 656px touch with the tier
-   and Send's word, 498px and 522px without; each threshold adds 8 to 10px
+/* The model and mode pills go icon-only where the fullest labelled row (mid-turn beside a
+   steerable turn, both halves of the send pill, task list shown) stops fitting with the
+   catalog's widest pills, a 17-character model name with its "medium" tier and "Semantic
+   Reviewer": 657px mouse with the tier and Steer's word, 661px touch with the tier and the
+   pill's glyphs, 530px and 570px without the tier; each threshold adds 3 to 7px
    (`button-size.test.ts` sweeps it). A longer name, such as a custom agent's, ellipsises
    within its cap. A container query cannot read `--pill-gap`, so the tier is a selector.
    The names stay in aria-label and the tooltip (`status.ts`, `role-picker.ts`). */
 @media (width > 48rem) and (height > 30rem) {
-  @container pill-row (width < 40rem) {
+  @container pill-row (width < 41.25rem) {
     .pill-model > :is([id="ctx-model-pill"], .pill-model-effort),
     .pill-role-label {
       display: none;
@@ -2051,14 +2114,14 @@
 }
 
 @media (width <= 48rem), (height <= 30rem) {
-  @container pill-row (width < 31.75rem) {
+  @container pill-row (width < 33.5rem) {
     .pill-model > [id="ctx-model-pill"],
     .pill-role-label {
       display: none;
     }
   }
 
-  @container pill-row (width < 33.25rem) {
+  @container pill-row (width < 36rem) {
     :root[data-pointer="coarse"] :is(.pill-model > [id="ctx-model-pill"], .pill-role-label) {
       display: none;
     }

@@ -217,7 +217,7 @@ func TestRunOrder_AContextReferenceQueuedBehindACompactionResolvesInItsTurn(t *t
 	}
 }
 
-// With Queue messages on, a saved prompt or context reference sent mid-turn waits behind the turn and goes as a
+// Sent as a queue, a saved prompt or context reference sent mid-turn waits behind the turn and goes as a
 // session/prompt of its own when the turn ends, never as a steer, so its context reference resolves.
 func TestRunOrder_APromptOnlyMessageQueuedBehindARunningTurnGoesAsItsOwnPrompt(t *testing.T) {
 	dir := t.TempDir()
@@ -225,13 +225,12 @@ func TestRunOrder_APromptOnlyMessageQueuedBehindARunningTurnGoesAsItsOwnPrompt(t
 		t.Fatal(err)
 	}
 	h, cs, br, _ := idleAfterFirstTurn(t, dir)
-	queueMode(t, cs)
 	turnID, _ := h.stagePromptTurn(t, "c1")
 	const text = "/review #[[file:notes.txt]]"
 
 	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: marotte.CmdPrompt, ChatID: "c1",
-		Payload: json.RawMessage(`{"text":"` + text + `","message_id":"m-ref","prompt_only":true}`),
+		Payload: json.RawMessage(`{"text":"` + text + `","message_id":"m-ref","prompt_only":true,"interrupt_mode":"queue"}`),
 	})
 	if got := ackAs(t, rec); got != "queued" {
 		t.Fatalf("prompt-only send behind a running turn in queue mode answered %s, want queued", got)
@@ -996,44 +995,6 @@ func TestRunOrder_ACancelAfterATakenRowsTurnOpenedLeavesOneCancelledTurn(t *test
 	}
 	if n := countOf(promptIDs(t, cs, "c1"), "m-q1"); n != 1 {
 		t.Errorf("m-q1 opened %d turns, want 1", n)
-	}
-}
-
-// Switching Queue messages on mid-turn republishes the run order under a newer version, so a page holding the list
-// takes the new verb; the life's last write still lands after it.
-func TestRunOrder_SwitchingTheInterruptModeMidTurnRepublishesTheVerb(t *testing.T) {
-	h, cs, br, tab := closeTabHub(t)
-	t.Cleanup(func() { shutdownHub(t, h) })
-	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
-	runPrompt(t, h, cs, "c1", "m-first")
-	h.stagePromptTurn(t, "c1")
-	queueDuring(t, h, "m-q1")
-	before := runView(t, cs, "c1")
-	if before.Send != marotte.SendSteer {
-		t.Fatalf("Setup: run.send = %q, want steer", before.Send)
-	}
-
-	payload, err := json.Marshal(marotte.SetInterruptModeCommand{Mode: marotte.InterruptQueue})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdSetInterruptMode, ChatID: "c1", Payload: payload}); rec.Code != http.StatusOK {
-		t.Fatalf("set_interrupt_mode = %d %s", rec.Code, rec.Body.String())
-	}
-	after := runView(t, cs, "c1")
-	if after.Version <= before.Version {
-		t.Errorf("run.version = %d after the switch, want above %d", after.Version, before.Version)
-	}
-	if after.Send != marotte.SendQueue {
-		t.Errorf("run.send = %q after the switch, want queue", after.Send)
-	}
-
-	if code := postCloseTab(t, h, tab); code != http.StatusOK {
-		t.Fatalf("close = %d", code)
-	}
-	awaitTeardown(t, h, "c1")
-	if got := runStates(t, cs, "c1"); !slices.Equal(got, []string{"m-q1 paused"}) {
-		t.Errorf("list the closed life left = %v, want [m-q1 paused]", got)
 	}
 }
 

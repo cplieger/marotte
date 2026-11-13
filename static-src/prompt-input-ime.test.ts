@@ -84,7 +84,10 @@ beforeEach(async () => {
       <div id="prompt-box">
         <textarea id="prompt-input"></textarea>
       </div>
-      <button id="midturn-send-btn" type="button" hidden></button>
+      <div id="midturn-send" class="send-split" role="group" aria-label="Send mid-turn" hidden>
+        <button id="midturn-send-btn" type="button" hidden></button>
+        <button id="midturn-alt-btn" type="button" class="send-btn" hidden></button>
+      </div>
       <button id="send-btn" type="submit"></button>
     </form>`;
   mod = (await import(

@@ -4,12 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 func queueReq(t *testing.T, text, messageID string, attachments ...marotte.Attachment) *marotte.ClientCommand {
@@ -131,42 +129,6 @@ func TestUnqueuePrompt_AnAbsentIDIsSuccessAndASendingRowIsConflict(t *testing.T)
 	_, err := cmdUnqueuePrompt(t.Context(), q, unqueueReq("m-2"))
 	if statusOf(err) != http.StatusConflict || reasonOf(err) != reasonSending {
 		t.Errorf("unqueue of a sending row: status = %d reason = %q, want 409 %q", statusOf(err), reasonOf(err), reasonSending)
-	}
-}
-
-func TestSetInterruptMode_PersistsAndRejectsUnknown(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	q := &launchingRun{}
-	req := func(mode string) *marotte.ClientCommand {
-		return &marotte.ClientCommand{ChatID: "c1", Payload: json.RawMessage(`{"mode":"` + mode + `"}`)}
-	}
-
-	if _, err := cmdSetInterruptMode(t.Context(), store, q, req("queue")); err != nil {
-		t.Fatalf("set queue: %v", err)
-	}
-	c, ok := store.Get(t.Context(), "c1")
-	if !ok || c.InterruptMode != marotte.InterruptQueue {
-		t.Fatalf("record = %+v, want an auto-created chat in queue mode", c)
-	}
-
-	if _, err := cmdSetInterruptMode(t.Context(), store, q, req("auto")); statusOf(err) != http.StatusBadRequest {
-		t.Errorf("unknown mode status = %d, want 400", statusOf(err))
-	}
-	if c, _ := store.Get(t.Context(), "c1"); c.InterruptMode != marotte.InterruptQueue {
-		t.Errorf("an unknown mode changed the record to %q", c.InterruptMode)
-	}
-	if _, err := cmdSetInterruptMode(t.Context(), store, q, req("queue")); err != nil {
-		t.Fatalf("set queue again: %v", err)
-	}
-
-	if _, err := cmdSetInterruptMode(t.Context(), store, q, req("steer")); err != nil {
-		t.Fatalf("set steer: %v", err)
-	}
-	if c, _ := store.Get(t.Context(), "c1"); c.InterruptMode != "" {
-		t.Errorf("steer stored as %q, want the empty default", c.InterruptMode)
-	}
-	if !slices.Equal(q.modes, []marotte.ChatID{"c1", "c1"}) {
-		t.Errorf("run order republished for %v, want once per stored change", q.modes)
 	}
 }
 

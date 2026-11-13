@@ -15,15 +15,10 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// queueMode switches c1 to the Queue interrupt mode.
-func queueMode(t *testing.T, cs *testChatStore) {
-	t.Helper()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.InterruptMode = marotte.InterruptQueue
-		return true
-	}); err != nil {
-		t.Fatal(err)
-	}
+// modePromptCmd is promptCmd naming what the send does beside a running turn.
+func modePromptCmd(id, text string, mode marotte.InterruptMode) marotte.ClientCommand {
+	payload, _ := json.Marshal(marotte.PromptCommand{Text: text, MessageID: id, InterruptMode: mode})
+	return marotte.ClientCommand{Type: marotte.CmdPrompt, ChatID: "c1", Payload: payload}
 }
 
 // entryView is the header's view of id, the zero view for none.
@@ -218,9 +213,6 @@ func TestRunOrder_Table(t *testing.T) {
 		}
 		t.Run("a turn_start during a fold-opened turn opens a bracketed one, "+name, func(t *testing.T) {
 			h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
-			if mode != "" {
-				queueMode(t, cs)
-			}
 			br.setCallResult(marotte.MethodSessionSteer, json.RawMessage(`{"queued":true}`))
 			br.deliver(newChunkMsg("kiro-cli on its own"))
 			if !eventually(func() bool { return slices.Contains(runStates(t, cs, "c1"), "wire running") }) {
@@ -233,7 +225,7 @@ func TestRunOrder_Table(t *testing.T) {
 			}) {
 				t.Fatalf("list after the turn_start = %+v, want one steerable wire turn", runView(t, cs, "c1").Entries)
 			}
-			if got := ackAs(t, postCmd(t, h, promptCmd("m-p", "into kiro-cli's turn"))); got != want {
+			if got := ackAs(t, postCmd(t, h, modePromptCmd("m-p", "into kiro-cli's turn", mode))); got != want {
 				t.Errorf("prompt answered %s, want %s", got, want)
 			}
 			if mode == marotte.InterruptQueue {

@@ -530,8 +530,6 @@ type Chat struct {
 	// Never trimmed: each still holds history on disk, so the reaper spares the whole
 	// chain. Maintained by RecordSession.
 	PriorACPSessionIDs []string `json:"prior_acp_session_ids,omitempty"`
-	// InterruptMode is what Send does while a turn runs; empty reads as steer.
-	InterruptMode InterruptMode `json:"interrupt_mode,omitempty"`
 	// Run is the chat's ordered list of what runs next, as its live lifecycle last wrote it (agent's runList owns it);
 	// a life starts from SanitizeRun of it.
 	Run []RunEntry `json:"run,omitempty"`
@@ -617,7 +615,7 @@ func (c *Chat) recomputeCredits() {
 	}
 }
 
-// InterruptMode is a chat's choice of what a message sent mid-turn does.
+// InterruptMode is what a message sent while a turn runs does: a send's own choice, else the interrupt_mode setting.
 type InterruptMode string
 
 const (
@@ -748,8 +746,7 @@ func (c *Chat) Header() ChatHeader {
 		PendingEffort:       c.PendingEffort,
 		SupervisedMode:      c.SupervisedMode,
 		CompactionWatermark: c.CompactionWatermark,
-		InterruptMode:       c.InterruptMode,
-		Run:                 RunViewOf(c.Run, c.RunVersion, c.InterruptMode),
+		Run:                 RunViewOf(c.Run, c.RunVersion),
 		Tangent:             c.Tangent,
 		Bot:                 c.Bot.summary(),
 	}
@@ -826,8 +823,6 @@ type ChatHeader struct {
 	CompactionWatermark string `json:"compaction_watermark,omitempty"`
 	// PriorACPSessionIDs mirrors Chat's: the retention sweep reads headers only.
 	PriorACPSessionIDs []string `json:"prior_acp_session_ids,omitempty"`
-	// InterruptMode mirrors Chat's for the composer.
-	InterruptMode InterruptMode `json:"interrupt_mode,omitempty"`
 	// Run is Chat.Run as the dock and the composer draw it.
 	Run RunView `json:"run"`
 	// Bot is the Bot's summary; absent on a regular chat.

@@ -14,7 +14,6 @@ import type {
   Usage,
   ToolCall,
   CodeReference,
-  InterruptMode,
   PendingSteer,
   ToolStatus,
 } from "./types.js";
@@ -838,8 +837,6 @@ export function upsertHeader(h: ChatHeader): void {
         // pick on every device.
         pending_model: h.pending_model ?? "",
         pending_effort: h.pending_effort ?? "",
-        // Both are header-authoritative: an absent field is steer and no follow-ups.
-        interrupt_mode: h.interrupt_mode ?? "steer",
         run: newerRun(s.run, h.run),
         tangent: h.tangent ?? false,
       };
@@ -879,7 +876,6 @@ export function upsertHeader(h: ChatHeader): void {
     read_position: h.read_position ?? 0,
     pending_model: h.pending_model ?? "",
     pending_effort: h.pending_effort ?? "",
-    interrupt_mode: h.interrupt_mode ?? "steer",
     run: newerRun(undefined, h.run),
     tangent: h.tangent ?? false,
     turns: new Map(),
@@ -1287,15 +1283,6 @@ export function setSupervisedMode(chatID: string, enabled: boolean): void {
     return;
   }
   sessions.update(chatID, (cur) => ({ ...cur, supervised_mode: enabled }));
-}
-
-/** Set what Send means on this chat while a turn runs. */
-export function setChatInterruptMode(chatID: string, mode: InterruptMode): void {
-  const s = get(chatID);
-  if (s === undefined || (s.interrupt_mode ?? "steer") === mode) {
-    return;
-  }
-  sessions.update(chatID, (cur) => ({ ...cur, interrupt_mode: mode }));
 }
 
 /** Set the chat's reasoning-effort level. Per-chat like model, mode and supervised, so a tab
