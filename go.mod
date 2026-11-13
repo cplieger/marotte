@@ -25,13 +25,13 @@ require (
 	github.com/philhofer/fwd v1.2.1 // indirect
 	github.com/tinylib/msgp v1.6.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	golang.org/x/crypto v0.58.0 // indirect
+	golang.org/x/crypto v0.59.0 // indirect
 	golang.org/x/mod v0.43.0 // indirect
 	golang.org/x/oauth2 v0.38.0 // indirect
 )
 
 require (
-	github.com/cplieger/access v1.0.0-dev.8.0.20261112215528-356b9d582aaf
+	github.com/cplieger/access v1.0.0-dev.10
 	github.com/cplieger/forgeapi/v2 v2.0.0
 	github.com/cplieger/go/envx v1.1.0
 	github.com/cplieger/go/filesafe v1.1.0
