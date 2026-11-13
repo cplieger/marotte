@@ -65,26 +65,18 @@ function placeholderFor(verb: SendVerb, wait: string): string {
   }
 }
 
-/** The mid-turn pill's faces per verb. The word is a word of the name (WCAG 2.5.3); `instead` names the second
- *  half, which shows the glyph alone. */
+/** The mid-turn pill's faces per verb. The word is a word of the name (WCAG 2.5.3). */
 const MIDTURN_FACE: Record<
   SendVerb,
-  { label: string; name: (wait: string) => string; icon: string; instead: string }
+  { label: string; name: (wait: string) => string; icon: string }
 > = {
-  prompt: { label: "Send", name: () => "Send", icon: ICON_SEND, instead: "Send" },
-  steer: {
-    label: "Steer",
-    name: () => "Steer the running turn",
-    icon: ICON_SEND,
-    instead: "Steer instead",
-  },
-  queue: {
-    label: "Queue",
-    name: (wait) => `Queue for after ${wait}`,
-    icon: ICON_QUEUE_UI,
-    instead: "Queue instead",
-  },
+  prompt: { label: "Send", name: () => "Send", icon: ICON_SEND },
+  steer: { label: "Steer", name: () => "Steer the running turn", icon: ICON_SEND },
+  queue: { label: "Queue", name: (wait) => `Queue for after ${wait}`, icon: ICON_QUEUE_UI },
 };
+
+/** The second half's name, which it shows as the glyph alone. */
+const INSTEAD: Record<InterruptMode, string> = { steer: "Steer instead", queue: "Queue instead" };
 
 /** What the pill's halves do: the first follows the default, the second is the other action, or null where only
  *  one can go. Beside a steerable turn a staged file queues, since a labelled send never steers. */
@@ -414,10 +406,9 @@ class PromptInputController {
     if (!sigChanged(alt, [other])) {
       return;
     }
-    const face = MIDTURN_FACE[other];
-    alt.replaceChildren(iconEl(face.icon));
-    alt.setAttribute("data-tooltip", face.instead);
-    alt.setAttribute("aria-label", face.instead);
+    alt.replaceChildren(iconEl(MIDTURN_FACE[other].icon));
+    alt.setAttribute("data-tooltip", INSTEAD[other]);
+    alt.setAttribute("aria-label", INSTEAD[other]);
   }
 
   private faces(): Faces {
