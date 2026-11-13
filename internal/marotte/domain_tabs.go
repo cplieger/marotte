@@ -90,9 +90,9 @@ type TabSubject struct {
 	// Seen is the read position the reader last acknowledged for a chat or run tab, 0 for none;
 	// only ack_tab moves it, never backward.
 	Seen uint64 `json:"seen,omitempty"`
-	// Pinned sorts a tab ahead of every unpinned one. The partition is applied
-	// by the client when it renders (applyPinOrder); the stored slice keeps the
-	// order it was given.
+	// Pinned seats a tab in the sidebar's Pinned section. The sections are drawn
+	// by the client (applySectionOrder); the stored slice keeps the order it was
+	// given.
 	Pinned bool `json:"pinned"`
 	// Owns means closing this tab tears down what it shows: a run REVIEW from History and a
 	// launcher-OWNED run share (Kind, Ref), and closing the owned one cancels the run. Set at

@@ -48,9 +48,10 @@ vi.mock("./icons.js", () => ({
 // The active tab is this SCREEN's, so it is written per field to its own module
 // rather than folded into any shared document. Stubbed here so the cases below
 // can read it back without touching localStorage.
-vi.mock("./device-view.js", () => {
+vi.mock("./device-view.js", async (importOriginal) => {
   let active = "";
   return {
+    ...(await importOriginal<Record<string, unknown>>()),
     activeView: vi.fn(() => active),
     setActiveView: vi.fn((id: string) => {
       active = id;
@@ -73,6 +74,15 @@ vi.mock("./dom.js", async (importOriginal) => ({
             document.body.appendChild(tl);
           }
           return tl;
+        }
+        if (prop === "pinnedList") {
+          let pl = document.getElementById("pinned-list");
+          if (pl === null) {
+            pl = document.createElement("div");
+            pl.id = "pinned-list";
+            document.body.appendChild(pl);
+          }
+          return pl;
         }
         if (prop === "sidebar") {
           let sidebar = document.getElementById("sidebar");
@@ -341,9 +351,13 @@ function paint(): Promise<void> {
   });
 }
 
+/** Every section's rows in DOM order, which is the strip's order: Open, then Pinned. */
 function rows(): HTMLElement[] {
-  const list = document.getElementById("tab-list");
-  return [...(list?.querySelectorAll<HTMLElement>("[data-tab-id]") ?? [])];
+  return [
+    ...document.querySelectorAll<HTMLElement>(
+      "#tab-list [data-tab-id], #pinned-list [data-tab-id]",
+    ),
+  ];
 }
 
 /** The rows on the strip, departing ones excluded: no stylesheet runs their exit. */
@@ -372,7 +386,9 @@ beforeEach(() => {
   _resetForTest();
   _resetFreshnessForTest();
   // Provide minimal DOM for renderDOM subscriber (tab-list element).
-  document.body.innerHTML = '<div id="tab-list"></div>';
+  document.body.innerHTML =
+    '<div id="tab-sections"><section id="open-section"><div id="tab-list"></div></section>' +
+    '<section id="pinned-section" hidden><div id="pinned-list"></div></section></div>';
 });
 
 afterEach(() => {
@@ -2576,110 +2592,123 @@ describe("sub-tabs", () => {
   });
 });
 
-// `TabSubject.Pinned` is stored server-side; the pinned-first PARTITION is a client rendering rule
-// over the stored order, kept in the ARRAY because a drop and the keyboard arrows read DOM order back.
+// `TabSubject.Pinned` is stored server-side; the SECTION partition (Open groups, then Pinned) is a
+// client rendering rule over the stored order, kept in the ARRAY because a drop and the keyboard
+// arrows read DOM order back.
 
-describe("pinned tabs", () => {
-  it("moves a pinned tab ahead of every unpinned one", async () => {
+/** Each tab section's rendered rows as refs, departing rows excluded. */
+async function sectionRefs(): Promise<{ open: string[]; pinned: string[] }> {
+  await paint();
+  const byID = new Map(tabServer.subjects().map((s) => [s.id, s.ref === "" ? s.kind : s.ref]));
+  const refsIn = (listID: string): string[] =>
+    [...(document.getElementById(listID)?.querySelectorAll<HTMLElement>("[data-tab-id]") ?? [])]
+      .filter((e) => !e.classList.contains("exiting"))
+      .map((e) => {
+        const id = e.dataset["tabId"] ?? "";
+        return byID.get(id) ?? id;
+      });
+  return { open: refsIn("tab-list"), pinned: refsIn("pinned-list") };
+}
+
+function rowEl(id: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-tab-id="${id}"]`);
+}
+
+describe("tab sections", () => {
+  it("seats a pinned group in Pinned and every other group in Open", async () => {
     expect.assertions(1);
     await openChats("a", "b", "c");
     await setTabPinned(chatID("c"), true);
-    expect(await rowRefs()).toEqual(["c", "a", "b"]);
+    expect(await sectionRefs()).toEqual({ open: ["a", "b"], pinned: ["c"] });
   });
 
-  it("does not reshuffle the pinned run when another tab joins it", async () => {
-    expect.assertions(2);
-    await openChats("a", "b", "c");
-    await setTabPinned(chatID("c"), true);
-    expect(await rowRefs()).toEqual(["c", "a", "b"]);
-    await setTabPinned(chatID("a"), true);
-    // The partition is stable, so pinning `a` only guarantees it sits above the
-    // unpinned tabs — it does not overtake a pin that was already ahead of it.
-    // Reordering WITHIN the run is what drag is for.
-    expect(await rowRefs()).toEqual(["c", "a", "b"]);
-  });
-
-  it("leaves a tab where it is when the pin is removed", async () => {
-    expect.assertions(2);
+  it("opens a new tab at the end of Open, above Pinned", async () => {
+    expect.assertions(1);
     await openChats("a", "b");
-    await setTabPinned(chatID("b"), true);
-    expect(await rowRefs()).toEqual(["b", "a"]);
-    await setTabPinned(chatID("b"), false);
-    expect(await rowRefs()).toEqual(["b", "a"]);
+    await setTabPinned(chatID("a"), true);
+    await openChat("c");
+    expect(await sectionRefs()).toEqual({ open: ["b", "c"], pinned: ["a"] });
   });
 
-  it("opens a new unpinned tab after the pinned run", async () => {
-    expect.assertions(1);
-    await openChat("a");
+  // A stored order can hold its pinned tabs first: the server never rearranges the stored order, so
+  // the stored position alone decides where a pin or unpin lands.
+  it("lands a pin last in Pinned and an unpin first in Open over a pinned-first stored order", async () => {
+    expect.assertions(4);
+    await openChats("p", "q", "a", "b");
+    await setTabPinned(chatID("p"), true);
+    await setTabPinned(chatID("q"), true);
+    expect(tabServer.subjects().map((s) => s.ref)).toEqual(["p", "q", "a", "b"]);
+    expect(await sectionRefs()).toEqual({ open: ["a", "b"], pinned: ["p", "q"] });
     await setTabPinned(chatID("a"), true);
-    await openChat("b");
-    expect(await rowRefs()).toEqual(["a", "b"]);
-  });
-
-  // A drop is partitioned before it is shown or sent, so an illegal position snaps back; a fully
-  // undone drop sends nothing.
-  it("cannot be dragged below an unpinned tab", async () => {
-    expect.assertions(3);
-    await openChats("a", "b", "c");
-    await setTabPinned(chatID("a"), true);
-    expect(commitDrop).toBeTypeOf("function");
-    commitDrop?.([chatID("b"), chatID("c"), chatID("a")]);
-    await settleTabs();
-    expect(await rowRefs()).toEqual(["a", "b", "c"]);
+    await setTabPinned(chatID("p"), false);
+    expect(await sectionRefs()).toEqual({ open: ["p", "b"], pinned: ["q", "a"] });
     expect(tabServer.sentOfType("reorder_tabs")).toHaveLength(0);
   });
 
-  // The drag announces and slides from this answer, so a snap-back must not read
-  // as a move and a partial partition must report where the tab really went.
-  it("answers the top-level order a drop applied, or null when it applied none", async () => {
+  it("lands a pin first in Pinned and an unpin last in Open once a drop stored Open first", async () => {
+    expect.assertions(3);
+    await openChats("p", "q", "a", "b");
+    await setTabPinned(chatID("p"), true);
+    await setTabPinned(chatID("q"), true);
+    commitDrop?.([chatID("b"), chatID("a")]);
+    await settleTabs();
+    expect(tabServer.subjects().map((s) => s.ref)).toEqual(["b", "a", "p", "q"]);
+    await setTabPinned(chatID("a"), true);
+    expect(await sectionRefs()).toEqual({ open: ["b"], pinned: ["a", "p", "q"] });
+    await setTabPinned(chatID("q"), false);
+    expect(await sectionRefs()).toEqual({ open: ["b", "q"], pinned: ["a", "p"] });
+  });
+
+  // The drag announces "position N" from this answer, so it counts the dropped section's heads only.
+  it("answers a drop inside Pinned with Pinned's heads and keeps Open's groups", async () => {
+    expect.assertions(4);
+    await openChats("x", "y", "p", "q");
+    await setTabPinned(chatID("p"), true);
+    await setTabPinned(chatID("q"), true);
+    expect(commitDrop?.([chatID("q"), chatID("p")])).toEqual([chatID("q"), chatID("p")]);
+    await settleTabs();
+    expect(await sectionRefs()).toEqual({ open: ["x", "y"], pinned: ["q", "p"] });
+    expect(tabServer.sentOfType("reorder_tabs")).toHaveLength(1);
+    expect(tabServer.sentOfType("reorder_tabs")[0]?.payload["order"]).toEqual([
+      chatID("x"),
+      chatID("y"),
+      chatID("q"),
+      chatID("p"),
+    ]);
+  });
+
+  it("answers a drop inside Open with Open's heads and sends the whole sectioned order", async () => {
     expect.assertions(3);
     await openChats("a", "b", "c");
     await setTabPinned(chatID("a"), true);
-    expect(commitDrop?.([chatID("b"), chatID("c"), chatID("a")])).toBeNull();
-    expect(commitDrop?.([chatID("c"), chatID("b"), chatID("a")])).toEqual([
-      chatID("a"),
+    expect(commitDrop?.([chatID("c"), chatID("b")])).toEqual([chatID("c"), chatID("b")]);
+    await settleTabs();
+    expect(await sectionRefs()).toEqual({ open: ["c", "b"], pinned: ["a"] });
+    expect(tabServer.sentOfType("reorder_tabs")[0]?.payload["order"]).toEqual([
       chatID("c"),
       chatID("b"),
+      chatID("a"),
     ]);
-    await settleTabs();
-    expect(await rowRefs()).toEqual(["a", "c", "b"]);
   });
 
-  it("sends the server the partitioned order it shows", async () => {
+  it("answers null and sends nothing for a drop that moved nothing", async () => {
     expect.assertions(2);
     await openChats("a", "b", "c");
-    await setTabPinned(chatID("a"), true);
-    commitDrop?.([chatID("c"), chatID("b"), chatID("a")]);
+    await setTabPinned(chatID("c"), true);
+    expect(commitDrop?.([chatID("a"), chatID("b")])).toBeNull();
     await settleTabs();
-    expect(await rowRefs()).toEqual(["a", "c", "b"]);
-    expect(tabServer.sentOfType("reorder_tabs")[0]?.payload["order"]).toEqual([
-      chatID("a"),
-      chatID("c"),
-      chatID("b"),
-    ]);
+    expect(tabServer.sentOfType("reorder_tabs")).toHaveLength(0);
   });
 
-  it("still honours a drag that reorders within the pinned run", async () => {
-    expect.assertions(1);
-    await openChats("a", "b", "c");
-    await setTabPinned(chatID("a"), true);
-    await setTabPinned(chatID("b"), true);
-    commitDrop?.([chatID("b"), chatID("a"), chatID("c")]);
-    await settleTabs();
-    expect(await rowRefs()).toEqual(["b", "a", "c"]);
-  });
-
-  it("carries a parent's children with it", async () => {
+  it("carries a parent's children into its section", async () => {
     expect.assertions(2);
     await openChat("p");
     await openTab({ kind: "chat", ref: "kid", parent: chatID("p") });
     await openChat("other");
     await setTabPinned(chatID("p"), true);
-    expect(await rowRefs()).toEqual(["p", "kid", "other"]);
+    expect(await sectionRefs()).toEqual({ open: ["other"], pinned: ["p", "kid"] });
     await setTabPinned(chatID("other"), true);
-    // `other` is pinned second, so it lands after the whole `p` group rather than
-    // between a parent and its child.
-    expect(await rowRefs()).toEqual(["p", "kid", "other"]);
+    expect(await sectionRefs()).toEqual({ open: [], pinned: ["p", "kid", "other"] });
   });
 
   // A tangent can parent on a side chat, so grouping must carry the whole descendant tree.
@@ -2690,36 +2719,35 @@ describe("pinned tabs", () => {
     await openTab({ kind: "chat", ref: "grandkid", parent: chatID("kid") });
     await openChat("other");
     await setTabPinned(chatID("p"), true);
-    expect(await rowRefs()).toEqual(["p", "kid", "grandkid", "other"]);
-    // The second pin is what exposed it: an orphaned grandchild group sat BETWEEN
-    // two pinned groups, so the partition hoisted `other` over it and the
-    // grandchild ended up behind a stranger.
+    expect(await sectionRefs()).toEqual({ open: ["other"], pinned: ["p", "kid", "grandkid"] });
     await setTabPinned(chatID("other"), true);
-    expect(await rowRefs()).toEqual(["p", "kid", "grandkid", "other"]);
+    expect(await sectionRefs()).toEqual({
+      open: [],
+      pinned: ["p", "kid", "grandkid", "other"],
+    });
   });
 
-  // Same assumption, second site: a drop names top-level ids only, so the walk
-  // that reproduces the strip has to descend.
+  // A drop names top-level ids only, so the walk that reproduces the strip has to descend.
   it("keeps a nested descendant behind its parent through a reorder", async () => {
     expect.assertions(1);
     await openChat("p");
     await openTab({ kind: "chat", ref: "kid", parent: chatID("p") });
     await openTab({ kind: "chat", ref: "grandkid", parent: chatID("kid") });
     await openChat("other");
-    commitDrop?.([chatID("p"), chatID("other")]);
+    commitDrop?.([chatID("other"), chatID("p")]);
     await settleTabs();
-    expect(await rowRefs()).toEqual(["p", "kid", "grandkid", "other"]);
+    expect(await sectionRefs()).toEqual({ open: ["other", "p", "kid", "grandkid"], pinned: [] });
   });
 
   // A sub-tab's position is its parent's, the same rule that denies it a drag
-  // handle — and the refusal is LOCAL, before it costs a round trip.
+  // handle, and the refusal is LOCAL, before it costs a round trip.
   it("refuses to pin a sub-tab without asking the server", async () => {
     expect.assertions(2);
     await openChat("p");
     await openTab({ kind: "chat", ref: "kid", parent: chatID("p") });
     await openChat("other");
     await setTabPinned(chatID("kid"), true);
-    expect(await rowRefs()).toEqual(["p", "kid", "other"]);
+    expect(await sectionRefs()).toEqual({ open: ["p", "kid", "other"], pinned: [] });
     expect(tabServer.sentOfType("pin_tab")).toHaveLength(0);
   });
 
@@ -2740,17 +2768,29 @@ describe("pinned tabs", () => {
     await setTabPinned(chatID("a"), true);
     await paint();
     const id = chatID("a");
-    const row = document.querySelector<HTMLElement>(`[data-tab-id="${id}"]`);
-    expect(row?.classList.contains("tab-pinned")).toBe(true);
+    expect(rowEl(id)?.classList.contains("tab-pinned")).toBe(true);
     // The glyph itself is decorative; the announced state is the .sr-only word.
-    expect(row?.querySelector(".tab-pin .sr-only")?.textContent).toBe("Pinned");
+    expect(rowEl(id)?.querySelector(".tab-pin .sr-only")?.textContent).toBe("Pinned");
     await setTabPinned(id, false);
     await paint();
-    expect(
-      document
-        .querySelector<HTMLElement>(`[data-tab-id="${id}"]`)
-        ?.classList.contains("tab-pinned"),
-    ).toBe(false);
+    expect(rowEl(id)?.classList.contains("tab-pinned")).toBe(false);
+  });
+
+  // A pin moves the row between the two lists: the same element, so its listeners and dot survive.
+  it("moves the same row element between Open and Pinned", async () => {
+    expect.assertions(4);
+    await openChats("a", "b");
+    await paint();
+    const id = chatID("a");
+    const before = rowEl(id);
+    expect(before?.parentElement?.id).toBe("tab-list");
+    await setTabPinned(id, true);
+    await paint();
+    expect(rowEl(id)).toBe(before);
+    expect(before?.parentElement?.id).toBe("pinned-list");
+    await setTabPinned(id, false);
+    await paint();
+    expect(before?.parentElement?.id).toBe("tab-list");
   });
 
   // A pin arrives as a `changed` upsert, so the row is REUSED: the subject is
@@ -2762,26 +2802,26 @@ describe("pinned tabs", () => {
     renameTab(chatID("a"), "Renamed");
     await setTabPinned(chatID("a"), true);
     await paint();
-    expect(rows()[0]?.querySelector(".tab-name")?.textContent).toBe("Renamed");
+    expect(rowEl(chatID("a"))?.querySelector(".tab-name")?.textContent).toBe("Renamed");
     expect(openers.chatShow).toHaveBeenCalledTimes(1);
   });
 
   // A pin applied on ANOTHER device arrives as the same `changed` frame, so the
   // partition has to move the row with no local gesture behind it.
-  it("re-partitions on a pin this device did not make", async () => {
+  it("re-sections on a pin this device did not make", async () => {
     expect.assertions(1);
     await openChats("a", "b");
-    const bID = chatID("b");
-    const subject = tabServer.subjects().find((s) => s.id === bID);
+    const aID = chatID("a");
+    const subject = tabServer.subjects().find((s) => s.id === aID);
     if (subject === undefined) {
-      throw new Error("b not in the collection");
+      throw new Error("a not in the collection");
     }
     tabServer.emitRaw({
       changed: { ...subject, pinned: true },
       version: tabServer.version() + 1,
     });
     await settleTabs();
-    expect(await rowRefs()).toEqual(["b", "a"]);
+    expect(await sectionRefs()).toEqual({ open: ["b"], pinned: ["a"] });
   });
 });
 
@@ -3675,6 +3715,15 @@ describe("a drop is shown before the server confirms it", () => {
     expect(await rowRefs()).toEqual(["c", "a", "b"]);
   });
 
+  // An open lays the strip out again before the reorder's frame lands, from the order the drop stored.
+  it("keeps the dropped order through an open before the frame, the new tab last", async () => {
+    expect.assertions(1);
+    await threeChatsHeld();
+    commitDrop?.([chatID("c"), chatID("a"), chatID("b")]);
+    await openTab({ kind: "chat", ref: "d" });
+    expect(await rowRefs()).toEqual(["c", "a", "b", "d"]);
+  });
+
   it("keeps the dropped order through a re-list that predates it", async () => {
     expect.assertions(1);
     await threeChatsHeld();
@@ -3726,7 +3775,7 @@ describe("a drop is shown before the server confirms it", () => {
   });
 });
 
-// Move up/down moves a GROUP within its pin partition, committed like a drop.
+// Move up/down moves a GROUP within its section, committed like a drop.
 
 describe("Move up / Move down in the chat menu", () => {
   // The root pair app boot mounts; the outer beforeEach has just reset the body.
@@ -3799,12 +3848,30 @@ describe("Move up / Move down in the chat menu", () => {
     expect(item(await menuFor("b"), "Move down").disabled).toBe(true);
   });
 
-  it("will not cross the pin partition in either direction", async () => {
-    expect.assertions(2);
-    await openChats("a", "b", "c");
+  it("stays inside its section at either edge", async () => {
+    expect.assertions(4);
+    await openChats("a", "b", "c", "d");
     await setTabPinned(chatID("a"), true);
-    expect(item(await menuFor("b"), "Move up").disabled, "first unpinned").toBe(true);
-    expect(item(await menuFor("a"), "Move down").disabled, "last pinned").toBe(true);
+    await setTabPinned(chatID("d"), true);
+    expect(item(await menuFor("b"), "Move up").disabled, "first in Open").toBe(true);
+    expect(item(await menuFor("c"), "Move down").disabled, "last in Open, above Pinned").toBe(true);
+    expect(item(await menuFor("a"), "Move up").disabled, "first in Pinned, under Open").toBe(true);
+    expect(item(await menuFor("d"), "Move down").disabled, "last in Pinned").toBe(true);
+  });
+
+  it("sends the sectioned order and counts the position inside the section", async () => {
+    expect.assertions(2);
+    await openChats("p", "b", "c");
+    await setTabPinned(chatID("p"), true);
+    renameTab(chatID("c"), "Sea");
+    item(await menuFor("c"), "Move up").action();
+    await settleTabs();
+    expect(tabServer.sentOfType("reorder_tabs")[0]?.payload["order"]).toEqual([
+      chatID("c"),
+      chatID("b"),
+      chatID("p"),
+    ]);
+    await expectAnnounced("Moved Sea to position 1");
   });
 
   it("disables both on a sub-tab, whose position is its parent's", async () => {

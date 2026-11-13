@@ -11,6 +11,18 @@
       "symbol": "ts://marotte-web/package.json#stylelint-config-standard:dev-dependency",
       "path": "static-src/package.json",
       "reason": ".stylelintrc.json extends it, resolved from static-src/node_modules by CI's web-lint stylelint run; no source imports it."
+    },
+    {
+      "code": "DS1102",
+      "symbol": "ts://marotte-web/retention.ts#isRetentionEnabled",
+      "path": "static-src/retention.ts",
+      "reason": "Kept for the sidebar's Recently closed list, which hides while chat retention is off and is the next reader of whether a close keeps the chat; this entry goes stale, and is removed, when that list lands."
+    },
+    {
+      "code": "DS1102",
+      "symbol": "ts://marotte-web/retention.ts#onRetentionChange",
+      "path": "static-src/retention.ts",
+      "reason": "Kept for the sidebar's Recently closed list, which hides while chat retention is off and is the next reader of a subscription to the retention setting; this entry goes stale, and is removed, when that list lands."
     }
   ]
 }

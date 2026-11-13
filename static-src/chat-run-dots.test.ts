@@ -96,9 +96,10 @@ vi.mock("./tabs-drag.js", async (importOriginal) => ({
 vi.mock("./transport.js", () =>
   import("./__test-helpers__/tabs-server.js").then((mod) => mod.tabTransportMock()),
 );
-vi.mock("./device-view.js", () => {
+vi.mock("./device-view.js", async (importOriginal) => {
   let active = "";
   return {
+    ...(await importOriginal<Record<string, unknown>>()),
     activeView: vi.fn(() => active),
     setActiveView: vi.fn((id: string) => {
       active = id;

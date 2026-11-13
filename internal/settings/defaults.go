@@ -141,7 +141,7 @@ const (
 // be silenced (push.TestPermissionKindHasNoSettingsKey). The master switch still covers it.
 
 // DefaultChatRetentionDays is the default for chat_retention_days: -1 forever, 0 delete on
-// close (History hidden), N purge after N days. The purge treats <= 0 as no purge. GET
+// close, N purge after N days. The purge treats <= 0 as no purge. GET
 // /api/settings resolves it, so the client carries no copy.
 const DefaultChatRetentionDays = 7
 

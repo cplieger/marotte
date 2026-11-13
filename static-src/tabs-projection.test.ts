@@ -42,9 +42,10 @@ vi.mock("./icons.js", () => ({
   ICON_SPINNER: "",
   ICON_HOURGLASS: "",
 }));
-vi.mock("./device-view.js", () => {
+vi.mock("./device-view.js", async (importOriginal) => {
   let active = "";
   return {
+    ...(await importOriginal<Record<string, unknown>>()),
     activeView: vi.fn(() => active),
     setActiveView: vi.fn((id: string) => {
       active = id;
@@ -57,11 +58,17 @@ vi.mock("./dom.js", async (importOriginal) => ({
     {},
     {
       get: (_t, prop: string) => {
-        if (prop === "tabList") {
-          let tl = document.getElementById("tab-list");
+        const ids: Record<string, string> = {
+          tabList: "tab-list",
+          pinnedList: "pinned-list",
+          tabSections: "tab-sections",
+        };
+        if (Object.hasOwn(ids, prop)) {
+          const id = ids[prop] ?? "";
+          let tl = document.getElementById(id);
           if (tl === null) {
             tl = document.createElement("div");
-            tl.id = "tab-list";
+            tl.id = id;
             document.body.appendChild(tl);
           }
           return tl;
@@ -161,6 +168,7 @@ import { dragOwnsStrip, setReorderCallback } from "./tabs-drag.js";
 import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.js";
 import { ingestTabsChanged, listTabs, tabsVersion, _resetTabsSyncForTest } from "./tabs-sync.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
+import { stripRows, TAB_SECTIONS_HTML } from "./__test-helpers__/tab-sections-markup.js";
 import {
   bindTabsSync,
   fakeSubject,
@@ -261,8 +269,7 @@ function paint(): Promise<void> {
 async function rowRefs(): Promise<string[]> {
   await paint();
   const byID = new Map(tabServer.subjects().map((s) => [s.id, s.ref === "" ? s.kind : s.ref]));
-  const list = document.getElementById("tab-list");
-  return [...(list?.querySelectorAll<HTMLElement>("[data-tab-id]:not(.exiting)") ?? [])].map(
+  return stripRows("[data-tab-id]:not(.exiting)").map(
     (n) => byID.get(n.dataset["tabId"] ?? "") ?? n.dataset["tabId"] ?? "",
   );
 }
@@ -274,7 +281,7 @@ beforeEach(() => {
   registerOpeners();
   resetActionFramework();
   _resetForTest();
-  document.body.innerHTML = '<div id="tab-list"></div>';
+  document.body.innerHTML = TAB_SECTIONS_HTML;
 });
 
 afterEach(() => {
@@ -728,6 +735,7 @@ describe("a failed mutation leaves the strip unchanged", () => {
     tabServer.setMode("event-first");
     await openTab({ kind: "chat", ref: "a" });
     await openTab({ kind: "chat", ref: "b" });
+    // `a` pinned: Open's `b`, then Pinned's `a`.
     await setTabPinned(tabIdFor("chat", "a"), true);
   });
 
@@ -755,7 +763,7 @@ describe("a failed mutation leaves the strip unchanged", () => {
     tabServer.failNext("close_tab");
     await closeTab(tabIdFor("chat", "b"));
     expect(hasTab("chat", "b")).toBe(true);
-    expect(await rowRefs()).toEqual(["a", "b"]);
+    expect(await rowRefs()).toEqual(["b", "a"]);
     expect(getActiveTabId()).toBe(tabIdFor("chat", "b"));
   });
 
@@ -766,17 +774,19 @@ describe("a failed mutation leaves the strip unchanged", () => {
     expect(tabServer.subjects().find((s) => s.ref === "b")?.pinned).toBe(false);
     // The partition is a rendering rule over the stored order, so an uncommitted
     // pin cannot move a row.
-    expect(await rowRefs()).toEqual(["a", "b"]);
+    expect(await rowRefs()).toEqual(["b", "a"]);
     expect(tabServer.version()).toBe(3);
   });
 
   it("a refused reorder leaves the order, and does not re-list", async () => {
-    expect.assertions(2);
+    expect.assertions(3);
+    await openTab({ kind: "chat", ref: "c" });
     const listsBefore = tabServer.listCalls();
     tabServer.failNext("reorder_tabs", 500, "boom");
-    commitDrop?.([tabIdFor("chat", "b"), tabIdFor("chat", "a")]);
+    commitDrop?.([tabIdFor("chat", "c"), tabIdFor("chat", "b")]);
     await settleTabs();
-    expect(await rowRefs()).toEqual(["a", "b"]);
+    expect(tabServer.sentOfType("reorder_tabs"), "the drop was sent").toHaveLength(1);
+    expect(await rowRefs()).toEqual(["b", "c", "a"]);
     // A 500 is not a 409: only the exact-set refusal means "you are behind".
     expect(tabServer.listCalls()).toBe(listsBefore);
   });

@@ -4,7 +4,7 @@
 // half, and `tabs-sync.ts` decides which frames arrive (this file implements its `TabsTarget`).
 // Removal is STATED per id in `removed_ids`; `order` never implies closure. Ids are opaque.
 // Local by design: the ACTIVE tab (device-view.ts), the live DOT, the NAME override, the
-// pinned-first PARTITION, and the DOM.
+// SECTION partition, and the DOM.
 
 import { pushRoute } from "./router.js";
 import { parseRoute } from "./route-path.js";
@@ -83,8 +83,15 @@ import { newOpID } from "./transport.js";
 import { join as joinKey } from "@cplieger/keyenc";
 import { ICON_CLOSE, ICON_PIN_FILLED, ICON_TAB_SUBTAB } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import { activeView, setActiveView } from "./device-view.js";
+import { activeView, sectionFolded, setActiveView } from "./device-view.js";
+import { isSliding } from "./disclosure-row.js";
 import { $, queryEl, setAttr, setText } from "./dom.js";
+import {
+  bindSectionToggle,
+  paintSectionHeader,
+  sectionToggle,
+  type SectionHeaderView,
+} from "./section-header.js";
 import { otherViewShown, showOnlyView } from "./view-swap.js";
 import { signal, effect, el } from "@cplieger/reactive";
 import {
@@ -238,6 +245,21 @@ const internal: Internal = {
   stripGestures: 0,
   unshown: "",
 };
+
+/** Each tab's position in the SERVER's stored order, the order the section partition is drawn
+ *  from: a pin changes only the flag (`internal/tabs/store.go`), so where a pinned or unpinned tab
+ *  lands must come from here, never from the partitioned array, or devices would disagree. Learned
+ *  from a snapshot, a frame's `order`, an open (appended, as the server does) and a sent reorder. */
+const storedRank = new Map<string, number>();
+let storedNext = 0;
+
+function noteStoredOrder(ids: readonly string[]): void {
+  storedRank.clear();
+  storedNext = 0;
+  for (const id of ids) {
+    storedRank.set(id, storedNext++);
+  }
+}
 
 /** Caller-supplied names keyed by `(kind, ref)`: a name arrives before the server mints an id, so
  *  the row is BUILT with it, and it survives a re-list. Bounded by `forgetRow`. */
@@ -397,7 +419,8 @@ function insertRow(row: TabRow): void {
   const parent = row.subject.parent;
   if (parent === "") {
     state.tabs.push(row);
-    applyPinOrder();
+    storedRank.set(row.subject.id, storedNext++);
+    applySectionOrder();
     return;
   }
   const pIdx = state.tabs.findIndex((t) => t.subject.id === parent);
@@ -405,7 +428,8 @@ function insertRow(row: TabRow): void {
     // An orphan (parent not open here) behaves as top-level rather than
     // vanishing: a tab nobody can see is worse than a tab in the wrong place.
     state.tabs.push(row);
-    applyPinOrder();
+    storedRank.set(row.subject.id, storedNext++);
+    applySectionOrder();
     return;
   }
   let at = pIdx + 1;
@@ -415,7 +439,7 @@ function insertRow(row: TabRow): void {
   state.tabs.splice(at, 0, row);
 }
 
-/** Group `rows` into [parent, ...its whole descendant tree] runs, in array order, so the pin
+/** Group `rows` into [parent, ...its whole descendant tree] runs, in array order, so the section
  *  partition and Move up/down move a parent and its subtree as one unit. Membership is tested
  *  against every row already in a group, or a grandchild becomes an orphan top-level group. */
 function groupsOf(rows: readonly TabRow[]): TabRow[][] {
@@ -438,23 +462,43 @@ function tabGroups(): TabRow[][] {
   return groupsOf(state.tabs);
 }
 
-/** `rows` with every pinned group ahead of every unpinned one, stably and with
- *  each parent's children still behind it. */
-function pinPartition(rows: readonly TabRow[]): readonly TabRow[] {
-  const groups = groupsOf(rows);
-  const pinned = groups.filter((g) => g[0]?.subject.pinned === true);
-  if (pinned.length === 0 || pinned.length === groups.length) {
-    return rows;
-  }
-  return [...pinned, ...groups.filter((g) => g[0]?.subject.pinned !== true)].flat();
+/** The sidebar section a group lives in, from its head's subject. A sub-tab is in its group's. */
+type SectionKey = "open" | "pinned";
+
+/** Sections in the order they are drawn; a group's rank is its index here. */
+const SECTION_ORDER: readonly SectionKey[] = ["open", "pinned"];
+
+function sectionOf(head: TabRow): SectionKey {
+  return head.subject.pinned ? "pinned" : "open";
 }
 
-/** Reorder `state.tabs` by the pin partition: a RENDERING rule over the stored
- *  order, so an unpin leaves the tab where it was. In the ARRAY rather than the
- *  render, because a drop and the keyboard arrows both read DOM order back as the
- *  truth, and a render-time sort would make them disagree with what is stored. */
-function applyPinOrder(): void {
-  state.tabs = [...pinPartition(state.tabs)];
+/** `rows` grouped by section in `SECTION_ORDER`, each section in stored order (a head the
+ *  stored order does not know keeps its array place, after those it does), each parent's
+ *  descendants still behind it. */
+function sectionPartition(rows: readonly TabRow[]): readonly TabRow[] {
+  const ranked = groupsOf(rows).flatMap((g, i) => {
+    const head = g[0];
+    return head === undefined
+      ? []
+      : [
+          {
+            g,
+            i,
+            section: SECTION_ORDER.indexOf(sectionOf(head)),
+            stored: storedRank.get(head.subject.id) ?? Number.MAX_SAFE_INTEGER,
+          },
+        ];
+  });
+  ranked.sort((a, b) => a.section - b.section || a.stored - b.stored || a.i - b.i);
+  return ranked.flatMap((r) => r.g);
+}
+
+/** Reorder `state.tabs` by the section partition: a RENDERING rule over the stored order, so a pin
+ *  or an unpin moves a row only by its stored position. In the ARRAY rather than the render,
+ *  because a drop and the keyboard arrows both read DOM order back as the truth, and a render-time
+ *  sort would make them disagree with what is stored. */
+function applySectionOrder(): void {
+  state.tabs = [...sectionPartition(state.tabs)];
 }
 
 /** Expand a top-level order into the exact set `reorder_tabs` demands: every open tab once, each
@@ -506,6 +550,7 @@ function reset(subjects: readonly TabSubject[]): void {
     next.push(existing);
   }
   state.tabs = next;
+  noteStoredOrder(subjects.map((s) => s.id));
   if (next.length > 0) {
     internal.everOpened = true;
   }
@@ -515,7 +560,7 @@ function reset(subjects: readonly TabSubject[]): void {
     forgetRow(row);
     tearDown(row);
   }
-  applyPinOrder();
+  applySectionOrder();
 
   // BOOT (nothing active): point at this screen's last tab, or the first, WITHOUT running `onShow`;
   // app.ts performs the one boot activation, so a re-list never re-fetches a view's content. A LATER
@@ -557,6 +602,7 @@ function apply(delta: TabsChangedPayload, local: boolean): void {
   const removed = delta.removed_ids ?? [];
   let lostActive = false;
   for (const id of removed) {
+    storedRank.delete(id);
     const at = state.tabs.findIndex((t) => t.subject.id === id);
     if (at < 0) {
       continue;
@@ -577,7 +623,8 @@ function apply(delta: TabsChangedPayload, local: boolean): void {
   if (order !== undefined) {
     // A PERMUTATION: an id the order does not name sorts LAST and is never closed.
     state.tabs = permute(state.tabs, (t) => t.subject.id, order);
-    applyPinOrder();
+    noteStoredOrder(state.tabs.map((t) => t.subject.id));
+    applySectionOrder();
   }
 
   if (lostActive) {
@@ -603,7 +650,7 @@ function upsertSubject(subject: TabSubject): void {
   }
   existing.subject = subject;
   existing.name = nameFor(subject, existing.spec);
-  applyPinOrder();
+  applySectionOrder();
 }
 
 /** `owns: false` tears down nothing: dismissing a view must not kill the work it watched. The
@@ -1485,7 +1532,7 @@ function captureClose(row: TabRow): CapturedClose {
     }
   }
   const storeActive = getActiveId();
-  const list = $.tabList;
+  const strip = $.tabSections;
   const at = state.tabs.findIndex((t) => t.subject.id === row.subject.id);
   return {
     rows,
@@ -1499,7 +1546,7 @@ function captureClose(row: TabRow): CapturedClose {
     storeActive: rows.some((r) => r.subject.kind === "chat" && r.subject.ref === storeActive)
       ? storeActive
       : "",
-    stripScroll: { top: list.scrollTop, left: list.scrollLeft },
+    stripScroll: { top: strip.scrollTop, left: strip.scrollLeft },
     stripGestures: internal.stripGestures,
     refused: false,
   };
@@ -1580,7 +1627,7 @@ function rollbackClose(c: CapturedClose): void {
   if (restorable.length > 0) {
     state.tabs.splice(restoreIndex(c), 0, ...restorable);
     internal.everOpened = true;
-    applyPinOrder();
+    applySectionOrder();
   }
   // `hasRow`, not the rows THIS call spliced: the verify-settled path's reset already
   // rebuilt the row, and it IS the no-closed-id invariant: a reopen under a new id is rowless.
@@ -1783,12 +1830,39 @@ export async function setTabParent(id: string, parent: string): Promise<boolean>
 
 const idOfRow = (t: TabRow): string => t.subject.id;
 
-/** Expanded and pin-partitioned BEFORE shown or sent, so the server gets what every device will
- *  render. A 409 rolls back and re-lists, never re-sends: the set moved under the gesture. Answers
- *  the applied order, or null when the partition undid the move. */
+/** Commit one section's dropped top-level order: every other section's groups keep their places,
+ *  and the whole set is expanded and section-partitioned BEFORE shown or sent, so the server gets
+ *  what every device will render. A 409 rolls back and re-lists, never re-sends: the set moved
+ *  under the gesture. Answers the dropped section's group heads in their new order (a drop's
+ *  "position N" counts inside its own list), or null when nothing moved. */
 function publishReorder(order: readonly string[]): readonly string[] | null {
+  const first = rowOfID(order[0] ?? "");
+  if (first === undefined) {
+    return null;
+  }
+  const key = sectionOf(first);
+  const heads = groupHeads();
+  const inSection = heads.filter((h) => sectionOf(h) === key).map(idOfRow);
+  const named = new Set(inSection);
+  const dropped = [...new Set(order.filter((id) => named.has(id)))];
+  for (const id of inSection) {
+    if (!dropped.includes(id)) {
+      dropped.push(id);
+    }
+  }
+  let slot = 0;
+  const full = heads.map((h) =>
+    sectionOf(h) === key ? (dropped[slot++] ?? idOfRow(h)) : idOfRow(h),
+  );
   const prior = state.tabs.map(idOfRow);
-  const next = pinPartition(permute(state.tabs, idOfRow, expandOrder(order))).map(idOfRow);
+  const storedBefore = [...state.tabs]
+    .sort(
+      (a, b) =>
+        (storedRank.get(a.subject.id) ?? Number.MAX_SAFE_INTEGER) -
+        (storedRank.get(b.subject.id) ?? Number.MAX_SAFE_INTEGER),
+    )
+    .map(idOfRow);
+  const next = permute(state.tabs, idOfRow, expandOrder(full)).map(idOfRow);
   if (next.length === prior.length && next.every((id, i) => id === prior[i])) {
     return null;
   }
@@ -1799,12 +1873,14 @@ function publishReorder(order: readonly string[]): readonly string[] | null {
     // The captured order with any NEWER pending reorder re-applied on top, so
     // rolling back an older drop never undoes a newer one.
     rollback: () => {
-      state.tabs = permute(state.tabs, idOfRow, overlayOrder(prior));
-      applyPinOrder();
+      state.tabs = permute(state.tabs, idOfRow, overlayOrder(storedBefore));
+      noteStoredOrder(state.tabs.map(idOfRow));
+      applySectionOrder();
       emit();
     },
   });
   state.tabs = permute(state.tabs, idOfRow, next);
+  noteStoredOrder(next);
   emit();
   void (async () => {
     const outcome = await reorderTabsCommand.dispatch({ order: next, opID });
@@ -1817,15 +1893,22 @@ function publishReorder(order: readonly string[]): readonly string[] | null {
       reorderCommitted(opID, outcome.version);
     }
   })();
-  return tabGroups().map((g) => g[0]?.subject.id ?? "");
+  return groupHeads()
+    .filter((h) => sectionOf(h) === key)
+    .map(idOfRow);
+}
+
+/** Every group's head, in strip order. */
+function groupHeads(): TabRow[] {
+  return tabGroups().flatMap((g) => (g[0] === undefined ? [] : [g[0]]));
 }
 
 setReorderCallback(publishReorder);
 setReprojectCallback(renderDOM);
 
 /** Where the menu's Move up / Move down would take a tab: its group swapped with the
- *  adjacent group in the SAME pin partition. Null for a sub-tab (its position is its
- *  parent's), at either end, and at the partition boundary. */
+ *  adjacent group in the SAME section. Null for a sub-tab (its position is its
+ *  parent's), at either end, and at a section's edge. */
 function moveTarget(
   id: string,
   delta: -1 | 1,
@@ -1837,7 +1920,7 @@ function moveTarget(
   if (head === undefined || neighbour === undefined) {
     return null;
   }
-  if (neighbour.subject.pinned !== head.subject.pinned) {
+  if (sectionOf(neighbour) !== sectionOf(head)) {
     return null;
   }
   return { groups, at, to: at + delta };
@@ -1857,7 +1940,14 @@ function moveTab(id: string, delta: -1 | 1): void {
   const groups = [...move.groups];
   // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- both indices checked by moveTarget
   [groups[move.at], groups[move.to]] = [groups[move.to]!, groups[move.at]!];
-  const applied = publishReorder(groups.map((g) => g[0]?.subject.id ?? ""));
+  const key = groups[move.at]?.[0];
+  const applied = publishReorder(
+    groups.flatMap((g) =>
+      g[0] !== undefined && key !== undefined && sectionOf(g[0]) === sectionOf(key)
+        ? [idOfRow(g[0])]
+        : [],
+    ),
+  );
   const at = applied?.indexOf(id) ?? -1;
   const row = rowOfID(id);
   if (row !== undefined && at >= 0) {
@@ -1994,6 +2084,8 @@ export function setTabStatus(id: string, status: TabDotStatus | "", since?: numb
   // From the ROW rather than the argument, so a since-less repaint of an unchanged
   // state keeps the age the row still holds instead of blanking the tooltip.
   paintDot(node, row.subject.kind, status, row.dotSince);
+  // A folded header speaks for its hidden rows' dots, and a dot change queues no render.
+  paintFolds();
 }
 
 /** The workflow mark's phrase and tooltip, one string as `dotPhrase` is for the dot. Nouns from
@@ -2534,18 +2626,48 @@ function watchStripGestures(list: HTMLElement): void {
   });
 }
 
+/** Each section's row list, in `SECTION_ORDER`. */
+function sectionLists(): readonly { key: SectionKey; list: HTMLElement }[] {
+  return [
+    { key: "open", list: $.tabList },
+    { key: "pinned", list: $.pinnedList },
+  ];
+}
+
+/** The rows a list shows or will show: departing rows and the boot skeleton excluded. */
+function liveRows(list: HTMLElement): HTMLElement[] {
+  return [...list.querySelectorAll<HTMLElement>(":scope > [data-tab-id]")].filter(
+    (n) => !n.classList.contains("exiting"),
+  );
+}
+
+/** A folded header's dot: the first state, in `TabDotState`'s precedence and then an editor's
+ *  unsaved changes, among the rows it hides. */
+const FOLD_DOT_PRECEDENCE: readonly TabDotStatus[] = [
+  "input",
+  "failed",
+  "working",
+  "waiting",
+  "done",
+  "dirty",
+];
+
 function renderDOM(): void {
-  const list = $.tabList;
-  if (!list.hasAttribute("role")) {
-    list.setAttribute("role", "tablist");
-  }
-  watchStripGestures(list);
+  const strip = $.tabSections;
+  watchStripGestures(strip);
+  const lists = sectionLists();
+  const focused = document.activeElement;
 
   const existing = new Map<string, HTMLElement>();
-  for (const node of [...list.children]) {
-    const id = (node as HTMLElement).dataset["tabId"];
-    if (id !== undefined) {
-      existing.set(id, node as HTMLElement);
+  for (const { list } of lists) {
+    if (!list.hasAttribute("role")) {
+      list.setAttribute("role", "tablist");
+    }
+    for (const node of [...list.children]) {
+      const id = (node as HTMLElement).dataset["tabId"];
+      if (id !== undefined) {
+        existing.set(id, node as HTMLElement);
+      }
     }
   }
 
@@ -2556,86 +2678,234 @@ function renderDOM(): void {
   // off the DOM because the row already left the projection.
   for (const [id, node] of existing) {
     if (!activeIDs.has(id)) {
-      const parent = node.dataset["parentId"];
-      node.classList.add("exiting");
-      if (parent !== undefined && activeIDs.has(parent)) {
-        node.classList.add("exiting-merge");
-      }
-      node.addEventListener("animationend", () => {
-        // A row that came back during its exit (a refused close) reuses this node.
-        if (node.classList.contains("exiting")) {
-          node.remove();
+      if (!node.classList.contains("exiting")) {
+        const parent = node.dataset["parentId"];
+        node.classList.add("exiting");
+        if (parent !== undefined && activeIDs.has(parent)) {
+          node.classList.add("exiting-merge");
         }
-      });
+        node.addEventListener(
+          "animationend",
+          () => {
+            // A row that came back during its exit (a refused close) reuses this node.
+            if (node.classList.contains("exiting")) {
+              node.remove();
+            }
+          },
+          { once: true },
+        );
+      }
       existing.delete(id);
+    }
+  }
+
+  const sectionOfRow = new Map<string, SectionKey>();
+  for (const g of tabGroups()) {
+    const head = g[0];
+    if (head !== undefined) {
+      for (const r of g) {
+        sectionOfRow.set(r.subject.id, sectionOf(head));
+      }
     }
   }
 
   // Exiting elements are skipped for ordering. While a drag holds the strip the pointer owns the
   // order, so nothing is re-seated.
   const reseat = !dragOwnsStrip();
-  let prev: HTMLElement | null = null;
-  for (const row of state.tabs) {
-    let node = existing.get(row.subject.id);
-    if (node === undefined) {
-      node = createTabEl(row);
+  for (const { key, list } of lists) {
+    let prev: HTMLElement | null = null;
+    for (const row of state.tabs) {
+      if (sectionOfRow.get(row.subject.id) !== key) {
+        continue;
+      }
+      prev = seatRow(list, row, existing.get(row.subject.id), prev, reseat);
+    }
+  }
+
+  for (const { key, list } of lists) {
+    bindSectionToggle(list, key, (folded) => {
+      paintFold(key, list, folded);
+    });
+    paintFold(key, list, sectionFolded(key), isSliding(list));
+  }
+
+  // Any re-seat of a node blurs it, so a row the frame moved (a pin, a remote reorder, Move up)
+  // takes focus back, or its folded section's header when the fold now hides it.
+  if (
+    focused instanceof HTMLElement &&
+    focused.dataset["tabId"] !== undefined &&
+    document.activeElement !== focused
+  ) {
+    const list = focused.parentElement;
+    if (focused.isConnected && !focused.hidden) {
+      focused.focus({ preventScroll: true });
+    } else if (list !== null) {
+      sectionToggle(list)?.focus({ preventScroll: true });
+    }
+  }
+
+  const restore = internal.stripRestore;
+  if (restore !== null) {
+    internal.stripRestore = null;
+    strip.scrollTop = restore.top;
+    strip.scrollLeft = restore.left;
+  }
+}
+
+/** Play a new row's entry once. The class leaves when the entry ends or stops, because any later
+ *  restart (a re-insert, a return from display: none, a drag class leaving) would replay it
+ *  (CSS Animations 1). Every other row animation replaces the entry's, so any end or cancel on the
+ *  row itself means the entry has stopped; the target check drops its status dot's events. */
+function playEntry(node: HTMLElement): void {
+  node.classList.add("entering");
+  const settle = (e: AnimationEvent): void => {
+    if (e.target === node) {
+      node.classList.remove("entering");
+    }
+  };
+  node.addEventListener("animationend", settle);
+  node.addEventListener("animationcancel", settle);
+}
+
+/** Seat one row in `list` right after `prev` (or first), creating or reusing its element, and
+ *  paint its per-row state. Answers the seated element, the next row's `prev`. */
+function seatRow(
+  list: HTMLElement,
+  row: TabRow,
+  found: HTMLElement | undefined,
+  prev: HTMLElement | null,
+  reseat: boolean,
+): HTMLElement {
+  let node = found;
+  if (node === undefined) {
+    node = createTabEl(row);
+    if (prev !== null) {
+      prev.after(node);
+    } else {
+      list.prepend(node);
+    }
+    playEntry(node);
+  } else {
+    node.classList.remove("exiting", "exiting-merge");
+    const nameEl = node.querySelector(".tab-name");
+    if (nameEl !== null && nameEl.textContent !== row.name) {
+      nameEl.textContent = row.name;
+    }
+    // Beside the label it restates, so a rename cannot move one and leave the
+    // other: renameTab writes the row and emit()s rather than touching the DOM.
+    paintTooltip(node, row.name);
+    let expectedNext: ChildNode | null = prev !== null ? prev.nextSibling : list.firstChild;
+    while (
+      expectedNext !== null &&
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      (expectedNext as HTMLElement).classList?.contains("exiting")
+    ) {
+      expectedNext = expectedNext.nextSibling;
+    }
+    // A row whose pin moved it to another list is moved even under a drag: the drag holds one list.
+    if ((reseat || node.parentElement !== list) && node !== expectedNext) {
       if (prev !== null) {
         prev.after(node);
       } else {
         list.prepend(node);
       }
-      node.classList.add("entering");
-    } else {
-      node.classList.remove("exiting", "exiting-merge");
-      const nameEl = node.querySelector(".tab-name");
-      if (nameEl !== null && nameEl.textContent !== row.name) {
-        nameEl.textContent = row.name;
-      }
-      // Beside the label it restates, so a rename cannot move one and leave the
-      // other: renameTab writes the row and emit()s rather than touching the DOM.
-      paintTooltip(node, row.name);
-      let expectedNext: ChildNode | null = prev !== null ? prev.nextSibling : list.firstChild;
-      while (
-        expectedNext !== null &&
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        (expectedNext as HTMLElement).classList?.contains("exiting")
-      ) {
-        expectedNext = expectedNext.nextSibling;
-      }
-      if (reseat && node !== expectedNext) {
-        if (prev !== null) {
-          prev.after(node);
-        } else {
-          list.prepend(node);
-        }
-      }
     }
-    node.classList.toggle("active", row.subject.id === state.active);
-    node.setAttribute("aria-selected", row.subject.id === state.active ? "true" : "false");
-    node.tabIndex = row.subject.id === state.active ? 0 : -1;
-    // Sub-tab indent and pin marker, both from the SUBJECT. Toggled here rather
-    // than only at creation so a pin applied to an already-rendered tab shows as
-    // soon as its frame lands.
-    node.classList.toggle("tab-child", row.subject.parent !== "");
-    // The indent is per generation, not per child: a grandchild (a spec under a
-    // tangent) steps in once more than its parent. Written beside the class so the
-    // two cannot disagree.
-    node.style.setProperty("--tab-depth", String(depthOf(row)));
-    node.classList.toggle("tab-pinned", row.subject.pinned);
-    // The parent id rides the row for the exit above, which must know whether the parent is still open
-    // once the row has left the projection.
-    if (row.subject.parent === "") {
-      delete node.dataset["parentId"];
-    } else {
-      node.dataset["parentId"] = row.subject.parent;
-    }
-    prev = node;
   }
-  const restore = internal.stripRestore;
-  if (restore !== null) {
-    internal.stripRestore = null;
-    list.scrollTop = restore.top;
-    list.scrollLeft = restore.left;
+  node.classList.toggle("active", row.subject.id === state.active);
+  node.setAttribute("aria-selected", row.subject.id === state.active ? "true" : "false");
+  // Sub-tab indent and pin marker, both from the SUBJECT. Toggled here rather
+  // than only at creation so a pin applied to an already-rendered tab shows as
+  // soon as its frame lands.
+  node.classList.toggle("tab-child", row.subject.parent !== "");
+  // The indent is per generation, not per child: a grandchild (a spec under a
+  // tangent) steps in once more than its parent. Written beside the class so the
+  // two cannot disagree.
+  node.style.setProperty("--tab-depth", String(depthOf(row)));
+  node.classList.toggle("tab-pinned", row.subject.pinned);
+  // The parent id rides the row for the exit above, which must know whether the parent is still open
+  // once the row has left the projection.
+  if (row.subject.parent === "") {
+    delete node.dataset["parentId"];
+  } else {
+    node.dataset["parentId"] = row.subject.parent;
+  }
+  return node;
+}
+
+/** Apply `folded` to one section: every row but the active one hidden when folded, its one Tab
+ *  stop, its header and its visibility. The fold's `slideBox` calls this with the state it is
+ *  showing, so a closing slide keeps the rows until it ends; `slideOwnsRows` leaves the rows'
+ *  `hidden` to a running slide and paints the rest. */
+function paintFold(
+  key: SectionKey,
+  list: HTMLElement,
+  folded: boolean,
+  slideOwnsRows = false,
+): void {
+  const rows = liveRows(list);
+  if (!slideOwnsRows) {
+    for (const node of rows) {
+      node.hidden = folded && node.dataset["tabId"] !== state.active;
+      if (node.hidden) {
+        // A row seated hidden never starts its entry, so no animation event clears the class.
+        node.classList.remove("entering");
+      }
+    }
+  }
+  const active = rows.find((n) => n.dataset["tabId"] === state.active);
+  const stop = active ?? (folded ? undefined : rows[0]);
+  for (const node of rows) {
+    node.tabIndex = node === stop ? 0 : -1;
+  }
+  const section = list.closest<HTMLElement>(".side-section");
+  const header = sectionToggle(list)?.parentElement ?? null;
+  // Open's section stays, because its list holds the boot skeleton; only its header hides.
+  if (key === "open") {
+    if (header !== null) {
+      header.hidden = rows.length === 0;
+    }
+  } else if (section !== null) {
+    section.hidden = rows.length === 0;
+  }
+  paintSectionHeader(list, {
+    count: rows.filter((n) => n.dataset["parentId"] === undefined).length,
+    folded: sectionFolded(key),
+    dot: folded ? foldDot(rows) : null,
+  });
+  dropBoxlessExits(list);
+}
+
+/** Remove the departing rows `list` shows no box for (a folded row, an emptied section): their
+ *  exit's `animationend` never comes, because `display: none` ends an element's animations
+ *  (https://drafts.csswg.org/css-animations-1/#animations). Runs after the paint that hides them. */
+function dropBoxlessExits(list: HTMLElement): void {
+  for (const node of list.querySelectorAll<HTMLElement>(":scope > .exiting")) {
+    if (!node.checkVisibility()) {
+      node.remove();
+    }
+  }
+}
+
+function foldDot(rows: readonly HTMLElement[]): SectionHeaderView["dot"] {
+  const hidden = rows
+    .filter((n) => n.dataset["tabId"] !== state.active)
+    .map((n) => rowOfID(n.dataset["tabId"] ?? ""))
+    .filter((r) => r !== undefined);
+  for (const status of FOLD_DOT_PRECEDENCE) {
+    const r = hidden.find((h) => h.dotStatus === status);
+    if (r !== undefined) {
+      // The header reads "one <phrase>", and the dot's own "unsaved changes" is a bare noun.
+      const phrase = status === "dirty" ? "has unsaved changes" : dotPhrase(r.subject.kind, status);
+      return { status, phrase };
+    }
+  }
+  return null;
+}
+
+/** Repaint every section's fold state from what is stored; a running slide keeps its rows. */
+function paintFolds(): void {
+  for (const { key, list } of sectionLists()) {
+    paintFold(key, list, sectionFolded(key), isSliding(list));
   }
 }
 
@@ -2984,22 +3254,10 @@ function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean)
       case "Delete":
       case "Backspace": {
         e.preventDefault();
-        // Focus is moved by hand, or Delete drops the keyboard user onto <body>. The APG puts focus on the
-        // tab that took the closed one's place: everything after me, then everything before in reverse.
-        // Moved BEFORE the dispatch, because a close is a round trip, and only once the gate lets it go.
+        // Focus moves BEFORE the dispatch, because a close is a round trip, and only once the gate
+        // lets it go.
         requestCloseTab(id, () => {
-          const siblings = [...(node.parentElement?.children ?? [])] as HTMLElement[];
-          const self = siblings.indexOf(node);
-          const successors = [...siblings.slice(self + 1), ...siblings.slice(0, self).reverse()];
-          const successor = successors.find((n) => n.dataset["tabId"] !== id);
-          if (successor !== undefined) {
-            successor.focus();
-          } else {
-            // The LAST tab: no row survives for focus to land on, and losing it
-            // to <body> strands the keyboard user. The empty-state surface's one
-            // control is the composer, so focus goes there.
-            $.promptInput.focus();
-          }
+          focusAfterClose(node);
         });
         break;
       }
@@ -3010,7 +3268,7 @@ function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean)
       case "Home":
       case "End": {
         e.preventDefault();
-        const tabs = [...(node.parentElement?.children ?? [])] as HTMLElement[];
+        const tabs = node.parentElement === null ? [node] : shownRows(node.parentElement);
         const i = tabs.indexOf(node);
         let targetEl: HTMLElement | undefined;
         if (e.key === "ArrowDown" || e.key === "ArrowRight") {
@@ -3031,6 +3289,77 @@ function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean)
   if (draggable) {
     attachDrag(node);
   }
+}
+
+/** The rows of `list` a reader can reach: live and not hidden by a fold. */
+function shownRows(list: HTMLElement): HTMLElement[] {
+  return liveRows(list).filter((n) => !n.hidden);
+}
+
+/** Whether `node` is a row that survives a close of the `closing` ids. */
+function survives(node: HTMLElement, closing: ReadonlySet<string>): boolean {
+  return !closing.has(node.dataset["tabId"] ?? "");
+}
+
+/** A folded section's header, while a row outside `closing` keeps it shown once the close lands. */
+function foldedHeaderAfterClose(
+  list: HTMLElement,
+  closing: ReadonlySet<string>,
+): HTMLElement | null {
+  if (!list.hasAttribute("data-folded") || !liveRows(list).some((n) => survives(n, closing))) {
+    return null;
+  }
+  return sectionToggle(list);
+}
+
+const NOTHING_CLOSES: ReadonlySet<string> = new Set();
+
+/** Where another section's Tab stop is, or its folded header while it has a row; null for a
+ *  hidden or empty section. A closing subtree sits in one section, so none of it is here. */
+function sectionFocusTarget(list: HTMLElement): HTMLElement | null {
+  if (list.closest<HTMLElement>(".side-section")?.hidden === true) {
+    return null;
+  }
+  const rows = shownRows(list);
+  const stop = rows.find((n) => n.tabIndex === 0) ?? rows[0];
+  return stop ?? foldedHeaderAfterClose(list, NOTHING_CLOSES);
+}
+
+/** Move focus off a row about to close, or Delete drops the keyboard user onto <body>. The APG puts
+ *  it on the tab that took the closed one's place: a shown row after it, then before it in reverse;
+ *  then its folded section's header, the next section's stop, the nearest earlier section's, and
+ *  on the last tab the composer, the empty-state surface's one control. Every row of the closed
+ *  row's subtree closes with it, so none of them is a target. */
+function focusAfterClose(node: HTMLElement): void {
+  const id = node.dataset["tabId"] ?? "";
+  const closed = rowOfID(id);
+  const closing = new Set(
+    closed === undefined ? [id] : subtreeRows(closed).map((r) => r.subject.id),
+  );
+  const list = node.parentElement;
+  const lists = sectionLists().map((l) => l.list);
+  const at = list === null ? -1 : lists.indexOf(list);
+  if (list !== null) {
+    const rows = shownRows(list);
+    const self = rows.indexOf(node);
+    const successor = [...rows.slice(self + 1), ...rows.slice(0, Math.max(self, 0)).reverse()].find(
+      (n) => survives(n, closing),
+    );
+    const target = successor ?? foldedHeaderAfterClose(list, closing);
+    if (target !== null) {
+      target.focus();
+      return;
+    }
+  }
+  const order = at < 0 ? lists : [...lists.slice(at + 1), ...lists.slice(0, at).reverse()];
+  for (const other of order) {
+    const target = sectionFocusTarget(other);
+    if (target !== null) {
+      target.focus();
+      return;
+    }
+  }
+  $.promptInput.focus();
 }
 
 // --- Singleton tab helpers ---
@@ -3264,6 +3593,8 @@ export function _resetForTest(): void {
   internal.stripRestore = null;
   nameOverrides.clear();
   doorRoutes.clear();
+  storedRank.clear();
+  storedNext = 0;
   activationHistory.length = 0;
   navigationSeq = 0;
   activeCloses = 0;

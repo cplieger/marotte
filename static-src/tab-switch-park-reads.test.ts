@@ -62,9 +62,12 @@ import { loadCSS } from "./__test-helpers__/css-rules.js";
 import { installLayoutSpy, type LayoutSpy } from "./__test-helpers__/layout-spy.js";
 import { activationRan, clickRow, frame } from "./__test-helpers__/tab-switch-mocks.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
+import { TAB_SECTIONS_HTML } from "./__test-helpers__/tab-sections-markup.js";
 
 document.body.innerHTML =
-  '<span id="titlebar-title"></span><span id="titlebar-subtitle"></span><div id="banner-stack"></div><aside id="sidebar"><div id="tab-list"></div></aside>' +
+  '<span id="titlebar-title"></span><span id="titlebar-subtitle"></span><div id="banner-stack"></div><aside id="sidebar">' +
+  TAB_SECTIONS_HTML +
+  "</aside>" +
   '<button id="settings-btn"></button><button id="git-btn"></button>' +
   '<button id="files-btn"></button><button id="history-btn"></button>' +
   '<button id="docs-btn"></button>' +
