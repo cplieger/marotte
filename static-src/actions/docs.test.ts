@@ -29,8 +29,8 @@ describe("docs.delete", () => {
     });
   });
 
-  // A delete, a recreate and a second delete of one path within the server's five-minute replay
-  // window must reach the handler twice, so each gesture carries its own key.
+  // A delete, a recreate and a second delete of one path within the server's replay window
+  // (idempotency.go idempotencyTTL) must reach the handler twice, so each gesture carries its own key.
   it("deleting a recreated doc sends a fresh key, so the second delete is not a replay", async () => {
     mockFetch.mockImplementation(() =>
       Promise.resolve(new Response(JSON.stringify({}), { status: 200 })),

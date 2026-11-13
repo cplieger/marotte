@@ -793,3 +793,73 @@ describe("a closed browser's folder", () => {
     expect(vi.mocked(openFilesView)).toHaveBeenCalledExactlyOnceWith(FB_ROOT);
   });
 });
+
+describe("New file and New folder beside entries holding the default name", () => {
+  const sent: { action: string; path: string }[] = [];
+
+  beforeEach(() => {
+    sent.length = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init: RequestInit) => {
+        sent.push(JSON.parse(init.body as string) as { action: string; path: string });
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      }),
+    );
+    return () => {
+      vi.unstubAllGlobals();
+    };
+  });
+
+  async function create(
+    button: HTMLElement,
+    existing: { name: string; isDir: boolean }[],
+    created: { name: string; isDir: boolean },
+  ): Promise<void> {
+    answers.set("/w", [
+      okAnswer({ files: existing, writable: true }),
+      okAnswer({ files: [...existing, created], writable: true }),
+    ]);
+    initFileBrowser();
+    await show("/w");
+    button.click();
+    await vi.waitFor(() => {
+      expect(rowFor(created.name).querySelector(`.${FB_NAME}`), "the rename opened").toBeNull();
+    });
+  }
+
+  it("creates the next free file name and opens the rename on it, not on the existing file", async () => {
+    const existing = [
+      { name: "new file", isDir: false },
+      { name: "new file 2", isDir: false },
+      { name: "new folder", isDir: true },
+    ];
+    await create($.fbNewFile, existing, { name: "new file 3", isDir: false });
+    expect(sent).toEqual([{ action: "touch", path: "/w/new file 3" }]);
+    expect(rowFor("new file").querySelector(`.${FB_NAME}`)).not.toBeNull();
+  });
+
+  it("creates the next free folder name, counting a file that holds it", async () => {
+    const existing = [{ name: "new folder", isDir: false }];
+    await create($.fbNewFolder, existing, { name: "new folder 2", isDir: true });
+    expect(sent).toEqual([{ action: "mkdir", path: "/w/new folder 2" }]);
+  });
+
+  for (const key of ["Enter", "Escape"]) {
+    it(`opens the file from its name after ${key} leaves the proposed name as it was`, async () => {
+      await create($.fbNewFile, [], { name: "new file", isDir: false });
+      const input = must(rowFor("new file").querySelector<HTMLInputElement>(".fb-name-edit"));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      must(rowFor("new file").querySelector<HTMLElement>(`.${FB_NAME}`)).click();
+      expect(h.openFile.mock.calls.map((c) => c[0])).toEqual(["/w/new file"]);
+    });
+  }
+
+  it("keeps the default name when no entry holds it", async () => {
+    await create($.fbNewFile, [{ name: "new file.txt", isDir: false }], {
+      name: "new file",
+      isDir: false,
+    });
+    expect(sent).toEqual([{ action: "touch", path: "/w/new file" }]);
+  });
+});

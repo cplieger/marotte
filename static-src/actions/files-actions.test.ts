@@ -205,7 +205,7 @@ describe("partialUploadOf", () => {
   });
 });
 
-// The server replays any answer it cached under a key for five minutes (internal/server/idempotency.go),
+// The server replays any answer it cached under a key (internal/server/idempotency.go idempotencyTTL),
 // so a key must name one user gesture: a retry of that gesture reuses it, a repeat of it must not.
 describe("idempotency keys name one gesture, not its arguments", () => {
   const ok = (): Response => new Response(JSON.stringify({}), { status: 200 });

@@ -794,8 +794,23 @@ function newFolder(): void {
   createEntry("mkdir", "new folder");
 }
 
-function createEntry(action: "touch" | "mkdir", name: string): void {
+/** `base`, or `base 2`, `base 3` and so on: the first name the listing does not hold. Touch and mkdir
+ *  answer success on an existing name, so a taken one would rename that entry instead. */
+function freeName(base: string): string {
+  if (!cur().entryMap.has(base)) {
+    return base;
+  }
+  for (let n = 2; ; n++) {
+    const name = `${base} ${String(n)}`;
+    if (!cur().entryMap.has(name)) {
+      return name;
+    }
+  }
+}
+
+function createEntry(action: "touch" | "mkdir", base: string): void {
   const actionFn = action === "mkdir" ? createFolder : createFile;
+  const name = freeName(base);
   void actionFn.dispatch(
     {
       dir: cur().currentPath,
@@ -854,10 +869,11 @@ function startInlineRename(targetName: string): void {
   }
 
   let committed = false;
-  const restore = (text: string): HTMLElement => {
-    const span = el("span", { className: `${FB_NAME} ${FB_NAME_LINK}` }, text);
-    input.replaceWith(span);
-    return span;
+  // The row's own name element goes back, since its click handler is what opens the entry.
+  const restore = (text: string): Element => {
+    nameEl.textContent = text;
+    input.replaceWith(nameEl);
+    return nameEl;
   };
 
   const commit = (): void => {

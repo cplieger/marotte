@@ -31,8 +31,8 @@ export const createFile = apiAction<CreateArgs>({
   scope: (args) => "dir:" + args.dir,
   retry: RETRY_STANDARD,
   retryable: retryNetwork,
-  // One key per dispatch, never one per name: the server replays a key's answer for five minutes,
-  // and every New file asks for the same name, so a name-built key made the next one a no-op.
+  // One key per dispatch, never one per name: the server replays a key's cached answer
+  // (idempotency.go idempotencyTTL), and two gestures can ask for the same name.
   idempotencyKey: true,
   request: (args) => ({
     method: "POST",

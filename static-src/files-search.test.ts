@@ -1,5 +1,6 @@
 // Find in files: the request, the note's honesty, and the second-press escape hatch that justifies overriding Ctrl-F.
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
+import { userEvent } from "vitest/browser";
 import type { FileMatch, FileSearchResult } from "./wire/types.gen.js";
 
 /** A non-2xx answer: what the mocked transport resolves to when the server refuses the query. */
@@ -936,6 +937,17 @@ describe("a search the server stopped at its budget", () => {
       "No matches in 99,101 entries, but not everything was searched",
     );
     expect(shown(deeperButton())).toBe(true);
+  });
+
+  it("hands a keyboard user's focus to the search field when the pressed offer hides", async () => {
+    apiGet.mockResolvedValue(stopped());
+    await typeQuery("secret");
+    apiGet.mockImplementation(() => new Promise(() => undefined));
+    deeperButton()?.focus();
+    expect(document.activeElement, "the offer took focus").toBe(deeperButton());
+    await userEvent.keyboard("{Enter}");
+    expect(shown(deeperButton())).toBe(false);
+    expect(document.activeElement).toBe(input());
   });
 
   it("goes back to the quick search for the next query", async () => {

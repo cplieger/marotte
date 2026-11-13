@@ -1,6 +1,7 @@
 // Against the REAL binary, in a real browser: the file browser's New file, New folder and Rename
-// repeated in one folder each reach the server, so the server's Idempotency-Key replay cache
-// (internal/server/idempotency.go) never answers a repeat gesture with the first one's cached 200.
+// repeated in one folder each reach the server and make a new entry, so neither the server's
+// Idempotency-Key replay cache (internal/server/idempotency.go) nor an existing entry under the
+// proposed name turns a repeat gesture into a no-op.
 // Chromium by default; FILES_ENGINES=1 adds Firefox and WebKit (`npx playwright install firefox webkit`).
 
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -41,6 +42,22 @@ async function create(page: Page, kind: "file" | "folder", name: string): Promis
   await input.fill(name);
   await input.press("Enter");
   await page.locator(rowSelector(name)).waitFor({ timeout: STEP_TIMEOUT_MS });
+}
+
+/** New file or New folder kept under the name it proposes, as Enter on the untouched field does. */
+async function createKeepingName(
+  page: Page,
+  kind: "file" | "folder",
+  expected: string,
+): Promise<void> {
+  if (await page.locator(".fb-new-trigger").isVisible()) {
+    await page.click(".fb-new-trigger");
+  }
+  await page.click(kind === "file" ? "#fb-new-file" : "#fb-new-folder");
+  const input = page.locator(`${rowSelector(expected)} .fb-name-edit`);
+  await input.waitFor({ timeout: STEP_TIMEOUT_MS });
+  await input.press("Enter");
+  await page.locator(`${rowSelector(expected)} .fb-name`).waitFor({ timeout: STEP_TIMEOUT_MS });
 }
 
 async function rename(page: Page, from: string, to: string): Promise<void> {
@@ -118,6 +135,26 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("file browser repeated 
         await create(page, "folder", "one");
         await create(page, "folder", "two");
         expect(await rowNames(page)).toEqual(["one", "two"]);
+        await page.context().close();
+      });
+
+      it("starts a second New file after the first kept its proposed name and was edited and saved", async () => {
+        const page = await openFolder();
+        await createKeepingName(page, "file", "new file");
+        await editAndSave(page, "new file", "hello");
+        await createKeepingName(page, "file", "new file 2");
+        expect(await rowNames(page)).toEqual(["new file", "new file 2"]);
+        expect(readFileSync(join(folder, "new file"), "utf8")).toBe("hello");
+        expect(readFileSync(join(folder, "new file 2"), "utf8")).toBe("");
+        await page.context().close();
+      });
+
+      it("starts a second New folder after the first kept its proposed name", async () => {
+        const page = await openFolder();
+        await createKeepingName(page, "folder", "new folder");
+        await createKeepingName(page, "folder", "new folder 2");
+        expect(await rowNames(page)).toEqual(["new folder", "new folder 2"]);
+        expect(existsSync(join(folder, "new folder 2"))).toBe(true);
         await page.context().close();
       });
 
