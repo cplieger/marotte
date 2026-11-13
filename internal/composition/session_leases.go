@@ -35,8 +35,8 @@ type leaseStamp struct {
 // leaseIDRe is KAS's instanceId and token schema.
 var leaseIDRe = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
 
-// valid applies the constraints of KAS's stamp schema, so a file KAS would not read as a stamp is
-// left to KAS.
+// valid checks the stamp's fields against KAS's stamp schema: v 1, the pid ranges, the id pattern
+// and the length caps.
 func (s *leaseStamp) valid() bool {
 	const maxInt31 = 1<<31 - 1
 	return s.V == 1 && s.PID != nil && *s.PID >= 1 && *s.PID <= maxInt31 &&
@@ -53,7 +53,9 @@ func inRuneRange(s string, maxLen int) bool {
 // sweepOwnSessionLeases removes the session leases a dead marotte engine left in KIRO_HOME, which
 // KAS would otherwise read as live for up to 135 s and refuse every write to those sessions. It
 // runs only under a full kiro_home claim, before the first engine start: no other marotte, so no
-// other marotte engine, can be writing this home then, and only marotte stamps kascap.ClientTitle,
+// other marotte engine, can be writing this home then, since an engine dies with its marotte: tini,
+// the container's PID 1, exits with marotte and the pid namespace takes the engine down. Only
+// marotte stamps kascap.ClientTitle,
 // so every such stamp was written by an engine that is gone.
 func sweepOwnSessionLeases(roots *heldRoots) {
 	home, ok := roots.fullyHeldKiroHome()

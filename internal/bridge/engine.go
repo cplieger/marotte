@@ -182,7 +182,10 @@ type Engine struct {
 	contentCollectionMu sync.Mutex
 	// readerExited is the exit path's fence, taking no lock: once set, writeFrame (which loads it under writeMu)
 	// writes nothing.
-	readerExited      atomic.Bool
+	readerExited atomic.Bool
+	// stdinClosed is set by teardown just before it closes stdin: a frame written in the EOF window would hit the
+	// closed pipe and log a false write failure.
+	stdinClosed       atomic.Bool
 	readLoopStarted   atomic.Bool
 	jsHeapOOM         atomic.Bool
 	relayWriteTimeout atomic.Bool

@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -95,11 +96,17 @@ func waitForFile(t *testing.T, path string) {
 // engine group, writes the child's pid to pidFile, and runs until release exists.
 func outsideChildScript(t *testing.T, pidFile, release string) string {
 	t.Helper()
+	return outsideChild(t, pidFile) + `while [ ! -e "` + release + `" ]; do sleep 0.05; done`
+}
+
+// outsideChild is outsideChildScript's spawn line alone, for a head with its own ending.
+func outsideChild(t *testing.T, pidFile string) string {
+	t.Helper()
 	if _, err := exec.LookPath("setsid"); err != nil {
 		t.Skip("setsid is not on PATH")
 	}
 	return `setsid sh -c 'echo $$ > "` + pidFile + `.tmp"; mv "` + pidFile + `.tmp" "` + pidFile + `"; trap "" TERM; while :; do sleep 0.05; done' &
-while [ ! -e "` + release + `" ]; do sleep 0.05; done`
+`
 }
 
 // The relay-crash shape: the head exits first, so its outside child is init's by the time Stop
@@ -133,7 +140,7 @@ func TestStop_SweepsTheEngineGroupAfterTheHeadExits(t *testing.T) {
 	}
 }
 
-// With the head alive at Stop, the reap-time refresh finds the outside group itself. Not
+// With the head alive at Stop, the teardown refresh finds the outside group itself. Not
 // parallel: it swaps the slog default.
 func TestStop_EscalatesSweepOfAnOutsideGroupAndLogsIt(t *testing.T) {
 	logs := capture.Default(t)
@@ -201,7 +208,7 @@ func TestSweepEngineGroups_KillsAGroupWhoseLeaderWasReaped(t *testing.T) {
 	}
 }
 
-// An id found again at reap takes the fresh stamp, so a group the initialize-time stamp no longer
+// An id found again in teardown takes the fresh stamp, so a group the initialize-time stamp no longer
 // matches is still swept. Not parallel: it swaps the slog default.
 func TestStop_RenotingAGroupReplacesItsStamp(t *testing.T) {
 	capture.Default(t)
@@ -322,6 +329,48 @@ func TestStop_SignalsOnlyAfterTheEOFGrace(t *testing.T) {
 	}
 	if n := logs.CountExact("kiro-cli did not exit within the teardown grace; killed"); n != 0 {
 		t.Errorf("teardown-grace Warn logged %d times for a process that exited on SIGTERM, want 0", n)
+	}
+}
+
+// A group born after initialize is found only by teardown's refresh, which must run before the stdin close: on EOF
+// the head exits, its setsid child becomes init's and no later walk finds it. Not parallel: it swaps the slog default.
+func TestStop_SweepsAGroupBornAfterInitializeOnAnEOFExit(t *testing.T) {
+	logs := capture.Default(t)
+	pidFile := filepath.Join(t.TempDir(), "outside.pid")
+	b := startEOFFixture(t, outsideChild(t, pidFile)+`cat >/dev/null; exit 0`)
+	outside := waitForBridgePID(t, pidFile)
+	t.Cleanup(func() { _ = syscall.Kill(-outside, syscall.SIGKILL) })
+
+	b.Stop()
+
+	if processAlive(outside) {
+		t.Errorf("Stop() left the group born after initialize (pid %d) alive after the EOF exit", outside)
+	}
+	if n := logs.CountExact("killed MCP and engine survivors after the engine ended"); n != 1 {
+		t.Errorf("survivor-kill Warn logged %d times, want 1", n)
+	}
+}
+
+// A frame sent while the engine finishes its EOF exit is refused, not written to the closed pipe and logged as a
+// failed write. Not parallel: it swaps the slog default.
+func TestStop_FencesAWriteInTheEOFWindow(t *testing.T) {
+	logs := capture.Default(t)
+	dir := t.TempDir()
+	eof, ready := filepath.Join(dir, "eof"), filepath.Join(dir, "ready")
+	b := startEOFFixture(t, `: > "`+ready+`"; cat >/dev/null; : > "`+eof+`"; sleep 1; exit 0`)
+	waitForFile(t, ready)
+	stopped := make(chan struct{})
+	go func() { b.Stop(); close(stopped) }()
+	waitForFile(t, eof)
+
+	err := b.writeFrame([]byte("{}\n"))
+	<-stopped
+
+	if !errors.Is(err, errWriteFenced) {
+		t.Errorf("writeFrame in the EOF window = %v, want errWriteFenced", err)
+	}
+	if n := logs.CountExact("ACP write failed; reaping the agent engine"); n != 0 {
+		t.Errorf("write-failure Error logged %d times on a clean stop, want 0", n)
 	}
 }
 
