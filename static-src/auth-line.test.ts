@@ -15,7 +15,6 @@ vi.mock("./tabs.js", async () => ({
   ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
 }));
 vi.mock("./git-badge.js", () => ({ initGitBadge: vi.fn() }));
-vi.mock("./git-tabs.js", () => ({ getGitTab: vi.fn(() => "changes") }));
 vi.mock("./shell.js", () => ({ restoreShell: vi.fn() }));
 vi.mock("./tools.js", () => ({ initTools: vi.fn(), loadToolsList: vi.fn() }));
 // The General panel's config.json door; the real opener links the editor graph, past this file's mocks.

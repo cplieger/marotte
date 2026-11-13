@@ -1,28 +1,20 @@
 // What this module still owns after the scroll-and-mark primitive moved to flash-target.ts: the
-// one-shot `?highlight=` read, `openSetting`'s single path (open the view, then swap the panel,
-// push the URL and mark the control), and `highlightControl`'s own `id === ""` guard — an empty id
-// means the CALLER had no target, which `flashTarget` would spend its whole frame budget failing to
-// find.
+// one-shot `?highlight=` read, `openSetting`'s single path (open the view on the tab, then mark the
+// control), and `highlightControl`'s own `id === ""` guard — an empty id means the CALLER had no
+// target, which `flashTarget` would spend its whole frame budget failing to find.
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { framesBudgetMs, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 
 const mocks = vi.hoisted(() => ({
-  // Opening a singleton is a round trip, so the open RESOLVES: `openSetting` sequences the panel
-  // swap, the URL push and the highlight in its continuation, because all three address a view the
-  // open has to produce first.
+  // Opening a singleton is a round trip, so the open RESOLVES: `openSetting` sequences the
+  // highlight in its continuation, because it addresses a panel the open has to produce first.
   openSettingsView: vi.fn(() => Promise.resolve()),
-  setSettingsTab: vi.fn(),
-  forceSettingsTab: vi.fn(),
-  pushRoute: vi.fn(),
 }));
 
 vi.mock("./tabs.js", () => ({
   openSettingsView: mocks.openSettingsView,
-  setSettingsTab: mocks.setSettingsTab,
 }));
-vi.mock("./settings-tabs.js", () => ({ forceSettingsTab: mocks.forceSettingsTab }));
-vi.mock("./router.js", () => ({ pushRoute: mocks.pushRoute }));
 
 import {
   highlightControl,
@@ -73,22 +65,27 @@ describe("highlightControl", { timeout: testTimeoutFor(framesBudgetMs(25)) }, ()
 });
 
 describe("openSetting", () => {
-  // Opening the tab is a ROUND TRIP now, so everything that addresses the panel it produces runs in
-  // the open's continuation: the panel swap, the URL push and the highlight are all DOM writes
-  // against a view that has to exist first.
-  it("opens the Settings view, then selects the tab, pushes the URL and marks the control", async () => {
-    expect.assertions(5);
+  // Opening the tab is a ROUND TRIP, and the open names the sub-tab, so the panel and the URL are
+  // the open's; only the highlight, a DOM write against that panel, runs in its continuation.
+  it("opens the Settings view on the tab, then marks the control", async () => {
+    expect.assertions(3);
     control("security-profile-list");
+    let release: () => void = () => undefined;
+    mocks.openSettingsView.mockReturnValueOnce(
+      new Promise<void>((r) => {
+        release = r;
+      }),
+    );
 
     openSetting("permissions", "security-profile-list");
 
     expect(mocks.openSettingsView).toHaveBeenCalledWith("permissions");
+    await frames(1);
     // Nothing has reached the panel yet: the open has not resolved.
-    expect(mocks.forceSettingsTab).not.toHaveBeenCalled();
+    expect(scrolled).toEqual([]);
 
+    release();
     await mocks.openSettingsView.mock.results[0]?.value;
-    expect(mocks.forceSettingsTab).toHaveBeenCalledWith("permissions");
-    expect(mocks.pushRoute).toHaveBeenCalledWith({ kind: "settings", tab: "permissions" });
     await frames(1);
     expect(scrolled).toEqual(["security-profile-list"]);
   });
@@ -108,8 +105,6 @@ describe("openSetting", () => {
     await mocks.openSettingsView.mock.results[1]?.value;
     await frames(1);
     expect(mocks.openSettingsView).toHaveBeenCalledTimes(2);
-    expect(mocks.forceSettingsTab).toHaveBeenCalledTimes(2);
-    expect(mocks.pushRoute).toHaveBeenCalledTimes(2);
     expect(scrolled).toEqual(["chat-retention-days", "chat-retention-days"]);
   });
 });

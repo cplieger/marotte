@@ -12,8 +12,10 @@ const H = vi.hoisted(() => ({
   refreshPRsDispatch: vi.fn(),
   changesClose: vi.fn(),
   prsClose: vi.fn(),
-  /** `getGitTab` is the only reader that matters here. */
-  tab: { current: "changes" as string },
+  /** `getGitTab` is the only reader that matters here; null is no git row. */
+  tab: { current: "changes" as string | null },
+  /** What `getActiveTabRoute` answers: the switch gate fetches only while Git is on screen. */
+  activeKind: { current: "git" as string },
   /** The subscriber `initGitTabs` would notify. Captured so a case can fire it. */
   listener: { fn: null as ((tab: string) => void) | null },
 }));
@@ -25,7 +27,9 @@ vi.mock("./git-tabs.js", () => ({
   onGitTabChange: (fn: (tab: string) => void) => {
     H.listener.fn = fn;
     // `subscribe` fires immediately on attach, the fire the `painted` gate refuses: a DOM sync, not a switch.
-    fn(H.tab.current);
+    if (H.tab.current !== null) {
+      fn(H.tab.current);
+    }
     return () => undefined;
   },
   getGitTab: () => H.tab.current,
@@ -50,6 +54,10 @@ vi.mock("./git-sources-tab.js", () => ({
 vi.mock("./git-badge.js", () => ({ initGitBadge: vi.fn(), refreshGitBadge: vi.fn() }));
 vi.mock("./git-status-store.js", () => ({ refreshGitStatus: vi.fn() }));
 vi.mock("./find-registry.js", () => ({ registerFind: vi.fn() }));
+vi.mock("./tabs.js", async () => ({
+  ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
+  getActiveTabRoute: () => ({ kind: H.activeKind.current }),
+}));
 
 /** A fresh module per test: `initialized` and `painted` are module-level. */
 async function load(): Promise<typeof ModGit> {
@@ -68,6 +76,7 @@ function fetched(): number {
 beforeEach(() => {
   vi.clearAllMocks();
   H.tab.current = "changes";
+  H.activeKind.current = "git";
   H.listener.fn = null;
 });
 
@@ -102,6 +111,30 @@ describe("initGitPanel", () => {
     expect(H.changesClose).toHaveBeenCalledTimes(1);
     expect(H.prsClose).toHaveBeenCalledTimes(1);
   });
+
+  it("fetches nothing on a switch with Git in the background, and still closes both find boxes", async () => {
+    const { initGitPanel } = await load();
+    initGitPanel();
+    H.activeKind.current = "chat";
+
+    // A door aimed at a background git row: its activation's `refreshGitView` fetches.
+    H.listener.fn?.("sources");
+
+    expect(fetched()).toBe(0);
+    expect(H.changesClose).toHaveBeenCalledTimes(1);
+    expect(H.prsClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a git row's birth after a boot with none as the first paint, not a switch", async () => {
+    H.tab.current = null;
+    const { initGitPanel } = await load();
+    initGitPanel();
+
+    H.listener.fn?.("changes");
+
+    expect(fetched()).toBe(0);
+    expect(H.changesClose).not.toHaveBeenCalled();
+  });
 });
 
 describe("refreshGitView", () => {
@@ -125,6 +158,15 @@ describe("refreshGitView", () => {
 
     expect(H.refreshChanges).toHaveBeenCalledWith(true);
     expect(H.refreshSources).toHaveBeenCalledTimes(1);
+  });
+
+  it("fetches nothing with no git row", async () => {
+    H.tab.current = null;
+    const { refreshGitView } = await load();
+
+    refreshGitView();
+
+    expect(fetched()).toBe(0);
   });
 
   it("runs the one-shot init itself, so it does not depend on onShow having run", async () => {

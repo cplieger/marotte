@@ -334,13 +334,11 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         name: "Settings",
         icon: TAB_ICONS.settings,
         view: TAB_VIEWS.settings,
-        // The CANONICAL sub-tab (a singleton's Ref is empty); setSettingsTab / applyRoute correct it.
+        // The default for an open that names no sub-tab; a door's `openTab` route replaces it at birth.
         route: { kind: "settings", tab: "general" },
         owns: subject.owns,
         ...parentOf(subject),
-        // No onShow: this tab's whole activation was the data half, which is now
-        // `refresh`. The panel it loads is the ACTIVE one, so a deep link's own
-        // forceSettingsTab has already landed by the time the dispatcher calls it.
+        // No onShow: the activation is all data. `refresh` loads the panel the row's route names.
         refresh: () => {
           lazily(
             import("./settings-tabs.js").then(({ refreshSettingsPanel }) => {
@@ -358,9 +356,7 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         route: { kind: "git", tab: "changes" },
         owns: subject.owns,
         ...parentOf(subject),
-        // Same divergence as settings: navigate.ts's path-link door passes no
-        // onShow, so /git reached from a chat's file link did not wire its panel
-        // while the sidebar's door did.
+        // The panel is wired here, not by a door: navigate.ts's path link into /git passes none.
         onShow: () => {
           lazily(
             import("./git.js").then(({ loadGitRepos }) => {

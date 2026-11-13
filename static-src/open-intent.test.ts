@@ -97,7 +97,6 @@ describe("the source guard", () => {
 
 const mocks = vi.hoisted(() => ({
   requestPRFocus: vi.fn<(identity: string) => void>(),
-  forceGitTab: vi.fn(),
 }));
 
 vi.mock("./router.js", () => ({ pushRoute: vi.fn(), replaceRoute: vi.fn() }));
@@ -109,9 +108,9 @@ vi.mock("./deep-link.js", () => ({
 vi.mock("./chat.js", () => ({ switchSession: vi.fn() }));
 vi.mock("./editor-openers.js", () => ({ openFile: vi.fn() }));
 vi.mock("./files.js", () => ({ pointFilesTab: vi.fn() }));
-vi.mock("./settings-tabs.js", () => ({ forceSettingsTab: vi.fn() }));
+vi.mock("./settings-tabs.js", () => ({ refreshSettingsPanel: vi.fn() }));
 vi.mock("./settings-highlight.js", () => ({ flushURLHighlight: vi.fn() }));
-vi.mock("./git-tabs.js", () => ({ forceGitTab: mocks.forceGitTab }));
+vi.mock("./git.js", () => ({ loadGitRepos: vi.fn(), refreshGitView: vi.fn() }));
 // The PRs tab is reached through a dynamic import, so mocking it is what makes the
 // call OBSERVABLE without pulling the git view into this fixture.
 vi.mock("./git-prs-tab.js", () => ({ requestPRFocus: mocks.requestPRFocus }));

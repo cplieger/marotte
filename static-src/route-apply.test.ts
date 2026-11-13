@@ -6,9 +6,7 @@ import type * as StoreLoad from "./store-load.js";
 import type * as WebView from "./web-view.js";
 import type * as EditorOpeners from "./editor-openers.js";
 import type * as Files from "./files.js";
-import type * as SettingsTabs from "./settings-tabs.js";
 import type * as SettingsHighlight from "./settings-highlight.js";
-import type * as GitTabs from "./git-tabs.js";
 import type * as DeviceView from "./device-view.js";
 import type * as Dom from "./dom.js";
 import type * as TabsDrag from "./tabs-drag.js";
@@ -51,17 +49,9 @@ vi.mock("./files.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Files>()),
   pointFilesTab: vi.fn(),
 }));
-vi.mock("./settings-tabs.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof SettingsTabs>()),
-  forceSettingsTab: vi.fn(),
-}));
 vi.mock("./settings-highlight.js", async (importOriginal) => ({
   ...(await importOriginal<typeof SettingsHighlight>()),
   flushURLHighlight: vi.fn(),
-}));
-vi.mock("./git-tabs.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof GitTabs>()),
-  forceGitTab: vi.fn(),
 }));
 vi.mock("./device-view.js", async (importOriginal) => {
   let active = "";
@@ -157,7 +147,7 @@ vi.mock("./turn-rail.js", async (importOriginal) => ({
 }));
 vi.mock("./docs.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Docs>()),
-  forceDocsTab: vi.fn(() => "steering"),
+  resolveDocsTab: vi.fn(() => "steering"),
   showDocsTab: vi.fn(),
   refreshDocsView: vi.fn(),
 }));

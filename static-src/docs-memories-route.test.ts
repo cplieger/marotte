@@ -9,6 +9,7 @@ import type * as Powers from "./powers.js";
 import type * as Recipes from "./recipes.js";
 import type * as Tabs from "./tabs.js";
 import type * as Toast from "./toast.js";
+import type { DocsTab } from "./route-path.js";
 
 vi.mock("./toast.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Toast>()),
@@ -49,9 +50,17 @@ vi.mock("./memories.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Memories>()),
   renderMemoriesPanel: vi.fn(),
 }));
+/** The docs row's route as the strip holds it, open on its default. */
+const docsRoute = await vi.hoisted(async () => {
+  const { signal } = await import("@cplieger/reactive");
+  return signal<DocsTab | null>("steering");
+});
 vi.mock("./tabs.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Tabs>()),
-  setDocsTab: vi.fn(),
+  subTabOf: (kind: string) => (kind === "docs" ? docsRoute.value : null),
+  setDocsTab: vi.fn((tab: DocsTab) => {
+    docsRoute.value = tab;
+  }),
 }));
 vi.mock("./bus.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Bus>()),
@@ -75,8 +84,7 @@ beforeAll(async () => {
       ).join("")}</nav>
       ${TABS.map((t) => `<div data-docs-panel="${t}" class="docs-panel hidden"></div>`).join("")}
     </div>`;
-  const { forceDocsTab, showDocsTab } = await import("./docs.js");
-  forceDocsTab("steering");
+  const { showDocsTab } = await import("./docs.js");
   showDocsTab();
   await vi.waitFor(() => {
     expect(document.querySelector('[data-docs-tab="memories"]')!.classList.contains("hidden")).toBe(
@@ -90,12 +98,12 @@ afterAll(() => {
 });
 
 it("replaces a withdrawn /docs/memories entry, so Back skips it", async () => {
-  const { forceDocsTab } = await import("./docs.js");
+  const { resolveDocsTab } = await import("./docs.js");
   history.replaceState(null, "", "/chat/c1");
   history.pushState(null, "", "/docs/memories");
   const entries = history.length;
 
-  forceDocsTab("memories");
+  expect(resolveDocsTab("memories")).toBe("steering");
 
   expect(location.pathname).toBe("/docs");
   expect(history.length).toBe(entries);
@@ -108,10 +116,10 @@ it("replaces a withdrawn /docs/memories entry, so Back skips it", async () => {
 });
 
 it("leaves the current page's entry alone when the withdrawn route came from elsewhere", async () => {
-  const { forceDocsTab } = await import("./docs.js");
+  const { resolveDocsTab } = await import("./docs.js");
   history.replaceState(null, "", "/chat/c2");
 
-  expect(forceDocsTab("memories")).toBe("steering");
+  expect(resolveDocsTab("memories")).toBe("steering");
 
   expect(location.pathname).toBe("/chat/c2");
 });
