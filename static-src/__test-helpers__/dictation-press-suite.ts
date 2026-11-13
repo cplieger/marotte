@@ -18,7 +18,7 @@ import { makeSession } from "./model.js";
 import { parkPointer } from "./park-pointer.js";
 import { markDictationCloudNoted } from "../device-view.js";
 
-export interface PressSuite {
+interface PressSuite {
   /** A real press on the element `selector` names: a finger's tap or a mouse click. */
   readonly press: (selector: string) => Promise<void>;
   /** Whether that press is a finger's. */
