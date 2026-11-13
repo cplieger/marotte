@@ -366,4 +366,18 @@ describe("a chat removed while Settings shows", () => {
     expect(getActiveTabId()).toBe(ids.settings);
     await closing;
   });
+
+  it("shows a reopened chat again, though it was the last chat shown before Settings", async () => {
+    const ids = await settingsAfterChats();
+    tabServer.closeRemotely(ids.a);
+    await settleTabs();
+    vi.clearAllMocks();
+
+    await openTab({ kind: "chat", ref: "a" });
+    await activationRan();
+
+    expect(fx.chat.show, "the activation took the reopened chat as mounted").toHaveBeenCalledWith(
+      "a",
+    );
+  });
 });

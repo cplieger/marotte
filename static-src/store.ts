@@ -184,8 +184,8 @@ export function parseContextSize(description: string): number | undefined {
 /** Structure ops fire `sessions.ids`; per-session field writes fire `signalFor(id)`. Module-private:
  *  consumers go through the typed accessors below and the `activeSession` computed. */
 const sessions = createCollection<Session>((s) => s.id);
-// Two chat pointers, equal except in a chat switch's gap and while a non-chat tab shows after a
-// closed chat. ACTIVE is the chat the reader is on (a switch's gesture moves it); PAINTED is the
+// Two chat pointers, equal except in a chat switch's gap, between a chat's removal and the tab
+// strip's next selection, and while a non-chat tab shows after a closed chat. ACTIVE is the chat the reader is on (a switch's gesture moves it); PAINTED is the
 // chat whose transcript is mounted (its activation moves it). Code acting for the reader (send,
 // cancel, steers, attachments, the composer) reads the active chat; code reading or writing the
 // transcript's DOM reads the painted chat. Mixing them sends to one chat while showing another.
@@ -907,18 +907,23 @@ export function setCurrentMode(id: string, modeID: string): void {
   sessions.update(id, (cur) => ({ ...cur, current_mode_id: modeID }));
 }
 
+/** Clears each chat pointer naming `id` and picks no successor. */
 export function removeChat(id: string): void {
-  const doomed = get(id);
-  if (doomed === undefined) {
-    return;
-  }
-  const wasActive = activeId.peek() === id;
-  const wasPainted = paintedId.peek() === id;
-  const order = sessions.ids.peek();
   // The reactive writes below feed `activeSession` and the messages renderer's effect. Batch them
-  // so subscribers re-derive ONCE; otherwise removing the painted chat double-fires the renderer
-  // and it flashes a transient teardown of the new chat's DOM.
+  // so subscribers re-derive ONCE; otherwise removing the painted chat double-fires the renderer.
   batch(() => {
+    // Before the row check: a tab can name a chat the store no longer holds, and a pointer left
+    // naming it would never be reselected.
+    if (activeId.peek() === id) {
+      activeId.value = "";
+    }
+    if (paintedId.peek() === id) {
+      paintedId.value = "";
+    }
+    const doomed = get(id);
+    if (doomed === undefined) {
+      return;
+    }
     sessions.remove(id);
     clearLiveTurnFacts(id);
     // Every signal the chat's window minted: the renderer's own dispose only reaches rows a
@@ -931,14 +936,6 @@ export function removeChat(id: string): void {
     flushedCause.delete(id);
     messagesVersionSigs.clear(id);
     forgetView("chat", id);
-    if (wasActive) {
-      const remaining = order.filter((x) => x !== id);
-      activeId.value = remaining[0] ?? "";
-    }
-    // No paint may target a removed row.
-    if (wasPainted) {
-      paintedId.value = activeId.peek();
-    }
   });
 }
 

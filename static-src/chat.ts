@@ -124,17 +124,14 @@ export function closeChatTab(id: string): void {
   flushComposerDraft();
   // The dock queue is keyed by chat id, so a leftover queue resurrects on reopening the id.
   dropDecisions(id);
-  // Before removeChat: the store reassigning the painted chat repaints synchronously,
-  // and a dead view still in the registry would be parked by that paint.
+  // Before removeChat: the store clearing the painted chat repaints synchronously, and a
+  // dead view still in the registry would be parked by that paint.
   disposeChatView(id);
   // The store row, whatever retention says. Under retention the record survives
   // server-side; with retention off the server deleted it inside the close.
   removeChat(id);
   // Local only: reopening the chat seeds the text back from the server.
   dropComposerState(id);
-  // `removeChat` reassigns the active chat with no activation, so retarget the composer;
-  // idempotent.
-  retargetComposer(getActiveId());
 }
 
 // --- Activation generation ---
