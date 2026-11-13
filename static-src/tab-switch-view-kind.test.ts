@@ -72,6 +72,8 @@ vi.mock("./api-client.js", async (importOriginal) => ({
 
 import { openTab, tabIdFor, getActiveTabId, closeTab } from "./tabs.js";
 import { markBootDone, _resetForTest as resetViewSwap } from "./view-swap.js";
+import { listTabs } from "./tabs-sync.js";
+import { tabServer, settleTabs } from "./__test-helpers__/tabs-server.js";
 import { loadCSS } from "./__test-helpers__/css-rules.js";
 import { fx, installSwitchSuite, strip } from "./__test-helpers__/tab-switch-suite.js";
 import {
@@ -293,5 +295,75 @@ describe("a switch from a chat to Settings", () => {
     expect(rendered("chat-view")).toBe(false);
     view("chat-view").classList.remove("hidden");
     expect(view("messages-wrap").scrollTop, "the chat's place was lost").toBe(600);
+  });
+});
+
+/** Chats a and b shown in turn (a the last), then Settings shown; every spy cleared. The chat
+ *  opener's close clears each store pointer naming its chat, as the store's removal does. */
+async function settingsAfterChats(): Promise<{ a: string; b: string; settings: string }> {
+  const ids = await strip("a", "b");
+  const a = ids["a"] ?? "";
+  const b = ids["b"] ?? "";
+  clickRow(b);
+  await activationRan();
+  clickRow(a);
+  await activationRan();
+  await openTab({ kind: "settings", ref: "" });
+  await activationRan();
+  const settings = tabIdFor("settings", "");
+  expect(getActiveTabId()).toBe(settings);
+  expect(pointers.active).toBe("a");
+  vi.clearAllMocks();
+  fx.chat.close.mockImplementation((id: string) => {
+    if (pointers.active === id) {
+      pointers.active = "";
+    }
+    if (pointers.painted === id) {
+      pointers.painted = "";
+    }
+  });
+  return { a, b, settings };
+}
+
+describe("a chat removed while Settings shows", () => {
+  it("another device's close of the chat under Settings acts for the chat last shown before it", async () => {
+    const ids = await settingsAfterChats();
+
+    tabServer.closeRemotely(ids.a);
+    await settleTabs();
+
+    expect(fx.chat.close).toHaveBeenCalledWith("a");
+    expect(fx.chat.select, "the strip picked no chat to act for").toHaveBeenCalledWith("b");
+    expect(pointers.active).toBe("b");
+    expect(getActiveTabId(), "the removal moved the reader off Settings").toBe(ids.settings);
+    expect(fx.chat.show).not.toHaveBeenCalled();
+  });
+
+  it("a re-list that drops the chat under Settings acts for the chat last shown before it", async () => {
+    const ids = await settingsAfterChats();
+
+    tabServer.closeElsewhere(ids.a);
+    await listTabs();
+    await settleTabs();
+
+    expect(fx.chat.close).toHaveBeenCalledWith("a");
+    expect(fx.chat.select, "the strip picked no chat to act for").toHaveBeenCalledWith("b");
+    expect(pointers.active).toBe("b");
+    expect(getActiveTabId(), "the re-list moved the reader off Settings").toBe(ids.settings);
+    expect(fx.chat.show).not.toHaveBeenCalled();
+  });
+
+  it("closing a chat the store already dropped, under Settings, acts for the chat last shown before it", async () => {
+    const ids = await settingsAfterChats();
+    // The state a gone chat's revert leaves: the store dropped the chat before its tab closes.
+    pointers.active = "";
+    pointers.painted = "";
+
+    const closing = closeTab(ids.a);
+
+    expect(fx.chat.select, "the strip picked no chat to act for").toHaveBeenCalledWith("b");
+    expect(pointers.active).toBe("b");
+    expect(getActiveTabId()).toBe(ids.settings);
+    await closing;
   });
 });

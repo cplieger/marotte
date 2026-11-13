@@ -11,6 +11,8 @@ import {
   setActive,
   getActive,
   getActiveId,
+  setPainted,
+  getPaintedId,
   watchActiveId,
   activeSession,
   upsertHeader,
@@ -333,11 +335,22 @@ describe("the session collection stays consistent under arbitrary add and remove
 });
 
 describe("removeChat", () => {
-  it("activates the next remaining chat when the active one goes", () => {
-    setSessions([makeSession("a"), makeSession("b")]);
+  it("names no chat when the chat on screen goes, whatever the store order", () => {
+    setSessions([makeSession("b"), makeSession("a"), makeSession("c")]);
     setActive("a");
+    setPainted("a");
     removeChat("a");
-    expect(getActiveId()).toBe("b");
+    expect(getActiveId(), "the store picked a successor").toBe("");
+    expect(getPaintedId(), "the store picked a chat to paint").toBe("");
+  });
+
+  it("clears a pointer naming a chat the store no longer holds", () => {
+    setSessions([makeSession("b")]);
+    setActive("a");
+    setPainted("a");
+    removeChat("a");
+    expect(getActiveId()).toBe("");
+    expect(getPaintedId()).toBe("");
   });
 
   it("leaves the active chat alone when a different one goes", () => {

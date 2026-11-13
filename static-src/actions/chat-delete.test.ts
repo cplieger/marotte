@@ -27,7 +27,7 @@ vi.mock("../api-client.js", async (importOriginal) => ({
 
 import { send as transportSend } from "../transport.js";
 import { error as toastError } from "../toast.js";
-import { setSessions, get } from "../store.js";
+import { setSessions, get, setActive, setPainted, getActiveId, getPaintedId } from "../store.js";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { deleteChat } from "./chat.js";
 import { serverImpactOf } from "./close-impact.js";
@@ -59,6 +59,8 @@ beforeEach(() => {
   resetActionFramework();
   vi.clearAllMocks();
   setSessions([makeSession("c1"), makeSession("d")]);
+  setActive("");
+  setPainted("");
 });
 
 describe("chat.delete", () => {
@@ -108,5 +110,17 @@ describe("chat.delete", () => {
       error: { code: "chat_not_found", status: 404 },
     });
     expect(get("c1")).toBeDefined();
+  });
+
+  it("a refused delete puts back the active chat it cleared, not its paint", async () => {
+    setSessions([makeSession("y"), makeSession("x")]);
+    setActive("x");
+    setPainted("x");
+    mockSend.mockResolvedValue({ ok: false, status: 500, error: "nope" });
+    const outcome = await deleteChat.dispatch({ id: "x", impact: named }).outcome;
+    expect(outcome.status).toBe("error");
+    expect(get("x")).toBeDefined();
+    expect(getActiveId(), "the refused delete left the reader acting for another chat").toBe("x");
+    expect(getPaintedId(), "a chat no activation showed was painted").toBe("");
   });
 });
