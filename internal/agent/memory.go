@@ -144,7 +144,8 @@ func writeMemoryErr(w http.ResponseWriter, err error) {
 	if _, ok := errors.AsType[*marotte.RPCError](err); ok && !marotte.ReplyUnread(err) {
 		if m, typed := rpcerr.MappedOf(err); typed && m.ErrorType == memoryImportComingSoonClass {
 			httpserver.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(
-				"Memory import and export are not available for this account yet.", memoryImportComingSoonCode))
+				"Memory import and export are not available for this account yet.", memoryImportComingSoonCode,
+			))
 			return
 		}
 		text := rpcerr.Text(err)
@@ -199,7 +200,7 @@ func (st *Settings) handleMemoryOne(w http.ResponseWriter, r *http.Request) {
 		}
 		params := map[string]any{"id": id}
 		for key, v := range map[string]*string{
-			"newTitle": body.Title, "summary": body.Summary, "content": body.Content, "memoryType": body.MemoryType,
+			"newTitle": body.Title, "summary": body.Summary, keyContent: body.Content, "memoryType": body.MemoryType,
 		} {
 			if v != nil {
 				params[key] = *v

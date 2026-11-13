@@ -79,7 +79,7 @@ func (in *inbound) respondFSRead(ctx context.Context, chatID marotte.ChatID, ori
 		return
 	}
 	content := sliceByLines(string(data), p.Line, p.Limit)
-	in.respondBridge(ctx, chatID, origin, msg, map[string]any{"content": content}, nil)
+	in.respondBridge(ctx, chatID, origin, msg, map[string]any{keyContent: content}, nil)
 }
 
 // nil means from the start or to the end. *limit is only compared against a count, never added to

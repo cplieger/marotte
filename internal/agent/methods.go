@@ -93,6 +93,9 @@ const (
 	methodKiroMemoryExport          = "_kiro/memory/export"          // {} → {format, content: a kiro-memory document, recordCount}
 )
 
+// keyContent is the text key of fs/read_text_file's answer and of the memory update and import params.
+const keyContent = "content"
+
 // KAS knowledge methods. _kiro/knowledge is dispatched by `subcommand` with no sessionId (the
 // global store). The two indexing notifications fire only for a custom agent's own bases.
 const (

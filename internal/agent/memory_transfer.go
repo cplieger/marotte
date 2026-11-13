@@ -121,7 +121,7 @@ func (st *Settings) handleMemoryImport(w http.ResponseWriter, r *http.Request) {
 	}
 	content := string(body)
 	st.memoryWrite(w, r, "memory import", func(ctx context.Context) engineReply {
-		raw, err := st.memoryCall(ctx, methodKiroMemoryImport, map[string]any{"content": content})
+		raw, err := st.memoryCall(ctx, methodKiroMemoryImport, map[string]any{keyContent: content})
 		if err != nil {
 			return memoryFailure(err)
 		}
