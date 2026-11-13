@@ -256,7 +256,7 @@ export function dictationPressSuite({ press: pressNow, finger }: PressSuite): vo
       await transitionsDone(btn);
       expect.soft(getComputedStyle(btn).color, "ink colour").not.toBe(rest.ink);
       expect.soft(getComputedStyle(btn).backgroundColor, "fill colour").not.toBe(rest.fill);
-      // motion.md "A row action keeps one footprint": the slot never changes width with its words.
+      // A row action keeps one footprint: the slot never changes width with its words.
       expect.soft(btn.getBoundingClientRect().width, "width").toBeCloseTo(rest.width, 1);
     });
 
