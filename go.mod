@@ -28,7 +28,7 @@ require (
 	github.com/cplieger/go/measure v1.2.0
 	github.com/cplieger/go/pathinside v1.1.0
 	github.com/cplieger/go/slogx v1.1.0
-	github.com/cplieger/go/sse/v2 v2.3.0-dev.3
+	github.com/cplieger/go/sse/v2 v2.3.0-dev.4
 	github.com/cplieger/go/ssrf v1.1.0
 	github.com/cplieger/go/textsafe v1.1.0
 	github.com/cplieger/go/wiregen v1.1.0-dev.2
