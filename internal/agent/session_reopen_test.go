@@ -297,7 +297,7 @@ var configWrites = []struct {
 	{key: settings.KeyAutoCompactPct, value: 60, reach: reachLive},
 	{key: settings.KeyAutoCompactPct, from: 60, value: 90, reach: reachLive},
 	{key: settings.KeyTerminalCommandTimeoutMs, value: 300000, reach: reachLive},
-	{key: settings.KeyContentCollectionEnabled, value: true, reach: reachLive},
+	{key: settings.KeyContentCollectionEnabled, value: false, reach: reachLive},
 	{key: settings.KeyAgentIgnoreFiles, value: []string{".gitignore"}, reach: reachLive},
 	{key: settings.KeyMCPWaitForReady, value: true, reach: reachLive},
 	{key: settings.KeyOutputStyle, value: "proactive", reach: reachLive},

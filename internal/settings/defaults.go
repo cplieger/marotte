@@ -56,10 +56,8 @@ const (
 	KeyGuardPayloadLinks = "guard_payload_links"
 
 	// KeyContentCollectionEnabled lets model requests be used by AWS for service
-	// improvement. Default off; an organization's lock overrides it. internal/agent
-	// writes it to kiro-cli's own switch before each engine spawn and on change (the
-	// relay starts KAS from that switch), and asserts it on every session door and
-	// pushes a change live (KAS holds it per process and persists none of it).
+	// improvement. Default on, as in kiro-cli; an organization's lock overrides it.
+	// Sent at initialize and pushed live through _kiro/contentCollection/settings_changed.
 	KeyContentCollectionEnabled = "content_collection_enabled"
 
 	// KeyMemoryMode is the Memory dropdown (memory.go's Memory* values), resolved per session door by

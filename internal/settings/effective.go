@@ -20,9 +20,9 @@ var errStoredNull = errors.New("settings: stored value is null")
 // searches only folders the user indexed under Knowledge bases, so indexing one is the opt-in.
 const defaultKnowledgeEnabled = true
 
-// DefaultContentCollectionEnabled is the content-collection switch's default: off,
-// so nothing is offered for service improvement until the user opts in.
-const DefaultContentCollectionEnabled = false
+// DefaultContentCollectionEnabled follows kiro-cli's default, on. A stored false and an
+// organization lock still decide.
+const DefaultContentCollectionEnabled = true
 
 // defaultGuardPayloadLinks is TRUE because the guard closes the one channel that
 // moves workspace data off the box on a single click with no ask; off is a choice

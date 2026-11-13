@@ -75,8 +75,9 @@ type fakeBridge struct {
 	// abandonedAt is, per blocked method whose caller gave up, how many frames the wire held when it did.
 	abandonedAt map[string]int
 	// notifyParams holds each Notify's params as JSON, index-aligned with notifies.
-	notifyParams            []string
-	contentCollectionWrites []string
+	notifyParams []string
+	// contentCollectionWrites is every content-collection notification attempted, failed ones included.
+	contentCollectionWrites []bool
 	// workflowLaunchHeals is every value HealWorkflowLaunch was handed, in call order.
 	workflowLaunchHeals []string
 	// sessionOpts records what the most recent door was handed, engineOpts the engine it opened on.
@@ -319,14 +320,6 @@ func (b *fakeBridge) lastSessionOpts() *marotte.SessionOpts {
 // Read it as a delta.
 // fake is the plain fake under a wrapper that embeds it.
 func (b *fakeBridge) fake() *fakeBridge { return b }
-
-// doorAssertFails reports whether this session's door write of content collection fails.
-func (b *fakeBridge) doorAssertFails() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	_, fails := b.callErrs[marotte.MethodSetConfigOption]
-	return fails
-}
 
 func (b *fakeBridge) startCount() int {
 	b.mu.Lock()

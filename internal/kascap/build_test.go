@@ -51,8 +51,9 @@ var engineMatrix = []struct {
 		MaxFiles: 200, Chunking: marotte.KnowledgeChunking{Size: 256, Overlap: 32},
 	}}},
 	{"telemetry off", EngineSpawn{DisableTelemetry: true}},
+	{"content collection on", EngineSpawn{ContentCollection: true}},
 	{"every gate on", EngineSpawn{
-		SecretStorage: true, Knowledge: true, InfraSafety: "enforce",
+		SecretStorage: true, Knowledge: true, InfraSafety: "enforce", ContentCollection: true,
 		AutoRouting: "on", AutoDelegation: "on",
 		TerminalCommandTimeoutMs: 300000, SteeringReminders: true,
 		DisableTelemetry: true, ModelFallback: true, MessageDeliveryLimit: 12,
@@ -654,5 +655,27 @@ func TestAutomaticTurnProfiling_MatchesAChatPrompt(t *testing.T) {
 	}
 	if got, ok := SessionMeta(&SessionSpawn{})["automaticTurnProfiling"]; ok {
 		t.Errorf("a session that is not a chat's declared automaticTurnProfiling = %v, want none", got)
+	}
+}
+
+// TestInitialize_ContentCollectionAlwaysSent pins that initialize states the switch in both positions, as the object
+// KAS reads, and that no session door carries it: KAS holds it per process.
+func TestInitialize_ContentCollectionAlwaysSent(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		settings, ok := Capabilities(&EngineSpawn{ContentCollection: on})[settingsKey].(map[string]any)
+		if !ok {
+			t.Fatalf("Capabilities(ContentCollection: %v) carries no settings object", on)
+		}
+		cc, ok := settings["contentCollection"].(map[string]any)
+		if !ok || cc["enabled"] != on || len(cc) != 1 {
+			t.Errorf("Capabilities(ContentCollection: %v) settings.contentCollection = %#v, want {enabled: %v}", on, settings["contentCollection"], on)
+		}
+	}
+	for _, tc := range sessionMatrix {
+		if settings, ok := SessionMeta(&tc.spawn)[settingsKey].(map[string]any); ok {
+			if _, present := settings["contentCollection"]; present {
+				t.Errorf("%s: SessionMeta carries settings.contentCollection; KAS takes it at initialize", tc.name)
+			}
+		}
 	}
 }

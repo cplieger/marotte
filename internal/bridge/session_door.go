@@ -286,7 +286,6 @@ func (e *Engine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach 
 	s.applyInitialEffort(dctx, o.Effort)
 	s.applySupervised(dctx, o.Supervised)
 	s.applyWorkflowLaunch(dctx)
-	s.applyContentCollection(dctx)
 	// Fail closed when the budget expired inside the appliers: they are best-effort, and an expiry would silently leave
 	// the session on the wrong mode or model, or in autopilot for a supervised chat.
 	if err := dctx.Err(); err != nil {
@@ -409,7 +408,6 @@ func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach
 	s.applyWorkflowLaunch(dctx)
 	// A loaded session keeps its memory mode, but reflection has a live setter.
 	s.applyMemoryReflection(dctx, o.Memory.Reflection)
-	s.applyContentCollection(dctx)
 	if !s.open(false) {
 		return nil, marotte.ErrChatClosedDuringCall
 	}
@@ -520,16 +518,6 @@ func withClientSteering(params map[string]any, o *marotte.SessionOpts) map[strin
 	}
 	sessionKiroMeta(params)[metaKeySteering] = o.Steering
 	return params
-}
-
-// applyContentCollection asserts the content-collection value on a session door either way: KAS starts opted
-// in when kiro-cli's own switch was not written (agent.ContentSharer) or the runtime is unmanaged. Logged at
-// Error, not fatal.
-func (s *Session) applyContentCollection(ctx context.Context) {
-	if enabled, err := s.engine.assertContentCollection(ctx, s.id); err != nil {
-		slog.Error("content collection not applied; model requests from the agent engine may be opted in to content collection",
-			"session_id", s.id, "enabled", enabled, "error", err)
-	}
 }
 
 // applyThinking asserts the chat's thinking choice; best-effort.
