@@ -783,29 +783,38 @@ func (bc *bridgeCoordinator) runFactsChanged(chatID marotte.ChatID) {
 	}
 }
 
-// closeEndsResolved records a close's steer ends on its closing entry, with the steer queue's facts read first.
+// closeEndsResolved records a close's steer ends on its closing entry, with the steer queue's facts read first
+// (outside lc.mu, as in runFactsChanged) and read again when the list holds other death bits than the close's.
 func (bc *bridgeCoordinator) closeEndsResolved(lc *chatLifecycle, turnID string, ends command.EndFacts) {
 	drained := ends.Death && !ends.Undrained
-	live := bc.bridgeLive(lc.chatID)
-	var (
-		n      int
-		unsent []string
-		seq    uint64
-	)
-	if bc.steerFacts != nil {
-		n, unsent, seq = bc.steerFacts(lc.chatID, drained)
+	read := drained
+	for pass := 0; ; pass++ {
+		var (
+			n      int
+			unsent []string
+			seq    uint64
+		)
+		if bc.steerFacts != nil {
+			n, unsent, seq = bc.steerFacts(lc.chatID, read)
+		}
+		live := bc.bridgeLive(lc.chatID)
+		lc.mu.Lock()
+		f := lc.orderFactsLocked()
+		if bc.steerFacts != nil {
+			reread, d := lc.run.endsChanged(seq, n, unsent, read, live, &f)
+			if reread && pass == 0 {
+				lc.mu.Unlock()
+				read = d
+				continue
+			}
+		}
+		if _, e := lc.run.byTurn(turnID); e != nil {
+			lc.run.closeEndsResolved(e.id, drained, live, &f)
+		}
+		lc.wakeLocked()
+		lc.mu.Unlock()
+		return
 	}
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	f := lc.orderFactsLocked()
-	if bc.steerFacts != nil {
-		lc.run.endsChanged(seq, n, unsent, drained, live, &f)
-	}
-	_, e := lc.run.byTurn(turnID)
-	if e != nil {
-		lc.run.closeEndsResolved(e.id, drained, live, &f)
-	}
-	lc.wakeLocked()
 }
 
 // awaitReleased waits until the entry whose turn is turnID has given its reservation back, or is gone: a holder a

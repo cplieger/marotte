@@ -997,7 +997,7 @@ func (l *runList) closingEntry() *runEntry {
 // the closing entry (or of the last ended close); reread reports that the caller read unsent with other bits and
 // must read again with drained.
 func (l *runList) endsChanged(seq uint64, n int, unsent []string, drainedRead, bridgeLive bool, f *orderFacts) (reread, drained bool) {
-	if seq != 0 && seq < l.endsSeq {
+	if seq < l.endsSeq {
 		return false, false
 	}
 	l.endsSeq = seq
