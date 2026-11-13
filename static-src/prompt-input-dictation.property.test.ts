@@ -173,7 +173,10 @@ function began(btn: HTMLButtonElement): Began | null {
     return null;
   }
   if (btn.getAttribute("aria-label") === "Dictate") {
-    return btn.getAttribute("aria-pressed") === "true" ? "stop" : "start";
+    return "start";
+  }
+  if (btn.getAttribute("aria-label") === "Stop dictation") {
+    return "stop";
   }
   return btn.getAttribute("aria-label") === "Cancel this turn" ? "cancel" : "send";
 }
@@ -290,14 +293,20 @@ function key(type: "keydown" | "keyup", name: string, repeat = false): KeyboardE
   return e;
 }
 
-function pointer(btn: HTMLButtonElement, type: string, onButton = true, button = 0): void {
+function pointer(
+  btn: HTMLButtonElement,
+  type: string,
+  onButton = true,
+  button = 0,
+  pointerType = "mouse",
+): void {
   const r = btn.getBoundingClientRect();
   const at = {
     clientX: onButton ? r.left + r.width / 2 : r.right + 40,
     clientY: r.top + r.height / 2,
   };
   (onButton ? btn : document.body).dispatchEvent(
-    new PointerEvent(type, { bubbles: true, cancelable: true, button, ...at }),
+    new PointerEvent(type, { bubbles: true, cancelable: true, button, pointerType, ...at }),
   );
 }
 
@@ -414,7 +423,8 @@ async function press(
         return { face, clicked: false };
       }
     }
-    pointer(btn, "pointerdown");
+    // A tap is a finger's, whose session leaves focus where it is.
+    pointer(btn, "pointerdown", true, 0, g.end === "tap" ? "touch" : "mouse");
     btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: i }));
     menuOpened = false;
     await applyAll(g.gaps[2 * i - 1]);

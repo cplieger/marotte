@@ -1,12 +1,12 @@
-// The microphone in the composer's Send slot, painted on the real buttons: its face, its name and pressed state,
-// where a press goes, and that it never sends or cancels by itself.
+// The microphone in the composer's Send slot, painted on the real buttons: its face and its name while idle and
+// listening, where a press goes, and that it never sends or cancels by itself.
 
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import { signal } from "@cplieger/reactive";
 import { initPromptInput, sendComposer, setSendState } from "./prompt-input.js";
 import { createDictation, type Dictation } from "./dictation.js";
-import { ICON_MIC, ICON_SEND } from "./icons.js";
+import { ICON_MIC, ICON_MIC_STOP, ICON_SEND } from "./icons.js";
 import { setActive, setSessions } from "./store.js";
 import { setComposerValue, writeComposerSilently } from "./composer-value.js";
 import { BUS_TAB_CHANGED, emitBus } from "./bus.js";
@@ -202,15 +202,19 @@ function streaming(): void {
   setSendState({ kind: "streaming" });
 }
 
-function expectDictateFace(btn: HTMLButtonElement, pressed: boolean): void {
+/** Listening is a Stop control in its own words, so it carries no `aria-pressed` (APG Button pattern). */
+function expectDictateFace(btn: HTMLButtonElement, listening: boolean): void {
+  const name = listening ? "Stop dictation" : "Dictate";
   expect(btn.hidden).toBe(false);
-  expect(btn.getAttribute("aria-label")).toBe("Dictate");
-  expect(btn.getAttribute("aria-pressed")).toBe(String(pressed));
-  expect(btn.getAttribute("data-tooltip")).toBe(pressed ? "Stop dictation" : "Dictate");
+  expect(btn.getAttribute("aria-label")).toBe(name);
+  expect(btn.hasAttribute("aria-pressed")).toBe(false);
+  expect(btn.getAttribute("data-tooltip")).toBe(name);
   expect(btn.type).toBe("button");
-  expect(btn.classList.contains("dictating")).toBe(pressed);
-  expect(btn.querySelector(".send-btn-label")?.textContent).toBe("Dictate");
-  expect(glyphMarkup(btn.querySelector("svg"))).toBe(registryMarkup(ICON_MIC));
+  expect(btn.classList.contains("dictating")).toBe(listening);
+  expect(btn.querySelector(".send-btn-label")?.textContent).toBe(listening ? "Stop" : "Dictate");
+  expect(glyphMarkup(btn.querySelector("svg"))).toBe(
+    registryMarkup(listening ? ICON_MIC_STOP : ICON_MIC),
+  );
 }
 
 function expectSendFace(btn: HTMLButtonElement): void {
@@ -264,7 +268,7 @@ describe("the microphone in Send's slot (rule 1)", () => {
 });
 
 describe("pressing it (rules 3 and 8)", () => {
-  it("starts dictation, and the button becomes the pressed stop control", async () => {
+  it("starts dictation, and the button becomes the Stop control", async () => {
     const btn = sendBtn();
     await startFrom(btn);
     expect(dictation.listening.value).toBe(true);
@@ -1035,6 +1039,82 @@ describe("where focus goes when dictation ends (rule 9)", () => {
         input().disabled = false;
         await settle();
       }
+    });
+  });
+
+  describe("a finger's tap", () => {
+    /** A finger's tap on `btn`, focusing it as a touch engine does. */
+    function fingerTap(btn: HTMLButtonElement): void {
+      btn.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerType: "touch" }),
+      );
+      btn.focus();
+      release(btn, true);
+      clickAt(btn, 1);
+    }
+
+    afterEach(() => {
+      // The next case's presses are a mouse's.
+      pressDown(sendBtn());
+      release(sendBtn(), false);
+    });
+
+    describe("after a finger's tap starts it, the press that stops it decides", () => {
+      async function tapToDictate(): Promise<void> {
+        fingerTap(sendBtn());
+        await settle();
+        speech.last().begin();
+        speech.last().hear(["hello", true]);
+        expect(document.activeElement, "the tap that starts it").toBe(sendBtn());
+      }
+
+      it.each([
+        ["Escape", "{Escape}"],
+        ["Space", " "],
+        ["Enter", "{Enter}"],
+      ])("a keyboard's %s on the focused Stop leaves focus in the box", async (_, key) => {
+        await underFinger(async () => {
+          await tapToDictate();
+          await userEvent.keyboard(key);
+          speech.last().finish();
+          await settle();
+          expect(dictation.listening.value).toBe(false);
+          expect(document.activeElement).toBe(input());
+          expect(input().value).toBe("hello");
+          expect(submitted).toEqual([]);
+          expect(cancelled).not.toHaveBeenCalled();
+        });
+      });
+
+      it("a second tap leaves focus off the box and off the button", async () => {
+        await underFinger(async () => {
+          await tapToDictate();
+          fingerTap(sendBtn());
+          speech.last().finish();
+          await settle();
+          expect(dictation.listening.value).toBe(false);
+          expect([input(), sendBtn()]).not.toContain(document.activeElement);
+          expect(input().value).toBe("hello");
+        });
+      });
+    });
+
+    it("that stops a mouse's session puts focus in the box, where the last phrase lands", async () => {
+      await underFinger(async () => {
+        sendBtn().focus();
+        await startFrom(sendBtn());
+        speech.last().hear(["hello", false]);
+        fingerTap(sendBtn());
+        await settle();
+        expect(dictation.listening.value).toBe(false);
+        expect(document.activeElement, "the tap that stops it").toBe(input());
+        speech.last().hear(["hello there", true]);
+        speech.last().finish();
+        await settle();
+        expect(document.activeElement).toBe(input());
+        expect(input().value).toBe("hello there");
+        expect(submitted).toEqual([]);
+      });
     });
   });
 });

@@ -115,6 +115,24 @@ describe.skipIf(!existsSync(script))("the send button's contrast", () => {
     );
   });
 
+  it("holds the listening face's ink to 4.5:1 on its solid, resting, hovered and pressed", () => {
+    // The listening face is its own solid, so the depth ladder above does not reach it.
+    const body = ruleBody(loadCSS("15-input.css"), ".send-btn").replace(/\/\*[\s\S]*?\*\//g, " ");
+    const mixes = [...body.matchAll(/--listen-mix:\s*([\d.]+)%/g)].map((m) => Number(m[1]!));
+    expect(mixes.length, "a resting, a hover and a press mix").toBe(3);
+    expect(body).toMatch(/color:\s*var\(--c-on-accent\)/);
+    const misses: string[] = [];
+    for (const mix of mixes) {
+      const solid = `color-mix(in oklch, var(--c-accent), var(--c-text-primary) ${String(mix)}%)`;
+      for (const m of pair("--c-on-accent", solid)) {
+        if (m.ratio < 4.5) {
+          misses.push(`${m.theme} @${String(mix)}%: ${String(m.ratio)}:1`);
+        }
+      }
+    }
+    expect(misses, "WCAG 1.4.3 on the listening glyph and word").toEqual([]);
+  });
+
   it("keeps the fill's own separation on the record, so a regression is visible", () => {
     // NOT a floor: this is the measured cost of building the colours that were asked for, recorded
     // so that anyone who widens the ramp sees the number move instead of discovering it by eye.

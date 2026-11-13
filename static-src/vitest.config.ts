@@ -45,6 +45,16 @@ const parkPointerCommand: BrowserCommand<[]> = async ({ page }) => {
   await page.mouse.move(-1, -1);
 };
 
+/** Emulate the two accessibility media features this app has arms for, per page and per test: the provider's
+ *  `contextOptions` is project-global and would invert the `tab-dot.test.ts` family. Playwright's typed
+ *  `emulateMedia` rather than `cdp()`, whose `CDPSession` is typed empty; one call takes both, so a test can hold
+ *  all four combinations. */
+const emulateA11yMediaCommand: BrowserCommand<
+  [features: { reducedMotion?: "reduce" | "no-preference"; forcedColors?: "active" | "none" }]
+> = async ({ page }, features) => {
+  await page.emulateMedia(features);
+};
+
 // A test needing a coarse pointer is `*.touch.test.ts` and runs in `browser-touch`, whose pages are
 // touch devices from creation: touch emulation switched off inside a page leaves headless Chromium
 // reporting no pointer at all, not the mouse a page starts with, and every later file inherits it.
@@ -92,19 +102,7 @@ function browserProject(
         commands: {
           tap: tapCommand,
           parkPointer: parkPointerCommand,
-          /** Emulate the two accessibility media features this app has arms for, per page and per test:
-           *  the provider's `contextOptions` is project-global and would invert the `tab-dot.test.ts` family.
-           *  Playwright's typed `emulateMedia` rather than `cdp()`, whose `CDPSession` is typed empty; one
-           *  call takes both, so a test can hold all four combinations. */
-          async emulateA11yMedia(
-            { page },
-            features: {
-              reducedMotion?: "reduce" | "no-preference";
-              forcedColors?: "active" | "none";
-            },
-          ) {
-            await page.emulateMedia(features);
-          },
+          emulateA11yMedia: emulateA11yMediaCommand,
           /** Set the page's device pixel ratio; null restores the ratio the page had when this command first ran on
            *  it. Chromium only, CI's engine. The override is page-wide and outlives the test that set it. A restore
            *  that leaves the top page at any size but its viewport throws. */
@@ -228,9 +226,25 @@ const engineInstances = (
   provider: playwright({ contextOptions: { deviceScaleFactor: dpr, hasTouch: touch } }),
 }));
 
-/** The touch files whose taps go through `tap` rather than CDP, run again in WebKit on a phone's
- *  viewport. Opt-in (`TOUCH_ENGINES=1`): it needs `npx playwright install webkit`, which CI does not. */
-const touchEngineFiles = ["slash-menu.touch.test.ts"];
+/** The touch files whose taps go through `tap` rather than CDP, run again in WebKit on a phone's viewport, and the
+ *  dictation press suites again in WebKit on an iPad's (iPad Pro 13-inch, a touch device laying out its meta
+ *  viewport) and a desktop's. Opt-in (`TOUCH_ENGINES=1`): it needs `npx playwright install webkit`, which CI does
+ *  not. */
+const touchEngineFiles = ["slash-menu.touch.test.ts", "prompt-input-dictation-tap.touch.test.ts"];
+const webkitDevices = [
+  {
+    name: "browser-touch-webkit-ipad",
+    include: ["prompt-input-dictation-tap.touch.test.ts"],
+    viewport: { width: 1032, height: 1376 },
+    contextOptions: { hasTouch: true, isMobile: true },
+  },
+  {
+    name: "browser-pointer-webkit",
+    include: ["prompt-input-dictation-click.pointer.test.ts"],
+    viewport: { width: 1440, height: 900 },
+    contextOptions: {},
+  },
+];
 
 export default defineConfig({
   // Serves the MSW worker script from the package for the browser tests that mock the network;
@@ -352,10 +366,43 @@ export default defineConfig({
                   provider: playwright({ contextOptions: { hasTouch: true } }),
                   instances: [{ browser: "webkit" }],
                   viewport: { width: 390, height: 844 },
-                  commands: { tap: tapCommand, parkPointer: parkPointerCommand },
+                  commands: {
+                    tap: tapCommand,
+                    parkPointer: parkPointerCommand,
+                    emulateA11yMedia: emulateA11yMediaCommand,
+                  },
                 },
               },
             } satisfies TestProjectInlineConfiguration,
+            ...webkitDevices.map(
+              ({ name, include, viewport, contextOptions }) =>
+                ({
+                  extends: true,
+                  test: {
+                    name,
+                    include,
+                    exclude: sharedExclude,
+                    setupFiles: [
+                      "./ro-loop-gate.ts",
+                      "./storage-reset-setup.ts",
+                      "./pointer-park-setup.ts",
+                    ],
+                    browser: {
+                      enabled: true,
+                      headless: true,
+                      screenshotFailures: false,
+                      provider: playwright({ contextOptions }),
+                      instances: [{ browser: "webkit" }],
+                      viewport,
+                      commands: {
+                        tap: tapCommand,
+                        parkPointer: parkPointerCommand,
+                        emulateA11yMedia: emulateA11yMediaCommand,
+                      },
+                    },
+                  },
+                }) satisfies TestProjectInlineConfiguration,
+            ),
           ]
         : []),
     ],

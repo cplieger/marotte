@@ -11,7 +11,14 @@ import { activeSession, getActive, getActiveId } from "./store.js";
 import { afterWords } from "./run-order.js";
 import { payloadOf, turnOpenOf } from "./turns.js";
 import { fixIOSViewport } from "./platform.js";
-import { ICON_SEND, ICON_CANCEL, ICON_ALERT, ICON_HOURGLASS, ICON_MIC } from "./icons.js";
+import {
+  ICON_SEND,
+  ICON_CANCEL,
+  ICON_ALERT,
+  ICON_HOURGLASS,
+  ICON_MIC,
+  ICON_MIC_STOP,
+} from "./icons.js";
 import { sendFaces, type Faces } from "./send-faces.js";
 import { NO_DICTATION, type Dictation } from "./dictation.js";
 import { pressOwner, type Act } from "./send-press.js";
@@ -108,18 +115,24 @@ function reasonOf(s: SendState): string {
   return s.kind === "error" ? s.reason : "";
 }
 
-/** A toggle's name stays stable and `aria-pressed` carries the state; the tooltip says what a press does. */
-function paintDictate(btn: HTMLButtonElement, pressed: boolean): void {
-  btn.replaceChildren(el("span", { className: "send-btn-label" }, "Dictate"), iconEl(ICON_MIC));
-  btn.setAttribute("aria-label", "Dictate");
-  btn.setAttribute("aria-pressed", String(pressed));
-  btn.setAttribute("data-tooltip", pressed ? "Stop dictation" : "Dictate");
-  btn.classList.toggle("dictating", pressed);
+/** Two actions, not a toggle: the listening face names what a press does ("Stop dictation"), so it carries no
+ *  `aria-pressed` (APG Button: a toggle's name never changes). The label reserves the other word's width, so the
+ *  slot keeps one footprint across the two faces. */
+function paintDictate(btn: HTMLButtonElement, listening: boolean): void {
+  const [word, other, name] = listening
+    ? ["Stop", "Dictate", "Stop dictation"]
+    : ["Dictate", "Stop", "Dictate"];
+  btn.replaceChildren(
+    el("span", { className: "send-btn-label", "data-reserve": other }, el("span", {}, word)),
+    iconEl(listening ? ICON_MIC_STOP : ICON_MIC),
+  );
+  btn.setAttribute("aria-label", name);
+  btn.setAttribute("data-tooltip", name);
+  btn.classList.toggle("dictating", listening);
   btn.type = "button";
 }
 
 function clearDictate(btn: HTMLButtonElement): void {
-  btn.removeAttribute("aria-pressed");
   btn.classList.remove("dictating");
 }
 
@@ -146,6 +159,11 @@ class PromptInputController {
   private staged: Staged = signal(false);
   private dictation: Dictation = NO_DICTATION;
   private midTurn: HTMLButtonElement | null = null;
+  /** The `pointerType` of the last pointer press on a slot button. */
+  private pressPointer = "";
+  /** Whether the press that last started or stopped dictation was a finger's; focusAfterDictation then never focuses
+   *  the box. */
+  private fingerDictation = false;
   private readonly press = pressOwner((btn) => this.actOf(btn));
   /** Each chat whose send is in flight, by the token of that send. */
   private readonly held = new Map<string, object>();
@@ -356,6 +374,11 @@ class PromptInputController {
     }
   }
 
+  /** A click from a touch or pen press; a key's click has detail 0. */
+  private byFinger(e: MouseEvent): boolean {
+    return e.detail > 0 && (this.pressPointer === "touch" || this.pressPointer === "pen");
+  }
+
   /** The slot button `t` is, or null. */
   private slotOf(t: EventTarget | null): HTMLButtonElement | null {
     return t === $.sendBtn || t === this.midTurn ? (t as HTMLButtonElement) : null;
@@ -365,6 +388,7 @@ class PromptInputController {
   private wirePresses(buttons: readonly HTMLButtonElement[]): void {
     for (const on of buttons) {
       on.addEventListener("pointerdown", (e: PointerEvent) => {
+        this.pressPointer = e.pointerType;
         this.press({ k: "pointerdown", on, e });
       });
       for (const k of ["lostpointercapture", "pointercancel"] as const) {
@@ -411,15 +435,22 @@ class PromptInputController {
   }
 
   /** A session's end puts focus in the box from a slot button, whose face may now send or steer on the reader's next
-   *  Space, or from nowhere; focus the reader moved elsewhere on the page stays there. */
+   *  Space, or from nowhere; focus the reader moved elsewhere on the page stays there. After a finger's start or stop
+   *  it only takes focus off a slot button, since focusing the box would raise the keyboard. */
   private focusAfterDictation(): void {
     const at = document.activeElement;
+    if (this.fingerDictation) {
+      if (this.slotOf(at) !== null) {
+        (at as HTMLElement).blur();
+      }
+      return;
+    }
     if (at === null || at === document.body || this.slotOf(at) !== null) {
       $.promptInput.focus();
     }
   }
 
-  /** Escape leaves dictation ahead of Cancel, so a keyboard reader keeps the turn. */
+  /** Escape leaves dictation ahead of Cancel as a keyboard's stop, so a keyboard reader keeps the turn and focus. */
   private escapeStops(e: KeyboardEvent): boolean {
     if (
       e.key !== "Escape" ||
@@ -434,28 +465,30 @@ class PromptInputController {
     }
     e.preventDefault();
     e.stopPropagation();
+    this.fingerDictation = false;
     this.dictation.toggle();
     return true;
   }
 
   /** `start` and `stop` do nothing once the session is already in that state, so a run's later clicks cannot
    *  undo its first. */
-  private perform(act: Exclude<Act, "send">): void {
+  private perform(act: Exclude<Act, "send">, finger: boolean): void {
     const listening = this.dictation.listening.peek();
     switch (act) {
       case "cancel":
         if (this.state.kind === "streaming") {
           this.onCancel();
         }
-        // A press can take focus off the box, and dictated words land only in the focused box.
-        if (listening) {
+        // A press can take focus off the box, and a keyboard or mouse session's words land only in the focused box.
+        if (listening && !this.fingerDictation) {
           $.promptInput.focus();
         }
         return;
       case "start":
       case "stop":
         if (listening === (act === "stop")) {
-          this.dictation.toggle();
+          this.fingerDictation = finger;
+          this.dictation.toggle({ finger });
         }
         return;
     }
@@ -562,7 +595,7 @@ class PromptInputController {
       e.preventDefault();
       e.stopPropagation();
       if (act !== null) {
-        this.perform(act);
+        this.perform(act, this.byFinger(e));
       }
     });
     midTurn.addEventListener("click", (e: MouseEvent) => {
@@ -570,7 +603,7 @@ class PromptInputController {
       if (act === "send") {
         this.sendComposer();
       } else if (act !== null) {
-        this.perform(act);
+        this.perform(act, this.byFinger(e));
       }
     });
 
