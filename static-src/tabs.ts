@@ -2831,6 +2831,10 @@ function paintFold(
   if (!slideOwnsRows) {
     for (const node of rows) {
       node.hidden = folded && node.dataset["tabId"] !== state.active;
+      if (node.hidden) {
+        // A box returning from display: none restarts its animations (CSS Animations 1).
+        node.classList.remove("entering");
+      }
     }
   }
   const active = rows.find((n) => n.dataset["tabId"] === state.active);

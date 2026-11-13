@@ -922,6 +922,39 @@ describe("a header's box and motion", () => {
     await slideEnd(list);
   });
 
+  it("plays each row's entry once, and not again across a fold and an unfold", async () => {
+    const list = el("tab-list");
+    const entries: string[] = [];
+    // An animation that starts and ends within one frame still dispatches its animationstart.
+    const record = (e: AnimationEvent): void => {
+      if (e.animationName === "vk-slide-in-x" && e.target instanceof HTMLElement) {
+        entries.push(e.target.dataset["tabId"] ?? "");
+      }
+    };
+    list.addEventListener("animationstart", record);
+    try {
+      await openChats("a", "b", "c");
+      await Promise.all(
+        ["a", "b", "c"].flatMap((r) =>
+          row(r)
+            .getAnimations()
+            .map((a) => a.finished),
+        ),
+      );
+      const opened = ["a", "b", "c"].map(chatID);
+      expect(entries.toSorted(), "each new row plays its entry").toEqual(opened.toSorted());
+      toggle("open").click();
+      expect(list.getAnimations(), "the list slides shut").not.toHaveLength(0);
+      await slideEnd(list);
+      toggle("open").click();
+      expect(list.getAnimations(), "the list slides open").not.toHaveLength(0);
+      await slideEnd(list);
+      expect(entries.toSorted(), "the fold and unfold replay none").toEqual(opened.toSorted());
+    } finally {
+      list.removeEventListener("animationstart", record);
+    }
+  });
+
   it("paints the count and the Tab stop of a render that lands during an unfold", async () => {
     await openChats("a", "b");
     const list = el("tab-list");
