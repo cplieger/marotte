@@ -42,6 +42,8 @@ export function engineRead(reask: () => void, shown: () => boolean): EngineRead 
     begin: () => {
       const n = ++e.sent;
       e.out = true;
+      // A read sent now reads the engine as it is, so a ready event before it owes it nothing.
+      e.stale = false;
       return (answered) => {
         if (n !== e.sent || !e.out) {
           return;

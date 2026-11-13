@@ -131,6 +131,14 @@ describe("engineRead", () => {
     expect(p.sends(), "the newest read settled").toBe(2);
   });
 
+  it("owes nothing after a read begun once the engine is ready", () => {
+    const p = panel();
+    ready();
+    const after = p.read.begin();
+    after(true);
+    expect(p.sends(), "a read sent after the ready event already reads the ready engine").toBe(1);
+  });
+
   it("asks nothing for a closed panel's refused or out read once it is reset", () => {
     const p = panel();
     p.answer(false);
