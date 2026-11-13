@@ -505,7 +505,6 @@ function reset(subjects: readonly TabSubject[]): void {
   if (!hasRow(state.active)) {
     emit();
     activateSuccessor(false);
-    reselectAfterRemoval();
     return;
   }
   reselectAfterRemoval();

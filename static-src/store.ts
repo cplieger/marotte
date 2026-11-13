@@ -184,8 +184,8 @@ export function parseContextSize(description: string): number | undefined {
 /** Structure ops fire `sessions.ids`; per-session field writes fire `signalFor(id)`. Module-private:
  *  consumers go through the typed accessors below and the `activeSession` computed. */
 const sessions = createCollection<Session>((s) => s.id);
-// Two chat pointers, equal except in a chat switch's gap, between a chat's removal and the tab
-// strip's next selection, and while a non-chat tab shows after a closed chat. ACTIVE is the chat the reader is on (a switch's gesture moves it); PAINTED is the
+// Two chat pointers, equal except in a chat switch's gap and while a non-chat tab shows after a
+// closed chat. ACTIVE is the chat the reader is on (a switch's gesture moves it); PAINTED is the
 // chat whose transcript is mounted (its activation moves it). Code acting for the reader (send,
 // cancel, steers, attachments, the composer) reads the active chat; code reading or writing the
 // transcript's DOM reads the painted chat. Mixing them sends to one chat while showing another.

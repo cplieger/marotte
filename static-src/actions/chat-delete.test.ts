@@ -123,4 +123,30 @@ describe("chat.delete", () => {
     expect(getActiveId(), "the refused delete left the reader acting for another chat").toBe("x");
     expect(getPaintedId(), "a chat no activation showed was painted").toBe("");
   });
+
+  it("a refused delete of a chat the reader was not on selects nothing", async () => {
+    mockSend.mockResolvedValue({ ok: false, status: 500, error: "nope" });
+    const outcome = await deleteChat.dispatch({ id: "c1", impact: named }).outcome;
+    expect(outcome.status).toBe("error");
+    expect(get("c1")).toBeDefined();
+    expect(getActiveId(), "the rollback moved the reader onto the chat it restored").toBe("");
+  });
+
+  it("a refused delete keeps a chat the reader chose while it was pending", async () => {
+    setSessions([makeSession("y"), makeSession("x")]);
+    setActive("x");
+    const refusal = Promise.withResolvers<{ ok: false; status: number; error: string }>();
+    mockSend.mockReturnValue(refusal.promise);
+    const pending = deleteChat.dispatch({ id: "x", impact: named }).outcome;
+    await vi.waitFor(() => {
+      expect(mockSend).toHaveBeenCalled();
+    });
+    expect(getActiveId()).toBe("");
+    setActive("y");
+    refusal.resolve({ ok: false, status: 500, error: "nope" });
+    const outcome = await pending;
+    expect(outcome.status).toBe("error");
+    expect(get("x")).toBeDefined();
+    expect(getActiveId(), "the rollback overrode the reader's later choice").toBe("y");
+  });
 });
