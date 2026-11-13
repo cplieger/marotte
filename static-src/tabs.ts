@@ -714,6 +714,9 @@ interface ActivationOpts {
   /** Run the activation half in this task: boot, where nothing has painted that could go first,
    *  and a refused switch's revert or a close's put-back, whose notice is raised when it returns. */
   readonly now?: boolean;
+  /** When the reader began waiting for this view (`performance.now()` clock), which the cover's
+   *  show window counts from; the gesture by default. */
+  readonly waitingSince?: number;
 }
 
 /** The GESTURE half, run inside the click: the outgoing chat's park reads at the clean layout the
@@ -751,7 +754,7 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
       dropCover();
       now = true;
     } else if (!transcriptPainted(ref)) {
-      holdCover(ref);
+      holdCover(ref, opts.waitingSince);
     } else {
       // A parked or mounted view shows its own turns: the outgoing view stays on screen until the
       // activation swaps them, and a cover an earlier switch held would only hide them.
@@ -994,7 +997,8 @@ export function activateRestoredTab(): void {
   const route = parseRoute(location.pathname, location.hash);
   const root = route.kind === "chat" && route.id === "";
   if (root || tabIdForRoute(route) === id) {
-    beginActivation(id, { quiet: true, now: true });
+    // The time origin: the reader has watched an empty chat area since the page began loading.
+    beginActivation(id, { quiet: true, now: true, waitingSince: 0 });
   }
 }
 
@@ -1002,7 +1006,8 @@ export function activateRestoredTab(): void {
  *  route could not open its own view. A no-op once any activation has run. */
 export function showUnshownTab(): void {
   if (internal.unshown !== "" && internal.unshown === state.active) {
-    beginActivation(internal.unshown, { quiet: true });
+    // Still boot: the reader has watched an empty chat area since the page began loading.
+    beginActivation(internal.unshown, { quiet: true, waitingSince: 0 });
   }
 }
 

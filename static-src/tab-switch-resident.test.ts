@@ -70,7 +70,14 @@ vi.mock("./api-client.js", async (importOriginal) => ({
   }))),
 }));
 
-import { openTab, tabIdFor, getActiveTabId, closeTab } from "./tabs.js";
+import {
+  activateRestoredTab,
+  openTab,
+  paintProvisionalTabs,
+  tabIdFor,
+  getActiveTabId,
+  closeTab,
+} from "./tabs.js";
 import { markBootDone, _resetForTest as resetViewSwap } from "./view-swap.js";
 import { registerTranscriptOwner, releaseCover, swapTranscript } from "./transcript-cover.js";
 import { loadCSS } from "./__test-helpers__/css-rules.js";
@@ -342,5 +349,25 @@ describe("a switch from Settings to a chat with nothing resident", () => {
     expect(rendered("settings-view")).toBe(false);
     await pastShowWindow();
     expect(coverShown(), "a skeleton showed over the answered chat").toBe(false);
+  });
+});
+
+describe("the boot's restore of a chat with nothing resident", () => {
+  it("shows the skeleton at once when the page has already waited past the window", async () => {
+    expect(performance.now(), "the page is not past the cover's window").toBeGreaterThan(
+      PAST_DELAY_MS,
+    );
+    paintProvisionalTabs([
+      { id: "tab-a", kind: "chat", ref: "a", parent: "", pinned: false, owns: false },
+    ]);
+    const page = fx.chat.page("a");
+
+    activateRestoredTab();
+    expect(getActiveTabId()).toBe("tab-a");
+    expect(coverUp(), "the restore held no cover over a chat with nothing resident").toBe(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(coverShown(), "a boot already past the window waited a fresh one").toBe(true);
+    expect(rendered("chat-view"), "the cover stands over no chat view").toBe(true);
+    page.resolve();
   });
 });

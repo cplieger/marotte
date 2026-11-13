@@ -85,6 +85,20 @@ describe("a held cover waits before it shows", () => {
     expect(shown(), "a chat still unpainted after the window shows no skeleton").toBe(true);
   });
 
+  it("counts the window from when the reader began waiting, not from the hold", () => {
+    coverModule.holdCover("cd-a", performance.now() - 200);
+    vi.advanceTimersByTime(40);
+    expect(shown(), "the skeleton showed before the reader had waited the window").toBe(false);
+    vi.advanceTimersByTime(20);
+    expect(shown(), "a wait that began before the hold waited a fresh window").toBe(true);
+  });
+
+  it("shows in the next task for a reader who has already waited past the window", () => {
+    coverModule.holdCover("cd-a", performance.now() - DELAY_MS * 4);
+    vi.advanceTimersByTime(0);
+    expect(shown(), "a wait already past the window waited a fresh window").toBe(true);
+  });
+
   it("never shows for a paint inside the window, and plays no fade over the content", () => {
     coverModule.holdCover("cd-a");
     const watch = watchCover();

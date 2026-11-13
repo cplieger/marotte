@@ -10,7 +10,8 @@ import { chatSkeleton } from "./skeleton.js";
 
 const COVER_ID = "transcript-cover";
 
-/** How long a held cover stays off screen, so a chat that paints sooner shows no placeholder.
+/** How long the reader waits on a held cover before it shows, so a chat that paints sooner shows
+ *  no placeholder.
  *  Above the design language's usual 200: a switch whose window is already in the store repaints
  *  in about a quarter second. No minimum once shown: the skeleton has the latest turn's shape, and
  *  the release fade carries the swap. */
@@ -32,9 +33,11 @@ let swapDue = "";
 /** The waiting switch's view reveal (tabs.ts), run at the swap. */
 let deferredReveal: (() => void) | null = null;
 
-/** Show `node` once the window passes, restarting a window already running. */
-function scheduleReveal(node: HTMLDivElement): void {
+/** Show `node` once the reader has waited the window since `since` (`performance.now()` clock),
+ *  restarting a window already running. */
+function scheduleReveal(node: HTMLDivElement, since: number): void {
   reveal?.cancel();
+  const waited = performance.now() - since;
   reveal = skeletonTiming(
     () => {
       reveal = null;
@@ -52,7 +55,7 @@ function scheduleReveal(node: HTMLDivElement): void {
         owner?.swap(due);
       }
     },
-    { showDelayMs: COVER_SHOW_DELAY_MS },
+    { showDelayMs: Math.max(0, COVER_SHOW_DELAY_MS - waited) },
   );
 }
 
@@ -166,15 +169,16 @@ function guardCoveredFocus(e: FocusEvent): void {
 /** Cover the transcript for `chatID`, or hand an existing cover to it without re-creating or
  *  re-animating it. Until a release the transcript under it is `aria-busy`, hidden from assistive
  *  tech and refuses focus; once the cover shows, it takes the pointer. A hold before the cover
- *  shows starts its window again. */
-export function holdCover(chatID: string): void {
+ *  shows starts its window again, counted from `waitingSince`: when the reader began waiting
+ *  (`performance.now()` clock; the hold itself by default). */
+export function holdCover(chatID: string, waitingSince = performance.now()): void {
   const node = ensureCover();
   holder = chatID;
   pendingLift = null;
   deferredReveal = null;
   if (node.hidden || node.dataset["state"] === "released") {
     swapDue = chatID;
-    scheduleReveal(node);
+    scheduleReveal(node, waitingSince);
   } else {
     swapDue = "";
   }
