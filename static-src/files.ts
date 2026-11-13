@@ -871,7 +871,8 @@ function startInlineRename(targetName: string): void {
   const row = [...$.fbList.children].find(
     (child) => (child as HTMLDivElement).dataset["name"] === targetName,
   ) as HTMLDivElement | undefined;
-  if (row === undefined) {
+  // An inert row has a rename in flight (commit marks it); a second input would take the pending label as its original.
+  if (row === undefined || row.inert) {
     return;
   }
 

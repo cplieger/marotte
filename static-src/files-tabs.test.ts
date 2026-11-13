@@ -1072,6 +1072,17 @@ describe("renaming an entry", () => {
     }
   });
 
+  it("opens no second rename on F2 while the rename is pending, and restores the label when it fails", async () => {
+    await renameTo("b.txt");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "F2", cancelable: true }));
+    expect(rowFor("a.txt").querySelector(".fb-name-edit")).toBeNull();
+    must(renames[0]).release(new Response('{"error":"no"}', { status: 403 }));
+    await vi.waitFor(() => {
+      expect(rowFor("a.txt").querySelector(`.${FB_NAME}`)?.textContent).toBe("a.txt");
+    });
+    expect(rowFor("a.txt").querySelector(".fb-name-edit")).toBeNull();
+  });
+
   it("opens the original from its label after the rename failed", async () => {
     await renameTo("b.txt");
     must(renames[0]).release(new Response('{"error":"no"}', { status: 403 }));
