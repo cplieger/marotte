@@ -399,15 +399,16 @@ describe("a refused close", () => {
   );
 
   it("keeps a row whose refusal lands during its exit", async () => {
+    // B, because the last pinned row's exit never plays: its emptied section hides with it.
     const ids = await closing();
-    const c = ids["c"] ?? "";
+    const b = ids["b"] ?? "";
     await frame();
     tabServer.holdResponses();
     tabServer.failNext("close_tab", 500);
 
-    const done = closeTab(c);
+    const done = closeTab(b);
     await frame();
-    const node = document.querySelector<HTMLElement>(`#tab-sections [data-tab-id="${c}"]`);
+    const node = document.querySelector<HTMLElement>(`#tab-sections [data-tab-id="${b}"]`);
     expect(node?.classList.contains("exiting")).toBe(true);
     tabServer.releaseResponses();
     await done;
@@ -417,7 +418,7 @@ describe("a refused close", () => {
 
     expect(node?.isConnected, "the exit's end removed the restored row").toBe(true);
     expect(node?.classList.contains("exiting")).toBe(false);
-    expect(rowIDs()).toContain(c);
+    expect(rowIDs()).toContain(b);
   });
 
   it("restores the strip's scroll offset the removal clamped", async () => {

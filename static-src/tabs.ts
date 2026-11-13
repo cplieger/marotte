@@ -2678,17 +2678,23 @@ function renderDOM(): void {
   // off the DOM because the row already left the projection.
   for (const [id, node] of existing) {
     if (!activeIDs.has(id)) {
-      const parent = node.dataset["parentId"];
-      node.classList.add("exiting");
-      if (parent !== undefined && activeIDs.has(parent)) {
-        node.classList.add("exiting-merge");
-      }
-      node.addEventListener("animationend", () => {
-        // A row that came back during its exit (a refused close) reuses this node.
-        if (node.classList.contains("exiting")) {
-          node.remove();
+      if (!node.classList.contains("exiting")) {
+        const parent = node.dataset["parentId"];
+        node.classList.add("exiting");
+        if (parent !== undefined && activeIDs.has(parent)) {
+          node.classList.add("exiting-merge");
         }
-      });
+        node.addEventListener(
+          "animationend",
+          () => {
+            // A row that came back during its exit (a refused close) reuses this node.
+            if (node.classList.contains("exiting")) {
+              node.remove();
+            }
+          },
+          { once: true },
+        );
+      }
       existing.delete(id);
     }
   }
@@ -2847,6 +2853,18 @@ function paintFold(
     folded: sectionFolded(key),
     dot: folded ? foldDot(rows) : null,
   });
+  dropBoxlessExits(list);
+}
+
+/** Remove the departing rows `list` shows no box for (a folded row, an emptied section): their
+ *  exit's `animationend` never comes, because `display: none` ends an element's animations
+ *  (https://drafts.csswg.org/css-animations-1/#animations). Runs after the paint that hides them. */
+function dropBoxlessExits(list: HTMLElement): void {
+  for (const node of list.querySelectorAll<HTMLElement>(":scope > .exiting")) {
+    if (!node.checkVisibility()) {
+      node.remove();
+    }
+  }
 }
 
 function foldDot(rows: readonly HTMLElement[]): SectionHeaderView["dot"] {
@@ -3217,9 +3235,8 @@ function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean)
       case "Delete":
       case "Backspace": {
         e.preventDefault();
-        // Focus is moved by hand, or Delete drops the keyboard user onto <body>. The APG puts focus on the
-        // tab that took the closed one's place: everything after me, then everything before in reverse.
-        // Moved BEFORE the dispatch, because a close is a round trip, and only once the gate lets it go.
+        // Focus moves BEFORE the dispatch, because a close is a round trip, and only once the gate
+        // lets it go.
         requestCloseTab(id, () => {
           focusAfterClose(node);
         });

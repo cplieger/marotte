@@ -1246,9 +1246,9 @@ describe("ending a live drag", () => {
   });
 });
 
-/** The sectioned column (`design.md` §16.1, §16.4): `#tab-sections` scrolls and holds
- *  `#open-section` (the harness strip under a header) above `#pinned-section` (p and q
- *  under a header), then the History row, then empty tail down to 500px. */
+/** The sectioned column: `#tab-sections` scrolls and holds `#open-section` (the harness strip
+ *  under a header) above `#pinned-section` (p and q under a header), then the History row, then
+ *  empty tail down to 500px. */
 describe("a strip split into sections", () => {
   let sections: HTMLElement;
   let pinnedSection: HTMLElement;

@@ -1,5 +1,5 @@
-// The sidebar's tab sections over the shipped markup (`design.md` §16.1, §16.8): which headers
-// show, what each header says to a screen reader, and how its toggle answers the keyboard.
+// The sidebar's tab sections over the shipped markup: which headers show, what each header says to
+// a screen reader, and how its toggle answers the keyboard.
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { userEvent } from "vitest/browser";
 
@@ -723,6 +723,89 @@ describe("the keyboard across sections", () => {
     await paint();
     expect(row("a").hidden).toBe(true);
     expect(document.activeElement).toBe(toggle("pinned"));
+  });
+});
+
+/** A hidden row runs no animation, so its `animationend` never comes; none of these cases sends one. */
+describe("a departing row", () => {
+  beforeEach(() => {
+    stubReducedMotion();
+  });
+
+  // By id taken before the close: `tabIdFor` answers "" once the tab has left.
+  const nodesOf = (id: string): HTMLElement[] => [
+    ...document.querySelectorAll<HTMLElement>(`[data-tab-id="${id}"]`),
+  ];
+
+  it("leaves no node for a folded parent's hidden sub-tab closed with it", async () => {
+    await openChats("p");
+    await setTabPinned(chatID("p"), true);
+    await openChats("a");
+    await openTab({ kind: "chat", ref: "kid", parent: chatID("a") });
+    await activateTab(chatID("a"));
+    await paint();
+    toggle("open").click();
+    await paint();
+    expect(hiddenRefs("tab-list")).toEqual(["kid"]);
+    const kid = chatID("kid");
+    row("a").focus();
+    await press("{Delete}");
+    expect(nodesOf(kid)).toEqual([]);
+  });
+
+  it("empties Pinned when its last row closes, so a later pin shows one row", async () => {
+    await openChats("a", "p", "q");
+    await setTabPinned(chatID("p"), true);
+    await paint();
+    await activateTab(chatID("p"));
+    await paint();
+    const rowsAtHide: number[] = [];
+    const watch = new MutationObserver(() => {
+      if (section("pinned").hidden) {
+        rowsAtHide.push(el("pinned-list").querySelectorAll("[data-tab-id]").length);
+      }
+    });
+    watch.observe(section("pinned"), { attributes: true, attributeFilter: ["hidden"] });
+    tabServer.closeRemotely(chatID("p"));
+    await paint();
+    watch.disconnect();
+    expect(new Set(rowsAtHide), "every paint that hides Pinned leaves it no row").toEqual(
+      new Set([0]),
+    );
+    await setTabPinned(chatID("q"), true);
+    await paint();
+    const rows = [...el("pinned-list").querySelectorAll<HTMLElement>("[data-tab-id]")];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.classList.contains("exiting")).toBe(false);
+  });
+
+  it("drops a folded section's hidden row a frame closes, and keeps it gone after an unfold", async () => {
+    await openChats("a", "b", "c");
+    toggle("open").click();
+    await paint();
+    expect(hiddenRefs("tab-list")).toEqual(["a", "b"]);
+    const a = chatID("a");
+    tabServer.closeRemotely(a);
+    await paint();
+    expect(nodesOf(a)).toEqual([]);
+    toggle("open").click();
+    await paint();
+    expect(nodesOf(a)).toEqual([]);
+    expect(hiddenRefs("tab-list")).toEqual([]);
+  });
+
+  it("listens once for a visible row's exit however many renders it spans", async () => {
+    await openChats("a", "b");
+    const leaving = row("a");
+    // Held mid-exit, so the second render below still finds it.
+    leaving.style.animationPlayState = "paused";
+    const listen = vi.spyOn(leaving, "addEventListener");
+    tabServer.closeRemotely(chatID("a"));
+    await paint();
+    expect(leaving.classList.contains("exiting")).toBe(true);
+    await openChats("c");
+    expect(leaving.isConnected, "still playing its exit").toBe(true);
+    expect(listen.mock.calls.filter(([type]) => type === "animationend")).toHaveLength(1);
   });
 });
 
