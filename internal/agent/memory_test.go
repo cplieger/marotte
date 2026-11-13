@@ -137,6 +137,13 @@ func TestWriteMemoryErr_ClassifiesTheFailure(t *testing.T) {
 			http.StatusConflict, memoryNotEnabledCode,
 		},
 		{
+			"import and export not yet served", &marotte.RPCError{
+				Code: -32000, Message: "Memory import and export are coming soon.",
+				Data: json.RawMessage(`{"errorType":"MemoryImportComingSoonError"}`),
+			},
+			http.StatusConflict, memoryImportComingSoonCode,
+		},
+		{
 			"a KAS refusal keeps KAS's words", &marotte.RPCError{Code: -32602, Message: `no memory with id "m1" to delete.`},
 			http.StatusBadRequest, "no memory with id",
 		},
