@@ -12,8 +12,10 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/modeltext"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/toolbelt/v3/pin"
@@ -496,5 +498,16 @@ func TestCaptureLogs_LeavesTheLogPackageWhereItFoundIt(t *testing.T) {
 func TestListenAndServe_RefusesNoListenAddress(t *testing.T) {
 	if err := New().ListenAndServe(); err == nil {
 		t.Error("ListenAndServe() with no WithListenAddr = nil, want an error")
+	}
+}
+
+// The drain must outlast the engine's stop, or marotte exits mid-stop and takes the engine's teardown with it, and must
+// end inside Docker's default 10 s stop timeout.
+func TestShutdownGrace_CoversTheEngineStop(t *testing.T) {
+	if ceiling := bridge.StopCeiling(); shutdownGrace <= ceiling {
+		t.Errorf("shutdownGrace = %v, want above the engine stop ceiling %v", shutdownGrace, ceiling)
+	}
+	if dockerStop := 10 * time.Second; shutdownGrace >= dockerStop {
+		t.Errorf("shutdownGrace = %v, want under Docker's default stop timeout %v", shutdownGrace, dockerStop)
 	}
 }

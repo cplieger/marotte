@@ -15,7 +15,7 @@ import (
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
-// shutdownBudget bounds one PTY teardown, above the engine's 5s reap ceiling so expiry means a real hang.
+// shutdownBudget bounds one PTY teardown, above the terminal engine's 5s reap ceiling (terminal.Handler.Shutdown) so expiry means a real hang.
 const shutdownBudget = 10 * time.Second
 
 // All three teardown paths use it, since engine v4's Shutdown blocks until the child is reaped. A

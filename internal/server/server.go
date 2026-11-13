@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/cplieger/go/health/v2"
 	"github.com/cplieger/go/httpserver"
@@ -394,7 +395,7 @@ func (s *Server) ListenAndServe() error {
 
 	// The pre-drain hook keeps the agent-before-server order: readiness flips, the runtime stops
 	// bridges and streams, and only then does the HTTP drain run.
-	runErr := httpserver.Run(ctx, srv, ln, httpserver.WithPreDrain(func(drainCtx context.Context) {
+	runErr := httpserver.Run(ctx, srv, ln, httpserver.WithShutdownGrace(shutdownGrace), httpserver.WithPreDrain(func(drainCtx context.Context) {
 		slog.Info("received signal, shutting down", "cause", context.Cause(ctx))
 		s.ready.Store(false)
 		// Run calls this hook SYNCHRONOUSLY before srv.Shutdown: drainCtx is passed on, never discarded.
@@ -405,6 +406,10 @@ func (s *Server) ListenAndServe() error {
 	s.ready.Store(false) // no-op on the signal path; covers a serve failure
 	return runErr
 }
+
+// shutdownGrace bounds the whole drain: it covers the engine stop (bridge.StopCeiling) plus the rest of the runtime's
+// shutdown, and stays under Docker's default 10 s stop timeout, past which the container's processes are SIGKILLed.
+const shutdownGrace = 9 * time.Second
 
 // clientIP is the access log's client_ip. The first request whose ignored forwarding header names a
 // public address warns once, because a reverse proxy missing from TRUSTED_PROXIES otherwise makes

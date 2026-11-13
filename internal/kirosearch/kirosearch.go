@@ -351,7 +351,7 @@ func exitRefusal(ctx context.Context, root string, err error, read readResult, s
 		return cmp.Or(stderr, "(no stderr)")
 	case code == 2:
 		// rg's exit 2 after output is "some paths were unreadable", with every other result valid.
-		// KAS's own rg path rejects it, which is the walker fallback this package replaces.
+		// KAS's own text search rejects it and falls back to the walker this package replaces.
 		slog.Debug("search: ripgrep skipped unreadable paths; results kept", "root", root,
 			"errors", strings.Count(stderr, "\n"))
 	default:

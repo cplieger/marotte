@@ -560,7 +560,7 @@ var stallProbeAfter = time.Second
 var writeStallCeiling = 120 * time.Second
 
 // writeFrame serialises stdin writes, refuses each once the read loop exited (readerExited, loaded under writeMu so
-// closePending's wait orders it), and writes in chunks, each watched by a stallWatch. Any write failure ends the engine:
+// closePending's wait orders it) or teardown closed stdin (stdinClosed), and writes in chunks, each watched by a stallWatch. Any write failure ends the engine:
 // a truncated frame desyncs kiro-cli's stdin scanner for good, and an error means it can read nothing after.
 func (e *Engine) writeFrame(data []byte) error {
 	_, err := e.writeFrameIf(data, nil)
@@ -572,7 +572,7 @@ func (e *Engine) writeFrame(data []byte) error {
 func (e *Engine) writeFrameIf(data []byte, commit func() error) (refused, err error) {
 	e.writeMu.Lock()
 	defer e.writeMu.Unlock()
-	if e.readerExited.Load() {
+	if e.readerExited.Load() || e.stdinClosed.Load() {
 		return nil, errWriteFenced
 	}
 	// Before anything touches the handle: a write before Start once panicked on a nil interface.

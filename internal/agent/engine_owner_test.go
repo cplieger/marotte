@@ -430,6 +430,32 @@ func TestEngineExit_ACauseForAStopMarotteDidNotSend(t *testing.T) {
 	}
 }
 
+// kiro-cli exits 1 when it kills its own engine after stdin EOF, so a stop marotte sent can end with a non-zero
+// sidecar exit; the reason Stop recorded names the cause, never that exit status.
+func TestEngineExit_AStopMarotteSentKeepsItsCause(t *testing.T) {
+	info := bridge.ExitInfo{Reason: bridge.ExitStopped, SidecarExit: "exit_code=1"}
+	for name, tc := range map[string]struct {
+		restart  *restartCause
+		draining bool
+		want     string
+	}{
+		"while draining":         {draining: true, want: "shutdown"},
+		"an automatic restart":   {restart: &restartCause{Kind: restartAuto}, want: "restart_auto"},
+		"a confirmed restart":    {restart: &restartCause{Kind: restartConfirmed}, want: "restart_confirmed"},
+		"a stop with no restart": {want: "stopped"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := exitCause(&info, tc.restart, tc.draining, true); got != tc.want {
+				t.Errorf("exitCause(%+v) = %q, want %q", info, got, tc.want)
+			}
+		})
+	}
+	line := exitFixture(t, &info, nil)
+	if line["cause"] != "stopped" || line["level"] != "INFO" || line["sidecar_exit"] != "exit_code=1" {
+		t.Errorf("exit line = %v, want cause=stopped sidecar_exit=exit_code=1 at INFO", line)
+	}
+}
+
 func oomStep() func() (uint64, bool) {
 	var mu sync.Mutex
 	n := uint64(0)

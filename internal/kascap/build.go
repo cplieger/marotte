@@ -16,6 +16,10 @@ const settingsKey = "settings"
 // acp engine on it.
 const ClientName = "marotte"
 
+// ClientTitle is the clientInfo.title marotte sends on initialize. kiro-cli stamps it as clientName
+// into every session lease file the engine writes.
+const ClientTitle = "Marotte for Kiro"
+
 // Capabilities returns the _meta.kiro map for the initialize handshake, ready
 // to sit under clientCapabilities._meta.kiro.
 //
