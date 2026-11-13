@@ -45,7 +45,6 @@ vi.mock("./notice-subject.js", async (importOriginal) => ({
 }));
 vi.mock("./notify.js", async (importOriginal) => ({
   ...(await importOriginal<typeof NotifyModule>()),
-  notifyOffScreen: vi.fn(),
   closeRunAsksExcept: vi.fn(() => Promise.resolve()),
 }));
 
@@ -107,6 +106,9 @@ async function flush(): Promise<void> {
 let runView: HTMLElement;
 
 beforeEach(() => {
+  // The stream adapter, in this graph through notify.js, installs its presenter at import, and
+  // with no stream attached that one answers every ask owed.
+  setScopePresenter(() => Promise.resolve("covered"));
   forgetRun(WF);
   document.body.replaceChildren();
   runView = document.createElement("div");
@@ -318,10 +320,6 @@ describe("a run tab's reads wait for the stream to deliver its run", () => {
           asks.push({ run, answer: resolve });
         }),
     );
-  });
-
-  afterEach(() => {
-    setScopePresenter(() => Promise.resolve("covered"));
   });
 
   function runReads(wf: string): string[] {

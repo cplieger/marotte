@@ -63,7 +63,6 @@ vi.mock("./notice-subject.js", async (importOriginal) => ({
 }));
 vi.mock("./notify.js", async (importOriginal) => ({
   ...(await importOriginal<typeof NotifyModule>()),
-  notifyOffScreen: vi.fn(),
   closeRunAsksExcept: vi.fn(() => Promise.resolve()),
 }));
 
