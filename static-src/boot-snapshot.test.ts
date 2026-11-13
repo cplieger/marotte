@@ -157,10 +157,6 @@ function capturedWindow(): NonNullable<BootSnapshot["window"]> {
   return win;
 }
 
-function carriedIDs(win: NonNullable<BootSnapshot["window"]>): string[] {
-  return win.entries.map((e) => e.id);
-}
-
 function row(id: string): Session {
   const s = get(id);
   if (s === undefined) {
@@ -395,37 +391,43 @@ describe("the capture", () => {
     ]);
   });
 
-  it("trims the newest turn to a contiguous PREFIX when it alone is over the entry cap", () => {
+  it("carries no window when the newest turn alone is over the entry cap", () => {
     oneOpenChat();
-    // One turn of 100 entries against the 80-entry cap, which is the case the cap exists
-    // for. Dropping it would resume with no transcript at all.
-    seedTurn("c1", "turn-1", 1, textBody("turn-1", 99));
+    // One turn of 100 entries against the 80-entry cap, under the byte budget. The reader lands
+    // on its end, which no part of it inside the cap holds.
+    const body = textBody("turn-1", 99);
+    seedTurn("c1", "turn-1", 1, body);
+    expect(JSON.stringify(body).length, "the premise: under the byte budget").toBeLessThan(
+      MAX_BYTES,
+    );
 
-    const win = capturedWindow();
+    const snap = captureBootSnapshot();
 
-    expect(win.entries).toHaveLength(MAX_ENTRIES);
-    // A PREFIX from `turn_open` (`entries[i].seq === i` cannot seat a tail), whose header
-    // carries the turn's ordinal.
-    expect(win.entries.map((e) => e.seq)).toEqual([...Array(MAX_ENTRIES).keys()]);
-    expect(win.entries[0]?.kind).toBe("turn_open");
-    expect(carriedIDs(win)).not.toContain("turn-1-e99");
+    expect(snap.window).toBeNull();
+    // The rows and the tab set still paint.
+    expect(snap.chats.map((c) => c.id)).toEqual(["c1"]);
   });
 
-  it("stops a prefix at the first entry the byte budget cannot afford", () => {
+  it("carries no window when the newest turn alone is over the byte budget", () => {
     oneOpenChat();
     // 71 entries of ordinary prose: inside the entry cap and past the byte budget, so the
-    // cut is the BYTE bound's rather than the count's.
+    // refusal is the BYTE bound's rather than the count's.
     const body = textBody("turn-1", 70, "x".repeat(1_500));
     seedTurn("c1", "turn-1", 1, body);
+    expect(body.length + 1, "the premise: inside the entry cap").toBeLessThan(MAX_ENTRIES);
+
+    expect(captureBootSnapshot().window).toBeNull();
+  });
+
+  it("drops an older turn whole behind a newest turn that fits", () => {
+    oneOpenChat();
+    seedTurn("c1", "turn-1", 1, textBody("turn-1", 99));
+    settledTurn("c1", "turn-2", 2);
 
     const win = capturedWindow();
 
-    expect(JSON.stringify(win).length).toBeLessThanOrEqual(MAX_BYTES);
-    expect(win.entries.length).toBeLessThan(body.length + 1);
-    // Under the cap, so a passing assertion above cannot be the count bound wearing this
-    // case's name.
-    expect(win.entries.length).toBeLessThan(MAX_ENTRIES);
-    expect(win.entries[0]?.kind).toBe("turn_open");
+    expect(new Set(win.entries.map((e) => e.turn))).toEqual(new Set(["turn-2"]));
+    expect(win.entries.map((e) => e.seq)).toEqual([0, 1, 2]);
   });
 
   it("drops WHOLE turns when the newest three do not fit", () => {

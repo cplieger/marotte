@@ -122,6 +122,86 @@ describe("the committed start state, against real CSS", () => {
     ctl.dispose();
   });
 
+  it("closes a region created closed over laid-out content at once, with no height transition", async () => {
+    expect(window.matchMedia("(prefers-reduced-motion: reduce)").matches).toBe(false);
+
+    // A tool group's body is painted open before its disclosure exists; one created closed then
+    // must not play a collapse the reader never asked for.
+    const region = document.createElement("div");
+    region.appendChild(document.createElement("p")).textContent = "x".repeat(400);
+    document.body.append(region);
+    await nextFrame();
+    expect(region.getBoundingClientRect().height, "the premise: laid out open").toBeGreaterThan(0);
+
+    const ctl = createDisclosure(null, region, { open: false });
+
+    expect(region.getAnimations().map((a) => (a as CSSTransition).transitionProperty)).toEqual([]);
+    expect(region.getBoundingClientRect().height).toBe(0);
+    await nextFrame();
+    expect(region.getAnimations()).toEqual([]);
+
+    // The tweened path still animates afterwards.
+    const ended = ownTransitionEndWithin(region, 2000);
+    ctl.open();
+    expect(await ended).toBe("height");
+
+    ctl.dispose();
+  });
+
+  it("keeps a reopen's tween running past the end of the close it replaced", async () => {
+    expect(window.matchMedia("(prefers-reduced-motion: reduce)").matches).toBe(false);
+
+    const trigger = document.createElement("button");
+    const region = document.createElement("div");
+    region.appendChild(document.createElement("p")).textContent = "x".repeat(400);
+    document.body.append(trigger, region);
+    const ctl = createDisclosure(trigger, region, { open: true });
+    await nextFrame();
+
+    ctl.close();
+    const closing = region.getAnimations();
+    expect(closing.length, "the premise: the close tweens").toBeGreaterThan(0);
+    // The reopen runs where an awaiter of the close's `finished` resumes: before the close's
+    // own transitionend is dispatched.
+    await Promise.allSettled(closing.map((a) => a.finished));
+    ctl.open();
+    // Record every own end from the reopen on: the close's, then the reopen's.
+    const ends: string[] = [];
+    let onSecond: (property: string | null) => void = () => undefined;
+    const secondEnd = new Promise<string | null>((resolve) => {
+      onSecond = resolve;
+    });
+    const timer = setTimeout(() => {
+      onSecond(null);
+    }, 2000);
+    const onEnd = (e: TransitionEvent): void => {
+      if (e.target !== region || e.pseudoElement !== "") {
+        return;
+      }
+      ends.push(e.propertyName);
+      if (ends.length === 2) {
+        clearTimeout(timer);
+        onSecond(e.propertyName);
+      }
+    };
+    region.addEventListener("transitionend", onEnd);
+    await settle();
+
+    expect(ends, "the premise: the close's end reaches the region after the reopen").toEqual([
+      "height",
+    ]);
+    expect(region.style.height).toBe("auto");
+    expect(region.getAnimations().map((a) => (a as CSSTransition).transitionProperty)).toEqual([
+      "height",
+    ]);
+    expect(await secondEnd).toBe("height");
+    region.removeEventListener("transitionend", onEnd);
+    await settle();
+    expect(region.style.height).toBe("");
+
+    ctl.dispose();
+  });
+
   it("fades a popup on hide, finishing on its own transitionend rather than the ceiling", async () => {
     expect(window.matchMedia("(prefers-reduced-motion: reduce)").matches).toBe(false);
 

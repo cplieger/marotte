@@ -86,6 +86,13 @@ export function onViewHidden(viewID: string, onHide: () => void): void {
   hideListeners.set(viewID, onHide);
 }
 
+/** Whether a `[data-tab-view]` view other than `target` is shown. Reads classes only. */
+export function otherViewShown(target: HTMLElement | null): boolean {
+  return queryAll<HTMLElement>(VIEWS_SELECTOR).some(
+    (v) => v !== target && !v.classList.contains("hidden"),
+  );
+}
+
 /** Show `target` alone among the `[data-tab-view]` views, parking the hidden ones (dom.ts `park`). Swaps, with the
  *  entry fade, only when `target` is not already the one shown: callers re-run this on every projection change. */
 export function showOnlyView(target: HTMLElement | null): void {

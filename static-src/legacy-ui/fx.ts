@@ -5,7 +5,15 @@
 
 /** The inline style properties realization writes. */
 export type StyleProp =
-  "height" | "position" | "left" | "right" | "top" | "minWidth" | "width" | "overflow";
+  | "height"
+  | "position"
+  | "left"
+  | "right"
+  | "top"
+  | "minWidth"
+  | "width"
+  | "overflow"
+  | "transitionProperty";
 
 /** `showModal`'s outcome, read from the element after the call. */
 type ShowResult = { readonly open: true } | { readonly open: false; readonly error: unknown };

@@ -1,7 +1,8 @@
-// A switch between view kinds (a chat and Settings). Toward a chat the click lays out no incoming
-// transcript and never leaves the view area empty: the chat view shows under the cover with its
-// transcript out of layout, and the activation lays it out. Toward any other view the click shows
-// that view, its entry fade starting there, and hides the chat view. Real tabs.ts and view-swap.ts
+// A switch between view kinds (a chat and Settings). Toward a chat with nothing resident the click
+// lays out no incoming transcript and never leaves the view area empty: the chat view shows under
+// the held cover with its transcript out of layout, and the activation lays it out. A chat that can
+// show its own turns is tab-switch-resident.test.ts's. Toward any other view the click shows that
+// view, its entry fade starting there, and hides the chat view. Real tabs.ts and view-swap.ts
 // against the fake tab server.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type * as TabsDrag from "./tabs-drag.js";
@@ -157,72 +158,25 @@ afterEach(() => {
 });
 
 describe("a switch from Settings to a chat", () => {
-  it("paints the cover over a painted chat in the click, then lifts it over the transcript the activation lays out", async () => {
-    const ids = await onSettings("a");
-    const a = ids["a"] ?? "";
-
-    clickRow(a);
-
-    expect(getActiveTabId()).toBe(a);
-    expect(rendered("settings-view"), "Settings stayed up in the click").toBe(false);
-    expect(rendered("chat-view"), "the click left the view area empty").toBe(true);
-    expect(rendered("messages-wrap"), "the click laid out the transcript").toBe(false);
-    await frame();
-    expect(coverUp(), "the gesture's frame painted no skeleton over the chat").toBe(true);
-    expect(rendered("messages-wrap"), "the gesture's frame laid out the transcript").toBe(false);
-    expect(entryFade("chat-view"), "the covered view showed with no fade").toBeDefined();
-
-    await activationRan();
-    expect(rendered("messages-wrap")).toBe(true);
-    expect(view("messages-wrap").scrollTop, "the reader's place was lost").toBe(600);
-    expect(coverUp(), "the cover stayed up over the mounted transcript").toBe(false);
-    expect(fx.chat.show, "the mounted chat was shown again").not.toHaveBeenCalled();
-  });
-
-  it("closing Settings shows the chat under it the same way: cover first, transcript from the activation", async () => {
-    const ids = await onSettings("a");
-
-    void closeTab(ids["settings"] ?? "");
-
-    expect(getActiveTabId()).toBe(ids["a"]);
-    expect(rendered("chat-view"), "the close left the view area empty").toBe(true);
-    expect(rendered("messages-wrap"), "the close laid out the transcript").toBe(false);
-    await frame();
-    expect(coverUp(), "the close's frame painted no skeleton over the chat").toBe(true);
-
-    await activationRan();
-    expect(rendered("messages-wrap")).toBe(true);
-    expect(view("messages-wrap").scrollTop).toBe(600);
-    expect(coverUp()).toBe(false);
-  });
-
-  it("paints the cover in the click for an unpainted chat, with the transcript under it out of layout", async () => {
+  it("keeps Settings up for an unpainted chat until the cover shows, then shows the chat view with its transcript laid out", async () => {
     const ids = await onSettings("a", "b");
-    const b = ids["b"] ?? "";
-    let shownOver = false;
-    fx.chat.show.mockImplementation((id: string) => {
-      shownOver = rendered("messages-wrap");
-      pointers.painted = id;
-    });
     const page = fx.chat.page("b");
 
-    clickRow(b);
-
-    expect(rendered("settings-view")).toBe(false);
-    expect(rendered("chat-view"), "the cover's view stayed hidden").toBe(true);
-    expect(rendered("messages-wrap"), "the click laid out the transcript under the cover").toBe(
-      false,
-    );
+    clickRow(ids["b"] ?? "");
+    expect(rendered("settings-view"), "the click emptied the view area").toBe(true);
     await frame();
-    expect(coverUp(), "the cover is up in the gesture's frame").toBe(true);
-    expect(rendered("messages-wrap"), "the gesture's frame laid out the transcript").toBe(false);
-    expect(entryFade("chat-view"), "the covered view showed with no fade").toBeDefined();
-
+    expect(rendered("settings-view"), "the gesture's frame emptied the view area").toBe(true);
     await activationRan();
     expect(fx.chat.show).toHaveBeenCalledWith("b");
-    expect(shownOver, "the chat was shown into a scroller with no box").toBe(true);
-    expect(rendered("messages-wrap")).toBe(true);
-    expect(coverUp(), "the cover lifted before B's page").toBe(true);
+    expect(rendered("settings-view"), "the activation emptied the view area").toBe(true);
+    expect(cover()?.hidden, "the cover showed inside its window").toBe(true);
+
+    await new Promise((r) => setTimeout(r, 320));
+    expect(cover()?.hidden, "the chat still loading shows no skeleton").toBe(false);
+    expect(rendered("settings-view")).toBe(false);
+    expect(rendered("chat-view")).toBe(true);
+    expect(rendered("messages-wrap"), "the swap left the transcript out of layout").toBe(true);
+    expect(coverUp()).toBe(true);
     page.resolve();
   });
 

@@ -189,6 +189,7 @@ export function createDisclosure(
         }
         const tween = height.tween;
         if (tween?.step === "from") {
+          fx.setStyle(region, "transitionProperty", "");
           // auto is not an animatable start on the fallback path, so measure first.
           fx.setStyle(
             region,
@@ -227,7 +228,15 @@ export function createDisclosure(
           }
         }
         if (height.tween === null) {
-          fx.setStyle(region, "height", d.open ? "" : "0px");
+          const next = d.open ? "" : "0px";
+          if (region.style.height !== next) {
+            // A write outside a tween is instant (no motion allowed, a region created closed over
+            // content painted open), so the region's CSS transitions stay off until the next
+            // tween. Not `getAnimations()` and cancel: reading them resolves style mid-build, which
+            // starts the chevron transitions of every tool group a rebuild creates.
+            fx.setStyle(region, "transitionProperty", "none");
+          }
+          fx.setStyle(region, "height", next);
         }
       },
       notify(fx, d) {

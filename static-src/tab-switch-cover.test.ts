@@ -2,7 +2,7 @@
 // page on screen, and lifts in that paint's task unless the browser reports input waiting or rows
 // in view are still being built (messages-cover-release.test.ts). Only an activation or the
 // failure box's Retry raises or holds it. Real store, renderer and scroll controller.
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { Session } from "./types.js";
 import { makeSession } from "./__test-helpers__/model.js";
 import type { Entry } from "./wire/types.gen.js";
@@ -80,9 +80,27 @@ function wrap(): HTMLElement {
   return el;
 }
 
+/** The cover is held, shown or still inside its show window. */
 function coverUp(): boolean {
+  return coverModule.coverHeld();
+}
+
+/** The cover is on screen and not lifting. */
+function coverShown(): boolean {
   const c = document.getElementById("transcript-cover");
   return c !== null && !c.hidden && c.getAttribute("data-state") !== "released";
+}
+
+/** Hold the cover for `chatID` and let its show window pass. */
+function showCover(chatID: string): void {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    coverModule.holdCover(chatID);
+    vi.advanceTimersByTime(250);
+  } finally {
+    vi.useRealTimers();
+  }
+  expect(coverShown(), "the premise: the held cover shows").toBe(true);
 }
 
 async function flushed(): Promise<void> {
@@ -347,7 +365,7 @@ describe("the cover's skeleton pulses only while the cover is held", () => {
       .join("\n");
     document.head.appendChild(pulse);
     try {
-      coverModule.holdCover("cv-a");
+      showCover("cv-a");
       const held = pulses();
       expect(held.length, "the skeleton's bars pulse").toBeGreaterThan(0);
       expect(new Set(held), "while held").toEqual(new Set(["running"]));
@@ -355,7 +373,7 @@ describe("the cover's skeleton pulses only while the cover is held", () => {
       coverModule.dropCover();
       expect(new Set(pulses()), "after the release").toEqual(new Set(["paused"]));
 
-      coverModule.holdCover("cv-b");
+      showCover("cv-b");
       expect(new Set(pulses()), "at the next hold").toEqual(new Set(["running"]));
     } finally {
       coverModule.dropCover();
@@ -388,7 +406,7 @@ describe("the cover's release fade shows the content under it from its first fra
     motion.textContent = ["01-tokens.css", "03-base.css", "40-a11y.css"].map(loadCSS).join("\n");
     document.head.appendChild(motion);
     try {
-      coverModule.holdCover("cv-a");
+      showCover("cv-a");
       coverModule.dropCover();
       fn();
     } finally {
@@ -425,8 +443,7 @@ describe("the cover's release fade shows the content under it from its first fra
           "vk-fade-out",
         );
       });
-      coverModule.holdCover("cv-b");
-      expect(coverUp(), "the next hold shows the cover again").toBe(true);
+      showCover("cv-b");
     } finally {
       coverModule.dropCover();
       await resetA11yMedia();

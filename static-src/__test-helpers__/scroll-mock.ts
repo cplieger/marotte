@@ -43,6 +43,10 @@ export const scrollMock = {
   onAttach: vi.fn(() => () => undefined),
   setAnchorProvider: vi.fn(),
   setResumeLabel: vi.fn(),
+  // A mocked scroller observes no box, so none is unseen.
+  whenNearSettled: vi.fn((cb: () => void) => {
+    cb();
+  }),
   // The deferral helper runs its mutation.
   deferWhileReading: vi.fn((mutate: () => void) => {
     mutate();

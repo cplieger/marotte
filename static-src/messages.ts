@@ -27,9 +27,17 @@ import { workspaceRoot } from "./workspace.js";
 import { buildEvent } from "./messages-events.js";
 import { releaseClampsIn } from "./clamp-text.js";
 import { releaseMarkdownIn } from "./markdown.js";
-import { effect, el, touch } from "@cplieger/reactive";
+import { effect, el, touch, untracked } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
-import { coverHeld, registerParkReads, releaseCover } from "./transcript-cover.js";
+import {
+  coverContentPainted,
+  coverHeld,
+  coverShown,
+  registerTranscriptOwner,
+  releaseCover,
+  swapDeferred,
+  swapTranscript,
+} from "./transcript-cover.js";
 import { $ } from "./dom.js";
 import {
   followTargetChanged,
@@ -56,6 +64,7 @@ import {
   onContentResize,
   readingLineOffset,
   applyPendingRestore,
+  whenNearSettled,
 } from "./scroll.js";
 import type { ViewScrollState } from "./scroll-controller.js";
 import {
@@ -618,9 +627,17 @@ export function mountChatView(): void {
   }
   mounted = true;
   initFollowModel();
-  registerParkReads({
+  registerTranscriptOwner({
     take: takeParkReads,
     drop: () => {
+      parkReads = null;
+    },
+    painted: (chatID) => views.has(chatID) && (get(chatID)?.turn_order.length ?? 0) > 0,
+    current: (chatID) => getActiveId() === chatID,
+    swap: (chatID) => {
+      if (getPaintedId() === chatID && getActiveId() === chatID && activeView?.chatID !== chatID) {
+        untracked(paint);
+      }
       parkReads = null;
     },
   });
@@ -1212,10 +1229,21 @@ function paint(): void {
   const isChatSwitch = lastPaintedId !== session.id;
   let unparked = false;
   if (isChatSwitch) {
+    if (
+      swapDeferred(session.id) &&
+      session.turn_order.length === 0 &&
+      session.residency !== "loaded" &&
+      !isEmptyChat(session)
+    ) {
+      // Nothing to show yet: the outgoing view stays until the cover shows or the turns land.
+      return;
+    }
+    swapTranscript();
     // Park first: its reads must precede every write of the task, and pruning disposes views.
     if (activeView !== null && activeView.chatID !== session.id) {
       parkView(activeView);
     }
+    parkReads = null;
     pruneDeadViews();
     // Already active only after a switch pass that threw: its finally landed the restore, and a second attach would
     // put the reader back on the park's snapshot.
@@ -1259,17 +1287,35 @@ let coverOwed = "";
 let coverCheckFrame = 0;
 
 /**
- * Lift `chatID`'s cover now, or, while it holds bodies this pass could only start, from the first
- * frame once no unbuilt row shows where the reader lands. In the frame, so the paint task forces no
- * layout read of its own. A release in the task needs no landing read: the scroll owner's follow
- * write runs in the next frame before it renders.
+ * Lift `chatID`'s cover now (once the near observer has sized the landing's boxes, while the cover
+ * shows), or, while it holds bodies this pass could only start, from the first frame once no
+ * unbuilt row shows where the reader lands. In the frame, so the paint task forces no layout read
+ * of its own. A release in the task needs no landing read: the scroll owner's follow write runs in
+ * the next frame before it renders.
  */
 function releaseCoverOverBuiltRows(chatID: string): void {
   coverOwed = "";
+  const gen = ++coverReleaseGen;
+  if (!coverShown() || !coverHeld(chatID)) {
+    liftOverBuiltRows(chatID);
+    return;
+  }
+  // An unreported box lays out at its intrinsic size and grows a frame after the lift.
+  whenNearSettled(() => {
+    if (gen === coverReleaseGen && getPaintedId() === chatID) {
+      liftOverBuiltRows(chatID);
+    }
+  });
+}
+
+let coverReleaseGen = 0;
+
+function liftOverBuiltRows(chatID: string): void {
   if (!paintedOwesBuild() || !coverHeld(chatID)) {
     releaseCover(chatID);
     return;
   }
+  coverContentPainted(chatID);
   cancelAnimationFrame(coverCheckFrame);
   coverCheckFrame = requestAnimationFrame(() => {
     coverCheckFrame = 0;

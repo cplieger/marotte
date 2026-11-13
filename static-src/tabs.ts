@@ -62,15 +62,19 @@ import {
 } from "./actions/tabs.js";
 import {
   coverHeld,
+  coverShown,
+  deferReveal,
   dropCover,
+  dropParkReads,
   hideTranscript,
   holdCover,
   moveFocusOffTranscript,
   releaseCover,
-  releaseCoverExceptFor,
   showTranscript,
+  swapDeferred,
   takeParkReads,
   transcriptHidden,
+  transcriptPainted,
 } from "./transcript-cover.js";
 import { afterNextPaint } from "./next-paint.js";
 import { ActionError, retryNetwork, type ActionErrorLike } from "./actions/index.js";
@@ -81,7 +85,7 @@ import { ICON_CLOSE, ICON_PIN_FILLED, ICON_TAB_SUBTAB } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { activeView, setActiveView } from "./device-view.js";
 import { $, queryEl, setAttr, setText } from "./dom.js";
-import { showOnlyView } from "./view-swap.js";
+import { otherViewShown, showOnlyView } from "./view-swap.js";
 import { signal, effect, el } from "@cplieger/reactive";
 import {
   attachDrag,
@@ -730,10 +734,6 @@ function reselectAfterRemoval(): void {
   }
 }
 
-function hasResidentTurns(chatID: string): boolean {
-  return (get(chatID)?.turn_order.length ?? 0) > 0;
-}
-
 interface ActivationOpts {
   readonly quiet: boolean;
   /** Start a fresh activation of the tab already active (a Retry after a failed load). */
@@ -741,6 +741,9 @@ interface ActivationOpts {
   /** Run the activation half in this task: boot, where nothing has painted that could go first,
    *  and a refused switch's revert or a close's put-back, whose notice is raised when it returns. */
   readonly now?: boolean;
+  /** When the reader began waiting for this view (`performance.now()` clock), which the cover's
+   *  show window counts from; the gesture by default. */
+  readonly waitingSince?: number;
 }
 
 /** The GESTURE half, run inside the click: the outgoing chat's park reads at the clean layout the
@@ -758,6 +761,7 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
   }
   internal.unshown = "";
   const ref = row.subject.kind === "chat" ? row.subject.ref : "";
+  dropParkReads();
   if (ref !== "" && ref !== getPaintedId()) {
     takeParkReads();
   }
@@ -776,16 +780,16 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
       // Its page is local and loads nothing, so it shows in this task and a cover would only flash.
       dropCover();
       now = true;
-    } else if (
-      ref !== getPaintedId() ||
-      (opts.again === true && !hasResidentTurns(ref)) ||
-      !viewLaidOut(row)
-    ) {
-      // A painted chat coming back from another view kind is covered too: its transcript stays out
-      // of layout until the activation, and the cover is what this frame shows in its place.
+    } else if (!transcriptPainted(ref)) {
+      holdCover(ref, opts.waitingSince);
+    } else if (coverShown()) {
+      // A slow switch's skeleton already stands over that chat's empty view: the parked chat's
+      // paint lifts it over its own turns.
       holdCover(ref);
     } else {
-      releaseCoverExceptFor(ref);
+      // A parked or mounted view shows its own turns: the outgoing view stays on screen until the
+      // activation swaps them, and a cover held but not shown would only hide them.
+      dropCover();
     }
   } else {
     reselectPaintedChat();
@@ -823,15 +827,16 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
     runActivation(gen);
   } else {
     afterNextPaint(() => {
-      runActivation(gen);
+      runActivation(gen, true);
     });
   }
   return record;
 }
 
 /** The ACTIVATION half, in its own task: show the view and start its refresh, only while `gen` is
- *  the newest. A superseded target runs nothing: no `onShow`, no fetch, no paint. */
-function runActivation(gen: number): void {
+ *  the newest. A superseded target runs nothing: no `onShow`, no fetch, no paint. `deferred` is a
+ *  run after the gesture's frame, whose layout is clean. */
+function runActivation(gen: number, deferred = false): void {
   const record = recordOf(gen);
   if (record === undefined || record.ran) {
     return;
@@ -842,9 +847,18 @@ function runActivation(gen: number): void {
     record.resolveDone();
     return;
   }
+  const target = row.subject.kind === "chat" ? row.subject.ref : "";
+  if (deferred && target !== "" && target !== getPaintedId() && !coverHeld()) {
+    // Uncovered, the outgoing transcript stayed in reach through that frame.
+    takeParkReads();
+  }
   try {
     // First: a chat's restore writes the scroll offset, which a scroller with no box cannot take.
-    revealView(row);
+    if (revealWaits(row)) {
+      revealAtSwap(row);
+    } else {
+      revealView(row);
+    }
     // A chat this file showed and that is still painted is mounted; showing it again would re-key
     // its rail and clear what it painted. One whose removal cleared the painted chat and that is
     // shown again is not mounted. A Retry's fresh activation clears its own failure box.
@@ -1014,7 +1028,8 @@ export function activateRestoredTab(): void {
   const route = parseRoute(location.pathname, location.hash);
   const root = route.kind === "chat" && route.id === "";
   if (root || tabIdForRoute(route) === id) {
-    beginActivation(id, { quiet: true, now: true });
+    // The time origin: the reader has watched an empty chat area since the page began loading.
+    beginActivation(id, { quiet: true, now: true, waitingSince: 0 });
   }
 }
 
@@ -1022,7 +1037,8 @@ export function activateRestoredTab(): void {
  *  route could not open its own view. A no-op once any activation has run. */
 export function showUnshownTab(): void {
   if (internal.unshown !== "" && internal.unshown === state.active) {
-    beginActivation(internal.unshown, { quiet: true });
+    // Still boot: the reader has watched an empty chat area since the page began loading.
+    beginActivation(internal.unshown, { quiet: true, waitingSince: 0 });
   }
 }
 
@@ -2419,7 +2435,11 @@ function showView(row: TabRow): void {
   if (activationPending()) {
     holdView(row);
   } else {
-    revealView(row);
+    if (revealWaits(row)) {
+      revealAtSwap(row);
+    } else {
+      revealView(row);
+    }
     pushRoute(row.spec.route);
   }
 
@@ -2445,16 +2465,39 @@ function viewLaidOut(row: TabRow): boolean {
   return target?.classList.contains("hidden") !== true && !transcriptHidden();
 }
 
-/** The gesture form of `revealView`, which never leaves the view area empty. A non-chat view shows
- *  now, its entry fade starting with the click. A chat view not laid out shows under the cover
- *  (`beginActivation` holds it) with its transcript out of layout, which the activation lays out;
- *  a laid-out chat view is already the one shown. */
-function holdView(row: TabRow): void {
-  if (row.subject.kind !== "chat") {
-    showOnlyView(queryEl<HTMLElement>(row.spec.view));
-  } else if (coverHeld() && !viewLaidOut(row)) {
+/** A chat view not laid out whose switch keeps the outgoing view up (transcript-cover.ts
+ *  `deferReveal` runs its reveal). */
+function revealWaits(row: TabRow): boolean {
+  return row.subject.kind === "chat" && swapDeferred(row.subject.ref) && !viewLaidOut(row);
+}
+
+/** Reveal the row's view at its swap, while it is still the active tab. With no other view on
+ *  screen there is nothing to keep, so the chat view shows now with its transcript out of layout. */
+function revealAtSwap(row: TabRow): void {
+  const id = row.subject.id;
+  const target = queryEl<HTMLElement>(row.spec.view);
+  if (!otherViewShown(target)) {
     hideTranscript();
-    showOnlyView(queryEl<HTMLElement>(row.spec.view));
+    showOnlyView(target);
+  }
+  deferReveal(() => {
+    const current = rowOfID(id);
+    if (state.active === id && current !== undefined) {
+      revealView(current);
+    }
+  });
+}
+
+/** The gesture form of `revealView`. A non-chat view shows now. The outgoing view stays until the
+ *  cover shows or the target view is revealed; under a shown cover, or with no other view on
+ *  screen, a chat view not laid out shows with its transcript out of layout. */
+function holdView(row: TabRow): void {
+  const target = queryEl<HTMLElement>(row.spec.view);
+  if (row.subject.kind !== "chat") {
+    showOnlyView(target);
+  } else if (!viewLaidOut(row) && (coverShown() || (coverHeld() && !otherViewShown(target)))) {
+    hideTranscript();
+    showOnlyView(target);
   }
 }
 
