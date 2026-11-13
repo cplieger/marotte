@@ -12,7 +12,7 @@ Reported as [kirodotdev/Kiro#11995](https://github.com/kirodotdev/Kiro/issues/11
 
 ### The agent stalls during a file search
 
-kiro-cli runs its own ripgrep when the agent searches the workspace. When ripgrep fails, kiro-cli falls back to a slow listing with no time limit, and every chat and workflow its engine hosts waits while it runs, sometimes for over an hour. ripgrep fails on a dangling symbolic link or a link loop anywhere in the workspace, and on a tree too large to search in 30 seconds.
+kiro-cli runs its own ripgrep when the agent searches the workspace. When ripgrep fails, kiro-cli falls back to a slow listing with no time limit, and every chat and workflow its engine hosts waits while it runs, sometimes for over an hour. A text search falls back when ripgrep reports any error, such as a dangling symbolic link or a link loop anywhere in the workspace. From kiro-cli 3.2.1 a file search keeps ripgrep's results in that case and falls back only when ripgrep found nothing. Both fall back on a tree too large to search in 30 seconds.
 
 Reported as [kirodotdev/Kiro#11957](https://github.com/kirodotdev/Kiro/issues/11957), open. marotte runs the agent's `grep_search` and `file_search` itself, so kiro-cli's own search and its fallback never run. marotte searches the workspace and the additional directories with ripgrep, honours `.gitignore`, never follows symbolic links, and keeps ripgrep's results when it skips an unreadable path. A search that names a folder, such as `marotte/internal/**/*.go`, reads only that folder. Each search ends after 15 seconds, or when you stop the reply, and the agent receives what was found by then: at most 100 files for a text search.
 
@@ -96,7 +96,7 @@ Reported as [kirodotdev/Kiro#12398](https://github.com/kirodotdev/Kiro/issues/12
 
 The agent's shell commands carry the chat's session ID as `KIRO_SESSION_ID`. In a chat started with **Fork a tangent** or **Branch from here**, that variable holds the ID of the chat it was forked from, not the new chat's own. A [notify request](configuration.md#waking-a-chat-from-another-service-marotte_notify_token) or a [message between chats](configuration.md#messages-between-chats) addressed with it reaches the chat it came from. kiro-cli sets the variable from the conversation's root, which a fork keeps from its source chat.
 
-Not reported upstream yet. marotte has no workaround, because kiro-cli sets the variable itself. Until it changes, a forked or branched chat cannot read its own ID, so address requests and messages only to chats that were not forked or branched.
+Reported as [kirodotdev/Kiro#12427](https://github.com/kirodotdev/Kiro/issues/12427), open. marotte has no workaround, because kiro-cli sets the variable itself. Until it changes, a forked or branched chat cannot read its own ID, so address requests and messages only to chats that were not forked or branched.
 
 ## Skills
 
@@ -154,7 +154,7 @@ Reported as [kirodotdev/Kiro#12326](https://github.com/kirodotdev/Kiro/issues/12
 
 When a turn fails on a model throttle before the model replies, kiro-cli puts a placeholder reply in its place in every later request to the model. The placeholder starts "(No assistant response was recorded for the preceding turn." Later in such a session, a model can answer with that exact text and end its turn. In a workflow step, kiro-cli then counts the step as completed with the placeholder as its output, and the run moves on.
 
-Not tracked upstream: the report was withdrawn and its issue closed. kiro-cli 3.2.0 still inserts the placeholder. marotte marks a step failed when kiro-cli completes it with no completion signal and the step's answer after its last tool call is empty or is the placeholder. The run's tab shows the step as failed with the reason "The step ended with an empty model turn and no completion signal, so its work may be unfinished." A **Workflow runs** notification says the step failed, and the agent that started the run is told which step failed and how to run its work again. kiro-cli has already moved the run past the step, so marotte does not re-run it.
+Not tracked upstream: the report was withdrawn and its issue closed. kiro-cli 3.2.1 still inserts the placeholder. marotte marks a step failed when kiro-cli completes it with no completion signal and the step's answer after its last tool call is empty or is the placeholder. The run's tab shows the step as failed with the reason "The step ended with an empty model turn and no completion signal, so its work may be unfinished." A **Workflow runs** notification says the step failed, and the agent that started the run is told which step failed and how to run its work again. kiro-cli has already moved the run past the step, so marotte does not re-run it.
 
 ### A step that finished inside a parallel group holds up the steps after it
 

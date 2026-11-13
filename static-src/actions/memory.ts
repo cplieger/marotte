@@ -45,14 +45,13 @@ export const deleteMemory = apiAction<DeleteArgs>({
 });
 
 interface SyncArgs {
-  scope: "account" | "device";
   on: boolean;
 }
 
-/** Writes the memorySync choice at the account's or this device's layer; the section refetches on memory_sync_changed. */
+/** Writes the account's memorySync choice; the section refetches on memory_sync_changed. */
 export const setMemorySync = apiAction<SyncArgs>({
   name: "memory.sync",
-  dedupe: (args) => `memory.sync:${args.scope}`,
+  dedupe: () => "memory.sync",
   request: (body) => ({ method: "PUT", path: `${MEMORY_API}/sync`, body }),
   error: stillOr("changing memory sync", "Couldn't change memory sync"),
 });

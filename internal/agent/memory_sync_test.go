@@ -33,15 +33,14 @@ func TestMemorySyncChoiceDecode(t *testing.T) {
 			view: memorySyncView("on", "replace", `[{"layer":"user-synced","stated":{"value":"on","used":true}}]`, none),
 			want: memorySyncChoice{Enabled: true, Account: true},
 		},
-		"account and device on": {
-			view: memorySyncView("on", "replace",
-				`[{"layer":"user-synced","stated":{"value":"on","used":false}},{"layer":"user-local","stated":{"value":"on","used":true}}]`, none),
-			want: memorySyncChoice{Enabled: true, Account: true, Device: true},
-		},
-		"device off under an account on": {
+		"account on under another layer's off": {
 			view: memorySyncView("off", "replace",
 				`[{"layer":"user-synced","stated":{"value":"on","used":false}},{"layer":"user-local","stated":{"value":"off","used":true}}]`, none),
 			want: memorySyncChoice{Account: true},
+		},
+		"on at a layer other than the account's": {
+			view: memorySyncView("on", "replace", `[{"layer":"user-local","stated":{"value":"on","used":true}}]`, none),
+			want: memorySyncChoice{Enabled: true},
 		},
 		"locked by the organization": {
 			view: memorySyncView("off", "locked", `[{"layer":"organization","stated":{"value":"off","used":true}},{"layer":"user-synced"}]`,
@@ -63,7 +62,7 @@ func TestMemorySyncChoiceDecode(t *testing.T) {
 			if err != nil {
 				t.Fatalf("decode: %v", err)
 			}
-			if got.Enabled != tc.want.Enabled || got.Account != tc.want.Account || got.Device != tc.want.Device ||
+			if got.Enabled != tc.want.Enabled || got.Account != tc.want.Account ||
 				(got.Lock == nil) != (tc.want.Lock == nil) || (got.Lock != nil && *got.Lock != *tc.want.Lock) {
 				t.Errorf("choice = %+v (lock %+v), want %+v (lock %+v)", got, got.Lock, tc.want, tc.want.Lock)
 			}
@@ -114,7 +113,7 @@ func TestMemorySyncGet_AnswersStatusAndChoice(t *testing.T) {
 	if p := br.paramsFor(methodKiroConfigurationGet); p["observer"] != "connection" {
 		t.Errorf("getState params = %v, want the connection's view", p)
 	}
-	const want = `{"status":{"pending":0,"state":"synced","last_sync_at":"2026-11-06T10:00:00.000Z"},"choice":{"enabled":true,"account":true,"device":false}}`
+	const want = `{"status":{"pending":0,"state":"synced","last_sync_at":"2026-11-06T10:00:00.000Z"},"choice":{"enabled":true,"account":true}}`
 	if got := strings.TrimSpace(rec.Body.String()); got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}
@@ -126,12 +125,13 @@ func putMemorySync(h *Runtime, body string) *httptest.ResponseRecorder {
 	return rec
 }
 
-func TestMemorySyncPutSendsLayer(t *testing.T) {
-	for _, tc := range []struct{ body, value, layer string }{
-		{`{"scope":"device","on":true}`, "on", "user-local"},
-		{`{"scope":"account","on":false}`, "off", "user-synced"},
+// kiro-cli 3.2.1 grants a client memorySync at user-synced only, so every PUT writes there.
+func TestMemorySyncPutWritesTheAccountLayer(t *testing.T) {
+	for _, tc := range []struct{ body, value string }{
+		{`{"on":true}`, "on"},
+		{`{"on":false}`, "off"},
 	} {
-		t.Run(tc.layer, func(t *testing.T) {
+		t.Run(tc.body, func(t *testing.T) {
 			h, _, br := newTestHub()
 			t.Cleanup(func() { shutdownHub(t, h) })
 			br.setCallResult(methodKiroConfigurationSet, json.RawMessage(
@@ -143,11 +143,27 @@ func TestMemorySyncPutSendsLayer(t *testing.T) {
 				t.Fatalf("PUT = %d %s, want 200", rec.Code, rec.Body.String())
 			}
 			p := br.paramsFor(methodKiroConfigurationSet)
-			if p["krn"] != memorySyncKRN || p["value"] != tc.value || p["layer"] != tc.layer {
-				t.Errorf("set params = %v, want %s at %s", p, tc.value, tc.layer)
+			if p["krn"] != memorySyncKRN || p["value"] != tc.value || p["layer"] != "user-synced" {
+				t.Errorf("set params = %v, want %s at user-synced", p, tc.value)
 			}
 			awaitEventCount(t, h, marotte.EventMemorySyncChanged, before+1)
 		})
+	}
+}
+
+// A PUT naming a scope comes from a page that offered a per-device switch; KAS grants no such layer, and writing the
+// account's instead would flip a choice the click did not name.
+func TestMemorySyncPutRefusesAScope(t *testing.T) {
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+
+	rec := putMemorySync(h, `{"scope":"device","on":false}`)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("PUT = %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	if br.called(methodKiroConfigurationSet) {
+		t.Errorf("PUT with a scope called %s, want no write", methodKiroConfigurationSet)
 	}
 }
 
@@ -160,9 +176,9 @@ func TestMemorySyncPutNamesLock(t *testing.T) {
 	))
 	br.setCallResult(methodKiroConfigurationGet, memorySyncView("off", "locked", `[]`, `[{"layer":"organization","compose":"locked"}]`))
 
-	rec := putMemorySync(h, `{"scope":"account","on":false}`)
+	rec := putMemorySync(h, `{"on":false}`)
 
-	const want = `{"lock":{"layer":"organization","name":"Your organization"},"enabled":false,"account":false,"device":false}`
+	const want = `{"lock":{"layer":"organization","name":"Your organization"},"enabled":false,"account":false}`
 	if got := strings.TrimSpace(rec.Body.String()); rec.Code != http.StatusOK || got != want {
 		t.Errorf("PUT = %d %s, want 200 %s", rec.Code, got, want)
 	}
@@ -177,22 +193,22 @@ func TestMemorySyncPutRefusals(t *testing.T) {
 	}{
 		"locked": {
 			err:      &marotte.RPCError{Code: -32602, Message: "Invalid params: the setting is locked", Data: json.RawMessage(`{"errorType":"ConfigurationSetRefusedError","reason":"locked","layer":"organization"}`)},
-			body:     `{"scope":"account","on":true}`,
+			body:     `{"on":true}`,
 			wantCode: http.StatusConflict, wantKey: `"code":"locked"`,
 		},
 		"unavailable": {
 			err:      &marotte.RPCError{Code: -32000, Message: "The setting cannot be written now", Data: json.RawMessage(`{"reason":"unavailable","layer":"user-synced"}`)},
-			body:     `{"scope":"account","on":true}`,
+			body:     `{"on":true}`,
 			wantCode: http.StatusConflict, wantKey: `"code":"unavailable"`,
 		},
 		"not granted": {
 			err:      &marotte.RPCError{Code: -32602, Message: "Invalid params: a client may not set this setting at this layer", Data: json.RawMessage(`{"reason":"notGranted"}`)},
-			body:     `{"scope":"device","on":true}`,
+			body:     `{"on":true}`,
 			wantCode: http.StatusBadRequest, wantKey: "may not set",
 		},
 		"locked by a layer id carrying a control character": {
 			err:      &marotte.RPCError{Code: -32602, Message: "locked", Data: json.RawMessage(`{"reason":"locked","layer":"org\u001b[31m"}`)},
-			body:     `{"scope":"account","on":true}`,
+			body:     `{"on":true}`,
 			wantCode: http.StatusConflict, wantKey: `"code":"locked"`,
 		},
 	}
@@ -212,13 +228,6 @@ func TestMemorySyncPutRefusals(t *testing.T) {
 			}
 		})
 	}
-	t.Run("an unknown scope", func(t *testing.T) {
-		h, _, _ := newTestHub()
-		t.Cleanup(func() { shutdownHub(t, h) })
-		if rec := putMemorySync(h, `{"scope":"everywhere","on":true}`); rec.Code != http.StatusBadRequest {
-			t.Errorf("PUT = %d, want 400", rec.Code)
-		}
-	})
 }
 
 // KAS pushes the sync state whenever it moves, so an open tab refetches it.

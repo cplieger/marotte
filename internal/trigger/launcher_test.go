@@ -276,8 +276,10 @@ func TestUnleasedAbandonedRunCancelRetried(t *testing.T) {
 				}
 				advance(pollTick)
 			}
-			tc.busy(r.ID, "wf_1")
+			// The answer is set before the busy: its resend can run before a later answerCancels sets it.
 			tc.answerCancels(nil)
+			tc.busy(r.ID, "wf_1")
+			synctest.Wait()
 			if rec := tc.recordOf(r.ID, "wf_1"); rec == nil || rec.state != stateAbandonedCancelled {
 				t.Errorf("record = %+v, want abandoned-cancelled once a resend lands", rec)
 			}

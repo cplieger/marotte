@@ -37,9 +37,11 @@ const (
 	turnBudget      = 5 * time.Minute
 	scrubWork       = "/work"
 	scrubHome       = "~/.kiro"
+	scrubTemp       = "/tmp/"
 	elicitServer    = "capture"
 	elicitAnswer    = "teal-7341"
-	notesBody       = "The release train leaves on Thursday.\nThe build cache lives in /var/cache/build.\nOwners rotate weekly.\n"
+	notesPath       = "/var/cache/build"
+	notesBody       = "The release train leaves on Thursday.\nThe build cache lives in " + notesPath + ".\nOwners rotate weekly.\n"
 )
 
 var (
@@ -54,16 +56,11 @@ var (
 // It spends model credits, so it needs both MAROTTE_LIVE_KIRO_CLI (a signed-in kiro-cli of the
 // entrypoint's pinned version) and -kas-capture.
 func TestCaptureKASCorpus(t *testing.T) {
-	bin := os.Getenv("MAROTTE_LIVE_KIRO_CLI")
-	if bin == "" {
-		t.Skip("MAROTTE_LIVE_KIRO_CLI names no kiro-cli binary")
-	}
 	if !*kasCapture {
 		t.Skip("-kas-capture not set: the capture spends credits and rewrites testdata")
 	}
-	pin := pinnedKiroCLI(t)
-	checkBinaryVersion(t, bin, pin)
-	env := captureEnv{cli: bin, kiroCLI: pin, kas: kasVersion(t, pin), elicitBin: buildElicitServer(t)}
+	bin, pin := liveKiroCLI(t)
+	env := captureEnv{cli: bin, kiroCLI: pin, elicitBin: buildElicitServer(t)}
 	for _, sc := range []scenario{
 		{name: "steer", about: "A prompt that reads a file through fs/read_text_file, steered on its first tool call; then session/close and a same-id session/load on the same engine.", run: runSteer},
 		{name: "compact", about: "Two one-word turns, _kiro/session/compact, a third turn; then a fresh engine and a session/load of the same id.", run: runCompact},
@@ -98,6 +95,8 @@ func captureScenario(t *testing.T, env *captureEnv, sc scenario) {
 		cancel()
 		c.shutdown()
 		if err == nil {
+			// kiro-cli unpacks its runtime at its first engine start, so the version is read after one ran.
+			env.kas = kasVersion(t, env.kiroCLI)
 			err = c.write(sc)
 		}
 		if err == nil {
@@ -530,17 +529,9 @@ func (c *capture) write(sc scenario) error {
 		buf.Write(raw)
 		buf.WriteByte('\n')
 	}
-	out, err := scrubModels(c.scrub(buf.Bytes()))
+	out, err := publishable(c.scrub(buf.Bytes()), os.TempDir())
 	if err != nil {
-		return err
-	}
-	for _, bad := range forbiddenInCapture {
-		if i := bytes.Index(out, []byte(bad)); i >= 0 {
-			return fmt.Errorf("capture holds %q near %q", bad, excerpt(out, i))
-		}
-	}
-	if m := emailRe.Find(out); m != nil {
-		return fmt.Errorf("capture holds an email address %q", m)
+		return fmt.Errorf("capture %w", err)
 	}
 	if err := os.MkdirAll(corpusDir, 0o755); err != nil {
 		return err
@@ -548,8 +539,46 @@ func (c *capture) write(sc scenario) error {
 	return os.WriteFile(filepath.Join(corpusDir, sc.name+".jsonl"), out, 0o644)
 }
 
+// publishable scrubs the model catalog from out, already scrubbed of scratch paths, and refuses bytes that would
+// publish the host's layout, a credential or an email address. Every writer of a committed fixture calls it: marotte
+// is public. tempDir is the temp root whose top directory a cut scratch path leaves behind; notesPath, which
+// notesBody plants, sits under /var on purpose and is not one.
+func publishable(out []byte, tempDir string) ([]byte, error) {
+	out, err := scrubModels(out)
+	if err != nil {
+		return nil, err
+	}
+	for _, bad := range forbiddenInCapture {
+		if i := bytes.Index(out, []byte(bad)); i >= 0 {
+			return nil, fmt.Errorf("holds %q near %q", bad, excerpt(out, i))
+		}
+	}
+	if top, ok := tempRootTop(tempDir); ok {
+		rest := bytes.ReplaceAll(out, []byte(notesPath), nil)
+		if i := bytes.Index(rest, []byte(top)); i >= 0 {
+			return nil, fmt.Errorf("holds %q near %q", top, excerpt(rest, i))
+		}
+	}
+	if m := emailRe.Find(out); m != nil {
+		return nil, fmt.Errorf("holds an email address %q", m)
+	}
+	return out, nil
+}
+
+// tempRootTop is the top directory of the temp root dir, such as "/data/", which a scratch path KAS cut inside the
+// temp root leaves behind once scrub cannot match it whole. A temp root under /tmp has none: scrubTemp is /tmp/.
+func tempRootTop(dir string) (string, bool) {
+	first, _, _ := strings.Cut(strings.TrimPrefix(filepath.Clean(dir), "/"), "/")
+	if first == "" || "/"+first+"/" == scrubTemp {
+		return "", false
+	}
+	return "/" + first + "/", true
+}
+
+// scrub replaces the scratch paths. The temp root goes last: KAS truncates a long title inside the scratch path, so
+// a prefix of it survives the two longer replacements.
 func (c *capture) scrub(b []byte) []byte {
-	for _, r := range []struct{ from, to string }{{c.work, scrubWork}, {c.home, scrubHome}} {
+	for _, r := range []struct{ from, to string }{{c.work, scrubWork}, {c.home, scrubHome}, {filepath.Clean(os.TempDir()) + "/", scrubTemp}} {
 		b = bytes.ReplaceAll(b, []byte(r.from), []byte(r.to))
 		quoted, _ := json.Marshal(r.from)
 		b = bytes.ReplaceAll(b, quoted[1:len(quoted)-1], []byte(r.to))
@@ -1057,6 +1086,48 @@ func (c *capture) awaitFrameMentioning(lane int, needle string, budget time.Dura
 	return fmt.Errorf("no frame mentioned %q within %s", needle, budget)
 }
 
+// liveKiroCLI is the kiro-cli MAROTTE_LIVE_KIRO_CLI names and the entrypoint pin it must report. It skips when
+// the variable is unset, so a caller checks its own opt-in flag first.
+func liveKiroCLI(t *testing.T) (bin, pin string) {
+	t.Helper()
+	bin = os.Getenv("MAROTTE_LIVE_KIRO_CLI")
+	if bin == "" {
+		t.Skip("MAROTTE_LIVE_KIRO_CLI names no kiro-cli binary")
+	}
+	pin = pinnedKiroCLI(t)
+	if dir := os.Getenv("KIRO_RUNTIME_DIR"); dir != "" {
+		if other := foreignRuntimes(dir, pin); len(other) > 0 {
+			t.Fatalf("KIRO_RUNTIME_DIR holds %v, which kiro-cli %s deletes at its start and a running engine may use: "+
+				"point it at a scratch folder or unset it", other, pin)
+		}
+	}
+	checkBinaryVersion(t, bin, pin)
+	return bin, pin
+}
+
+// runtimeEntryRe is a KIRO_RUNTIME_DIR entry's name, <version>-<16 hex>.
+var runtimeEntryRe = regexp.MustCompile(`^(.+)-[0-9a-f]{16}$`)
+
+// foreignRuntimes are dir's complete runtime entries of a kiro-cli version other than pin: a start of pin prunes
+// every one of them.
+func foreignRuntimes(dir, pin string) []string {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range ents {
+		m := runtimeEntryRe.FindStringSubmatch(e.Name())
+		if !e.IsDir() || m == nil || m[1] == pin {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, e.Name(), ".complete")); err == nil {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
 func pinnedKiroCLI(t *testing.T) string {
 	t.Helper()
 	raw, err := os.ReadFile("../../entrypoint.sh")
@@ -1087,7 +1158,7 @@ func kasVersion(t *testing.T, pin string) string {
 	t.Helper()
 	server := workspace.KASLookupFromEnv().Find(pin).Server
 	if server == "" {
-		t.Fatalf("no unpacked agent runtime for kiro-cli %s: run it once first", pin)
+		t.Fatalf("no unpacked agent runtime for kiro-cli %s after an engine start", pin)
 	}
 	pkgJSON := filepath.Join(filepath.Dir(server), "..", "..", "package.json")
 	raw, err := os.ReadFile(pkgJSON)

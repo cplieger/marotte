@@ -887,6 +887,11 @@ func TestSignIn_AStagedCopyLeftRefusesTheSaveAndLogsItsPath(t *testing.T) {
 			h := newTimedHarness(t, tc.retryBase, 5*time.Second, fb)
 			h.signIn(fb, approval{cred: credOf(t, h.account("alice"))})
 			leaveStagedCopy(h, fb, 1_000_000)
+			// The worker logs the failed save's retry line after the sign-in's outcome is published; let it land
+			// before the count below, or it reads as the refusal's.
+			eventually(t, "the failed save's retry line", func() bool {
+				return rec.CountExact("sign-in: the updated sign-in could not be saved; retrying") > 0
+			})
 			copies := stagedCopies(h)
 			copyPath := filepath.Join(h.dir, copies[0])
 			refusals, errorLines := saveFailures(t, "cb", "staged_copy_left"), len(rec.Records())
