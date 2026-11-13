@@ -12,6 +12,7 @@ import { formatShortDate } from "./locale-time.js";
 import { confirmText } from "./__test-helpers__/confirm-text.js";
 import type { Confirmation } from "./confirm.js";
 import { BUS_ENGINE_READY, emitBus } from "./bus.js";
+import type { HistoryTab } from "./route-path.js";
 
 /**
  * Cache-buster: `vi.resetModules()` does not re-evaluate a module in Browser Mode (URL-keyed module map). The `.ts`
@@ -63,7 +64,15 @@ const { actionNotice, deleteStopsWork, descendantChatsOf } = vi.hoisted(() => ({
 const deleteRunDispatch = vi.fn(async () => ({ ok: true }));
 const confirmMock = vi.fn(async (_q: Confirmation) => true);
 const closeTab = vi.fn();
-const setHistoryTab = vi.fn();
+/** The History row's route as the strip holds it: null while no row is open. A signal, since the real `subTabOf` is
+ *  a tracked read. */
+const historyRoute = signal<HistoryTab | null>(null);
+// The real setter's no-op while no row is open.
+const setHistoryTab = vi.fn((tab: HistoryTab) => {
+  if (historyRoute.peek() !== null) {
+    historyRoute.value = tab;
+  }
+});
 const pushRoute = vi.fn();
 
 vi.mock("./actions/chat.js", () => ({
@@ -122,6 +131,7 @@ vi.mock("./tabs.js", () => ({
   descendantChatsOf,
   hasTab,
   setHistoryTab,
+  subTabOf: (kind: string) => (kind === "history" ? historyRoute.value : null),
   tabSetVersion: () => tabsVersion.value,
 }));
 // The pane switch pushes its URL; a forced switch (the router's) must not.
@@ -239,6 +249,7 @@ function resetAll(): void {
   vi.resetModules();
   bootSeq++;
   hasTab.mockReturnValue(false);
+  historyRoute.value = null;
   asking.value = new Set();
   forgetRun("wf_1");
 }
@@ -309,6 +320,28 @@ describe("history: two panes behind one bar", () => {
     );
     expect(setHistoryTab).toHaveBeenCalledWith("runs");
     expect(pushRoute).not.toHaveBeenCalled();
+  });
+
+  it("a row born on Chats after one closed on Runs shows Chats", async () => {
+    const view = await render({ sessions: [chatRow], runs: [runRow] });
+    historyRoute.value = "chats";
+    view.querySelector<HTMLElement>('[data-history-tab="runs"]')!.click();
+    expect(view.querySelector('[data-history-panel="runs"]')!.classList.contains("hidden")).toBe(
+      false,
+    );
+
+    historyRoute.value = null;
+    historyRoute.value = "chats";
+
+    expect(view.querySelector('[data-history-panel="chats"]')!.classList.contains("hidden")).toBe(
+      false,
+    );
+    expect(view.querySelector('[data-history-panel="runs"]')!.classList.contains("hidden")).toBe(
+      true,
+    );
+    expect(view.querySelector('[data-history-tab="chats"]')!.getAttribute("aria-selected")).toBe(
+      "true",
+    );
   });
 
   it("keeps the kind chips and the status word off the row", async () => {

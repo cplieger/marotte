@@ -2,6 +2,8 @@ import { describe, it, expect, vi, afterEach, beforeEach, beforeAll } from "vite
 import type * as GitStatusStore from "./git-status-store.js";
 import { join as joinKey } from "@cplieger/keyenc";
 
+import type { DocsTab } from "./route-path.js";
+
 type GitStatusStoreModule = typeof GitStatusStore;
 
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
@@ -43,8 +45,15 @@ function serveDocsPage(
           ? Promise.resolve(standing).then(decode)
           : Promise.resolve({ hooks: [] });
 }
+/** The docs row's route as the strip holds it: null while no row is open. A signal, since the real `subTabOf` is a
+ *  tracked read. */
+const docsRoute = await vi.hoisted(async () => {
+  const { signal } = await import("@cplieger/reactive");
+  return signal<DocsTab | null>(null);
+});
 // toggleDocsView runs onShow, which wires and loads the page; swallowing it leaves the SSE cases on an unopened page.
 vi.mock("./tabs.js", () => ({
+  subTabOf: (kind: string) => (kind === "docs" ? docsRoute.value : null),
   // Present-but-undefined for real-ESM linking.
   getActiveTabRoute: undefined,
   openRunTab: undefined,
@@ -68,7 +77,12 @@ vi.mock("./tabs.js", () => ({
   // navigate.js's `openSpec`, from this page's spec-group door.
   activateTab: undefined,
   setTabParent: undefined,
-  setDocsTab: vi.fn(),
+  // The real setter's no-op while no row is open.
+  setDocsTab: vi.fn((tab: DocsTab) => {
+    if (docsRoute.peek() !== null) {
+      docsRoute.value = tab;
+    }
+  }),
   toggleDocsView: vi.fn(() => Promise.resolve()),
 }));
 /** Every onBus registration since import: engine-read.ts registers its listener once, when the file loads. */
@@ -1297,5 +1311,35 @@ describe("grouped tabs render one section per group", () => {
     _renderActiveForTest();
     expect(panel("hooks").querySelector<HTMLElement>(".entry")).toBe(row);
     expect((row?.querySelector(".hook-toggle") as HTMLInputElement).checked).toBe(false);
+  });
+});
+
+describe("the docs page's sub-tab is its row's", () => {
+  function shown(): string[] {
+    return [...document.querySelectorAll<HTMLElement>("[data-docs-panel]")]
+      .filter((p) => !p.classList.contains("hidden"))
+      .map((p) => p.dataset["docsPanel"] ?? "");
+  }
+
+  afterEach(() => {
+    docsRoute.value = null;
+  });
+
+  it("a row born on Steering after one closed on Hooks shows Steering", async () => {
+    const { showDocsTab } = await import("./docs.js");
+    showDocsTab();
+    docsRoute.value = "steering";
+    document.querySelector<HTMLElement>('#docs-tab-bar [data-docs-tab="hooks"]')?.click();
+    expect(shown()).toEqual(["hooks"]);
+
+    docsRoute.value = null;
+    docsRoute.value = "steering";
+
+    expect(shown()).toEqual(["steering"]);
+    expect(
+      document
+        .querySelector('#docs-tab-bar [data-docs-tab="steering"]')
+        ?.classList.contains("active"),
+    ).toBe(true);
   });
 });
