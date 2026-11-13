@@ -350,7 +350,12 @@
 }
 
 @container fb-list (width < 30rem) or style(--fb-stack: 1) {
-  /* A rename replaces `.fb-name` with a field-height input, so that row stays one line. */
+  /* A rename replaces `.fb-name` with a field-height input, so that row stays one line, and
+     the metadata steps aside or its nowrap width squeezes the field to a few pixels. */
+  .fb-row:has(> .fb-name-edit) > .fb-meta {
+    display: none;
+  }
+
   .fb-row:has(> .fb-name ~ .fb-meta:not(:empty)) {
     --fb-name-lh: 1rem;
     --fb-meta-lh: 0.875rem;

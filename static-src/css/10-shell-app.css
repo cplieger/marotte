@@ -935,6 +935,8 @@ body.sidebar-resizing {
  * button: a clip there would cut its hit expander (61-mcp-tools.css). */
 .icon-swap {
   display: flex;
+  flex: 1;
+  align-self: stretch;
   align-items: center;
   justify-content: center;
   margin: calc(-1 * var(--sp-2));

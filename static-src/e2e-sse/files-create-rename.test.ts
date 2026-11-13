@@ -87,8 +87,8 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("file browser repeated 
       });
 
       async function openFolder(): Promise<Page> {
-        // The file browser needs no service worker, and WebKit's Playwright build drops a page
-        // whose service worker registers.
+        // The file browser needs no service worker, and WebKit's Playwright build on Linux closes
+        // the page on pushManager.getSubscription(), which boot calls once the worker is ready.
         const ctx = await browser.newContext({ serviceWorkers: "block" });
         const page = await ctx.newPage();
         page.setDefaultTimeout(STEP_TIMEOUT_MS);
