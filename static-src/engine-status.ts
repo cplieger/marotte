@@ -9,6 +9,7 @@ import { restartEngine } from "./actions/settings.js";
 import { decodeEngineStatus } from "./wire/decoders.gen.js";
 import type { EngineBusy, EngineStatus } from "./wire/types.gen.js";
 import { maybeEl } from "./dom.js";
+import { BUS_ENGINE_READY, emitBus } from "./bus.js";
 
 /** The last status the server reported; null until the first answer. */
 const engineStatus = signal<EngineStatus | null>(null);
@@ -288,13 +289,18 @@ function paint(s: EngineStatus | null): void {
   paintSettingsControl(s);
 }
 
-/** Paint `s` unless the status shown is newer: the GET and the event arrive in any order. */
+/** Paint `s` unless the status shown is newer: the GET and the event arrive in any order. One that brings the engine
+ *  to ready from another state, or from none shown, emits BUS_ENGINE_READY. */
 export function adoptEngineStatus(s: EngineStatus): void {
-  if (!isNewerStatus(s, engineStatus.peek())) {
+  const held = engineStatus.peek();
+  if (!isNewerStatus(s, held)) {
     return;
   }
   engineStatus.value = s;
   paint(s);
+  if (s.state === "ready" && held?.state !== "ready") {
+    emitBus(BUS_ENGINE_READY);
+  }
 }
 
 /** Counts the reconciles so far; a GET answer is adopted only in the count it was asked in. */

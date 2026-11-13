@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   explainDispatch: vi.fn<(args: Record<string, unknown>) => Promise<unknown>>(),
   confirm: vi.fn<(msg: string, label?: string) => Promise<boolean>>(),
   sseHandlers: new Map<string, SSEFn>(),
+  busHandlers: new Map<string, () => void>(),
 }));
 
 vi.mock("./api-client.js", () => ({ apiGet: mocks.apiGet }));
@@ -20,6 +21,11 @@ vi.mock("./bus.js", () => ({
     mocks.sseHandlers.set(type, fn);
     return () => mocks.sseHandlers.delete(type);
   },
+  onBus: (type: string, fn: () => void) => {
+    mocks.busHandlers.set(type, fn);
+    return () => mocks.busHandlers.delete(type);
+  },
+  BUS_ENGINE_READY: "engine:ready",
   // Present-but-inert so real-ESM linking succeeds; no case calls them.
   apiGetTyped: vi.fn(),
 }));
@@ -135,6 +141,72 @@ describe("native policy view", () => {
   it("populates the effect selector defaulting to Ask (conservative)", () => {
     initNativePolicyUI();
     expect(byId<HTMLSelectElement>("native-rule-effect").value).toBe("ask");
+  });
+
+  // A read the server refused while no engine was ready is asked again when the engine is back.
+  for (const [what, refused] of [
+    ["kiro-cli did not answer", { ...sampleView, available: false }],
+    ["whose read failed", null],
+  ] as const) {
+    it(`re-reads a policy ${what} when the engine is back, and not one that answered`, async () => {
+      mocks.apiGet.mockResolvedValue(refused);
+      initAndLoad();
+      await flush();
+      mocks.apiGet.mockClear();
+      mocks.apiGet.mockResolvedValue(sampleView);
+
+      mocks.busHandlers.get("engine:ready")?.();
+      await flush();
+      expect(mocks.apiGet).toHaveBeenCalledWith("/api/permissions", expect.anything());
+      expect(policyRows()).toHaveLength(3);
+
+      mocks.apiGet.mockClear();
+      mocks.busHandlers.get("engine:ready")?.();
+      await flush();
+      expect(mocks.apiGet, "a policy that answered").not.toHaveBeenCalled();
+    });
+  }
+
+  it("re-reads a refused policy only once the panel is on screen", async () => {
+    mocks.apiGet.mockResolvedValue(null);
+    initAndLoad();
+    await flush();
+    const list = byId<HTMLDivElement>("native-policy-list");
+    list.style.display = "none";
+    mocks.apiGet.mockClear();
+    mocks.apiGet.mockResolvedValue(sampleView);
+
+    mocks.busHandlers.get("engine:ready")?.();
+    await flush();
+    expect(mocks.apiGet, "a panel off screen reads on its next open").not.toHaveBeenCalled();
+
+    list.style.display = "";
+    mocks.busHandlers.get("engine:ready")?.();
+    await flush();
+    expect(mocks.apiGet, "the same panel on screen").toHaveBeenCalledTimes(1);
+  });
+
+  it("re-reads once more after the engine came back during a read", async () => {
+    let release = (): void => undefined;
+    mocks.apiGet.mockResolvedValue(sampleView);
+    mocks.apiGet.mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          release = () => {
+            r(null);
+          };
+        }),
+    );
+    initAndLoad();
+    mocks.busHandlers.get("engine:ready")?.();
+    mocks.busHandlers.get("engine:ready")?.();
+    await flush();
+    expect(mocks.apiGet, "no second read beside the one out").toHaveBeenCalledTimes(1);
+    release();
+    await flush();
+    await flush();
+    expect(mocks.apiGet, "one more read after it").toHaveBeenCalledTimes(2);
+    expect(policyRows()).toHaveLength(3);
   });
 
   it("refetches when a permissions_changed SSE arrives", async () => {

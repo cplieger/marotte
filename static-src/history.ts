@@ -16,6 +16,7 @@ import type { TabRunDotStatus } from "./tabs.js";
 import { pushRoute } from "./router.js";
 import type { HistoryTab } from "./route-path.js";
 import { onBus, BUS_RUNS_CHANGED } from "./bus.js";
+import { engineRead } from "./engine-read.js";
 import { reconcile } from "./reconcile.js";
 import { paintPlaceholder } from "./skeleton.js";
 import { creditFigure } from "./strings.js";
@@ -242,6 +243,7 @@ const ROW_RENDER_INFO: ToolRenderInfo = {
   diffSources: null,
   mcp: null,
   disclosed: null,
+  loaded: null,
   denial: null,
 };
 
@@ -453,6 +455,7 @@ class HistoryController {
     searchChats.cancel();
     this.abort?.abort();
     this.abort = null;
+    historyRead.reset();
     // A null verdict stops the effect re-deriving rows for a closed page; `load()` re-sets it.
     this.verdict.value = null;
     // reset(), not close(): close's clear would repaint, a fetch no reader needs.
@@ -543,9 +546,11 @@ class HistoryController {
             }
           };
         });
+    const settle = historyRead.begin();
     const d = await loadSessions.dispatch(undefined);
     skeleton?.cancel();
     if (signal.aborted) {
+      settle(null);
       return;
     }
     // No misleading empty state on failure: offer a retry. The held answer goes too, or the next tab-set, dock or
@@ -556,10 +561,12 @@ class HistoryController {
       if (this.query === "") {
         chats.replaceChildren(this.buildError());
       }
+      settle(false);
       return;
     }
     this.answered = true;
     this.verdict.value = d;
+    settle(d.sessions_state !== "unavailable" && d.runs_state !== "unavailable");
   }
 
   /** Only while no search is open: the search owns the pane then. */
@@ -964,10 +971,18 @@ export function teardownHistoryView(): void {
   historyCtrl.teardown();
 }
 
+function historyShowing(): boolean {
+  const view = maybeEl("history-view");
+  return view !== null && view.offsetParent !== null;
+}
+
+const historyRead = engineRead(() => {
+  void historyCtrl.load();
+}, historyShowing);
+
 // A run starting or finishing changes the Runs pane. Gated on the view being on screen.
 onBus(BUS_RUNS_CHANGED, () => {
-  const view = maybeEl("history-view");
-  if (view !== null && view.offsetParent !== null) {
+  if (historyShowing()) {
     void historyCtrl.load();
   }
 });

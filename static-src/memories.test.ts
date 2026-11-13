@@ -19,12 +19,17 @@ let confirmAnswer = true;
 const deleted: string[] = [];
 const refusedDeletes = new Set<string>();
 const updated: { id: string; edit: unknown }[] = [];
+/** Holds the list read until released, with the reply it was asked under. */
+let holdList: Promise<void> | null = null;
 
 vi.mock("./api-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ApiClient>()),
   apiGetTypedOrError: vi.fn(async (path: string, decode: (v: unknown) => unknown) => {
     const r =
       path === "/api/memory" ? listReply : path === "/api/memory/sync" ? syncReply : oneReply;
+    if (path === "/api/memory" && holdList !== null) {
+      await holdList;
+    }
     return r.ok ? { ...r, data: decode(r.data) } : r;
   }),
 }));
@@ -57,7 +62,7 @@ vi.mock("./actions/memory.js", async (importOriginal) => ({
 import { renderMemoriesPanel, setMemoryCountsListener, _resetMemoriesForTest } from "./memories.js";
 import { confirm } from "./confirm.js";
 import { apiGetTypedOrError } from "./api-client.js";
-import { dispatch } from "./bus.js";
+import { BUS_ENGINE_READY, dispatch, emitBus } from "./bus.js";
 import { confirmText } from "./__test-helpers__/confirm-text.js";
 
 function record(id: string, scope: string | null, title: string, updated = 1_700_000_000) {
@@ -112,6 +117,7 @@ function button(text: string): HTMLButtonElement {
 }
 
 beforeEach(() => {
+  holdList = null;
   _resetMemoriesForTest();
   document.body.replaceChildren();
   panel = document.createElement("div");
@@ -137,6 +143,68 @@ beforeEach(() => {
     choice: { enabled: false, account: false },
   });
   syncWrites.length = 0;
+});
+
+// A read the server refused while no engine was ready is asked again when the engine is back.
+describe("the engine's return", () => {
+  function reads(path: string): number {
+    return vi.mocked(apiGetTypedOrError).mock.calls.filter((c) => c[0] === path).length;
+  }
+
+  it("re-asks a refused list and a refused sync state while the tab is on screen", async () => {
+    const answered = listReply;
+    const answeredSync = syncReply;
+    listReply = { ok: false, status: 502, data: null, error: "engine not ready" };
+    syncReply = { ok: false, status: 502, data: null, error: "engine not ready" };
+    await mount();
+    expect(panel.textContent).toContain("Couldn't load memories.");
+    listReply = answered;
+    syncReply = answeredSync;
+    vi.mocked(apiGetTypedOrError).mockClear();
+
+    emitBus(BUS_ENGINE_READY);
+    await settle();
+
+    expect(reads("/api/memory")).toBe(1);
+    expect(reads("/api/memory/sync")).toBe(1);
+    expect(titlesIn("repo:org/one")).toEqual(["Newer", "Older"]);
+    vi.mocked(apiGetTypedOrError).mockClear();
+    emitBus(BUS_ENGINE_READY);
+    await settle();
+    expect(vi.mocked(apiGetTypedOrError), "reads that answered").not.toHaveBeenCalled();
+  });
+
+  it("reads the list once more after the engine came back during a refused read", async () => {
+    const answered = listReply;
+    listReply = { ok: false, status: 502, data: null, error: "engine not ready" };
+    let release = (): void => undefined;
+    holdList = new Promise((r) => {
+      release = r;
+    });
+    await mount();
+    emitBus(BUS_ENGINE_READY);
+    emitBus(BUS_ENGINE_READY);
+    await settle();
+    expect(reads("/api/memory"), "no second read beside the one out").toBe(1);
+    holdList = null;
+    listReply = answered;
+    release();
+    await settle();
+    expect(reads("/api/memory"), "one more read after it").toBe(2);
+    expect(titlesIn("repo:org/one")).toEqual(["Newer", "Older"]);
+  });
+
+  it("asks nothing while the tab is off screen", async () => {
+    listReply = { ok: false, status: 502, data: null, error: "engine not ready" };
+    await mount();
+    panel.classList.add("hidden");
+    vi.mocked(apiGetTypedOrError).mockClear();
+
+    emitBus(BUS_ENGINE_READY);
+    await settle();
+
+    expect(vi.mocked(apiGetTypedOrError)).not.toHaveBeenCalled();
+  });
 });
 
 describe("the list", () => {

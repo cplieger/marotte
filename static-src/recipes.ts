@@ -4,6 +4,7 @@
 import { el } from "@cplieger/reactive";
 import { join as joinKey } from "@cplieger/keyenc";
 import { onBus, onSSE, BUS_CATALOG_MODELS, BUS_RUNS_CHANGED } from "./bus.js";
+import { engineRead, type EngineRead } from "./engine-read.js";
 import { reconcile } from "./reconcile.js";
 import { loadRecipes, loadRuns, launchRun, cancelRun } from "./actions/runs.js";
 import {
@@ -49,6 +50,9 @@ let recipes: Recipe[] = [];
 /** Whether the latest recipe fetch answered. A rule is called orphaned only against a current
  *  list: a failed refetch keeps the old rows on screen, but absence from them proves nothing. */
 let recipesCurrent = false;
+
+let recipesRead: EngineRead | null = null;
+let runsRead: EngineRead | null = null;
 
 /** MODULE state, not a render parameter, and that distinction is load-bearing: this panel repaints
  *  itself on its own schedule (the run poll, the rules fetch, the settings SSE), and a parameter
@@ -143,6 +147,12 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
         void refreshRecipes();
       }
     });
+    recipesRead = engineRead(() => {
+      void refreshRecipes();
+    }, isShowing);
+    runsRead = engineRead(() => {
+      void refreshRuns();
+    }, isShowing);
     window.matchMedia(COMPACT_QUERY).addEventListener("change", paint);
     // An open Run or rule form holds the catalog it opened with, which can be empty when it
     // opened before the boot fetch landed.
@@ -164,12 +174,14 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
     paint();
   }
   void (async () => {
+    const settle = recipesRead?.begin();
     const [r] = await Promise.all([loadRecipes.dispatch(undefined), refreshRuns()]);
     recipesCurrent = r !== null;
     if (r !== null) {
       recipes = r.recipes;
     }
     paint();
+    settle?.(r !== null);
     // Decoration, deliberately off the critical path: the workflow list must still render when the
     // launch-rule endpoint is unavailable.
     void refreshRules();
@@ -178,12 +190,14 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
 }
 
 async function refreshRecipes(): Promise<void> {
+  const settle = recipesRead?.begin();
   const r = await loadRecipes.dispatch(undefined);
   recipesCurrent = r !== null;
   if (r !== null) {
     recipes = r.recipes;
   }
   paint();
+  settle?.(r !== null);
 }
 
 function counts(): RecipeCounts {
@@ -622,8 +636,10 @@ function isShowing(): boolean {
 }
 
 async function refreshRuns(): Promise<void> {
+  const settle = runsRead?.begin();
   const d = await loadRuns.dispatch(undefined);
   if (d === null) {
+    settle?.(false);
     return;
   }
   const next = new Map<string, WorkflowRun>();
@@ -636,6 +652,7 @@ async function refreshRuns(): Promise<void> {
   }
   liveRuns = next;
   paint();
+  settle?.(true);
 }
 
 /** What the list reconciles: a recipe's row, and — for the one recipe whose input form is open —

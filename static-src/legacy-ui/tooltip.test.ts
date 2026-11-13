@@ -991,3 +991,95 @@ describe("tooltips for touch", () => {
     expect([tip(), b.getAttribute("aria-describedby")]).toEqual([null, "help-1 help-2"]);
   });
 });
+
+describe("a shown tip follows its trigger's current label", () => {
+  // A MutationObserver delivers on a microtask, which fake timers leave alone.
+  const delivered = (): Promise<void> => Promise.resolve();
+
+  it("reads the new text when the face swaps under a visible tip", async () => {
+    initTooltips();
+    const a = anchor("Dictate");
+    pointerOver(a);
+    vi.advanceTimersByTime(500);
+    a.setAttribute("data-uip-tooltip", "Stop dictation");
+    await delivered();
+    expect([...document.querySelectorAll(".uip-tooltip")].map((t) => t.textContent)).toEqual([
+      "Stop dictation",
+    ]);
+    expect(a.getAttribute("aria-describedby")).toBe(liveTip()?.id);
+  });
+
+  it("stays centred over its trigger when the new text is wider", async () => {
+    stubViewport(2000, 2000);
+    initTooltips();
+    const a = anchor("Send");
+    anchorRect(a, 300, 200, 40, 40);
+    pointerOver(a);
+    vi.advanceTimersByTime(500);
+    a.setAttribute("data-uip-tooltip", "Cancel the running turn");
+    await delivered();
+    const t = liveTip()!;
+    expect(parseFloat(t.style.left) + t.offsetWidth / 2).toBe(320);
+  });
+
+  it("shows the text the trigger carries when the delay ends, not the one it had on hover", () => {
+    initTooltips();
+    const a = anchor("Send");
+    pointerOver(a);
+    vi.advanceTimersByTime(200);
+    a.setAttribute("data-uip-tooltip", "Cancel");
+    vi.advanceTimersByTime(300);
+    expect(liveTip()?.textContent).toBe("Cancel");
+  });
+
+  it("shows nothing when the trigger lost its text during the delay", () => {
+    initTooltips();
+    const a = anchor("Send");
+    pointerOver(a);
+    vi.advanceTimersByTime(200);
+    a.removeAttribute("data-uip-tooltip");
+    vi.advanceTimersByTime(300);
+    expect(tip()).toBeNull();
+  });
+
+  it.each([
+    ["emptied", (a: HTMLElement) => a.setAttribute("data-uip-tooltip", "")],
+    ["removed", (a: HTMLElement) => a.removeAttribute("data-uip-tooltip")],
+  ])("hides a visible tip whose text is %s", async (_, change) => {
+    initTooltips();
+    const a = anchor("Dictate");
+    pointerOver(a);
+    vi.advanceTimersByTime(500);
+    change(a);
+    await delivered();
+    expect(liveTip()).toBeNull();
+    expect(a.hasAttribute("aria-describedby")).toBe(false);
+  });
+
+  it("follows a referenced description's text", async () => {
+    initTooltips();
+    const desc = document.createElement("span");
+    desc.id = "follow-ref";
+    desc.textContent = "Starts a full check.";
+    const b = document.createElement("button");
+    b.setAttribute("data-uip-tooltip-ref", desc.id);
+    document.body.append(desc, b);
+    b.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, pointerType: "mouse" }));
+    vi.advanceTimersByTime(500);
+    desc.textContent = "Checking\u2026";
+    await delivered();
+    expect(liveTip()?.textContent).toBe("Checking\u2026");
+  });
+
+  it("leaves the label alone once the tip is gone", async () => {
+    initTooltips();
+    const a = anchor("Dictate");
+    pointerOver(a);
+    vi.advanceTimersByTime(500);
+    pointerOut(a);
+    vi.runAllTimers();
+    a.setAttribute("data-uip-tooltip", "Stop dictation");
+    await delivered();
+    expect(tip()).toBeNull();
+  });
+});

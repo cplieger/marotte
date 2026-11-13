@@ -17,15 +17,18 @@ const installed: string[] = [];
 const removed: string[] = [];
 let listCalls = 0;
 let hold: Promise<void> | null = null;
+/** Replies taken in call order, ahead of listReply. */
+const queued: Reply[] = [];
 
 vi.mock("./api-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ApiClient>()),
   apiGetTypedOrError: vi.fn(async (_path: string, decode: (v: unknown) => unknown) => {
     listCalls++;
+    const reply = queued.shift() ?? listReply;
     if (hold !== null) {
       await hold;
     }
-    return listReply.ok ? { ...listReply, data: decode(listReply.data) } : listReply;
+    return reply.ok ? { ...reply, data: decode(reply.data) } : reply;
   }),
   apiGetTyped: vi.fn(async (_path: string, decode: (v: unknown) => unknown) =>
     decode(serversReply),
@@ -60,7 +63,7 @@ import {
 } from "./powers.js";
 import type { PowerRow } from "./powers.js";
 import { confirm } from "./confirm.js";
-import { dispatch } from "./bus.js";
+import { BUS_ENGINE_READY, dispatch, emitBus } from "./bus.js";
 
 function row(name: string, over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -128,6 +131,7 @@ beforeEach(() => {
   removed.length = 0;
   listCalls = 0;
   hold = null;
+  queued.length = 0;
   confirmAnswer = true;
   vi.mocked(confirm).mockClear();
   serversReply = { servers: ["postman"], known: true };
@@ -296,6 +300,82 @@ describe("the list", () => {
     dispatch({ type: "powers_changed", chat_id: "" });
     await settle();
     expect(names()).toEqual(["fresh"]);
+  });
+});
+
+// A read the server refused while no engine was ready is asked again when the engine is back.
+describe("the engine's return", () => {
+  const back = ok({ catalog: "ready", installed: "ready", powers: [row("back")] });
+
+  it("re-asks a list whose read failed", async () => {
+    listReply = { ok: false, status: 502, data: null, error: "engine not ready" };
+    await mount();
+    listReply = back;
+    emitBus(BUS_ENGINE_READY);
+    await settle();
+    expect(names()).toEqual(["back"]);
+  });
+
+  it("re-asks a list whose catalog or installed half was unavailable", async () => {
+    for (const half of ["catalog", "installed"]) {
+      listReply = ok({ catalog: "ready", installed: "ready", [half]: "unavailable", powers: [] });
+      await mount();
+      listReply = back;
+      emitBus(BUS_ENGINE_READY);
+      await settle();
+      expect(names(), half).toEqual(["back"]);
+    }
+  });
+
+  it.each([
+    {
+      order: "a refused read",
+      first: { ok: false, status: 502, data: null, error: "engine not ready" },
+      readies: 1,
+    },
+    {
+      order: "an answering read",
+      first: ok({ catalog: "ready", installed: "ready", powers: [] }),
+      readies: 1,
+    },
+    {
+      order: "a refused read, twice",
+      first: { ok: false, status: 502, data: null, error: "x" },
+      readies: 2,
+    },
+  ])("reads once more after $order the engine came back during", async ({ first, readies }) => {
+    queued.push(first);
+    let release = (): void => undefined;
+    hold = new Promise((r) => {
+      release = r;
+    });
+    await mount();
+    for (let i = 0; i < readies; i++) {
+      emitBus(BUS_ENGINE_READY);
+    }
+    await settle();
+    expect(listCalls, "no second read beside the one out").toBe(1);
+    listReply = back;
+    release();
+    await settle();
+    expect(listCalls, "one more read after it").toBe(2);
+    expect(names()).toEqual(["back"]);
+  });
+
+  it("asks nothing for a list that answered, or while the tab is off screen", async () => {
+    await mount();
+    const answered = listCalls;
+    emitBus(BUS_ENGINE_READY);
+    await settle();
+    expect(listCalls, "a list that answered").toBe(answered);
+
+    listReply = { ok: false, status: 502, data: null, error: "engine not ready" };
+    await mount();
+    panel.classList.add("hidden");
+    const hidden = listCalls;
+    emitBus(BUS_ENGINE_READY);
+    await settle();
+    expect(listCalls, "off screen").toBe(hidden);
   });
 });
 

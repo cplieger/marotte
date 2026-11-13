@@ -162,6 +162,49 @@ describe("popup: light dismiss", () => {
     expect(pop.isOpen).toBe(false);
   });
 
+  describe("opened by a contextmenu during a press", () => {
+    // macOS Safari: a Control-click's press makes `contextmenu`, and its release still sends a
+    // pointer click (`detail` 1), which every other engine makes `auxclick` or nothing.
+    function openFromPress(): ReturnType<typeof createPopup> {
+      const { panel } = fixture();
+      const pop = createPopup(panel);
+      const tab = document.createElement("button");
+      tab.addEventListener("contextmenu", () => {
+        pop.show();
+      });
+      document.body.append(tab);
+      tab.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, buttons: 1 }));
+      tab.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, buttons: 1, ctrlKey: true }),
+      );
+      tab.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+      tab.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1, ctrlKey: true }));
+      return pop;
+    }
+
+    it("stays open through the click the press's release sends", () => {
+      expect(openFromPress().isOpen).toBe(true);
+    });
+
+    it("closes on the next press's click outside", () => {
+      const pop = openFromPress();
+      document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, buttons: 1 }));
+      document.body.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+      expect(pop.isOpen).toBe(false);
+    });
+
+    it("closes on a keyboard click outside, which no press precedes", () => {
+      const { panel } = fixture();
+      const pop = createPopup(panel);
+      document.body.addEventListener("contextmenu", () => {
+        pop.show();
+      });
+      document.body.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+      clickOn(document.body);
+      expect(pop.isOpen).toBe(false);
+    });
+  });
+
   it("closeOnOutside: false leaves outside clicks alone", () => {
     const { panel } = fixture();
     const pop = createPopup(panel, { closeOnOutside: false });

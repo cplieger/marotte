@@ -7,12 +7,12 @@ import type { CatalogPhase } from "./picker.js";
 import type { CatalogState } from "./wire/types.gen.js";
 
 /** Must exceed the server's 45s budget (configTemplateTimeout,
- *  internal/agent/config_template.go): a first call waits for the agent engine
- *  to start, which unpacks the KAS runtime. Move the two together. */
+ *  internal/agent/config_template.go): a ready engine can take that long to
+ *  answer; with none ready the read answers at once. Move the two together. */
 export const CATALOG_REQUEST_TIMEOUT_MS = 50_000;
 
-// The total budget is the bound that binds: about three ~50s attempts fit in
-// 180s. MAX_ATTEMPTS only guards a fast failure (a 4xx) multiplying requests.
+// A read with no engine ready answers at once, so MAX_ATTEMPTS bounds that loop
+// (about 90s; the engine's return re-reads); the budget bounds a slow ready engine.
 const RETRY_INTERVAL_MS = 2_000;
 const RETRY_BACKOFF = { factor: 2, maxMs: 30_000 };
 const MAX_ATTEMPTS = 6;
@@ -52,6 +52,15 @@ interface CatalogRefresh<T extends CatalogAnswer> {
 /** The single refresh slot, held for the life of one bounded loop. */
 let inFlight: AbortController | undefined;
 
+/** True from a read that answered nothing usable until one that did. */
+let refused = false;
+
+/** Whether the newest catalog read answered nothing usable (a failure or `unavailable`), so
+ *  the engine's return should ask again; false before the first answer. */
+export function catalogRefused(): boolean {
+  return refused;
+}
+
 /** One read, then a bounded retry on the one verdict that can converge; settles
  *  `unavailable` when the budget is spent. `reset` restarts a running loop (a
  *  login may have fixed the read); every other caller declines while one runs. */
@@ -85,7 +94,14 @@ async function runRefresh<T extends CatalogAnswer>(
   deps: CatalogRefresh<T>,
   signal: AbortSignal,
 ): Promise<void> {
-  const first = await deps.read(signal);
+  const read = async (s: AbortSignal): Promise<T | null> => {
+    const d = await deps.read(s);
+    if (!s.aborted) {
+      refused = d === null || readVerdict(d.catalog) === "retry";
+    }
+    return d;
+  };
+  const first = await read(signal);
   if (signal.aborted) {
     return;
   }
@@ -93,7 +109,7 @@ async function runRefresh<T extends CatalogAnswer>(
     accept(deps, first);
     return;
   }
-  const outcome = await pollUntil(deps.read, {
+  const outcome = await pollUntil(read, {
     intervalMs: RETRY_INTERVAL_MS,
     // Checked before onPoll, so a terminal result is applied from outcome.result below.
     until: (d) => readVerdict(d.catalog) === "usable",

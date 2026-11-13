@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -443,4 +445,141 @@ func compactionSends(t *testing.T, cs *testChatStore, chatID marotte.ChatID) (ru
 		}
 	}
 	return running, false
+}
+
+// A steer-facts read the list has already passed (an older sequence, read before lc.mu) changes nothing: its unsent
+// count of zero would let the taker drop the unread entry whose steer is still unsent. Sequence 0 is the process's
+// first facts state, so it is older than 1.
+func TestRunFactsChanged_AnOlderReadKeepsTheUnsentCount(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		newer, older uint64
+	}{
+		{name: "two then one", newer: 2, older: 1},
+		{name: "one then zero", newer: 1, older: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, cs, br := newTestHub()
+			t.Cleanup(func() { shutdownHub(t, h) })
+			seedChat(t, cs, "c1")
+			h.insertBridgeNow("c1", testBridge(br, bridgeReady))
+			lc, ok := h.coord.turns.lookup("c1")
+			if !ok {
+				t.Fatal("setup: the chat has no lifecycle")
+			}
+			var (
+				mu    sync.Mutex
+				ends  int
+				keys  []string
+				facts uint64
+			)
+			h.coord.steerFacts = func(marotte.ChatID, bool) (int, []string, uint64) {
+				mu.Lock()
+				defer mu.Unlock()
+				return ends, keys, facts
+			}
+			read := func(n int, unsent []string, seq uint64) {
+				mu.Lock()
+				ends, keys, facts = n, unsent, seq
+				mu.Unlock()
+				h.coord.runFactsChanged("c1")
+			}
+
+			read(0, []string{"steer-a"}, tc.newer)
+			read(1, nil, tc.older)
+
+			lc.mu.Lock()
+			got := lc.orderFactsLocked().unsent()
+			lc.mu.Unlock()
+			if got != 1 {
+				t.Errorf("unsent after an older read = %d, want 1: the newer read's steer is still unsent", got)
+			}
+		})
+	}
+}
+
+// A close whose death bits differ from the list's reads the steer facts again with the list's bits, so the unsent
+// count is the one those bits yield, not the previous read's.
+func TestCloseEndsResolved_AReadWithOtherDeathBitsIsMadeAgain(t *testing.T) {
+	h, cs, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	seedChat(t, cs, "c1")
+	h.insertBridgeNow("c1", testBridge(br, bridgeReady))
+	lc, ok := h.coord.turns.lookup("c1")
+	if !ok {
+		t.Fatal("setup: the chat has no lifecycle")
+	}
+	var reads atomic.Int32
+	h.coord.steerFacts = func(_ marotte.ChatID, drained bool) (int, []string, uint64) {
+		reads.Add(1)
+		if drained {
+			return 0, nil, 1
+		}
+		return 0, []string{"steer-a"}, 1
+	}
+
+	h.coord.closeEndsResolved(lc, "no-such-turn", command.EndFacts{Death: true})
+
+	lc.mu.Lock()
+	got := lc.orderFactsLocked().unsent()
+	lc.mu.Unlock()
+	if got != 1 {
+		t.Errorf("unsent after a close with other death bits = %d, want 1: the list is undrained and steer-a is unsent", got)
+	}
+	if n := reads.Load(); n != 2 {
+		t.Errorf("steer facts reads = %d, want 2: one with the close's bits, one with the list's", n)
+	}
+}
+
+// However often the list's drained bit moves while the steer facts are read unlocked, the read that finally matches
+// it sets the unsent count, so the unread entry for a steer still unsent survives the taker.
+func TestSteerFacts_EveryRereadEndsOnAnAppliedRead(t *testing.T) {
+	for _, path := range []struct {
+		name string
+		run  func(h *Runtime, lc *chatLifecycle)
+	}{
+		{name: "facts changed", run: func(h *Runtime, _ *chatLifecycle) { h.coord.runFactsChanged("c1") }},
+		{name: "close", run: func(h *Runtime, lc *chatLifecycle) {
+			h.coord.closeEndsResolved(lc, "no-such-turn", command.EndFacts{Death: true})
+		}},
+	} {
+		for _, rereads := range []int{1, 2, 5} {
+			t.Run(fmt.Sprintf("%s %d rereads", path.name, rereads), func(t *testing.T) {
+				h, cs, br := newTestHub()
+				t.Cleanup(func() { shutdownHub(t, h) })
+				seedChat(t, cs, "c1")
+				h.insertBridgeNow("c1", testBridge(br, bridgeReady))
+				lc, ok := h.coord.turns.lookup("c1")
+				if !ok {
+					t.Fatal("setup: the chat has no lifecycle")
+				}
+				reads := 0
+				h.coord.steerFacts = func(_ marotte.ChatID, drained bool) (int, []string, uint64) {
+					reads++
+					if reads <= rereads {
+						lc.mu.Lock()
+						lc.run.drained = !drained
+						lc.mu.Unlock()
+					}
+					return 0, slices.Repeat([]string{"steer"}, reads), uint64(reads)
+				}
+
+				path.run(h, lc)
+
+				lc.mu.Lock()
+				defer lc.mu.Unlock()
+				f := lc.orderFactsLocked()
+				if got, want := f.unsent(), rereads+1; got != want {
+					t.Errorf("unsent = %d, want %d: the count of the read that matched the list's bits", got, want)
+				}
+				if reads != rereads+1 {
+					t.Errorf("steer facts reads = %d, want %d: one per move of the list's bits, then the applied one", reads, rereads+1)
+				}
+				lc.run.nextPending(&f)
+				if !slices.ContainsFunc(lc.run.entries, func(e *runEntry) bool { return e.kind == marotte.RunKindUnread }) {
+					t.Error("no unread entry after the taker ran: the steers are still unsent")
+				}
+			})
+		}
+	}
 }

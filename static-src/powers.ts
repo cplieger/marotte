@@ -20,6 +20,7 @@ import { ICON_TRASH } from "./icons.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { installPower, uninstallPower } from "./actions/powers.js";
 import { onSSE } from "./bus.js";
+import { engineRead, type EngineRead } from "./engine-read.js";
 
 export interface PowerRow {
   readonly name: string;
@@ -145,6 +146,7 @@ let generation = 0;
 /** True from a fetch's start until the newest one answers. */
 let requestPending = false;
 let wired = false;
+let listRead: EngineRead | null = null;
 
 export function setPowerCountsListener(fn: (c: PowerCounts) => void): void {
   onCounts = fn;
@@ -180,6 +182,9 @@ export function renderPowersPanel(panel: HTMLElement, filter = ""): void {
         void refresh();
       }
     });
+    listRead = engineRead(() => {
+      void refresh();
+    }, isShowing);
   }
   const next = filter.trim().toLowerCase();
   const filterMoved = next !== filterText;
@@ -193,6 +198,7 @@ export function renderPowersPanel(panel: HTMLElement, filter = ""): void {
 async function refresh(): Promise<void> {
   const gen = ++generation;
   requestPending = true;
+  const settle = listRead?.begin();
   const res = await apiGetTypedOrError("/api/powers", decodePowerList);
   if (gen !== generation) {
     return;
@@ -210,6 +216,7 @@ async function refresh(): Promise<void> {
     state = "failed";
   }
   paint();
+  settle?.(state === "ready" && catalogState !== "unavailable" && installedState !== "unavailable");
 }
 
 interface Section {

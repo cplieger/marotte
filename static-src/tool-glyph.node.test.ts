@@ -18,8 +18,14 @@ function rows(): GoldenRow[] {
   return JSON.parse(readFileSync(new URL(GOLDEN, import.meta.url), "utf8")) as GoldenRow[];
 }
 
-/** The glyph a call should draw, from the rulings: a kind's own glyph, a workflow action's badge, or the docs library. */
-type Want = { kind: ToolKind } | { workflow: WorkflowBadge } | { library: true } | { mcp: string };
+/** The glyph a call should draw, from the rulings: a kind's own glyph, a workflow action's badge, the docs library, or what a load loaded. */
+type Want =
+  | { kind: ToolKind }
+  | { workflow: WorkflowBadge }
+  | { library: true }
+  | { mcp: string }
+  // A load draws what it loaded: an MCP tool's plug, a built-in's wrench.
+  | { load: "mcp" | "tool" };
 
 function wantGlyph(w: Want): string {
   if ("workflow" in w) {
@@ -28,12 +34,15 @@ function wantGlyph(w: Want): string {
   if ("library" in w) {
     return ICON_TAB_DOCS;
   }
+  if ("load" in w) {
+    return toolIcon({ kind: w.load === "mcp" ? "mcp" : "other", toolName: "" });
+  }
   return toolIcon({ kind: "mcp" in w ? "mcp" : w.kind, toolName: "" });
 }
 
 const WANT: Record<string, Want> = {
   "read_file (wire)": { kind: "read" },
-  "tool_load (wire)": { kind: "search" },
+  "tool_load (wire)": { load: "mcp" },
   "MCP via tool_call (wire)": { mcp: "capture" },
   "update_workflow via tool_call": { workflow: "update" },
   "update_workflow direct": { workflow: "update" },
@@ -48,7 +57,7 @@ const WANT: Record<string, Want> = {
   "mailbox fetch_inbox via tool_call": { mcp: "mailbox" },
   "unloaded built-in via tool_call": { workflow: "inspect" },
   "unloaded MCP tool via tool_call": { mcp: "mailbox" },
-  tool_load: { kind: "search" },
+  tool_load: { load: "tool" },
   "disclose_context skill": { library: true },
   "disclose_context steering": { library: true },
   read_file: { kind: "read" },

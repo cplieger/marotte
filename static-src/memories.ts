@@ -13,6 +13,7 @@ import { deleteMemory, setMemorySync, updateMemory } from "./actions/memory.js";
 import type { MemoryEdit } from "./actions/memory.js";
 import { forceReflow } from "./dom.js";
 import { onSSE } from "./bus.js";
+import { engineRead, type EngineRead } from "./engine-read.js";
 
 interface MemoryRecord {
   readonly id: string;
@@ -153,6 +154,8 @@ let onCounts: ((c: MemoryCounts) => void) | null = null;
 let generation = 0;
 let wired = false;
 let cloud: MemorySync | "loading" | "failed" = "loading";
+let listRead: EngineRead | null = null;
+let cloudRead: EngineRead | null = null;
 let cloudGeneration = 0;
 
 export function setMemoryCountsListener(fn: (c: MemoryCounts) => void): void {
@@ -173,6 +176,12 @@ export function renderMemoriesPanel(panel: HTMLElement, filter = ""): void {
   if (!wired) {
     wired = true;
     onSSE("memories_changed", onMemoriesChanged);
+    listRead = engineRead(() => {
+      void refresh();
+    }, isShowing);
+    cloudRead = engineRead(() => {
+      void refreshCloud();
+    }, isShowing);
     onSSE("memory_sync_changed", () => {
       if (isShowing()) {
         void refreshCloud();
@@ -191,12 +200,14 @@ export function renderMemoriesPanel(panel: HTMLElement, filter = ""): void {
 
 async function refreshCloud(): Promise<void> {
   const gen = ++cloudGeneration;
+  const settle = cloudRead?.begin();
   const res = await apiGetTypedOrError("/api/memory/sync", decodeMemorySync);
   if (gen !== cloudGeneration) {
     return;
   }
   cloud = res.ok && res.data !== null ? res.data : "failed";
   syncHead();
+  settle?.(cloud !== "failed");
 }
 
 function isShowing(): boolean {
@@ -221,6 +232,7 @@ function onMemoriesChanged(): void {
 
 async function refresh(): Promise<void> {
   const gen = ++generation;
+  const settle = listRead?.begin();
   const res = await apiGetTypedOrError("/api/memory", decodeMemoryList);
   if (gen !== generation) {
     return;
@@ -245,6 +257,7 @@ async function refresh(): Promise<void> {
     state = { kind: "failed" };
   }
   paint();
+  settle?.(state.kind !== "failed");
 }
 
 function notEnabledText(body: unknown, error: string): string {

@@ -1,7 +1,7 @@
 /**
  * tooltip.ts — One delegated tooltip controller on `document` for every
- * `data-uip-tooltip` trigger, with native `title` timing by default. A scroll
- * hides a tip rather than moving it. `-anchor` names the ink a tip points at,
+ * `data-uip-tooltip` trigger, with native `title` timing by default. A shown
+ * tip follows its trigger's current text. A scroll hides a tip rather than moving it. `-anchor` names the ink a tip points at,
  * `-ref` takes the text from a description in the page, and `-toggle` pins it
  * on a tap, since a touch pointer never starts a hover tip.
  * @module
@@ -48,6 +48,8 @@ type TooltipState =
       readonly pinned: boolean;
       /** The tip's id is in the trigger's aria-describedby (no `-ref`). */
       readonly described: boolean;
+      /** Watches the trigger's text while the tip shows it. */
+      readonly watcher: MutationObserver;
     }
   | { readonly kind: "fading"; readonly tip: HTMLElement };
 
@@ -192,15 +194,16 @@ class TooltipController {
     return text === "" ? null : text;
   }
 
-  private onEnter(e: Event): void {
-    const anchor = this.closestAnchor(e.target);
-    if (anchor === null) {
-      return;
-    }
-    const text = anchor.hasAttribute(this.refAttribute)
+  /** The trigger's current text: its reference's when it has one, else its attribute's; "" for none. */
+  private textOf(anchor: HTMLElement): string {
+    return anchor.hasAttribute(this.refAttribute)
       ? (this.refText(anchor) ?? "")
       : (anchor.getAttribute(this.attribute) ?? "");
-    if (text === "") {
+  }
+
+  private onEnter(e: Event): void {
+    const anchor = this.closestAnchor(e.target);
+    if (anchor === null || this.textOf(anchor) === "") {
       return;
     }
     if (
@@ -211,7 +214,13 @@ class TooltipController {
     }
     this.teardown();
     const delay = Date.now() < this.warmUntil ? this.delayWarm : this.delayCold;
+    // The text is read when the delay ends: a face can swap while the pointer rests on it.
     const timer = setTimeout(() => {
+      const text = this.textOf(anchor);
+      if (text === "") {
+        this.state = { kind: "idle" };
+        return;
+      }
       this.show(anchor, text);
     }, delay);
     this.state = { kind: "pending", anchor, timer };
@@ -268,9 +277,45 @@ class TooltipController {
 
     this.position(anchor, tip);
 
-    this.state = { kind: "visible", anchor, tip, pinned, described };
+    const watcher = new MutationObserver(() => {
+      this.follow(anchor, tip, watcher);
+    });
+    this.watch(anchor, watcher);
+    this.state = { kind: "visible", anchor, tip, pinned, described, watcher };
     // Keep the group warm long enough to cover a cold-delay hover of a peer.
     this.warmUntil = Date.now() + this.cooldown + this.delayCold;
+  }
+
+  /** Observe what the trigger's text is read from: its two attributes, and the
+   *  referenced element's content. */
+  private watch(anchor: HTMLElement, watcher: MutationObserver): void {
+    watcher.observe(anchor, { attributeFilter: [this.attribute, this.refAttribute] });
+    const id = anchor.getAttribute(this.refAttribute);
+    const root = anchor.getRootNode();
+    const target =
+      id !== null && (root instanceof Document || root instanceof ShadowRoot)
+        ? root.getElementById(id)
+        : null;
+    if (target !== null) {
+      watcher.observe(target, { childList: true, characterData: true, subtree: true });
+    }
+  }
+
+  /** Re-render a visible tip from its trigger's current text, or hide it when the text is gone. */
+  private follow(anchor: HTMLElement, tip: HTMLElement, watcher: MutationObserver): void {
+    if (this.state.kind !== "visible" || this.state.tip !== tip) {
+      return;
+    }
+    const text = this.textOf(anchor);
+    if (text === "") {
+      this.hide();
+      return;
+    }
+    // Re-armed every time: a changed `-ref` names a different element to watch.
+    watcher.disconnect();
+    this.watch(anchor, watcher);
+    tip.replaceChildren(...renderLines(text));
+    this.position(anchor, tip);
   }
 
   private position(anchor: HTMLElement, tip: HTMLElement): void {
@@ -331,7 +376,8 @@ class TooltipController {
     if (this.state.kind !== "visible") {
       return;
     }
-    const { anchor, tip, described } = this.state;
+    const { anchor, tip, described, watcher } = this.state;
+    watcher.disconnect();
     if (described) {
       removeDescribedBy(anchor, tip.id);
     }
@@ -355,6 +401,7 @@ class TooltipController {
         clearTimeout(this.state.timer);
         break;
       case "visible":
+        this.state.watcher.disconnect();
         if (this.state.described) {
           removeDescribedBy(this.state.anchor, this.state.tip.id);
         }

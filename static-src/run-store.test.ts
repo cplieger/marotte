@@ -1682,6 +1682,67 @@ describe("a run's log orders its turns by the run's own ordinal", () => {
   });
 });
 
+describe("rereadUnansweredRuns re-reads each held run whose newest read missed", () => {
+  beforeEach(() => {
+    holdTrees = false;
+  });
+  const unregisters: (() => void)[] = [];
+
+  function hold(...ids: string[]): () => void {
+    const un = store.registerRunStateDemand((id) => ids.includes(id), "tree");
+    unregisters.push(un);
+    return un;
+  }
+
+  afterEach(async () => {
+    await settle();
+    for (const un of unregisters.splice(0)) {
+      un();
+    }
+    for (const id of ["wf_1", "wf_2", "wf_3"]) {
+      forget(id);
+    }
+  });
+
+  it("re-reads a run whose read failed, and not one that answered or is gone", async () => {
+    hold("wf_1", "wf_2", "wf_3");
+    failStatuses = [502];
+    store.invalidateRun("wf_1");
+    await settle();
+    responses = [{ workflowId: "wf_2", status: "running" }];
+    store.invalidateRun("wf_2");
+    await settle();
+    failStatuses = [404];
+    store.invalidateRun("wf_3");
+    await settle();
+    fetches.length = 0;
+
+    responses = [{ workflowId: "wf_1", status: "running" }];
+    store.rereadUnansweredRuns();
+    await settle();
+    expect(fetches).toEqual(["/api/runs/wf_1"]);
+    expect(store.runState("wf_1")?.status).toBe("running");
+
+    fetches.length = 0;
+    store.rereadUnansweredRuns();
+    await settle();
+    expect(fetches, "a run that answered since").toEqual([]);
+  });
+
+  it("re-reads no run nobody holds any more", async () => {
+    const un = hold("wf_1");
+    failStatuses = [502];
+    store.invalidateRun("wf_1");
+    await settle();
+    un();
+    fetches.length = 0;
+
+    store.rereadUnansweredRuns();
+    await settle();
+    expect(fetches).toEqual([]);
+  });
+});
+
 describe("rereadHeldRuns re-reads every run a reader holds", () => {
   beforeEach(() => {
     holdTrees = false;

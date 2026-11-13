@@ -285,6 +285,13 @@ export const BUS_CATALOG_MODELS = "catalog:models" as const;
  */
 export const BUS_FOLDS_CHANGED = "folds:changed" as const;
 
+/**
+ * A status brought the agent engine to ready from another state or from none shown. An API read answers at once
+ * while no engine is ready, so a reader whose last answer was refused or failed asks again. On the bus so the status
+ * store knows no reader.
+ */
+export const BUS_ENGINE_READY = "engine:ready" as const;
+
 /** Payload shape per bus event. Events with no payload use `undefined`. */
 interface BusPayloads {
   readonly [BUS_RECONCILE]: { readonly cause: string; readonly signal: AbortSignal };
@@ -301,6 +308,7 @@ interface BusPayloads {
   readonly [BUS_USER_INPUT_ANSWERED]: { readonly chatID: string; readonly answer: string };
   readonly [BUS_CATALOG_MODELS]: undefined;
   readonly [BUS_FOLDS_CHANGED]: undefined;
+  readonly [BUS_ENGINE_READY]: undefined;
 }
 
 // The generic bus is @cplieger/reactive's createBus; the SSE surface stays bespoke

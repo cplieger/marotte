@@ -511,6 +511,20 @@
   overflow-wrap: anywhere;
 }
 
+/* The ids a load call loaded, one per line, copyable. */
+.tool-loaded {
+  display: grid;
+  gap: var(--sp-1);
+  margin: 0 0 var(--sp-2);
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-sm);
+}
+
+.tool-loaded code {
+  overflow-wrap: anywhere;
+}
+
 .tool-title {
   color: var(--c-accent);
   font-weight: var(--fw-medium);

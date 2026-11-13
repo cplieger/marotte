@@ -8,6 +8,7 @@ import { defineAction, ActionError, retryNetwork, registerCleanup } from "./acti
 import { setHookEnabled } from "./actions/hooks.js";
 import { asObject, decodeArray, optStr, reqBool, reqStr } from "./wire/validators.gen.js";
 import { onSSE } from "./bus.js";
+import { engineRead } from "./engine-read.js";
 import { $, byId, maybeEl, queryAll, queryEl } from "./dom.js";
 import { swapViews } from "./view-swap.js";
 import { el } from "@cplieger/reactive";
@@ -335,9 +336,13 @@ function loadSteeringIssues(): void {
  * Best-effort and separate from loadDocs: a hooks failure must not blank other tabs. A workspace hook still renders
  * without its toggle; a global hook does not render.
  */
+const hookRead = engineRead(loadHookState, () => $.docsView.offsetParent !== null);
+
 function loadHookState(): void {
+  const settle = hookRead.begin();
   void apiGetTyped("/api/hooks", decodeHookList).then((d) => {
     if (d === null) {
+      settle(false);
       return;
     }
     const next = new Map<string, HookState>();
@@ -348,6 +353,7 @@ function loadHookState(): void {
     if (activeTab.peek() === "hooks") {
       renderActive();
     }
+    settle(true);
   });
 }
 

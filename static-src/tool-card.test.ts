@@ -285,6 +285,7 @@ describe("outcome is the row's one mark, not a word and not a badge", () => {
       mcp: null,
       disclosed: null,
       denial: null,
+      loaded: null,
     });
     const icon = card.querySelector(".tool-icon");
     expect(icon?.classList.contains("is-warn")).toBe(true);
@@ -322,6 +323,7 @@ describe("outcome is the row's one mark, not a word and not a badge", () => {
       mcp: null,
       disclosed: null,
       denial: null,
+      loaded: null,
     } as const;
     // Same state twice, then a change, then the same state again: the writer REPLACES the
     // slot's child, so two marks in one glyph is unrepresentable.
@@ -360,6 +362,7 @@ describe("outcome is the row's one mark, not a word and not a badge", () => {
       mcp: null,
       disclosed: null,
       denial: null,
+      loaded: null,
     } as const;
     applyOutcome(card, "failed", "Run Command", info);
     expect(icon?.querySelector("svg")?.outerHTML).not.toBe(identity);
@@ -388,6 +391,7 @@ describe("outcome is the row's one mark, not a word and not a badge", () => {
       mcp: null,
       disclosed: null,
       denial: null,
+      loaded: null,
     } as const;
     applyOutcome(node, "failed", "Run Command", info);
     expect(icon.querySelectorAll("svg")).toHaveLength(1);
@@ -568,6 +572,26 @@ describe("disclose_context and policy denials", () => {
     });
     expect(card.dataset["title"]).toBe("Loaded skill: code-review");
     expect(card.dataset["disclosed"]).toBe("skill");
+  });
+
+  it("keeps the document's name through a live card's update frames", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const { applyToolCallUpdate } = await import("./messages-tools.js");
+    const call = makeToolCall({
+      id: "t1-live",
+      title: "disclose_context",
+      kind: "other",
+      status: "in_progress",
+      disclosed: { type: "skill", display_name: "code-review", uri: "file:///x/code-review" },
+    });
+    const card = buildToolCard(toolCardOptsFor(call, true, "c-disclosed"));
+    applyToolCallUpdate(
+      card,
+      { ...call, title: "Running: disclose_context", status: "completed" },
+      "c-disclosed",
+    );
+    expect(card.dataset["title"]).toBe("Loaded skill: code-review");
+    expect(card.querySelector(".tool-title")?.textContent).toBe("Loaded skill: code-review");
   });
 
   it("distinguishes a steering document from a skill", async () => {
@@ -1992,8 +2016,191 @@ describe("an MCP card is built from the server's identity", () => {
     expect(card.querySelector(".tool-mcp-badge")).toBeNull();
   });
 
+  it("keeps the tool's own name through a live card's update frames", async () => {
+    const { applyToolCallUpdate } = await import("./messages-tools.js");
+    const call = makeToolCall({
+      id: "mcp-live",
+      title: "@probe/echo_text",
+      kind: "other",
+      status: "in_progress",
+      mcp: { server_name: "probe", tool_name: "echo_text" },
+    });
+    const card = buildToolCard(toolCardOptsFor(call, true, "c-mcp"));
+    applyToolCallUpdate(
+      card,
+      { ...call, title: "Running: @probe/echo_text", status: "completed" },
+      "c-mcp",
+    );
+    expect(mcpParts(card)).toEqual(["probe", "probe", "echo text"]);
+    expect(card.dataset["title"]).toBe("echo text");
+  });
+
   it("toolCardOptsFor copies mcp", () => {
     const mcp = { server_name: "s", tool_name: "t" };
     expect(toolCardOptsFor(makeToolCall({ mcp }), false).mcp).toEqual(mcp);
+  });
+});
+
+// The id's prefix says what loaded; the card names it and draws that thing's glyph.
+describe("a tool_load or load_resource card names what it loaded", () => {
+  // A document draws its docs page tab's glyph (the tab whose list holds it).
+  type Glyph = "mcp" | "tool" | "skills" | "steering" | "powers";
+  const cases: { id: string; title: string; glyph: Glyph }[] = [
+    { id: "tool::agent-mail::fetch_inbox", title: "Loaded agent-mail fetch_inbox", glyph: "mcp" },
+    { id: "tool::inspect_workflow", title: "Loaded tool: inspect_workflow", glyph: "tool" },
+    { id: "skill::land", title: "Loaded skill: land", glyph: "skills" },
+    { id: "steering::code-style", title: "Loaded steering: code-style", glyph: "steering" },
+    { id: "power::aws::overview", title: "Loaded power overview: aws", glyph: "powers" },
+    { id: "power::aws::tool::docs::search_docs", title: "Loaded docs search_docs", glyph: "mcp" },
+    { id: "plugin::kit::skill::release", title: "Loaded skill: release", glyph: "skills" },
+    { id: "plugin::kit::steering::style", title: "Loaded steering: style", glyph: "steering" },
+  ];
+
+  async function glyphOf(g: Glyph): Promise<string> {
+    if (g === "mcp" || g === "tool") {
+      const { toolIcon } = await import("./icons.js");
+      return toolIcon({ kind: g === "mcp" ? "mcp" : "other", toolName: "" });
+    }
+    const { default: indexHtml } = await import("../static/index.html?raw");
+    const page = new DOMParser().parseFromString(indexHtml, "text/html");
+    const tab = page.querySelector(`[data-docs-tab="${g}"] svg`);
+    expect(tab, `the docs page's ${g} tab draws no glyph`).not.toBeNull();
+    return tab?.outerHTML ?? "";
+  }
+
+  /** The drawing only: the tab's <svg> carries its own class and aria attributes. */
+  function drawing(svg: string): string {
+    const t = document.createElement("template");
+    t.innerHTML = svg;
+    return t.content.querySelector("svg")?.innerHTML.replace(/\s+/g, " ").trim() ?? "";
+  }
+
+  for (const tool of ["load_resource", "tool_load"]) {
+    for (const c of cases) {
+      it(`${tool} ${c.id}`, async () => {
+        const { buildToolCard } = await import("./tool-card.js");
+        const card = buildToolCard({
+          id: `load-${tool}-${c.id}`,
+          title: tool === "tool_load" ? "Tool Load" : "Load Resource",
+          kind: "other",
+          status: "completed",
+          toolName: tool,
+          input: { id: c.id },
+          output: "loaded",
+          live: false,
+        });
+        expect(card.dataset["title"]).toBe(c.title);
+        expect(card.dataset["kind"]).not.toBe("search");
+        expect(drawing(card.querySelector(".tool-icon")?.innerHTML ?? "")).toBe(
+          drawing(await glyphOf(c.glyph)),
+        );
+        expect(card.querySelector(".tool-subtitle")).toBeNull();
+        // Opened, the card shows the id it loaded, not a search layout.
+        document.body.appendChild(card);
+        card.querySelector<HTMLElement>(".tool-disclosure")?.click();
+        const loaded = card.querySelector(".tool-loaded");
+        card.remove();
+        expect(card.dataset["depth1"]).toBe("load");
+        expect(loaded?.textContent).toContain(c.id);
+      });
+    }
+  }
+
+  // A live card takes title frames after its build; each one re-derives the same claim.
+  for (const tool of ["load_resource", "tool_load"]) {
+    for (const c of cases) {
+      it(`${tool} ${c.id} keeps its claim through a live card's update frames`, async () => {
+        const { buildToolCard } = await import("./tool-card.js");
+        const { applyToolCallUpdate } = await import("./messages-tools.js");
+        const wireTitle = tool === "tool_load" ? "Tool Load" : "Load Resource";
+        const call = makeToolCall({
+          id: `live-${tool}-${c.id}`,
+          title: wireTitle,
+          kind: "other",
+          status: "in_progress",
+          tool_name: tool,
+          input: { id: c.id },
+        });
+        const card = buildToolCard(toolCardOptsFor(call, true, "c-load"));
+        applyToolCallUpdate(card, { ...call, status: "completed", output: "loaded" }, "c-load");
+        expect(card.dataset["title"]).toBe(c.title);
+        expect(card.querySelector(".tool-title")?.textContent).toBe(c.title);
+        expect(card.querySelector<HTMLElement>(".tool-header")?.title).toBe(c.title);
+      });
+    }
+  }
+
+  // A create frame without the id paints the kind's glyph; the frame that brings the id re-picks it, and the settle
+  // keeps the re-picked glyph as the card's identity.
+  for (const c of cases) {
+    it(`a live card whose id ${c.id} arrives after its build draws that thing's glyph`, async () => {
+      const { buildToolCard } = await import("./tool-card.js");
+      const { applyToolCallUpdate } = await import("./messages-tools.js");
+      const call = makeToolCall({
+        id: `late-${c.id}`,
+        title: "Tool Load",
+        kind: "other",
+        status: "in_progress",
+        tool_name: "tool_load",
+      });
+      const card = buildToolCard(toolCardOptsFor(call, true, "c-load"));
+      const want = drawing(await glyphOf(c.glyph));
+      applyToolCallUpdate(card, { ...call, input: { id: c.id } }, "c-load");
+      expect(card.dataset["title"]).toBe(c.title);
+      expect(drawing(card.querySelector(".tool-icon")?.innerHTML ?? ""), "while it runs").toBe(
+        want,
+      );
+      applyToolCallUpdate(
+        card,
+        { ...call, input: { id: c.id }, status: "completed", output: "loaded" },
+        "c-load",
+      );
+      expect(drawing(card.querySelector(".tool-icon")?.innerHTML ?? ""), "once it settles").toBe(
+        want,
+      );
+      expect(card.dataset["depth1"]).toBe("load");
+      expect(card.classList.contains("tool-depth1-load")).toBe(true);
+      expect(card.dataset["disclosable"]).toBe("1");
+      document.body.appendChild(card);
+      card.querySelector<HTMLElement>(".tool-disclosure")?.click();
+      const rows = [...card.querySelectorAll(".tool-loaded li")].map((li) => li.textContent);
+      card.remove();
+      expect(rows).toEqual([c.id]);
+    });
+  }
+
+  // The id frame lands on a card the reader already opened: the list joins the open region once.
+  it("adds the loaded id to a card opened before its id arrived", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const { applyToolCallUpdate } = await import("./messages-tools.js");
+    const call = makeToolCall({
+      id: "late-open",
+      title: "Tool Load",
+      kind: "other",
+      status: "in_progress",
+      tool_name: "tool_load",
+    });
+    const card = buildToolCard({ ...toolCardOptsFor(call, true, "c-load"), detailsOpen: true });
+    applyToolCallUpdate(card, { ...call, input: { id: "skill::land" } }, "c-load");
+    applyToolCallUpdate(card, { ...call, input: { id: "skill::land" } }, "c-load");
+    const rows = [...card.querySelectorAll(".tool-loaded li")].map((li) => li.textContent);
+    expect(rows).toEqual(["skill::land"]);
+  });
+
+  it("names every id an older tool_load's tool_ids carried", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const card = buildToolCard({
+      id: "load-ids",
+      title: "Tool Load",
+      kind: "other",
+      status: "completed",
+      toolName: "tool_load",
+      input: { tool_ids: ["builtin::inspect_workflow", "tool::mailbox::reply_message"] },
+      live: false,
+    });
+    expect(card.dataset["title"]).toBe("Loaded tool: inspect_workflow, mailbox reply_message");
+    expect(drawing(card.querySelector(".tool-icon")?.innerHTML ?? "")).toBe(
+      drawing(await glyphOf("tool")),
+    );
   });
 });

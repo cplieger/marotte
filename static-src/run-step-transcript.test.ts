@@ -21,6 +21,7 @@ const {
   clearStepTranscripts,
   requestStepTranscript,
   rereadStepTranscript,
+  rereadUnavailableSteps,
   stepRead,
   stepTranscriptVersion,
 } = await import("./run-step-transcript.js");
@@ -360,5 +361,33 @@ describe("run-step-transcript: the bound", () => {
     clearStepTranscripts();
     await ask("wf_1", "wf_1/a", ok());
     expect(apiGetTypedOrError).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("run-step-transcript: the engine's return", () => {
+  it("asks again for a step whose read missed transiently, and not a settled one", async () => {
+    await ask("wf_1", "wf_1/missed", fail(503));
+    await reject("wf_1", "wf_1/threw");
+    await ask("wf_1", "wf_1/ready", ok());
+    await ask("wf_1", "wf_1/refused", fail(404));
+    apiGetTypedOrError.mockReset();
+    apiGetTypedOrError.mockResolvedValue(ok());
+
+    rereadUnavailableSteps();
+
+    expect(apiGetTypedOrError.mock.calls.map((c) => c[0]).sort()).toEqual([
+      "/api/runs/wf_1/steps/wf_1%2Fmissed",
+      "/api/runs/wf_1/steps/wf_1%2Fthrew",
+    ]);
+  });
+
+  it("asks nothing for a page's reads once its mount cleared them", async () => {
+    await ask("wf_1", "wf_1/missed", fail(503));
+    clearStepTranscripts();
+    apiGetTypedOrError.mockReset();
+
+    rereadUnavailableSteps();
+
+    expect(apiGetTypedOrError).not.toHaveBeenCalled();
   });
 });

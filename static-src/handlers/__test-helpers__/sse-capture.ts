@@ -29,6 +29,7 @@ export function createBusMock(extras: Record<string, unknown> = {}): Record<stri
     BUS_COMMAND_FAILED: undefined,
     BUS_CATALOG_MODELS: undefined,
     BUS_FOLDS_CHANGED: undefined,
+    BUS_ENGINE_READY: undefined,
     onSSE: vi.fn((event: string, handler: SSEHandler) => {
       sseHandlers.set(event, handler);
     }),
