@@ -36,6 +36,8 @@ func (d *Dispatcher) Notify(ctx context.Context, chatID marotte.ChatID, text str
 		return "", StatusError(http.StatusBadRequest, errNotifyMention)
 	}
 	roles := d.prompts
+	// Before the submit, as a prompt's: a message into an idle chat starts a turn, whose tab must exist first.
+	roles.reopen.ReopenForMessage(ctx, chatID)
 	s := Submission{
 		Row:    marotte.QueuedPrompt{ID: ids.NewMessageID(), Text: text, Caller: from},
 		Origin: marotte.RunFromNotify, Kind: marotte.SendPlain,

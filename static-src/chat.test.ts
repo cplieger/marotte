@@ -124,6 +124,7 @@ vi.mock("./store-load.js", () => ({
   loadMessages: vi.fn(),
   loadOlderTurns: vi.fn(),
   confirmChatExists: vi.fn(),
+  loadMissingChats: vi.fn(),
 }));
 vi.mock("./banner-stack.js", () => ({ ensureBound: vi.fn() }));
 vi.mock("./chat-commands.js", () => ({ sendPromptTo: vi.fn() }));

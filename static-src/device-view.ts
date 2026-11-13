@@ -109,13 +109,14 @@ export function setRunBarOpen(open: boolean): void {
   writeBlob({ run_bar_open: open });
 }
 
-/** Whether this screen folded the sidebar section `key`; false (open) when nothing valid is stored. */
-export function sectionFolded(key: string): boolean {
+/** Whether this screen folded the sidebar section `key`; `fallback`, the section's default, when nothing valid is stored. */
+export function sectionFolded(key: string, fallback = false): boolean {
   const folds = readBlob()["sidebar_folds"];
   if (typeof folds !== "object" || folds === null || Array.isArray(folds)) {
-    return false;
+    return fallback;
   }
-  return (folds as Record<string, unknown>)[key] === true;
+  const v = (folds as Record<string, unknown>)[key];
+  return typeof v === "boolean" ? v : fallback;
 }
 
 /** Record one section's fold; keys this build does not know are kept. */

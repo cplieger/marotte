@@ -21,6 +21,7 @@ import {
 } from "./store.js";
 import {
   loadList,
+  loadMissingChats,
   loadMessages,
   loadOlderTurns,
   confirmChatExists,
@@ -645,6 +646,28 @@ export async function attachPathsToActiveChat(paths: readonly string[]): Promise
 }
 
 /**
+ * Open a closed chat's tab, the door History and Recently closed share: loads the chat list first
+ * when the store lacks the chat, so the activation finds its Session; a failed read still opens,
+ * and activation's heal is the fallback. Answers the open's outcome; moves no focus.
+ */
+export async function reopenChat(id: string, name: string): Promise<OpenTabOutcome> {
+  if (get(id) === undefined) {
+    // Required: a chat closed in this page is gone from the store while its record survives.
+    await loadList();
+  }
+  // A tab already open and active is not activated again, so only a refresh can bring it current.
+  const tabID = tabIdFor("chat", id);
+  const wasActive = tabID !== "" && getActiveTabId() === tabID;
+  // AWAITED: opening the tab is a round trip, and its activation is the one activation.
+  const outcome = await openChatTab(id, get(id)?.name ?? name);
+  // The user may have moved to another tab while the open was in flight; the view is then theirs.
+  if (outcome === "opened" && wasActive && tabIdFor("chat", id) === getActiveTabId()) {
+    refreshActiveView();
+  }
+  return outcome;
+}
+
+/**
  * Open a session the previous-session picker listed; every listed row is claimed by a
  * marotte chat (`toResumable`), so `chat_id` is always present.
  */
@@ -655,16 +678,7 @@ export async function openPreviousSession(
   if (chatID === "") {
     return "failed";
   }
-  const existing = get(chatID);
-  if (existing === undefined) {
-    // Required: a chat closed in this page is gone from the store while its file survives.
-    await loadList();
-  }
-  // A tab already open and active is not activated again, so only a refresh can bring it current.
-  const tabID = tabIdFor("chat", chatID);
-  const wasActive = tabID !== "" && getActiveTabId() === tabID;
-  // AWAITED: opening the tab is a round trip, and its activation is the one activation.
-  const outcome = await openChatTab(chatID, get(chatID)?.name ?? row.title);
+  const outcome = await reopenChat(chatID, row.title);
   if (outcome === "not-found") {
     // Retention is off and a close DELETED this conversation: said with activation skipped,
     // and no Open offered, since it would 404.
@@ -680,9 +694,9 @@ export async function openPreviousSession(
     // The framework's error surface has already spoken; the row stays.
     return "failed";
   }
-  // The user may have moved to another tab while the open was in flight; the view is then theirs.
-  if (wasActive && tabIdFor("chat", chatID) === getActiveTabId()) {
-    refreshActiveView();
+  // The open parked the History view with focus inside it; focus the person moved elsewhere stays.
+  if (document.activeElement === null || document.activeElement === document.body) {
+    $.promptInput.focus();
   }
   return "opened";
 }
@@ -770,10 +784,18 @@ export function installStoreSubscribers(): void {
         rowEffects.delete(chatID);
       }
     }
+    const missing: string[] = [];
     for (const chatID of open) {
       if (!rowEffects.has(chatID)) {
         rowEffects.set(chatID, chatRowEffect(chatID));
+        // A tab another device opened for a chat this device closed: no frame brings its header.
+        if (get(chatID) === undefined) {
+          missing.push(chatID);
+        }
       }
+    }
+    if (missing.length > 0) {
+      loadMissingChats(missing);
     }
   });
 

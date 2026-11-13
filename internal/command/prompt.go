@@ -340,6 +340,8 @@ func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 	p.Caller = cmd.From
 	// The prompt's intent begins here: a close that commits after this stamp ends it wherever it waits.
 	stamp := roles.admission.LifeStamp()
+	// Before the submit: a prompt into an idle chat starts a turn, whose tab must exist first.
+	reopenForCaller(ctx, roles.reopen, cmd)
 	s := Submission{
 		Row: marotte.QueuedPrompt{
 			ID: p.MessageID, Text: p.Text, Label: p.DisplayText, Attachments: p.Attachments, Caller: p.Caller,

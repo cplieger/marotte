@@ -45,3 +45,16 @@ describe("a disabled context-menu item", () => {
     expect(items()).toHaveLength(0);
   });
 });
+
+describe("a second context menu", () => {
+  it("closes the open one, so one menu shows", () => {
+    const first = vi.fn();
+    showContextMenu([{ label: "Rename", action: first }], { x: 10, y: 10 });
+    dismiss = showContextMenu([{ label: "Reopen", action: vi.fn() }], { x: 40, y: 40 });
+    const open = [...document.querySelectorAll(".tab-context-menu")].filter(
+      (m) => !m.classList.contains("is-leaving"),
+    );
+    expect(open).toHaveLength(1);
+    expect(items().map((b) => b.textContent)).toEqual(["Reopen"]);
+  });
+});
