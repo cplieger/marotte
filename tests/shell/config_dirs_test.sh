@@ -50,9 +50,9 @@ mode=$(stat -c %a "$ROOT/home/.ssh" 2>/dev/null)
 # internal/composition/boot_modes.go owns the modes of marotte's own folders. The boot creates
 # ~/.ssh at 700 when it is missing and restores the system's /tmp to 1777 (tmp_mode_test.sh), and
 # sets no other mode; the drop-in's temp file is a file.
-stray=$(grep -vE '^[[:space:]]*#' "$ENTRYPOINT" | grep -nE 'chmod|mkdir[^#]* -m|--mode|install [^#]*-m' \
+stray=$(grep -nE 'chmod|mkdir[^#]* -m|--mode|install [^#]*-m' "$ENTRYPOINT" | grep -vE '^[0-9]+:[[:space:]]*#' \
   | grep -vF 'chmod 644 "$tmp"' | grep -vF 'mkdir -m 700 "$HOME/.ssh"' \
-  | grep -vF 'install -d -m 1777 "$dir"')
+  | grep -vF 'chmod 01777 "$dir"')
 [ -z "$stray" ] \
   && ok "the boot script sets no folder mode beyond creating ~/.ssh at 700 and restoring /tmp to 1777" \
   || no "folder mode set in entrypoint.sh" "$stray"

@@ -11,20 +11,21 @@ logfmt_value() {
   printf '%s' "$safe"
 }
 
-# A process that removes and recreates /tmp under umask 022 leaves it 0755, so no other uid can
-# write there. install -d resets an existing folder's mode in place, keeping its contents; a
-# symlinked /tmp is the operator's and is left alone.
+# A process that recreates /tmp under umask 022 leaves it 0755; a symlinked /tmp is the operator's.
+# 01777 needs its five digits: GNU chmod keeps a directory's setgid bit for a four-digit mode.
 restore_tmp_mode() {
-  local dir=$1 was
+  local dir=$1 was now msg="the temp folder had the wrong mode; restored it to 1777"
   [ -L "$dir" ] && return 0
   was=$(stat -c %a "$dir" 2>/dev/null) || was=missing
-  [ "$was" = 1777 ] && return 0
-  if install -d -m 1777 "$dir" 2>/dev/null; then
-    printf 'level=warn msg="the temp folder had the wrong mode; restored it to 1777" path="%s" was=%s component=entrypoint\n' \
-      "$(logfmt_value "$dir")" "$was" >&2
+  [ -d "$dir" ] && [ "$was" = 1777 ] && return 0
+  [ "$was" = missing ] && msg="the temp folder was missing; created it at mode 1777"
+  mkdir -p "$dir" 2>/dev/null && chmod 01777 "$dir" 2>/dev/null
+  now=$(stat -c %a "$dir" 2>/dev/null) || now=missing
+  if [ -d "$dir" ] && [ "$now" = 1777 ]; then
+    printf 'level=warn msg="%s" path="%s" was=%s component=entrypoint\n' "$msg" "$(logfmt_value "$dir")" "$was" >&2
   else
-    printf 'level=warn msg="could not restore the temp folder to mode 1777; a process running as another uid may fail to write temporary files" path="%s" was=%s component=entrypoint\n' \
-      "$(logfmt_value "$dir")" "$was" >&2
+    printf 'level=warn msg="could not restore the temp folder to mode 1777; a process running as another uid may fail to write temporary files" path="%s" was=%s now=%s component=entrypoint\n' \
+      "$(logfmt_value "$dir")" "$was" "$now" >&2
   fi
   return 0
 }
