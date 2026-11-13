@@ -120,6 +120,14 @@ func refuseMountPoint(w http.ResponseWriter, action string, l loc) error {
 	return errHandled
 }
 
+// refuseTaken writes the 409 for a create on a name already taken: the client created a name it
+// shows the user, so succeeding on someone else's entry would hand them that entry instead.
+func refuseTaken(w http.ResponseWriter, action string, l loc) error {
+	slog.Info("filebrowse: "+action+" on a taken name", "path", logsafe.Field(l.abs))
+	httpreply.Conflict(w, filepath.Base(l.abs)+" already exists")
+	return errHandled
+}
+
 func actionMkdir(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, h *Handler) error {
 	if h.sensitive.protectedDir(l.abs) {
 		slog.Warn("filebrowse: mkdir blocked on protected dir", "path", l.abs)
@@ -131,7 +139,10 @@ func actionMkdir(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, 
 	if l.isMountPoint() {
 		return refuseMountPoint(w, "mkdir", l)
 	}
-	if err := l.m.root.MkdirAll(l.rel(), 0o755); err != nil {
+	if err := l.m.root.Mkdir(l.rel(), 0o755); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return refuseTaken(w, "mkdir", l)
+		}
 		return err
 	}
 	slog.Info("filebrowse: mkdir", "path", l.abs)
@@ -149,12 +160,11 @@ func actionTouch(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, 
 	}
 	// O_EXCL, because O_NOFOLLOW is inert here: os.Root.OpenFile adds it itself and re-resolves on
 	// ELOOP (go1.27.0 src/os/root_unix.go:85-101). O_EXCL makes anything already at the name, a
-	// symlink planted after resolvePath included, fail the create; EEXIST is touch's no-op success.
+	// symlink planted after resolvePath included, fail the create.
 	f, err := l.m.root.OpenFile(l.rel(), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		if errors.Is(err, fs.ErrExist) {
-			slog.Info("filebrowse: touch (already present)", "path", l.abs)
-			return nil
+			return refuseTaken(w, "touch", l)
 		}
 		return err
 	}

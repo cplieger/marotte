@@ -508,9 +508,10 @@ func (w *searchWalk) drain(c *dirCursor, queue []queuedDir) {
 	}
 }
 
-// enter has the cursor open q's directory. One that vanished, or whose inode changed between two
-// of the cursor's opens, is skipped, the refusal being the guarantee; any other failure lost its
-// subtree and is reported once, the directories queued below it skipping silently.
+// enter has the cursor open q's directory. One that vanished, became a symlink or a non-directory,
+// or whose inode changed between two of the cursor's opens, is skipped, the refusal being the
+// guarantee; any other failure lost its subtree and is reported once, the directories queued below
+// it skipping silently.
 func (w *searchWalk) enter(c *dirCursor, q queuedDir) (*walkDir, bool) {
 	d := q.dir()
 	if d.parent == nil {
@@ -532,9 +533,12 @@ func (w *searchWalk) enter(c *dirCursor, q queuedDir) (*walkDir, bool) {
 // the next level; queued is how many already wait, which the directory budget counts. After a
 // listing the entry budget cut, it offers what was read and stops the walk.
 func (w *searchWalk) visit(d *walkDir, queued int) ([]queuedDir, bool) {
-	entries, more := w.list(d)
+	entries, whole, more := w.list(d)
+	if w.ctx.Err() != nil {
+		return nil, false
+	}
 	if w.ignoreRules && d.pruneGit {
-		w.enterIgnore(d, entries)
+		w.enterIgnore(d, entries, whole)
 	}
 	slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(pathOrderKey(a), pathOrderKey(b)) })
 	var next []queuedDir
@@ -697,45 +701,43 @@ func pathOrderKey(e fs.DirEntry) string {
 	return e.Name()
 }
 
-// list returns d's entries, or those read before the entry budget, the context or a read failure
-// stopped it; more is false when the walk must stop after offering them.
-func (w *searchWalk) list(d *walkDir) (entries []fs.DirEntry, more bool) {
+// list returns d's entries, or those read before the entry budget or a read failure stopped it,
+// with whole false; more is false when the walk must stop after offering them.
+func (w *searchWalk) list(d *walkDir) (entries []fs.DirEntry, whole, more bool) {
 	var all []fs.DirEntry
 	for {
 		if w.ctx.Err() != nil {
-			return all, false
+			return nil, false, false
 		}
 		chunk, err := d.f.ReadDir(searchReadDirChunk)
 		if left := w.maxEntries - w.entries; len(chunk) > left {
 			w.entries = w.maxEntries
 			w.truncated, w.spent = true, true
-			return append(all, chunk[:max(left, 0)]...), false
+			return append(all, chunk[:left]...), false, false
 		}
 		w.entries += len(chunk)
 		all = append(all, chunk...)
 		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				w.truncated = true
-				slog.Warn("filebrowse: search readdir failed", "path", logsafe.Field(d.abs), "error", logsafe.Field(err.Error()))
+			if errors.Is(err, io.EOF) {
+				return all, true, true
 			}
-			return all, true
+			w.truncated = true
+			slog.Warn("filebrowse: search readdir failed", "path", logsafe.Field(d.abs), "error", logsafe.Field(err.Error()))
+			return all, false, true
 		}
 		if len(chunk) == 0 {
-			return all, true
+			return all, true, true
 		}
 	}
 }
 
-// enterIgnore opens only what d's listing names, so a directory with no rule file costs no open.
-func (w *searchWalk) enterIgnore(d *walkDir, entries []fs.DirEntry) {
-	var hasGit, gitIsDir, hasIgnore bool
-	for _, e := range entries {
-		switch e.Name() {
-		case ".git":
-			hasGit, gitIsDir = true, e.IsDir()
-		case ".gitignore":
-			hasIgnore = e.Type().IsRegular()
-		}
+// enterIgnore loads d's own rule files. From a whole listing it opens only what the listing names,
+// so a directory with no rule file costs no syscall; a partial one may have dropped either name, so
+// it looks both up against d's handle.
+func (w *searchWalk) enterIgnore(d *walkDir, entries []fs.DirEntry, whole bool) {
+	hasGit, gitIsDir, hasIgnore := ruleFilesListed(entries)
+	if !whole {
+		hasGit, gitIsDir, hasIgnore = ruleFilesAt(d.f)
 	}
 	if hasGit {
 		d.inRepo, d.rrel, d.ign = true, "", nil
@@ -746,6 +748,24 @@ func (w *searchWalk) enterIgnore(d *walkDir, entries []fs.DirEntry) {
 	if hasIgnore && d.inRepo {
 		d.ign = readIgnoreLevel(d.f, ".gitignore", filepath.Join(d.abs, ".gitignore"), d.rrel, d.ign, w.sensitive)
 	}
+}
+
+func ruleFilesListed(entries []fs.DirEntry) (hasGit, gitIsDir, hasIgnore bool) {
+	for _, e := range entries {
+		switch e.Name() {
+		case ".git":
+			hasGit, gitIsDir = true, e.IsDir()
+		case ".gitignore":
+			hasIgnore = e.Type().IsRegular()
+		}
+	}
+	return hasGit, gitIsDir, hasIgnore
+}
+
+func ruleFilesAt(dir *os.File) (hasGit, gitIsDir, hasIgnore bool) {
+	gitType, hasGit := lstatTypeAt(dir, ".git")
+	ignoreType, found := lstatTypeAt(dir, ".gitignore")
+	return hasGit, gitType == fs.ModeDir, found && ignoreType == 0
 }
 
 // admit records the include half of the Files filter on the entry rather than applying it, since

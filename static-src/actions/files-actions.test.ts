@@ -58,11 +58,28 @@ describe("files.create_file", () => {
   });
 
   it("toasts error on failure", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "exists" }), { status: 409 }));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "refused" }), { status: 403 }),
+    );
     const { createFile } = await import("./files.js");
     await createFile.dispatch({ dir: "/", name: "x" });
     expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("create file"), undefined);
   });
+});
+
+describe("a create on a name already taken", () => {
+  for (const which of ["createFile", "createFolder"] as const) {
+    it(`${which} answers taken on a 409 and created on a 200, toasting neither`, async () => {
+      const actions = await import("./files.js");
+      mockFetch.mockResolvedValueOnce(
+        new Response('{"error":"x already exists"}', { status: 409 }),
+      );
+      expect(await actions[which].dispatch({ dir: "/", name: "x" })).toBe("taken");
+      mockFetch.mockResolvedValueOnce(new Response("{}", { status: 200 }));
+      expect(await actions[which].dispatch({ dir: "/", name: "x 2" })).toBe("created");
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+  }
 });
 
 describe("files.create_folder", () => {

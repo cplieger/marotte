@@ -950,6 +950,21 @@ describe("a search the server stopped at its budget", () => {
     expect(document.activeElement).toBe(input());
   });
 
+  it("leaves focus off the search field when a pointer pressed the offer", async () => {
+    apiGet.mockResolvedValue(stopped());
+    await typeQuery("secret");
+    apiGet.mockImplementation(() => new Promise(() => undefined));
+    const offer = deeperButton();
+    if (offer === null) {
+      throw new Error("no Search deeper button");
+    }
+    await userEvent.click(offer);
+    expect(shown(deeperButton())).toBe(false);
+    expect(document.activeElement, "a phone would raise its keyboard over the results").not.toBe(
+      input(),
+    );
+  });
+
   it("goes back to the quick search for the next query", async () => {
     apiGet.mockResolvedValue(stopped());
     await typeQuery("secret");

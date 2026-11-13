@@ -1,10 +1,10 @@
 // Against the REAL binary, in a real browser: the file browser's New file, New folder and Rename
 // repeated in one folder each reach the server and make a new entry, so neither the server's
 // Idempotency-Key replay cache (internal/server/idempotency.go) nor an existing entry under the
-// proposed name turns a repeat gesture into a no-op.
+// proposed name, listed or created since, turns a repeat gesture into a no-op.
 // Chromium by default; FILES_ENGINES=1 adds Firefox and WebKit (`npx playwright install firefox webkit`).
 
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from "vitest";
 import { type Browser, type BrowserType, type Page, chromium, firefox, webkit } from "playwright";
@@ -155,6 +155,16 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("file browser repeated 
         await createKeepingName(page, "folder", "new folder 2");
         expect(await rowNames(page)).toEqual(["new folder", "new folder 2"]);
         expect(existsSync(join(folder, "new folder 2"))).toBe(true);
+        await page.context().close();
+      });
+
+      it("starts New file on the next free name when another writer took the proposed one", async () => {
+        const page = await openFolder();
+        writeFileSync(join(folder, "new file"), "theirs");
+        await createKeepingName(page, "file", "new file 2");
+        expect(await rowNames(page)).toEqual(["new file", "new file 2"]);
+        expect(readFileSync(join(folder, "new file"), "utf8")).toBe("theirs");
+        expect(readFileSync(join(folder, "new file 2"), "utf8")).toBe("");
         await page.context().close();
       });
 

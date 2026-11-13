@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -335,8 +336,7 @@ func TestDirCursor_SkipsTheChildrenOfAnAncestorThatFailedToReopen(t *testing.T) 
 	}
 }
 
-// A failed fstat is an I/O failure, which the walk reports as truncation, not a replaced
-// directory, which it skips as complete.
+// A failed fstat is reported as itself, not as a replaced directory.
 func TestDirIdentity_AFailedStatIsNotAReplacement(t *testing.T) {
 	f, err := os.Open(t.TempDir())
 	if err != nil {
@@ -347,5 +347,140 @@ func TestDirIdentity_AFailedStatIsNotAReplacement(t *testing.T) {
 	}
 	if _, err := dirIdentity(f); err == nil || errors.Is(err, errDirReplaced) {
 		t.Errorf("dirIdentity(closed file) err = %v, want an error other than errDirReplaced", err)
+	}
+}
+
+// ignoredNeedleRoot builds a repository root of needle files its own .gitignore excludes and
+// answers it with the entry budget that cuts its raw listing where cut says. It retries in a fresh
+// directory until the filesystem's listing order gives cut a needle before the cut.
+func ignoredNeedleRoot(t *testing.T, cut func(order []string) (budget int, ok bool)) (dir string, budget int) {
+	t.Helper()
+	tree := map[string]string{".gitignore": "needle-*\n", ".git/HEAD": ""}
+	for i := range 200 {
+		tree[fmt.Sprintf("needle-%03d.txt", i)] = ""
+	}
+	for range 20 {
+		dir = t.TempDir()
+		writeTree(t, dir, tree)
+		f, err := os.Open(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries, err := f.ReadDir(-1)
+		_ = f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		order := make([]string, len(entries))
+		for i, e := range entries {
+			order[i] = e.Name()
+		}
+		if budget, ok := cut(order); ok {
+			return dir, budget
+		}
+	}
+	t.Fatal("no listing order put a needle before the cut in 20 directories")
+	return "", 0
+}
+
+// cutBefore cuts the listing just before name, when a needle comes earlier and, for each of
+// alsoBefore, that name does too.
+func cutBefore(name string, alsoBefore ...string) func([]string) (int, bool) {
+	return func(order []string) (int, bool) {
+		at := slices.Index(order, name)
+		if at < 0 || !slices.ContainsFunc(order[:at], func(n string) bool { return strings.HasPrefix(n, "needle-") }) {
+			return 0, false
+		}
+		for _, n := range alsoBefore {
+			if !slices.Contains(order[:at], n) {
+				return 0, false
+			}
+		}
+		return at, true
+	}
+}
+
+// A listing the entry budget cuts still applies its directory's own rule files, whichever of them
+// the cut dropped: the needles read before the cut are all ignored.
+func TestNameSearch_ACutListingKeepsItsOwnIgnoreRules(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cut  func([]string) (int, bool)
+	}{
+		{"cut before the gitignore", cutBefore(".gitignore")},
+		{"cut before the git directory", cutBefore(".git", ".gitignore")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, budget := ignoredNeedleRoot(t, tc.cut)
+			h, err := New(Sensitive{}, []string{dir})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			v := newNameVisitor(mustQuery(t, "needle"))
+			walk := newSearchWalk(t.Context(), v, budgetFor(modeNames, false))
+			walk.ignoreRules = true
+			walk.entries = maxNameSearchEntries - budget
+			walk.walkRoots([]loc{{m: &h.mounts[0], abs: h.mounts[0].dir}})
+			res := v.result(walk.truncated)
+
+			if res.Matched != 0 {
+				t.Errorf("matched = %d, want 0: the root's .gitignore excludes every needle", res.Matched)
+			}
+			if !res.Truncated || !walk.spent {
+				t.Errorf("truncated = %v spent = %v, want both true: the budget cut the listing", res.Truncated, walk.spent)
+			}
+		})
+	}
+}
+
+// leaveHook runs after on leaving the directory at the path it names.
+type leaveHook struct {
+	*nameVisitor
+	at    string
+	after func()
+}
+
+func (v *leaveHook) leave(d *walkDir) {
+	v.nameVisitor.leave(d)
+	if d.abs == v.at {
+		v.after()
+	}
+}
+
+// A queued directory whose parent vanished after its listing is skipped, and so is its sibling,
+// without a reopen or a log line: a vanished subtree is no hole in the answer.
+func TestNameSearch_ADirectoryThatVanishedSkipsItsQueuedChildrenQuietly(t *testing.T) {
+	dir := t.TempDir()
+	h, err := New(Sensitive{}, []string{dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTree(t, dir, map[string]string{
+		"a/x/needle-a.txt": "", "p/d1/needle-1.txt": "", "p/d2/needle-2.txt": "", "z/needle-z.txt": "",
+	})
+	logs := captureFilebrowseLogs(t)
+
+	v := &leaveHook{nameVisitor: newNameVisitor(mustQuery(t, "needle")), at: filepath.Join(dir, "a", "x"), after: func() {
+		if err := os.Rename(filepath.Join(dir, "p"), filepath.Join(dir, "p.moved")); err != nil {
+			t.Error(err)
+		}
+	}}
+	walk := newSearchWalk(t.Context(), v, budgetFor(modeNames, false))
+	walk.walkRoots([]loc{{m: &h.mounts[0], abs: h.mounts[0].dir}})
+	res := v.result(walk.truncated)
+
+	if n := strings.Count(logs.String(), "search opendir failed"); n != 0 {
+		t.Errorf("logged %d opendir failures, want 0:\n%s", n, logs)
+	}
+	if res.Truncated {
+		t.Error("truncated = true, want false: the vanished subtree left no hole")
+	}
+	var got []string
+	for _, m := range res.Matches {
+		got = append(got, m.Path)
+	}
+	if want := []string{filepath.Join(dir, "z", "needle-z.txt"), filepath.Join(dir, "a", "x", "needle-a.txt")}; !slices.Equal(got, want) {
+		t.Errorf("matches = %v, want %v", got, want)
 	}
 }

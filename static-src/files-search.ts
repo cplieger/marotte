@@ -225,8 +225,9 @@ function ensureBuilt(): void {
   ) as HTMLButtonElement;
   deeperBtn.addEventListener("click", () => {
     deepNext = true;
-    // The button hides itself, which would drop a keyboard user's focus to the page.
-    if (document.activeElement === deeperBtn) {
+    // The button hides itself, which would drop a keyboard user's focus to the page. A click or tap
+    // also focuses it, but not :focus-visible, and the field's focus would raise a phone's keyboard.
+    if (deeperBtn?.matches(":focus-visible") === true) {
       shell?.input.focus();
     }
     showDeeper(false);

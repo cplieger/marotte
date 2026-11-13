@@ -53,6 +53,8 @@ import { fileRowsSkeleton, paintPlaceholder } from "./skeleton.js";
 import { skeletonTiming } from "./legacy-ui/skeleton.js";
 import { setOnUploadComplete } from "./files-picker.js";
 import {
+  CREATE_FILE_ERROR,
+  CREATE_FOLDER_ERROR,
   createFile,
   createFolder,
   renameFile,
@@ -794,8 +796,7 @@ function newFolder(): void {
   createEntry("mkdir", "new folder");
 }
 
-/** `base`, or `base 2`, `base 3` and so on: the first name the listing does not hold. Touch and mkdir
- *  answer success on an existing name, so a taken one would rename that entry instead. */
+/** `base`, or `base 2`, `base 3` and so on: the first name the listing does not hold. */
 function freeName(base: string): string {
   if (!cur().entryMap.has(base)) {
     return base;
@@ -808,7 +809,11 @@ function freeName(base: string): string {
   }
 }
 
-function createEntry(action: "touch" | "mkdir", base: string): void {
+/** Creates tried before giving up: each "taken" means another writer took the name since the
+ *  listing, which the reload before the next try shows. */
+const CREATE_TRIES = 3;
+
+function createEntry(action: "touch" | "mkdir", base: string, triesLeft = CREATE_TRIES): void {
   const actionFn = action === "mkdir" ? createFolder : createFile;
   const name = freeName(base);
   void actionFn.dispatch(
@@ -817,9 +822,16 @@ function createEntry(action: "touch" | "mkdir", base: string): void {
       name,
     },
     {
-      onSuccess: () => {
+      onSuccess: (outcome) => {
         void loadDirAsync().then(() => {
-          startInlineRename(name);
+          if (outcome === "created") {
+            startInlineRename(name);
+          } else if (triesLeft > 1) {
+            createEntry(action, base, triesLeft - 1);
+          } else {
+            const label = action === "mkdir" ? CREATE_FOLDER_ERROR : CREATE_FILE_ERROR;
+            toast.error(`${label}: ${name} already exists`);
+          }
         });
       },
     },
@@ -869,11 +881,9 @@ function startInlineRename(targetName: string): void {
   }
 
   let committed = false;
-  // The row's own name element goes back, since its click handler is what opens the entry.
-  const restore = (text: string): Element => {
-    nameEl.textContent = text;
+  // The row's own name element goes back only under its own name: its click handler opens that name.
+  const restore = (): void => {
     input.replaceWith(nameEl);
-    return nameEl;
   };
 
   const commit = (): void => {
@@ -882,10 +892,12 @@ function startInlineRename(targetName: string): void {
     }
     committed = true;
     const newName = input.value.trim();
-    const span = restore(newName !== "" ? newName : original);
     if (newName === "" || newName === original) {
+      restore();
       return;
     }
+    const pending = el("span", { className: FB_NAME }, newName);
+    input.replaceWith(pending);
 
     void renameFile.dispatch(
       { dir: cur().currentPath, original, newName },
@@ -897,7 +909,7 @@ function startInlineRename(targetName: string): void {
           loadDir();
         },
         onError: () => {
-          span.textContent = original;
+          pending.replaceWith(nameEl);
         },
       },
     );
@@ -908,7 +920,7 @@ function startInlineRename(targetName: string): void {
       return;
     }
     committed = true;
-    restore(original);
+    restore();
   };
 
   input.addEventListener("keydown", (e: KeyboardEvent) => {

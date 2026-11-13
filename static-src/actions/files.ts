@@ -7,6 +7,8 @@ import {
   RETRY_STANDARD,
   withTimeout,
   API_TIMEOUT_MS,
+  type ApiErrorDecision,
+  type ApiErrorInfo,
 } from "./index.js";
 
 import { readDownload } from "./download.js";
@@ -26,7 +28,21 @@ interface CreateArgs {
   name: string;
 }
 
-export const createFile = apiAction<CreateArgs>({
+/** A create's answer: made, or refused because something already holds the name. */
+export type CreateOutcome = "created" | "taken";
+
+const HTTP_CONFLICT = 409;
+
+const createdOrTaken = {
+  decode: (): CreateOutcome => "created",
+  decodeError: (info: ApiErrorInfo): ApiErrorDecision<CreateOutcome> | undefined =>
+    info.status === HTTP_CONFLICT ? { kind: "success", value: "taken" } : undefined,
+};
+
+export const CREATE_FILE_ERROR = "Could not create file";
+export const CREATE_FOLDER_ERROR = "Could not create folder";
+
+export const createFile = apiAction<CreateArgs, CreateOutcome>({
   name: "files.create_file",
   scope: (args) => "dir:" + args.dir,
   retry: RETRY_STANDARD,
@@ -39,10 +55,11 @@ export const createFile = apiAction<CreateArgs>({
     path: API_FILES_ACTION,
     body: { action: "touch", path: joinPath(args.dir, args.name) },
   }),
-  error: "Could not create file",
+  ...createdOrTaken,
+  error: CREATE_FILE_ERROR,
 });
 
-export const createFolder = apiAction<CreateArgs>({
+export const createFolder = apiAction<CreateArgs, CreateOutcome>({
   name: "files.create_folder",
   scope: (args) => "dir:" + args.dir,
   retry: RETRY_STANDARD,
@@ -53,7 +70,8 @@ export const createFolder = apiAction<CreateArgs>({
     path: API_FILES_ACTION,
     body: { action: "mkdir", path: joinPath(args.dir, args.name) },
   }),
-  error: "Could not create folder",
+  ...createdOrTaken,
+  error: CREATE_FOLDER_ERROR,
 });
 
 export const renameFile = apiAction<{ dir: string; original: string; newName: string }>({

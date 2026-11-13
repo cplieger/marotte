@@ -2,6 +2,7 @@
 // and middle-click opens another in the background.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type * as Toast from "./toast.js";
 
 // One hoisted block: `vi.mock` factories run above module consts, and this file value-imports two mocked modules.
 const h = vi.hoisted(() => {
@@ -31,6 +32,7 @@ const h = vi.hoisted(() => {
     renameTab: vi.fn(),
     openFile: vi.fn(),
     openFileInBackground: vi.fn(),
+    toastError: vi.fn((_message: string) => () => undefined),
     /** Paint the rows placeholder at once instead of never, for the cases that read the loading cue. */
     paintSkeleton: false,
   };
@@ -87,6 +89,10 @@ vi.mock("./icons.js", () => ({
   ICON_SAVE_OK: "",
   ICON_SAVE_FAIL: "",
   ICON_TAB_WEB: "",
+}));
+vi.mock("./toast.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Toast>()),
+  error: h.toastError,
 }));
 vi.mock("./chat.js", () => ({ attachPathsToActiveChat: vi.fn() }));
 vi.mock("./files-browser-drop.js", () => ({ initBrowserDragDrop: vi.fn() }));
@@ -796,14 +802,19 @@ describe("a closed browser's folder", () => {
 
 describe("New file and New folder beside entries holding the default name", () => {
   const sent: { action: string; path: string }[] = [];
+  /** Status per create, in order; past the end every create answers 200. */
+  const statuses: number[] = [];
 
   beforeEach(() => {
     sent.length = 0;
+    statuses.length = 0;
     vi.stubGlobal(
       "fetch",
       vi.fn((_url: string, init: RequestInit) => {
         sent.push(JSON.parse(init.body as string) as { action: string; path: string });
-        return Promise.resolve(new Response("{}", { status: 200 }));
+        const status = statuses.shift() ?? 200;
+        const body = status === 409 ? '{"error":"taken"}' : "{}";
+        return Promise.resolve(new Response(body, { status }));
       }),
     );
     return () => {
@@ -855,11 +866,109 @@ describe("New file and New folder beside entries holding the default name", () =
     });
   }
 
+  it("takes the next free name when another writer took the chosen one since the listing", async () => {
+    statuses.push(409);
+    const other = { name: "new file", isDir: false };
+    answers.set("/w", [
+      okAnswer({ files: [], writable: true }),
+      okAnswer({ files: [other], writable: true }),
+      okAnswer({ files: [other, { name: "new file 2", isDir: false }], writable: true }),
+    ]);
+    initFileBrowser();
+    await show("/w");
+    $.fbNewFile.click();
+    await vi.waitFor(() => {
+      expect(
+        rowFor("new file 2").querySelector(".fb-name-edit"),
+        "the rename opened",
+      ).not.toBeNull();
+    });
+    expect(sent).toEqual([
+      { action: "touch", path: "/w/new file" },
+      { action: "touch", path: "/w/new file 2" },
+    ]);
+    expect(rowFor("new file").querySelector(".fb-name-edit"), "the other writer's file").toBeNull();
+  });
+
+  it("gives up with the create's error once every try found its name taken", async () => {
+    statuses.push(409, 409, 409, 409);
+    answers.set("/w", [okAnswer({ files: [], writable: true })]);
+    initFileBrowser();
+    await show("/w");
+    $.fbNewFolder.click();
+    await vi.waitFor(() => {
+      expect(h.toastError).toHaveBeenCalledOnce();
+    });
+    expect(String(h.toastError.mock.calls[0]?.[0])).toMatch(/^Could not create folder: /);
+    expect(sent.map((r) => r.action)).toEqual(["mkdir", "mkdir", "mkdir"]);
+    expect($.fbList.querySelector(".fb-name-edit")).toBeNull();
+  });
+
   it("keeps the default name when no entry holds it", async () => {
     await create($.fbNewFile, [{ name: "new file.txt", isDir: false }], {
       name: "new file",
       isDir: false,
     });
     expect(sent).toEqual([{ action: "touch", path: "/w/new file" }]);
+  });
+});
+
+describe("renaming an entry", () => {
+  let renames: { release: (r: Response) => void }[] = [];
+
+  beforeEach(() => {
+    renames = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((release) => {
+            renames.push({ release });
+          }),
+      ),
+    );
+    return () => {
+      // The rename's scope queues the next case's rename behind a held one.
+      for (const r of renames) {
+        r.release(new Response("{}", { status: 200 }));
+      }
+      vi.unstubAllGlobals();
+    };
+  });
+
+  async function renameTo(name: string): Promise<void> {
+    answers.set("/w", [okAnswer({ files: [{ name: "a.txt", isDir: false }], writable: true })]);
+    initFileBrowser();
+    await show("/w");
+    const check = must(rowFor("a.txt").querySelector<HTMLInputElement>(`.${FB_CHECK}`));
+    check.checked = true;
+    check.dispatchEvent(new Event("change"));
+    $.fbRename.click();
+    const input = must(rowFor("a.txt").querySelector<HTMLInputElement>(".fb-name-edit"));
+    input.value = name;
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+    await vi.waitFor(() => {
+      expect(renames).toHaveLength(1);
+    });
+  }
+
+  it("opens nothing from the new name's label before the listing reloads", async () => {
+    await renameTo("b.txt");
+    const label = must(rowFor("a.txt").querySelector<HTMLElement>(`.${FB_NAME}`));
+    expect(label.textContent).toBe("b.txt");
+    label.click();
+    expect(h.openFile).not.toHaveBeenCalled();
+  });
+
+  it("opens the original from its label after the rename failed", async () => {
+    await renameTo("b.txt");
+    must(renames[0]).release(new Response('{"error":"no"}', { status: 403 }));
+    await vi.waitFor(() => {
+      expect(rowFor("a.txt").querySelector(`.${FB_NAME}`)?.textContent).toBe("a.txt");
+    });
+    must(rowFor("a.txt").querySelector<HTMLElement>(`.${FB_NAME}`)).click();
+    expect(h.openFile.mock.calls.map((c) => c[0])).toEqual(["/w/a.txt"]);
   });
 });
