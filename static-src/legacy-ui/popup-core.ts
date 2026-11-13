@@ -5,6 +5,7 @@
 
 import { untracked } from "@cplieger/reactive";
 
+import { isContextPressRelease } from "./context-press.js";
 import type { Fx } from "./fx.js";
 import { topmostOpenDialog } from "./modal-host.js";
 import { createDriver, ownedBinding, type Driver } from "./owner.js";
@@ -319,7 +320,7 @@ export function createPopupCore<C extends PopupConfig>(
     };
 
     const onDocClick = (e: MouseEvent): void => {
-      if (e === opening) {
+      if (e === opening || isContextPressRelease(e)) {
         return;
       }
       const target = e.target;

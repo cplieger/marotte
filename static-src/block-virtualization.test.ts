@@ -1105,18 +1105,21 @@ describe("scrolling moves the window", () => {
 
   it("mounts every ordinal a running turn appends, and stays bounded past the budget", async () => {
     const id = chatID();
-    // Running and short: everything is mounted, and with the reader FOLLOWING the
-    // anchor is the live tail, so each arrival is in window by construction.
-    activate(id, [hugeTurn("live", 6, false)], true);
+    // Running and an overscan short of the budget: everything is mounted, and with the reader
+    // FOLLOWING the anchor is the live tail, so each arrival is in window by construction. Seeded
+    // there, not appended up to: a paint per append over a growing window outlasts the case's
+    // bound on a loaded runner.
+    const seeded = RESIDENT_ENTRIES - OVERSCAN_ENTRIES;
+    activate(id, [hugeTurn("live", seeded, false)], true);
     await vi.waitFor(() => {
-      expect(mountedSeqs("live")).toHaveLength(6);
+      expect(mountedSeqs("live")).toHaveLength(seeded);
     });
     await atLiveEdge();
 
     // Arrivals are SEALED `thinking` entries, so "every arrival is mounted" is a per-element
     // claim (text deltas would coalesce into one row).
     const total = RESIDENT_ENTRIES + 2 * OVERSCAN_ENTRIES;
-    for (let at = 7; at <= total; at++) {
+    for (let at = seeded + 1; at <= total; at++) {
       appendEntry(id, sealed("live", at, "thinking", { text: `step ${String(at)}` }));
       await tick();
       // EACH arrival, not a sample: a reader watching a run sees every entry land.

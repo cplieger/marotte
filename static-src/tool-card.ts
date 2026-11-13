@@ -25,12 +25,10 @@ import {
 import { createDisclosure, type DisclosureController } from "./legacy-ui/disclosure.js";
 import {
   renderInfoFor,
-  disclosedClaim,
-  formatMCPToolName,
+  cardTitle,
   commandTitle,
-  toolTitleText,
   toolDepth1,
-  hasDepth1,
+  cardDepth1,
   isToolActive,
   isToolDone,
   type ToolRenderInfo,
@@ -54,16 +52,10 @@ function renderInfoOf(opts: BuildToolCardOpts): ToolRenderInfo {
 /** Build a tool-call element. Does not append it to the DOM. */
 export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   const info = renderInfoOf(opts);
-  const depth1 = toolDepth1(info.kind);
-  const withToggle = hasDepth1(info.kind);
+  const depth1 = cardDepth1(info);
+  const withToggle = depth1 !== "none";
   const shellTitle = commandTitle(opts.title, opts.kind, opts.input);
-  // A disclose_context call names its DOCUMENT, not the tool that fetched it.
-  const displayTitle =
-    info.disclosed !== null
-      ? disclosedClaim(info.disclosed)
-      : info.mcp !== null
-        ? formatMCPToolName(info.mcp.tool_name)
-        : (shellTitle ?? toolTitleText(opts.title));
+  const displayTitle = cardTitle(info, opts.title, opts.kind, opts.input);
 
   const node = el("div", { className: `tool-call tool-depth1-${depth1}` }) as HTMLDivElement;
   node.dataset["kind"] = info.kind;
@@ -148,6 +140,7 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     // `detailsBody`'s fetch reads, so no chevron sits over a region that can never fill.
     if (
       opts.denial !== undefined ||
+      info.loaded !== null ||
       (opts.live && opts.input !== undefined) ||
       (opts.output !== undefined && opts.output.trim() !== "") ||
       (bulkChatID(opts) !== null && DEFERRED_PARTS.some((part) => part.reveals(deferred)))
@@ -578,6 +571,27 @@ export function applyOutcome(
   nameTarget.setAttribute("aria-label", `${subject}, ${outcomeWord(state)}`);
 }
 
+/** Re-pick a built card's identity from `info`, for a frame that brings what the build lacked (a load's id): its
+ *  glyph, and for a load its `load` depth and loaded-id list. A slot `applyOutcome` already painted ok or running
+ *  shows the new glyph at once. */
+export function setToolIdentity(card: HTMLElement, info: ToolRenderInfo): void {
+  adoptLoaded(card, info);
+  const icon = card.querySelector<HTMLElement>(".tool-icon");
+  if (icon === null) {
+    return;
+  }
+  const glyph = iconEl(toolIcon(info));
+  const mark = iconMarks.get(icon);
+  if (mark === undefined) {
+    icon.replaceChildren(glyph);
+    return;
+  }
+  mark.identity = glyph.cloneNode(true) as Element;
+  if (mark.painted === "ok" || mark.painted === "running") {
+    icon.replaceChildren(glyph);
+  }
+}
+
 /** Bring one card's SILENCE marker up to date: shown past the threshold, removed
  *  otherwise, only while `data-start-ms` says it is in flight. Idempotent. The value is
  *  TRACKED, so a caller inside an effect repaints while the call stays quiet. */
@@ -730,7 +744,10 @@ function detailsBody(node: HTMLDivElement, ctx: DeferredCtx): () => void {
       opts.live && opts.input !== undefined
         ? `<pre class="tool-input">${escText(JSON.stringify(opts.input, null, 2))}</pre>`
         : "";
-    const head = denialBlock(opts.denial ?? heldDenials.get(node)) + inputBlock;
+    const head =
+      denialBlock(opts.denial ?? heldDenials.get(node)) +
+      loadedBlock(adoptedInfo.get(node) ?? ctx.info) +
+      inputBlock;
     if (head !== "") {
       details.insertAdjacentHTML("afterbegin", head);
     }
@@ -753,8 +770,55 @@ function detailsBody(node: HTMLDivElement, ctx: DeferredCtx): () => void {
   };
 }
 
+/** The ids a load call loaded, one per line, as the call sent them. */
+function loadedBlock(info: ToolRenderInfo): string {
+  if (info.loaded === null) {
+    return "";
+  }
+  const rows = info.loaded.map((r) => `<li><code>${escText(r.id)}</code></li>`).join("");
+  return `<ul class="tool-loaded">${rows}</ul>`;
+}
+
 /** Cards whose details region `detailsBody` has filled. */
 const builtDetails = new WeakSet<HTMLElement>();
+/** A load's render info adopted after the build, read by `detailsBody` in place of the build's. */
+const adoptedInfo = new WeakMap<HTMLElement, ToolRenderInfo>();
+
+/** Give a built card the depth and loaded-id list of the load `info` names. Idempotent. */
+function adoptLoaded(card: HTMLElement, info: ToolRenderInfo): void {
+  if (info.loaded === null) {
+    return;
+  }
+  adoptedInfo.set(card, info);
+  const depth1 = cardDepth1(info);
+  const was = card.dataset["depth1"];
+  if (was !== depth1) {
+    card.classList.remove(`tool-depth1-${was ?? ""}`);
+    card.classList.add(`tool-depth1-${depth1}`);
+    card.dataset["depth1"] = depth1;
+    card.querySelector(".tool-summary > .tool-subtitle")?.remove();
+  }
+  const details = card.querySelector(".tool-details");
+  if (details === null) {
+    return;
+  }
+  card.dataset["disclosable"] = "1";
+  if (builtDetails.has(card)) {
+    const list = details.querySelector(".tool-loaded");
+    if (list !== null) {
+      list.outerHTML = loadedBlock(info);
+    } else {
+      // `detailsBody`'s order: the denial block, then the list.
+      const denial = details.querySelector(":scope > .tool-denial");
+      if (denial !== null) {
+        denial.insertAdjacentHTML("afterend", loadedBlock(info));
+      } else {
+        details.insertAdjacentHTML("afterbegin", loadedBlock(info));
+      }
+    }
+  }
+  refreshToolDisclosure(card);
+}
 /** A denial adopted after the build, for a details region first opened later. */
 const heldDenials = new WeakMap<HTMLElement, ToolDenial>();
 

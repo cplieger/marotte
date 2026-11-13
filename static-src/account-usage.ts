@@ -7,6 +7,7 @@ import { $ } from "./dom.js";
 import { apiGetTyped } from "./api-client.js";
 import { decodeAccountUsage } from "./wire/decoders.gen.js";
 import type { AccountUsage, AccountUsageBreakdown } from "./types.js";
+import { engineRead } from "./engine-read.js";
 import { getAccountUsageEndpoint } from "./wire/client.gen.js";
 
 const CLIENT_TTL_MS = 30_000;
@@ -14,6 +15,18 @@ let lastFetch = 0;
 let inflight = false;
 /** Bumped by resetAccountUsage; a response fetched under an older epoch describes another account. */
 let epoch = 0;
+/** Whether the rows show "Usage unavailable". */
+let unavailable = false;
+/** The rows are on screen only while the popup is open; a closed one fetches on its next open, since a refused read
+ *  leaves no throttle. */
+const usageRead = engineRead(
+  () => {
+    loadAccountUsage(true);
+  },
+  () => !$.statusCard.hidden,
+);
+/** The settle of the read out, for a reset that abandons it. */
+let settleOut: ((answered: boolean | null) => void) | null = null;
 
 /**
  * Fetch and render account usage, throttled to CLIENT_TTL_MS unless forced; safe on every
@@ -27,6 +40,8 @@ export function loadAccountUsage(force = false): void {
   inflight = true;
   lastFetch = now;
   const started = epoch;
+  const settle = usageRead.begin();
+  settleOut = settle;
   void apiGetTyped<AccountUsage>(getAccountUsageEndpoint.path, decodeAccountUsage)
     .then((u) => {
       if (started === epoch) {
@@ -34,9 +49,16 @@ export function loadAccountUsage(force = false): void {
       }
     })
     .finally(() => {
-      if (started === epoch) {
-        inflight = false;
+      if (started !== epoch) {
+        return;
       }
+      inflight = false;
+      settleOut = null;
+      if (unavailable) {
+        // A refusal is no answer, so it holds no throttle against the next open.
+        lastFetch = 0;
+      }
+      settle(!unavailable);
     });
 }
 
@@ -45,10 +67,14 @@ export function resetAccountUsage(): void {
   epoch++;
   inflight = false;
   lastFetch = 0;
+  unavailable = false;
   $.acctPlan.textContent = "";
   $.acctMeter.textContent = "";
   $.acctMeter.removeAttribute("data-tooltip");
   $.acctOverage.textContent = "";
+  const abandoned = settleOut;
+  settleOut = null;
+  abandoned?.(null);
 }
 
 function primaryBreakdown(u: AccountUsage): AccountUsageBreakdown | undefined {
@@ -75,6 +101,7 @@ function renderAccountUsage(u: AccountUsage | null): void {
   const overageEl = $.acctOverage;
   box.hidden = false;
 
+  unavailable = u === null;
   if (u === null) {
     planEl.textContent = "Usage unavailable";
     meterEl.textContent = "";

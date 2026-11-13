@@ -96,6 +96,7 @@ import { announce } from "./legacy-ui/announce.js";
 import type { ViewportBox } from "./viewport-frame.js";
 import { viewportBox, viewportMoved } from "./viewport-frame.js";
 import { showContextMenu } from "./context-menu.js";
+import { isContextPressRelease } from "./legacy-ui/context-press.js";
 import type { ContextMenuItem } from "./context-menu.js";
 import { downloadChatExport } from "./chat-export.js";
 import { MAX_CHAT_NAME_UNITS, downloadKiroSession, renameChat } from "./actions/chat.js";
@@ -2818,7 +2819,7 @@ function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean)
     if (gestureDragged()) {
       return;
     }
-    if ((e.target as HTMLElement).closest(".tab-close") !== null) {
+    if ((e.target as HTMLElement).closest(".tab-close") !== null || isContextPressRelease(e)) {
       return;
     }
     void activateTab(id);

@@ -1952,6 +1952,23 @@ describe("a drag on the strip scrolls it and never activates a row", () => {
     expect(getActiveTabId()).toBe(chatID("a"));
   });
 
+  // macOS Safari makes a Control-click's press a `contextmenu` and still sends a pointer click on its
+  // release; a right button's release sends none, and neither gesture activates the row.
+  it("leaves the active tab alone when the press opened the tab's menu", async () => {
+    expect.assertions(1);
+    const nodes = await renderTabs();
+    const row = nodes[0] as HTMLElement;
+    row.dispatchEvent(ptr("pointerdown", ORIGIN_X, ORIGIN_Y, "mouse"));
+    row.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, buttons: 1, ctrlKey: true }),
+    );
+    row.dispatchEvent(ptr("pointerup", ORIGIN_X, ORIGIN_Y, "mouse"));
+    row.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1, ctrlKey: true }),
+    );
+    expect(getActiveTabId()).toBe(chatID("b"));
+  });
+
   // A keyboard dismissal shifts client coordinates under a still pointer; read as travel it refuses
   // the activation.
   it("activates the row a click held through a viewport shift released on", async () => {

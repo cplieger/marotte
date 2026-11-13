@@ -2,6 +2,7 @@
 // glyphs. Everything draws in `currentColor`.
 
 import type { ToolKind } from "./types.js";
+import type { LoadedResource, LoadedType } from "./tool-schema.js";
 import { extToIconKey } from "./file-extensions.js";
 import { ICON_MASK_ID } from "./icon-mask.js";
 
@@ -114,6 +115,12 @@ export const ICON_SEND = svg("ui", PATH_SEND);
 export const ICON_MIC = svg(
   "ui",
   '<path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/>',
+);
+/** Lucide `circle-stop`, its square filled: dictation listening, a press stops it. The ring keeps it apart from
+ *  Cancel's bare square, which can sit beside it mid-turn. */
+export const ICON_MIC_STOP = svg(
+  "ui",
+  '<circle cx="12" cy="12" r="10"/><rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor"/>',
 );
 // Rotated by 15-input.css. Not a marching `stroke-dashoffset`: under `non-scaling-stroke` Chromium computes the dash
 // in a space `stroke-dasharray` disagrees with, collapsing the arc to a dot.
@@ -358,6 +365,20 @@ const ICON_TOOL_STEERING = svg(
   '<circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>',
 );
 
+/** Lucide "graduation-cap": the introspect subagent's header, and the docs page's Skills tab as static markup there
+ *  (pinned by `menu-icons.test.ts`). A book would collide with `ICON_TOOL_READ` in the transcript, and a circled `?`
+ *  with `ICON_INFO`. */
+export const ICON_SUBAGENT_INTROSPECT = svg(
+  "ui",
+  '<path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z"/><path d="M22 10v6"/><path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5"/>',
+);
+
+/** The docs page's Powers tab glyph, duplicated as static markup there (pinned by `menu-icons.test.ts`). */
+const ICON_TAB_POWER = svg(
+  "ui",
+  '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
+);
+
 const ICON_BY_KIND: Record<ToolKind, string> = {
   read: ICON_TOOL_READ,
   edit: ICON_TOOL_EDIT,
@@ -389,9 +410,33 @@ const ICON_BY_TOOL_NAME: ReadonlyMap<string, string> = new Map([
   ["disclose_context", ICON_TOOL_READ],
 ]);
 
-/** Pick the glyph for a tool call from the identity the server named: the built-in's own glyph, else its kind's,
- *  else the wrench for a tool marotte does not know. */
-export function toolIcon(info: { readonly kind: ToolKind; readonly toolName: string }): string {
+/** What a load draws per thing it loaded: an MCP tool its plug, a built-in tool the wrench, a document the glyph of
+ *  the docs page tab that lists it. */
+const ICON_BY_LOADED: Readonly<Record<LoadedType, string>> = {
+  mcp: ICON_TOOL_MCP,
+  tool: ICON_TOOL_FALLBACK,
+  skill: ICON_SUBAGENT_INTROSPECT,
+  steering: ICON_TOOL_STEERING,
+  overview: ICON_TAB_POWER,
+  unknown: ICON_TOOL_FALLBACK,
+};
+
+/** A load's glyph: the one its loads share, else the wrench. */
+function loadedIcon(loaded: readonly LoadedResource[]): string {
+  const [first, ...rest] = loaded.map((r) => ICON_BY_LOADED[r.type]);
+  return first !== undefined && rest.every((g) => g === first) ? first : ICON_TOOL_FALLBACK;
+}
+
+/** Pick the glyph for a tool call from the identity the server named: what a load loaded, else the built-in's own
+ *  glyph, else its kind's, else the wrench for a tool marotte does not know. */
+export function toolIcon(info: {
+  readonly kind: ToolKind;
+  readonly toolName: string;
+  readonly loaded?: readonly LoadedResource[] | null;
+}): string {
+  if (info.loaded !== undefined && info.loaded !== null) {
+    return loadedIcon(info.loaded);
+  }
   return ICON_BY_TOOL_NAME.get(info.toolName) ?? ICON_BY_KIND[info.kind] ?? ICON_TOOL_FALLBACK; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
 }
 
@@ -488,13 +533,8 @@ export const ICON_TAB_AGENT = svg(
   "ui",
   '<path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><circle cx="12" cy="12" r="2.5"/>',
 );
-// Subagent header icons, one per bundled kiro-cli subagent; unknown ones fall back to ICON_TAB_AGENT (roles.ts
-// iconForSubagent). Introspect is Lucide "graduation-cap": a book would collide with `ICON_TOOL_READ` in the
-// transcript, and a circled `?` with `ICON_INFO`.
-export const ICON_SUBAGENT_INTROSPECT = svg(
-  "ui",
-  '<path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z"/><path d="M22 10v6"/><path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5"/>',
-);
+// Subagent header icons, one per bundled kiro-cli subagent (introspect's is `ICON_SUBAGENT_INTROSPECT`, above);
+// unknown ones fall back to ICON_TAB_AGENT (roles.ts iconForSubagent).
 // Context gatherer (Lucide "telescope"): explores the codebase read-only. Not the magnifier, which the search tools
 // draw inside this subagent's block.
 export const ICON_SUBAGENT_GATHERER = svg(

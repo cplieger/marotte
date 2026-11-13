@@ -14,6 +14,7 @@ import { reconcile } from "./reconcile.js";
 import { paintIfChanged, sigChanged } from "./paint-sig.js";
 import { join } from "@cplieger/keyenc";
 import { onSSE } from "./bus.js";
+import { engineRead, type EngineRead } from "./engine-read.js";
 import { confirm } from "./confirm.js";
 import type { PolicyView, PolicyRule, SecurityProfile } from "./types.js";
 // `types.js` re-exports the Policy* shapes the panel renders and not these two, which only an
@@ -338,6 +339,12 @@ class NativePolicyController {
    *  loaded once they fetch nothing, and while a load is in flight they queue one more. */
   private loaded = false;
   private reloadQueued = false;
+  private readonly read: EngineRead = engineRead(
+    () => {
+      this.reloadOnChange();
+    },
+    () => this.loaded && (maybeEl("native-policy-list")?.offsetParent ?? null) !== null,
+  );
   /** Never local constants: the ladder decides what one click grants, and policyfile owns it. */
   private profiles: SecurityProfile[] = [];
   private activeProfile = "";
@@ -439,8 +446,14 @@ class NativePolicyController {
   }
 
   private async fetchAndRender(signal: AbortSignal): Promise<void> {
+    const settle = this.read.begin();
     const data = await apiGet<PolicyView>(getPermissionsEndpoint.path, signal);
-    if (signal.aborted || data === null) {
+    if (signal.aborted) {
+      settle(null);
+      return;
+    }
+    if (data === null) {
+      settle(false);
       return;
     }
     // A completed read-back supersedes any note a past selection left. Without this, a failure
@@ -469,6 +482,7 @@ class NativePolicyController {
     // AFTER render(), which rebuilds the rows this locks: locking first would disable controls that
     // are about to be replaced by fresh, enabled ones.
     this.renderProfileState(data.rules);
+    settle(data.available);
   }
 
   // A selection writes no rule, so the user's own rules survive it. Outside Custom the table is

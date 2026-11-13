@@ -14,6 +14,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -65,7 +66,9 @@ type OpenTurnTail struct {
 // without it, an append arriving after a concurrent Delete would re-create the chat
 // directory as a ghost row.
 type Store struct {
-	broadcast broadcaster
+	// broadcast is atomic because the composition root wires it after construction, beside a header flush the
+	// coalescer's timer may already run (publishHeader).
+	broadcast atomic.Pointer[broadcaster]
 	tombstone map[marotte.ChatID]tombstone
 	versions  *subject.Versions
 	epoch     func() string
@@ -147,7 +150,7 @@ type StoreOption func(*Store)
 // WithBroadcaster sets the SSE broadcaster used by the store to emit
 // chat_created / chat_updated / chat_deleted events.
 func WithBroadcaster(b broadcaster) StoreOption {
-	return func(s *Store) { s.broadcast = b }
+	return func(s *Store) { s.broadcast.Store(&b) }
 }
 
 // WithVersions makes the store mint its `chat` and `chats` versions into the
@@ -185,6 +188,14 @@ func WithOpenTurns(fn func(chatID marotte.ChatID) []OpenTurnTail) StoreOption {
 // draws nothing for while it is off. Injected post-construction for the reason WithLiveTurn states.
 func WithHookStatusShown(fn func() bool) StoreOption {
 	return func(s *Store) { s.hookStatusShown = fn }
+}
+
+// broadcaster is the wired broadcaster, or nil before WithBroadcaster.
+func (s *Store) broadcaster() broadcaster {
+	if b := s.broadcast.Load(); b != nil {
+		return *b
+	}
+	return nil
 }
 
 // isLiveChat reports whether the chat's own turn is open, a prompt is admitted and
@@ -361,12 +372,13 @@ func validateChatUTF8(c *marotte.Chat) error {
 // with it, at once: a create is never coalesced, so no later frame can reach a page before it.
 func (s *Store) announceCreated(ctx context.Context, chatID marotte.ChatID, c *marotte.Chat) {
 	chatsVersion := s.versions.BumpCounter(subject.KindChats, "")
-	if s.broadcast == nil {
+	b := s.broadcaster()
+	if b == nil {
 		return
 	}
 	frame := marotte.NewEvent(marotte.EventChatCreated, chatID, s.wireHeader(chatID, c))
 	frame.Subject = marotte.NewSubjectStamp(string(subject.KindChats), "", chatsVersion)
-	s.broadcast.Broadcast(ctx, frame)
+	b.Broadcast(ctx, frame)
 }
 
 // publishHeader is the header coalescer's flush: it mints one `chats` version covering every save
@@ -389,12 +401,13 @@ func (s *Store) publishHeader(chatID marotte.ChatID) {
 			"chat_id", logsafe.Field(string(chatID)), "error", err)
 		return
 	}
-	if s.broadcast == nil {
+	b := s.broadcaster()
+	if b == nil {
 		return
 	}
 	frame := marotte.NewEvent(marotte.EventChatUpdated, chatID, s.wireHeader(chatID, c))
 	frame.Subject = marotte.NewSubjectStamp(string(subject.KindChats), "", chatsVersion)
-	s.broadcast.Broadcast(ctx, frame)
+	b.Broadcast(ctx, frame)
 }
 
 // wireHeader is the header every chat producer in this package sends: c.Header() plus the read
@@ -546,13 +559,14 @@ func (s *Store) Delete(ctx context.Context, chatID marotte.ChatID) (sessionChain
 	return sessionChain, nil
 }
 
-// broadcastDeleted announces a removal stamped with the `chats` version remove minted. It reads s.broadcast at call
-// time, so a broadcaster wired after construction still reaches every delete.
+// broadcastDeleted announces a removal stamped with the `chats` version remove minted. It reads the broadcaster at
+// call time, so one wired after construction still reaches every delete.
 func (s *Store) broadcastDeleted(ctx context.Context, chatID marotte.ChatID, chatsVersion string) {
-	if s.broadcast == nil {
+	b := s.broadcaster()
+	if b == nil {
 		return
 	}
 	frame := marotte.NewEvent(marotte.EventChatDeleted, chatID, marotte.ChatDeletedPayload{ID: string(chatID)})
 	frame.Subject = marotte.NewSubjectStamp(string(subject.KindChats), "", chatsVersion)
-	s.broadcast.Broadcast(ctx, frame)
+	b.Broadcast(ctx, frame)
 }

@@ -3,7 +3,7 @@
 // Chromium at three device pixel ratios; `SCROLL_ENGINES=1 npx vitest --run --project browser-engines` runs it in
 // Firefox and WebKit at the ratios and widths of the user's devices (`vitest.config.ts`).
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { server, userEvent } from "vitest/browser";
 import type { TurnState } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
@@ -96,13 +96,20 @@ async function frame(): Promise<void> {
   await taskHop();
 }
 
-/** `n` frames and at least `n` frames' time at 60Hz: frames are not rate-limited here, and the owner's idle bound is
- *  both a frame count and a time. */
+/** `n` frames, which `runClock` makes `n` frames' time at 60Hz. */
 async function idle(n: number): Promise<void> {
-  const until = performance.now() + n * (1000 / 60);
-  for (let i = 0; i < n || performance.now() < until; i++) {
+  for (let i = 0; i < n; i++) {
     await frame();
   }
+}
+
+/** The owner's gesture idle bound is a frame count and a `Date.now()` time, and frames are not rate-limited here:
+ *  the faked clock moves one 60Hz frame per frame, so a wait costs its frames and not their wall-clock time. */
+const FRAME_MS = 1000 / 60;
+let clockFrame = 0;
+function runClock(): void {
+  vi.advanceTimersByTime(FRAME_MS);
+  clockFrame = requestAnimationFrame(runClock);
 }
 
 const gap = (): number => scrollerEl.scrollHeight - scrollerEl.clientHeight - scrollerEl.scrollTop;
@@ -348,6 +355,14 @@ const viewportPx = (): number => Math.min(720, window.innerHeight);
 const DPRS = engine === "chromium" ? [1, 1.5, 3] : [window.devicePixelRatio];
 
 beforeAll(async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  clockFrame = requestAnimationFrame(runClock);
+  const clockFrom = Date.now();
+  await idle(3);
+  expect(
+    Math.abs(Date.now() - clockFrom - 3 * FRAME_MS),
+    "the premise: the owner's clock moves one 60Hz frame per frame",
+  ).toBeLessThanOrEqual(1);
   mountAppCSS();
   outerEl.style.height = `${String(viewportPx())}px`;
   mountChatView();
@@ -382,6 +397,8 @@ beforeAll(async () => {
 }, 60000);
 
 afterAll(async () => {
+  cancelAnimationFrame(clockFrame);
+  vi.useRealTimers();
   if (engine === "chromium") {
     await deviceScale(null);
   }

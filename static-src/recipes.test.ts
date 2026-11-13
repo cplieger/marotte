@@ -11,18 +11,21 @@ const authoredSource = import.meta.glob<string>(
 );
 
 const dispatched: { name: string; args: unknown }[] = [];
+/** Holds the recipe read until released, with the reply it was asked under. */
+let holdRecipes: Promise<void> | null = null;
 
 vi.mock("./actions/runs.js", () => ({
   loadRecipes: {
     dispatch: vi.fn((args: unknown) => {
       dispatched.push({ name: "recipes", args });
-      return Promise.resolve(recipesReply);
+      const reply = recipesReply;
+      return holdRecipes === null ? Promise.resolve(reply) : holdRecipes.then(() => reply);
     }),
   },
   loadRuns: {
     dispatch: vi.fn((args: unknown) => {
       dispatched.push({ name: "runs", args });
-      return Promise.resolve(runsReply);
+      return Promise.resolve(runsRefused ? null : runsReply);
     }),
   },
   launchRun: {
@@ -79,7 +82,7 @@ vi.mock("./config-standing.js", async (importOriginal) => {
 });
 
 import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
-import { BUS_CATALOG_MODELS, dispatch, emitBus } from "./bus.js";
+import { BUS_CATALOG_MODELS, BUS_ENGINE_READY, dispatch, emitBus } from "./bus.js";
 import {
   deleteLaunchRule,
   loadLaunchRules,
@@ -95,9 +98,11 @@ import type { LaunchRulesResponse, LaunchRuleView } from "./launch-rule-types.js
 import type { ForgesListResponse } from "./actions/forge-list.js";
 import type * as ConfigStandingModule from "./config-standing.js";
 
-let recipesReply: RecipesResponse = { recipes: [] };
+let recipesReply: RecipesResponse | null = { recipes: [] };
 let rulesReply: LaunchRulesResponse = { rules: [] };
 let forgesReply: ForgesListResponse = { forges: [], kinds: [] };
+/** The run list answers nothing, as a read the server refused. */
+let runsRefused = false;
 let runsReply: { sessions: ResumableSession[]; runs: WorkflowRun[] } = {
   sessions: [],
   runs: [],
@@ -150,6 +155,7 @@ function shownText(btn: HTMLElement): string {
 }
 
 beforeEach(() => {
+  holdRecipes = null;
   document.body.replaceChildren();
   dispatched.length = 0;
   vi.mocked(openRunView).mockClear();
@@ -159,6 +165,71 @@ beforeEach(() => {
   rulesReply = { rules: [] };
   forgesReply = { forges: [], kinds: [] };
   runsReply = { sessions: [], runs: [] };
+  runsRefused = false;
+});
+
+// A read the server refused while no engine was ready is asked again when the engine is back.
+describe("the engine's return", () => {
+  async function flush(): Promise<void> {
+    for (let i = 0; i < 4; i++) {
+      await Promise.resolve();
+    }
+  }
+
+  it("re-asks a refused recipe list and run list while the tab is on screen", async () => {
+    recipesReply = null;
+    runsRefused = true;
+    const panel = await render();
+    recipesReply = { recipes: [recipe("goal")] };
+    runsRefused = false;
+    runsReply = { sessions: [], runs: [run("goal", "wf_1", "running")] };
+    dispatched.length = 0;
+
+    emitBus(BUS_ENGINE_READY);
+    await flush();
+
+    expect(dispatched.map((d) => d.name).sort()).toEqual(["recipes", "runs"]);
+    expect(names(panel)).toEqual(["goal"]);
+    dispatched.length = 0;
+    emitBus(BUS_ENGINE_READY);
+    await flush();
+    expect(dispatched, "lists that answered are not re-asked").toEqual([]);
+  });
+
+  it("reads the recipe list once more after the engine came back during its read", async () => {
+    recipesReply = null;
+    let release = (): void => undefined;
+    holdRecipes = new Promise((r) => {
+      release = r;
+    });
+    const panel = await render();
+    dispatched.length = 0;
+    emitBus(BUS_ENGINE_READY);
+    emitBus(BUS_ENGINE_READY);
+    await flush();
+    expect(dispatched, "no second read beside the one out").toEqual([]);
+    holdRecipes = null;
+    recipesReply = { recipes: [recipe("goal")] };
+    release();
+    await flush();
+    expect(
+      dispatched.map((d) => d.name),
+      "one more recipe read, the run list answered",
+    ).toEqual(["recipes"]);
+    expect(names(panel)).toEqual(["goal"]);
+  });
+
+  it("asks nothing while the tab is off screen", async () => {
+    recipesReply = null;
+    const panel = await render();
+    panel.classList.add("hidden");
+    dispatched.length = 0;
+
+    emitBus(BUS_ENGINE_READY);
+    await flush();
+
+    expect(dispatched).toEqual([]);
+  });
 });
 
 describe("configuration standing", () => {

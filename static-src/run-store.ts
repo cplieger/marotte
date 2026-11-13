@@ -1157,6 +1157,19 @@ function readURL(workflowID: string, shape: RunShape, since: number | undefined)
   }
 }
 
+/** Runs whose newest read produced no answer and no settled refusal, until one answers. */
+const unanswered = new Set<string>();
+
+/** Re-read now each held run whose newest read produced no answer; its retry ladder keeps its
+ *  count. */
+export function rereadUnansweredRuns(): void {
+  for (const id of unanswered) {
+    if (runStateDemanded(id)) {
+      invalidateRun(id);
+    }
+  }
+}
+
 async function fetchRun(workflowID: string): Promise<void> {
   const owed = wholeOwed.delete(workflowID);
   const shape = readShape(workflowID);
@@ -1222,6 +1235,11 @@ async function fetchRun(workflowID: string): Promise<void> {
   } finally {
     inFlight.delete(workflowID);
     dropped = forgotten.delete(workflowID);
+    if (dropped || answered || failed === RUN_GONE_STATUS) {
+      unanswered.delete(workflowID);
+    } else {
+      unanswered.add(workflowID);
+    }
     if (dropped) {
       // Nothing to retry for a run no reader holds; `forgetRun` already cleared its ladder.
     } else if (answered) {
@@ -1579,6 +1597,7 @@ export function forgetRun(workflowID: string): void {
   bodies.delete(workflowID);
   folded.delete(workflowID);
   wholeOwed.delete(workflowID);
+  unanswered.delete(workflowID);
   cancelRunRetry(workflowID);
   plans.delete(workflowID);
   executions.delete(workflowID);

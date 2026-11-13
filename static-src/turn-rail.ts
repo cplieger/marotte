@@ -1081,11 +1081,15 @@ async function navigateToTurn(
     await correctLanding(card, gen, gestures, landed);
   } finally {
     // Per id and unconditional: a superseded jump still owns the pending mark it
-    // set. The pick belongs to whoever owns the scroller.
+    // set, and repaints its removal, since its successor may have painted before it.
+    // The pick belongs to whoever owns the scroller.
     pending.delete(s.id);
-    if (ownsJump(gen)) {
+    const owner = ownsJump(gen);
+    if (owner) {
       releaseIntent();
-      render();
+    }
+    render();
+    if (owner) {
       schedulePick();
     }
   }

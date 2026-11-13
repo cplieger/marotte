@@ -25,6 +25,8 @@ vi.mock("./bus.js", () => ({
     mocks.sseHandlers.set(type, fn);
     return () => mocks.sseHandlers.delete(type);
   },
+  onBus: () => () => undefined,
+  BUS_ENGINE_READY: "engine:ready",
   // Present-but-inert so real-ESM linking succeeds: this graph reaches names no case here calls.
   apiGetTyped: vi.fn(),
 }));

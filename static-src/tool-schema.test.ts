@@ -3,15 +3,17 @@ import { describe, it, expect } from "vitest";
 import {
   profileFor,
   toolDepth1,
-  hasDepth1,
+  cardDepth1,
   formatMCPToolName,
   renderInfoFor,
   isToolActive,
   isToolDone,
   toolTitleText,
   commandTitle,
+  loadedResources,
+  loadedClaim,
 } from "./tool-schema.js";
-import type { ToolKind, ToolDepth1 as Depth1 } from "./tool-schema.js";
+import type { ToolKind, ToolDepth1 as Depth1, LoadedResource } from "./tool-schema.js";
 import type { ToolStatus } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -43,35 +45,27 @@ describe("profileFor", () => {
   it.each(kindCases)(
     "no tool name + kind=$kind → $expectedKind",
     ({ kind, expectedKind, expectedWrites }) => {
-      const p = profileFor("", kind, null);
+      const p = profileFor(kind, null);
       expect(p.kind).toBe(expectedKind);
       expect(p.writesFile).toBe(expectedWrites);
     },
   );
 
   it.each(["unknownKind", "constructor", "toString"])("kind=%s → other", (kind) => {
-    const p = profileFor("", kind, null);
+    const p = profileFor(kind, null);
     expect(p.kind).toBe("other");
     expect(p.writesFile).toBe(false);
   });
 
-  it.each(["tool_load", "load_resource"])("tool %s reads as a search", (tool) => {
-    expect(profileFor(tool, "other", null).kind).toBe("search");
-  });
-
-  it("a server-named tool with no profile keeps its kind", () => {
-    expect(profileFor("update_workflow", "other", null).kind).toBe("other");
-  });
-
   it("an MCP identity is an integration call whatever the kind", () => {
-    const p = profileFor("", "execute", PROBE);
+    const p = profileFor("execute", PROBE);
     expect(p.kind).toBe("mcp");
     expect(p.writesFile).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// toolDepth1 / hasDepth1 — what a card reveals, per kind
+// toolDepth1 / cardDepth1 — what a card reveals, per kind
 // ---------------------------------------------------------------------------
 
 describe("toolDepth1", () => {
@@ -102,16 +96,22 @@ describe("toolDepth1", () => {
     expect(toolDepth1(kind)).toBe(expected);
   });
 
-  it("hasDepth1 is false exactly for the claim-only kinds", () => {
+  it("cardDepth1 is the kind's for any call that is not a load", () => {
     for (const { kind, expected } of cases) {
-      expect(hasDepth1(kind)).toBe(expected !== "none");
+      expect(cardDepth1({ kind, loaded: null })).toBe(expected);
     }
   });
 
   it("an edit CAN be expanded, which the old tier axis prevented", () => {
     // The tier this replaced gave `simple` (which included edit) no toggle at
     // all, so the diff had to live in the resting state to be visible.
-    expect(hasDepth1("edit")).toBe(true);
+    expect(cardDepth1({ kind: "edit", loaded: null })).not.toBe("none");
+  });
+
+  it("a load reveals what it loaded, whatever its kind", () => {
+    const loaded = [{ id: "skill::land", type: "skill", name: "land", server: "" }] as const;
+    expect(cardDepth1({ kind: "other", loaded })).toBe("load");
+    expect(cardDepth1({ kind: "read", loaded })).toBe("load");
   });
 });
 
@@ -294,5 +294,65 @@ describe("commandTitle", () => {
     expect(commandTitle("Run Command", "execute", "go vet")).toBeNull();
     expect(commandTitle("Run Command", "execute", { command: 7 })).toBeNull();
     expect(commandTitle("Run Command", "execute", { command: " \n " })).toBeNull();
+  });
+});
+
+// KAS's resource-id grammar, one case per prefix the load tools accept, plus ids outside it.
+describe("loadedResources", () => {
+  const cases: { id: string; want: Omit<LoadedResource, "id"> }[] = [
+    {
+      id: "tool::agent-mail::fetch_inbox",
+      want: { type: "mcp", name: "fetch_inbox", server: "agent-mail" },
+    },
+    { id: "tool::inspect_workflow", want: { type: "tool", name: "inspect_workflow", server: "" } },
+    {
+      id: "builtin::inspect_workflow",
+      want: { type: "tool", name: "inspect_workflow", server: "" },
+    },
+    { id: "skill::land", want: { type: "skill", name: "land", server: "" } },
+    { id: "steering::code-style", want: { type: "steering", name: "code-style", server: "" } },
+    { id: "power::aws::overview", want: { type: "overview", name: "aws", server: "" } },
+    { id: "power::aws::tool::docs::search", want: { type: "mcp", name: "search", server: "docs" } },
+    { id: "power::aws::steering::guide", want: { type: "steering", name: "guide", server: "" } },
+    { id: "plugin::kit::skill::release", want: { type: "skill", name: "release", server: "" } },
+    { id: "plugin::kit::tool::srv::do", want: { type: "mcp", name: "do", server: "srv" } },
+    { id: "tool::mailbox::", want: { type: "unknown", name: "tool::mailbox::", server: "" } },
+    { id: "tool::::x", want: { type: "unknown", name: "tool::::x", server: "" } },
+    { id: "power::aws", want: { type: "unknown", name: "power::aws", server: "" } },
+    { id: "plugin::::skill::x", want: { type: "unknown", name: "plugin::::skill::x", server: "" } },
+    { id: "memory::x", want: { type: "unknown", name: "memory::x", server: "" } },
+    { id: "skill::team::land", want: { type: "skill", name: "team::land", server: "" } },
+    { id: "steering::web::css", want: { type: "steering", name: "web::css", server: "" } },
+    { id: "skill::", want: { type: "unknown", name: "skill::", server: "" } },
+    { id: "power::aws::skill::a::b", want: { type: "skill", name: "a::b", server: "" } },
+    { id: "plugin::kit::steering::a::b", want: { type: "steering", name: "a::b", server: "" } },
+    {
+      id: "power::a::b::skill::x",
+      want: { type: "unknown", name: "power::a::b::skill::x", server: "" },
+    },
+    {
+      id: "plugin::a::b::steering::x",
+      want: { type: "unknown", name: "plugin::a::b::steering::x", server: "" },
+    },
+  ];
+  it.each(cases)("$id", ({ id, want }) => {
+    expect(loadedResources("load_resource", { id })).toEqual([{ id, ...want }]);
+  });
+
+  it("reads an older tool_load's tool_ids, skipping non-strings and empties", () => {
+    const got = loadedResources("tool_load", { tool_ids: ["skill::a", 7, "", "tool::b"] });
+    expect(got?.map((r) => r.id)).toEqual(["skill::a", "tool::b"]);
+  });
+
+  it("is null for a call that is not a load, or names no id yet", () => {
+    expect(loadedResources("read_file", { id: "skill::a" })).toBeNull();
+    expect(loadedResources("load_resource", undefined)).toBeNull();
+    expect(loadedResources("load_resource", {})).toBeNull();
+    expect(loadedResources("tool_load", { tool_ids: [] })).toBeNull();
+  });
+
+  it("names what loaded on the claim line", () => {
+    const loaded = loadedResources("load_resource", { id: "tool::agent-mail::fetch_inbox" });
+    expect(loaded === null ? "" : loadedClaim(loaded)).toBe("Loaded agent-mail fetch_inbox");
   });
 });

@@ -1195,6 +1195,9 @@ describe("which card a row jumps to", () => {
     });
 
     marker(1).click();
+    await vi.waitFor(() => {
+      expect(vi.mocked(loadOlderTurns)).toHaveBeenCalledTimes(1);
+    });
     marker(2).click();
     await vi.waitFor(() => {
       expect(measured).toBeGreaterThan(3);
@@ -1202,6 +1205,45 @@ describe("which card a row jumps to", () => {
 
     await settleJump();
     expect(target.dataset["railTarget"]).toBe("");
+    expect(currentOf(rail)).toBe("2");
+  });
+
+  it("clears the paging mark of a superseded jump that exits after the jump that superseded it", async () => {
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
+    await loadTurnRail("c-late-exit");
+    setSessions([paged("c-late-exit", ["m2"], true)]);
+    setActive("c-late-exit");
+    setPainted("c-late-exit");
+    residentCard(2, "m2");
+    let releaseFirst: (() => void) | undefined;
+    const paging = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    vi.mocked(loadOlderTurns).mockImplementation(async () => {
+      await paging;
+      return false;
+    });
+
+    marker(1).click();
+    marker(2).click();
+    // The second jump settles (two polls with no new landing) while the first waits in the paging door.
+    let seen = -1;
+    await vi.waitFor(
+      () => {
+        const now = scrollable.landings.length;
+        const still = now > 0 && now === seen && scrollable.landed === now;
+        seen = now;
+        expect(still).toBe(true);
+      },
+      { interval: 60, timeout: 5000 },
+    );
+    expect(vi.mocked(loadOlderTurns)).toHaveBeenCalledTimes(1);
+    // The premise: the second jump has landed while the first still holds its paging mark.
+    expect(isPending(marker(1))).toBe(true);
+    releaseFirst?.();
+
+    await settleJump();
+    expect(isPending(marker(1))).toBe(false);
     expect(currentOf(rail)).toBe("2");
   });
 

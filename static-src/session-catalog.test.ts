@@ -38,7 +38,7 @@ vi.mock("./store.js", { spy: true });
 
 const store = await import("./store.js");
 const { MODEL_CONTEXT_SIZES } = store;
-const { fetchCatalog } = await import("./session-catalog.js");
+const { fetchCatalog, rereadRefusedCatalog } = await import("./session-catalog.js");
 const { BUS_CATALOG_MODELS, onBus } = await import("./bus.js");
 
 /** A catalog answer with the lists the wire declares non-null. */
@@ -256,5 +256,29 @@ describe("the one catalog reader", () => {
     const models = mockSetPickerModels.mock.calls[0]?.[0] as ModelInfo[] | undefined;
     expect(models?.[0]?.thinking_default_off).toBe(true);
     expect(models?.[1]?.thinking_default_off).toBeUndefined();
+  });
+});
+
+describe("the engine's return", () => {
+  it("re-asks a catalog whose newest read was refused, and not one that answered", async () => {
+    vi.useFakeTimers();
+    try {
+      reply = catalog({ catalog: "unavailable" });
+      const loop = fetchCatalog();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reads, "the refused read").toEqual(["/api/config-template"]);
+      reply = catalog({ models: [model("m-big")] });
+      rereadRefusedCatalog();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reads, "re-asked at once, before the retry's wait").toHaveLength(2);
+      await vi.runAllTimersAsync();
+      await loop;
+      const before = reads.length;
+      rereadRefusedCatalog();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reads, "a catalog that answered is not re-asked").toHaveLength(before);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

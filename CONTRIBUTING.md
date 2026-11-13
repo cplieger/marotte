@@ -33,7 +33,7 @@ env -u KIRO_KAS_SERVER_PATH -u KIRO_KAS_NODE_PATH -u KIRO_RUNTIME_DIR -u KIRO_HO
 env -u KIRO_RUNTIME_DIR -u KIRO_HOME HOME=<scratch> go test ./internal/kascap/
 ```
 
-The `e2e-sse` test project runs against a real server binary and skips unless `SSE_FIXTURE` names one. CI does not set it yet, because the shared TypeScript workflow has no step that builds the binary. After a change to the SSE stream, the sync digest or how the chat store publishes headers, build that binary and run the project:
+The `e2e-sse` test project runs against a real server binary. In CI, ts-ci builds it from the `sseFixture` and `sseFixtureTags` keys in `static-src/package.json` and passes it to every shard as `SSE_FIXTURE`, so the project runs there, and its setup fails a CI run where `SSE_FIXTURE` is unset rather than skipping. Locally it skips unless `SSE_FIXTURE` names a binary. After a change to the SSE stream, the sync digest or how the chat store publishes headers, build that binary and run the project:
 
 ```sh
 go build -tags marotte_test -o /tmp/marotte-test .

@@ -190,8 +190,6 @@ type chatLifecycle struct {
 	// stamp is the gate stamp that created the life; every reservation carries it.
 	stamp uint64
 	state turnState
-	// runUnsent is the steer queue's unsent row count the list last applied (runFactsChanged).
-	runUnsent int
 	// stopSeq is nextSeq when a stop was last requested: every turn at or below it was open then. Zero is no stop.
 	stopSeq uint64
 	// nextSeq is the open sequence the newest record took; openLocked increments it

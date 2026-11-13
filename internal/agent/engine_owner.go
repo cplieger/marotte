@@ -523,7 +523,7 @@ func (o *engineOwner) onExit(gen uint64) {
 	o.mu.Unlock()
 }
 
-// acquire waits for the engine to be ready, bounded by ctx, and counts the caller as an in-flight door until release.
+// acquire waits for the engine to be ready, bounded by ctx (or not at all under marotte.WithoutEngineWait), and counts the caller as an in-flight door until release.
 func (o *engineOwner) acquire(ctx context.Context) (h engineHandle, gen uint64, release func(), err error) {
 	return o.acquireAfter(ctx, 0)
 }
@@ -539,6 +539,11 @@ func (o *engineOwner) acquireAfter(ctx context.Context, after uint64) (h engineH
 			return nil, 0, nil, err
 		case h != nil:
 			return h, gen, o.releaseDoor, nil
+		case marotte.EngineWaitRefused(ctx):
+			if w.startErr != nil {
+				return nil, 0, nil, fmt.Errorf("%w: %w", marotte.ErrBridgeExited, w.startErr)
+			}
+			return nil, 0, nil, fmt.Errorf("%w: the agent engine is not ready", marotte.ErrBridgeExited)
 		}
 		select {
 		case <-w.ch:

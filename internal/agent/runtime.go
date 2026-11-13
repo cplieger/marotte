@@ -176,9 +176,10 @@ func (lt *lifetime) derivedContext() (context.Context, context.CancelFunc) {
 }
 
 // TurnContext returns a turn's context and the teardown to defer. Detached from reqCtx's cancellation (the
-// POST context dies on return) but keeping its values; shutdown re-attaches via AfterFunc.
+// POST context dies on return) but keeping its values, and waiting for the engine as a read's request does not;
+// shutdown re-attaches via AfterFunc.
 func (lt *lifetime) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(context.WithoutCancel(reqCtx))
+	ctx, cancel := context.WithCancel(marotte.WithEngineWait(context.WithoutCancel(reqCtx)))
 	stop := context.AfterFunc(lt.shutdownCtx, cancel)
 	return ctx, func() {
 		stop()

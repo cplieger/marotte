@@ -20,9 +20,9 @@ import {
 // open peers, light dismissal arms within show() under the current flags, a hide fades and then
 // hides the panel, a same-value option patch changes nothing, and dispose hides at once with no
 // onClose. An Escape or outside click closes an open popup whose listener it reaches, unless it
-// is the event in dispatch when that listener armed. A closed popup whose fade the model cannot
-// place (a show undone inside its own realization never revealed the panel) may be fading or
-// hidden.
+// is the event in dispatch when that listener armed. A settle ends only the fades begun before it.
+// A closed popup whose fade the model cannot place (a show undone inside its own realization never
+// revealed the panel) may be fading or hidden.
 
 type Flag = "closeOnOutside" | "closeOnEscape";
 type Step =
@@ -39,6 +39,8 @@ interface Pop {
   annotated: "yes" | "maybe" | "no";
   opens: number;
   closes: number;
+  /** Model hides so far: a settle ends only the fades begun before it. */
+  hides: number;
 }
 
 function newPop(): Pop {
@@ -50,6 +52,7 @@ function newPop(): Pop {
     annotated: "no",
     opens: 0,
     closes: 0,
+    hides: 0,
   };
 }
 
@@ -165,6 +168,7 @@ function scenario(w: World): Scenario<Step> {
     if (pop.open) {
       pop.open = false;
       pop.phase = "closing";
+      pop.hides++;
     }
   };
   const showModel = (pop: Pop, other: Pop): void => {
@@ -347,9 +351,10 @@ function scenario(w: World): Scenario<Step> {
           release(s.k);
           return;
         case "settle": {
+          const before = [me.hides, peer.hides];
           w.advance(400, null);
-          for (const pop of [me, peer]) {
-            if (pop.phase === "closing") {
+          for (const [i, pop] of [me, peer].entries()) {
+            if (pop.phase === "closing" && pop.hides === before[i]) {
               pop.phase = "hidden";
             }
           }
@@ -528,6 +533,13 @@ describe("popup: re-entry property", () => {
             {
               script: [{ k: "show" }, { k: "closeGroup" }, { k: "settle" }],
               injections: [{ at: 320, actions: [{ k: "show" }] }],
+            },
+          ],
+          // A show at the settle's own leave-end write closes the peer inside the settle: its fade outlasts it.
+          [
+            {
+              script: [{ k: "show" }, { k: "peerShow" }, { k: "settle" }],
+              injections: [{ at: 4, hit: "attr:class@panel", actions: [{ k: "show" }] }],
             },
           ],
         ],

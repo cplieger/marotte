@@ -17,9 +17,9 @@ class FakeRecognizer extends EventTarget implements SpeechRecognizer {
   continuous = false;
   interimResults = false;
   processLocally = false;
-  started = 0; // deadset:ignore DS1301 -- the fake's call record, read by the dictation tests
-  stopped = 0; // deadset:ignore DS1301 -- the fake's call record, read by the dictation tests
-  aborted = 0; // deadset:ignore DS1301 -- the fake's call record, read by the dictation tests
+  started = 0;
+  stopped = 0;
+  aborted = 0;
   startThrows: Error | null = null;
 
   start(): void {
@@ -44,15 +44,26 @@ class FakeRecognizer extends EventTarget implements SpeechRecognizer {
 
   /** The engine's whole result list so far, as a `result` event carries it. */
   hear(...results: readonly Heard[]): void {
+    this.hearFrom(0, ...results);
+  }
+
+  /** `hear` with the list's first changed entry at `resultIndex`, as WebKit sets it: the count of earlier finals
+   *  (WebCore SpeechRecognition::didReceiveResult). */
+  hearFrom(resultIndex: number, ...results: readonly Heard[]): void {
     const list = results.map(([transcript, isFinal]) => {
       const alt = { transcript, confidence: 0.9 };
       return Object.assign([alt], { isFinal, item: () => alt });
     });
     const e = Object.assign(new Event("result"), {
-      resultIndex: 0,
+      resultIndex,
       results: Object.assign(list, { item: (i: number) => list[i] }),
     });
     this.dispatchEvent(e);
+  }
+
+  /** One of the engine's argument-free lifecycle events (`audiostart`, `speechstart`, `speechend`, `audioend`). */
+  signal(type: "audiostart" | "speechstart" | "speechend" | "audioend"): void {
+    this.dispatchEvent(new Event(type));
   }
 
   fail(code: string): void {

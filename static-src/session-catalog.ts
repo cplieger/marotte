@@ -8,7 +8,7 @@ import { BUS_CATALOG_MODELS, emitBus } from "./bus.js";
 import { observeStamp } from "./subject-versions.js";
 import { decodeConfigTemplateResponse } from "./wire/decoders.gen.js";
 import type { ConfigTemplateResponse } from "./wire/types.gen.js";
-import { CATALOG_REQUEST_TIMEOUT_MS, refreshCatalog } from "./model-catalog.js";
+import { CATALOG_REQUEST_TIMEOUT_MS, catalogRefused, refreshCatalog } from "./model-catalog.js";
 import { setCatalogModes } from "./roles.js";
 import { refreshPickerIfVisible, setCatalogPhase, setPickerModels } from "./picker.js";
 import { refreshContextUI } from "./context-ui.js";
@@ -85,6 +85,13 @@ export function fetchCatalog(
     },
     opts,
   );
+}
+
+/** Ask for the catalog again, now, when its newest read answered nothing usable. */
+export function rereadRefusedCatalog(): void {
+  if (catalogRefused()) {
+    void fetchCatalog({ reset: true });
+  }
 }
 
 /** `activeModel` moves the active highlight; pass "" when no session is active yet. */

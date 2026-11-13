@@ -27,7 +27,7 @@ npm run typecheck:tests # tsc type-check (tests)
 
 ## Test environment
 
-Five vitest projects, and the DEFAULT is the browser (the fifth, `e2e-sse`, skips unless `SSE_FIXTURE` is set; see CONTRIBUTING.md "Checks"):
+Five vitest projects, and the DEFAULT is the browser (the fifth, `e2e-sse`, runs against a real server binary: CI builds it and runs the project, and locally it skips unless `SSE_FIXTURE` is set; see CONTRIBUTING.md "Checks"):
 
 - **browser** — headless Chromium via `@vitest/browser-playwright`. Every test
   runs here unless its filename opts out. No `environment` option and no

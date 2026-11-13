@@ -8,7 +8,6 @@ import { BUS_TAB_CHANGED, onBus } from "./bus.js";
 import { watchActiveId } from "./store.js";
 import { dictationCloudNoted, markDictationCloudNoted } from "./device-view.js";
 import { applyEdit } from "./text-edit.js";
-import { touchComposer } from "./composer-touch.js";
 
 export type SpeechAvailability = "available" | "downloadable" | "downloading" | "unavailable";
 
@@ -54,8 +53,9 @@ export interface Dictation {
   readonly ready: ReadonlySignal<boolean>;
   /** From the press until the session stops. */
   readonly listening: ReadonlySignal<boolean>;
-  /** Start, or stop so the words still being recognized land. */
-  toggle(): void;
+  /** Start, or stop so the words still being recognized land. A `finger`'s session leaves focus where it is, so no
+   *  keyboard opens over the words, and writes into the unfocused box. */
+  toggle(press?: { readonly finger?: boolean }): void;
   /** Stop now: the words still being recognized are dropped, and a phrase waiting for the box's focus lands when
    *  it comes back. What is in the box stays. */
   stop(): void;
@@ -143,8 +143,12 @@ interface Session {
   after: string;
   /** The phrase heard while focus was outside the box, written when it comes back. */
   pending: string | null;
-  /** Under a finger: the box's own `inputmode`, put away while the session keeps the box focused. */
-  keyboard: { readonly mode: string | null } | null;
+  /** Started by a finger: focus stays where the press left it. */
+  readonly finger: boolean;
+  /** A result arrived, so audio reaches the recognizer. */
+  heard: boolean;
+  /** The no-result limit's timer, from `audiostart` to the first result. */
+  deaf: ReturnType<typeof setTimeout> | undefined;
 }
 
 /** `cloud`: whether audio is known to go to the vendor's service, which the notice says. */
@@ -169,8 +173,17 @@ function isRefused(code: string): code is Refusal {
   return Object.hasOwn(REFUSED, code);
 }
 
-/** Codes that end a session with nothing to report: silence, or our own abort. */
+/** Codes that end a session with nothing to report: silence after words, or our own abort. */
 const QUIET = new Set(["no-speech", "aborted"]);
+
+/** How long a session may go without a result once its audio starts: Chromium's own silence limit
+ *  (`kNoSpeechTimeoutMs`, content/browser/speech/speech_recognizer_impl.h). WebKit has none, and on iOS 27 a session
+ *  can open the microphone and never send a result or an error (https://bugs.webkit.org/show_bug.cgi?id=321436). */
+const NO_RESULT_MS = 8000;
+
+/** One text for both silences, the engine's `no-speech` and `NO_RESULT_MS`, since either can come first. */
+const UNHEARD =
+  "Dictation stopped: it heard no words. Press Dictate to try again. If it keeps hearing nothing, close and reopen the browser or app.";
 
 /** How long `install()` runs before the downloading toast shows: `available()` masks an installed pack as
  *  downloadable until this origin installs it, and that install resolves at once (Web Speech API, "Download Masking"). */
@@ -210,11 +223,6 @@ class Controller implements Dictation {
         this.drop();
       }
     });
-    box.addEventListener("pointerdown", () => {
-      if (this.s !== null) {
-        this.giveKeyboardBack(this.s);
-      }
-    });
     box.addEventListener("focusin", () => {
       const late = this.late;
       this.late = null;
@@ -247,7 +255,7 @@ class Controller implements Dictation {
     });
   }
 
-  toggle(): void {
+  toggle(press: { readonly finger?: boolean } = {}): void {
     const s = this.s;
     if (s?.listening === true) {
       if (s.rec === null) {
@@ -255,12 +263,14 @@ class Controller implements Dictation {
         return;
       }
       s.rec.stop();
-      this.box.focus();
+      if (!s.finger) {
+        this.box.focus();
+      }
       this.unlisten(s);
       return;
     }
     if (this.ready.peek()) {
-      void this.begin();
+      void this.begin(press.finger === true);
     }
   }
 
@@ -294,42 +304,24 @@ class Controller implements Dictation {
     }
   }
 
-  /** The words land as one undo step only in a focused box. Under a finger the keyboard is put away for the
-   *  session, so the focus does not raise it over the words. */
-  private focusBox(s: Session): void {
-    const box = this.box;
-    if (touchComposer()) {
-      s.keyboard = { mode: box.getAttribute("inputmode") };
-      box.inputMode = "none";
-    }
-    box.focus();
-  }
-
-  /** Leaves focus where it is; prompt-input.ts `focusAfterDictation` owns where it goes when a session ends. */
-  private giveKeyboardBack(s: Session): void {
-    const k = s.keyboard;
-    if (k === null) {
-      return;
-    }
-    s.keyboard = null;
-    const box = this.box;
-    if (k.mode === null) {
-      box.removeAttribute("inputmode");
-    } else {
-      box.setAttribute("inputmode", k.mode);
-    }
-  }
-
   private halt(s: Session): void {
     s.accepting = false;
     s.rec?.abort();
     this.retire(s);
     this.unlisten(s);
-    this.giveKeyboardBack(s);
+  }
+
+  /** A session that heard nothing stops and says so, rather than listen on with nothing written. */
+  private unheard(s: Session): void {
+    if (this.s === s && s.listening && !s.heard) {
+      errorToast(UNHEARD);
+      this.halt(s);
+    }
   }
 
   /** The session's results stop landing; a phrase still waiting for focus lands on the box's next `focusin`. */
   private retire(s: Session): void {
+    clearTimeout(s.deaf);
     if (this.s !== s) {
       return;
     }
@@ -348,7 +340,7 @@ class Controller implements Dictation {
     }
   }
 
-  private async begin(): Promise<void> {
+  private async begin(finger: boolean): Promise<void> {
     this.stop();
     const s: Session = {
       rec: null,
@@ -359,11 +351,16 @@ class Controller implements Dictation {
       written: "",
       after: "",
       pending: null,
-      keyboard: null,
+      finger,
+      heard: false,
+      deaf: undefined,
     };
     this.s = s;
     this.on.value = true;
-    this.focusBox(s);
+    // The words land as one undo step only in a focused box; under a finger the focus would raise the keyboard.
+    if (!finger) {
+      this.box.focus();
+    }
     const engine = await this.pickEngine(s);
     if (!s.listening) {
       return;
@@ -468,14 +465,27 @@ class Controller implements Dictation {
         announce("Dictation started");
       }
     });
+    rec.addEventListener("audiostart", () => {
+      if (!s.heard && s.deaf === undefined) {
+        s.deaf = setTimeout(() => {
+          this.unheard(s);
+        }, NO_RESULT_MS);
+      }
+    });
     rec.addEventListener("result", (e) => {
       this.answered = true;
+      s.heard = true;
+      clearTimeout(s.deaf);
       if (s.accepting && this.s === s) {
         this.write(s, phraseOf(e as ResultEvent, this.platform.cumulative));
       }
     });
     rec.addEventListener("error", (e) => {
       const code = (e as Event & { readonly error?: unknown }).error;
+      if (code === "no-speech" && !s.heard) {
+        this.unheard(s);
+        return;
+      }
       if (typeof code === "string" && QUIET.has(code)) {
         return;
       }
@@ -493,7 +503,6 @@ class Controller implements Dictation {
       s.accepting = false;
       this.retire(s);
       this.unlisten(s);
-      this.giveKeyboardBack(s);
     });
   }
 
@@ -504,7 +513,8 @@ class Controller implements Dictation {
 
   /** Replace what the session wrote with `phrase`. Each write first takes the previous one back through the
    *  browser's undo, so the whole session is one undo step. Only `execCommand` keeps that history, and it edits
-   *  the focused element only, so a phrase heard while focus is elsewhere waits for the box's `focusin`. */
+   *  the focused element only, so a phrase heard while focus is elsewhere waits for the box's `focusin`; a finger's
+   *  session, which never took focus, writes into the unfocused box without that history. */
   private write(s: Session, phrase: string): void {
     const box = this.box;
     if (phrase === "") {
@@ -524,7 +534,8 @@ class Controller implements Dictation {
       }
       return;
     }
-    if (document.activeElement !== box) {
+    const focused = document.activeElement === box;
+    if (!focused && !s.finger) {
       s.pending = phrase;
       return;
     }
@@ -535,7 +546,8 @@ class Controller implements Dictation {
     const caret = a.start + a.prefix.length + phrase.length;
     this.writing = true;
     try {
-      const back = s.written === "" || this.undoTo(a.base);
+      // A finger's session writes outside the undo history, so an undo would take back an older edit, not its last write.
+      const back = s.written === "" || (!s.finger && this.undoTo(a.base));
       applyEdit(box, {
         start: a.start,
         end: back ? a.end : a.start + s.written.length,

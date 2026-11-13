@@ -1,5 +1,5 @@
 // Starts the marotte binary named by SSE_FIXTURE and hands its origin and workspace through
-// `inject("marotteURL")` and `inject("marotteWorkDir")`; a no-op when unset. The binary must be built with `-tags marotte_test`,
+// `inject("marotteURL")` and `inject("marotteWorkDir")`; a no-op when unset outside CI, an error inside it. The binary must be built with `-tags marotte_test`,
 // the only build that mounts the SSE control surface.
 import { type ChildProcess, spawn } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -99,6 +99,13 @@ export default async function setup(
 ): Promise<(() => Promise<void>) | undefined> {
   const binary = process.env["SSE_FIXTURE"];
   if (binary === undefined || binary === "") {
+    // ts-ci builds the package.json `sseFixture` server and exports SSE_FIXTURE before the suite,
+    // so an unset one in CI is a broken build step that would skip the suite and still pass.
+    if (process.env["CI"] === "true") {
+      throw new Error(
+        "[e2e-sse] SSE_FIXTURE is unset in CI: the sseFixture build step did not export it, so the e2e-sse suite would skip",
+      );
+    }
     console.warn(
       "[e2e-sse] SSE_FIXTURE is unset, the suite skips itself: `go build -tags marotte_test -o /tmp/marotte-test .` then `SSE_FIXTURE=/tmp/marotte-test npx vitest --run --project e2e-sse`",
     );
