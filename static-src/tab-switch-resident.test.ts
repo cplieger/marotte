@@ -198,6 +198,32 @@ describe("a switch to a parked chat", () => {
     expect(coverShown()).toBe(false);
   });
 
+  it("keeps a slow switch's shown skeleton over a return to the parked chat until its paint lifts it", async () => {
+    const ids = await strip("a", "b");
+    const page = fx.chat.page("b");
+    clickRow(ids["b"] ?? "");
+    await activationRan();
+    await pastShowWindow();
+    expect(coverShown(), "the premise: the slow switch's skeleton shows").toBe(true);
+    let shownAtPaint: boolean | undefined;
+    fx.chat.show.mockImplementation((id: string) => {
+      shownAtPaint = coverShown();
+      pointers.painted = id;
+      releaseCover(id);
+    });
+
+    clickRow(ids["a"] ?? "");
+
+    expect(coverShown(), "going back lifted the skeleton over the abandoned chat's view").toBe(
+      true,
+    );
+    await activationRan();
+    expect(fx.chat.show).toHaveBeenCalledWith("a");
+    expect(shownAtPaint, "the skeleton lifted before the parked chat painted its turns").toBe(true);
+    expect(coverShown(), "the parked chat's paint left the skeleton up").toBe(false);
+    page.resolve();
+  });
+
   it("drops the park reads its gesture took when a later gesture supersedes it", async () => {
     const log: string[] = [];
     registerTranscriptOwner({

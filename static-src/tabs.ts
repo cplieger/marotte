@@ -755,9 +755,13 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
       now = true;
     } else if (!transcriptPainted(ref)) {
       holdCover(ref, opts.waitingSince);
+    } else if (coverShown()) {
+      // A slow switch's skeleton already stands over that chat's empty view: the parked chat's
+      // paint lifts it over its own turns.
+      holdCover(ref);
     } else {
       // A parked or mounted view shows its own turns: the outgoing view stays on screen until the
-      // activation swaps them, and a cover an earlier switch held would only hide them.
+      // activation swaps them, and a cover held but not shown would only hide them.
       dropCover();
     }
   } else {
