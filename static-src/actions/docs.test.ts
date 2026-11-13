@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type * as Toast from "../toast.js";
 
 import { resetActionFramework, headerValue } from "./__test-helpers__/action-test-setup.js";
 
-vi.mock("../toast.js", () =>
-  import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
-);
+vi.mock("../toast.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Toast>()),
+  ...(await import("../__test-helpers__/toast-mock.js")).toastMock(),
+}));
 
 const mockFetch = vi.fn();
 
