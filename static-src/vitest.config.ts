@@ -40,6 +40,11 @@ const tapCommand: BrowserCommand<[selector: string]> = async ({ iframe }, select
   await iframe.locator(selector).tap();
 };
 
+/** Move the real pointer to (-1, -1), outside the viewport, where it hovers nothing. */
+const parkPointerCommand: BrowserCommand<[]> = async ({ page }) => {
+  await page.mouse.move(-1, -1);
+};
+
 // A test needing a coarse pointer is `*.touch.test.ts` and runs in `browser-touch`, whose pages are
 // touch devices from creation: touch emulation switched off inside a page leaves headless Chromium
 // reporting no pointer at all, not the mouse a page starts with, and every later file inherits it.
@@ -57,7 +62,7 @@ function browserProject(
       exclude,
       // Merged with the root list (`extends: true` merges arrays). Browser-only: both read `window`,
       // and a `ResizeObserver` loop is a real engine's verdict.
-      setupFiles: ["./ro-loop-gate.ts", "./storage-reset-setup.ts"],
+      setupFiles: ["./ro-loop-gate.ts", "./storage-reset-setup.ts", "./pointer-park-setup.ts"],
       // Files run in parallel because each worker session opens its own Playwright context, and the
       // mocker's routes live on the context: two concurrent files never share one
       // (https://github.com/vitest-dev/vitest/issues/8339).
@@ -86,6 +91,7 @@ function browserProject(
         // two nest one line apart and the wrong one type-checks nowhere.
         commands: {
           tap: tapCommand,
+          parkPointer: parkPointerCommand,
           /** Emulate the two accessibility media features this app has arms for, per page and per test:
            *  the provider's `contextOptions` is project-global and would invert the `tab-dot.test.ts` family.
            *  Playwright's typed `emulateMedia` rather than `cdp()`, whose `CDPSession` is typed empty; one
@@ -309,13 +315,18 @@ export default defineConfig({
                 name: "browser-engines",
                 include: engineFiles,
                 exclude: sharedExclude,
-                setupFiles: ["./ro-loop-gate.ts", "./storage-reset-setup.ts"],
+                setupFiles: [
+                  "./ro-loop-gate.ts",
+                  "./storage-reset-setup.ts",
+                  "./pointer-park-setup.ts",
+                ],
                 browser: {
                   enabled: true,
                   headless: true,
                   screenshotFailures: false,
                   provider: playwright(),
                   instances: engineInstances,
+                  commands: { parkPointer: parkPointerCommand },
                 },
               },
             } satisfies TestProjectInlineConfiguration,
@@ -329,7 +340,11 @@ export default defineConfig({
                 name: "browser-touch-webkit",
                 include: touchEngineFiles,
                 exclude: sharedExclude,
-                setupFiles: ["./ro-loop-gate.ts", "./storage-reset-setup.ts"],
+                setupFiles: [
+                  "./ro-loop-gate.ts",
+                  "./storage-reset-setup.ts",
+                  "./pointer-park-setup.ts",
+                ],
                 browser: {
                   enabled: true,
                   headless: true,
@@ -337,7 +352,7 @@ export default defineConfig({
                   provider: playwright({ contextOptions: { hasTouch: true } }),
                   instances: [{ browser: "webkit" }],
                   viewport: { width: 390, height: 844 },
-                  commands: { tap: tapCommand },
+                  commands: { tap: tapCommand, parkPointer: parkPointerCommand },
                 },
               },
             } satisfies TestProjectInlineConfiguration,
