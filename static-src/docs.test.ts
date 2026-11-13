@@ -71,6 +71,8 @@ vi.mock("./tabs.js", () => ({
   setDocsTab: vi.fn(),
   toggleDocsView: vi.fn(() => Promise.resolve()),
 }));
+/** Every onBus registration since import: engine-read.ts registers its listener once, when the file loads. */
+const busCapture = vi.hoisted(() => new Map<string, () => void>());
 vi.mock("./bus.js", () => ({
   // Present-but-undefined for real-ESM linking.
   BUS_RUNS_CHANGED: undefined,
@@ -87,7 +89,10 @@ vi.mock("./bus.js", () => ({
   decodeEnvelope: undefined,
   dispatch: undefined,
   emitBus: undefined,
-  onBus: vi.fn(() => () => undefined),
+  onBus: vi.fn((type: string, fn: () => void) => {
+    busCapture.set(type, fn);
+    return () => undefined;
+  }),
   onSSE: vi.fn(() => () => undefined),
 }));
 // Only the subscription is replaced: subscribing fetches through the transport, which outlived teardown as an
@@ -875,8 +880,7 @@ describe("the Hooks tab: staying current", () => {
     forceDocsTab("hooks");
     refreshDocsView();
     sseHandlers = new Map(vi.mocked(onSSE).mock.calls.map((c) => [c[0], c[1] as () => void]));
-    const { onBus } = await import("./bus.js");
-    busHandlers = new Map(vi.mocked(onBus).mock.calls.map((c) => [c[0], c[1] as () => void]));
+    busHandlers = busCapture;
   });
 
   it("badges a steering doc KAS reported an issue for, and refetches on steering_issues_changed", async () => {
@@ -1071,6 +1075,41 @@ describe("the Hooks tab: staying current", () => {
     vi.mocked(apiGetTyped).mockClear();
     ready?.();
     expect(vi.mocked(apiGetTyped), "a read that answered").not.toHaveBeenCalled();
+  });
+
+  it("reads hook state once more after the engine came back during a read", async () => {
+    const { apiGetTyped } = await import("./api-client.js");
+    const serve = serveDocsPage();
+    let held = true;
+    let release = (): void => undefined;
+    vi.mocked(apiGetTyped)
+      .mockClear()
+      .mockImplementation((path, decode) => {
+        if (path === "/api/hooks" && held) {
+          held = false;
+          return new Promise((r) => {
+            release = () => {
+              r(serve(path, decode));
+            };
+          });
+        }
+        return serve(path, decode);
+      });
+    const hookReads = (): number =>
+      vi.mocked(apiGetTyped).mock.calls.filter((c) => c[0] === "/api/hooks").length;
+    sseHandlers.get("hooks_changed")?.();
+    await vi.waitFor(() => {
+      expect(hookReads()).toBe(1);
+    });
+
+    busHandlers.get("engine:ready")?.();
+    busHandlers.get("engine:ready")?.();
+    await Promise.resolve();
+    expect(hookReads(), "no second read beside the one out").toBe(1);
+    release();
+    await vi.waitFor(() => {
+      expect(hookReads(), "one more read after it").toBe(2);
+    });
   });
 
   it("dispatches the toggle for the row it was clicked on", async () => {

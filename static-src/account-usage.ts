@@ -7,7 +7,7 @@ import { $ } from "./dom.js";
 import { apiGetTyped } from "./api-client.js";
 import { decodeAccountUsage } from "./wire/decoders.gen.js";
 import type { AccountUsage, AccountUsageBreakdown } from "./types.js";
-import { onBus, BUS_ENGINE_READY } from "./bus.js";
+import { engineRead } from "./engine-read.js";
 
 const CLIENT_TTL_MS = 30_000;
 let lastFetch = 0;
@@ -16,8 +16,16 @@ let inflight = false;
 let epoch = 0;
 /** Whether the rows show "Usage unavailable". */
 let unavailable = false;
-/** The engine came back while a read was out; that read re-asks if it was refused. */
-let reaskOwed = false;
+/** The rows are on screen only while the popup is open; a closed one fetches on its next open, since a refused read
+ *  leaves no throttle. */
+const usageRead = engineRead(
+  () => {
+    loadAccountUsage(true);
+  },
+  () => !$.statusCard.hidden,
+);
+/** The settle of the read out, for a reset that abandons it. */
+let settleOut: ((answered: boolean | null) => void) | null = null;
 
 /**
  * Fetch and render account usage, throttled to CLIENT_TTL_MS unless forced; safe on every
@@ -31,6 +39,8 @@ export function loadAccountUsage(force = false): void {
   inflight = true;
   lastFetch = now;
   const started = epoch;
+  const settle = usageRead.begin();
+  settleOut = settle;
   void apiGetTyped<AccountUsage>("/api/account/usage", decodeAccountUsage)
     .then((u) => {
       if (started === epoch) {
@@ -42,23 +52,13 @@ export function loadAccountUsage(force = false): void {
         return;
       }
       inflight = false;
-      if (!unavailable) {
-        reaskOwed = false;
-        return;
+      settleOut = null;
+      if (unavailable) {
+        // A refusal is no answer, so it holds no throttle against the next open.
+        lastFetch = 0;
       }
-      // A refusal is no answer, so it holds no throttle against the next open.
-      lastFetch = 0;
-      if (reaskOwed) {
-        reaskOwed = false;
-        reaskIfShown();
-      }
+      settle(!unavailable);
     });
-}
-
-function reaskIfShown(): void {
-  if (unavailable && !$.statusCard.hidden) {
-    loadAccountUsage(true);
-  }
 }
 
 /** Blank the usage rows and drop the throttle and any in-flight fetch, for an account change. */
@@ -67,11 +67,13 @@ export function resetAccountUsage(): void {
   inflight = false;
   lastFetch = 0;
   unavailable = false;
-  reaskOwed = false;
   $.acctPlan.textContent = "";
   $.acctMeter.textContent = "";
   $.acctMeter.removeAttribute("data-tooltip");
   $.acctOverage.textContent = "";
+  const abandoned = settleOut;
+  settleOut = null;
+  abandoned?.(null);
 }
 
 function primaryBreakdown(u: AccountUsage): AccountUsageBreakdown | undefined {
@@ -139,13 +141,3 @@ function renderAccountUsage(u: AccountUsage | null): void {
     meterEl.removeAttribute("data-tooltip");
   }
 }
-
-// The popup's rows are on screen only while it is open; a closed one fetches on its next open, since a refused read
-// leaves no throttle.
-onBus(BUS_ENGINE_READY, () => {
-  if (inflight) {
-    reaskOwed = true;
-    return;
-  }
-  reaskIfShown();
-});

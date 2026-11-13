@@ -2103,7 +2103,7 @@ describe("history: the engine's return", () => {
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
-  it("asks nothing more while the first read is out", async () => {
+  it("sends no second read while the first is out, and one more after it", async () => {
     mountView();
     let answer: (d: unknown) => void = () => undefined;
     dispatch.mockReturnValueOnce(
@@ -2119,11 +2119,16 @@ describe("history: the engine's return", () => {
     });
 
     emitBus(BUS_ENGINE_READY);
+    emitBus(BUS_ENGINE_READY);
     await Promise.resolve();
-    expect(dispatch, "a second sessions read").toHaveBeenCalledTimes(1);
-    answer(answered);
+    expect(dispatch, "a second sessions read beside the first").toHaveBeenCalledTimes(1);
+    dispatch.mockResolvedValue(answered);
+    answer({ ...answered, runs: [], runs_state: "unavailable" });
     await vi.waitFor(() => {
-      expect(keysIn(chatsPane())).toEqual(["s:sess_chat"]);
+      expect(dispatch, "one more read after it").toHaveBeenCalledTimes(2);
+    });
+    await vi.waitFor(() => {
+      expect(keysIn(runsPane())).toEqual(["r:wf_1"]);
     });
   });
 

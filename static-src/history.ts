@@ -15,7 +15,8 @@ import {
 import type { TabRunDotStatus } from "./tabs.js";
 import { pushRoute } from "./router.js";
 import type { HistoryTab } from "./route-path.js";
-import { onBus, BUS_ENGINE_READY, BUS_RUNS_CHANGED } from "./bus.js";
+import { onBus, BUS_RUNS_CHANGED } from "./bus.js";
+import { engineRead } from "./engine-read.js";
 import { reconcile } from "./reconcile.js";
 import { paintPlaceholder } from "./skeleton.js";
 import { creditFigure } from "./strings.js";
@@ -433,9 +434,6 @@ class HistoryController {
    */
   private readonly verdict = signal<SessionListResponse | null>(null);
 
-  /** The newest read that ran to its end failed or could not read the chats or the runs. */
-  private refused = false;
-
   constructor() {
     // A run's mark reads the dock's queue and every row reads the tab set, and neither change emits `runs:changed`, so a
     // plain rebuild would leave a working mark over a parked run, or a closed tab's chat and runs missing.
@@ -457,7 +455,7 @@ class HistoryController {
     searchChats.cancel();
     this.abort?.abort();
     this.abort = null;
-    this.refused = false;
+    historyRead.reset();
     // A null verdict stops the effect re-deriving rows for a closed page; `load()` re-sets it.
     this.verdict.value = null;
     // reset(), not close(): close's clear would repaint, a fetch no reader needs.
@@ -523,14 +521,6 @@ class HistoryController {
     container.replaceChildren(...res.matches.map((m) => buildMatchRow(m, q)));
   }
 
-  /** Load again when the newest answer failed or could not read the chats or the runs; a page closed since, not yet
-   *  loaded, or with its first read out, has asked nothing. */
-  reloadIfRefused(): void {
-    if (this.abort !== null && this.refused) {
-      void this.load();
-    }
-  }
-
   /** The Chats pane only while no search is open. */
   async load(): Promise<void> {
     const chats = chatsContainer();
@@ -556,25 +546,27 @@ class HistoryController {
             }
           };
         });
+    const settle = historyRead.begin();
     const d = await loadSessions.dispatch(undefined);
     skeleton?.cancel();
     if (signal.aborted) {
+      settle(null);
       return;
     }
     // No misleading empty state on failure: offer a retry. The held answer goes too, or the next tab-set, dock or
     // query change repaints it over the Retry.
-    this.refused =
-      d === null || d.sessions_state === "unavailable" || d.runs_state === "unavailable";
     if (d === null) {
       this.verdict.value = null;
       runs.replaceChildren(this.buildError());
       if (this.query === "") {
         chats.replaceChildren(this.buildError());
       }
+      settle(false);
       return;
     }
     this.answered = true;
     this.verdict.value = d;
+    settle(d.sessions_state !== "unavailable" && d.runs_state !== "unavailable");
   }
 
   /** Only while no search is open: the search owns the pane then. */
@@ -984,15 +976,13 @@ function historyShowing(): boolean {
   return view !== null && view.offsetParent !== null;
 }
 
+const historyRead = engineRead(() => {
+  void historyCtrl.load();
+}, historyShowing);
+
 // A run starting or finishing changes the Runs pane. Gated on the view being on screen.
 onBus(BUS_RUNS_CHANGED, () => {
   if (historyShowing()) {
     void historyCtrl.load();
-  }
-});
-
-onBus(BUS_ENGINE_READY, () => {
-  if (historyShowing()) {
-    historyCtrl.reloadIfRefused();
   }
 });

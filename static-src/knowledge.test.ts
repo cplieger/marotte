@@ -65,6 +65,9 @@ const mockRemove = vi.mocked(removeKnowledge.dispatch);
 const mockReindex = vi.mocked(reindexKnowledge.dispatch);
 const mockCancel = vi.mocked(cancelKnowledgeIndexing.dispatch);
 const mockClear = vi.mocked(clearKnowledge.dispatch);
+/** The engine-ready listener, registered once at import, before any case clears the mocks. */
+const engineReady = vi.mocked(onBus).mock.calls.find((c) => c[0] === "engine:ready")?.[1] as
+  (() => void) | undefined;
 
 /** Flushes the fetch().then(render) and refreshHint chains without advancing the 1500ms poll timer. */
 async function flush(): Promise<void> {
@@ -129,25 +132,51 @@ describe("initKnowledge", () => {
 
   // A read the server refused while no engine was ready is asked again when the engine is back.
   it("re-asks a list whose read failed when the engine is back, and not one that answered", async () => {
+    expect(engineReady, "the section's read listens for the engine's return").toBeDefined();
     initKnowledge();
     mockGet.mockResolvedValue(null);
     loadKnowledge();
     await flush();
     expect(list().textContent).toContain("Could not load knowledge bases.");
-    const ready = vi.mocked(onBus).mock.calls.find((c) => c[0] === "engine:ready")?.[1] as
-      (() => void) | undefined;
-    expect(ready, "the section listens for the engine's return").toBeDefined();
     mockGet.mockClear();
     mockGet.mockResolvedValue({ contexts: [{ name: "back", id: "a", item_count: 1 }] });
 
-    ready?.();
+    engineReady?.();
     await flush();
     expect(list().textContent).toContain("back");
 
     mockGet.mockClear();
-    ready?.();
+    engineReady?.();
     await flush();
     expect(mockGet, "a list that answered").not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { order: "a refused read", first: null, readies: 1 },
+    { order: "an answering read", first: { contexts: [] }, readies: 1 },
+    { order: "a refused read, twice", first: null, readies: 2 },
+  ])("reads once more after $order the engine came back during", async ({ first, readies }) => {
+    initKnowledge();
+    let release = (): void => undefined;
+    mockGet.mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          release = () => {
+            r(first);
+          };
+        }),
+    );
+    loadKnowledge();
+    for (let i = 0; i < readies; i++) {
+      engineReady?.();
+    }
+    await flush();
+    expect(mockGet, "no second read beside the one out").toHaveBeenCalledTimes(1);
+    mockGet.mockResolvedValue({ contexts: [{ name: "back", id: "a", item_count: 1 }] });
+    release();
+    await flush();
+    expect(mockGet, "one more read after it").toHaveBeenCalledTimes(2);
+    expect(list().textContent).toContain("back");
   });
 
   it("toggles the add form open on + click", () => {

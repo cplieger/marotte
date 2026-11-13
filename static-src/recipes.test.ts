@@ -11,12 +11,15 @@ const authoredSource = import.meta.glob<string>(
 );
 
 const dispatched: { name: string; args: unknown }[] = [];
+/** Holds the recipe read until released, with the reply it was asked under. */
+let holdRecipes: Promise<void> | null = null;
 
 vi.mock("./actions/runs.js", () => ({
   loadRecipes: {
     dispatch: vi.fn((args: unknown) => {
       dispatched.push({ name: "recipes", args });
-      return Promise.resolve(recipesReply);
+      const reply = recipesReply;
+      return holdRecipes === null ? Promise.resolve(reply) : holdRecipes.then(() => reply);
     }),
   },
   loadRuns: {
@@ -152,6 +155,7 @@ function shownText(btn: HTMLElement): string {
 }
 
 beforeEach(() => {
+  holdRecipes = null;
   document.body.replaceChildren();
   dispatched.length = 0;
   vi.mocked(openRunView).mockClear();
@@ -190,6 +194,29 @@ describe("the engine's return", () => {
     emitBus(BUS_ENGINE_READY);
     await flush();
     expect(dispatched, "lists that answered are not re-asked").toEqual([]);
+  });
+
+  it("reads the recipe list once more after the engine came back during its read", async () => {
+    recipesReply = null;
+    let release = (): void => undefined;
+    holdRecipes = new Promise((r) => {
+      release = r;
+    });
+    const panel = await render();
+    dispatched.length = 0;
+    emitBus(BUS_ENGINE_READY);
+    emitBus(BUS_ENGINE_READY);
+    await flush();
+    expect(dispatched, "no second read beside the one out").toEqual([]);
+    holdRecipes = null;
+    recipesReply = { recipes: [recipe("goal")] };
+    release();
+    await flush();
+    expect(
+      dispatched.map((d) => d.name),
+      "one more recipe read, the run list answered",
+    ).toEqual(["recipes"]);
+    expect(names(panel)).toEqual(["goal"]);
   });
 
   it("asks nothing while the tab is off screen", async () => {

@@ -13,7 +13,8 @@ import { editNativeRule, explainPolicy, setSecurityProfile } from "./actions/per
 import { reconcile } from "./reconcile.js";
 import { paintIfChanged, sigChanged } from "./paint-sig.js";
 import { join } from "@cplieger/keyenc";
-import { onBus, onSSE, BUS_ENGINE_READY } from "./bus.js";
+import { onSSE } from "./bus.js";
+import { engineRead, type EngineRead } from "./engine-read.js";
 import { confirm } from "./confirm.js";
 import type { PolicyView, PolicyRule, SecurityProfile } from "./types.js";
 // `types.js` re-exports the Policy* shapes the panel renders and not these two, which only an
@@ -337,8 +338,12 @@ class NativePolicyController {
    *  loaded once they fetch nothing, and while a load is in flight they queue one more. */
   private loaded = false;
   private reloadQueued = false;
-  /** The latest read failed or kiro-cli did not answer it. */
-  private refused = false;
+  private readonly read: EngineRead = engineRead(
+    () => {
+      this.reloadOnChange();
+    },
+    () => this.loaded,
+  );
   /** Never local constants: the ladder decides what one click grants, and policyfile owns it. */
   private profiles: SecurityProfile[] = [];
   private activeProfile = "";
@@ -383,13 +388,6 @@ class NativePolicyController {
     registerCleanup(
       onSSE("permissions_changed", () => {
         this.reloadOnChange();
-      }),
-    );
-    registerCleanup(
-      onBus(BUS_ENGINE_READY, () => {
-        if (this.refused) {
-          this.reloadOnChange();
-        }
       }),
     );
     registerCleanup(
@@ -447,12 +445,14 @@ class NativePolicyController {
   }
 
   private async fetchAndRender(signal: AbortSignal): Promise<void> {
+    const settle = this.read.begin();
     const data = await apiGet<PolicyView>("/api/permissions", signal);
     if (signal.aborted) {
+      settle(null);
       return;
     }
-    this.refused = data?.available !== true;
     if (data === null) {
+      settle(false);
       return;
     }
     // A completed read-back supersedes any note a past selection left. Without this, a failure
@@ -481,6 +481,7 @@ class NativePolicyController {
     // AFTER render(), which rebuilds the rows this locks: locking first would disable controls that
     // are about to be replaced by fresh, enabled ones.
     this.renderProfileState(data.rules);
+    settle(data.available);
   }
 
   // A selection writes no rule, so the user's own rules survive it. Outside Custom the table is

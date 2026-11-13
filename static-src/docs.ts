@@ -7,7 +7,8 @@ import type { KiroDoc as WireKiroDoc, KiroDocsResponse, SteeringIssue } from "./
 import { defineAction, ActionError, retryNetwork, registerCleanup } from "./actions/index.js";
 import { setHookEnabled } from "./actions/hooks.js";
 import { asObject, decodeArray, optStr, reqBool, reqStr } from "./wire/validators.gen.js";
-import { onBus, onSSE, BUS_ENGINE_READY } from "./bus.js";
+import { onSSE } from "./bus.js";
+import { engineRead } from "./engine-read.js";
 import { $, byId, maybeEl, queryAll, queryEl } from "./dom.js";
 import { swapViews } from "./view-swap.js";
 import { el } from "@cplieger/reactive";
@@ -215,8 +216,6 @@ const memoryOff = signal<boolean | null>(null);
 let docs: KiroDoc[] = [];
 /** Separate from `docs`: different invalidation triggers (`settings_updated` vs `hooks_changed`). */
 let hooks = new Map<string, HookState>();
-/** Whether the latest hook-state read answered. */
-let hooksCurrent = false;
 /** Own fetch and broadcast (`steering_issues_changed`), so a failure does not blank the list. */
 let steeringIssues = new Map<string, SteeringIssue[]>();
 let inited = false;
@@ -337,10 +336,13 @@ function loadSteeringIssues(): void {
  * Best-effort and separate from loadDocs: a hooks failure must not blank other tabs. A workspace hook still renders
  * without its toggle; a global hook does not render.
  */
+const hookRead = engineRead(loadHookState, () => $.docsView.offsetParent !== null);
+
 function loadHookState(): void {
+  const settle = hookRead.begin();
   void apiGetTyped("/api/hooks", decodeHookList).then((d) => {
-    hooksCurrent = d !== null;
     if (d === null) {
+      settle(false);
       return;
     }
     const next = new Map<string, HookState>();
@@ -351,6 +353,7 @@ function loadHookState(): void {
     if (activeTab.peek() === "hooks") {
       renderActive();
     }
+    settle(true);
   });
 }
 
@@ -437,13 +440,6 @@ function initDocsView(): void {
     onSSE("hooks_changed", () => {
       if ($.docsView.offsetParent !== null) {
         loadDocs();
-      }
-    }),
-  );
-  registerCleanup(
-    onBus(BUS_ENGINE_READY, () => {
-      if ($.docsView.offsetParent !== null && !hooksCurrent) {
-        loadHookState();
       }
     }),
   );

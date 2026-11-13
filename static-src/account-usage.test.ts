@@ -320,7 +320,7 @@ describe("the engine's return", () => {
     expect($.acctPlan.textContent).toBe("KIRO POWER");
   });
 
-  it("asks nothing more when the engine returns while a read that answers is out", async () => {
+  it("asks once more when the engine returns while a read that answers is out", async () => {
     resetAccountUsage();
     seedCard(true);
     let answer: (u: AccountUsage | null) => void = () => undefined;
@@ -331,11 +331,14 @@ describe("the engine's return", () => {
     );
     loadAccountUsage(true);
     emitBus(BUS_ENGINE_READY);
+    emitBus(BUS_ENGINE_READY);
+    expect(mockApiGetTyped, "no second read beside the one out").toHaveBeenCalledTimes(1);
+    mockApiGetTyped.mockResolvedValue(usage);
 
     answer(usage);
     await flush();
     await flush();
-    expect(mockApiGetTyped).toHaveBeenCalledTimes(1);
+    expect(mockApiGetTyped, "one more read after it").toHaveBeenCalledTimes(2);
   });
 
   it("asks nothing while the popup is closed", async () => {

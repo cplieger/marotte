@@ -103,7 +103,6 @@ function policyRows(): HTMLElement[] {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.sseHandlers.clear();
-  mocks.busHandlers.clear();
   document.body.replaceChildren();
   document.body.appendChild(el("p", "native-policy-status"));
   document.body.appendChild(el("div", "native-policy-list"));
@@ -167,6 +166,29 @@ describe("native policy view", () => {
       expect(mocks.apiGet, "a policy that answered").not.toHaveBeenCalled();
     });
   }
+
+  it("re-reads once more after the engine came back during a read", async () => {
+    let release = (): void => undefined;
+    mocks.apiGet.mockResolvedValue(sampleView);
+    mocks.apiGet.mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          release = () => {
+            r(null);
+          };
+        }),
+    );
+    initAndLoad();
+    mocks.busHandlers.get("engine:ready")?.();
+    mocks.busHandlers.get("engine:ready")?.();
+    await flush();
+    expect(mocks.apiGet, "no second read beside the one out").toHaveBeenCalledTimes(1);
+    release();
+    await flush();
+    await flush();
+    expect(mocks.apiGet, "one more read after it").toHaveBeenCalledTimes(2);
+    expect(policyRows()).toHaveLength(3);
+  });
 
   it("refetches when a permissions_changed SSE arrives", async () => {
     initAndLoad();

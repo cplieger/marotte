@@ -13,7 +13,8 @@ import { apiGetTyped, CancellableSlot, type Decoder } from "./api-client.js";
 import { loadSettings } from "./persist.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { mayStillApply } from "./actions/still-applying.js";
-import { onBus, onSSE, BUS_ENGINE_READY } from "./bus.js";
+import { onSSE } from "./bus.js";
+import { engineRead } from "./engine-read.js";
 import { paintIfChanged, sigChanged } from "./paint-sig.js";
 import {
   addKnowledge,
@@ -72,8 +73,13 @@ let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let stalledPolls = 0;
 /** Progress signature from the previous tick, to tell advance from stall. */
 let lastProgress = "";
-/** Whether the latest list read failed. */
-let listFailed = false;
+/** The section has no off-screen state of its own: the settings page holds it whether shown or not. */
+const listRead = engineRead(
+  () => {
+    loadKnowledge();
+  },
+  () => true,
+);
 
 registerCleanup(() => {
   listSlot.abort();
@@ -123,37 +129,43 @@ export function loadKnowledge(fromPoll = false): void {
   }
   clearPoll();
   const signal = listSlot.start();
-  void apiGetTyped("/api/knowledge", decodeList, signal).then((d) => {
-    if (signal.aborted) {
-      return;
-    }
-    listFailed = d === null;
-    if (d === null) {
-      renderError();
-      return;
-    }
-    const merged = mergeByName(d.contexts);
-    renderList(merged);
-    if (!merged.some((c) => c.indexing === true)) {
-      return;
-    }
-    const signature = progressSignature(merged);
-    if (signature === lastProgress) {
-      stalledPolls++;
-    } else {
-      // Advanced, so the budget resets.
-      stalledPolls = 0;
-      lastProgress = signature;
-    }
-    if (stalledPolls >= MAX_STALLED_POLLS) {
-      // Nothing will move the row's last paint, so say the client gave up; re-activating the tab re-fires the load.
-      renderList(merged, true);
-      return;
-    }
-    pollTimer = setTimeout(() => {
-      loadKnowledge(true);
-    }, POLL_MS);
-  });
+  const settle = listRead.begin();
+  let answered: boolean | null = null;
+  void apiGetTyped("/api/knowledge", decodeList, signal)
+    .then((d) => {
+      if (signal.aborted) {
+        return;
+      }
+      answered = d !== null;
+      if (d === null) {
+        renderError();
+        return;
+      }
+      const merged = mergeByName(d.contexts);
+      renderList(merged);
+      if (!merged.some((c) => c.indexing === true)) {
+        return;
+      }
+      const signature = progressSignature(merged);
+      if (signature === lastProgress) {
+        stalledPolls++;
+      } else {
+        // Advanced, so the budget resets.
+        stalledPolls = 0;
+        lastProgress = signature;
+      }
+      if (stalledPolls >= MAX_STALLED_POLLS) {
+        // Nothing will move the row's last paint, so say the client gave up; re-activating the tab re-fires the load.
+        renderList(merged, true);
+        return;
+      }
+      pollTimer = setTimeout(() => {
+        loadKnowledge(true);
+      }, POLL_MS);
+    })
+    .finally(() => {
+      settle(answered);
+    });
   // The setting cannot change under a poll tick.
   if (!fromPoll) {
     void refreshHint();
@@ -480,13 +492,6 @@ export function initKnowledge(): void {
   registerCleanup(
     onSSE("knowledge_changed", () => {
       loadKnowledge();
-    }),
-  );
-  registerCleanup(
-    onBus(BUS_ENGINE_READY, () => {
-      if (listFailed) {
-        loadKnowledge();
-      }
     }),
   );
 }
