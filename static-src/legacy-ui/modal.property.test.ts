@@ -450,15 +450,17 @@ function scenarioFor(c: Case) {
       },
       act(s: Step): Promise<void> | undefined {
         pump();
-        if (
+        // Only the engine the step calls folds a pending close: the other modal's
+        // engine reads it at most, and its own open under way still writes `open`.
+        if (s.k === "owner") {
+          commitClose("a");
+        } else if (
+          "who" in s &&
           s.k !== "platformClose" &&
           s.k !== "platformOther" &&
-          s.k !== "platformOpen" &&
-          s.k !== "focusOpener" &&
-          s.k !== "throw"
+          s.k !== "platformOpen"
         ) {
-          commitClose("a");
-          commitClose("b");
+          commitClose(s.who);
         }
         if (s.k === "owner") {
           release("a", "owner");
@@ -672,6 +674,30 @@ describe("createModal: re-entry property", () => {
       {
         numRuns: 150,
         examples: [
+          // A page show() and form close of b inside its own showModal's beforetoggle, and
+          // a's open from the close's focus steps: b's showModal still opens it after.
+          [
+            {
+              probeBody: false,
+              allowGuard: false,
+              script: [
+                { k: "open", who: "b" },
+                { k: "platformClose", who: "b", kind: "form" },
+                { k: "platformOther", who: "a", kind: "addOpen" },
+                { k: "owner" },
+              ],
+              injections: [
+                { at: 388, actions: [{ k: "open", who: "a" }] },
+                {
+                  at: 220,
+                  actions: [
+                    { k: "platformOther", who: "b", kind: "show" },
+                    { k: "platformClose", who: "b", kind: "form" },
+                  ],
+                },
+              ],
+            },
+          ],
           // An Escape on b from the beforetoggle of the page's show() inside a close and
           // show() of b in one task: it meets b closed, and the show() opens it.
           [
