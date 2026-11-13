@@ -2,6 +2,8 @@
 // and middle-click opens another in the background.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { userEvent } from "vitest/browser";
+import type * as Toast from "./toast.js";
 
 // One hoisted block: `vi.mock` factories run above module consts, and this file value-imports two mocked modules.
 const h = vi.hoisted(() => {
@@ -31,6 +33,7 @@ const h = vi.hoisted(() => {
     renameTab: vi.fn(),
     openFile: vi.fn(),
     openFileInBackground: vi.fn(),
+    toastError: vi.fn((_message: string) => () => undefined),
     /** Paint the rows placeholder at once instead of never, for the cases that read the loading cue. */
     paintSkeleton: false,
   };
@@ -87,6 +90,10 @@ vi.mock("./icons.js", () => ({
   ICON_SAVE_OK: "",
   ICON_SAVE_FAIL: "",
   ICON_TAB_WEB: "",
+}));
+vi.mock("./toast.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Toast>()),
+  error: h.toastError,
 }));
 vi.mock("./chat.js", () => ({ attachPathsToActiveChat: vi.fn() }));
 vi.mock("./files-browser-drop.js", () => ({ initBrowserDragDrop: vi.fn() }));
@@ -179,6 +186,13 @@ function held(): { answer: Promise<unknown>; release: (v: unknown) => void } {
     release = r;
   });
   return { answer, release };
+}
+
+/** Lets a settled request's continuations, and any request they start, run before an assertion that nothing happened. */
+async function settleTasks(): Promise<void> {
+  for (let i = 0; i < 5; i++) {
+    await new Promise((r) => setTimeout(r, 0));
+  }
 }
 
 /** Narrows without a `!`. */
@@ -791,5 +805,291 @@ describe("a closed browser's folder", () => {
     const deps = vi.mocked(initFilesSearch).mock.calls[0]?.[0];
     deps?.activateBrowser();
     expect(vi.mocked(openFilesView)).toHaveBeenCalledExactlyOnceWith(FB_ROOT);
+  });
+});
+
+describe("New file and New folder beside entries holding the default name", () => {
+  const sent: { action: string; path: string }[] = [];
+  /** Status per create, in order; past the end every create answers 200. */
+  const statuses: number[] = [];
+  const TAKEN = 409;
+  /** The idempotency layer's 409 for a retry whose first attempt is still running. */
+  const IN_PROGRESS = -409;
+
+  beforeEach(() => {
+    sent.length = 0;
+    statuses.length = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init: RequestInit) => {
+        sent.push(JSON.parse(init.body as string) as { action: string; path: string });
+        const status = statuses.shift() ?? 200;
+        if (status === IN_PROGRESS) {
+          return Promise.resolve(
+            new Response('{"error":"request already in progress"}', { status: 409 }),
+          );
+        }
+        const body = status === TAKEN ? '{"error":"taken","code":"name_taken"}' : "{}";
+        return Promise.resolve(new Response(body, { status }));
+      }),
+    );
+    return () => {
+      vi.unstubAllGlobals();
+    };
+  });
+
+  async function create(
+    button: HTMLElement,
+    existing: { name: string; isDir: boolean }[],
+    created: { name: string; isDir: boolean },
+  ): Promise<void> {
+    answers.set("/w", [
+      okAnswer({ files: existing, writable: true }),
+      okAnswer({ files: [...existing, created], writable: true }),
+    ]);
+    initFileBrowser();
+    await show("/w");
+    button.click();
+    await vi.waitFor(() => {
+      expect(rowFor(created.name).querySelector(`.${FB_NAME}`), "the rename opened").toBeNull();
+    });
+  }
+
+  it("creates the next free file name and opens the rename on it, not on the existing file", async () => {
+    const existing = [
+      { name: "new file", isDir: false },
+      { name: "new file 2", isDir: false },
+      { name: "new folder", isDir: true },
+    ];
+    await create($.fbNewFile, existing, { name: "new file 3", isDir: false });
+    expect(sent).toEqual([{ action: "touch", path: "/w/new file 3" }]);
+    expect(rowFor("new file").querySelector(`.${FB_NAME}`)).not.toBeNull();
+  });
+
+  it("creates the next free folder name, counting a file that holds it", async () => {
+    const existing = [{ name: "new folder", isDir: false }];
+    await create($.fbNewFolder, existing, { name: "new folder 2", isDir: true });
+    expect(sent).toEqual([{ action: "mkdir", path: "/w/new folder 2" }]);
+  });
+
+  for (const key of ["Enter", "Escape"]) {
+    it(`opens the file from its name after ${key} leaves the proposed name as it was`, async () => {
+      await create($.fbNewFile, [], { name: "new file", isDir: false });
+      const input = must(rowFor("new file").querySelector<HTMLInputElement>(".fb-name-edit"));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      must(rowFor("new file").querySelector<HTMLElement>(`.${FB_NAME}`)).click();
+      expect(h.openFile.mock.calls.map((c) => c[0])).toEqual(["/w/new file"]);
+    });
+  }
+
+  it("takes the next free name when another writer took the chosen one since the listing", async () => {
+    statuses.push(409);
+    const other = { name: "new file", isDir: false };
+    answers.set("/w", [
+      okAnswer({ files: [], writable: true }),
+      okAnswer({ files: [other], writable: true }),
+      okAnswer({ files: [other, { name: "new file 2", isDir: false }], writable: true }),
+    ]);
+    initFileBrowser();
+    await show("/w");
+    $.fbNewFile.click();
+    await vi.waitFor(() => {
+      expect(
+        rowFor("new file 2").querySelector(".fb-name-edit"),
+        "the rename opened",
+      ).not.toBeNull();
+    });
+    expect(sent).toEqual([
+      { action: "touch", path: "/w/new file" },
+      { action: "touch", path: "/w/new file 2" },
+    ]);
+    expect(rowFor("new file").querySelector(".fb-name-edit"), "the other writer's file").toBeNull();
+  });
+
+  it("gives up with the create's error once every try found its name taken", async () => {
+    statuses.push(409, 409, 409, 409);
+    answers.set("/w", [okAnswer({ files: [], writable: true })]);
+    initFileBrowser();
+    await show("/w");
+    $.fbNewFolder.click();
+    await vi.waitFor(() => {
+      expect(h.toastError).toHaveBeenCalledOnce();
+    });
+    expect(String(h.toastError.mock.calls[0]?.[0])).toMatch(/^Could not create folder: /);
+    expect(sent.map((r) => r.action)).toEqual(["mkdir", "mkdir", "mkdir"]);
+    expect($.fbList.querySelector(".fb-name-edit")).toBeNull();
+  });
+
+  it("tries no other name when the server is still running the same create, and shows what it made", async () => {
+    statuses.push(IN_PROGRESS);
+    answers.set("/w", [
+      okAnswer({ files: [], writable: true }),
+      okAnswer({ files: [{ name: "new file", isDir: false }], writable: true }),
+    ]);
+    initFileBrowser();
+    await show("/w");
+    $.fbNewFile.click();
+    await vi.waitFor(() => {
+      expect(sent).toHaveLength(1);
+    });
+    await settleTasks();
+    expect(sent).toEqual([{ action: "touch", path: "/w/new file" }]);
+    expect($.fbList.querySelector(".fb-name-edit")).toBeNull();
+    expect(rowFor("new file"), "the first attempt's file, listed").toBeDefined();
+  });
+
+  for (const [status, outcome] of [
+    [TAKEN, "taken"],
+    [200, "created"],
+  ] as const) {
+    for (const [move, go] of [
+      [
+        "opened a subfolder",
+        () => rowFor("sub").querySelector(`.${FB_NAME}`)?.dispatchEvent(new MouseEvent("click")),
+      ],
+      ["switched files tab", () => show("/b")],
+    ] as const) {
+      it(`acts on nothing shown when the reload after a ${outcome} create lands after the user ${move}`, async () => {
+        statuses.push(status);
+        const there = { name: "new file", isDir: false };
+        const reload = held();
+        answers.set("/w", [
+          okAnswer({ files: [{ name: "sub", isDir: true }], writable: true }),
+          reload.answer,
+        ]);
+        answers.set("/w/sub", [okAnswer({ files: [there], writable: true })]);
+        answers.set("/b", [okAnswer({ files: [there], writable: true })]);
+        initFileBrowser();
+        await show("/w");
+        $.fbNewFile.click();
+        await vi.waitFor(() => {
+          const loads = vi
+            .mocked(apiGetOrError)
+            .mock.calls.filter((c) => String(c[0]).endsWith("path=%2Fw"));
+          expect(loads, "the reload after the create was asked for").toHaveLength(2);
+        });
+
+        await go();
+        await vi.waitFor(() => {
+          expect(rowFor("new file")).toBeDefined();
+        });
+        reload.release(okAnswer({ files: [{ name: "sub", isDir: true }, there], writable: true }));
+        await settleTasks();
+
+        expect(sent).toEqual([{ action: "touch", path: "/w/new file" }]);
+        expect(
+          $.fbList.querySelector(".fb-name-edit"),
+          "a rename opened on the folder now shown",
+        ).toBeNull();
+      });
+    }
+  }
+
+  it("keeps the default name when no entry holds it", async () => {
+    await create($.fbNewFile, [{ name: "new file.txt", isDir: false }], {
+      name: "new file",
+      isDir: false,
+    });
+    expect(sent).toEqual([{ action: "touch", path: "/w/new file" }]);
+  });
+});
+
+describe("renaming an entry", () => {
+  let renames: { release: (r: Response) => void }[] = [];
+
+  beforeEach(() => {
+    renames = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((release) => {
+            renames.push({ release });
+          }),
+      ),
+    );
+    return () => {
+      // The rename's scope queues the next case's rename behind a held one.
+      for (const r of renames) {
+        r.release(new Response("{}", { status: 200 }));
+      }
+      vi.unstubAllGlobals();
+    };
+  });
+
+  async function renameTo(name: string): Promise<void> {
+    answers.set("/w", [okAnswer({ files: [{ name: "a.txt", isDir: false }], writable: true })]);
+    initFileBrowser();
+    await show("/w");
+    const check = must(rowFor("a.txt").querySelector<HTMLInputElement>(`.${FB_CHECK}`));
+    check.checked = true;
+    check.dispatchEvent(new Event("change"));
+    $.fbRename.click();
+    const input = must(rowFor("a.txt").querySelector<HTMLInputElement>(".fb-name-edit"));
+    input.value = name;
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+    await vi.waitFor(() => {
+      expect(renames).toHaveLength(1);
+    });
+  }
+
+  it("opens nothing from the new name's label before the listing reloads", async () => {
+    await renameTo("b.txt");
+    const label = must(rowFor("a.txt").querySelector<HTMLElement>(`.${FB_NAME}`));
+    expect(label.textContent).toBe("b.txt");
+    label.click();
+    expect(h.openFile).not.toHaveBeenCalled();
+  });
+
+  it("opens nothing in the background from the new name's label before the listing reloads", async () => {
+    await renameTo("b.txt");
+    document.body.appendChild($.fbList);
+    try {
+      const label = must(rowFor("a.txt").querySelector<HTMLElement>(`.${FB_NAME}`));
+      await userEvent.click(label, { button: "middle", force: true });
+      expect(h.openFileInBackground).not.toHaveBeenCalled();
+    } finally {
+      $.fbList.remove();
+    }
+  });
+
+  it("opens the original in the background from its label after the rename failed", async () => {
+    await renameTo("b.txt");
+    must(renames[0]).release(new Response('{"error":"no"}', { status: 403 }));
+    await vi.waitFor(() => {
+      expect(rowFor("a.txt").querySelector(`.${FB_NAME}`)?.textContent).toBe("a.txt");
+    });
+    document.body.appendChild($.fbList);
+    try {
+      await userEvent.click(must(rowFor("a.txt").querySelector<HTMLElement>(`.${FB_NAME}`)), {
+        button: "middle",
+      });
+      expect(h.openFileInBackground.mock.calls.map((c) => c[0])).toEqual(["/w/a.txt"]);
+    } finally {
+      $.fbList.remove();
+    }
+  });
+
+  it("opens no second rename on F2 while the rename is pending, and restores the label when it fails", async () => {
+    await renameTo("b.txt");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "F2", cancelable: true }));
+    expect(rowFor("a.txt").querySelector(".fb-name-edit")).toBeNull();
+    must(renames[0]).release(new Response('{"error":"no"}', { status: 403 }));
+    await vi.waitFor(() => {
+      expect(rowFor("a.txt").querySelector(`.${FB_NAME}`)?.textContent).toBe("a.txt");
+    });
+    expect(rowFor("a.txt").querySelector(".fb-name-edit")).toBeNull();
+  });
+
+  it("opens the original from its label after the rename failed", async () => {
+    await renameTo("b.txt");
+    must(renames[0]).release(new Response('{"error":"no"}', { status: 403 }));
+    await vi.waitFor(() => {
+      expect(rowFor("a.txt").querySelector(`.${FB_NAME}`)?.textContent).toBe("a.txt");
+    });
+    must(rowFor("a.txt").querySelector<HTMLElement>(`.${FB_NAME}`)).click();
+    expect(h.openFile.mock.calls.map((c) => c[0])).toEqual(["/w/a.txt"]);
   });
 });

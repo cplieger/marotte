@@ -51,8 +51,8 @@ type searchCandidate struct {
 	abs  string
 }
 
-// contentVisitor reads in the walker's exact path order, flushing before every descent, so the
-// reply cut at maxSearchMatches is a true prefix of the path-ordered answer.
+// contentVisitor reads in the walker's order and folds each directory's batch in admission order,
+// so the reply cut at maxSearchMatches is a true prefix of the level-ordered answer.
 type contentVisitor struct {
 	ctx     context.Context
 	rows    []FileMatch
@@ -60,27 +60,30 @@ type contentVisitor struct {
 	needle  textsearch.Needle
 	// files is Tally.Scanned, in files read.
 	files int
-	// accepted is what maxSearchFiles counts: a candidate at its admission, before its read can
-	// refuse it.
+	// accepted is what maxFiles counts: a candidate at its admission, before its read can refuse
+	// it.
 	accepted int
+	maxFiles int
 	// matched is Tally.Matched, in matching lines.
 	matched   int
 	truncated bool
+	// filesSpent says maxFiles refused a file.
+	filesSpent bool
 }
 
 // newContentVisitor uses the transcript search's exact case rule, so the two toggles agree.
 func newContentVisitor(ctx context.Context, query string, caseSensitive bool) *contentVisitor {
-	return &contentVisitor{ctx: ctx, needle: textsearch.NewNeedle(query, caseSensitive)}
+	return &contentVisitor{ctx: ctx, needle: textsearch.NewNeedle(query, caseSensitive), maxFiles: maxSearchFiles}
 }
 
 func (v *contentVisitor) file(d *walkDir, e *walkEntry) bool {
 	if !e.inFilter || !e.typ.IsRegular() {
 		return true
 	}
-	if v.accepted >= maxSearchFiles {
+	if v.accepted >= v.maxFiles {
 		// Checking BEFORE the accept is what makes `truncated` exact: it is set only when there
 		// really was one more file to read.
-		v.truncated = true
+		v.truncated, v.filesSpent = true, true
 		v.flush(d)
 		return false
 	}
@@ -92,14 +95,13 @@ func (v *contentVisitor) file(d *walkDir, e *walkEntry) bool {
 	return true
 }
 
-func (v *contentVisitor) dir(d *walkDir, _ *walkEntry) bool {
-	v.flush(d)
-	return true
-}
+func (*contentVisitor) dir(*walkDir, *walkEntry) bool { return true }
 
 func (v *contentVisitor) leave(d *walkDir) { v.flush(d) }
 
 func (v *contentVisitor) full() bool { return len(v.rows) >= maxSearchMatches }
+
+func (v *contentVisitor) spent() bool { return v.filesSpent }
 
 // rootFile searches a root that turned out to be a file, from the descriptor openPinnedRoot
 // already holds, so the reopen this walk exists to avoid does not sneak back in at the root.
@@ -122,8 +124,8 @@ func (v *contentVisitor) result(truncated bool) FileSearchResult {
 	return res
 }
 
-// flush folds in admission order, and every open uses d's descriptor, so it runs before the walk
-// descends past d or closes it.
+// flush folds in admission order, and every open uses d's descriptor, so it runs before the cursor
+// moves off d.
 func (v *contentVisitor) flush(d *walkDir) {
 	if len(v.pending) == 0 {
 		return

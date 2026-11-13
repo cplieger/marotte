@@ -48,6 +48,7 @@ const FIELD_COPY: Record<SearchMode, string> = {
 const NAMES_HINT = "Type a name, or a pattern like *.css";
 const INVALID_NOTE = "Incomplete or invalid pattern";
 const IGNORED_ROOT_NOTE = "This folder is ignored. Turn on Include ignored files to search it.";
+const DEEPER_NOTE = "Searching deeper\u2026";
 
 /** A 400 is the pattern's fault, which the reader fixes by typing on, so it is told apart from a
  *  search that could not run. */
@@ -76,6 +77,9 @@ let resultsEl: HTMLElement | null = null;
 let filesEl: HTMLInputElement | null = null;
 let contentsBtn: HTMLButtonElement | null = null;
 let ignoredBtn: HTMLButtonElement | null = null;
+let deeperBtn: HTMLButtonElement | null = null;
+/** Set by Search deeper and consumed by the run it starts, so the next keystroke searches quickly again. */
+let deepNext = false;
 let rowNav: RovingFocusController | null = null;
 /** Its own abort signal: sharing the browser's would cancel searches and directory loads against each other. */
 let shell: SearchShell | null = null;
@@ -91,7 +95,13 @@ let searchOwnerID = "";
 export function searchURL(
   path: string,
   query: string,
-  opts: { caseSensitive?: boolean; mode?: SearchMode; files?: string; ignored?: boolean } = {},
+  opts: {
+    caseSensitive?: boolean;
+    mode?: SearchMode;
+    files?: string;
+    ignored?: boolean;
+    deep?: boolean;
+  } = {},
 ): string {
   const q = new URLSearchParams({ path, q: query });
   if (opts.mode === "contents") {
@@ -106,6 +116,9 @@ export function searchURL(
   }
   if (opts.ignored === true) {
     q.set("ignored", "1");
+  }
+  if (opts.deep === true) {
+    q.set("deep", "1");
   }
   return `/api/files/search?${q.toString()}`;
 }
@@ -172,6 +185,10 @@ function applyMode(next: SearchMode): void {
   }
 }
 
+function showDeeper(on: boolean): void {
+  deeperBtn?.classList.toggle("hidden", !on);
+}
+
 function idleNote(): string {
   return mode === "names" ? NAMES_HINT : "";
 }
@@ -201,6 +218,22 @@ function ensureBuilt(): void {
       shell?.run();
     },
   );
+  deeperBtn = el(
+    "button",
+    { type: "button", className: "btn-small fb-search-deeper hidden" },
+    "Search deeper",
+  ) as HTMLButtonElement;
+  deeperBtn.addEventListener("click", () => {
+    deepNext = true;
+    // The button hides itself, which would drop a keyboard user's focus to the page. A click or tap
+    // also focuses it, but not :focus-visible, and the field's focus would raise a phone's keyboard.
+    if (deeperBtn?.matches(":focus-visible") === true) {
+      shell?.input.focus();
+    }
+    showDeeper(false);
+    shell?.setNote(DEEPER_NOTE);
+    shell?.run();
+  });
   filesEl = searchField({
     id: "fb-search-files",
     className: "fb-search-field fb-search-files",
@@ -225,9 +258,11 @@ function ensureBuilt(): void {
     compose: ({ input, caseButton, closeButton, note }) => [
       el("div", { className: "fb-search-row" }, input, caseButton, contentsBtn, closeButton),
       el("div", { className: "fb-search-row" }, filesEl, ignoredBtn),
-      note,
+      el("div", { className: "fb-search-row" }, note, deeperBtn),
     ],
     query: async (query, qctx) => {
+      const deep = deepNext;
+      deepNext = false;
       // An empty root means no browser is bound.
       if (isIdle(query) || ctx === null || ctx.getSearchPath() === "") {
         return null;
@@ -238,6 +273,7 @@ function ensureBuilt(): void {
           mode,
           files: filesEl?.value.trim() ?? "",
           ignored: includeIgnored,
+          deep,
         }),
         decodeFileSearchResult,
         qctx.signal,
@@ -255,6 +291,7 @@ function ensureBuilt(): void {
     },
     render: (answer, query) => {
       const searchPath = ctx?.getSearchPath() ?? "";
+      showDeeper(answer?.kind === "result" && answer.result.can_search_deeper);
       if (isIdle(query)) {
         lastMatches = [];
         renderResults(searchPath);
@@ -357,7 +394,7 @@ type ResultItem =
   | { readonly kind: "group"; readonly path: string; readonly count: number }
   | { readonly kind: "line"; readonly match: FileMatch };
 
-/** Relies on the server's path order: one file's content rows arrive together. */
+/** Relies on the server's order: one file's content rows arrive together. */
 function groupItems(matches: readonly FileMatch[]): ResultItem[] {
   const items: ResultItem[] = [];
   // A hit's path is container-absolute, so the empty path never names a real file.
@@ -530,6 +567,8 @@ export function closeFilesSearch(): void {
   $.fbList.classList.remove("hidden");
   $.findBtn.setAttribute("aria-pressed", "false");
   shell?.setNote("");
+  deepNext = false;
+  showDeeper(false);
 }
 
 /** Unlike `closeFilesSearch`, also forgets the query, the filter and both toggles. */

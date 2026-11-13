@@ -58,7 +58,8 @@
       "scanned": 6,
       "matched": 3,
       "truncated": false,
-      "root_ignored": false
+      "root_ignored": false,
+      "can_search_deeper": false
     }
   },
   "contents": {
@@ -338,7 +339,8 @@
       "scanned": 5,
       "matched": 23,
       "truncated": false,
-      "root_ignored": false
+      "root_ignored": false,
+      "can_search_deeper": false
     }
   }
 }

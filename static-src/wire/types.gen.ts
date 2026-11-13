@@ -1691,6 +1691,11 @@ export interface FileSearchResult {
  * that includes ignored files never sets it.
  */
   root_ignored: boolean;
+  /**
+ * CanSearchDeeper says a budget or the deadline stopped the walk, so the same request with
+ * deep=1 reads further. A deep search never sets it.
+ */
+  can_search_deeper: boolean;
 }
 
 /** FileStat is GET /api/file/stat's reply: the facts the viewer picks a view from. */

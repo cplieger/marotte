@@ -350,7 +350,12 @@
 }
 
 @container fb-list (width < 30rem) or style(--fb-stack: 1) {
-  /* A rename replaces `.fb-name` with a field-height input, so that row stays one line. */
+  /* A rename replaces `.fb-name` with a field-height input, so that row stays one line, and
+     the metadata steps aside or its nowrap width squeezes the field to a few pixels. */
+  .fb-row:has(> .fb-name-edit) > .fb-meta {
+    display: none;
+  }
+
   .fb-row:has(> .fb-name ~ .fb-meta:not(:empty)) {
     --fb-name-lh: 1rem;
     --fb-meta-lh: 0.875rem;
@@ -831,6 +836,14 @@
   /* Reserved height so the note landing does not shift the results under the
      reader's cursor between keystrokes. */
   min-height: 1.25rem;
+
+  /* Shares its row with Search deeper, which keeps its own width. */
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.fb-search-deeper {
+  flex: none;
 }
 
 /* No intrinsic-size override: a hit row's extra spans are single-line and share

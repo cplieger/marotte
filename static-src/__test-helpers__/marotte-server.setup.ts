@@ -1,11 +1,12 @@
 // Starts the marotte binary named by SSE_FIXTURE and hands its origin and workspace through
 // `inject("marotteURL")` and `inject("marotteWorkDir")`; a no-op when unset outside CI, an error inside it. The binary must be built with `-tags marotte_test`,
-// the only build that mounts the SSE control surface.
-import { type ChildProcess, spawn } from "node:child_process";
+// the only build that mounts the SSE control surface, and serves the client bundled here from source.
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { TestProject } from "vitest/node";
 
 declare module "vitest" {
@@ -17,6 +18,7 @@ declare module "vitest" {
 }
 
 const READY_TIMEOUT_MS = 20_000;
+const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const EXIT_TIMEOUT_MS = 10_000;
 
 // Never answers `initialize`, so the prompt's Mutate is the ONLY chat:X mutation: a missing
@@ -111,6 +113,8 @@ export default async function setup(
     );
     return undefined;
   }
+  // ts-ci builds the fixture before any bundle exists, so the binary embeds no client.
+  execFileSync("go", ["run", "./cmd/bundle"], { cwd: REPO_ROOT, stdio: "inherit" });
   const scratch = mkdtempSync(join(tmpdir(), "marotte-e2e-"));
   // The binary refuses to boot without its config dir and creates nothing above it.
   for (const dir of ["home", "config", "work", "bin"]) {
@@ -128,6 +132,7 @@ export default async function setup(
       KIRO_CONFIG_DIR: join(scratch, "config"),
       KIRO_WORK_DIR: join(scratch, "work"),
       LISTEN_ADDR: `127.0.0.1:${String(port)}`,
+      MAROTTE_TEST_STATIC_ROOT: REPO_ROOT,
     },
     stdio: ["ignore", "inherit", "inherit"],
   });

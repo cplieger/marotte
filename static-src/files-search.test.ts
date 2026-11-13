@@ -1,5 +1,6 @@
 // Find in files: the request, the note's honesty, and the second-press escape hatch that justifies overriding Ctrl-F.
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
+import { userEvent } from "vitest/browser";
 import type { FileMatch, FileSearchResult } from "./wire/types.gen.js";
 
 /** A non-2xx answer: what the mocked transport resolves to when the server refuses the query. */
@@ -116,6 +117,7 @@ function result(over: Partial<FileSearchResult> = {}): FileSearchResult {
     matched: matches.length,
     truncated: false,
     root_ignored: false,
+    can_search_deeper: false,
     ...over,
   };
 }
@@ -237,6 +239,13 @@ describe("searchURL", () => {
     expect(new URL(full, "http://h").searchParams.get("mode")).toBe("contents");
     expect(new URL(full, "http://h").searchParams.get("files")).toBe("*.css, !node_modules");
     expect(new URL(full, "http://h").searchParams.get("ignored")).toBe("1");
+  });
+
+  it("sends deep only when asked", () => {
+    expect(searchURL("workspace", "x", { deep: false })).not.toContain("deep=");
+    expect(
+      new URL(searchURL("workspace", "x", { deep: true }), "http://h").searchParams.get("deep"),
+    ).toBe("1");
   });
 });
 
@@ -837,6 +846,145 @@ describe("the search bar", () => {
     folder?.click();
     expect(openFolder).toHaveBeenCalledWith("/workspace/src/book");
     expect(openFileOrPage).not.toHaveBeenCalled();
+  });
+});
+
+describe("a search the server stopped at its budget", () => {
+  function deeperButton(): HTMLButtonElement | null {
+    return _filesSearchBar()?.querySelector<HTMLButtonElement>(".fb-search-deeper") ?? null;
+  }
+
+  function shown(btn: HTMLButtonElement | null): boolean {
+    return btn !== null && !btn.classList.contains("hidden");
+  }
+
+  async function typeQuery(q: string): Promise<void> {
+    openFilesSearch();
+    input().value = q;
+    input().dispatchEvent(new Event("input"));
+    await settle();
+  }
+
+  const stopped = (): FileSearchResult =>
+    result({
+      matches: [nameHit("/workspace/src/.kiro/secret.md")],
+      scanned: 99_173,
+      truncated: true,
+      can_search_deeper: true,
+    });
+
+  it("says the results are incomplete and offers to search deeper", async () => {
+    apiGet.mockResolvedValue(stopped());
+    await typeQuery("secret");
+    expect(document.getElementById("fb-search-note")?.textContent).toBe(
+      "1 entry; 99,173 entries scanned, not everything was read",
+    );
+    expect(shown(deeperButton())).toBe(true);
+    expect(deeperButton()?.textContent).toBe("Search deeper");
+  });
+
+  it("re-runs the same search with deep=1 on Search deeper, and says it is searching meanwhile", async () => {
+    apiGet.mockResolvedValue(stopped());
+    await typeQuery("secret");
+    apiGet.mockClear();
+    let answer: (v: unknown) => void = () => undefined;
+    apiGet.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
+    deeperButton()?.click();
+    await Promise.resolve();
+
+    expect(apiGet).toHaveBeenCalledTimes(1);
+    const url = new URL(apiGet.mock.calls[0]?.[0] ?? "", "http://h");
+    expect(url.searchParams.get("deep")).toBe("1");
+    expect(url.searchParams.get("q")).toBe("secret");
+    expect(document.getElementById("fb-search-note")?.textContent).toBe("Searching deeper\u2026");
+    expect(shown(deeperButton())).toBe(false);
+
+    answer(
+      result({
+        matches: [
+          nameHit("/workspace/src/secrets", "dir"),
+          nameHit("/workspace/src/.kiro/secret.md"),
+        ],
+        scanned: 300_000,
+      }),
+    );
+    await settle();
+    expect(_filesSearchResults().querySelectorAll(".fb-search-hit")).toHaveLength(2);
+    expect(document.getElementById("fb-search-note")?.textContent).toBe(
+      "2 entries; 300,000 entries scanned",
+    );
+    expect(shown(deeperButton())).toBe(false);
+  });
+
+  it("offers nothing more when the server says a deeper search would not read further", async () => {
+    apiGet.mockResolvedValue(result({ ...stopped(), can_search_deeper: false }));
+    await typeQuery("secret");
+    expect(document.getElementById("fb-search-note")?.textContent).toContain(
+      "not everything was read",
+    );
+    expect(shown(deeperButton())).toBe(false);
+  });
+
+  it("offers it beside an empty answer too, which would otherwise read as nowhere", async () => {
+    apiGet.mockResolvedValue(result({ scanned: 99_101, truncated: true, can_search_deeper: true }));
+    await typeQuery("secret");
+    expect(document.getElementById("fb-search-note")?.textContent).toBe(
+      "No matches in 99,101 entries, but not everything was searched",
+    );
+    expect(shown(deeperButton())).toBe(true);
+  });
+
+  it("hands a keyboard user's focus to the search field when the pressed offer hides", async () => {
+    apiGet.mockResolvedValue(stopped());
+    await typeQuery("secret");
+    apiGet.mockImplementation(() => new Promise(() => undefined));
+    deeperButton()?.focus();
+    expect(document.activeElement, "the offer took focus").toBe(deeperButton());
+    await userEvent.keyboard("{Enter}");
+    expect(shown(deeperButton())).toBe(false);
+    expect(document.activeElement).toBe(input());
+  });
+
+  it("leaves focus off the search field when a pointer pressed the offer", async () => {
+    apiGet.mockResolvedValue(stopped());
+    await typeQuery("secret");
+    apiGet.mockImplementation(() => new Promise(() => undefined));
+    const offer = deeperButton();
+    if (offer === null) {
+      throw new Error("no Search deeper button");
+    }
+    await userEvent.click(offer);
+    expect(shown(deeperButton())).toBe(false);
+    expect(document.activeElement, "a phone would raise its keyboard over the results").not.toBe(
+      input(),
+    );
+  });
+
+  it("goes back to the quick search for the next query", async () => {
+    apiGet.mockResolvedValue(stopped());
+    await typeQuery("secret");
+    deeperButton()?.click();
+    await settle();
+    apiGet.mockClear();
+    input().value = "secrets";
+    input().dispatchEvent(new Event("input"));
+    await settle();
+    expect(apiGet).toHaveBeenCalledTimes(1);
+    expect(apiGet.mock.calls[0]?.[0]).not.toContain("deep=");
+  });
+
+  it("hides the offer when the bar closes", async () => {
+    apiGet.mockResolvedValue(stopped());
+    await typeQuery("secret");
+    closeFilesSearch();
+    apiGet.mockResolvedValue(result());
+    await typeQuery("x");
+    expect(shown(deeperButton())).toBe(false);
   });
 });
 

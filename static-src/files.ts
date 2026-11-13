@@ -53,6 +53,8 @@ import { fileRowsSkeleton, paintPlaceholder } from "./skeleton.js";
 import { skeletonTiming } from "./legacy-ui/skeleton.js";
 import { setOnUploadComplete } from "./files-picker.js";
 import {
+  CREATE_FILE_ERROR,
+  CREATE_FOLDER_ERROR,
   createFile,
   createFolder,
   renameFile,
@@ -794,21 +796,58 @@ function newFolder(): void {
   createEntry("mkdir", "new folder");
 }
 
-function createEntry(action: "touch" | "mkdir", name: string): void {
+/** `base`, or `base 2`, `base 3` and so on: the first name the listing does not hold. */
+function freeName(base: string): string {
+  if (!cur().entryMap.has(base)) {
+    return base;
+  }
+  for (let n = 2; ; n++) {
+    const name = `${base} ${String(n)}`;
+    if (!cur().entryMap.has(name)) {
+      return name;
+    }
+  }
+}
+
+/** Creates tried before giving up: each "taken" means another writer took the name since the
+ *  listing, which the reload before the next try shows. */
+const CREATE_TRIES = 3;
+
+function createEntry(action: "touch" | "mkdir", base: string): void {
   const actionFn = action === "mkdir" ? createFolder : createFile;
-  void actionFn.dispatch(
-    {
-      dir: cur().currentPath,
-      name,
-    },
-    {
-      onSuccess: () => {
-        void loadDirAsync().then(() => {
-          startInlineRename(name);
-        });
+  const st = cur();
+  const dir = st.currentPath;
+  const attempt = (triesLeft: number): void => {
+    const name = freeName(base);
+    void actionFn.dispatch(
+      { dir, name },
+      {
+        onSuccess: (outcome) => {
+          void loadDirAsync().then(() => {
+            // A browser now showing another folder, or another browser, holds no row and no free name of dir's.
+            if (cur() !== st || st.currentPath !== dir) {
+              return;
+            }
+            if (outcome === "created") {
+              startInlineRename(name);
+            } else if (triesLeft > 1) {
+              attempt(triesLeft - 1);
+            } else {
+              const label = action === "mkdir" ? CREATE_FOLDER_ERROR : CREATE_FILE_ERROR;
+              toast.error(`${label}: ${name} already exists`);
+            }
+          });
+        },
+        // A failure can still have created the entry (a retry finding its first attempt running).
+        onError: () => {
+          if (cur() === st && st.currentPath === dir) {
+            loadDir();
+          }
+        },
       },
-    },
-  );
+    );
+  };
+  attempt(CREATE_TRIES);
 }
 
 function addSelectedToChat(): void {
@@ -832,7 +871,8 @@ function startInlineRename(targetName: string): void {
   const row = [...$.fbList.children].find(
     (child) => (child as HTMLDivElement).dataset["name"] === targetName,
   ) as HTMLDivElement | undefined;
-  if (row === undefined) {
+  // An inert row has a rename in flight (commit marks it); a second input would take the pending label as its original.
+  if (row === undefined || row.inert) {
     return;
   }
 
@@ -854,10 +894,9 @@ function startInlineRename(targetName: string): void {
   }
 
   let committed = false;
-  const restore = (text: string): HTMLElement => {
-    const span = el("span", { className: `${FB_NAME} ${FB_NAME_LINK}` }, text);
-    input.replaceWith(span);
-    return span;
+  // The row's own name element goes back only under its own name: its click handler opens that name.
+  const restore = (): void => {
+    input.replaceWith(nameEl);
   };
 
   const commit = (): void => {
@@ -866,10 +905,14 @@ function startInlineRename(targetName: string): void {
     }
     committed = true;
     const newName = input.value.trim();
-    const span = restore(newName !== "" ? newName : original);
     if (newName === "" || newName === original) {
+      restore();
       return;
     }
+    const pending = el("span", { className: FB_NAME }, newName);
+    input.replaceWith(pending);
+    // Until the reload rebuilds it, every handler on the row still names the original.
+    row.inert = true;
 
     void renameFile.dispatch(
       { dir: cur().currentPath, original, newName },
@@ -881,7 +924,8 @@ function startInlineRename(targetName: string): void {
           loadDir();
         },
         onError: () => {
-          span.textContent = original;
+          row.inert = false;
+          pending.replaceWith(nameEl);
         },
       },
     );
@@ -892,7 +936,7 @@ function startInlineRename(targetName: string): void {
       return;
     }
     committed = true;
-    restore(original);
+    restore();
   };
 
   input.addEventListener("keydown", (e: KeyboardEvent) => {
