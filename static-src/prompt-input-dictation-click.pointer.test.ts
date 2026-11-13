@@ -5,7 +5,10 @@ import { vi } from "vitest";
 import { page } from "vitest/browser";
 import { dictationPressSuite } from "./__test-helpers__/dictation-press-suite.js";
 
-vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
+vi.mock("./toast.js", async (importOriginal) => {
+  const { toastMock } = await import("./__test-helpers__/toast-mock.js");
+  return { ...(await importOriginal<Record<string, unknown>>()), ...toastMock() };
+});
 
 dictationPressSuite({
   press: async (selector) => {

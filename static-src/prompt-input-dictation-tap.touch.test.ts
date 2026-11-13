@@ -5,6 +5,9 @@ import { vi } from "vitest";
 import { dictationPressSuite } from "./__test-helpers__/dictation-press-suite.js";
 import { tap } from "./__test-helpers__/tap.js";
 
-vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
+vi.mock("./toast.js", async (importOriginal) => {
+  const { toastMock } = await import("./__test-helpers__/toast-mock.js");
+  return { ...(await importOriginal<Record<string, unknown>>()), ...toastMock() };
+});
 
 dictationPressSuite({ press: tap, finger: true });
