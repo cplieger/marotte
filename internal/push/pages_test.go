@@ -138,6 +138,20 @@ func TestPresenceView_AGoneTagLosesItsPages(t *testing.T) {
 	}
 }
 
+func TestPresenceView_AnUnjudgedDepartureClearsThePagesAtTheReconnect(t *testing.T) {
+	p, clock := pagesAt(t)
+	p.View("t1", marotte.PageView{Page: "DEAD", Visible: true, Tab: onChat("c1")})
+	p.Observe(disconnected("t1", sse.PresenceClosed))
+	clock.Advance(liveness.ReconnectDelay + time.Millisecond)
+	p.Observe(connected("t1"))
+	if got, ok := p.offerTarget("t1"); ok {
+		t.Errorf("offerTarget = %q after a departure past the retry interval, want none", got)
+	}
+	if p.pageOnTab("t1", marotte.TabKindChat, "c1") {
+		t.Error("pageOnTab(c1) read the departed page as on c1")
+	}
+}
+
 func TestPresenceView_ASilentTagOffersNothingUntilItsAcksResume(t *testing.T) {
 	p, clock := pagesAt(t)
 	p.View("t1", marotte.PageView{Page: "P1"})

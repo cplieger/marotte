@@ -291,8 +291,10 @@ func parseRetryAfter(h string) time.Duration {
 }
 
 // pushVerdict is the push channel's answer for one notice. subs is keyed by profile tag and is empty unless
-// pushable; debounced reports the kind and subject's quiet window still open, which bounds pushes only.
+// pushable; debounced reports the kind and subject's quiet window still open, which bounds pushes only;
+// stampedAt is the debounce stamp this verdict wrote, zero when it wrote none.
 type pushVerdict struct {
+	stampedAt time.Time
 	subs      map[string]marotte.PushSubscription
 	pushable  bool
 	debounced bool
@@ -336,8 +338,18 @@ func (s *Service) pushGates(notifyType marotte.PushKind, subject marotte.PushSub
 		return v
 	}
 	s.pruneDebounceLocked()
-	s.lastPush[key] = time.Now()
+	v.stampedAt = time.Now()
+	s.lastPush[key] = v.stampedAt
 	return v
+}
+
+// unstampDebounce removes key's debounce stamp while it is still the one taken at at.
+func (s *Service) unstampDebounce(key pushDebounceKey, at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if last, ok := s.lastPush[key]; ok && last.Equal(at) {
+		delete(s.lastPush, key)
+	}
 }
 
 // pruneDebounceLocked drops entries whose window has expired. Caller holds mu.

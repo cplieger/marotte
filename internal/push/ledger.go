@@ -103,8 +103,9 @@ func (s *Service) Raise(
 		notice: notice, chatID: chatID, payload: payload, tab: tabKey{kind: kind, ref: ref}, hasTab: hasTab,
 		key: debounceKey(notice.Kind, notice.PushSubject), position: position,
 	}
-	// A read notice must not stamp the debounce, and Service.mu is never taken under the ledger lock: the
-	// marker is read before preflightSend and again under the placement hold, for an ack landing between.
+	// A read notice leaves no debounce stamp, and Service.mu is never taken under the ledger lock: the marker
+	// is read before preflightSend and again under the placement hold, and an ack landing between them has
+	// its stamp removed after the unlock.
 	s.ledger.mu.Lock()
 	read := s.ledger.readAt(&proto)
 	s.ledger.mu.Unlock()
@@ -117,6 +118,9 @@ func (s *Service) Raise(
 	s.ledger.mu.Lock()
 	if s.ledger.readAt(&proto) {
 		s.ledger.mu.Unlock()
+		if !v.stampedAt.IsZero() {
+			s.unstampDebounce(proto.key, v.stampedAt)
+		}
 		s.readAtRaise(&proto, v)
 		return noDelivery
 	}

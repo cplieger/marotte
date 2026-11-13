@@ -851,3 +851,35 @@ func TestFitToCap_KeepsTheBodysCRLFAxis(t *testing.T) {
 		}
 	})
 }
+
+func TestUnstampDebounce_RemovesItsOwnStampAndKeepsANewerOne(t *testing.T) {
+	s := newServiceOnTestServer(t, &recordingHandler{})
+	key := debounceKey(marotte.PushKindAgentFinished, marotte.PushSubject{})
+	stamped := time.Now()
+
+	t.Run("its own stamp", func(t *testing.T) {
+		s.mu.Lock()
+		s.lastPush[key] = stamped
+		s.mu.Unlock()
+		s.unstampDebounce(key, stamped)
+		s.mu.Lock()
+		_, kept := s.lastPush[key]
+		s.mu.Unlock()
+		if kept {
+			t.Error("the stamp of a notice read before delivery stayed, want it removed")
+		}
+	})
+	t.Run("a newer stamp", func(t *testing.T) {
+		newer := stamped.Add(time.Millisecond)
+		s.mu.Lock()
+		s.lastPush[key] = newer
+		s.mu.Unlock()
+		s.unstampDebounce(key, stamped)
+		s.mu.Lock()
+		got, kept := s.lastPush[key]
+		s.mu.Unlock()
+		if !kept || !got.Equal(newer) {
+			t.Errorf("lastPush = %v, %v, want another notice's newer stamp %v kept", got, kept, newer)
+		}
+	})
+}
