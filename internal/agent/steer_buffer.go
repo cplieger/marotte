@@ -433,12 +433,6 @@ func (rec *steerRecord) frameOf(w *dockRow) marotte.SteerQueuedPayload {
 	return f
 }
 
-// names reports whether turnID is the turn this record knows as starting or bound,
-// the one target check delivery shares.
-func (rec *steerRecord) names(turnID string) bool {
-	return turnID != "" && (rec.starting == turnID || rec.turnID == turnID)
-}
-
 func (rec *steerRecord) row(key string) *dockRow {
 	for i := range rec.rows {
 		if w := &rec.rows[i]; !w.state.terminal() && w.key == key {

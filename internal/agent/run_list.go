@@ -175,8 +175,6 @@ const (
 type orderFacts struct {
 	// reserve takes the admission slot (turnRegistry.reserveLocked) for e at stamp.
 	reserve func(e *runEntry, stamp uint64) (command.Reservation, takeAnswer)
-	// newMessageID mints a message id for the prompt an Unread lead's joined rows open.
-	newMessageID func() string
 	// newOffer mints a steer offer's token, unique in the process, so a fate the steer record reports for an earlier
 	// offer, in this life or another, never matches a later one.
 	newOffer func() uint64

@@ -131,14 +131,13 @@ func (lc *chatLifecycle) orderFactsLocked() orderFacts {
 			}
 			return a.res, takeGranted
 		},
-		newMessageID: func() string { return "m-" + newMessageID() },
-		newOffer:     func() uint64 { return r.offerTokens.Add(1) },
-		stamp:        lc.stamp,
-		nextSeq:      lc.nextSeq,
-		stopSeq:      lc.stopSeq,
-		stops:        len(lc.stops),
-		admit:        may.admit,
-		sessionCall:  may.sessionCall,
+		newOffer:    func() uint64 { return r.offerTokens.Add(1) },
+		stamp:       lc.stamp,
+		nextSeq:     lc.nextSeq,
+		stopSeq:     lc.stopSeq,
+		stops:       len(lc.stops),
+		admit:       may.admit,
+		sessionCall: may.sessionCall,
 	}
 }
 

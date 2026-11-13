@@ -1433,15 +1433,6 @@ func TestSteerRecords_ShutdownTakeLeavesNothingToFold(t *testing.T) {
 	}
 }
 
-// idleUnsent leaves key as a row the server holds with no turn to deliver it to.
-func (s *steerHarness) idleUnsent(key string) {
-	s.steer(key, "words")
-	if _, refuse := s.q.RouteSteer(s.chat, key, "words", nil, command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
-		s.fatalf("RouteSteer(%s) with no holder refused %q, want no_turn", key, refuse)
-	}
-	s.mustState(key, rowUnsent)
-}
-
 func (s *steerHarness) lastFrame(key string) marotte.SteerQueuedPayload {
 	f := s.spy.framesFor(key)
 	if len(f) == 0 {

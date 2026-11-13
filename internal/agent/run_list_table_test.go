@@ -36,9 +36,8 @@ func (w *tableWorld) facts() *orderFacts {
 			w.tokens++
 			return command.Reservation{Chat: "c1", Token: w.tokens}, takeGranted
 		},
-		newMessageID: func() string { return "m-unread" },
-		newOffer:     func() uint64 { w.offers++; return w.offers },
-		nextSeq:      w.nextSeq, stopSeq: w.stopSeq, stops: w.stops,
+		newOffer: func() uint64 { w.offers++; return w.offers },
+		nextSeq:  w.nextSeq, stopSeq: w.stopSeq, stops: w.stops,
 		admit: !w.kasRunning, sessionCall: !w.kasRunning,
 	}
 }

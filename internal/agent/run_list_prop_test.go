@@ -81,9 +81,8 @@ func (w *listWorld) facts() *orderFacts {
 			w.reserved = w.tok
 			return command.Reservation{Chat: "c1", Token: w.tok, Stamp: 1}, takeGranted
 		},
-		newMessageID: func() string { w.ids++; return "u-" + strconv.Itoa(w.ids) },
-		newOffer:     func() uint64 { w.ids++; return uint64(w.ids) },
-		stamp:        1, nextSeq: w.nextSeq, stopSeq: w.stopSeq, stops: len(w.stops),
+		newOffer: func() uint64 { w.ids++; return uint64(w.ids) },
+		stamp:    1, nextSeq: w.nextSeq, stopSeq: w.stopSeq, stops: len(w.stops),
 		admit: w.admit, sessionCall: w.admit,
 	}
 }
