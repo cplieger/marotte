@@ -633,8 +633,9 @@ export function mountChatView(): void {
       parkReads = null;
     },
     painted: (chatID) => views.has(chatID) && (get(chatID)?.turn_order.length ?? 0) > 0,
+    current: (chatID) => getActiveId() === chatID,
     swap: (chatID) => {
-      if (getPaintedId() === chatID && activeView?.chatID !== chatID) {
+      if (getPaintedId() === chatID && getActiveId() === chatID && activeView?.chatID !== chatID) {
         untracked(paint);
       }
       parkReads = null;

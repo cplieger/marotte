@@ -167,7 +167,7 @@ export function moveFocusOffTranscript(): void {
   }
 }
 
-let focusGuarded = false;
+let inputGuarded = false;
 
 /** Turn focus that enters the covered transcript (Tab, a script) to the composer. */
 function guardCoveredFocus(e: FocusEvent): void {
@@ -176,11 +176,21 @@ function guardCoveredFocus(e: FocusEvent): void {
   }
 }
 
+/** Refuse a click on the outgoing transcript while its swap waits: its controls resolve their chat
+ *  from the painted one, already the target's. Clicks only, so scrolling and selection still work. */
+function guardOutgoingClick(e: MouseEvent): void {
+  if (swapDue !== "" && e.target instanceof Node && $.messagesWrap.contains(e.target)) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }
+}
+
 /** Cover the transcript for `chatID`, or hand an existing cover to it without re-creating or
  *  re-animating it. Until a release the transcript under it is `aria-busy`, hidden from assistive
- *  tech and refuses focus; once the cover shows, it takes the pointer. A hold before the cover
- *  shows starts its window again, counted from `waitingSince`: when the reader began waiting
- *  (`performance.now()` clock; the hold itself by default). */
+ *  tech and refuses focus, the outgoing view left on screen refuses clicks, and once the cover shows
+ *  it takes the pointer. A hold before the cover shows starts its window again, counted from
+ *  `waitingSince`: when the reader began waiting (`performance.now()` clock; the hold itself by
+ *  default). */
 export function holdCover(chatID: string, waitingSince = performance.now()): void {
   const node = ensureCover();
   holder = chatID;
@@ -195,9 +205,10 @@ export function holdCover(chatID: string, waitingSince = performance.now()): voi
   // Not `inert`: setting it restyles every resident turn, 30 to 140 ms each way in WebKit.
   $.messagesWrap.setAttribute("aria-hidden", "true");
   setBusy($.messagesWrap, true);
-  if (!focusGuarded) {
+  if (!inputGuarded) {
     document.addEventListener("focusin", guardCoveredFocus, true);
-    focusGuarded = true;
+    document.addEventListener("click", guardOutgoingClick, true);
+    inputGuarded = true;
   }
 }
 
@@ -255,7 +266,10 @@ interface TranscriptOwner {
   readonly drop: () => void;
   /** Whether `chatID` has a resident view holding its turns, which it can show with no load. */
   readonly painted: (chatID: string) => boolean;
-  /** Swap the transcript to `chatID`'s view, if it is still the painted chat and not yet active. */
+  /** Whether `chatID` is still the chat the reader is on. */
+  readonly current: (chatID: string) => boolean;
+  /** Swap the transcript to `chatID`'s view, if it is still the painted and current chat and not
+   *  yet active. */
   readonly swap: (chatID: string) => void;
 }
 
@@ -311,11 +325,15 @@ export function dropCover(): void {
   }
   dropParkReads();
   const due = swapDue;
-  if (due !== "") {
-    // A failed, missing or abandoned switch still owes its view the swap the cover was waiting on.
+  if (due !== "" && owner?.current(due) === true) {
+    // A failed or missing switch still owes its view the swap the cover was waiting on.
     takeOutgoingReads();
     runSwap();
-    owner?.swap(due);
+    owner.swap(due);
+  } else if (due !== "") {
+    // The reader left the switch for a view already on screen, which stays.
+    swapDue = "";
+    deferredReveal = null;
   }
   if (cover === null || cover.hidden) {
     return;

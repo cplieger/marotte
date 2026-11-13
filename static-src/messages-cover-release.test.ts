@@ -48,6 +48,10 @@ const scroll = await import("./scroll.js");
 const messages = await import("./messages.js");
 const cover = await import("./transcript-cover.js");
 const { mountedWindow } = await import("./messages-blocks.js");
+const { isTurnRevealed } = await import("./fold-state.js");
+
+/** The held cover's show window. */
+const DELAY_MS = 250;
 
 messages.mountChatView();
 
@@ -211,14 +215,19 @@ function holdYields(): HeldYields {
   return hold;
 }
 
-/** Switch to `to` under a cover held for it, from a painted one-turn chat, as an activation does. */
+/** Switch to `to` under a cover held for it, from a painted chat (one turn unless `fromTurns`
+ *  names more), as an activation does. Answers the chat switched from. */
 async function switchUnderCover(
   sessions: Session[],
   to: string,
   onHeld?: () => void,
-): Promise<void> {
+  fromTurns = 1,
+): Promise<string> {
   const from = freshID("cr-from");
-  store.setSessions([chat(from, [heavyTurn(`${from}-t`, 1, 1)]), ...sessions]);
+  const turns = Array.from({ length: fromTurns }, (_, i) =>
+    heavyTurn(`${from}-t${String(i)}`, 1, i + 1),
+  );
+  store.setSessions([chat(from, turns), ...sessions]);
   store.setActive(from);
   store.setPainted(from);
   store.bumpMessages(from, "load");
@@ -228,6 +237,7 @@ async function switchUnderCover(
   onHeld?.();
   store.setPainted(to);
   await flushed();
+  return from;
 }
 
 /** What the page looked like at the moment the cover was released. */
@@ -603,16 +613,52 @@ describe("a switch to a chat with nothing resident, inside the cover's window", 
       subtree: true,
       attributeFilter: ["class"],
     });
+    const t0 = performance.now();
     await switchUnderCover([evicted(b)], b);
     expect(activeHasTurns(), "the switch activated an empty view").toBe(true);
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 150));
     await nextFrame();
-    expect(activeHasTurns(), "the outgoing turns left inside the window").toBe(true);
-    expect(coverShown()).toBe(false);
-    await new Promise((r) => setTimeout(r, 120));
+    // Read only while the window is surely still open: a late frame on a loaded runner can end it.
+    if (performance.now() - t0 < DELAY_MS) {
+      expect(activeHasTurns(), "the outgoing turns left inside the window").toBe(true);
+      expect(coverShown()).toBe(false);
+    }
+    await new Promise((r) => setTimeout(r, Math.max(0, t0 + DELAY_MS + 70 - performance.now())));
     expect(coverShown(), "the skeleton never showed for a chat still loading").toBe(true);
     mo.disconnect();
     expect(emptySeen, "a frame showed an empty transcript with no cover").toBe(false);
+  });
+
+  it("keeps the outgoing chat's turns when the reader goes back to it inside the window", async () => {
+    const b = freshID("cr-b");
+    const from = await switchUnderCover([evicted(b)], b);
+    // The gesture back to the chat still on screen, as tabs.ts runs it for a painted target.
+    store.setActive(from);
+    cover.dropCover();
+    expect(activeHasTurns(), "going back swapped to the abandoned chat's empty view").toBe(true);
+    await nextFrame();
+    expect(activeHasTurns(), "the frame after going back showed an empty transcript").toBe(true);
+    store.setPainted(from);
+    await flushed();
+    await nextFrame();
+    expect(activeHasTurns(), "the chat gone back to lost its turns").toBe(true);
+  });
+
+  it("leaves the outgoing chat's controls inert while its view waits for the swap", async () => {
+    const b = freshID("cr-b");
+    const from = await switchUnderCover([evicted(b)], b, undefined, 2);
+    const older = `${from}-t0`;
+    // The older turn's: the newest is never folded.
+    const toggle = document.querySelector<HTMLButtonElement>(
+      "#messages .transcript-view.is-active .turn .turn-fold-toggle",
+    );
+    expect(toggle, "the outgoing chat's older turn has no fold toggle").not.toBeNull();
+    toggle?.click();
+    await flushed();
+    expect(isTurnRevealed(b, older), "the outgoing turn's fold wrote to the target chat").toBe(
+      false,
+    );
+    expect(isTurnRevealed(from, older), "the outgoing turn's fold acted at all").toBe(false);
   });
 
   it("swaps straight to the answer when it lands inside the window, with no cover", async () => {

@@ -184,16 +184,32 @@ describe("a held cover waits before it shows", () => {
 });
 
 describe("the outgoing view stays on screen while the held cover waits", () => {
-  /** The owner's calls, in order, with whether the cover was on screen at each. */
-  function recordingOwner(): string[] {
+  /** The owner's calls, in order, with whether the cover was on screen at each. `current` is the
+   *  chat the reader is on, the held one by default. */
+  function recordingOwner(current?: string): string[] {
     const log: string[] = [];
     coverModule.registerTranscriptOwner({
       take: () => log.push(`take shown=${String(shown())}`),
       drop: () => log.push("drop"),
       painted: () => false,
+      current: (chatID) => (current ?? chatID) === chatID,
       swap: (chatID) => log.push(`swap ${chatID} shown=${String(shown())}`),
     });
     return log;
+  }
+
+  /** Dispatch a click on `target` and answer whether its own listener ran and whether the click's
+   *  default was refused. */
+  function clickOn(target: HTMLElement): { ran: boolean; refused: boolean } {
+    let ran = false;
+    const mark = (): void => {
+      ran = true;
+    };
+    target.addEventListener("click", mark);
+    const ev = new MouseEvent("click", { bubbles: true, cancelable: true });
+    target.dispatchEvent(ev);
+    target.removeEventListener("click", mark);
+    return { ran, refused: ev.defaultPrevented };
   }
 
   it("defers the swap to the window's end, then swaps under the shown cover at fresh park reads", () => {
@@ -229,20 +245,63 @@ describe("the outgoing view stays on screen while the held cover waits", () => {
     watch.stop();
   });
 
-  it("still swaps when the switch drops its cover inside the window", () => {
+  it("still swaps when a failed switch drops its cover inside the window", () => {
     const log = recordingOwner();
     coverModule.holdCover("cd-a");
     coverModule.deferReveal(() => log.push("reveal"));
     vi.advanceTimersByTime(DELAY_MS / 2);
 
     coverModule.dropCover();
-    expect(log, "a failed or abandoned switch left the outgoing view up").toEqual([
+    expect(log, "a failed switch left the outgoing view up").toEqual([
       "take shown=false",
       "reveal",
       "swap cd-a shown=false",
     ]);
     vi.advanceTimersByTime(DELAY_MS * 4);
     expect(shown()).toBe(false);
+  });
+
+  it("swaps nothing for a switch the reader left inside the window", () => {
+    const log = recordingOwner("cd-from");
+    coverModule.holdCover("cd-a");
+    coverModule.deferReveal(() => log.push("reveal"));
+    vi.advanceTimersByTime(DELAY_MS / 2);
+
+    coverModule.dropCover();
+    expect(log, "the abandoned switch swapped out the view the reader went back to").toEqual([]);
+    expect(coverModule.swapDeferred("cd-a")).toBe(false);
+    vi.advanceTimersByTime(DELAY_MS * 4);
+    expect(log).toEqual([]);
+    expect(shown()).toBe(false);
+  });
+
+  it("refuses a click on the outgoing transcript while its swap waits, and only there", () => {
+    recordingOwner();
+    const turn = document.createElement("button");
+    document.getElementById("messages")?.appendChild(turn);
+    coverModule.holdCover("cd-a");
+
+    expect(clickOn(turn), "the outgoing chat's control acted for the target").toEqual({
+      ran: false,
+      refused: true,
+    });
+    expect(clickOn(composer), "a click outside the transcript was refused").toEqual({
+      ran: true,
+      refused: false,
+    });
+    coverModule.swapTranscript();
+    expect(clickOn(turn), "the swapped-in view's control stayed refused").toEqual({
+      ran: true,
+      refused: false,
+    });
+
+    coverModule.holdCover("cd-b");
+    coverModule.dropCover();
+    expect(clickOn(turn), "a dropped cover left the transcript refusing clicks").toEqual({
+      ran: true,
+      refused: false,
+    });
+    turn.remove();
   });
 
   it("defers nothing once the cover is on screen", () => {

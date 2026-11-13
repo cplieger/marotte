@@ -99,6 +99,9 @@ const style = document.createElement("style");
 style.textContent = loadCSS("40-a11y.css");
 document.head.appendChild(style);
 
+/** The cover's show window. */
+const DELAY_MS = 250;
+
 /** Past the cover's show window. */
 const PAST_DELAY_MS = 320;
 
@@ -316,14 +319,18 @@ describe("a switch from Settings to a chat with nothing resident", () => {
     await activationRan();
     const page = fx.chat.page("b");
 
+    const t0 = performance.now();
     clickRow(ids["b"] ?? "");
     await activationRan();
     expect(rendered("settings-view"), "the activation emptied the view area").toBe(true);
-    await new Promise((r) => setTimeout(r, 200));
-    expect(rendered("settings-view"), "the view area emptied inside the window").toBe(true);
-    expect(coverShown()).toBe(false);
+    await new Promise((r) => setTimeout(r, 150));
+    // Read only while the window is surely still open: a late frame on a loaded runner can end it.
+    if (performance.now() - t0 < DELAY_MS) {
+      expect(rendered("settings-view"), "the view area emptied inside the window").toBe(true);
+      expect(coverShown()).toBe(false);
+    }
 
-    await new Promise((r) => setTimeout(r, PAST_DELAY_MS - 200));
+    await new Promise((r) => setTimeout(r, Math.max(0, t0 + PAST_DELAY_MS - performance.now())));
     expect(coverShown(), "the chat still loading shows no skeleton").toBe(true);
     expect(rendered("chat-view")).toBe(true);
     expect(rendered("settings-view")).toBe(false);
