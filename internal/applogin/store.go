@@ -252,7 +252,8 @@ func (s *Store) seenSeq() uint64 { return s.cur.Load().seenSeq }
 // built.
 func (s *Store) OIDCProvider() *oidc.Provider { return s.cur.Load().oidc }
 
-// DeviceKeys returns the device-cookie keys, newest first, masked.
+// DeviceKeys returns the persisted device-cookie keys in file order, masked; NewSealer seals with
+// the first.
 func (s *Store) DeviceKeys() []access.Secret { return slices.Clone(s.cur.Load().deviceKeys) }
 
 // FailureKey returns the failure-record HMAC key, masked.

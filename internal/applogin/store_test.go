@@ -339,7 +339,7 @@ func TestIDs_NeverReusedAfterDeleteAndReopen(t *testing.T) {
 		t.Fatalf("after the reopen %d attributions, want the other user's %d", len(got), len(otherAtt))
 	}
 	for i, w := range otherAtt {
-		if g := got[i]; g.ID != w.ID || g.UserID != w.UserID || g.Action != w.Action || !slices.Equal(g.KeyLineage, w.KeyLineage) {
+		if g := got[i]; g.ID != w.ID || g.UserID != w.UserID || g.Action != w.Action || !g.At.Equal(w.At) || !slices.Equal(g.KeyLineage, w.KeyLineage) {
 			t.Errorf("attribution %d after the reopen = %+v, want %+v", i, g, w)
 		}
 	}
