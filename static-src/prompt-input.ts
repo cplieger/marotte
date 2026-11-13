@@ -11,7 +11,14 @@ import { activeSession, getActive, getActiveId } from "./store.js";
 import { afterWords } from "./run-order.js";
 import { payloadOf, turnOpenOf } from "./turns.js";
 import { fixIOSViewport } from "./platform.js";
-import { ICON_SEND, ICON_CANCEL, ICON_ALERT, ICON_HOURGLASS, ICON_MIC } from "./icons.js";
+import {
+  ICON_SEND,
+  ICON_CANCEL,
+  ICON_ALERT,
+  ICON_HOURGLASS,
+  ICON_MIC,
+  ICON_MIC_STOP,
+} from "./icons.js";
 import { sendFaces, type Faces } from "./send-faces.js";
 import { NO_DICTATION, type Dictation } from "./dictation.js";
 import { pressOwner, type Act } from "./send-press.js";
@@ -108,18 +115,24 @@ function reasonOf(s: SendState): string {
   return s.kind === "error" ? s.reason : "";
 }
 
-/** A toggle's name stays stable and `aria-pressed` carries the state; the tooltip says what a press does. */
-function paintDictate(btn: HTMLButtonElement, pressed: boolean): void {
-  btn.replaceChildren(el("span", { className: "send-btn-label" }, "Dictate"), iconEl(ICON_MIC));
-  btn.setAttribute("aria-label", "Dictate");
-  btn.setAttribute("aria-pressed", String(pressed));
-  btn.setAttribute("data-tooltip", pressed ? "Stop dictation" : "Dictate");
-  btn.classList.toggle("dictating", pressed);
+/** Two actions, not a toggle: the listening face names what a press does ("Stop dictation"), so it carries no
+ *  `aria-pressed` (APG Button: a toggle's name never changes). The label reserves the other word's width, so the
+ *  slot keeps one footprint across the two faces. */
+function paintDictate(btn: HTMLButtonElement, listening: boolean): void {
+  const [word, other, name] = listening
+    ? ["Stop", "Dictate", "Stop dictation"]
+    : ["Dictate", "Stop", "Dictate"];
+  btn.replaceChildren(
+    el("span", { className: "send-btn-label", "data-reserve": other }, el("span", {}, word)),
+    iconEl(listening ? ICON_MIC_STOP : ICON_MIC),
+  );
+  btn.setAttribute("aria-label", name);
+  btn.setAttribute("data-tooltip", name);
+  btn.classList.toggle("dictating", listening);
   btn.type = "button";
 }
 
 function clearDictate(btn: HTMLButtonElement): void {
-  btn.removeAttribute("aria-pressed");
   btn.classList.remove("dictating");
 }
 

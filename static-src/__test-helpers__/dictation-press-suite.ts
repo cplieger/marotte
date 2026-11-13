@@ -77,6 +77,10 @@ export function dictationPressSuite({ press: pressNow, finger }: PressSuite): vo
   }
 
   beforeAll(() => {
+    if (finger) {
+      // A finger-driven load's tier (pointer-tier.ts `resolveTier`).
+      document.documentElement.setAttribute("data-pointer", "coarse");
+    }
     sheet = mountAppCSS();
     document.body.insertAdjacentHTML(
       "beforeend",
@@ -107,6 +111,7 @@ export function dictationPressSuite({ press: pressNow, finger }: PressSuite): vo
     dictation.drop();
     document.getElementById("prompt-form")?.remove();
     sheet.remove();
+    document.documentElement.removeAttribute("data-pointer");
   });
 
   beforeEach(async () => {
@@ -216,12 +221,20 @@ export function dictationPressSuite({ press: pressNow, finger }: PressSuite): vo
 
   describe(`the listening face after a ${finger ? "tap" : "click"} (bug 2: nothing shows it records)`, () => {
     /** The resting face's colours and glyph, read before any press. */
-    async function restingFace(): Promise<{ edge: string; fill: string; glyph: string | null }> {
+    async function restingFace(): Promise<{
+      edge: string;
+      fill: string;
+      ink: string;
+      width: number;
+      glyph: string | null;
+    }> {
       await transitionsDone(sendBtn());
       const s = getComputedStyle(sendBtn());
       return {
         edge: s.borderTopColor,
         fill: s.backgroundColor,
+        ink: s.color,
+        width: sendBtn().getBoundingClientRect().width,
         glyph: glyphMarkup(sendBtn().querySelector("svg")),
       };
     }
@@ -238,8 +251,10 @@ export function dictationPressSuite({ press: pressNow, finger }: PressSuite): vo
       expect.soft(btn.hasAttribute("aria-pressed"), "aria-pressed").toBe(false);
       expect.soft(glyphMarkup(btn.querySelector("svg")), "glyph").not.toBe(rest.glyph);
       await transitionsDone(btn);
-      expect.soft(getComputedStyle(btn).borderTopColor, "edge colour").not.toBe(rest.edge);
+      expect.soft(getComputedStyle(btn).color, "ink colour").not.toBe(rest.ink);
       expect.soft(getComputedStyle(btn).backgroundColor, "fill colour").not.toBe(rest.fill);
+      // motion.md "A row action keeps one footprint": the slot never changes width with its words.
+      expect.soft(btn.getBoundingClientRect().width, "width").toBeCloseTo(rest.width, 1);
     });
 
     it("pulses while listening", async () => {
@@ -247,6 +262,9 @@ export function dictationPressSuite({ press: pressNow, finger }: PressSuite): vo
       const beat = getComputedStyle(sendBtn(), "::before");
       expect(beat.animationName).not.toBe("none");
       expect(beat.animationIterationCount).toBe("infinite");
+      expect(beat.backgroundColor, "a swell of the fill's own colour cannot be seen").not.toBe(
+        getComputedStyle(sendBtn()).backgroundColor,
+      );
     });
 
     describe("under reduced motion", () => {
@@ -267,7 +285,8 @@ export function dictationPressSuite({ press: pressNow, finger }: PressSuite): vo
           .not.toBe("infinite");
         expect.soft(glyphMarkup(btn.querySelector("svg")), "glyph").not.toBe(rest.glyph);
         await transitionsDone(btn);
-        expect.soft(getComputedStyle(btn).borderTopColor, "edge colour").not.toBe(rest.edge);
+        expect.soft(getComputedStyle(btn).color, "ink colour").not.toBe(rest.ink);
+        expect.soft(getComputedStyle(btn).backgroundColor, "fill colour").not.toBe(rest.fill);
       });
     });
 
@@ -284,6 +303,8 @@ export function dictationPressSuite({ press: pressNow, finger }: PressSuite): vo
       expect(glyphMarkup(btn.querySelector("svg"))).toBe(rest.glyph);
       await transitionsDone(btn);
       expect(getComputedStyle(btn).borderTopColor).toBe(rest.edge);
+      expect(getComputedStyle(btn).backgroundColor).toBe(rest.fill);
+      expect(getComputedStyle(btn).color).toBe(rest.ink);
     });
   });
 }

@@ -6,7 +6,7 @@ import { userEvent } from "vitest/browser";
 import { signal } from "@cplieger/reactive";
 import { initPromptInput, sendComposer, setSendState } from "./prompt-input.js";
 import { createDictation, type Dictation } from "./dictation.js";
-import { ICON_MIC, ICON_SEND } from "./icons.js";
+import { ICON_MIC, ICON_MIC_STOP, ICON_SEND } from "./icons.js";
 import { setActive, setSessions } from "./store.js";
 import { setComposerValue, writeComposerSilently } from "./composer-value.js";
 import { BUS_TAB_CHANGED, emitBus } from "./bus.js";
@@ -202,15 +202,19 @@ function streaming(): void {
   setSendState({ kind: "streaming" });
 }
 
-function expectDictateFace(btn: HTMLButtonElement, pressed: boolean): void {
+/** Listening is a Stop control in its own words, so it carries no `aria-pressed` (APG Button pattern). */
+function expectDictateFace(btn: HTMLButtonElement, listening: boolean): void {
+  const name = listening ? "Stop dictation" : "Dictate";
   expect(btn.hidden).toBe(false);
-  expect(btn.getAttribute("aria-label")).toBe("Dictate");
-  expect(btn.getAttribute("aria-pressed")).toBe(String(pressed));
-  expect(btn.getAttribute("data-tooltip")).toBe(pressed ? "Stop dictation" : "Dictate");
+  expect(btn.getAttribute("aria-label")).toBe(name);
+  expect(btn.hasAttribute("aria-pressed")).toBe(false);
+  expect(btn.getAttribute("data-tooltip")).toBe(name);
   expect(btn.type).toBe("button");
-  expect(btn.classList.contains("dictating")).toBe(pressed);
-  expect(btn.querySelector(".send-btn-label")?.textContent).toBe("Dictate");
-  expect(glyphMarkup(btn.querySelector("svg"))).toBe(registryMarkup(ICON_MIC));
+  expect(btn.classList.contains("dictating")).toBe(listening);
+  expect(btn.querySelector(".send-btn-label")?.textContent).toBe(listening ? "Stop" : "Dictate");
+  expect(glyphMarkup(btn.querySelector("svg"))).toBe(
+    registryMarkup(listening ? ICON_MIC_STOP : ICON_MIC),
+  );
 }
 
 function expectSendFace(btn: HTMLButtonElement): void {

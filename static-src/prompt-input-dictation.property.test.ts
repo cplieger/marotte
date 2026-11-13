@@ -173,7 +173,10 @@ function began(btn: HTMLButtonElement): Began | null {
     return null;
   }
   if (btn.getAttribute("aria-label") === "Dictate") {
-    return btn.getAttribute("aria-pressed") === "true" ? "stop" : "start";
+    return "start";
+  }
+  if (btn.getAttribute("aria-label") === "Stop dictation") {
+    return "stop";
   }
   return btn.getAttribute("aria-label") === "Cancel this turn" ? "cancel" : "send";
 }
