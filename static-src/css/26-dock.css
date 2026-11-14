@@ -1441,8 +1441,15 @@
 .run-bar-toggle {
   display: flex;
   flex: 1 1 0;
+  align-items: center;
   min-inline-size: 0;
   gap: var(--sp-2);
+}
+
+/* Beside the batch button the toggle's hover is the button's height on every pointer and width, so the
+   fold row's two targets read as one line. The row already budgets that height (`--run-room`). */
+.run-bar-fold:has(> .run-bar-all:not([hidden])) > .run-bar-toggle {
+  min-block-size: var(--btn-h);
 }
 
 .run-bar-chev {
