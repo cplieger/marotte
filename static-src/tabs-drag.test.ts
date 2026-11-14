@@ -26,7 +26,9 @@ import {
   yieldDragToMenu,
 } from "./tabs-drag.js";
 import { announce } from "./legacy-ui/announce.js";
+import { bindContextPress } from "./context-hold.js";
 import shellCss from "./css/10-shell-app.css?raw";
+import tabsCss from "./css/12-tabs.css?raw";
 
 vi.mock("./legacy-ui/announce.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Announce>()),
@@ -661,6 +663,64 @@ describe("the touch hold", () => {
   it("lets a held menu open while no drag holds the strip", () => {
     expect(yieldDragToMenu()).toBe(true);
     expectStripQuiet(START);
+  });
+
+  // The lift folds `s` away, so a scroller at its end clamps and fires `scroll` under a still finger.
+  it("opens a held row's menu on a scrolled strip whose lift folds a sub-tab", async () => {
+    const style = document.createElement("style");
+    style.textContent = tabsCss;
+    const scroller = document.createElement("div");
+    scroller.style.cssText = `position:absolute;top:0;left:0;width:200px;height:${String(ROW_H * 2)}px;overflow-y:auto`;
+    const strip = document.createElement("div");
+    stubPointerCapture(strip);
+    for (const [id, child] of [
+      ["p", false],
+      ["q", false],
+      ["t", true],
+      ["u", false],
+      ["v", false],
+    ] as const) {
+      const row = document.createElement("div");
+      row.dataset["tabId"] = id;
+      row.className = child ? "tab tab-child" : "tab";
+      row.style.height = `${String(ROW_H)}px`;
+      strip.append(row);
+      attachDrag(row);
+    }
+    scroller.append(strip);
+    document.head.append(style);
+    document.body.append(scroller);
+    try {
+      scroller.scrollTop = scroller.scrollHeight;
+      await new Promise((resolve) => {
+        scroller.addEventListener("scroll", resolve, { once: true });
+      });
+      vi.useRealTimers();
+      await new Promise((resolve) => {
+        setTimeout(resolve, 150);
+      });
+      vi.useFakeTimers();
+      const held = strip.querySelector<HTMLElement>('[data-tab-id="u"]') as HTMLElement;
+      const open = vi.fn();
+      bindContextPress(held, open, yieldDragToMenu);
+      const clamped = new Promise((resolve) => {
+        scroller.addEventListener("scroll", resolve, { once: true });
+      });
+      const at = { clientY: mid(held), buttons: 1, pointerType: "touch" };
+      held.dispatchEvent(ptr("pointerdown", at));
+      vi.advanceTimersByTime(TOUCH_HOLD);
+      expect(
+        strip.querySelector("[data-drag-collapsed]"),
+        "the lift folded the sub-tab",
+      ).not.toBeNull();
+      await clamped;
+      vi.advanceTimersByTime(500 - TOUCH_HOLD);
+      expect(open).toHaveBeenCalledTimes(1);
+      held.dispatchEvent(ptr("pointerup", { ...at, buttons: 0 }));
+    } finally {
+      scroller.remove();
+      style.remove();
+    }
   });
 });
 

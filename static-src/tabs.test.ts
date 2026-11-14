@@ -4055,22 +4055,40 @@ describe("the touch hold on a chat tab", () => {
     expect(showContextMenu).not.toHaveBeenCalled();
   });
 
-  // design.md §16 "The momentum-scroll guard": a finger that stops a fling rests on a row.
-  it("opens no menu when the scroller holding the row scrolls under the finger", async () => {
+  it("opens no menu for a touch that lands while the scroller holding the row is scrolling", async () => {
     const row = await rowA();
-    touch("pointerdown", row);
     row.parentElement?.dispatchEvent(new Event("scroll"));
+    touch("pointerdown", row);
     vi.advanceTimersByTime(HOLD_MS);
     expect(showContextMenu).not.toHaveBeenCalled();
   });
 
-  it("keeps the hold while a scroller that does not hold the row scrolls", async () => {
+  it("opens the menu for a touch that lands after the scroller holding the row came to rest", async () => {
+    const row = await rowA();
+    row.parentElement?.dispatchEvent(new Event("scroll"));
+    await new Promise((resolve) => {
+      setTimeout(resolve, 150);
+    });
+    touch("pointerdown", row);
+    vi.advanceTimersByTime(HOLD_MS);
+    expect(showContextMenu).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the menu when the scroller holding the row scrolls under a still finger", async () => {
+    const row = await rowA();
+    touch("pointerdown", row);
+    row.parentElement?.dispatchEvent(new Event("scroll"));
+    vi.advanceTimersByTime(HOLD_MS);
+    expect(showContextMenu).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the menu for a touch that lands while a scroller that does not hold the row scrolls", async () => {
     const row = await rowA();
     const elsewhere = document.createElement("div");
     document.body.append(elsewhere);
-    touch("pointerdown", row);
     elsewhere.dispatchEvent(new Event("scroll"));
     elsewhere.remove();
+    touch("pointerdown", row);
     vi.advanceTimersByTime(HOLD_MS);
     expect(showContextMenu).toHaveBeenCalledTimes(1);
   });
