@@ -42,7 +42,7 @@ Pressing a header folds its section or opens it again, and each browser remember
 
 Click a row, or press Enter on it, to reopen the chat. **Reopen** in the row's menu does the same. A pinned chat reopens pinned, and a reopened chat leaves the list. While **Days kept** is 0 in Settings, the section is hidden, because a chat closed then is deleted at once.
 
-When another service sends a message through the [notify route](configuration.md#waking-a-chat-from-another-service-marotte_notify_token) to a chat whose tab you closed, that tab opens again on every device.
+When another service sends a message through the [notify route](configuration.md#waking-a-chat-from-another-service-marotte_notify_token) to a chat whose tab you closed, that tab opens again on every device. With 48 tabs open, the message is still delivered and the tab stays closed.
 
 The **History** row ends the sections. It opens History in the main area without opening a tab, and picking a tab, starting a chat or going back leaves it. It reads **More history** while **Recently closed** shows.
 
