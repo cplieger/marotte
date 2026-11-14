@@ -64,7 +64,11 @@ if (!scenario) {
   throw new Error(`view.mjs: plan.json has no scenario ${args.scenario}`);
 }
 const windows = new Set(args.windows ? args.windows.split(",") : scenario.windows);
-const origin = `http://127.0.0.1:${String(inst.port)}`;
+const port = String(inst.port);
+if (!/^[1-9][0-9]{0,4}$/.test(port) || Number(port) > 65535) {
+  throw new Error(`view.mjs: instance.json has no valid port (${port})`);
+}
+const origin = `http://127.0.0.1:${port}`;
 const trigDir = path.join(args.instance, "trigger");
 const logDir = path.join(args.instance, "logs");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
