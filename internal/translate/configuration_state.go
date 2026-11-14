@@ -83,16 +83,18 @@ const modelFallbackKRN = configurationSettingKRN + "modelFallback/"
 
 // fallbackSetting is one modelFallback row: a chain of model ids per layer, composed into Value.
 type fallbackSetting struct {
-	KRN           string   `json:"krn"`
-	Compose       string   `json:"compose"`
-	Value         []string `json:"value"`
-	Contributions []struct {
-		Stated *struct {
-			Value []string `json:"value"`
-			Used  bool     `json:"used"`
-		} `json:"stated"`
-		Layer string `json:"layer"`
-	} `json:"contributions"`
+	KRN           string                 `json:"krn"`
+	Compose       string                 `json:"compose"`
+	Value         []string               `json:"value"`
+	Contributions []fallbackContribution `json:"contributions"`
+}
+
+type fallbackContribution struct {
+	Stated *struct {
+		Value []string `json:"value"`
+		Used  bool     `json:"used"`
+	} `json:"stated"`
+	Layer string `json:"layer"`
 }
 
 // layers names the last stated contribution's layer the compose used, and the first target of the last
@@ -113,6 +115,17 @@ func (st *fallbackSetting) layers() (usedLayer, vendorDefault string) {
 		}
 	}
 	return usedLayer, vendorDefault
+}
+
+// hasEmptyID reports a chain, composed or stated, holding an empty model id: kiro-cli's terminal UI refuses that
+// row.
+func (st *fallbackSetting) hasEmptyID() bool {
+	if slices.Contains(st.Value, "") {
+		return true
+	}
+	return slices.ContainsFunc(st.Contributions, func(c fallbackContribution) bool {
+		return c.Stated != nil && slices.Contains(c.Stated.Value, "")
+	})
 }
 
 // vendorFallbackLayers state Kiro's own chains; a chain composed from any other layer is the account's or an
@@ -150,7 +163,7 @@ func DecodeModelFallbackSetting(raw json.RawMessage) (marotte.ModelFallback, boo
 		return marotte.ModelFallback{}, false
 	}
 	model, ok := strings.CutPrefix(st.KRN, modelFallbackKRN)
-	if !ok || model == "" {
+	if !ok || model == "" || st.hasEmptyID() {
 		return marotte.ModelFallback{}, false
 	}
 	usedLayer, vendorDefault := st.layers()

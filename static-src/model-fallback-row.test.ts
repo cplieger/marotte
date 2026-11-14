@@ -67,12 +67,14 @@ function build(
   rows: ModelFallback[],
   { enabled = true, identity = signedIn, model = "model-a" } = {},
 ): HTMLElement | null {
-  return buildFallbackRow({
-    model,
-    settings: settingsPayload({ model_fallback_enabled: enabled, model_fallbacks: rows }),
-    catalog,
-    identity,
-  });
+  return (
+    buildFallbackRow({
+      model,
+      settings: settingsPayload({ model_fallback_enabled: enabled, model_fallbacks: rows }),
+      catalog,
+      identity,
+    })?.el ?? null
+  );
 }
 
 function select(row: HTMLElement | null): HTMLSelectElement {
@@ -163,6 +165,11 @@ describe("the model picker's Fallback row", () => {
       await userEvent.keyboard(key);
       expect(document.activeElement, `focus stayed on the select after ${key}`).toBe(s);
     }
+    // The keys changed the choice; a write still running would land in the next case's record.
+    await vi.waitFor(() => {
+      expect(sent.at(-1)).toEqual({ model: "model-a", target: "model-c" });
+      expect(s.getAttribute("aria-busy")).toBeNull();
+    });
     nav.dispose();
   });
 

@@ -1,5 +1,5 @@
 // The model picker's Fallback row: the account's fallback for the chat's model, as KAS composes it
-// (settings.model_fallbacks), with the served models as targets. `model-switcher.ts` places it.
+// (settings.model_fallbacks), with the served models as targets. `model-switcher.ts` holds its FallbackSlot.
 
 import { el } from "@cplieger/reactive";
 import { setModelFallback } from "./actions/model-fallback.js";
@@ -36,23 +36,40 @@ function noAccount(identity: IdentityVerdict): boolean {
   return identity.state === "signed_out" || (identity.state === "signed_in" && identity.apiKey);
 }
 
-/** The row, or null while the Model fallback switch is off or KAS states no fallback for the model. */
-export function buildFallbackRow(input: FallbackRowInput): HTMLElement | null {
-  const { model, settings, catalog, identity } = input;
+/** A built Fallback row. */
+interface FallbackRow {
+  readonly el: HTMLElement;
+  /** True while a write the row sent is unanswered. */
+  busy(): boolean;
+  /** Repaints the select and its reason in place, so a focused select keeps focus. */
+  show(row: ModelFallback): void;
+}
+
+/** The stated row for the input's model, or null when no row is shown. Signed out or with an API key
+ *  there is a row, read-only, whether or not KAS states one. */
+function rowFor(input: FallbackRowInput): ModelFallback | null {
+  const { model, settings, identity } = input;
   if (settings?.model_fallback_enabled !== true || model === "" || model === AUTO) {
     return null;
   }
-  const signedOut = noAccount(identity);
   const stated = settings.model_fallbacks.find((f) => f.model === model);
-  if (stated === undefined && !signedOut) {
+  if (stated !== undefined) {
+    return stated;
+  }
+  return noAccount(identity)
+    ? { model, configured: "", vendor_default: "", read_only_reason: "" }
+    : null;
+}
+
+/** The row, or null while the Model fallback switch is off, for Auto, or when KAS states no fallback
+ *  for the model and an account is signed in; signed out or with an API key, a read-only row. */
+export function buildFallbackRow(input: FallbackRowInput): FallbackRow | null {
+  const row = rowFor(input);
+  if (row === null) {
     return null;
   }
-  const row: ModelFallback = stated ?? {
-    model,
-    configured: "",
-    vendor_default: "",
-    read_only_reason: "",
-  };
+  const { model, catalog } = input;
+  const signedOut = noAccount(input.identity);
   const nameOf = (id: string): string => {
     const name = catalog.find((m) => m.model_id === id)?.model_name ?? "";
     return humanName(name === "" ? id : name);
@@ -68,8 +85,6 @@ export function buildFallbackRow(input: FallbackRowInput): HTMLElement | null {
     className: "section-hint",
     "aria-live": "polite",
   });
-  const reason = signedOut ? SIGN_IN_WORDS : (READ_ONLY_WORDS.get(row.read_only_reason) ?? "");
-
   const paint = (r: ModelFallback): void => {
     const targets = catalog.map((m) => m.model_id).filter((id) => id !== model && id !== AUTO);
     if (r.configured !== "" && !targets.includes(r.configured)) {
@@ -83,12 +98,16 @@ export function buildFallbackRow(input: FallbackRowInput): HTMLElement | null {
     );
     select.value = r.configured;
   };
+  const showReason = (r: ModelFallback): void => {
+    const reason = signedOut ? SIGN_IN_WORDS : (READ_ONLY_WORDS.get(r.read_only_reason) ?? "");
+    hint.textContent = reason;
+    hint.hidden = reason === "";
+    select.disabled = reason !== "";
+  };
   paint(row);
+  showReason(row);
   let shown = row;
   let pending = 0;
-  hint.textContent = reason;
-  hint.hidden = reason === "";
-  select.disabled = reason !== "";
 
   // Stop the picker's own handlers: a click inside the card must not reach the pill trigger.
   select.addEventListener("click", (e) => {
@@ -133,11 +152,64 @@ export function buildFallbackRow(input: FallbackRowInput): HTMLElement | null {
       });
   });
 
-  return el(
-    "div",
-    { className: "effort-row" },
-    el("span", { className: "effort-label" }, "Fallback"),
-    select,
-    hint,
+  return {
+    el: el(
+      "div",
+      { className: "effort-row" },
+      el("span", { className: "effort-label" }, "Fallback"),
+      select,
+      hint,
+    ),
+    busy: () => pending > 0,
+    show: (r) => {
+      shown = r;
+      paint(r);
+      showReason(r);
+    },
+  };
+}
+
+function sameRow(a: ModelFallback, b: ModelFallback): boolean {
+  return (
+    a.configured === b.configured &&
+    a.vendor_default === b.vendor_default &&
+    a.read_only_reason === b.read_only_reason
   );
+}
+
+/** The card's one Fallback row, kept across settings steps: rebuilding it would replace a select the
+ *  user has focus on, and the write's own settings_updated steps the shown settings twice. */
+export class FallbackSlot {
+  private row: FallbackRow | null = null;
+  private built: { input: FallbackRowInput; row: ModelFallback } | null = null;
+
+  /** Shows, repaints in place, or removes the row for `input`, last in `list`; never while a write is
+   *  pending, whose answer the row paints itself. */
+  sync(list: HTMLElement, input: FallbackRowInput): void {
+    if (this.row?.busy() === true) {
+      return;
+    }
+    const next = rowFor(input);
+    const was = this.built;
+    if (
+      this.row !== null &&
+      was !== null &&
+      next !== null &&
+      was.input.model === input.model &&
+      was.input.catalog === input.catalog &&
+      noAccount(was.input.identity) === noAccount(input.identity)
+    ) {
+      if (!sameRow(was.row, next)) {
+        this.row.show(next);
+      }
+    } else {
+      this.row?.el.remove();
+      this.row = buildFallbackRow(input);
+    }
+    this.built = next === null ? null : { input, row: next };
+    // Re-seating a node blurs it, so only a row that is not already last moves.
+    if (this.row !== null && list.lastElementChild !== this.row.el) {
+      list.appendChild(this.row.el);
+    }
+  }
 }

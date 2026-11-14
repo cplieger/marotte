@@ -3,18 +3,22 @@ import { userEvent } from "vitest/browser";
 import { settingsPayload } from "./__test-helpers__/settings.js";
 import type { EffectiveSettings } from "./persist.js";
 import type { ModelInfo } from "./types.js";
+import type { ModelFallback } from "./wire/types.gen.js";
 import type * as Strings from "./strings.js";
 
 let cachedModels: ModelInfo[] = [];
 
 let notice: { text: string; busy: boolean } | null = null;
 
-const { onExpand, onCollapse, effortDispatch, thinkingDispatch } = vi.hoisted(() => ({
-  onExpand: { fn: null as null | (() => void) },
-  onCollapse: { fn: null as null | (() => void) },
-  effortDispatch: vi.fn(),
-  thinkingDispatch: vi.fn(),
-}));
+const { onExpand, onCollapse, effortDispatch, thinkingDispatch, fallbackDispatch } = vi.hoisted(
+  () => ({
+    onExpand: { fn: null as null | (() => void) },
+    onCollapse: { fn: null as null | (() => void) },
+    effortDispatch: vi.fn(),
+    thinkingDispatch: vi.fn(),
+    fallbackDispatch: vi.fn(),
+  }),
+);
 
 /** Read-only as in production: the set_effort command writes the seed. */
 let lastEffortByModel: Record<string, string> = {};
@@ -99,6 +103,7 @@ vi.mock("./actions/index.js", () => ({
   RETRY_STANDARD: {},
 }));
 vi.mock("./actions/chat.js", () => ({ switchModel: { dispatch: vi.fn() } }));
+vi.mock("./actions/model-fallback.js", () => ({ setModelFallback: { dispatch: fallbackDispatch } }));
 vi.mock("./reconcile.js", () => ({ reconcile: vi.fn() }));
 vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));
 vi.mock("./session-context.js", () => ({
@@ -616,12 +621,14 @@ describe("the Fallback row", () => {
     setSession({ id: "c1", model: "model-a", effort: "", effort_levels: fiveTiers() });
   });
 
-  function shown(enabled: boolean): EffectiveSettings {
+  function answered(configured: string, vendorDefault = ""): ModelFallback {
+    return { model: "model-a", configured, vendor_default: vendorDefault, read_only_reason: "" };
+  }
+
+  function shown(enabled: boolean, configured = "model-b", vendorDefault = ""): EffectiveSettings {
     return settingsPayload({
       model_fallback_enabled: enabled,
-      model_fallbacks: [
-        { model: "model-a", configured: "model-b", vendor_default: "", read_only_reason: "" },
-      ],
+      model_fallbacks: [answered(configured, vendorDefault)],
     });
   }
 
@@ -649,6 +656,55 @@ describe("the Fallback row", () => {
     expect(fallbackSelect()?.value).toBe("model-b");
     shownSettingsSignal.value = shown(false);
     expect(fallbackSelect()).toBeNull();
+  });
+
+  it("keeps the focused select and the answered target through the write's settings refetch", async () => {
+    cachedModels = [...cachedModels, model("model-c", "high")];
+    let settle: () => void = () => undefined;
+    fallbackDispatch.mockImplementation(
+      (_args: unknown, opts: { onSuccess: (answer: ModelFallback) => void }) =>
+        new Promise<void>((resolve) => {
+          settle = () => {
+            opts.onSuccess(answered("model-c"));
+            resolve();
+          };
+        }),
+    );
+    shownSettingsSignal.value = shown(true);
+    openCard();
+    const s = fallbackSelect();
+    if (s === null) {
+      throw new Error("no Fallback select");
+    }
+    s.focus();
+    await userEvent.selectOptions(s, "model-c");
+    expect(fallbackDispatch).toHaveBeenCalledOnce();
+
+    // While the write is pending, a pushed view still holding the old target; then settings_updated
+    // steps announce (the old target) after the answer, and the refetch adopts the written target.
+    shownSettingsSignal.value = shown(true, "model-b", "model-b");
+    expect(s.value).toBe("model-c");
+    settle();
+    await vi.waitFor(() => {
+      expect(s.getAttribute("aria-busy")).toBeNull();
+    });
+    shownSettingsSignal.value = shown(true);
+    expect(s.value).toBe("model-c");
+    shownSettingsSignal.value = shown(true, "model-c");
+
+    expect(fallbackSelect()).toBe(s);
+    expect(document.activeElement).toBe(s);
+    expect(s.value).toBe("model-c");
+  });
+
+  it("repaints in place when another device changes the choice", () => {
+    cachedModels = [...cachedModels, model("model-c", "high")];
+    shownSettingsSignal.value = shown(true);
+    openCard();
+    const s = fallbackSelect();
+    shownSettingsSignal.value = shown(true, "model-c");
+    expect(fallbackSelect()).toBe(s);
+    expect(s?.value).toBe("model-c");
   });
 
   it("leaves a closed card alone on a settings change", () => {

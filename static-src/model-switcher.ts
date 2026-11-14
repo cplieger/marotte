@@ -47,7 +47,7 @@ import {
   type PillKnob,
   type PillOpen,
 } from "./pill-commit.js";
-import { buildFallbackRow } from "./model-fallback-row.js";
+import { FallbackSlot } from "./model-fallback-row.js";
 import { settingsAsShown, shownSettingsSignal } from "./persist.js";
 import { currentIdentity } from "./settings.js";
 import type { EffectiveSettings } from "./persist.js";
@@ -205,7 +205,7 @@ class ModelSwitchController {
     effect(() => {
       const shown = shownSettingsSignal.value;
       if (this.expanded) {
-        this.syncFallbackRow(expandContent, shown);
+        this.syncFallbackRow($.modelSwitchList, shown);
       }
     });
     // Wired ONCE: re-wiring per render stacks keydown handlers.
@@ -311,7 +311,7 @@ class ModelSwitchController {
 
   private expanded = false;
 
-  private fallbackRow: HTMLElement | null = null;
+  private readonly fallback = new FallbackSlot();
 
   /** Rebuild the ticks only when the vocabulary changed. */
   private effortLevelsShown: readonly SessionEffortLevel[] = [];
@@ -335,19 +335,14 @@ class ModelSwitchController {
     this.effortSlider?.el.remove();
   }
 
-  /** Rebuilt on each render, last in the card, for the chat's model. */
+  /** Last in the card, for the chat's model. */
   private syncFallbackRow(list: HTMLElement, settings: EffectiveSettings | null): void {
-    this.fallbackRow?.remove();
-    this.fallbackRow = null;
-    this.fallbackRow = buildFallbackRow({
+    this.fallback.sync(list, {
       model: getActive()?.model ?? "",
       settings,
       catalog: getCachedModels(),
       identity: currentIdentity(),
     });
-    if (this.fallbackRow !== null) {
-      list.appendChild(this.fallbackRow);
-    }
   }
 
   /** Ticks are rebuilt when the model's vocabulary changes: the set is per model, so

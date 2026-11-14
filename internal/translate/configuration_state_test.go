@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -204,6 +205,19 @@ func TestDecodeModelFallbacks(t *testing.T) {
 		rows, _ := DecodeModelFallbacks(raw)
 		if got, want := fallbackOf(t, rows, "model-a"), (marotte.ModelFallback{Model: "model-a", VendorDefault: "model-k"}); got != want {
 			t.Errorf("model-a = %+v, want %+v", got, want)
+		}
+	})
+	t.Run("a chain holding an empty id is dropped", func(t *testing.T) {
+		raw := json.RawMessage(`{"view":{"observer":"connection"},"settings":[
+			{"krn":"krn:::setting/modelFallback/model-a","value":[""],"compose":"replace","contributions":[]},
+			{"krn":"krn:::setting/modelFallback/model-b","value":["model-k"],"compose":"replace","contributions":[
+				{"layer":"kiro-service","stated":{"value":["model-k",""],"used":false}},
+				{"layer":"user-synced","stated":{"value":["model-k"],"used":true}}]},
+			{"krn":"krn:::setting/modelFallback/model-c","value":["model-k"],"compose":"replace","contributions":[
+				{"layer":"kiro-service","stated":{"value":["model-k"],"used":true}}]}]}`)
+		rows, _ := DecodeModelFallbacks(raw)
+		if want := []marotte.ModelFallback{{Model: "model-c", VendorDefault: "model-k"}}; !slices.Equal(rows, want) {
+			t.Errorf("rows = %+v, want %+v: kiro-cli refuses a chain with an empty id", rows, want)
 		}
 	})
 	t.Run("treats the text", func(t *testing.T) {

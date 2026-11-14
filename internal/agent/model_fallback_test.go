@@ -61,7 +61,7 @@ func TestModelFallbackPutWritesTheAccountLayer(t *testing.T) {
 			h, _, br := newTestHub()
 			t.Cleanup(func() { shutdownHub(t, h) })
 			br.setCallResult(methodKiroConfigurationSet, modelFallbackExchange(t, tc.name).Result)
-			before := settingsUpdatedCount(t, h)
+			before := len(eventsOfType(h, marotte.EventSettingsUpdated))
 
 			rec := putModelFallback(h, tc.body)
 
@@ -78,9 +78,8 @@ func TestModelFallbackPutWritesTheAccountLayer(t *testing.T) {
 			if got := h.config.ModelFallbacks(); len(got) != 1 || got[0] != want {
 				t.Errorf("ModelFallbacks() after the write = %+v, want [%+v] so GET /api/settings answers it", got, want)
 			}
-			if n := settingsUpdatedCount(t, h); n != before+1 {
-				t.Errorf("settings_updated broadcasts = %d, want %d so every tab repaints", n, before+1)
-			}
+			// The announce runs after the reply is written, so it is awaited, not counted.
+			awaitEventCount(t, h, marotte.EventSettingsUpdated, before+1)
 		})
 	}
 }
@@ -149,7 +148,7 @@ func TestModelFallbackPutRefusals(t *testing.T) {
 			h, _, br := newTestHub()
 			t.Cleanup(func() { shutdownHub(t, h) })
 			br.setCallRPCErr(methodKiroConfigurationSet, tc.err)
-			before := settingsUpdatedCount(t, h)
+			before := len(eventsOfType(h, marotte.EventSettingsUpdated))
 
 			rec := putModelFallback(h, `{"model":"model-a","target":"model-b"}`)
 
