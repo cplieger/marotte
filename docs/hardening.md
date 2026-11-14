@@ -37,6 +37,8 @@ marotte sends no telemetry. Its outbound requests are these:
 - the public MCP registry when you search it
 - the kiro-cli download on first start, the tools you install, and the tool catalog refresh, once a day by default. When a github.com account is connected, its token goes with the tools' requests to GitHub's API and to no other host.
 
+AWS may use what marotte sends the model, which is your chats and workflow runs, to improve its service. The **Share content with AWS for service improvement** switch under **Data sharing** in **Settings** decides it. It is on by default, as in kiro-cli, and a switch you turned off stays off. On an enterprise account, the organization's setting decides it instead. kiro-cli run in the Shell panel follows its own setting, which [Content sharing with AWS](configuration.md#content-sharing-with-aws) covers.
+
 kiro-cli's own telemetry is on by default, as in kiro-cli. The **kiro-cli telemetry** switch under **Data sharing** in **Settings** covers both kinds: its usage telemetry, which sends usage data linked to your signed-in account, and its legacy toolkit telemetry. Turned off, it stops both. On an enterprise account, the organization's usage-analytics setting decides it instead. Push notifications go only to the browser vendors' push services, over HTTPS on port 443. Each push connection is checked again after the name is resolved.
 
 ## How kiro-cli is installed
