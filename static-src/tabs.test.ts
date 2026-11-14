@@ -126,6 +126,7 @@ vi.mock("./tabs-drag.js", async (importOriginal) => ({
   attachDrag: vi.fn(),
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
+  yieldDragToMenu: vi.fn(() => true),
 }));
 // The COMPLETE store helper (the factory's name stores, the close's active-pointer writers, and
 // what actions/chat.js links): a partial factory fails the file when store.ts grows an export.
@@ -219,7 +220,13 @@ import { observeStamp, _resetForTest as _resetFreshnessForTest } from "./subject
 import { closeTabCommand } from "./actions/tabs.js";
 import { adoptUnownedComposer, retargetComposer } from "./composer-state.js";
 import { info as toastInfo, error as toastErrorFn } from "./toast.js";
-import { attachDrag, pointerDragActivation, setReorderCallback } from "./tabs-drag.js";
+import {
+  attachDrag,
+  pointerDragActivation,
+  setReorderCallback,
+  yieldDragToMenu,
+} from "./tabs-drag.js";
+import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 import { $ } from "./dom.js";
 import { showContextMenu } from "./context-menu.js";
 import type { ContextMenuItem } from "./context-menu.js";
@@ -3928,6 +3935,129 @@ describe("Move up / Move down in the chat menu", () => {
     up.action();
     await settleTabs();
     expect(tabServer.sentOfType("reorder_tabs")).toHaveLength(0);
+  });
+});
+
+// iOS WebKit fires no `contextmenu` for a long press (https://bugs.webkit.org/show_bug.cgi?id=213953),
+// so a chat row's menu opens from its own 500 ms touch hold too.
+describe("the touch hold on a chat tab", () => {
+  const HOLD_MS = 500;
+  const AT = { x: 40, y: 100 };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    vi.mocked(showContextMenu).mockClear();
+  });
+
+  afterEach(() => {
+    // A hold a case left pressed: its lift listener goes with the pointer.
+    window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1, pointerType: "touch" }));
+  });
+
+  function touch(type: string, target: Element, dx = 0, pointerId = 1): void {
+    target.dispatchEvent(
+      new PointerEvent(type, {
+        pointerId,
+        pointerType: "touch",
+        isPrimary: pointerId === 1,
+        buttons: type === "pointerup" ? 0 : 1,
+        clientX: AT.x + dx,
+        clientY: AT.y,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  }
+
+  /** Chats `a` and `b`, painted, `b` active; answers `a`'s row. */
+  async function rowA(): Promise<HTMLElement> {
+    await openChats("a", "b");
+    await paint();
+    const row = rows().find((r) => r.dataset["tabId"] === chatID("a"));
+    if (row === undefined) {
+      throw new Error("no row for a");
+    }
+    return row;
+  }
+
+  const menuLabels = (): string[] =>
+    (vi.mocked(showContextMenu).mock.lastCall?.[0] ?? []).map((i) => i.label);
+
+  it("opens the chat menu once the hold reaches 500 ms, with no contextmenu", async () => {
+    const row = await rowA();
+    touch("pointerdown", row);
+    vi.advanceTimersByTime(HOLD_MS - 1);
+    expect(showContextMenu, "before the hold completes").not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(showContextMenu).toHaveBeenCalledTimes(1);
+    expect(menuLabels()[0]).toBe("Pin");
+  });
+
+  it("swallows the lift's click, so no tab opens and the menu stays", async () => {
+    const row = await rowA();
+    const outside = vi.fn();
+    document.addEventListener("click", outside);
+    touch("pointerdown", row);
+    vi.advanceTimersByTime(HOLD_MS);
+    touch("pointerup", row);
+    row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+    document.removeEventListener("click", outside);
+    expect(getActiveTabId()).toBe(chatID("b"));
+    expect(outside, "the menu's outside dismissal saw the lift").not.toHaveBeenCalled();
+  });
+
+  it("builds one menu when the platform's contextmenu follows the hold", async () => {
+    const row = await rowA();
+    touch("pointerdown", row);
+    vi.advanceTimersByTime(HOLD_MS);
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    expect(showContextMenu).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens no menu for a touch that travels past the slop before the hold", async () => {
+    const row = await rowA();
+    touch("pointerdown", row);
+    touch("pointermove", row, pointerDragActivation("touch").slopPx + 1);
+    vi.advanceTimersByTime(HOLD_MS);
+    expect(showContextMenu).not.toHaveBeenCalled();
+  });
+
+  it("opens no menu for a touch the browser cancels before the hold", async () => {
+    const row = await rowA();
+    touch("pointerdown", row);
+    touch("pointercancel", row);
+    vi.advanceTimersByTime(HOLD_MS);
+    expect(showContextMenu).not.toHaveBeenCalled();
+  });
+
+  it("keeps the hold while another finger travels", async () => {
+    const row = await rowA();
+    touch("pointerdown", row);
+    touch("pointermove", row, pointerDragActivation("touch").slopPx + 1, 2);
+    vi.advanceTimersByTime(HOLD_MS);
+    expect(showContextMenu).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens no menu when the row's drag refuses the hold", async () => {
+    const row = await rowA();
+    vi.mocked(yieldDragToMenu).mockReturnValueOnce(false);
+    touch("pointerdown", row);
+    vi.advanceTimersByTime(HOLD_MS);
+    expect(showContextMenu).not.toHaveBeenCalled();
+  });
+
+  it("selects no text and shows no callout on a chat row", async () => {
+    const style = mountAppCSS();
+    try {
+      const row = await rowA();
+      expect(getComputedStyle(row).userSelect).toBe("none");
+    } finally {
+      style.remove();
+    }
+    // WebKit's callout is iOS-only: Chromium computes no such property, so the declaration is read.
+    expect(ruleBody(loadCSS("10-shell-app.css"), '.tab[data-kind="chat"]')).toMatch(
+      /(?:^|[;{\s])-webkit-touch-callout:\s*none;/,
+    );
   });
 });
 

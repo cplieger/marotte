@@ -519,6 +519,13 @@ body.sidebar-resizing {
   -webkit-touch-callout: none;
 }
 
+/* A touch hold opens a chat row's menu, so the row selects no text. */
+.tab[data-kind="chat"] {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
 .tab-name {
   flex: 1;
   overflow: hidden;

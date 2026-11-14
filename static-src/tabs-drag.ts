@@ -5,6 +5,7 @@
 // pressed row's scrollers, and no press on a row in a `data-folded` list.
 
 import { announce } from "./legacy-ui/announce.js";
+import { TOUCH_SLOP_PX } from "./legacy-ui/context-press.js";
 
 import type { ViewportBox } from "./viewport-frame.js";
 import { onViewportChange, viewportBox, viewportMoved } from "./viewport-frame.js";
@@ -16,12 +17,11 @@ interface DragActivation {
   readonly slopPx: number;
 }
 
-// 8px is Android's touch slop; 150ms clears its 100ms tap window and wins the race
-// against the platform long press. A mouse competes with no native pan, so a time
-// gate there is pure latency.
+// 150ms clears Android's 100ms tap window and wins the race against the platform long
+// press. A mouse competes with no native pan, so a time gate there is pure latency.
 // https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/core/java/android/view/ViewConfiguration.java
-export const TOUCH_DRAG: DragActivation = { holdMs: 150, slopPx: 8 };
-export const PEN_DRAG: DragActivation = { holdMs: 150, slopPx: 8 };
+export const TOUCH_DRAG: DragActivation = { holdMs: 150, slopPx: TOUCH_SLOP_PX };
+export const PEN_DRAG: DragActivation = { holdMs: 150, slopPx: TOUCH_SLOP_PX };
 export const MOUSE_DRAG: DragActivation = { holdMs: 0, slopPx: 5 };
 
 /** How long (ms) the pointer must have been un-moved before a position report at an
@@ -282,6 +282,16 @@ class TabDragController {
   /** Whether a drag holds the strip: true from the lift until the drag ends. */
   ownsStrip(): boolean {
     return this.dragEl !== null;
+  }
+
+  /** A row's held menu asking for the press: refused under a travelling row, else an unmoved lift ends
+   *  abandoned, as a platform `contextmenu` ends it (`boundContextMenu`). */
+  yieldToMenu(): boolean {
+    if (this.dragMoved && this.dragEl !== null) {
+      return false;
+    }
+    this.endDrag("abandoned");
+    return true;
   }
 
   setReorderCallback(fn: (order: string[]) => readonly string[] | null): void {
@@ -805,6 +815,12 @@ export function isDragHandled(): boolean {
  *  starts ending. A render in that window must not re-seat an existing row. */
 export function dragOwnsStrip(): boolean {
   return instance.ownsStrip();
+}
+
+/** Whether a row's touch-hold menu may open: false under a travelling row; an unmoved lift ends, as a
+ *  platform long-press menu ends it. */
+export function yieldDragToMenu(): boolean {
+  return instance.yieldToMenu();
 }
 
 /** Set the callback invoked when a drag commits a changed top-level order. It

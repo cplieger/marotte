@@ -111,12 +111,13 @@ import {
   pointerDragActivation,
   setReorderCallback,
   setReprojectCallback,
+  yieldDragToMenu,
 } from "./tabs-drag.js";
 import { announce } from "./legacy-ui/announce.js";
 import type { ViewportBox } from "./viewport-frame.js";
 import { viewportBox, viewportMoved } from "./viewport-frame.js";
 import { showContextMenu } from "./context-menu.js";
-import { isContextPressRelease } from "./legacy-ui/context-press.js";
+import { bindContextPress, isContextPressRelease } from "./legacy-ui/context-press.js";
 import type { ContextMenuItem } from "./context-menu.js";
 import { downloadChatExport } from "./chat-export.js";
 import { MAX_CHAT_NAME_UNITS, downloadKiroSession, renameChat } from "./actions/chat.js";
@@ -3230,78 +3231,84 @@ function createTabEl(row: TabRow): HTMLElement {
     });
   }
 
-  // Right-click context menu for chat tabs: pin/unpin, move up/down, rename, then the exports.
   // Non-chat tabs keep the native browser menu.
-  node.addEventListener("contextmenu", (e) => {
-    if (kind !== "chat") {
-      return;
-    }
-    e.preventDefault();
-    // Read the CURRENT row: an applied frame replaces the subject, so the
-    // closure's copy can be a generation behind on exactly the field this menu
-    // reports.
-    const current = rowOfID(id);
-    if (current === undefined) {
-      return;
-    }
-    const items: ContextMenuItem[] = [];
-    if (current.subject.parent === "") {
-      const pinned = current.subject.pinned;
-      items.push({
-        label: pinned ? "Unpin" : "Pin",
-        action: () => {
-          void setTabPinned(id, !pinned);
-        },
-      });
-    }
-    // On every chat row, a sub-tab's included, so the items never shift position
-    // between rows; a sub-tab shows both disabled.
-    items.push(
-      {
-        label: "Move up",
-        disabled: !canMoveTab(id, -1),
-        action: () => {
-          moveTab(id, -1);
-        },
+  if (kind === "chat") {
+    bindContextPress(
+      node,
+      (x, y) => {
+        openTabMenu(node, id, x, y);
       },
-      {
-        label: "Move down",
-        disabled: !canMoveTab(id, 1),
-        action: () => {
-          moveTab(id, 1);
-        },
-      },
+      yieldDragToMenu,
     );
-    items.push({
-      label: "Rename\u2026",
-      action: () => {
-        beginTabRename(node, id);
-      },
-    });
-    items.push(
-      {
-        label: "Export as Markdown",
-        action: () => {
-          downloadChatExport(current.subject.ref, current.name, "md");
-        },
-      },
-      {
-        label: "Export as JSON",
-        action: () => {
-          downloadChatExport(current.subject.ref, current.name, "json");
-        },
-      },
-      {
-        label: "Download Kiro session",
-        action: () => {
-          void downloadKiroSession.dispatch({ chatID: current.subject.ref, name: current.name });
-        },
-      },
-    );
-    showContextMenu(items, { x: e.clientX, y: e.clientY }, { returnFocus: node });
-  });
+  }
 
   return node;
+}
+
+/** A chat row's menu at `(x, y)`: pin/unpin, move up/down, rename, then the exports. */
+function openTabMenu(node: HTMLElement, id: string, x: number, y: number): void {
+  // Read the CURRENT row: an applied frame replaces the subject, so the
+  // closure's copy can be a generation behind on exactly the field this menu
+  // reports.
+  const current = rowOfID(id);
+  if (current === undefined) {
+    return;
+  }
+  const items: ContextMenuItem[] = [];
+  if (current.subject.parent === "") {
+    const pinned = current.subject.pinned;
+    items.push({
+      label: pinned ? "Unpin" : "Pin",
+      action: () => {
+        void setTabPinned(id, !pinned);
+      },
+    });
+  }
+  // On every chat row, a sub-tab's included, so the items never shift position
+  // between rows; a sub-tab shows both disabled.
+  items.push(
+    {
+      label: "Move up",
+      disabled: !canMoveTab(id, -1),
+      action: () => {
+        moveTab(id, -1);
+      },
+    },
+    {
+      label: "Move down",
+      disabled: !canMoveTab(id, 1),
+      action: () => {
+        moveTab(id, 1);
+      },
+    },
+  );
+  items.push({
+    label: "Rename\u2026",
+    action: () => {
+      beginTabRename(node, id);
+    },
+  });
+  items.push(
+    {
+      label: "Export as Markdown",
+      action: () => {
+        downloadChatExport(current.subject.ref, current.name, "md");
+      },
+    },
+    {
+      label: "Export as JSON",
+      action: () => {
+        downloadChatExport(current.subject.ref, current.name, "json");
+      },
+    },
+    {
+      label: "Download Kiro session",
+      action: () => {
+        void downloadKiroSession.dispatch({ chatID: current.subject.ref, name: current.name });
+      },
+    },
+  );
+  showContextMenu(items, { x, y }, { returnFocus: node });
 }
 
 // --- In-place rename ---

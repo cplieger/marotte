@@ -23,6 +23,7 @@ import {
   REORDER_SHIFT_TRANS,
   REORDER_SETTLE_MS,
   REORDER_SLOT_FADE_MS,
+  yieldDragToMenu,
 } from "./tabs-drag.js";
 import { announce } from "./legacy-ui/announce.js";
 import shellCss from "./css/10-shell-app.css?raw";
@@ -631,6 +632,35 @@ describe("the touch hold", () => {
     expect(menu.defaultPrevented).toBe(true);
     expect(rowMenu).not.toHaveBeenCalled();
     expect(ghost(), "the drag carries on").not.toBeNull();
+  });
+
+  // iOS WebKit fires no `contextmenu` for a long press, so the row's own hold timer asks instead.
+  it("ends an unmoved lift for a menu the row's hold opens", () => {
+    const row = rows["b"] as HTMLElement;
+    row.dispatchEvent(ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType: "touch" }));
+    vi.advanceTimersByTime(TOUCH_HOLD);
+    expect(ghost(), "the hold lifted the row").not.toBeNull();
+
+    expect(yieldDragToMenu()).toBe(true);
+    expectStripQuiet(START);
+    expect(isDragHandled()).toBe(false);
+  });
+
+  it("refuses a held menu under a travelling row", () => {
+    const row = rows["b"] as HTMLElement;
+    row.dispatchEvent(ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType: "touch" }));
+    vi.advanceTimersByTime(TOUCH_HOLD);
+    row.dispatchEvent(
+      ptr("pointermove", { clientY: mid(row) + TOUCH_SLOP + 1, buttons: 1, pointerType: "touch" }),
+    );
+
+    expect(yieldDragToMenu()).toBe(false);
+    expect(ghost(), "the drag carries on").not.toBeNull();
+  });
+
+  it("lets a held menu open while no drag holds the strip", () => {
+    expect(yieldDragToMenu()).toBe(true);
+    expectStripQuiet(START);
   });
 });
 
