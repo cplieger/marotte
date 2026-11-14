@@ -2,7 +2,9 @@ package steering
 
 import (
 	"io/fs"
+	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -12,6 +14,7 @@ import (
 type fakeDirEntry struct {
 	name  string
 	isDir bool
+	typ   fs.FileMode
 }
 
 func (e fakeDirEntry) Name() string { return e.name }
@@ -20,7 +23,7 @@ func (e fakeDirEntry) Type() fs.FileMode {
 	if e.isDir {
 		return fs.ModeDir
 	}
-	return 0
+	return e.typ
 }
 func (e fakeDirEntry) Info() (fs.FileInfo, error) { return fakeFileInfo{e}, nil }
 
@@ -51,6 +54,21 @@ var agentDoorFixture = []string{
 	"notes.md",
 	"reviewer.json",
 	"reviewer.md",
+}
+
+// linkTargets is the stat DedupeAgentFiles follows links with: linked.md resolves to a file,
+// pair.md to a fifo, todir.md to a directory, and any other name dangles.
+func linkTargets(name string) (fs.FileInfo, error) {
+	switch name {
+	case "linked.md":
+		return fakeFileInfo{fakeDirEntry{name: name}}, nil
+	case "pair.md":
+		return fakeFileInfo{fakeDirEntry{name: name, typ: fs.ModeNamedPipe}}, nil
+	case "todir.md":
+		return fakeFileInfo{fakeDirEntry{name: name, isDir: true}}, nil
+	default:
+		return nil, fs.ErrNotExist
+	}
 }
 
 // TestDedupeAgentFiles is the ONE statement of what an agents/ listing means.
@@ -88,6 +106,27 @@ func TestDedupeAgentFiles(t *testing.T) {
 			in:   []fs.DirEntry{fakeDirEntry{name: "archive.md", isDir: true}},
 			want: nil,
 			why:  "a directory named like a doc would produce an entry no reader can open",
+		},
+		"a fifo, socket or device is not an agent": {
+			in: []fs.DirEntry{
+				fakeDirEntry{name: "pair.md", typ: fs.ModeNamedPipe},
+				fakeDirEntry{name: "pair.json"},
+				fakeDirEntry{name: "sock.md", typ: fs.ModeSocket},
+				fakeDirEntry{name: "dev.json", typ: fs.ModeDevice | fs.ModeCharDevice},
+			},
+			want: []AgentFile{{Base: "pair", File: "pair.json"}},
+			why:  "KAS reads an agent from a file, so a fifo .md must not shadow the readable .json",
+		},
+		"a link is an agent only when its target is a regular file": {
+			in: []fs.DirEntry{
+				fakeDirEntry{name: "pair.md", typ: fs.ModeSymlink},
+				fakeDirEntry{name: "pair.json"},
+				fakeDirEntry{name: "dangling.md", typ: fs.ModeSymlink},
+				fakeDirEntry{name: "todir.md", typ: fs.ModeSymlink},
+				fakeDirEntry{name: "linked.md", typ: fs.ModeSymlink},
+			},
+			want: []AgentFile{{Base: "pair", File: "pair.json"}, {Base: "linked", File: "linked.md"}},
+			why:  "a link KAS cannot read as a file must not shadow the readable .json or stand as an agent",
 		},
 		"a dot-prefixed file is not an agent": {
 			in:   entries(".hidden.md", "._deploy.json"),
@@ -133,7 +172,7 @@ func TestDedupeAgentFiles(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			got := DedupeAgentFiles(tc.in)
+			got := DedupeAgentFiles(tc.in, linkTargets)
 			if len(got) != len(tc.want) {
 				t.Fatalf("DedupeAgentFiles = %+v (len %d), want %+v (len %d) — %s",
 					got, len(got), tc.want, len(tc.want), tc.why)
@@ -160,7 +199,7 @@ func TestFindRepoAgents_AgreesWithTheRule(t *testing.T) {
 		mustWriteFile(t, filepath.Join(dir, name), "# "+name+"\n")
 	}
 
-	want := DedupeAgentFiles(entries(agentDoorFixture...))
+	want := DedupeAgentFiles(entries(agentDoorFixture...), linkTargets)
 	got, _ := findRepoAgents(repo)
 
 	if len(got) != len(want) {
@@ -170,5 +209,62 @@ func TestFindRepoAgents_AgreesWithTheRule(t *testing.T) {
 		if got[i].Name != want[i].Base {
 			t.Errorf("findRepoAgents[%d].Name = %q, the rule says %q", i, got[i].Name, want[i].Base)
 		}
+	}
+}
+
+// TestFindRepoAgents_LinkCountsOnlyWhenItsTargetIsARegularFile pins that environment.md's agent
+// list and the presence check read an agents/ link as KAS does: an agent only when it resolves to
+// a file.
+func TestFindRepoAgents_LinkCountsOnlyWhenItsTargetIsARegularFile(t *testing.T) {
+	cases := []struct {
+		plant     func(t *testing.T, kiro string) string
+		name      string
+		wantAgent bool
+	}{
+		{name: "dangling", plant: func(t *testing.T, kiro string) string {
+			return filepath.Join(kiro, "shared", "missing.md")
+		}},
+		{name: "to_a_directory", plant: func(t *testing.T, kiro string) string {
+			dir := filepath.Join(kiro, "shared", "dir")
+			mustWriteFile(t, filepath.Join(dir, "keep.txt"), "x\n")
+			return dir
+		}},
+		{name: "to_a_fifo", plant: func(t *testing.T, kiro string) string {
+			p := filepath.Join(kiro, "shared", "pipe")
+			if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Mkfifo(p, 0o600); err != nil {
+				t.Skipf("mkfifo unavailable: %v", err)
+			}
+			return p
+		}},
+		{name: "to_a_file", wantAgent: true, plant: func(t *testing.T, kiro string) string {
+			p := filepath.Join(kiro, "shared", "real.md")
+			mustWriteFile(t, p, "# real\n")
+			return p
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			kiro := filepath.Join(repo, ".kiro")
+			if err := os.MkdirAll(filepath.Join(kiro, "agents"), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(tc.plant(t, kiro), filepath.Join(kiro, "agents", "linked.md")); err != nil {
+				t.Skipf("symlink unsupported here: %v", err)
+			}
+			want := 0
+			if tc.wantAgent {
+				want = 1
+			}
+			if agents, total := findRepoAgents(repo); total != want {
+				t.Errorf("findRepoAgents = %+v (total %d), want %d agents", agents, total, want)
+			}
+			if got := hasKiroContent(repo); got != tc.wantAgent {
+				t.Errorf("hasKiroContent = %v, want %v", got, tc.wantAgent)
+			}
+		})
 	}
 }

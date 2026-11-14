@@ -111,7 +111,7 @@ func refuseOwned(w http.ResponseWriter, action string, l loc, owned string) erro
 	return errHandled
 }
 
-// refuseMountPoint writes the shared 403 for create/delete/rename/move
+// refuseMountPoint writes the shared 403 for create/rename/move
 // aimed at a granted root itself. Mounts are boot-time configuration;
 // the UI must not be able to remove or shadow one.
 func refuseMountPoint(w http.ResponseWriter, action string, l loc) error {
@@ -181,17 +181,93 @@ func actionTouch(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, 
 }
 
 func actionDelete(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, h *Handler) error {
+	err := h.remove(l)
+	if refusal, ok := errors.AsType[DeleteRefusedError](err); ok {
+		httpreply.Forbidden(w, refusal.Reason)
+		return errHandled
+	}
+	return err
+}
+
+// DeleteRefusedError is a delete the file browser never performs, Reason worded for the person
+// deleting.
+type DeleteRefusedError struct{ Reason string }
+
+func (e DeleteRefusedError) Error() string { return e.Reason }
+
+// Delete removes reqPath and everything under it behind the guards of POST /api/files/action's
+// delete, answering a DeleteRefusedError for a path those refuse. An absent path is success.
+func (h *Handler) Delete(reqPath string) error {
+	l, err := h.deletable(reqPath)
+	if err != nil {
+		return err
+	}
+	return h.unlink(l)
+}
+
+// CheckDelete answers the DeleteRefusedError Delete would for reqPath and removes nothing, so a
+// caller removing several paths can refuse the lot before touching the first.
+func (h *Handler) CheckDelete(reqPath string) error {
+	_, err := h.deletable(reqPath)
+	return err
+}
+
+// DeleteFile removes the file reqPath resolves to, behind Delete's guards, only when it is a
+// regular file: anything else answers an error matching filesafe.ErrNotRegular and is left as
+// found. An absent path is success.
+func (h *Handler) DeleteFile(reqPath string) error {
+	l, err := h.deletable(reqPath)
+	if err != nil {
+		return err
+	}
+	err = filesafe.RemoveFileInRoot(l.m.root, l.rel())
+	if errors.Is(err, fs.ErrNotExist) {
+		slog.Info("filebrowse: delete (already absent)", "path", l.abs)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	slog.Info("filebrowse: delete", "path", l.abs)
+	return nil
+}
+
+func (h *Handler) deletable(reqPath string) (loc, error) {
+	l, err := h.resolvePath(filepath.Clean("/" + reqPath))
+	if err != nil {
+		slog.Warn("filebrowse: delete path rejected",
+			"path", logsafe.Field(reqPath), "reason", logsafe.Field(err.Error()))
+		return loc{}, DeleteRefusedError{Reason: err.Error()}
+	}
+	if h.ownerFor(l) != nil {
+		return loc{}, DeleteRefusedError{Reason: filepath.Base(l.abs) + " is written through its editor; edit it instead"}
+	}
+	return l, h.refuseRemove(l)
+}
+
+func (h *Handler) remove(l loc) error {
+	if err := h.refuseRemove(l); err != nil {
+		return err
+	}
+	return h.unlink(l)
+}
+
+func (h *Handler) refuseRemove(l loc) error {
 	// Refuse to delete a granted root itself; everything INSIDE a mount is
 	// deletable.
 	if l.isMountPoint() {
-		return refuseMountPoint(w, "delete", l)
+		slog.Warn("filebrowse: delete blocked on granted root", "path", l.abs)
+		return DeleteRefusedError{Reason: "refusing to delete a granted root"}
 	}
 	// The mount-point check stops `/config` but not `/config/chats`, which protectedDir closes.
 	if h.sensitive.protectedDir(l.abs) {
 		slog.Warn("filebrowse: delete blocked on protected dir", "path", l.abs)
-		httpreply.Forbidden(w, "refusing to delete protected directory")
-		return errHandled
+		return DeleteRefusedError{Reason: "refusing to delete protected directory"}
 	}
+	return nil
+}
+
+func (h *Handler) unlink(l loc) error {
 	// The mount's os.Root confines the unlink but follows an in-root symlink, so a multi-component
 	// rel could reach a different file than protectedDir judged. OpenParentInRoot descends refusing
 	// symlinks, so only the final element is named through the pinned parent.

@@ -685,6 +685,10 @@ type ForgesChangedPayload struct{}
 // The client refetches GET /api/hooks on receipt.
 type HooksChangedPayload struct{}
 
+// KiroDocsChangedPayload is the payload for type="kiro_docs_changed", workspace-global and
+// empty. The client refetches GET /api/workspace/kiro-docs on receipt.
+type KiroDocsChangedPayload struct{}
+
 // PowersChangedPayload is the payload for type="powers_changed", workspace-global
 // and empty: the installed Powers moved, so the Powers tab refetches.
 type PowersChangedPayload struct{}

@@ -474,7 +474,8 @@ func TestFindMdDocsInDir_KeepsAnAlwaysDocThatSortsAfterTheCap(t *testing.T) {
 }
 
 // TestFindRepoSkills_ScansSubdirsWithSkillMd pins skills as subdirectories pointing at
-// SKILL.md, classified by it, with a manifest-less subdir counted and a flat .md ignored.
+// SKILL.md, classified by it, with a manifest-less subdir counted, an empty one and a flat .md
+// ignored.
 func TestFindRepoSkills_ScansSubdirsWithSkillMd(t *testing.T) {
 	repo := t.TempDir()
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "alpha", "SKILL.md"),
@@ -482,8 +483,11 @@ func TestFindRepoSkills_ScansSubdirsWithSkillMd(t *testing.T) {
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "beta", "SKILL.md"), "# beta\n")
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "gamma", "notes.txt"), "no skill.md here\n")
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "loose.md"), "# not a skill\n")
+	if err := os.Mkdir(filepath.Join(repo, ".kiro", "skills", "emptied"), 0o750); err != nil {
+		t.Fatal(err)
+	}
 
-	skills, _ := findRepoSkills(repo)
+	skills, seen := findRepoSkills(repo)
 	// alpha, beta, gamma are directories -> 3 skills. loose.md is a flat
 	// file -> ignored.
 	if len(skills) != 3 {
@@ -508,6 +512,48 @@ func TestFindRepoSkills_ScansSubdirsWithSkillMd(t *testing.T) {
 	}
 	if _, ok := byFile["loose.md"]; ok {
 		t.Error("flat skills/loose.md should not be treated as a skill")
+	}
+	if _, ok := byFile["emptied/SKILL.md"]; ok {
+		t.Error("an empty skills/emptied directory was listed as a skill")
+	}
+	if seen.total != 3 {
+		t.Errorf("seen.total = %d, want 3: an empty directory is not counted", seen.total)
+	}
+}
+
+// TestFindRepoSkills_LinkedSkillDirectory pins that a link to a skill directory inside .kiro is
+// a skill, as KAS follows one and the docs page lists it, while a link out of .kiro, to an empty
+// directory, or back to skills/ or .kiro itself is not; the presence check agrees.
+func TestFindRepoSkills_LinkedSkillDirectory(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "repo")
+	kiro := filepath.Join(repo, ".kiro")
+	mustWriteFile(t, filepath.Join(kiro, "shared", "inside", "SKILL.md"), "---\ndescription: Linked in\n---\n")
+	mustWriteFile(t, filepath.Join(base, "outside", "SKILL.md"), "---\ndescription: Linked out\n---\n")
+	if err := os.MkdirAll(filepath.Join(kiro, "shared", "hollow"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(kiro, "skills"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for name, target := range map[string]string{
+		"inside":  filepath.Join(kiro, "shared", "inside"),
+		"outside": filepath.Join(base, "outside"),
+		"hollow":  filepath.Join(kiro, "shared", "hollow"),
+		"self":    ".",
+		"root":    "..",
+	} {
+		if err := os.Symlink(target, filepath.Join(kiro, "skills", name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	skills, _ := findRepoSkills(repo)
+	if len(skills) != 1 || skills[0].Filename != "inside/SKILL.md" || skills[0].Description != "Linked in" {
+		t.Errorf("findRepoSkills = %+v, want only the in-tree link with its manifest", skills)
+	}
+	if !hasKiroContent(repo) {
+		t.Error("hasKiroContent = false for a repo whose only skill is an in-tree link")
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"mime/multipart"
 	"net/http"
@@ -613,6 +614,37 @@ func TestAction_Delete(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "del.txt")); err == nil {
 		t.Error("file still exists")
+	}
+}
+
+// TestHandler_DeleteFile_RemovesOnlyARegularFile pins DeleteFile's contract: a directory wearing
+// the name is refused and left as found, never removed with what it holds.
+func TestHandler_DeleteFile_RemovesOnlyARegularFile(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("bye"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "keep.txt"), []byte("kept"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := h.DeleteFile(prefix + "/sub"); !errors.Is(err, filesafe.ErrNotRegular) {
+		t.Errorf("DeleteFile(sub) = %v, want ErrNotRegular", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "sub", "keep.txt")); err != nil {
+		t.Errorf("the refused directory lost its contents: %v", err)
+	}
+	if err := h.DeleteFile(prefix + "/absent.txt"); err != nil {
+		t.Errorf("DeleteFile(absent) = %v, want nil", err)
+	}
+	if err := h.DeleteFile(prefix + "/file.txt"); err != nil {
+		t.Errorf("DeleteFile(file.txt) = %v, want nil", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "file.txt")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("file.txt survived DeleteFile: %v", err)
 	}
 }
 

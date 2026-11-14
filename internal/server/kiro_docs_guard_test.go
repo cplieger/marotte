@@ -1,12 +1,18 @@
 package server
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
+	"time"
 
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/filebrowse"
 )
 
@@ -96,11 +102,9 @@ func TestScanKiroDocs_SymlinkedFlatCategoryIsNotEnumerated(t *testing.T) {
 		plant    func(t *testing.T, outside string)
 	}{
 		{catSkill + "s", func(t *testing.T, outside string) {
-			// A manifest-less skill directory is still a row, the shape that leaked.
+			// A manifest-less skill directory holding files is still a row, the shape that leaked.
 			writeFile(t, outside, filepath.Join(leakName, "SKILL.md"), "---\nname: "+leakName+"\n---\n")
-			if err := os.MkdirAll(filepath.Join(outside, leakName+"-bare"), 0o750); err != nil {
-				t.Fatal(err)
-			}
+			writeFile(t, outside, filepath.Join(leakName+"-bare", "notes.md"), "# Notes\n")
 		}},
 		{catAgent + "s", func(t *testing.T, outside string) {
 			writeFile(t, outside, leakName+".md", "---\nname: "+leakName+"\n---\n")
@@ -290,5 +294,184 @@ func TestKiroDocsGuard_NilAdmitsEverything(t *testing.T) {
 	var guard pathGuard
 	if !guard.allows("anything/at/all.md") {
 		t.Error("a nil guard refused a path; the MapFS tests would silently scan nothing")
+	}
+}
+
+// TestScanKiroDocs_LinkedSkillDirectoryFollowsTheGuard pins that a linked skill directory is a
+// row inside the tree and none out of it.
+func TestScanKiroDocs_LinkedSkillDirectoryFollowsTheGuard(t *testing.T) {
+	base := t.TempDir()
+	work := filepath.Join(base, "work")
+	kiro := filepath.Join(work, ".kiro")
+	writeFile(t, kiro, "shared/inside/SKILL.md", "---\nname: inside\n---\n")
+	writeFile(t, base, "outside/"+leakName+"/SKILL.md", "---\nname: "+leakName+"\n---\n")
+	if err := os.MkdirAll(filepath.Join(kiro, "skills"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOr(t, filepath.Join(kiro, "shared", "inside"), filepath.Join(kiro, "skills", "inside"))
+	symlinkOr(t, filepath.Join(base, "outside", leakName), filepath.Join(kiro, "skills", leakName))
+
+	srv := &Server{workDir: work, kiroDocs: &docsCache{}}
+	skills := docsByCategory(srv.collectKiroDocs(t.Context()).Docs, catSkill)
+	if len(skills) != 1 || skills[0].Name != "inside" {
+		t.Errorf("skills = %+v, want only the in-tree link", skills)
+	}
+}
+
+// TestScanKiroDocs_SkillLinkToItsOwnTreeIsNoRow pins that a skills/<name> link back to skills/
+// or the .kiro root is no skill: KAS would find no SKILL.md there, and the tree is no skill.
+func TestScanKiroDocs_SkillLinkToItsOwnTreeIsNoRow(t *testing.T) {
+	work := t.TempDir()
+	kiro := filepath.Join(work, ".kiro")
+	writeFile(t, kiro, "skills/keep/SKILL.md", "---\nname: keep\n---\n")
+	writeFile(t, kiro, "steering/a.md", "# A\n")
+	symlinkOr(t, ".", filepath.Join(kiro, "skills", "self"))
+	symlinkOr(t, "..", filepath.Join(kiro, "skills", "root"))
+
+	srv := &Server{workDir: work, kiroDocs: &docsCache{}}
+	skills := docsByCategory(srv.collectKiroDocs(t.Context()).Docs, catSkill)
+	if len(skills) != 1 || skills[0].Name != "keep" {
+		t.Errorf("skills = %+v, want only keep", skills)
+	}
+}
+
+// TestDirSignature_FollowsLinksOnlyWhereRowsComeFromThem pins that the cache key reads through a
+// link only under skills/: the steering and specs walks do not descend a linked directory, so
+// what sits behind one there is no row and must not be read on every listing.
+func TestDirSignature_FollowsLinksOnlyWhereRowsComeFromThem(t *testing.T) {
+	base := t.TempDir()
+	kiro := filepath.Join(base, "work", ".kiro")
+	outside := filepath.Join(base, "target")
+	inTree := filepath.Join(kiro, "shared", "linked")
+	targets := map[string]string{"steering": outside, "specs": outside, "skills": inTree}
+	for sub, target := range targets {
+		if err := os.MkdirAll(target, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(kiro, sub), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		symlinkOr(t, target, filepath.Join(kiro, sub, "linked"))
+	}
+	roots := []kiroRoot{{fsPath: kiro}}
+	before := dirSignature(roots)
+	writeFile(t, outside, "behind.md", "# Behind\n")
+	// Coarse mtimes could hide the write; a moved mtime cannot.
+	later := time.Now().Add(time.Hour)
+	if err := os.Chtimes(outside, later, later); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, inTree, "SKILL.md", "---\nname: linked\n---\n")
+	after := dirSignature(roots)
+
+	for _, sub := range []string{"steering", "specs"} {
+		if part := sigPart(after, filepath.Join(kiro, sub)); part != sigPart(before, filepath.Join(kiro, sub)) {
+			t.Errorf("%s's signature read through the link: %q", sub, part)
+		}
+	}
+	if sigPart(after, filepath.Join(kiro, "skills")) == sigPart(before, filepath.Join(kiro, "skills")) {
+		t.Error("skills' signature did not read through the linked skill directory")
+	}
+}
+
+// sigPart answers the `;`-terminated entry dirSignature wrote for dir.
+func sigPart(sig, dir string) string {
+	for part := range strings.SplitSeq(sig, ";") {
+		if strings.HasPrefix(part, dir+"=") {
+			return part
+		}
+	}
+	return ""
+}
+
+// TestKiroDocs_ListingReadsOnlyRegularFiles pins that a fifo named like a doc does not block the
+// scan and is no row, and that a fifo agent .md does not shadow its readable .json. A skill's row
+// is its directory, so one whose only entry is a fifo SKILL.md is a manifest-less skill.
+func TestKiroDocs_ListingReadsOnlyRegularFiles(t *testing.T) {
+	cases := []struct {
+		files                 map[string]string
+		category, keep, plant string
+		plantIsRow            bool
+	}{
+		{
+			category: catSteering, keep: "real", plant: "steering/x.md",
+			files: map[string]string{"steering/real.md": "---\nname: real\n---\n"},
+		},
+		{
+			category: catSpec, keep: "Real", plant: "specs/feat/x.md",
+			files: map[string]string{"specs/feat/requirements.md": "# Real\n"},
+		},
+		{category: catHook, keep: "real", plant: "hooks/x.json", files: map[string]string{
+			"hooks/real.json": `{"version":"v1","hooks":[{"name":"real","trigger":"PostFileSave",` +
+				`"action":{"type":"command","command":"echo"}}]}`,
+		}},
+		{
+			category: catPrompt, keep: "real", plant: "prompts/x.md",
+			files: map[string]string{"prompts/real.md": "# Real\n"},
+		},
+		{
+			category: catAgent, keep: "x", plant: "agents/x.md",
+			files: map[string]string{"agents/x.json": `{"name":"x"}`},
+		},
+		{
+			category: catSkill, keep: "real", plant: "skills/x/SKILL.md", plantIsRow: true,
+			files: map[string]string{"skills/real/SKILL.md": "---\nname: real\n---\n"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.category, func(t *testing.T) {
+			h, work := docsDeleteServer(t)
+			kiro := filepath.Join(work, ".kiro")
+			for rel, body := range tc.files {
+				writeFile(t, kiro, rel, body)
+			}
+			mkfifoOr(t, filepath.Join(kiro, filepath.FromSlash(tc.plant)))
+			docs := docsByCategory(listDocs(t, h), tc.category)
+			kept := mustRow(t, docs, tc.category, tc.keep)
+			if tc.category == catAgent && !strings.HasSuffix(kept.Path, "/agents/x.json") {
+				t.Errorf("agent x = %+v, want its readable .json, not the fifo .md", kept)
+			}
+			planted := slices.ContainsFunc(docs, func(d KiroDoc) bool { return strings.HasSuffix(d.Path, "/"+tc.plant) })
+			if planted != tc.plantIsRow {
+				t.Errorf("a row at the fifo %s: %v, want %v (rows %+v)", tc.plant, planted, tc.plantIsRow, docs)
+			}
+		})
+	}
+}
+
+// swappedFS reports name as a regular file to Stat while Open serves what is really there, as a
+// fifo swapped in between readCappedFS's mode check and its open would.
+type swappedFS struct{ fstest.MapFS }
+
+func (swappedFS) Stat(name string) (fs.FileInfo, error) {
+	return fstest.MapFS{name: {Data: []byte("x")}}.Stat(name)
+}
+
+func TestReadCappedFS_RefusesWhatTheOpenFindsIsNoRegularFile(t *testing.T) {
+	root := swappedFS{fstest.MapFS{"steering/x.md": {Mode: fs.ModeNamedPipe}}}
+	if _, err := readCappedFS(root, "steering/x.md"); !errors.Is(err, filesafe.ErrNotRegular) {
+		t.Errorf("readCappedFS = %v, want ErrNotRegular", err)
+	}
+}
+
+// TestKiroDirFS_OpensAFifoWithoutBlocking pins the open readCappedFS's fstat relies on.
+func TestKiroDirFS_OpensAFifoWithoutBlocking(t *testing.T) {
+	dir := t.TempDir()
+	mkfifoOr(t, filepath.Join(dir, "x.md"))
+	done := make(chan error, 1)
+	go func() {
+		f, err := kiroDirFS(dir).Open("x.md")
+		if err == nil {
+			_ = f.Close()
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("open: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("kiroDirFS blocked opening a fifo")
 	}
 }

@@ -4,11 +4,13 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
+	"github.com/cplieger/go/pathinside"
 	"github.com/cplieger/marotte/internal/sanitize"
 )
 
@@ -186,9 +188,9 @@ func normalizeInclusion(v string) string {
 	}
 }
 
-// findRepoSkills scans `.kiro/skills/` for skill directories (any non-dot directory; one with no
-// SKILL.md is counted and renders with no description) and returns keepByRank's share of the
-// first maxScannedEntries, with the directory's dirCount.
+// findRepoSkills scans `.kiro/skills/` for skills (isSkillDir; one with no SKILL.md renders with
+// no description) and returns keepByRank's share of the first maxScannedEntries, with the
+// directory's dirCount.
 func findRepoSkills(repoDir string) (skills []docEntry, seen dirCount) {
 	dir := filepath.Join(repoDir, ".kiro", "skills")
 	entries, err := os.ReadDir(dir)
@@ -198,15 +200,14 @@ func findRepoSkills(repoDir string) (skills []docEntry, seen dirCount) {
 	out := make([]docEntry, 0, min(len(entries), maxScannedEntries))
 	total := 0
 	for _, e := range entries {
-		if !isSkillDir(e) {
+		if !isSkillDir(dir, e) {
 			continue
 		}
+		data, _ := readCappedFile(filepath.Join(dir, e.Name(), "SKILL.md"), FrontMatterReadCap)
 		total++
 		if len(out) >= maxScannedEntries {
 			continue
 		}
-		// A missing SKILL.md yields empty data: the skill renders with no description.
-		data, _ := readCappedFile(filepath.Join(dir, e.Name(), "SKILL.md"), FrontMatterReadCap)
 		doc := parseSteeringFrontmatter(data)
 		doc.Filename = defuse(e.Name()) + "/SKILL.md"
 		out = append(out, doc)
@@ -224,17 +225,26 @@ type agentEntry struct {
 // `.json`/`.md` pair to ONE agent through DedupeAgentFiles. It returns the first
 // 10 distinct agents and how many there are.
 func findRepoAgents(repoDir string) (agents []agentEntry, total int) {
-	dir := filepath.Join(repoDir, ".kiro", "agents")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
+	all := readAgentFiles(filepath.Join(repoDir, ".kiro", "agents"))
+	if len(all) == 0 {
 		return nil, 0
 	}
-	all := DedupeAgentFiles(entries)
 	out := make([]agentEntry, 0, min(len(all), 10))
 	for _, a := range all[:min(len(all), 10)] {
 		out = append(out, agentEntry{Name: defuse(a.Base)})
 	}
 	return out, len(all)
+}
+
+// readAgentFiles is DedupeAgentFiles over the agents directory dir; an unreadable dir has none.
+func readAgentFiles(dir string) []AgentFile {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	return DedupeAgentFiles(entries, func(name string) (fs.FileInfo, error) {
+		return os.Stat(filepath.Join(dir, name))
+	})
 }
 
 // HookEntry is one hook from a `.kiro/hooks/*.json` document.
@@ -402,6 +412,47 @@ func isSteeringDoc(e os.DirEntry) bool {
 	return !e.IsDir() && !strings.HasPrefix(e.Name(), ".") && strings.HasSuffix(e.Name(), ".md")
 }
 
-func isSkillDir(e os.DirEntry) bool {
-	return e.IsDir() && !strings.HasPrefix(e.Name(), ".")
+// isEmptyDir reports whether dir lists no entries; an unreadable one counts as empty.
+func isEmptyDir(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	return err != nil || len(entries) == 0
+}
+
+// isSkillDir reports whether skills/<e> is a skill: a non-dot directory, or a link to one inside
+// `.kiro` (KAS follows a linked skill directory), that holds anything. KAS skips one with no
+// SKILL.md, but it is listed as a broken skill to repair; an empty one has nothing to show.
+func isSkillDir(skills string, e os.DirEntry) bool {
+	if strings.HasPrefix(e.Name(), ".") {
+		return false
+	}
+	p := filepath.Join(skills, e.Name())
+	switch {
+	case e.Type()&os.ModeSymlink != 0:
+		if !linksToSkill(p, skills) {
+			return false
+		}
+	case !e.IsDir():
+		return false
+	}
+	return !isEmptyDir(p)
+}
+
+// linksToSkill reports whether link resolves beneath skills' `.kiro` and neither to skills nor to
+// a directory holding it, which would list that tree as a skill. All three are resolved first,
+// since `.kiro` or skills may itself be a link.
+func linksToSkill(link, skills string) bool {
+	target, err := filepath.EvalSymlinks(link)
+	if err != nil {
+		return false
+	}
+	resolvedKiro, err := filepath.EvalSymlinks(filepath.Dir(skills))
+	if err != nil {
+		return false
+	}
+	resolvedSkills, err := filepath.EvalSymlinks(skills)
+	if err != nil {
+		return false
+	}
+	return strings.HasPrefix(target, resolvedKiro+string(filepath.Separator)) &&
+		!pathinside.Root(target).Contains(resolvedSkills)
 }
