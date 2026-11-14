@@ -1095,9 +1095,9 @@
 
   /* The toggle's anchor: the summary, or the filler that ends its line when it lays out as its
      parts (a phone's pause). It grows to the verbs, or to the head's end when they wrap under
-     it. A verb's height, and with its block margins a verb's target's, so a verb's expander
-     under it stays off the toggle; beside it, the end margin tops the head's gap (8px, or 4px
-     in the phone container) up to that reach. */
+     it. A verb's height, and with its block margins a verb's target's, so the toggle's target
+     stays on its own line; beside the verbs, the end margin tops the head's gap (8px, or 4px
+     in the phone container) up to a verb's expander's reach. */
   & > .ev-sum,
   & > .ev-sum::after {
     anchor-name: --ev-sum-end;
@@ -1381,10 +1381,13 @@
 
 /* --- The verbs (`run-controls-view.ts`) ---------------------------------------- */
 
+/* As tall as its verbs' targets, so on a line of its own under the summary it holds them in
+   layout and the step rows under the head never cover them. */
 .ev-dock-act {
   display: flex;
   align-items: center;
   flex-shrink: 0;
+  min-block-size: var(--row-tap-dense);
 
   &:empty {
     display: none;

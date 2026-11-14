@@ -9,6 +9,7 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
 import type { ExecNode, ExecRun } from "./exec-view/model.js";
 import { buildExecSummary } from "./exec-view/summary.js";
+import { ownsItsClick } from "./disclosure-row.js";
 import { buildPermissionCard } from "./permission.js";
 import type { PermissionNeededPayload } from "./types.js";
 import {
@@ -809,25 +810,114 @@ describe("the run dock head's toggle", () => {
     return document.documentElement.getAttribute("data-pointer") === "coarse" ? 44 : 24;
   }
 
-  /** How far past its box a verb answers a tap: a button's expander grows it to the floor, a
-   *  field has none, so its box must reach the floor itself. */
-  function reachOf(v: Element, floor: number, what: string): number {
-    const r = v.getBoundingClientRect();
-    if (v instanceof HTMLButtonElement) {
-      return Math.max(0, (floor - r.height) / 2);
-    }
-    expect(r.height, `${what}: the passes field's height`).toBeGreaterThanOrEqual(floor - 0.5);
-    return 0;
+  interface Box {
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
   }
 
-  /** The toggle's box holds each of `parts`, is as tall as each button and level with it, and
-   *  ends before every verb's target. */
-  function coversAtVerbHeight(
-    head: HTMLElement,
-    row: HTMLElement,
-    parts: readonly string[],
-    what: string,
-  ): void {
+  function fmt(b: Box): string {
+    return `[${b.left.toFixed(1)}..${b.right.toFixed(1)} x ${b.top.toFixed(1)}..${b.bottom.toFixed(1)}]`;
+  }
+
+  function meets(a: Box, b: Box): boolean {
+    return (
+      Math.min(a.right, b.right) - Math.max(a.left, b.left) > 0.5 &&
+      Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 0.5
+    );
+  }
+
+  /** Where `c` answers a tap: a button's expander (61-mcp-tools.css) centres the floor on each
+   *  axis its box is smaller on; a field has none, so its box is its target. */
+  function targetOf(c: Element, floor: number): Box {
+    const r = c.getBoundingClientRect();
+    const grow = (size: number): number =>
+      c instanceof HTMLButtonElement ? Math.max(0, (floor - size) / 2) : 0;
+    return {
+      left: r.left - grow(r.width),
+      right: r.right + grow(r.width),
+      top: r.top - grow(r.height),
+      bottom: r.bottom + grow(r.height),
+    };
+  }
+
+  /** Every control in the head, the toggle included, answers over the floor on each axis inside
+   *  the dock's clip, and no other control's target or dock region meets that area. */
+  function ownsItsTarget(head: HTMLElement, what: string): void {
+    const floor = hitFloor();
+    const dock = head.closest<HTMLElement>(".ev-dock")!;
+    const d = dock.getBoundingClientRect();
+    const clip: Box = {
+      left: d.left + dock.clientLeft,
+      right: d.left + dock.clientLeft + dock.clientWidth,
+      top: d.top + dock.clientTop,
+      bottom: d.top + dock.clientTop + dock.clientHeight,
+    };
+    const shown = (e: Element): boolean => {
+      const r = e.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    };
+    const controls = [...head.querySelectorAll("button, input")].filter(shown);
+    const regions = [...dock.children].filter((e) => e !== head && shown(e));
+    const nameOf = (c: Element): string => c.getAttribute("aria-label") ?? "the passes field";
+    const toggle = head.querySelector(".ev-box-toggle")!;
+    for (const c of controls) {
+      const name = nameOf(c);
+      const t = targetOf(c, floor);
+      expect(t.bottom - t.top, `${what}: ${name}'s target's height`).toBeGreaterThanOrEqual(
+        floor - 0.5,
+      );
+      expect(t.right - t.left, `${what}: ${name}'s target's width`).toBeGreaterThanOrEqual(
+        floor - 0.5,
+      );
+      expect(
+        t.left >= clip.left - 0.5 &&
+          t.right <= clip.right + 0.5 &&
+          t.top >= clip.top - 0.5 &&
+          t.bottom <= clip.bottom + 0.5,
+        `${what}: ${name}'s target ${fmt(t)} inside the dock's clip ${fmt(clip)}`,
+      ).toBe(true);
+      for (const o of controls) {
+        if (o !== c) {
+          const u = targetOf(o, floor);
+          expect(
+            meets(t, u),
+            `${what}: ${name}'s target ${fmt(t)} meets ${nameOf(o)}'s ${fmt(u)}`,
+          ).toBe(false);
+        }
+      }
+      for (const g of regions) {
+        const u = g.getBoundingClientRect();
+        expect(
+          meets(t, u),
+          `${what}: ${name}'s target ${fmt(t)} meets .${g.className.split(" ")[0] ?? ""} ${fmt(u)}`,
+        ).toBe(false);
+      }
+      const x = (t.left + t.right) / 2;
+      const y = (t.top + t.bottom) / 2;
+      const probes = [
+        ["top", x, t.top + 1],
+        ["bottom", x, t.bottom - 1],
+        ["start", t.left + 1, y],
+        ["end", t.right - 1, y],
+      ] as const;
+      for (const [edge, px, py] of probes) {
+        const hit = document.elementFromPoint(px, py);
+        // The head forwards a tap on its own ink to the toggle (`wireRowToggle`).
+        const answers =
+          hit !== null &&
+          (c.contains(hit) || (c === toggle && head.contains(hit) && !ownsItsClick(hit, head)));
+        expect(
+          answers,
+          `${what}: ${name} answers at its target's ${edge} edge, not ${hit?.className ?? "nothing"}`,
+        ).toBe(true);
+      }
+    }
+  }
+
+  /** The toggle's box holds each of `parts`. */
+  function holds(head: HTMLElement, parts: readonly string[], what: string): DOMRect {
     const t = head.querySelector(".ev-box-toggle")!.getBoundingClientRect();
     for (const sel of parts) {
       const p = head.querySelector(sel)!.getBoundingClientRect();
@@ -837,65 +927,52 @@ describe("the run dock head's toggle", () => {
           t.right >= p.right - 0.5 &&
           t.top <= p.top + 0.5 &&
           t.bottom >= p.bottom - 0.5,
-        `${what}: the toggle [${t.left.toFixed(1)}..${t.right.toFixed(1)} x ${t.top.toFixed(1)}..${t.bottom.toFixed(1)}] holds ${sel} [${p.left.toFixed(1)}..${p.right.toFixed(1)} x ${p.top.toFixed(1)}..${p.bottom.toFixed(1)}]`,
+        `${what}: the toggle ${fmt(t)} holds ${sel} ${fmt(p)}`,
       ).toBe(true);
     }
+    return t;
+  }
+
+  /** The toggle's box holds each of `parts` and is as tall as each button and level with it. */
+  function coversAtVerbHeight(
+    head: HTMLElement,
+    row: HTMLElement,
+    parts: readonly string[],
+    what: string,
+  ): void {
+    const t = holds(head, parts, what);
     const chevron = head.querySelector(".disclosure-chevron")!.getBoundingClientRect();
     const credits = head.querySelector(".ev-sum-credits")!.getBoundingClientRect();
     expect(
       t.right - credits.right,
       `${what}: the toggle's end inset past the credits`,
     ).toBeGreaterThanOrEqual(chevron.left - t.left - 0.5);
-    const floor = hitFloor();
-    for (const v of row.querySelectorAll("button, input")) {
+    for (const v of row.querySelectorAll("button")) {
       const r = v.getBoundingClientRect();
-      const name = v.getAttribute("aria-label") ?? "the passes field";
-      const reach = reachOf(v, floor, what);
-      expect(t.right, `${what}: the toggle ends before ${name}'s target`).toBeLessThanOrEqual(
-        r.left - reach + 0.5,
-      );
-      if (!(v instanceof HTMLButtonElement)) {
-        continue;
-      }
+      const name = v.getAttribute("aria-label") ?? "";
       expect(t.height, `${what}: the toggle's height beside ${name}`).toBeCloseTo(r.height, 0);
       expect(t.top, `${what}: the toggle level with ${name}`).toBeCloseTo(r.top, 0);
     }
   }
 
-  /** The toggle's box holds each of `parts` on the head's first line, as tall as each verb and
-   *  the head's width; the verbs are on the next line, their targets clear of it. */
+  /** The toggle's box holds each of `parts` on the head's first line, as tall as each button and
+   *  the head's width; the verbs are on a line of their own under it. */
   function coversAboveVerbs(
     head: HTMLElement,
     row: HTMLElement,
     parts: readonly string[],
     what: string,
   ): void {
-    const t = head.querySelector(".ev-box-toggle")!.getBoundingClientRect();
-    for (const sel of parts) {
-      const p = head.querySelector(sel)!.getBoundingClientRect();
-      expect(
-        t.left <= p.left + 0.5 &&
-          t.right >= p.right - 0.5 &&
-          t.top <= p.top + 0.5 &&
-          t.bottom >= p.bottom - 0.5,
-        `${what}: the toggle [${t.left.toFixed(1)}..${t.right.toFixed(1)} x ${t.top.toFixed(1)}..${t.bottom.toFixed(1)}] holds ${sel} [${p.left.toFixed(1)}..${p.right.toFixed(1)} x ${p.top.toFixed(1)}..${p.bottom.toFixed(1)}]`,
-      ).toBe(true);
-    }
+    const t = holds(head, parts, what);
     const edge = head.getBoundingClientRect();
     const end = edge.right - parseFloat(getComputedStyle(head).paddingInlineEnd);
     expect(t.left, `${what}: the toggle from the head's start`).toBeCloseTo(edge.left, 0);
     expect(t.right, `${what}: the toggle to the head's end`).toBeGreaterThanOrEqual(end - 3);
-    const floor = hitFloor();
-    for (const v of row.querySelectorAll("button, input")) {
+    for (const v of row.querySelectorAll("button")) {
       const r = v.getBoundingClientRect();
-      const name = v.getAttribute("aria-label") ?? "the passes field";
-      const reach = reachOf(v, floor, what);
-      expect(r.top - reach, `${what}: ${name}'s target under the toggle`).toBeGreaterThanOrEqual(
-        t.bottom - 0.5,
-      );
-      if (v instanceof HTMLButtonElement) {
-        expect(t.height, `${what}: the toggle's height beside ${name}`).toBeCloseTo(r.height, 0);
-      }
+      const name = v.getAttribute("aria-label") ?? "";
+      expect(r.top, `${what}: ${name} under the toggle`).toBeGreaterThanOrEqual(t.bottom - 0.5);
+      expect(t.height, `${what}: the toggle's height beside ${name}`).toBeCloseTo(r.height, 0);
     }
   }
 
@@ -925,7 +1002,7 @@ describe("the run dock head's toggle", () => {
 
   // Beside the verbs while the summary fits, under them once it does not: a running run's
   // summary with its credits and Pause and Stop fit a 390px head with a mouse but overrun it
-  // with a finger's larger verbs, and overrun a 360px head with either; the pass-limit verbs
+  // with a finger's wider gap between the verbs, and overrun a 360px head with either; the pass-limit verbs
   // (a field and three buttons) overrun a 390px head with either.
   const CASES = [
     {
@@ -971,7 +1048,16 @@ describe("the run dock head's toggle", () => {
     for (const c of CASES) {
       for (const [w, h] of WIDTHS) {
         const at = `${String(w)}px ${pointer}`;
-        if ((c.beside[pointer] as readonly number[]).includes(w)) {
+        const beside = (c.beside[pointer] as readonly number[]).includes(w);
+        if (beside || (c.under[pointer] as readonly number[]).includes(w)) {
+          it(`keeps every target in ${c.what} head its own, ${at}`, async () => {
+            await browser.viewport(w, h);
+            document.documentElement.setAttribute("data-pointer", pointer);
+            const { head } = mountHead(h, c.names, c.run);
+            ownsItsTarget(head, at);
+          });
+        }
+        if (beside) {
           it(`covers ${c.what} summary line beside its verbs at their height, ${at}`, async () => {
             await browser.viewport(w, h);
             document.documentElement.setAttribute("data-pointer", pointer);
