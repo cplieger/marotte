@@ -48,8 +48,7 @@ export const DRIVERS = {
   "run-drive": (x, s) => x.trigger({ op: "steps", workflowId: s.run, ...DRIVE }),
 };
 
-// A string literal safe to splice into a page script: JSON.stringify leaves `</script>` and the
-// U+2028 and U+2029 line terminators as they are.
+// CodeQL js/bad-code-sanitization takes a replace after JSON.stringify as its sanitizer: https://codeql.github.com/codeql-query-help/javascript/js-bad-code-sanitization/
 const jsString = (s) =>
   JSON.stringify(s).replace(
     /[<>/\u2028\u2029]/g,

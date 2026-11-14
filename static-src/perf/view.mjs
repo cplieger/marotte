@@ -55,7 +55,11 @@ for (const k of ["instance", "plan", "scenario", "engine", "width", "out"]) {
 }
 const readJSON = (f) => JSON.parse(fs.readFileSync(f, "utf8"));
 const inst = readJSON(path.join(args.instance, "instance.json"));
-if (String(inst.port) === LIVE_PORT || String(inst.forge_port) === LIVE_PORT) {
+const port = String(inst.port);
+if (!/^[1-9][0-9]{0,4}$/.test(port) || Number(port) > 65535) {
+  throw new Error(`view.mjs: instance.json has no valid port (${port})`);
+}
+if (port === LIVE_PORT || String(inst.forge_port) === LIVE_PORT) {
   throw new Error(`view.mjs: ${LIVE_PORT} is the live marotte`);
 }
 const facts = instanceFacts(inst.seeded);
@@ -64,10 +68,6 @@ if (!scenario) {
   throw new Error(`view.mjs: plan.json has no scenario ${args.scenario}`);
 }
 const windows = new Set(args.windows ? args.windows.split(",") : scenario.windows);
-const port = String(inst.port);
-if (!/^[1-9][0-9]{0,4}$/.test(port) || Number(port) > 65535) {
-  throw new Error(`view.mjs: instance.json has no valid port (${port})`);
-}
 const origin = `http://127.0.0.1:${port}`;
 const trigDir = path.join(args.instance, "trigger");
 const logDir = path.join(args.instance, "logs");
@@ -375,7 +375,7 @@ function scopeMirror(doc) {
       "python3",
       [
         CAPTURE,
-        ...["--port", String(inst.port), "--out", sseFile],
+        ...["--port", port, "--out", sseFile],
         ...["--scope-file", scopeFile, "--stop-file", stopFile],
       ],
       { stdio: ["ignore", "ignore", err] },
