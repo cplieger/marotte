@@ -53,7 +53,12 @@ function hooks(settle: SwitchHooks["settle"]): {
   readonly revert: ReturnType<typeof vi.fn<SwitchHooks["revert"]>>;
 } {
   return {
-    begin: vi.fn<SwitchHooks["begin"]>(() => ({ gen: 1, from: "tb_a", history: null })),
+    begin: vi.fn<SwitchHooks["begin"]>(() => ({
+      gen: 1,
+      from: "tb_a",
+      history: null,
+      covered: "",
+    })),
     settle: vi.fn<SwitchHooks["settle"]>(settle),
     revert: vi.fn<SwitchHooks["revert"]>(),
   };

@@ -1255,7 +1255,9 @@ describe("a header's box and motion", () => {
         window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
         await paint();
         await settled(["kid", "c"]);
-        expect(starts.filter((s) => !s.startsWith("vk-dot-beat")).toSorted()).toEqual(
+        // A slow frame lets the still window pass mid-lift, and the slot's own flash then plays on c.
+        const played = starts.filter((s) => !/^(vk-dot-beat|tab-slot-in) /.test(s));
+        expect(played.toSorted()).toEqual(
           [
             "vk-slide-in-x p",
             "vk-slide-in-x b",

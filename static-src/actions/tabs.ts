@@ -324,6 +324,8 @@ export interface SwitchOp {
   readonly from: string;
   /** History's pane when the switch left it, so a failure returns there; else null. */
   readonly history: HistoryTab | null;
+  /** The tab History covered when the switch left it, else "". */
+  readonly covered: string;
 }
 
 /** The switch's halves, injected by tabs.ts, which imports this module. */
@@ -333,8 +335,8 @@ export interface SwitchHooks {
   /** The whole run, its retries included. MUST observe `signal`: the time bound only aborts it,
    *  so a `settle` that ignores it never settles and never rolls back. */
   settle(args: SwitchArgs, signal: AbortSignal): Promise<SwitchVerdict>;
-  /** Undo a definitive failure. Answers true when the reader stays on the failed tab because no
-   *  other tab is left to return to. */
+  /** Undo a definitive failure. Answers true when the revert did not put the reader back on the
+   *  previous tab: no other tab is left, or History came back. */
   revert(args: SwitchArgs, op: SwitchOp, err: ActionErrorLike): boolean;
 }
 
@@ -345,8 +347,9 @@ export function switchRetryable(err: ActionErrorLike): boolean {
   return err.code !== "show_failed" && err.status !== 404 && err.status !== 400;
 }
 
-/** Errors whose revert kept the reader on the failed tab, so their sentence drops "so you are back
- *  on the previous tab". The framework hands `rollback` and the notice the same error object. */
+/** Errors whose revert did not put the reader back on the previous tab (no other tab is left, or
+ *  History came back), so their sentence drops "so you are back on the previous tab". The framework
+ *  hands `rollback` and the notice the same error object. */
 const stayed = new WeakSet<ActionErrorLike>();
 
 /** The sentence a failed switch reads as, after the subject's name. A timeout is matched before

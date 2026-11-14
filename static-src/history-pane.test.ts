@@ -105,12 +105,14 @@ import {
   getActiveTabKind,
   getActiveTabRoute,
   openTab,
+  refreshActiveView,
   setOnEmpty,
   tabIdFor,
   EMPTY_RESPAWN_MS,
   _resetForTest,
 } from "./tabs.js";
 import { pushRoute } from "./router.js";
+import { error as toastError } from "./toast.js";
 import { maybeEl, queryEl } from "./dom.js";
 import { registerFind } from "./find-registry.js";
 import type { PageFind } from "./find-registry.js";
@@ -118,6 +120,7 @@ import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.j
 import { ingestTabsChanged, listTabs, _resetTabsSyncForTest } from "./tabs-sync.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import { bindTabsSync, fakeSubject, tabServer } from "./__test-helpers__/tabs-server.js";
+import { until } from "./__test-helpers__/until.js";
 import { ActionError } from "./actions/index.js";
 
 bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
@@ -424,11 +427,22 @@ describe("History as the sidebar's foot row, with no tab", () => {
     await settle();
     const onEmpty = vi.fn();
     setOnEmpty(onEmpty);
-    await closeTab(tabIdFor("settings"));
-    await settle();
+    // A frozen clock, so the respawn the close arms cannot fire before the press however slow the
+    // run is.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const closed = closeTab(tabIdFor("settings"));
+      await vi.advanceTimersByTimeAsync(0);
+      await closed;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onEmpty, "armed, not yet fired").not.toHaveBeenCalled();
 
-    el("history-btn").click();
-    await new Promise((r) => setTimeout(r, EMPTY_RESPAWN_MS + 100));
+      el("history-btn").click();
+      await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS + 100);
+    } finally {
+      vi.useRealTimers();
+    }
+    await settle();
 
     expect(onEmpty).not.toHaveBeenCalled();
     expect(historyShown()).toBe(true);
@@ -461,6 +475,75 @@ describe("History as the sidebar's foot row, with no tab", () => {
     await applyRoute({ kind: "chat", id: "" }, "deeplink");
     await settle();
     expect(getActiveTabId(), "the tab under History is the one it covered").toBe(git);
+  });
+
+  it("says only what failed when a switch from History fails offline", async () => {
+    await openSingletons();
+    adoptSubject(fakeSubject("t-b", { kind: "chat", ref: "c-b" }));
+    await settle();
+    chatRefresh.mockImplementation((chatID) =>
+      chatID === "c-b"
+        ? Promise.reject(new ActionError("network", { status: 0, code: "network" }))
+        : Promise.resolve(),
+    );
+    el("history-btn").click();
+    await settle();
+
+    vi.mocked(toastError).mockClear();
+    await activateTab("t-b");
+    await until(() => vi.mocked(toastError).mock.calls.length > 0, "the switch's refusal toast", {
+      timeout: 5000,
+    });
+    await settle();
+
+    expect(historyShown(), "back on History").toBe(true);
+    expect(vi.mocked(toastError).mock.calls.map(([message]) => message)).toEqual([
+      "Could not reach marotte.",
+    ]);
+  });
+
+  it("returns to History over the tab it covered when a switch to that tab fails", async () => {
+    adoptSubject(fakeSubject("t-a", { kind: "chat", ref: "c-a" }));
+    adoptSubject(fakeSubject("t-b", { kind: "chat", ref: "c-b" }));
+    await settle();
+    await activateTab("t-b");
+    await settle();
+    await activateTab("t-a");
+    await settle();
+    el("history-btn").click();
+    await settle();
+    chatRefresh.mockImplementation((chatID) =>
+      chatID === "c-a"
+        ? Promise.reject(new ActionError("bad request", { status: 400 }))
+        : Promise.resolve(),
+    );
+
+    await activateTab("t-a");
+    await settle();
+    expect(historyShown(), "back on History").toBe(true);
+
+    chatRefresh.mockImplementation(() => Promise.resolve());
+    await applyRoute({ kind: "chat", id: "" }, "deeplink");
+    await settle();
+    expect(getActiveTabId(), "the tab under History is the one it covered").toBe("t-a");
+  });
+
+  it("refreshes History's lists and no chat on an invalidation while it shows", async () => {
+    adoptSubject(fakeSubject("t-a", { kind: "chat", ref: "c-a" }));
+    await settle();
+    await activateTab("t-a");
+    await settle();
+    el("history-btn").click();
+    await settle();
+    const { refreshHistoryView } = await import("./history.js");
+    chatRefresh.mockClear();
+    vi.mocked(refreshHistoryView).mockClear();
+
+    refreshActiveView();
+    await settle();
+
+    expect(refreshHistoryView).toHaveBeenCalledOnce();
+    expect(chatRefresh).not.toHaveBeenCalled();
   });
 
   it("leaves for the tab under it on an open naming the root route", async () => {

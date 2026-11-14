@@ -1019,9 +1019,10 @@ function showLoadFailure(row: TabRow): void {
   row.spec.onLoadFailed?.();
 }
 
-/** The active row's refresh, for the two invalidation triggers (an SSE gap's reconcile, a page
- *  resume). A no-op on an empty strip and while an activation is pending, whose own refresh runs a
- *  moment later. Owns its failure; emits nothing, pushes no route and touches no state. */
+/** The shown view's refresh, for the two invalidation triggers (an SSE gap's reconcile, a page
+ *  resume): History's lists while History shows, else the active row's, a no-op on an empty strip
+ *  and while an activation is pending, whose own refresh runs a moment later. Owns its failure;
+ *  emits nothing, pushes no route and touches no state. */
 export function refreshActiveView(): void {
   if (historyPane.peek() !== null) {
     loadHistoryPane();
@@ -1254,6 +1255,7 @@ const genOfArgs = new WeakMap<SwitchArgs, number>();
 function beginSwitch(args: SwitchArgs): SwitchOp {
   const from = settledActive;
   const history = historyPane.peek();
+  const covered = history !== null ? state.active : "";
   let record: ActivationRecord | undefined;
   if (args.to !== state.active || internal.unshown === args.to) {
     record = beginActivation(args.to, { quiet: false });
@@ -1265,10 +1267,10 @@ function beginSwitch(args: SwitchArgs): SwitchOp {
     record = beginActivation(args.to, { quiet: false, again: true });
   }
   if (record === undefined) {
-    return { gen: switchGen, from, history }; // no row: `settle` finds no generation and answers superseded
+    return { gen: switchGen, from, history, covered }; // no row: `settle` finds no generation and answers superseded
   }
   genOfArgs.set(args, record.gen);
-  return { gen: record.gen, from, history };
+  return { gen: record.gen, from, history, covered };
 }
 
 /** Resolve or reject with `p`, or reject with `signal.reason` once `signal` aborts first. */
@@ -1396,12 +1398,14 @@ function revertSwitch(args: SwitchArgs, op: SwitchOp, err: ActionErrorLike): boo
   if (op.history !== null) {
     // The reader left History for the failed tab: History comes back over the tab it covered.
     presentHistory(op.history);
-    if (target !== "") {
-      beginActivation(target, { quiet: true, now: true });
+    const under = hasRow(op.covered) ? op.covered : target;
+    if (under !== "") {
+      beginActivation(under, { quiet: true, now: true });
     }
     if (focusOnRow) {
       $.historyBtn.focus();
     }
+    stays = true;
   } else if (target !== "") {
     beginActivation(target, { quiet: true, now: true });
     if (focusOnRow) {
