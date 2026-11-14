@@ -5,10 +5,10 @@ import { confirm } from "./confirm.js";
 import {
   ICON_SHIELD,
   ICON_SHIELD_DOT,
-  ICON_SHIELD_LINES_1,
-  ICON_SHIELD_LINES_2,
-  ICON_SHIELD_LINES_3,
-  ICON_SHIELD_LINES_4,
+  ICON_SHIELD_LINES_ONE,
+  ICON_SHIELD_LINES_TWO,
+  ICON_SHIELD_LINES_THREE,
+  ICON_SHIELD_LINES_FOUR,
 } from "./icons.js";
 
 /** The Custom profile's id, the one rung the client knows by name: the policy table is editable only there. */
@@ -43,13 +43,13 @@ export function profileLabel(id: string): string {
 export function profileIcon(id: string): string {
   switch (id) {
     case "guarded":
-      return ICON_SHIELD_LINES_4;
+      return ICON_SHIELD_LINES_FOUR;
     case "read-only":
-      return ICON_SHIELD_LINES_3;
+      return ICON_SHIELD_LINES_THREE;
     case "trusted":
-      return ICON_SHIELD_LINES_2;
+      return ICON_SHIELD_LINES_TWO;
     case "delegated":
-      return ICON_SHIELD_LINES_1;
+      return ICON_SHIELD_LINES_ONE;
     case CUSTOM_PROFILE:
       return ICON_SHIELD_DOT;
     default:

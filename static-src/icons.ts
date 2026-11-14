@@ -572,20 +572,20 @@ export const ICON_SHIELD = svg("ui", PATH_SHIELD);
  * and every gap is at least 1px at 16px: 3.5 units apart, the top one clear of the shoulders, and the lowest one
  * shortened where the outline narrows.
  */
-export const ICON_SHIELD_LINES_4 = svg(
+export const ICON_SHIELD_LINES_FOUR = svg(
   "ui",
   PATH_SHIELD +
     '<path d="M8 7.75h8"/><path d="M8 11.25h8"/><path d="M8 14.75h8"/><path d="M9.5 18.25h5"/>',
 );
-export const ICON_SHIELD_LINES_3 = svg(
+export const ICON_SHIELD_LINES_THREE = svg(
   "ui",
   PATH_SHIELD + '<path d="M8 9h8"/><path d="M8 12.5h8"/><path d="M8 16h8"/>',
 );
-export const ICON_SHIELD_LINES_2 = svg(
+export const ICON_SHIELD_LINES_TWO = svg(
   "ui",
   PATH_SHIELD + '<path d="M8 10.75h8"/><path d="M8 14.25h8"/>',
 );
-export const ICON_SHIELD_LINES_1 = svg("ui", PATH_SHIELD + '<path d="M8 12.5h8"/>');
+export const ICON_SHIELD_LINES_ONE = svg("ui", PATH_SHIELD + '<path d="M8 12.5h8"/>');
 /** The shield with a dot: a profile with no rank on the ladder. */
 export const ICON_SHIELD_DOT = svg(
   "ui",
