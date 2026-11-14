@@ -44,8 +44,8 @@ github.com/cplieger/go/yamlenv v1.1.0 h1:vNaxHJnJMmg7MfRhqTBDaFPhMylEzzEtNefCvqU
 github.com/cplieger/go/yamlenv v1.1.0/go.mod h1:2kEi6iiRSxaaAusNrPoC6l0BUqvVVskkR1Cdpt15nUg=
 github.com/cplieger/toolbelt/v3 v3.16.0-dev.3 h1:fF0qPPPmksjXeboER5CVetcoH/pc5BugpYfqF8uRZnw=
 github.com/cplieger/toolbelt/v3 v3.16.0-dev.3/go.mod h1:vpDPZnwJHzkfHrFAcGkr6ReKwPpLzRjEtjcXzuvoerE=
-github.com/cplieger/web-terminal-engine/v6 v6.5.0 h1:nECDhDAW4K4XYFfl+B+57nNHwlKos9/s2qzr2hfHUeA=
-github.com/cplieger/web-terminal-engine/v6 v6.5.0/go.mod h1:Q9FfHBKIYRzkwHND2f1/psB2MeZtO9CgA8lev7LLx6c=
+github.com/cplieger/web-terminal-engine/v6 v6.6.0-dev.1 h1:z9KXxG/o+d+csf2jeZZ3uAaPV4+etVvvr3Hi5YQ68KI=
+github.com/cplieger/web-terminal-engine/v6 v6.6.0-dev.1/go.mod h1:Q9FfHBKIYRzkwHND2f1/psB2MeZtO9CgA8lev7LLx6c=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
 github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=
 github.com/evanw/esbuild v0.28.2 h1:A2uETn4jrQTcXaT/shwTDTYBxDjl7fV7nXmUrJxfA2w=
