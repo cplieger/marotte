@@ -515,19 +515,38 @@ func TestKiroDocs_AgentLinkListsOnlyWhenItsTargetIsARegularFile(t *testing.T) {
 }
 
 // TestKiroDocs_LinkRowFollowsItsTargetWithoutAReload pins live pickup for a row built through a
-// link: the target appearing or vanishing changes nothing in the category directory itself.
+// link: the target appearing, changing or vanishing changes nothing in the category directory itself.
 func TestKiroDocs_LinkRowFollowsItsTargetWithoutAReload(t *testing.T) {
+	hook := func(command string) string {
+		return `{"version":"v1","hooks":[{"name":"a",` +
+			`"trigger":"PostFileSave","action":{"type":"command","command":"` + command + `"}}]}`
+	}
+	description := func(d KiroDoc) string { return d.Description }
 	cases := []struct {
 		name     string
 		category string
 		link     string
 		body     string
+		edited   string
+		field    func(KiroDoc) string
+		want     string
 	}{
-		{name: "agent", category: catAgent, link: "agents/a.md", body: "---\nname: a\n---\n"},
-		{name: "steering", category: catSteering, link: "steering/a.md", body: "---\nname: a\n---\n"},
-		{name: "hook", category: catHook, link: "hooks/a.json", body: `{"version":"v1","hooks":[{"name":"a",` +
-			`"trigger":"PostFileSave","action":{"type":"command","command":"echo"}}]}`},
-		{name: "prompt", category: catPrompt, link: "prompts/a.md", body: "# A\n"},
+		{
+			name: "agent", category: catAgent, link: "agents/a.md", body: "---\nname: a\n---\n",
+			edited: "---\nname: a\ndescription: edited\n---\n", field: description, want: "edited",
+		},
+		{
+			name: "steering", category: catSteering, link: "steering/a.md", body: "---\nname: a\n---\n",
+			edited: "---\nname: a\ndescription: edited\n---\n", field: description, want: "edited",
+		},
+		{
+			name: "hook", category: catHook, link: "hooks/a.json", body: hook("echo"),
+			edited: hook("true"), field: func(d KiroDoc) string { return d.Action }, want: "true",
+		},
+		{
+			name: "prompt", category: catPrompt, link: "prompts/a.md", body: "# A\n",
+			edited: "# Edited\n", field: description, want: "Edited",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -546,6 +565,15 @@ func TestKiroDocs_LinkRowFollowsItsTargetWithoutAReload(t *testing.T) {
 			}
 			writeFile(t, kiro, "shared/"+filepath.Base(tc.link), tc.body)
 			mustRow(t, listDocs(t, h), tc.category, "a")
+			writeFile(t, kiro, "shared/"+filepath.Base(tc.link), tc.edited)
+			// Linux stamps mtimes from a coarse clock, so the rewrite alone may leave the mtime unchanged.
+			later := time.Now().Add(time.Hour)
+			if err := os.Chtimes(target, later, later); err != nil {
+				t.Fatal(err)
+			}
+			if got := tc.field(mustRow(t, listDocs(t, h), tc.category, "a")); got != tc.want {
+				t.Errorf("after the target was edited the row shows %q, want %q", got, tc.want)
+			}
 			if err := os.Remove(target); err != nil {
 				t.Fatal(err)
 			}

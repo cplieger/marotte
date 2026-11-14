@@ -184,10 +184,11 @@ var sigDepth = map[string]int{
 	"specs": mdSigDepth, "hooks": 1, "prompts": 1,
 }
 
-// dirSignature builds a cache key from each root's category directories: the mtime AND the
-// entry names down to sigDepth. Names are load-bearing: Linux stamps mtimes from a coarse clock,
-// so two changes inside one tick (a write then the settings_updated refetch) give identical
-// mtimes. An in-place body edit is still undetected; it changes only the description.
+// dirSignature builds a cache key from each root's category directories: the mtime, the entry
+// names down to sigDepth, and one stat of each link's target. Names are load-bearing: Linux stamps
+// mtimes from a coarse clock, so two changes inside one tick (a write then the settings_updated
+// refetch) give identical mtimes. An in-place body edit of a regular file is still undetected; it
+// changes only the description.
 func dirSignature(roots []kiroRoot) string {
 	var b strings.Builder
 	for _, root := range roots {
