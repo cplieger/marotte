@@ -235,11 +235,11 @@ func launchQueuedRow(ctx context.Context, roles *promptRoles, l *EntryLaunch) (s
 }
 
 // launchResume opens marotte's own prompt that continues a turn the compaction failsafe stopped, on the session's
-// model. kiro-cli stores every prompt as the user's (kirodotdev/Kiro#12346), so only its turn_open's Automatic says
-// marotte sent it.
+// model. kiro-cli stores every prompt as the user's (kirodotdev/Kiro#12346), so Automatic names marotte as its sender
+// on the turn_open and on kiro-cli's row (senderLabel).
 func launchResume(ctx context.Context, roles *promptRoles, l *EntryLaunch) (string, error) {
-	p := &marotte.PromptCommand{Text: l.Row.Text, MessageID: l.Row.ID}
-	turnID, err := startPrompt(ctx, roles, l.Res.Chat, p, &launch{res: l.Res, fence: l.Fence, automatic: true})
+	p := &marotte.PromptCommand{Text: l.Row.Text, MessageID: l.Row.ID, Automatic: true}
+	turnID, err := startPrompt(ctx, roles, l.Res.Chat, p, &launch{res: l.Res, fence: l.Fence})
 	if err != nil {
 		logLaunchRefused(l.Res.Chat, l.Row.ID, err)
 		return "", err
