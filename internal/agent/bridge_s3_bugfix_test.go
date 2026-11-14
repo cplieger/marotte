@@ -395,7 +395,7 @@ func TestTermCreate_PassesKASEnvVerbatim(t *testing.T) {
 
 // termEnv layers requested vars over os.Environ, and pins the locale with or without them.
 func TestTermEnv(t *testing.T) {
-	t.Parallel()
+	t.Setenv(termLocaleEnvVar, "C")
 	for name, vars := range map[string][]termEnvVar{"nil": nil, "empty": {}} {
 		if got := lastValueFor(termEnv(vars), termLocaleEnvVar); termLocaleEnvVar+"="+got != termLocaleEnv()[0] {
 			t.Errorf("termEnv(%s) leaves %s=%q, want %q", name, termLocaleEnvVar, got, termLocaleEnv()[0])

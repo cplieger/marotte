@@ -22,21 +22,15 @@ func SpawnEnv(env []string) []string {
 }
 
 // SetCommandEnv sets cmd.Env to SpawnEnv(env), then PWD to cmd.Dir when Dir is set: os/exec adds that PWD only when
-// Env is nil (go.dev/issue/50599), so the child would otherwise see the caller's PWD. Set cmd.Dir first. A Dir that
-// cannot be made absolute fails cmd.Start, as os/exec does.
+// Env is nil (go.dev/issue/50599), so the child would otherwise see the caller's PWD. Set cmd.Dir first.
 func SetCommandEnv(cmd *exec.Cmd, env []string) {
 	cmd.Env = SpawnEnv(env)
 	if cmd.Dir == "" {
 		return
 	}
-	pwd, err := filepath.Abs(cmd.Dir)
-	if err != nil {
-		if cmd.Err == nil {
-			cmd.Err = err
-		}
-		return
+	if pwd, err := filepath.Abs(cmd.Dir); err == nil {
+		cmd.Env = append(cmd.Env, "PWD="+pwd)
 	}
-	cmd.Env = append(cmd.Env, "PWD="+pwd)
 }
 
 // The release's fixed facts.

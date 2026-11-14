@@ -46,8 +46,7 @@ func TestAgentCommand_RunsWithKiroCLISelfUpdateOff(t *testing.T) {
 	}
 }
 
-// os/exec adds PWD=Dir only when Env is nil, and every agent command sets Env, so this covers both cwd sources with and
-// without agent vars under a parent PWD that names another directory.
+// Both cwd sources, with and without agent vars, under a parent PWD that names another directory.
 func TestTermCreate_CommandSeesItsCwdAsPWD(t *testing.T) {
 	for _, withVars := range []bool{false, true} {
 		for _, cwd := range []string{"", "sub"} {
