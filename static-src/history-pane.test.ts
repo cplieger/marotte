@@ -118,6 +118,7 @@ import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.j
 import { ingestTabsChanged, listTabs, _resetTabsSyncForTest } from "./tabs-sync.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import { bindTabsSync, fakeSubject, tabServer } from "./__test-helpers__/tabs-server.js";
+import { ActionError } from "./actions/index.js";
 
 bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
 
@@ -126,6 +127,8 @@ let style: HTMLStyleElement;
 // Imported once the shell exists: their graphs read the shipped DOM at import.
 let applyRoute: typeof RouteApply.applyRoute;
 let handleFindKey: typeof FindDispatch.handleFindKey;
+/** Every chat view's load; a case makes one chat's refuse. */
+const chatRefresh = vi.fn((_chatID: string, _signal: AbortSignal) => Promise.resolve());
 
 beforeAll(async () => {
   const doc = new DOMParser().parseFromString(indexHtml, "text/html");
@@ -160,7 +163,7 @@ beforeEach(() => {
       select: vi.fn(),
       loadFailed: vi.fn(),
       show: vi.fn(),
-      refresh: vi.fn(() => Promise.resolve()),
+      refresh: chatRefresh,
       close: vi.fn(),
       dot: () => "",
     },
@@ -176,6 +179,7 @@ beforeEach(() => {
     el(id).replaceChildren();
   }
   vi.mocked(pushRoute).mockClear();
+  chatRefresh.mockImplementation(() => Promise.resolve());
 });
 
 afterEach(() => {
@@ -249,9 +253,7 @@ function expectHistoryPane(opens: number, tab: "chats" | "runs" = "chats"): void
   expect(footRowSelected(), "the foot row is selected").toBe(true);
   expect(getActiveTabId()).toBe("");
   expect(getActiveTabKind()).toBeNull();
-  expect(lastRoute()).toEqual(
-    tab === "runs" ? { kind: "history", tab: "runs" } : { kind: "history" },
-  );
+  expect(lastRoute()).toEqual({ kind: "history", tab });
 }
 
 async function openSingletons(): Promise<{ settings: string; git: string }> {
@@ -415,6 +417,116 @@ describe("History as the sidebar's foot row, with no tab", () => {
     expect(onEmpty).not.toHaveBeenCalled();
     expect(historyShown()).toBe(true);
     expect(footRowSelected()).toBe(true);
+  });
+
+  it("drops a respawn armed before it opens, so the respawned chat never takes the view", async () => {
+    await openTab({ kind: "settings" });
+    await settle();
+    const onEmpty = vi.fn();
+    setOnEmpty(onEmpty);
+    await closeTab(tabIdFor("settings"));
+    await settle();
+
+    el("history-btn").click();
+    await new Promise((r) => setTimeout(r, EMPTY_RESPAWN_MS + 100));
+
+    expect(onEmpty).not.toHaveBeenCalled();
+    expect(historyShown()).toBe(true);
+    expect(footRowSelected()).toBe(true);
+  });
+
+  it("returns to History when a switch from it fails", async () => {
+    const { git } = await openSingletons();
+    adoptSubject(fakeSubject("t-b", { kind: "chat", ref: "c-b" }));
+    await settle();
+    chatRefresh.mockImplementation((chatID) =>
+      chatID === "c-b"
+        ? Promise.reject(new ActionError("bad request", { status: 400 }))
+        : Promise.resolve(),
+    );
+    el("history-btn").click();
+    await settle();
+
+    el("tab-list").querySelector<HTMLElement>('[data-tab-id="t-b"]')?.focus();
+    await activateTab("t-b");
+    await settle();
+
+    expect(historyShown(), "back on History").toBe(true);
+    expect(document.activeElement, "focus followed the return").toBe(el("history-btn"));
+    expect(footRowSelected()).toBe(true);
+    expect(selectedRows()).toEqual([]);
+    expect(getActiveTabRoute()).toEqual({ kind: "history", tab: "chats" });
+    expect(lastRoute()).toEqual({ kind: "history", tab: "chats" });
+
+    await applyRoute({ kind: "chat", id: "" }, "deeplink");
+    await settle();
+    expect(getActiveTabId(), "the tab under History is the one it covered").toBe(git);
+  });
+
+  it("leaves for the tab under it on an open naming the root route", async () => {
+    const { git } = await openSingletons();
+    el("history-btn").click();
+    await settle();
+
+    await applyRoute({ kind: "chat", id: "" }, "deeplink");
+    await settle();
+
+    expect(historyShown()).toBe(false);
+    expect(footRowDeselected()).toBe(true);
+    expect(getActiveTabId()).toBe(git);
+    expect(el("git-view").classList.contains("hidden"), "git's view shows").toBe(false);
+    expect(lastRoute()).toEqual({ kind: "git", tab: "changes" });
+  });
+
+  it("leaves for the empty strip on an open naming the root route, then respawns once", async () => {
+    await openTab({ kind: "settings" });
+    await settle();
+    const onEmpty = vi.fn();
+    setOnEmpty(onEmpty);
+    el("history-btn").click();
+    await settle();
+    await closeTab(tabIdFor("settings"));
+    await settle();
+
+    await applyRoute({ kind: "chat", id: "" }, "deeplink");
+    await settle();
+    expect(historyShown()).toBe(false);
+    expect(footRowDeselected()).toBe(true);
+
+    await new Promise((r) => setTimeout(r, EMPTY_RESPAWN_MS + 100));
+    expect(onEmpty).toHaveBeenCalledOnce();
+  });
+
+  it("reopens on the pane it last showed", async () => {
+    const { git } = await openSingletons();
+    el("history-btn").click();
+    await settle();
+    queryEl<HTMLButtonElement>('[data-history-tab="runs"]')?.click();
+    await settle();
+    await activateTab(git);
+    await settle();
+
+    el("history-btn").click();
+    await settle();
+
+    expect(historyShown()).toBe(true);
+    expect(getActiveTabRoute()).toEqual({ kind: "history", tab: "runs" });
+    expect(queryEl<HTMLElement>('[data-history-panel="runs"]')?.classList.contains("hidden")).toBe(
+      false,
+    );
+  });
+
+  it("reopens on the pane a link showed it on", async () => {
+    const { git } = await openSingletons();
+    await applyRoute({ kind: "history", tab: "runs" }, "deeplink");
+    await settle();
+    await activateTab(git);
+    await settle();
+
+    el("history-btn").click();
+    await settle();
+
+    expect(getActiveTabRoute()).toEqual({ kind: "history", tab: "runs" });
   });
 
   it("routes its Chats and Runs pills with no tab", async () => {

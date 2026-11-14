@@ -21,6 +21,7 @@ import type { Action, ActionDefinition } from "@cplieger/reactive/actions";
 import { errorAbout } from "./subject.js";
 import { send as transportSend, type SendResult } from "../transport.js";
 import type { TabKind, TabSubject } from "../types.js";
+import type { HistoryTab } from "../route-path.js";
 import { decodeTabSubject } from "../wire/decoders.gen.js";
 import type { CloseImpact } from "../wire/types.gen.js";
 import { impactRefusal } from "./close-impact.js";
@@ -321,6 +322,8 @@ export type SwitchVerdict = "shown" | "superseded";
 export interface SwitchOp {
   readonly gen: number;
   readonly from: string;
+  /** History's pane when the switch left it, so a failure returns there; else null. */
+  readonly history: HistoryTab | null;
 }
 
 /** The switch's halves, injected by tabs.ts, which imports this module. */

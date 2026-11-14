@@ -104,6 +104,9 @@ const NEEDLES = ["vi.mock", "vi.doMock"] as const;
 /** `{ spy: true }` is vitest's automocker calling through, which lists no exports. */
 const SPY_OPTIONS = /,\s*\{\s*spy:\s*true\s*\}\s*,?\s*$/;
 
+/** A factory whose body is one `throw` makes the module fail to load, so it lists no exports. */
+const THROWS_ONLY = /,\s*(?:async\s*)?\(\s*\)\s*=>\s*\{\s*throw\b[^;]*;\s*\}\s*,?\s*$/;
+
 /** Every `vi.mock` call in one file. Unexported: knip runs with `includeEntryExports`. */
 function mockSites(src: string): MockSite[] {
   const out: MockSite[] = [];
@@ -117,7 +120,7 @@ function mockSites(src: string): MockSite[] {
     if (args === null) continue;
     out.push({
       specifier: firstSpecifier(args.text),
-      hasFactory: args.commas > 0 && !SPY_OPTIONS.test(args.text),
+      hasFactory: args.commas > 0 && !SPY_OPTIONS.test(args.text) && !THROWS_ONLY.test(args.text),
       spreadsOriginal: args.text.includes("importOriginal"),
     });
   }
@@ -214,6 +217,12 @@ describe("the vi.mock ratchet", () => {
       `  pressHold: noop,`,
       `}));`,
     ].join("\n");
+    const failing = [
+      `vi.mock("./history.js", () => {`,
+      `  throw new Error("offline");`,
+      `});`,
+    ].join("\n");
+    const throwsLater = `vi.mock("./store.js", () => { const m = { a: 1 }; throw m; });`;
     // `vi.doUnmock` takes no factory and must not be read as a governed verb.
     const unmock = `vi.doUnmock("./store.js");`;
 
@@ -227,6 +236,8 @@ describe("the vi.mock ratchet", () => {
     expect(mockSites(stringy).map(offends)).toEqual([true]);
     expect(mockSites(deferred).map(offends)).toEqual([true]);
     expect(mockSites(deferredSpread).map(offends)).toEqual([false]);
+    expect(mockSites(failing).map(offends)).toEqual([false]);
+    expect(mockSites(throwsLater).map(offends)).toEqual([true]);
     expect(mockSites(unmock)).toEqual([]);
     expect(mockSites(`${whole}\n${spread}\n${bare}`)).toHaveLength(3);
     expect(mockSites(`${deferred}\n${whole}`).map(offends)).toEqual([true, true]);

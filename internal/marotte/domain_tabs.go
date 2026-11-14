@@ -28,7 +28,7 @@ const (
 // always asks next: is this kind a SINGLETON, the one tab of its type, whose Ref
 // is therefore empty?
 //
-// ONE table rather than two, because two tables can disagree: a tenth kind added
+// ONE table rather than two, because two tables can disagree: a new kind added
 // to the valid set and forgotten in the singleton set would be a kind that is
 // accepted and then required to carry a ref it has no meaning for, which reaches
 // a reader as "Settings opens twice" rather than as an error.

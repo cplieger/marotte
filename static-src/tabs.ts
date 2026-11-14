@@ -93,7 +93,8 @@ import { ICON_CLOSE, ICON_PIN_FILLED, ICON_TAB_SUBTAB } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { activeView, sectionFolded, setActiveView } from "./device-view.js";
 import { isSliding } from "./disclosure-row.js";
-import { $, queryEl, setAttr, setText } from "./dom.js";
+import { $, maybeEl, queryEl, setAttr, setText } from "./dom.js";
+import { historyLoadError } from "./history-note.js";
 import {
   bindSectionToggle,
   paintSectionHeader,
@@ -1089,14 +1090,18 @@ function parkUnderHistory(id: string): void {
 }
 
 function loadHistoryPane(): void {
-  void import("./history.js")
-    .then(({ loadHistoryView, refreshHistoryView }) => {
+  void import("./history.js").then(
+    ({ loadHistoryView, refreshHistoryView }) => {
       loadHistoryView();
       refreshHistoryView();
-    })
-    .catch(() => {
-      /* noop: a failed chunk load leaves the page's own placeholder */
-    });
+    },
+    () => {
+      // The page's module never arrived, so its lists still hold the shipped empty-list sentence.
+      for (const id of ["history-table", "history-runs"]) {
+        maybeEl(id)?.replaceChildren(historyLoadError(loadHistoryPane));
+      }
+    },
+  );
 }
 
 /** Show History in the main area, on `tab` or else the pane it last showed: the reader picked a
@@ -1105,6 +1110,11 @@ function loadHistoryPane(): void {
 export function showHistoryView(tab?: HistoryTab): void {
   navigationSeq++;
   revealActiveView();
+  presentHistory(tab);
+}
+
+/** `showHistoryView` without the reader's navigation: a failed switch's return to History. */
+function presentHistory(tab?: HistoryTab): void {
   const pane = tab ?? historyPane.peek() ?? lastHistoryPane;
   lastHistoryPane = pane;
   if (historyPane.peek() !== null) {
@@ -1116,6 +1126,8 @@ export function showHistoryView(tab?: HistoryTab): void {
   }
   dropParkReads();
   moveFocusOffTranscript();
+  // Held while History shows (scheduleEmpty); leaving it schedules again.
+  cancelEmptyRespawn();
   internal.unshown = state.active;
   switchGen += 1;
   if (currentActivation !== null) {
@@ -1141,8 +1153,9 @@ export function setHistoryPane(tab: HistoryTab): void {
   emit();
 }
 
-/** Leave History for the tab under it, else the most recent one, else the empty strip: Back to
- *  the root route. A no-op while History is not on screen. */
+/** Leave History for the tab under it, else the most recent one, else the empty strip: an open
+ *  intent naming the root route (a workspace notification's click). A no-op while History is not
+ *  on screen. */
 export function leaveHistoryView(): void {
   if (historyPane.peek() === null) {
     return;
@@ -1240,6 +1253,7 @@ const genOfArgs = new WeakMap<SwitchArgs, number>();
 
 function beginSwitch(args: SwitchArgs): SwitchOp {
   const from = settledActive;
+  const history = historyPane.peek();
   let record: ActivationRecord | undefined;
   if (args.to !== state.active || internal.unshown === args.to) {
     record = beginActivation(args.to, { quiet: false });
@@ -1251,10 +1265,10 @@ function beginSwitch(args: SwitchArgs): SwitchOp {
     record = beginActivation(args.to, { quiet: false, again: true });
   }
   if (record === undefined) {
-    return { gen: switchGen, from }; // no row: `settle` finds no generation and answers superseded
+    return { gen: switchGen, from, history }; // no row: `settle` finds no generation and answers superseded
   }
   genOfArgs.set(args, record.gen);
-  return { gen: record.gen, from };
+  return { gen: record.gen, from, history };
 }
 
 /** Resolve or reject with `p`, or reject with `signal.reason` once `signal` aborts first. */
@@ -1379,7 +1393,16 @@ function revertSwitch(args: SwitchArgs, op: SwitchOp, err: ActionErrorLike): boo
   const focusOnRow = failedEl !== null && document.activeElement === failedEl;
   const target = revertTarget(args.to, op.from);
   let stays = false;
-  if (target !== "") {
+  if (op.history !== null) {
+    // The reader left History for the failed tab: History comes back over the tab it covered.
+    presentHistory(op.history);
+    if (target !== "") {
+      beginActivation(target, { quiet: true, now: true });
+    }
+    if (focusOnRow) {
+      $.historyBtn.focus();
+    }
+  } else if (target !== "") {
     beginActivation(target, { quiet: true, now: true });
     if (focusOnRow) {
       elementOf(target)?.focus();
@@ -2531,11 +2554,20 @@ export function setOnEmpty(fn: () => void): void {
   callbacks.onEmpty = fn;
 }
 
+/** Drop an armed or deferred empty-strip respawn. */
+function cancelEmptyRespawn(): void {
+  internal.emptyDeferred = false;
+  if (internal.emptyTimer !== null) {
+    clearTimeout(internal.emptyTimer);
+    internal.emptyTimer = null;
+  }
+}
+
 function scheduleEmpty(): void {
   if (internal.emptyTimer !== null) {
     clearTimeout(internal.emptyTimer);
   }
-  // A respawned chat would take the view from History; leaving History schedules again.
+  // A respawned chat would take the view from History; leaving History schedules it again.
   if (historyPane.peek() !== null) {
     internal.emptyTimer = null;
     return;
@@ -2581,11 +2613,7 @@ function registerModuleSubscribers(): void {
   // Clear the empty timer (and any deferred respawn) on any activation.
   tabsEffect(() => {
     if (state.active !== "") {
-      internal.emptyDeferred = false;
-      if (internal.emptyTimer !== null) {
-        clearTimeout(internal.emptyTimer);
-        internal.emptyTimer = null;
-      }
+      cancelEmptyRespawn();
     }
   });
 
@@ -2694,15 +2722,11 @@ function syncHistoryRow(on: boolean): void {
   }
 }
 
-function historyRoute(pane: HistoryTab): Route {
-  return pane === "chats" ? { kind: "history" } : { kind: "history", tab: pane };
-}
-
 /** History alone in the main area, with the foot row selected and its route on the URL. */
 function showHistoryPane(pane: HistoryTab): void {
   showTranscript();
   showOnlyView(queryEl<HTMLElement>(HISTORY_VIEW));
-  pushRoute(historyRoute(pane));
+  pushRoute({ kind: "history", tab: pane });
   setPageTitle("History", "history");
   syncSidebarButtons(null);
   syncHistoryRow(true);

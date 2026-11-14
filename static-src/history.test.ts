@@ -356,6 +356,28 @@ describe("history: two panes behind one bar", () => {
   });
 });
 
+describe("history: off screen", () => {
+  beforeEach(resetAll);
+
+  it("fetches and paints nothing when its first load lands after the reader left", async () => {
+    const view = mountView();
+    dispatch.mockResolvedValue({ sessions: [chatRow], runs: [runRow] });
+    const { loadHistoryView, refreshHistoryView } = await freshModule();
+    // The reader left while the page's module was still loading: the pair runs with History gone.
+    historyPane.value = null;
+    loadHistoryView();
+    refreshHistoryView();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(dispatch, "no list read").not.toHaveBeenCalled();
+    const before = chatsPane().innerHTML;
+    tabsVersion.value++;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(chatsPane().innerHTML, "a tab change repaints nothing").toBe(before);
+    expect(view.querySelectorAll("[data-key]")).toHaveLength(0);
+  });
+});
+
 describe("history: opening a row", () => {
   beforeEach(resetAll);
 

@@ -49,6 +49,7 @@ import { applyOutcome } from "./tool-card.js";
 import type { ToolRenderInfo } from "./tool-schema.js";
 import { ICON_TAB_RUN, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { historyLoadError, paneNote } from "./history-note.js";
 import { senderWords } from "./sent-by.js";
 import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
@@ -357,11 +358,6 @@ function runsContainer(): HTMLElement | null {
   return maybeEl("history-runs");
 }
 
-/** A note shown in place of a pane's rows; a list item, since both panes are ARIA lists. */
-function paneNote(className: string, ...children: (Node | string)[]): HTMLElement {
-  return el("div", { className, role: "listitem" }, ...children);
-}
-
 class HistoryController {
   private abort: AbortController | null = null;
   /** Closing clears the query, or a hidden box leaves the list narrowed unexplained. No case toggle:
@@ -648,15 +644,9 @@ class HistoryController {
   }
 
   private buildError(): HTMLElement {
-    const retry = el("button", { type: "button", className: "btn-small" }, "Retry");
-    retry.addEventListener("click", () => {
+    return historyLoadError(() => {
       void this.load();
     });
-    return paneNote(
-      "list-empty history-error",
-      el("span", {}, "Could not load previous sessions. Check your connection and try again."),
-      retry,
-    );
   }
 }
 
@@ -957,6 +947,9 @@ export function loadHistoryView(): void {
 
 /** Fetch History's lists again: on each show and each invalidation while it shows. */
 export function refreshHistoryView(): void {
+  if (shownTab.peek() === null) {
+    return;
+  }
   void historyCtrl.refresh();
 }
 
