@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# The instance's git (MAROTTE_TEST_GIT): appends one JSON line per fetch to PERF_GIT_LOG, then runs
+# the real git at PERF_GIT_REAL with the same arguments.
+set -euo pipefail
+sub=
+skip=
+for a in "$@"; do
+  if [ -n "$skip" ]; then
+    skip=
+    continue
+  fi
+  case $a in
+    -c | -C) skip=1 ;;
+    -*) ;;
+    *)
+      sub=$a
+      break
+      ;;
+  esac
+done
+if [ "$sub" = fetch ]; then
+  dir=${PWD//\\/\\\\}
+  dir=${dir//\"/\\\"}
+  printf '{"t":%s,"op":"fetch","dir":"%s"}\n' "$(date +%s.%N)" "$dir" >>"${PERF_GIT_LOG:?}"
+fi
+exec "${PERF_GIT_REAL:?}" "$@"

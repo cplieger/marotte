@@ -39,3 +39,39 @@ cd static-src && SSE_FIXTURE=/tmp/marotte-test npx vitest --run --project e2e-ss
 ```
 
 A second marotte you start by hand needs its own `KIRO_CONFIG_DIR`, `HOME` and `KIRO_HOME`, or it finds the running one's lock and refuses to start.
+
+## Performance
+
+On a pull request, CI runs the `pr` set of `tests/perf/plan.json` on a hosted runner and compares each cell with `tests/perf/budgets.json`. A cell is one scenario at one fixture scale (`x1` or `x10`), browser engine and width. Its scenarios are listed under `scenarios` in `plan.json`.
+
+To measure one cell on your machine, build the test binary once, write the cell to a file, and run it. The run generates a synthetic fixture, then starts each rep on a fresh instance with a fake kiro-cli and a fake forge. It never touches your own marotte, and `serve.sh` refuses a `PERF_PORT` that would bind 9847:
+
+```sh
+tests/perf/build.sh /tmp/perf-build
+(cd static-src && npx playwright install chromium webkit)
+echo '[{"scenario": "chat-long", "scale": "x10", "engine": "chromium", "width": "desktop", "seconds": 240}]' >/tmp/cell.json
+PERF_BUILD=/tmp/perf-build PERF_PORT=20151 PERF_REPS=1 tests/perf/run.sh /tmp/cell.json /tmp/perf-out
+```
+
+`/tmp/perf-out/results.json` holds every metric of every window, and `/tmp/perf-out/raw/` holds each rep's own record. Add `"profile": true` to the cell for one more rep that records a CPU profile, and `"windows": ["cold"]` to measure only the windows it lists. `run-drive` measures the server alone: use engine `server` and width `none`. A rep that does not settle exits 1 and names the window it waited for.
+
+To compare a result with the budgets as the pull request's `perf` job does, run `perf_gate.py` from a clone of `cplieger/ci`. It gates only results measured on the runner that `budgets.json` names, so the copy below takes that runner's name. An exact count, such as a route's reads or `git_fetch`, is the same on any machine; a time measured on yours is compared with budgets calibrated on CI's runner. `--base` names the head file, so no budget needs its signed calibration here:
+
+```sh
+git clone --depth 1 https://github.com/cplieger/ci.git /tmp/cplieger-ci
+mkdir -p /tmp/perf-res
+python3 - tests/perf/budgets.json /tmp/perf-out/results.json /tmp/perf-res/results.json <<'EOF'
+import json, sys
+budgets, results = (json.load(open(p)) for p in sys.argv[1:3])
+results['runner'] = budgets['runner']
+json.dump(results, open(sys.argv[3], 'w'))
+EOF
+python3 /tmp/cplieger-ci/scripts/perf_gate.py --budgets tests/perf/budgets.json \
+  --base tests/perf/budgets.json --results /tmp/perf-res --calibrations tests/perf/calibrations \
+  --repo cplieger/marotte --head "$(git rev-parse HEAD)" --plan-doc tests/perf/plan.json --set pr \
+  --only chat-long --remeasure-out /tmp/perf-remeasure.json
+```
+
+Two results concern the cell you measured. An exact count that differs from its budget is listed under "Failures" as one that "differs from its exact budget", with its reps, and the command exits 1. A timed cell over its budget shows `remeasure` in the "Status" column: CI measures it again on fresh runners before it fails the job.
+
+`--only chat-long` keeps every `pr` cell of that scenario, so the plan also holds its WebKit cell, which measures only the `cold` window. Once `budgets.json` holds a gated or exact entry for a cell the plan holds and your run did not measure, "Failures" lists it as an entry "that no shard measured" and the command exits 1. That line names a cell CI measures, not a fault in the cell you measured.

@@ -8,7 +8,8 @@
       "static-src/prepaint.ts",
       "static-src/sse-worker.ts",
       "static-src/sw.ts",
-      "internal/spec/testdata/gen-goldens.mjs"
+      "internal/spec/testdata/gen-goldens.mjs",
+      "static-src/perf/view.mjs"
     ]
   }
 }

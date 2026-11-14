@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "runner": "ubuntu-26.04",
+  "headroom": { "cpu_ms": 1.5, "heap_mb": 1.25, "rss_mb": 1.25 },
+  "floor": { "cpu_ms": 50, "heap_mb": 1 },
+  "budgets": []
+}
