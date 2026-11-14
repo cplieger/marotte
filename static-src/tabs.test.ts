@@ -3954,11 +3954,17 @@ describe("the touch hold on a chat tab", () => {
     window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1, pointerType: "touch" }));
   });
 
-  function touch(type: string, target: Element, dx = 0, pointerId = 1): void {
+  function touch(
+    type: string,
+    target: Element,
+    dx = 0,
+    pointerId = 1,
+    pointerType = "touch",
+  ): void {
     target.dispatchEvent(
       new PointerEvent(type, {
         pointerId,
-        pointerType: "touch",
+        pointerType,
         isPrimary: pointerId === 1,
         buttons: type === "pointerup" ? 0 : 1,
         clientX: AT.x + dx,
@@ -4146,6 +4152,152 @@ describe("the touch hold on a chat tab", () => {
     touch("pointerup", row);
     row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
     touch("pointercancel", row, 0, 2);
+    expect(getActiveTabId()).toBe(chatID("b"));
+  });
+
+  const rowB = (): HTMLElement => {
+    const row = rows().find((r) => r.dataset["tabId"] === chatID("b"));
+    if (row === undefined) {
+      throw new Error("no row for b");
+    }
+    return row;
+  };
+  const clickRow = (row: HTMLElement): void => {
+    row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+  };
+
+  it("starts no hold for a second finger on another row", async () => {
+    const row = await rowA();
+    touch("pointerdown", row);
+    vi.advanceTimersByTime(200);
+    touch("pointerdown", rowB(), 30, 2);
+    vi.advanceTimersByTime(HOLD_MS);
+    expect(showContextMenu).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(showContextMenu).mock.lastCall?.[1], "the first finger's point").toEqual(AT);
+    touch("pointercancel", rowB(), 30, 2);
+  });
+
+  it("opens no menu from a second finger's contextmenu on another row", async () => {
+    const row = await rowA();
+    touch("pointerdown", row);
+    touch("pointerdown", rowB(), 30, 2);
+    const menu = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: AT.x + 30,
+      clientY: AT.y,
+    });
+    rowB().dispatchEvent(menu);
+    expect(showContextMenu, "the second finger's menu").not.toHaveBeenCalled();
+    expect(menu.defaultPrevented, "the platform's own menu").toBe(true);
+    vi.advanceTimersByTime(HOLD_MS);
+    expect(vi.mocked(showContextMenu).mock.lastCall?.[1], "the first finger's hold").toEqual(AT);
+    touch("pointercancel", rowB(), 30, 2);
+  });
+
+  it("starts a new hold for the next primary touch when the last one's end never arrived", async () => {
+    const row = await rowA();
+    touch("pointerdown", row);
+    vi.advanceTimersByTime(200);
+    touch("pointerdown", rowB());
+    vi.advanceTimersByTime(HOLD_MS);
+    expect(showContextMenu).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(showContextMenu).mock.lastCall?.[2]?.returnFocus, "the new touch's row").toBe(
+      rowB(),
+    );
+  });
+
+  it("keeps the first finger's hold when a second finger lifts from another row", async () => {
+    const row = await rowA();
+    touch("pointerdown", row);
+    vi.advanceTimersByTime(200);
+    touch("pointerdown", rowB(), 30, 2);
+    touch("pointerup", rowB(), 30, 2);
+    vi.advanceTimersByTime(HOLD_MS - 200);
+    expect(showContextMenu, "the first finger's hold").toHaveBeenCalledTimes(1);
+  });
+
+  // Each pointer type has its own primary pointer (https://www.w3.org/TR/pointerevents3/#the-primary-pointer).
+  it("keeps the first finger's hold when a primary pen lands on another row", async () => {
+    const row = await rowA();
+    touch("pointerdown", row);
+    vi.advanceTimersByTime(200);
+    rowB().dispatchEvent(
+      new PointerEvent("pointerdown", {
+        pointerId: 2,
+        pointerType: "pen",
+        isPrimary: true,
+        clientX: AT.x + 30,
+        clientY: AT.y,
+        bubbles: true,
+      }),
+    );
+    vi.advanceTimersByTime(HOLD_MS - 200);
+    expect(showContextMenu, "the first finger's hold").toHaveBeenCalledTimes(1);
+    expect(vi.mocked(showContextMenu).mock.lastCall?.[1], "the first finger's point").toEqual(AT);
+  });
+
+  it("opens the platform's contextmenu on a row whose touch travelled past the slop", async () => {
+    const row = await rowA();
+    touch("pointerdown", row);
+    touch("pointermove", row, pointerDragActivation("touch").slopPx + 1);
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    expect(showContextMenu).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the lift's click to the row's drag when the drag refuses the hold", async () => {
+    const row = await rowA();
+    vi.mocked(yieldDragToMenu).mockReturnValueOnce(false);
+    touch("pointerdown", row);
+    vi.advanceTimersByTime(HOLD_MS);
+    touch("pointerup", row);
+    clickRow(row);
+    expect(getActiveTabId()).toBe(chatID("a"));
+  });
+
+  it("swallows the lift of a touch that caught a fling and stayed down past the hold", async () => {
+    const row = await rowA();
+    sections().dispatchEvent(new Event("scroll"));
+    touch("pointerdown", row);
+    vi.advanceTimersByTime(HOLD_MS);
+    touch("pointerup", row);
+    clickRow(row);
+    expect(showContextMenu).not.toHaveBeenCalled();
+    expect(getActiveTabId()).toBe(chatID("b"));
+  });
+
+  it("swallows the lift of a touch that caught a fling and got the platform's contextmenu", async () => {
+    const row = await rowA();
+    sections().dispatchEvent(new Event("scroll"));
+    touch("pointerdown", row);
+    vi.advanceTimersByTime(300);
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    touch("pointerup", row);
+    clickRow(row);
+    expect(showContextMenu).not.toHaveBeenCalled();
+    expect(getActiveTabId()).toBe(chatID("b"));
+  });
+
+  it("opens no menu from the platform's contextmenu for a pen that caught a fling, and swallows its lift", async () => {
+    const row = await rowA();
+    sections().dispatchEvent(new Event("scroll"));
+    touch("pointerdown", row, 0, 1, "pen");
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    touch("pointerup", row, 0, 1, "pen");
+    clickRow(row);
+    expect(showContextMenu).not.toHaveBeenCalled();
+    expect(getActiveTabId()).toBe(chatID("b"));
+  });
+
+  it("opens a pen's menu from the platform's contextmenu alone on a still list, and swallows its lift", async () => {
+    const row = await rowA();
+    touch("pointerdown", row, 0, 1, "pen");
+    vi.advanceTimersByTime(HOLD_MS);
+    expect(showContextMenu, "by time alone").not.toHaveBeenCalled();
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    expect(showContextMenu).toHaveBeenCalledTimes(1);
+    touch("pointerup", row, 0, 1, "pen");
+    clickRow(row);
     expect(getActiveTabId()).toBe(chatID("b"));
   });
 

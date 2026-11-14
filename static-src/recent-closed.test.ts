@@ -113,6 +113,7 @@ import { adoptRetention } from "./retention.js";
 import { formatClock, setClock } from "./locale-time.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_TAB_CHAT } from "./icons.js";
+import { TOUCH_SLOP_PX } from "./context-hold.js";
 import { LS_UI_STATE_KEY } from "./ls-keys.js";
 import {
   closeTab,
@@ -1051,6 +1052,35 @@ describe("the touch hold on a Recently closed row", () => {
     expect(menus()).toHaveLength(0);
   });
 
+  it("reopens nothing from a touch that caught a fling and stayed down past the hold", async () => {
+    await closedElsewhere({ "c-a": "Alpha" });
+    unfold();
+    const row = rowFor("Alpha");
+    el("tab-sections").dispatchEvent(new Event("scroll"));
+    touch("pointerdown", row);
+    await sleep(HOLD);
+    touch("pointerup", row);
+    clickOn(row);
+    await settle();
+    expect(menus()).toHaveLength(0);
+    expect(opens()).toHaveLength(0);
+  });
+
+  it("reopens nothing from a touch that caught a fling and got the platform's contextmenu", async () => {
+    await closedElsewhere({ "c-a": "Alpha" });
+    unfold();
+    const row = rowFor("Alpha");
+    el("tab-sections").dispatchEvent(new Event("scroll"));
+    touch("pointerdown", row);
+    await sleep(300);
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    touch("pointerup", row);
+    clickOn(row);
+    await settle();
+    expect(menus()).toHaveLength(0);
+    expect(opens()).toHaveLength(0);
+  });
+
   it("reopens from a tap that caught a fling", async () => {
     await closedElsewhere({ "c-a": "Alpha" });
     unfold();
@@ -1063,6 +1093,28 @@ describe("the touch hold on a Recently closed row", () => {
     expect(opens()).toHaveLength(1);
     // The shell's `#tab-sections` outlives the case: its scroll must not make the next case's touch a fling.
     await sleep(150);
+  });
+
+  it("reopens from the lift of a touch that travelled past the slop", async () => {
+    await closedElsewhere({ "c-a": "Alpha" });
+    unfold();
+    const row = rowFor("Alpha");
+    touch("pointerdown", row);
+    const box = row.getBoundingClientRect();
+    row.dispatchEvent(
+      new PointerEvent("pointermove", {
+        pointerType: "touch",
+        pointerId: 7,
+        isPrimary: true,
+        bubbles: true,
+        clientX: box.left + 10 + TOUCH_SLOP_PX + 1,
+        clientY: box.top + 5,
+      }),
+    );
+    touch("pointerup", row);
+    clickOn(row);
+    await settle();
+    expect(opens()).toHaveLength(1);
   });
 
   it("lets the next tap on the row reopen it", async () => {

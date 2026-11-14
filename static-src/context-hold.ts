@@ -45,75 +45,103 @@ export function caughtFling(e: PointerEvent): boolean {
   return false;
 }
 
+/** `pending` until settled once: `menu` opened one, `refused` was a caught fling reaching its hold or a
+ *  platform `contextmenu`, `ended` travelled past the slop or was refused by `mayOpen` and lifts as a tap. */
+type Outcome = "pending" | "menu" | "refused" | "ended";
+
+interface Press {
+  readonly id: number;
+  readonly type: string;
+  readonly target: HTMLElement;
+  readonly fling: boolean;
+  readonly x: number;
+  readonly y: number;
+  timer: number | null;
+  outcome: Outcome;
+}
+
+/** The document's one touch or pen press, from its `pointerdown` to its pointer's lift or cancel. */
+let press: Press | null = null;
+
+function settle(p: Press, outcome: Exclude<Outcome, "pending">): void {
+  p.outcome = outcome;
+  if (p.timer !== null) {
+    clearTimeout(p.timer);
+    p.timer = null;
+  }
+}
+
+function dropPress(): void {
+  if (press?.timer != null) {
+    clearTimeout(press.timer);
+  }
+  press = null;
+  window.removeEventListener("pointermove", onMove, true);
+  window.removeEventListener("pointerup", onLift, true);
+  window.removeEventListener("pointercancel", onCancel, true);
+}
+
+function onMove(e: PointerEvent): void {
+  if (
+    e.pointerId === press?.id &&
+    press.outcome === "pending" &&
+    Math.hypot(e.clientX - press.x, e.clientY - press.y) > TOUCH_SLOP_PX
+  ) {
+    settle(press, "ended");
+  }
+}
+
+function onCancel(e: PointerEvent): void {
+  if (e.pointerId === press?.id) {
+    dropPress();
+  }
+}
+
+function onLift(e: PointerEvent): void {
+  if (e.pointerId !== press?.id) {
+    return;
+  }
+  const { outcome } = press;
+  dropPress();
+  if (outcome === "menu" || outcome === "refused") {
+    swallowLiftClick();
+  }
+}
+
+/** Whether `target`'s `contextmenu` may open its menu, settling the live press it belongs to. A press
+ *  on another row refuses it: a second finger's long press starts nothing. */
+function menuFromContextEvent(target: HTMLElement): boolean {
+  if (press === null) {
+    return true;
+  }
+  if (press.target !== target) {
+    return false;
+  }
+  switch (press.outcome) {
+    case "pending":
+      settle(press, press.fling ? "refused" : "menu");
+      return !press.fling;
+    case "ended":
+      return true;
+    case "menu":
+    case "refused":
+      return false;
+  }
+}
+
 /** Open `target`'s menu with `open(x, y)` from its `contextmenu` or from a touch held `HOLD_MS` within the slop,
  *  once per press: iOS WebKit fires no `contextmenu` for a long press (https://bugs.webkit.org/show_bug.cgi?id=213953).
- *  A touch that caught a fling opens no menu by either path, and `mayOpen`, asked when the hold completes, can
- *  refuse it. The held touch's lift click is swallowed. */
+ *  A touch or pen press that caught a fling opens no menu by either path, and `mayOpen`, asked when the hold
+ *  completes, can refuse it. The lift's click is swallowed after a menu or a refusal. */
 export function bindContextPress(
   target: HTMLElement,
   open: (x: number, y: number) => void,
   mayOpen: () => boolean = () => true,
 ): void {
   watchForFlings();
-  let press: {
-    id: number;
-    x: number;
-    y: number;
-    timer: number | null;
-    opened: boolean;
-    fling: boolean;
-  } | null = null;
-  const endPress = (): void => {
-    if (press?.timer != null) {
-      clearTimeout(press.timer);
-    }
-    press = null;
-    window.removeEventListener("pointermove", onMove, true);
-    window.removeEventListener("pointerup", onLift, true);
-    window.removeEventListener("pointercancel", onCancel, true);
-  };
-  const onMove = (e: PointerEvent): void => {
-    if (
-      e.pointerId === press?.id &&
-      press.timer !== null &&
-      Math.hypot(e.clientX - press.x, e.clientY - press.y) > TOUCH_SLOP_PX
-    ) {
-      endPress();
-    }
-  };
-  const onCancel = (e: PointerEvent): void => {
-    if (e.pointerId === press?.id) {
-      endPress();
-    }
-  };
-  const onLift = (e: PointerEvent): void => {
-    if (e.pointerId !== press?.id) {
-      return;
-    }
-    const opened = press.opened;
-    endPress();
-    if (opened) {
-      swallowLiftClick();
-    }
-  };
-  const menuFromPress = (): boolean => {
-    if (press === null) {
-      return true;
-    }
-    if (press.opened || press.fling) {
-      return false;
-    }
-    press.opened = true;
-    if (press.timer !== null) {
-      clearTimeout(press.timer);
-      press.timer = null;
-    }
-    return true;
-  };
-
   target.addEventListener("contextmenu", (e) => {
     e.preventDefault();
-    if (!menuFromPress()) {
+    if (!menuFromContextEvent(target)) {
       return;
     }
     // A keyboard-opened menu carries no point of its own.
@@ -122,26 +150,39 @@ export function bindContextPress(
     open(keyed ? box.left : e.clientX, keyed ? box.bottom : e.clientY);
   });
   target.addEventListener("pointerdown", (e) => {
-    // A second finger (never primary) leaves the first finger's hold, and its lift's swallow, alone.
-    if (e.pointerType !== "touch" || (press !== null && !e.isPrimary)) {
+    if (e.pointerType !== "touch" && e.pointerType !== "pen") {
       return;
     }
-    endPress();
-    const p = {
+    // A primary pointer of the press's own type means its lift was never seen
+    // (https://www.w3.org/TR/pointerevents3/#the-primary-pointer); any other is a second pointer.
+    if (press !== null && !(e.isPrimary && e.pointerType === press.type)) {
+      return;
+    }
+    dropPress();
+    const p: Press = {
       id: e.pointerId,
+      type: e.pointerType,
+      target,
+      fling: caughtFling(e),
       x: e.clientX,
       y: e.clientY,
-      timer: null as number | null,
-      opened: false,
-      // Not `opened`: a tap that caught a fling still clicks its row.
-      fling: caughtFling(e),
+      timer: null,
+      outcome: "pending",
     };
-    p.timer = window.setTimeout(() => {
-      p.timer = null;
-      if (press === p && mayOpen() && menuFromPress()) {
-        open(p.x, p.y);
-      }
-    }, HOLD_MS);
+    // Only a touch arms the hold: a pen's menu comes from the platform's `contextmenu`.
+    if (p.type === "touch") {
+      // Every settle and drop clears this timer, so it fires only for the live, pending press.
+      p.timer = window.setTimeout(() => {
+        if (p.fling) {
+          settle(p, "refused");
+        } else if (mayOpen()) {
+          settle(p, "menu");
+          open(p.x, p.y);
+        } else {
+          settle(p, "ended");
+        }
+      }, HOLD_MS);
+    }
     press = p;
     // Passive: a blocking window `pointermove` listener makes WebKit lay the page out again (`tabs-drag.ts`).
     window.addEventListener("pointermove", onMove, { capture: true, passive: true });
