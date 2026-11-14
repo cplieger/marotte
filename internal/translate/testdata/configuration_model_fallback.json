@@ -1,0 +1,1897 @@
+{
+ "clear": {
+  "params": {
+   "krn": "krn:::setting/modelFallback/model-a",
+   "layer": "user-synced",
+   "value": []
+  },
+  "result": {
+   "setting": {
+    "krn": "krn:::setting/modelFallback/model-a",
+    "value": [
+     "model-k"
+    ],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [
+        "model-k"
+       ],
+       "used": true
+      }
+     }
+    ]
+   }
+  }
+ },
+ "connection": {
+  "view": {
+   "observer": "connection"
+  },
+  "layers": [
+   {
+    "id": "kiro-agent-defaults",
+    "name": "Kiro Defaults"
+   },
+   {
+    "id": "client-defaults",
+    "name": "Client defaults"
+   },
+   {
+    "id": "kiro-service",
+    "name": "Kiro"
+   },
+   {
+    "id": "organization",
+    "name": "Your Organization"
+   },
+   {
+    "id": "machine",
+    "name": "Machine Administrator"
+   },
+   {
+    "id": "user-synced",
+    "name": "Cloud Config"
+   },
+   {
+    "id": "user-local",
+    "name": "Local Settings (~/.kiro)"
+   },
+   {
+    "id": "kiro-agent",
+    "name": "Kiro Agent"
+   },
+   {
+    "id": "client-connection",
+    "name": "Marotte for Kiro"
+   }
+  ],
+  "settings": [
+   {
+    "krn": "krn:::setting/knowledge",
+    "value": "off",
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-agent",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-agent",
+      "stated": {
+       "value": "off",
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/memorySync",
+    "value": "off",
+    "compose": "ceiling",
+    "assertions": [
+     {
+      "layer": "user-synced",
+      "compose": "ceiling"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "user-synced",
+      "stated": {
+       "value": "off",
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/auto",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-a",
+    "value": [
+     "model-k"
+    ],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [
+        "model-k"
+       ],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-b",
+    "value": [
+     "model-j"
+    ],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [
+        "model-j"
+       ],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-c",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-d",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-e",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-f",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-g",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-h",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-i",
+    "value": [
+     "model-k"
+    ],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [
+        "model-k"
+       ],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-j",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-k",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-l",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-m",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-n",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-o",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-p",
+    "value": [
+     "model-k"
+    ],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [
+        "model-k"
+       ],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-q",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-r",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-s",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-t",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-u",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-v",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-w",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   }
+  ],
+  "resources": [
+   {
+    "type": "steering",
+    "compose": "append",
+    "assertions": [
+     {
+      "layer": "kiro-agent-defaults",
+      "compose": "append"
+     }
+    ],
+    "items": [
+     {
+      "krn": "krn:kiro-agent-defaults::steering/architecture-selection",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "architecture-selection",
+       "inclusion": "manual",
+       "uri": "builtin:architecture-selection"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::steering/quick-spec",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "quick-spec",
+       "inclusion": "manual",
+       "uri": "builtin:quick-spec"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::steering/bug-fix",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "bug-fix",
+       "inclusion": "manual",
+       "uri": "builtin:bug-fix"
+      }
+     }
+    ],
+    "pureAssertions": []
+   },
+   {
+    "type": "agent",
+    "compose": "append",
+    "assertions": [
+     {
+      "layer": "kiro-agent-defaults",
+      "compose": "append"
+     }
+    ],
+    "items": [
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-auto-researcher",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-auto-researcher",
+       "name": "wf-auto-researcher",
+       "description": "Autonomous research subagent. Reads directions, runs experiments, benchmarks results, and commits improvements."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-code-reviewer",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-code-reviewer",
+       "name": "wf-code-reviewer",
+       "description": "Targeted review of changed behavior and required verification. Reports blocking findings and writes the workflow verdict."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-coder",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-coder",
+       "name": "wf-coder",
+       "description": "Reads files, edits code, runs tests, and commits. General implementation agent."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-design",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-design",
+       "name": "wf-design",
+       "description": "Authors requirements and technical design documents for a feature, exploring the codebase so designs fit existing patterns."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-design-reviewer",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-design-reviewer",
+       "name": "wf-design-reviewer",
+       "description": "Reviews technical designs for ambiguity, gaps, and unverified assumptions before implementation begins. Mechanical verdict: any HIGH/MEDIUM finding blocks."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-planner",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-planner",
+       "name": "wf-planner",
+       "description": "Investigates a codebase and produces an ordered implementation plan — from an approved design when one is provided, or by making the design decisions itself when not."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-pr-responder",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-pr-responder",
+       "name": "wf-pr-responder",
+       "description": "Responds to PR review comments and CI feedback."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-pr-submitter",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-pr-submitter",
+       "name": "wf-pr-submitter",
+       "description": "Opens a pull request from a branch and records the PR metadata."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-review-aggregator",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-review-aggregator",
+       "name": "wf-review-aggregator",
+       "description": "Merges multiple review outputs into a single consolidated review verdict."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-workflow-creator",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-workflow-creator",
+       "name": "wf-workflow-creator",
+       "description": "Runs as a workflow step that designs the run's steps from a brief or an edit request, saves them with save_workflow_definition, and adds them to the run with update_workflow."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/semantic_reviewer",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "semantic_reviewer",
+       "name": "semantic_reviewer",
+       "description": "Behavioral, narrative code review of a local or PR diff. Writes a review document and a verdict."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/Explore",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "Explore",
+       "name": "Explore",
+       "description": "Analyze and understand a codebase using tree-sitter parsing and dependency graphs. Use when the user asks to analyze or explore their codebase, or to generate system specs for it — answers structural questions about architecture, data flows, and dependencies from searches, reads and the code index, and writes system specs (.kiro/specs/system) with code_index_explore when deep analysis is on."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/create-spec",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "create-spec",
+       "name": "create-spec",
+       "description": "Encourages spec-driven development by producing guided artifacts — a requirements, design, and task-list specification — for a feature request."
+      }
+     }
+    ],
+    "pureAssertions": []
+   },
+   {
+    "type": "workflow",
+    "compose": "append",
+    "assertions": [
+     {
+      "layer": "kiro-agent-defaults",
+      "compose": "append"
+     }
+    ],
+    "items": [
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/autoresearch",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "autoresearch"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/feature-pipeline",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "feature-pipeline"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/goal",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "goal"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/investigate",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "investigate"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/publish-pr",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "publish-pr"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/ralph",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "ralph"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/semantic-review-multi-model",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "semantic-review-multi-model"
+      }
+     }
+    ],
+    "pureAssertions": []
+   }
+  ]
+ },
+ "connection_configured": {
+  "view": {
+   "observer": "connection"
+  },
+  "layers": [
+   {
+    "id": "kiro-agent-defaults",
+    "name": "Kiro Defaults"
+   },
+   {
+    "id": "client-defaults",
+    "name": "Client defaults"
+   },
+   {
+    "id": "kiro-service",
+    "name": "Kiro"
+   },
+   {
+    "id": "organization",
+    "name": "Your Organization"
+   },
+   {
+    "id": "machine",
+    "name": "Machine Administrator"
+   },
+   {
+    "id": "user-synced",
+    "name": "Cloud Config"
+   },
+   {
+    "id": "user-local",
+    "name": "Local Settings (~/.kiro)"
+   },
+   {
+    "id": "kiro-agent",
+    "name": "Kiro Agent"
+   },
+   {
+    "id": "client-connection",
+    "name": "Marotte for Kiro"
+   }
+  ],
+  "settings": [
+   {
+    "krn": "krn:::setting/knowledge",
+    "value": "off",
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-agent",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-agent",
+      "stated": {
+       "value": "off",
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/memorySync",
+    "value": "off",
+    "compose": "ceiling",
+    "assertions": [
+     {
+      "layer": "user-synced",
+      "compose": "ceiling"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "user-synced",
+      "stated": {
+       "value": "off",
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-a",
+    "value": [
+     "model-b"
+    ],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "user-synced",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [
+        "model-k"
+       ],
+       "used": false
+      }
+     },
+     {
+      "layer": "user-synced",
+      "stated": {
+       "value": [
+        "model-b"
+       ],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/auto",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-b",
+    "value": [
+     "model-j"
+    ],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [
+        "model-j"
+       ],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-c",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-d",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-e",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-f",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-g",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-h",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-i",
+    "value": [
+     "model-k"
+    ],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [
+        "model-k"
+       ],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-j",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-k",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-l",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-m",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-n",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-o",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-p",
+    "value": [
+     "model-k"
+    ],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [
+        "model-k"
+       ],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-q",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-r",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-s",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-t",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-u",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-v",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   },
+   {
+    "krn": "krn:::setting/modelFallback/model-w",
+    "value": [],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "kiro-service",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [],
+       "used": true
+      }
+     }
+    ]
+   }
+  ],
+  "resources": [
+   {
+    "type": "steering",
+    "compose": "append",
+    "assertions": [
+     {
+      "layer": "kiro-agent-defaults",
+      "compose": "append"
+     }
+    ],
+    "items": [
+     {
+      "krn": "krn:kiro-agent-defaults::steering/architecture-selection",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "architecture-selection",
+       "inclusion": "manual",
+       "uri": "builtin:architecture-selection"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::steering/quick-spec",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "quick-spec",
+       "inclusion": "manual",
+       "uri": "builtin:quick-spec"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::steering/bug-fix",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "bug-fix",
+       "inclusion": "manual",
+       "uri": "builtin:bug-fix"
+      }
+     }
+    ],
+    "pureAssertions": []
+   },
+   {
+    "type": "agent",
+    "compose": "append",
+    "assertions": [
+     {
+      "layer": "kiro-agent-defaults",
+      "compose": "append"
+     }
+    ],
+    "items": [
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-auto-researcher",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-auto-researcher",
+       "name": "wf-auto-researcher",
+       "description": "Autonomous research subagent. Reads directions, runs experiments, benchmarks results, and commits improvements."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-code-reviewer",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-code-reviewer",
+       "name": "wf-code-reviewer",
+       "description": "Targeted review of changed behavior and required verification. Reports blocking findings and writes the workflow verdict."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-coder",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-coder",
+       "name": "wf-coder",
+       "description": "Reads files, edits code, runs tests, and commits. General implementation agent."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-design",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-design",
+       "name": "wf-design",
+       "description": "Authors requirements and technical design documents for a feature, exploring the codebase so designs fit existing patterns."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-design-reviewer",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-design-reviewer",
+       "name": "wf-design-reviewer",
+       "description": "Reviews technical designs for ambiguity, gaps, and unverified assumptions before implementation begins. Mechanical verdict: any HIGH/MEDIUM finding blocks."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-planner",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-planner",
+       "name": "wf-planner",
+       "description": "Investigates a codebase and produces an ordered implementation plan — from an approved design when one is provided, or by making the design decisions itself when not."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-pr-responder",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-pr-responder",
+       "name": "wf-pr-responder",
+       "description": "Responds to PR review comments and CI feedback."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-pr-submitter",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-pr-submitter",
+       "name": "wf-pr-submitter",
+       "description": "Opens a pull request from a branch and records the PR metadata."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-review-aggregator",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-review-aggregator",
+       "name": "wf-review-aggregator",
+       "description": "Merges multiple review outputs into a single consolidated review verdict."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/wf-workflow-creator",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "wf-workflow-creator",
+       "name": "wf-workflow-creator",
+       "description": "Runs as a workflow step that designs the run's steps from a brief or an edit request, saves them with save_workflow_definition, and adds them to the run with update_workflow."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/semantic_reviewer",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "semantic_reviewer",
+       "name": "semantic_reviewer",
+       "description": "Behavioral, narrative code review of a local or PR diff. Writes a review document and a verdict."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/Explore",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "Explore",
+       "name": "Explore",
+       "description": "Analyze and understand a codebase using tree-sitter parsing and dependency graphs. Use when the user asks to analyze or explore their codebase, or to generate system specs for it — answers structural questions about architecture, data flows, and dependencies from searches, reads and the code index, and writes system specs (.kiro/specs/system) with code_index_explore when deep analysis is on."
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::agent/create-spec",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "id": "create-spec",
+       "name": "create-spec",
+       "description": "Encourages spec-driven development by producing guided artifacts — a requirements, design, and task-list specification — for a feature request."
+      }
+     }
+    ],
+    "pureAssertions": []
+   },
+   {
+    "type": "workflow",
+    "compose": "append",
+    "assertions": [
+     {
+      "layer": "kiro-agent-defaults",
+      "compose": "append"
+     }
+    ],
+    "items": [
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/autoresearch",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "autoresearch"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/feature-pipeline",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "feature-pipeline"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/goal",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "goal"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/investigate",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "investigate"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/publish-pr",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "publish-pr"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/ralph",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "ralph"
+      }
+     },
+     {
+      "krn": "krn:kiro-agent-defaults::workflow/semantic-review-multi-model",
+      "layer": "kiro-agent-defaults",
+      "standing": {
+       "kind": "active"
+      },
+      "value": {
+       "name": "semantic-review-multi-model"
+      }
+     }
+    ],
+    "pureAssertions": []
+   }
+  ]
+ },
+ "note": "_kiro/configuration/getState and set captured from kiro-cli 3.2.1 on a signed-in account: the connection view, one model's fallback set at user-synced, the view after it, a write naming the model itself, a write naming two targets, a write for Auto, and the clearing write.",
+ "refused_auto": {
+  "error": {
+   "message": "Fallback preference not stored: The selected model is not eligible for model fallback",
+   "code": -32000
+  },
+  "params": {
+   "krn": "krn:::setting/modelFallback/auto",
+   "layer": "user-synced",
+   "value": [
+    "model-b"
+   ]
+  }
+ },
+ "refused_self": {
+  "error": {
+   "message": "Invalid params: 'model-a' cannot be its own fallback",
+   "code": -32602
+  },
+  "params": {
+   "krn": "krn:::setting/modelFallback/model-a",
+   "layer": "user-synced",
+   "value": [
+    "model-a"
+   ]
+  }
+ },
+ "refused_two_targets": {
+  "error": {
+   "message": "Invalid params: modelFallback/model-a does not accept [\"model-b\",\"model-c\"] at user-synced",
+   "code": -32602
+  },
+  "params": {
+   "krn": "krn:::setting/modelFallback/model-a",
+   "layer": "user-synced",
+   "value": [
+    "model-b",
+    "model-c"
+   ]
+  }
+ },
+ "set": {
+  "params": {
+   "krn": "krn:::setting/modelFallback/model-a",
+   "layer": "user-synced",
+   "value": [
+    "model-b"
+   ]
+  },
+  "result": {
+   "setting": {
+    "krn": "krn:::setting/modelFallback/model-a",
+    "value": [
+     "model-b"
+    ],
+    "compose": "replace",
+    "assertions": [
+     {
+      "layer": "user-synced",
+      "compose": "replace"
+     }
+    ],
+    "contributions": [
+     {
+      "layer": "kiro-service",
+      "stated": {
+       "value": [
+        "model-k"
+       ],
+       "used": false
+      }
+     },
+     {
+      "layer": "user-synced",
+      "stated": {
+       "value": [
+        "model-b"
+       ],
+       "used": true
+      }
+     }
+    ]
+   }
+  }
+ }
+}

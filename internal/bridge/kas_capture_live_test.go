@@ -1275,3 +1275,208 @@ func buildElicitServer(t *testing.T) string {
 	}
 	return out
 }
+
+const (
+	modelFallbackFixture = "../translate/testdata/configuration_model_fallback.json"
+	modelFallbackKRN     = "krn:::setting/modelFallback/"
+)
+
+// TestCaptureModelFallbackView rewrites internal/translate/testdata/configuration_model_fallback.json from a signed-in
+// engine: the connection view, one model's fallback written at user-synced with its answer and the view after it, two
+// writes KAS refuses, and the clearing write. It changes the account's real choice for that model and puts the
+// chain it found back before it returns.
+func TestCaptureModelFallbackView(t *testing.T) {
+	if !*kasCapture {
+		t.Skip("-kas-capture not set: the capture writes the account's model fallback and rewrites testdata")
+	}
+	bin, pin := liveKiroCLI(t)
+	c := newCapture(t, &captureEnv{cli: bin, kiroCLI: pin})
+	t.Cleanup(c.shutdown)
+	ctx, cancel := context.WithTimeout(t.Context(), turnBudget)
+	defer cancel()
+	e, err := c.startEngine(ctx, marotte.EngineFeatures{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.newSession(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	catalog := c.awaitModelCatalog(t)
+	call := func(method string, params any) map[string]any {
+		resp, err := e.Call(ctx, method, params)
+		out := map[string]any{"params": params}
+		if rpc, refused := errors.AsType[*marotte.RPCError](err); refused {
+			out["error"] = rpc
+			return out
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+		out["result"] = resp.Result
+		return out
+	}
+	getState := func() json.RawMessage {
+		got := call("_kiro/configuration/getState", map[string]any{"observer": "connection"})
+		raw, ok := got["result"].(json.RawMessage)
+		if !ok {
+			t.Fatalf("connection getState refused: %v", got["error"])
+		}
+		return raw
+	}
+	set := func(model string, value []string) map[string]any {
+		return call("_kiro/configuration/set", map[string]any{
+			"krn": modelFallbackKRN + model, "value": value, "layer": "user-synced",
+		})
+	}
+
+	before := getState()
+	rows := modelFallbackRows(t, before)
+	// Auto routes by itself, so KAS refuses a fallback for it.
+	picks := slices.DeleteFunc(slices.Clone(rows), func(r fallbackRow) bool { return r.model == marotte.ModelAuto })
+	if len(picks) < 3 {
+		t.Fatalf("the connection view states %d modelFallback rows past Auto, want one per served model", len(picks))
+	}
+	model, target, other := picks[0], picks[1].model, picks[2].model
+	t.Cleanup(func() {
+		if _, err := e.Call(context.Background(), "_kiro/configuration/set", map[string]any{
+			"krn": modelFallbackKRN + model.model, "value": model.account, "layer": "user-synced",
+		}); err != nil {
+			t.Errorf("put %s's fallback back to %v: %v", model.model, model.account, err)
+		}
+	})
+	fx := map[string]any{
+		"note": "_kiro/configuration/getState and set captured from kiro-cli " + pin + " on a signed-in account: the " +
+			"connection view, one model's fallback set at user-synced, the view after it, a write naming the model " +
+			"itself, a write naming two targets, a write for Auto, and the clearing write.",
+		"connection":            before,
+		"set":                   set(model.model, []string{target}),
+		"connection_configured": getState(),
+		"refused_self":          set(model.model, []string{model.model}),
+		"refused_two_targets":   set(model.model, []string{target, other}),
+		"refused_auto":          set(marotte.ModelAuto, []string{target}),
+		"clear":                 set(model.model, []string{}),
+	}
+	raw, err := json.Marshal(fx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := scrubFallbackCapture(catalog, c.scrub(raw), rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pretty bytes.Buffer
+	if err := json.Indent(&pretty, out, "", " "); err != nil {
+		t.Fatal(err)
+	}
+	pretty.WriteByte('\n')
+	if err := os.WriteFile(modelFallbackFixture, pretty.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// fallbackRow is one modelFallback row of a view: its model and the chain the account layer states (empty when none).
+type fallbackRow struct {
+	model   string
+	account []string
+}
+
+func modelFallbackRows(t *testing.T, view json.RawMessage) []fallbackRow {
+	t.Helper()
+	var v struct {
+		Settings []struct {
+			KRN           string `json:"krn"`
+			Contributions []struct {
+				Layer  string `json:"layer"`
+				Stated *struct {
+					Value json.RawMessage `json:"value"`
+				} `json:"stated"`
+			} `json:"contributions"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal(view, &v); err != nil {
+		t.Fatalf("decode the connection view: %v", err)
+	}
+	var rows []fallbackRow
+	for _, s := range v.Settings {
+		model, ok := strings.CutPrefix(s.KRN, modelFallbackKRN)
+		if !ok {
+			continue
+		}
+		row := fallbackRow{model: model, account: []string{}}
+		for _, k := range s.Contributions {
+			if k.Layer == "user-synced" && k.Stated != nil {
+				if err := json.Unmarshal(k.Stated.Value, &row.account); err != nil {
+					t.Fatalf("%s's account chain: %v", model, err)
+				}
+			}
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+// awaitModelCatalog waits up to 60 s for a frame carrying the model catalog and answers the scrubbed frames so far,
+// which scrubModels reads the catalog from.
+func (c *capture) awaitModelCatalog(t *testing.T) []byte {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		c.mu.Lock()
+		var buf bytes.Buffer
+		for _, l := range c.lines {
+			buf.Write(l.Frame)
+			buf.WriteByte('\n')
+		}
+		c.mu.Unlock()
+		var opts []modelOption
+		for line := range bytes.Lines(buf.Bytes()) {
+			var v any
+			if json.Unmarshal(line, &v) == nil {
+				collectModelOptions(v, &opts)
+			}
+		}
+		if len(opts) > 0 {
+			return c.scrub(buf.Bytes())
+		}
+		time.Sleep(time.Second)
+	}
+	t.Fatal("no model catalog reached the session within 60 s")
+	return nil
+}
+
+// scrubFallbackCapture replaces each row's model id with scrubModels' placeholder wherever it appears in fx, the
+// setting keys and KAS's refusal prose included, then runs publishable over the catalog and fx together, so a model
+// the catalog does not name is refused rather than published.
+func scrubFallbackCapture(catalog, fx []byte, rows []fallbackRow) ([]byte, error) {
+	ids := make([]string, 0, len(rows))
+	for _, r := range rows {
+		ids = append(ids, r.model)
+	}
+	list, _ := json.Marshal(ids)
+	scrubbed, err := scrubModels(append(slices.Clone(catalog), list...))
+	if err != nil {
+		return nil, err
+	}
+	lines := slices.Collect(bytes.Lines(scrubbed))
+	var placeholders []string
+	if err := json.Unmarshal(lines[len(lines)-1], &placeholders); err != nil || len(placeholders) != len(ids) {
+		return nil, fmt.Errorf("map the row models to placeholders: %v", err)
+	}
+	pairs := make([][2]string, len(ids))
+	for i := range ids {
+		if !strings.HasPrefix(placeholders[i], "model-") && placeholders[i] != marotte.ModelAuto {
+			return nil, fmt.Errorf("row model %d is not in the catalog, so it cannot be scrubbed", i)
+		}
+		pairs[i] = [2]string{ids[i], placeholders[i]}
+	}
+	slices.SortFunc(pairs, func(a, b [2]string) int { return len(b[0]) - len(a[0]) })
+	for _, p := range pairs {
+		fx = bytes.ReplaceAll(fx, []byte(p[0]), []byte(p[1]))
+	}
+	checked, err := publishable(append(append(slices.Clone(catalog), '\n'), fx...), os.TempDir())
+	if err != nil {
+		return nil, fmt.Errorf("capture %w", err)
+	}
+	checkedLines := slices.Collect(bytes.Lines(checked))
+	return bytes.TrimSpace(checkedLines[len(checkedLines)-1]), nil
+}

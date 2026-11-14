@@ -1,7 +1,9 @@
 package translate
 
 import (
+	"cmp"
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -74,6 +76,109 @@ func configurationValue(raw json.RawMessage) string {
 		return displayText(s)
 	}
 	return displayText(string(raw))
+}
+
+// modelFallbackKRN prefixes the one modelFallback row KAS states per served model.
+const modelFallbackKRN = configurationSettingKRN + "modelFallback/"
+
+// fallbackSetting is one modelFallback row: a chain of model ids per layer, composed into Value.
+type fallbackSetting struct {
+	KRN           string                 `json:"krn"`
+	Compose       string                 `json:"compose"`
+	Value         []string               `json:"value"`
+	Contributions []fallbackContribution `json:"contributions"`
+}
+
+type fallbackContribution struct {
+	Stated *struct {
+		Value []string `json:"value"`
+		Used  bool     `json:"used"`
+	} `json:"stated"`
+	Layer string `json:"layer"`
+}
+
+// layers names the last stated contribution's layer the compose used, and the first target of the last
+// vendor-layer statement ("" when it states an empty chain).
+func (st *fallbackSetting) layers() (usedLayer, vendorDefault string) {
+	for _, c := range st.Contributions {
+		if c.Stated == nil {
+			continue
+		}
+		if c.Stated.Used {
+			usedLayer = c.Layer
+		}
+		if slices.Contains(vendorFallbackLayers, c.Layer) {
+			vendorDefault = ""
+			if len(c.Stated.Value) > 0 {
+				vendorDefault = displayText(c.Stated.Value[0])
+			}
+		}
+	}
+	return usedLayer, vendorDefault
+}
+
+// hasEmptyID reports a chain, composed or stated, holding an empty model id: kiro-cli's terminal UI refuses that
+// row.
+func (st *fallbackSetting) hasEmptyID() bool {
+	if slices.Contains(st.Value, "") {
+		return true
+	}
+	return slices.ContainsFunc(st.Contributions, func(c fallbackContribution) bool {
+		return c.Stated != nil && slices.Contains(c.Stated.Value, "")
+	})
+}
+
+// vendorFallbackLayers state Kiro's own chains; a chain composed from any other layer is the account's or an
+// administrator's choice. kiro-cli's terminal UI reads the same two.
+var vendorFallbackLayers = []string{"kiro-service", agentDefaultsLayer}
+
+// DecodeModelFallbacks reads a CONNECTION view's modelFallback rows, sorted by model, reduced as kiro-cli's terminal
+// UI reduces them. A row whose chain is not a list of model ids is dropped. ok is false for a session view or an
+// undecodable frame.
+func DecodeModelFallbacks(raw json.RawMessage) ([]marotte.ModelFallback, bool) {
+	var s struct {
+		View struct {
+			Observer string `json:"observer"`
+		} `json:"view"`
+		Settings []json.RawMessage `json:"settings"`
+	}
+	if json.Unmarshal(raw, &s) != nil || s.View.Observer != "connection" {
+		return nil, false
+	}
+	out := []marotte.ModelFallback{}
+	for _, row := range s.Settings {
+		if f, ok := DecodeModelFallbackSetting(row); ok {
+			out = append(out, f)
+		}
+	}
+	slices.SortFunc(out, func(a, b marotte.ModelFallback) int { return cmp.Compare(a.Model, b.Model) })
+	return out, true
+}
+
+// DecodeModelFallbackSetting reduces one composed setting, as _kiro/configuration/set answers it; ok is false for
+// any other setting or a malformed chain.
+func DecodeModelFallbackSetting(raw json.RawMessage) (marotte.ModelFallback, bool) {
+	var st fallbackSetting
+	if json.Unmarshal(raw, &st) != nil {
+		return marotte.ModelFallback{}, false
+	}
+	model, ok := strings.CutPrefix(st.KRN, modelFallbackKRN)
+	if !ok || model == "" || st.hasEmptyID() {
+		return marotte.ModelFallback{}, false
+	}
+	usedLayer, vendorDefault := st.layers()
+	f := marotte.ModelFallback{Model: displayText(model), VendorDefault: vendorDefault}
+	configured := usedLayer != "" && !slices.Contains(vendorFallbackLayers, usedLayer) && len(st.Value) > 0
+	if configured {
+		f.Configured = displayText(st.Value[0])
+	}
+	switch {
+	case st.Compose == "locked":
+		f.ReadOnlyReason = "locked"
+	case configured && len(st.Value) > 1:
+		f.ReadOnlyReason = "multiple-targets"
+	}
+	return f, true
 }
 
 // agentDefaultsLayer holds KAS's own helper agents (the wf-* step agents, Explore): subagents a

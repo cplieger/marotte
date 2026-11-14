@@ -459,6 +459,16 @@ func (f fakeKiroDefaults) KiroDefaults() map[string]marotte.KiroDefault { return
 
 func (fakeKiroDefaults) HookStatusShown() bool { return true }
 
+func (fakeKiroDefaults) ModelFallbacks() []marotte.ModelFallback { return []marotte.ModelFallback{} }
+
+// withFallbacks is a kiro-cli that reported a view stating these model fallbacks.
+type withFallbacks struct {
+	fakeKiroDefaults
+	rows []marotte.ModelFallback
+}
+
+func (f withFallbacks) ModelFallbacks() []marotte.ModelFallback { return f.rows }
+
 // hookStatusOff is a kiro-cli whose hooks.showStatus is off.
 type hookStatusOff struct{ fakeKiroDefaults }
 
@@ -511,6 +521,24 @@ func TestSettingsGet_KiroDefaultsIsAnEmptyObjectWithoutAReader(t *testing.T) {
 	handleSettingsGet(rec, settings.AgentDirs{Config: t.TempDir()}, nil)
 	if !strings.Contains(rec.Body.String(), `"kiro_defaults":{}`) {
 		t.Errorf("GET /api/settings = %s, want kiro_defaults as an empty object", rec.Body.String())
+	}
+}
+
+func TestSettingsGet_ModelFallbacksAreTheEngines(t *testing.T) {
+	rows := []marotte.ModelFallback{
+		{Model: "model-a", Configured: "model-b", VendorDefault: "model-k"},
+		{Model: "model-c", ReadOnlyReason: "locked"},
+	}
+	if got := getEffectiveWith(t, seedConfig(t, `{}`), withFallbacks{rows: rows}).ModelFallbacks; !slices.Equal(got, rows) {
+		t.Errorf("model_fallbacks = %+v, want the engine's %+v", got, rows)
+	}
+	if got := getEffectiveWith(t, seedConfig(t, `{not json`), withFallbacks{rows: rows}).ModelFallbacks; !slices.Equal(got, rows) {
+		t.Errorf("unreadable config: model_fallbacks = %+v, want the engine's %+v: they are not stored in config.json", got, rows)
+	}
+	rec := httptest.NewRecorder()
+	handleSettingsGet(rec, settings.AgentDirs{Config: t.TempDir()}, nil)
+	if !strings.Contains(rec.Body.String(), `"model_fallbacks":[]`) {
+		t.Errorf("GET /api/settings with no reader = %s, want model_fallbacks as an empty list", rec.Body.String())
 	}
 }
 

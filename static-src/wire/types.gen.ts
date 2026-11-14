@@ -829,6 +829,8 @@ export interface EffectiveSettings {
   additional_directories: string[];
   /** RejectedKeys are the stored keys whose value did not fit, each served as its default; never stored. */
   rejected_keys: string[];
+  /** ModelFallbacks is kiro-cli's fallback for each model it serves, empty until the engine reported a view. */
+  model_fallbacks: ModelFallback[];
   /**
  * ChatRetentionDays is -1 (keep forever), 0 (delete on close) or a day count.
  * Zero is the most destructive value in the document, so absent must never
@@ -2394,6 +2396,18 @@ export interface MeteringItem {
   unit_singular: string;
   unit_plural: string;
   value: number;
+}
+
+/**
+ * ModelFallback is kiro-cli's fallback for one model, as KAS composes the account's choice over Kiro's own.
+ * Configured is the model the account chose ("" when it follows Kiro), VendorDefault Kiro's own first
+ * target ("" when Kiro states none), and ReadOnlyReason "locked", "multiple-targets" or "" when editable.
+ */
+export interface ModelFallback {
+  model: string;
+  configured: string;
+  vendor_default: string;
+  read_only_reason: string;
 }
 
 /** NoticeReport is a page's report to POST /api/events/notice about the notice ID. */
