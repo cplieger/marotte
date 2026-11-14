@@ -100,7 +100,7 @@ func deleteDocRow(d docDeleter, row *KiroDoc) error {
 }
 
 // docTarget is one path a row's delete removes. A twin is removed only as a regular file: the
-// scan builds no agent from a directory, so a directory wearing the name is not this row's.
+// scan builds an agent from nothing else, so anything else wearing the name is not this row's.
 type docTarget struct {
 	path string
 	twin bool
@@ -129,8 +129,8 @@ func agentTwin(file string) string {
 }
 
 // presentDocTargets answers the targets to remove, or the refusal of the first one any delete
-// guard or a link refuses, before anything is removed. An absent target, or a twin that is
-// neither a link nor a regular file, is left out.
+// guard or a link refuses, before anything is removed. An absent target, or a twin that does not
+// resolve to a regular file, is left out.
 func presentDocTargets(d docDeleter, targets []docTarget) ([]docTarget, error) {
 	present := make([]docTarget, 0, len(targets))
 	for _, target := range targets {
@@ -141,13 +141,13 @@ func presentDocTargets(d docDeleter, targets []docTarget) ([]docTarget, error) {
 		if err != nil {
 			return nil, err
 		}
+		if target.twin && !resolvesToRegular(target.path) {
+			continue
+		}
 		// A linked twin refuses the row rather than being skipped: the scan lists it once the
 		// row's own file is gone, so the row would survive its delete.
 		if fi.Mode()&os.ModeSymlink != 0 {
 			return nil, filebrowse.DeleteRefusedError{Reason: path.Base(target.path) + " is a link; delete it where it points"}
-		}
-		if target.twin && !fi.Mode().IsRegular() {
-			continue
 		}
 		if err := d.CheckDelete(target.path); err != nil {
 			return nil, err
@@ -155,4 +155,9 @@ func presentDocTargets(d docDeleter, targets []docTarget) ([]docTarget, error) {
 		present = append(present, target)
 	}
 	return present, nil
+}
+
+func resolvesToRegular(p string) bool {
+	fi, err := os.Stat("/" + p)
+	return err == nil && fi.Mode().IsRegular()
 }

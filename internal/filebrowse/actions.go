@@ -220,7 +220,12 @@ func (h *Handler) DeleteFile(reqPath string) error {
 	if err != nil {
 		return err
 	}
-	if err := filesafe.RemoveFileInRoot(l.m.root, l.rel()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	err = filesafe.RemoveFileInRoot(l.m.root, l.rel())
+	if errors.Is(err, fs.ErrNotExist) {
+		slog.Info("filebrowse: delete (already absent)", "path", l.abs)
+		return nil
+	}
+	if err != nil {
 		return err
 	}
 	slog.Info("filebrowse: delete", "path", l.abs)

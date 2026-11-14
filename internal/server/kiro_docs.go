@@ -37,7 +37,6 @@ const (
 	catPrompt   = "prompt"
 )
 
-// skillsDir is the `.kiro` subdirectory skills live in.
 const skillsDir = "skills"
 
 // Per-category and overall bounds, set above any real corpus while still refusing an
@@ -203,6 +202,7 @@ func dirSignature(roots []kiroRoot) string {
 				continue
 			}
 			b.WriteString(p + "=" + info.ModTime().UTC().Format("20060102150405.000000000"))
+			// Only skills builds a row through a linked directory; the markdown walks never descend one.
 			writeEntryNames(&b, p, sigDepth[sub], sub == skillsDir)
 			b.WriteString(";")
 		}
@@ -211,8 +211,7 @@ func dirSignature(roots []kiroRoot) string {
 }
 
 // writeEntryNames appends dir's entry names, descending into subdirectories while depth allows,
-// and through a link only with followLinks: skills is the one category that builds a row through
-// a linked directory, and the markdown walks never descend one.
+// and through a link only with followLinks.
 func writeEntryNames(b *strings.Builder, dir string, depth int, followLinks bool) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -238,7 +237,7 @@ func scanKiroRoots(ctx context.Context, roots []kiroRoot, sensitive filebrowse.S
 			sc.truncated = true
 			break
 		}
-		sc.absorb(scanKiroDocsFS(ctx, os.DirFS(root.fsPath), root.prefix,
+		sc.absorb(scanKiroDocsFS(ctx, kiroDirFS(root.fsPath), root.prefix,
 			newRootGuard(root.fsPath, root.prefix, sensitive)))
 	}
 	if len(sc.docs) > maxDocsTotal {
@@ -356,6 +355,7 @@ func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGu
 	if err != nil {
 		return docScan{}
 	}
+	entries = dropLinksToNonFiles(root, entries)
 	agents := steering.DedupeAgentFiles(entries)
 	linked := make(map[string]bool)
 	for _, e := range entries {
@@ -392,6 +392,18 @@ func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGu
 		}
 	}
 	return sc
+}
+
+// dropLinksToNonFiles drops an agents/ link that does not resolve to a regular file, before
+// DedupeAgentFiles picks a spelling, so it cannot shadow a readable twin.
+func dropLinksToNonFiles(root fs.FS, entries []fs.DirEntry) []fs.DirEntry {
+	return slices.DeleteFunc(entries, func(e fs.DirEntry) bool {
+		if e.Type()&fs.ModeSymlink == 0 {
+			return false
+		}
+		fi, err := fs.Stat(root, "agents/"+e.Name())
+		return err != nil || !fi.Mode().IsRegular()
+	})
 }
 
 // scanDocsSpecs walks `specs/` and groups each document under its feature directory. Specs

@@ -12,6 +12,7 @@ import (
 type fakeDirEntry struct {
 	name  string
 	isDir bool
+	typ   fs.FileMode
 }
 
 func (e fakeDirEntry) Name() string { return e.name }
@@ -20,7 +21,7 @@ func (e fakeDirEntry) Type() fs.FileMode {
 	if e.isDir {
 		return fs.ModeDir
 	}
-	return 0
+	return e.typ
 }
 func (e fakeDirEntry) Info() (fs.FileInfo, error) { return fakeFileInfo{e}, nil }
 
@@ -88,6 +89,18 @@ func TestDedupeAgentFiles(t *testing.T) {
 			in:   []fs.DirEntry{fakeDirEntry{name: "archive.md", isDir: true}},
 			want: nil,
 			why:  "a directory named like a doc would produce an entry no reader can open",
+		},
+		"a fifo, socket or device is not an agent": {
+			in: []fs.DirEntry{
+				fakeDirEntry{name: "pair.md", typ: fs.ModeNamedPipe},
+				fakeDirEntry{name: "pair.json"},
+				fakeDirEntry{name: "sock.md", typ: fs.ModeSocket},
+				fakeDirEntry{name: "dev.json", typ: fs.ModeDevice | fs.ModeCharDevice},
+				fakeDirEntry{name: "linked.md", typ: fs.ModeSymlink},
+			},
+			want: []AgentFile{{Base: "pair", File: "pair.json"}, {Base: "linked", File: "linked.md"}},
+			why: "KAS reads an agent from a file, so a fifo .md must not shadow the readable .json; " +
+				"a link is judged by its target where the caller can stat it",
 		},
 		"a dot-prefixed file is not an agent": {
 			in:   entries(".hidden.md", "._deploy.json"),

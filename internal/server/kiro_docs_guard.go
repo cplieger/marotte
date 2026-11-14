@@ -7,13 +7,16 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/steering"
@@ -130,13 +133,70 @@ func readGuardedDir(root fs.FS, name string, guard pathGuard) ([]fs.DirEntry, er
 	return fs.ReadDir(root, name)
 }
 
-// readCappedFS reads at most steering.FrontMatterReadCap bytes of name from root (an
-// fs.FS twin of internal/steering's readCappedFile).
+// readCappedFS reads at most steering.FrontMatterReadCap bytes of name from root, refusing
+// anything not a regular file with filesafe.ErrNotRegular (an fs.FS twin of internal/steering's
+// readCappedFile). The mode is checked before the open because an fs.FS open of a fifo can block;
+// the fstat after it catches a swap in between, which kiroDirFS's open survives.
 func readCappedFS(root fs.FS, name string) ([]byte, error) {
+	if err := requireRegular(fs.Stat(root, name)); err != nil {
+		return nil, err
+	}
 	f, err := root.Open(name)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
+	if err := requireRegular(f.Stat()); err != nil {
+		return nil, err
+	}
 	return io.ReadAll(io.LimitReader(f, steering.FrontMatterReadCap))
+}
+
+func requireRegular(fi fs.FileInfo, err error) error {
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("%w: %s is %v", filesafe.ErrNotRegular, fi.Name(), fi.Mode().Type())
+	}
+	return nil
+}
+
+// kiroDirFS is os.DirFS(dir) whose Open does not block on a fifo, so readCappedFS's fstat can
+// refuse one that appeared after its mode check.
+type kiroDirFS string
+
+func (d kiroDirFS) path(op, name string) (string, error) {
+	if !fs.ValidPath(name) {
+		return "", &fs.PathError{Op: op, Path: name, Err: fs.ErrInvalid}
+	}
+	return filepath.Join(string(d), filepath.FromSlash(name)), nil
+}
+
+func (d kiroDirFS) Open(name string) (fs.File, error) {
+	p, err := d.path("open", name)
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+func (d kiroDirFS) Stat(name string) (fs.FileInfo, error) {
+	p, err := d.path("stat", name)
+	if err != nil {
+		return nil, err
+	}
+	return os.Stat(p)
+}
+
+func (d kiroDirFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	p, err := d.path("readdir", name)
+	if err != nil {
+		return nil, err
+	}
+	return os.ReadDir(p)
 }

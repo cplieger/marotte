@@ -25,8 +25,9 @@ func DedupeAgentFiles(entries []fs.DirEntry) []AgentFile {
 	out := make([]AgentFile, 0, len(entries))
 	for _, e := range entries {
 		name := e.Name()
-		// A dot-prefix also covers a bare ".md" / ".json", whose base would be empty.
-		if e.IsDir() || strings.HasPrefix(name, ".") || strings.ContainsRune(name, 0) {
+		// A dot-prefix also covers a bare ".md" / ".json", whose base would be empty. KAS reads an
+		// agent from a file; a link's target is the caller's to judge.
+		if !isFileOrLink(e) || strings.HasPrefix(name, ".") || strings.ContainsRune(name, 0) {
 			continue
 		}
 		base, ok := agentBaseName(name)
@@ -43,6 +44,10 @@ func DedupeAgentFiles(entries []fs.DirEntry) []AgentFile {
 		}
 	}
 	return out
+}
+
+func isFileOrLink(e fs.DirEntry) bool {
+	return e.Type().IsRegular() || e.Type()&fs.ModeSymlink != 0
 }
 
 func agentBaseName(filename string) (string, bool) {

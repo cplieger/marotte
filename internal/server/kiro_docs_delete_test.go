@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -35,10 +38,21 @@ func docsDeleteServer(t *testing.T) (http.Handler, string) {
 	return srv.routes(), work
 }
 
+// listDocs fails rather than hangs when the scan blocks, as an open of a fifo does.
 func listDocs(t *testing.T, h http.Handler) []KiroDoc {
 	t.Helper()
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/workspace/kiro-docs", http.NoBody))
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/workspace/kiro-docs", http.NoBody))
+		done <- rec
+	}()
+	var rec *httptest.ResponseRecorder
+	select {
+	case rec = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("GET kiro-docs blocked")
+	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET kiro-docs: status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -270,6 +284,72 @@ func TestKiroDocsDelete_RefusesWhatTheRowDoesNotOwn(t *testing.T) {
 			t.Errorf("a file no row lists was deleted: %v", err)
 		}
 	})
+}
+
+func mkfifoOr(t *testing.T, p string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(p, 0o600); err != nil {
+		t.Skipf("mkfifo unavailable: %v", err)
+	}
+}
+
+// socketAt binds a Unix socket in a short directory and moves it to p, since a temp path can
+// exceed the socket address length.
+func socketAt(t *testing.T, p string) {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	l, err := net.Listen("unix", filepath.Join(dir, "s"))
+	if err != nil {
+		t.Skipf("unix socket unavailable: %v", err)
+	}
+	l.(*net.UnixListener).SetUnlinkOnClose(false)
+	t.Cleanup(func() { _ = l.Close() })
+	if err := os.Rename(filepath.Join(dir, "s"), p); err != nil {
+		t.Skipf("cannot move the socket into place: %v", err)
+	}
+}
+
+// TestKiroDocsDelete_AgentTwinThatIsNoFileLeavesNoRow pins that a fifo or socket wearing the
+// twin's name is no agent file: the delete removes the row's own file and no row comes back.
+func TestKiroDocsDelete_AgentTwinThatIsNoFileLeavesNoRow(t *testing.T) {
+	cases := []struct {
+		plant func(t *testing.T, kiro string)
+		name  string
+	}{
+		{name: "fifo", plant: func(t *testing.T, kiro string) {
+			mkfifoOr(t, filepath.Join(kiro, "agents", "pair.json"))
+		}},
+		{name: "socket", plant: func(t *testing.T, kiro string) {
+			socketAt(t, filepath.Join(kiro, "agents", "pair.json"))
+		}},
+		{name: "link_to_a_fifo", plant: func(t *testing.T, kiro string) {
+			mkfifoOr(t, filepath.Join(kiro, "shared", "pipe"))
+			symlinkOr(t, filepath.Join(kiro, "shared", "pipe"), filepath.Join(kiro, "agents", "pair.json"))
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, work := docsDeleteServer(t)
+			kiro := filepath.Join(work, ".kiro")
+			writeFile(t, kiro, "agents/pair.md", "---\nname: pair\n---\n")
+			tc.plant(t, kiro)
+			row := mustRow(t, listDocs(t, h), catAgent, "pair")
+			if rec := deleteRow(t, h, &row); rec.Code != http.StatusOK {
+				t.Fatalf("delete: status %d, want 200: %s", rec.Code, rec.Body.String())
+			}
+			requireGone(t, filepath.Join(kiro, "agents", "pair.md"))
+			if d, ok := findDoc(docsByCategory(listDocs(t, h), catAgent), "pair"); ok {
+				t.Errorf("the deleted agent is still listed: %+v", d)
+			}
+		})
+	}
 }
 
 // TestKiroDocsDelete_BroadcastsSoEveryDeviceRefetches pins the event other devices refetch on.
