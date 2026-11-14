@@ -48,6 +48,7 @@ type callerFixture struct {
 	queue   *launchingRun
 	join    *promptJoin
 	reopens *reopenRecorder
+	host    *admissionHost
 }
 
 func newCallerFixture(t *testing.T) *callerFixture {
@@ -98,7 +99,7 @@ func newCallerFixture(t *testing.T) *callerFixture {
 	d.register(marotte.CmdQueuePrompt, func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
 		return cmdQueuePrompt(ctx, queue, roles.admission, reopens, cmd)
 	})
-	return &callerFixture{d: d, opens: opens, store: store, steers: steers, queue: queue, join: join, reopens: reopens}
+	return &callerFixture{d: d, opens: opens, store: store, steers: steers, queue: queue, join: join, reopens: reopens, host: host}
 }
 
 // post sends a command the way the poller does (no fetch metadata, no Origin), with headers adding a page's, and
@@ -274,6 +275,60 @@ func TestCommandCaller_LabelIsOneShortSafeLine(t *testing.T) {
 				t.Errorf("commandCaller(%q) = %+v, want label %q", tc.label, got, tc.want)
 			}
 		})
+	}
+}
+
+// kiro-cli stores every session/prompt as a user row; callerLabel is the one key a client can add to it, so a prompt a
+// program sent through /api/command must carry it, a fixed "api" when the program gave no usable name, and the page's
+// own prompt must not.
+func TestPrompt_OnlyThePagesPromptReachesTheEngineWithoutACallerLabel(t *testing.T) {
+	cases := []struct {
+		headers   map[string]string
+		name      string
+		label     string
+		want      string
+		wantFound bool
+	}{
+		{name: "an API caller with no label", want: "api", wantFound: true},
+		{name: "an API caller whose label cleans to nothing", label: " \n\t\u202e ", want: "api", wantFound: true},
+		{name: "a labelled API caller", label: "Agent Mail", want: "Agent Mail", wantFound: true},
+		{name: "an https page", headers: pageHeaders, label: "Agent Mail"},
+		{name: "a plain-HTTP page", headers: map[string]string{"Origin": "http://nas.lan:9847"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCallerFixture(t)
+			bridge := &orderedBridge{rec: f.host.rec}
+			f.host.openErr, f.host.bridge = nil, bridge
+			f.post(t, marotte.CmdPrompt, tc.label, tc.headers)
+
+			if bridge.gotMethod != marotte.MethodPrompt {
+				t.Fatalf("engine call = %q, want %s", bridge.gotMethod, marotte.MethodPrompt)
+			}
+			got, found := promptCallerLabel(bridge.gotParams)
+			if found != tc.wantFound || got != tc.want {
+				t.Errorf("session/prompt _meta.kiro.callerLabel = %q (present %v), want %q (present %v)",
+					got, found, tc.want, tc.wantFound)
+			}
+		})
+	}
+}
+
+// The resume is marotte's own words, so the user row kiro-cli stores for it must not read as one the user typed.
+func TestLaunchEntry_AResumeNamesMarotteToTheEngine(t *testing.T) {
+	host, roles, join := newAdmissionFixture(t, marotte.TurnResult{Stop: marotte.StopReasonEndTurn}, false)
+	_, err := launchEntry(t.Context(), roles, "c1", &EntryLaunch{
+		Kind: marotte.RunKindResume, Row: marotte.QueuedPrompt{ID: "m-resume", Text: "continue where you stopped"},
+		Res: testReservation("c1", true),
+	})
+	join.join()
+	if err != nil {
+		t.Fatalf("launchEntry(resume) = %v, want the prompt sent", err)
+	}
+
+	sent := host.bridge.(*orderedBridge).gotParams
+	if got, found := promptCallerLabel(sent); !found || got != "marotte" {
+		t.Errorf("resume session/prompt _meta.kiro.callerLabel = %q (present %v), want %q", got, found, "marotte")
 	}
 }
 

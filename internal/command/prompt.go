@@ -1,6 +1,7 @@
 package command
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -236,6 +237,7 @@ func supervisedDefaultSetting(ctx context.Context, configDir string) bool {
 func promptEntry(p *marotte.PromptCommand, resends []string) *marotte.EntryPrompt {
 	return &marotte.EntryPrompt{
 		ID: p.MessageID, Text: p.Text, Label: p.DisplayText, Attachments: p.Attachments, Resends: resends, Caller: p.Caller,
+		Automatic: p.Automatic,
 	}
 }
 
@@ -249,7 +251,6 @@ func openPromptTurn(ctx context.Context, roles *promptRoles, chatID marotte.Chat
 		c.SupervisedMode = supervisedDefault
 	}
 	prompt := promptEntry(p, l.resends)
-	prompt.Automatic = l.automatic
 	return roles.turnOutcome.OpenTurn(ctx, chatID, TurnOpen{
 		Source: marotte.TurnSourcePrompt, Prompt: prompt, Init: init, Awaited: l.awaited,
 		Admission: l.res.Token, Fence: l.fence,
@@ -407,8 +408,6 @@ type launch struct {
 	// fence is the take's: a re-fence since (a shutdown, a teardown) refuses the open.
 	fence   TurnFence
 	awaited bool
-	// automatic marks the turn_open's prompt as marotte's own (EntryPrompt.Automatic).
-	automatic bool
 }
 
 // errLaunchUnreserved fails a prompt launched with no reservation, a wiring error.
@@ -703,11 +702,25 @@ func promptFacts(ctx context.Context, configDir string, p *marotte.PromptCommand
 	if !read || !settings.ValidOutputStyle(style) || style == settings.OutputStyleDefault {
 		style = ""
 	}
-	var caller string
-	if p.Caller != nil {
-		caller = p.Caller.Label
+	return &kascap.Prompt{OutputStyle: style, Label: p.DisplayText, Tag: turnID, Caller: senderLabel(p)}
+}
+
+// Sender names kiro-cli's user row carries for a prompt nobody typed in marotte's page.
+const (
+	unnamedCallerLabel   = "api"
+	automaticCallerLabel = "marotte"
+)
+
+// senderLabel is the sender p names to the engine: "" for a prompt with no caller, the page's (which a reader of the
+// session's rows takes as typed by the user) or a tangent's (which its displayText marks); every other is named.
+func senderLabel(p *marotte.PromptCommand) string {
+	switch {
+	case p.Automatic:
+		return automaticCallerLabel
+	case p.Caller != nil:
+		return cmp.Or(p.Caller.Label, unnamedCallerLabel)
 	}
-	return &kascap.Prompt{OutputStyle: style, Label: p.DisplayText, Tag: turnID, Caller: caller}
+	return ""
 }
 
 func promptParamsInlineImage(params map[string]any) bool {
