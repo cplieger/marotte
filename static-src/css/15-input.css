@@ -626,7 +626,11 @@
 :is(.pill-model, [id="profile-pill"]).pending {
   border-color: var(--c-accent);
   color: var(--c-accent);
-  animation: vk-breathe 1.8s ease-in-out infinite;
+
+  /* Only the icon breathes: a dimmed name drops under its contrast floor at the pulse's trough. */
+  & svg {
+    animation: vk-breathe 1.8s ease-in-out infinite;
+  }
 }
 
 /* Each target reaches over its 1px border and half the row's gap, so neighbours' targets meet
