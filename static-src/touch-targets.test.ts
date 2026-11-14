@@ -207,6 +207,18 @@ function reaches(p: Probe, x: number, y: number): string | null {
   if (hit !== null && p.el.contains(hit)) {
     return null;
   }
+  // A row's own ink forwards its press to the disclosure control it wraps (`wireRowToggle`), a
+  // control nested in the row excepted.
+  const row = hit?.closest<HTMLElement>("[data-row-toggle]");
+  if (
+    row !== null &&
+    row !== undefined &&
+    row.contains(p.el) &&
+    p.el.hasAttribute("aria-expanded") &&
+    !row.contains(hit?.closest("button, [role='button'], a[href], summary, input") ?? null)
+  ) {
+    return null;
+  }
   // A declared overlay on `p` owns its own target there, as a control nested inside it would.
   const over = hit?.closest<HTMLElement>("button, [role='button'], a[href], summary");
   if (

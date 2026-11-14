@@ -1072,30 +1072,29 @@
   }
 }
 
-/* The head is the run's identity row in every state, never washed or wrapped, and
-   the panel's hit target (`disclosure-row.ts` `wireRowToggle`), forwarding to the
-   chevron that keeps `aria-expanded`; its controls are their own. The verbs end on
-   its corner, so its end inset is theirs (`--head-act-in`, half of what a 44px expander
-   adds to a dense verb, so it stays inside the dock's clip). One value on both tiers:
-   the clock and the alert line before the verbs keep their x; the chevron is flush with
-   its start edge and takes that corner. */
+/* The head is the run's identity row in every state, never wrapped, and the panel's hit
+   target (`disclosure-row.ts` `wireRowToggle`), forwarding to the toggle that keeps
+   `aria-expanded`; its controls are their own. The verbs end on its corner, so its end
+   inset is theirs (`--head-act-in`, half of what a 44px expander adds to a dense verb, so
+   it stays inside the dock's clip). One value on both tiers: the clock and the alert line
+   before the verbs keep their x. The start padding is the chevron's column. */
 .ev-dock-head {
   --head-act-in: calc((var(--hit-floor-touch) - var(--ctl-h-dense)) / 2);
+  --head-chev-w: 1.5rem;
 
   position: relative;
+  isolation: isolate;
+  anchor-scope: --ev-dock-act;
   display: flex;
   align-items: center;
   gap: var(--sp-2);
   min-block-size: var(--row-tap);
-  padding-inline: 0 var(--head-act-in);
+  padding-inline: calc(var(--head-chev-w) + var(--sp-2)) var(--head-act-in);
   border-radius: var(--stack-in-r);
   cursor: pointer;
-  transition: background-color var(--dur-micro) var(--ease-standard);
 
-  @media (any-hover: hover) {
-    &:hover {
-      background-color: var(--c-hover);
-    }
+  & > .ev-dock-act {
+    anchor-name: --ev-dock-act;
   }
 
   & .run-icon-btn {
@@ -1103,18 +1102,29 @@
   }
 }
 
+/* The summary line's one target and wash, painted under the line's ink so its tooltips and
+   selection stay: from the head's start to the verbs, at their height and level with them
+   (anchored to `.ev-dock-act`; the whole head when there are none), ending a verb's expander
+   reach short of them so the two targets never overlap. */
 .ev-box-toggle {
+  position: absolute;
+  z-index: -1;
+  inset-inline: 0 anchor(--ev-dock-act start, 0);
+  inset-block: anchor(--ev-dock-act start, 0) anchor(--ev-dock-act end, 0);
+  margin-inline-end: max(var(--sp-1), var(--tap-gap-dense) / 2);
   display: grid;
+  grid-template-columns: var(--head-chev-w);
   place-items: center;
-  flex-shrink: 0;
-  inline-size: 1.5rem;
-  align-self: stretch;
+  justify-content: start;
   padding: 0;
   border: 0;
-  border-radius: var(--stack-in-r) 0 0 var(--stack-in-r);
+  border-radius: max(0px, calc(var(--stack-in-r) - var(--head-act-in)));
   background: none;
   color: var(--c-text-control);
   cursor: pointer;
+  transition:
+    background-color var(--dur-micro) var(--ease-standard),
+    box-shadow var(--dur-micro) var(--ease-standard);
 
   &:focus-visible {
     outline: var(--focus-ring);
@@ -1124,11 +1134,26 @@
   &[aria-expanded="true"] .disclosure-chevron {
     --chev-turn: 0deg;
   }
+}
 
-  /* Flush with the box's clipped edge, so its target grows inward only. */
-  &::after {
-    inset-inline: 0 min(0px, calc(1.5rem - var(--hit-floor)));
+/* The head forwards its clicks to the toggle (`wireRowToggle`), so a hover or press anywhere on
+   it but the verbs shows on the toggle. */
+@media (any-hover: hover) {
+  .ev-dock-head:hover > .ev-box-toggle {
+    background-color: var(--c-hover);
   }
+
+  .ev-dock-head:has(> .ev-dock-act:hover) > .ev-box-toggle {
+    background-color: transparent;
+  }
+}
+
+.ev-dock-head:active > .ev-box-toggle {
+  box-shadow: inset 0 0 0 100vmax var(--c-press);
+}
+
+.ev-dock-head:has(> .ev-dock-act:active) > .ev-box-toggle {
+  box-shadow: none;
 }
 
 .ev-dock-icon {
@@ -1724,6 +1749,10 @@
     column-gap: var(--sp-1);
   }
 
+  .ev-dock-head {
+    padding-inline-start: calc(var(--head-chev-w) + var(--sp-1));
+  }
+
   /* The mini timeline becomes a band along the head's bottom edge. */
   .ev-dock-head .ev-mini {
     position: absolute;
@@ -1763,7 +1792,6 @@
 
     & .ev-alert-line {
       order: 2;
-      padding-inline-start: calc(1.5rem + var(--sp-1));
     }
 
     & :is(.ev-sum-clock, .ev-sum-credits) {

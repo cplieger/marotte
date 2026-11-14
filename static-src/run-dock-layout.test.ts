@@ -415,12 +415,13 @@ describe("the run summary on a phone", () => {
     });
   }
 
-  it("toggles the panel from a tap anywhere on the head row at 360px, the chevron's narrowed box included", async () => {
+  it("toggles the panel from a tap anywhere on the head row at 360px but its verbs", async () => {
     await browser.viewport(360, 844);
     document.documentElement.setAttribute("data-pointer", "coarse");
     style = mountAppCSS();
     const { byId } = mountRunView(844);
-    mountPage(byId, verbs(false, ["Pause", "Cancel"])).render({
+    const row = verbs(false, ["Pause", "Cancel"]);
+    mountPage(byId, row).render({
       label: "nightly",
       state: "running",
       nodes: inLoop(sixSteps("running")),
@@ -429,28 +430,32 @@ describe("the run summary on a phone", () => {
     const dock = byId("run-exec-dock");
     const head = dock.querySelector<HTMLElement>(".ev-dock-head")!;
     const toggle = dock.querySelector<HTMLButtonElement>(".ev-box-toggle")!;
-    expect(toggle.getBoundingClientRect().width, "the chevron's box narrows").toBeLessThan(44);
     expect(
       head.getBoundingClientRect().height,
       "the row keeps the floor's height",
     ).toBeGreaterThanOrEqual(44);
     expect(toggle.tabIndex).toBe(0);
     expect(toggle.getAttribute("aria-label")).toBe("Run details");
-    // The chevron's centre, the head's own padding before it, and the gap after it that the
-    // floor's width used to cover. Read per tap: the head rises as the panel opens.
-    const points: [string, (b: DOMRect, r: DOMRect) => number][] = [
-      ["the chevron", (b) => b.left + b.width / 2],
-      ["the row's start", (_b, r) => r.left + 2],
-      ["past the chevron", (b) => b.right + 2],
+    const centre = (sel: string): number => {
+      const b = head.querySelector(sel)!.getBoundingClientRect();
+      return b.left + b.width / 2;
+    };
+    // Read per tap: the head rises as the panel opens.
+    const points: [string, (r: DOMRect) => number][] = [
+      ["the chevron", () => centre(".disclosure-chevron")],
+      ["the row's start", (r) => r.left + 2],
+      ["the state word", () => centre(".ev-sum-state")],
+      ["the clock", () => centre(".ev-sum-clock")],
     ];
     const region = dock.querySelector(".ev-dock-panel")!;
     for (const [what, at] of points) {
       for (const want of ["true", "false"]) {
         const r = head.getBoundingClientRect();
-        const x = at(toggle.getBoundingClientRect(), r);
+        const x = at(r);
         const y = r.top + r.height / 2;
         const hit = document.elementFromPoint(x, y);
         expect(hit !== null && head.contains(hit), `${what} is on the head`).toBe(true);
+        expect(hit !== null && row.contains(hit), `${what} is no verb`).toBe(false);
         await userEvent.click(head, { position: { x: x - r.left, y: y - r.top } });
         expect(toggle.getAttribute("aria-expanded"), `a tap on ${what}`).toBe(want);
         await Promise.all(region.getAnimations().map((a) => a.finished));
@@ -752,6 +757,115 @@ describe("the run dock's step rows", () => {
       const gutter =
         row.getBoundingClientRect().right - parseFloat(getComputedStyle(row).paddingRight);
       expect(part(row, ".ev-dock-dur").right).toBeCloseTo(gutter, 0);
+    });
+  }
+});
+
+describe("the run dock head's toggle", () => {
+  const WIDTHS = [
+    [1000, 800],
+    [700, 1000],
+    [390, 844],
+  ] as const;
+
+  /** Mount the run tab `h` tall with `names` as its verbs and render `run`; the head and its verbs. */
+  function mountHead(
+    h: number,
+    names: readonly string[],
+    run: ExecRun,
+  ): { head: HTMLElement; row: HTMLElement } {
+    style ??= mountAppCSS();
+    const { byId } = mountRunView(h);
+    const row = verbs(false, names);
+    mountPage(byId, row).render(run);
+    return { head: byId("run-exec-dock").querySelector<HTMLElement>(".ev-dock-head")!, row };
+  }
+
+  function unmount(): void {
+    view?.dispose();
+    view = null;
+    frame?.remove();
+    frame = null;
+  }
+
+  /** The toggle's box holds each of `parts`, is as tall as each verb and level with it, and ends
+   *  before the verbs. */
+  function coversAtVerbHeight(
+    head: HTMLElement,
+    row: HTMLElement,
+    parts: readonly string[],
+    what: string,
+  ): void {
+    const t = head.querySelector(".ev-box-toggle")!.getBoundingClientRect();
+    for (const sel of parts) {
+      const p = head.querySelector(sel)!.getBoundingClientRect();
+      expect(p.width, `${what}: ${sel} renders`).toBeGreaterThan(0);
+      expect(
+        t.left <= p.left + 0.5 &&
+          t.right >= p.right - 0.5 &&
+          t.top <= p.top + 0.5 &&
+          t.bottom >= p.bottom - 0.5,
+        `${what}: the toggle [${t.left.toFixed(1)}..${t.right.toFixed(1)} x ${t.top.toFixed(1)}..${t.bottom.toFixed(1)}] holds ${sel} [${p.left.toFixed(1)}..${p.right.toFixed(1)} x ${p.top.toFixed(1)}..${p.bottom.toFixed(1)}]`,
+      ).toBe(true);
+    }
+    for (const b of row.querySelectorAll("button")) {
+      const r = b.getBoundingClientRect();
+      const name = b.getAttribute("aria-label") ?? "";
+      expect(t.height, `${what}: the toggle's height beside ${name}`).toBeCloseTo(r.height, 0);
+      expect(t.top, `${what}: the toggle level with ${name}`).toBeCloseTo(r.top, 0);
+    }
+    expect(t.right, `${what}: the toggle ends before the verbs`).toBeLessThanOrEqual(
+      row.getBoundingClientRect().left + 0.5,
+    );
+  }
+
+  for (const pointer of ["fine", "coarse"] as const) {
+    it(`covers a running run's summary line at Pause and Stop's height at every width, ${pointer}`, async () => {
+      for (const [w, h] of WIDTHS) {
+        await browser.viewport(w, h);
+        document.documentElement.setAttribute("data-pointer", pointer);
+        const { head, row } = mountHead(h, ["Pause", "Stop"], {
+          label: "nightly",
+          state: "running",
+          nodes: inLoop(sixSteps("running")),
+          live: true,
+          credits: 257.8,
+        });
+        coversAtVerbHeight(
+          head,
+          row,
+          [
+            ".disclosure-chevron",
+            ".ev-sum-state",
+            ".ev-sum-compact",
+            ".ev-sum-clock",
+            ".ev-sum-credits",
+          ],
+          `${String(w)}px ${pointer}`,
+        );
+        unmount();
+      }
+    });
+
+    it(`covers a paused run's state at Resume and Stop's height at every width, ${pointer}`, async () => {
+      for (const [w, h] of WIDTHS) {
+        await browser.viewport(w, h);
+        document.documentElement.setAttribute("data-pointer", pointer);
+        const { head, row } = mountHead(h, ["Resume", "Stop"], {
+          label: "subflux-build-lanes-relaunch",
+          state: "waiting",
+          nodes: lanes(true),
+          live: true,
+          alert: { kind: "paused", text: LANES_PAUSE },
+        });
+        coversAtVerbHeight(
+          head,
+          row,
+          [".disclosure-chevron", ".ev-sum-state"],
+          `${String(w)}px ${pointer}`,
+        );
+        unmount();
+      }
     });
   }
 });
