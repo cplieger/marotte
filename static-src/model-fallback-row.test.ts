@@ -68,12 +68,15 @@ function build(
   { enabled = true, identity = signedIn, model = "model-a" } = {},
 ): HTMLElement | null {
   return (
-    buildFallbackRow({
-      model,
-      settings: settingsPayload({ model_fallback_enabled: enabled, model_fallbacks: rows }),
-      catalog,
-      identity,
-    })?.el ?? null
+    buildFallbackRow(
+      {
+        model,
+        settings: settingsPayload({ model_fallback_enabled: enabled, model_fallbacks: rows }),
+        catalog,
+        identity,
+      },
+      () => undefined,
+    )?.el ?? null
   );
 }
 

@@ -1,6 +1,7 @@
 // Settings persistence. Debounces PATCHes to coalesce rapid writes (e.g. theme toggle +
-// notification toggle changes into one round-trip), and owns the settings reads. The settings
-// state and every rule over it are settings-state.ts's; this module runs it.
+// notification toggle changes into one round-trip), and owns the settings reads and the fallback
+// answers laid over the shown settings. The settings state and every other rule over it are
+// settings-state.ts's, which this module runs.
 
 import { signal, type Signal } from "@cplieger/reactive";
 import { showSaving, showSaved, showError } from "./save-indicator.js";
@@ -59,7 +60,10 @@ let eventsNoted = 0;
 let readsSent = 0;
 /** Each model's answered fallback write, with readsSent when it was answered: shown until a read sent
  *  after it is adopted, so the write's own announce does not show the target it replaced. */
-const fallbackAnswers = new Map<string, { readonly row: ModelFallback; readonly afterReads: number }>();
+const fallbackAnswers = new Map<
+  string,
+  { readonly row: ModelFallback; readonly afterReads: number }
+>();
 
 /** settingsAsShown as a signal, written on every settings-state step, for a surface that repaints when
  *  shown settings change outside the Settings panel. */
@@ -93,10 +97,12 @@ export function settingsAsShown(): EffectiveSettings | null {
 }
 
 /** Shows an answered PUT /api/model-fallback in the shown settings until a settings read sent after
- *  it is adopted. */
+ *  it is adopted, and sends that read. */
 export function showFallbackAnswer(row: ModelFallback): void {
   fallbackAnswers.set(row.model, { row, afterReads: readsSent });
   shownSettingsSignal.value = settingsAsShown();
+  // The write's own announce read can go out before this answer arrives, and ends nothing.
+  void (reading === null ? startRead() : readAfter(reading));
 }
 
 function unsettled(el: HTMLInputElement): boolean {
@@ -323,8 +329,15 @@ export function refreshSettings(): Promise<EffectiveSettings | null> {
   if (reading.afterEvents === eventsNoted) {
     return reading.answer;
   }
+  return readAfter(reading);
+}
+
+/** The read sent once `read` settles, shared by every caller until it is sent. */
+function readAfter(read: {
+  sent: Promise<EffectiveSettings | null>;
+}): Promise<EffectiveSettings | null> {
   // On the raw answer: the checked one can wait for this very read.
-  rereading ??= reading.sent.then(() => {
+  rereading ??= read.sent.then(() => {
     rereading = null;
     return startRead();
   });

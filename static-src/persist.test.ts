@@ -958,7 +958,10 @@ describe("showFallbackAnswer", () => {
     vi.unstubAllGlobals();
   });
 
-  const row = (configured: string, model = "model-a"): EffectiveSettings["model_fallbacks"][number] => ({
+  const row = (
+    configured: string,
+    model = "model-a",
+  ): EffectiveSettings["model_fallbacks"][number] => ({
     model,
     configured,
     vendor_default: "",
@@ -995,6 +998,45 @@ describe("showFallbackAnswer", () => {
     answers[1]?.(at(2, row("model-b")));
     await after;
     expect(shownTarget()).toBe("model-b");
+  });
+
+  it("sends a read after the answer when the announce read went out before it", async () => {
+    adoptSettings(at(1, row("model-b")));
+    noteSettingsEvent(v(2));
+    const announce = refreshSettings();
+    await vi.waitFor(() => {
+      expect(answers).toHaveLength(1);
+    });
+    showFallbackAnswer(row("model-c"));
+    // Another device wrote model-d between this write and the announce read's serve.
+    answers[0]?.(at(2, row("model-d")));
+    await announce;
+    expect(shownTarget(), "a read sent before the answer does not end it").toBe("model-c");
+    await vi.waitFor(() => {
+      expect(answers, "a read sent after the answer").toHaveLength(2);
+    });
+    answers[1]?.(at(2, row("model-d")));
+    await vi.waitFor(() => {
+      expect(shownTarget()).toBe("model-d");
+    });
+  });
+
+  it("keeps the answer when the read sent after it is older than a later event", async () => {
+    adoptSettings(at(1, row("model-b")));
+    showFallbackAnswer(row("model-c"));
+    const read = refreshSettings();
+    await vi.waitFor(() => {
+      expect(answers).toHaveLength(1);
+    });
+    noteSettingsEvent(v(3));
+    answers[0]?.(at(2, row("model-b")));
+    await vi.waitFor(() => {
+      expect(answers, "the read sent after the event").toHaveLength(2);
+    });
+    expect(shownTarget(), "a refused read does not end it").toBe("model-c");
+    answers[1]?.(at(3, row("model-c")));
+    await read;
+    expect(shownTarget()).toBe("model-c");
   });
 
   it("adds the answer for a model the adopted settings state no row for", () => {

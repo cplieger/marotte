@@ -68,7 +68,7 @@ function rowFor(input: FallbackRowInput): ModelFallback | null {
  *  `onSettled` runs when the last write the row sent settles. */
 export function buildFallbackRow(
   input: FallbackRowInput,
-  onSettled: () => void = () => undefined,
+  onSettled: () => void,
 ): FallbackRow | null {
   const row = rowFor(input);
   if (row === null) {

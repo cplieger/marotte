@@ -68,7 +68,7 @@ vi.mock("./store.js", async () => {
 });
 
 // A real signal, as persist.ts's: the Fallback row repaints from it while the card is open. A write's
-// answer enters the shown settings, as persist.ts's showFallbackAnswer does (persist.test.ts pins it).
+// answer is written into the shown settings once; persist.test.ts pins how long the real one holds.
 vi.mock("./persist.js", async () => {
   const { signal } = (await vi.importActual("@cplieger/reactive")) as { signal: SignalFactory };
   const shownSettingsSignal = signal<EffectiveSettings | null>(null);
@@ -114,7 +114,9 @@ vi.mock("./actions/index.js", () => ({
   RETRY_STANDARD: {},
 }));
 vi.mock("./actions/chat.js", () => ({ switchModel: { dispatch: vi.fn() } }));
-vi.mock("./actions/model-fallback.js", () => ({ setModelFallback: { dispatch: fallbackDispatch } }));
+vi.mock("./actions/model-fallback.js", () => ({
+  setModelFallback: { dispatch: fallbackDispatch },
+}));
 vi.mock("./reconcile.js", () => ({ reconcile: vi.fn() }));
 vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));
 vi.mock("./session-context.js", () => ({
@@ -671,7 +673,10 @@ describe("the Fallback row", () => {
 
   /** Makes the next fallback write wait for its settle: answered with `answer`, or refused. */
   function pendingWrite(): { answer: (row: ModelFallback) => void; refuse: () => void } {
-    const out = { answer: (_row: ModelFallback) => undefined as void, refuse: () => undefined as void };
+    const out: { answer: (row: ModelFallback) => void; refuse: () => void } = {
+      answer: () => undefined,
+      refuse: () => undefined,
+    };
     fallbackDispatch.mockImplementationOnce(
       (
         _args: unknown,
