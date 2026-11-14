@@ -22,6 +22,7 @@ import (
 // the refusal a delete would get without removing anything.
 type docDeleter interface {
 	Delete(reqPath string) error
+	DeleteFile(reqPath string) error
 	CheckDelete(reqPath string) error
 }
 
@@ -87,24 +88,35 @@ func deleteDocRow(d docDeleter, row *KiroDoc) error {
 		return err
 	}
 	for _, target := range targets {
-		if err := d.Delete(target); err != nil {
+		remove := d.Delete
+		if target.twin {
+			remove = d.DeleteFile
+		}
+		if err := remove(target.path); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+// docTarget is one path a row's delete removes. A twin is removed only as a regular file: the
+// scan builds no agent from a directory, so a directory wearing the name is not this row's.
+type docTarget struct {
+	path string
+	twin bool
+}
+
 // docDeleteTargets names what row stands for, row.Path last so a removal failing partway leaves
 // the row listed for a retry: a skill is its whole directory, and an agent is both spellings of
 // its name, since the scan lists the `.json` once the `.md` is gone.
-func docDeleteTargets(row *KiroDoc) []string {
+func docDeleteTargets(row *KiroDoc) []docTarget {
 	switch row.Category {
 	case catSkill:
-		return []string{path.Dir(row.Path)}
+		return []docTarget{{path: path.Dir(row.Path)}}
 	case catAgent:
-		return []string{agentTwin(row.Path), row.Path}
+		return []docTarget{{path: agentTwin(row.Path), twin: true}, {path: row.Path}}
 	default:
-		return []string{row.Path}
+		return []docTarget{{path: row.Path}}
 	}
 }
 
@@ -116,22 +128,28 @@ func agentTwin(file string) string {
 	return strings.TrimSuffix(file, ".json") + ".md"
 }
 
-// presentDocTargets answers the targets that exist, or the refusal of the first one any delete
-// guard or a link refuses, before anything is removed.
-func presentDocTargets(d docDeleter, targets []string) ([]string, error) {
-	present := make([]string, 0, len(targets))
+// presentDocTargets answers the targets to remove, or the refusal of the first one any delete
+// guard or a link refuses, before anything is removed. An absent target, or a twin that is
+// neither a link nor a regular file, is left out.
+func presentDocTargets(d docDeleter, targets []docTarget) ([]docTarget, error) {
+	present := make([]docTarget, 0, len(targets))
 	for _, target := range targets {
-		fi, err := os.Lstat("/" + target)
+		fi, err := os.Lstat("/" + target.path)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		if err != nil {
 			return nil, err
 		}
+		// A linked twin refuses the row rather than being skipped: the scan lists it once the
+		// row's own file is gone, so the row would survive its delete.
 		if fi.Mode()&os.ModeSymlink != 0 {
-			return nil, filebrowse.DeleteRefusedError{Reason: path.Base(target) + " is a link; delete it where it points"}
+			return nil, filebrowse.DeleteRefusedError{Reason: path.Base(target.path) + " is a link; delete it where it points"}
 		}
-		if err := d.CheckDelete(target); err != nil {
+		if target.twin && !fi.Mode().IsRegular() {
+			continue
+		}
+		if err := d.CheckDelete(target.path); err != nil {
 			return nil, err
 		}
 		present = append(present, target)

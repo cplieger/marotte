@@ -522,8 +522,8 @@ func TestFindRepoSkills_ScansSubdirsWithSkillMd(t *testing.T) {
 }
 
 // TestFindRepoSkills_LinkedSkillDirectory pins that a link to a skill directory inside .kiro is
-// a skill, as KAS follows one and the docs page lists it, while a link out of .kiro or to an
-// empty directory is not; the presence check agrees.
+// a skill, as KAS follows one and the docs page lists it, while a link out of .kiro, to an empty
+// directory, or back to skills/ or .kiro itself is not; the presence check agrees.
 func TestFindRepoSkills_LinkedSkillDirectory(t *testing.T) {
 	base := t.TempDir()
 	repo := filepath.Join(base, "repo")
@@ -540,6 +540,8 @@ func TestFindRepoSkills_LinkedSkillDirectory(t *testing.T) {
 		"inside":  filepath.Join(kiro, "shared", "inside"),
 		"outside": filepath.Join(base, "outside"),
 		"hollow":  filepath.Join(kiro, "shared", "hollow"),
+		"self":    ".",
+		"root":    "..",
 	} {
 		if err := os.Symlink(target, filepath.Join(kiro, "skills", name)); err != nil {
 			t.Fatal(err)

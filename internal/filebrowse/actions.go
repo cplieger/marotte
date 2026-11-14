@@ -212,6 +212,21 @@ func (h *Handler) CheckDelete(reqPath string) error {
 	return err
 }
 
+// DeleteFile removes the file reqPath resolves to, behind Delete's guards, only when it is a
+// regular file: anything else answers an error matching filesafe.ErrNotRegular and is left as
+// found. An absent path is success.
+func (h *Handler) DeleteFile(reqPath string) error {
+	l, err := h.deletable(reqPath)
+	if err != nil {
+		return err
+	}
+	if err := filesafe.RemoveFileInRoot(l.m.root, l.rel()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	slog.Info("filebrowse: delete", "path", l.abs)
+	return nil
+}
+
 func (h *Handler) deletable(reqPath string) (loc, error) {
 	l, err := h.resolvePath(filepath.Clean("/" + reqPath))
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cplieger/go/pathinside"
 	"github.com/cplieger/marotte/internal/sanitize"
 )
 
@@ -417,7 +418,7 @@ func isSkillDir(skills string, e os.DirEntry) bool {
 	p := filepath.Join(skills, e.Name())
 	switch {
 	case e.Type()&os.ModeSymlink != 0:
-		if !linksInside(p, filepath.Dir(skills)) {
+		if !linksToSkill(p, skills) {
 			return false
 		}
 	case !e.IsDir():
@@ -426,16 +427,22 @@ func isSkillDir(skills string, e os.DirEntry) bool {
 	return !isEmptyDir(p)
 }
 
-// linksInside reports whether link resolves beneath root, both resolved first since `.kiro` may
-// itself be a link.
-func linksInside(link, root string) bool {
+// linksToSkill reports whether link resolves beneath skills' `.kiro` and neither to skills nor to
+// a directory holding it, which would list that tree as a skill. All three are resolved first,
+// since `.kiro` or skills may itself be a link.
+func linksToSkill(link, skills string) bool {
 	target, err := filepath.EvalSymlinks(link)
 	if err != nil {
 		return false
 	}
-	resolvedRoot, err := filepath.EvalSymlinks(root)
+	resolvedKiro, err := filepath.EvalSymlinks(filepath.Dir(skills))
 	if err != nil {
 		return false
 	}
-	return strings.HasPrefix(target, resolvedRoot+string(filepath.Separator))
+	resolvedSkills, err := filepath.EvalSymlinks(skills)
+	if err != nil {
+		return false
+	}
+	return strings.HasPrefix(target, resolvedKiro+string(filepath.Separator)) &&
+		!pathinside.Root(target).Contains(resolvedSkills)
 }

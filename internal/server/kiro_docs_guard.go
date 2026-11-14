@@ -23,10 +23,12 @@ import (
 // whether its row may offer a DELETE. There is no writability bit: a save through a
 // followed link writes the canonical target, so a symlinked entry is still editable.
 type docVerdict struct {
-	allowed bool
+	// resolved is the entry's absolute target once every link is followed; empty when unknown.
+	resolved string
+	allowed  bool
 	// deleteProtected marks an entry whose DELETE must not be offered: its OWN final component
 	// is a symlink, so a delete would remove a different row's file (a file under a linked
-	// directory is not that case). Advisory only; the delete route keeps every server-side check.
+	// directory is not that case). The delete route refuses such a row.
 	deleteProtected bool
 }
 
@@ -35,6 +37,14 @@ type pathGuard func(rel string) docVerdict
 
 func (g pathGuard) allows(rel string) bool {
 	return g == nil || g(rel).allowed
+}
+
+// verdict answers g's verdict on rel, a nil guard's being an allowed entry of unknown target.
+func (g pathGuard) verdict(rel string) docVerdict {
+	if g == nil {
+		return docVerdict{allowed: true}
+	}
+	return g(rel)
 }
 
 type rootGuard struct {
@@ -77,7 +87,7 @@ func (g *rootGuard) allow(rel string) docVerdict {
 		return docVerdict{}
 	}
 	// An in-root link is listed and editable; only its delete is withheld (see deleteProtected).
-	return docVerdict{allowed: true, deleteProtected: finalComponentIsLink(full)}
+	return docVerdict{resolved: resolved, allowed: true, deleteProtected: finalComponentIsLink(full)}
 }
 
 // finalComponentIsLink reports whether the last component of full is itself a symlink, the
@@ -103,10 +113,7 @@ var errRefused = errors.New("kiro docs: path refused by the scan guard")
 // readGuardedFS is readCappedFS with the guard in front, returning the verdict with the bytes
 // so the caller need not resolve again.
 func readGuardedFS(root fs.FS, name string, guard pathGuard) ([]byte, docVerdict, error) {
-	v := docVerdict{allowed: true}
-	if guard != nil {
-		v = guard(name)
-	}
+	v := guard.verdict(name)
 	if !v.allowed {
 		return nil, v, errRefused
 	}

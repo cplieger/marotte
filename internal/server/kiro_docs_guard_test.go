@@ -311,3 +311,61 @@ func TestScanKiroDocs_LinkedSkillDirectoryFollowsTheGuard(t *testing.T) {
 		t.Errorf("skills = %+v, want only the in-tree link", skills)
 	}
 }
+
+// TestScanKiroDocs_SkillLinkToItsOwnTreeIsNoRow pins that a skills/<name> link back to skills/
+// or the .kiro root is no skill: KAS would find no SKILL.md there, and the tree is no skill.
+func TestScanKiroDocs_SkillLinkToItsOwnTreeIsNoRow(t *testing.T) {
+	work := t.TempDir()
+	kiro := filepath.Join(work, ".kiro")
+	writeFile(t, kiro, "skills/keep/SKILL.md", "---\nname: keep\n---\n")
+	writeFile(t, kiro, "steering/a.md", "# A\n")
+	symlinkOr(t, ".", filepath.Join(kiro, "skills", "self"))
+	symlinkOr(t, "..", filepath.Join(kiro, "skills", "root"))
+
+	srv := &Server{workDir: work, kiroDocs: &docsCache{}}
+	skills := docsByCategory(srv.collectKiroDocs(t.Context()).Docs, catSkill)
+	if len(skills) != 1 || skills[0].Name != "keep" {
+		t.Errorf("skills = %+v, want only keep", skills)
+	}
+}
+
+// TestDirSignature_FollowsLinksOnlyWhereRowsComeFromThem pins that the cache key reads through a
+// link only under skills/: the steering and specs walks do not descend a linked directory, so
+// what sits behind one there is no row and must not be read on every listing.
+func TestDirSignature_FollowsLinksOnlyWhereRowsComeFromThem(t *testing.T) {
+	base := t.TempDir()
+	kiro := filepath.Join(base, "work", ".kiro")
+	target := filepath.Join(base, "target")
+	if err := os.MkdirAll(target, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for _, sub := range []string{"steering", "specs", "skills"} {
+		if err := os.MkdirAll(filepath.Join(kiro, sub), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		symlinkOr(t, target, filepath.Join(kiro, sub, "linked"))
+	}
+	roots := []kiroRoot{{fsPath: kiro}}
+	before := dirSignature(roots)
+	writeFile(t, target, "behind.md", "# Behind\n")
+	after := dirSignature(roots)
+
+	for _, sub := range []string{"steering", "specs"} {
+		if part := sigPart(after, filepath.Join(kiro, sub)); part != sigPart(before, filepath.Join(kiro, sub)) {
+			t.Errorf("%s's signature read through the link: %q", sub, part)
+		}
+	}
+	if sigPart(after, filepath.Join(kiro, "skills")) == sigPart(before, filepath.Join(kiro, "skills")) {
+		t.Error("skills' signature did not read through the linked skill directory")
+	}
+}
+
+// sigPart answers the `;`-terminated entry dirSignature wrote for dir.
+func sigPart(sig, dir string) string {
+	for part := range strings.SplitSeq(sig, ";") {
+		if strings.HasPrefix(part, dir+"=") {
+			return part
+		}
+	}
+	return ""
+}

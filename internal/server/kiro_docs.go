@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/pathinside"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
@@ -35,6 +36,9 @@ const (
 	catHook     = "hook"
 	catPrompt   = "prompt"
 )
+
+// skillsDir is the `.kiro` subdirectory skills live in.
+const skillsDir = "skills"
 
 // Per-category and overall bounds, set above any real corpus while still refusing an
 // unbounded tree.
@@ -177,7 +181,7 @@ func (s *Server) kiroRoots() []kiroRoot {
 // sigDepth is how many directory levels below each category the signature reads: the levels a
 // scan builds rows from. A change deeper than its category's depth here would serve a stale scan.
 var sigDepth = map[string]int{
-	"": 1, "steering": mdSigDepth, "skills": 2, "agents": 1,
+	"": 1, "steering": mdSigDepth, skillsDir: 2, "agents": 1,
 	"specs": mdSigDepth, "hooks": 1, "prompts": 1,
 }
 
@@ -188,7 +192,7 @@ var sigDepth = map[string]int{
 func dirSignature(roots []kiroRoot) string {
 	var b strings.Builder
 	for _, root := range roots {
-		for _, sub := range []string{"", "steering", "skills", "agents", "specs", "hooks", "prompts"} {
+		for _, sub := range []string{"", "steering", skillsDir, "agents", "specs", "hooks", "prompts"} {
 			p := root.fsPath
 			if sub != "" {
 				p = filepath.Join(p, sub)
@@ -199,25 +203,26 @@ func dirSignature(roots []kiroRoot) string {
 				continue
 			}
 			b.WriteString(p + "=" + info.ModTime().UTC().Format("20060102150405.000000000"))
-			writeEntryNames(&b, p, sigDepth[sub])
+			writeEntryNames(&b, p, sigDepth[sub], sub == skillsDir)
 			b.WriteString(";")
 		}
 	}
 	return b.String()
 }
 
-// writeEntryNames appends dir's entry names, descending into subdirectories while depth allows.
-// It descends through a link too, since a linked skill directory is a row.
-func writeEntryNames(b *strings.Builder, dir string, depth int) {
+// writeEntryNames appends dir's entry names, descending into subdirectories while depth allows,
+// and through a link only with followLinks: skills is the one category that builds a row through
+// a linked directory, and the markdown walks never descend one.
+func writeEntryNames(b *strings.Builder, dir string, depth int, followLinks bool) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		b.WriteString("#?")
 	}
 	for _, e := range entries {
 		b.WriteString("#" + e.Name())
-		if depth > 1 && (e.IsDir() || e.Type()&fs.ModeSymlink != 0) {
+		if depth > 1 && (e.IsDir() || followLinks && e.Type()&fs.ModeSymlink != 0) {
 			b.WriteString("{")
-			writeEntryNames(b, filepath.Join(dir, e.Name()), depth-1)
+			writeEntryNames(b, filepath.Join(dir, e.Name()), depth-1, followLinks)
 			b.WriteString("}")
 		}
 	}
@@ -278,11 +283,12 @@ func scanDocsSteering(ctx context.Context, root fs.FS, prefix string, guard path
 
 // scanDocsSkills emits one row per skill directory; other markdown under one is reference material.
 func scanDocsSkills(ctx context.Context, root fs.FS, prefix string, guard pathGuard) docScan {
-	entries, err := readGuardedDir(root, "skills", guard)
+	entries, err := readGuardedDir(root, skillsDir, guard)
 	if err != nil {
 		return docScan{}
 	}
 	sc := docScan{docs: make([]KiroDoc, 0, len(entries))}
+	skills := guard.verdict(skillsDir).resolved
 	for _, e := range entries {
 		if ctx.Err() != nil {
 			sc.truncated = true
@@ -294,7 +300,7 @@ func scanDocsSkills(ctx context.Context, root fs.FS, prefix string, guard pathGu
 			strings.ContainsRune(e.Name(), 0) {
 			continue
 		}
-		doc, ok := skillRow(root, prefix, e.Name(), guard)
+		doc, ok := skillRow(root, prefix, e.Name(), skills, guard)
 		if ok && !sc.add(&doc) {
 			return sc
 		}
@@ -302,9 +308,15 @@ func scanDocsSkills(ctx context.Context, root fs.FS, prefix string, guard pathGu
 	return sc
 }
 
-// skillRow builds the row for skills/<name>, or reports there is no skill there.
-func skillRow(root fs.FS, prefix, name string, guard pathGuard) (KiroDoc, bool) {
+// skillRow builds the row for skills/<name>, or reports there is no skill there. skills is
+// skills/' resolved path, empty when the guard cannot tell.
+func skillRow(root fs.FS, prefix, name, skills string, guard pathGuard) (KiroDoc, bool) {
 	dir := "skills/" + name
+	v := guard.verdict(dir)
+	// A link back to skills/ or a directory holding it would list that tree as a skill.
+	if !v.allowed || pathinside.Root(v.resolved).Contains(skills) {
+		return KiroDoc{}, false
+	}
 	data, _, rErr := readGuardedFS(root, dir+"/SKILL.md", guard)
 	if rErr != nil && !holdsFiles(root, dir, guard) {
 		return KiroDoc{}, false
@@ -325,7 +337,7 @@ func skillRow(root fs.FS, prefix, name string, guard pathGuard) (KiroDoc, bool) 
 		Inclusion:        inclusion,
 		SteeringOverride: fm.SteeringOverride,
 		// The delete removes the directory, so a linked directory is what must not offer it.
-		DeleteProtected: guard != nil && guard(dir).deleteProtected,
+		DeleteProtected: v.deleteProtected,
 	}, true
 }
 

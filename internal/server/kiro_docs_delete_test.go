@@ -180,7 +180,8 @@ func TestKiroDocsDelete_EveryCategoryRowLeavesTheNextListing(t *testing.T) {
 }
 
 // TestKiroDocsDelete_RefusesWhatTheRowDoesNotOwn pins the guards: a linked skill directory or
-// agent twin is refused with its target intact, and a path no row lists is not deleted.
+// agent twin is refused with its target intact, a directory wearing an agent twin's name is left
+// alone, and a path no row lists is not deleted.
 func TestKiroDocsDelete_RefusesWhatTheRowDoesNotOwn(t *testing.T) {
 	t.Run("linked_skill_directory", func(t *testing.T) {
 		h, work := docsDeleteServer(t)
@@ -222,6 +223,40 @@ func TestKiroDocsDelete_RefusesWhatTheRowDoesNotOwn(t *testing.T) {
 		}
 		if after := mustRow(t, listDocs(t, h), catAgent, "pair"); after.Path != row.Path {
 			t.Errorf("after the refusal the row is %+v, want it still at %s", after, row.Path)
+		}
+	})
+	t.Run("twin_is_a_directory", func(t *testing.T) {
+		h, work := docsDeleteServer(t)
+		kiro := filepath.Join(work, ".kiro")
+		writeFile(t, kiro, "agents/pair.md", "---\nname: pair\n---\n")
+		writeFile(t, kiro, "agents/pair.json/keep.txt", "kept\n")
+		row := mustRow(t, listDocs(t, h), catAgent, "pair")
+		if rec := deleteRow(t, h, &row); rec.Code != http.StatusOK {
+			t.Fatalf("delete: status %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+		requireGone(t, filepath.Join(kiro, "agents", "pair.md"))
+		if _, err := os.Stat(filepath.Join(kiro, "agents", "pair.json", "keep.txt")); err != nil {
+			t.Errorf("a directory wearing the twin's name was removed: %v", err)
+		}
+		if d, ok := findDoc(docsByCategory(listDocs(t, h), catAgent), "pair"); ok {
+			t.Errorf("the deleted agent is still listed: %+v", d)
+		}
+	})
+	t.Run("skill_link_to_its_own_tree", func(t *testing.T) {
+		h, work := docsDeleteServer(t)
+		kiro := filepath.Join(work, ".kiro")
+		writeFile(t, kiro, "steering/a.md", "# A\n")
+		if err := os.MkdirAll(filepath.Join(kiro, "skills"), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		symlinkOr(t, "..", filepath.Join(kiro, "skills", "root"))
+		listDocs(t, h)
+		p := strings.TrimPrefix(filepath.Join(kiro, "skills", "root", "SKILL.md"), "/")
+		if rec := deletePath(t, h, p); rec.Code != http.StatusNotFound {
+			t.Errorf("delete: status %d, want 404: %s", rec.Code, rec.Body.String())
+		}
+		if _, err := os.Stat(filepath.Join(kiro, "steering", "a.md")); err != nil {
+			t.Errorf("the .kiro tree behind the link was touched: %v", err)
 		}
 	})
 	t.Run("unlisted_path", func(t *testing.T) {
