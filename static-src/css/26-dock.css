@@ -1142,7 +1142,7 @@
   /* The gap between runs, and under an open fold row. */
   --run-row-gap: var(--sp-05);
 
-  /* The stacked fold row's painted height; its ::after reaches the rest of the floor. */
+  /* The stacked fold row's painted height without the batch button; its ::after reaches the rest of the floor. */
   --run-fold-h: calc(var(--hit-floor) - var(--run-row-gap) - var(--stack-in) - var(--stack-gap));
 
   &:has(> .run-bar.hidden) {
@@ -1445,6 +1445,12 @@
   gap: var(--sp-2);
 }
 
+/* Beside the batch button the toggle's hover is the button's height on every pointer and width, so the
+   fold row's two targets read as one line. The row already budgets that height (`--run-room`). */
+.run-bar-fold:has(> .run-bar-all:not([hidden])) > .run-bar-toggle {
+  min-block-size: var(--btn-h);
+}
+
 .run-bar-chev {
   display: grid;
   place-items: center;
@@ -1547,7 +1553,7 @@
     }
   }
 
-  /* Painted at 2 * air plus the ink, not at the hit floor: the ::after reaches up into the box's
+  /* Alone on its line (no batch button beside it), painted at 2 * air plus the ink, not at the hit floor: the ::after reaches up into the box's
      padding, border and the stack gap, stopping short of the stack member above, and down over
      the row gap; the first row stacks above it. The box keeps what the floor needs past those
      two reaches. */

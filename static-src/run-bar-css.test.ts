@@ -376,6 +376,34 @@ describe("the run bar's box", () => {
 
   describe("the batch button", () => {
     for (const pointer of ["fine", "coarse"] as const) {
+      it(`shares its height with the fold row's toggle at every width, ${pointer}`, () => {
+        document.documentElement.setAttribute("data-pointer", pointer);
+        try {
+          for (const width of [1000, 700, 390]) {
+            const bar = mountRows(RUNS.slice(0, 2), true, width, true);
+            const fold = bar.parentElement!.querySelector<HTMLElement>(".run-bar-fold")!;
+            // A row rises 4px into place as it mounts (`@starting-style`); measure where it settles.
+            for (const a of document.getAnimations()) {
+              if (a.effect?.getComputedTiming().endTime !== Infinity) {
+                a.finish();
+              }
+            }
+            const toggle = fold
+              .querySelector<HTMLElement>(".run-bar-toggle")!
+              .getBoundingClientRect();
+            const all = fold.querySelector<HTMLElement>(".run-bar-all")!.getBoundingClientRect();
+            expect(toggle.height, `${String(width)}px: the toggle's hover`).toBeCloseTo(
+              all.height,
+              0,
+            );
+            expect(toggle.top, `${String(width)}px: one line`).toBeCloseTo(all.top, 0);
+            host.remove();
+          }
+        } finally {
+          document.documentElement.removeAttribute("data-pointer");
+        }
+      });
+
       it(`paints at the top bar's control height at the box's top right, ${pointer}`, () => {
         document.documentElement.setAttribute("data-pointer", pointer);
         try {
