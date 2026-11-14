@@ -131,11 +131,8 @@ func termLocaleEnv() []string {
 }
 
 // termEnv layers the requested vars over the process environment, then the locale pin
-// (last wins in os/exec). Nil when none are requested, so the child inherits os.Environ().
+// (last wins in os/exec).
 func termEnv(vars []termEnvVar) []string {
-	if len(vars) == 0 {
-		return nil
-	}
 	env := os.Environ()
 	for _, v := range vars {
 		env = append(env, v.Name+"="+v.Value)
@@ -512,11 +509,7 @@ func agentCommand(ctx context.Context, line string, args *[]string, vars []termE
 	} else {
 		cmd = exec.CommandContext(ctx, agentShell(), "-c", line) // #nosec G204 -- agent-controlled
 	}
-	env := termEnv(vars)
-	if env == nil {
-		env = os.Environ()
-	}
-	cmd.Env = kirorelease.SpawnEnv(env)
+	cmd.Env = kirorelease.SpawnEnv(termEnv(vars))
 	return cmd
 }
 

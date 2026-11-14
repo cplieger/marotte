@@ -129,7 +129,6 @@ func TestClassifier_MatchesKiroCLIOnThisAccount(t *testing.T) {
 	}
 }
 
-// liveKiroCLIOutput runs one command of the real kiro-cli named by MAROTTE_LIVE_KIRO_CLI and returns its stdout.
 func liveKiroCLIOutput(t *testing.T, bin string, args ...string) ([]byte, error) {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), bin, args...) // #nosec G204 -- the operator's own binary

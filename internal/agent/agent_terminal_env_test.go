@@ -6,8 +6,8 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// An agent command can run the pinned kiro-cli from PATH, so both forms carry kirorelease.NoAutoUpdateVar under an
-// `env -i` parent, over a parent opt-out and over the agent's own vars.
+// Both forms carry kirorelease.NoAutoUpdateVar under an `env -i` parent, over a parent opt-out and over the agent's
+// own vars.
 func TestAgentCommand_RunsWithKiroCLISelfUpdateOff(t *testing.T) {
 	parents := map[string]struct {
 		parent string

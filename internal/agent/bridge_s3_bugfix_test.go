@@ -393,14 +393,13 @@ func TestTermCreate_PassesKASEnvVerbatim(t *testing.T) {
 	}
 }
 
-// termEnv layers requested vars over os.Environ and returns nil when none are requested.
+// termEnv layers requested vars over os.Environ, and pins the locale with or without them.
 func TestTermEnv(t *testing.T) {
 	t.Parallel()
-	if termEnv(nil) != nil {
-		t.Error("termEnv(nil) = non-nil, want nil (inherit os.Environ)")
-	}
-	if termEnv([]termEnvVar{}) != nil {
-		t.Error("termEnv(empty) = non-nil, want nil")
+	for name, vars := range map[string][]termEnvVar{"nil": nil, "empty": {}} {
+		if got := lastValueFor(termEnv(vars), termLocaleEnvVar); termLocaleEnvVar+"="+got != termLocaleEnv()[0] {
+			t.Errorf("termEnv(%s) leaves %s=%q, want %q", name, termLocaleEnvVar, got, termLocaleEnv()[0])
+		}
 	}
 	got := termEnv([]termEnvVar{{Name: "MAROTTE_A", Value: "1"}})
 	if len(got) <= len(os.Environ()) {
