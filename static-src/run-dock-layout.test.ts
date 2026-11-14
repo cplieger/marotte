@@ -860,7 +860,7 @@ describe("the run dock head's toggle", () => {
     };
     const controls = [...head.querySelectorAll("button, input")].filter(shown);
     const regions = [...dock.children].filter((e) => e !== head && shown(e));
-    const nameOf = (c: Element): string => c.getAttribute("aria-label") ?? "the passes field";
+    const nameOf = (c: Element): string => c.getAttribute("aria-label") ?? c.tagName.toLowerCase();
     const toggle = head.querySelector(".ev-box-toggle")!;
     for (const c of controls) {
       const name = nameOf(c);
@@ -1002,8 +1002,8 @@ describe("the run dock head's toggle", () => {
 
   // Beside the verbs while the summary fits, under them once it does not: a running run's
   // summary with its credits and Pause and Stop fit a 390px head with a mouse but overrun it
-  // with a finger's wider gap between the verbs, and overrun a 360px head with either; the pass-limit verbs
-  // (a field and three buttons) overrun a 390px head with either.
+  // with a finger's wider gap between the verbs, and overrun a 360px head with either; the
+  // pass-limit verbs (a field and three buttons) overrun a 390px head with either.
   const CASES = [
     {
       what: "a running run's",
