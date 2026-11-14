@@ -1,6 +1,7 @@
 package applogin
 
 import (
+	"crypto/tls"
 	"errors"
 	"testing"
 
@@ -9,7 +10,8 @@ import (
 )
 
 // TestKeyPermissions_ScopedKeyCannotMintOrCreate, at the account layer: under marotte's empty
-// scopes a scoped owner key minted out of band reaches no key or user creation.
+// scopes a scoped owner key minted out of band reaches no key or user creation, over HTTPS so
+// the refusal is the scope's and not the transport's.
 func TestKeyPermissions_ScopedKeyCannotMintOrCreate(t *testing.T) {
 	h := newHarness(t)
 	ctx := t.Context()
@@ -18,9 +20,11 @@ func TestKeyPermissions_ScopedKeyCannotMintOrCreate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kp, err := h.authn.Authenticate(bearerRequest("Bearer " + created.Plaintext.Reveal()))
-	if err != nil || !kp.IsAPIKey() {
-		t.Fatalf("the scoped key = (%v, %v), want an API-key principal", kp.Method, err)
+	r := bearerRequest("Bearer " + created.Plaintext.Reveal())
+	r.TLS = &tls.ConnectionState{}
+	kp, err := h.authn.Authenticate(r)
+	if err != nil || !kp.IsAPIKey() || !kp.Secure {
+		t.Fatalf("the scoped key = (%v, secure %t, %v), want a secure API-key principal", kp.Method, kp.Secure, err)
 	}
 	keys, _ := h.store.ListAPIKeys(ctx)
 	minted := len(h.events.of(account.EventKeyMinted))

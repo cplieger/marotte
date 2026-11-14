@@ -3,6 +3,7 @@ package applogin
 import (
 	"bytes"
 	"errors"
+	"net/http"
 	"runtime"
 	"strconv"
 	"strings"
@@ -13,6 +14,20 @@ import (
 	"github.com/cplieger/access"
 	"github.com/cplieger/go/slogx/capture"
 )
+
+func TestConstruct_ChallengeNamesTheMarotteRealm(t *testing.T) {
+	h := newHarness(t)
+	_, err := h.authn.Authenticate(bearerRequest("Bearer test-key-not-stored"))
+	e, ok := access.ErrorFor(err)
+	if !ok {
+		t.Fatalf("an unknown key = %v, want a refusal", err)
+	}
+	hdr := http.Header{}
+	h.authn.Challenge(hdr, e.Code, "")
+	if got := hdr.Get("WWW-Authenticate"); !strings.HasPrefix(got, "Bearer ") || !strings.Contains(got, `realm="marotte"`) {
+		t.Errorf("WWW-Authenticate for %s = %q, want a Bearer challenge with realm=\"marotte\"", e.Code, got)
+	}
+}
 
 func TestConstruct_ChainOverTheStore(t *testing.T) {
 	h := newHarness(t)

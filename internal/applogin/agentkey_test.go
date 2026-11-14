@@ -62,7 +62,7 @@ func TestAgentKey_VerifyOnlyItsOwnKey(t *testing.T) {
 func TestAgentKey_OwnerKeyStillAuthenticates(t *testing.T) {
 	h := newHarness(t)
 	si := h.setupOwner(t.Context())
-	created, err := h.svc.CreateAPIKey(t.Context(), account.As(h.principal(si.Token)), si.User.ID, account.NewKey{Label: "k", Scopes: []string{"tools"}})
+	created, err := h.svc.CreateAPIKey(t.Context(), account.As(h.securePrincipal(h.signInHTTPS(t.Context()).Token)), si.User.ID, account.NewKey{Label: "k", Scopes: []string{"tools"}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -19,17 +19,16 @@ import (
 	"github.com/cplieger/marotte/internal/filemode"
 )
 
-// Options is one construction attempt's input. Unauthorized, OnEvent and Breach are the
-// production values in composition and recording ones in a test.
+// Options is one construction attempt's input. OnEvent and Breach are the production values in
+// composition and recording ones in a test.
 type Options struct {
-	Disk         filemode.Disk
-	Proxies      *Proxies
-	Origin       *Origin
-	Agent        access.CredentialVerifier
-	Unauthorized func(http.ResponseWriter, *http.Request, error)
-	OnEvent      func(account.Event)
-	Breach       http.RoundTripper // nil: an ssrf-guarded HTTPS transport
-	Path         string
+	Disk    filemode.Disk
+	Proxies *Proxies
+	Origin  *Origin
+	Agent   access.CredentialVerifier
+	OnEvent func(account.Event)
+	Breach  http.RoundTripper // nil: an ssrf-guarded HTTPS transport
+	Path    string
 	// MemoryLimit is the container's memory limit in bytes; 0 reads the cgroup.
 	MemoryLimit int64
 }
@@ -176,7 +175,7 @@ func Build(ctx context.Context, opts Options) (*Attempt, error) { //nolint:gocri
 		return refuseEarly(err)
 	}
 	a.store, a.reset = store, reset
-	store.SetOriginValid(opts.Origin.Valid())
+	store.SetOrigin(opts.Origin)
 	authn, err := access.New(store, access.Config{
 		Cookie:           opts.Proxies.CookieConfig(),
 		IdleTimeout:      defaultIdle,
@@ -185,7 +184,7 @@ func Build(ctx context.Context, opts Options) (*Attempt, error) { //nolint:gocri
 		ActivityThrottle: time.Minute,
 		Verifier:         opts.Agent,
 		ClientAddr:       opts.Proxies.ClientAddr,
-		Unauthorized:     opts.Unauthorized,
+		Realm:            "marotte",
 	})
 	if err != nil {
 		return refuseEarly(fmt.Errorf("access: build the authenticator: %w", err))

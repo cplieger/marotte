@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"log/slog"
 	"maps"
 	"slices"
 	"time"
@@ -324,9 +323,8 @@ func (t *txView) deleteSession(k access.HashKey) {
 	mapDel(t, &t.s.sessions, &t.own.sessions, k)
 }
 
-// CreateSession stores the transport the gate decided; a context without one is stored as plain
-// HTTP, the stricter tag.
-func (t *txView) CreateSession(ctx context.Context, sess *access.Session) error {
+// CreateSession stores the Secure access set from the request's ClientAddr.
+func (t *txView) CreateSession(_ context.Context, sess *access.Session) error {
 	switch {
 	case sess.TokenHash.IsZero():
 		return errNoHash
@@ -340,12 +338,7 @@ func (t *txView) CreateSession(ctx context.Context, sess *access.Session) error 
 	if _, ok := t.s.sessByID[sess.ID]; ok {
 		return errSessionIDTaken
 	}
-	plain, ok := transportOf(ctx)
-	if !ok {
-		slog.Error("access: a session was created without a transport; stored as plain HTTP")
-		plain = true
-	}
-	r := sessionFromAuth(sess, plain)
+	r := sessionFromAuth(sess)
 	t.putSession(&r)
 	return nil
 }
@@ -390,7 +383,8 @@ func (t *txView) owned(ref access.SessionRef) (access.HashKey, bool) {
 	return k, true
 }
 
-// RotateSession keeps the stored transport tag and, under rule 21, a newer stored activity.
+// RotateSession writes Next, keeping a newer stored activity (rule 21) and the stored transport
+// tag and caps, which a rotation never changes.
 func (t *txView) RotateSession(_ context.Context, rot account.Rotation) error { //nolint:gocritic // hugeParam: account.SessionStore's signature
 	k, ok := t.owned(access.SessionRef{ID: rot.ID, UserID: rot.UserID})
 	if !ok {
@@ -410,7 +404,8 @@ func (t *txView) RotateSession(_ context.Context, rot account.Rotation) error { 
 	if _, taken := t.s.sessions[nk]; taken && nk != k {
 		return errHashTaken
 	}
-	next := sessionFromAuth(&rot.Next, cur.Plain)
+	next := sessionFromAuth(&rot.Next)
+	next.Secure, next.IdleCap, next.AbsoluteCap = cur.Secure, cur.IdleCap, cur.AbsoluteCap
 	if cur.LastActivity.After(next.LastActivity) {
 		next.LastActivity, next.LastIP = cur.LastActivity, cur.LastIP
 	}
@@ -472,23 +467,6 @@ func (t *txView) cleanup(now time.Time, timeouts access.SessionTimeouts, limit i
 	slices.SortFunc(expired, cmpSessionOrder)
 	refs := make([]access.SessionRef, 0, min(limit, len(expired)))
 	for _, r := range expired[:min(limit, len(expired))] {
-		refs = append(refs, r.ref())
-		t.deleteSession(r.TokenHash.Key())
-	}
-	return refs
-}
-
-// deletePlainSessions removes every Plain session and returns the refs it removed.
-func (t *txView) deletePlainSessions() []access.SessionRef {
-	var gone []*storeSession
-	for _, r := range t.s.sessions {
-		if r.Plain {
-			gone = append(gone, r)
-		}
-	}
-	slices.SortFunc(gone, cmpSessionOrder)
-	refs := make([]access.SessionRef, 0, len(gone))
-	for _, r := range gone {
 		refs = append(refs, r.ref())
 		t.deleteSession(r.TokenHash.Key())
 	}
@@ -603,19 +581,59 @@ func (t *txView) DeleteUserPasskeys(_ context.Context, userID int64) ([]int64, e
 
 // --- API keys ---
 
-func (t *txView) putKey(r *storeKey) {
-	k := r.KeyHash.Key()
-	mapSet(t, &t.s.keys, &t.own.keys, k, r)
-	mapSet(t, &t.s.keyByID, &t.own.keyByID, r.ID, k)
+// putKey replaces the record under its ID and moves no hash entry, so both of the key's hashes
+// read the record it leaves (rule 23).
+func (t *txView) putKey(r *storeKey) { mapSet(t, &t.s.keyByID, &t.own.keyByID, r.ID, r) }
+
+func (t *txView) indexKeyHash(h access.Hash, id int64) {
+	if !h.IsZero() {
+		mapSet(t, &t.s.keys, &t.own.keys, h.Key(), id)
+	}
+}
+
+func (t *txView) unindexKeyHash(h access.Hash) {
+	if !h.IsZero() {
+		mapDel(t, &t.s.keys, &t.own.keys, h.Key())
+	}
+}
+
+// hashesFree reports whether the non-zero hashes differ from each other and each indexes no key
+// but id: decodeKeys refuses a file holding one hash twice, so the writer must never publish one.
+func (t *txView) hashesFree(id int64, hs ...access.Hash) bool {
+	seen := make(map[access.HashKey]struct{}, len(hs))
+	for _, h := range hs {
+		if h.IsZero() {
+			continue
+		}
+		k := h.Key()
+		if _, dup := seen[k]; dup {
+			return false
+		}
+		if other, ok := t.s.keys[k]; ok && other != id {
+			return false
+		}
+		seen[k] = struct{}{}
+	}
+	return true
 }
 
 func (t *txView) deleteKey(id int64) {
-	k, ok := t.s.keyByID[id]
+	r, ok := t.s.keyByID[id]
 	if !ok {
 		return
 	}
-	mapDel(t, &t.s.keys, &t.own.keys, k)
+	t.unindexKeyHash(r.KeyHash)
+	t.unindexKeyHash(r.PreviousHash)
 	mapDel(t, &t.s.keyByID, &t.own.keyByID, id)
+}
+
+// userKey is the key ref names, or ErrNotFound when no key of ref.UserID has ref.ID (rule 6).
+func (t *txView) userKey(ref access.KeyRef) (*storeKey, error) {
+	r, ok := t.s.keyByID[ref.ID]
+	if !ok || ref.UserID == 0 || r.UserID != ref.UserID {
+		return nil, account.ErrNotFound
+	}
+	return r, nil
 }
 
 // CreateAPIKey appends the ID it assigns to the lineage it was given, as stored, with no default
@@ -624,7 +642,7 @@ func (t *txView) CreateAPIKey(_ context.Context, key *access.Key) error {
 	if key.KeyHash.IsZero() {
 		return errNoHash
 	}
-	if _, ok := t.s.keys[key.KeyHash.Key()]; ok {
+	if !t.hashesFree(0, key.KeyHash, key.PreviousHash) {
 		return errHashTaken
 	}
 	id, err := t.nextID(func(n *nextIDs) *int64 { return &n.Key })
@@ -634,23 +652,26 @@ func (t *txView) CreateAPIKey(_ context.Context, key *access.Key) error {
 	r := keyFromAuth(key)
 	r.ID = id
 	r.LineageIDs = append(r.LineageIDs, id)
+	t.indexKeyHash(r.KeyHash, id)
+	t.indexKeyHash(r.PreviousHash, id)
 	t.putKey(&r)
 	key.ID, key.LineageIDs = id, slices.Clone(r.LineageIDs)
 	return nil
 }
 
+// APIKeyByHash finds a key by its KeyHash or its non-zero PreviousHash; a zero hash finds nothing.
 func (t *txView) APIKeyByHash(_ context.Context, hash access.Hash) (*access.Key, bool, error) {
-	r, ok := t.s.keys[hash.Key()]
+	id, ok := t.s.keys[hash.Key()]
 	if !ok {
 		return nil, false, nil
 	}
-	return r.toAuth(), true, nil
+	return t.s.keyByID[id].toAuth(), true, nil
 }
 
 func (t *txView) listKeys(match func(*storeKey) bool) []access.Key {
 	out := []access.Key{}
 	for _, id := range sortedKeys(t.s.keyByID) {
-		if r := t.s.keys[t.s.keyByID[id]]; match(r) {
+		if r := t.s.keyByID[id]; match(r) {
 			out = append(out, *r.toAuth())
 		}
 	}
@@ -666,9 +687,8 @@ func (t *txView) ListAPIKeys(context.Context) ([]access.Key, error) {
 }
 
 func (t *txView) DeleteAPIKey(_ context.Context, ref access.KeyRef) error {
-	k, ok := t.s.keyByID[ref.ID]
-	if !ok || ref.UserID == 0 || t.s.keys[k].UserID != ref.UserID {
-		return account.ErrNotFound
+	if _, err := t.userKey(ref); err != nil {
+		return err
 	}
 	t.deleteKey(ref.ID)
 	return nil
@@ -677,7 +697,7 @@ func (t *txView) DeleteAPIKey(_ context.Context, ref access.KeyRef) error {
 func (t *txView) deleteUserKeys(userID int64) []int64 {
 	ids := []int64{}
 	for _, id := range sortedKeys(t.s.keyByID) {
-		if t.s.keys[t.s.keyByID[id]].UserID == userID {
+		if t.s.keyByID[id].UserID == userID {
 			ids = append(ids, id)
 			t.deleteKey(id)
 		}
@@ -689,16 +709,75 @@ func (t *txView) DeleteUserAPIKeys(_ context.Context, userID int64) ([]int64, er
 	return t.deleteUserKeys(userID), nil
 }
 
-// TouchAPIKey compares and writes in one writer step (rule 21).
-func (t *txView) TouchAPIKey(_ context.Context, keyID int64, at time.Time) error {
-	k, ok := t.s.keyByID[keyID]
-	if !ok || !at.After(t.s.keys[k].LastUsedAt) {
+// TouchAPIKey compares and writes in one writer step (rule 21); a touch carrying a superseded
+// hash writes nothing, so it never ends a rotation's overlap (rule 23).
+func (t *txView) TouchAPIKey(_ context.Context, keyID int64, hash access.Hash, at time.Time) error {
+	r, ok := t.s.keyByID[keyID]
+	if !ok || !r.KeyHash.Equal(hash) || !at.After(r.LastUsedAt) {
 		return nil
 	}
-	next := *t.s.keys[k]
+	next := *r
 	next.LastUsedAt = at
 	t.putKey(&next)
 	return nil
+}
+
+// UpdateAPIKeySecret writes s and zeroes LastUsedAt; the hashes it supersedes leave the index in
+// the same copy, so after rotations A to B to C only B and C find the key (rule 23).
+func (t *txView) UpdateAPIKeySecret(_ context.Context, ref access.KeyRef, s access.KeySecret) error {
+	r, err := t.userKey(ref)
+	if err != nil {
+		return err
+	}
+	switch {
+	case s.KeyHash.IsZero():
+		return errNoHash
+	case !t.hashesFree(r.ID, s.KeyHash, s.PreviousHash):
+		return errHashTaken
+	}
+	next := *r
+	next.KeyHash, next.KeyPrefix, next.KeySuffix = s.KeyHash, s.KeyPrefix, s.KeySuffix
+	next.PreviousHash, next.PreviousUntil, next.LastUsedAt = s.PreviousHash, s.PreviousUntil, time.Time{}
+	t.unindexKeyHash(r.KeyHash)
+	t.unindexKeyHash(r.PreviousHash)
+	t.indexKeyHash(next.KeyHash, r.ID)
+	t.indexKeyHash(next.PreviousHash, r.ID)
+	t.putKey(&next)
+	return nil
+}
+
+// UpdateAPIKeyLabel writes the label alone; labels carry no unique index.
+func (t *txView) UpdateAPIKeyLabel(_ context.Context, ref access.KeyRef, label string) error {
+	r, err := t.userKey(ref)
+	if err != nil {
+		return err
+	}
+	next := *r
+	next.Label = label
+	t.putKey(&next)
+	return nil
+}
+
+// clearRetired zeroes PreviousHash and PreviousUntil, in ascending ID, on at most limit keys whose
+// previous secret no longer verifies at now, judged on the private copy at the job's turn, and
+// never writes KeyHash (rule 23).
+func (t *txView) clearRetired(now time.Time, limit int) int {
+	n := 0
+	for _, id := range sortedKeys(t.s.keyByID) {
+		if n == limit {
+			break
+		}
+		r := t.s.keyByID[id]
+		if r.PreviousHash.IsZero() || (r.PreviousUntil.After(now) && r.LastUsedAt.IsZero()) {
+			continue
+		}
+		next := *r
+		next.PreviousHash, next.PreviousUntil = access.Hash{}, time.Time{}
+		t.unindexKeyHash(r.PreviousHash)
+		t.putKey(&next)
+		n++
+	}
+	return n
 }
 
 // --- One-time tokens ---

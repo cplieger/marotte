@@ -30,6 +30,7 @@ var (
 	errStoreClosed     = errors.New("applogin: the store is closed")
 	errCleanupLimit    = errors.New("access: cleanup limit below 1")
 	errCleanupTimeouts = errors.New("access: cleanup with a non-positive timeout")
+	errClearLimit      = errors.New("access: clear limit below 1")
 )
 
 // Published reports whether a write's result left its change in force: nil, or a publication
@@ -581,8 +582,18 @@ func (s *Store) DeleteUserAPIKeys(ctx context.Context, userID int64) ([]int64, e
 }
 
 // TouchAPIKey implements [account.KeyStore].
-func (s *Store) TouchAPIKey(ctx context.Context, keyID int64, at time.Time) error {
-	return s.write(ctx, func(tx *txView) error { return tx.TouchAPIKey(ctx, keyID, at) })
+func (s *Store) TouchAPIKey(ctx context.Context, keyID int64, hash access.Hash, at time.Time) error {
+	return s.write(ctx, func(tx *txView) error { return tx.TouchAPIKey(ctx, keyID, hash, at) })
+}
+
+// UpdateAPIKeySecret implements [account.KeyStore].
+func (s *Store) UpdateAPIKeySecret(ctx context.Context, ref access.KeyRef, sec access.KeySecret) error {
+	return s.write(ctx, func(tx *txView) error { return tx.UpdateAPIKeySecret(ctx, ref, sec) })
+}
+
+// UpdateAPIKeyLabel implements [account.KeyStore].
+func (s *Store) UpdateAPIKeyLabel(ctx context.Context, ref access.KeyRef, label string) error {
+	return s.write(ctx, func(tx *txView) error { return tx.UpdateAPIKeyLabel(ctx, ref, label) })
 }
 
 // CreateOneTimeToken implements [account.TokenStore].
@@ -746,13 +757,24 @@ func (s *Store) CleanupExpiredOneTimeTokens(ctx context.Context, now time.Time) 
 	return int64(n), nil
 }
 
-// --- marotte's own writes ---
-
-// DeleteSessionDirect is the gate's delete of a refused Plain session; the gate answers 401
-// whatever it returns, a fence's refusal included.
-func (s *Store) DeleteSessionDirect(ctx context.Context, h access.Hash) error {
-	return s.write(ctx, func(tx *txView) error { return tx.DeleteSessionByHash(ctx, h) })
+// ClearRetiredAPIKeySecrets is one writer job, as CleanupExpiredSessions is: it judges the keys
+// on the private copy at its turn and returns its count only once the clear is durable (rule 23).
+func (s *Store) ClearRetiredAPIKeySecrets(ctx context.Context, now time.Time, limit int) (int, error) {
+	if limit < 1 {
+		return 0, errClearLimit
+	}
+	var n int
+	err := s.write(ctx, func(tx *txView) error {
+		n = tx.clearRetired(now, limit)
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
 }
+
+// --- marotte's own writes ---
 
 // setSeenSeq raises activity_seen_seq to seq, capped at the highest Seq assigned, never lowering it.
 func (s *Store) setSeenSeq(ctx context.Context, seq uint64) error {
@@ -791,27 +813,14 @@ type ownService interface {
 var _ ownService = (*account.Service)(nil)
 
 const (
-	kindPlainOn   = "marotte.plain_http_on"
-	kindPlainOff  = "marotte.plain_http_off"
 	kindMethodOn  = "marotte.method_on"
 	kindMethodOff = "marotte.method_off"
 )
 
-// applyDelta deletes the Plain sessions a switch-off ends and appends one log entry per delta
-// entry, on the job's txView, so each commits with its change or not at all.
+// applyDelta appends one log entry per delta entry, on the job's txView, so each commits with its
+// change or not at all.
 func applyDelta(ctx context.Context, tx *txView, svc ownService, actor *account.Actor, d *policyDelta) error {
-	if d.plainOff {
-		for _, ref := range tx.deletePlainSessions() {
-			d.deletedPlain = append(d.deletedPlain, ref.ID)
-		}
-	}
 	var entries []account.AppEntry
-	switch {
-	case d.plainOn:
-		entries = append(entries, account.AppEntry{Kind: kindPlainOn, Actor: *actor})
-	case d.plainOff:
-		entries = append(entries, account.AppEntry{Kind: kindPlainOff, Actor: *actor})
-	}
 	for _, m := range policyMethodOrder {
 		on, ok := d.methods[m]
 		if !ok {
@@ -912,30 +921,4 @@ func nextPolicy(cur, candidate *storePolicy, edit *providerEdit) storePolicy {
 		next.Provider.DisplayName = name
 	}
 	return next
-}
-
-// setPlainHTTP is the admin socket's switch, shape (b): it compares and sets plain_http on the
-// private copy and deletes the Plain sessions when it turns the switch off.
-func (s *Store) setPlainHTTP(ctx context.Context, svc ownService, on bool) (policyDelta, error) {
-	var delta policyDelta
-	err := s.write(ctx, func(tx *txView) error {
-		delta = policyDelta{}
-		cur := tx.s.policy
-		if cur.PlainHTTP == on {
-			return nil
-		}
-		next := cur.clone()
-		next.PlainHTTP = on
-		if err := bumpGeneration(&next); err != nil {
-			return err
-		}
-		tx.setPolicy(&next)
-		delta = deltaOf(&cur, &next)
-		actor := account.OutOfBand("admin-socket")
-		return applyDelta(ctx, tx, svc, &actor, &delta)
-	})
-	if !Published(err) {
-		return policyDelta{}, err
-	}
-	return delta, err
 }

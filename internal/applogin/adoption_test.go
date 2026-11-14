@@ -56,7 +56,7 @@ func (h *harness) accessRoutes() map[string]accesshttp.Route {
 	h.t.Helper()
 	ah, err := accesshttp.New(accesshttp.Config{
 		Account: h.svc, Prefix: "/api/access", OIDCPrefix: "/access/oidc",
-		Errors: func(w http.ResponseWriter, _ *http.Request, e accesshttp.Error) {
+		Errors: func(w http.ResponseWriter, _ *http.Request, e access.Error) {
 			w.WriteHeader(e.Status)
 			_, _ = w.Write([]byte(e.Code))
 		},
@@ -78,6 +78,19 @@ func serve(route accesshttp.Route, token access.Secret, body string) *httptest.R
 		r.Header.Set("Content-Type", "application/json")
 	}
 	r.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token.Reveal()})
+	w := httptest.NewRecorder()
+	route.Handler.ServeHTTP(w, r)
+	return w
+}
+
+// serveSecure sends an HTTPS request with token's secure session cookie through route.
+func serveSecure(route accesshttp.Route, token access.Secret, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(route.Method, "https://marotte.example"+route.Path, strings.NewReader(body))
+	if body != "" {
+		r.Header.Set("Content-Type", "application/json")
+	}
+	cookies := ParseProxies("").CookieConfig()
+	r.AddCookie(&http.Cookie{Name: cookies.CookieName(true), Value: token.Reveal()})
 	w := httptest.NewRecorder()
 	route.Handler.ServeHTTP(w, r)
 	return w
@@ -137,7 +150,7 @@ func TestAdoption_KeyPastExpiresAtIsRefused(t *testing.T) {
 func TestAdoption_AuthKeyCreateIsRecentAuthUnderEmptyScopes(t *testing.T) {
 	h := newHarness(t)
 	ctx := t.Context()
-	si := h.setupOwner(ctx)
+	h.setupOwner(ctx)
 	if s := h.svc.CreateKeysScope(); s != "" {
 		t.Fatalf("CreateKeysScope = %q, want empty", s)
 	}
@@ -150,13 +163,13 @@ func TestAdoption_AuthKeyCreateIsRecentAuthUnderEmptyScopes(t *testing.T) {
 	}
 	const body = `{"label":"adoption","scopes":["tools"]}`
 	keys, _ := h.store.ListAPIKeys(ctx)
-	if w := serve(route, si.Token, body); w.Code >= 300 {
+	if w := serveSecure(route, h.signInHTTPS(ctx).Token, body); w.Code >= 300 {
 		t.Errorf("a fresh session's key create = %d %s, want success", w.Code, w.Body)
 	}
 	if after, _ := h.store.ListAPIKeys(ctx); len(after) != len(keys)+1 {
 		t.Errorf("%d keys after a fresh session's create, want %d", len(after), len(keys)+1)
 	}
-	old := h.signIn(ctx)
+	old := h.signInHTTPS(ctx)
 	aged, ok := h.store.sessionRecord(old.Session.TokenHash)
 	if !ok {
 		t.Fatal("the second sign-in is not stored")
@@ -164,9 +177,9 @@ func TestAdoption_AuthKeyCreateIsRecentAuthUnderEmptyScopes(t *testing.T) {
 	aged.AuthTime = aged.AuthTime.Add(-11 * time.Minute)
 	h.fixture(func(tx *txView) error { tx.putSession(&aged); return nil })
 	keys, _ = h.store.ListAPIKeys(ctx)
-	w := serve(route, old.Token, body)
-	if got := w.Body.String(); got != string(accesshttp.CodeRecentAuthRequired) {
-		t.Errorf("an eleven-minute-old sign-in's key create = %d %s, want %s", w.Code, got, accesshttp.CodeRecentAuthRequired)
+	w := serveSecure(route, old.Token, body)
+	if got := w.Body.String(); got != string(access.CodeRecentAuthRequired) {
+		t.Errorf("an eleven-minute-old sign-in's key create = %d %s, want %s", w.Code, got, access.CodeRecentAuthRequired)
 	}
 	if after, _ := h.store.ListAPIKeys(ctx); len(after) != len(keys) {
 		t.Errorf("%d keys after the refused create, want %d", len(after), len(keys))
@@ -183,15 +196,15 @@ func TestAdoption_LogoutOnStoreErrorCookieOutcome(t *testing.T) {
 		si := h.setupOwner(ctx)
 		h.store.setFenceTick(make(chan time.Time))
 		h.disk.faults().AfterPublish()
-		if err := h.store.CreateSession(plainCtx(ctx), newTestSession(si.User.ID, time.Now())); !errors.Is(err, ErrNotDurable) {
+		if err := h.store.CreateSession(ctx, newTestSession(si.User.ID, time.Now())); !errors.Is(err, ErrNotDurable) {
 			t.Fatalf("the non-durable write = %v, want ErrNotDurable", err)
 		}
 		if !h.store.Fenced() {
 			t.Fatal("the store is not fenced")
 		}
 		w := serve(h.accessRoutes()["authLogout"], si.Token, "")
-		if got := w.Body.String(); w.Code != http.StatusServiceUnavailable || got != string(accesshttp.CodeUnavailable) {
-			t.Errorf("logout on a fenced store = %d %s, want 503 %s", w.Code, got, accesshttp.CodeUnavailable)
+		if got := w.Body.String(); w.Code != http.StatusServiceUnavailable || got != string(access.CodeUnavailable) {
+			t.Errorf("logout on a fenced store = %d %s, want 503 %s", w.Code, got, access.CodeUnavailable)
 		}
 		if c, ok := sessionCookie(w); ok {
 			t.Errorf("the refused logout set the session cookie %q, want it left alone", c.String())
@@ -255,51 +268,94 @@ func TestAdoption_KeyPrincipalDeadlineIsExpiresAt(t *testing.T) {
 	}
 }
 
-// TestAdoption_SessionCapsStoredAndEnforced: a plain password sign-in stores a 30-minute idle cap
-// and a 12-hour absolute cap, a step-up keeps both, and the verifier refuses the session 31
-// minutes after its last activity without writing.
-func TestAdoption_SessionCapsStoredAndEnforced(t *testing.T) {
+// TestAdoption_PlainLimitsFromSessionDeadlines: under the default 7-day policy a plain sign-in
+// stores Secure false and no caps, and access lowers it to 30 minutes idle and 12 hours absolute,
+// refusing it past each without a write; an HTTPS sign-in stores Secure true and keeps the
+// policy's limits.
+func TestAdoption_PlainLimitsFromSessionDeadlines(t *testing.T) {
 	quietSweep(t)
-	synctest.Test(t, func(t *testing.T) {
-		h := newHarness(t)
-		ctx := t.Context()
-		h.setupOwner(ctx)
-		caps := func(what string, hash access.Hash) {
-			t.Helper()
-			r, ok := h.store.sessionRecord(hash)
-			if !ok {
-				t.Fatalf("%s: no stored session", what)
+	inBubble := func(t *testing.T, fn func(t *testing.T, h *harness, policy access.SessionTimeouts)) {
+		synctest.Test(t, func(t *testing.T) {
+			h := newHarness(t)
+			h.setupOwner(t.Context())
+			policy := h.store.PolicyTimeouts()
+			if policy.Idle != 7*24*time.Hour || policy.Absolute != 30*24*time.Hour {
+				t.Fatalf("policy timeouts = %+v, want 7 days idle and 30 days absolute", policy)
 			}
-			if r.IdleCap != 30*time.Minute || r.AbsoluteCap != 12*time.Hour {
-				t.Errorf("%s stores caps (%v, %v), want (30m, 12h)", what, r.IdleCap, r.AbsoluteCap)
-			}
+			fn(t, h, policy)
+		})
+	}
+	stored := func(t *testing.T, h *harness, hash access.Hash, secure bool) storeSession {
+		t.Helper()
+		r, ok := h.store.sessionRecord(hash)
+		if !ok {
+			t.Fatal("no stored session")
 		}
-		si := h.signIn(ctx)
-		caps("the plain sign-in", si.Session.TokenHash)
-		up, err := h.svc.StepUpPassword(plainCtx(ctx), testClient, h.principal(si.Token), access.NewSecret(testPassword))
-		if err != nil {
-			t.Fatalf("StepUpPassword: %v", err)
+		if r.Secure != secure || r.IdleCap != 0 || r.AbsoluteCap != 0 {
+			t.Errorf("stored Secure %t and caps (%v, %v), want %t and none", r.Secure, r.IdleCap, r.AbsoluteCap, secure)
 		}
-		caps("the stepped-up session", up.Session.TokenHash)
+		return r
+	}
+	refused := func(t *testing.T, h *harness, what string, token access.Secret) {
+		t.Helper()
 		synctest.Wait()
-		time.Sleep(29 * time.Minute)
-		if p := h.principal(up.Token); p.SessionID != up.Session.ID {
-			t.Fatalf("29 minutes idle authenticates %q, want %q", p.SessionID, up.Session.ID)
-		}
-		synctest.Wait()
-		active, _ := h.store.sessionRecord(up.Session.TokenHash)
-		time.Sleep(31 * time.Minute)
 		before := h.diskMark()
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
-		r.AddCookie(&http.Cookie{Name: SessionCookieName, Value: up.Token.Reveal()})
+		r.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token.Reveal()})
 		if _, err := h.authn.Authenticate(r); !errors.Is(err, access.ErrSessionExpired) {
-			t.Errorf("31 minutes idle = %v, want ErrSessionExpired", err)
+			t.Errorf("%s = %v, want ErrSessionExpired", what, err)
 		}
 		synctest.Wait()
-		h.wroteNothingSince(before, "the refused session")
-		if after, _ := h.store.sessionRecord(up.Session.TokenHash); !after.LastActivity.Equal(active.LastActivity) {
-			t.Errorf("LastActivity moved from %v to %v on the refusal", active.LastActivity, after.LastActivity)
-		}
+		h.wroteNothingSince(before, what)
+	}
+
+	t.Run("plain_idle", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, h *harness, policy access.SessionTimeouts) {
+			si := h.signIn(t.Context())
+			rec := stored(t, h, si.Session.TokenHash, false)
+			idle, absolute := access.SessionDeadlines(rec.toAuth(), policy)
+			if !idle.Equal(rec.LastActivity.Add(30*time.Minute)) || !absolute.Equal(rec.CreatedAt.Add(12*time.Hour)) {
+				t.Errorf("SessionDeadlines = (%v, %v), want LastActivity+30m and CreatedAt+12h", idle, absolute)
+			}
+			time.Sleep(31 * time.Minute)
+			refused(t, h, "31 minutes idle", si.Token)
+		})
+	})
+	t.Run("plain_absolute", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, h *harness, policy access.SessionTimeouts) {
+			si := h.signIn(t.Context())
+			rec := stored(t, h, si.Session.TokenHash, false)
+			deadline := rec.CreatedAt.Add(12 * time.Hour)
+			for time.Until(deadline) > 20*time.Minute {
+				time.Sleep(20 * time.Minute)
+				synctest.Wait()
+				if p := h.principal(si.Token); p.SessionID != si.Session.ID {
+					t.Fatalf("an active plain session %v before its deadline authenticates %q, want %q", time.Until(deadline), p.SessionID, si.Session.ID)
+				}
+			}
+			time.Sleep(time.Until(deadline) + time.Second)
+			synctest.Wait()
+			active, _ := h.store.sessionRecord(si.Session.TokenHash)
+			if idle, _ := access.SessionDeadlines(active.toAuth(), policy); !idle.After(time.Now()) {
+				t.Fatalf("the session is idle-expired at %v, want it past its absolute limit only", idle)
+			}
+			refused(t, h, "past 12 hours absolute", si.Token)
+		})
+	})
+	t.Run("https_unlowered", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, h *harness, policy access.SessionTimeouts) {
+			si := h.signInHTTPS(t.Context())
+			rec := stored(t, h, si.Session.TokenHash, true)
+			idle, absolute := access.SessionDeadlines(rec.toAuth(), policy)
+			if !idle.Equal(rec.LastActivity.Add(policy.Idle)) || !absolute.Equal(rec.CreatedAt.Add(policy.Absolute)) {
+				t.Errorf("SessionDeadlines = (%v, %v), want the policy's 7 days and 30 days", idle, absolute)
+			}
+			time.Sleep(31 * time.Minute)
+			synctest.Wait()
+			if p := h.securePrincipal(si.Token); p.SessionID != si.Session.ID {
+				t.Errorf("the HTTPS session 31 minutes idle authenticates %q, want %q", p.SessionID, si.Session.ID)
+			}
+		})
 	})
 }
 
@@ -314,9 +370,9 @@ func TestAdoption_LastMethodGuardHonoursMethodUsable(t *testing.T) {
 			h.setupOwner(ctx)
 			mustCreatePasskey(t, h.store, h.owner().ID, "adoption-pk")
 			h.setPolicy(func(p *storePolicy) { p.Methods.Passkey = passkeyOn })
-			p := h.principal(h.signIn(ctx).Token)
+			p := h.securePrincipal(h.signInHTTPS(ctx).Token)
 			before := h.diskMark()
-			_, err := h.svc.RemovePassword(ctx, testClient, p, access.NewSecret(testPassword))
+			_, err := h.svc.RemovePassword(ctx, httpsClient, p, access.NewSecret(testPassword))
 			if passkeyOn {
 				if err != nil {
 					t.Errorf("RemovePassword with a usable passkey = %v, want success", err)

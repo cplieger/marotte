@@ -18,7 +18,7 @@ func heldGroup(t *testing.T, s *Store, calls ...func()) {
 	t.Helper()
 	entered, pending, release := s.holdGroup()
 	first := make(chan error, 1)
-	go func() { first <- s.CreateSession(plainCtx(context.Background()), newTestSession(999, time.Now())) }()
+	go func() { first <- s.CreateSession(context.Background(), newTestSession(999, time.Now())) }()
 	<-entered
 	done := make(chan struct{}, len(calls))
 	for i, call := range calls {
@@ -139,7 +139,7 @@ func TestWriter_PublicationFailureReachesOnlyParticipants(t *testing.T) {
 	var gotNoop, gotC, gotW error
 	entered, pending, release := s.holdGroup()
 	first := make(chan error, 1)
-	go func() { first <- s.CreateSession(plainCtx(context.Background()), newTestSession(999, time.Now())) }()
+	go func() { first <- s.CreateSession(context.Background(), newTestSession(999, time.Now())) }()
 	<-entered
 	queue := func(n int, call func()) chan struct{} {
 		done := make(chan struct{})
@@ -180,7 +180,7 @@ func TestWriter_JobCancelledWhileQueuedDoesNotRun(t *testing.T) {
 	var got error
 	entered, pending, release := s.holdGroup()
 	first := make(chan error, 1)
-	go func() { first <- s.CreateSession(plainCtx(context.Background()), newTestSession(999, time.Now())) }()
+	go func() { first <- s.CreateSession(context.Background(), newTestSession(999, time.Now())) }()
 	<-entered
 	done := make(chan struct{})
 	go func() {
@@ -203,7 +203,7 @@ func TestCleanup_GroupedWritesJudgedInOrder(t *testing.T) {
 	seed := func(t *testing.T) (*Store, *access.Session) {
 		s, _ := openTestStore(t)
 		sess := newTestSession(1, now.Add(-2*time.Hour))
-		if err := s.CreateSession(plainCtx(t.Context()), sess); err != nil {
+		if err := s.CreateSession(t.Context(), sess); err != nil {
 			t.Fatal(err)
 		}
 		return s, sess
@@ -258,7 +258,7 @@ func TestActivity_OlderWriteIsANoop(t *testing.T) {
 	t.Run("session_in_one_group", func(t *testing.T) {
 		s, d := openTestStore(t)
 		sess := newTestSession(1, epoch)
-		if err := s.CreateSession(plainCtx(t.Context()), sess); err != nil {
+		if err := s.CreateSession(t.Context(), sess); err != nil {
 			t.Fatal(err)
 		}
 		base := d.publishes.Load() + 1
@@ -281,7 +281,7 @@ func TestActivity_OlderWriteIsANoop(t *testing.T) {
 	t.Run("older_alone_publishes_nothing", func(t *testing.T) {
 		s, d := openTestStore(t)
 		sess := newTestSession(1, t0)
-		if err := s.CreateSession(plainCtx(t.Context()), sess); err != nil {
+		if err := s.CreateSession(t.Context(), sess); err != nil {
 			t.Fatal(err)
 		}
 		base := d.publishes.Load()
@@ -292,11 +292,11 @@ func TestActivity_OlderWriteIsANoop(t *testing.T) {
 			t.Errorf("an older activity write published %d times, want 0", n)
 		}
 		k := mustCreateKey(t, s, 1)
-		if err := s.TouchAPIKey(t.Context(), k.ID, t0); err != nil {
+		if err := s.TouchAPIKey(t.Context(), k.ID, k.KeyHash, t0); err != nil {
 			t.Fatal(err)
 		}
 		base = d.publishes.Load()
-		if err := s.TouchAPIKey(t.Context(), k.ID, epoch); err != nil {
+		if err := s.TouchAPIKey(t.Context(), k.ID, k.KeyHash, epoch); err != nil {
 			t.Errorf("an older touch = %v, want nil", err)
 		}
 		if n := d.publishes.Load() - base; n != 0 {
@@ -310,7 +310,7 @@ func TestActivity_OlderWriteIsANoop(t *testing.T) {
 	t.Run("rotation_keeps_newer_stored_activity", func(t *testing.T) {
 		s, _ := openTestStore(t)
 		sess := newTestSession(1, epoch)
-		if err := s.CreateSession(plainCtx(t.Context()), sess); err != nil {
+		if err := s.CreateSession(t.Context(), sess); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.UpdateSessionActivity(t.Context(), sess.TokenHash, access.SessionActivity{At: t0, IP: "192.0.2.2"}); err != nil {
@@ -352,7 +352,7 @@ func TestHold_PendingCountsEveryJob(t *testing.T) {
 	pending, release := d.faults().HoldPublish()
 	defer release()
 	done := make(chan error, 2)
-	go func() { done <- s.CreateSession(plainCtx(context.Background()), newTestSession(1, epoch)) }()
+	go func() { done <- s.CreateSession(context.Background(), newTestSession(1, epoch)) }()
 	waitUntil(t, "pending 1 for a lone held CreateSession", func() bool { return pending() == 1 })
 	go func() { done <- s.Update(context.Background(), func(account.Tx) error { return nil }) }()
 	waitUntil(t, "pending 2 once an Update queues behind it", func() bool { return pending() == 2 })

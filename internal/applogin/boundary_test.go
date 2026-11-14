@@ -119,7 +119,7 @@ func TestBoundary_RevealSites(t *testing.T) {
 	}
 }
 
-// TestBoundary_CompareSites: Hash.Equal at exactly its two sites with their
+// TestBoundary_CompareSites: Hash.Equal at exactly its three sites with their
 // operands, and no generic equality over a type holding a Hash or a Secret.
 func TestBoundary_CompareSites(t *testing.T) {
 	var got []string
@@ -132,6 +132,7 @@ func TestBoundary_CompareSites(t *testing.T) {
 	want := []string{
 		"applogin.(*agentKeyVerifier).Verify: access.APIKeyHash(tok).Equal(v.hash)",
 		"applogin.(*txView).RotateSession: cur.TokenHash.Equal(rot.ExpectHash)",
+		"applogin.(*txView).TouchAPIKey: r.KeyHash.Equal(hash)",
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("Hash.Equal sites = %v, want exactly %v", got, want)

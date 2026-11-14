@@ -53,37 +53,54 @@ func asPolicyInvalid(err error, target **policyInvalidError) bool {
 	return ok
 }
 
-// TestPolicy_DeltaNamesTheChange: what each own write changed, the
-// Plain sessions a switch-off deleted, and one marotte log entry per delta entry in the same job.
+func TestRules_HTTPSOriginFromTheHeldOrigin(t *testing.T) {
+	s, _ := openTestStore(t)
+	for _, c := range []struct {
+		set  func()
+		name string
+		want string
+	}{
+		{func() {}, "unset", ""},
+		{func() { s.SetOrigin(parseOrigin("", nil)) }, "degraded", ""},
+		{func() { s.SetOrigin(parseOrigin(testOrigin, nil)) }, "valid", testOrigin},
+		{func() { s.SetOrigin(nil) }, "nil", ""},
+	} {
+		c.set()
+		r := s.Rules()
+		if r.HTTPSOrigin != c.want {
+			t.Errorf("%s: HTTPSOrigin = %q, want %q", c.name, r.HTTPSOrigin, c.want)
+		}
+		if err := r.Validate(); err != nil {
+			t.Errorf("%s: Rules().Validate() = %v", c.name, err)
+		}
+	}
+}
+
+// TestPolicy_DeltaNamesTheChange: what each own write changed, and one marotte log entry per
+// delta entry in the same job.
 func TestPolicy_DeltaNamesTheChange(t *testing.T) {
 	h := newHarness(t)
 	ctx := t.Context()
-	setup := h.setupOwner(ctx)
-	plain := newTestSession(h.owner().ID, epoch)
-	if err := h.store.CreateSession(plainCtx(ctx), plain); err != nil {
-		t.Fatal(err)
+	h.setupOwner(ctx)
+	save := func(edit func(*storePolicy)) policyDelta {
+		t.Helper()
+		base := h.store.policy()
+		c := base.clone()
+		edit(&c)
+		delta, _, err := h.store.putPolicy(ctx, h.svc, &accountTestActor, ownerRPID, c, base.Generation, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return delta
 	}
-	base := h.store.policy()
-	delta, _, err := h.store.putPolicy(ctx, h.svc, &accountTestActor, ownerRPID, allowanceOff(base, access.MethodPasskey), base.Generation, nil)
-	if err != nil {
-		t.Fatal(err)
+	if d := save(func(p *storePolicy) { p.Methods.Passkey = false }); !maps.Equal(d.methods, map[access.Method]bool{access.MethodPasskey: false}) {
+		t.Errorf("the allowance-off save's delta = %+v, want the passkey off alone", d)
 	}
-	if !maps.Equal(delta.methods, map[access.Method]bool{access.MethodPasskey: false}) || delta.plainOn || delta.plainOff {
-		t.Errorf("the allowance-off save's delta = %+v, want the passkey off alone", delta)
+	if d := save(func(p *storePolicy) { p.Methods.Passkey = true }); !maps.Equal(d.methods, map[access.Method]bool{access.MethodPasskey: true}) {
+		t.Errorf("the allowance-on save's delta = %+v, want the passkey on alone", d)
 	}
-	off, err := h.store.setPlainHTTP(ctx, h.svc, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantGone := slices.Sorted(slices.Values([]string{setup.Session.ID, plain.ID}))
-	if !off.plainOff || !slices.Equal(off.deletedPlain, wantGone) {
-		t.Errorf("the switch-off's delta = %+v, want plainOff deleting both Plain sessions %v", off, wantGone)
-	}
-	if on, err := h.store.setPlainHTTP(ctx, h.svc, true); err != nil || !on.plainOn {
-		t.Errorf("the switch-on = (%+v, %v), want plainOn", on, err)
-	}
-	if again, err := h.store.setPlainHTTP(ctx, h.svc, true); err != nil || !again.empty() {
-		t.Errorf("a switch already on = (%+v, %v), want an empty delta", again, err)
+	if d := save(func(p *storePolicy) { p.Breach = !p.Breach }); !d.empty() {
+		t.Errorf("a save changing no allowance = %+v, want an empty delta", d)
 	}
 	es, err := h.store.ListLog(ctx, account.LogRange{Limit: 100})
 	if err != nil {
@@ -95,7 +112,7 @@ func TestPolicy_DeltaNamesTheChange(t *testing.T) {
 			kinds = append(kinds, string(e.Event.Kind)+":"+string(e.Event.Method))
 		}
 	}
-	want := []string{kindMethodOff + ":passkey", kindPlainOff + ":", kindPlainOn + ":"}
+	want := []string{kindMethodOff + ":passkey", kindMethodOn + ":passkey"}
 	if !slices.Equal(kinds, want) {
 		t.Errorf("own log entries %v, want %v", kinds, want)
 	}

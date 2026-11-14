@@ -43,4 +43,6 @@ func (u UnavailableStore) APIKeyByHash(context.Context, access.Hash) (*access.Ke
 }
 
 // TouchAPIKey implements [access.AuthenticatorStore].
-func (u UnavailableStore) TouchAPIKey(context.Context, int64, time.Time) error { return u.err() }
+func (u UnavailableStore) TouchAPIKey(context.Context, int64, access.Hash, time.Time) error {
+	return u.err()
+}

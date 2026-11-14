@@ -107,7 +107,7 @@ func TestOrigin_AllowedHostsCases(t *testing.T) {
 			if o.Valid() != c.valid {
 				t.Errorf("origin valid = %t, want %t", o.Valid(), c.valid)
 			}
-			lines := o.SetupLinks(token, true, policy)
+			lines := o.SetupLinks(token, policy)
 			hasTunnel := false
 			for _, l := range lines {
 				hasTunnel = hasTunnel || strings.HasPrefix(l, "http://localhost:9847/access/setup#token=tok-marker")
@@ -129,7 +129,7 @@ func TestOrigin_LinkForms(t *testing.T) {
 	const marker = "tok-marker-xyz"
 	token := access.NewSecret(marker)
 	valid := parseOrigin(testOrigin, nil)
-	lines := valid.SetupLinks(token, true, nil)
+	lines := valid.SetupLinks(token, nil)
 	want := []string{
 		testOrigin + "/access/setup#token=" + marker,
 		"http://localhost:9847/access/setup#token=" + marker + " through the SSH tunnel (docs/hardening.md)",
@@ -142,9 +142,9 @@ func TestOrigin_LinkForms(t *testing.T) {
 		t.Errorf("RecoveryLink = (%q, %t)", link, ok)
 	}
 	degraded := parseOrigin("", nil)
-	dl := degraded.SetupLinks(token, false, nil)
-	if len(dl) != 1 || !strings.Contains(dl[0], "/access/setup#token="+marker) {
-		t.Errorf("degraded SetupLinks with the switch off = %q, want the origin-free form only", dl)
+	dl := degraded.SetupLinks(token, nil)
+	if strings.Join(dl, "\n") != strings.Join(want[1:], "\n") {
+		t.Errorf("degraded SetupLinks = %q, want the tunnel and origin-free forms only %q", dl, want[1:])
 	}
 	if link, ok := degraded.RecoveryLink(token); ok || link != "" {
 		t.Errorf("degraded RecoveryLink = (%q, %t), want none", link, ok)
@@ -155,7 +155,7 @@ func TestOrigin_LinkForms(t *testing.T) {
 }
 
 func TestOrigin_DegradedWordingHasNoPlaceholder(t *testing.T) {
-	for _, w := range []string{DegradedMethodReason, DegradedPlainNoticeEnd, DegradedSwitchOffPage, DegradedSwitchOffAsk, DegradedRepairNote} {
+	for _, w := range []string{DegradedMethodReason, DegradedPlainNoticeEnd, DegradedRepairNote} {
 		if w == "" || strings.Contains(w, "<") || strings.Contains(w, "https://") || strings.Contains(w, "%") {
 			t.Errorf("degraded wording %q is empty or holds a placeholder or origin", w)
 		}

@@ -24,7 +24,6 @@ type storePolicy struct {
 	// publication, so a Settings form built on an older value is refused.
 	Generation int64         `json:"generation"`
 	Methods    policyMethods `json:"methods"`
-	PlainHTTP  bool          `json:"plain_http"`
 	Breach     bool          `json:"breach"`
 }
 
@@ -86,7 +85,6 @@ func defaultPolicy() storePolicy {
 		Idle:       defaultIdle,
 		Absolute:   defaultAbsolute,
 		Generation: 1,
-		PlainHTTP:  true,
 	}
 }
 
@@ -110,7 +108,7 @@ func clonePins(m map[string][]netip.Addr) map[string][]netip.Addr {
 // sameRecord reports whether two records hold the same values, the secret excepted.
 func sameRecord(a, b *storePolicy) bool {
 	return a.Methods == b.Methods && a.Idle == b.Idle && a.Absolute == b.Absolute &&
-		a.PlainHTTP == b.PlainHTTP && a.Breach == b.Breach &&
+		a.Breach == b.Breach &&
 		!providerFieldsDiffer(&a.Provider, &b.Provider) && a.Provider.DisplayName == b.Provider.DisplayName
 }
 
@@ -177,38 +175,32 @@ func validatePolicy(p *storePolicy) error {
 	case p.Absolute < minAbsolute || p.Absolute > maxAbsolute:
 		return &policyInvalidError{Reason: "absolute_out_of_range"}
 	}
-	if err := rulesOf(p, nil).Validate(); err != nil {
+	if err := rulesOf(p, "", nil).Validate(); err != nil {
 		return fmt.Errorf("%w: %w", &policyInvalidError{Reason: "rules_invalid"}, err)
 	}
 	return nil
 }
 
-// PlainCaps is Rules.SessionCaps: a plain request, or one the gate never saw, gets the plain caps;
-// an HTTPS request none.
-func PlainCaps(ctx context.Context, _ account.Client) (idle, absolute time.Duration) { //nolint:gocritic // hugeParam: Rules.SessionCaps's signature
-	if plain, ok := transportOf(ctx); ok && !plain {
-		return 0, 0
-	}
-	return 30 * time.Minute, 12 * time.Hour
-}
-
-// rulesOf derives the library's Rules from a policy record; usableFn is the store's
-// Rules.MethodUsable, nil only for validation.
-func rulesOf(p *storePolicy, usableFn func(context.Context, account.Tx, *access.User, access.Method) bool) account.Rules {
+// rulesOf derives the library's Rules from a policy record. SessionCaps stays nil: access lowers a
+// plain session to its plain limits itself. httpsOrigin is the canonical origin, "" while
+// degraded; usableFn is the store's Rules.MethodUsable, nil only for validation.
+func rulesOf(p *storePolicy, httpsOrigin string, usableFn func(context.Context, account.Tx, *access.User, access.Method) bool) account.Rules {
 	breach := account.BreachOff
 	if p.Breach {
 		breach = account.BreachFailOpen
 	}
 	return account.Rules{
 		MethodUsable: usableFn,
-		SessionCaps:  PlainCaps,
+		HTTPSOrigin:  httpsOrigin,
 		Scopes:       route.KeyScopes(),
 		RecentAuth:   10 * time.Minute,
 		Breach:       breach,
 	}
 }
 
-func (s *Store) rulesFor(snap *snapshot) account.Rules { return rulesOf(&snap.policy, s.methodUsable) }
+func (s *Store) rulesFor(snap *snapshot) account.Rules {
+	return rulesOf(&snap.policy, s.httpsOrigin(), s.methodUsable)
+}
 
 // Rules is account.Config.Rules, derived from the published policy on every call.
 func (s *Store) Rules() account.Rules { return s.rulesFor(s.cur.Load()) }
@@ -226,7 +218,6 @@ type PolicyView struct {
 	AbsoluteSeconds int64         `json:"absolute_seconds"`
 	Generation      int64         `json:"generation"`
 	Methods         PolicyMethods `json:"methods"`
-	PlainHTTP       bool          `json:"plain_http"`
 	Breach          bool          `json:"breach"`
 }
 
@@ -265,7 +256,6 @@ type PolicyWriteRequest struct {
 	AbsoluteSeconds int64             `json:"absolute_seconds"`
 	Generation      int64             `json:"generation"`
 	Methods         PolicyMethods     `json:"methods"`
-	PlainHTTP       bool              `json:"plain_http"`
 	Breach          bool              `json:"breach"`
 }
 
@@ -275,7 +265,6 @@ func viewOf(p *storePolicy) PolicyView {
 		IdleSeconds:     int64(p.Idle / time.Second),
 		AbsoluteSeconds: int64(p.Absolute / time.Second),
 		Generation:      p.Generation,
-		PlainHTTP:       p.PlainHTTP,
 		Breach:          p.Breach,
 	}
 	if !p.Provider.isZero() {
@@ -308,11 +297,10 @@ func candidateOf(req *PolicyWriteRequest) (storePolicy, error) {
 		return storePolicy{}, &policyInvalidError{Reason: "absolute_out_of_range"}
 	}
 	p := storePolicy{
-		Methods:   policyMethods(req.Methods),
-		Idle:      time.Duration(req.IdleSeconds) * time.Second,
-		Absolute:  time.Duration(req.AbsoluteSeconds) * time.Second,
-		PlainHTTP: req.PlainHTTP,
-		Breach:    req.Breach,
+		Methods:  policyMethods(req.Methods),
+		Idle:     time.Duration(req.IdleSeconds) * time.Second,
+		Absolute: time.Duration(req.AbsoluteSeconds) * time.Second,
+		Breach:   req.Breach,
 	}
 	if req.Provider == nil || req.Provider.Issuer == "" {
 		return p, nil
@@ -359,19 +347,13 @@ func canonicalOrigins(raw ProviderOrigins) (ProviderOrigins, error) {
 
 // policyDelta is what an own policy write changed on the private copy.
 type policyDelta struct {
-	methods      map[access.Method]bool
-	deletedPlain []string
-	plainOn      bool
-	plainOff     bool
+	methods map[access.Method]bool
 }
 
-func (d *policyDelta) empty() bool { return !d.plainOn && !d.plainOff && len(d.methods) == 0 }
+func (d *policyDelta) empty() bool { return len(d.methods) == 0 }
 
 func deltaOf(cur, next *storePolicy) policyDelta {
 	var d policyDelta
-	if cur.PlainHTTP != next.PlainHTTP {
-		d.plainOn, d.plainOff = next.PlainHTTP, !next.PlainHTTP
-	}
 	for _, m := range policyMethodOrder {
 		if v := next.Methods.get(m); cur.Methods.get(m) != v {
 			if d.methods == nil {

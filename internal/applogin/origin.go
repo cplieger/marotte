@@ -22,8 +22,6 @@ const OriginEnv = "MAROTTE_PUBLIC_URL"
 const (
 	DegradedMethodReason   = "Passkeys and single sign-on are off until marotte has an HTTPS address. See docs/configuration.md."
 	DegradedPlainNoticeEnd = "Set up HTTPS for marotte when you can."
-	DegradedSwitchOffPage  = "The admin turned off sign-in over plain HTTP, and marotte has no HTTPS address yet. Run `marotte access policy plain-http on` in the container."
-	DegradedSwitchOffAsk   = "You are signed in over plain HTTP, and marotte has no HTTPS address yet. Turning this off signs out every plain-HTTP session, this one included. To get back in, use an HTTPS address for marotte or the shell: `marotte access policy plain-http on`."
 	DegradedRepairNote     = "passkeys and single sign-on are off: no HTTPS address is configured"
 )
 
@@ -174,16 +172,16 @@ func (o *Origin) OIDCRedirect() string {
 	return o.origin + "/access/oidc/callback"
 }
 
-// SetupLinks returns the setup token's link forms in their order: the HTTPS
-// link when the origin is valid, the tunnel link when localhost is an allowed host and the switch
-// is on, and always the origin-free sentence. The token is revealed only into these lines.
-func (o *Origin) SetupLinks(token access.Secret, switchOn bool, policy *httpserver.HostPolicy) []string {
+// SetupLinks returns the setup token's link forms in their order: the HTTPS link when the origin
+// is valid, the tunnel link when localhost is an allowed host, and always the origin-free
+// sentence. The token is revealed only into these lines.
+func (o *Origin) SetupLinks(token access.Secret, policy *httpserver.HostPolicy) []string {
 	frag := "/access/setup#token=" + token.Reveal()
 	var lines []string
 	if o.Valid() {
 		lines = append(lines, o.origin+frag)
 	}
-	if switchOn && allowedHost(policy, "localhost") {
+	if allowedHost(policy, "localhost") {
 		lines = append(lines, tunnelOrigin+frag+" through the SSH tunnel (docs/hardening.md)")
 	}
 	return append(lines, fmt.Sprintf("Or open marotte at the address you use and add %s to the end.", frag))

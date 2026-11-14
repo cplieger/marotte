@@ -336,7 +336,7 @@ func rebuildFailure(t *testing.T, opts accesstest.IdPOptions) error {
 	if h.store.OIDCProvider() != nil {
 		t.Error("a provider is attached")
 	}
-	if _, err := h.svc.AdmitOIDC(testClient); !errors.Is(err, account.ErrOIDCUnavailable) {
+	if _, err := h.svc.AdmitOIDC(httpsClient); !errors.Is(err, account.ErrOIDCUnavailable) {
 		t.Errorf("AdmitOIDC = %v, want ErrOIDCUnavailable", err)
 	}
 	return h.store.ProviderBuildFailure()

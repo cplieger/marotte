@@ -85,37 +85,135 @@ func mustAttribute(t *testing.T, s *Store, userID int64, action access.Attributi
 	return *a
 }
 
-func TestRecords_PlainTagSurvivesAReopen(t *testing.T) {
+// rotated is a key after one rotation: current is its KeyHash, previous the superseded one.
+type rotated struct {
+	current, previous access.Hash
+	id, userID        int64
+}
+
+// rotatedKey creates a key for userID and rotates it through Update, as account's RotateAPIKey
+// does, with an overlap ending an hour after at.
+func rotatedKey(t *testing.T, s *Store, userID int64, at time.Time) rotated {
+	t.Helper()
+	k := mustCreateKey(t, s, userID)
+	g, err := access.GenerateAPIKey("test_")
+	if err != nil {
+		t.Fatalf("GenerateAPIKey: %v", err)
+	}
+	sec := access.KeySecret{
+		KeyHash: g.Hash, KeyPrefix: g.DisplayPrefix, KeySuffix: g.DisplaySuffix,
+		PreviousHash: k.KeyHash, PreviousUntil: at.Add(time.Hour),
+	}
+	ref := access.KeyRef{ID: k.ID, UserID: userID}
+	if err := s.Update(t.Context(), func(tx account.Tx) error { return tx.UpdateAPIKeySecret(t.Context(), ref, sec) }); err != nil {
+		t.Fatalf("UpdateAPIKeySecret: %v", err)
+	}
+	return rotated{current: g.Hash, previous: k.KeyHash, id: k.ID, userID: userID}
+}
+
+// TestRecords_PreviousHashFindsKeyAfterReopen: a rotated key is found by its superseded hash across
+// a reopen, and no longer once the retired secret is cleared, across a second reopen.
+func TestRecords_PreviousHashFindsKeyAfterReopen(t *testing.T) {
 	s, d := openTestStore(t)
-	plain, https := newTestSession(1, epoch), newTestSession(1, epoch)
-	if err := s.CreateSession(plainCtx(t.Context()), plain); err != nil {
-		t.Fatalf("CreateSession(plain): %v", err)
-	}
-	if err := s.CreateSession(httpsCtx(t.Context()), https); err != nil {
-		t.Fatalf("CreateSession(https): %v", err)
-	}
+	ctx := t.Context()
+	k := rotatedKey(t, s, 1, epoch)
 	s = reopenStore(t, s, d)
 	for _, c := range []struct {
-		sess *access.Session
 		name string
-		want bool
-	}{{plain, "plain", true}, {https, "https", false}} {
-		rec, ok := s.sessionRecord(c.sess.TokenHash)
-		if !ok {
-			t.Errorf("%s session is gone after the reopen", c.name)
-			continue
+		hash access.Hash
+	}{{"current", k.current}, {"previous", k.previous}} {
+		got, found, err := s.APIKeyByHash(ctx, c.hash)
+		if err != nil || !found || got.ID != k.id {
+			t.Fatalf("APIKeyByHash(%s) after the reopen = (%v, %t, %v), want key %d", c.name, got, found, err, k.id)
 		}
-		if rec.Plain != c.want {
-			t.Errorf("%s session's Plain = %t after the reopen, want %t", c.name, rec.Plain, c.want)
+		if !got.PreviousHash.Equal(k.previous) || !got.PreviousUntil.Equal(epoch.Add(time.Hour)) {
+			t.Errorf("APIKeyByHash(%s) lost the previous secret across the reopen", c.name)
 		}
+	}
+	if n, err := s.ClearRetiredAPIKeySecrets(ctx, epoch.Add(2*time.Hour), 10); err != nil || n != 1 {
+		t.Fatalf("ClearRetiredAPIKeySecrets past the overlap = (%d, %v), want (1, nil)", n, err)
+	}
+	s = reopenStore(t, s, d)
+	if got, found, err := s.APIKeyByHash(ctx, k.previous); err != nil || found {
+		t.Errorf("APIKeyByHash(previous) after the clear and a reopen = (%v, %t, %v), want nothing", got, found, err)
+	}
+	if got, found, err := s.APIKeyByHash(ctx, k.current); err != nil || !found || !got.PreviousHash.IsZero() || !got.PreviousUntil.IsZero() {
+		t.Errorf("APIKeyByHash(current) after the clear = (%v, %t, %v), want the key with no previous secret", got, found, err)
+	}
+}
+
+// TestRecords_PreviousHashSeesTheCurrentRecord: after a rotation, a touch of the new secret and a
+// rename, the superseded hash reads the same record as the current one, so the touch has ended the
+// overlap for it too.
+func TestRecords_PreviousHashSeesTheCurrentRecord(t *testing.T) {
+	s, _ := openTestStore(t)
+	ctx := t.Context()
+	k := rotatedKey(t, s, 1, epoch)
+	now := epoch.Add(10 * time.Minute)
+	if err := s.TouchAPIKey(ctx, k.id, k.current, now); err != nil {
+		t.Fatalf("TouchAPIKey: %v", err)
+	}
+	ref := access.KeyRef{ID: k.id, UserID: k.userID}
+	if err := s.Update(ctx, func(tx account.Tx) error { return tx.UpdateAPIKeyLabel(ctx, ref, "renamed") }); err != nil {
+		t.Fatalf("UpdateAPIKeyLabel: %v", err)
+	}
+	cur, found, err := s.APIKeyByHash(ctx, k.current)
+	if err != nil || !found {
+		t.Fatalf("APIKeyByHash(current) = (%t, %v)", found, err)
+	}
+	prev, found, err := s.APIKeyByHash(ctx, k.previous)
+	if err != nil || !found {
+		t.Fatalf("APIKeyByHash(previous) = (%t, %v)", found, err)
+	}
+	if !prev.LastUsedAt.Equal(now) || prev.Label != "renamed" {
+		t.Errorf("the previous hash reads LastUsedAt %v and label %q, want %v and renamed", prev.LastUsedAt, prev.Label, now)
+	}
+	if !reflect.DeepEqual(prev, cur) {
+		t.Errorf("APIKeyByHash(previous) = %+v, want the current record %+v", prev, cur)
+	}
+	if prev.PreviousSecretUsable(now) {
+		t.Error("the superseded secret is still usable after the new one was used")
+	}
+}
+
+// TestKeys_OneHashInBothFieldsIsRefused: a key whose PreviousHash is its own KeyHash is refused at
+// create and at rotation, since the decoder refuses a file that holds one hash twice.
+func TestKeys_OneHashInBothFieldsIsRefused(t *testing.T) {
+	s, d := openTestStore(t)
+	ctx := t.Context()
+	g, err := access.GenerateAPIKey("test_")
+	if err != nil {
+		t.Fatalf("GenerateAPIKey: %v", err)
+	}
+	same := &access.Key{KeyHash: g.Hash, PreviousHash: g.Hash, PreviousUntil: epoch.Add(time.Hour), UserID: 1, Label: "k", Scopes: []string{"tools"}, CreatedAt: epoch}
+	if err := s.CreateAPIKey(ctx, same); !errors.Is(err, errHashTaken) {
+		t.Errorf("CreateAPIKey with PreviousHash = KeyHash = %v, want errHashTaken", err)
+	}
+	k := mustCreateKey(t, s, 1)
+	sec := access.KeySecret{KeyHash: k.KeyHash, PreviousHash: k.KeyHash, PreviousUntil: epoch.Add(time.Hour)}
+	ref := access.KeyRef{ID: k.ID, UserID: 1}
+	if err := s.Update(ctx, func(tx account.Tx) error { return tx.UpdateAPIKeySecret(ctx, ref, sec) }); !errors.Is(err, errHashTaken) {
+		t.Errorf("UpdateAPIKeySecret with PreviousHash = KeyHash = %v, want errHashTaken", err)
+	}
+	s.Close()
+	s2, reset, err := OpenStore(context.Background(), d.path, d)
+	if err != nil {
+		t.Fatalf("OpenStore = %v", err)
+	}
+	t.Cleanup(s2.Close)
+	if reset.Taken() {
+		t.Fatal("the reopen reset the file, want it valid")
+	}
+	if got, found, err := s2.APIKeyByHash(ctx, k.KeyHash); err != nil || !found || got.ID != k.ID || !got.PreviousHash.IsZero() {
+		t.Errorf("APIKeyByHash after the reopen = (%v, %t, %v), want key %d with no previous secret", got, found, err, k.ID)
 	}
 }
 
 func TestKeys_LineageEndsWithOwnID(t *testing.T) {
 	h := newHarness(t)
-	si := h.setupOwner(t.Context())
-	p := h.principal(si.Token)
-	fromSession, err := h.svc.CreateAPIKey(plainCtx(t.Context()), account.As(p), p.User.ID, account.NewKey{Label: "s", Scopes: []string{"tools"}})
+	h.setupOwner(t.Context())
+	p := h.securePrincipal(h.signInHTTPS(t.Context()).Token)
+	fromSession, err := h.svc.CreateAPIKey(t.Context(), account.As(p), p.User.ID, account.NewKey{Label: "s", Scopes: []string{"tools"}})
 	if err != nil {
 		t.Fatalf("CreateAPIKey(session): %v", err)
 	}
@@ -362,43 +460,43 @@ func TestIDs_NeverReusedAfterDeleteAndReopen(t *testing.T) {
 	}
 }
 
-func TestCreateSession_NoTransportStoresPlainAndLogsError(t *testing.T) {
-	logs := capture.Default(t)
-	s, _ := openTestStore(t)
-	sess := newTestSession(1, epoch)
-	if err := s.CreateSession(context.Background(), sess); err != nil {
-		t.Fatalf("CreateSession without a transport = %v, want nil", err)
-	}
-	if rec, ok := s.sessionRecord(sess.TokenHash); !ok || !rec.Plain {
-		t.Errorf("session without a transport stored Plain = %t (found %t), want true", rec.Plain, ok)
-	}
-	if n := logs.CountExact("access: a session was created without a transport; stored as plain HTTP"); n != 1 {
-		t.Errorf("missing-transport ERROR logged %d times, want 1", n)
-	}
-}
-
 func TestRotateSession_KeepsTheTag(t *testing.T) {
-	s, _ := openTestStore(t)
-	ctx := t.Context()
-	sess := newTestSession(1, epoch)
-	sess.IdleCap, sess.AbsoluteCap = 30*time.Minute, 12*time.Hour
-	if err := s.CreateSession(plainCtx(ctx), sess); err != nil {
-		t.Fatalf("CreateSession: %v", err)
+	type tag struct {
+		idle, absolute time.Duration
+		secure         bool
 	}
-	next := *sess
-	_, next.TokenHash = access.GenerateSessionToken()
-	if err := s.RotateSession(httpsCtx(ctx), account.Rotation{ID: sess.ID, UserID: sess.UserID, Next: next, ExpectHash: sess.TokenHash}); err != nil {
-		t.Fatalf("RotateSession: %v", err)
-	}
-	rec, ok := s.sessionRecord(next.TokenHash)
-	if !ok {
-		t.Fatal("the rotated session is not found under its new hash")
-	}
-	if !rec.Plain || rec.IdleCap != 30*time.Minute || rec.AbsoluteCap != 12*time.Hour {
-		t.Errorf("rotated record Plain %t caps (%s, %s), want true and (30m, 12h)", rec.Plain, rec.IdleCap, rec.AbsoluteCap)
-	}
-	if _, ok := s.sessionRecord(sess.TokenHash); ok {
-		t.Error("the old hash still finds the session after the rotation")
+	for _, c := range []struct {
+		name         string
+		stored, next tag
+	}{
+		{"secure", tag{30 * time.Minute, 12 * time.Hour, true}, tag{0, 0, false}},
+		{"plain", tag{0, 0, false}, tag{time.Hour, 24 * time.Hour, true}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, _ := openTestStore(t)
+			ctx := t.Context()
+			sess := newTestSession(1, epoch)
+			sess.Secure, sess.IdleCap, sess.AbsoluteCap = c.stored.secure, c.stored.idle, c.stored.absolute
+			if err := s.CreateSession(ctx, sess); err != nil {
+				t.Fatalf("CreateSession: %v", err)
+			}
+			next := *sess
+			_, next.TokenHash = access.GenerateSessionToken()
+			next.Secure, next.IdleCap, next.AbsoluteCap = c.next.secure, c.next.idle, c.next.absolute
+			if err := s.RotateSession(ctx, account.Rotation{ID: sess.ID, UserID: sess.UserID, Next: next, ExpectHash: sess.TokenHash}); err != nil {
+				t.Fatalf("RotateSession: %v", err)
+			}
+			rec, ok := s.sessionRecord(next.TokenHash)
+			if !ok {
+				t.Fatal("the rotated session is not found under its new hash")
+			}
+			if got := (tag{rec.IdleCap, rec.AbsoluteCap, rec.Secure}); got != c.stored {
+				t.Errorf("rotated record %+v, want the stored %+v", got, c.stored)
+			}
+			if _, ok := s.sessionRecord(sess.TokenHash); ok {
+				t.Error("the old hash still finds the session after the rotation")
+			}
+		})
 	}
 }
 
@@ -415,7 +513,7 @@ func TestReads_DoNotBlockOnASlowFsync(t *testing.T) {
 		return nil
 	})
 	done := make(chan error, 1)
-	go func() { done <- s.CreateSession(plainCtx(context.Background()), newTestSession(u.ID, epoch)) }()
+	go func() { done <- s.CreateSession(context.Background(), newTestSession(u.ID, epoch)) }()
 	<-entered
 	readDone := make(chan bool, 1)
 	go func() {
@@ -440,7 +538,7 @@ func TestCleanup_RefusesZeroTimeoutsAndLimitBelowOne(t *testing.T) {
 	s, d := openTestStore(t)
 	ctx := t.Context()
 	old := newTestSession(1, epoch)
-	if err := s.CreateSession(plainCtx(ctx), old); err != nil {
+	if err := s.CreateSession(ctx, old); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	base := d.publishes.Load()
@@ -465,42 +563,19 @@ func TestCleanup_RefusesZeroTimeoutsAndLimitBelowOne(t *testing.T) {
 	if _, ok := s.sessionRecord(old.TokenHash); !ok {
 		t.Error("a refused cleanup deleted the session")
 	}
-}
-
-func TestPlainCaps_PlainOrMissingTransportCapsHTTPSDoesNot(t *testing.T) {
-	for _, c := range []struct {
-		ctx            context.Context
-		name           string
-		idle, absolute time.Duration
-	}{
-		{plainCtx(t.Context()), "plain", 30 * time.Minute, 12 * time.Hour},
-		{t.Context(), "missing", 30 * time.Minute, 12 * time.Hour},
-		{httpsCtx(t.Context()), "https", 0, 0},
-	} {
-		idle, absolute := PlainCaps(c.ctx, account.Client{})
-		if idle != c.idle || absolute != c.absolute {
-			t.Errorf("%s: PlainCaps = (%s, %s), want (%s, %s)", c.name, idle, absolute, c.idle, c.absolute)
+	t.Run("clear_limit_zero", func(t *testing.T) {
+		k := rotatedKey(t, s, 1, epoch)
+		before := d.publishes.Load()
+		if n, err := s.ClearRetiredAPIKeySecrets(ctx, now, 0); err == nil || n != 0 {
+			t.Errorf("ClearRetiredAPIKeySecrets(limit 0) = (%d, %v), want 0 and an error", n, err)
 		}
-	}
-}
-
-func TestDirectDelete_ReturnsFenceErrorAndCallerIgnoresIt(t *testing.T) {
-	s, d := openTestStore(t)
-	ctx := t.Context()
-	sess := newTestSession(1, epoch)
-	if err := s.CreateSession(plainCtx(ctx), sess); err != nil {
-		t.Fatalf("CreateSession: %v", err)
-	}
-	d.faults().AfterPublish()
-	if err := s.CreateSession(plainCtx(ctx), newTestSession(1, epoch)); !errors.Is(err, ErrNotDurable) {
-		t.Fatalf("the non-durable write = %v, want ErrNotDurable", err)
-	}
-	if err := s.DeleteSessionDirect(ctx, sess.TokenHash); !errors.Is(err, ErrFenced) {
-		t.Errorf("DeleteSessionDirect while fenced = %v, want ErrFenced", err)
-	}
-	if _, ok := s.sessionRecord(sess.TokenHash); !ok {
-		t.Error("a fenced direct delete removed the record")
-	}
+		if got := d.publishes.Load(); got != before {
+			t.Errorf("the refused clear published %d times", got-before)
+		}
+		if got, found, _ := s.APIKeyByHash(ctx, k.previous); !found || got.PreviousHash.IsZero() {
+			t.Error("a refused clear cleared the retired secret")
+		}
+	})
 }
 
 func TestLog_ResetStoreStartsAtSeqOne(t *testing.T) {
@@ -547,10 +622,10 @@ func TestRecords_PrintNoSecret(t *testing.T) {
 	}
 	sess := newTestSession(u.ID, epoch)
 	sess.TokenHash = access.NewHash(markerHash + "-s")
-	if err := s.CreateSession(plainCtx(ctx), sess); err != nil {
+	if err := s.CreateSession(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateAPIKey(ctx, &access.Key{KeyHash: access.NewHash(markerHash + "-k"), UserID: u.ID}); err != nil {
+	if err := s.CreateAPIKey(ctx, &access.Key{KeyHash: access.NewHash(markerHash + "-k"), PreviousHash: access.NewHash(markerHash + "-p"), UserID: u.ID}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.CreateOneTimeToken(ctx, access.OneTimeToken{Hash: access.NewHash(markerHash + "-t"), Purpose: access.PurposeInvite, ExpiresAt: epoch}); err != nil {
@@ -562,8 +637,8 @@ func TestRecords_PrintNoSecret(t *testing.T) {
 	snap := s.cur.Load()
 	values := map[string]any{
 		"storeUser":     userFromAuth(u),
-		"storeSession":  sessionFromAuth(sess, true),
-		"storeKey":      *snap.keys[snap.keyByID[1]],
+		"storeSession":  sessionFromAuth(sess),
+		"storeKey":      *snap.keyByID[1],
 		"storeToken":    snap.tokens[access.NewHash(markerHash+"-t").Key()],
 		"storeProvider": provider,
 		"storePolicy":   policy,
@@ -700,12 +775,12 @@ func TestKeys_RingAndFailureKeySurviveAReopen(t *testing.T) {
 	t.Run("failure_record_found_after", func(t *testing.T) {
 		h := newHarness(t)
 		h.setupOwner(t.Context())
-		if _, err := h.svc.PasswordLogin(plainCtx(t.Context()), testClient, account.Credentials{Username: testUsername, Password: access.NewSecret("wrong password, not it")}); err == nil {
+		if _, err := h.svc.PasswordLogin(t.Context(), testClient, account.Credentials{Username: testUsername, Password: access.NewSecret("wrong password, not it")}); err == nil {
 			t.Fatal("a wrong password signed in")
 		}
 		counted := failureCounts(t, h.store)
 		h = h.reopen()
-		if _, err := h.svc.PasswordLogin(plainCtx(t.Context()), testClient, account.Credentials{Username: testUsername, Password: access.NewSecret("wrong password, not it")}); err == nil {
+		if _, err := h.svc.PasswordLogin(t.Context(), testClient, account.Credentials{Username: testUsername, Password: access.NewSecret("wrong password, not it")}); err == nil {
 			t.Fatal("a wrong password signed in")
 		}
 		after := failureCounts(t, h.store)
@@ -948,7 +1023,8 @@ func TestCustody_WidenedFileRepairedOrRefusedNeverDeleted(t *testing.T) {
 }
 
 // TestSweep_CappedPlainSessionExpiresWithEvent runs the library's sweep over the store: a Plain
-// session past its idle cap goes, with one EventSessionsExpired naming it alone.
+// session past access's plain idle limit goes, with one EventSessionsExpired naming it alone, and an
+// HTTPS session of the same age stays.
 func TestSweep_CappedPlainSessionExpiresWithEvent(t *testing.T) {
 	cleanupInterval = 20 * time.Millisecond
 	t.Cleanup(func() { cleanupInterval = 0 })
@@ -960,11 +1036,11 @@ func TestSweep_CappedPlainSessionExpiresWithEvent(t *testing.T) {
 	}
 	age := time.Now().Add(-time.Hour)
 	plain, https := newTestSession(owner.ID, age), newTestSession(owner.ID, age)
-	plain.IdleCap, plain.AbsoluteCap = 30*time.Minute, 12*time.Hour
-	if err := h.store.CreateSession(plainCtx(ctx), plain); err != nil {
+	https.Secure = true
+	if err := h.store.CreateSession(ctx, plain); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.store.CreateSession(httpsCtx(ctx), https); err != nil {
+	if err := h.store.CreateSession(ctx, https); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(time.Second)
@@ -980,10 +1056,10 @@ func TestSweep_CappedPlainSessionExpiresWithEvent(t *testing.T) {
 		t.Errorf("event = user %d sessions %v actor %+v, want the owner, [%s] and no actor", e.UserID, e.SessionIDs, e.Actor, plain.ID)
 	}
 	if _, ok := h.store.sessionRecord(plain.TokenHash); ok {
-		t.Error("the capped Plain session is still stored")
+		t.Error("the Plain session is still stored")
 	}
 	if _, ok := h.store.sessionRecord(https.TokenHash); !ok {
-		t.Error("the uncapped HTTPS session was swept")
+		t.Error("the HTTPS session was swept")
 	}
 }
 
@@ -1812,7 +1888,7 @@ func queueInOrder(t *testing.T, s *Store, calls ...func()) {
 	t.Helper()
 	entered, pending, release := s.holdGroup()
 	first := make(chan error, 1)
-	go func() { first <- s.CreateSession(plainCtx(context.Background()), newTestSession(999, time.Now())) }()
+	go func() { first <- s.CreateSession(context.Background(), newTestSession(999, time.Now())) }()
 	<-entered
 	var wg sync.WaitGroup
 	for i, call := range calls {
@@ -1850,12 +1926,12 @@ func (h *harness) enrolPasskey(p access.Principal, dev *accesstest.PasskeyDevice
 // passkeySignIn signs in with dev through the real ceremony.
 func (h *harness) passkeySignIn(dev *accesstest.PasskeyDevice) error {
 	h.t.Helper()
-	ctx := httpsCtx(context.Background())
-	cer, err := h.svc.PasskeyLoginBegin(ctx, testClient, webOrigin(h.t), account.LoginModal)
+	ctx := context.Background()
+	cer, err := h.svc.PasskeyLoginBegin(ctx, httpsClient, webOrigin(h.t), account.LoginModal)
 	if err != nil {
 		return err
 	}
-	_, err = h.svc.PasskeyLoginFinish(ctx, testClient, cer.ID, bytes.NewReader(dev.Assert(mustJSON(h.t, cer.Assertion))))
+	_, err = h.svc.PasskeyLoginFinish(ctx, httpsClient, cer.ID, bytes.NewReader(dev.Assert(mustJSON(h.t, cer.Assertion))))
 	return err
 }
 
@@ -1920,7 +1996,7 @@ func TestGuard_RacesInOneGroup(t *testing.T) {
 				ctx := t.Context()
 				h.setupOwner(ctx)
 				pk := mustCreatePasskey(t, h.store, h.owner().ID, "race-pk")
-				p := h.principal(h.signIn(ctx).Token)
+				p := h.securePrincipal(h.signInHTTPS(ctx).Token)
 				base := h.store.policy()
 				var policyErr, removeErr error
 				policy := func() {
@@ -1955,7 +2031,7 @@ func TestGuard_RacesInOneGroup(t *testing.T) {
 				h.setupOwner(ctx)
 				rec := providerOf(idp)
 				h.savedProvider(rec, builtProvider(t, rec, h.origin), true)
-				p := h.principal(h.signIn(ctx).Token)
+				p := h.securePrincipal(h.signInHTTPS(ctx).Token)
 				base := h.store.policy()
 				var policyErr, removeErr error
 				policy := func() {
@@ -1977,7 +2053,7 @@ func TestGuard_RacesInOneGroup(t *testing.T) {
 				done := make(chan struct{})
 				go func() {
 					defer close(done)
-					_, removeErr = h.svc.RemovePassword(plainCtx(ctx), testClient, p, access.NewSecret(testPassword))
+					_, removeErr = h.svc.RemovePassword(ctx, httpsClient, p, access.NewSecret(testPassword))
 				}()
 				<-arrived
 				removal := func() { close(proceed); <-done }
@@ -2010,7 +2086,7 @@ func TestGuard_RemovalAfterAllowanceOffInOneGroupReadsTheGroup(t *testing.T) {
 	ctx := t.Context()
 	h.setupOwner(ctx)
 	pk := mustCreatePasskey(t, h.store, h.owner().ID, "group-pk")
-	p := h.principal(h.signIn(ctx).Token)
+	p := h.securePrincipal(h.signInHTTPS(ctx).Token)
 	base := h.store.policy()
 	var policyErr, removeErr error
 	queueInOrder(t, h.store,
@@ -2038,12 +2114,11 @@ type guardState struct {
 	lock     int // the password's locked failure records: 0, 1 (untrusted only) or 2 (both)
 	provider int // 0 none, 1 saved and not built, 2 saved and attached
 	pw, link bool
-	plain    bool
 }
 
 func (st guardState) String() string {
-	return fmt.Sprintf("pw=%t lock=%d pk=%q link=%t allow=%+v provider=%d plain=%t",
-		st.pw, st.lock, st.pkRPID, st.link, st.allow, st.provider, st.plain)
+	return fmt.Sprintf("pw=%t lock=%d pk=%q link=%t allow=%+v provider=%d",
+		st.pw, st.lock, st.pkRPID, st.link, st.allow, st.provider)
 }
 
 // guardWrite is an own write the guard judges: one allowance off, or the provider removed.
@@ -2075,12 +2150,10 @@ func guardStates() []guardState {
 				for _, link := range []bool{false, true} {
 					for a := range 8 {
 						for provider := range 3 {
-							for _, plain := range []bool{false, true} {
-								out = append(out, guardState{
-									pw: pw, lock: lock, pkRPID: pk, link: link, provider: provider, plain: plain,
-									allow: policyMethods{Password: a&1 != 0, Passkey: a&2 != 0, OIDC: a&4 != 0},
-								})
-							}
+							out = append(out, guardState{
+								pw: pw, lock: lock, pkRPID: pk, link: link, provider: provider,
+								allow: policyMethods{Password: a&1 != 0, Passkey: a&2 != 0, OIDC: a&4 != 0},
+							})
 						}
 					}
 				}
@@ -2091,8 +2164,7 @@ func guardStates() []guardState {
 }
 
 // TestGuard_OwnWriteCountsThroughUsableMethods, for marotte's own writes:
-// under every combination of held methods, allowances, locks, RP IDs, provider states and switch
-// states, an allowance turned off or the provider removed is refused exactly when no working
+// under every combination of held methods, allowances, locks, RP IDs and provider states, an allowance turned off or the provider removed is refused exactly when no working
 // method would be left. Each case's fixture and write run in one group, so the guard can only
 // judge the fixture by reading the job's private copy.
 func TestGuard_OwnWriteCountsThroughUsableMethods(t *testing.T) {
@@ -2144,7 +2216,7 @@ func TestGuard_OwnWriteCountsThroughUsableMethods(t *testing.T) {
 				}
 			}
 			p := tx.s.policy.clone()
-			p.Methods, p.PlainHTTP, p.Provider, p.Generation = st.allow, st.plain, storeProvider{}, g
+			p.Methods, p.Provider, p.Generation = st.allow, storeProvider{}, g
 			if st.provider > 0 {
 				p.Provider = rec
 			}
@@ -2182,7 +2254,7 @@ func TestGuard_OwnWriteCountsThroughUsableMethods(t *testing.T) {
 			r := &run{st: st, w: w}
 			runs = append(runs, r)
 			fx := fixture(st)
-			candidate := storePolicy{Methods: st.allow, PlainHTTP: st.plain, Idle: defaultIdle, Absolute: defaultAbsolute}
+			candidate := storePolicy{Methods: st.allow, Idle: defaultIdle, Absolute: defaultAbsolute}
 			if st.provider > 0 {
 				candidate.Provider = rec
 			}
@@ -2322,13 +2394,13 @@ func TestGuard_PasskeyUnderAnotherRPIDCountsForNothing(t *testing.T) {
 	h := newHarness(t)
 	ctx := t.Context()
 	h.setupOwner(ctx)
-	h.enrolPasskey(h.principal(h.signIn(ctx).Token), accesstest.NewPasskeyDevice(t))
+	h.enrolPasskey(h.securePrincipal(h.signInHTTPS(ctx).Token), accesstest.NewPasskeyDevice(t))
 	for _, origin := range []string{"https://192.0.2.5", "https://other.example"} {
 		t.Run(strings.TrimPrefix(origin, "https://"), func(t *testing.T) {
 			b := h.reopen(withOrigin(origin))
 			h = b
-			p := b.principal(b.signIn(ctx).Token)
-			if _, err := b.svc.RemovePassword(plainCtx(ctx), testClient, p, access.NewSecret(testPassword)); !errors.Is(err, account.ErrLastMethod) {
+			p := b.securePrincipal(b.signInHTTPS(ctx).Token)
+			if _, err := b.svc.RemovePassword(ctx, httpsClient, p, access.NewSecret(testPassword)); !errors.Is(err, account.ErrLastMethod) {
 				t.Errorf("removing the password = %v, want ErrLastMethod", err)
 			}
 			base := b.store.policy()
@@ -2336,15 +2408,6 @@ func TestGuard_PasskeyUnderAnotherRPIDCountsForNothing(t *testing.T) {
 				allowanceOff(base, access.MethodPassword), base.Generation, nil); !errors.Is(err, ErrNoWorkingMethod) {
 				t.Errorf("turning the password allowance off = %v, want ErrNoWorkingMethod", err)
 			}
-			if _, err := b.store.setPlainHTTP(ctx, b.svc, false); err != nil {
-				t.Errorf("turning the plain-HTTP switch off = %v, want nil", err)
-			}
-			if _, err := b.svc.PasswordLogin(httpsCtx(ctx), testClient, account.Credentials{
-				Username: testUsername, Password: access.NewSecret(testPassword),
-			}); err != nil {
-				t.Errorf("password sign-in over HTTPS after the switch-off = %v", err)
-			}
-			b.setPolicy(func(p *storePolicy) { p.PlainHTTP = true })
 		})
 	}
 }
@@ -2360,7 +2423,7 @@ func TestRestoreAllowance_PasswordRepairTurnsPasswordOn(t *testing.T) {
 	h.setPolicy(func(p *storePolicy) { p.Methods.Password = false })
 	gen := h.store.policy().Generation
 	publishes := h.disk.publishes.Load()
-	err := h.svc.RecoverOutOfBand(WithRestoreAllowance(plainCtx(ctx), access.MethodPassword), account.OutOfBand("admin-socket"),
+	err := h.svc.RecoverOutOfBand(WithRestoreAllowance(ctx, access.MethodPassword), account.OutOfBand("admin-socket"),
 		h.owner().ID, access.NewSecret(recoveredPassword), account.RecoverOptions{})
 	if err != nil {
 		t.Fatalf("RecoverOutOfBand: %v", err)
@@ -2375,7 +2438,7 @@ func TestRestoreAllowance_PasswordRepairTurnsPasswordOn(t *testing.T) {
 		if !b.store.policy().Methods.Password {
 			t.Error("Password is off")
 		}
-		if _, err := b.svc.PasswordLogin(httpsCtx(ctx), testClient, account.Credentials{
+		if _, err := b.svc.PasswordLogin(ctx, httpsClient, account.Credentials{
 			Username: testUsername, Password: access.NewSecret(recoveredPassword),
 		}); err != nil {
 			t.Errorf("the recovered password does not sign in: %v", err)
@@ -2393,7 +2456,7 @@ func TestRestoreAllowance_RefusedPasswordChangesNothing(t *testing.T) {
 	h.setPolicy(func(p *storePolicy) { p.Methods.Password = false })
 	owner := h.owner()
 	gen := h.store.policy().Generation
-	marked := WithRestoreAllowance(plainCtx(ctx), access.MethodPassword)
+	marked := WithRestoreAllowance(ctx, access.MethodPassword)
 	t.Run("refused_password", func(t *testing.T) {
 		err := h.svc.RecoverOutOfBand(marked, account.OutOfBand("admin-socket"), owner.ID, access.NewSecret("short"), account.RecoverOptions{})
 		if err == nil {
@@ -2443,7 +2506,7 @@ func TestRestoreAllowance_ExhaustedGenerationRefusesTheRepair(t *testing.T) {
 		return nil
 	})
 	owner := h.owner()
-	err := h.svc.RecoverOutOfBand(WithRestoreAllowance(plainCtx(ctx), access.MethodPassword), account.OutOfBand("admin-socket"),
+	err := h.svc.RecoverOutOfBand(WithRestoreAllowance(ctx, access.MethodPassword), account.OutOfBand("admin-socket"),
 		owner.ID, access.NewSecret(recoveredPassword), account.RecoverOptions{})
 	if !errors.Is(err, errIDsExhausted) {
 		t.Fatalf("RecoverOutOfBand = %v, want errIDsExhausted", err)
@@ -2471,7 +2534,7 @@ func TestRestoreAllowance_RecoveryPasskeyTurnsPasskeyOn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec, err := h.svc.StartRecovery(httpsCtx(ctx), testClient, tok.Plaintext)
+	rec, err := h.svc.StartRecovery(ctx, httpsClient, tok.Plaintext)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2481,7 +2544,7 @@ func TestRestoreAllowance_RecoveryPasskeyTurnsPasskeyOn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = h.svc.RecoverPasskeyFinish(WithRestoreAllowance(httpsCtx(ctx), access.MethodPasskey), p, cer.ID,
+	err = h.svc.RecoverPasskeyFinish(WithRestoreAllowance(ctx, access.MethodPasskey), p, cer.ID,
 		bytes.NewReader(dev.Register(mustJSON(t, cer.Creation))), account.RecoverOptions{})
 	if err != nil {
 		t.Fatalf("RecoverPasskeyFinish: %v", err)
@@ -2504,12 +2567,12 @@ func TestRestoreAllowance_RecoveryPasskeyTurnsPasskeyOn(t *testing.T) {
 func clientAt(n int) account.Client {
 	c := testClient
 	ip := netip.AddrFrom4([4]byte{10, byte(n >> 16), byte(n >> 8), byte(n)})
-	c.ClientAddr = access.ClientAddr{IP: ip, Peer: ip}
+	c.ClientAddr = access.ClientAddr{Peer: ip, Via: access.ViaDirect}
 	return c
 }
 
 func (h *harness) failedLogin(ctx context.Context, c account.Client, username, password string) error {
-	_, err := h.svc.PasswordLogin(plainCtx(ctx), c, account.Credentials{Username: username, Password: access.NewSecret(password)})
+	_, err := h.svc.PasswordLogin(ctx, c, account.Credentials{Username: username, Password: access.NewSecret(password)})
 	return err
 }
 
@@ -2693,7 +2756,7 @@ func TestFailures_UntrustedAllowanceIs10000(t *testing.T) {
 	// commit while the next attempt is judged.
 	entered, pending, release := h.store.holdGroup()
 	held := make(chan error, 1)
-	go func() { held <- h.store.CreateSession(plainCtx(context.Background()), newTestSession(999, time.Now())) }()
+	go func() { held <- h.store.CreateSession(context.Background(), newTestSession(999, time.Now())) }()
 	<-entered
 	last := make(chan error, 1)
 	go func() { last <- attempt(account.MaxUntrustedCounts) }()

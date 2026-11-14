@@ -174,30 +174,6 @@ func TestPolicy_StaleSaveIsRefused(t *testing.T) {
 			t.Errorf("a form loaded before the boot attach = %v, want applied", err)
 		}
 	})
-	t.Run("socket_switch", func(t *testing.T) {
-		h := newHarness(t)
-		ctx := t.Context()
-		h.setupOwner(ctx)
-		plain := newTestSession(h.owner().ID, epoch)
-		if err := h.store.CreateSession(plainCtx(ctx), plain); err != nil {
-			t.Fatal(err)
-		}
-		form := h.store.policy()
-		if _, err := h.store.setPlainHTTP(ctx, h.svc, false); err != nil {
-			t.Fatal(err)
-		}
-		x := form.clone()
-		x.Breach = !x.Breach
-		if err := h.policySave(x, form.Generation); !errors.Is(err, ErrPolicyConflict) {
-			t.Errorf("a form loaded before the switch-off = %v, want ErrPolicyConflict", err)
-		}
-		if h.store.policy().PlainHTTP {
-			t.Error("the switch is back on")
-		}
-		if _, ok := h.store.sessionRecord(plain.TokenHash); ok {
-			t.Error("the deleted Plain session is back")
-		}
-	})
 	t.Run("restore_marker", func(t *testing.T) {
 		h := newHarness(t)
 		ctx := t.Context()
@@ -205,7 +181,7 @@ func TestPolicy_StaleSaveIsRefused(t *testing.T) {
 		mustCreatePasskey(t, h.store, h.owner().ID, "marker-pk")
 		h.setPolicy(func(p *storePolicy) { p.Methods.Password = false })
 		form := h.store.policy()
-		if err := h.svc.RecoverOutOfBand(WithRestoreAllowance(plainCtx(ctx), access.MethodPassword), account.OutOfBand("admin-socket"),
+		if err := h.svc.RecoverOutOfBand(WithRestoreAllowance(ctx, access.MethodPassword), account.OutOfBand("admin-socket"),
 			h.owner().ID, access.NewSecret(recoveredPassword), account.RecoverOptions{KeepSessions: true}); err != nil {
 			t.Fatal(err)
 		}

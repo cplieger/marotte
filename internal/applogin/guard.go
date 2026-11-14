@@ -30,15 +30,30 @@ func usable(s *snapshot, rpValid bool, u *access.User, m access.Method) bool {
 func (s *Store) methodUsable(_ context.Context, tx account.Tx, u *access.User, m access.Method) bool {
 	switch v := tx.(type) {
 	case *txView:
-		return v.st == s && usable(v.s, s.rpValid.Load(), u, m)
+		return v.st == s && usable(v.s, s.originValid(), u, m)
 	case *Store:
-		return v == s && usable(s.cur.Load(), s.rpValid.Load(), u, m)
+		return v == s && usable(s.cur.Load(), s.originValid(), u, m)
 	}
 	return false
 }
 
-// SetOriginValid records whether the canonical origin is valid, which the OIDC arm of usable reads.
-func (s *Store) SetOriginValid(valid bool) { s.rpValid.Store(valid) }
+// SetOrigin hands the store the canonical origin, whose validity the OIDC arm of usable reads and
+// whose text is Rules.HTTPSOrigin. Until it is called the store reads the origin as degraded.
+func (s *Store) SetOrigin(o *Origin) { s.origin.Store(o) }
+
+// originValid reads a nil origin as invalid without calling its methods, which dereference it.
+func (s *Store) originValid() bool {
+	o := s.origin.Load()
+	return o != nil && o.Valid()
+}
+
+// httpsOrigin is Rules.HTTPSOrigin: the canonical origin, "" while degraded or unset.
+func (s *Store) httpsOrigin() string {
+	if o := s.origin.Load(); o != nil {
+		return o.String()
+	}
+	return ""
+}
 
 type restoreKey struct{}
 

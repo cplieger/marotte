@@ -64,15 +64,17 @@ type storeSession struct {
 	IssuedByKey  int64              `json:"issued_by_key,omitempty"`
 	IdleCap      time.Duration      `json:"idle_cap,omitempty"`
 	AbsoluteCap  time.Duration      `json:"absolute_cap,omitempty"`
-	Plain        bool               `json:"plain"`
+	// Secure is written when false, so the file shows a plain session's tag; a record without it
+	// decodes plain, the weaker binding.
+	Secure bool `json:"secure"`
 }
 
-func sessionFromAuth(s *access.Session, plain bool) storeSession {
+func sessionFromAuth(s *access.Session) storeSession {
 	return storeSession{
 		CreatedAt: s.CreatedAt, LastActivity: s.LastActivity, AuthTime: s.AuthTime, ID: s.ID,
 		TokenHash: s.TokenHash, AuthMethod: s.AuthMethod, Kind: s.Kind, UserAgent: s.UserAgent,
 		Label: s.Label, LastIP: s.LastIP, UserID: s.UserID, IssuedByKey: s.IssuedByKey,
-		IdleCap: s.IdleCap, AbsoluteCap: s.AbsoluteCap, Plain: plain,
+		IdleCap: s.IdleCap, AbsoluteCap: s.AbsoluteCap, Secure: s.Secure,
 	}
 }
 
@@ -81,7 +83,7 @@ func (r *storeSession) toAuth() *access.Session {
 		CreatedAt: r.CreatedAt, LastActivity: r.LastActivity, AuthTime: r.AuthTime, ID: r.ID,
 		TokenHash: r.TokenHash, AuthMethod: r.AuthMethod, Kind: r.Kind, UserAgent: r.UserAgent,
 		Label: r.Label, LastIP: r.LastIP, UserID: r.UserID, IssuedByKey: r.IssuedByKey,
-		IdleCap: r.IdleCap, AbsoluteCap: r.AbsoluteCap,
+		IdleCap: r.IdleCap, AbsoluteCap: r.AbsoluteCap, Secure: r.Secure,
 	}
 }
 
@@ -141,32 +143,34 @@ func (r *storePasskey) toAuth() *access.PasskeyCredential {
 }
 
 type storeKey struct {
-	CreatedAt  time.Time   `json:"created_at"`
-	ExpiresAt  time.Time   `json:"expires_at,omitzero"`
-	LastUsedAt time.Time   `json:"last_used_at,omitzero"`
-	KeyHash    access.Hash `json:"-"`
-	KeyPrefix  string      `json:"key_prefix"`
-	KeySuffix  string      `json:"key_suffix"`
-	Label      string      `json:"label"`
-	Scopes     []string    `json:"scopes"`
-	LineageIDs []int64     `json:"lineage_ids"`
-	ID         int64       `json:"id"`
-	UserID     int64       `json:"user_id"`
+	CreatedAt     time.Time   `json:"created_at"`
+	ExpiresAt     time.Time   `json:"expires_at,omitzero"`
+	LastUsedAt    time.Time   `json:"last_used_at,omitzero"`
+	PreviousUntil time.Time   `json:"previous_until,omitzero"`
+	KeyHash       access.Hash `json:"-"`
+	PreviousHash  access.Hash `json:"-"`
+	KeyPrefix     string      `json:"key_prefix"`
+	KeySuffix     string      `json:"key_suffix"`
+	Label         string      `json:"label"`
+	Scopes        []string    `json:"scopes"`
+	LineageIDs    []int64     `json:"lineage_ids"`
+	ID            int64       `json:"id"`
+	UserID        int64       `json:"user_id"`
 }
 
 func keyFromAuth(k *access.Key) storeKey {
 	return storeKey{
-		CreatedAt: k.CreatedAt, ExpiresAt: k.ExpiresAt, LastUsedAt: k.LastUsedAt, KeyHash: k.KeyHash,
-		KeyPrefix: k.KeyPrefix, KeySuffix: k.KeySuffix, Label: k.Label, Scopes: slices.Clone(k.Scopes),
-		LineageIDs: slices.Clone(k.LineageIDs), ID: k.ID, UserID: k.UserID,
+		CreatedAt: k.CreatedAt, ExpiresAt: k.ExpiresAt, LastUsedAt: k.LastUsedAt, PreviousUntil: k.PreviousUntil,
+		KeyHash: k.KeyHash, PreviousHash: k.PreviousHash, KeyPrefix: k.KeyPrefix, KeySuffix: k.KeySuffix,
+		Label: k.Label, Scopes: slices.Clone(k.Scopes), LineageIDs: slices.Clone(k.LineageIDs), ID: k.ID, UserID: k.UserID,
 	}
 }
 
 func (r *storeKey) toAuth() *access.Key {
 	return &access.Key{
-		CreatedAt: r.CreatedAt, ExpiresAt: r.ExpiresAt, LastUsedAt: r.LastUsedAt, KeyHash: r.KeyHash,
-		KeyPrefix: r.KeyPrefix, KeySuffix: r.KeySuffix, Label: r.Label, Scopes: slices.Clone(r.Scopes),
-		LineageIDs: slices.Clone(r.LineageIDs), ID: r.ID, UserID: r.UserID,
+		CreatedAt: r.CreatedAt, ExpiresAt: r.ExpiresAt, LastUsedAt: r.LastUsedAt, PreviousUntil: r.PreviousUntil,
+		KeyHash: r.KeyHash, PreviousHash: r.PreviousHash, KeyPrefix: r.KeyPrefix, KeySuffix: r.KeySuffix,
+		Label: r.Label, Scopes: slices.Clone(r.Scopes), LineageIDs: slices.Clone(r.LineageIDs), ID: r.ID, UserID: r.UserID,
 	}
 }
 
@@ -340,7 +344,8 @@ type wireSession struct {
 }
 
 type wireKey struct {
-	KeyHash string `json:"key_hash"`
+	KeyHash      string `json:"key_hash"`
+	PreviousHash string `json:"previous_hash,omitempty"`
 	storeKey
 }
 
@@ -411,8 +416,8 @@ func encode(s *snapshot) ([]byte, error) {
 		f.Passkeys = append(f.Passkeys, s.passkeys[uid]...)
 	}
 	for _, id := range sortedKeys(s.keyByID) {
-		r := s.keys[s.keyByID[id]]
-		f.Keys = append(f.Keys, wireKey{storeKey: *r, KeyHash: r.KeyHash.Reveal()})
+		r := s.keyByID[id]
+		f.Keys = append(f.Keys, wireKey{storeKey: *r, KeyHash: r.KeyHash.Reveal(), PreviousHash: r.PreviousHash.Reveal()})
 	}
 	for _, r := range s.tokens {
 		f.Tokens = append(f.Tokens, wireToken{storeToken: r, Hash: r.Hash.Reveal()})
@@ -556,25 +561,31 @@ func decodePasskeys(s *snapshot, f *fileState) error {
 	return nil
 }
 
+// decodeKeys indexes a key under its KeyHash and its non-zero PreviousHash; a hash two entries
+// share is a file that does not parse.
 func decodeKeys(s *snapshot, f *fileState) error {
 	for i := range f.Keys {
 		r := f.Keys[i].storeKey
-		r.KeyHash = access.NewHash(f.Keys[i].KeyHash)
+		r.KeyHash, r.PreviousHash = access.NewHash(f.Keys[i].KeyHash), access.NewHash(f.Keys[i].PreviousHash)
 		switch {
 		case r.ID < 1 || r.ID >= s.nextIDs.Key:
 			return corrupt("key ID %d outside 1 to next_ids.key", r.ID)
 		case r.KeyHash.IsZero():
 			return corrupt("key %d has no hash", r.ID)
 		}
-		k := r.KeyHash.Key()
-		if _, dup := s.keys[k]; dup {
-			return corrupt("two keys share a hash")
-		}
 		if _, dup := s.keyByID[r.ID]; dup {
 			return corrupt("two keys share ID %d", r.ID)
 		}
-		s.keys[k] = &r
-		s.keyByID[r.ID] = k
+		for _, h := range []access.Hash{r.KeyHash, r.PreviousHash} {
+			if h.IsZero() {
+				continue
+			}
+			if _, dup := s.keys[h.Key()]; dup {
+				return corrupt("two keys share a hash")
+			}
+			s.keys[h.Key()] = r.ID
+		}
+		s.keyByID[r.ID] = &r
 	}
 	return nil
 }

@@ -156,18 +156,18 @@ func (h *harness) owner() *access.User {
 	return u
 }
 
-func plainCtx(ctx context.Context) context.Context {
-	return withFacts(ctx, requestFacts{plain: true})
-}
-
-func httpsCtx(ctx context.Context) context.Context {
-	return withFacts(ctx, requestFacts{plain: false})
-}
-
-var testClient = account.Client{
-	UserAgent: "test-browser",
-	IP:        netip.MustParseAddr("192.0.2.10"), Peer: netip.MustParseAddr("192.0.2.10"),
-}
+// testClient is a plain request's client, httpsClient a secure one's.
+var (
+	testClient = account.Client{
+		UserAgent: "test-browser",
+		Peer:      netip.MustParseAddr("192.0.2.10"), Via: access.ViaDirect,
+	}
+	httpsClient = func() account.Client {
+		c := testClient
+		c.Secure = true
+		return c
+	}()
+)
 
 // setupOwner completes setup by password over a plain request and returns the owner's session.
 func (h *harness) setupOwner(ctx context.Context) account.SignedIn {
@@ -176,7 +176,7 @@ func (h *harness) setupOwner(ctx context.Context) account.SignedIn {
 	if err != nil {
 		h.t.Fatalf("IssueSetupToken: %v", err)
 	}
-	si, err := h.svc.SetupWithPassword(plainCtx(ctx), testClient, account.SetupPassword{
+	si, err := h.svc.SetupWithPassword(ctx, testClient, account.SetupPassword{
 		Token: tok, Password: access.NewSecret(testPassword), Username: testUsername,
 	})
 	if err != nil {
@@ -197,12 +197,26 @@ func (h *harness) principal(token access.Secret) access.Principal {
 	return p
 }
 
-// recoveryPrincipal authenticates a recovery session's cookie on a route that admits it.
+// securePrincipal authenticates an HTTPS request carrying token's secure session cookie.
+func (h *harness) securePrincipal(token access.Secret) access.Principal {
+	h.t.Helper()
+	cookies := ParseProxies("").CookieConfig()
+	r := httptest.NewRequest(http.MethodGet, "https://marotte.example/", nil)
+	r.AddCookie(&http.Cookie{Name: cookies.CookieName(true), Value: token.Reveal()})
+	p, err := h.authn.Authenticate(r)
+	if err != nil {
+		h.t.Fatalf("Authenticate over HTTPS: %v", err)
+	}
+	return p
+}
+
+// recoveryPrincipal authenticates an HTTPS recovery session's cookie on a route that admits it.
 func (h *harness) recoveryPrincipal(token access.Secret) access.Principal {
 	h.t.Helper()
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	cookies := ParseProxies("").CookieConfig()
+	r := httptest.NewRequest(http.MethodGet, "https://marotte.example/", nil)
 	r = r.WithContext(access.AllowRecoverySession(r.Context()))
-	r.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token.Reveal()})
+	r.AddCookie(&http.Cookie{Name: cookies.CookieName(true), Value: token.Reveal()})
 	p, err := h.authn.Authenticate(r)
 	if err != nil {
 		h.t.Fatalf("Authenticate: %v", err)
@@ -213,11 +227,23 @@ func (h *harness) recoveryPrincipal(token access.Secret) access.Principal {
 // signIn signs the owner in by password over a plain request.
 func (h *harness) signIn(ctx context.Context) account.SignedIn {
 	h.t.Helper()
-	si, err := h.svc.PasswordLogin(plainCtx(ctx), testClient, account.Credentials{
+	si, err := h.svc.PasswordLogin(ctx, testClient, account.Credentials{
 		Username: testUsername, Password: access.NewSecret(testPassword),
 	})
 	if err != nil {
 		h.t.Fatalf("PasswordLogin: %v", err)
+	}
+	return si
+}
+
+// signInHTTPS signs the owner in by password over an HTTPS request.
+func (h *harness) signInHTTPS(ctx context.Context) account.SignedIn {
+	h.t.Helper()
+	si, err := h.svc.PasswordLogin(ctx, httpsClient, account.Credentials{
+		Username: testUsername, Password: access.NewSecret(testPassword),
+	})
+	if err != nil {
+		h.t.Fatalf("PasswordLogin over HTTPS: %v", err)
 	}
 	return si
 }

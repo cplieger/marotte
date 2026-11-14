@@ -1,5 +1,5 @@
 // Package applogin is marotte's sign-in: the access library's file store, the constructor chain
-// over it, and the request facts, origin and policy the library's configuration reads.
+// over it, and the client address, origin and policy the library's configuration reads.
 package applogin
 
 import (
@@ -26,20 +26,22 @@ import (
 // snapshot is one published state. Nothing in a published snapshot is ever changed: a write
 // replaces a record, map or slice in the writer's private copy (store_tx.go).
 type snapshot struct {
-	tokens     map[access.HashKey]storeToken
-	failures   map[account.FailureRef]storeFailure
-	byHandle   map[string]int
-	byOIDC     map[access.OIDCIdentity]int
-	sessions   map[access.HashKey]*storeSession
-	sessByID   map[string]access.HashKey
-	passkeys   map[int64][]storePasskey // by UserID, ascending ID
-	credIDs    map[string]int64         // credential ID → passkey ID, across users (rule 4)
-	keys       map[access.HashKey]*storeKey
+	tokens   map[access.HashKey]storeToken
+	failures map[account.FailureRef]storeFailure
+	byHandle map[string]int
+	byOIDC   map[access.OIDCIdentity]int
+	sessions map[access.HashKey]*storeSession
+	sessByID map[string]access.HashKey
+	passkeys map[int64][]storePasskey // by UserID, ascending ID
+	credIDs  map[string]int64         // credential ID → passkey ID, across users (rule 4)
+	// keys maps a key's KeyHash and its non-zero PreviousHash to its ID; keyByID holds the one
+	// record both reach, so a write replaces it in one place.
+	keys       map[access.HashKey]int64
 	failureKey access.Secret
 	byName     map[string]int
 	// logEvicted holds each class that ever held an entry, with its Keep evictions.
 	logEvicted map[account.LogClass]uint64
-	keyByID    map[int64]access.HashKey
+	keyByID    map[int64]*storeKey
 	log        map[account.LogClass][]storeLogEntry // ascending Seq per class
 	// oidc is built from policy.Provider and never serialized.
 	oidc         *oidc.Provider
@@ -62,8 +64,8 @@ func emptySnapshot() *snapshot {
 		sessByID:   map[string]access.HashKey{},
 		passkeys:   map[int64][]storePasskey{},
 		credIDs:    map[string]int64{},
-		keys:       map[access.HashKey]*storeKey{},
-		keyByID:    map[int64]access.HashKey{},
+		keys:       map[access.HashKey]int64{},
+		keyByID:    map[int64]*storeKey{},
 		tokens:     map[access.HashKey]storeToken{},
 		failures:   map[account.FailureRef]storeFailure{},
 		log:        map[account.LogClass][]storeLogEntry{},
@@ -189,6 +191,8 @@ type Store struct {
 	stop context.CancelFunc
 	cur  atomic.Pointer[snapshot]
 	w    *writer
+	// origin is the canonical origin SetOrigin hands the store; nil until then.
+	origin atomic.Pointer[Origin]
 	// buildFailure is the provider builder's last failure (provider.go).
 	buildFailure atomic.Pointer[buildFailure]
 	fence        fence
@@ -197,7 +201,6 @@ type Store struct {
 	loops        sync.WaitGroup
 	// diskOwned is set around each call the writer makes on the disk seam.
 	diskOwned atomic.Bool
-	rpValid   atomic.Bool
 }
 
 var (
@@ -234,12 +237,11 @@ func (s *Store) sessionRecord(h access.Hash) (storeSession, bool) {
 }
 
 func (s *Store) keyRecord(id int64) (storeKey, bool) {
-	snap := s.cur.Load()
-	k, ok := snap.keyByID[id]
+	p, ok := s.cur.Load().keyByID[id]
 	if !ok {
 		return storeKey{}, false
 	}
-	r := *snap.keys[k]
+	r := *p
 	r.Scopes, r.LineageIDs = slices.Clone(r.Scopes), slices.Clone(r.LineageIDs)
 	return r, true
 }

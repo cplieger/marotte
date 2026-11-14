@@ -33,7 +33,7 @@ func fenceStore(t *testing.T, s *Store, d *testDisk, tick <-chan time.Time) {
 	t.Helper()
 	s.setFenceTick(tick)
 	d.faults().AfterPublish()
-	if err := s.CreateSession(plainCtx(t.Context()), newTestSession(1, epoch)); !errors.Is(err, ErrNotDurable) {
+	if err := s.CreateSession(t.Context(), newTestSession(1, epoch)); !errors.Is(err, ErrNotDurable) {
 		t.Fatalf("the non-durable write = %v, want ErrNotDurable", err)
 	}
 	if !s.Fenced() {
@@ -50,7 +50,7 @@ func TestCleanup_RefsOnlyForADurablePublish(t *testing.T) {
 		expired, live := newTestSession(1, epoch), newTestSession(1, now.Add(-time.Minute))
 		live.CreatedAt = now.Add(-time.Hour)
 		for _, sess := range []*access.Session{expired, live} {
-			if err := s.CreateSession(plainCtx(ctx), sess); err != nil {
+			if err := s.CreateSession(ctx, sess); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -129,6 +129,58 @@ func decodeFile(path string) (*snapshot, error) {
 	return decode(data)
 }
 
+// TestClearRetired_CountOnlyForADurablePublish: the retired-secret clear answers its count only once
+// the clear is durable; a failed publication clears nothing and a non-durable one keeps the clear
+// in cur and the file and fences the store.
+func TestClearRetired_CountOnlyForADurablePublish(t *testing.T) {
+	ctx := t.Context()
+	now := epoch.Add(2 * time.Hour)
+	t.Run("before_publish_fails", func(t *testing.T) {
+		s, d := openTestStore(t)
+		k := rotatedKey(t, s, 1, epoch)
+		d.faults().BeforePublish()
+		if n, err := s.ClearRetiredAPIKeySecrets(ctx, now, 10); err == nil || n != 0 {
+			t.Errorf("ClearRetiredAPIKeySecrets = (%d, %v), want 0 and an error", n, err)
+		}
+		if _, found, _ := s.APIKeyByHash(ctx, k.previous); !found {
+			t.Error("cur lost the previous hash after a failed publication")
+		}
+		s = reopenStore(t, s, d)
+		if _, found, _ := s.APIKeyByHash(ctx, k.previous); !found {
+			t.Error("the file lost the previous hash after a failed publication")
+		}
+	})
+	t.Run("not_durable", func(t *testing.T) {
+		s, d := openTestStore(t)
+		k := rotatedKey(t, s, 1, epoch)
+		s.setFenceTick(make(chan time.Time))
+		d.faults().AfterPublish()
+		if n, err := s.ClearRetiredAPIKeySecrets(ctx, now, 10); !errors.Is(err, ErrNotDurable) || n != 0 {
+			t.Errorf("ClearRetiredAPIKeySecrets = (%d, %v), want 0 and ErrNotDurable", n, err)
+		}
+		if !s.Fenced() {
+			t.Error("not fenced after a non-durable publication")
+		}
+		if _, found, _ := s.APIKeyByHash(ctx, k.previous); found {
+			t.Error("cur still finds the previous hash after a non-durable clear")
+		}
+		snap, err := decodeFile(d.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := snap.keys[k.previous.Key()]; ok || !snap.keyByID[k.id].PreviousHash.IsZero() {
+			t.Error("the file still holds the previous hash after a non-durable clear")
+		}
+	})
+	t.Run("durable", func(t *testing.T) {
+		s, _ := openTestStore(t)
+		rotatedKey(t, s, 1, epoch)
+		if n, err := s.ClearRetiredAPIKeySecrets(ctx, now, 10); err != nil || n != 1 {
+			t.Errorf("ClearRetiredAPIKeySecrets = (%d, %v), want (1, nil)", n, err)
+		}
+	})
+}
+
 // TestFence_RevokeNotDurable: a revoke whose publish is not durable, at the store and account
 // layers.
 func TestFence_RevokeNotDurable(t *testing.T) {
@@ -156,7 +208,7 @@ func TestFence_RevokeNotDurable(t *testing.T) {
 	}
 	waitUntil(t, "onUnconfirmed", func() bool { return unconfirmed.Load() == 1 })
 	file, _ := os.ReadFile(h.disk.path)
-	if _, err := h.svc.PasswordLogin(plainCtx(ctx), testClient, account.Credentials{Username: testUsername, Password: access.NewSecret(testPassword)}); !errors.Is(err, access.ErrAuthBackend) {
+	if _, err := h.svc.PasswordLogin(ctx, testClient, account.Credentials{Username: testUsername, Password: access.NewSecret(testPassword)}); !errors.Is(err, access.ErrAuthBackend) {
 		t.Errorf("a sign-in while fenced = %v, want ErrAuthBackend (503)", err)
 	}
 	if after, _ := os.ReadFile(h.disk.path); !bytes.Equal(file, after) {
@@ -233,11 +285,11 @@ func TestFence_ConfirmIsAWriterJob(t *testing.T) {
 		var unconfirmed atomic.Int32
 		s.SetFenceHooks(func() { unconfirmed.Add(1) }, nil)
 		fenceStore(t, s, d, make(chan time.Time))
-		if err := s.CreateSession(plainCtx(t.Context()), newTestSession(1, epoch)); !errors.Is(err, ErrFenced) {
+		if err := s.CreateSession(t.Context(), newTestSession(1, epoch)); !errors.Is(err, ErrFenced) {
 			t.Errorf("a write while fenced = %v, want ErrFenced", err)
 		}
 		d.faults().AfterPublish()
-		if err := s.CreateSession(plainCtx(t.Context()), newTestSession(1, epoch)); !errors.Is(err, ErrFenced) {
+		if err := s.CreateSession(t.Context(), newTestSession(1, epoch)); !errors.Is(err, ErrFenced) {
 			t.Errorf("a second write while fenced = %v, want ErrFenced", err)
 		}
 		waitUntil(t, "onUnconfirmed", func() bool { return unconfirmed.Load() >= 1 })
@@ -372,7 +424,7 @@ func prePublishOps() []prePublishOp {
 		if err != nil {
 			t.Fatal(err)
 		}
-		rec, err := h.svc.StartRecovery(httpsCtx(t.Context()), testClient, tok.Plaintext)
+		rec, err := h.svc.StartRecovery(t.Context(), httpsClient, tok.Plaintext)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -382,7 +434,7 @@ func prePublishOps() []prePublishOp {
 		{name: "setup_password", update: 1, prepare: func(t *testing.T, h *harness) func(*harness) error {
 			tok := setupToken(t, h)
 			return func(h *harness) error {
-				_, err := h.svc.SetupWithPassword(plainCtx(t.Context()), testClient, account.SetupPassword{
+				_, err := h.svc.SetupWithPassword(t.Context(), testClient, account.SetupPassword{
 					Token: tok, Password: access.NewSecret(testPassword), Username: testUsername,
 				})
 				return err
@@ -392,13 +444,13 @@ func prePublishOps() []prePublishOp {
 			tok := setupToken(t, h)
 			dev := accesstest.NewPasskeyDevice(t)
 			return func(h *harness) error {
-				cer, err := h.svc.SetupPasskeyBegin(httpsCtx(t.Context()), testClient, account.SetupPasskey{
+				cer, err := h.svc.SetupPasskeyBegin(t.Context(), httpsClient, account.SetupPasskey{
 					Token: tok, Username: testUsername, Origin: webOrigin(t),
 				})
 				if err != nil {
 					return err
 				}
-				_, err = h.svc.SetupPasskeyFinish(httpsCtx(t.Context()), testClient, cer.ID,
+				_, err = h.svc.SetupPasskeyFinish(t.Context(), httpsClient, cer.ID,
 					bytes.NewReader(dev.Register(mustJSON(t, cer.Creation))))
 				return err
 			}
@@ -410,14 +462,14 @@ func prePublishOps() []prePublishOp {
 				t.Fatal(err)
 			}
 			return func(h *harness) error {
-				_, err := h.svc.StartRecovery(httpsCtx(t.Context()), testClient, tok.Plaintext)
+				_, err := h.svc.StartRecovery(t.Context(), httpsClient, tok.Plaintext)
 				return err
 			}
 		}},
 		{name: "recovery_password", update: 1, prepare: func(t *testing.T, h *harness) func(*harness) error {
 			tok := recovery(t, h)
 			return func(h *harness) error {
-				return h.svc.RecoverWithPassword(httpsCtx(t.Context()), h.recoveryPrincipal(tok),
+				return h.svc.RecoverWithPassword(t.Context(), h.recoveryPrincipal(tok),
 					access.NewSecret(recoveredPassword), account.RecoverOptions{})
 			}
 		}},
@@ -430,7 +482,7 @@ func prePublishOps() []prePublishOp {
 				if err != nil {
 					return err
 				}
-				return h.svc.RecoverPasskeyFinish(httpsCtx(t.Context()), p, cer.ID,
+				return h.svc.RecoverPasskeyFinish(t.Context(), p, cer.ID,
 					bytes.NewReader(dev.Register(mustJSON(t, cer.Creation))), account.RecoverOptions{})
 			}
 		}},
@@ -439,7 +491,7 @@ func prePublishOps() []prePublishOp {
 			h.setupOwner(t.Context())
 			tok := h.signIn(t.Context()).Token
 			return func(h *harness) error {
-				_, err := h.svc.SetPassword(plainCtx(t.Context()), testClient, h.principal(tok),
+				_, err := h.svc.SetPassword(t.Context(), testClient, h.principal(tok),
 					access.NewSecret(testPassword), access.NewSecret(recoveredPassword))
 				return err
 			}

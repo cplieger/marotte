@@ -1,7 +1,6 @@
 package applogin
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 	"net/netip"
@@ -13,26 +12,8 @@ import (
 	"github.com/cplieger/go/httpserver"
 )
 
-// requestFacts is the gate's request-scoped transport decision. It is immutable: the gate stores
-// a new value on the context rather than change one.
-type requestFacts struct {
-	plain bool
-}
-
-type factsKey struct{}
-
-func withFacts(ctx context.Context, f requestFacts) context.Context {
-	return context.WithValue(ctx, factsKey{}, f)
-}
-
-// transportOf reports the transport the gate decided; ok is false outside the gate.
-func transportOf(ctx context.Context) (plain, ok bool) {
-	f, ok := ctx.Value(factsKey{}).(requestFacts)
-	return f.plain, ok
-}
-
-// Proxies is the one TRUSTED_PROXIES rule both transport predicates read, so the client address,
-// the limiter key and the HTTPS decision never disagree.
+// Proxies is the one TRUSTED_PROXIES rule: ClientAddr's address, Via and Secure come from one
+// resolution, so the client address, the limiter key and the transport never disagree.
 type Proxies struct {
 	// untrusted is the last peer seen forwarding from outside the trusted set.
 	untrusted atomic.Pointer[netip.Addr]
@@ -58,30 +39,27 @@ func ParseProxies(raw string) *Proxies {
 // Prefixes returns the trusted prefixes.
 func (p *Proxies) Prefixes() []netip.Prefix { return slices.Clone(p.trusted) }
 
-// RequestIsHTTPS is marotte's policy predicate: r.TLS, or a first X-Forwarded-Proto token "https"
-// from a socket peer, unmapped, inside TRUSTED_PROXIES. It is never CookieConfig.HTTPS.
-func (p *Proxies) RequestIsHTTPS(r *http.Request) bool {
-	if r.TLS != nil {
-		return true
-	}
-	if !httpserver.ResolveClient(r, p.trusted...).PeerTrusted {
-		return false
-	}
-	first, _, _ := strings.Cut(r.Header.Get("X-Forwarded-Proto"), ",")
-	return strings.EqualFold(strings.TrimSpace(first), schemeHTTPS)
-}
-
-// ClientAddr is access.Config.ClientAddr's resolver, from the same rule. A forwarding header
-// from an untrusted peer, X-Forwarded-Proto included, sets UntrustedForwarding and records the
-// peer for the exposure warning.
+// ClientAddr is access.Config.ClientAddr's resolver. Secure is r.TLS or httpserver's
+// ForwardedHTTPS from a trusted peer; a loopback peer is never secure by itself. A forwarding
+// header from an untrusted peer answers ViaUntrustedForwarding and records the peer for the
+// exposure warning.
 func (p *Proxies) ClientAddr(r *http.Request) access.ClientAddr {
 	res := httpserver.ResolveClient(r, p.trusted...)
-	untrusted := res.UntrustedForwarding || (!res.PeerTrusted && r.Header.Get("X-Forwarded-Proto") != "")
-	if untrusted {
+	a := access.ClientAddr{Peer: res.Peer, Secure: r.TLS != nil || res.ForwardedHTTPS}
+	switch {
+	case res.Forwarded:
+		a.Via, a.Forwarded = access.ViaProxy, res.IP
+	case res.PeerTrusted:
+		a.Via = access.ViaProxyNoClient
+	// httpserver's UntrustedForwarding does not count this header; access's default resolver does.
+	case res.UntrustedForwarding || len(r.Header.Values("X-Forwarded-Proto")) > 0:
+		a.Via = access.ViaUntrustedForwarding
 		peer := res.Peer
 		p.untrusted.Store(&peer)
+	default:
+		a.Via = access.ViaDirect
 	}
-	return access.ClientAddr{IP: res.IP, Peer: res.Peer, Proxied: res.Forwarded, UntrustedForwarding: untrusted}
+	return a
 }
 
 // LastUntrustedPeer reports the last peer seen forwarding from outside TRUSTED_PROXIES; ok is
@@ -96,15 +74,12 @@ func (p *Proxies) LastUntrustedPeer() (peer netip.Addr, ok bool) {
 // SessionCookieName is the session cookie's base name.
 const SessionCookieName = "marotte_session"
 
-// CookieConfig is the one session cookie: its name and Secure flag follow the library's
-// header-trusting predicate, so a forged header only makes its own client stricter, and it
-// persists only on a request marotte's own rule calls HTTPS.
+// CookieConfig is the one session cookie. Under PosturePerRequest access derives its name,
+// Secure flag and lifetime from ClientAddr's Secure, so a forged header never makes it persist.
 func (p *Proxies) CookieConfig() access.CookieConfig {
 	return access.CookieConfig{
-		Name:       SessionCookieName,
-		SameSite:   http.SameSiteStrictMode,
-		Posture:    access.PosturePerRequest,
-		HTTPS:      access.RequestIsHTTPS,
-		Persistent: p.RequestIsHTTPS,
+		Name:     SessionCookieName,
+		SameSite: http.SameSiteStrictMode,
+		Posture:  access.PosturePerRequest,
 	}
 }

@@ -31,7 +31,7 @@ require (
 )
 
 require (
-	github.com/cplieger/access v1.0.0-dev.10
+	github.com/cplieger/access v1.0.0-dev.13
 	github.com/cplieger/forgeapi/v2 v2.0.0
 	github.com/cplieger/go/envx v1.1.0
 	github.com/cplieger/go/filesafe v1.1.0
