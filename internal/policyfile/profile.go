@@ -8,11 +8,12 @@ import (
 	"go.yaml.in/yaml/v4"
 )
 
-// Named security profiles for the Settings -> Permissions picker. A named profile is
-// KAS policy presets alone, injected at SESSION scope as `source: preset:<id>`, so it
-// writes nothing to disk and cannot drift from upstream's review of which commands
-// are safe. Custom has no presets: its policy files are the whole policy. KAS seeds a
-// session's presets when the session is built and has no live setter for them.
+// Named security profiles for the Settings default and each chat's shield pill. A
+// named profile is KAS policy presets alone, injected at SESSION scope as
+// `source: preset:<id>`, so it writes nothing to disk and cannot drift from
+// upstream's review of which commands are safe. Custom has no presets: its policy
+// files are the whole policy. KAS seeds a session's presets when the session is
+// built and has no live setter for them.
 
 // Preset ids KAS's registry accepts. Pinned because an unknown id is not a
 // degraded grant but a failed session: validatePresetIds throws InvalidParamsError
