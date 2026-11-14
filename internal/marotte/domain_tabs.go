@@ -6,7 +6,7 @@ package marotte
 // Here rather than in internal/tabs because TabSubject is a wire type.
 type TabKind string
 
-// The eleven tab kinds; each string is the wire value AND the client's TabKind union member, so a
+// The ten tab kinds; each string is the wire value AND the client's TabKind union member, so a
 // rename is a cross-language change. There is no "plan" kind (roles.ts's "plan" is a mode id).
 // "subagent"'s Ref is the only composite one, `<chatID>/<agentSubtaskID>`, since nothing indexes a
 // subtask to a chat; a chat id holds no slash, so the split is unambiguous. "spec"'s Ref is the
@@ -19,7 +19,6 @@ const (
 	TabKindSettings TabKind = "settings"
 	TabKindGit      TabKind = "git"
 	TabKindFiles    TabKind = "files"
-	TabKindHistory  TabKind = "history"
 	TabKindDocs     TabKind = "docs"
 	TabKindSpec     TabKind = "spec"
 	TabKindWeb      TabKind = "web"
@@ -29,7 +28,7 @@ const (
 // always asks next: is this kind a SINGLETON, the one tab of its type, whose Ref
 // is therefore empty?
 //
-// ONE table rather than two, because two tables can disagree: a tenth kind added
+// ONE table rather than two, because two tables can disagree: a new kind added
 // to the valid set and forgotten in the singleton set would be a kind that is
 // accepted and then required to carry a ref it has no meaning for, which reaches
 // a reader as "Settings opens twice" rather than as an error.
@@ -41,13 +40,12 @@ var tabKinds = map[TabKind]bool{
 	TabKindSettings: true,
 	TabKindGit:      true,
 	TabKindFiles:    false,
-	TabKindHistory:  true,
 	TabKindDocs:     true,
 	TabKindSpec:     false,
 	TabKindWeb:      false,
 }
 
-// Valid reports whether k is one of the eleven kinds. Used at the command
+// Valid reports whether k is one of the ten kinds. Used at the command
 // boundary and again inside the store, because a kind that reaches the persisted
 // set is a kind every client has to render.
 func (k TabKind) Valid() bool {
@@ -55,13 +53,12 @@ func (k TabKind) Valid() bool {
 	return ok
 }
 
-// Singleton reports whether k has exactly one tab — settings, git, history and
-// docs — so its subject's Ref is empty and a second open of it returns the tab
+// Singleton reports whether k has exactly one tab — settings, git and docs
+// — so its subject's Ref is empty and a second open of it returns the tab
 // already open.
 //
 // An unknown kind reports false, so this answer is only meaningful for a kind
-// Valid accepts. The one place that matters is tabs.Store.Open, which checks
-// Valid first.
+// Valid accepts.
 func (k TabKind) Singleton() bool { return tabKinds[k] }
 
 // TabSubject is the SHARED fact about one open tab: what it shows, where it sits, and whether
@@ -112,7 +109,7 @@ type OpenTab struct {
 	// Launch is a new run tab's resolved holders, set by the run-tab door alone; nil leaves
 	// TabSubject.LaunchResolved false.
 	Launch *RunLaunch `json:"launch,omitempty"`
-	// Kind is required and must be one of the eleven (see TabKind.Valid).
+	// Kind is required and must be one of the ten (see TabKind.Valid).
 	Kind TabKind `json:"kind"`
 	// Ref is required for every kind but a singleton, where it must be empty.
 	Ref string `json:"ref,omitempty"`

@@ -1,7 +1,16 @@
 import { get, getActiveId } from "./store.js";
 import { admitLocation, settleDeepLinkedChat } from "./deep-link.js";
 import { switchSession } from "./chat.js";
-import { activateTab, filesTabForRoute, openTab, showUnshownTab, tabIdFor } from "./tabs.js";
+import {
+  activateTab,
+  filesTabForRoute,
+  historyPaneTab,
+  leaveHistoryView,
+  openTab,
+  showHistoryView,
+  showUnshownTab,
+  tabIdFor,
+} from "./tabs.js";
 import { replaceRoute } from "./router.js";
 import type { RouteOrigin } from "./router.js";
 import type { Route } from "./route-path.js";
@@ -46,12 +55,14 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
             land();
           }
         });
+      } else if (historyPaneTab() !== null) {
+        leaveHistoryView();
       } else if (getActiveId() !== "") {
         replaceRoute({ kind: "chat", id: getActiveId() });
       }
       break;
     }
-    // The FOUR singleton routes name their sub-tab in the open, which a subject cannot carry (its
+    // The three singleton routes name their sub-tab in the open, which a subject cannot carry (its
     // `ref` is empty).
     case "settings":
       void openTab({ kind: "settings", route }).then(() => {
@@ -109,10 +120,8 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
         })
         .catch(showUnshownTab);
     case "history":
-      // Returned so the location claim stands until the open's round trip settles.
-      return openTab({ kind: "history", route: { kind: "history", tab: route.tab ?? "chats" } })
-        .then(() => undefined)
-        .catch(showUnshownTab);
+      showHistoryView(route.tab ?? "chats");
+      break;
     case "run":
       // RETURNED rather than voided: the router's claim on this location stands until it resolves,
       // so no unrelated projection emit can write the URL while the chunk loads.

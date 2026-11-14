@@ -43,7 +43,6 @@ export function iconsMock(): Record<string, string> {
     "ICON_SUBAGENT_TASK",
     "ICON_SUBAGENT_CREATOR",
     "ICON_TAB_EDITOR",
-    "ICON_TAB_HISTORY",
     "ICON_TAB_DOCS",
     "ICON_TAB_SUBTAB",
     "ICON_SEND",

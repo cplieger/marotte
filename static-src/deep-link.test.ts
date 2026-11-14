@@ -4,6 +4,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { admitLocation, settleDeepLinkedChat } from "./deep-link.js";
 import { pushRoute } from "./router.js";
+import type { RouteOrigin } from "./router.js";
 
 const {
   mockResolve,
@@ -350,8 +351,18 @@ describe("admitLocation", () => {
     expect.assertions(1);
     mockTabIdForRoute.mockReturnValue("");
 
-    expect(admitLocation({ kind: "history" }, "history")).toBe("canonicalized");
+    expect(admitLocation({ kind: "settings", tab: "general" }, "history")).toBe("canonicalized");
   });
+
+  // History is a view, never a tab: showing it opens nothing another device could have closed.
+  it.each<RouteOrigin>(["deeplink", "history", "restore"])(
+    "admits the History page from a %s origin with no tab behind it",
+    (origin) => {
+      mockTabIdForRoute.mockReturnValue("");
+
+      expect(admitLocation({ kind: "history", tab: "runs" }, origin)).toBe("opens");
+    },
+  );
 
   // The docs router arm forces a sub-tab, so admitting a back press would also move the panel. No carve-out.
   it("refuses a back press onto a closed docs tab, sub-tab and all", () => {

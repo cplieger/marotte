@@ -622,7 +622,6 @@ export const ICON_TAB_FILES = svg(
   "ui",
   '<path d="M6 3h3l3 3h6a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3z"/>',
 );
-export const ICON_TAB_HISTORY = svg("ui", '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>');
 /**
  * The configuration browser's library: an upright volume with its spine line beside a leaning one. Two volumes keep
  * it apart from the single closed book, `ICON_REPO`'s meaning. Duplicated as static markup on `#docs-btn` (pinned

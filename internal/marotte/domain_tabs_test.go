@@ -1,7 +1,7 @@
 package marotte_test
 
 // The tab vocabulary is the half of the tab collection that crosses the wire, so
-// these tests pin two things a Go compiler cannot: the kind SET (a ninth member
+// these tests pin two things a Go compiler cannot: the kind SET (a member added
 // reaches every client's per-kind factory as a switch with no case for it) and the
 // JSON KEYS (the client decodes them by name, and a renamed tag is a field that
 // silently arrives undefined).
@@ -33,12 +33,12 @@ func TestTabKind_ValidAndSingletonAgreeOnEveryMember(t *testing.T) {
 		{desc: "settings", kind: marotte.TabKindSettings, wantValid: true, wantSingleton: true},
 		{desc: "git", kind: marotte.TabKindGit, wantValid: true, wantSingleton: true},
 		{desc: "files, one tab per folder the browser was opened at", kind: marotte.TabKindFiles, wantValid: true},
-		{desc: "history", kind: marotte.TabKindHistory, wantValid: true, wantSingleton: true},
 		{desc: "docs", kind: marotte.TabKindDocs, wantValid: true, wantSingleton: true},
 		{desc: "subagent, one tab per delegate execution", kind: marotte.TabKindSubagent, wantValid: true},
 		{desc: "spec, one tab per spec directory", kind: marotte.TabKindSpec, wantValid: true},
 		{desc: "web, one tab per previewed page", kind: marotte.TabKindWeb, wantValid: true},
 		{desc: "plan, deleted from the client on 2026-08-25 and deliberately absent here", kind: "plan"},
+		{desc: "history, the sidebar's foot row and never a tab", kind: "history"},
 		{desc: "the empty kind, which is what a payload with no kind field decodes to", kind: ""},
 		{desc: "a kind from some other vocabulary", kind: "vibe"},
 		{desc: "a kind differing only in case", kind: "Chat"},
@@ -55,16 +55,16 @@ func TestTabKind_ValidAndSingletonAgreeOnEveryMember(t *testing.T) {
 	}
 }
 
-// TestTabKind_TheSetIsExactlyEleven is the guard on the set's SIZE, which the table
-// above cannot give: a twelfth member added to the map and forgotten there would
+// TestTabKind_TheSetIsExactlyTen is the guard on the set's SIZE, which the table
+// above cannot give: an eleventh member added to the map and forgotten there would
 // leave every existing case passing. A new kind is a cross-language change (the
 // client's TabKind union, its icon table and its per-kind factory), so it should
 // fail here first.
-func TestTabKind_TheSetIsExactlyEleven(t *testing.T) {
+func TestTabKind_TheSetIsExactlyTen(t *testing.T) {
 	all := []marotte.TabKind{
 		marotte.TabKindChat, marotte.TabKindEditor, marotte.TabKindRun,
 		marotte.TabKindSubagent, marotte.TabKindSettings, marotte.TabKindGit,
-		marotte.TabKindFiles, marotte.TabKindHistory, marotte.TabKindDocs,
+		marotte.TabKindFiles, marotte.TabKindDocs,
 		marotte.TabKindSpec, marotte.TabKindWeb,
 	}
 	valid := 0
@@ -79,7 +79,7 @@ func TestTabKind_TheSetIsExactlyEleven(t *testing.T) {
 		t.Errorf("%d of the %d declared kinds are Valid, want all of them", valid, len(all))
 	}
 	slices.Sort(seen)
-	want := []string{"chat", "docs", "editor", "files", "git", "history", "run", "settings", "spec", "subagent", "web"}
+	want := []string{"chat", "docs", "editor", "files", "git", "run", "settings", "spec", "subagent", "web"}
 	if !slices.Equal(seen, want) {
 		t.Errorf("the declared kinds are %v, want %v; a change here is a change to the client's TabKind union", seen, want)
 	}

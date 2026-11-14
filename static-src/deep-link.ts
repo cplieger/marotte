@@ -62,9 +62,10 @@ type LocationVerdict =
 /**
  * Whether a location may open its view. A deliberate navigation may; a `history` entry or restored load may only
  * activate something already open (`openTab` persists and broadcasts, so opening would resurrect a tab closed elsewhere).
+ * The History page is not a tab and showing it persists nothing, so every origin may show it.
  */
 export function admitLocation(route: Route, origin: RouteOrigin): LocationVerdict {
-  if (origin === "deeplink" || tabIdForRoute(route) !== "") {
+  if (origin === "deeplink" || route.kind === "history" || tabIdForRoute(route) !== "") {
     return "opens";
   }
   canonicalize();

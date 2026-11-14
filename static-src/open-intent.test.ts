@@ -14,7 +14,6 @@ import historySrc from "./history.ts?raw";
 import settingsSrc from "./settings.ts?raw";
 import filesSrc from "./files.ts?raw";
 import appSrc from "./app.ts?raw";
-import sidebarHistorySrc from "./sidebar-history.ts?raw";
 import runViewSrc from "./run-view.ts?raw";
 
 // Pinned literally: the trailing `\(` makes the guard read calls, not mentions in prose.
@@ -88,7 +87,6 @@ describe("the source guard", () => {
     { name: "settings.ts", src: settingsSrc },
     { name: "files.ts", src: filesSrc },
     { name: "app.ts", src: appSrc },
-    { name: "sidebar-history.ts", src: sidebarHistorySrc },
   ])("$name still contains a toggle call, so the pattern matches", ({ src }) => {
     expect.assertions(1);
     expect(src).toMatch(TOGGLE_CALL);
@@ -135,7 +133,6 @@ vi.mock("./icons.js", () => ({
   ICON_SUBAGENT_TASK: "",
   ICON_SUBAGENT_CREATOR: "",
   ICON_TAB_EDITOR: "",
-  ICON_TAB_HISTORY: "",
   ICON_TAB_DOCS: "",
   ICON_TAB_SUBTAB: "",
   ICON_SEND: "",

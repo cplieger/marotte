@@ -126,7 +126,7 @@ export type SteerState = "read" | "dropped";
 
 export type StopReason = "end_turn" | "cancelled" | "interrupted" | "refusal" | "unknown" | "error" | "content_filtered" | "max_tokens" | "max_turn_requests" | "tool_use" | "unterminated";
 
-export type TabKind = "chat" | "editor" | "run" | "subagent" | "settings" | "git" | "files" | "history" | "docs" | "spec" | "web";
+export type TabKind = "chat" | "editor" | "run" | "subagent" | "settings" | "git" | "files" | "docs" | "spec" | "web";
 
 export type ToolKind = "execute" | "shell" | "read" | "search" | "fetch" | "edit" | "think" | "hook" | "steering" | "write" | "delete" | "move" | "command" | "browser" | "switch_mode" | "mcp" | "other";
 
