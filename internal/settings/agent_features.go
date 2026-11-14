@@ -112,9 +112,13 @@ func ValidChatAwarenessMode(v string) bool {
 }
 
 // WorkflowCreatorEfforts returns a copy of the creator effort levels workflow_creator_effort accepts besides unset.
+//
+//deadset:ignore DS1102 -- the kascap census checks every value against kiro-cli's bundle through it
 func WorkflowCreatorEfforts() []string { return slices.Clone(workflowCreatorEfforts) }
 
 // ChatAwarenessModes returns a copy of the awareness modes chat_awareness_mode accepts besides unset.
+//
+//deadset:ignore DS1102 -- the kascap census checks every value against kiro-cli's bundle through it
 func ChatAwarenessModes() []string { return slices.Clone(chatAwarenessModes) }
 
 // ThreeStateChoice answers a follow-kiro-cli setting's effective choice by key, false for a key that
