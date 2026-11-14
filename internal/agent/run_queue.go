@@ -466,11 +466,16 @@ func (bc *bridgeCoordinator) Submit(ctx context.Context, chatID marotte.ChatID, 
 	out, e, err := lc.submitLocked(stamp, s, mode)
 	lc.wakeLocked()
 	out.Run = lc.runViewLocked()
+	var w *launchWait
+	if e != nil {
+		// Read under the lock that placed e: a putBack before the wait answers this launch and swaps in a fresh one.
+		w = e.launch
+	}
 	lc.mu.Unlock()
 	if err != nil || e == nil {
 		return out, err
 	}
-	return lc.awaitLaunch(ctx, e)
+	return lc.awaitLaunch(ctx, e, w)
 }
 
 // submitLocked decides a send by VerbFor and places it, answering the entry whose first outcome the caller waits on
@@ -621,12 +626,9 @@ func cappedRows(entries []marotte.RunEntry) []*marotte.QueuedPrompt {
 	return rows
 }
 
-// awaitLaunch waits for the first outcome of submit's own entry (its turn open, kiro-cli holding its steer), up to
+// awaitLaunch waits on w, the first outcome of submit's own entry e (its turn open, kiro-cli holding its steer), up to
 // command.AdmissionWait; past it, one section answers queued unless the outcome answered first.
-func (lc *chatLifecycle) awaitLaunch(ctx context.Context, e *runEntry) (command.SubmitAnswer, error) {
-	lc.mu.Lock()
-	w := e.launch
-	lc.mu.Unlock()
+func (lc *chatLifecycle) awaitLaunch(ctx context.Context, e *runEntry, w *launchWait) (command.SubmitAnswer, error) {
 	timer := time.NewTimer(command.AdmissionWait)
 	defer timer.Stop()
 	select {
