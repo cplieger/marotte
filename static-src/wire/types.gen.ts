@@ -798,6 +798,11 @@ export interface EffectiveSettings {
  */
   workflow_creator_effort: string;
   /**
+ * ChatAwarenessMode is "" (kiro-cli decides), "direct" or "consult"; it applies only while ChatAwareness is on and
+ * to chats created after the change.
+ */
+  chat_awareness_mode: string;
+  /**
  * KnowledgeIndexType is "" (kiro-cli's own, semantic unless its legacy knowledge.json says fast), "fast" or
  * "best": the index a knowledge base added from now on is built as.
  */

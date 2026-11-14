@@ -221,7 +221,7 @@ object without the member records no effort, so unset leaves the planning step
 of a run started from a prose request (wf-workflow-creator) at that agent's own
 effortLevel, and a stated value replaces the record on load.`,
 	"setting-object.sessionTools": `SENT on both session doors as {"messaging": {"enabled": bool},
-"awareness": {"enabled": bool}}. messaging is the Messages between chats
+"awareness": {"enabled": bool, "mode"?: string}}. messaging is the Messages between chats
 setting (chat_messaging_enabled, default off, kiro-cli's own
 sessionToolsMessaging default); awareness is Search other chats
 (chat_awareness_enabled, default off, kiro-cli's own sessionToolsAwareness
@@ -242,7 +242,15 @@ which marotte renders as the From and To rows. Always present because on load a
 stated value replaces the persisted sessionMessagingEnabled
 (saveSessionMessaging) while an absent one leaves it in force, so withholding
 off would leave a chat once opened with it on still reachable; awareness
-persists the same way (saveSessionAwareness).`,
+persists the same way (saveSessionAwareness).
+
+With awareness on, "Search method" (chat_awareness_mode, unset by default)
+adds awareness.mode, one of KAS's direct or consult (sessionToolsAwarenessMode).
+Unset leaves kiro-cli's own direct, the three tools above; consult gives the
+session consult_sessions only, one question a helper answers from the chats it
+reads. KAS reads the mode at session/new and records it as sessionAwarenessMode;
+session/load keeps the recorded mode and reads the member only for a session
+with no record, so a change reaches new chats only.`,
 	"setting-object.sendMessage": `SENT on the engine's initialize as {"deliveryLimit": n} when "Messages per
 exchange" (chat_message_delivery_limit) holds a value other than kiro-cli's own
 default, 50; the default withholds it. KAS reads settings.sendMessage.deliveryLimit
@@ -873,8 +881,10 @@ which the bundle's experiment-gate helper names as its settingKey, has no reader
 The universal_background_tool experiment (default off). On, the job_list and
 job_cancel tools mount and KAS serves _kiro/job/cancel and _kiro/job/output and can
 send _kiro/job/update, none of which marotte renders or calls, but no tool call
-becomes a job in this build: the job runtime's beginCall has no caller. The session setting of the
-same name is recorded unclaimed, so the ramp decides there too.`,
+becomes a job: the job runtime's beginCall is called only by the backgrounding shell
+tool's job handoff, and nothing constructs that tool. Revisit when the tool belt
+constructs it or the experiment defaults on. The session setting of the same name
+is recorded unclaimed, so the ramp decides there too.`,
 	"env.KIRO_FEATURE_USER_AGENT_REFACTORING_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 Backend user-agent shape; not pinned by decision.`,

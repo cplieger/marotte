@@ -716,6 +716,7 @@ export const decodeEffectiveSettings: Decoder<EffectiveSettings> = (v) => {
     output_style: reqStr(o, "output_style", "$.effective_settings"),
     workflow_launch: reqStr(o, "workflow_launch", "$.effective_settings"),
     workflow_creator_effort: reqStr(o, "workflow_creator_effort", "$.effective_settings"),
+    chat_awareness_mode: reqStr(o, "chat_awareness_mode", "$.effective_settings"),
     knowledge_index_type: reqStr(o, "knowledge_index_type", "$.effective_settings"),
     knowledge_include_patterns: own(o, "knowledge_include_patterns") === null ? [] : decodeArray(own(o, "knowledge_include_patterns"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.effective_settings.knowledge_include_patterns"),
     knowledge_exclude_patterns: own(o, "knowledge_exclude_patterns") === null ? [] : decodeArray(own(o, "knowledge_exclude_patterns"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.effective_settings.knowledge_exclude_patterns"),

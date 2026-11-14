@@ -681,6 +681,7 @@ const WILDCARD_COVERS = new Map([
   ["shell", "any command"],
   ["fs_read", "any file read, by any tool"],
   ["fs_write", "any file write, by any tool"],
+  ["sessions", "any read of your other chats, by any tool"],
 ]);
 
 /** KAS saves a resource as a Cedar `like` pattern whose one wildcard is `*` (2.28's `qFc`), so a

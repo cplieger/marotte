@@ -751,7 +751,12 @@ const agentCapabilities: readonly {
  *  (settings.ValidSpecPlanning and its siblings). A value outside the list, from a newer build,
  *  leaves the control as it is. */
 const agentChoices: readonly {
-  key: "spec_planning" | "workflow_launch" | "workflow_creator_effort" | "knowledge_index_type";
+  key:
+    | "spec_planning"
+    | "workflow_launch"
+    | "workflow_creator_effort"
+    | "chat_awareness_mode"
+    | "knowledge_index_type";
   selectID: string;
   values: readonly string[];
 }[] = [
@@ -765,6 +770,11 @@ const agentChoices: readonly {
     key: "workflow_creator_effort",
     selectID: "workflow-creator-effort",
     values: ["", "low", "medium", "high", "xhigh", "max"],
+  },
+  {
+    key: "chat_awareness_mode",
+    selectID: "chat-awareness-mode",
+    values: ["", "direct", "consult"],
   },
   { key: "knowledge_index_type", selectID: "knowledge-index-type", values: ["", "fast", "best"] },
 ];
@@ -893,13 +903,16 @@ function paintSpecPlanning(mode: string): void {
 }
 
 /** Each sub-row only means something while its parent switch shows on, a lock's value included:
- *  Workflow use and planning effort under Workflows, the delivery limit under Messages between chats. */
+ *  Workflow use and planning effort under Workflows, the delivery limit under Messages between chats,
+ *  the search method under Search other chats. */
 function paintSubRows(): void {
   const workflows = maybeEl<HTMLInputElement>("flag-workflows")?.checked === true;
   maybeEl("workflow-launch-row")?.classList.toggle("hidden", !workflows);
   maybeEl("workflow-creator-effort-row")?.classList.toggle("hidden", !workflows);
   const messaging = maybeEl<HTMLInputElement>("flag-chat-messaging")?.checked === true;
   maybeEl("chat-message-limit-row")?.classList.toggle("hidden", !messaging);
+  const awareness = maybeEl<HTMLInputElement>("flag-chat-awareness")?.checked === true;
+  maybeEl("chat-awareness-mode-row")?.classList.toggle("hidden", !awareness);
 }
 
 /** The Memory dropdown's values, mirroring settings.MemoryOff and its siblings. */

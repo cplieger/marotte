@@ -46,6 +46,7 @@ const VALUE_CONTROLS = [
   "workflow-launch",
   "workflow-creator-effort",
   "chat-message-delivery-limit",
+  "chat-awareness-mode",
   "knowledge-index-type",
   "knowledge-include-patterns",
   "knowledge-exclude-patterns",

@@ -202,7 +202,7 @@ func (h *Handler) Delete(reqPath string) error {
 	if err != nil {
 		return err
 	}
-	return h.unlink(l)
+	return unlink(l)
 }
 
 // CheckDelete answers the DeleteRefusedError Delete would for reqPath and removes nothing, so a
@@ -249,7 +249,7 @@ func (h *Handler) remove(l loc) error {
 	if err := h.refuseRemove(l); err != nil {
 		return err
 	}
-	return h.unlink(l)
+	return unlink(l)
 }
 
 func (h *Handler) refuseRemove(l loc) error {
@@ -267,7 +267,7 @@ func (h *Handler) refuseRemove(l loc) error {
 	return nil
 }
 
-func (h *Handler) unlink(l loc) error {
+func unlink(l loc) error {
 	// The mount's os.Root confines the unlink but follows an in-root symlink, so a multi-component
 	// rel could reach a different file than protectedDir judged. OpenParentInRoot descends refusing
 	// symlinks, so only the final element is named through the pinned parent.

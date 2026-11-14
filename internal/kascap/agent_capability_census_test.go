@@ -27,9 +27,12 @@ var (
 		`\("sendMessage","deliveryLimit",\{min:(` + jsIdent + `),max:(` + jsIdent + `)\}\)\}`)
 	creatorEffortRowRe  = regexp.MustCompile(`workflowsCreatorEffort:` + jsIdent + `\("workflowsCreatorEffort",(` + jsIdent + `),`)
 	creatorEffortWireRe = regexp.MustCompile(`=` + jsIdent + `\("workflows","creatorEffort"\)`)
-	infraSafetyRowRe    = regexp.MustCompile(`infraSafety:` + jsIdent + `\("infraSafety",(` + jsIdent + `),`)
-	knowledgeWireRe     = regexp.MustCompile(`\{key:` + jsIdent + `\.knowledge([A-Za-z]+),wire:` + jsIdent + `\("knowledge","([A-Za-z]+)"\)\}`)
-	knowledgeChunkWire  = regexp.MustCompile(`\{keys:\["knowledge"\],read:` + jsIdent + `\(` + jsIdent + `=>\{let ` + jsIdent + `=` + jsIdent +
+	awarenessModeRowRe  = regexp.MustCompile(`=` + jsIdent + `\("sessionToolsAwarenessMode",(` + jsIdent + `),`)
+	awarenessModeWireRe = regexp.MustCompile(`let (` + jsIdent + `)=` + jsIdent + `\.awareness;return!` + jsIdent + `\((` + jsIdent +
+		`)\)\|\|(` + jsIdent + `)\.mode===void 0`)
+	infraSafetyRowRe   = regexp.MustCompile(`infraSafety:` + jsIdent + `\("infraSafety",(` + jsIdent + `),`)
+	knowledgeWireRe    = regexp.MustCompile(`\{key:` + jsIdent + `\.knowledge([A-Za-z]+),wire:` + jsIdent + `\("knowledge","([A-Za-z]+)"\)\}`)
+	knowledgeChunkWire = regexp.MustCompile(`\{keys:\["knowledge"\],read:` + jsIdent + `\(` + jsIdent + `=>\{let ` + jsIdent + `=` + jsIdent +
 		`\.knowledge;if\(!` + jsIdent + `\(` + jsIdent + `\)\)return ` + jsIdent + `;let\{chunkSize:` + jsIdent + `,chunkOverlap:` + jsIdent + `\}=`)
 	knowledgeTableRe    = regexp.MustCompile(`(` + jsIdent + `)=\[\{key:` + jsIdent + `\.knowledge,wire:`)
 	knowledgeChunkRowRe = regexp.MustCompile(`knowledgeChunking:` + jsIdent + `\("knowledgeChunking",(` + jsIdent + `),(` + jsIdent + `),`)
@@ -153,13 +156,45 @@ func TestCreatorEffortVocabularyMatchesTheBundle(t *testing.T) {
 				t.Errorf("kiro-cli's creator effort %q is not a value workflow_creator_effort accepts", l)
 			}
 		}
-		for _, l := range []string{"low", "medium", "high", "xhigh", "max"} {
+		for _, l := range settings.WorkflowCreatorEfforts() {
 			if !slices.Contains(levels, l) {
 				t.Errorf("workflow_creator_effort accepts %q, which kiro-cli's %v does not", l, levels)
 			}
 		}
 		if len(findAround(creatorEffortWireRe, `("workflows","creatorEffort")`, b.src)) != 1 {
 			t.Error(`the bundle has no one wire reader <f>("workflows","creatorEffort"); creatorEffort would ride a member KAS does not read`)
+		}
+	})
+}
+
+// TestAwarenessModeMatchesTheBundle pins the sessionToolsAwarenessMode vocabulary chat_awareness_mode offers and its
+// wire member settings.sessionTools.awareness.mode: KAS reads any other value as malformed and keeps its default.
+func TestAwarenessModeMatchesTheBundle(t *testing.T) {
+	forEachBundle(t, func(t *testing.T, b bundle) {
+		ident := discoverOneAround(t, "sessionToolsAwarenessMode registry row", awarenessModeRowRe, `("sessionToolsAwarenessMode",`, b.src)
+		modes, err := stringArrayBinding(b.src, ident)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range modes {
+			if !settings.ValidChatAwarenessMode(m) {
+				t.Errorf("kiro-cli's awareness mode %q is not a value chat_awareness_mode accepts", m)
+			}
+		}
+		for _, m := range settings.ChatAwarenessModes() {
+			if !slices.Contains(modes, m) {
+				t.Errorf("chat_awareness_mode accepts %q, which kiro-cli's %v does not", m, modes)
+			}
+		}
+		readers := 0
+		for _, m := range findAround(awarenessModeWireRe, `.awareness;return!`, b.src) {
+			if n := b.src[m[2]:m[3]]; b.src[m[4]:m[5]] == n && b.src[m[6]:m[7]] == n {
+				readers++
+			}
+		}
+		if readers != 1 {
+			t.Errorf("found %d wire readers `let <n>=<e>.awareness;return!<f>(<n>)||<n>.mode===void 0`, want 1; mode would ride a member KAS does not read",
+				readers)
 		}
 	})
 }

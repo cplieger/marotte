@@ -163,6 +163,9 @@ type SessionFeatures struct {
 	WorkflowLaunch string
 	// WorkflowCreatorEffort is the effort level of the step KAS runs to draft a workflow; empty sends none.
 	WorkflowCreatorEffort string
+	// AwarenessMode is KAS's sessionToolsAwarenessMode: empty for kiro-cli's own, and always empty while Awareness is
+	// off. KAS records it at session/new and keeps it on load, so it stays out of the session-door fingerprint.
+	AwarenessMode string `json:"-"`
 	// Workflows gives the agent its workflow tools; the zero value withholds them.
 	Workflows bool
 	// Messaging is KAS's sessionToolsMessaging switch; KAS delivers only between sessions that both have it on.

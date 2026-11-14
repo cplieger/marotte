@@ -100,6 +100,7 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		ChatAwareness:             defaultChatAwareness,
 		ChatMessageDeliveryLimit:  DefaultChatMessageDeliveryLimit,
 		WorkflowCreatorEffort:     defaultWorkflowCreatorEffort,
+		ChatAwarenessMode:         defaultChatAwarenessMode,
 		KnowledgeIncludePatterns:  []string{},
 		KnowledgeExcludePatterns:  []string{},
 		KnowledgeMaxFiles:         DefaultKnowledgeMaxFiles,
@@ -222,6 +223,9 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 		},
 		KeyWorkflowCreatorEffort: func(r json.RawMessage) error {
 			return decodeChecked(&out.WorkflowCreatorEffort, r, KeyWorkflowCreatorEffort, ValidWorkflowCreatorEffort)
+		},
+		KeyChatAwarenessMode: func(r json.RawMessage) error {
+			return decodeChecked(&out.ChatAwarenessMode, r, KeyChatAwarenessMode, ValidChatAwarenessMode)
 		},
 		KeyKnowledgeIndexType: func(r json.RawMessage) error {
 			return decodeChecked(&out.KnowledgeIndexType, r, KeyKnowledgeIndexType, ValidKnowledgeIndexType)

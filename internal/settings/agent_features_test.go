@@ -55,6 +55,12 @@ func TestValidateAgentPatch_RefusesValuesTheUICannotProduce(t *testing.T) {
 		{name: "chat messaging string", key: KeyChatMessaging, raw: `"on"`, wantErr: true},
 		{name: "chat awareness on", key: KeyChatAwareness, raw: `true`},
 		{name: "chat awareness string", key: KeyChatAwareness, raw: `"on"`, wantErr: true},
+		// KAS's sessionToolsAwarenessMode vocabulary, plus unset.
+		{name: "awareness mode unset", key: KeyChatAwarenessMode, raw: `""`},
+		{name: "awareness mode direct", key: KeyChatAwarenessMode, raw: `"direct"`},
+		{name: "awareness mode consult", key: KeyChatAwarenessMode, raw: `"consult"`},
+		{name: "awareness mode unknown", key: KeyChatAwarenessMode, raw: `"ask"`, wantErr: true},
+		{name: "awareness mode bool", key: KeyChatAwarenessMode, raw: `true`, wantErr: true},
 		// KAS's sendMessageDeliveryLimit is a whole number from 1 to 500.
 		{name: "delivery limit floor", key: KeyChatMessageDeliveryLimit, raw: `1`},
 		{name: "delivery limit ceiling", key: KeyChatMessageDeliveryLimit, raw: `500`},
@@ -111,6 +117,7 @@ func TestEffective_AgentCapabilityDefaults(t *testing.T) {
 		{"TerminalCommandTimeoutMs", d.TerminalCommandTimeoutMs, defaultTerminalCommandTimeoutMs},
 		{"ModelFallback", d.ModelFallback, defaultModelFallback},
 		{"WorkflowLaunch", d.WorkflowLaunch, DefaultWorkflowLaunch},
+		{"ChatAwarenessMode", d.ChatAwarenessMode, ""},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
