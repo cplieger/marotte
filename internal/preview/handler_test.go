@@ -167,8 +167,8 @@ func TestGrant_Refusals(t *testing.T) {
 	}
 }
 
-// Both routes that read a page's head take the path from the request: the grant from its JSON
-// body, the stamp from its query string, which the server decodes once.
+// The grant reads the path from its JSON body as sent, and the stamp from its query string, which
+// the server decodes once, so an encoded row reaches each route in a different form.
 func TestPage_EscapeAttemptsAreRefusedOnBothRoutes(t *testing.T) {
 	f := newFixture(t)
 	outside := filepath.Dir(f.h.workDir) + "/x.html"
@@ -177,29 +177,25 @@ func TestPage_EscapeAttemptsAreRefusedOnBothRoutes(t *testing.T) {
 	symlink(t, escapeTarget, filepath.Join(f.demo, "out.html"))
 	symlink(t, "index.html", filepath.Join(f.demo, "same.html"))
 	cases := []struct {
-		name, raw string
-		status    int
+		name, raw    string
+		grant, stamp int
 	}{
-		{"dotdot out of the workspace", f.demo + "/../../x.html", 400},
-		{"encoded dotdot", f.demo + "/%2e%2e/%2e%2e/x.html", 400},
-		{"encoded slash dotdot", f.demo + "%2f..%2f..%2fx.html", 400},
-		{"absolute outside the workspace", outside, 403},
-		{"page symlinked outside the workspace", filepath.Join(f.demo, "out.html"), 404},
-		{"page symlinked inside the folder", filepath.Join(f.demo, "same.html"), 404},
-		{"folder symlinked outside the workspace", filepath.Join(f.ws, "linked", "index.html"), 404},
-		{"folder symlinked to its parent", filepath.Join(f.demo, "up", "demo", "index.html"), 404},
+		{"dotdot out of the workspace", f.demo + "/../../x.html", 400, 400},
+		{"encoded dotdot", f.demo + "/%2e%2e/%2e%2e/x.html", 404, 400},
+		{"encoded slash dotdot", f.demo + "%2f..%2f..%2fx.html", 400, 400},
+		{"absolute outside the workspace", outside, 403, 403},
+		{"page symlinked outside the workspace", filepath.Join(f.demo, "out.html"), 404, 404},
+		{"page symlinked inside the folder", filepath.Join(f.demo, "same.html"), 404, 404},
+		{"folder symlinked outside the workspace", filepath.Join(f.ws, "linked", "index.html"), 404, 404},
+		{"folder symlinked to its parent", filepath.Join(f.demo, "up", "demo", "index.html"), 404, 404},
 	}
 	for _, tc := range cases {
 		t.Run(strings.ReplaceAll(tc.name, " ", "_"), func(t *testing.T) {
-			decoded, err := url.QueryUnescape(tc.raw)
-			if err != nil {
-				t.Fatalf("QueryUnescape(%q): %v", tc.raw, err)
+			if got, body := f.grantStatus(tc.raw); got != tc.grant {
+				t.Errorf("grant(%q) = %d %s, want %d", tc.raw, got, body, tc.grant)
 			}
-			if got, body := f.grantStatus(decoded); got != tc.status {
-				t.Errorf("grant(%q) = %d %s, want %d", decoded, got, body, tc.status)
-			}
-			if rec := f.do(http.MethodGet, "/api/preview/stamp?path="+tc.raw, ""); rec.Code != tc.status {
-				t.Errorf("stamp(%q) = %d %s, want %d", tc.raw, rec.Code, rec.Body, tc.status)
+			if rec := f.do(http.MethodGet, "/api/preview/stamp?path="+tc.raw, ""); rec.Code != tc.stamp {
+				t.Errorf("stamp(%q) = %d %s, want %d", tc.raw, rec.Code, rec.Body, tc.stamp)
 			}
 		})
 	}
