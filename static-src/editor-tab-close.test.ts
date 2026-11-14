@@ -53,7 +53,6 @@ vi.mock("./icons.js", () => ({
   ICON_ALERT: "",
   ICON_SEND: "",
   ICON_SPINNER: "",
-  ICON_HOURGLASS: "",
 }));
 // Type-only, for the `importOriginal`s below.
 import type * as TabsDrag from "./tabs-drag.js";

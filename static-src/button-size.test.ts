@@ -17,6 +17,7 @@ import {
   ICON_QUEUE_UI,
   ICON_SEND,
   ICON_SHIELD,
+  ICON_STEER,
 } from "./icons.js";
 import { setActive, setSessions } from "./store.js";
 import { watchPillRow } from "./pill-row-fit.js";
@@ -166,7 +167,7 @@ async function dress(state: State): Promise<void> {
     midTurn.hidden = false;
     midTurn.replaceChildren(
       label(state === "steer" ? "Steer" : "Queue"),
-      iconEl(state === "steer" ? ICON_SEND : ICON_QUEUE_UI),
+      iconEl(state === "steer" ? ICON_STEER : ICON_QUEUE_UI),
     );
     // Beside a steerable turn the pill's second half offers the other action; a queue-only turn has none.
     const alt = byId("midturn-alt-btn");
@@ -480,8 +481,10 @@ describe("the model, profile and mode pills, by the room the row has", () => {
     }
   });
 
-  /** What the row breaks of its contract: an overflow, a wrap, a target under the floor. */
-  function rowFaults(at: string): string[] {
+  /** What the row breaks of its contract: an overflow, a wrap, and with `hits` a target under the floor. A walk probes
+   *  targets where its state changes and at its last width, since a control never shrinks (15-input.css) and one probe
+   *  is hundreds of hit tests. */
+  function rowFaults(at: string, hits = true): string[] {
     const off: string[] = [];
     const row = document.querySelector<HTMLElement>(".prompt-pills")!;
     if (row.scrollWidth > row.clientWidth) {
@@ -492,7 +495,7 @@ describe("the model, profile and mode pills, by the room the row has", () => {
       off.push(`${at}: the row wraps`);
     }
     const floor = floorPx();
-    for (const el of items) {
+    for (const el of hits ? items : []) {
       const hit = hitRect(el);
       if (width(hit) < floor - 2 * STEP || height(hit) < floor - 2 * STEP) {
         off.push(`${at}: ${nameOf(el)} reaches ${String(width(hit))}x${String(height(hit))}px`);
@@ -576,11 +579,12 @@ describe("the model, profile and mode pills, by the room the row has", () => {
           box().style.width = `${String(w)}px`;
           await nextFrame();
           const moved = movedNow().join(" ") || "none";
-          if (states.at(-1) !== moved) {
+          const changed = states.at(-1) !== moved;
+          if (changed) {
             states.push(moved);
             seen.set(`${dir} ${moved}`, w);
           }
-          off.push(...rowFaults(`${pointer} ${String(w)}`));
+          off.push(...rowFaults(`${pointer} ${String(w)}`, changed || w === order.at(-1)));
           if (moved !== "none" && roomForOneMore()) {
             off.push(`${pointer} ${String(w)}: ${moved} moved with room to spare`);
           }
@@ -602,7 +606,7 @@ describe("the model, profile and mode pills, by the room the row has", () => {
     }
   }, 60_000);
 
-  it("drops Cancel's and Send's words after both pills have moved, down to a phone's composer", async () => {
+  it("drops the send buttons' words after both pills have moved, down to a phone's composer", async () => {
     const box = (): HTMLElement => byId("prompt-box");
     const words = (): HTMLElement[] => [
       ...document.querySelectorAll<HTMLElement>(
@@ -613,40 +617,42 @@ describe("the model, profile and mode pills, by the room the row has", () => {
       await mount([360, 844], pointer, "steer");
       const floor = Math.floor(box().getBoundingClientRect().width);
       await mount(DESKTOP, pointer, "steer");
-      expect(words(), `${pointer}: the words this test reads`).toHaveLength(2);
+      expect(words().filter(shown), `${pointer}: the words this test reads`).not.toEqual([]);
       const widths: number[] = [];
       for (let w = 420; w >= floor; w -= 2) {
         widths.push(w);
       }
       const off: string[] = [];
-      const walk = async (order: number[]): Promise<string[]> => {
+      const seen = new Map<string, number>();
+      const walk = async (order: number[], dir: string): Promise<string[]> => {
         const states: string[] = [];
         for (const w of order) {
           box().style.width = `${String(w)}px`;
           await nextFrame();
           const shownWords = words().filter(shown).length;
-          if (shownWords === 1) {
-            off.push(`${pointer} ${String(w)}: one word shows without the other`);
-          }
           const state = [...movedNow(), ...(shownWords === 0 ? ["words"] : [])].join(" ") || "none";
-          if (states.at(-1) !== state) {
+          const changed = states.at(-1) !== state;
+          if (changed) {
             states.push(state);
+            seen.set(`${dir} ${state}`, w);
           }
-          off.push(...rowFaults(`${pointer} ${String(w)}`));
+          off.push(...rowFaults(`${pointer} ${String(w)}`, changed || w === order.at(-1)));
         }
         return states;
       };
-      expect(await walk(widths), `${pointer}: narrowing to ${String(floor)}px`).toEqual([
-        "mode",
-        "mode profile",
-        "mode profile words",
-      ]);
-      expect(await walk([...widths].reverse()), `${pointer}: widening`).toEqual([
+      expect(
+        await walk(widths, "narrowing"),
+        `${pointer}: narrowing to ${String(floor)}px`,
+      ).toEqual(["mode", "mode profile", "mode profile words"]);
+      expect(await walk([...widths].reverse(), "widening"), `${pointer}: widening`).toEqual([
         "mode profile words",
         "mode profile",
         "mode",
       ]);
       expect(off, `${pointer}: the row at every width`).toEqual([]);
+      console.log(
+        `${pointer} words from ${String(floor)}px: ${JSON.stringify(Object.fromEntries(seen))}`,
+      );
     }
   }, 60_000);
 

@@ -12,7 +12,14 @@ import { activeSession, getActive, getActiveId } from "./store.js";
 import { afterWords } from "./run-order.js";
 import { payloadOf, turnOpenOf } from "./turns.js";
 import { fixIOSViewport } from "./platform.js";
-import { ICON_SEND, ICON_CANCEL, ICON_ALERT, ICON_QUEUE_UI, ICON_MIC } from "./icons.js";
+import {
+  ICON_SEND,
+  ICON_CANCEL,
+  ICON_ALERT,
+  ICON_QUEUE_UI,
+  ICON_MIC,
+  ICON_STEER,
+} from "./icons.js";
 import { interruptDefault, otherInterrupt } from "./interrupt-default.js";
 import { sendFaces, type Faces } from "./send-faces.js";
 import { NO_DICTATION, type Dictation } from "./dictation.js";
@@ -64,7 +71,7 @@ const MIDTURN_FACE: Record<
   { label: string; name: (wait: string) => string; icon: string }
 > = {
   prompt: { label: "Send", name: () => "Send", icon: ICON_SEND },
-  steer: { label: "Steer", name: () => "Steer the running turn", icon: ICON_SEND },
+  steer: { label: "Steer", name: () => "Steer the running turn", icon: ICON_STEER },
   queue: { label: "Queue", name: (wait) => `Queue for after ${wait}`, icon: ICON_QUEUE_UI },
 };
 

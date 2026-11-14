@@ -512,7 +512,8 @@
   [id="ctx-model-pill"],
   .pill-role-label,
   .pill-model-effort,
-  .pill-model-item > span,
+  .pill-model-name,
+  .pill-model-meta,
   .send-btn-label,
   .send-btn-label > span
 ) {
@@ -791,9 +792,11 @@
   min-width: var(--btn-h);
 }
 
-/* `pill-row-fit.ts` owns `data-moved`; the Chat options card shows each moved pill as a select. */
+/* `pill-row-fit.ts` owns `data-moved` and `data-wordless`; the Chat options card shows each moved pill as a select,
+   and each send button keeps its name in aria-label and the tooltip. */
 .prompt-pills[data-moved~="mode"] > .pill-slot-mode,
-.prompt-pills[data-moved~="profile"] > .pill-slot-profile {
+.prompt-pills[data-moved~="profile"] > .pill-slot-profile,
+.prompt-pills[data-wordless] .send-btn-label {
   display: none;
 }
 
@@ -1027,6 +1030,7 @@
 }
 
 .pill-model-meta {
+  margin-inline-start: auto;
   color: var(--c-text-tertiary);
   font-size: var(--fs-popup-meta);
 }
@@ -1091,7 +1095,8 @@
   /* Selected: 70-selection.css, with every other selected surface. */
 }
 
-.pill-role-item-icon {
+.pill-role-item-icon,
+.pill-model-item-icon {
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;

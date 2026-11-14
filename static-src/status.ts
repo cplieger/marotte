@@ -9,6 +9,8 @@ import type { CompactionPoint } from "./context-indicator.js";
 import { versionsSignal } from "./versions.js";
 import { el, effect, touch } from "@cplieger/reactive";
 import { announce } from "./legacy-ui/announce.js";
+import { iconEl } from "./icon-el.js";
+import { modelIcon } from "./icons.js";
 import type { MeteringItem, ConnectionStatus } from "./types.js";
 
 /** Options for updateContextBar — named fields prevent argument-order bugs. */
@@ -72,6 +74,7 @@ class ContextBarController {
     const pending = opts.pendingModel ?? "";
     $.switchModelBtn.classList.toggle("pending", pending !== "");
     $.ctxModelPill.textContent = modelLabel;
+    paintModelIcon($.switchModelBtn, modelIcon(model, "inline"));
 
     // The tier rides its OWN element, not the model label, for two reasons. The label is capped at
     // 10rem with an ellipsis, so a concatenated tier is the half that gets clipped.
@@ -107,6 +110,24 @@ class ContextBarController {
 }
 
 const contextBar = new ContextBarController();
+
+const paintedIcon = new WeakMap<Element, string>();
+
+/** Unwrapped, before the label: the `.switching` face hides the pill's svg by selector (15-input.css). */
+function paintModelIcon(pill: HTMLElement, icon: string): void {
+  if (paintedIcon.get(pill) === icon) {
+    return;
+  }
+  paintedIcon.set(pill, icon);
+  const glyph = iconEl(icon);
+  glyph.setAttribute("aria-hidden", "true");
+  const old = pill.querySelector(":scope > svg");
+  if (old === null) {
+    pill.prepend(glyph);
+  } else {
+    old.replaceWith(glyph);
+  }
+}
 
 /** The pill's hover text, naming where the chat compacts or saying nothing does. */
 function contextTooltip(at: number | null): string {

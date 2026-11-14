@@ -1,12 +1,15 @@
 // Which pills the composer row has room for. A row too narrow for every control at its tier's target moves Mode, then
-// Security profile, into the Chat options card (chat-options.ts), and takes each back once it fits again. The row's
-// controls never shrink (15-input.css), so an overflowing row is the one signal, whatever the device or pointer.
+// Security profile, into the Chat options card (chat-options.ts), then drops Cancel's and Send's words, and undoes each
+// once it fits again. The row's controls never shrink (15-input.css), so an overflowing row is the one signal, whatever
+// the device or pointer.
 
 import { signal } from "@cplieger/reactive";
 
 /** The pills that can leave the row, in the order they leave. */
 export type MovablePill = "mode" | "profile";
 const ORDER: readonly MovablePill[] = ["mode", "profile"];
+/** The steps the fit takes: each pill in `ORDER`, then the send buttons' words. */
+const STEPS = ORDER.length + 1;
 
 /** The pills the row has moved into the Chat options card. */
 export const movedPills = signal<readonly MovablePill[]>([]);
@@ -20,7 +23,7 @@ export function watchPillRow(
   const fit = (): void => {
     let n = 0;
     apply(row, n);
-    while (n < ORDER.length && row.scrollWidth > row.clientWidth) {
+    while (n < STEPS && row.scrollWidth > row.clientWidth) {
       n += 1;
       apply(row, n);
     }
@@ -51,6 +54,10 @@ function apply(row: HTMLElement, n: number): void {
   } else if (row.dataset["moved"] !== moved) {
     row.dataset["moved"] = moved;
   }
+  const wordless = n === STEPS;
+  if (row.hasAttribute("data-wordless") !== wordless) {
+    row.toggleAttribute("data-wordless", wordless);
+  }
 }
 
 function commit(row: HTMLElement, moved: readonly MovablePill[], closeCards: () => void): void {
@@ -64,9 +71,12 @@ function commit(row: HTMLElement, moved: readonly MovablePill[], closeCards: () 
   }
 }
 
-/** The fit's own attribute, and the cards' contents, which take no room in the row. */
+/** The fit's own attributes, and the cards' contents, which take no room in the row. */
 function ownWrite(row: HTMLElement, r: MutationRecord): boolean {
-  if (r.target === row && r.attributeName === "data-moved") {
+  if (
+    r.target === row &&
+    (r.attributeName === "data-moved" || r.attributeName === "data-wordless")
+  ) {
     return true;
   }
   const target = r.target instanceof Element ? r.target : r.target.parentElement;

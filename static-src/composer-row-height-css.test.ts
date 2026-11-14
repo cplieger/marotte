@@ -8,7 +8,7 @@ import indexHtml from "../static/index.html?raw";
 
 import { buildAttachmentPill } from "./attachment-pill.js";
 import { el } from "@cplieger/reactive";
-import { ICON_QUEUE_UI, ICON_SEND } from "./icons.js";
+import { ICON_QUEUE_UI, ICON_SEND, ICON_STEER } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { watchPillRow } from "./pill-row-fit.js";
 import { BUTTON_BOX } from "./__test-helpers__/button-reference.js";
@@ -480,7 +480,7 @@ describe("the composer, measured at real viewport sizes", () => {
     if (group === null || main === null || alt === null) {
       throw new Error("the composer subtree has no split pill");
     }
-    main.replaceChildren(el("span", { className: "send-btn-label" }, "Steer"), iconEl(ICON_SEND));
+    main.replaceChildren(el("span", { className: "send-btn-label" }, "Steer"), iconEl(ICON_STEER));
     alt.replaceChildren(iconEl(ICON_QUEUE_UI));
     group.hidden = false;
     group.classList.add("send-split-both");

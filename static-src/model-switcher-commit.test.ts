@@ -140,7 +140,11 @@ describe("the model card sends once, when it closes", () => {
     const card = document.createElement("div");
     card.id = "model-switch-list";
     slot.append(btn, card);
-    document.body.append(slot);
+    // A click away lands here: the unstyled card's glyphs take their 300x150 default, which covers the body's centre.
+    const away = document.createElement("p");
+    away.id = "away";
+    away.textContent = "elsewhere";
+    document.body.append(away, slot);
     initModelSwitcher();
   });
 
@@ -207,7 +211,7 @@ describe("the model card sends once, when it closes", () => {
   it("sends a tier alone on a click away", async () => {
     await open();
     await keys("{Home}");
-    await userEvent.click(document.body);
+    await userEvent.click(document.getElementById("away")!);
 
     expect(closed()).toBe(true);
     expect(effortDispatch.mock.calls).toEqual([[{ chatID: "c1", level: "low" }]]);

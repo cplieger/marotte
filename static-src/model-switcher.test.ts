@@ -131,7 +131,7 @@ vi.mock("./strings.js", async (importOriginal) => ({
   humanName: (s: string) => s,
 }));
 vi.mock("./icon-el.js", () => ({ iconEl: () => document.createElement("span") }));
-vi.mock("./icons.js", () => ({ ICON_MODEL: "" }));
+vi.mock("./icons.js", () => ({ ICON_MODEL: "", modelIcon: () => "" }));
 vi.mock("./legacy-ui/roving-focus.js", () => ({
   rovingFocus: () => ({ refresh: vi.fn(), focusFirst: vi.fn(), dispose: vi.fn() }),
 }));

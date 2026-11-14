@@ -30,7 +30,7 @@ import { el, effect } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
 import { errorAbout } from "./actions/subject.js";
 import { retryUnlessStill, stillOr } from "./actions/still-applying.js";
-import { ICON_MODEL } from "./icons.js";
+import { ICON_MODEL, modelIcon } from "./icons.js";
 import {
   THINKING_OFF,
   effortVocabulary,
@@ -459,7 +459,12 @@ class ModelSwitchController {
         role: "option",
         "aria-label": rate === "" ? label : `${label}, ${rate} credits`,
       },
-      el("span", null, label),
+      el(
+        "span",
+        { className: "pill-model-item-icon", "aria-hidden": "true" },
+        iconEl(modelIcon(m.model_id, "ui")),
+      ),
+      el("span", { className: "pill-model-name" }, label),
     );
     if (rate !== "") {
       opt.append(el("span", { className: "pill-model-meta" }, rate));

@@ -21,11 +21,12 @@ import { chatNotice, subjectName } from "./notice-subject.js";
 import {
   ICON_ARROW_UP,
   ICON_COMPACT,
-  ICON_HOURGLASS,
   ICON_EDIT,
   ICON_PAUSE,
   ICON_QUEUE,
+  ICON_QUEUE_UI,
   ICON_RESUME,
+  ICON_STEER,
   ICON_TRASH,
 } from "./icons.js";
 import { iconEl } from "./icon-el.js";
@@ -416,7 +417,7 @@ function buildRow(steer: PendingSteer, place: SteerPlace, state: StackState): HT
   const stateEl = el(
     "span",
     { className: "steer-state" },
-    el("span", { className: "steer-state-icon", "aria-hidden": "true" }, iconEl(ICON_HOURGLASS)),
+    el("span", { className: "steer-state-icon", "aria-hidden": "true" }, iconEl(ICON_STEER)),
   );
   // The word, not only the glyph. "Sent" is the fact this stack states: the message has left,
   // it is not a draft, and it is waiting.
@@ -888,7 +889,7 @@ function buildResumeRow(entry: RunEntryView): HTMLElement {
     el(
       "span",
       { className: "steer-state" },
-      el("span", { className: "steer-state-icon", "aria-hidden": "true" }, iconEl(ICON_HOURGLASS)),
+      el("span", { className: "steer-state-icon", "aria-hidden": "true" }, iconEl(ICON_QUEUE_UI)),
       el("span", { className: "steer-state-label" }),
     ),
     el("span", { className: "steer-text" }, RESUME_TEXT),
@@ -1003,7 +1004,7 @@ function buildQueuedRow(entry: RunEntryView, stop: string | undefined): HTMLElem
     el(
       "span",
       { className: "steer-state" },
-      el("span", { className: "steer-state-icon", "aria-hidden": "true" }, iconEl(ICON_HOURGLASS)),
+      el("span", { className: "steer-state-icon", "aria-hidden": "true" }, iconEl(ICON_QUEUE_UI)),
       el("span", { className: "steer-state-label" }),
     ),
     el("div", { className: "steer-text" }),
