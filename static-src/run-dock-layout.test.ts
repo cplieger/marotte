@@ -803,8 +803,24 @@ describe("the run dock head's toggle", () => {
     return { head: byId("run-exec-dock").querySelector<HTMLElement>(".ev-dock-head")!, row };
   }
 
-  /** The toggle's box holds each of `parts`, is as tall as each verb and level with it, and ends
-   *  before the verbs. */
+  /** The hit floor: WCAG 2.5.8's 24px on a mouse, Apple HIG's 44px on touch. */
+  function hitFloor(): number {
+    return document.documentElement.getAttribute("data-pointer") === "coarse" ? 44 : 24;
+  }
+
+  /** How far past its box a verb answers a tap: a button's expander grows it to the floor, a
+   *  field has none, so its box must reach the floor itself. */
+  function reachOf(v: Element, floor: number, what: string): number {
+    const r = v.getBoundingClientRect();
+    if (v instanceof HTMLButtonElement) {
+      return Math.max(0, (floor - r.height) / 2);
+    }
+    expect(r.height, `${what}: the passes field's height`).toBeGreaterThanOrEqual(floor - 0.5);
+    return 0;
+  }
+
+  /** The toggle's box holds each of `parts`, is as tall as each button and level with it, and
+   *  ends before every verb's target. */
   function coversAtVerbHeight(
     head: HTMLElement,
     row: HTMLElement,
@@ -823,15 +839,20 @@ describe("the run dock head's toggle", () => {
         `${what}: the toggle [${t.left.toFixed(1)}..${t.right.toFixed(1)} x ${t.top.toFixed(1)}..${t.bottom.toFixed(1)}] holds ${sel} [${p.left.toFixed(1)}..${p.right.toFixed(1)} x ${p.top.toFixed(1)}..${p.bottom.toFixed(1)}]`,
       ).toBe(true);
     }
-    for (const b of row.querySelectorAll("button")) {
-      const r = b.getBoundingClientRect();
-      const name = b.getAttribute("aria-label") ?? "";
+    const floor = hitFloor();
+    for (const v of row.querySelectorAll("button, input")) {
+      const r = v.getBoundingClientRect();
+      const name = v.getAttribute("aria-label") ?? "the passes field";
+      const reach = reachOf(v, floor, what);
+      expect(t.right, `${what}: the toggle ends before ${name}'s target`).toBeLessThanOrEqual(
+        r.left - reach + 0.5,
+      );
+      if (!(v instanceof HTMLButtonElement)) {
+        continue;
+      }
       expect(t.height, `${what}: the toggle's height beside ${name}`).toBeCloseTo(r.height, 0);
       expect(t.top, `${what}: the toggle level with ${name}`).toBeCloseTo(r.top, 0);
     }
-    expect(t.right, `${what}: the toggle ends before the verbs`).toBeLessThanOrEqual(
-      row.getBoundingClientRect().left + 0.5,
-    );
   }
 
   /** The toggle's box holds each of `parts` on the head's first line, as tall as each verb and
@@ -857,16 +878,17 @@ describe("the run dock head's toggle", () => {
     const end = edge.right - parseFloat(getComputedStyle(head).paddingInlineEnd);
     expect(t.left, `${what}: the toggle from the head's start`).toBeCloseTo(edge.left, 0);
     expect(t.right, `${what}: the toggle to the head's end`).toBeGreaterThanOrEqual(end - 3);
-    // The hit floor: WCAG 2.5.8's 24px on a mouse, Apple HIG's 44px on touch.
-    const floor = document.documentElement.getAttribute("data-pointer") === "coarse" ? 44 : 24;
-    for (const b of row.querySelectorAll("button")) {
-      const r = b.getBoundingClientRect();
-      const name = b.getAttribute("aria-label") ?? "";
-      expect(t.height, `${what}: the toggle's height beside ${name}`).toBeCloseTo(r.height, 0);
-      const reach = Math.max(0, (floor - r.height) / 2);
+    const floor = hitFloor();
+    for (const v of row.querySelectorAll("button, input")) {
+      const r = v.getBoundingClientRect();
+      const name = v.getAttribute("aria-label") ?? "the passes field";
+      const reach = reachOf(v, floor, what);
       expect(r.top - reach, `${what}: ${name}'s target under the toggle`).toBeGreaterThanOrEqual(
         t.bottom - 0.5,
       );
+      if (v instanceof HTMLButtonElement) {
+        expect(t.height, `${what}: the toggle's height beside ${name}`).toBeCloseTo(r.height, 0);
+      }
     }
   }
 
@@ -919,7 +941,7 @@ describe("the run dock head's toggle", () => {
       names: "pass limit",
       run: PAUSED,
       parts: PAUSED_PARTS,
-      beside: [],
+      beside: [1000, 700],
       under: [390, 360],
     },
   ] as const;
