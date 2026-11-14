@@ -702,8 +702,8 @@ func writeTurnCloseMarkdown(b *strings.Builder, p *marotte.EntryTurnClose) {
 	}
 }
 
-// creditFigure renders a positive credit charge to the cent, a charge under half a cent as "<0.01",
-// matching the client's creditFigure so the export never reads "0.00" for a turn that spent.
+// creditFigure renders a positive credit charge to the cent, or "<0.01" under half a cent (the
+// client's creditFigure threshold in static-src/strings.ts), so a turn that spent never reads "0.00".
 func creditFigure(credits float64) string {
 	if credits < 0.005 {
 		return "<0.01"

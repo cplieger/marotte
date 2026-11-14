@@ -82,21 +82,24 @@ func TestRenderChatMarkdown_FullTranscript(t *testing.T) {
 // cent is "<0.01", never "0.00", and no charge prints no figure.
 func TestRenderChatMarkdown_TurnCloseCreditFigure(t *testing.T) {
 	cases := []struct {
+		name    string
 		credits float64
 		want    string
 	}{
-		{0.004, "_Outcome: completed · <0.01 credits_"},
-		{0.005, "_Outcome: completed · 0.01 credits_"},
-		{1.234, "_Outcome: completed · 1.23 credits_"},
-		{0, "_Outcome: completed_\n"},
+		{"under_half_a_cent", 0.004, "_Outcome: completed · <0.01 credits_"},
+		{"half_a_cent", 0.005, "_Outcome: completed · 0.01 credits_"},
+		{"normal_figure", 1.234, "_Outcome: completed · 1.23 credits_"},
+		{"no_charge", 0, "_Outcome: completed_\n"},
 	}
 	for _, tc := range cases {
-		entries, _ := chatOf(openTurn("t-1", 1, nil).
-			close(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, Credits: tc.credits}))
-		md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Spend"}, entries)
-		if !strings.Contains(md, tc.want) {
-			t.Errorf("credits %v: markdown missing %q\n---\n%s", tc.credits, tc.want, md)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			entries, _ := chatOf(openTurn("t-1", 1, nil).
+				close(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, Credits: tc.credits}))
+			md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Spend"}, entries)
+			if !strings.Contains(md, tc.want) {
+				t.Errorf("credits %v: markdown missing %q\n---\n%s", tc.credits, tc.want, md)
+			}
+		})
 	}
 }
 
