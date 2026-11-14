@@ -796,11 +796,12 @@
   min-width: var(--btn-h);
 }
 
-/* `pill-row-fit.ts` owns `data-moved` and `data-wordless`; the Chat options card shows each moved pill as a select,
-   and each send button keeps its name in aria-label and the tooltip. */
+/* `pill-row-fit.ts` owns `data-moved`, `data-wordless` and `data-countless`; the Chat options card shows each moved
+   pill as a select, each send button keeps its name in aria-label and the tooltip, and the task list its count. */
 .prompt-pills[data-moved~="mode"] > .pill-slot-mode,
 .prompt-pills[data-moved~="profile"] > .pill-slot-profile,
-.prompt-pills[data-wordless] .send-btn-label {
+.prompt-pills[data-wordless] .send-btn-label,
+.prompt-pills[data-countless] [id="task-list-badge"] {
   display: none;
 }
 
@@ -2114,50 +2115,44 @@
   }
 }
 
-/* Labels drop where the fullest row (mid-turn, both send halves, task list, profile shield)
-   stops fitting the catalog's widest pills, a 17-character model with "medium" and "Semantic
-   Reviewer": 680px mouse, 693px touch, 553px and 602px without the tier and the profile's
-   name. The profile's name ("Approve for me") goes first, at 766px mouse and 774px touch. Each
+/* Labels drop where the fullest row (mid-turn, both send halves, task list and its count, profile
+   shield) stops fitting the catalog's widest pills, a 17-character model with "medium" and "Semantic
+   Reviewer": 706px mouse, 716px touch, 580px and 624px without the tier and the profile's
+   name. The profile's name ("Approve for me") goes first, at 788px on both tiers. Each
    threshold adds up to 7px (`button-size.test.ts` sweeps it); a container query cannot read
    `--pill-gap`, so the tier is a selector. The names stay in aria-label and the tooltip
    (`status.ts`, `role-picker.ts`, `profile-pill.ts`). */
 @media (width > 48rem) and (height > 30rem) {
-  @container pill-row (width < 42.5rem) {
+  @container pill-row (width < 44.125rem) {
     .pill-model > :is([id="ctx-model-pill"], .pill-model-effort),
     .pill-role-label {
       display: none;
     }
   }
 
-  @container pill-row (width < 43.375rem) {
+  @container pill-row (width < 44.75rem) {
     :root[data-pointer="coarse"]
       :is(.pill-model > [id="ctx-model-pill"], .pill-model-effort, .pill-role-label) {
       display: none;
     }
   }
 
-  @container pill-row (width < 47.875rem) {
+  @container pill-row (width < 49.25rem) {
     [id="profile-pill-label"] {
-      display: none;
-    }
-  }
-
-  @container pill-row (width < 48.375rem) {
-    :root[data-pointer="coarse"] [id="profile-pill-label"] {
       display: none;
     }
   }
 }
 
 @media (width <= 48rem), (height <= 30rem) {
-  @container pill-row (width < 34.625rem) {
+  @container pill-row (width < 36.25rem) {
     .pill-model > [id="ctx-model-pill"],
     .pill-role-label {
       display: none;
     }
   }
 
-  @container pill-row (width < 37.625rem) {
+  @container pill-row (width < 39rem) {
     :root[data-pointer="coarse"] :is(.pill-model > [id="ctx-model-pill"], .pill-role-label) {
       display: none;
     }

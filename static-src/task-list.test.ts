@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 
 import { makeSession, makeTurn } from "./__test-helpers__/model.js";
-import { setActive, setSessions } from "./store.js";
+import { bumpMessages, setActive, setSessions } from "./store.js";
 import { initTaskListPill } from "./task-list.js";
 
 function mountPill(): { pill: HTMLButtonElement; popover: HTMLElement } {
@@ -84,6 +84,7 @@ describe("task list pill", () => {
         }),
       ]);
       setActive("c-1");
+      bumpMessages("c-1");
     };
     plan(["completed", "in_progress", "pending"]);
     initTaskListPill();

@@ -1,6 +1,6 @@
 // Which pills the composer row has room for. A row too narrow for every control at its tier's target moves Mode, then
-// Security profile, into the Chat options card (chat-options.ts), then drops Cancel's and Send's words, and undoes each
-// once it fits again. The row's controls never shrink (15-input.css), so an overflowing row is the one signal, whatever
+// Security profile, into the Chat options card (chat-options.ts), then drops Cancel's and Send's words, then the task
+// list's count, and undoes each once it fits again. The row's controls never shrink (15-input.css), so an overflowing row is the one signal, whatever
 // the device or pointer.
 
 import { signal } from "@cplieger/reactive";
@@ -8,8 +8,9 @@ import { signal } from "@cplieger/reactive";
 /** The pills that can leave the row, in the order they leave. */
 export type MovablePill = "mode" | "profile";
 const ORDER: readonly MovablePill[] = ["mode", "profile"];
-/** The steps the fit takes: each pill in `ORDER`, then the send buttons' words. */
-const STEPS = ORDER.length + 1;
+/** The steps the fit takes: each pill in `ORDER`, then the send buttons' words, then the task list's count. */
+const WORDLESS = ORDER.length + 1;
+const STEPS = WORDLESS + 1;
 
 /** The pills the row has moved into the Chat options card. */
 export const movedPills = signal<readonly MovablePill[]>([]);
@@ -54,9 +55,13 @@ function apply(row: HTMLElement, n: number): void {
   } else if (row.dataset["moved"] !== moved) {
     row.dataset["moved"] = moved;
   }
-  const wordless = n === STEPS;
-  if (row.hasAttribute("data-wordless") !== wordless) {
-    row.toggleAttribute("data-wordless", wordless);
+  flag(row, "data-wordless", n >= WORDLESS);
+  flag(row, "data-countless", n >= STEPS);
+}
+
+function flag(row: HTMLElement, name: string, on: boolean): void {
+  if (row.hasAttribute(name) !== on) {
+    row.toggleAttribute(name, on);
   }
 }
 
@@ -75,7 +80,9 @@ function commit(row: HTMLElement, moved: readonly MovablePill[], closeCards: () 
 function ownWrite(row: HTMLElement, r: MutationRecord): boolean {
   if (
     r.target === row &&
-    (r.attributeName === "data-moved" || r.attributeName === "data-wordless")
+    (r.attributeName === "data-moved" ||
+      r.attributeName === "data-wordless" ||
+      r.attributeName === "data-countless")
   ) {
     return true;
   }
