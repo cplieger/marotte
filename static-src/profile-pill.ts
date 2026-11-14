@@ -170,7 +170,7 @@ function renderCard(): void {
   list.setAttribute("aria-label", "Security profile");
   const current = profileOf(s, v);
   const saved = savedRulesStillApply(current, v?.saved_grants ?? false);
-  const profiles = v?.profiles ?? [];
+  const profiles = listedProfiles(v, current);
   // A repaint that changes nothing must not rebuild an open card: the rebuild takes focus off the row the user is on.
   if (!sigChanged(list, [current, String(busy), String(saved), wireSignature(profiles)])) {
     return;
@@ -186,8 +186,8 @@ function renderCard(): void {
   if (saved) {
     items.push(el("span", { className: "pill-role-hint" }, SAVED_RULES_NOTE));
   }
-  for (const p of profiles) {
-    items.push(profileOption(p.id, current));
+  for (const id of profiles) {
+    items.push(profileOption(id, current));
   }
   list.replaceChildren(...items);
   nav?.refresh();
