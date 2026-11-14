@@ -787,6 +787,7 @@ describe("the run dock head's toggle", () => {
     [1000, 800],
     [700, 1000],
     [390, 844],
+    [402, 874],
     [360, 780],
   ] as const;
 
@@ -839,6 +840,12 @@ describe("the run dock head's toggle", () => {
         `${what}: the toggle [${t.left.toFixed(1)}..${t.right.toFixed(1)} x ${t.top.toFixed(1)}..${t.bottom.toFixed(1)}] holds ${sel} [${p.left.toFixed(1)}..${p.right.toFixed(1)} x ${p.top.toFixed(1)}..${p.bottom.toFixed(1)}]`,
       ).toBe(true);
     }
+    const chevron = head.querySelector(".disclosure-chevron")!.getBoundingClientRect();
+    const credits = head.querySelector(".ev-sum-credits")!.getBoundingClientRect();
+    expect(
+      t.right - credits.right,
+      `${what}: the toggle's end inset past the credits`,
+    ).toBeGreaterThanOrEqual(chevron.left - t.left - 0.5);
     const floor = hitFloor();
     for (const v of row.querySelectorAll("button, input")) {
       const r = v.getBoundingClientRect();
@@ -916,33 +923,34 @@ describe("the run dock head's toggle", () => {
   ];
   const PAUSED_PARTS = [".disclosure-chevron", ".ev-sum-state", ".ev-sum-clock", ".ev-sum-credits"];
 
-  // Beside the verbs while the summary fits; at 360px a running run's summary with its credits
-  // (about 232px) and Pause and Stop (68px) overrun the head's 284px, as the pass-limit verbs
-  // (a field and three buttons) do at 390px.
+  // Beside the verbs while the summary fits, under them once it does not: a running run's
+  // summary with its credits and Pause and Stop fit a 390px head with a mouse but overrun it
+  // with a finger's larger verbs, and overrun a 360px head with either; the pass-limit verbs
+  // (a field and three buttons) overrun a 390px head with either.
   const CASES = [
     {
       what: "a running run's",
       names: ["Pause", "Stop"],
       run: RUNNING,
       parts: RUNNING_PARTS,
-      beside: [1000, 700, 390],
-      under: [360],
+      beside: { fine: [1000, 700, 390], coarse: [1000, 700, 402] },
+      under: { fine: [360], coarse: [390, 360] },
     },
     {
       what: "a paused run's",
       names: ["Resume", "Stop"],
       run: PAUSED,
       parts: PAUSED_PARTS,
-      beside: [1000, 700, 390, 360],
-      under: [],
+      beside: { fine: [1000, 700, 390, 360], coarse: [1000, 700, 390, 360] },
+      under: { fine: [], coarse: [] },
     },
     {
       what: "a pass-limit pause's",
       names: "pass limit",
       run: PAUSED,
       parts: PAUSED_PARTS,
-      beside: [1000, 700],
-      under: [390, 360],
+      beside: { fine: [1000, 700], coarse: [1000, 700] },
+      under: { fine: [390, 360], coarse: [390, 360] },
     },
   ] as const;
 
@@ -963,7 +971,7 @@ describe("the run dock head's toggle", () => {
     for (const c of CASES) {
       for (const [w, h] of WIDTHS) {
         const at = `${String(w)}px ${pointer}`;
-        if ((c.beside as readonly number[]).includes(w)) {
+        if ((c.beside[pointer] as readonly number[]).includes(w)) {
           it(`covers ${c.what} summary line beside its verbs at their height, ${at}`, async () => {
             await browser.viewport(w, h);
             document.documentElement.setAttribute("data-pointer", pointer);
@@ -971,7 +979,7 @@ describe("the run dock head's toggle", () => {
             coversAtVerbHeight(head, row, c.parts, at);
           });
         }
-        if ((c.under as readonly number[]).includes(w)) {
+        if ((c.under[pointer] as readonly number[]).includes(w)) {
           it(`covers ${c.what} summary line above its verbs at their height, ${at}`, async () => {
             await browser.viewport(w, h);
             document.documentElement.setAttribute("data-pointer", pointer);

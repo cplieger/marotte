@@ -1096,14 +1096,18 @@
   /* The toggle's anchor: the summary, or the filler that ends its line when it lays out as its
      parts (a phone's pause). It grows to the verbs, or to the head's end when they wrap under
      it. A verb's height, and with its block margins a verb's target's, so a verb's expander
-     under it stays off the toggle; beside it, the end margin tops the head's gap (each tier's)
-     up to that reach. */
+     under it stays off the toggle; beside it, the end margin tops the head's gap (8px, or 4px
+     in the phone container) up to that reach. */
   & > .ev-sum,
   & > .ev-sum::after {
     anchor-name: --ev-sum-end;
     min-block-size: var(--ctl-h-dense);
     margin-block: max(0px, var(--tap-gap-dense) / 2);
     margin-inline-end: max(0px, var(--head-act-in) - var(--sp-2));
+  }
+
+  & > .ev-sum {
+    padding-inline-end: var(--sp-1);
   }
 
   & .run-icon-btn {
@@ -1788,9 +1792,9 @@
     border-radius: 1px;
   }
 
-  /* A pause takes a line of its own under the summary, and under the verbs when they wrap,
-     where the band it replaces sits. The clock and credits stay on line one, inside the toggle.
-     The head's `::after` is the line break; the pause starts under the state word. */
+  /* A pause takes a line of its own under the summary, and under the verbs when they wrap.
+     The clock and credits stay on line one, inside the toggle. The head's `::after` is the
+     line break; the pause starts under the state word. */
   .ev-dock-head[data-alert] {
     row-gap: 0;
     padding-block-end: var(--sp-1);
