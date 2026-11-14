@@ -72,6 +72,7 @@ vi.mock("./composer-state.js", () => ({
 }));
 
 import { submitPrompt, submitLabelled, forgetDeletedChat } from "./submit.js";
+import { adoptInterruptDefault } from "./interrupt-default.js";
 import { applyRun, setSessions, setActive, openTurn, appendEntry } from "./store.js";
 import { runAt, turnEntry } from "./__test-helpers__/run-order.js";
 import type { Session } from "./types.js";
@@ -374,7 +375,7 @@ describe("prompt-only text", () => {
     expect(await submitPrompt("c1", "@review")).toBe("held");
     expect(mockChatNotice).toHaveBeenCalledWith(
       "c1",
-      "A steer cannot run that command. Send it when the turn ends, or turn on Queue messages in Chat options.",
+      "A steer cannot run that command. Press Queue instead, beside Steer, to queue it, or send it when the turn ends.",
     );
     expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "@review");
   });
@@ -387,8 +388,40 @@ describe("prompt-only text", () => {
     expect(mockSendPromptTo.mock.calls[0]?.[2]).toMatchObject({ promptOnly: true });
     expect(mockChatNotice).toHaveBeenCalledWith(
       "c1",
-      "A steer cannot carry context references. Send it when the turn ends, or turn on Queue messages in Chat options.",
+      "A steer cannot carry context references. Press Queue instead, beside Steer, to queue it, or send it when the turn ends.",
     );
+  });
+
+  it("points a refusal at the Queue default when Queue is the default", async () => {
+    resetStore("c1");
+    adoptInterruptDefault({ interrupt_mode: "queue" });
+    mockInvokesCatalog.mockReturnValue(true);
+    mockSendPromptTo.mockResolvedValue("prompt_only");
+
+    expect(await submitPrompt("c1", "@review", { interrupt: "steer" })).toBe("held");
+    expect(mockChatNotice).toHaveBeenCalledWith(
+      "c1",
+      "A steer cannot run that command. Press Queue to queue it, or send it when the turn ends.",
+    );
+    adoptInterruptDefault({ interrupt_mode: "steer" });
+  });
+});
+
+describe("the face a send was pressed on", () => {
+  it("rides the prompt as its interrupt mode", async () => {
+    resetStore("c1");
+    mockSendPromptTo.mockResolvedValue("queued");
+
+    await submitPrompt("c1", "after this", { interrupt: "queue" });
+    expect(mockSendPromptTo.mock.calls[0]?.[2]).toMatchObject({ interruptMode: "queue" });
+  });
+
+  it("leaves a send that names none to the instance's setting", async () => {
+    resetStore("c1");
+    mockSendPromptTo.mockResolvedValue("sent");
+
+    await submitPrompt("c1", "hello");
+    expect(mockSendPromptTo.mock.calls[0]?.[2]).not.toHaveProperty("interruptMode");
   });
 });
 

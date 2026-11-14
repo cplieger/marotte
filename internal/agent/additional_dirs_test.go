@@ -196,7 +196,7 @@ func TestUnreadableConfig_EverySessionDoorOpensOnTheLastReadableSettings(t *test
 		br.setCallResult(methodKiroWorkflowList, json.RawMessage(`{"runs":[]}`))
 		br.setCallResult(methodKiroWorkflowNew, json.RawMessage(`{"workflowId":"wf_9"}`))
 		br.setCallResult(methodKiroWorkflowInvoke, json.RawMessage(`{}`))
-		if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
+		if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
 			t.Fatalf("Launch: %v", err)
 		}
 		checkDoor(t, br.lastSessionOpts(), f, "host")

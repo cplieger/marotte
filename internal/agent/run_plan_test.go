@@ -1,7 +1,11 @@
 package agent
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -112,7 +116,67 @@ func TestRunPlanUpdate_ARejectionTellsTheLaunchingChat(t *testing.T) {
 		t.Fatalf("got %d notes, want one", len(steers))
 	}
 	s := steers[0]
-	if s.Text != "Plan update rejected: step 'x' names no agent" || s.Severity != "error" || s.OriginRun != "wf_1" {
+	if s.Text != "Plan update could not be applied: step 'x' names no agent" || s.Severity != "error" || s.OriginRun != "wf_1" {
 		t.Errorf("note = %+v, want KAS's reason at error severity from wf_1", s)
+	}
+}
+
+const kasRejectionID = `["wf_1","create-workflow","tc_7"]`
+
+func wantRejectionID(kasID string) string {
+	sum := sha256.Sum256([]byte(kasID))
+	return "notify-wf_1:plan-rejection:" + hex.EncodeToString(sum[:8])
+}
+
+func TestRunPlanRejection_NotesTheLaunchingChat(t *testing.T) {
+	for _, tc := range []struct{ name, kasID, reason, want string }{
+		{"with a reason", kasRejectionID, "split step 2", "Plan edits requested: split step 2"},
+		{"without one", `["wf_1","create-workflow","tc_8"]`, "", "Plan rejected"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const chatID = marotte.ChatID("c1")
+			h, cs, _ := runLoggingHub(t)
+			seedChat(t, cs, chatID)
+
+			h.runs.RunPlanRejection(t.Context(), chatID, "wf_1", tc.kasID, tc.reason)
+
+			byID := steerEntries(t, cs, chatID)
+			got := byID[wantRejectionID(tc.kasID)]
+			if len(byID) != 1 || len(got) != 1 {
+				t.Fatalf("notes = %+v, want one under %q", byID, wantRejectionID(tc.kasID))
+			}
+			s := got[0]
+			if s.Text != tc.want || s.Severity != "" || s.OriginRun != "wf_1" || s.Origin != marotte.SteerOriginAgent {
+				t.Errorf("note = %+v, want %q from wf_1, agent origin, no severity", s, tc.want)
+			}
+		})
+	}
+}
+
+// A run chat cannot be stored, so a steer filed for one surfaces only as recordSteer's warning.
+func TestRunPlanRejection_ARunChatTellsNoOne(t *testing.T) {
+	h, _, _ := runLoggingHub(t)
+	logs := captureLogs(t)
+
+	h.runs.RunPlanRejection(t.Context(), runChatID("wf_1"), "wf_1", kasRejectionID, "split step 2")
+
+	if out := logs.String(); strings.Contains(out, "steer was not recorded") {
+		t.Errorf("a run chat was sent a note: %s", out)
+	}
+}
+
+// The id is KAS's rejection id hashed, never a clock, so every Runs names one rejection alike.
+func TestRunPlanRejection_OneRejectionOneID(t *testing.T) {
+	const chatID = marotte.ChatID("c1")
+	ids := make([][]string, 2)
+	for i := range ids {
+		h, cs, _ := runLoggingHub(t)
+		seedChat(t, cs, chatID)
+		h.runs.RunPlanRejection(t.Context(), chatID, "wf_1", kasRejectionID, "split step 2")
+		ids[i] = slices.Collect(maps.Keys(steerEntries(t, cs, chatID)))
+	}
+	want := []string{wantRejectionID(kasRejectionID)}
+	if !slices.Equal(ids[0], want) || !slices.Equal(ids[1], want) {
+		t.Errorf("note ids = %v, want %v from each", ids, want)
 	}
 }

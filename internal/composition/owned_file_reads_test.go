@@ -412,7 +412,7 @@ func testConfigJSONCells(t *testing.T) {
 }
 
 // The user permissions file as its cells start: rule Y in the .yaml and rule J in its .json sibling, which
-// KAS reads only while the .yaml is missing or blank. personYAML is the person's new document, rule Y2.
+// KAS reads only while the .yaml is missing. personYAML is the person's new document, rule Y2.
 const (
 	permsYAML       = "rules:\n  - capability: shell\n    effect: ask\n"
 	permsJSON       = `{"rules":[{"capability":"web_search","effect":"deny"}]}`

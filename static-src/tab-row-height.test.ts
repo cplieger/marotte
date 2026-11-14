@@ -15,7 +15,7 @@ let frame: HTMLIFrameElement;
 let doc: Document;
 
 /** The sidebar's two rows as the app builds them: `.sidebar-actions` wrapping
- *  `#new-chat` (10-shell-app.css / index.html), then `#tab-list` holding one
+ *  `#new-chat` (10-shell-app.css / index.html), then `#tab-sections` > `#tab-list` holding one
  *  top-level chat tab in `createTabEl`'s own child order. */
 function mountSidebar(): { btn: HTMLElement; tab: HTMLElement; close: HTMLElement } {
   const sidebar = doc.createElement("nav");
@@ -36,6 +36,7 @@ function mountSidebar(): { btn: HTMLElement; tab: HTMLElement; close: HTMLElemen
 
   const list = doc.createElement("div");
   list.id = "tab-list";
+  list.className = "side-section-list";
   list.setAttribute("role", "tablist");
 
   const tab = doc.createElement("div");
@@ -124,7 +125,7 @@ describe("a chat tab against the New chat button", () => {
   });
 
   it("measures the same WIDTH, on the same left and right edges", () => {
-    // `#tab-list`'s inline padding and `.sidebar-actions`' margin are the SAME value
+    // `.side-section-list`'s inline padding and `.sidebar-actions`' margin are the SAME value
     // (`--sp-2`), which is what makes these two boxes one box rather than a button
     // lined up inside a wrapper that overhangs it.
     const { btn, tab } = mountSidebar();

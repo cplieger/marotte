@@ -10,6 +10,8 @@ const h = vi.hoisted(() => ({
   setTabStatus: vi.fn(),
   tabIdFor: vi.fn((_kind: string, ref = "") => (ref === "" ? "" : `tb_${ref}`)),
   refreshContextUI: vi.fn(),
+  loadList: vi.fn(),
+  loadMissingChats: vi.fn(),
   // Placeholders, replaced with REAL signals by the async mock factories below
   // (they can await the reactive import; this hoisted block runs before it).
   openRefs: { value: [] as string[] },
@@ -51,7 +53,8 @@ vi.mock("./context-ui.js", () => ({ refreshContextUI: h.refreshContextUI }));
 // chat.ts's other first-hop dependencies, inert; never the store, whose signals are the
 // subject. `confirmChatExists` and `loadOlderTurns` exist so real-ESM linking succeeds.
 vi.mock("./store-load.js", () => ({
-  loadList: vi.fn(),
+  loadList: h.loadList,
+  loadMissingChats: h.loadMissingChats,
   loadMessages: vi.fn(),
   loadOlderTurns: vi.fn(),
   confirmChatExists: vi.fn(),
@@ -168,6 +171,8 @@ beforeEach(() => {
   // test's install is torn down by the next installStoreSubscribers call.
   h.pendingAsks.clear();
   h.openRefs.value = [];
+  h.loadList.mockReset();
+  h.loadMissingChats.mockReset();
   setSessions([]);
   setActive("");
   expect(stripWrites()).toEqual([]);
@@ -326,5 +331,53 @@ describe("the context bar tracks the active session only", () => {
 
     expect(h.refreshContextUI).toHaveBeenCalledTimes(1);
     expect((h.refreshContextUI.mock.calls[0]?.[0] as Session).id).toBe("b");
+  });
+});
+
+describe("a chat tab whose chat the store lacks asks for the chat list", () => {
+  it("asks once for every newly opened chat the store lacks, and for none it holds", () => {
+    setSessions([session("a")]);
+    installStoreSubscribers();
+
+    h.openRefs.value = ["a", "b", "c"];
+
+    expect(h.loadMissingChats.mock.calls).toEqual([[["b", "c"]]]);
+    expect(h.loadList).not.toHaveBeenCalled();
+  });
+
+  it("asks for nothing when every opened chat is held", () => {
+    setSessions([session("a"), session("b")]);
+    installStoreSubscribers();
+
+    h.openRefs.value = ["a", "b"];
+
+    expect(h.loadMissingChats).not.toHaveBeenCalled();
+  });
+
+  it("asks only for the refs that gained a row, not again for one already asked for", () => {
+    installStoreSubscribers();
+    h.openRefs.value = ["b"];
+    expect(h.loadMissingChats.mock.calls).toEqual([[["b"]]]);
+
+    h.openRefs.value = ["b", "c"];
+
+    expect(h.loadMissingChats.mock.calls).toEqual([[["b"]], [["c"]]]);
+  });
+
+  it("names the row once the read lands the chat", async () => {
+    // The read lands after the effect returned, as the real flush's does.
+    h.loadMissingChats.mockImplementation((ids: readonly string[]) => {
+      queueMicrotask(() => {
+        setSessions(ids.map((id) => session(id)));
+      });
+    });
+    installStoreSubscribers();
+    clearStripSpies();
+
+    h.openRefs.value = ["b"];
+    expect(h.renameTab).not.toHaveBeenCalled();
+    await Promise.resolve();
+
+    expect(h.renameTab.mock.calls).toEqual([["tb_b", "Chat b"]]);
   });
 });

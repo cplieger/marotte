@@ -661,10 +661,7 @@ func TestAfterTurnClose_Order(t *testing.T) {
 		bridge:            &bridges{mgr: newBridgeManager()},
 		lifecycle:         &lifetime{shutdownCtx: t.Context()},
 		applyPendingModel: func(context.Context, marotte.ChatID) { record("model") },
-		resolveEnds: func(context.Context, marotte.ChatID, command.TurnFence) command.EndFacts {
-			record("resolve")
-			return command.EndFacts{}
-		},
+		resolveEnds:       func(context.Context, marotte.ChatID, command.TurnFence) { record("resolve") },
 	}
 	bc.turns.tailHook = func(_ marotte.ChatID, ended bool) {
 		if ended {

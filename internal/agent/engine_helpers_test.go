@@ -164,8 +164,10 @@ type fakeEngine struct {
 	files    []string
 	ms       int
 	gen      uint64
-	seq      uint64
-	ended    bool
+	// contentCollection is the value initialize carried.
+	contentCollection bool
+	seq               uint64
+	ended             bool
 	// sessionsEnded is set when end takes its session snapshot; open refuses a session that arrives after it.
 	sessionsEnded bool
 	sendMu        sync.RWMutex
@@ -207,8 +209,16 @@ func (e *fakeEngine) Start(ctx context.Context, o *marotte.EngineOpts) error {
 	if len(files) == 0 || !e.src.lane.startSendLands(marotte.MethodPolicyIgnoreFilesChanged) {
 		files = nil
 	}
+	collect := false
+	if o.ContentCollection != nil {
+		collect, _ = o.ContentCollection(ctx)
+	}
+	lane := e.src.lane
+	lane.mu.Lock()
+	lane.contentCollectionApplied, lane.contentCollectionKnown = collect, true
+	lane.mu.Unlock()
 	e.mu.Lock()
-	e.opts, e.files, e.ms = o, files, ms
+	e.opts, e.files, e.ms, e.contentCollection = o, files, ms, collect
 	e.mu.Unlock()
 	// The lifetime bounds the process, as the real engine's does.
 	if o.Lifetime != nil {
@@ -373,7 +383,6 @@ func (e *fakeEngine) open(ctx context.Context, o *marotte.SessionOpts, attach fu
 			return nil, err
 		}
 	}
-	e.assertAtDoor(ctx, s, eo)
 	e.mu.Lock()
 	if e.sessionsEnded {
 		e.mu.Unlock()
@@ -411,31 +420,14 @@ func (s *fakeEngineSource) observerFactory() sessionFactory {
 	return s.observer
 }
 
-// assertAtDoor is the door's content-collection assert: written on the session, recorded on the engine, which holds
-// the value for every session.
-func (e *fakeEngine) assertAtDoor(ctx context.Context, s engineSession, eo *marotte.EngineOpts) {
-	if eo == nil || eo.ContentCollection == nil {
-		return
-	}
-	enabled, _ := eo.ContentCollection(ctx)
-	fails := false
-	if f, ok := s.(interface{ fake() *fakeBridge }); ok {
-		fails = f.fake().doorAssertFails()
-	}
-	lane := e.src.lane
-	lane.mu.Lock()
-	lane.contentCollectionApplied, lane.contentCollectionKnown = enabled, !fails
-	lane.mu.Unlock()
-}
-
 func (e *fakeEngine) StartLive() (ignoreFiles []string, terminalTimeoutMs int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return slices.Clone(e.files), e.ms
 }
 
-// RefreshContentCollection asserts the resolver's value on the lane unless the engine confirmed it, recording each
-// write on the lane fake.
+// RefreshContentCollection notifies the resolver's value unless the engine holds it, recording each attempt on the lane
+// fake.
 func (e *fakeEngine) RefreshContentCollection(ctx context.Context) (bool, error) {
 	e.mu.Lock()
 	o := e.opts
@@ -448,13 +440,12 @@ func (e *fakeEngine) RefreshContentCollection(ctx context.Context) (bool, error)
 	lane.mu.Lock()
 	applied, known := lane.contentCollectionApplied, lane.contentCollectionKnown
 	lane.mu.Unlock()
-	if !readable || (known && applied == enabled) {
+	if known && (!readable || applied == enabled) {
 		return enabled, nil
 	}
-	params := marotte.ContentCollectionParams("", enabled)
-	_, err := e.Call(ctx, marotte.MethodSetConfigOption, params)
+	err := e.Notify(ctx, marotte.MethodContentCollectionSettingsChanged, marotte.ContentCollectionSettingsParams(enabled))
 	lane.mu.Lock()
-	lane.contentCollectionWrites = append(lane.contentCollectionWrites, params["value"].(string))
+	lane.contentCollectionWrites = append(lane.contentCollectionWrites, enabled)
 	lane.contentCollectionApplied, lane.contentCollectionKnown = enabled, err == nil
 	lane.mu.Unlock()
 	return enabled, err

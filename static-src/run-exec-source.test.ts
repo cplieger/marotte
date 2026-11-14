@@ -1,7 +1,21 @@
 // The workflow adapter: KAS's `inspect` reply folded into the exec view's model.
 
-import { describe, it, expect } from "vitest";
-import { runToExec, indexPlan, planToExec } from "./run-exec-source.js";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import type { ModelInfo } from "./types.js";
+import type * as Picker from "./picker.js";
+
+const catalog = vi.hoisted(() => ({ models: [] as ModelInfo[] }));
+vi.mock("./picker.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Picker>()),
+  getCachedModels: () => catalog.models,
+}));
+afterEach(() => {
+  catalog.models = [];
+});
+
+import { effect } from "@cplieger/reactive";
+import { BUS_CATALOG_MODELS, emitBus } from "./bus.js";
+import { runToExec, indexPlan, planToExec, type ExecFoldMemo } from "./run-exec-source.js";
 import { nodePathKey } from "./run-node-key.js";
 import { flatten, workNodes, counters, miniBar, type ExecNode } from "./exec-view/model.js";
 import extendedLoopRaw from "./testdata/run-extended-loop.json?raw";
@@ -218,6 +232,174 @@ describe("runToExec decides work by kind and fills an unexpanded container from 
       expect(facts.get("Model"), name).toBe("model-a-5.5");
       expect(facts.get("Effort"), name).toBe("high");
     }
+  });
+
+  // KAS's initState: a pending sequence root whose children are every top-level step, pending and
+  // carrying its declared pin as `modelId` with no catalog check.
+  const launched = (...steps: [string, string][]) => ({
+    nodeId: "wf_1",
+    type: "sequence",
+    status: "pending",
+    children: steps.map(([id, pin]) =>
+      step(id, "pending", { agentName: "wf-coder", modelId: pin }),
+    ),
+  });
+  const pendingFanOf = (pin: string) => ({
+    root: {
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [{ nodeId: "fan", type: "parallel", status: "pending", children: [] }],
+    },
+    plan: [
+      {
+        nodeId: "fan",
+        type: "parallel",
+        branches: [{ nodeId: "code", type: "step", agentName: "wf-coder", modelId: pin }],
+      },
+    ],
+  });
+  const factsOf = (root: unknown, plan: unknown, label: string) => {
+    const node = flatten(runToExec(stateWith(root), plan, NO_ASKS).nodes).find(
+      (n) => n.label === label,
+    );
+    return { node, facts: new Map((node?.facts ?? []).map((f) => [f.label, f.value])) };
+  };
+
+  it("a pending step names a pin the account is not offered, launched or planned", () => {
+    catalog.models = [{ model_id: "model-b", model_name: "Model B" }];
+    const plan = [
+      { nodeId: "code", type: "step", agentName: "wf-coder", modelId: "model-a-5.5" },
+      { nodeId: "test", type: "step", agentName: "wf-coder", modelId: "model-b" },
+    ];
+    const root = launched(["code", "model-a-5.5"], ["test", "model-b"]);
+    const fan = pendingFanOf("model-a-5.5");
+    const cases: [string, unknown, unknown][] = [
+      ["launched", root, plan],
+      ["parallel branch", fan.root, fan.plan],
+    ];
+    for (const [name, r, p] of cases) {
+      const code = factsOf(r, p, "code");
+      expect(code.facts.get("Model"), name).toBeUndefined();
+      expect(code.facts.get("Pinned model"), name).toBe("model-a-5.5, not offered");
+      expect(code.node?.subtitle, name).toContain("model-a-5.5 not offered");
+    }
+    const test = factsOf(root, plan, "test");
+    expect(test.facts.get("Model")).toBe("model-b");
+    expect(test.facts.has("Pinned model")).toBe(false);
+    expect(test.node?.subtitle).not.toContain("not offered");
+  });
+
+  it("judges a pending pin by exact served id", () => {
+    catalog.models = [{ model_id: "model-b-1", model_name: "Model B 1" }];
+    const exact = pendingFanOf("model-b-1");
+    const served = factsOf(exact.root, exact.plan, "code");
+    expect(served.facts.has("Pinned model")).toBe(false);
+    expect(served.node?.subtitle).not.toContain("not offered");
+    for (const pin of ["model-b", "MODEL-B-1"]) {
+      const fan = pendingFanOf(pin);
+      const code = factsOf(fan.root, fan.plan, "code");
+      expect(code.facts.get("Pinned model"), pin).toBe(`${pin}, not offered`);
+    }
+  });
+
+  it("names a pin KAS cannot correct", () => {
+    const cases: [string, string[], string][] = [
+      ["a part of two stems", ["model-b-1", "model-bx-2"], "model-b"],
+      ["a part under three characters", ["model-b-1"], "mo"],
+      ["no part of any id", ["model-b-1"], "model-c"],
+    ];
+    for (const [name, served, pin] of cases) {
+      catalog.models = served.map((id) => ({ model_id: id, model_name: id }));
+      const code = factsOf(launched(["code", pin]), undefined, "code");
+      expect(code.facts.get("Pinned model"), name).toBe(`${pin}, not offered`);
+    }
+  });
+
+  // Once a step starts, KAS's own record decides: a step it failed at its first model call keeps
+  // the unserved pin as its model and drops nothing.
+  it("judges no started step's model against the catalog", () => {
+    catalog.models = [{ model_id: "model-b", model_name: "Model B" }];
+    const root = {
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [step("code", "failed", { modelId: "model-a-5.5" })],
+    };
+    const code = factsOf(root, undefined, "code");
+    expect(code.facts.get("Model")).toBe("model-a-5.5");
+    expect(code.facts.has("Pinned model")).toBe(false);
+  });
+
+  it("a catalog landing after the first fold names the pending pin, and repaints", () => {
+    const plan = [{ nodeId: "code", type: "step", agentName: "wf-coder", modelId: "model-a-5.5" }];
+    const state = stateWith(launched(["code", "model-a-5.5"]));
+    const memo: ExecFoldMemo = {};
+    const pinOf = () =>
+      flatten(runToExec(state, plan, NO_ASKS, "", new Map(), memo).nodes)
+        .find((n) => n.label === "code")
+        ?.facts?.find((f) => f.label === "Pinned model")?.value;
+    let folds = 0;
+    let pin: string | undefined;
+    const stop = effect(() => {
+      folds++;
+      pin = pinOf();
+    });
+    expect(pin).toBeUndefined();
+    catalog.models = [{ model_id: "model-b", model_name: "Model B" }];
+    emitBus(BUS_CATALOG_MODELS);
+    stop();
+    expect(folds).toBe(2);
+    expect(pin).toBe("model-a-5.5, not offered");
+  });
+
+  it("a catalog landing refolds a held container's planned pin", () => {
+    const plan = [
+      {
+        nodeId: "fan",
+        type: "parallel",
+        branches: [{ nodeId: "code", type: "step", agentName: "wf-coder", modelId: "model-a-5.5" }],
+      },
+    ];
+    const fan = { nodeId: "fan", type: "parallel", status: "pending", children: [] };
+    const state = stateWith({
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [fan],
+    });
+    const memo: ExecFoldMemo = {};
+    const pinOf = () =>
+      flatten(runToExec(state, plan, NO_ASKS, "", new Map(), memo).nodes)
+        .find((n) => n.label === "code")
+        ?.facts?.find((f) => f.label === "Pinned model")?.value;
+    expect(pinOf()).toBeUndefined();
+    catalog.models = [{ model_id: "model-b", model_name: "Model B" }];
+    emitBus(BUS_CATALOG_MODELS);
+    expect(pinOf()).toBe("model-a-5.5, not offered");
+  });
+
+  it("names a step's dropped model pin", () => {
+    const run = runToExec(
+      stateWith({
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "running",
+        children: [
+          step("fell", "completed", { notOfferedModelId: "m-x", modelId: "m-y" }),
+          step("bare", "running", { notOfferedModelId: "m-x" }),
+        ],
+      }),
+      undefined,
+      NO_ASKS,
+    );
+    const [fell, bare] = run.nodes;
+    const fact = (n: ExecNode | undefined) =>
+      (n?.facts ?? []).find((f) => f.label === "Pinned model")?.value;
+    expect(fact(fell)).toBe("m-x, not offered; ran on m-y");
+    expect(fact(bare)).toBe("m-x, not offered; ran on the agent default");
+    expect(fell?.subtitle).toContain("fell back from m-x");
+    expect(bare?.subtitle).toContain("fell back from m-x");
   });
 
   it("never counts a childless container as a step, plan or no plan", () => {

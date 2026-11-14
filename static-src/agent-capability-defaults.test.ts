@@ -35,6 +35,7 @@ describe("Agent capabilities switches before settings load", () => {
     ["auto-delegation", ""],
     ["cloudformation-safety", ""],
     ["workflow-creator-effort", ""],
+    ["chat-awareness-mode", ""],
     ["knowledge-index-type", ""],
   ] as const)("paints #%s at its default (%j)", (id, value) => {
     const doc = new DOMParser().parseFromString(indexHtml, "text/html");
@@ -51,6 +52,7 @@ describe("Agent capabilities switches before settings load", () => {
   // knowledgeIndexType's best and fast (its "accurate" normalizes to best).
   it.each([
     ["workflow-creator-effort", ["", "low", "medium", "high", "xhigh", "max"]],
+    ["chat-awareness-mode", ["", "direct", "consult"]],
     ["cloudformation-safety", ["", "on", "enforce", "off"]],
     ["knowledge-index-type", ["", "best", "fast"]],
   ] as const)("#%s offers exactly the values the server accepts", (id, values) => {

@@ -393,7 +393,8 @@ func TestCloseOwner_ReloadWaitsForAHostedStep(t *testing.T) {
 		endStep := hostStepOn(t, o.h, "sess-step")
 
 		o.openReturnsCurrent(t, openAsync(t, o.h), "the chat hosts a run step")
-		if rec := postCmd(t, o.h, marotte.ClientCommand{
+		// The page's prompt: another program's would reopen the chat's tab, and the chat would no longer be tabless.
+		if rec := postPageCmd(t.Context(), o.h, marotte.ClientCommand{
 			Type: marotte.CmdPrompt, ChatID: "c1", Payload: json.RawMessage(`{"text":"hello","message_id":"m-1"}`),
 		}); rec.Code != 200 {
 			t.Fatalf("prompt = %d %s", rec.Code, rec.Body.String())

@@ -1059,7 +1059,7 @@ describe("createPopover — focus management", () => {
     expect(document.activeElement).toBe(before); // detached target ignored
   });
 
-  it("returnFocus:true restores the pre-show active element on hide", () => {
+  it("returnFocus:true leaves focus on an element outside the panel that took it while open", () => {
     const anchor = document.createElement("button");
     const panel = document.createElement("div");
     const trigger = document.createElement("button");
@@ -1072,20 +1072,82 @@ describe("createPopover — focus management", () => {
     anchor.focus(); // focus moves elsewhere while open
     expect(document.activeElement).toBe(anchor);
     c.hide();
-    expect(document.activeElement).toBe(trigger); // restored to the pre-show element
+    // HTML's hide popover algorithm restores only while focus is inside the popover.
+    expect(document.activeElement).toBe(anchor);
   });
 
-  it("returnFocus as an element focuses that element on hide", () => {
+  it("returnFocus:true restores the pre-show active element on a hide with focus inside the panel", () => {
     const anchor = document.createElement("button");
     const panel = document.createElement("div");
+    const inside = document.createElement("button");
+    const trigger = document.createElement("button");
+    panel.appendChild(inside);
+    document.body.append(trigger, anchor, panel);
+    trigger.focus();
+    stubRect(anchor, 100, 100, 50, 20);
+    stubSize(panel, 80, 40);
+    const c = createPopover(anchor, panel, { returnFocus: true, flip: false, clamp: false });
+    c.show();
+    inside.focus();
+    c.hide();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("returnFocus as an element focuses that element on a hide with focus inside the panel", () => {
+    const anchor = document.createElement("button");
+    const panel = document.createElement("div");
+    const inside = document.createElement("button");
     const target = document.createElement("button");
+    panel.appendChild(inside);
     document.body.append(anchor, panel, target);
     stubRect(anchor, 100, 100, 50, 20);
     stubSize(panel, 80, 40);
     const c = createPopover(anchor, panel, { returnFocus: target, flip: false, clamp: false });
     c.show();
+    inside.focus();
     c.hide();
     expect(document.activeElement).toBe(target);
+  });
+
+  it("returnFocus leaves focus on <body> when it left the panel for <body> before the hide", () => {
+    const anchor = document.createElement("button");
+    const panel = document.createElement("div");
+    const inside = document.createElement("button");
+    const target = document.createElement("button");
+    panel.appendChild(inside);
+    document.body.append(anchor, panel, target);
+    stubRect(anchor, 100, 100, 50, 20);
+    stubSize(panel, 80, 40);
+    const c = createPopover(anchor, panel, { returnFocus: target, flip: false, clamp: false });
+    c.show();
+    inside.focus();
+    inside.blur();
+    expect(document.activeElement).toBe(document.body);
+    c.hide();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("dispose restores returnFocus only with focus inside the panel", () => {
+    const anchor = document.createElement("button");
+    const panel = document.createElement("div");
+    const inside = document.createElement("button");
+    const target = document.createElement("button");
+    const outside = document.createElement("button");
+    panel.appendChild(inside);
+    document.body.append(anchor, panel, target, outside);
+    stubRect(anchor, 100, 100, 50, 20);
+    stubSize(panel, 80, 40);
+    const a = createPopover(anchor, panel, { returnFocus: target, flip: false, clamp: false });
+    a.show();
+    inside.focus();
+    a.dispose();
+    expect(document.activeElement, "focus inside: restored").toBe(target);
+
+    const b = createPopover(anchor, panel, { returnFocus: target, flip: false, clamp: false });
+    b.show();
+    outside.focus();
+    b.dispose();
+    expect(document.activeElement, "focus outside: left").toBe(outside);
   });
 
   it("leaves focus alone on hide when returnFocus is unset", () => {

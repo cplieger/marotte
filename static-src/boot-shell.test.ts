@@ -55,6 +55,13 @@ describe("every region whose content is pending says so", () => {
     }
   });
 
+  it("keeps the skeleton in the Open list, which reads as Open tabs", () => {
+    const column = slice(indexHtml, '<div id="tab-sections"', '<div class="sidebar-footer">');
+    const list = column.querySelector("#open-section #tab-list");
+    expect(list?.getAttribute("aria-label")).toBe("Open tabs");
+    expect(list?.querySelector("#tab-strip-skeleton")).not.toBeNull();
+  });
+
   it("gives the sidebar identity row a pending shimmer", () => {
     // Both markers matter: with only the opening one changed the fragment would run to
     // `#st-account`'s `</a>` and pass vacuously.

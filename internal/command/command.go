@@ -178,13 +178,12 @@ func (d *Dispatcher) Run(ctx context.Context, cmd *marotte.ClientCommand) error 
 }
 
 // ResolveAfterClose resolves the pending turn ends of the closed turn and older
-// under the chat's steer lock, then routes the rows it made unsent into a prompt
-// that already started. The zero EndFacts answers when nothing is registered.
-func (d *Dispatcher) ResolveAfterClose(ctx context.Context, chatID marotte.ChatID, fence TurnFence) EndFacts {
+// under the chat's steer lock; nothing when no steer queue is registered.
+func (d *Dispatcher) ResolveAfterClose(ctx context.Context, chatID marotte.ChatID, fence TurnFence) {
 	if d.prompts == nil || d.prompts.queue == nil {
-		return EndFacts{}
+		return
 	}
-	return resolveAfterClose(ctx, d.prompts, chatID, fence)
+	resolveAfterClose(ctx, d.prompts, chatID, fence)
 }
 
 type errorResponse struct {

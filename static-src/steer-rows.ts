@@ -23,6 +23,11 @@ interface SteerFold {
   repaint: boolean;
 }
 
+/** `marotte.SteerIDFor`'s twin: the dock key of the steer sent for message `messageID`. */
+export function steerIDFor(messageID: string): string {
+  return `steer-${messageID}`;
+}
+
 /** The row a device draws on Send, before any frame: `user` is a fact, it is this device's POST. */
 export function pendingSteerRow(id: string, text: string): PendingSteer {
   return { id, text, origin: "user", pending: true };

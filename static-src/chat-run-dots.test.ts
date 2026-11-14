@@ -96,9 +96,10 @@ vi.mock("./tabs-drag.js", async (importOriginal) => ({
 vi.mock("./transport.js", () =>
   import("./__test-helpers__/tabs-server.js").then((mod) => mod.tabTransportMock()),
 );
-vi.mock("./device-view.js", () => {
+vi.mock("./device-view.js", async (importOriginal) => {
   let active = "";
   return {
+    ...(await importOriginal<Record<string, unknown>>()),
     activeView: vi.fn(() => active),
     setActiveView: vi.fn((id: string) => {
       active = id;
@@ -736,7 +737,7 @@ describe("a mixed strip keeps one text origin", () => {
 
   it("lines a chat row's title up with every other top-level kind's", async () => {
     const chat = await openSubject("chat", "c1");
-    const kinds: TabKind[] = ["files", "git", "history", "settings", "docs"];
+    const kinds: TabKind[] = ["files", "git", "settings", "docs"];
     const ids = [];
     for (const kind of kinds) {
       ids.push(await openSubject(kind));

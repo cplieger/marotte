@@ -3,6 +3,7 @@
 
 import { el } from "@cplieger/reactive";
 import { launchRun } from "./actions/runs.js";
+import { notice } from "./toast.js";
 import { anchoredPopover, type AnchoredPopover } from "./anchored-popover.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_PLAY } from "./icons.js";
@@ -82,6 +83,9 @@ function promptForm(name: string, close: () => void): HTMLElement {
       { source: `agent://${name}`, inputs: { prompt } },
       {
         onSuccess: (d) => {
+          if (d.warnings !== undefined && d.warnings.length > 0) {
+            notice(d.warnings.join("\n"), "warning");
+          }
           // Lazy: the run view's graph is the run store and the exec page, which the
           // configuration browser that hosts this button has no other use for.
           void import("./run-view.js").then(({ openRunView }) =>

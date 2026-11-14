@@ -58,6 +58,8 @@ type EffectiveSettings struct {
 	// MemoryMode is the Memory dropdown's value ("off" and its three
 	// siblings); it defaults to settings.DefaultMemoryMode, kiro-cli's own.
 	MemoryMode string `json:"memory_mode"`
+	// InterruptMode is the composer's default beside a running turn, steer unless queue was chosen.
+	InterruptMode InterruptMode `json:"interrupt_mode"`
 	// SpecPlanning is "off", "quick" or "full"; default off, matching kiro-cli.
 	SpecPlanning string `json:"spec_planning"`
 	// WorkValidation, CloudFormationSafetyCheck, AutoRouting and AutoDelegation
@@ -76,6 +78,9 @@ type EffectiveSettings struct {
 	// WorkflowCreatorEffort is "" (KAS's creator agent decides) or a KAS effort level for the step that drafts a
 	// workflow from a prose request; it applies only while WorkflowsEnabled is on.
 	WorkflowCreatorEffort string `json:"workflow_creator_effort"`
+	// ChatAwarenessMode is "" (kiro-cli decides), "direct" or "consult"; it applies only while ChatAwareness is on and
+	// to chats created after the change.
+	ChatAwarenessMode string `json:"chat_awareness_mode"`
 	// KnowledgeIndexType is "" (kiro-cli's own, semantic unless its legacy knowledge.json says fast), "fast" or
 	// "best": the index a knowledge base added from now on is built as.
 	KnowledgeIndexType string `json:"knowledge_index_type"`

@@ -39,8 +39,8 @@ describe("expandable pill markup (static/index.html)", () => {
         ).toBe(true);
       }
     }
-    // The context, model, mode, chat-options, task-list and status cards.
-    expect(cards).toBe(6);
+    // The context, model, security profile, mode, chat-options, task-list and status cards.
+    expect(cards).toBe(7);
   });
 
   it("gives every expandable trigger a card next to it", () => {

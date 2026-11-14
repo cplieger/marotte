@@ -55,6 +55,12 @@ func TestValidateAgentPatch_RefusesValuesTheUICannotProduce(t *testing.T) {
 		{name: "chat messaging string", key: KeyChatMessaging, raw: `"on"`, wantErr: true},
 		{name: "chat awareness on", key: KeyChatAwareness, raw: `true`},
 		{name: "chat awareness string", key: KeyChatAwareness, raw: `"on"`, wantErr: true},
+		// KAS's sessionToolsAwarenessMode vocabulary, plus unset.
+		{name: "awareness mode unset", key: KeyChatAwarenessMode, raw: `""`},
+		{name: "awareness mode direct", key: KeyChatAwarenessMode, raw: `"direct"`},
+		{name: "awareness mode consult", key: KeyChatAwarenessMode, raw: `"consult"`},
+		{name: "awareness mode unknown", key: KeyChatAwarenessMode, raw: `"ask"`, wantErr: true},
+		{name: "awareness mode bool", key: KeyChatAwarenessMode, raw: `true`, wantErr: true},
 		// KAS's sendMessageDeliveryLimit is a whole number from 1 to 500.
 		{name: "delivery limit floor", key: KeyChatMessageDeliveryLimit, raw: `1`},
 		{name: "delivery limit ceiling", key: KeyChatMessageDeliveryLimit, raw: `500`},
@@ -111,6 +117,7 @@ func TestEffective_AgentCapabilityDefaults(t *testing.T) {
 		{"TerminalCommandTimeoutMs", d.TerminalCommandTimeoutMs, defaultTerminalCommandTimeoutMs},
 		{"ModelFallback", d.ModelFallback, defaultModelFallback},
 		{"WorkflowLaunch", d.WorkflowLaunch, DefaultWorkflowLaunch},
+		{"ChatAwarenessMode", d.ChatAwarenessMode, ""},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
@@ -227,5 +234,35 @@ func TestEffective_AStoredValueOutsideTheVocabularyReadsAsTheDefault(t *testing.
 	}
 	if slices.Contains(rejected, KeyOutputStyle) {
 		t.Errorf("rejected = %v, want the valid output_style accepted", rejected)
+	}
+}
+
+func TestEffective_ContentCollectionDefaultsOnAsKiroCLI(t *testing.T) {
+	if got, _ := EffectiveFrom(nil); !got.ContentCollection {
+		t.Error("EffectiveFrom(no content_collection_enabled key).ContentCollection = false, want kiro-cli's default, true")
+	}
+	if !DefaultContentCollectionEnabled {
+		t.Error("DefaultContentCollectionEnabled = false, want true, kiro-cli's own default")
+	}
+}
+
+// A user who turned sharing off keeps it off: the stored false reads false, and a write of another key keeps it.
+func TestEffective_AnExplicitOffSurvivesTheDefaultChange(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Update(t.Context(), dir, setRaw(KeyContentCollectionEnabled, "false"), nil); err != nil {
+		t.Fatalf("Setup: store content_collection_enabled false: %v", err)
+	}
+	if _, err := Update(t.Context(), dir, setKey(KeyTheme, "dark"), nil); err != nil {
+		t.Fatalf("write theme: %v", err)
+	}
+	stored, err := Stored(dir)
+	if err != nil {
+		t.Fatalf("Stored: %v", err)
+	}
+	if got := string(stored[KeyContentCollectionEnabled]); got != "false" {
+		t.Errorf("after a theme write config.json holds content_collection_enabled %q, want false", got)
+	}
+	if got, rejected := EffectiveFrom(stored); got.ContentCollection || len(rejected) != 0 {
+		t.Errorf("EffectiveFrom(stored off).ContentCollection = %v, rejected %v; want false, none", got.ContentCollection, rejected)
 	}
 }

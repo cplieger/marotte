@@ -35,11 +35,6 @@ afterAll(() => {
 });
 
 describe("the hidden attribute under the app's stylesheet", () => {
-  // Shown today although hidden: `.page-section` sets `display: flex` and has no
-  // `[hidden]` arm, so this empty section takes a flex gap in the General panel. A
-  // known defect, recorded as a failing case so the fix flips it.
-  const KNOWN_SHOWN = ["#general-governance-section"];
-
   function shownWhileHidden(): string[] {
     return [...host.querySelectorAll("[hidden]")]
       .filter((el) => getComputedStyle(el).display !== "none")
@@ -53,10 +48,21 @@ describe("the hidden attribute under the app's stylesheet", () => {
 
   it("computes display none for every hidden element", () => {
     expect.assertions(1);
-    expect(shownWhileHidden().filter((a) => !KNOWN_SHOWN.includes(a))).toEqual([]);
+    expect(shownWhileHidden()).toEqual([]);
   });
 
-  it.fails.each(KNOWN_SHOWN)("computes display none for %s", (addr) => {
-    expect(shownWhileHidden()).not.toContain(addr);
+  it("keeps a closed pill card, hidden by script, out of layout and the Tab order", () => {
+    // makeExpandable swaps the card's `hidden` class for the attribute at init.
+    const cards = [...host.querySelectorAll<HTMLElement>(".pill-expand-content")];
+    expect(cards.length).toBeGreaterThanOrEqual(3);
+    for (const card of cards) {
+      card.classList.remove("hidden");
+      card.hidden = true;
+    }
+    expect(shownWhileHidden()).toEqual([]);
+    const row = document.createElement("button");
+    cards[0]!.appendChild(row);
+    row.focus();
+    expect(document.activeElement).not.toBe(row);
   });
 });

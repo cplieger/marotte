@@ -36,7 +36,7 @@ func TestSteerRecords_InvariantsHoldOverAnySequence(t *testing.T) {
 				key := "steer-k" + strconv.Itoa(keys)
 				h := command.SteerHolder{
 					Held: rapid.Bool().Draw(rt, "held"), PromptClass: true,
-					Live: rapid.Bool().Draw(rt, "live"), Delivering: rapid.Bool().Draw(rt, "delivering"),
+					Live: rapid.Bool().Draw(rt, "live"),
 				}
 				sends, _ := s.q.RouteSteer(chat, key, key, nil, h)
 				kasAnswers(rt, s, sends)
@@ -101,7 +101,6 @@ func TestSteerRecords_InvariantsHoldOverAnySequence(t *testing.T) {
 				s.q.DiscardCleared(chat, "op-d", landed)
 			},
 			"bridgeGone": func(*rapid.T) { s.recs.bridgeGone(chat) },
-			"nextParked": func(*rapid.T) { s.q.NextParked(chat, s.turnID()) },
 			"jobs": func(rt *rapid.T) {
 				for _, j := range s.spy.takeJobs() {
 					if j.Chat == chat {
@@ -121,17 +120,6 @@ func TestSteerRecords_InvariantsHoldOverAnySequence(t *testing.T) {
 					}
 					s.q.EndUnsent(chat, e.Owner)
 				}
-			},
-			"drain": func(rt *rapid.T) {
-				rows := s.q.UnsentRows(chat, false)
-				if len(rows) == 0 || !rapid.Bool().Draw(rt, "opened") {
-					return
-				}
-				keys := make([]string, 0, len(rows))
-				for _, r := range rows {
-					keys = append(keys, r.Key)
-				}
-				s.q.Delivered(chat, keys)
 			},
 		})
 	})

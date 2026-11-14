@@ -165,9 +165,9 @@ beforeEach(() => {
 describe("readers in a switch's gap act on the chat the strip shows", () => {
   it("sends the composer's prompt to the target chat", () => {
     inTheGap();
-    chat.sendPrompt("hello");
+    chat.sendPrompt("hello", "queue");
     expect(submitPromptMock).toHaveBeenCalledTimes(1);
-    expect(submitPromptMock).toHaveBeenCalledWith("b", "hello");
+    expect(submitPromptMock).toHaveBeenCalledWith("b", "hello", { interrupt: "queue" });
   });
 
   it("cancels nothing when the target is idle and the outgoing chat is busy", () => {

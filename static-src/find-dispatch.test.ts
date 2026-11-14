@@ -11,8 +11,12 @@ const filesToggle = vi.fn();
 const editorToggle = vi.fn();
 let editorClaims = true;
 let activeKind: TabKind | null = "chat";
+let historyPane: "chats" | "runs" | null = null;
 
-vi.mock("./tabs.js", () => ({ getActiveTabKind: () => activeKind }));
+vi.mock("./tabs.js", () => ({
+  getActiveTabKind: () => activeKind,
+  historyPaneTab: () => historyPane,
+}));
 vi.mock("./find-in-chat.js", () => ({
   handleFindHotkey: (e: KeyboardEvent) => chatFind(e),
   toggleChatFind: () => chatToggle(),
@@ -59,6 +63,7 @@ beforeEach(() => {
   editorToggle.mockReset();
   editorClaims = true;
   activeKind = "chat";
+  historyPane = null;
   _resetFindRegistry();
 });
 
@@ -104,8 +109,8 @@ describe("handleFindKey", () => {
     expect(filesFind).not.toHaveBeenCalled();
   });
 
-  it("opens a registered page box on docs, history and git, consuming the press", () => {
-    for (const kind of ["docs", "history", "git"] as TabKind[]) {
+  it("opens a registered page box on docs and git, consuming the press", () => {
+    for (const kind of ["docs", "git"] as TabKind[]) {
       _resetFindRegistry();
       chatFind.mockReset();
       const find = pageFindStub();
@@ -141,9 +146,23 @@ describe("handleFindKey", () => {
   });
 
   it("falls through when a page never registered at all", () => {
-    activeKind = "history";
+    activeKind = "docs";
     handleFindKey(ctrlF());
     expect(chatFind).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens History's find while History shows, not the find of the tab under it", () => {
+    // History is no tab: the tab under it keeps its kind, so the pane is what decides.
+    const history = pageFindStub();
+    const docs = pageFindStub();
+    registerFind("history", history);
+    registerFind("docs", docs);
+    activeKind = "docs";
+    historyPane = "runs";
+    handleFindKey(ctrlF());
+    expect(history.open).toHaveBeenCalledTimes(1);
+    expect(docs.open).not.toHaveBeenCalled();
+    expect(chatFind).not.toHaveBeenCalled();
   });
 
   it("does not reach a page box on a non-find chord", () => {
@@ -230,7 +249,8 @@ describe("toggleFindForActiveTab", () => {
   });
 
   it("is inert rather than wrong on a page whose box is not there", () => {
-    activeKind = "history";
+    activeKind = null;
+    historyPane = "chats";
     expect(() => {
       toggleFindForActiveTab();
     }).not.toThrow();
@@ -284,7 +304,8 @@ describe("findAffordanceForActiveTab", () => {
   });
 
   it("takes a page's OWN word for which of the two it is", () => {
-    activeKind = "history";
+    activeKind = null;
+    historyPane = "chats";
     registerFind("history", pageFindStub({ kind: () => "search" }));
     expect(findAffordanceForActiveTab().kind).toBe("search");
     registerFind("history", pageFindStub({ kind: () => "filter" }));

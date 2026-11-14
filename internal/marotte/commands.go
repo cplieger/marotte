@@ -32,12 +32,13 @@ const (
 	CmdSetAttachments      CommandType = "set_attachments"
 	CmdSetMode             CommandType = "set_mode"
 	CmdSetSupervisedMode   CommandType = "set_supervised_mode"
+	CmdSetSecurityProfile  CommandType = "set_security_profile"
 	CmdSteer               CommandType = "steer"
 	CmdSteerClear          CommandType = "steer_clear"
 	CmdQueuePrompt         CommandType = "queue_prompt"
 	CmdUnqueuePrompt       CommandType = "unqueue_prompt"
 	CmdSendQueuedNow       CommandType = "send_queued_now"
-	CmdSetInterruptMode    CommandType = "set_interrupt_mode"
+	CmdResumeQueue         CommandType = "resume_queue"
 	CmdRenameChat          CommandType = "rename_chat"
 	// CmdSteerRemove drops ONE waiting steer: KAS has no per-steer verb, so the
 	// server clears the buffer and resends the others together, in order.
@@ -85,12 +86,14 @@ type ClientCommand struct {
 // message's label. A typed message never carries one.
 type PromptCommand struct {
 	// Caller is the dispatcher's ClientCommand.From: an API caller's prompt. Server-only.
-	Caller      *Caller      `json:"-"`
-	Text        string       `json:"text"`
-	MessageID   string       `json:"message_id"`
-	Model       string       `json:"model,omitempty"`
-	DisplayText string       `json:"display_text,omitempty"`
-	Attachments []Attachment `json:"attachments,omitempty"`
+	Caller      *Caller `json:"-"`
+	Text        string  `json:"text"`
+	MessageID   string  `json:"message_id"`
+	Model       string  `json:"model,omitempty"`
+	DisplayText string  `json:"display_text,omitempty"`
+	// InterruptMode is what the prompt does beside a running turn; empty leaves it to the interrupt_mode setting.
+	InterruptMode InterruptMode `json:"interrupt_mode,omitempty"`
+	Attachments   []Attachment  `json:"attachments,omitempty"`
 	// PromptOnly marks text only a prompt carries (a catalog command, a context reference): it is never steered.
 	// A queued row is sent as its own prompt, so it may queue.
 	PromptOnly bool `json:"prompt_only,omitempty"`
@@ -342,6 +345,12 @@ type SetSupervisedModeCommand struct {
 	Enabled bool `json:"enabled"`
 }
 
+// SetSecurityProfileCommand is the payload for type="set_security_profile": a policyfile profile id for this chat's
+// session. A run's subject is refused.
+type SetSecurityProfileCommand struct {
+	Profile string `json:"profile"`
+}
+
 // SteerCommand is the payload for type="steer": a message that joins the RUNNING turn, merged by
 // KAS at the next node boundary. Text is required, trimmed and capped at maxSteerBytes.
 type SteerCommand struct {
@@ -350,9 +359,11 @@ type SteerCommand struct {
 }
 
 // SteerRemoveCommand is the payload for type="steer_remove". SteerID is the key of
-// a dock row the user sent; the rows they kept are resent together, in order.
+// a dock row the user sent; the user's rows kept are resent together, in order.
+// Queue moves the row to the chat's queue instead of deleting it.
 type SteerRemoveCommand struct {
 	SteerID string `json:"steer_id"`
+	Queue   bool   `json:"queue,omitempty"`
 }
 
 // CancelCommand is the payload for type="cancel". Target is the run entry the stop is for (RunView.Cancel); a
@@ -396,11 +407,6 @@ type UnqueuePromptCommand struct {
 type SendQueuedNowCommand struct {
 	MessageID string `json:"message_id"`
 	Stop      string `json:"stop,omitempty"`
-}
-
-// SetInterruptModeCommand is the payload for type="set_interrupt_mode".
-type SetInterruptModeCommand struct {
-	Mode InterruptMode `json:"mode"`
 }
 
 // OpenTabCommand is the payload for type="open_tab": open a tab for something that already exists.

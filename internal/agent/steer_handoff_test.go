@@ -43,7 +43,7 @@ func (s *pausingStore) WriteCounters(ctx context.Context, chatID marotte.ChatID)
 	return err
 }
 
-// handoffHub is a chat whose two steers were left unsent by a turn's end, so the run list resends them as the next
+// handoffHub is a chat whose two steers, a and b, a turn's end left unread, so the run list resends them as the next
 // turn. Its store parks that resend between its open and its retire; drained closes once the resend's launch ends.
 func handoffHub(t *testing.T) (h *Runtime, cs *testChatStore, ps *pausingStore, drained <-chan struct{}) {
 	t.Helper()
@@ -62,12 +62,17 @@ func handoffHub(t *testing.T) (h *Runtime, cs *testChatStore, ps *pausingStore, 
 		defer once.Do(func() { close(done) })
 		return launch(ctx, id, l)
 	}
-	for _, k := range []string{"steer-a", "steer-b"} {
-		h.steerQueue.RouteSteer("c1", k, k, nil, command.SteerHolder{Held: true, PromptClass: true})
-		if _, refuse := h.steerQueue.RouteSteer("c1", k, k, nil, command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
-			t.Fatalf("unsending %s = %q, want no_turn", k, refuse)
-		}
+	lc := h.coord.turns.testLifecycle("c1")
+	lc.mu.Lock()
+	for _, id := range []string{"a", "b"} {
+		lc.run.insertPending(&runEntry{
+			id: id, kind: marotte.RunKindRow, origin: marotte.RunFromPrompt, state: marotte.RunInKAS, offer: 1,
+			want: marotte.RunWantEither, row: &marotte.QueuedPrompt{ID: id, Text: id},
+		})
 	}
+	lc.run.turnEnded([]string{"a", "b"})
+	lc.wakeLocked()
+	lc.mu.Unlock()
 	return h, cs, ps, done
 }
 
@@ -120,48 +125,31 @@ func shutdownWithin(h *Runtime, d time.Duration) <-chan struct{} {
 	return done
 }
 
-// A shutdown between a resend's open and its retire leaves each steer exactly one destination, the resend,
-// whether the shutdown's drain wait completes or expires. The resend's launch runs on inflight, so the shutdown
-// reaches the steers only once its inflight wait gives up on the parked open (a one-second budget).
+// A shutdown between a resend's open and its retire leaves each steer exactly one destination, the resend. The
+// resend's launch runs on inflight, so the shutdown waits on the parked open.
 func TestShutdown_AResendOpenedBeforeTheTakeHasOneDestination(t *testing.T) {
-	for _, expired := range []bool{false, true} {
-		name := "completed wait"
-		if expired {
-			name = "expired wait"
-		}
-		t.Run(name, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				if expired {
-					shortenSteerLockWait(t)
-				}
-				h, cs, ps, drained := handoffHub(t)
-				<-ps.paused
-				stopped := shutdownWithin(h, time.Second)
-				if expired {
-					waitFor(t, func() bool { return h.bus.steers.gone("c1") })
-				} else {
-					// Every other goroutine is durably blocked: the shutdown is parked on the steer lock.
-					synctest.Wait()
-				}
-				close(ps.release)
-				<-drained
-				<-stopped
+	synctest.Test(t, func(t *testing.T) {
+		h, cs, ps, drained := handoffHub(t)
+		<-ps.paused
+		stopped := shutdownWithin(h, time.Second)
+		synctest.Wait()
+		close(ps.release)
+		<-drained
+		<-stopped
 
-				if p := resendPrompt(t, cs); p == nil || !slices.Equal(p.Resends, []string{"steer-a", "steer-b"}) {
-					t.Fatalf("resend prompt = %+v, want both steers named", p)
-				}
-				got := steerEntries(t, cs, "c1")
-				for _, k := range []string{"steer-a", "steer-b"} {
-					if e := got[k]; len(e) != 0 {
-						t.Errorf("entries for %s = %+v, want none: the resend prompt carries them", k, e)
-					}
-				}
-				if rows := queuedRows(t, cs, "c1"); len(rows) != 0 {
-					t.Errorf("queue = %+v, want no Held row for steers a prompt already carried", rows)
-				}
-			})
-		})
-	}
+		if p := resendPrompt(t, cs); p == nil || !slices.Equal(p.Resends, []string{"steer-a", "steer-b"}) {
+			t.Fatalf("resend prompt = %+v, want both steers named", p)
+		}
+		got := steerEntries(t, cs, "c1")
+		for _, k := range []string{"steer-a", "steer-b"} {
+			if e := got[k]; len(e) != 0 {
+				t.Errorf("entries for %s = %+v, want none: the resend prompt carries them", k, e)
+			}
+		}
+		if rows := queuedRows(t, cs, "c1"); len(rows) != 0 {
+			t.Errorf("queue = %+v, want no Held row for steers a prompt already carried", rows)
+		}
+	})
 }
 
 // A tab close whose lock wait expires between a resend's open and its retire writes no drop note for the

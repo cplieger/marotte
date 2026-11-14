@@ -50,7 +50,7 @@ function slice(from: string, to: string): HTMLElement {
 
 interface Mounted {
   rows: HTMLElement[];
-  list: HTMLElement;
+  scroller: HTMLElement;
   toast: HTMLElement;
 }
 
@@ -60,8 +60,10 @@ function mount(open: boolean, count: number, banners: number): Mounted {
   const sidebar = slice('<nav id="sidebar"', "</nav>");
   sidebar.classList.toggle("open", open);
   const list = sidebar.querySelector<HTMLElement>("#tab-list");
-  if (list === null) {
-    throw new Error("#tab-list missing");
+  const scroller = sidebar.querySelector<HTMLElement>("#tab-sections");
+  const history = sidebar.querySelector<HTMLElement>("#history-btn");
+  if (list === null || scroller === null || history === null) {
+    throw new Error("#tab-list, #tab-sections or #history-btn missing");
   }
   const rows = Array.from({ length: count }, (_, i) => {
     const row = document.createElement("div");
@@ -112,7 +114,7 @@ function mount(open: boolean, count: number, banners: number): Mounted {
   stack.appendChild(toast);
 
   document.body.replaceChildren(sidebar, area, stack);
-  return { rows, list, toast };
+  return { rows: [...rows, history], scroller, toast };
 }
 
 function overlaps(a: DOMRect, b: DOMRect): boolean {
@@ -130,12 +132,12 @@ describe("a toast over the open phone drawer", () => {
   for (const banners of [0, 1]) {
     for (const count of [1, 9, 40]) {
       it(`covers no visible row of a ${String(count)}-row strip, ${String(banners)} banner(s) up`, () => {
-        const { rows, list, toast } = mount(true, count, banners);
+        const { rows, scroller, toast } = mount(true, count, banners);
         const t = toast.getBoundingClientRect();
         expect(t.height, "the toast is laid out").toBeGreaterThan(0);
         expect(t.top, "on screen").toBeGreaterThanOrEqual(0);
         expect(t.bottom, "on screen").toBeLessThanOrEqual(H);
-        const clip = list.getBoundingClientRect();
+        const clip = scroller.getBoundingClientRect();
         for (const [i, row] of rows.entries()) {
           const shown = visibleIn(row.getBoundingClientRect(), clip);
           expect(

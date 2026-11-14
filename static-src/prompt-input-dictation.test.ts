@@ -6,7 +6,7 @@ import { userEvent } from "vitest/browser";
 import { signal } from "@cplieger/reactive";
 import { initPromptInput, sendComposer, setSendState } from "./prompt-input.js";
 import { createDictation, type Dictation } from "./dictation.js";
-import { ICON_MIC, ICON_MIC_STOP, ICON_SEND } from "./icons.js";
+import { ICON_MIC, ICON_CANCEL, ICON_SEND } from "./icons.js";
 import { setActive, setSessions } from "./store.js";
 import { setComposerValue, writeComposerSilently } from "./composer-value.js";
 import { BUS_TAB_CHANGED, emitBus } from "./bus.js";
@@ -91,7 +91,10 @@ beforeAll(() => {
   document.body.innerHTML = `
     <form id="prompt-form" action="javascript:void 0">
       <textarea id="prompt-input"></textarea>
-      <button id="midturn-send-btn" class="send-btn" type="button" hidden></button>
+      <div id="midturn-send" class="send-split" role="group" aria-label="Send mid-turn" hidden>
+        <button id="midturn-send-btn" class="send-btn" type="button" hidden></button>
+        <button id="midturn-alt-btn" type="button" class="send-btn" hidden></button>
+      </div>
       <button id="send-btn" class="send-btn" type="submit"></button>
     </form>`;
   dictation = createDictation(speech.platform, input());
@@ -213,7 +216,7 @@ function expectDictateFace(btn: HTMLButtonElement, listening: boolean): void {
   expect(btn.classList.contains("dictating")).toBe(listening);
   expect(btn.querySelector(".send-btn-label")?.textContent).toBe(listening ? "Stop" : "Dictate");
   expect(glyphMarkup(btn.querySelector("svg"))).toBe(
-    registryMarkup(listening ? ICON_MIC_STOP : ICON_MIC),
+    registryMarkup(listening ? ICON_CANCEL : ICON_MIC),
   );
 }
 

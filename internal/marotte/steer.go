@@ -6,8 +6,8 @@ const SteerIDPrefix = "steer-"
 
 // SteerIDFor mints the id a steer will be known by: `steer-<messageID>`. Derivable because KAS's
 // handleSessionSteer prefixes the sent messageId and stamps it on the response and on
-// `steering_queued`, so the ledger can be written before the RPC. static-src/store.ts steerIDFor is
-// the twin and must agree.
+// `steering_queued`, so the ledger can be written before the RPC. static-src/steer-rows.ts steerIDFor
+// is the twin and must agree.
 func SteerIDFor(messageID string) string {
 	return SteerIDPrefix + messageID
 }

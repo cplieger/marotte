@@ -35,9 +35,9 @@ const (
 	KeyNotifyRunOutcome    = "notify_run_outcome"
 	KeySupervisedDefault   = "supervised_default"
 
-	// KeySecurityProfile is the security posture every session opens with (a policyfile profile
-	// id sent as policy presets). Global: KAS cannot change a live session's policy. An unset or
-	// unknown value resolves to policyfile.DefaultProfile, never to Custom (no presets).
+	// KeySecurityProfile is the security profile a new chat starts on, and the one observer passes
+	// and parentless run hosts open with (a policyfile profile id sent as policy presets). An
+	// unset or unknown value resolves to policyfile.DefaultProfile, never to Custom (no presets).
 	KeySecurityProfile = "security_profile"
 
 	// KeyScheduledAutoApprove lets a scheduled or triggered run's tool requests be approved instead
@@ -56,10 +56,8 @@ const (
 	KeyGuardPayloadLinks = "guard_payload_links"
 
 	// KeyContentCollectionEnabled lets model requests be used by AWS for service
-	// improvement. Default off; an organization's lock overrides it. internal/agent
-	// writes it to kiro-cli's own switch before each engine spawn and on change (the
-	// relay starts KAS from that switch), and asserts it on every session door and
-	// pushes a change live (KAS holds it per process and persists none of it).
+	// improvement. Default on, as in kiro-cli; an organization's lock overrides it.
+	// Sent at initialize and pushed live through _kiro/contentCollection/settings_changed.
 	KeyContentCollectionEnabled = "content_collection_enabled"
 
 	// KeyMemoryMode is the Memory dropdown (memory.go's Memory* values), resolved per session door by
@@ -102,6 +100,9 @@ const (
 	// KeyWorkflowCreatorEffort is the effort of the step KAS runs to draft a workflow from a prose request, sent in
 	// the session doors' workflows object and read only while KeyWorkflowsEnabled is on; empty sends nothing.
 	KeyWorkflowCreatorEffort = "workflow_creator_effort"
+	// KeyChatAwarenessMode is how a chat searches the others, sent in the session doors' sessionTools.awareness.mode
+	// and read only while KeyChatAwareness is on; empty sends nothing.
+	KeyChatAwarenessMode = "chat_awareness_mode"
 	// KeyChatMessageDeliveryLimit caps one agent-to-agent exchange between two chats (KAS's
 	// sendMessageDeliveryLimit), sent at initialize, so it applies when the engine restarts.
 	KeyChatMessageDeliveryLimit = "chat_message_delivery_limit"
@@ -141,7 +142,7 @@ const (
 // be silenced (push.TestPermissionKindHasNoSettingsKey). The master switch still covers it.
 
 // DefaultChatRetentionDays is the default for chat_retention_days: -1 forever, 0 delete on
-// close (History hidden), N purge after N days. The purge treats <= 0 as no purge. GET
+// close, N purge after N days. The purge treats <= 0 as no purge. GET
 // /api/settings resolves it, so the client carries no copy.
 const DefaultChatRetentionDays = 7
 
@@ -172,6 +173,7 @@ var KnownKeys = map[string]struct{}{
 	KeyDebugLogs:                {},
 	KeyEngineHeapMiB:            {},
 	KeyHighThroughput:           {},
+	KeyInterruptMode:            {},
 	KeyOutputStyle:              {},
 	KeySpecPlanning:             {},
 	KeySpecPlanningAskFirst:     {},
@@ -181,6 +183,7 @@ var KnownKeys = map[string]struct{}{
 	KeyWorkflowsEnabled:         {},
 	KeyChatMessaging:            {},
 	KeyChatAwareness:            {},
+	KeyChatAwarenessMode:        {},
 	KeyChatMessageDeliveryLimit: {},
 	KeyWorkflowLaunch:           {},
 	KeyWorkflowCreatorEffort:    {},

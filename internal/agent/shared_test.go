@@ -196,10 +196,12 @@ func (rt *Runtime) handleCommand(w http.ResponseWriter, r *http.Request) {
 	rt.dispatcher.ServeHTTP(w, r)
 }
 
+// postCmd posts cmd as marotte's own page, so what it sends is the user's (apicaller.Is).
 func postCmd(t *testing.T, h *Runtime, cmd marotte.ClientCommand) *httptest.ResponseRecorder {
 	t.Helper()
 	body, _ := json.Marshal(cmd)
 	req := httptest.NewRequest(http.MethodPost, "/api/command", strings.NewReader(string(body)))
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	rec := httptest.NewRecorder()
 	h.handleCommand(rec, req)
 	return rec
@@ -350,15 +352,46 @@ func (rt *Runtime) stagePromptTurnCalling(tb testing.TB, chatID marotte.ChatID, 
 	if !rt.coord.startTurn(tb.Context(), command.TurnRef{Chat: chatID, Turn: id}, cancel) {
 		tb.Fatalf("startTurn(%q, %q) refused, so there is no turn to stage", chatID, id)
 	}
-	// The staged prompt counts as sent, so the turn_start a test delivers next is its own.
-	if _, err := rt.coord.AwaitPromptSend(tb.Context(), chatID, id); err != nil {
+	// The staged prompt counts as sent and written, so the turn_start a test delivers next is its own and kiro-cli has
+	// a turn to file a steer in.
+	commit, err := rt.coord.AwaitPromptSend(tb.Context(), chatID, id)
+	if err != nil {
 		tb.Fatalf("AwaitPromptSend(%q, %q): %v", chatID, id, err)
+	}
+	if commit != nil {
+		if err := commit(); err != nil {
+			tb.Fatalf("the staged prompt's write commit refused: %v", err)
+		}
+		rt.awaitPrompted(tb, chatID, id)
 	}
 	log, ok := rt.coord.OwnTurn(chatID)
 	if !ok {
 		tb.Fatalf("OwnTurn(%q) holds nothing after startTurn", chatID)
 	}
 	return id, log
+}
+
+// awaitPrompted waits for the commit's mark of turnID prompted (chatLifecycle.markPrompted runs it on a spawned
+// goroutine): a test entering a synctest bubble next would otherwise have that goroutine, started outside the bubble,
+// close a channel the bubble made.
+func (rt *Runtime) awaitPrompted(tb testing.TB, chatID marotte.ChatID, turnID string) {
+	tb.Helper()
+	lc := rt.coord.turns.testLifecycle(chatID)
+	if lc.reg == nil || lc.reg.runHost == nil {
+		return
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		lc.mu.Lock()
+		_, e := lc.run.byTurn(turnID)
+		done := lc.ended || (e != nil && e.prompted)
+		lc.mu.Unlock()
+		if done {
+			return
+		}
+		if time.Now().After(deadline) {
+			tb.Fatalf("turn %s of %s was not marked prompted after its write commit", turnID, chatID)
+		}
+	}
 }
 
 func endTurn(t *testing.T, h *Runtime, chatID marotte.ChatID, turnID string) {

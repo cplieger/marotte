@@ -1,6 +1,8 @@
 // Twin of web-terminal-ui src/features/tabs/{index,strip}.ts; when changing drag
 // behaviour or its constants, check the other app. Both judge a live drag's viewport
 // against the PRESS-time frame, so a move a hold lifted across still ends the drag.
+// marotte-only: the release hit test over `#tab-sections`, the scroll listener filtered to the
+// pressed row's scrollers, and no press on a row in a `data-folded` list.
 
 import { announce } from "./legacy-ui/announce.js";
 
@@ -97,7 +99,6 @@ type DragEnd = "commit" | "cancelled" | "tap" | "abandoned";
  *  primary gesture at a time. */
 interface PendingPress {
   readonly el: HTMLElement;
-  readonly list: HTMLElement | null;
   readonly pointerId: number;
   readonly pointerType: string;
   readonly clientX: number;
@@ -105,6 +106,11 @@ interface PendingPress {
   readonly frame: ViewportBox;
   holdTimer: ReturnType<typeof setTimeout> | null;
   releaseViewport: () => void;
+}
+
+function inBox(el: Element, x: number, y: number): boolean {
+  const box = el.getBoundingClientRect();
+  return box.width > 0 && x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
 }
 
 function isSlotRow(node: Element | null): node is HTMLElement {
@@ -222,9 +228,13 @@ class TabDragController {
       this.clearPending();
     }
   };
-  // A press landing during a momentum scroll must not lift.
-  private readonly boundPendingScroll = (): void => {
-    this.clearPending();
+  // A press landing during a momentum scroll must not lift. Only a scroller holding the row
+  // counts: the transcript streaming a reply scrolls all the time.
+  private readonly boundPendingScroll = (e: Event): void => {
+    const pending = this.pending;
+    if (pending !== null && e.target instanceof Node && e.target.contains(pending.el)) {
+      this.clearPending();
+    }
   };
   private readonly boundPendingMove = (e: PointerEvent): void => {
     this.onPressMove(e);
@@ -301,10 +311,12 @@ class TabDragController {
 
   private arm(tabEl: HTMLElement, e: PointerEvent): void {
     this.clearPending();
-    const list = tabEl.parentElement;
+    // A folded list shows only its active row and is sliding or shut, so it has no order to drag.
+    if (tabEl.parentElement?.hasAttribute("data-folded") === true) {
+      return;
+    }
     const pending: PendingPress = {
       el: tabEl,
-      list,
       pointerId: e.pointerId,
       pointerType: e.pointerType,
       clientX: e.clientX,
@@ -314,7 +326,8 @@ class TabDragController {
       releaseViewport: onViewportChange(this.boundPendingViewport),
     };
     this.pending = pending;
-    list?.addEventListener("scroll", this.boundPendingScroll, { passive: true });
+    // `scroll` does not bubble, so the capture phase on `document` sees every scroller's.
+    document.addEventListener("scroll", this.boundPendingScroll, { capture: true, passive: true });
     const { holdMs } = pointerDragActivation(e.pointerType);
     if (holdMs > 0) {
       pending.holdTimer = setTimeout(() => {
@@ -347,7 +360,7 @@ class TabDragController {
       clearTimeout(pending.holdTimer);
     }
     pending.releaseViewport();
-    pending.list?.removeEventListener("scroll", this.boundPendingScroll);
+    document.removeEventListener("scroll", this.boundPendingScroll, true);
     window.removeEventListener("pointermove", this.boundPendingMove, true);
     window.removeEventListener("pointerup", this.boundPendingRelease, true);
     window.removeEventListener("pointercancel", this.boundPendingRelease, true);
@@ -417,6 +430,8 @@ class TabDragController {
     const rect = tabEl.getBoundingClientRect();
     // Cloned BEFORE the row takes the slot's look, so the ghost is the pristine row.
     this.dragGhost = tabEl.cloneNode(true) as HTMLElement;
+    // A row lifted mid-entry would play the entry on its ghost in place of the bob.
+    this.dragGhost.classList.remove("entering");
     this.dragGhost.classList.add("tab-drag-ghost");
     this.dragGhost.style.width = `${String(rect.width)}px`;
     this.dragGhost.style.left = `${String(rect.left)}px`;
@@ -684,9 +699,10 @@ class TabDragController {
     }
   }
 
-  /** A release decides by POSITION, never by a slot a timer had pending. One outside
-   *  the strip is a refused drop and reverts, as an HTML5 drop outside its target
-   *  does. */
+  /** A release decides by POSITION, never by a slot a timer had pending. It commits inside the
+   *  dragged list, or inside `#tab-sections` outside every other section (its own header, the
+   *  empty tail, the History row), where the slot is the list's end or its nearest row. Anywhere
+   *  else is a refused drop and reverts, as an HTML5 drop outside its target does. */
   private onRelease(e: PointerEvent): void {
     this.endRestNet();
     if (!this.dragMoved) {
@@ -695,19 +711,30 @@ class TabDragController {
       this.endDrag("tap");
       return;
     }
-    const box = this.dragList?.getBoundingClientRect();
-    const inside =
-      box !== undefined &&
-      e.clientX >= box.left &&
-      e.clientX <= box.right &&
-      e.clientY >= box.top &&
-      e.clientY <= box.bottom;
-    if (!inside) {
+    if (!this.releaseCommits(e.clientX, e.clientY)) {
       this.endDrag("cancelled");
       return;
     }
     this.commitSlot(this.dropTargetBefore(e.clientY));
     this.endDrag("commit");
+  }
+
+  private releaseCommits(x: number, y: number): boolean {
+    const list = this.dragList;
+    if (list === null) {
+      return false;
+    }
+    if (inBox(list, x, y)) {
+      return true;
+    }
+    const column = list.closest<HTMLElement>("#tab-sections");
+    if (column === null || !inBox(column, x, y)) {
+      return false;
+    }
+    const own = list.closest(".side-section");
+    return ![...column.querySelectorAll<HTMLElement>(".side-section")].some(
+      (s) => s !== own && inBox(s, x, y),
+    );
   }
 
   /** Take the strip back to a settled state: every end re-projects (a commit from its order, else
@@ -736,8 +763,8 @@ class TabDragController {
     this.rest = { at: null, movedAt: 0 };
     if (end === "commit" && changed) {
       this.setChildrenCollapsed(list, false);
-      // The projection may undo the drop (the pin partition), so the order it
-      // applied, not the previewed one, is what slides in and what is announced.
+      // The projection may undo the drop, so the order it applied, not the previewed one, is
+      // what slides in and what is announced.
       const applied = this.flipTo(() => {
         const result = this.reorderCallback?.(order) ?? null;
         this.reproject();

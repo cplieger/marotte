@@ -106,23 +106,25 @@ func TestEngineLive_ASettingTheEngineStartFailedToSendIsSentAtTheNextOpen(t *tes
 	}
 }
 
-func TestOpenBridge_AFailedContentCollectionAssertIsResentAtTheNextOpen(t *testing.T) {
+func TestOpenBridge_AFailedContentCollectionNotifyIsResentAtTheNextOpen(t *testing.T) {
 	configDir := t.TempDir()
+	rewriteConfigByHand(t, configDir, `{"content_collection_enabled":false}`)
 	h, src := resendFixture(t, configDir, nil, nil)
 	openChat(t, h, "c1")
 	lane := src.lane
-	lane.setCallErr(marotte.MethodSetConfigOption, errors.New("broken pipe"))
+	lane.setNotifyErr(marotte.MethodContentCollectionSettingsChanged, errors.New("broken pipe"))
 	rewriteConfigByHand(t, configDir, `{"content_collection_enabled":true}`)
 	openChat(t, h, "c1")
-	lane.mu.Lock()
-	delete(lane.callErrs, marotte.MethodSetConfigOption)
-	lane.mu.Unlock()
+	lane.setNotifyErr(marotte.MethodContentCollectionSettingsChanged, nil)
 
 	for i := range 2 {
 		openChat(t, h, "c1")
-		if got := contentCollectionWrites(lane); len(got) != 2 {
-			t.Errorf("after open %d since the engine healed its content-collection asserts are %v, want the failed one "+
-				"and one resend", i+1, got)
+		if got := contentCollectionWrites(lane); !slices.Equal(got, []bool{true, true}) {
+			t.Errorf("after open %d since the engine healed its content-collection notifications are %v, want the failed "+
+				"one and one resend, [true true]", i+1, got)
+		}
+		if got := lane.notified(marotte.MethodContentCollectionSettingsChanged); len(got) != 1 {
+			t.Errorf("after open %d the engine received %d content-collection notifications, want 1", i+1, len(got))
 		}
 	}
 }
@@ -151,17 +153,32 @@ func TestOpenBridge_AMissedPushIsHeldOverAnUnreadableDocumentAndResentOnceItPars
 	}
 }
 
-// A door's failed assert leaves the engine's record unconfirmed, so the open's engine sync asserts it before the open
-// returns, once.
-func TestOpenBridge_ADoorWhoseContentCollectionAssertFailedIsAssertedBeforeTheOpenReturns(t *testing.T) {
-	h, src := resendFixture(t, t.TempDir(), nil, func(br *fakeBridge) {
-		br.callErrs = map[string]error{marotte.MethodSetConfigOption: errors.New("broken pipe")}
-	})
-	for i := range 2 {
-		openChat(t, h, "c1")
-		if got := contentCollectionWrites(src.lane); len(got) != 1 || got[0] != marotte.ConfigValueContentCollectionDisabled {
-			t.Errorf("after open %d the engine's content-collection asserts are %v, want one %q: "+
-				"a door whose assert failed leaves KAS on its opted-in default", i+1, got, marotte.ConfigValueContentCollectionDisabled)
-		}
+// The engine starts on the resolved value, which initialize carries, so a start sends no notification.
+func TestEngineSpawn_StartsOnTheResolvedContentCollection(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{name: "absent_follows_kiro_cli_on", body: `{}`, want: true},
+		{name: "stored_off", body: `{"content_collection_enabled":false}`},
+		{name: "stored_on", body: `{"content_collection_enabled":true}`, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configDir := t.TempDir()
+			rewriteConfigByHand(t, configDir, tc.body)
+			h, src := resendFixture(t, configDir, nil, nil)
+			openChat(t, h, "c1")
+			e := src.current()
+			e.mu.Lock()
+			got := e.contentCollection
+			e.mu.Unlock()
+			if got != tc.want {
+				t.Errorf("the engine started on %s with content collection %v, want %v", tc.body, got, tc.want)
+			}
+			if writes := contentCollectionWrites(src.lane); len(writes) != 0 {
+				t.Errorf("the start and first open sent content-collection notifications %v, want none", writes)
+			}
+		})
 	}
 }

@@ -4,6 +4,7 @@
 // The server is the source of truth: a prompt posts a command and SSE drives rendering.
 
 import type { ServerEvent } from "./types.js";
+import type { InterruptMode } from "./wire/types.gen.js";
 import { getActiveId, getSessions } from "./store.js";
 import { effect } from "@cplieger/reactive";
 import { mountLiveRegions } from "./legacy-ui/announce.js";
@@ -18,6 +19,7 @@ import { initPointerModeToggle, revealPointerModeToggle } from "./pointer-mode.j
 import { initClockSetting } from "./clock-setting.js";
 import { initPageTitleFit } from "./page-title.js";
 import { initRolePicker } from "./role-picker.js";
+import { initProfilePill } from "./profile-pill.js";
 import * as sse from "./sse-adapter.js";
 import { installMirrors } from "./mirror.js";
 import { initUI, renderIdentity } from "./settings.js";
@@ -64,6 +66,7 @@ import { initTerminalStream } from "./terminal-stream.js";
 import { initTooltips } from "./tooltip.js";
 import { guardBackspaceChars } from "./backspace-char.js";
 import { initSidebarHistory } from "./sidebar-history.js";
+import { initRecentClosed } from "./recent-closed.js";
 import { initNewChatControl } from "./new-chat-control.js";
 import { initKeyboardShortcuts } from "./keys.js";
 import { openShortcutsSheet } from "./shortcuts.js";
@@ -314,6 +317,7 @@ function init(): void {
     void toggleDocsView();
   });
   initSidebarHistory();
+  initRecentClosed();
   initTerminalStream();
   initTooltips();
   guardBackspaceChars();
@@ -452,7 +456,7 @@ function setupInput(): void {
     openFilePicker();
   });
   initPromptInput(
-    (text: string) => {
+    (text: string, mode: InterruptMode) => {
       // The PROJECTION's active subject, not the store pointer: optimistic closes leave a closed
       // chat's row until confirmed, and the empty state must create rather than send into it.
       if (activeChatRef() === "") {
@@ -461,7 +465,7 @@ function setupInput(): void {
         void createSession(text);
         return undefined;
       }
-      return sendPrompt(text);
+      return sendPrompt(text, mode);
     },
     cancelActiveTurn,
     stagedAttachment,
@@ -493,6 +497,7 @@ function setupInput(): void {
   initRolePicker(() => {
     void fetchCatalog();
   });
+  initProfilePill();
   // Queued-prompt chips (pending sends buffered while a turn is in flight).
   initPendingSteers();
   // The composer band's live-run rows; a pure projection of the run store.

@@ -316,6 +316,17 @@ describe("chat.send_queued_now", () => {
   });
 });
 
+describe("chat.resume_queue", () => {
+  it("sends the chat's resume_queue with no payload", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true } });
+    const { resumeQueue } = await import("./chat.js");
+    await resumeQueue.dispatch({ chatID: "c1" }).outcome;
+    expect(mockSend.mock.calls.map(([cmd]) => cmd)).toEqual([
+      { type: "resume_queue", chat_id: "c1" },
+    ]);
+  });
+});
+
 describe("chat.load_sessions", () => {
   /** The reply as the server sends it. The per-list verdicts are REQUIRED by the generated decoder
    *  (no omitempty in Go), so an absent verdict cannot read as success. */

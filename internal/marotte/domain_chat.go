@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"math"
 	"slices"
-	"strings"
 )
 
 // ToolKind identifies the category of a tool invocation, assigned by kiro-cli and
@@ -520,6 +519,9 @@ type Chat struct {
 	// ThinkingActive is what the session last reported.
 	Thinking       string `json:"thinking,omitempty"`
 	ThinkingActive string `json:"thinking_active,omitempty"`
+	// SecurityProfile is the policyfile profile id this chat's session doors send. Empty until the chat's first
+	// door gives it the Settings profile; a fork or tangent copies its parent's.
+	SecurityProfile string `json:"security_profile,omitempty"`
 	// LastTurnOutcome is how the newest finished non-carrier turn ended, written with TurnCount.
 	LastTurnOutcome TurnOutcome `json:"last_turn_outcome,omitempty"`
 	// PendingModel is a model pick awaiting its apply between turns.
@@ -530,8 +532,6 @@ type Chat struct {
 	// Never trimmed: each still holds history on disk, so the reaper spares the whole
 	// chain. Maintained by RecordSession.
 	PriorACPSessionIDs []string `json:"prior_acp_session_ids,omitempty"`
-	// InterruptMode is what Send does while a turn runs; empty reads as steer.
-	InterruptMode InterruptMode `json:"interrupt_mode,omitempty"`
 	// Run is the chat's ordered list of what runs next, as its live lifecycle last wrote it (agent's runList owns it);
 	// a life starts from SanitizeRun of it.
 	Run []RunEntry `json:"run,omitempty"`
@@ -617,7 +617,7 @@ func (c *Chat) recomputeCredits() {
 	}
 }
 
-// InterruptMode is a chat's choice of what a message sent mid-turn does.
+// InterruptMode is what a message sent while a turn runs does: a send's own choice, else the interrupt_mode setting.
 type InterruptMode string
 
 const (
@@ -633,7 +633,7 @@ func (m InterruptMode) Valid() bool {
 }
 
 // MaxQueuedPrompts caps the rows on Chat.Run, which the header carries to every device. A
-// user's queue_prompt stops short of it, so a shutdown's carried row always has a slot.
+// user's queue_prompt stops short of it, so a carried row always has a slot.
 const MaxQueuedPrompts = 20
 
 // carrySeparator joins the steers one carried row resends.
@@ -642,8 +642,8 @@ const carrySeparator = "\n\n"
 // CarryCost is the bytes a steer of this text adds to its carried row, separator included.
 func CarryCost(text string) int { return len(text) + len(carrySeparator) }
 
-// QueuedPrompt is the message a row, unread or retry entry of Chat.Run sends. A row with Resends is CARRIED,
-// written at shutdown from unread steers; a list holds at most one carried row, and it is held. Label is the row's
+// QueuedPrompt is the message a row or retry entry of Chat.Run sends. A row with Resends is CARRIED: an
+// earlier version's shutdown wrote it from unread steers, and it stays held. Label is the row's
 // PromptCommand.DisplayText; Model is the POST's model, which seeds a new record's.
 type QueuedPrompt struct {
 	// Caller is set on a row an API caller queued.
@@ -658,18 +658,6 @@ type QueuedPrompt struct {
 
 // Carried reports whether the row resends dropped steers.
 func (q *QueuedPrompt) Carried() bool { return len(q.Resends) > 0 }
-
-// CarriedRow is the carried row for unread steers, texts in the order given.
-func CarriedRow(id string, texts, resends []string) QueuedPrompt {
-	return QueuedPrompt{ID: id, Text: strings.Join(texts, carrySeparator), Resends: resends}
-}
-
-// Absorb appends more steers to q, keeping q's id; q keeps a caller only when neither row is the user's (SharedCaller).
-func (q *QueuedPrompt) Absorb(more *QueuedPrompt) {
-	q.Text += carrySeparator + more.Text
-	q.Resends = append(q.Resends, more.Resends...)
-	q.Caller = SharedCaller([]*Caller{q.Caller, more.Caller})
-}
 
 // SessionChain returns every KAS session id this chat has run on, current one last: the
 // reaper's keep-set.
@@ -740,6 +728,7 @@ func (c *Chat) Header() ChatHeader {
 		EffortActive:        c.EffortActive,
 		Thinking:            c.Thinking,
 		ThinkingActive:      c.ThinkingActive,
+		SecurityProfile:     c.SecurityProfile,
 		Usage:               c.Usage,
 		CreatedAt:           c.CreatedAt,
 		UpdatedAt:           c.UpdatedAt,
@@ -748,8 +737,7 @@ func (c *Chat) Header() ChatHeader {
 		PendingEffort:       c.PendingEffort,
 		SupervisedMode:      c.SupervisedMode,
 		CompactionWatermark: c.CompactionWatermark,
-		InterruptMode:       c.InterruptMode,
-		Run:                 RunViewOf(c.Run, c.RunVersion, c.InterruptMode),
+		Run:                 RunViewOf(c.Run, c.RunVersion),
 		Tangent:             c.Tangent,
 		Bot:                 c.Bot.summary(),
 	}
@@ -817,6 +805,8 @@ type ChatHeader struct {
 	// Thinking and ThinkingActive mirror Chat's for the effort slider's Off stop.
 	Thinking       string `json:"thinking,omitempty"`
 	ThinkingActive string `json:"thinking_active,omitempty"`
+	// SecurityProfile mirrors Chat's for the composer's profile pill.
+	SecurityProfile string `json:"security_profile,omitempty"`
 	// PendingModel and PendingEffort mirror Chat's for the model badge and the pill's card.
 	PendingModel  string               `json:"pending_model,omitempty"`
 	PendingEffort string               `json:"pending_effort,omitempty"`
@@ -826,8 +816,6 @@ type ChatHeader struct {
 	CompactionWatermark string `json:"compaction_watermark,omitempty"`
 	// PriorACPSessionIDs mirrors Chat's: the retention sweep reads headers only.
 	PriorACPSessionIDs []string `json:"prior_acp_session_ids,omitempty"`
-	// InterruptMode mirrors Chat's for the composer.
-	InterruptMode InterruptMode `json:"interrupt_mode,omitempty"`
 	// Run is Chat.Run as the dock and the composer draw it.
 	Run RunView `json:"run"`
 	// Bot is the Bot's summary; absent on a regular chat.

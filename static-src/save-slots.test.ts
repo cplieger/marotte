@@ -17,6 +17,8 @@ const EXPECTED_KEYS = [
   "notify_run_outcome",
   // Chat retention — one value, two controls, so one slot on the section title
   "chat_retention_days",
+  // Composer (settings.ts initInterruptModeControl)
+  "interrupt_mode",
   // Links (settings.ts panelSwitches)
   "guard_payload_links",
   "mcp_wait_for_ready",
@@ -41,6 +43,7 @@ const EXPECTED_KEYS = [
   "chat_messaging_enabled",
   "chat_message_delivery_limit",
   "chat_awareness_enabled",
+  "chat_awareness_mode",
   "work_validation",
   "auto_routing",
   "auto_delegation",

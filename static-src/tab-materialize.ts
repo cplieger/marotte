@@ -2,7 +2,7 @@
 // the singletons load lazily (static imports would close cycles). DOM-free; store reads untracked.
 
 import type { TabKind, TabSubject } from "./types.js";
-import type { Route } from "./route-path.js";
+import type { TabRoute } from "./route-path.js";
 import { TAB_ICONS, TAB_VIEWS, type TabDotStatus, type TabViewSpec } from "./tab-view.js";
 import { get, subagentStatusFor, turnLive } from "./store.js";
 import { runLabelOf } from "./run-store.js";
@@ -432,39 +432,6 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         },
       };
     }
-    case "history":
-      return {
-        name: "History",
-        icon: TAB_ICONS.history,
-        view: TAB_VIEWS.history,
-        route: { kind: "history", tab: "chats" },
-        owns: subject.owns,
-        ...parentOf(subject),
-        onShow: () => {
-          lazily(
-            import("./history.js").then(({ loadHistoryView }) => {
-              loadHistoryView();
-            }),
-          );
-        },
-        refresh: () => {
-          lazily(
-            import("./history.js").then(({ refreshHistoryView }) => {
-              refreshHistoryView();
-            }),
-          );
-          return SHOWN;
-        },
-        // Unlike docs, this page needs a close hook: it holds a dispatch, an
-        // AbortController and a debounce timer.
-        onClose: () => {
-          lazily(
-            import("./history.js").then(({ teardownHistoryView }) => {
-              teardownHistoryView();
-            }),
-          );
-        },
-      };
     case "docs":
       return {
         name: "Kiro docs",
@@ -497,7 +464,7 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
 /** The subject a URL route names, the inverse of each case's `route`, total with no default, so a
  *  new kind is one compile error for both directions. A singleton's sub-position is DROPPED; a
  *  FILES ref is the ORIGIN a route mints (`filesTabForRoute` addresses open browsers). */
-export function subjectForRoute(route: Route): { kind: TabKind; ref: string } {
+export function subjectForRoute(route: TabRoute): { kind: TabKind; ref: string } {
   switch (route.kind) {
     case "chat":
       return { kind: "chat", ref: route.id };
@@ -517,8 +484,6 @@ export function subjectForRoute(route: Route): { kind: TabKind; ref: string } {
       return { kind: "git", ref: "" };
     case "files":
       return { kind: "files", ref: route.path };
-    case "history":
-      return { kind: "history", ref: "" };
     case "docs":
       return { kind: "docs", ref: "" };
     case "web":

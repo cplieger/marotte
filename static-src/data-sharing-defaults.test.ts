@@ -1,5 +1,5 @@
 // The Data sharing switches as static/index.html ships them, which is what stays on screen until
-// the kiro-cli settings read lands, so each must start at its key's default.
+// the settings reads land, so each must start at its key's default.
 import { describe, it, expect } from "vitest";
 import indexHtml from "../static/index.html?raw";
 
@@ -25,5 +25,11 @@ describe("kiro-cli telemetry switch before settings load", () => {
     expect(hint?.textContent).toContain("its usage telemetry");
     expect(hint?.textContent).toContain("its legacy toolkit telemetry");
     expect(hint?.textContent).toContain("On by default, as in kiro-cli.");
+  });
+});
+
+describe("content sharing switch before settings load", () => {
+  it("paints on, kiro-cli's own default", () => {
+    expect(shippedSwitch("flag-content-collection").checked).toBe(true);
   });
 });

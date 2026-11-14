@@ -81,7 +81,10 @@ beforeAll(() => {
   document.body.innerHTML = `
     <form id="prompt-form" action="javascript:void 0">
       <textarea id="prompt-input"></textarea>
-      <button id="midturn-send-btn" type="button" hidden></button>
+      <div id="midturn-send" class="send-split" role="group" aria-label="Send mid-turn" hidden>
+        <button id="midturn-send-btn" type="button" hidden></button>
+        <button id="midturn-alt-btn" type="button" class="send-btn" hidden></button>
+      </div>
       <button id="send-btn" type="submit"></button>
     </form>
     <button id="switch-model-btn">

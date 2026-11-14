@@ -10,7 +10,6 @@ const {
   mergeTangentChat,
   openRunView,
   setSupervisedDispatch,
-  setInterruptDispatch,
   compactDispatch,
   launchDispatch,
   recipesDispatch,
@@ -33,7 +32,6 @@ const {
   openTangentChat: vi.fn(),
   openRunView: vi.fn(),
   setSupervisedDispatch: vi.fn(),
-  setInterruptDispatch: vi.fn(),
   compactDispatch: vi.fn(),
   launchDispatch: vi.fn(),
   recipesDispatch: vi.fn(),
@@ -48,7 +46,6 @@ const {
 
 let activeID = "";
 let supervised: boolean | undefined;
-let interruptMode: "steer" | "queue" | undefined;
 let thinking = false;
 let messageCount = 3;
 let tangent = false;
@@ -59,7 +56,6 @@ function session():
       id: string;
       name: string;
       supervised_mode: boolean | undefined;
-      interrupt_mode: "steer" | "queue" | undefined;
       message_count: number;
       tangent: boolean;
     }
@@ -70,7 +66,6 @@ function session():
         id: activeID,
         name: "My chat",
         supervised_mode: supervised,
-        interrupt_mode: interruptMode,
         message_count: messageCount,
         tangent,
       };
@@ -104,7 +99,6 @@ vi.mock("./toast.js", () => ({ error: toastError, success: vi.fn(), info: vi.fn(
 vi.mock("./notice-subject.js", () => ({ chatNotice }));
 vi.mock("./actions/chat.js", () => ({
   setSupervised: { dispatch: setSupervisedDispatch },
-  setInterruptMode: { dispatch: setInterruptDispatch },
   compactChat: { dispatch: compactDispatch },
   renameChat: { dispatch: renameDispatch },
   downloadKiroSession: { dispatch: sessionDispatch },
@@ -196,7 +190,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   activeID = "c-active";
   supervised = false;
-  interruptMode = undefined;
   thinking = false;
   messageCount = 3;
   tangent = false;
@@ -210,8 +203,8 @@ beforeEach(() => {
 });
 
 describe("the chat-options menu", () => {
-  // Six actions, then the two switches: an addition or loss shows here.
-  it("holds exactly eight entries, the switches last", async () => {
+  // Six actions, then the switch: an addition or loss shows here. What Send does mid-turn is Settings, General.
+  it("holds exactly seven entries, the switch last", async () => {
     const { card } = await mountMenu();
     const names = Array.from(card.querySelectorAll(".chat-opt-name")).map((n) => n.textContent);
     expect(names).toEqual([
@@ -221,16 +214,15 @@ describe("the chat-options menu", () => {
       "Merge into parent chat",
       "Compact the context",
       "Rename chat",
-      "Queue messages",
       "Supervised mode",
     ]);
   });
 
-  // The switches are labels with a checkbox; the rest are buttons.
-  it("renders the switches as labels with a checkbox and the rest as buttons", async () => {
+  // The switch is a label with a checkbox; the rest are buttons.
+  it("renders the switch as a label with a checkbox and the rest as buttons", async () => {
     const { card } = await mountMenu();
     expect(card.querySelectorAll(".chat-opt-btn")).toHaveLength(6);
-    for (const id of ["chat-opt-queue", "chat-opt-supervised"]) {
+    for (const id of ["chat-opt-supervised"]) {
       const row = card.querySelector<HTMLLabelElement>(`label.chat-opt-row[for="${id}"]`);
       expect(row?.querySelector<HTMLInputElement>("input")?.type, id).toBe("checkbox");
     }
@@ -740,53 +732,12 @@ describe("supervised mode", () => {
   });
 });
 
-// What Send means while a turn runs: a per-chat switch, on for queue, off (steer) the default.
-describe("the interrupt mode", () => {
-  function box(card: HTMLElement): HTMLInputElement {
-    const el = card.querySelector<HTMLInputElement>("#chat-opt-queue");
-    if (el === null) {
-      throw new Error("no queue switch");
-    }
-    return el;
-  }
-
-  it("is off for a chat that has recorded no mode", async () => {
-    const { card } = await mountMenu();
-    expect(box(card).checked).toBe(false);
-  });
-
-  it("mirrors the active chat's recorded mode", async () => {
-    interruptMode = "queue";
-    const { card } = await mountMenu();
-    expect(box(card).checked).toBe(true);
-  });
-
-  it("dispatches queue when switched on and steer when switched off", async () => {
-    const { card } = await mountMenu();
-    box(card).checked = true;
-    box(card).dispatchEvent(new Event("change"));
-    expect(setInterruptDispatch).toHaveBeenLastCalledWith({ chatID: "c-active", mode: "queue" });
-    box(card).checked = false;
-    box(card).dispatchEvent(new Event("change"));
-    expect(setInterruptDispatch).toHaveBeenLastCalledWith({ chatID: "c-active", mode: "steer" });
-  });
-
-  it("records nothing and resets the visual with no active chat", async () => {
-    activeID = "";
-    const { card } = await mountMenu();
-    box(card).checked = true;
-    box(card).dispatchEvent(new Event("change"));
-    expect(setInterruptDispatch).not.toHaveBeenCalled();
-    expect(box(card).checked).toBe(false);
-  });
-});
-
 // initChatOptions is called once from app.ts, but the latch is what makes a
 // second call safe — without it a re-init would append a second set of rows.
 describe("initChatOptions", () => {
   it("is idempotent", async () => {
     const { card, mod } = await mountMenu();
     mod.initChatOptions();
-    expect(card.querySelectorAll(".chat-opt-name")).toHaveLength(8);
+    expect(card.querySelectorAll(".chat-opt-name")).toHaveLength(7);
   });
 });

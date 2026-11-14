@@ -376,14 +376,36 @@ func TestFailsafe_ACompactPressJoinsTheFailsafeCompaction(t *testing.T) {
 // Steers the stopped turn left unread were written for the task it ran: they are sent after the compaction and
 // before the resume.
 func TestFailsafe_UnreadSteersGoAfterTheCompactionAndBeforeTheResume(t *testing.T) {
-	w := firedOn(t)
+	w := firedOnWithASteer(t)
 	_, e := w.l.find("m-a")
 	w.l.turnClosed(listClose{turnID: e.turnID, seq: w.nextSeq}, w.facts())
-	w.l.endsChanged(1, 0, []string{"s-1"}, false, true, w.facts())
-	w.l.closeEndsResolved("m-a", false, true, w.facts())
-	if got, want := w.order(), "m-a:closing compact-1:pending m-unread:pending m-resume:pending m-q1:paused"; got != want {
+	w.l.turnEnded([]string{"m-s"})
+	if got, want := w.order(), "m-a:closing compact-1:pending m-s:pending m-resume:pending m-q1:paused"; got != want {
 		t.Errorf("list = %q, want %q", got, want)
 	}
+}
+
+// steerLeftUnread stands id on w's list as the reader's steer in kiro-cli's buffer, then ends the turn with it unread.
+func (w *tableWorld) steerLeftUnread(id string) {
+	w.l.insertPending(&runEntry{
+		id: id, kind: marotte.RunKindRow, origin: marotte.RunFromPrompt, state: marotte.RunInKAS, offer: 1,
+		want: marotte.RunWantEither, row: &marotte.QueuedPrompt{ID: id, Text: id},
+	})
+	w.l.turnEnded([]string{id})
+}
+
+// firedOnWithASteer is firedOn with the reader's steer m-s in kiro-cli's buffer when the failsafe stops m-a.
+func firedOnWithASteer(t *testing.T) *tableWorld {
+	t.Helper()
+	w := newTableWorld()
+	w.head()
+	w.user("m-s", marotte.RunWantEither)
+	w.queued("m-s")
+	w.send("m-q1", marotte.SendPlain, marotte.InterruptQueue)
+	if plan := w.fire("m-a", 1); plan.arm != stopRunning || plan.entry == nil || plan.entry.id != "m-a" {
+		t.Fatalf("Setup: a reading at 95%% during m-a's turn stopped %+v, want m-a's running turn; list %s", plan, w.order())
+	}
+	return w
 }
 
 // A turn whose reply finished before the cancel landed has nothing to continue: the compaction still runs first,
@@ -563,12 +585,11 @@ func TestFailsafe_AReaderStopBeforeTheResumeStartsWithdrawsIt(t *testing.T) {
 			w.l.compactionStart("compact-1", w.facts())
 			w.wireOpen("t-w", true)
 		}},
-		{name: "the stopped turn's unread steers", drawn: "m-unread", setup: func(t *testing.T, w *tableWorld) {
+		{name: "the stopped turn's unread steers", drawn: "m-s", setup: func(t *testing.T, w *tableWorld) {
 			_, e := w.l.find("m-a")
 			token := e.res.Token
 			w.l.turnClosed(listClose{turnID: e.turnID, seq: w.nextSeq}, w.facts())
-			w.l.endsChanged(1, 0, []string{"s-1"}, false, true, w.facts())
-			w.l.closeEndsResolved("m-a", false, true, w.facts())
+			w.steerLeftUnread("m-s")
 			w.l.tailEnded("m-a", false)
 			w.held = false
 			w.l.reservationReleased(token)
@@ -576,8 +597,8 @@ func TestFailsafe_AReaderStopBeforeTheResumeStartsWithdrawsIt(t *testing.T) {
 			w.l.compactionStart("compact-1", w.facts())
 			w.l.compactionEnded("compact-1", true, nil)
 			w.advance()
-			w.running("m-unread")
-			if got, want := w.order(), "m-unread:running m-resume:pending m-q1:paused"; got != want {
+			w.running("m-s")
+			if got, want := w.order(), "m-s:running m-resume:pending m-q1:paused"; got != want {
 				t.Fatalf("Setup: list = %q, want %q", got, want)
 			}
 		}},
@@ -650,7 +671,7 @@ func TestFailsafe_ClosingTheChatDropsAWaitingResume(t *testing.T) {
 		t.Fatalf("Setup: list = %q, want %q", got, want)
 	}
 
-	next := w.l.endLife()
+	next, _ := w.l.endLife()
 	w.held = false
 	w.l.takeEffects()
 	w.advance()
@@ -860,14 +881,13 @@ func TestFailsafe_ATurnTheReaderSentAllowsTheNextResume(t *testing.T) {
 			_, r := w.l.find("m-resume")
 			token := r.res.Token
 			w.l.turnClosed(listClose{turnID: r.turnID, seq: w.nextSeq, clean: true, completed: true}, w.facts())
-			w.l.endsChanged(1, 0, []string{"s-1"}, false, true, w.facts())
-			w.l.closeEndsResolved("m-resume", false, true, w.facts())
+			w.steerLeftUnread("m-s")
 			w.l.tailEnded("m-resume", false)
 			w.held = false
 			w.l.reservationReleased(token)
 			w.advance()
-			w.running("m-unread")
-			return "m-unread"
+			w.running("m-s")
+			return "m-s"
 		}},
 		{name: "kiro-cli's own wire turn", turn: func(w *tableWorld) string {
 			w.closed("m-resume", listClose{clean: true, completed: true})
@@ -940,9 +960,9 @@ func TestFailsafe_ARefusedResumeLaunchTellsTheReader(t *testing.T) {
 		refusal launchRefusal
 		ended   bool
 	}{
-		{name: "refused", refusal: launchClosed, want: []string{resumeRefusedNotice}},
+		{name: "refused", refusal: launchFailed, want: []string{resumeRefusedNotice}},
 		{name: "withdrawn by a stop", refusal: launchWithdrawn},
-		{name: "on an ended life", refusal: launchClosed, ended: true},
+		{name: "on an ended life", refusal: launchFailed, ended: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := firedOn(t)
@@ -962,6 +982,66 @@ func TestFailsafe_ARefusedResumeLaunchTellsTheReader(t *testing.T) {
 			}
 			if !slices.Equal(fx.notices, tc.want) {
 				t.Errorf("notices = %q, want %q", fx.notices, tc.want)
+			}
+		})
+	}
+}
+
+// The failsafe's stop pauses the rows only until its resume's turn closes clean, so the queue does not read as the
+// reader's paused queue; once the reader takes over (the resume withdrawn), it does.
+func TestFailsafe_RowsItPausedAreNotTheReadersPausedQueue(t *testing.T) {
+	w := firedOn(t)
+	stopPausedRows := func() (out []string) {
+		for _, e := range w.l.project() {
+			if e.StopPaused {
+				out = append(out, e.ID)
+			}
+		}
+		return out
+	}
+	if got := stopPausedRows(); len(got) != 0 {
+		t.Errorf("under the failsafe: rows read as the reader's paused queue: %v", got)
+	}
+	w.l.readerStop("m-a", 2)
+	if got, want := stopPausedRows(), []string{"m-q1"}; !slices.Equal(got, want) {
+		t.Errorf("after the reader's stop: got %v, want %v", got, want)
+	}
+}
+
+// A stopped turn the failsafe does not continue leaves the rows for the reader, as its notice says ("Send a message to
+// go on"): a turn kiro-cli then runs by itself and ends clean sends none of them.
+func TestFailsafe_ATurnNotContinuedHoldsTheRowsForTheReader(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		end  func(t *testing.T, w *tableWorld)
+	}{
+		{name: "the compaction failed", end: func(t *testing.T, w *tableWorld) {
+			w.closed("m-a", listClose{})
+			w.l.compactionStart("compact-1", w.facts())
+			w.l.compactionEnded("compact-1", false, errors.New("model failure"))
+		}},
+		{name: "the resume's launch was refused", end: func(t *testing.T, w *tableWorld) {
+			w.compacted(t)
+			w.failLaunch(t, "m-resume")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := firedOn(t)
+			tc.end(t, w)
+			w.advance()
+			w.mustOrder(t, "m-q1:paused")
+			w.l.takeEffects()
+			w.wireOpen("t-w", false)
+			w.closed("t-w", listClose{clean: true})
+			if got := w.order(); got != "m-q1:paused" {
+				t.Errorf("after kiro-cli's clean turn: list = %q, want m-q1 still paused", got)
+			}
+			if n := len(w.l.takeEffects().launch); n != 0 {
+				t.Errorf("launches = %d, want 0", n)
+			}
+			w.user("m-u", marotte.RunWantPrompt)
+			if got := w.order(); got != "m-u:starting m-q1:paused" {
+				t.Errorf("after the reader's send: list = %q, want m-u taken ahead of m-q1", got)
 			}
 		})
 	}

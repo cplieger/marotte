@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -126,6 +127,8 @@ func TestScanKiroDocs_SkillsAreManifestsOnly(t *testing.T) {
 		"skills/triage/regulations/rewrite.md": {Data: []byte("# Rewrite\n")},
 		"skills/triage/triage-agent-guide.md":  {Data: []byte("# Guide\n")},
 		"skills/nomanifest/notes.md":           {Data: []byte("# Notes\n")},
+		"skills/emptied":                       {Mode: fs.ModeDir},
+		"skills/.git/config":                   {Data: []byte("[core]\n")},
 	}
 	skills := docsByCategory(scanKiroDocsFS(t.Context(), fsys, "ws/.kiro", nil).docs, catSkill)
 	if len(skills) != 2 {
@@ -144,9 +147,15 @@ func TestScanKiroDocs_SkillsAreManifestsOnly(t *testing.T) {
 	if j.Path != "ws/.kiro/skills/triage/SKILL.md" {
 		t.Errorf("Path = %q", j.Path)
 	}
-	// A directory without a manifest is still a skill, named by its directory.
+	// A directory holding files but no manifest is a broken skill, named by its directory.
 	if _, nOK := findDoc(skills, "nomanifest"); !nOK {
 		t.Error("a skill directory without SKILL.md must still get a row")
+	}
+	if d, eOK := findDoc(skills, "emptied"); eOK {
+		t.Errorf("an empty skill directory got a row: %+v", d)
+	}
+	if d, gOK := findDoc(skills, ".git"); gOK {
+		t.Errorf("a dot directory got a row: %+v", d)
 	}
 	for _, s := range skills {
 		if strings.Contains(s.Path, "/references/") || strings.Contains(s.Path, "/regulations/") {

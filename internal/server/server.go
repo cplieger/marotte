@@ -36,6 +36,7 @@ type Server struct {
 	chats        routeHandler
 	git          routeHandler
 	files        routeHandler
+	docDeleter   docDeleter
 	auth         routeHandler
 	push         routeHandler
 	mcpStatus    routeHandler
@@ -124,6 +125,9 @@ func WithGit(g routeHandler) Option { return func(s *Server) { s.git = g } }
 
 // WithFiles sets the file handler for workspace file read/write endpoints.
 func WithFiles(f routeHandler) Option { return func(s *Server) { s.files = f } }
+
+// WithDocDeleter sets what removes a Kiro docs row's files; nil answers the delete route 503.
+func WithDocDeleter(d docDeleter) Option { return func(s *Server) { s.docDeleter = d } }
 
 // WithAuth sets the auth handler for login, logout, and whoami endpoints.
 func WithAuth(a routeHandler) Option { return func(s *Server) { s.auth = a } }
@@ -342,6 +346,8 @@ func (s *Server) Register(m routeMux) {
 		route.Typed[struct{}, KiroDocsResponse](http.MethodGet)))
 	m.Bind(route.Methods("/api/workspace/kiro-docs/new", http.HandlerFunc(s.handleKiroDocNew),
 		route.Typed[KiroDocNewRequest, KiroDocNewResult](http.MethodPost).WithStatus(http.StatusCreated)))
+	m.Bind(route.Methods("/api/workspace/kiro-docs/delete", http.HandlerFunc(s.handleKiroDocDelete),
+		route.Typed[KiroDocDeleteRequest, httpreply.OKBody](http.MethodPost)))
 	m.Bind(route.Methods("/api/specs/{dir}", http.HandlerFunc(s.handleSpec),
 		route.Typed[struct{}, marotte.Spec](http.MethodGet).WithParams(reflect.TypeFor[marotte.DirPath]()).WithHeaders(ifNoneMatchHeader)))
 	s.mcpConfig.RegisterRoutes(m)
@@ -357,6 +363,7 @@ func (s *Server) Register(m routeMux) {
 	m.Bind(route.Methods("/api/permissions/rules", http.HandlerFunc(s.handlePolicyRules),
 		route.Typed[PolicyRuleWrite, httpreply.OKBody](http.MethodPost)))
 	m.Bind(route.Methods("/api/permissions/profile", http.HandlerFunc(s.handlePolicyProfile),
+		route.Typed[struct{}, marotte.SecurityProfileView](http.MethodGet),
 		route.Typed[PolicyProfileWrite, httpreply.OKBody](http.MethodPost)))
 	m.Bind(route.Methods("/api/account/usage", http.HandlerFunc(s.handleAccountUsage),
 		route.Typed[struct{}, marotte.AccountUsage](http.MethodGet)))

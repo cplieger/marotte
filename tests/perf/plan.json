@@ -1,0 +1,1351 @@
+{
+  "node": "static-src",
+  "scenarios": {
+    "chat-long": {
+      "windows": [
+        "cold",
+        "rest",
+        "live",
+        "away",
+        "back"
+      ],
+      "drivers": {
+        "live": "prompt-shown",
+        "away": "prompt-shown"
+      }
+    },
+    "chat-stream": {
+      "windows": [
+        "cold",
+        "rest",
+        "live",
+        "away",
+        "back"
+      ],
+      "drivers": {
+        "live": "prompt-shown",
+        "away": "prompt-shown"
+      }
+    },
+    "tabs": {
+      "windows": [
+        "cold",
+        "rest",
+        "live",
+        "away",
+        "back"
+      ],
+      "drivers": {
+        "live": "prompt-background",
+        "away": "prompt-background"
+      }
+    },
+    "run-dock": {
+      "windows": [
+        "cold",
+        "rest",
+        "live",
+        "away",
+        "back"
+      ],
+      "drivers": {
+        "live": "run-steps",
+        "away": "run-steps"
+      }
+    },
+    "run-page": {
+      "windows": [
+        "cold",
+        "rest",
+        "live",
+        "away",
+        "back"
+      ],
+      "drivers": {
+        "live": "run-steps",
+        "away": "run-steps"
+      }
+    },
+    "files": {
+      "windows": [
+        "cold",
+        "rest",
+        "live",
+        "away",
+        "back"
+      ],
+      "drivers": {
+        "live": "edit-tree",
+        "away": "edit-tree"
+      }
+    },
+    "git-changes": {
+      "windows": [
+        "cold",
+        "rest",
+        "live",
+        "away",
+        "back"
+      ],
+      "drivers": {
+        "live": "edit-repos",
+        "away": "edit-repos"
+      }
+    },
+    "git-prs": {
+      "windows": [
+        "cold",
+        "rest",
+        "live",
+        "away",
+        "back"
+      ],
+      "drivers": {
+        "live": "forge-churn",
+        "away": "forge-churn"
+      }
+    },
+    "settings": {
+      "windows": [
+        "cold",
+        "rest",
+        "live",
+        "away",
+        "back"
+      ],
+      "drivers": {
+        "live": "prompt-background",
+        "away": "prompt-background"
+      }
+    },
+    "settings-tools": {
+      "windows": [
+        "cold",
+        "rest",
+        "live",
+        "away",
+        "back"
+      ],
+      "drivers": {
+        "live": "prompt-background",
+        "away": "prompt-background"
+      }
+    },
+    "docs": {
+      "windows": [
+        "cold",
+        "rest",
+        "live",
+        "away",
+        "back"
+      ],
+      "drivers": {
+        "live": "edit-docs",
+        "away": "edit-docs"
+      }
+    },
+    "docs-workflows": {
+      "windows": [
+        "cold",
+        "rest",
+        "live",
+        "away",
+        "back"
+      ],
+      "drivers": {
+        "live": "run-starts",
+        "away": "run-starts"
+      }
+    },
+    "shell": {
+      "windows": [
+        "cold",
+        "rest",
+        "live",
+        "away",
+        "back"
+      ],
+      "drivers": {
+        "live": "shell-open",
+        "away": "shell-closed"
+      }
+    },
+    "history": {
+      "windows": [
+        "cold",
+        "rest",
+        "live",
+        "away",
+        "back"
+      ],
+      "drivers": {
+        "live": "prompt-background",
+        "away": "prompt-background"
+      }
+    },
+    "history-runs": {
+      "windows": [
+        "cold",
+        "rest",
+        "live",
+        "away",
+        "back"
+      ],
+      "drivers": {
+        "live": "run-starts",
+        "away": "run-starts"
+      }
+    },
+    "run-drive": {
+      "windows": [
+        "drive"
+      ],
+      "drivers": {
+        "drive": "run-drive"
+      }
+    }
+  },
+  "sets": {
+    "pr": {
+      "shards": 5,
+      "cells": [
+        {
+          "scenario": "chat-long",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "chat-stream",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "tabs",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "run-dock",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "run-page",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 540
+        },
+        {
+          "scenario": "files",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "git-changes",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "git-prs",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 945
+        },
+        {
+          "scenario": "settings",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "settings-tools",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "docs",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "docs-workflows",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "shell",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "history",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "history-runs",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "chat-long",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "windows": [
+            "cold"
+          ],
+          "seconds": 75
+        },
+        {
+          "scenario": "chat-stream",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "windows": [
+            "cold"
+          ],
+          "seconds": 75
+        },
+        {
+          "scenario": "tabs",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "windows": [
+            "cold"
+          ],
+          "seconds": 75
+        },
+        {
+          "scenario": "run-dock",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "windows": [
+            "cold"
+          ],
+          "seconds": 75
+        },
+        {
+          "scenario": "run-page",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "windows": [
+            "cold"
+          ],
+          "seconds": 75
+        },
+        {
+          "scenario": "files",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "windows": [
+            "cold"
+          ],
+          "seconds": 75
+        },
+        {
+          "scenario": "git-changes",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "windows": [
+            "cold"
+          ],
+          "seconds": 75
+        },
+        {
+          "scenario": "git-prs",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "windows": [
+            "cold"
+          ],
+          "seconds": 75
+        },
+        {
+          "scenario": "settings",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "windows": [
+            "cold"
+          ],
+          "seconds": 75
+        },
+        {
+          "scenario": "settings-tools",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "windows": [
+            "cold"
+          ],
+          "seconds": 75
+        },
+        {
+          "scenario": "docs",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "windows": [
+            "cold"
+          ],
+          "seconds": 75
+        },
+        {
+          "scenario": "docs-workflows",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "windows": [
+            "cold"
+          ],
+          "seconds": 75
+        },
+        {
+          "scenario": "shell",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "windows": [
+            "cold"
+          ],
+          "seconds": 75
+        },
+        {
+          "scenario": "history",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "windows": [
+            "cold"
+          ],
+          "seconds": 75
+        },
+        {
+          "scenario": "history-runs",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "windows": [
+            "cold"
+          ],
+          "seconds": 75
+        },
+        {
+          "scenario": "run-drive",
+          "scale": "x10",
+          "engine": "server",
+          "width": "none",
+          "seconds": 120
+        }
+      ]
+    },
+    "full": {
+      "shards": 24,
+      "cells": [
+        {
+          "scenario": "chat-long",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "chat-long",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "chat-long",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "chat-long",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "chat-long",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "profile": true,
+          "seconds": 320
+        },
+        {
+          "scenario": "chat-long",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "chat-long",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "chat-long",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "chat-stream",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "chat-stream",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "chat-stream",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "chat-stream",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "chat-stream",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "profile": true,
+          "seconds": 320
+        },
+        {
+          "scenario": "chat-stream",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "chat-stream",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "chat-stream",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "tabs",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "tabs",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "tabs",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "tabs",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "tabs",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "profile": true,
+          "seconds": 320
+        },
+        {
+          "scenario": "tabs",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "tabs",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "tabs",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "run-dock",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "run-dock",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "run-dock",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "run-dock",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "run-dock",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "profile": true,
+          "seconds": 320
+        },
+        {
+          "scenario": "run-dock",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "run-dock",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "run-dock",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "run-page",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 270
+        },
+        {
+          "scenario": "run-page",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 270
+        },
+        {
+          "scenario": "run-page",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 270
+        },
+        {
+          "scenario": "run-page",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 270
+        },
+        {
+          "scenario": "run-page",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "profile": true,
+          "seconds": 720
+        },
+        {
+          "scenario": "run-page",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 540
+        },
+        {
+          "scenario": "run-page",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 540
+        },
+        {
+          "scenario": "run-page",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 540
+        },
+        {
+          "scenario": "files",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "files",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "files",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "files",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "files",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "profile": true,
+          "seconds": 320
+        },
+        {
+          "scenario": "files",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "files",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "files",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "git-changes",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "git-changes",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "git-changes",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "git-changes",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "git-changes",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "profile": true,
+          "seconds": 320
+        },
+        {
+          "scenario": "git-changes",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "git-changes",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "git-changes",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "git-prs",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 945
+        },
+        {
+          "scenario": "git-prs",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 945
+        },
+        {
+          "scenario": "git-prs",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 945
+        },
+        {
+          "scenario": "git-prs",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 945
+        },
+        {
+          "scenario": "git-prs",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "profile": true,
+          "seconds": 1260
+        },
+        {
+          "scenario": "git-prs",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 945
+        },
+        {
+          "scenario": "git-prs",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 945
+        },
+        {
+          "scenario": "git-prs",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 945
+        },
+        {
+          "scenario": "settings",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "settings",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "settings",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "settings",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "settings",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "profile": true,
+          "seconds": 320
+        },
+        {
+          "scenario": "settings",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "settings",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "settings",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "settings-tools",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "settings-tools",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "settings-tools",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "settings-tools",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "settings-tools",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "profile": true,
+          "seconds": 320
+        },
+        {
+          "scenario": "settings-tools",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "settings-tools",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "settings-tools",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "docs",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "docs",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "docs",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "docs",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "docs",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "profile": true,
+          "seconds": 320
+        },
+        {
+          "scenario": "docs",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "docs",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "docs",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "docs-workflows",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "docs-workflows",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "docs-workflows",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "docs-workflows",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "docs-workflows",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "profile": true,
+          "seconds": 320
+        },
+        {
+          "scenario": "docs-workflows",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "docs-workflows",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "docs-workflows",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "shell",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "shell",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "shell",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "shell",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "shell",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "profile": true,
+          "seconds": 320
+        },
+        {
+          "scenario": "shell",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "shell",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "shell",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "history",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "history",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "history",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "history",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "history",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "profile": true,
+          "seconds": 320
+        },
+        {
+          "scenario": "history",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "history",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "history",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "history-runs",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "history-runs",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "history-runs",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "history-runs",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "history-runs",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "desktop",
+          "profile": true,
+          "seconds": 320
+        },
+        {
+          "scenario": "history-runs",
+          "scale": "x10",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "history-runs",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 240
+        },
+        {
+          "scenario": "history-runs",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 240
+        },
+        {
+          "scenario": "run-drive",
+          "scale": "x1",
+          "engine": "server",
+          "width": "none",
+          "seconds": 120
+        },
+        {
+          "scenario": "run-drive",
+          "scale": "x10",
+          "engine": "server",
+          "width": "none",
+          "seconds": 120
+        }
+      ]
+    }
+  }
+}

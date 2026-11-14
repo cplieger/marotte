@@ -1,4 +1,4 @@
-// The OS file dialog behind both "Upload" buttons (the picker modal and the file browser).
+// The OS file dialog behind the "Upload" buttons (the picker modal and the file browser) and the Memories Import pick.
 
 import { el } from "@cplieger/reactive";
 import * as toast from "./toast.js";
@@ -8,15 +8,20 @@ import * as toast from "./toast.js";
 let pending: HTMLInputElement | null = null;
 
 /**
- * Open the OS file dialog and hand the chosen files to `onPick`. A dialog that ends with no files
- * shows an info toast, and a throw from `onPick` an error toast. Call it synchronously from the
- * press's own handler: the dialog opens only under that press's user activation.
+ * Open the OS file dialog and hand the chosen files to `onPick`; `multiple: false` lets it pick
+ * only one. A dialog that ends with no files shows an info toast, and a throw from `onPick` an error
+ * toast. Call it synchronously from the press's own handler: the dialog opens only under that
+ * press's user activation.
  */
-export function openFileDialog(trigger: Element, onPick: (files: FileList) => void): void {
+export function openFileDialog(
+  trigger: Element,
+  onPick: (files: FileList) => void,
+  opts: { readonly multiple?: boolean } = {},
+): void {
   pending?.remove();
   const input = el("input", {
     type: "file",
-    multiple: true,
+    multiple: opts.multiple ?? true,
     className: "file-dialog-input",
     tabIndex: -1,
     "aria-hidden": "true",

@@ -453,8 +453,8 @@ func TestAllotRouting_SpendsTheBudgetByRank(t *testing.T) {
 }
 
 // A repo past the first maxKiroRepos is classified by a presence check, which must agree with
-// the full scan the first ones get: a hooks file with no hook, or files the finders skip, is no
-// .kiro content.
+// the full scan the first ones get: a hooks file with no hook, an empty skill directory, or
+// files the finders skip, is no .kiro content.
 func TestWriteRepoList_ThePresenceCheckAgreesWithTheScan(t *testing.T) {
 	probes := []struct {
 		name, path, body string
@@ -464,6 +464,7 @@ func TestWriteRepoList_ThePresenceCheckAgreesWithTheScan(t *testing.T) {
 		{"p-hook", "hooks/h.json", `{"version":"v1","hooks":[{"name":"n","trigger":"PostFileSave","action":{"type":"command","command":"make"}}]}`},
 		{"p-skill", "skills/s/notes.txt", "no SKILL.md\n"},
 		{"q-deadhook", "hooks/h.json", `{"version":"v1","hooks":[]}`},
+		{"q-emptyskill", "skills/e/", ""},
 		{"q-skipped", "steering/notes.txt", "not markdown\n"},
 	}
 	for _, fillers := range []int{0, maxKiroRepos} {
@@ -476,7 +477,14 @@ func TestWriteRepoList_ThePresenceCheckAgreesWithTheScan(t *testing.T) {
 			}
 			for _, p := range probes {
 				writeRepo(t, workDir, p.name, "https://git.example.org/o/"+p.name+".git", false)
-				mustWrite(t, filepath.Join(workDir, p.name, ".kiro", p.path), p.body)
+				target := filepath.Join(workDir, p.name, ".kiro", p.path)
+				if strings.HasSuffix(p.path, "/") {
+					if err := os.MkdirAll(target, 0o750); err != nil {
+						t.Fatal(err)
+					}
+					continue
+				}
+				mustWrite(t, target, p.body)
 			}
 			entries, err := os.ReadDir(workDir)
 			if err != nil {
@@ -488,8 +496,8 @@ func TestWriteRepoList_ThePresenceCheckAgreesWithTheScan(t *testing.T) {
 			writeRepoList(&b, workDir, repos)
 
 			out := b.String()
-			if got := lineWithPrefix(out, "- Other repositories: "); got != "- Other repositories: `q-deadhook/`, `q-skipped/`" {
-				t.Errorf("Other repositories line = %q, want the two repos with no .kiro content", got)
+			if got := lineWithPrefix(out, "- Other repositories: "); got != "- Other repositories: `q-deadhook/`, `q-emptyskill/`, `q-skipped/`" {
+				t.Errorf("Other repositories line = %q, want the three repos with no .kiro content", got)
 			}
 			if fillers == 0 {
 				return

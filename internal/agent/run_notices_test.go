@@ -237,7 +237,7 @@ func TestTurnClosed_TheNoticeClearsDropIsCarriedByTheSameClose(t *testing.T) {
 		send(t, s.h, newPromptTurnStartMsg(id), newActivityMsg(true))
 		s.h.runs.observeComplete(t.Context(), "c1", runComplete("wf_1", "completed"))
 		s.recs.SteerWaiting("c1", &marotte.SteerQueuedPayload{SteerID: "notify-wf-1", Text: "wf_1 completed", Origin: marotte.SteerOriginAgent})
-		s.steer("steer-a", "keep building")
+		s.userSteer(t, "steer-a", "keep building")
 		// A cancel: KAS skips its own boundary clear and leaves both unread.
 		send(t, s.h, newTurnEndMsg("cancelled"))
 		s.h.coord.releaseTurn("c1", id)

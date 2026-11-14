@@ -28,7 +28,9 @@ func ruleFor(t *testing.T, root fs.FS) []steering.AgentFile {
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
-	return steering.DedupeAgentFiles(entries)
+	return steering.DedupeAgentFiles(entries, func(name string) (fs.FileInfo, error) {
+		return fs.Stat(root, "agents/"+name)
+	})
 }
 
 // TestDocsAgentScanAgreesWithTheSharedRule pins that the document scan resolves one listing to

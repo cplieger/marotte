@@ -128,7 +128,7 @@ func (*benchDeps) PendingElicitation(marotte.ChatID, int64) (marotte.Elicitation
 	return marotte.ElicitationNeededPayload{}, false
 }
 
-func (*benchDeps) EnsureCustomProfile(context.Context) error { return nil }
+func (*benchDeps) ReloadChatProfile(marotte.ChatID) {}
 
 func (*benchDeps) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithCancel(context.WithoutCancel(reqCtx))
@@ -192,8 +192,7 @@ func (d *benchDeps) ReserveIdleTurn(_ context.Context, chatID marotte.ChatID, _ 
 func (*benchDeps) tryReserveDrainOld(marotte.ChatID, marotte.TurnOpenSource, CloseFacts) bool {
 	return true
 }
-func (*benchDeps) PromptHolder(marotte.ChatID) (string, bool) { return "", false }
-func (*benchDeps) releaseOld(marotte.ChatID)                  {}
+func (*benchDeps) releaseOld(marotte.ChatID) {}
 
 func (*benchDeps) AwaitTurn(context.Context, marotte.ChatID, string) (marotte.TurnResult, error) {
 	return marotte.TurnResult{}, marotte.ErrNoSuchTurn
@@ -362,7 +361,7 @@ type hostDouble interface {
 	broadcaster
 	chatTeardown
 	pendingPermAccess
-	profileSwitcher
+	profileReloader
 	terminalAccess
 	turnStopper
 	lifecycleAccess

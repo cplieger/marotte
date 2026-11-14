@@ -192,14 +192,15 @@ func TestProvider_CancelWhileHeldAttachesNothing(t *testing.T) {
 // network call, OIDC stays off while the issuer never answers, and the provider attaches once it
 // does, within the in-flight attempt and one backoff.
 func TestProvider_BootDoesNotWaitOnIdP(t *testing.T) {
-	oldTimeout, oldBackoff := oidcClientTimeout, providerBackoff
-	oidcClientTimeout, providerBackoff = 200*time.Millisecond, 50*time.Millisecond
-	t.Cleanup(func() { oidcClientTimeout, providerBackoff = oldTimeout, oldBackoff })
 	idp := newSeamIdP(t, idpURL, accesstest.IdPOptions{})
 	h := newHarness(t)
 	h.setupOwner(t.Context())
 	rec := providerOf(idp)
 	h.savedProvider(rec, builtProvider(t, rec, h.origin), false)
+	// Shortened only after the setup's own discovery, which a loaded host can push past 200 ms.
+	oldTimeout, oldBackoff := oidcClientTimeout, providerBackoff
+	oidcClientTimeout, providerBackoff = 200*time.Millisecond, 50*time.Millisecond
+	t.Cleanup(func() { oidcClientTimeout, providerBackoff = oldTimeout, oldBackoff })
 	hits := newRecorderHost(t, "idp.example.com")
 	h = h.reopen()
 	if n := hits.Load(); n != 0 {

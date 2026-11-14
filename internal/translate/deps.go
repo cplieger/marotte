@@ -82,6 +82,9 @@ type RunAppender interface {
 	RunNodePaused(ctx context.Context, runID string, path []string)
 	// RunPlanUpdate records a run's queued plan revision, or settles it with KAS's outcome.
 	RunPlanUpdate(ctx context.Context, chatID marotte.ChatID, runID string, u marotte.RunPlanUpdate)
+	// RunPlanRejection notes a person's rejection of a run's launch plan in the launching chat;
+	// kasID is KAS's id for the rejection.
+	RunPlanRejection(ctx context.Context, chatID marotte.ChatID, runID, kasID, reason string)
 	// RunSteer files a step steer's durable entry in the path's open turn, else after its newest
 	// closed one.
 	RunSteer(ctx context.Context, runID, nodePath, steerID string, steer *marotte.EntrySteer)

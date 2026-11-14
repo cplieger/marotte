@@ -72,11 +72,11 @@ export type RunAskRefusal = "ask_stopping" | "ask_pending" | "ask_stale" | "ask_
 
 export type RunAskText = "asked" | "last_message" | "unseen";
 
-export type RunEntryKind = "turn" | "row" | "unread" | "retry" | "compaction" | "revert" | "resume";
+export type RunEntryKind = "turn" | "row" | "retry" | "compaction" | "revert" | "resume";
 
-export type RunEntryOrigin = "prompt" | "queue" | "tangent" | "summary" | "unread" | "retry" | "wire" | "run" | "carried" | "request" | "threshold" | "turn_end" | "context_limit" | "rewind" | "failsafe";
+export type RunEntryOrigin = "prompt" | "queue" | "tangent" | "summary" | "retry" | "wire" | "run" | "carried" | "request" | "threshold" | "turn_end" | "context_limit" | "rewind" | "failsafe" | "notify";
 
-export type RunEntryState = "pending" | "paused" | "held" | "starting" | "running" | "stopping" | "closing";
+export type RunEntryState = "pending" | "paused" | "held" | "offered" | "in_kas" | "starting" | "running" | "stopping" | "closing";
 
 export type RunNodeStatus = "pending" | "running" | "paused" | "completed" | "failed" | "aborted" | "skipped";
 
@@ -96,7 +96,9 @@ export type RunStepMessageVerb = "steer" | "answer" | "prompt";
 
 export type RunStepTranscriptState = "ready" | "gone" | "unavailable";
 
-export type RunWaitAfter = "running" | "starting" | "next" | "compaction" | "turns" | "held";
+export type RunWaitAfter = "running" | "starting" | "next" | "compaction" | "turns" | "held" | "paused";
+
+export type RunWant = "either" | "prompt";
 
 export type SafetyStatus = "idle" | "formalizing" | "evaluating" | "blocked" | "error";
 
@@ -124,7 +126,7 @@ export type SteerState = "read" | "dropped";
 
 export type StopReason = "end_turn" | "cancelled" | "interrupted" | "refusal" | "unknown" | "error" | "content_filtered" | "max_tokens" | "max_turn_requests" | "tool_use" | "unterminated";
 
-export type TabKind = "chat" | "editor" | "run" | "subagent" | "settings" | "git" | "files" | "history" | "docs" | "spec" | "web";
+export type TabKind = "chat" | "editor" | "run" | "subagent" | "settings" | "git" | "files" | "docs" | "spec" | "web";
 
 export type ToolKind = "execute" | "shell" | "read" | "search" | "fetch" | "edit" | "think" | "hook" | "steering" | "write" | "delete" | "move" | "command" | "browser" | "switch_mode" | "mcp" | "other";
 
@@ -172,14 +174,15 @@ export type ClientCommand =
   | { type: "rename_chat"; chat_id?: string; caller?: string; payload?: RenameChatCommand }
   | { type: "reorder_tabs"; chat_id?: string; caller?: string; payload?: ReorderTabsCommand }
   | { type: "reparent_tab"; chat_id?: string; caller?: string; payload?: ReparentTabCommand }
+  | { type: "resume_queue"; chat_id?: string; caller?: string }
   | { type: "resume_session"; chat_id?: string; caller?: string; payload?: ResumeSessionCommand }
   | { type: "rewind_chat"; chat_id?: string; caller?: string; payload?: RewindChatCommand }
   | { type: "send_queued_now"; chat_id?: string; caller?: string; payload?: SendQueuedNowCommand }
   | { type: "set_attachments"; chat_id?: string; caller?: string; payload?: SetAttachmentsCommand }
   | { type: "set_draft"; chat_id?: string; caller?: string; payload?: SetDraftCommand }
   | { type: "set_effort"; chat_id?: string; caller?: string; payload?: SetEffortCommand }
-  | { type: "set_interrupt_mode"; chat_id?: string; caller?: string; payload?: SetInterruptModeCommand }
   | { type: "set_mode"; chat_id?: string; caller?: string; payload?: SetModeCommand }
+  | { type: "set_security_profile"; chat_id?: string; caller?: string; payload?: SetSecurityProfileCommand }
   | { type: "set_supervised_mode"; chat_id?: string; caller?: string; payload?: SetSupervisedModeCommand }
   | { type: "set_thinking"; chat_id?: string; caller?: string; payload?: SetThinkingCommand }
   | { type: "steer"; chat_id?: string; caller?: string; payload?: SteerCommand }
@@ -508,6 +511,8 @@ export interface ChatHeader {
   /** Thinking and ThinkingActive mirror Chat's for the effort slider's Off stop. */
   thinking?: string;
   thinking_active?: string;
+  /** SecurityProfile mirrors Chat's for the composer's profile pill. */
+  security_profile?: string;
   /** PendingModel and PendingEffort mirror Chat's for the model badge and the pill's card. */
   pending_model?: string;
   pending_effort?: string;
@@ -517,8 +522,6 @@ export interface ChatHeader {
   compaction_watermark?: string;
   /** PriorACPSessionIDs mirrors Chat's: the retention sweep reads headers only. */
   prior_acp_session_ids?: string[];
-  /** InterruptMode mirrors Chat's for the composer. */
-  interrupt_mode?: InterruptMode;
   /** Run is Chat.Run as the dock and the composer draw it. */
   run: RunView;
   /** Bot is the Bot's summary; absent on a regular chat. */
@@ -1101,6 +1104,8 @@ export interface EffectiveSettings {
  * siblings); it defaults to settings.DefaultMemoryMode, kiro-cli's own.
  */
   memory_mode: string;
+  /** InterruptMode is the composer's default beside a running turn, steer unless queue was chosen. */
+  interrupt_mode: InterruptMode;
   /** SpecPlanning is "off", "quick" or "full"; default off, matching kiro-cli. */
   spec_planning: string;
   /**
@@ -1127,6 +1132,11 @@ export interface EffectiveSettings {
  * workflow from a prose request; it applies only while WorkflowsEnabled is on.
  */
   workflow_creator_effort: string;
+  /**
+ * ChatAwarenessMode is "" (kiro-cli decides), "direct" or "consult"; it applies only while ChatAwareness is on and
+ * to chats created after the change.
+ */
+  chat_awareness_mode: string;
   /**
  * KnowledgeIndexType is "" (kiro-cli's own, semantic unless its legacy knowledge.json says fast), "fast" or
  * "best": the index a knowledge base added from now on is built as.
@@ -2756,6 +2766,11 @@ export interface KiroDoc {
   delete_protected?: boolean;
 }
 
+/** KiroDocDeleteRequest is POST /api/workspace/kiro-docs/delete's body: a row's `path` verbatim. */
+export interface KiroDocDeleteRequest {
+  path: string;
+}
+
 /** KiroDocNewRequest is POST /api/workspace/kiro-docs/new's body; each kind reads only its fields. */
 export interface KiroDocNewRequest {
   /** Timeout is a hook command's limit in seconds; absent leaves KAS's default. */
@@ -3197,6 +3212,33 @@ export interface Match {
 export interface MatchRange {
   start: number;
   end: number;
+}
+
+/**
+ * MemoryImportLine is one skipped or failed import line. Reason is KAS's open vocabulary (duplicate_in_file,
+ * quota, validation, secret_blocked, parse_error).
+ */
+export interface MemoryImportLine {
+  reason: string;
+  detail?: string;
+  line: number;
+}
+
+/** MemoryImportPrompt is GET /api/memory/import-prompt's body. */
+export interface MemoryImportPrompt {
+  prompt: string;
+}
+
+/**
+ * MemoryImportReport is POST /api/memory/import's answer. It counts the added and duplicate lines, which the
+ * refetched list shows or which need nothing, and keeps skipped and failed per line, which a user fixes and
+ * imports again.
+ */
+export interface MemoryImportReport {
+  skipped: MemoryImportLine[];
+  failed: MemoryImportLine[];
+  added: number;
+  duplicates: number;
 }
 
 /**
@@ -4071,6 +4113,8 @@ export interface PromptCommand {
   message_id: string;
   model?: string;
   display_text?: string;
+  /** InterruptMode is what the prompt does beside a running turn; empty leaves it to the interrupt_mode setting. */
+  interrupt_mode?: InterruptMode;
   attachments?: Attachment[];
   /**
  * PromptOnly marks text only a prompt carries (a catalog command, a context reference): it is never steered.
@@ -4118,8 +4162,8 @@ export interface QueuePromptCommand {
 }
 
 /**
- * QueuedPrompt is the message a row, unread or retry entry of Chat.Run sends. A row with Resends is CARRIED,
- * written at shutdown from unread steers; a list holds at most one carried row, and it is held. Label is the row's
+ * QueuedPrompt is the message a row or retry entry of Chat.Run sends. A row with Resends is CARRIED: an
+ * earlier version's shutdown wrote it from unread steers, and it stays held. Label is the row's
  * PromptCommand.DisplayText; Model is the POST's model, which seeds a new record's.
  */
 export interface QueuedPrompt {
@@ -4675,7 +4719,7 @@ export interface RunControlsResponse {
 
 /** RunEntry is one entry of Chat.Run, in run order: the live entries first, then what runs after them. */
 export interface RunEntry {
-  /** Row is a row, unread or retry entry's message. */
+  /** Row is a row or retry entry's message. */
   row?: QueuedPrompt;
   id: string;
   kind: RunEntryKind;
@@ -4683,20 +4727,28 @@ export interface RunEntry {
   origin: RunEntryOrigin;
   /** Turn is the turn id once the entry's turn opened: the transcript then shows its message. */
   turn?: string;
+  want?: RunWant;
   /** Next marks the row send_queued_now moved to the front. */
   next?: boolean;
+  /** Unread marks a row a turn end left unread in kiro-cli's steer buffer: one sender's run of them is one prompt. */
+  unread?: boolean;
   steerable?: boolean;
   /** Yields marks a fold-opened wire turn, which owes no close: a turn-kind take or a compaction goes beside it. */
   yields?: boolean;
   /** Admits, with Yields, is whether kiro-cli's state admits a take beside it now. */
   admits?: boolean;
+  /**
+ * StopPaused marks a paused row the reader's stop paused: the queue is paused until the reader sends, sends a row
+ * now or resumes it.
+ */
+  stop_paused?: boolean;
 }
 
 /** RunEntryView is one entry as the header draws it. */
 export interface RunEntryView {
   /** SendNow is the row's arrow; absent: no arrow. */
   send_now?: SendNowKind;
-  /** Row is a row, unread or retry entry's message. */
+  /** Row is a row or retry entry's message. */
   row?: QueuedPrompt;
   id: string;
   kind: RunEntryKind;
@@ -4704,16 +4756,29 @@ export interface RunEntryView {
   origin: RunEntryOrigin;
   /** Turn is the turn id once the entry's turn opened: the transcript then shows its message. */
   turn?: string;
+  want?: RunWant;
   /** Next marks the row send_queued_now moved to the front. */
   next?: boolean;
+  /** Unread marks a row a turn end left unread in kiro-cli's steer buffer: one sender's run of them is one prompt. */
+  unread?: boolean;
   steerable?: boolean;
   /** Yields marks a fold-opened wire turn, which owes no close: a turn-kind take or a compaction goes beside it. */
   yields?: boolean;
   /** Admits, with Yields, is whether kiro-cli's state admits a take beside it now. */
   admits?: boolean;
+  /**
+ * StopPaused marks a paused row the reader's stop paused: the queue is paused until the reader sends, sends a row
+ * now or resumes it.
+ */
+  stop_paused?: boolean;
   wait: RunWait;
   /** CarriesUnread marks the entry whose turn the awaits-prompt steers ride. */
   carries_unread?: boolean;
+  /**
+ * SteerInFlight marks a user row the running turn takes as a steer once the turn's prompt is written and the one
+ * steer offered is answered: drawn as a steer being sent, never as a queue row.
+ */
+  steer_in_flight?: boolean;
 }
 
 /**
@@ -4771,6 +4836,8 @@ export interface RunLaunchRequest {
 export interface RunLaunchedResponse {
   workflow_id: string;
   name: string;
+  /** Warnings are KAS's workflow/new advisories, verbatim. */
+  warnings?: string[];
 }
 
 /**
@@ -5269,6 +5336,17 @@ export interface SecurityProfile {
 }
 
 /**
+ * SecurityProfileView is the GET /api/permissions/profile response, the chat profile pill's read: the ladder in
+ * picker order, the Settings profile a new chat starts on, and whether the user or workspace file grants on its
+ * own (policyfile.HoldsGrant), which no chat's profile takes away.
+ */
+export interface SecurityProfileView {
+  default: string;
+  profiles: SecurityProfile[];
+  saved_grants: boolean;
+}
+
+/**
  * SendQueuedNowCommand is the payload for type="send_queued_now": the row goes next,
  * ahead of the other queued rows, which keep their order. Stop is the run.cancel the
  * row's arrow was drawn against: that turn is stopped while it is still the lone live
@@ -5435,11 +5513,6 @@ export interface SetEffortCommand {
   level: string;
 }
 
-/** SetInterruptModeCommand is the payload for type="set_interrupt_mode". */
-export interface SetInterruptModeCommand {
-  mode: InterruptMode;
-}
-
 /**
  * SetModeCommand is the payload for type="set_mode". ModeID names an entry in
  * the workspace mode catalog — bundled workflow modes and workspace custom agents
@@ -5448,6 +5521,14 @@ export interface SetInterruptModeCommand {
  */
 export interface SetModeCommand {
   mode_id: string;
+}
+
+/**
+ * SetSecurityProfileCommand is the payload for type="set_security_profile": a policyfile profile id for this chat's
+ * session. A run's subject is refused.
+ */
+export interface SetSecurityProfileCommand {
+  profile: string;
 }
 
 /**
@@ -5805,10 +5886,12 @@ export interface SteerQueuedPayload {
 
 /**
  * SteerRemoveCommand is the payload for type="steer_remove". SteerID is the key of
- * a dock row the user sent; the rows they kept are resent together, in order.
+ * a dock row the user sent; the user's rows kept are resent together, in order.
+ * Queue moves the row to the chat's queue instead of deleting it.
  */
 export interface SteerRemoveCommand {
   steer_id: string;
+  queue?: boolean;
 }
 
 /**
@@ -5971,9 +6054,9 @@ export interface TabSubject {
  */
   seen?: number;
   /**
- * Pinned sorts a tab ahead of every unpinned one. The partition is applied
- * by the client when it renders (applyPinOrder); the stored slice keeps the
- * order it was given.
+ * Pinned seats a tab in the sidebar's Pinned section. The sections are drawn
+ * by the client (applySectionOrder); the stored slice keeps the order it was
+ * given.
  */
   pinned: boolean;
   /**

@@ -108,8 +108,11 @@ export type Route =
   | RouteSettings
   | RouteWeb;
 
+/** A route a tab can hold: every one but History's, which is a view and never a tab. */
+export type TabRoute = Exclude<Route, RouteHistory>;
+
 /** The routes of the singletons whose row's route names a sub-tab. */
-export type SubTabRoute = RouteSettings | RouteGit | RouteDocs | RouteHistory;
+export type SubTabRoute = RouteSettings | RouteGit | RouteDocs;
 
 /** Wrapper around decodeURIComponent that returns the raw input on malformed percent-encoded
  *  sequences instead of throwing. Browsers can navigate to URLs with bare `%` characters (e.g.

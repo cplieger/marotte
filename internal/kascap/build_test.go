@@ -51,8 +51,9 @@ var engineMatrix = []struct {
 		MaxFiles: 200, Chunking: marotte.KnowledgeChunking{Size: 256, Overlap: 32},
 	}}},
 	{"telemetry off", EngineSpawn{DisableTelemetry: true}},
+	{"content collection on", EngineSpawn{ContentCollection: true}},
 	{"every gate on", EngineSpawn{
-		SecretStorage: true, Knowledge: true, InfraSafety: "enforce",
+		SecretStorage: true, Knowledge: true, InfraSafety: "enforce", ContentCollection: true,
 		AutoRouting: "on", AutoDelegation: "on",
 		TerminalCommandTimeoutMs: 300000, SteeringReminders: true,
 		DisableTelemetry: true, ModelFallback: true, MessageDeliveryLimit: 12,
@@ -85,6 +86,7 @@ var sessionMatrix = []struct {
 	{"workflows on, planning effort high", SessionSpawn{Workflows: true, WorkflowCreatorEffort: "high"}},
 	{"messages between chats on", SessionSpawn{Messaging: true}},
 	{"search other chats on", SessionSpawn{Awareness: true}},
+	{"search other chats, consult", SessionSpawn{Awareness: true, AwarenessMode: "consult"}},
 	{"a chat session", SessionSpawn{ProfileAgentTurns: true}},
 	{"a Bot's chat session", SessionSpawn{ProfileAgentTurns: true, CustomAgents: []marotte.ClientCustomAgent{probeAgent}}},
 	{"every gate on", SessionSpawn{
@@ -93,7 +95,7 @@ var sessionMatrix = []struct {
 		MemoryMode:        "read_write", MemoryReflection: true,
 		DisableAutoCompaction: true, SpecPlan: "full", SpecAskClarification: true,
 		WorkValidation: "on", Workflows: true, WorkflowCreatorEffort: "max", Messaging: true, Awareness: true,
-		ProfileAgentTurns: true, CustomAgents: []marotte.ClientCustomAgent{probeAgent},
+		AwarenessMode: "consult", ProfileAgentTurns: true, CustomAgents: []marotte.ClientCustomAgent{probeAgent},
 	}},
 }
 
@@ -466,6 +468,7 @@ func TestSessionDoor_WithholdsSteeringSupervisor(t *testing.T) {
 // TestSessionDoor_SessionToolsFollowTheSettings pins settings.sessionTools.messaging and .awareness in every state,
 // the shape KAS's session-tools reader takes (`keys:["sessionTools"]`, then `.<switch>.enabled` as a boolean): on
 // load a stated false clears the persisted sessionMessagingEnabled or sessionAwarenessEnabled, so off is sent too.
+// awareness.mode rides only a stated mode with awareness on; KAS reads its absence as direct.
 func TestSessionDoor_SessionToolsFollowTheSettings(t *testing.T) {
 	for _, messaging := range []bool{false, true} {
 		for _, awareness := range []bool{false, true} {
@@ -478,6 +481,24 @@ func TestSessionDoor_SessionToolsFollowTheSettings(t *testing.T) {
 				t.Errorf("SessionMeta(Messaging=%v, Awareness=%v) sessionTools = %#v, want %#v", messaging, awareness, got, want)
 			}
 		}
+	}
+	for _, tc := range []struct {
+		name  string
+		spawn SessionSpawn
+		want  map[string]any
+	}{
+		{"mode unset", SessionSpawn{Awareness: true}, map[string]any{"enabled": true}},
+		{"direct", SessionSpawn{Awareness: true, AwarenessMode: "direct"}, map[string]any{"enabled": true, "mode": "direct"}},
+		{"consult", SessionSpawn{Awareness: true, AwarenessMode: "consult"}, map[string]any{"enabled": true, "mode": "consult"}},
+		{"consult with awareness off", SessionSpawn{AwarenessMode: "consult"}, map[string]any{"enabled": false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			settings, _ := SessionMeta(&tc.spawn)[settingsKey].(map[string]any)
+			tools, _ := settings["sessionTools"].(map[string]any)
+			if got := tools["awareness"]; !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("sessionTools.awareness = %#v, want %#v", got, tc.want)
+			}
+		})
 	}
 	for _, tc := range engineMatrix {
 		connection, _ := Capabilities(&tc.spawn)[settingsKey].(map[string]any)
@@ -654,5 +675,27 @@ func TestAutomaticTurnProfiling_MatchesAChatPrompt(t *testing.T) {
 	}
 	if got, ok := SessionMeta(&SessionSpawn{})["automaticTurnProfiling"]; ok {
 		t.Errorf("a session that is not a chat's declared automaticTurnProfiling = %v, want none", got)
+	}
+}
+
+// TestInitialize_ContentCollectionAlwaysSent pins that initialize states the switch in both positions, as the object
+// KAS reads, and that no session door carries it: KAS holds it per process.
+func TestInitialize_ContentCollectionAlwaysSent(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		settings, ok := Capabilities(&EngineSpawn{ContentCollection: on})[settingsKey].(map[string]any)
+		if !ok {
+			t.Fatalf("Capabilities(ContentCollection: %v) carries no settings object", on)
+		}
+		cc, ok := settings["contentCollection"].(map[string]any)
+		if !ok || cc["enabled"] != on || len(cc) != 1 {
+			t.Errorf("Capabilities(ContentCollection: %v) settings.contentCollection = %#v, want {enabled: %v}", on, settings["contentCollection"], on)
+		}
+	}
+	for _, tc := range sessionMatrix {
+		if settings, ok := SessionMeta(&tc.spawn)[settingsKey].(map[string]any); ok {
+			if _, present := settings["contentCollection"]; present {
+				t.Errorf("%s: SessionMeta carries settings.contentCollection; KAS takes it at initialize", tc.name)
+			}
+		}
 	}
 }

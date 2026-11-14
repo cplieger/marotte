@@ -29,7 +29,8 @@ export function tabsMock(): Record<string, unknown> {
     toggleFilesView: vi.fn(async () => {}),
     openFilesView: vi.fn(async () => {}),
     toggleDocsView: vi.fn(async () => {}),
-    toggleHistoryView: vi.fn(async () => {}),
+    showHistoryView: vi.fn(),
+    leaveHistoryView: vi.fn(),
 
     adoptSubject: vi.fn(),
     // Resolves like the real door, whose promise settles once the activation half has run.
@@ -48,7 +49,7 @@ export function tabsMock(): Record<string, unknown> {
     setSettingsTab: vi.fn(),
     setGitTab: vi.fn(),
     setDocsTab: vi.fn(),
-    setHistoryTab: vi.fn(),
+    setHistoryPane: vi.fn(),
     setFilesRoute: vi.fn(),
 
     hasTab: vi.fn(() => false),
@@ -58,9 +59,11 @@ export function tabsMock(): Record<string, unknown> {
     tabIdForRoute: vi.fn(() => ""),
     filesTabForRoute: vi.fn(() => ({ id: "", ref: "" })),
     getActiveTabId: vi.fn(() => ""),
+    focusTabRow: vi.fn(() => false),
     getActiveTabRoute: vi.fn(() => null),
     subTabOf: vi.fn(() => null),
     getActiveTabKind: vi.fn(() => null),
+    historyPaneTab: vi.fn(() => null),
     activeChatRef: vi.fn(() => ""),
     parentChatRef: vi.fn(() => ""),
     openChatRefs: vi.fn(() => []),
@@ -70,6 +73,7 @@ export function tabsMock(): Record<string, unknown> {
     openRunRefs: vi.fn(() => []),
     openSpecRefs: vi.fn(() => []),
     openTabSubjects: vi.fn(() => []),
+    recentClosed: vi.fn(() => []),
     cueCandidates: vi.fn(() => []),
 
     // Hands back an unsubscribe so a caller's cleanup does not throw on undefined.

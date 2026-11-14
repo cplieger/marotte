@@ -37,6 +37,10 @@ const PATH_PIN = '<path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3
 const PATH_LIBRARY_BIG =
   '<rect width="8" height="18" x="3" y="3" rx="1"/><path d="M7 3v18"/><path d="M20.4 18.9c.2.5-.1 1.1-.6 1.3l-1.9.7c-.5.2-1.1-.1-1.3-.6L11.1 5.1c-.2-.5.1-1.1.6-1.3l1.9-.7c.5-.2 1.1.1 1.3.6Z"/>';
 
+/** Lucide `list-end`: a message moved to the end of the line, after the turn. */
+const PATH_LIST_END =
+  '<path d="M16 12H3M16 6H3M10 18H3M21 6v10a2 2 0 0 1-2 2h-5"/><path d="m16 16-2 2 2 2"/>';
+
 /** Lucide `eye`. */
 const PATH_EYE =
   '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/>' +
@@ -116,12 +120,6 @@ export const ICON_MIC = svg(
   "ui",
   '<path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/>',
 );
-/** Lucide `circle-stop`, its square filled: dictation listening, a press stops it. The ring keeps it apart from
- *  Cancel's bare square, which can sit beside it mid-turn. */
-export const ICON_MIC_STOP = svg(
-  "ui",
-  '<circle cx="12" cy="12" r="10"/><rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor"/>',
-);
 // Rotated by 15-input.css. Not a marching `stroke-dashoffset`: under `non-scaling-stroke` Chromium computes the dash
 // in a space `stroke-dasharray` disagrees with, collapsing the arc to a dot.
 export const ICON_SPINNER =
@@ -137,6 +135,7 @@ export const ICON_HOURGLASS = svg(
     '<path d="M7 21.5V19.1L12 12L17 19.1V21.5"/>',
 );
 // A stop square, filled: the outline reads as a checkbox at 16px, and stop-is-filled is the transport convention.
+// Cancel and dictation's Stop share it: the two sit side by side mid-turn, and one action keeps one glyph.
 export const ICON_CANCEL = svg(
   "ui",
   '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/>',
@@ -184,11 +183,9 @@ export const ICON_ALERT = svg(
 );
 // Lucide `arrow-up`, a direction primitive: the dock's send-now control.
 export const ICON_ARROW_UP = svg("ui", '<path d="M12 19V5M5 12l7-7 7 7"/>');
-// Lucide `list-end`: the dock's Queue instead, which moves a steer to the end of the line, after the turn.
-export const ICON_QUEUE = svg(
-  "inline",
-  '<path d="M16 12H3M16 6H3M10 18H3M21 6v10a2 2 0 0 1-2 2h-5"/><path d="m16 16-2 2 2 2"/>',
-);
+// The dock's Queue instead, which moves a steer after the turn; the composer's Queue half draws the `_UI` size.
+export const ICON_QUEUE = svg("inline", PATH_LIST_END);
+export const ICON_QUEUE_UI = svg("ui", PATH_LIST_END);
 // Lucide `arrow-right`: the turn panel's "Review all changes", which leaves the panel for the git view.
 export const ICON_ARROW_RIGHT = svg("ui", '<path d="M5 12h14M13 6l6 6-6 6"/>');
 // Go to line (Lucide "hash").
@@ -566,7 +563,7 @@ export const ICON_COMPACT = svg(
   '<path d="M12 22v-6"/><path d="M12 8V2"/><path d="M4 12H2"/><path d="M10 12H8"/><path d="M16 12h-2"/>' +
     '<path d="M22 12h-2"/><path d="m15 19-3-3-3 3"/><path d="m15 5-3 3-3-3"/>',
 );
-// A safety check blocked the turn (Lucide "shield").
+// Lucide "shield": a safety check blocked the turn, and the security profile pill.
 export const ICON_SHIELD = svg(
   "ui",
   '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
@@ -625,7 +622,6 @@ export const ICON_TAB_FILES = svg(
   "ui",
   '<path d="M6 3h3l3 3h6a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3z"/>',
 );
-export const ICON_TAB_HISTORY = svg("ui", '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>');
 /**
  * The configuration browser's library: an upright volume with its spine line beside a leaning one. Two volumes keep
  * it apart from the single closed book, `ICON_REPO`'s meaning. Duplicated as static markup on `#docs-btn` (pinned

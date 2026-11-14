@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { userEvent } from "vitest/browser";
 import type * as ApiClient from "./api-client.js";
 
 const m = vi.hoisted(() => ({
@@ -106,5 +107,102 @@ describe("the branch switcher's lifetime", () => {
       expect(row.getAttribute("aria-busy")).toBeNull();
       expect(row.disabled).toBe(false);
     }
+  });
+});
+
+/** A checkout whose request answers when `answer` runs, as a failed checkout (HTTP 200 with an
+ *  error, the git routes' shape), so nothing else is imported on its success. */
+function heldCheckout(): { answer: () => void } {
+  let answer = (): void => undefined;
+  vi.stubGlobal(
+    "fetch",
+    (_url: string, init?: RequestInit) =>
+      new Promise<Response>((resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(init.signal?.reason as Error);
+        });
+        answer = () => {
+          resolve(
+            new Response(JSON.stringify({ error: "nope" }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        };
+      }),
+  );
+  return {
+    answer: () => {
+      answer();
+    },
+  };
+}
+
+async function openWithRows(): Promise<{ pop: HTMLDivElement; row: HTMLButtonElement }> {
+  const pop = open();
+  m.loads[0]!.answer(BRANCHES);
+  await settle();
+  const row = [...pop.querySelectorAll<HTMLButtonElement>(".git-branch-popover-row")].find(
+    (r) => r.textContent === "dev",
+  );
+  expect(row).toBeDefined();
+  return { pop, row: row! };
+}
+
+/** The pressed row is disabled while its checkout runs, which blurs it on a queued task. */
+async function pressPending(row: HTMLButtonElement): Promise<void> {
+  const blurred = new Promise((r) => {
+    row.addEventListener("blur", r, { once: true });
+  });
+  await userEvent.click(row);
+  await blurred;
+  await settle();
+  expect(row.disabled).toBe(true);
+  expect(document.activeElement).toBe(document.body);
+}
+
+describe("focus when the branch switcher closes", () => {
+  it("returns focus to its anchor after a checkout from a branch row", async () => {
+    const held = heldCheckout();
+    const { row } = await openWithRows();
+    await pressPending(row);
+    held.answer();
+    await vi.waitFor(() => {
+      expect(document.querySelector(".git-branch-popover")).toBeNull();
+    });
+    expect(document.activeElement).toBe(anchor);
+  });
+
+  it("returns focus to its anchor on Escape during a checkout in flight", async () => {
+    heldCheckout();
+    const { row } = await openWithRows();
+    await pressPending(row);
+    await userEvent.keyboard("{Escape}");
+    expect(document.querySelector(".git-branch-popover")).toBeNull();
+    expect(document.activeElement).toBe(anchor);
+  });
+
+  it("leaves focus on <body> after an idle click on a spot that takes no focus", async () => {
+    await openWithRows();
+    const padding = document.createElement("div");
+    padding.style.cssText = "position:fixed;inset:auto auto 0 0;inline-size:100px;block-size:40px";
+    document.body.append(padding);
+    await userEvent.click(padding);
+    padding.remove();
+    expect(document.querySelector(".git-branch-popover")).toBeNull();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("leaves focus in the composer after an outside click into it during a checkout", async () => {
+    heldCheckout();
+    const { row } = await openWithRows();
+    await pressPending(row);
+    const composer = document.createElement("textarea");
+    composer.style.cssText = "position:fixed;inset:auto 0 0 auto";
+    document.body.append(composer);
+    await userEvent.click(composer);
+    expect(document.querySelector(".git-branch-popover")).toBeNull();
+    expect(document.activeElement).toBe(composer);
+    composer.remove();
   });
 });

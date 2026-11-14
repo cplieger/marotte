@@ -129,6 +129,10 @@ func TerminalSettingsParams(ms int) map[string]any {
 	return map[string]any{"terminal": terminal}
 }
 
+// MethodContentCollectionSettingsChanged updates a live KAS process's content-collection switch, which every
+// session of the process shares. KAS reads a malformed payload as off.
+const MethodContentCollectionSettingsChanged = "_kiro/contentCollection/settings_changed"
+
 // Session-level ACP method names — streaming updates, permissions, config.
 const (
 	MethodSessionUpdate     = "session/update"
@@ -175,10 +179,6 @@ const (
 	// choice carries `_meta.kiro.thinkingToggleable`. Its value is the STRING
 	// ThinkingOn or ThinkingOff; turning it off caps a high effort tier.
 	ConfigOptionThinking = "thinking"
-	// ConfigOptionContentCollection drives the opt-out header on every model request of the
-	// PROCESS, not the session, and KAS persists none of it. The value is the STRING
-	// ConfigValueContentCollectionEnabled or ...Disabled; a JSON boolean is ignored.
-	ConfigOptionContentCollection = "contentCollection"
 	// ConfigOptionWorkflowLaunch says when a workflows-on chat starts a workflow on its own. KAS
 	// offers it only in a delegation-suppressing mode, and never on a session recorded before the
 	// option existed, which it runs as WorkflowLaunchDelegateAll.
@@ -190,12 +190,6 @@ const (
 	WorkflowLaunchWhenAsked   = "when-asked"
 	WorkflowLaunchLargeTasks  = "large-tasks"
 	WorkflowLaunchDelegateAll = "delegate-all"
-)
-
-// The two values KAS's contentCollection option accepts.
-const (
-	ConfigValueContentCollectionEnabled  = "enabled"
-	ConfigValueContentCollectionDisabled = "disabled"
 )
 
 // The thinking option's two values, also Chat.Thinking's choices.

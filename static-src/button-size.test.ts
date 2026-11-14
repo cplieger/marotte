@@ -10,7 +10,14 @@ import { page } from "vitest/browser";
 import indexHtml from "../static/index.html?raw";
 import { buildAttachmentPill } from "./attachment-pill.js";
 import { iconEl } from "./icon-el.js";
-import { ICON_CANCEL, ICON_CLOSE, ICON_HOURGLASS, ICON_MODEL, ICON_SEND } from "./icons.js";
+import {
+  ICON_CANCEL,
+  ICON_CLOSE,
+  ICON_MODEL,
+  ICON_QUEUE_UI,
+  ICON_SEND,
+  ICON_SHIELD,
+} from "./icons.js";
 import { setActive, setSessions } from "./store.js";
 import type { updateContextBar as updateContextBarFn } from "./status.js";
 import { makeSession } from "./__test-helpers__/model.js";
@@ -44,7 +51,13 @@ const TOOLBAR = [
 ];
 
 /** Icon-only by construction, so square at the reference; the context pie carries its percentage. */
-const SQUARE = ["chat-options-btn", "task-list-pill", "midturn-send-btn", "scroll-bottom"];
+const SQUARE = [
+  "chat-options-btn",
+  "task-list-pill",
+  "midturn-send-btn",
+  "midturn-alt-btn",
+  "scroll-bottom",
+];
 
 /** The widest pills kiro-cli's catalog renders: a stand-in with as many characters as its widest model's name,
  *  with its widest tier label, and its widest built-in mode. The fit thresholds in `15-input.css` are decided on them. */
@@ -53,6 +66,8 @@ const MODEL = "model charlie 5.5";
 const EFFORT = "medium";
 const MODE_ID = "semantic_reviewer";
 const MODE = "Semantic Reviewer";
+/** The ladder's widest label, as `security-profiles.ts` names the Delegated rung. */
+const PROFILE = "Approve for me";
 
 /** The production writers of the model and mode pills, loaded once a page is mounted: their module graph
  *  resolves page elements at import, and `initRolePicker` installs a lasting effect, so it runs once. */
@@ -131,9 +146,12 @@ async function writeNames(): Promise<void> {
   await nextFrame();
 }
 
-/** The DOM `model-switcher.ts`, `prompt-input.ts` and `attachment-pill.ts` write. */
+/** The DOM `model-switcher.ts`, `profile-pill.ts`, `prompt-input.ts` and `attachment-pill.ts` write. */
 async function dress(state: State): Promise<void> {
   byId("switch-model-btn").prepend(iconEl(ICON_MODEL));
+  byId("profile-pill").classList.remove("hidden");
+  byId("profile-pill-icon").replaceChildren(iconEl(ICON_SHIELD));
+  byId("profile-pill-label").textContent = PROFILE;
   await writeNames();
   const send = byId("send-btn");
   if (state === "idle") {
@@ -141,11 +159,17 @@ async function dress(state: State): Promise<void> {
   } else {
     send.replaceChildren(label("Cancel"), iconEl(ICON_CANCEL));
     const midTurn = byId("midturn-send-btn");
+    byId("midturn-send").hidden = false;
     midTurn.hidden = false;
     midTurn.replaceChildren(
       label(state === "steer" ? "Steer" : "Queue"),
-      iconEl(state === "steer" ? ICON_SEND : ICON_HOURGLASS),
+      iconEl(state === "steer" ? ICON_SEND : ICON_QUEUE_UI),
     );
+    // Beside a steerable turn the pill's second half offers the other action; a queue-only turn has none.
+    const alt = byId("midturn-alt-btn");
+    alt.hidden = state !== "steer";
+    byId("midturn-send").classList.toggle("send-split-both", state === "steer");
+    alt.replaceChildren(iconEl(ICON_QUEUE_UI));
     byId("task-list-pill").classList.remove("hidden");
   }
   const row = byId("attachment-row");
@@ -337,8 +361,10 @@ describe("the composer's controls and the resume button, against the toolbar's b
       const off: string[] = [];
       for (const el of controls()) {
         const hit = hitRect(el);
-        // A pill row control reaches half the row's gap past each side, so its width is the toolbar's plus one gap.
-        const reach = el.closest(".prompt-pills") === null ? 0 : rowGap();
+        // A pill row control reaches half the row's gap past each side, so its width is the toolbar's plus one gap; the
+        // send pill's first half reaches only to its seam on the side it shares with the second.
+        const seam = el.matches(".send-split > :has(+ :not([hidden]))");
+        const reach = el.closest(".prompt-pills") === null ? 0 : seam ? rowGap() / 2 : rowGap();
         if (Math.abs(height(hit) - ref.hit.h) > SLACK) {
           off.push(`${nameOf(el)} reaches ${String(height(hit))}px tall`);
         }
@@ -406,8 +432,13 @@ describe("the composer's controls and the resume button, against the toolbar's b
   });
 });
 
-describe("the model and mode pills, by the room the row has", () => {
+describe("the model, profile and mode pills, by the room the row has", () => {
   const labels = (): HTMLElement[] => [byId("ctx-model-pill"), byId("role-pill-label")];
+  /** The profile pill's label, which drops before the other two; null where the row leaves the pill out. */
+  const profileName = (): HTMLElement | null => {
+    const name = byId("profile-pill-label");
+    return shown(byId("profile-pill")) ? name : null;
+  };
 
   it("fits the row on one line at the phone preset, with no control cut", async () => {
     for (const pointer of ["coarse", "fine"] as const) {
@@ -452,23 +483,26 @@ describe("the model and mode pills, by the room the row has", () => {
 
   it("keeps their text on a wide screen with a mouse", async () => {
     await mount(DESKTOP, "fine", "queue");
-    for (const el of labels()) {
+    for (const el of [...labels(), byId("profile-pill-label")]) {
       expect(shown(el), `#${el.id} shows`).toBe(true);
       expect(el.scrollWidth, `#${el.id} is not cut`).toBeLessThanOrEqual(el.clientWidth);
     }
   });
 
   it("drops the text exactly where the fullest labelled row stops fitting", async () => {
-    // The fullest row (mid-turn, a plan filed) decides, so the labels do not come and go as a turn starts. A phone-shaped
-    // screen hides Send's word and the tier, a wider one shows them, so each regime has its own fit.
+    // The fullest row (mid-turn beside a steerable turn, both halves of the pill, a plan filed) decides, so the labels
+    // do not come and go as a turn starts. A phone-shaped screen hides Send's word and the tier, a wider one shows
+    // them, so each regime has its own fit. The profile pill's name goes first, then the model's and the mode's.
     const box = (): HTMLElement => byId("prompt-box");
     for (const [viewport, pointer] of [
       [[768, 1024], "coarse"],
       [[768, 1024], "fine"],
       [IPAD, "coarse"],
       [IPAD, "fine"],
+      [DESKTOP, "coarse"],
+      [DESKTOP, "fine"],
     ] as const) {
-      await mount(viewport, pointer, "queue");
+      await mount(viewport, pointer, "steer");
       const row = document.querySelector<HTMLElement>(".prompt-pills");
       if (row === null) {
         throw new Error("no pill row");
@@ -479,20 +513,35 @@ describe("the model and mode pills, by the room the row has", () => {
           row.clientWidth - Number.parseFloat(cs.paddingLeft) - Number.parseFloat(cs.paddingRight)
         );
       };
-      // The labelled row's natural width, read where it has room: the controls and the gaps between them.
+      // A row's natural width, read where it has room: the controls and the gaps between them.
+      const natural = (): number => {
+        const gap = Number.parseFloat(getComputedStyle(row).columnGap);
+        const items = [...row.children]
+          .filter((el): el is HTMLElement => el instanceof HTMLElement && shown(el))
+          .filter((el) => !el.classList.contains("pill-spacer"));
+        return (
+          items.reduce((sum, el) => sum + el.getBoundingClientRect().width, 0) +
+          gap * (items.length - 1)
+        );
+      };
       box().style.width = "60rem";
-      const gap = Number.parseFloat(getComputedStyle(row).columnGap);
-      const items = [...row.children]
-        .filter((el): el is HTMLElement => el instanceof HTMLElement && shown(el))
-        .filter((el) => !el.classList.contains("pill-spacer"));
       for (const el of labels()) {
         expect(shown(el), `${String(viewport[0])}: #${el.id} shows with room`).toBe(true);
       }
-      const need =
-        items.reduce((sum, el) => sum + el.getBoundingClientRect().width, 0) +
-        gap * (items.length - 1);
+      // Its name's width is read even where the row is too narrow for it: an inline display outranks the query. The
+      // composer's measure caps the row near the labelled width, so its name is held to the pixel.
+      const profile = profileName();
+      let full = natural();
+      let need = full;
+      if (profile !== null) {
+        profile.style.display = "inline";
+        full = natural();
+        profile.style.display = "none";
+        need = natural();
+        profile.style.display = "";
+      }
       const wrong: string[] = [];
-      for (let w = 760; w >= 280; w -= 4) {
+      for (let w = 1000; w >= 280; w -= 4) {
         box().style.width = `${String(w)}px`;
         const avail = content();
         const labelled = labels().every(shown);
@@ -504,6 +553,19 @@ describe("the model and mode pills, by the room the row has", () => {
         } else if (iconOnly && avail >= need + 16) {
           wrong.push(
             `${String(w)}: icons only with ${String(avail)}px for a ${String(need)}px row`,
+          );
+        }
+        if (profile === null) {
+          continue;
+        }
+        const named = shown(profile);
+        if (named && (!labelled || avail < full - 0.5)) {
+          wrong.push(
+            `${String(w)}: the profile named in ${String(avail)}px of a ${String(full)}px row`,
+          );
+        } else if (!named && avail >= full + 2) {
+          wrong.push(
+            `${String(w)}: the profile unnamed with ${String(avail)}px for a ${String(full)}px row`,
           );
         }
       }
@@ -587,7 +649,7 @@ const CENSUS: readonly Family[] = [
   },
   {
     name: "tab row",
-    selector: "#tab-list .tab",
+    selector: ".side-section-list .tab",
     kind: "row",
     documented: "10-shell-app.css `.tab`: `--tab-row-h`",
   },
@@ -694,7 +756,7 @@ const CENSUS: readonly Family[] = [
   {
     name: "disclosure and list rows",
     selector:
-      ".chat-opt-strip-btn, .run-bar-open, .run-bar-toggle, .tool-group-header, .reasoning-summary, .run-head, .run-step-head, .subagent-header, .tool-diff-stats, .native-explain-summary, .turn-file-row, .turn-info-dbtn, .turn-info-link, .turn-review-all, .entry, .entry-open, .fb-row, .ev-dock-row, .ev-tl-lane, .ev-dock-more, .ev-dock-ask-more, .dock-ask-more, .user-input-option, .git-repo-section-header, .git-file-path, .git-pr-row-title, .git-recent-commits-summary, .code-refs-summary, .forge-options-summary, .rw-more-summary, .mcp-result-summary, .always-choice-option, .compaction-head, .mcp-discovery-summary, .forge-account-repos-summary, .git-repo-section-header-toggle",
+      ".chat-opt-strip-btn, .run-bar-open, .run-bar-toggle, .tool-group-header, .reasoning-summary, .run-head, .run-step-head, .subagent-header, .tool-diff-stats, .native-explain-summary, .turn-file-row, .turn-info-dbtn, .turn-info-link, .turn-review-all, .entry, .entry-open, .fb-row, .ev-dock-row, .ev-tl-lane, .ev-dock-more, .ev-dock-ask-more, .dock-ask-more, .user-input-option, .git-repo-section-header, .git-file-path, .git-pr-row-title, .git-recent-commits-summary, .code-refs-summary, .forge-options-summary, .rw-more-summary, .mcp-result-summary, .always-choice-option, .compaction-head, .mcp-discovery-summary, .forge-account-repos-summary, .git-repo-section-header-toggle, .side-section-toggle",
     kind: "row",
     documented: "each family's `--row-tap*` rule: a row, its own target",
   },
@@ -874,7 +936,13 @@ const COVERS: Readonly<Record<Surface, readonly string[]>> = {
     ".attachment-open",
     ".attachment-close",
   ],
-  "chat steer": ["#midturn-send-btn", "#task-list-pill", "#send-btn", ".attachment-close"],
+  "chat steer": [
+    "#midturn-send-btn",
+    "#midturn-alt-btn",
+    "#task-list-pill",
+    "#send-btn",
+    ".attachment-close",
+  ],
   "chat queue": ["#midturn-send-btn", "#task-list-pill", "#send-btn", "#scroll-bottom"],
   run: ["#settings-btn", "#run-send-btn", "#run-scroll-bottom"],
 };

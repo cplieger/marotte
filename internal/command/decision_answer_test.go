@@ -109,7 +109,7 @@ func decisionCases(t *testing.T) []struct {
 		run  func(hostDouble) (any, error)
 	}{
 		{name: "permission", run: func(host hostDouble) (any, error) {
-			return cmdPermission(t.Context(), host, host, perm)
+			return cmdPermission(t.Context(), host, perm)
 		}},
 		{name: "elicitation", run: func(host hostDouble) (any, error) {
 			return cmdElicitationResponse(t.Context(), host, elicit)
@@ -210,18 +210,18 @@ func TestDecisionHandlers_AClaimedAnswerOutlivesTheRequest(t *testing.T) {
 	gone, cancel := context.WithCancel(t.Context())
 	cancel()
 	for _, tc := range []struct {
-		run  func(pendingPermAccess, profileSwitcher) (any, error)
+		run  func(pendingPermAccess) (any, error)
 		name string
 	}{
-		{name: "permission", run: func(p pendingPermAccess, s profileSwitcher) (any, error) {
-			return cmdPermission(gone, p, s, decisionCommand(t, marotte.CmdPermissionResponse,
+		{name: "permission", run: func(p pendingPermAccess) (any, error) {
+			return cmdPermission(gone, p, decisionCommand(t, marotte.CmdPermissionResponse,
 				marotte.PermissionResponseCommand{RequestID: decisionRequestID, OptionID: "allow_once"}))
 		}},
-		{name: "elicitation", run: func(p pendingPermAccess, _ profileSwitcher) (any, error) {
+		{name: "elicitation", run: func(p pendingPermAccess) (any, error) {
 			return cmdElicitationResponse(gone, p, decisionCommand(t, marotte.CmdElicitationResponse,
 				marotte.ElicitationResponseCommand{RequestID: decisionRequestID, Action: marotte.ElicitationActionDecline}))
 		}},
-		{name: "user_input", run: func(p pendingPermAccess, _ profileSwitcher) (any, error) {
+		{name: "user_input", run: func(p pendingPermAccess) (any, error) {
 			return cmdUserInputResponse(gone, p, decisionCommand(t, marotte.CmdUserInputResponse,
 				marotte.UserInputResponseCommand{RequestID: decisionRequestID, Action: marotte.UserInputActionDismissed}))
 		}},
@@ -230,7 +230,7 @@ func TestDecisionHandlers_AClaimedAnswerOutlivesTheRequest(t *testing.T) {
 			bridge := &liveCtxBridge{}
 			deps := &takeDeps{benchDeps: newBenchDeps(), bridge: bridge, takeOK: true}
 
-			if _, err := tc.run(deps, deps); err != nil {
+			if _, err := tc.run(deps); err != nil {
 				t.Fatalf("%s on a request whose client left = %v", tc.name, err)
 			}
 

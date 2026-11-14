@@ -270,27 +270,27 @@ func TestEnsureResident_ACallerWaitsOnlyItsOwnContextAndALaterCallerJoinsTheLoad
 }
 
 func TestUnreadableConfig_AResidentSessionIsNotMarkedUntilTheRepairMovesAValue(t *testing.T) {
-	dir := writeSettings(t, `{"security_profile":"unrestricted"}`)
+	dir := writeSettings(t, `{"memory_mode":"learn"}`)
 	h := reopenFixtureIn(t, dir, nil)
 	settleBoot(t, h)
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
-	rewriteConfigByHand(t, dir, `{"security_profile":`)
+	rewriteConfigByHand(t, dir, `{"memory_mode":`)
 	h.ReconcileSessionSettings(t.Context())
 	if reloadMarked(h, "c1") {
 		t.Error("an unreadable config.json marked the open chat to reload onto the defaults")
 	}
-	rewriteConfigByHand(t, dir, `{"security_profile":"unrestricted"}`)
+	rewriteConfigByHand(t, dir, `{"memory_mode":"learn"}`)
 	h.ReconcileSessionSettings(t.Context())
 	if reloadMarked(h, "c1") {
 		t.Error("a repair to the same document marked the open chat to reload")
 	}
-	rewriteConfigByHand(t, dir, `{"security_profile":"guarded"}`)
+	rewriteConfigByHand(t, dir, `{"memory_mode":"read_only"}`)
 	h.ReconcileSessionSettings(t.Context())
 	if !reloadMarked(h, "c1") {
-		t.Error("a repair that moved the profile left the open chat unmarked")
+		t.Error("a repair that moved the memory mode left the open chat unmarked")
 	}
 }
 

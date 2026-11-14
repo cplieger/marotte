@@ -47,11 +47,6 @@ func (bc *bridgeCoordinator) openTurn(ctx context.Context, chatID marotte.ChatID
 	if err != nil {
 		return "", err
 	}
-	// Before the announce, so no client sees the turn live while the unsent rows it will carry
-	// still read as a turn of their own.
-	if bc.steerTurnOpened != nil && source.PromptClass() {
-		bc.steerTurnOpened(chatID, t.ID)
-	}
 	bc.announceTurnOpened(ctx, chatID, t)
 	if err := bc.chatStore.WriteCounters(ctx, chatID); err != nil {
 		slog.Warn("turn opened but the header's counters did not follow", "chat_id", chatID, "turn", t.ID, "error", err)

@@ -9,7 +9,7 @@ export interface FaceInput {
   readonly dictating: boolean;
 }
 
-/** `main` is `#send-btn`, `side` is `#midturn-send-btn` in the slot beside Cancel. */
+/** `main` is `#send-btn`, `side` is the mid-turn pill (`#midturn-send`) in the slot beside Cancel. */
 export interface Faces {
   readonly main: "send" | "dictate" | "cancel" | "retry";
   readonly side: "hidden" | "send" | "dictate";

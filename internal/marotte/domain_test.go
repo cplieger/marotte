@@ -18,9 +18,14 @@ func TestChatHeader_copies_metadata(t *testing.T) {
 		UpdatedAt:       200,
 		TurnCount:       2,
 		LastTurnOutcome: TurnOutcomeCompleted,
+		SecurityProfile: "read-only",
 	}
 
 	h := c.Header()
+
+	if h.SecurityProfile != "read-only" {
+		t.Errorf("SecurityProfile = %q, want read-only for the composer's profile pill", h.SecurityProfile)
+	}
 
 	if h.ID != "c1" || h.Name != "Hello" || h.Model != "model-x" {
 		t.Errorf("header identity fields = %+v, want id=c1 name=Hello model=model-x", h)

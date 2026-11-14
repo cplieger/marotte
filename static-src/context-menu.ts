@@ -17,11 +17,20 @@ interface ContextMenuPosition {
   y: number;
 }
 
-/** Show a menu at a viewport point; dismisses on outside click or Escape. Returns a dismiss function. */
+// One menu shows at a time: a right-click sends no click, so the open menu's outside dismissal never sees it.
+let dismissOpen: (() => void) | null = null;
+
+/** Show a menu at a viewport point, closing any menu already open; dismisses on outside click or Escape.
+ *  Returns a dismiss function.
+ *  `returnFocus` takes focus back when the menu closes with focus inside it (Escape, an item). */
 export function showContextMenu(
   items: ContextMenuItem[],
   position: ContextMenuPosition,
+  opts?: { returnFocus?: HTMLElement },
 ): () => void {
+  const open = dismissOpen;
+  dismissOpen = null;
+  open?.();
   const menu = el("div", { className: "tab-context-menu", role: "menu" });
 
   // Created before the item handlers so they can close it.
@@ -29,8 +38,12 @@ export function showContextMenu(
     placement: "bottom",
     align: "start",
     offset: 0,
+    ...(opts?.returnFocus === undefined ? {} : { returnFocus: opts.returnFocus }),
     onClose: () => {
       menu.remove();
+      if (dismissOpen === dismiss) {
+        dismissOpen = null;
+      }
     },
   });
 
@@ -51,12 +64,14 @@ export function showContextMenu(
 
   rovingFocus(menu, ".tab-context-item");
 
+  const dismiss = (): void => {
+    pop.hide();
+  };
+  dismissOpen = dismiss;
   pop.show();
 
   // The popover leaves focus to the caller.
   menu.querySelector<HTMLButtonElement>("button")?.focus();
 
-  return () => {
-    pop.hide();
-  };
+  return dismiss;
 }

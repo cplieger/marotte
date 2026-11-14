@@ -67,6 +67,7 @@ func TestOpen_RefusesASpecItCannotHold(t *testing.T) {
 		{desc: "a kind nobody declared", spec: marotte.OpenTab{Kind: "sidebar", Ref: "x"}, want: ErrBadKind},
 		{desc: "the empty kind", spec: marotte.OpenTab{Ref: "x"}, want: ErrBadKind},
 		{desc: "plan, deleted from the client on 2026-08-25", spec: marotte.OpenTab{Kind: "plan"}, want: ErrBadKind},
+		{desc: "history, the sidebar's foot row and never a tab", spec: marotte.OpenTab{Kind: "history"}, want: ErrBadKind},
 		{desc: "a chat with no ref", spec: marotte.OpenTab{Kind: marotte.TabKindChat}, want: ErrBadRef},
 		{desc: "an editor with no ref", spec: marotte.OpenTab{Kind: marotte.TabKindEditor}, want: ErrBadRef},
 		{desc: "a web preview with no ref", spec: marotte.OpenTab{Kind: marotte.TabKindWeb}, want: ErrBadRef},

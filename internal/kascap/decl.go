@@ -110,6 +110,9 @@ type EngineSpawn struct {
 	SteeringReminders bool
 	// DisableTelemetry sends telemetryEnabled false at initialize; the zero value is KAS's own default, on.
 	DisableTelemetry bool
+	// ContentCollection is sent at initialize as settings.contentCollection.enabled, always present; KAS reads a
+	// malformed value as off.
+	ContentCollection bool
 	// ModelFallback writes KIRO_FEATURE_MODEL_FALLBACK_{REFUSAL,AVAILABILITY}_ENABLED as "true" or "false", both
 	// positions, since KAS defaults them on: the zero value turns fallback off.
 	ModelFallback bool
@@ -129,6 +132,9 @@ type SessionSpawn struct {
 	WorkValidation string
 	// WorkflowCreatorEffort rides the workflows object as creatorEffort; empty withholds the member.
 	WorkflowCreatorEffort string
+	// AwarenessMode rides the sessionTools awareness object as mode, sent only while Awareness is on; empty withholds
+	// the member.
+	AwarenessMode string
 	// Presets are the KAS policy-preset ids of the active security profile (policyfile.Profile). EMPTY means the
 	// Custom profile, so the key is withheld. KAS persists neither door's ids, so both doors resolve from this field.
 	Presets []string

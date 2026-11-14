@@ -260,7 +260,7 @@ func TestSanitize_DropsWhatOpenCouldNotHaveWritten(t *testing.T) {
 			wantRefs: nil,
 		},
 		{
-			desc:     "a kind that is not one of the eight, including the deleted plan",
+			desc:     "a kind that is not a tab kind, including the deleted plan",
 			in:       []marotte.TabSubject{{ID: "a", Kind: "plan", Ref: "x"}, {ID: "b", Kind: "", Ref: "y"}, {ID: "c", Kind: marotte.TabKindDocs}},
 			wantRefs: []string{"docs:"},
 		},
@@ -303,6 +303,37 @@ func TestSanitize_DropsWhatOpenCouldNotHaveWritten(t *testing.T) {
 				t.Errorf("NewStore over %s kept %v, want %v", tc.desc, got, tc.wantRefs)
 			}
 		})
+	}
+}
+
+// TestNewStore_DropsAStoredHistoryTab pins the load of a file written while History was a tab: the
+// entry is dropped by ordinary validation, the others keep their order, and the file is read, not
+// moved aside.
+func TestNewStore_DropsAStoredHistoryTab(t *testing.T) {
+	dir := t.TempDir()
+	writeDoc(t, dir, file{Version: 7, Tabs: []marotte.TabSubject{
+		{ID: "a", Kind: marotte.TabKindChat, Ref: "c-a"},
+		{ID: "h", Kind: "history"},
+		{ID: "s", Kind: marotte.TabKindSettings},
+		{ID: "e", Kind: marotte.TabKindEditor, Ref: "/workspace/a.ts"},
+	}})
+
+	s, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore over a file holding a history tab: %v, want no error", err)
+	}
+	tabs, version := s.List()
+	if got, want := refsOf(tabs), []string{"chat:c-a", "settings:", "editor:/workspace/a.ts"}; !slices.Equal(got, want) {
+		t.Errorf("NewStore kept %v, want %v: the history entry dropped and the rest in order", got, want)
+	}
+	if version != 7 {
+		t.Errorf("List() version = %d, want the stored 7", version)
+	}
+	if s.Unread() != "" {
+		t.Errorf("Unread() = %q, want \"\": a dropped entry is not an unread arrangement", s.Unread())
+	}
+	if _, _, _, err := s.Open(t.Context(), chatSpec("c-b")); err != nil {
+		t.Errorf("Open after the load: %v, want the store writable", err)
 	}
 }
 

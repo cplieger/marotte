@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 
 import indexHtml from "../static/index.html?raw";
-import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { manifestSheets, mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { settingsPayload } from "./__test-helpers__/settings.js";
 import type * as Router from "./router.js";
 import type * as History from "./history.js";
@@ -20,12 +20,11 @@ vi.mock("./router.js", async (importOriginal) => ({
   pushRoute: vi.fn(),
   replaceRoute: vi.fn(),
 }));
-// The History page's own content is not this suite's subject; its tab and view are.
+// The History page's own content is not this suite's subject; its row and view are.
 vi.mock("./history.js", async (importOriginal) => ({
   ...(await importOriginal<typeof History>()),
   loadHistoryView: vi.fn(),
   refreshHistoryView: vi.fn(),
-  teardownHistoryView: vi.fn(),
 }));
 vi.mock("./device-view.js", async (importOriginal) => {
   let active = "";
@@ -88,12 +87,10 @@ vi.mock("./api-client.js", async (importOriginal) => {
 import { initSidebarHistory } from "./sidebar-history.js";
 import { adoptRetention } from "./retention.js";
 import {
-  openTab,
   tabIdFor,
   getActiveTabId,
   toggleDocsView,
   toggleGitView,
-  toggleHistoryView,
   toggleSettingsView,
   _resetForTest,
 } from "./tabs.js";
@@ -120,7 +117,7 @@ beforeAll(async () => {
   document.body.appendChild(shell);
   style = mountAppCSS();
   initSidebarHistory();
-  // The History tab imports this lazily and unawaited; loaded here, once the shell exists, its
+  // Showing History imports this lazily and unawaited; loaded here, once the shell exists, its
   // real graph is not still resolving through the mock route when the file ends.
   await import("./history.js");
 });
@@ -177,7 +174,7 @@ async function settle(): Promise<void> {
 }
 
 describe("the sidebar's History button", () => {
-  it("opens History and marks the button active, closing the phone drawer", async () => {
+  it("shows History with no tab and selects the row, closing the phone drawer", async () => {
     const sidebar = el("sidebar");
     sidebar.classList.add("open");
 
@@ -185,79 +182,86 @@ describe("the sidebar's History button", () => {
     expect(sidebar.classList.contains("open")).toBe(false);
     await settle();
 
-    const id = tabIdFor("history");
-    expect(id).not.toBe("");
-    expect(getActiveTabId()).toBe(id);
+    expect(tabServer.subjects()).toHaveLength(0);
+    expect(getActiveTabId()).toBe("");
     expect(el("history-view").classList.contains("hidden")).toBe(false);
     expect(el("history-btn").classList.contains("active")).toBe(true);
+    expect(el("history-btn").getAttribute("aria-current")).toBe("page");
   });
 
-  it("closes the tab it is showing when pressed again, and drops the active mark", async () => {
-    await openTab({ kind: "history" });
-    expect(el("history-btn").classList.contains("active")).toBe(true);
-
-    el("history-btn").click();
-    await settle();
-
-    expect(tabIdFor("history")).toBe("");
-    expect(el("history-btn").classList.contains("active")).toBe(false);
-  });
-
-  it("brings an open but hidden History forward instead of closing it", async () => {
-    await openTab({ kind: "history" });
-    const id = tabIdFor("history");
-    await openTab({ kind: "settings" });
-    expect(getActiveTabId()).not.toBe(id);
-    expect(el("history-btn").classList.contains("active")).toBe(false);
-
-    el("history-btn").click();
-    await settle();
-
-    expect(tabIdFor("history")).toBe(id);
-    expect(getActiveTabId()).toBe(id);
-    expect(el("history-btn").classList.contains("active")).toBe(true);
-  });
-
-  it("is named History and explains itself through the styled tooltip, never a native title", () => {
+  it("is a row named by its visible label, with no tooltip", () => {
     const b = el("history-btn");
-    expect(b.getAttribute("aria-label")).toBe("History");
-    expect(b.getAttribute("data-tooltip")).toBe("History");
+    expect(b.classList.contains("side-history-row")).toBe(true);
+    expect(b.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    expect(b.querySelector(".side-history-label")?.textContent).toBe("History");
+    expect(b.textContent.trim(), "the name from content").toBe("History");
+    expect(b.hasAttribute("aria-label")).toBe(false);
+    expect(b.hasAttribute("data-tooltip")).toBe(false);
     expect(b.hasAttribute("title")).toBe(false);
   });
 
+  it("sits at the foot of the sections, leaving New chat alone in the actions row", () => {
+    const actions = shell.querySelector(".sidebar-actions");
+    expect([...(actions?.children ?? [])].map((c) => c.id)).toEqual(["new-chat"]);
+    expect(el("tab-sections").lastElementChild).toBe(el("history-btn"));
+  });
+
   it.each(["fine", "coarse"] as const)(
-    "is a square level with New chat, right of it, on a %s pointer",
+    "is a full-width row at the tab row height on a %s pointer",
     (tier) => {
       document.documentElement.dataset["pointer"] = tier;
-      const chat = el("new-chat").getBoundingClientRect();
       const history = el("history-btn").getBoundingClientRect();
-      // The sidebar tab row's height on each tier, 42px on a mouse and 44px under a finger.
+      const column = el("tab-sections").getBoundingClientRect();
+      // `--tab-row-h` on each tier, 42px on a mouse and 44px under a finger.
       expect(history.height).toBe(tier === "fine" ? 42 : 44);
-      expect(history.height).toBe(chat.height);
-      expect(history.width).toBe(history.height);
-      expect(history.top).toBe(chat.top);
-      expect(history.left).toBeGreaterThan(chat.right);
-      // New chat takes the rest of the row.
-      expect(chat.width).toBeGreaterThan(4 * history.width);
+      expect(history.width).toBeGreaterThan(column.width / 2);
     },
   );
 
-  it("hides with retention off and returns with it on", async () => {
-    adoptRetention(settingsPayload({ chat_retention_days: 0 }));
-    expect(el("history-btn").classList.contains("hidden")).toBe(true);
-    adoptRetention(settingsPayload({ chat_retention_days: 7 }));
-    expect(el("history-btn").classList.contains("hidden")).toBe(false);
+  it("is shown with no tab open, no closed chat and retention off", async () => {
+    await settle();
+    expect(tabServer.subjects()).toHaveLength(0);
+    for (const days of [0, 7]) {
+      adoptRetention(settingsPayload({ chat_retention_days: days }));
+      const b = el("history-btn");
+      expect(b.hidden, `days ${String(days)}`).toBe(false);
+      expect(b.classList.contains("hidden"), `days ${String(days)}`).toBe(false);
+      expect(b.getBoundingClientRect().height, `days ${String(days)}`).toBeGreaterThan(0);
+    }
+  });
+
+  it("says in the Days kept hint that 0 deletes on close, never that it hides History", () => {
+    const hint = new DOMParser()
+      .parseFromString(indexHtml, "text/html")
+      .querySelector("#general-retention-section .section-hint");
+    expect(hint, "the Days kept hint").not.toBeNull();
+    expect(hint?.innerHTML).toContain(
+      "Set <strong>0</strong> to delete a chat as soon as you close it.",
+    );
+    expect(hint?.textContent).not.toMatch(/hide/i);
+  });
+});
+
+describe("the sidebar's scroll region", () => {
+  it("scrolls the sections as a whole, not the Open list", () => {
+    expect(getComputedStyle(el("tab-sections")).overflowY).toBe("auto");
+    expect(getComputedStyle(el("tab-list")).overflowY).toBe("visible");
+    expect(getComputedStyle(el("pinned-list")).overflowY).toBe("visible");
+  });
+
+  it("leaves no rule naming the old square History button", () => {
+    const stale = manifestSheets().filter((s) => s.css.includes("sidebar-history-btn"));
+    expect(stale.map((s) => s.name)).toEqual([]);
   });
 });
 
 // The toolbar's page toggles share one contract: lit while their page is the one on screen, and a second
-// press closes it. The docs button was the one that never lit.
-describe("the page toggles in the toolbar and sidebar", () => {
+// press closes it.
+describe("the page toggles in the toolbar", () => {
   const toggles = [
     { button: "docs-btn", kind: "docs", toggle: () => toggleDocsView() },
     { button: "git-btn", kind: "git", toggle: () => toggleGitView() },
     { button: "settings-btn", kind: "settings", toggle: () => toggleSettingsView() },
-    { button: "history-btn", kind: "history", toggle: () => toggleHistoryView() },
   ] as const;
 
   it.each(toggles)(

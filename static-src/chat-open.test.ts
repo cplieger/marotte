@@ -157,6 +157,42 @@ describe("openPreviousSession", () => {
     expect(h.pointTurnRail, "chat.ts showed the chat a second time").not.toHaveBeenCalled();
     expect(h.loadMessages, "chat.ts loaded the chat a second time").not.toHaveBeenCalled();
   });
+
+  const row = { chat_id: "b", title: "b" } as unknown as ResumableSession;
+  const composer = (): HTMLElement | null => document.getElementById("prompt-input");
+
+  it("puts focus on the composer after an open that left it on <body> (a History row opened with Enter)", async () => {
+    blankB();
+    const historyRow = document.createElement("button");
+    document.body.append(historyRow);
+    historyRow.focus();
+    h.openTab.mockImplementationOnce(() => {
+      // The open parks the History view, and the focus inside it with it.
+      historyRow.remove();
+      return Promise.resolve("opened");
+    });
+    await expect(chat.openPreviousSession(row)).resolves.toBe("opened");
+    expect(document.activeElement).toBe(composer());
+  });
+
+  it("leaves focus on a control the person moved to while the open ran", async () => {
+    blankB();
+    const elsewhere = document.getElementById("in-transcript");
+    h.openTab.mockImplementationOnce(() => {
+      elsewhere?.focus();
+      return Promise.resolve("opened");
+    });
+    await chat.openPreviousSession(row);
+    expect(document.activeElement).toBe(elsewhere);
+  });
+
+  it("moves no focus for a conversation that is gone", async () => {
+    blankB();
+    (document.activeElement as HTMLElement | null)?.blur();
+    h.openTab.mockResolvedValueOnce("not-found");
+    await expect(chat.openPreviousSession(row)).resolves.toBe("gone");
+    expect(document.activeElement).toBe(document.body);
+  });
 });
 
 describe("the load-error Retry", () => {

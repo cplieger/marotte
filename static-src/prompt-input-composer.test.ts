@@ -113,7 +113,10 @@ async function mount(): Promise<Mounted> {
         <div id="prompt-box">
           <textarea id="prompt-input"></textarea>
           <ul id="attachment-row" class="hidden"></ul>
-          <button id="midturn-send-btn" type="button" hidden></button>
+          <div id="midturn-send" class="send-split" role="group" aria-label="Send mid-turn" hidden>
+            <button id="midturn-send-btn" type="button" hidden></button>
+            <button id="midturn-alt-btn" type="button" class="send-btn" hidden></button>
+          </div>
           <button id="send-btn" type="submit"></button>
         </div>
       </form>
@@ -232,7 +235,7 @@ describe("history cycling versus the per-chat draft", () => {
     const { input } = await mount();
     type(input, "send me");
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    expect(mockSubmit).toHaveBeenCalledWith("send me");
+    expect(mockSubmit).toHaveBeenCalledWith("send me", "steer");
     expect(input.value).toBe("");
     expect(mockDispatch).toHaveBeenLastCalledWith({ chatID: "c1", text: "" });
   });

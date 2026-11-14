@@ -56,7 +56,10 @@ beforeAll(() => {
     <form id="prompt-form" action="javascript:void 0">
       <ul id="slash-menu" hidden></ul>
       <textarea id="prompt-input" aria-controls="slash-menu"></textarea>
-      <button id="midturn-send-btn" type="button" hidden></button>
+      <div id="midturn-send" class="send-split" role="group" aria-label="Send mid-turn" hidden>
+        <button id="midturn-send-btn" type="button" hidden></button>
+        <button id="midturn-alt-btn" type="button" class="send-btn" hidden></button>
+      </div>
       <button id="send-btn" type="submit"></button>
     </form>`;
   initPromptInput((text) => {

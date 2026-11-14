@@ -78,6 +78,31 @@ func TestRenderChatMarkdown_FullTranscript(t *testing.T) {
 	}
 }
 
+// The turn footer's credit figure reads like the History row and prompt bar: a charge under half a
+// cent is "<0.01", never "0.00", and no charge prints no figure.
+func TestRenderChatMarkdown_TurnCloseCreditFigure(t *testing.T) {
+	cases := []struct {
+		name    string
+		credits float64
+		want    string
+	}{
+		{"under_half_a_cent", 0.004, "_Outcome: completed · <0.01 credits_"},
+		{"half_a_cent", 0.005, "_Outcome: completed · 0.01 credits_"},
+		{"normal_figure", 1.234, "_Outcome: completed · 1.23 credits_"},
+		{"no_charge", 0, "_Outcome: completed_\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entries, _ := chatOf(openTurn("t-1", 1, nil).
+				close(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, Credits: tc.credits}))
+			md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Spend"}, entries)
+			if !strings.Contains(md, tc.want) {
+				t.Errorf("credits %v: markdown missing %q\n---\n%s", tc.credits, tc.want, md)
+			}
+		})
+	}
+}
+
 func TestRenderChatMarkdown_EmptyLog(t *testing.T) {
 	md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Empty"}, nil)
 	if !strings.Contains(md, "# Empty") {

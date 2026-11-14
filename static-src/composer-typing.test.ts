@@ -34,6 +34,7 @@ import {
 } from "./composer-state.js";
 import { initSlashMenu, _setCatalogForTest } from "./slash-menu.js";
 import { setSessions, setActive } from "./store.js";
+import { adoptInterruptDefault } from "./interrupt-default.js";
 import type { Session } from "./types.js";
 import type { SlashCommand } from "./wire/types.gen.js";
 
@@ -131,7 +132,10 @@ beforeAll(() => {
     <form id="prompt-form" action="javascript:void 0">
       <ul id="slash-menu" hidden></ul>
       <textarea id="prompt-input" aria-controls="slash-menu"></textarea>
-      <button id="midturn-send-btn" type="button" hidden></button>
+      <div id="midturn-send" class="send-split" role="group" aria-label="Send mid-turn" hidden>
+        <button id="midturn-send-btn" type="button" hidden></button>
+        <button id="midturn-alt-btn" type="button" class="send-btn" hidden></button>
+      </div>
       <button id="send-btn" type="submit"></button>
     </form>`;
   document.documentElement.setAttribute("data-pointer", "coarse");
@@ -168,7 +172,6 @@ async function between(c: Condition): Promise<void> {
       session({
         thinking: true,
         working_label: `Working ${String(tick)}`,
-        ...(c.endsWith("Queue") ? { interrupt_mode: "queue" as const } : {}),
       }),
     ]);
     setSendState({ kind: "streaming" });
@@ -190,7 +193,8 @@ const MENU: SlashCommand[] = ["whats", "what's", "what\u2019s"].map((name): Slas
 
 async function begin(c: Condition, prefix: string): Promise<HTMLTextAreaElement> {
   _setCatalogForTest(c === "slash menu open" ? MENU : []);
-  setSessions([session(c.endsWith("Queue") ? { interrupt_mode: "queue" } : {})]);
+  adoptInterruptDefault({ interrupt_mode: c.endsWith("Queue") ? "queue" : "steer" });
+  setSessions([session()]);
   setActive(CHAT);
   const el = box();
   drive(() => {

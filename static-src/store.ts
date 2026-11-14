@@ -14,7 +14,6 @@ import type {
   Usage,
   ToolCall,
   CodeReference,
-  InterruptMode,
   PendingSteer,
   ToolStatus,
 } from "./types.js";
@@ -818,6 +817,7 @@ export function upsertHeader(h: ChatHeader): void {
         acp_session_id: h.acp_session_id ?? "",
         current_mode_id: h.current_mode_id ?? "",
         supervised_mode: h.supervised_mode ?? false,
+        security_profile: h.security_profile ?? "",
         effort: h.effort ?? "",
         // Absent means the server has no session catalog to report (a chat with no bridge, or a
         // header built before session/new answered), NOT that the tiers went away.
@@ -838,8 +838,6 @@ export function upsertHeader(h: ChatHeader): void {
         // pick on every device.
         pending_model: h.pending_model ?? "",
         pending_effort: h.pending_effort ?? "",
-        // Both are header-authoritative: an absent field is steer and no follow-ups.
-        interrupt_mode: h.interrupt_mode ?? "steer",
         run: newerRun(s.run, h.run),
         tangent: h.tangent ?? false,
       };
@@ -869,6 +867,7 @@ export function upsertHeader(h: ChatHeader): void {
     acp_session_id: h.acp_session_id ?? "",
     current_mode_id: h.current_mode_id ?? "",
     supervised_mode: h.supervised_mode ?? false,
+    security_profile: h.security_profile ?? "",
     effort: h.effort ?? "",
     effort_levels: h.effort_levels ?? [],
     effort_active: h.effort_active ?? "",
@@ -879,7 +878,6 @@ export function upsertHeader(h: ChatHeader): void {
     read_position: h.read_position ?? 0,
     pending_model: h.pending_model ?? "",
     pending_effort: h.pending_effort ?? "",
-    interrupt_mode: h.interrupt_mode ?? "steer",
     run: newerRun(undefined, h.run),
     tangent: h.tangent ?? false,
     turns: new Map(),
@@ -1289,13 +1287,12 @@ export function setSupervisedMode(chatID: string, enabled: boolean): void {
   sessions.update(chatID, (cur) => ({ ...cur, supervised_mode: enabled }));
 }
 
-/** Set what Send means on this chat while a turn runs. */
-export function setChatInterruptMode(chatID: string, mode: InterruptMode): void {
+export function setSecurityProfile(chatID: string, profile: string): void {
   const s = get(chatID);
-  if (s === undefined || (s.interrupt_mode ?? "steer") === mode) {
+  if (s === undefined || (s.security_profile ?? "") === profile) {
     return;
   }
-  sessions.update(chatID, (cur) => ({ ...cur, interrupt_mode: mode }));
+  sessions.update(chatID, (cur) => ({ ...cur, security_profile: profile }));
 }
 
 /** Set the chat's reasoning-effort level. Per-chat like model, mode and supervised, so a tab

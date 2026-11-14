@@ -38,7 +38,7 @@ func TestLaunchScheduled_TellsABusyEngineFromAFailure(t *testing.T) {
 			br.callErrs = tc.fail
 			var err error
 			if tc.manual {
-				_, _, err = h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
+				_, _, _, err = h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
 			} else {
 				_, _, err = h.runs.LaunchScheduled(t.Context(), "bundled://publish", launchrule.Row{ID: "s1"},
 					nil, marotte.RunDefaults{}, time.Now().Add(time.Hour))

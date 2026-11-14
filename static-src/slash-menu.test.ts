@@ -256,7 +256,7 @@ describe("the listbox", () => {
 
   it("says why a row is greyed while a send would steer, and how to queue it instead", () => {
     expect(BUSY_REASON).toBe(
-      "A steer cannot run this. Send it when the turn ends, or turn on Queue messages",
+      "A steer cannot run this. Press Queue instead, beside Steer, to queue it, or send it when the turn ends",
     );
   });
 });

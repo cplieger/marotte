@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,283 +18,113 @@ import (
 func contentCollectionOff(context.Context) (bool, bool) { return false, true }
 func contentCollectionOn(context.Context) (bool, bool)  { return true, true }
 
-// Content collection is process-scoped in KAS and never persisted, and it is set through a session, so both session
-// doors carry it, as a string: a boolean is ignored.
-func TestSessionDoors_AssertContentCollection(t *testing.T) {
-	for _, tc := range []struct {
-		resolve func(context.Context) (bool, bool)
-		name    string
-		session string
-		want    string
-	}{
-		{name: "new_off", resolve: contentCollectionOff, want: marotte.ConfigValueContentCollectionDisabled},
-		{name: "new_on", resolve: contentCollectionOn, want: marotte.ConfigValueContentCollectionEnabled},
-		{name: "load_off", resolve: contentCollectionOff, session: "sess_resumed", want: marotte.ConfigValueContentCollectionDisabled},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			line := captureEngineRequest(t, "session/set_config_option",
-				&marotte.EngineOpts{ContentCollection: tc.resolve}, &marotte.SessionOpts{SessionID: tc.session},
-				`"configId":"`+marotte.ConfigOptionContentCollection+`"`)
-			params := digObject(t, "the contentCollection params", line, "params")
-			if got, ok := params[keyConfigValue].(string); !ok || got != tc.want {
-				t.Errorf("contentCollection value = %#v (%T), want the string %q", params[keyConfigValue], params[keyConfigValue], tc.want)
-			}
-		})
-	}
-}
-
-func TestSessionDoors_NoResolverSendsNoContentCollection(t *testing.T) {
-	data := captureRequests(t, &marotte.SessionOpts{})
-	if strings.Contains(data, `"`+marotte.ConfigOptionContentCollection+`"`) {
-		t.Errorf("an engine with no resolver sent contentCollection:\n%s", data)
-	}
-}
-
-// contentCollectionScript answers every set_config_option stuck at "enabled", like a build ignoring the option.
-const contentCollectionScript = `#!/bin/sh
-while IFS= read -r line; do
-  id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
-  method=$(echo "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
-  sid=$(echo "$line" | sed -n 's/.*"overrideSessionId":"\([^"]*\)".*/\1/p')
-  case "$method" in
-    initialize)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake"}}}\n' "$id"
-      ;;
-    session/new|session/load)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"%s"}}\n' "$id" "$sid"
-      ;;
-    *)
-      if [ -n "$id" ]; then
-        printf '{"jsonrpc":"2.0","id":%s,"result":{"configOptions":[{"id":"contentCollection","currentValue":"enabled"}]}}\n' "$id"
-      fi
-      ;;
-  esac
-done
-`
-
-// A reply reporting another value is the silent opt-in, so setContentCollection errors.
-func TestSetContentCollection_ReportsAMismatchedReply(t *testing.T) {
-	dir := t.TempDir()
-	scriptPath := filepath.Join(dir, "fake-kiro-cli")
-	if err := os.WriteFile(scriptPath, []byte(contentCollectionScript), 0o755); err != nil {
-		t.Fatalf("write fake script: %v", err)
-	}
-	t.Setenv("HOME", t.TempDir())
-	b := NewEngine(scriptPath, dir)
-	s, err := openSessionOn(t, b, &marotte.SessionOpts{})
-	if err != nil {
-		t.Fatalf("open session: %v", err)
-	}
-	if err := b.setContentCollection(t.Context(), s.SessionID(), false); err == nil {
-		t.Error("setContentCollection(false) against a reply reporting enabled = nil, want an error")
-	}
-	if err := b.setContentCollection(t.Context(), s.SessionID(), true); err != nil {
-		t.Errorf("setContentCollection(true) against a reply reporting enabled = %v, want nil", err)
-	}
-}
-
-func TestContentCollectionApplied_IsKnownOnlyOnceKASConfirmedTheValue(t *testing.T) {
-	for _, tc := range []struct {
-		resolve   func(context.Context) (bool, bool)
-		name      string
-		wantKnown bool
-	}{
-		{name: "confirmed", resolve: contentCollectionOn, wantKnown: true},
-		{name: "reply_reports_another_value", resolve: contentCollectionOff, wantKnown: false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			scriptPath := filepath.Join(dir, "fake-kiro-cli")
-			if err := os.WriteFile(scriptPath, []byte(contentCollectionScript), 0o755); err != nil {
-				t.Fatalf("write fake script: %v", err)
-			}
-			t.Setenv("HOME", t.TempDir())
-			b := NewEngine(scriptPath, dir)
-			if _, err := openSessionWith(t, b, &marotte.EngineOpts{ContentCollection: tc.resolve}, &marotte.SessionOpts{}); err != nil {
-				t.Fatalf("open session: %v", err)
-			}
-
-			b.mu.Lock()
-			enabled, known := b.contentCollectionApplied, b.contentCollectionKnown
-			b.mu.Unlock()
-			if known != tc.wantKnown || (known && !enabled) {
-				t.Errorf("ContentCollectionApplied() after the session door against a reply reporting enabled = (%v, %v), want known %v",
-					enabled, known, tc.wantKnown)
-			}
-		})
-	}
-}
-
-// A lock change lands while a door holds a stale resolution; the following push must be KAS's last write. The resolve
-// gives an unserialized push 200ms to land first.
-func TestAssertContentCollection_AStaleDoorWriteNeverLandsLast(t *testing.T) {
-	dir := t.TempDir()
-	scriptPath := filepath.Join(dir, "fake-kiro-cli")
+// startCapturing starts e on sessionDoorScript with eo and returns the path every request and notification is
+// appended to, one JSON line each. The engine stops at cleanup.
+func startCapturing(t *testing.T, e *Engine, eo *marotte.EngineOpts) string {
+	t.Helper()
+	scriptPath := filepath.Join(t.TempDir(), "fake-kiro-cli")
 	if err := os.WriteFile(scriptPath, []byte(sessionDoorScript), 0o755); err != nil {
 		t.Fatalf("write fake script: %v", err)
 	}
+	e.cliPath = scriptPath
 	t.Setenv("HOME", t.TempDir())
 	capturePath := filepath.Join(t.TempDir(), "rpc.jsonl")
 	t.Setenv("RPC_CAPTURE", capturePath)
-
-	b := NewEngine(scriptPath, dir)
-	var (
-		mu       sync.Mutex
-		resolves int
-		minted   atomic.Pointer[marotte.SessionID]
-	)
-	pushResolved := make(chan struct{})
-	pushDone := make(chan error, 1)
-	resolve := func(context.Context) (bool, bool) {
-		mu.Lock()
-		resolves++
-		n := resolves
-		mu.Unlock()
-		if n > 1 {
-			close(pushResolved)
-			return false, true
-		}
-		go func() {
-			// The door's own session: the only one the engine holds while its door runs.
-			b.lanesMu.Lock()
-			for id := range b.sessions {
-				minted.Store(&id)
-			}
-			b.lanesMu.Unlock()
-			_, err := b.assertContentCollection(t.Context(), *minted.Load())
-			pushDone <- err
-		}()
-		select {
-		case <-pushResolved:
-		case <-time.After(200 * time.Millisecond):
-		}
-		return true, true
+	eo.Lifetime = context.Background()
+	if err := e.Start(t.Context(), eo); err != nil {
+		t.Fatalf("Start: %v", err)
 	}
-	if _, err := openSessionWith(t, b, &marotte.EngineOpts{ContentCollection: resolve}, &marotte.SessionOpts{}); err != nil {
-		t.Fatalf("open session: %v", err)
-	}
-	if err := <-pushDone; err != nil {
-		t.Fatalf("push AssertContentCollection: %v", err)
-	}
-	b.Stop()
-
-	values := contentCollectionValues(t, capturePath)
-	want := []string{marotte.ConfigValueContentCollectionEnabled, marotte.ConfigValueContentCollectionDisabled}
-	if !slices.Equal(values, want) {
-		t.Errorf("contentCollection writes in wire order = %q, want %q (the push's newer value last)", values, want)
-	}
+	t.Cleanup(e.Stop)
+	return capturePath
 }
 
-func contentCollectionValues(t *testing.T, capturePath string) []string {
+func capturedLines(t *testing.T, capturePath string) []string {
 	t.Helper()
 	data, err := os.ReadFile(capturePath)
 	if err != nil {
 		t.Fatalf("read rpc capture: %v", err)
 	}
-	var values []string
-	for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
-		if !strings.Contains(line, `"configId":"`+marotte.ConfigOptionContentCollection+`"`) {
+	return strings.Split(strings.TrimSpace(string(data)), "\n")
+}
+
+// contentCollectionNotified returns the enabled value of every content-collection notification in wire order.
+func contentCollectionNotified(t *testing.T, lines []string) []bool {
+	t.Helper()
+	var values []bool
+	for _, line := range lines {
+		if !strings.Contains(line, `"method":"`+marotte.MethodContentCollectionSettingsChanged+`"`) {
 			continue
 		}
-		params := digObject(t, "the contentCollection params", line, "params")
-		v, _ := params[keyConfigValue].(string)
-		values = append(values, v)
+		cc := digObject(t, "the contentCollection notification", line, "params", "contentCollection")
+		on, ok := cc["enabled"].(bool)
+		if !ok {
+			t.Fatalf("contentCollection notification carries enabled %#v, want a bool:\n%s", cc["enabled"], line)
+		}
+		values = append(values, on)
 	}
 	return values
 }
 
-func TestRefreshContentCollection_SendsOnlyAReadableValueKASHasNotConfirmed(t *testing.T) {
-	unreadable := func(context.Context) (bool, bool) { return false, false }
+// notifiedOn returns the values written to w as content-collection notifications, in write order.
+func notifiedOn(t *testing.T, w *captureWriter) []bool {
+	t.Helper()
+	w.mu.Lock()
+	raw := w.buf.String()
+	w.mu.Unlock()
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	return contentCollectionNotified(t, strings.Split(strings.TrimSpace(raw), "\n"))
+}
+
+func TestEngineStart_InitializeCarriesContentCollection(t *testing.T) {
 	for _, tc := range []struct {
-		live func(context.Context) (bool, bool)
-		name string
-		want []string
+		resolve func(context.Context) (bool, bool)
+		name    string
+		want    bool
 	}{
-		{name: "unreadable_document", live: unreadable},
-		{name: "value_already_confirmed", live: contentCollectionOn},
-		{name: "moved_value", live: contentCollectionOff, want: []string{marotte.ConfigValueContentCollectionDisabled}},
+		{name: "off", resolve: contentCollectionOff},
+		{name: "on", resolve: contentCollectionOn, want: true},
+		{name: "unreadable_sends_the_answer", resolve: func(context.Context) (bool, bool) { return true, false }, want: true},
+		{name: "no_resolver_fails_closed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			scriptPath := filepath.Join(dir, "fake-kiro-cli")
-			if err := os.WriteFile(scriptPath, []byte(sessionDoorScript), 0o755); err != nil {
-				t.Fatalf("write fake script: %v", err)
+			e := NewEngine("", t.TempDir())
+			capturePath := startCapturing(t, e, &marotte.EngineOpts{ContentCollection: tc.resolve})
+			e.Stop()
+			lines := capturedLines(t, capturePath)
+			cc := digObject(t, "settings.contentCollection", lines[0],
+				"params", "clientCapabilities", "_meta", metaKeyKiro, "settings", "contentCollection")
+			if got, ok := cc["enabled"].(bool); !ok || got != tc.want {
+				t.Errorf("initialize settings.contentCollection.enabled = %#v, want %v", cc["enabled"], tc.want)
 			}
-			t.Setenv("HOME", t.TempDir())
-			capturePath := filepath.Join(t.TempDir(), "rpc.jsonl")
-			t.Setenv("RPC_CAPTURE", capturePath)
-			var atDoor atomic.Bool
-			atDoor.Store(true)
-			resolve := func(ctx context.Context) (bool, bool) {
-				if atDoor.Load() {
-					return contentCollectionOn(ctx)
-				}
-				return tc.live(ctx)
-			}
-			b := NewEngine(scriptPath, dir)
-			if _, err := openSessionWith(t, b, &marotte.EngineOpts{ContentCollection: resolve}, &marotte.SessionOpts{}); err != nil {
-				t.Fatalf("open session: %v", err)
-			}
-			atDoor.Store(false)
-
-			_, err := b.RefreshContentCollection(t.Context())
-			b.Stop()
-
-			if err != nil {
-				t.Fatalf("RefreshContentCollection: %v", err)
-			}
-			got := contentCollectionValues(t, capturePath)
-			if len(got) == 0 || got[0] != marotte.ConfigValueContentCollectionEnabled {
-				t.Fatalf("Setup: the session door sent %q, want %q first", got, marotte.ConfigValueContentCollectionEnabled)
-			}
-			if !slices.Equal(got[1:], tc.want) {
-				t.Errorf("RefreshContentCollection after a door that KAS confirmed enabled sent %q, want %q", got[1:], tc.want)
+			if got := contentCollectionNotified(t, lines); len(got) != 0 {
+				t.Errorf("Start sent content-collection notifications %v after an initialize that carried the value", got)
 			}
 		})
 	}
 }
 
-func TestRefreshContentCollection_SendsOverAnUnreadableDocumentWhenKASConfirmedNothing(t *testing.T) {
-	dir := t.TempDir()
-	scriptPath := filepath.Join(dir, "fake-kiro-cli")
-	if err := os.WriteFile(scriptPath, []byte(sessionDoorScript), 0o755); err != nil {
-		t.Fatalf("write fake script: %v", err)
+// A resolver that moves between the initialize write and Start returning is notified before Start returns.
+func TestEngineStart_AChangeDuringStartIsNotified(t *testing.T) {
+	var calls atomic.Int32
+	resolve := func(context.Context) (bool, bool) { return calls.Add(1) > 1, true }
+	e := NewEngine("", t.TempDir())
+	capturePath := startCapturing(t, e, &marotte.EngineOpts{ContentCollection: resolve})
+	e.Stop()
+	lines := capturedLines(t, capturePath)
+	cc := digObject(t, "settings.contentCollection", lines[0],
+		"params", "clientCapabilities", "_meta", metaKeyKiro, "settings", "contentCollection")
+	if cc["enabled"] != false {
+		t.Fatalf("Setup: initialize carried contentCollection %v, want the first resolution, false", cc["enabled"])
 	}
-	t.Setenv("HOME", t.TempDir())
-	capturePath := filepath.Join(t.TempDir(), "rpc.jsonl")
-	t.Setenv("RPC_CAPTURE", capturePath)
-	var atDoor atomic.Bool
-	atDoor.Store(true)
-	resolve := func(ctx context.Context) (bool, bool) {
-		if atDoor.Load() {
-			return contentCollectionOn(ctx)
-		}
-		return false, false
-	}
-	b := NewEngine(scriptPath, dir)
-	if _, err := openSessionWith(t, b, &marotte.EngineOpts{ContentCollection: resolve}, &marotte.SessionOpts{}); err != nil {
-		t.Fatalf("open session: %v", err)
-	}
-	atDoor.Store(false)
-	// The state a failed door assert leaves.
-	b.mu.Lock()
-	b.contentCollectionKnown = false
-	b.mu.Unlock()
-
-	_, err := b.RefreshContentCollection(t.Context())
-	b.Stop()
-
-	if err != nil {
-		t.Fatalf("RefreshContentCollection: %v", err)
-	}
-	got := contentCollectionValues(t, capturePath)
-	if want := []string{marotte.ConfigValueContentCollectionEnabled, marotte.ConfigValueContentCollectionDisabled}; !slices.Equal(got, want) {
-		t.Errorf("RefreshContentCollection over an unreadable document with nothing confirmed sent %q, want %q", got, want)
+	if got := contentCollectionNotified(t, lines); !slices.Equal(got, []bool{true}) {
+		t.Errorf("content-collection notifications during Start = %v, want [true]: the change landed after initialize", got)
 	}
 }
 
-// With no session open, a refresh has nothing to send through and sends nothing: the next session door asserts.
-func TestRefreshContentCollection_WithNoOpenSessionSendsNothing(t *testing.T) {
+// KAS holds one value for the process, so a refresh needs no session to carry it.
+func TestRefreshContentCollection_NotifiesWithNoOpenSession(t *testing.T) {
 	b := NewEngine("/nonexistent", "/work")
 	w := &captureWriter{}
 	b.stdin.Store(&stdinPipe{w: w})
@@ -301,7 +132,162 @@ func TestRefreshContentCollection_WithNoOpenSessionSendsNothing(t *testing.T) {
 	if _, err := b.RefreshContentCollection(t.Context()); err != nil {
 		t.Fatalf("RefreshContentCollection: %v", err)
 	}
-	if w.wrote() {
-		t.Error("RefreshContentCollection wrote with no session to carry it")
+	if got := notifiedOn(t, w); !slices.Equal(got, []bool{false}) {
+		t.Errorf("RefreshContentCollection with no session open notified %v, want [false]", got)
+	}
+}
+
+func TestRefreshContentCollection_SendsOnlyAReadableValueKASHasNotConfirmed(t *testing.T) {
+	unreadable := func(context.Context) (bool, bool) { return false, false }
+	for _, tc := range []struct {
+		live func(context.Context) (bool, bool)
+		name string
+		want []bool
+	}{
+		{name: "unreadable_document", live: unreadable},
+		{name: "value_already_confirmed", live: contentCollectionOn},
+		{name: "moved_value", live: contentCollectionOff, want: []bool{false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var atStart atomic.Bool
+			atStart.Store(true)
+			resolve := func(ctx context.Context) (bool, bool) {
+				if atStart.Load() {
+					return contentCollectionOn(ctx)
+				}
+				return tc.live(ctx)
+			}
+			e := NewEngine("", t.TempDir())
+			capturePath := startCapturing(t, e, &marotte.EngineOpts{ContentCollection: resolve})
+			atStart.Store(false)
+
+			_, err := e.RefreshContentCollection(t.Context())
+			e.Stop()
+
+			if err != nil {
+				t.Fatalf("RefreshContentCollection: %v", err)
+			}
+			if got := contentCollectionNotified(t, capturedLines(t, capturePath)); !slices.Equal(got, tc.want) {
+				t.Errorf("RefreshContentCollection after an initialize that carried enabled notified %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRefreshContentCollection_SendsOverAnUnreadableDocumentWhenKASConfirmedNothing(t *testing.T) {
+	var atStart atomic.Bool
+	atStart.Store(true)
+	resolve := func(ctx context.Context) (bool, bool) {
+		if atStart.Load() {
+			return contentCollectionOn(ctx)
+		}
+		return false, false
+	}
+	e := NewEngine("", t.TempDir())
+	capturePath := startCapturing(t, e, &marotte.EngineOpts{ContentCollection: resolve})
+	atStart.Store(false)
+	// The state a failed notification leaves.
+	e.mu.Lock()
+	e.contentCollectionKnown = false
+	e.mu.Unlock()
+
+	_, err := e.RefreshContentCollection(t.Context())
+	e.Stop()
+
+	if err != nil {
+		t.Fatalf("RefreshContentCollection: %v", err)
+	}
+	if got := contentCollectionNotified(t, capturedLines(t, capturePath)); !slices.Equal(got, []bool{false}) {
+		t.Errorf("RefreshContentCollection over an unreadable document with nothing confirmed notified %v, want [false]", got)
+	}
+}
+
+func TestRefreshContentCollection_AFailedNotifyLeavesTheValueUnconfirmed(t *testing.T) {
+	b := NewEngine("/nonexistent", "/work")
+	w := &captureWriter{failErr: os.ErrClosed}
+	b.stdin.Store(&stdinPipe{w: w})
+	b.contentCollection = contentCollectionOff
+	if _, err := b.RefreshContentCollection(t.Context()); err == nil {
+		t.Fatal("RefreshContentCollection over a failing pipe = nil, want the write error")
+	}
+	b.mu.Lock()
+	known := b.contentCollectionKnown
+	b.mu.Unlock()
+	if known {
+		t.Error("a failed notification left content collection known, so the next sync would not resend it")
+	}
+}
+
+// Two refreshes race; the one that resolved later must be KAS's last write. The first resolve gives an unserialized
+// second refresh 200ms to land first.
+func TestRefreshContentCollection_AStaleResolutionNeverLandsLast(t *testing.T) {
+	b := NewEngine("/nonexistent", "/work")
+	w := &captureWriter{}
+	b.stdin.Store(&stdinPipe{w: w})
+	var (
+		mu       sync.Mutex
+		resolves int
+	)
+	secondResolved := make(chan struct{})
+	secondDone := make(chan error, 1)
+	b.contentCollection = func(context.Context) (bool, bool) {
+		mu.Lock()
+		resolves++
+		n := resolves
+		mu.Unlock()
+		if n > 1 {
+			close(secondResolved)
+			return false, true
+		}
+		go func() {
+			_, err := b.RefreshContentCollection(t.Context())
+			secondDone <- err
+		}()
+		select {
+		case <-secondResolved:
+		case <-time.After(200 * time.Millisecond):
+		}
+		return true, true
+	}
+	if _, err := b.RefreshContentCollection(t.Context()); err != nil {
+		t.Fatalf("first RefreshContentCollection: %v", err)
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatalf("second RefreshContentCollection: %v", err)
+	}
+	if got := notifiedOn(t, w); !slices.Equal(got, []bool{true, false}) {
+		t.Errorf("content-collection notifications in wire order = %v, want [true false] (the newer value last)", got)
+	}
+}
+
+func TestSessionDoors_SendNoContentCollection(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		session string
+	}{
+		{name: "new"},
+		{name: "load", session: "sess_resumed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := captureEngineRequests(t, &marotte.EngineOpts{ContentCollection: contentCollectionOn},
+				&marotte.SessionOpts{SessionID: tc.session})
+			for line := range strings.SplitSeq(strings.TrimSpace(data), "\n") {
+				var req struct {
+					Params struct {
+						ConfigID string `json:"configId"`
+					} `json:"params"`
+					Method string `json:"method"`
+				}
+				if err := json.Unmarshal([]byte(line), &req); err != nil {
+					t.Fatalf("captured request is not JSON: %v\n%s", err, line)
+				}
+				if req.Method == marotte.MethodSetConfigOption && req.Params.ConfigID == "contentCollection" {
+					t.Errorf("session/%s wrote contentCollection on the session: %s", tc.name, line)
+				}
+				if req.Method == marotte.MethodContentCollectionSettingsChanged {
+					t.Errorf("session/%s re-sent the value initialize carried: %s", tc.name, line)
+				}
+			}
+		})
 	}
 }

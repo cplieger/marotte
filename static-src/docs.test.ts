@@ -117,7 +117,13 @@ vi.mock("./git-status-store.js", async (importOriginal) => ({
 }));
 vi.mock("./actions/hooks.js", () => ({ setHookEnabled: { dispatch: vi.fn() } }));
 
-import { _setDocsForTest, _setHooksForTest, _hookRowsForTest, _renderRowForTest } from "./docs.js";
+import {
+  _deleteBodyForTest,
+  _setDocsForTest,
+  _setHooksForTest,
+  _hookRowsForTest,
+  _renderRowForTest,
+} from "./docs.js";
 import { _setReposForTest } from "./git-status-store.js";
 import type { GitRepoStatus } from "./git-types.js";
 import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
@@ -493,6 +499,23 @@ function wsHookDoc(over: Partial<Parameters<typeof _renderRowForTest>[0]> = {}) 
     ...over,
   };
 }
+
+describe("the delete confirm", () => {
+  it("names the other hooks a hook row's file delete takes with it", () => {
+    const greet = wsHookDoc();
+    const wave = wsHookDoc({ name: "wave" });
+    const alone = wsHookDoc({
+      name: "alone",
+      path: "workspace/.kiro/hooks/alone.json",
+      group: "alone.json",
+    });
+    _setDocsForTest([greet, wave, alone]);
+    expect(_deleteBodyForTest(greet)).toBe(
+      "It shares greet.json with wave, which go too. This cannot be undone.",
+    );
+    expect(_deleteBodyForTest(alone)).toBe("This cannot be undone.");
+  });
+});
 
 describe("the Hooks tab: joining state onto a scanned row", () => {
   it("joins across the two path SHAPES the endpoints use", () => {
@@ -1041,6 +1064,19 @@ describe("the Hooks tab: staying current", () => {
     expect(row(both)?.querySelector(".docs-badge-standing")?.textContent).toBe("Off by Workspace");
     panel?.remove();
     docsRoute.value = "hooks";
+  });
+
+  it("refetches the inventory when kiro_docs_changed arrives", async () => {
+    const { apiGetTyped } = await import("./api-client.js");
+    vi.mocked(apiGetTyped).mockClear().mockImplementation(serveDocsPage());
+
+    sseHandlers.get("kiro_docs_changed")?.();
+
+    expect(vi.mocked(apiGetTyped)).toHaveBeenCalledWith(
+      DOCS_PATH,
+      expect.anything(),
+      expect.anything(),
+    );
   });
 
   it("subscribes to hooks_changed, not only to settings_updated", () => {

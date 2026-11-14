@@ -20,9 +20,9 @@ var errStoredNull = errors.New("settings: stored value is null")
 // searches only folders the user indexed under Knowledge bases, so indexing one is the opt-in.
 const defaultKnowledgeEnabled = true
 
-// DefaultContentCollectionEnabled is the content-collection switch's default: off,
-// so nothing is offered for service improvement until the user opts in.
-const DefaultContentCollectionEnabled = false
+// DefaultContentCollectionEnabled follows kiro-cli's default, on. A stored false and an
+// organization lock still decide.
+const DefaultContentCollectionEnabled = true
 
 // defaultGuardPayloadLinks is TRUE because the guard closes the one channel that
 // moves workspace data off the box on a single click with no ask; off is a choice
@@ -86,6 +86,7 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		HighThroughput:        defaultHighThroughput,
 		// kiro-cli's own default for hooks.showStatus, until a reader says otherwise.
 		HookStatusShown:   true,
+		InterruptMode:     defaultInterruptMode,
 		KnowledgeEnabled:  defaultKnowledgeEnabled,
 		ContentCollection: DefaultContentCollectionEnabled,
 		MemoryMode:        DefaultMemoryMode,
@@ -99,6 +100,7 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		ChatAwareness:             defaultChatAwareness,
 		ChatMessageDeliveryLimit:  DefaultChatMessageDeliveryLimit,
 		WorkflowCreatorEffort:     defaultWorkflowCreatorEffort,
+		ChatAwarenessMode:         defaultChatAwarenessMode,
 		KnowledgeIncludePatterns:  []string{},
 		KnowledgeExcludePatterns:  []string{},
 		KnowledgeMaxFiles:         DefaultKnowledgeMaxFiles,
@@ -198,6 +200,7 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 			return decodeInto(&out.ContentCollection, r)
 		},
 		KeyGuardPayloadLinks:    func(r json.RawMessage) error { return decodeInto(&out.GuardPayloadLinks, r) },
+		KeyInterruptMode:        func(r json.RawMessage) error { return decodeInterruptMode(&out.InterruptMode, r) },
 		KeyMemoryMode:           func(r json.RawMessage) error { return decodeMemoryMode(&out.MemoryMode, r) },
 		KeyMCPWaitForReady:      func(r json.RawMessage) error { return decodeInto(&out.MCPWaitForReady, r) },
 		KeyNotificationsEnabled: func(r json.RawMessage) error { return decodeInto(&out.NotificationsEnabled, r) },
@@ -220,6 +223,9 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 		},
 		KeyWorkflowCreatorEffort: func(r json.RawMessage) error {
 			return decodeChecked(&out.WorkflowCreatorEffort, r, KeyWorkflowCreatorEffort, ValidWorkflowCreatorEffort)
+		},
+		KeyChatAwarenessMode: func(r json.RawMessage) error {
+			return decodeChecked(&out.ChatAwarenessMode, r, KeyChatAwarenessMode, ValidChatAwarenessMode)
 		},
 		KeyKnowledgeIndexType: func(r json.RawMessage) error {
 			return decodeChecked(&out.KnowledgeIndexType, r, KeyKnowledgeIndexType, ValidKnowledgeIndexType)

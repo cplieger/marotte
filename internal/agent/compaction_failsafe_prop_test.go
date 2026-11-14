@@ -17,8 +17,10 @@ type windowWorld struct {
 	reached map[string]int
 	// withdrawn names the resumes that waited when the reader stopped, which must never start.
 	withdrawn map[string]bool
-	tok       uint64
-	ids       int
+	// leftUnread names the closing turns whose close already left a steer of the reader's unread.
+	leftUnread map[string]bool
+	tok        uint64
+	ids        int
 }
 
 // window names what runs between the failsafe's stop and the resume's start, as the reader sees it.
@@ -36,7 +38,7 @@ func (w *windowWorld) window() string {
 		return "the compaction"
 	case h.wire():
 		return "kiro-cli's re-prompt"
-	case h.kind == marotte.RunKindUnread:
+	case h.kind == marotte.RunKindRow && h.unread:
 		return "the stopped turn's unread steers"
 	case h.state == marotte.RunClosing:
 		return "a closing turn"
@@ -94,9 +96,10 @@ func (w *windowWorld) step() {
 	}
 	h := live[len(live)-1]
 	switch {
-	case h.state == marotte.RunClosing && !h.endsDone && w.r.IntN(2) == 0:
-		w.l.endsChanged(1, 0, []string{"s-1"}, false, true, w.facts())
-		w.l.closeEndsResolved(h.id, false, true, w.facts())
+	case h.state == marotte.RunClosing && !w.leftUnread[h.id] && w.r.IntN(2) == 0:
+		w.leftUnread[h.id] = true
+		w.ids++
+		w.steerLeftUnread("s-" + strconv.Itoa(w.ids))
 	case h.state == marotte.RunClosing && w.r.IntN(2) == 0 && !slices.ContainsFunc(live, (*runEntry).wire):
 		w.wireOpen("t-w"+strconv.Itoa(w.ids), true)
 		w.ids++
@@ -134,7 +137,7 @@ func TestFailsafe_NoResumeStartsAfterAReaderStop(t *testing.T) {
 		t.Run("seed "+strconv.FormatUint(seed, 10), func(t *testing.T) {
 			w := &windowWorld{
 				tableWorld: firedOn(t), r: rand.New(rand.NewPCG(seed, seed^0x5bd1e995)), reached: reached, tok: 1,
-				withdrawn: map[string]bool{},
+				withdrawn: map[string]bool{}, leftUnread: map[string]bool{},
 			}
 			for range 60 {
 				w.step()

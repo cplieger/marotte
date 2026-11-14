@@ -27,7 +27,9 @@ func turnEndedBesideASteer(t *testing.T) (*steerHarness, *testChatStore, *fakeBr
 	}
 	id, _ := s.h.stagePromptTurn(t, "c1")
 	send(t, s.h, newPromptTurnStartMsg(id), newActivityMsg(true))
-	s.steer("steer-a", "keep building")
+	if code := postSteer(t, s.h, "a", "keep building"); code != http.StatusOK {
+		t.Fatalf("Setup: steer = %d, want 200", code)
+	}
 	send(t, s.h, newTurnEndMsg("end_turn"))
 	s.h.coord.releaseTurn("c1", id)
 	synctest.Wait()

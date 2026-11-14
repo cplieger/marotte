@@ -7,6 +7,7 @@ import { onBus, onSSE, BUS_CATALOG_MODELS, BUS_RUNS_CHANGED } from "./bus.js";
 import { engineRead, type EngineRead } from "./engine-read.js";
 import { reconcile } from "./reconcile.js";
 import { loadRecipes, loadRuns, launchRun, cancelRun } from "./actions/runs.js";
+import { notice } from "./toast.js";
 import {
   deleteLaunchRule,
   dismissGap,
@@ -1072,6 +1073,9 @@ function launch(r: Recipe, inputs: Record<string, string>, defaults: RunDefaults
         // launch the server accepted but KAS then refused.
         liveRuns.set(r.name, { workflow_id: d.workflow_id, name: d.name, updated_at: Date.now() });
         paint();
+        if (d.warnings !== undefined && d.warnings.length > 0) {
+          notice(d.warnings.join("\n"), "warning");
+        }
         void openRunView(d.workflow_id, d.name);
       },
     },

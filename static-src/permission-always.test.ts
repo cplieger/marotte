@@ -123,12 +123,12 @@ describe("an always option opens a chooser instead of answering", () => {
     expect(card.querySelector(".always-choice")).toBeNull();
   });
 
-  it("says the rule reaches every kiro-cli session and switches Permissions to Custom", () => {
+  it("says the rule reaches every kiro-cli session and leaves each chat's profile alone", () => {
     const { card } = mount(ask());
     button(card, "Always allow").click();
     expect(card.querySelector(".always-choice-hint")?.textContent).toBe(
       "Saves the rule to your user permissions, which every kiro-cli session on this account reads, " +
-        "not only these chats. Switches Permissions to Custom if another profile is selected.",
+        "not only these chats. Each chat keeps its security profile.",
     );
   });
 
@@ -136,6 +136,7 @@ describe("an always option opens a chooser instead of answering", () => {
     ["shell", "any command"],
     ["fs_write", "any file write, by any tool"],
     ["fs_read", "any file read, by any tool"],
+    ["sessions", "any read of your other chats, by any tool"],
     ["web_fetch", "any web_fetch request, by any tool"],
   ])("names the whole %s capability on the * pattern", (capability, covers) => {
     const { card } = mount(ask({ kind: "edit", consent: { capability, subject: "x" } }));

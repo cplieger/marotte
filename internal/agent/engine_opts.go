@@ -155,9 +155,10 @@ func (rt *Runtime) terminalTimeout(ctx context.Context) int {
 }
 
 // sessionSettings are a chat session door's inputs; a move reloads resident chat sessions (markSessionsForReload).
-// Live settings (ignore files, the shell timeout, content collection) are pushed instead.
+// Live settings (ignore files, the shell timeout, content collection) are pushed instead. Presets is the Settings
+// profile's, which a chat takes only at its first door (pinSecurityProfile), so it is outside the fingerprint.
 type sessionSettings struct {
-	Presets               []string                 `json:"presets"`
+	Presets               []string                 `json:"-"`
 	AdditionalDirectories []string                 `json:"additional_directories"`
 	Memory                marotte.MemoryPreference `json:"memory"`
 	Features              marotte.SessionFeatures  `json:"features"`
@@ -195,6 +196,9 @@ func (rt *Runtime) sessionFingerprint(ctx context.Context) (string, bool) {
 // chatSessionOpts is what a chat's session door sends.
 func (rt *Runtime) chatSessionOpts(ctx context.Context, rec *marotte.Chat, ask *sessionAsk, steering []marotte.ClientSteeringDoc) *marotte.SessionOpts {
 	s := rt.readSessionSettings(ctx)
+	if rec.SecurityProfile != "" {
+		s.Presets = securityPresets(rec.SecurityProfile)
+	}
 	opts := &marotte.SessionOpts{
 		Role:                  marotte.SessionRoleChat,
 		Model:                 ask.model,

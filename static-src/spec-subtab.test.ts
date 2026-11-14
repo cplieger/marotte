@@ -30,7 +30,6 @@ vi.mock("./icons.js", () => ({
   ICON_SUBAGENT_TASK: "",
   ICON_SUBAGENT_CREATOR: "",
   ICON_TAB_EDITOR: "",
-  ICON_TAB_HISTORY: "",
   ICON_TAB_DOCS: "",
   ICON_TAB_SUBTAB: "",
   ICON_SEND: "",
@@ -40,9 +39,10 @@ vi.mock("./icons.js", () => ({
   ICON_PIN_FILLED: "",
   ICON_CHEVRON_DOWN: "",
 }));
-vi.mock("./device-view.js", () => {
+vi.mock("./device-view.js", async (importOriginal) => {
   let active = "";
   return {
+    ...(await importOriginal<Record<string, unknown>>()),
     activeView: vi.fn(() => active),
     setActiveView: vi.fn((id: string) => {
       active = id;

@@ -6,6 +6,7 @@ import (
 	"math/rand/v2"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -29,7 +30,6 @@ type listWorld struct {
 	nextSeq    uint64
 	stopSeq    uint64
 	ids        int
-	steers     int
 	resumes    int // resumes opened since the last turn the reader sent opened
 	admit      bool
 	gate       bool
@@ -81,9 +81,8 @@ func (w *listWorld) facts() *orderFacts {
 			w.reserved = w.tok
 			return command.Reservation{Chat: "c1", Token: w.tok, Stamp: 1}, takeGranted
 		},
-		unsent:       func() int { return w.steers },
-		newMessageID: func() string { w.ids++; return "u-" + strconv.Itoa(w.ids) },
-		stamp:        1, nextSeq: w.nextSeq, stopSeq: w.stopSeq, stops: len(w.stops),
+		newOffer: func() uint64 { w.ids++; return uint64(w.ids) },
+		stamp:    1, nextSeq: w.nextSeq, stopSeq: w.stopSeq, stops: len(w.stops),
 		admit: w.admit, sessionCall: w.admit,
 	}
 }
@@ -121,6 +120,9 @@ func (w *listWorld) settle() {
 	fx := w.l.takeEffects()
 	for _, e := range fx.launch {
 		w.reached["take "+string(e.kind)]++
+		if e.unread {
+			w.reached["take unread"]++
+		}
 		if e.kind == marotte.RunKindRetry && before[e.id] {
 			w.fail("retry %s taken after a later wire turn or a stop overtook its turn", e.id)
 		}
@@ -290,7 +292,9 @@ func (w *listWorld) refill() {
 	live := w.live()
 	switch {
 	case len(live) == 1 && live[0].kind == marotte.RunKindResume && live[0].turnID != "":
+		// kiro-cli admitted the resume's take and waits for its prompt.
 		clear(w.stops)
+		w.admit = true
 		w.send(live[0])
 	case len(live) == 0 && w.l.resume() != nil:
 		w.wireOpen()
@@ -350,7 +354,8 @@ func (w *listWorld) fireIn(turn string) {
 	}
 	w.stops[token] = true
 	w.stopSeq = w.nextSeq
-	if w.r.IntN(4) == 0 {
+	// A fire at the resume limit is rare and is left standing, so the generator reaches its notice at the close.
+	if !w.limited[turn] && w.r.IntN(4) == 0 {
 		w.reached["failsafe undone"]++
 		delete(w.limited, turn)
 		w.l.stopUndone(token, func(id string) bool { return w.turns[id] != nil })
@@ -384,15 +389,17 @@ func (w *listWorld) checkTaken() {
 		if e.state != marotte.RunPending {
 			continue
 		}
-		switch {
-		case e.kind == marotte.RunKindCompaction:
+		switch e.kind {
+		case marotte.RunKindCompaction:
 			if w.admit && len(w.stops) == 0 {
 				w.fail("pending compaction %s not taken", e.id)
 			}
-		case e.kind == marotte.RunKindRevert:
-		case e.kind == marotte.RunKindUnread && w.steers == 0:
+		case marotte.RunKindRevert:
 		default:
-			if w.admit && !w.gate && w.reserved == 0 {
+			// A row waits while the reader's stop holds the queue, which the page reads as StopPaused.
+			if w.admit && !w.gate && w.reserved == 0 && !slices.ContainsFunc(l.project(), func(p marotte.RunEntry) bool {
+				return p.StopPaused
+			}) {
 				w.fail("pending %s not taken", e.id)
 			}
 		}
@@ -472,7 +479,7 @@ func (w *listWorld) launch() {
 	if w.r.IntN(5) == 0 {
 		token := e.res.Token
 		w.release(token)
-		removed := w.l.launched(e.id, e.res.Token, "", launchClosed, marotte.ErrChatClosedDuringCall)
+		removed := w.l.launched(e.id, e.res.Token, "", launchFailed, marotte.ErrChatClosedDuringCall)
 		if removed && w.l.compaction() != nil && w.l.compaction().id == e.id {
 			w.fail("a refused launch removed the compaction")
 		}
@@ -489,7 +496,7 @@ func (w *listWorld) launch() {
 		if w.resumes++; w.resumes > compactionFailsafeResumes {
 			w.fail("resume %s is the %d. since the reader's last turn", e.id, w.resumes)
 		}
-	case marotte.RunKindRow, marotte.RunKindUnread:
+	case marotte.RunKindRow:
 		w.resumes = 0
 	}
 	if w.composerBy[e.id] == 0 && w.l.claimComposer(e.id) {
@@ -748,6 +755,9 @@ func (w *listWorld) sendNow() {
 	if err != nil {
 		return
 	}
+	// Any press is the reader taking over (readerTookOver), stopping something or not: no failsafe stop it lands
+	// on tells of the resume limit.
+	clear(w.limited)
 	if waiting != nil {
 		w.readerStopped[waiting.id] = true
 	}
@@ -760,7 +770,6 @@ func (w *listWorld) sendNow() {
 		}
 		w.tok++
 		plan := w.l.readerStop(h.id, w.tok)
-		clear(w.limited)
 		w.stops[w.tok] = true
 		w.stopSeq = w.nextSeq
 		switch plan.arm {
@@ -914,24 +923,23 @@ func (w *listWorld) takeIdle() {
 	}
 }
 
+// ends moves the steer queue's pending-end count, or has a turn end leave a steer of the reader's unread.
 func (w *listWorld) ends() {
-	w.steers = w.r.IntN(2)
-	if c := w.l.closingEntry(); c != nil && !c.endsDone && w.r.IntN(2) == 0 {
-		w.l.closeEndsResolved(c.id, w.r.IntN(2) == 0, true, w.facts())
+	if w.r.IntN(2) == 0 {
+		w.ids++
+		id := "s-" + strconv.Itoa(w.ids)
+		w.l.insertPending(&runEntry{
+			id: id, kind: marotte.RunKindRow, origin: marotte.RunFromPrompt, state: marotte.RunInKAS, offer: 1,
+			want: marotte.RunWantEither, row: &marotte.QueuedPrompt{ID: id, Text: id},
+		})
+		w.l.turnEnded([]string{id})
 		return
 	}
 	n := 0
 	if w.r.IntN(4) == 0 {
 		n = 1
 	}
-	var unsent []string
-	if w.steers > 0 {
-		unsent = []string{"s-1"}
-	}
-	seq := uint64(w.step)
-	if reread, drained := w.l.endsChanged(seq, n, unsent, false, true, w.facts()); reread {
-		w.l.endsChanged(seq, n, unsent, drained, true, w.facts())
-	}
+	w.l.endsChanged(uint64(w.step), n)
 }
 
 func TestRunList_Invariants(t *testing.T) {
@@ -962,5 +970,299 @@ func TestRunList_Invariants(t *testing.T) {
 		if reached[want] == 0 {
 			t.Errorf("the generator never reached %q", want)
 		}
+	}
+}
+
+// holdWorld drives a run list through the events the user's Stop ruling names (Stop, the user's send, Resume, a wake,
+// an API caller's send, a turn kiro-cli opens, a clean or failed close, a failed launch, a send-now, a close and
+// reopen, a restart) and records what the ruling says about the queue: a reader's Stop with rows waiting, or a row
+// an outside caller sends while the stopped turn is live, holds the queue until the user sends or resumes.
+type holdWorld struct {
+	*tableWorld
+	t    *testing.T
+	r    *rand.Rand
+	step int
+	ids  int
+	tok  uint64
+	// held is the ruling's state: no row may be taken or steered while it is set.
+	held bool
+	// acted: the event was the user's send, send-now or Resume, after which no row waits on the reader.
+	acted bool
+	// stopping names the turns a reader's Stop is ending, whose window a late row joins paused.
+	stopping map[string]bool
+	log      []string
+}
+
+func (h *holdWorld) fail(format string, args ...any) {
+	h.t.Helper()
+	h.t.Fatalf("step %d: %s\nlist: %s\nevents:\n%s", h.step, fmt.Sprintf(format, args...), h.order(), strings.Join(h.log[max(0, len(h.log)-16):], "\n"))
+}
+
+func (h *holdWorld) id(prefix string) string { h.ids++; return prefix + strconv.Itoa(h.ids) }
+
+// waitingRows reports a row waiting on the list (pending or paused), which a Stop pauses.
+func (h *holdWorld) waitingRows() bool {
+	return slices.ContainsFunc(h.l.entries, func(e *runEntry) bool {
+		return e.kind == marotte.RunKindRow && (e.state == marotte.RunPending || e.state == marotte.RunPaused)
+	})
+}
+
+func (h *holdWorld) liveTurns() []*runEntry {
+	var out []*runEntry
+	for _, e := range h.l.entries[:h.l.liveLen()] {
+		if e.turnID != "" && e.state != marotte.RunClosing {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func (h *holdWorld) do() {
+	op := h.r.IntN(12)
+	if op <= 4 && len(h.l.entries) >= 6 {
+		op = 8
+	}
+	switch op {
+	case 0, 1:
+		h.log = append(h.log, "user send")
+		h.userActs()
+		want := marotte.RunWantPrompt
+		if h.r.IntN(2) == 0 {
+			want = marotte.RunWantEither
+		}
+		h.user(h.id("u-"), want)
+	case 2, 3:
+		h.log = append(h.log, "wake")
+		h.lateJoin()
+		h.door(h.id("d-"), h.id("new "))
+	case 4:
+		h.log = append(h.log, "api send")
+		h.lateJoin()
+		h.api(h.id("a-"), marotte.RunWantPrompt)
+	case 5:
+		h.stop()
+	case 6:
+		h.log = append(h.log, "resume")
+		h.userActs()
+		h.l.resumeQueue()
+		h.advance()
+	case 7:
+		h.kiroCLITurn()
+	case 8, 9:
+		h.closeOne()
+	case 10:
+		h.launchOne()
+	case 11:
+		h.lifeEvent()
+	}
+}
+
+// userActs is the user's send or Resume: the queue goes on, and the stopped turn's late window holds nothing more.
+func (h *holdWorld) userActs() {
+	h.held, h.acted = false, true
+	clear(h.stopping)
+}
+
+// lateJoin is the ruling's late window: a row an outside caller sends while a turn the reader stopped is live joins
+// the queue paused.
+func (h *holdWorld) lateJoin() {
+	for _, e := range h.liveTurns() {
+		if h.stopping[e.turnID] {
+			h.held = true
+		}
+	}
+}
+
+func (h *holdWorld) stop() {
+	h.tok++
+	if h.r.IntN(4) == 0 {
+		h.sendNow()
+		return
+	}
+	h.log = append(h.log, "stop")
+	plan := h.l.readerStop("", h.tok)
+	switch plan.arm {
+	case stopWithdraw:
+		h.tableWorld.held = false
+		h.l.reservationReleased(plan.res.Token)
+		h.l.launched(plan.entry.id, plan.res.Token, "", launchWithdrawn, command.ErrTakeWithdrawn)
+	case stopRunning, stopUnsent:
+		for _, e := range h.liveTurns() {
+			if e.stopBy == h.tok {
+				h.stopping[e.turnID] = true
+			}
+		}
+	case stopNothing, stopRun, stopSession:
+		return
+	}
+	if h.waitingRows() {
+		h.held = true
+	}
+	h.advance()
+}
+
+// sendNow is the user's send-now press on a waiting row of theirs, which stops the turn it was drawn against.
+func (h *holdWorld) sendNow() {
+	var rows []*runEntry
+	for _, e := range h.l.entries[h.l.liveLen():] {
+		if e.byUser() && e.kind == marotte.RunKindRow && (e.state == marotte.RunPending || e.state == marotte.RunPaused) {
+			rows = append(rows, e)
+		}
+	}
+	if len(rows) == 0 {
+		return
+	}
+	h.log = append(h.log, "send-now")
+	h.userActs()
+	head, err := h.l.sendNow(rows[h.r.IntN(len(rows))].id, "", false)
+	if err != nil || head == nil {
+		h.advance()
+		return
+	}
+	plan := h.l.readerStop(head.id, h.tok)
+	switch plan.arm {
+	case stopWithdraw:
+		h.tableWorld.held = false
+		h.l.reservationReleased(plan.res.Token)
+		h.l.launched(plan.entry.id, plan.res.Token, "", launchWithdrawn, command.ErrTakeWithdrawn)
+	case stopRunning, stopUnsent, stopNothing, stopRun, stopSession:
+	}
+	h.advance()
+}
+
+// kiroCLITurn opens a turn kiro-cli runs by itself (its re-prompt after a cancel), on an idle list or beside the
+// turn a Stop is ending.
+func (h *holdWorld) kiroCLITurn() {
+	live := h.l.entries[:h.l.liveLen()]
+	if len(live) > 1 || (len(live) == 1 && live[0].state != marotte.RunStopping) {
+		return
+	}
+	h.log = append(h.log, "kiro-cli turn")
+	h.wireOpen(h.id("w-"), true)
+}
+
+// closeOne closes a live turn, clean or failed, kiro-cli first leaving the steers it holds unread.
+func (h *holdWorld) closeOne() {
+	live := h.liveTurns()
+	if len(live) == 0 {
+		return
+	}
+	e := live[h.r.IntN(len(live))]
+	var held []string
+	for _, s := range h.l.entries {
+		if s.inFlight() {
+			held = append(held, s.id)
+		}
+	}
+	clean := h.r.IntN(2) == 0
+	h.log = append(h.log, fmt.Sprintf("close %s clean=%v", e.id, clean))
+	h.l.turnEnded(held)
+	delete(h.stopping, e.turnID)
+	h.closed(e.id, listClose{clean: clean, completed: clean})
+}
+
+// launchOne moves a take on: its turn opens and its prompt is written, or its launch fails; kiro-cli takes a steer
+// offered, or refuses it.
+func (h *holdWorld) launchOne() {
+	for _, e := range h.l.entries {
+		switch {
+		case e.state == marotte.RunOffered && h.r.IntN(2) == 0:
+			h.log = append(h.log, "steer queued "+e.id)
+			h.queued(e.id)
+			return
+		case e.state == marotte.RunOffered:
+			h.log = append(h.log, "steer refused "+e.id)
+			h.l.steerBack(e.id)
+			h.advance()
+			return
+		case e.state == marotte.RunStarting && e.turnID == "" && h.r.IntN(4) == 0:
+			h.log = append(h.log, "failed launch "+e.id)
+			h.failLaunch(h.t, e.id)
+			return
+		case e.state == marotte.RunStarting && e.turnID == "":
+			h.log = append(h.log, "opened "+e.id)
+			h.running(e.id)
+			h.prompted(e.id)
+			return
+		}
+	}
+}
+
+// lifeEvent closes and reopens the chat in the same process, or restarts marotte, on a list with nothing live.
+func (h *holdWorld) lifeEvent() {
+	if h.l.liveLen() != 0 {
+		return
+	}
+	next, _ := h.l.endLife()
+	if h.r.IntN(3) == 0 {
+		// A restart holds every row it keeps for the user (RunHeld) and drops the wakes: nothing is paused.
+		h.log = append(h.log, "restart")
+		next = marotte.SanitizeRun(h.l.project(), true)
+		h.held = false
+	} else {
+		h.log = append(h.log, "reopen")
+	}
+	h.l = &runList{}
+	h.l.load(next, next, 0)
+	h.tableWorld.held = false
+	h.advance()
+}
+
+// check asserts the ruling after one event: nothing taken or steered while the queue is held, nothing left waiting on
+// the reader after the user acts, and one caller has at most one waiting row.
+func (h *holdWorld) check() {
+	fx := h.l.takeEffects()
+	if n := len(h.log); n > 0 && !strings.Contains(h.log[n-1], " -> ") {
+		h.log[n-1] += " -> " + h.order()
+	}
+	if h.held {
+		for _, e := range fx.launch {
+			if e.kind == marotte.RunKindRow || e.kind == marotte.RunKindRetry {
+				h.fail("%s taken while a Stop holds the queue", e.id)
+			}
+		}
+		for _, e := range fx.steer {
+			h.fail("%s steered while a Stop holds the queue", e.id)
+		}
+	}
+	if h.acted && slices.ContainsFunc(h.l.project(), func(e marotte.RunEntry) bool { return e.StopPaused }) {
+		h.fail("a row still waits on the reader after the user's send or Resume")
+	}
+	h.acted = false
+	waiting := map[string]int{}
+	for _, e := range h.l.entries {
+		if e.origin == marotte.RunFromNotify && (e.state == marotte.RunPending || e.state == marotte.RunPaused) {
+			if waiting[e.row.Caller.Label]++; waiting[e.row.Caller.Label] > 1 {
+				h.fail("caller %s has two waiting rows", e.row.Caller.Label)
+			}
+		}
+	}
+}
+
+// The user's Stop ruling as a property: after a Stop that paused the queue, no row is taken or steered until the
+// user sends or resumes, whatever kiro-cli, the outside callers, the closes, a failed launch or a reopen do.
+func TestRunList_AStopHoldsTheQueueUntilTheUserActs(t *testing.T) {
+	steps := 400
+	if testing.Short() {
+		steps = 100
+	}
+	held := 0
+	for seed := range uint64(200) {
+		t.Run("seed "+strconv.FormatUint(seed, 10), func(t *testing.T) {
+			h := &holdWorld{
+				tableWorld: newTableWorld(), t: t, r: rand.New(rand.NewPCG(seed, seed^0x51ab)),
+				stopping: map[string]bool{},
+			}
+			for h.step = range steps {
+				h.do()
+				h.check()
+				if h.held {
+					held++
+				}
+			}
+		})
+	}
+	if held == 0 {
+		t.Error("the generator never held the queue")
 	}
 }

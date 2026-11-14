@@ -3,7 +3,7 @@
 // icon, name, dot), never persisted or transmitted. DOM-free; tabs.ts paints, tab-materialize.ts
 // produces.
 
-import type { Route } from "./route-path.js";
+import type { TabRoute } from "./route-path.js";
 // The kinds' one definition is the Go const block, emitted as a registered enum, so both tables
 // below fail the type gate on a new kind.
 import type { TabKind } from "./types.js";
@@ -15,7 +15,6 @@ import {
   ICON_TAB_RUN,
   ICON_TAB_AGENT,
   ICON_TAB_EDITOR,
-  ICON_TAB_HISTORY,
   ICON_TAB_DOCS,
   ICON_TAB_SPEC,
   ICON_TAB_WEB,
@@ -29,7 +28,6 @@ export const TAB_VIEWS: Readonly<Record<TabKind, string>> = {
   git: "#git-view",
   files: "#files-view",
   editor: "#editor-view",
-  history: "#history-view",
   docs: "#docs-view",
   run: "#run-view",
   subagent: "#subagent-view",
@@ -45,7 +43,6 @@ export const TAB_ICONS: Readonly<Record<TabKind, string>> = {
   git: ICON_TAB_GIT,
   files: ICON_TAB_FILES,
   editor: ICON_TAB_EDITOR,
-  history: ICON_TAB_HISTORY,
   docs: ICON_TAB_DOCS,
   run: ICON_TAB_RUN,
   subagent: ICON_TAB_AGENT,
@@ -75,7 +72,7 @@ export interface TabViewSpec {
   /** CSS selector for the view element to show, from TAB_VIEWS. */
   readonly view: string;
   /** The typed route; every tab needs a real one for the store's view/render/URL promise. */
-  readonly route: Route;
+  readonly route: TabRoute;
   /** Called in the gesture that makes the tab active, before anything paints: moves what acts
    *  for the reader to this tab and reads no layout. */
   readonly onSelect?: (() => void) | undefined;

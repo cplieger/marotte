@@ -12,7 +12,7 @@ beforeEach(() => {
 });
 
 describe("viewStale", () => {
-  it.each<TabKind>(["run", "files", "editor", "docs", "settings", "history", "git"])(
+  it.each<TabKind>(["run", "files", "editor", "docs", "settings", "git"])(
     "a %s view has no subject and is always stale",
     (kind) => {
       expect(viewStale(kind, "anything")).toBe(true);

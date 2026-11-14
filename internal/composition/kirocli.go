@@ -2,19 +2,13 @@ package composition
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"os"
-	"os/exec"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/kirorelease"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/marotte/internal/procgroup"
 	"github.com/cplieger/marotte/internal/signin"
 	kirosignin "github.com/cplieger/marotte/internal/signin/kiro"
 	"github.com/cplieger/toolbelt/v3/pin"
@@ -233,44 +227,12 @@ type engineSource struct {
 	allow map[string]struct{}
 }
 
-var (
-	_ agent.EngineSource  = engineSource{}
-	_ agent.ContentSharer = engineSource{}
-)
+var _ agent.EngineSource = engineSource{}
 
 func (s engineSource) CLIPath() string               { return s.kiro.cliPath() }
 func (s engineSource) Installed() <-chan struct{}    { return s.kiro.installed }
 func (s engineSource) Env() []string                 { return s.kiro.env() }
 func (s engineSource) EnvAllow() map[string]struct{} { return s.allow }
-
-// shareContentSetting is the kiro-cli switch the relay derives its engine's KIRO_CONTENT_COLLECTION_ENABLED from at
-// spawn, overwriting any inherited value.
-const shareContentSetting = "codeWhisperer.shareCodeWhispererContentWithAWS"
-
-// shareContentTimeout bounds one `kiro-cli settings` write, which kiro-cli serializes under its own file lock.
-const shareContentTimeout = 5 * time.Second
-
-// ShareContent writes kiro-cli's content-collection switch. It writes nothing without a managed install, so a
-// developer's own kiro-cli settings stay untouched, or while no version is active: the spawn that follows writes it.
-func (s engineSource) ShareContent(ctx context.Context, enabled bool) error {
-	if s.kiro.installed == nil {
-		return nil
-	}
-	path := s.kiro.cliPath()
-	if path == "" {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, shareContentTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, path, "settings", shareContentSetting, strconv.FormatBool(enabled))
-	procgroup.OwnGroup(cmd, time.Second)
-	cmd.Env = append(os.Environ(), s.kiro.env()...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("kiro-cli settings %s: %w (output %s)", shareContentSetting, err,
-			logsafe.Field(strings.TrimSpace(string(out))))
-	}
-	return nil
-}
 
 // engineBackend is the sign-in backend the agent engine runs.
 const engineBackend = kirosignin.ID

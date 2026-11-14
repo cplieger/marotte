@@ -22,6 +22,7 @@ var (
 	errTooManyAttachments   = errors.New("too many attachments")
 	errBadAttachmentPath    = errors.New("attachment path is empty or too long")
 	errMissingMessageID     = errors.New("missing message_id")
+	errUnknownInterruptMode = errors.New("interrupt_mode must be steer or queue")
 	errRewindTargetNotFound = errors.New("rewind target is not a user message in this chat")
 	// Prose: the client appends it to "Compact failed: ".
 	errCompactNoBridge = errors.New("this chat's agent session could not be started, so the conversation was not compacted")

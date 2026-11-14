@@ -26,8 +26,9 @@ import (
 	"go.yaml.in/yaml/v4"
 )
 
-// KAS reads the .yaml unless it is missing or blank, then the .json sibling. marotte writes the
-// .yaml only, so Load falls back to the .json and the first Mutate carries its content over.
+// KAS reads the first of permissions.yaml and permissions.json that exists, so a blank .yaml is the
+// file it reads and fails as an empty document. marotte writes the .yaml only, so Load falls back to
+// the .json only while the .yaml is missing, and the first Mutate carries its content over.
 const (
 	filename     = "permissions.yaml"
 	jsonFilename = "permissions.json"
@@ -185,44 +186,45 @@ func Load(path string) (*File, error) {
 }
 
 // readSource returns the bytes and base name of the file KAS reads for path: path itself, or its
-// permissions.json sibling when path is a missing or blank permissions.yaml. Nothing to read yields
-// nil bytes.
+// permissions.json sibling when path is a missing permissions.yaml. Nothing to read yields nil
+// bytes.
 func readSource(ctx context.Context, path string) (data []byte, name string, err error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, "", fmt.Errorf("resolve %s: %w", filename, err)
 	}
-	if data, err = readPolicy(ctx, abs); err != nil {
+	data, found, err := readPolicy(ctx, abs)
+	if err != nil {
 		return nil, "", err
 	}
 	name = filepath.Base(abs)
-	if strings.TrimSpace(string(data)) == "" && name == filename {
+	if !found && name == filename {
 		name = jsonFilename
-		if data, err = readPolicy(ctx, filepath.Join(filepath.Dir(abs), name)); err != nil {
+		if data, _, err = readPolicy(ctx, filepath.Join(filepath.Dir(abs), name)); err != nil {
 			return nil, "", err
 		}
 	}
 	return data, name, nil
 }
 
-// readPolicy returns abs's bytes, nil for a missing file. Through filesafe.OpenRegularNoFollow: a FIFO
-// at the name (the agent can write $HOME/.kiro) would block os.ReadFile forever, the size is
-// checked off the descriptor before reading, and a final-component symlink is refused, as Mutate's
-// write refuses it.
-func readPolicy(ctx context.Context, abs string) ([]byte, error) {
+// readPolicy returns abs's bytes, found false for a missing file. Through
+// filesafe.OpenRegularNoFollow: a FIFO at the name (the agent can write $HOME/.kiro) would block
+// os.ReadFile forever, the size is checked off the descriptor before reading, and a final-component
+// symlink is refused, as Mutate's write refuses it.
+func readPolicy(ctx context.Context, abs string) (data []byte, found bool, err error) {
 	fh, _, err := filesafe.OpenRegularNoFollow(abs)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
+			return nil, false, nil
 		}
-		return nil, err
+		return nil, false, err
 	}
 	defer func() { _ = fh.Close() }()
-	data, err := filesafe.ReadBoundedFile(ctx, fh, maxPolicyFileSize)
+	data, err = filesafe.ReadBoundedFile(ctx, fh, maxPolicyFileSize)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", filepath.Base(abs), err)
+		return nil, true, fmt.Errorf("read %s: %w", filepath.Base(abs), err)
 	}
-	return data, nil
+	return data, true, nil
 }
 
 // parse decodes data, read from the file called name, into its document node and its rules. doc

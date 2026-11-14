@@ -123,7 +123,7 @@ type Engine struct {
 	pending      map[int64]*pendingEntry
 	reapSession  func(marotte.SessionID)
 	// contentCollection is EngineOpts.ContentCollection, immutable after Start. contentCollectionMu spans a resolve and
-	// its send, so KAS always ends on the newest resolution.
+	// its notification, so KAS always ends on the newest resolution.
 	contentCollection func(context.Context) (enabled, readable bool)
 	// stdin is the process's write end, published atomically: startProcess assigns it, writeFrame writes, teardown and
 	// cmd.Cancel close it, on different goroutines.
@@ -189,8 +189,9 @@ type Engine struct {
 	readLoopStarted   atomic.Bool
 	jsHeapOOM         atomic.Bool
 	relayWriteTimeout atomic.Bool
-	// contentCollectionApplied is the value KAS last confirmed; contentCollectionKnown is false until an assert lands
-	// and again after one fails, since a failed send may or may not have reached KAS. Guarded by mu.
+	// contentCollectionApplied is the value KAS last took, at initialize or by notification; contentCollectionKnown is
+	// false until initialize lands and again after a notification fails, which may or may not have reached KAS.
+	// Guarded by mu.
 	contentCollectionApplied bool
 	contentCollectionKnown   bool
 	debugLogs                bool
@@ -354,14 +355,25 @@ func (e *Engine) Start(ctx context.Context, o *marotte.EngineOpts) error {
 	hctx, cancel := e.StallAware(ctx, handshakeBudget)
 	defer cancel()
 	e.resolveTerminalTimeout(hctx, o.TerminalTimeout)
+	if e.contentCollection != nil {
+		e.spawn.ContentCollection, _ = e.contentCollection(hctx)
+	}
 	if err := e.initialize(hctx); err != nil {
 		return handshakeTimeout(err, "agent engine start", handshakeBudget)
 	}
+	e.mu.Lock()
+	e.contentCollectionApplied, e.contentCollectionKnown = e.spawn.ContentCollection, true
+	e.mu.Unlock()
 	go e.watchMemory()
 	// Between initialize and the first session: KAS scopes the ignore list to the connection and pushes it into every
 	// session, so the first turn already enforces it.
 	ignoreFiles := e.applyIgnoreFiles(hctx, o.IgnoreFiles)
 	terminalTimeoutMs := e.reapplyTerminalTimeout(hctx, o.TerminalTimeout)
+	// A save landing during the start has no other channel; an unmoved value sends nothing.
+	if enabled, err := e.RefreshContentCollection(hctx); err != nil {
+		slog.Error("content collection not pushed; model requests may still be opted in",
+			"generation", e.generation, "enabled", enabled, "error", err)
+	}
 	e.mu.Lock()
 	e.startIgnoreFiles, e.startTerminalTimeoutMs = ignoreFiles, terminalTimeoutMs
 	e.mu.Unlock()
@@ -484,34 +496,9 @@ func (e *Engine) reapplyTerminalTimeout(ctx context.Context, resolve func(contex
 	return ms
 }
 
-// openSessionIDs returns the ids of the sessions in state open.
-func (e *Engine) openSessionIDs() []marotte.SessionID {
-	e.lanesMu.Lock()
-	defer e.lanesMu.Unlock()
-	ids := make([]marotte.SessionID, 0, len(e.sessions))
-	for id, s := range e.sessions {
-		if s.Open() {
-			ids = append(ids, id)
-		}
-	}
-	return ids
-}
-
-// assertContentCollection resolves the content-collection value and sets it on sessionID, serialized with every
-// other assert so a stale resolution never lands last. It reports the resolved value; no resolver sends nothing.
-func (e *Engine) assertContentCollection(ctx context.Context, sessionID marotte.SessionID) (bool, error) {
-	if e.contentCollection == nil {
-		return false, nil
-	}
-	e.contentCollectionMu.Lock()
-	defer e.contentCollectionMu.Unlock()
-	enabled, _ := e.contentCollection(ctx)
-	return enabled, e.sendContentCollection(ctx, sessionID, enabled)
-}
-
-// RefreshContentCollection sends the resolved content-collection value when KAS has not confirmed it. KAS holds one
-// value per process but takes it only through a session, so it rides any open session; with none open, the next
-// session door asserts it. Over unreadable settings it keeps a confirmed value.
+// RefreshContentCollection notifies KAS of the resolved content-collection value when KAS does not hold it. KAS keeps
+// one value per process, so no session carries it. Over unreadable settings it keeps the value KAS holds. It reports
+// the resolved value; no resolver sends nothing.
 func (e *Engine) RefreshContentCollection(ctx context.Context) (bool, error) {
 	if e.contentCollection == nil {
 		return false, nil
@@ -525,32 +512,9 @@ func (e *Engine) RefreshContentCollection(ctx context.Context) (bool, error) {
 	if known && (!readable || applied == enabled) {
 		return enabled, nil
 	}
-	ids := e.openSessionIDs()
-	if len(ids) == 0 {
-		return enabled, nil
-	}
-	return enabled, e.sendContentCollection(ctx, ids[0], enabled)
-}
-
-// sendContentCollection runs under contentCollectionMu and checks the reply, which carries the option KAS now holds.
-func (e *Engine) sendContentCollection(ctx context.Context, sessionID marotte.SessionID, enabled bool) error {
-	err := e.setContentCollection(ctx, sessionID, enabled)
+	err := e.Notify(ctx, marotte.MethodContentCollectionSettingsChanged, marotte.ContentCollectionSettingsParams(enabled))
 	e.mu.Lock()
 	e.contentCollectionApplied, e.contentCollectionKnown = enabled, err == nil
 	e.mu.Unlock()
-	return err
-}
-
-func (e *Engine) setContentCollection(ctx context.Context, sessionID marotte.SessionID, enabled bool) error {
-	if sessionID == "" {
-		return errors.New("no session")
-	}
-	resp, err := e.Call(ctx, marotte.MethodSetConfigOption, marotte.ContentCollectionParams(string(sessionID), enabled))
-	if err != nil {
-		return err
-	}
-	if got, ok := marotte.ContentCollectionReported(resp.Result); ok && got != enabled {
-		return fmt.Errorf("kiro-cli reports content collection enabled=%v", got)
-	}
-	return nil
+	return enabled, err
 }

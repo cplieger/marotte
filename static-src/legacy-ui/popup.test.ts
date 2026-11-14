@@ -276,14 +276,32 @@ describe("popup: focus (opt-in)", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
-  it("returnFocus element form refocuses that element on close", () => {
+  it("returnFocus element form refocuses that element on a close with focus inside the panel", () => {
     const { panel } = fixture();
+    const inside = document.createElement("button");
+    panel.appendChild(inside);
     const target = document.createElement("button");
     document.body.appendChild(target);
     const pop = createPopup(panel, { returnFocus: target });
     pop.show();
+    inside.focus();
     pop.hide();
     expect(document.activeElement).toBe(target);
+  });
+
+  it("returnFocus leaves focus on an element outside the panel, and on <body>", () => {
+    const { panel, trigger } = fixture();
+    const target = document.createElement("button");
+    document.body.appendChild(target);
+    const pop = createPopup(panel, { returnFocus: target });
+    pop.show();
+    trigger.focus();
+    pop.hide();
+    expect(document.activeElement).toBe(trigger);
+    pop.show();
+    trigger.blur();
+    pop.hide();
+    expect(document.activeElement).toBe(document.body);
   });
 
   it("with neither option, focus is left alone", () => {

@@ -16,7 +16,6 @@ import (
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/policyfile"
-	"github.com/cplieger/marotte/internal/securityprofile"
 )
 
 // CancelGrace is how long a cooperative session/cancel gets to end the turn before marotte unblocks
@@ -246,11 +245,10 @@ func nothingToCancel(err error) bool {
 		errors.Is(err, marotte.ErrSessionClosed)
 }
 
-// cmdPermission forwards the user's permission dialog choice to kiro-cli. A user-scope always
-// answer switches the profile to Custom first (Customize), and only once that write landed does
-// kiro-cli get the answer, whose rule it writes into the same file. A session-scope one writes no
-// file, so the profile stays as it is.
-func cmdPermission(ctx context.Context, perms pendingPermAccess, profiles profileSwitcher, cmd *marotte.ClientCommand) (any, error) {
+// cmdPermission forwards the user's permission dialog choice to kiro-cli. An always answer leaves
+// every chat's profile as it is: kiro-cli writes a user-scope rule into the user permissions file,
+// which every chat reads under its own profile.
+func cmdPermission(ctx context.Context, perms pendingPermAccess, cmd *marotte.ClientCommand) (any, error) {
 	var p marotte.PermissionResponseCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
@@ -264,11 +262,6 @@ func cmdPermission(ctx context.Context, perms pendingPermAccess, profiles profil
 	always, err := alwaysConsent(perms, cmd.ChatID, &p)
 	if err != nil {
 		return nil, err
-	}
-	if always != nil && always.Scope == marotte.ConsentScopeUser {
-		if err := profiles.EnsureCustomProfile(ctx); err != nil {
-			return nil, customizeRefusal(err)
-		}
 	}
 	// Claim the request before answering it: two tabs on one chat can both
 	// see the card, and kiro-cli silently discards the second answer for a
@@ -301,7 +294,7 @@ func cmdPermission(ctx context.Context, perms pendingPermAccess, profiles profil
 // (the chat stays waiting and the surface re-offers its card).
 func answerResponse(ctx context.Context, kind string, chatID marotte.ChatID, reply AskReply, result any) (any, error) {
 	// A claimed ask must be answered or the turn waits forever, and Respond refuses a done
-	// context: the client may have gone during the switch to Custom.
+	// context: the client may have gone since it sent the answer.
 	switch outcome, err := reply.Respond(durable.Context(ctx), result); outcome {
 	case AnswerDelivered:
 		return responseOK, nil
@@ -381,27 +374,7 @@ func subjectResource(c *marotte.PermissionConsent, chosen string) (string, bool)
 	return "", false
 }
 
-// reasonAlwaysRuleNotSaved marks an always answer refused before its rule was saved: the ask
-// is still pending, which is what the client offers again on.
-const reasonAlwaysRuleNotSaved = "always_rule_not_saved"
-
 var alwaysEffects = map[string]string{
 	"allow_always":  policyfile.EffectAllow,
 	"reject_always": policyfile.EffectDeny,
-}
-
-// customizeRefusal answers an always answer whose switch to Custom failed. The ask stays
-// pending and every refusal carries one reason, so the client offers the card again.
-func customizeRefusal(err error) error {
-	msg := "the rule could not be saved, so the request is still waiting. Allow it once instead, or try again"
-	switch {
-	case errors.Is(err, securityprofile.ErrNoLivePolicy):
-		msg = "the current profile's rules could not be read to switch Permissions to Custom, so no rule was saved. Allow it once instead, or try again"
-	case errors.Is(err, securityprofile.ErrUserFileUnreadable):
-		msg = "the user permissions file could not be read, so no rule was saved. Fix the file by hand, or allow it once instead"
-	case errors.Is(err, securityprofile.ErrUserFileFull):
-		msg = "the user permissions file is at its rule limit, so no rule was saved. Remove a rule in Permissions, or allow it once instead"
-	}
-	slog.Warn("an always answer was refused because Permissions could not switch to Custom", keyError, err)
-	return StatusErrorReason(http.StatusConflict, reasonAlwaysRuleNotSaved, errors.New(msg))
 }

@@ -37,10 +37,12 @@ func Binding(h http.Handler) route.Binding {
 	return route.WithParams[marotte.SessionPath](route.JSON[Request, Delivery](http.MethodPost+" "+pattern, h))
 }
 
-// What a delivery became: the chat's live turn read it as a steer, or it opened a turn as a prompt.
+// What a delivery became: the chat's live turn holds it as a steer, it opened a turn as a prompt, or it waits on
+// the chat's run order and goes in order.
 const (
 	DeliveredSteer  = "steer"
 	DeliveredPrompt = "prompt"
+	DeliveredQueued = "queued"
 )
 
 var (
@@ -56,9 +58,9 @@ type TextRefusedError struct{ Reason string }
 
 func (e *TextRefusedError) Error() string { return "text: " + e.Reason }
 
-// Deliverer hands one message to the chat holding session, steering its live turn or prompting it when idle, with
-// source as the caller label. It answers DeliveredSteer or DeliveredPrompt, or ErrUnknownSession, ErrUnavailable, a
-// *TextRefusedError or another error.
+// Deliverer hands one message to the chat holding session, with source as the caller label. It answers
+// DeliveredSteer, DeliveredPrompt or DeliveredQueued, or ErrUnknownSession, ErrUnavailable, a *TextRefusedError or
+// another error.
 type Deliverer interface {
 	Deliver(ctx context.Context, session, text, source string) (string, error)
 }

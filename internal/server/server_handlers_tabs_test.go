@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -75,6 +78,36 @@ func TestTabs_GetReturnsTheSetAndItsVersion(t *testing.T) {
 	}
 	if got.Version != 2 {
 		t.Errorf("version = %d, want 2: two mutations of an empty collection", got.Version)
+	}
+}
+
+// TestTabs_AStoredHistoryTabIsNotListed pins the boot frame over a file written while History was
+// a tab: the frame answers 200 with the other tabs in order and no history entry.
+func TestTabs_AStoredHistoryTabIsNotListed(t *testing.T) {
+	dir := t.TempDir()
+	doc := `{"version":4,"tabs":[` +
+		`{"id":"a","kind":"chat","ref":"c-a","parent":"","pinned":false,"owns":false},` +
+		`{"id":"h","kind":"history","ref":"","parent":"","pinned":true,"owns":false},` +
+		`{"id":"g","kind":"git","ref":"","parent":"","pinned":false,"owns":false}]}`
+	if err := os.WriteFile(filepath.Join(dir, "tabs.json"), []byte(doc), 0o600); err != nil {
+		t.Fatalf("Setup: write tabs.json: %v", err)
+	}
+	st, err := tabs.NewStore(dir)
+	if err != nil {
+		t.Fatalf("tabs.NewStore over a stored history tab: %v, want no error", err)
+	}
+
+	got, code := getTabs(t, &Server{tabs: st})
+
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", code)
+	}
+	kinds := make([]string, 0, len(got.Tabs))
+	for _, tab := range got.Tabs {
+		kinds = append(kinds, tab.ID+":"+string(tab.Kind))
+	}
+	if want := []string{"a:chat", "g:git"}; !slices.Equal(kinds, want) {
+		t.Errorf("GET /api/tabs listed %v, want %v", kinds, want)
 	}
 }
 

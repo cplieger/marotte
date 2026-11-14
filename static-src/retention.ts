@@ -1,6 +1,5 @@
-// Chat retention state. Holds the marotte-owned chat_retention_days setting from the settings
-// payloads the page adopts, and exposes it to the tab-close handler (keep vs delete) and the
-// history button (hidden when retention is off).
+// Chat retention state: the marotte-owned chat_retention_days setting from the settings payloads
+// the page adopts.
 
 import { signal, subscribe } from "@cplieger/reactive";
 import type { EffectiveSettings } from "./persist.js";
@@ -10,7 +9,7 @@ import type { EffectiveSettings } from "./persist.js";
 // setting.
 const retentionDays = signal(7);
 
-/** Whether closing a tab KEEPS the chat (and History is shown). True for a positive day count
+/** Whether closing a tab KEEPS the chat. True for a positive day count
  *  AND forever (-1); false only when retention is off (0). */
 export function isRetentionEnabled(): boolean {
   return retentionDays.value !== 0;

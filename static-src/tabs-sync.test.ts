@@ -3,7 +3,8 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from "vitest";
 import type { TabSubject, TabsChangedPayload } from "./types.js";
-import type { TabList } from "./wire/types.gen.js";
+import type { RecentClose, TabList } from "./wire/types.gen.js";
+import tabsSyncSource from "./tabs-sync.ts?raw";
 
 /** The collection GET's answers, queued so a test can arrange a stale one behind
  *  a fresh one. `null` is the unreachable-endpoint case. */
@@ -57,10 +58,13 @@ class FakeTarget {
   ids: string[] = [];
   applied: Applied[] = [];
   resets: string[][] = [];
+  /** The recent list each reset was handed, beside `resets`. */
+  recents: (readonly RecentClose[] | undefined)[] = [];
 
-  reset = (tabs: readonly TabSubject[]): void => {
+  reset = (tabs: readonly TabSubject[], recent: readonly RecentClose[]): void => {
     this.ids = tabs.map((t) => t.id);
     this.resets.push([...this.ids]);
+    this.recents.push(recent);
   };
 
   apply = (delta: TabsChangedPayload, local: boolean): void => {
@@ -312,6 +316,35 @@ describe("the recently closed list", () => {
     expect(await listTabs()).toBe(true);
     expect(t.ids).toEqual(["b"]);
     expect(tabsVersion()).toBe(3);
+  });
+
+  it("hands the boot read's list to reset beside its tabs", async () => {
+    listing.answers.push({ tabs: [subject("b")], recent: [closed], version: 3 });
+    await listTabs();
+    expect(t.recents).toEqual([[closed]]);
+  });
+
+  it("hands a gap re-list's list to reset, replacing the one the boot read gave", async () => {
+    const later = { ref: "c-z", name: "Zeta", closed_at: 1_700_000_001_000 };
+    listing.answers.push({ tabs: [subject("b")], recent: [closed], version: 3 });
+    await listTabs();
+    listing.answers.push({ tabs: [subject("b")], recent: [later], version: 9 });
+    ingestTabsChanged({ changed: subject("x"), version: 8 });
+    await settle();
+    expect(listing.calls).toBe(2);
+    expect(t.recents).toEqual([[closed], [later]]);
+  });
+
+  it("hands an emptied list to reset as an empty array", async () => {
+    listing.answers.push({ tabs: [subject("b")], recent: [closed], version: 3 });
+    await listTabs();
+    listing.answers.push({ tabs: [subject("b")], recent: [], version: 4 });
+    await listTabs();
+    expect(t.recents).toEqual([[closed], []]);
+  });
+
+  it("reads no chat list: the open-refs effect in chat.ts owns naming a chat a frame opened", () => {
+    expect(tabsSyncSource).not.toMatch(/\bloadList\b|\bloadMissingChats\b|store-load/);
   });
 });
 

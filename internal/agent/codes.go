@@ -22,6 +22,7 @@ var Codes = route.CodeSet{
 	{Code: "ask_unsettled", Status: http.StatusConflict},
 	{Code: "awaiting_answer", Status: http.StatusConflict},
 	{Code: "busy", Status: http.StatusConflict},
+	{Code: memoryImportComingSoonCode, Status: http.StatusConflict},
 	{Code: "engine_slow", Status: http.StatusServiceUnavailable},
 	{Code: "event_report_invalid", Status: http.StatusBadRequest},
 	{Code: "finished", Status: http.StatusConflict},

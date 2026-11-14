@@ -16,7 +16,7 @@ const (
 	methodV3Governance           = "_kiro/governance/state"                  // org/account feature-flag policy → governance_state SSE + GET /api/governance (HandleGovernanceState)
 	methodV3ToolsDidChange       = "_kiro/tools/didChange"                   // recognised-ignored (tool catalog; marotte fetches via REST)
 	methodV3SteeringDocs         = "_kiro/steering/documents_changed"        // consumed for configIssues (GET /api/steering/issues)
-	methodV3ProgressiveContext   = "_kiro/progressive_context/items_changed" // recognised-ignored (skills/steering list; REST-sourced)
+	methodV3ProgressiveContext   = "_kiro/progressive_context/items_changed" // the engine's skills/steering catalog moved → kiro_docs_changed SSE
 	methodV3Powers               = "_kiro/powers/items_changed"              // installed Powers moved: re-render the legacy block, broadcast powers_changed
 	methodV3CodeReferences       = "_kiro/code_references"                   // licensed-code attributions → per-turn chip (HandleCodeReferences)
 	methodKiroConfigurationState = "_kiro/configuration/state"               // the engine declares configurationState; Settings' kiro_defaults
@@ -84,6 +84,17 @@ const (
 	methodKiroMemoryGetSyncStatus = "_kiro/memory/getSyncStatus"
 	methodKiroMemorySyncStatus    = "_kiro/memory/syncStatus"
 )
+
+// KAS memory import and export, session-less too. All three answer -32000 MemoryImportComingSoonError until
+// kiro-cli's memory-import experiment reaches the account.
+const (
+	methodKiroMemoryGetImportPrompt = "_kiro/memory/getImportPrompt" // {} → {prompt}
+	methodKiroMemoryImport          = "_kiro/memory/import"          // {content: JSONL} → {totalLines, added[], duplicates[], skipped[], failed[]}
+	methodKiroMemoryExport          = "_kiro/memory/export"          // {} → {format, content: a kiro-memory document, recordCount}
+)
+
+// keyContent is the text key of fs/read_text_file's answer and of the memory update and import params.
+const keyContent = "content"
 
 // KAS knowledge methods. _kiro/knowledge is dispatched by `subcommand` with no sessionId (the
 // global store). The two indexing notifications fire only for a custom agent's own bases.

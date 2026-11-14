@@ -11,6 +11,12 @@
       "symbol": "ts://marotte-web/package.json#stylelint-config-standard:dev-dependency",
       "path": "static-src/package.json",
       "reason": ".stylelintrc.json extends it, resolved from static-src/node_modules by CI's web-lint stylelint run; no source imports it."
+    },
+    {
+      "code": "DS1102",
+      "symbol": "go://github.com/cplieger/marotte/internal/marotte#RunFromCarried",
+      "path": "internal/marotte/run_order.go",
+      "reason": "A chat record stored by an earlier version can hold a held row with origin carried; SanitizeRun keeps it held and the client decoder must still accept the value, so the wire value stays though nothing writes it now."
     }
   ]
 }

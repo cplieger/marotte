@@ -19,6 +19,8 @@ import { isSendable } from "./composer-value.js";
 import { invokesCatalogCommand } from "./slash-menu.js";
 import { carriesContextMention } from "./context-mentions.js";
 import { chatNotice } from "./notice-subject.js";
+import { interruptDefault } from "./interrupt-default.js";
+import type { InterruptMode } from "./wire/types.gen.js";
 
 export type SubmitResult = "sent" | "steered" | "queued" | "held" | "failed";
 
@@ -94,11 +96,12 @@ function settled(send: Send): void {
 
 /** Sends one prompt; the server places it. A hard failure restores text and attachments under the
  *  same message id. `opts.attachments` is for a send not drawn from the live composer: it is sent in
- *  place of the pill row, which is left untouched. */
+ *  place of the pill row, which is left untouched. `opts.interrupt` is what the send does beside a
+ *  running turn, the face it was pressed on; without it the instance's setting decides. */
 export async function submitPrompt(
   chatID: string,
   text: string,
-  opts: { attachments?: readonly AttachedFile[] } = {},
+  opts: { attachments?: readonly AttachedFile[]; interrupt?: InterruptMode } = {},
 ): Promise<SubmitResult> {
   const named = opts.attachments;
   if (
@@ -131,6 +134,7 @@ export async function submitPrompt(
     // it, and recordFailure hands the token back so a restore into a state that was
     // dropped meanwhile (the chat was closed) is refused rather than recreating it.
     attachGen: attachmentGeneration(chatID),
+    ...(opts.interrupt !== undefined ? { interrupt: opts.interrupt } : {}),
     deleted: false,
   };
   return whileInFlight(send, post);
@@ -169,6 +173,7 @@ interface TypedSend {
   readonly messageID: string;
   readonly attachments: readonly AttachedFile[];
   readonly attachGen: number;
+  readonly interrupt?: InterruptMode;
   /** The server deleted the chat while this send was in flight (`forgetDeletedChat`). */
   deleted: boolean;
 }
@@ -186,12 +191,20 @@ interface LabelledSend {
  *  server refuses to steer it; a queued row is its own turn, so it may queue. */
 function promptOnlyReason(text: string): string | null {
   if (invokesCatalogCommand(text)) {
-    return "A steer cannot run that command. Send it when the turn ends, or turn on Queue messages in Chat options.";
+    return `A steer cannot run that command. ${queueHint()}`;
   }
   if (carriesContextMention(text)) {
-    return "A steer cannot carry context references. Send it when the turn ends, or turn on Queue messages in Chat options.";
+    return `A steer cannot carry context references. ${queueHint()}`;
   }
   return null;
+}
+
+/** Points a steer refusal at the composer's Queue: the icon half beside Steer, or the default half when Queue is the
+ *  default and the refused send came from Steer instead. */
+function queueHint(): string {
+  const press =
+    interruptDefault.peek() === "queue" ? "Press Queue" : "Press Queue instead, beside Steer,";
+  return `${press} to queue it, or send it when the turn ends.`;
 }
 
 /** Post the send once and fold the answer: a placed message is settled, a refusal keeps the text
@@ -203,6 +216,9 @@ async function post(send: Send): Promise<SubmitResult> {
     messageID,
     ...extras(send),
     ...(reason !== null ? { promptOnly: true } : {}),
+    ...(send.kind === "typed" && send.interrupt !== undefined
+      ? { interruptMode: send.interrupt }
+      : {}),
   });
   switch (result) {
     case "sent":
@@ -212,7 +228,7 @@ async function post(send: Send): Promise<SubmitResult> {
       return result;
     case "prompt_only":
       // The send would steer and the text needs a turn of its own: it stays in the composer.
-      chatNotice(chatID, reason ?? PROMPT_ONLY_NOTICE);
+      chatNotice(chatID, reason ?? `A steer cannot carry that message. ${queueHint()}`);
       recordFailure(send);
       return "held";
     case "full":
@@ -240,10 +256,6 @@ async function post(send: Send): Promise<SubmitResult> {
       return "failed";
   }
 }
-
-/** The notice for a `prompt_only` refusal of text this page did not class as prompt-only. */
-const PROMPT_ONLY_NOTICE =
-  "A steer cannot carry that message. Send it when the turn ends, or turn on Queue messages in Chat options.";
 
 /** What rides a prompt or a queued row beside its text: a typed send's attachments, a labelled
  *  send's label. */

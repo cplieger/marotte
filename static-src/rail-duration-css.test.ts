@@ -45,6 +45,7 @@ const RULED = new Map<string, string>([
   ["sched-time", "wall clock, not a duration"],
   ["entry-time", "wall clock, not a duration — and painted at rest on every device"],
   ["steer-note-times", "wall clock, not a duration — a workflow message's send and read times"],
+  ["recent-row-time", "wall clock, not a duration — a Recently closed row's close time"],
 ]);
 
 describe("the closed list stays closed", () => {

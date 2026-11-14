@@ -1,20 +1,22 @@
 // Actions for the Kiro configuration browser (/docs).
 
 import { apiAction, fromEndpoint, retryNetwork, RETRY_STANDARD } from "./index.js";
-import { postFilesActionEndpoint, postWorkspaceKiroDocsNewEndpoint } from "../wire/client.gen.js";
+import {
+  postWorkspaceKiroDocsDeleteEndpoint,
+  postWorkspaceKiroDocsNewEndpoint,
+} from "../wire/client.gen.js";
 import { asObject, reqStr } from "../wire/validators.gen.js";
 
-/** Delete one `.kiro` document. `path` is the row's `doc.path` verbatim, the spelling `openFile`
- *  uses. The docs scan's signature includes each category's entry names, so no invalidation. */
+/** Delete what one `.kiro` row stands for, which the server decides. `path` is the row's `doc.path`
+ *  verbatim. */
 export const deleteDoc = apiAction<{ path: string; name: string }>({
   name: "docs.delete",
   scope: (args) => "doc:" + args.path,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   idempotencyKey: true,
-  // The file browser's own delete: one place for the mount-root and protected-directory refusals.
   request: (args) =>
-    fromEndpoint(postFilesActionEndpoint.request({ body: { action: "delete", path: args.path } })),
+    fromEndpoint(postWorkspaceKiroDocsDeleteEndpoint.request({ body: { path: args.path } })),
   success: (args) => `Deleted ${args.name}`,
   error: (args) => `Could not delete ${args.name}`,
 });

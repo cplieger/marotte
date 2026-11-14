@@ -168,6 +168,7 @@ const (
 	// signals for GET /api/slash-commands and GET /api/steering/issues.
 	EventSlashCommandsChanged  EventType = "slash_commands_changed"
 	EventSteeringIssuesChanged EventType = "steering_issues_changed"
+	EventKiroDocsChanged       EventType = "kiro_docs_changed"
 	EventSafetyStatus          EventType = "safety_status"
 	EventSafetyProperties      EventType = "safety_properties"
 	// EventKnowledgeIndexing reports a custom agent's own knowledge base being

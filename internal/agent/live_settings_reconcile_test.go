@@ -441,7 +441,7 @@ func TestOpenBridge_ReloadingAMarkedChatWithTheMCPStoreHeldWaitsOnlyThePushBound
 		if err != nil {
 			t.Fatalf("Setup: OpenBridge: %v", err)
 		}
-		writeSetting(t, configDir, settings.KeySecurityProfile, "unrestricted")
+		writeSetting(t, configDir, settings.KeyMemoryMode, "learn")
 		writeSetting(t, configDir, settings.KeyMCPWaitForReady, true)
 
 		if waited := openWithin(t, h, "c1", 3*ignorePushTimeout); waited > ignorePushTimeout {
@@ -449,7 +449,7 @@ func TestOpenBridge_ReloadingAMarkedChatWithTheMCPStoreHeldWaitsOnlyThePushBound
 				waited, ignorePushTimeout)
 		}
 		if !sessionClosed(fakeOf(first)) {
-			t.Fatal("Setup: the open kept the session opened under the old profile")
+			t.Fatal("Setup: the open kept the session opened under the old settings")
 		}
 
 		release()

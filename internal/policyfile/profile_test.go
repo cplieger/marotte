@@ -1,6 +1,7 @@
 package policyfile
 
 import (
+	"path/filepath"
 	"slices"
 	"testing"
 )
@@ -118,8 +119,8 @@ func TestProfileFor_ReportsAbsenceInBand(t *testing.T) {
 	if _, ok := ProfileFor("nonexistent"); ok {
 		t.Error("ProfileFor reported an unknown id as found")
 	}
-	if p, ok := ProfileFor(DefaultProfile); !ok || p.ID != ProfileGuarded {
-		t.Errorf("DefaultProfile %q does not resolve to guarded", DefaultProfile)
+	if p, ok := ProfileFor(DefaultProfile); !ok || p.ID != ProfileTrusted {
+		t.Errorf("DefaultProfile %q does not resolve to trusted", DefaultProfile)
 	}
 }
 
@@ -151,5 +152,53 @@ func TestDelegatesToSafetyCheck_OnlyTheDelegatedProfile(t *testing.T) {
 	}
 	if !DelegatesToSafetyCheck([]string{"approve-for-me"}) {
 		t.Error("DelegatesToSafetyCheck missed KAS's approve-for-me preset id")
+	}
+}
+
+// TestHoldsGrant_NamesWhatAFileGrantsOnItsOwn: the chat pill warns that a profile does not take away
+// what the files grant, so a grant missed here is a chat that looks tighter than it is.
+func TestHoldsGrant_NamesWhatAFileGrantsOnItsOwn(t *testing.T) {
+	cases := []struct {
+		name, file, body string
+		want             bool
+	}{
+		{"no file", "", "", false},
+		{"blank file", filename, "\n", false},
+		{
+			"only deny and ask rules", filename,
+			"rules:\n  - capability: shell\n    effect: deny\n    match: [\"rm *\"]\n" +
+				"  - capability: fs_write\n    effect: ask\n", false,
+		},
+		{"an allow rule", filename, "rules:\n  - capability: fs_write\n    effect: allow\n", true},
+		{"an evaluate rule", filename, "rules:\n  - capability: shell\n    effect: evaluate\n", true},
+		{"a preset reference", filename, "policies:\n  - dev-shell\nrules: []\n", true},
+		{"an empty preset list", filename, "policies: []\n", false},
+		{
+			"the json sibling KAS reads while the yaml is missing", jsonFilename,
+			`{"policies":["read-all"],"rules":[]}`, true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.file != "" {
+				writeFixture(t, filepath.Join(dir, tc.file), tc.body)
+			}
+			got, err := HoldsGrant(t.Context(), filepath.Join(dir, filename))
+			if err != nil {
+				t.Fatalf("HoldsGrant: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("HoldsGrant = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHoldsGrant_AnUnparseableFileIsAnError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), filename)
+	writeFixture(t, path, "rules: [\n")
+	if _, err := HoldsGrant(t.Context(), path); err == nil {
+		t.Error("HoldsGrant read an unparseable file as granting nothing; the caller cannot tell it from an empty one")
 	}
 }

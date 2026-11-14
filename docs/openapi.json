@@ -514,9 +514,6 @@
           "id": {
             "type": "string"
           },
-          "interrupt_mode": {
-            "$ref": "#/components/schemas/InterruptMode"
-          },
           "last_turn_outcome": {
             "$ref": "#/components/schemas/TurnOutcome"
           },
@@ -544,6 +541,9 @@
           },
           "run": {
             "$ref": "#/components/schemas/RunView"
+          },
+          "security_profile": {
+            "type": "string"
           },
           "supervised_mode": {
             "type": "boolean"
@@ -850,14 +850,15 @@
             "rename_chat": "#/components/schemas/ClientCommandInput.rename_chat",
             "reorder_tabs": "#/components/schemas/ClientCommandInput.reorder_tabs",
             "reparent_tab": "#/components/schemas/ClientCommandInput.reparent_tab",
+            "resume_queue": "#/components/schemas/ClientCommandInput.resume_queue",
             "resume_session": "#/components/schemas/ClientCommandInput.resume_session",
             "rewind_chat": "#/components/schemas/ClientCommandInput.rewind_chat",
             "send_queued_now": "#/components/schemas/ClientCommandInput.send_queued_now",
             "set_attachments": "#/components/schemas/ClientCommandInput.set_attachments",
             "set_draft": "#/components/schemas/ClientCommandInput.set_draft",
             "set_effort": "#/components/schemas/ClientCommandInput.set_effort",
-            "set_interrupt_mode": "#/components/schemas/ClientCommandInput.set_interrupt_mode",
             "set_mode": "#/components/schemas/ClientCommandInput.set_mode",
+            "set_security_profile": "#/components/schemas/ClientCommandInput.set_security_profile",
             "set_supervised_mode": "#/components/schemas/ClientCommandInput.set_supervised_mode",
             "set_thinking": "#/components/schemas/ClientCommandInput.set_thinking",
             "steer": "#/components/schemas/ClientCommandInput.steer",
@@ -928,6 +929,9 @@
             "$ref": "#/components/schemas/ClientCommandInput.reparent_tab"
           },
           {
+            "$ref": "#/components/schemas/ClientCommandInput.resume_queue"
+          },
+          {
             "$ref": "#/components/schemas/ClientCommandInput.resume_session"
           },
           {
@@ -946,10 +950,10 @@
             "$ref": "#/components/schemas/ClientCommandInput.set_effort"
           },
           {
-            "$ref": "#/components/schemas/ClientCommandInput.set_interrupt_mode"
+            "$ref": "#/components/schemas/ClientCommandInput.set_mode"
           },
           {
-            "$ref": "#/components/schemas/ClientCommandInput.set_mode"
+            "$ref": "#/components/schemas/ClientCommandInput.set_security_profile"
           },
           {
             "$ref": "#/components/schemas/ClientCommandInput.set_supervised_mode"
@@ -1489,6 +1493,24 @@
         ],
         "type": "object"
       },
+      "ClientCommandInput.resume_queue": {
+        "additionalProperties": false,
+        "properties": {
+          "caller": {
+            "type": "string"
+          },
+          "chat_id": {
+            "type": "string"
+          },
+          "type": {
+            "const": "resume_queue"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
       "ClientCommandInput.resume_session": {
         "additionalProperties": false,
         "properties": {
@@ -1657,34 +1679,6 @@
         ],
         "type": "object"
       },
-      "ClientCommandInput.set_interrupt_mode": {
-        "additionalProperties": false,
-        "properties": {
-          "caller": {
-            "type": "string"
-          },
-          "chat_id": {
-            "type": "string"
-          },
-          "payload": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SetInterruptModeCommand"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "type": {
-            "const": "set_interrupt_mode"
-          }
-        },
-        "required": [
-          "type"
-        ],
-        "type": "object"
-      },
       "ClientCommandInput.set_mode": {
         "additionalProperties": false,
         "properties": {
@@ -1706,6 +1700,34 @@
           },
           "type": {
             "const": "set_mode"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "ClientCommandInput.set_security_profile": {
+        "additionalProperties": false,
+        "properties": {
+          "caller": {
+            "type": "string"
+          },
+          "chat_id": {
+            "type": "string"
+          },
+          "payload": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SetSecurityProfileCommand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": {
+            "const": "set_security_profile"
           }
         },
         "required": [
@@ -2768,6 +2790,9 @@
           "chat_awareness_enabled": {
             "type": "boolean"
           },
+          "chat_awareness_mode": {
+            "type": "string"
+          },
           "chat_message_delivery_limit": {
             "type": "integer"
           },
@@ -2797,6 +2822,9 @@
           },
           "hook_status_shown": {
             "type": "boolean"
+          },
+          "interrupt_mode": {
+            "$ref": "#/components/schemas/InterruptMode"
           },
           "kiro_defaults": {
             "additionalProperties": {
@@ -2941,6 +2969,7 @@
           "last_model",
           "last_merge_method",
           "memory_mode",
+          "interrupt_mode",
           "spec_planning",
           "work_validation",
           "cloudformation_safety_check",
@@ -2949,6 +2978,7 @@
           "output_style",
           "workflow_launch",
           "workflow_creator_effort",
+          "chat_awareness_mode",
           "knowledge_index_type",
           "knowledge_include_patterns",
           "knowledge_exclude_patterns",
@@ -5892,6 +5922,17 @@
         ],
         "type": "object"
       },
+      "KiroDocDeleteRequest": {
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
       "KiroDocNewRequestInput": {
         "properties": {
           "action": {
@@ -6868,6 +6909,70 @@
         "required": [
           "start",
           "end"
+        ],
+        "type": "object"
+      },
+      "MemoryImportLine": {
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "line"
+        ],
+        "type": "object"
+      },
+      "MemoryImportPrompt": {
+        "properties": {
+          "prompt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "type": "object"
+      },
+      "MemoryImportReport": {
+        "properties": {
+          "added": {
+            "type": "integer"
+          },
+          "duplicates": {
+            "type": "integer"
+          },
+          "failed": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryImportLine"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryImportLine"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "skipped",
+          "failed",
+          "added",
+          "duplicates"
         ],
         "type": "object"
       },
@@ -8549,6 +8654,9 @@
           "display_text": {
             "type": "string"
           },
+          "interrupt_mode": {
+            "$ref": "#/components/schemas/InterruptMode"
+          },
           "message_id": {
             "type": "string"
           },
@@ -9748,8 +9856,17 @@
           "steerable": {
             "type": "boolean"
           },
+          "stop_paused": {
+            "type": "boolean"
+          },
           "turn": {
             "type": "string"
+          },
+          "unread": {
+            "type": "boolean"
+          },
+          "want": {
+            "$ref": "#/components/schemas/RunWant"
           },
           "yields": {
             "type": "boolean"
@@ -9767,7 +9884,6 @@
         "enum": [
           "turn",
           "row",
-          "unread",
           "retry",
           "compaction",
           "revert",
@@ -9781,7 +9897,6 @@
           "queue",
           "tangent",
           "summary",
-          "unread",
           "retry",
           "wire",
           "run",
@@ -9791,7 +9906,8 @@
           "turn_end",
           "context_limit",
           "rewind",
-          "failsafe"
+          "failsafe",
+          "notify"
         ],
         "type": "string"
       },
@@ -9800,6 +9916,8 @@
           "pending",
           "paused",
           "held",
+          "offered",
+          "in_kas",
           "starting",
           "running",
           "stopping",
@@ -9836,14 +9954,26 @@
           "state": {
             "$ref": "#/components/schemas/RunEntryState"
           },
+          "steer_in_flight": {
+            "type": "boolean"
+          },
           "steerable": {
+            "type": "boolean"
+          },
+          "stop_paused": {
             "type": "boolean"
           },
           "turn": {
             "type": "string"
           },
+          "unread": {
+            "type": "boolean"
+          },
           "wait": {
             "$ref": "#/components/schemas/RunWait"
+          },
+          "want": {
+            "$ref": "#/components/schemas/RunWant"
           },
           "yields": {
             "type": "boolean"
@@ -9932,6 +10062,12 @@
         "properties": {
           "name": {
             "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "workflow_id": {
             "type": "string"
@@ -10462,7 +10598,15 @@
           "next",
           "compaction",
           "turns",
-          "held"
+          "held",
+          "paused"
+        ],
+        "type": "string"
+      },
+      "RunWant": {
+        "enum": [
+          "either",
+          "prompt"
         ],
         "type": "string"
       },
@@ -10686,6 +10830,31 @@
         "required": [
           "id",
           "presets"
+        ],
+        "type": "object"
+      },
+      "SecurityProfileView": {
+        "properties": {
+          "default": {
+            "type": "string"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/components/schemas/SecurityProfile"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "saved_grants": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "default",
+          "profiles",
+          "saved_grants"
         ],
         "type": "object"
       },
@@ -11106,17 +11275,6 @@
         ],
         "type": "object"
       },
-      "SetInterruptModeCommand": {
-        "properties": {
-          "mode": {
-            "$ref": "#/components/schemas/InterruptMode"
-          }
-        },
-        "required": [
-          "mode"
-        ],
-        "type": "object"
-      },
       "SetModeCommand": {
         "properties": {
           "mode_id": {
@@ -11125,6 +11283,17 @@
         },
         "required": [
           "mode_id"
+        ],
+        "type": "object"
+      },
+      "SetSecurityProfileCommand": {
+        "properties": {
+          "profile": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "profile"
         ],
         "type": "object"
       },
@@ -11734,6 +11903,9 @@
       },
       "SteerRemoveCommand": {
         "properties": {
+          "queue": {
+            "type": "boolean"
+          },
           "steer_id": {
             "type": "string"
           }
@@ -11941,7 +12113,6 @@
           "settings",
           "git",
           "files",
-          "history",
           "docs",
           "spec",
           "web"
@@ -13752,7 +13923,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -13766,6 +13937,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -13915,10 +14087,9 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, always_rule_not_saved, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, full, held, in_progress, no_turn, not_user, prompt_only, sending, settling, starting, tabs_full, too_many_specs, turn_open",
+            "description": "Conflict: agent_rows_waiting, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, full, held, in_progress, no_turn, not_queueable, not_user, prompt_only, sending, settling, starting, tabs_full, too_many_specs, turn_open",
             "x-error-codes": {
               "agent_rows_waiting": {},
-              "always_rule_not_saved": {},
               "bot_mode": {},
               "busy": {},
               "chat_closed": {},
@@ -13929,6 +14100,7 @@
               "held": {},
               "in_progress": {},
               "no_turn": {},
+              "not_queueable": {},
               "not_user": {},
               "prompt_only": {},
               "sending": {},
@@ -14292,10 +14464,9 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, always_rule_not_saved, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, full, held, in_progress, no_turn, not_user, prompt_only, sending, settling, starting, tabs_full, too_many_specs, turn_open",
+            "description": "Conflict: agent_rows_waiting, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, full, held, in_progress, no_turn, not_queueable, not_user, prompt_only, sending, settling, starting, tabs_full, too_many_specs, turn_open",
             "x-error-codes": {
               "agent_rows_waiting": {},
-              "always_rule_not_saved": {},
               "bot_mode": {},
               "busy": {},
               "chat_closed": {},
@@ -14306,6 +14477,7 @@
               "held": {},
               "in_progress": {},
               "no_turn": {},
+              "not_queueable": {},
               "not_user": {},
               "prompt_only": {},
               "sending": {},
@@ -14403,7 +14575,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -14417,6 +14589,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -14548,7 +14721,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -14562,6 +14735,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -14732,7 +14906,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -14746,6 +14920,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -14877,7 +15052,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -14891,6 +15066,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -15224,7 +15400,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -15238,6 +15414,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -15381,7 +15558,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -15395,6 +15572,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -15542,7 +15720,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -15556,6 +15734,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -15738,7 +15917,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -15752,6 +15931,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -16115,7 +16295,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -16129,6 +16309,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -26454,7 +26635,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -26468,6 +26649,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -26599,7 +26781,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -26613,6 +26795,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -26764,7 +26947,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -26778,6 +26961,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -27051,7 +27235,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -27065,6 +27249,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -27194,7 +27379,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -27208,6 +27393,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -27347,7 +27533,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -27361,6 +27547,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -27502,7 +27689,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -27516,6 +27703,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -27657,7 +27845,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -27671,6 +27859,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -27812,7 +28001,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -27826,6 +28015,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -27959,12 +28149,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -27979,6 +28168,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -27987,6 +28177,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -28132,12 +28323,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -28152,6 +28342,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -28160,6 +28351,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -28307,12 +28499,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -28327,6 +28518,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -28335,6 +28527,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -28490,12 +28683,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -28510,6 +28702,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -28518,6 +28711,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -28665,12 +28859,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -28685,6 +28878,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -28693,6 +28887,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -29109,7 +29304,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -29123,6 +29318,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -29264,7 +29460,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -29278,6 +29474,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -29412,7 +29609,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -29426,6 +29623,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -29624,7 +29822,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -29638,6 +29836,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -29769,7 +29968,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -29783,6 +29982,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -30124,7 +30324,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -30138,6 +30338,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -30207,6 +30408,440 @@
         }
       }
     },
+    "/api/memory/export": {
+      "get": {
+        "operationId": "getMemoryExport",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {}
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request: alive_invalid, event_report_invalid",
+            "x-error-codes": {
+              "alive_invalid": {},
+              "event_report_invalid": {}
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found: not_waiting",
+            "x-error-codes": {
+              "not_waiting": {}
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method Not Allowed: method_not_allowed",
+            "x-error-codes": {
+              "method_not_allowed": {}
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "x-error-codes": {
+              "already_paused": {},
+              "already_running": {},
+              "ask_branch_running": {},
+              "ask_gone": {},
+              "ask_pending": {},
+              "ask_settling": {},
+              "ask_stale": {},
+              "ask_stopping": {},
+              "ask_unnamed": {},
+              "ask_unsettled": {},
+              "awaiting_answer": {},
+              "busy": {},
+              "coming_soon": {},
+              "finished": {},
+              "full": {},
+              "locked": {},
+              "not_enabled": {},
+              "not_started": {},
+              "run_answer_pending": {},
+              "run_paused": {},
+              "sign_in_required": {},
+              "step_not_paused": {},
+              "step_unnamed": {},
+              "unavailable": {},
+              "waits_on_run": {}
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway: render_failed",
+            "x-error-codes": {
+              "render_failed": {}
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable: ask_unreadable, engine_slow, identity_provider_unreachable, model_list_unreadable, recipe_list_slow",
+            "x-error-codes": {
+              "ask_unreadable": {},
+              "engine_slow": {},
+              "identity_provider_unreachable": {},
+              "model_list_unreadable": {},
+              "recipe_list_slow": {}
+            }
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Gateway Timeout: still_applying",
+            "x-error-codes": {
+              "still_applying": {}
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Download the memories as kiro-cli's memory document",
+        "x-marotte-access": {
+          "class": "session"
+        }
+      }
+    },
+    "/api/memory/import": {
+      "post": {
+        "operationId": "postMemoryImport",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryImportReport"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request: alive_invalid, event_report_invalid",
+            "x-error-codes": {
+              "alive_invalid": {},
+              "event_report_invalid": {}
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found: not_waiting",
+            "x-error-codes": {
+              "not_waiting": {}
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method Not Allowed: method_not_allowed",
+            "x-error-codes": {
+              "method_not_allowed": {}
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "x-error-codes": {
+              "already_paused": {},
+              "already_running": {},
+              "ask_branch_running": {},
+              "ask_gone": {},
+              "ask_pending": {},
+              "ask_settling": {},
+              "ask_stale": {},
+              "ask_stopping": {},
+              "ask_unnamed": {},
+              "ask_unsettled": {},
+              "awaiting_answer": {},
+              "busy": {},
+              "coming_soon": {},
+              "finished": {},
+              "full": {},
+              "locked": {},
+              "not_enabled": {},
+              "not_started": {},
+              "run_answer_pending": {},
+              "run_paused": {},
+              "sign_in_required": {},
+              "step_not_paused": {},
+              "step_unnamed": {},
+              "unavailable": {},
+              "waits_on_run": {}
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway: render_failed",
+            "x-error-codes": {
+              "render_failed": {}
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable: ask_unreadable, engine_slow, identity_provider_unreachable, model_list_unreadable, recipe_list_slow",
+            "x-error-codes": {
+              "ask_unreadable": {},
+              "engine_slow": {},
+              "identity_provider_unreachable": {},
+              "model_list_unreadable": {},
+              "recipe_list_slow": {}
+            }
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Gateway Timeout: still_applying",
+            "x-error-codes": {
+              "still_applying": {}
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Import memories from another assistant's JSONL answer, sent as the raw body",
+        "x-marotte-access": {
+          "class": "session"
+        }
+      }
+    },
+    "/api/memory/import-prompt": {
+      "get": {
+        "operationId": "getMemoryImportPrompt",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryImportPrompt"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request: alive_invalid, event_report_invalid",
+            "x-error-codes": {
+              "alive_invalid": {},
+              "event_report_invalid": {}
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found: not_waiting",
+            "x-error-codes": {
+              "not_waiting": {}
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method Not Allowed: method_not_allowed",
+            "x-error-codes": {
+              "method_not_allowed": {}
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "x-error-codes": {
+              "already_paused": {},
+              "already_running": {},
+              "ask_branch_running": {},
+              "ask_gone": {},
+              "ask_pending": {},
+              "ask_settling": {},
+              "ask_stale": {},
+              "ask_stopping": {},
+              "ask_unnamed": {},
+              "ask_unsettled": {},
+              "awaiting_answer": {},
+              "busy": {},
+              "coming_soon": {},
+              "finished": {},
+              "full": {},
+              "locked": {},
+              "not_enabled": {},
+              "not_started": {},
+              "run_answer_pending": {},
+              "run_paused": {},
+              "sign_in_required": {},
+              "step_not_paused": {},
+              "step_unnamed": {},
+              "unavailable": {},
+              "waits_on_run": {}
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway: render_failed",
+            "x-error-codes": {
+              "render_failed": {}
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable: ask_unreadable, engine_slow, identity_provider_unreachable, model_list_unreadable, recipe_list_slow",
+            "x-error-codes": {
+              "ask_unreadable": {},
+              "engine_slow": {},
+              "identity_provider_unreachable": {},
+              "model_list_unreadable": {},
+              "recipe_list_slow": {}
+            }
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Gateway Timeout: still_applying",
+            "x-error-codes": {
+              "still_applying": {}
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "The prompt that asks another assistant for its memories",
+        "x-marotte-access": {
+          "class": "session"
+        }
+      }
+    },
     "/api/memory/sync": {
       "get": {
         "operationId": "getMemorySync",
@@ -30269,7 +30904,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -30283,6 +30918,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -30422,7 +31058,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -30436,6 +31072,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -30577,7 +31214,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -30591,6 +31228,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -30730,7 +31368,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -30744,6 +31382,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -30893,7 +31532,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -30907,6 +31546,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -31110,6 +31750,43 @@
       }
     },
     "/api/permissions/profile": {
+      "get": {
+        "operationId": "getPermissionsProfile",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecurityProfileView"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method Not Allowed: method_not_allowed",
+            "x-error-codes": {
+              "method_not_allowed": {}
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "The security profiles and the default new chats start on",
+        "x-marotte-access": {
+          "class": "session"
+        }
+      },
       "post": {
         "operationId": "postPermissionsProfile",
         "requestBody": {
@@ -31271,7 +31948,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -31285,6 +31962,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -31426,7 +32104,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -31440,6 +32118,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -31581,7 +32260,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -31595,6 +32274,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -31736,7 +32416,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -31750,6 +32430,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -32118,12 +32799,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -32138,6 +32818,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -32146,6 +32827,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -32299,12 +32981,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -32319,6 +33000,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -32327,6 +33009,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -32470,12 +33153,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -32490,6 +33172,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -32498,6 +33181,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -32651,12 +33335,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -32671,6 +33354,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -32679,6 +33363,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -32842,12 +33527,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -32862,6 +33546,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -32870,6 +33555,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -33033,12 +33719,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -33053,6 +33738,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -33061,6 +33747,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -33214,12 +33901,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -33234,6 +33920,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -33242,6 +33929,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -33395,12 +34083,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -33415,6 +34102,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -33423,6 +34111,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -33586,12 +34275,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -33606,6 +34294,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -33614,6 +34303,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -33777,12 +34467,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -33797,6 +34486,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -33805,6 +34495,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -33958,12 +34649,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -33978,6 +34668,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -33986,6 +34677,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -34139,12 +34831,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -34159,6 +34850,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -34167,6 +34859,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -34320,12 +35013,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -34340,6 +35032,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -34348,6 +35041,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -34509,12 +35203,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -34529,6 +35222,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -34537,6 +35231,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -34698,12 +35393,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -34718,6 +35412,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -34726,6 +35421,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -34897,12 +35593,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -34917,6 +35612,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -34925,6 +35621,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -35096,12 +35793,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -35116,6 +35812,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -35124,6 +35821,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -35285,12 +35983,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -35305,6 +36002,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -35313,6 +36011,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -35484,12 +36183,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -35504,6 +36202,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -35512,6 +36211,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -35681,12 +36381,11 @@
                 }
               }
             },
-            "description": "Conflict: agent_rows_waiting, already_paused, already_running, always_rule_not_saved, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
+            "description": "Conflict: agent_rows_waiting, already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, bot_mode, busy, chat_closed, chat_gone, chat_not_found, coming_soon, consumed, finished, full, held, in_progress, locked, no_turn, not_enabled, not_queueable, not_started, not_user, prompt_only, run_answer_pending, run_paused, sending, settling, sign_in_required, starting, step_not_paused, step_unnamed, tabs_full, too_many_specs, turn_open, unavailable, waits_on_run",
             "x-error-codes": {
               "agent_rows_waiting": {},
               "already_paused": {},
               "already_running": {},
-              "always_rule_not_saved": {},
               "ask_branch_running": {},
               "ask_gone": {},
               "ask_pending": {},
@@ -35701,6 +36400,7 @@
               "chat_closed": {},
               "chat_gone": {},
               "chat_not_found": {},
+              "coming_soon": {},
               "consumed": {},
               "finished": {},
               "full": {},
@@ -35709,6 +36409,7 @@
               "locked": {},
               "no_turn": {},
               "not_enabled": {},
+              "not_queueable": {},
               "not_started": {},
               "not_user": {},
               "prompt_only": {},
@@ -35850,7 +36551,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -35864,6 +36565,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -36159,7 +36861,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -36173,6 +36875,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -36304,7 +37007,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -36318,6 +37021,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -36608,7 +37312,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -36622,6 +37326,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -36749,7 +37454,7 @@
                 }
               }
             },
-            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
             "x-error-codes": {
               "already_paused": {},
               "already_running": {},
@@ -36763,6 +37468,7 @@
               "ask_unsettled": {},
               "awaiting_answer": {},
               "busy": {},
+              "coming_soon": {},
               "finished": {},
               "full": {},
               "locked": {},
@@ -38054,6 +38760,55 @@
           }
         ],
         "summary": "The workspace's .kiro documents",
+        "x-marotte-access": {
+          "class": "session"
+        }
+      }
+    },
+    "/api/workspace/kiro-docs/delete": {
+      "post": {
+        "operationId": "postWorkspaceKiroDocsDelete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KiroDocDeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OKBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method Not Allowed: method_not_allowed",
+            "x-error-codes": {
+              "method_not_allowed": {}
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Delete what one .kiro document row stands for",
         "x-marotte-access": {
           "class": "session"
         }

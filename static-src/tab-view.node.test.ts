@@ -15,7 +15,6 @@ const KINDS: readonly TabKind[] = [
   "settings",
   "git",
   "files",
-  "history",
   "docs",
   "spec",
   "web",

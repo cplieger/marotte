@@ -893,6 +893,33 @@ describe("initPostAuthUI", () => {
 // NOT TESTED, and the absence is deliberate rather than an oversight: that `initUI` issues no `GET
 // /api/steering`.
 
+// What a message sent while a turn runs does, for every chat: steer, the default, or queue.
+describe("the mid-turn send choice", () => {
+  const select = (): HTMLSelectElement =>
+    document.getElementById("interrupt-mode") as HTMLSelectElement;
+
+  beforeEach(() => {
+    document.body.innerHTML = `<select id="interrupt-mode">
+      <option value="steer">Steer the running turn</option>
+      <option value="queue">Queue for after the turn</option>
+    </select>`;
+  });
+
+  it.each(["steer", "queue"] as const)("seeds the choice from interrupt_mode = %s", (mode) => {
+    select().value = mode === "steer" ? "queue" : "steer";
+    applyGeneralPanel(settingsPayload({ interrupt_mode: mode }));
+    expect(select().value).toBe(mode);
+  });
+
+  it("writes interrupt_mode when the reader picks the other", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload({ interrupt_mode: "steer" }));
+    select().value = "queue";
+    select().dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenCalledExactlyOnceWith({ interrupt_mode: "queue" });
+  });
+});
+
 describe("the payload-link guard switch", () => {
   const box = (): HTMLInputElement =>
     document.getElementById("flag-guard-payload-links") as HTMLInputElement;
@@ -1097,6 +1124,10 @@ describe("the agent-capability selects and the shell timeout", () => {
       <div id="workflow-creator-effort-row">
         <select id="workflow-creator-effort"><option value="">Default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">X-high</option><option value="max">Max</option></select>
       </div>
+      <input type="checkbox" id="flag-chat-awareness">
+      <div id="chat-awareness-mode-row">
+        <select id="chat-awareness-mode"><option value="">Default</option><option value="direct">Browse and read</option><option value="consult">Ask a question</option></select>
+      </div>
       <input type="number" id="shell-command-timeout">`;
   });
 
@@ -1141,6 +1172,32 @@ describe("the agent-capability selects and the shell timeout", () => {
     sel("workflow-creator-effort").dispatchEvent(new Event("change"));
     expect(patchSettings).toHaveBeenLastCalledWith({ workflow_creator_effort: "" });
     expect(askRow().classList.contains("hidden"), "spec planning is still off").toBe(true);
+  });
+
+  const searchMethodRow = (): HTMLElement =>
+    document.getElementById("chat-awareness-mode-row") as HTMLElement;
+
+  it("paints the stored search method and shows its row only while Search other chats is on", () => {
+    applyGeneralPanel(
+      settingsPayload({ chat_awareness_enabled: true, chat_awareness_mode: "consult" }),
+    );
+    expect(sel("chat-awareness-mode").value).toBe("consult");
+    expect(searchMethodRow().classList.contains("hidden")).toBe(false);
+    applyGeneralPanel(settingsPayload({ chat_awareness_enabled: false, chat_awareness_mode: "" }));
+    expect(sel("chat-awareness-mode").value).toBe("");
+    expect(searchMethodRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("stores a search method, Default included", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload({ chat_awareness_enabled: true }));
+    vi.mocked(patchSettings).mockClear();
+    sel("chat-awareness-mode").value = "consult";
+    sel("chat-awareness-mode").dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenLastCalledWith({ chat_awareness_mode: "consult" });
+    sel("chat-awareness-mode").value = "";
+    sel("chat-awareness-mode").dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenLastCalledWith({ chat_awareness_mode: "" });
   });
 
   it("keeps the ask-first row hidden when a Workflow use choice is made with spec planning off", () => {

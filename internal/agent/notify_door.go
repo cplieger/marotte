@@ -53,6 +53,8 @@ func (d notifyDoor) Deliver(ctx context.Context, session, text, source string) (
 		return notify.DeliveredSteer, nil
 	case command.NotifyPrompt:
 		return notify.DeliveredPrompt, nil
+	case command.NotifyQueued:
+		return notify.DeliveredQueued, nil
 	}
 	return "", fmt.Errorf("notify: unknown delivery %q", got)
 }

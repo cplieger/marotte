@@ -108,20 +108,27 @@ func (l *runList) dropResume() {
 	}
 }
 
-// dropResumeOf removes the waiting resume the failsafe stop token listed; a resume an earlier stop listed stays.
-func (l *runList) dropResumeOf(token uint64) {
-	if r := l.resume(); r != nil && r.fsToken == token {
-		l.remove(r)
+// unlistResume removes the waiting resume r when its stop is taken back (the turn finished before the cancel, or the
+// cancel was not delivered): the rows that stop paused wait for the next clean close (pausedBy 0), not for the reader
+// (runList.held). A resume that cannot run leaves them held, as its notice asks the reader to send.
+func (l *runList) unlistResume(r *runEntry) {
+	l.remove(r)
+	for _, e := range l.entries {
+		if e.state == marotte.RunPaused && e.pausedBy == r.fsToken {
+			e.pausedBy = 0
+		}
 	}
 }
 
-// withdrawFailsafe takes back what the failsafe stop token listed: its waiting resume goes, and the compaction it
-// took over gets back its prior origin and turn. A resume an earlier stop listed stays.
+// withdrawFailsafe takes back what the failsafe stop token listed: its waiting resume goes (unlistResume), and the
+// compaction it took over gets back its prior origin and turn. A resume an earlier stop listed stays.
 func (l *runList) withdrawFailsafe(token uint64) {
 	if token == 0 {
 		return
 	}
-	l.dropResumeOf(token)
+	if r := l.resume(); r != nil && r.fsToken == token {
+		l.unlistResume(r)
+	}
 	if c := l.compaction(); c != nil && c.fsToken == token && c.origin == marotte.RunFromFailsafe {
 		c.origin, c.forTurn, c.fsToken = c.fsPrior, c.fsPriorFor, 0
 		l.touch()

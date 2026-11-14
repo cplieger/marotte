@@ -16,6 +16,7 @@ vi.mock("./tabs.js", () => ({
     void tabSignal.value;
     return activeKind;
   },
+  historyPaneTab: () => null,
 }));
 vi.mock("./find-in-chat.js", () => ({
   handleFindHotkey: () => false,

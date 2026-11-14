@@ -83,6 +83,26 @@ func TestNotify_PromptsWhenTheTurnEndedBeforeTheSteer(t *testing.T) {
 	}
 }
 
+// A wake the chat holds behind its running turn is accepted as queued, waiting under its caller's name.
+func TestNotify_AnswersQueuedForAWakeTheChatHolds(t *testing.T) {
+	f := newCallerFixture(t)
+	f.queue.mode = marotte.InterruptQueue
+	f.opens.admitFirst = AdmissionBusy
+	if got := notifyInto(t, f); got != NotifyQueued {
+		t.Fatalf("delivered as %q, want queued", got)
+	}
+	if len(f.queue.rows) != 1 || f.queue.rows[0].Text != notifyText {
+		t.Fatalf("queued rows = %+v, want the wake", f.queue.rows)
+	}
+	if got := f.queue.rows[0].Caller; got == nil || got.Label != "grelot" {
+		t.Errorf("queued row caller = %+v, want grelot", got)
+	}
+	if len(f.steers.froms) != 0 || len(f.opens.prompts()) != 0 {
+		t.Errorf("a held wake was delivered: steers %d, prompts %v", len(f.steers.froms), f.opens.prompts())
+	}
+	composerKept(t, f)
+}
+
 func TestNotify_LeavesWaitingOnUser(t *testing.T) {
 	for name, busy := range map[string]bool{"prompt": false, "steer": true} {
 		t.Run(name, func(t *testing.T) {
@@ -176,10 +196,11 @@ func TestClassifyNotifyError(t *testing.T) {
 	}{
 		{"a deleted chat", StatusErrorReason(http.StatusConflict, reasonChatGone, ErrChatNotFound), NotifyUnknownChat},
 		{"a chat still starting", StatusErrorReason(http.StatusConflict, reasonStarting, errBusy), NotifyRetryLater},
-		{"a full steer buffer", StatusErrorReason(http.StatusConflict, reasonFull, errSteerFull), NotifyRetryLater},
+		{"a full steer buffer", StatusErrorReason(http.StatusConflict, reasonFull, ErrSteerFull), NotifyRetryLater},
 		{"a chat closed meanwhile", StatusErrorReason(http.StatusConflict, reasonChatClosed, errChatClosed), NotifyRetryLater},
 		{"the steer lock unavailable", StatusError(http.StatusServiceUnavailable, errors.New("lock")), NotifyRetryLater},
 		{"the steer send failed", StatusError(http.StatusBadGateway, errors.New("pipe")), NotifyRetryLater},
+		{"a wake past the draft cap behind a running turn", submitRefusal(ErrSubmitTooBig), NotifyRetryLater},
 		{"system-notice text", StatusError(http.StatusBadRequest, errSteerLooksLikeNotification), NotifyBadText},
 		{"a server fault", StatusError(http.StatusInternalServerError, errors.New("disk")), NotifyFailed},
 		{"a bare error", errors.New("disk"), NotifyFailed},

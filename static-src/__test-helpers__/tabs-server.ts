@@ -9,7 +9,7 @@
 import { vi } from "vitest";
 
 import type { TabKind, TabSubject, TabsChangedPayload } from "../types.js";
-import type { TabList } from "../wire/types.gen.js";
+import type { RecentClose, TabList } from "../wire/types.gen.js";
 
 /** Handed in, not imported: the `api-client.js` mock's factory imports THIS module, so a static
  *  `../tabs-sync.js` import deadlocks the mocker silently and the run never starts. */
@@ -64,6 +64,11 @@ interface State {
   readBounds: Map<string, number>;
   /** The chat that launched each run, as the server's run owner answers it. */
   runLaunchers: Map<string, string>;
+  /** The Recently closed list, newest first, or null when the case did not ask for it
+   *  (`trackRecent`): then no frame carries `recent` and a read answers `[]`. */
+  recent: RecentClose[] | null;
+  /** The name a closed chat's entry is stamped with, per ref; "" when absent. */
+  chatNames: Map<string, string>;
 }
 
 const state: State = {
@@ -81,6 +86,8 @@ const state: State = {
   held: null,
   readBounds: new Map(),
   runLaunchers: new Map(),
+  recent: null,
+  chatNames: new Map(),
 };
 
 export const tabServer = {
@@ -100,6 +107,21 @@ export const tabServer = {
     state.held = null;
     state.readBounds = new Map();
     state.runLaunchers = new Map();
+    state.recent = null;
+    state.chatNames = new Map();
+  },
+
+  /** Keep the server's Recently closed list from here on: a close of a chat's tab lists it under
+   *  the name `names` gives (the record's name at the close), an open takes it out, and each frame
+   *  that changed the list carries it whole as `recent`, as the server's frames do. */
+  trackRecent(names: Readonly<Record<string, string>> = {}): void {
+    state.recent = [];
+    state.chatNames = new Map(Object.entries(names));
+  },
+
+  /** The server's Recently closed list; `[]` when not tracked. */
+  recent(): readonly RecentClose[] {
+    return state.recent ?? [];
   },
 
   /** Record the chat that launched a run, so an `open_tab` for it naming no open parent nests
@@ -241,10 +263,7 @@ export const tabServer = {
   /** Close a tab the way ANOTHER device does and withhold its frame, so the next command still
    *  names it; `flushFrames` delivers the frame afterwards. */
   closeElsewhere(id: string): void {
-    const removed = descendants(id);
-    state.subjects = state.subjects.filter((s) => !removed.includes(s.id));
-    state.version++;
-    state.pending.push({ removed_ids: removed, version: state.version });
+    commitClose(descendants(id));
   },
 
   /** Close a tab the way ANOTHER device does: commit it and emit a frame with no
@@ -254,9 +273,11 @@ export const tabServer = {
     if (removed.length === 0) {
       return;
     }
-    state.subjects = state.subjects.filter((s) => !removed.includes(s.id));
-    state.version++;
-    ingest({ removed_ids: removed, version: state.version });
+    commitClose(removed);
+    const frame = state.pending.pop();
+    if (frame !== undefined) {
+      ingest(frame);
+    }
   },
 };
 
@@ -293,6 +314,7 @@ function runLauncherTab(kind: TabKind, ref: string): string {
 function commitOpen(spec: SeedSpec): TabSubject {
   const ref = spec.ref ?? "";
   const parent = spec.parent ?? "";
+  const listed = spec.kind === "chat" ? state.recent?.find((e) => e.ref === ref) : undefined;
   const subject: TabSubject = {
     id: mint(),
     kind: spec.kind,
@@ -302,6 +324,9 @@ function commitOpen(spec: SeedSpec): TabSubject {
     pinned: spec.pinned ?? false,
     owns: spec.owns ?? true,
   };
+  if (subject.parent === "" && listed?.pinned === true) {
+    subject.pinned = true;
+  }
   if (subject.parent === "") {
     state.subjects.push(subject);
   } else {
@@ -312,8 +337,35 @@ function commitOpen(spec: SeedSpec): TabSubject {
     state.subjects.splice(at, 0, subject);
   }
   state.version++;
-  state.pending.push({ changed: subject, version: state.version });
+  const frame: TabsChangedPayload = { changed: subject, version: state.version };
+  if (listed !== undefined && state.recent !== null) {
+    state.recent = state.recent.filter((e) => e !== listed);
+    frame.recent = { items: [...state.recent] };
+  }
+  state.pending.push(frame);
   return subject;
+}
+
+/** Remove `removed` (a close's ids, deepest first) and queue its frame. With the list tracked,
+ *  each closed chat goes to its head, an older entry for it dropped, the list cut to 10. */
+function commitClose(removed: readonly string[]): void {
+  const closedChats = state.subjects.filter((s) => removed.includes(s.id) && s.kind === "chat");
+  state.subjects = state.subjects.filter((s) => !removed.includes(s.id));
+  state.version++;
+  const frame: TabsChangedPayload = { removed_ids: [...removed], version: state.version };
+  if (state.recent !== null && closedChats.length > 0) {
+    const now = Date.now();
+    const entries = closedChats.map((s) => ({
+      ref: s.ref,
+      name: state.chatNames.get(s.ref) ?? "",
+      closed_at: now,
+      ...(s.pinned ? { pinned: true } : {}),
+    }));
+    const refs = new Set(entries.map((e) => e.ref));
+    state.recent = [...entries, ...state.recent.filter((e) => !refs.has(e.ref))].slice(0, 10);
+    frame.recent = { items: [...state.recent] };
+  }
+  state.pending.push(frame);
 }
 
 /** The server's ack rule: clamp to the bound, store only a value past the stored one. Answers the
@@ -411,9 +463,7 @@ function handle(type: string, payload: Record<string, unknown>): SendResultLike 
         // Two devices can close one tab: the EMPTY list is the client's confirmation of absence.
         return { ok: true, status: 200, body: { closed: [], version: state.version } };
       }
-      state.subjects = state.subjects.filter((s) => !removed.includes(s.id));
-      state.version++;
-      state.pending.push({ removed_ids: removed, version: state.version });
+      commitClose(removed);
       stamp(payload);
       return { ok: true, status: 200, body: { closed: removed, version: state.version } };
     }
@@ -589,7 +639,7 @@ export function tabListRead(): (path: string) => Promise<TabList | null> {
     }
     return Promise.resolve({
       tabs: state.subjects.map((s) => ({ ...s })),
-      recent: [],
+      recent: [...(state.recent ?? [])],
       version: state.version,
     });
   });

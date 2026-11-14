@@ -73,8 +73,6 @@ func (o *recoveryOutcome) reservePromptOld(context.Context, marotte.ChatID, time
 	return AdmissionStarting
 }
 
-func (*recoveryOutcome) PromptHolder(marotte.ChatID) (string, bool) { return "", false }
-
 func (o *recoveryOutcome) ReserveTurn(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
 	if o.tryReserveOld(chatID, source) {
 		return IdleAcquired, testReservation(chatID, true)

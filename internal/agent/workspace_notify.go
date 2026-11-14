@@ -15,6 +15,9 @@ func (rt *Runtime) initWorkspaceHandlers() {
 			rt.hookTriggers.changed(msg.Params)
 			rt.config.broadcastHooksChanged()
 		},
+		methodV3ProgressiveContext: func(ctx context.Context, _ marotte.ChatID, _ *marotte.RPCResponse) {
+			rt.Broadcast(ctx, marotte.NewEvent(marotte.EventKiroDocsChanged, "", marotte.KiroDocsChangedPayload{}))
+		},
 		methodV3Powers: func(ctx context.Context, _ marotte.ChatID, msg *marotte.RPCResponse) {
 			rt.powers.itemsChanged(ctx, msg.Params)
 		},

@@ -107,7 +107,7 @@ var closedGateVerbs = []closedGateVerb{
 	{
 		name: "a launch", route: "POST /api/runs", want: gateRefuses,
 		call: func(ctx context.Context, _ *testing.T, h *Runtime) error {
-			_, _, err := h.runs.launch(ctx, "bundled://demo", nil, marotte.RunDefaults{})
+			_, _, _, err := h.runs.launch(ctx, "bundled://demo", nil, marotte.RunDefaults{})
 			return err
 		},
 	},

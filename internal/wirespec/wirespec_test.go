@@ -30,6 +30,7 @@ var emptySignalPayloads = []string{
 	"ConfigStandingChangedPayload",
 	"ForgesChangedPayload",
 	"HooksChangedPayload",
+	"KiroDocsChangedPayload",
 	"KnowledgeChangedPayload",
 	"MCPConfigChangedPayload",
 	"MCPPoolChangedPayload",

@@ -86,20 +86,57 @@
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>
           New chat
         </button>
-        <button type="button" id="history-btn" class="sidebar-action-btn sidebar-history-btn" data-tooltip="History" aria-label="History" aria-pressed="false">
-          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-        </button>
       </div>
-      <!-- The strip's pending state, authored so it paints before any script has
-           run. boot.ts removes it when the tab set has been adopted (or provably
-           cannot be), and tabs.ts leaves it alone: renderDOM reconciles children
-           by data-tab-id and this row set carries none. -->
-      <div id="tab-list" role="tablist" aria-label="Tabs">
-        <div id="tab-strip-skeleton" aria-hidden="true">
-          <div class="skeleton skeleton-tab-row"></div>
-          <div class="skeleton skeleton-tab-row"></div>
-          <div class="skeleton skeleton-tab-row"></div>
-        </div>
+      <div id="tab-sections" class="tab-sections">
+        <section id="open-section" class="side-section" aria-labelledby="open-section-name">
+          <h2 class="side-section-h" hidden>
+            <button type="button" class="side-section-toggle" aria-expanded="true" aria-controls="tab-list" aria-labelledby="open-section-name" aria-describedby="open-section-desc">
+              <span class="disclosure-chevron side-section-chevron" aria-hidden="true"><svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+              <span class="side-section-name" id="open-section-name">Open</span>
+              <span class="side-section-dot tab-status-dot" aria-hidden="true"></span>
+              <span class="side-section-count" aria-hidden="true"></span>
+              <span class="sr-only" id="open-section-desc"></span>
+            </button>
+          </h2>
+          <!-- The strip's pending state, authored so it paints before any script has
+               run. boot.ts removes it when the tab set has been adopted (or provably
+               cannot be), and tabs.ts leaves it alone: renderDOM reconciles children
+               by data-tab-id and this row set carries none. -->
+          <div id="tab-list" class="side-section-list" role="tablist" aria-label="Open tabs" aria-orientation="vertical">
+            <div id="tab-strip-skeleton" aria-hidden="true">
+              <div class="skeleton skeleton-tab-row"></div>
+              <div class="skeleton skeleton-tab-row"></div>
+              <div class="skeleton skeleton-tab-row"></div>
+            </div>
+          </div>
+        </section>
+        <section id="pinned-section" class="side-section" aria-labelledby="pinned-section-name" hidden>
+          <h2 class="side-section-h">
+            <button type="button" class="side-section-toggle" aria-expanded="true" aria-controls="pinned-list" aria-labelledby="pinned-section-name" aria-describedby="pinned-section-desc">
+              <span class="disclosure-chevron side-section-chevron" aria-hidden="true"><svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+              <span class="side-section-name" id="pinned-section-name">Pinned</span>
+              <span class="side-section-dot tab-status-dot" aria-hidden="true"></span>
+              <span class="side-section-count" aria-hidden="true"></span>
+              <span class="sr-only" id="pinned-section-desc"></span>
+            </button>
+          </h2>
+          <div id="pinned-list" class="side-section-list" role="tablist" aria-label="Pinned" aria-orientation="vertical"></div>
+        </section>
+        <section id="recent-section" class="side-section" aria-labelledby="recent-section-name" hidden>
+          <h2 class="side-section-h">
+            <button type="button" class="side-section-toggle" aria-expanded="false" aria-controls="recent-list" aria-labelledby="recent-section-name" aria-describedby="recent-section-desc">
+              <span class="disclosure-chevron side-section-chevron" aria-hidden="true"><svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+              <span class="side-section-name" id="recent-section-name">Recently closed</span>
+              <span class="side-section-count" aria-hidden="true"></span>
+              <span class="sr-only" id="recent-section-desc"></span>
+            </button>
+          </h2>
+          <ul id="recent-list" class="recent-list" hidden></ul>
+        </section>
+        <button type="button" id="history-btn" class="side-history-row">
+          <svg class="ic-ui" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          <span class="side-history-label">History</span>
+        </button>
       </div>
       <div class="sidebar-footer">
         <div class="popup-anchor">
@@ -396,6 +433,14 @@
                 </button>
                 <span id="model-switch-list" class="pill-expand-content pill-model-list hidden"></span>
               </span>
+              <!-- The chat's security profile (profile-pill.ts), drawn with the mode pill's classes. -->
+              <span class="pill-slot pill-slot-profile">
+                <button id="profile-pill" class="pill pill-role pill-expandable hidden" type="button" data-tooltip="Security profile" aria-label="Security profile">
+                  <span id="profile-pill-icon" class="pill-role-icon"></span>
+                  <span id="profile-pill-label" class="pill-role-label"></span>
+                </button>
+                <span id="profile-list" class="pill-expand-content pill-role-list hidden"></span>
+              </span>
               <span class="pill-slot">
                 <button id="role-pill" class="pill pill-role pill-expandable" type="button" data-tooltip="Switch mode" aria-label="Switch mode">
                   <span id="role-pill-icon" class="pill-role-icon"></span>
@@ -434,8 +479,12 @@
                 </span>
               </span>
               <div class="pill-spacer"></div>
-              <!-- Mid-turn Send (prompt-input.ts). Left of Cancel, which keeps the row's end and its corner. -->
-              <button type="button" id="midturn-send-btn" class="send-btn" hidden></button>
+              <!-- Mid-turn send (prompt-input.ts): the default action, then the other as a glyph. Left of Cancel, which
+                   keeps the row's end and its corner. -->
+              <div id="midturn-send" class="send-split" role="group" aria-label="Send mid-turn" hidden>
+                <button type="button" id="midturn-send-btn" class="send-btn" hidden></button>
+                <button type="button" id="midturn-alt-btn" class="send-btn" hidden></button>
+              </div>
               <!-- ONE activity button: Send when nothing runs, Cancel while a
                    turn streams (prompt-input.ts flips its type so a streaming
                    click can never submit). The 4-state split button it
@@ -573,12 +622,29 @@
               </div>
             </div>
 
+            <div class="page-section" id="general-composer-section">
+              <h2 class="section-title">Composer</h2>
+              <div class="section-option section-option-fixed">
+                <div class="section-field">
+                  <div class="section-title-status-row">
+                    <label class="section-option-label" for="interrupt-mode">Sending while a turn runs</label>
+                    <span class="settings-save-status hidden" data-save-status="interrupt_mode" aria-live="polite"></span>
+                  </div>
+                  <select id="interrupt-mode" class="rf-select" aria-describedby="interrupt-mode-hint">
+                    <option value="steer" selected>Steer the running turn</option>
+                    <option value="queue">Queue for after the turn</option>
+                  </select>
+                  <p class="section-hint" id="interrupt-mode-hint">What the first half of the send button does with a message you send while the agent works, in every chat, and what Enter does where Enter sends. Steer lets the agent read it mid-turn. Queue holds it until the turn ends, and queued messages go one per turn. When both halves show, the second does the other. Steer is the default.</p>
+                </div>
+              </div>
+            </div>
+
             <div class="page-section" id="general-retention-section">
               <div class="section-title-status-row">
                 <h2 class="section-title">Chat retention</h2>
                 <span class="settings-save-status hidden" data-save-status="chat_retention_days" aria-live="polite"></span>
               </div>
-              <p class="section-hint">Closed chats stay in <strong>History</strong> for the <strong>Days kept</strong>, or for good with <strong>Keep forever</strong>. With <strong>Days kept</strong> above 0, finished workflow runs are deleted that many days after they last ran, even while their chat stays open. Set <strong>0</strong> to delete a chat as soon as you close it and hide History.</p>
+              <p class="section-hint">Closed chats stay in <strong>History</strong> for the <strong>Days kept</strong>, or for good with <strong>Keep forever</strong>. With <strong>Days kept</strong> above 0, finished workflow runs are deleted that many days after they last ran, even while their chat stays open. Set <strong>0</strong> to delete a chat as soon as you close it.</p>
               <div class="section-option">
                 <label class="toggle">
                   <input type="checkbox" id="chat-retention-forever" aria-label="Keep archived chats forever">
@@ -940,7 +1006,21 @@
                     <span class="section-option-label">Search other chats</span>
                     <span class="settings-save-status hidden" data-save-status="chat_awareness_enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint" id="flag-chat-awareness-hint">On: the agent can browse and search your other chats by branch, file or topic, and read what each one decided, changed and produced, to build on earlier work or find a chat to message. Off by default.</p>
+                  <p class="section-hint" id="flag-chat-awareness-hint">On: the agent can use your other chats to build on earlier work or find a chat to message, and Search method says how. Off by default.</p>
+                </div>
+              </div>
+              <div class="section-option section-option-fixed" id="chat-awareness-mode-row">
+                <div class="section-field">
+                  <div class="section-title-status-row">
+                    <label class="section-option-label" for="chat-awareness-mode">Search method</label>
+                    <span class="settings-save-status hidden" data-save-status="chat_awareness_mode" aria-live="polite"></span>
+                  </div>
+                  <select id="chat-awareness-mode" class="rf-select" aria-describedby="chat-awareness-mode-hint">
+                    <option value="" selected>Default</option>
+                    <option value="direct">Browse and read</option>
+                    <option value="consult">Ask a question</option>
+                  </select>
+                  <p class="section-hint" id="chat-awareness-mode-hint">How the agent reads your other chats. Browse and read: it lists and searches them and reads each one's summary itself. Ask a question: it asks once and a hidden helper reads the chats and answers, citing the chats it used, which keeps their text out of this chat but spends extra model calls. Default lets Kiro decide (Browse and read today). Applies to chats you start after the change.</p>
                 </div>
               </div>
               <div class="section-option section-option-fixed">
@@ -991,10 +1071,10 @@
 
             <div class="page-section" id="general-data-section">
               <h2 class="section-title">Data sharing</h2>
-              <p class="section-hint">What Marotte and kiro-cli share with AWS. Both are off by default.</p>
+              <p class="section-hint">What Marotte and kiro-cli share with AWS. Both are on by default, as in kiro-cli.</p>
               <div class="section-option">
                 <label class="toggle">
-                  <input type="checkbox" id="flag-content-collection" aria-label="Share content with AWS for service improvement">
+                  <input type="checkbox" id="flag-content-collection" aria-label="Share content with AWS for service improvement" checked>
                   <span class="toggle-slider"></span>
                 </label>
                 <div>
@@ -1002,7 +1082,7 @@
                     <span class="section-option-label">Share content with AWS for service improvement</span>
                     <span class="settings-save-status hidden" data-save-status="content_collection_enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">Lets AWS use what Marotte sends the model to improve its service: your chats and workflow runs. A change applies at the next model request.</p>
+                  <p class="section-hint">Lets AWS use what Marotte sends the model to improve its service: your chats and workflow runs. On by default, as in kiro-cli. It covers what Marotte sends; kiro-cli run in the Shell panel follows its own setting. A change applies at the next model request.</p>
                 </div>
               </div>
               <div class="section-option">
@@ -1149,15 +1229,16 @@
 
           <!-- Permissions: active (Cedar) policy + supervised mode + agent ignore files -->
           <div class="settings-panel hidden" data-settings-panel="permissions">
-            <p class="settings-panel-intro">The <strong>Active policy</strong> below is the live permission policy kiro-cli actually enforces, including shell commands. Supervised mode and agent ignore files are separate layers under it. The review gate is kiro-cli's own, and marotte only sets a value for it. Defaults here apply to new conversations, and the chat-options menu next to the prompt changes the conversation you are in.</p>
+            <p class="settings-panel-intro">The <strong>Active policy</strong> below is the permission policy a new chat starts with, including shell commands; a chat whose shield pill names another profile runs that profile's presets with the same saved rules. Supervised mode and agent ignore files are separate layers under it. The review gate is kiro-cli's own, and marotte only sets a value for it. Defaults here apply to new conversations, and the pills and the chat-options menu next to the prompt change the conversation you are in.</p>
 
             <div class="page-section" id="security-profile-section">
               <h2 class="section-title">Security profile</h2>
-              <p class="section-hint">How much the agent may do here without asking. Outside Custom the table below is read-only. Rules <em>you</em> added stay in the table and keep applying alongside the profile. Open chats switch at their next message.</p>
+              <p class="section-hint">How much the agent may do here without asking. New chats start on this profile, Trusted unless you pick another, and the shield pill beside the model pill changes it for one chat. Outside Custom the table below is read-only. Rules <em>you</em> added stay in the table and keep applying alongside the profile.</p>
               <p id="security-profile-admin" class="section-hint governance-reason hidden">Your administrator has rules on this machine that apply under every profile and win over it.</p>
               <div id="security-profile-list" class="profile-list" role="radiogroup" aria-label="Security profile"></div>
               <div class="profile-actions">
                 <button id="security-profile-customize" class="btn btn-small hidden" type="button">Customize</button>
+                <p id="security-profile-customize-hint" class="section-hint hidden">Customize copies this profile's rules into your saved rules. Saved rules apply in every chat, whatever its shield pill says.</p>
                 <p id="security-profile-status" class="section-hint hidden"></p>
               </div>
             </div>
@@ -1670,12 +1751,12 @@
           </header>
           <div data-history-panel="chats" class="history-panel">
             <div id="history-table" class="list-container" role="list">
-              <div class="list-empty">No previous conversations in this workspace.</div>
+              <div class="list-empty" role="listitem">No previous conversations in this workspace.</div>
             </div>
           </div>
           <div data-history-panel="runs" class="history-panel hidden">
             <div id="history-runs" class="list-container" role="list">
-              <div class="list-empty">No previous workflow runs in this workspace.</div>
+              <div class="list-empty" role="listitem">No previous workflow runs in this workspace.</div>
             </div>
           </div>
         </div>

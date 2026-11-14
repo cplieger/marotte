@@ -682,6 +682,7 @@ const WILDCARD_COVERS = new Map([
   ["shell", "any command"],
   ["fs_read", "any file read, by any tool"],
   ["fs_write", "any file write, by any tool"],
+  ["sessions", "any read of your other chats, by any tool"],
 ]);
 
 /** KAS saves a resource as a Cedar `like` pattern whose one wildcard is `*` (2.28's `qFc`), so a
@@ -742,7 +743,7 @@ type AlwaysReach = "user" | "session";
 
 const USER_RULE_HINT =
   "Saves the rule to your user permissions, which every kiro-cli session on this account reads, " +
-  "not only these chats. Switches Permissions to Custom if another profile is selected.";
+  "not only these chats. Each chat keeps its security profile.";
 
 const SESSION_RULE_HINT =
   "kiro-cli keeps this rule for this chat's session only. Nothing is saved and Permissions stay " +

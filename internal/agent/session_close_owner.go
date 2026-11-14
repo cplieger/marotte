@@ -377,6 +377,20 @@ func (lc *chatLifecycle) markReload(sb *sharedBridge) bool {
 	return lc.markReloadLocked(sb)
 }
 
+// noteCloseRefused records a close the session refused: it stays open and keeps any reload mark.
+func (lc *chatLifecycle) noteCloseRefused() {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	lc.closeRefusals++
+}
+
+// closeRefusalCount is how many closes the life's session refused so far (noteCloseRefused).
+func (lc *chatLifecycle) closeRefusalCount() uint64 {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.closeRefusals
+}
+
 // markReloadLocked is markReload with mu held.
 func (lc *chatLifecycle) markReloadLocked(sb *sharedBridge) bool {
 	if lc.ended || lc.reloadFor == sb {

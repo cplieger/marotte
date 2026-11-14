@@ -91,9 +91,8 @@ func (rt *Runtime) initDispatch() {
 	}
 	// Recognised and ignored, kept out of the Debug log.
 	rt.noopMethods = map[string]struct{}{
-		methodV3SessionsChanged:    {},
-		methodV3ToolsDidChange:     {},
-		methodV3ProgressiveContext: {},
+		methodV3SessionsChanged: {},
+		methodV3ToolsDidChange:  {},
 	}
 	rt.initWorkspaceHandlers()
 	// Eager: several bridge goroutines read it.

@@ -529,7 +529,7 @@ func TestMutate_RefusesAnEditThatBreaksTheDocument(t *testing.T) {
 	}
 }
 
-// jsonSibling is a permissions.json KAS reads while the .yaml is missing or blank, holding the
+// jsonSibling is a permissions.json KAS reads while the .yaml is missing, holding the
 // keys and a rule field marotte does not model.
 const jsonSibling = `{"workspaceTrusted": true, "policies": ["read-all"],
  "rules": [{"capability": "shell", "effect": "deny", "match": ["rm *"], "description": "kept"}],
@@ -551,17 +551,46 @@ rules:
       effect: allow
 note: "true"
 `
-	for name, yamlBefore := range map[string]*string{"yaml absent": nil, "yaml blank": new("  \n")} {
+	dir := t.TempDir()
+	jsonPath, yamlPath := filepath.Join(dir, jsonFilename), filepath.Join(dir, filename)
+	if err := os.WriteFile(jsonPath, []byte(jsonSibling), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Load(yamlPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, err := f.Upsert(&Rule{Capability: "web_fetch", Effect: EffectAllow}); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveRules(t.Context(), yamlPath, f); err != nil {
+		t.Fatalf("Mutate: %v", err)
+	}
+	got, err := os.ReadFile(yamlPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Errorf("saved .yaml = %q, want %q", got, want)
+	}
+	if raw, err := os.ReadFile(jsonPath); err != nil || string(raw) != jsonSibling {
+		t.Errorf("the .json changed to %q (err %v), want it left as KAS's fallback", raw, err)
+	}
+}
+
+// TestMutate_ABlankYAMLIsTheFileKASReads pins that a blank permissions.yaml shadows the .json, as in
+// KAS's file pick: the first write holds only the edit, and the .json is left alone.
+func TestMutate_ABlankYAMLIsTheFileKASReads(t *testing.T) {
+	const want = "rules:\n    - capability: web_fetch\n      effect: allow\n"
+	for name, blank := range map[string]string{"empty": "", "whitespace": "  \n"} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			jsonPath, yamlPath := filepath.Join(dir, jsonFilename), filepath.Join(dir, filename)
 			if err := os.WriteFile(jsonPath, []byte(jsonSibling), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if yamlBefore != nil {
-				if err := os.WriteFile(yamlPath, []byte(*yamlBefore), 0o600); err != nil {
-					t.Fatal(err)
-				}
+			if err := os.WriteFile(yamlPath, []byte(blank), 0o600); err != nil {
+				t.Fatal(err)
 			}
 			f, err := Load(yamlPath)
 			if err != nil {
@@ -573,15 +602,11 @@ note: "true"
 			if err := saveRules(t.Context(), yamlPath, f); err != nil {
 				t.Fatalf("Mutate: %v", err)
 			}
-			got, err := os.ReadFile(yamlPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(got) != want {
-				t.Errorf("saved .yaml = %q, want %q", got, want)
+			if got, err := os.ReadFile(yamlPath); err != nil || string(got) != want {
+				t.Errorf("saved .yaml = %q (err %v), want %q", got, err, want)
 			}
 			if raw, err := os.ReadFile(jsonPath); err != nil || string(raw) != jsonSibling {
-				t.Errorf("the .json changed to %q (err %v), want it left as KAS's fallback", raw, err)
+				t.Errorf("the .json changed to %q (err %v), want it untouched", raw, err)
 			}
 		})
 	}

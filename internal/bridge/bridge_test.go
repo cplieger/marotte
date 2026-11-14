@@ -2262,6 +2262,23 @@ func TestSessionDoorMessagingFollowsTheSetting(t *testing.T) {
 	}
 }
 
+// TestSessionDoorAwarenessModeFollowsTheSetting pins the Search method on both verbs as KAS's
+// settings.sessionTools.awareness.mode, stated beside enabled.
+func TestSessionDoorAwarenessModeFollowsTheSetting(t *testing.T) {
+	for _, method := range []string{"session/new", "session/load"} {
+		opts := &marotte.SessionOpts{Model: "m", Features: marotte.SessionFeatures{Awareness: true, AwarenessMode: "consult"}}
+		if method == "session/load" {
+			opts.SessionID = "sess_resume_door"
+		}
+		settings := metaKiroSettings(t, captureRequest(t, method, opts))
+		tools, _ := settings["sessionTools"].(map[string]any)
+		got, _ := tools["awareness"].(map[string]any)
+		if got["enabled"] != true || got["mode"] != "consult" {
+			t.Errorf("%s sent sessionTools=%v, want awareness {\"enabled\":true,\"mode\":\"consult\"}", method, settings["sessionTools"])
+		}
+	}
+}
+
 // TestSessionDoorCarriesBackgroundExecution pins settings.backgroundExecution as {"enabled":true} on both verbs.
 func TestSessionDoorCarriesBackgroundExecution(t *testing.T) {
 	for _, method := range []string{"session/new", "session/load"} {

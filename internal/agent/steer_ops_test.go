@@ -54,6 +54,15 @@ func steerOpsHub(t *testing.T) (*steerHarness, *testChatStore, *fakeBridge) {
 	return harnessOn(h, "c1", t.Fatalf), cs, br
 }
 
+// userSteer sends the user's steer command for key's message id into c1's running turn, through the run list as the
+// page does.
+func (s *steerHarness) userSteer(t *testing.T, key, text string) {
+	t.Helper()
+	if code := postSteer(t, s.h, strings.TrimPrefix(key, marotte.SteerIDPrefix), text); code != http.StatusOK {
+		t.Fatalf("Setup: steer %s = %d, want 200", key, code)
+	}
+}
+
 func clearReply(ids []string) json.RawMessage {
 	raw, _ := json.Marshal(map[string]any{"cleared": true, "messageIds": ids})
 	return raw
@@ -214,8 +223,8 @@ func TestCmdSteerRemove_ATurnEndingUnderTheClearResendsTheKeptRows(t *testing.T)
 		{name: "a bridge death", stage: func(t *testing.T, s *steerHarness, br *fakeBridge) {
 			id, _ := s.h.stagePromptTurn(t, "c1")
 			s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
-			s.steer("steer-a", "a")
-			s.steer("steer-b", "b")
+			s.userSteer(t, "steer-a", "a")
+			s.userSteer(t, "steer-b", "b")
 			var once sync.Once
 			s.h.bridge.mgr.remove("c1")
 			s.h.insertBridgeNow("c1", testBridge(failingClear{fakeBridge: br, before: func() {
@@ -265,8 +274,8 @@ func wireEndUnderTheClear(stop string) func(t *testing.T, s *steerHarness, br *f
 	return func(t *testing.T, s *steerHarness, br *fakeBridge) {
 		id, _ := s.h.stagePromptTurn(t, "c1")
 		s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
-		s.steer("steer-a", "a")
-		s.steer("steer-b", "b")
+		s.userSteer(t, "steer-a", "a")
+		s.userSteer(t, "steer-b", "b")
 		br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 			if method != marotte.MethodSessionSteerClear {
 				return nil, nil, false
@@ -309,8 +318,8 @@ func TestCmdCancel_TheSendNowRowOpensTheNextTurnWithNoNotReadNote(t *testing.T) 
 	}
 	id, _ := s.h.stagePromptTurn(t, "c1")
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
-	s.steer("steer-a", "first")
-	s.steer("steer-b", "second")
+	s.userSteer(t, "steer-a", "first")
+	s.userSteer(t, "steer-b", "second")
 
 	rec := postCmd(t, s.h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1", Payload: json.RawMessage(`{"lead":"steer-b"}`)})
 	if rec.Code != http.StatusOK {
@@ -339,14 +348,52 @@ func TestCmdCancel_TheSendNowRowOpensTheNextTurnWithNoNotReadNote(t *testing.T) 
 	}
 }
 
+// A send-now press whose stop stops nothing (the turn it was drawn against is gone) leaves no lead behind: the next
+// plain stop pauses both unread steers in the order they were written and opens no turn, as it would with no press.
+func TestCmdCancel_ALeadWhoseStopStopsNothingIsNotKept(t *testing.T) {
+	s, cs, _ := steerOpsHub(t)
+	s.recs.note = func(ctx context.Context, chatID marotte.ChatID, id string, steer *marotte.EntrySteer) {
+		s.h.coord.recordSteer(ctx, chatID, id, steer)
+	}
+	id, _ := s.h.stagePromptTurn(t, "c1")
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
+	s.userSteer(t, "steer-a", "first")
+	s.userSteer(t, "steer-b", "second")
+
+	rec := postCmd(t, s.h, marotte.ClientCommand{
+		Type: marotte.CmdCancel, ChatID: "c1", Payload: json.RawMessage(`{"lead":"steer-b","target":"t-gone"}`),
+	})
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"stopped":true`) {
+		t.Fatalf("cancel against a gone turn = %d %s, want 200 stopping nothing", rec.Code, rec.Body.String())
+	}
+	rec = postCmd(t, s.h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stop = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), clearedMsg("steer-a", "steer-b"))
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnEndMsg("cancelled"))
+	s.h.coord.releaseTurn("c1", id)
+
+	waitFor(t, func() bool {
+		return stateOf(s.h, "c1", "a") == marotte.RunPaused && stateOf(s.h, "c1", "b") == marotte.RunPaused
+	})
+	joinInflight(t, s.h)
+	if got := listedRows(s.h, "c1"); !slices.Equal(got, []string{"a:paused", "b:paused"}) {
+		t.Errorf("waiting rows = %v, want both steers paused in the order written", got)
+	}
+	if n := len(opensOf(t, logOf(t, cs, "c1"))); n != 1 {
+		t.Errorf("turns opened = %d, want only the stopped one", n)
+	}
+}
+
 // The reader pressed send now on a steer as its turn closed on its own, and that close already sent the steer as
 // the next prompt: the stop arriving now would cancel the very turn the reader asked for.
 func TestCmdCancel_ALeadWhoseResendOpenedBeforeTheStopIsNotCancelled(t *testing.T) {
 	s, cs, br := steerOpsHub(t)
 	id, _ := s.h.stagePromptTurn(t, "c1")
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
-	s.steer("steer-a", "first")
-	s.steer("steer-b", "second")
+	s.userSteer(t, "steer-a", "first")
+	s.userSteer(t, "steer-b", "second")
 	resendRuns := make(chan struct{})
 	t.Cleanup(func() { close(resendRuns) })
 	br.mu.Lock()
@@ -521,8 +568,10 @@ func TestSteerRecords_AnEndResolvedAfterTeardownFindsTheChatGone(t *testing.T) {
 	}
 }
 
-// While KAS may still hold a dead buffer's copy, the drain does not send the row; only a landed clear releases it.
+// A user's steer kiro-cli held when its bridge died without draining waits for the next prompt: while kiro-cli's log
+// may re-inject it, nothing sends it; once that prompt's post-load clear lands, it is steered into that prompt's turn.
 func TestPromptDrain_ADeadBuffersRowWaitsForThePostLoadClear(t *testing.T) {
+	never := make(chan struct{})
 	for _, tc := range []struct {
 		setup     func(s *steerHarness, br *fakeBridge)
 		name      string
@@ -538,27 +587,51 @@ func TestPromptDrain_ADeadBuffersRowWaitsForThePostLoadClear(t *testing.T) {
 		{name: "the clear lands", wantClear: true, wantSteer: true, setup: func(*steerHarness, *fakeBridge) {}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h, cs, br := newTestHub()
-			defer shutdownHub(t, h)
-			seedChat(t, cs, "c1")
-			s := harnessOn(h, "c1", t.Fatalf)
-			br.callResults = map[string]json.RawMessage{marotte.MethodSessionSteer: json.RawMessage(`{"queued":true}`)}
-			s.steer("steer-a", "first")
-			s.recs.bridgeGone("c1")
+			shortenSteerLockWait(t)
+			s, _, br := steerOpsHub(t)
+			id, _ := s.h.stagePromptTurn(t, "c1")
+			s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
+			s.userSteer(t, "steer-a", "first")
+			if !reachesState(s.h, "c1", "a", marotte.RunInKAS) {
+				t.Fatalf("Setup: the steer is %q, want in kiro-cli's buffer", stateOf(s.h, "c1", "a"))
+			}
+			s.recs.turnEnded("c1", command.SteerTurnEnd{
+				TurnID: id, BridgeDeath: true, Exit: never, Source: marotte.TurnSourcePrompt,
+			})
+			s.h.coord.finalizeTurn(t.Context(), "c1", &turnClose{
+				Closer: closerBridgeDeath, Stop: marotte.StopReasonInterrupted, Reason: deathInterruptCause, Turn: id,
+			})
+			s.h.coord.releaseTurn("c1", id)
+			idleAfter(t, s.h, "c1", id)
 			tc.setup(s, br)
+			br.forgetCalls()
+			gate := make(chan struct{})
+			t.Cleanup(func() { close(gate) })
+			br.blockOn = map[string]chan struct{}{marotte.MethodPrompt: gate}
 
-			postCmd(t, h, marotte.ClientCommand{
+			postCmd(t, s.h, marotte.ClientCommand{
 				Type: marotte.CmdPrompt, ChatID: "c1",
 				Payload: json.RawMessage(`{"text":"next","message_id":"m-1"}`),
 			})
 			waitForCall(t, br, marotte.MethodPrompt)
+			next, _ := ownID(s.h, "c1")
+			s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(next))
+			// A steer goes, if at all, once the list applied the clear's outcome to the prompted turn.
+			within := 300 * time.Millisecond
+			if tc.wantSteer {
+				within = 5 * time.Second
+			}
+			sent := false
+			for deadline := time.Now().Add(within); !sent && time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+				sent = slices.Contains(br.callLog(), marotte.MethodSessionSteer)
+			}
+			if sent != tc.wantSteer {
+				t.Errorf("steer sent = %v, want %v (calls %v)", sent, tc.wantSteer, br.callLog())
+			}
 
 			calls := br.callLog()
 			if got := slices.Contains(calls, marotte.MethodSessionSteerClear); got != tc.wantClear {
 				t.Errorf("clear issued = %v, want %v (calls %v)", got, tc.wantClear, calls)
-			}
-			if got := slices.Contains(calls, marotte.MethodSessionSteer); got != tc.wantSteer {
-				t.Errorf("steer sent = %v, want %v (calls %v)", got, tc.wantSteer, calls)
 			}
 			if tc.wantSteer {
 				if msg := br.paramsFor(marotte.MethodSessionSteer)["message"]; msg != "first" {
@@ -566,7 +639,9 @@ func TestPromptDrain_ADeadBuffersRowWaitsForThePostLoadClear(t *testing.T) {
 				}
 				return
 			}
-			s.mustState("steer-a", rowUnsent)
+			if got := stateOf(s.h, "c1", "a"); got != marotte.RunInKAS {
+				t.Errorf("the steer is %q, want still in kiro-cli's custody", got)
+			}
 		})
 	}
 }
@@ -700,8 +775,8 @@ func TestCmdSteerRemove_ASteerOfAStarterKASHasNotReportedIsDeleted(t *testing.T)
 	if !slices.Contains(br.callLog(), marotte.MethodSessionSteerClear) {
 		t.Error("the delete issued no clear, so KAS's buffer still holds the steer")
 	}
-	if rows := s.q.UnsentRows("c1", false); len(rows) != 0 {
-		t.Errorf("UnsentRows = %+v after the delete and the late report, want none", rows)
+	if st, live := s.state("steer-late"); live {
+		t.Errorf("steer-late is still on the dock (%d) after the delete and the late report", st)
 	}
 }
 
@@ -733,7 +808,7 @@ func TestSendQueuedNow_StopsTheTurnAndItsCloseSendsThatRowFirst(t *testing.T) {
 	}
 	id, _ := s.h.stagePromptTurn(t, "c1")
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
-	s.steer("steer-a", "use tabs")
+	s.userSteer(t, "steer-a", "use tabs")
 	seedQueue(t, cs, "c1",
 		marotte.QueuedPrompt{ID: "m-q1", Text: "first"},
 		marotte.QueuedPrompt{ID: "m-q2", Text: "second"},
@@ -767,31 +842,34 @@ func TestSendQueuedNow_StopsTheTurnAndItsCloseSendsThatRowFirst(t *testing.T) {
 	})
 }
 
-// The unread steer goes into the marked row's turn ahead of its prompt, and KAS reads it there.
-func TestSendQueuedNow_TheUnreadSteerRidesIntoTheMarkedRowsTurn(t *testing.T) {
+// The unread steer does not ride into the marked row's turn: kiro-cli gets that row's prompt with no steer ahead of it,
+// then the steer's words as the next prompt, so the reader's send-now message is the next thing the agent reads.
+func TestSendQueuedNow_TheUnreadSteerWaitsForTheTurnAfterTheMarkedRow(t *testing.T) {
 	s, cs, br := steerOpsHub(t)
 	s.recs.note = func(ctx context.Context, chatID marotte.ChatID, id string, steer *marotte.EntrySteer) {
 		s.h.coord.recordSteer(ctx, chatID, id, steer)
 	}
 	id, _ := s.h.stagePromptTurn(t, "c1")
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
-	s.steer("steer-a", "use tabs")
+	s.userSteer(t, "steer-a", "use tabs")
 	seedQueue(t, cs, "c1",
 		marotte.QueuedPrompt{ID: "m-q1", Text: "first"},
 		marotte.QueuedPrompt{ID: "m-q3", Text: "third"},
 	)
-	// The bridge records the call before it runs this hook, so the test waits on hooked, not on the call.
-	hooked := make(chan struct{})
-	var hookDone sync.Once
+	var mu sync.Mutex
+	var prompted []string
 	br.onCall = func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 		if method != marotte.MethodPrompt {
 			return nil, nil, false
 		}
 		s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(promptTagOf(params)))
-		s.h.translateACPEvent("c1", s.h.originOf("c1"), injectedMsg(s.kasID("steer-a"), "use tabs"))
-		hookDone.Do(func() { close(hooked) })
+		s.h.translateACPEvent("c1", s.h.originOf("c1"), newChunkMsg("done"))
+		mu.Lock()
+		prompted = append(prompted, kasReplayedUserText(t, params))
+		mu.Unlock()
 		return json.RawMessage(`{"stopReason":"end_turn"}`), nil, true
 	}
+	before := len(br.callLog())
 
 	rec := postCmd(t, s.h, marotte.ClientCommand{
 		Type: marotte.CmdSendQueuedNow, ChatID: "c1", Payload: json.RawMessage(`{"message_id":"m-q3"}`),
@@ -802,36 +880,19 @@ func TestSendQueuedNow_TheUnreadSteerRidesIntoTheMarkedRowsTurn(t *testing.T) {
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), clearedMsg("steer-a"))
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnEndMsg("cancelled"))
 	s.h.coord.releaseTurn("c1", id)
-	select {
-	case <-hooked:
-	case <-time.After(2 * time.Second):
-		t.Fatalf("no session/prompt answered within 2s; wire = %v, turns opened = %v", br.callLog(), promptIDs(t, cs, "c1"))
-	}
+	waitFor(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(prompted) >= 2
+	})
 
-	if ids := promptIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-c1", "m-q3"}) {
-		t.Fatalf("turns opened = %v, want m-q3's turn next", ids)
+	if calls := br.callLog()[before:]; len(calls) < 2 || calls[0] != marotte.MethodPrompt || calls[1] != marotte.MethodPrompt {
+		t.Errorf("wire after the press = %v, want m-q3's prompt then the steer's, with no steer between", calls)
 	}
-	if calls := br.callLog(); !slices.Equal(calls, []string{marotte.MethodSessionSteer, marotte.MethodPrompt}) {
-		t.Errorf("wire = %v, want the steer sent into m-q3's turn before its prompt", calls)
-	}
-	q3Turn, readTurn := "", ""
-	for _, e := range logOf(t, cs, "c1") {
-		switch e.Kind {
-		case marotte.EntryKindTurnOpen:
-			var open marotte.EntryTurnOpen
-			decodePayload(t, e, &open)
-			if open.Prompt != nil && open.Prompt.ID == "m-q3" {
-				q3Turn = e.Turn
-			}
-		case marotte.EntryKindSteer:
-			var st marotte.EntrySteer
-			decodePayload(t, e, &st)
-			if st.State == marotte.SteerStateRead && slices.Contains(st.Resends, "steer-a") {
-				readTurn = e.Turn
-			}
-		}
-	}
-	if readTurn == "" || readTurn != q3Turn {
-		t.Errorf("steer-a read in turn %q, want m-q3's turn %q", readTurn, q3Turn)
+	mu.Lock()
+	got := slices.Clone(prompted[:2])
+	mu.Unlock()
+	if !slices.Equal(got, []string{"third", "use tabs"}) {
+		t.Errorf("prompts sent = %q, want the send-now row's words, then the unread steer's", got)
 	}
 }

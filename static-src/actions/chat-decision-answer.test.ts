@@ -28,7 +28,6 @@ vi.mock("../store.js", async () => ({
   recordSteerQueued: vi.fn(),
   setModel: vi.fn(),
   setSupervisedMode: vi.fn(),
-  setChatInterruptMode: vi.fn(),
   removeChat: vi.fn(),
   reinsertSession: vi.fn(),
   indexOfSession: () => 0,

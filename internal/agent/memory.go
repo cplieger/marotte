@@ -143,10 +143,16 @@ func decodeOneMemory(raw json.RawMessage) (MemoryRow, error) {
 	return rowFromKAS(res.Memory), nil
 }
 
-// writeMemoryErr answers a KAS refusal with KAS's text (409 not_enabled, else 400) and anything else, an answer
-// marotte could not read included, with a generic 502.
+// writeMemoryErr answers a KAS refusal with KAS's text (409 coming_soon for import and export not yet served, 409
+// not_enabled, else 400) and anything else, an answer marotte could not read included, with a generic 502.
 func writeMemoryErr(w http.ResponseWriter, err error) {
 	if _, ok := errors.AsType[*marotte.RPCError](err); ok && !marotte.ReplyUnread(err) {
+		if m, typed := rpcerr.MappedOf(err); typed && m.ErrorType == memoryImportComingSoonClass {
+			httpserver.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(
+				"Memory import and export are not available for this account yet.", memoryImportComingSoonCode,
+			))
+			return
+		}
 		text := rpcerr.Text(err)
 		if strings.Contains(text, "Memory is not enabled") {
 			httpserver.WriteJSONStatus(w, http.StatusConflict,
@@ -195,7 +201,7 @@ func (st *Settings) handleMemoryOne(w http.ResponseWriter, r *http.Request) {
 		}
 		params := map[string]any{"id": id}
 		for key, v := range map[string]*string{
-			"newTitle": body.Title, "summary": body.Summary, "content": body.Content, "memoryType": body.MemoryType,
+			"newTitle": body.Title, "summary": body.Summary, keyContent: body.Content, "memoryType": body.MemoryType,
 		} {
 			if v != nil {
 				params[key] = *v
@@ -254,6 +260,11 @@ func (st *Settings) registerMemoryRoutes(m routeMux) {
 	m.Bind(route.Methods("/api/memory/sync", http.HandlerFunc(st.handleMemorySync),
 		route.Typed[struct{}, MemorySync](http.MethodGet),
 		route.Typed[MemorySyncUpdate, MemorySyncChoice](http.MethodPut)))
+	m.Bind(route.Methods("/api/memory/import-prompt", http.HandlerFunc(st.handleMemoryImportPrompt),
+		route.Typed[struct{}, MemoryImportPrompt](http.MethodGet)))
+	m.Bind(route.Methods("/api/memory/import", http.HandlerFunc(st.handleMemoryImport),
+		route.Typed[struct{}, MemoryImportReport](http.MethodPost)))
+	m.Bind(route.Raw("/api/memory/export", http.HandlerFunc(st.handleMemoryExport)))
 	m.Bind(route.Methods("/api/memory/{id}", http.HandlerFunc(st.handleMemoryOne),
 		route.Typed[struct{}, MemoryOne](http.MethodGet).WithParams(id),
 		route.Typed[MemoryUpdate, MemoryOne](http.MethodPatch).WithParams(id),
