@@ -469,6 +469,40 @@ describe("the model, profile and mode pills, by the room the row has", () => {
     }
   });
 
+  it("keeps the profile pill beside a turn on a phone, on one line with every target at the floor", async () => {
+    const off: string[] = [];
+    for (const w of [360, 390, 430]) {
+      for (const pointer of ["coarse", "fine"] as const) {
+        for (const state of ["steer", "queue"] as const) {
+          await mount([w, 844], pointer, state);
+          const at = `${String(w)} ${pointer} ${state}`;
+          const row = document.querySelector<HTMLElement>(".prompt-pills")!;
+          if (!shown(byId("profile-pill"))) {
+            off.push(`${at}: no profile pill`);
+            continue;
+          }
+          if (row.scrollWidth > row.clientWidth) {
+            off.push(`${at}: the row overflows by ${String(row.scrollWidth - row.clientWidth)}px`);
+          }
+          const items = controls().filter((el) => row.contains(el));
+          if (new Set(items.map((el) => el.getBoundingClientRect().top)).size !== 1) {
+            off.push(`${at}: the row wraps`);
+          }
+          const floor = floorPx();
+          for (const el of items) {
+            const hit = hitRect(el);
+            if (width(hit) < floor - 2 * STEP || height(hit) < floor - 2 * STEP) {
+              off.push(
+                `${at}: ${nameOf(el)} reaches ${String(width(hit))}x${String(height(hit))}px`,
+              );
+            }
+          }
+        }
+      }
+    }
+    expect(off).toEqual([]);
+  });
+
   it("keeps their text, uncut, at the iPad preset in touch mode", async () => {
     for (const state of STATES) {
       await mount(IPAD, "coarse", state);
@@ -937,13 +971,20 @@ const COVERS: Readonly<Record<Surface, readonly string[]>> = {
     ".attachment-close",
   ],
   "chat steer": [
+    "#profile-pill",
     "#midturn-send-btn",
     "#midturn-alt-btn",
     "#task-list-pill",
     "#send-btn",
     ".attachment-close",
   ],
-  "chat queue": ["#midturn-send-btn", "#task-list-pill", "#send-btn", "#scroll-bottom"],
+  "chat queue": [
+    "#profile-pill",
+    "#midturn-send-btn",
+    "#task-list-pill",
+    "#send-btn",
+    "#scroll-bottom",
+  ],
   run: ["#settings-btn", "#run-send-btn", "#run-scroll-bottom"],
 };
 

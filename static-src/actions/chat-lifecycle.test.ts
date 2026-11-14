@@ -22,6 +22,7 @@ vi.mock("../api-client.js", () => ({
   apiGetTyped: vi.fn(),
 }));
 import { send as transportSend } from "../transport.js";
+import * as toast from "../toast.js";
 import { setSessions, get, setActive, setThinking } from "../store.js";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import type { Session } from "../types.js";
@@ -82,6 +83,46 @@ describe("chat.set_supervised", () => {
     const { setSupervised } = await import("./chat.js");
     await setSupervised.dispatch({ chatID: "c1", enabled: true });
     expect(get("c1")!.supervised_mode).toBe(false);
+  });
+});
+
+describe("chat.set_security_profile", () => {
+  it("shows the picked profile on the chat before the server answers", async () => {
+    let answer!: (r: { ok: boolean; status: number }) => void;
+    mockSend.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    const { setChatProfile } = await import("./chat.js");
+    const sent = setChatProfile.dispatch({ chatID: "c1", profile: "read-only" });
+    await vi.waitFor(() => {
+      expect(mockSend).toHaveBeenCalled();
+    });
+    expect(get("c1")!.security_profile).toBe("read-only");
+    answer({ ok: true, status: 200 });
+    await sent;
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "set_security_profile",
+        chat_id: "c1",
+        payload: { profile: "read-only" },
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("puts the chat's profile back and says why when the server refuses it", async () => {
+    setSessions([makeSession("c1", { security_profile: "trusted" })]);
+    mockSend.mockResolvedValue({ ok: false, status: 400, error: "unknown security profile" });
+    const { setChatProfile } = await import("./chat.js");
+    const outcome = await setChatProfile.dispatch({ chatID: "c1", profile: "read-only" }).outcome;
+    expect(outcome.status).toBe("error");
+    expect(get("c1")!.security_profile).toBe("trusted");
+    expect(toast.error).toHaveBeenCalledWith(
+      expect.stringContaining("Could not change the security profile"),
+      undefined,
+    );
   });
 });
 
