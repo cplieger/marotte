@@ -7,8 +7,7 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// kiro-cli replaces its own executable on exit unless KIRO_NO_AUTO_UPDATE=1 or its HOME's app.disableAutoupdates is
-// set, so a powers run carries the variable under an `env -i` parent and over an overlay opting back in.
+// A powers run carries kirorelease.NoAutoUpdateVar under an `env -i` parent and over an overlay opting back in.
 func TestManager_TheCLIRunsWithSelfUpdateOff(t *testing.T) {
 	cases := map[string]func() []string{
 		"no overlay":                   noOverlay,

@@ -12,9 +12,8 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// kiro-cli replaces its own executable on exit unless KIRO_NO_AUTO_UPDATE=1 or its HOME's app.disableAutoupdates is
-// set, and the install's probe and assertions run the binary before that setting exists. So every command the
-// install runs carries the variable, under an `env -i` parent too.
+// The install's probe and assertions run the binary before app.disableAutoupdates is set, so every command the
+// install runs carries kirorelease.NoAutoUpdateVar, under an `env -i` parent too.
 func TestStartKiroCLI_EveryInstallCommandRunsWithSelfUpdateOff(t *testing.T) {
 	const version = "9.9.9"
 	testsupport.EmptyEnv(t)

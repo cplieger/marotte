@@ -6,8 +6,7 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// kiro-cli replaces its own executable on exit unless KIRO_NO_AUTO_UPDATE=1 or its HOME's app.disableAutoupdates is
-// set, so the engine carries the variable whatever HOME and parent environment it starts under.
+// The engine carries kirorelease.NoAutoUpdateVar whatever HOME and parent environment it starts under.
 func TestProcessEnv_TurnsOffKiroCLISelfUpdate(t *testing.T) {
 	t.Run("an env -i parent and no overlay, as the unpinned runtime starts it", func(t *testing.T) {
 		testsupport.EmptyEnv(t)

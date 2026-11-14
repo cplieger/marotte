@@ -123,8 +123,7 @@ grep -Eq '^ENV KIRO_SKIP_BINARY_PINNING=1$' "$DOCKERFILE" \
   && ok "the image sets KIRO_SKIP_BINARY_PINNING=1, so kiro-cli copies no binary into its data dir" \
   || no "binary pinning" "the Dockerfile does not set KIRO_SKIP_BINARY_PINNING=1; each TUI start then copies the ~219 MB kiro-cli binary into ~/.local/share/kiro-cli/run/"
 
-# kiro-cli's updater replaces the executable it ran from on exit unless this is set or its HOME
-# turns it off, so every process in the image inherits it.
+# Every process in the image inherits it; the Dockerfile ENV comment says why.
 grep -Eq '^ENV KIRO_NO_AUTO_UPDATE=1$' "$DOCKERFILE" \
   && ok "the image sets KIRO_NO_AUTO_UPDATE=1, so no kiro-cli run under another HOME replaces the pinned binary" \
   || no "self-update" "the Dockerfile does not set KIRO_NO_AUTO_UPDATE=1; a kiro-cli run under a HOME without app.disableAutoupdates rewrites the pinned version directory's binary"
