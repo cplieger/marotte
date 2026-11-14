@@ -212,13 +212,16 @@ func (rs *Runs) preRefuse(ctx context.Context, workflowID, nodePath string) erro
 }
 
 // messageStep delivers the words to the step at nodePath by the verb its live state calls for; from is the API
-// caller that sent them, nil for the user's own (recorded on the step's prompt or steer entry and its dock row).
+// caller that sent them, nil for the user's own (recorded on the step's prompt or steer entry and its dock row), and
+// resident is the residency wait of whoever waits on the answer.
 // A refusal is a StatusErrorReason carrying a RunStepMessageRefusal or a RunAskRefusal.
 //
 // The verb is decided from a fresh read of the run's host under the run's serializer, so two sends
 // to one paused step cannot both prompt it, and on a leased run a stop cannot overtake either.
 // askID, when set, is the ask the words answer, and names which execution at nodePath gets them.
-func (rs *Runs) messageStep(ctx context.Context, workflowID, nodePath, raw, messageID, askID string, from *marotte.Caller) (out marotte.RunStepMessageResponse, err error) {
+func (rs *Runs) messageStep(
+	ctx context.Context, resident residentFn, workflowID, nodePath, raw, messageID, askID string, from *marotte.Caller,
+) (out marotte.RunStepMessageResponse, err error) {
 	text, steerID, err := command.ValidSteerText(raw, messageID)
 	if err != nil {
 		return out, err
@@ -230,7 +233,7 @@ func (rs *Runs) messageStep(ctx context.Context, workflowID, nodePath, raw, mess
 	if refused := rs.preRefuse(ctx, workflowID, nodePath); refused != nil {
 		return out, refused
 	}
-	host, release, err := rs.ensureResident(ctx, workflowID)
+	host, release, err := resident(ctx, workflowID)
 	defer release()
 	if err != nil {
 		return out, err

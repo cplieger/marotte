@@ -15,6 +15,7 @@ import (
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 )
 
 // A load KAS answers with a blank record restores nothing; these pin that marotte tells such a load from a real
@@ -467,5 +468,77 @@ func TestPromptTurn_AnEmptyTurnsRetryRecordsOneContextReset(t *testing.T) {
 	})
 	if retry < 0 || reset > retry {
 		t.Errorf("context_reset at %d, empty_retry turn_open at %d: want the reset above the retry", reset, retry)
+	}
+}
+
+// unansweredLoads are the load failures that prove nothing about kiro-cli's record: it may still be replaying, or
+// still hold the session a door gave up on.
+var unansweredLoads = map[string]error{
+	"the replay budget ran out": fmt.Errorf("session resume did not finish within 5m0s. kiro-cli stopped answering: %w",
+		context.DeadlineExceeded),
+	"kiro-cli still holds the previous load": marotte.ErrSessionClosing,
+}
+
+// A live run's steps take its launching session's presets, so a new session would cut the run off for good. A lease
+// whose launching session marotte has not recorded yet may be this session's.
+func TestSessionLoad_AReplayTimeoutKeepsALiveRunsLaunchingSession(t *testing.T) {
+	leases := map[string]string{"a run launched from it": lostSession, "a run whose launching session is unrecorded": ""}
+	for leaseName, parent := range leases {
+		for name, loadErr := range unansweredLoads {
+			t.Run(leaseName+", "+name, func(t *testing.T) {
+				h, cs, fakes := lostRecordHub(t, func(b *fakeBridge) { b.loadErr = loadErr })
+				const chatID marotte.ChatID = "c1"
+				onSession(t, cs, chatID, lostSession)
+				boundTurn(t, cs, chatID, lostSession)
+				leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ChatID: string(chatID), ParentSessionID: parent})
+
+				_, err := h.coord.openReleased(t.Context(), chatID, "")
+
+				if !errors.Is(err, loadErr) {
+					t.Errorf("openBridge = %v, want the load's own error", err)
+				}
+				if rec := chatRecord(t, cs, chatID); rec.ACPSessionID != lostSession {
+					t.Errorf("chat runs %q, want %q kept: the run's steps hold its presets", rec.ACPSessionID, lostSession)
+				}
+				if _, loads := fakes.doors(); slices.Contains(loads, false) {
+					t.Errorf("doors (load?) = %v, want no session/new", loads)
+				}
+				if got := contextResets(t, cs, chatID); len(got) != 0 {
+					t.Errorf("context resets = %v, want none", got)
+				}
+			})
+		}
+	}
+}
+
+// A run launched from a session the chat already retired cannot be driven from this one, so it keeps nothing.
+func TestSessionLoad_AReplayTimeoutWithNoRunOfThatSessionStillOpensANewOne(t *testing.T) {
+	leases := map[string][]runlease.Lease{
+		"no run":                                nil,
+		"a run launched from a retired session": {{WorkflowID: "wf_1", ChatID: "c1", ParentSessionID: "sess_retired"}},
+	}
+	for leaseName, chatLeases := range leases {
+		for name, loadErr := range unansweredLoads {
+			t.Run(leaseName+", "+name, func(t *testing.T) {
+				h, cs, fakes := lostRecordHub(t, func(b *fakeBridge) { b.loadErr = loadErr })
+				const chatID marotte.ChatID = "c1"
+				onSession(t, cs, chatID, lostSession)
+				boundTurn(t, cs, chatID, lostSession)
+				for _, l := range chatLeases {
+					leaseRun(t, h, l)
+				}
+
+				if _, err := h.coord.openReleased(t.Context(), chatID, ""); err != nil {
+					t.Fatalf("openBridge: %v", err)
+				}
+
+				if doors, loads := fakes.doors(); !slices.Equal(loads, []bool{false}) || len(doors) != 1 {
+					t.Errorf("completed doors (load?) = %v, want the one session/new", loads)
+				}
+				if got := contextResets(t, cs, chatID); !slices.Equal(got, []marotte.ContextResetCause{marotte.ContextResetLoadFailed}) {
+					t.Errorf("context resets = %v, want exactly one load_failed", got)
+				}
+			})
+		}
 	}
 }

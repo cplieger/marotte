@@ -618,12 +618,6 @@ var errRetryRunDeleting = errors.New("this run is being deleted or checked for d
 var errRetryRunOwned = errors.New("this run is still being cancelled or retried, so nothing was retried. " +
 	"Try again in a moment")
 
-// errRetrySlow reports a retry whose run's session did not load within retryTimeout, so the verb was never sent;
-// the REST layer answers 503.
-var errRetrySlow = errors.New(
-	"the run's session did not load in time, so nothing was retried. Try again",
-)
-
 // errRetryOutcomeUnknown reports a retry verb sent and not answered within retryTimeout: KAS may be running it, so
 // the lease stays and the REST layer answers 504 still_applying.
 var errRetryOutcomeUnknown = errors.New(
@@ -787,10 +781,11 @@ func (rs *Runs) retryCall(
 	return marotte.RunRetriedResponse{Status: out.Status, RetriedNodeIDs: nodes}, nil
 }
 
-// retryResidencyErr labels a failed load of the run's session: this call's deadline, or the load failure itself.
+// retryResidencyErr labels a failed load of the run's session: errRunHostSlow for this call's deadline or the load's
+// own budget running out, else the load failure itself.
 func (*Runs) retryResidencyErr(ctx context.Context, err error) error {
-	if ctx.Err() != nil {
-		return errRetrySlow
+	if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
+		return errRunHostSlow
 	}
 	return fmt.Errorf("retry: load the run's session: %w", err)
 }
@@ -878,7 +873,7 @@ func (rs *Runs) answerInput(ctx context.Context, workflowID, askID, text string,
 	if c == nil {
 		return errAskGone
 	}
-	host, releaseHost, err := rs.ensureResident(ctx, workflowID)
+	host, releaseHost, err := rs.residentUntil(answerDeadline())(ctx, workflowID)
 	defer releaseHost()
 	if err != nil {
 		return err

@@ -10,7 +10,8 @@ Environment:
   FAKE_KIRO_INSPECT_DIR  one `<workflowId>.json` per run: the `_kiro/workflow/inspect` reply
                          {workflowId, state, nodePlan}, held in memory and changed by live ops
   FAKE_KIRO_SESSIONS     JSON list of `session/list` rows
-  FAKE_KIRO_TRIGGER_DIR  live ops: a `trigger-<n>.json` file runs and is renamed `.done`
+  FAKE_KIRO_TRIGGER_DIR  live ops: a `trigger-<n>.json` file runs and is renamed `.done`; a
+                         `hang-load` file lists session ids whose `session/load` is never answered
   FAKE_KIRO_LOG          one JSON line per invocation (its argv), per frame received and per op
 
 Ops (a trigger file's JSON):
@@ -49,6 +50,17 @@ RUNS = {}  # workflowId -> inspect reply
 def load_json(path):
     with open(path) as f:
         return json.load(f)
+
+
+def hung_loads():
+    """The session ids TRIGGER_DIR/hang-load names, whose session/load is never answered."""
+    if not TRIGGER_DIR:
+        return []
+    try:
+        with open(os.path.join(TRIGGER_DIR, 'hang-load')) as f:
+            return f.read().split()
+    except FileNotFoundError:
+        return []
 
 
 def log(obj):
@@ -744,6 +756,9 @@ def main():
             result(rid, {'sessionId': sid, 'modes': MODES, 'configOptions': CONFIG})
             notify('_kiro/governance/state', {'sessionId': sid, **GOVERNANCE})
         elif method == 'session/load':
+            if params.get('sessionId') in hung_loads():
+                log({'t': time.time(), 'hung': 'session/load', 'sid': params.get('sessionId')})
+                continue
             result(rid, {'modes': MODES, 'configOptions': CONFIG})
             notify('_kiro/governance/state', {'sessionId': params.get('sessionId'), **GOVERNANCE})
         elif method == 'session/prompt':
