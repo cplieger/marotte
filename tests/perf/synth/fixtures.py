@@ -14,9 +14,11 @@ Layout under --out:
                  sessions.json
   forge/         forge.json, the fake Gitea's repositories and pull requests
   manifest.json  what was written, with counts and bytes
+  .perf-fixture  the empty marker that lets a re-run empty --out
 
-An existing --out is emptied first only when it holds a manifest.json; any other non-empty
-directory is refused with exit 2.
+An existing --out is emptied first only when it holds .perf-fixture; any other non-empty
+directory, and any --out inside the repository's static/ or internal/ trees, is refused with
+exit 2.
 
 Usage: fixtures.py --out DIR [--scale N] [--seed S] [--now UNIX_SECONDS] [--forge-base URL]
 """
@@ -35,6 +37,8 @@ import time
 import recipes
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.realpath(os.path.join(HERE, '..', '..', '..'))
+MARKER = '.perf-fixture'
 # Three days back keeps every record inside the 7-day chat and run retention default.
 BACKDATE_MS = 3 * 86400 * 1000
 MODELS = ['model-a', 'model-b', 'model-c']
@@ -661,14 +665,22 @@ def main():
     now = a.now if a.now is not None else int(time.time())
     rg = R(a.seed * 1000 + s, now * 1000 - BACKDATE_MS)
     out = os.path.abspath(a.out)
+    real = os.path.realpath(out)
+    for tree in ('static', 'internal'):
+        top = os.path.join(REPO, tree)
+        if os.path.commonpath([real, top]) == top:
+            print(f"fixtures.py: {out} is inside the repository's {tree}/ tree", file=sys.stderr)
+            return 2
     if os.path.lexists(out):
         if not os.path.isdir(out) or os.path.islink(out):
             print(f'fixtures.py: {out} is not a directory', file=sys.stderr)
             return 2
-        if os.listdir(out) and not os.path.isfile(os.path.join(out, 'manifest.json')):
-            print(f'fixtures.py: {out} is not empty and holds no manifest.json', file=sys.stderr)
+        if os.listdir(out) and not os.path.isfile(os.path.join(out, MARKER)):
+            print(f'fixtures.py: {out} is not empty and holds no {MARKER}', file=sys.stderr)
             return 2
         shutil.rmtree(out)
+    os.makedirs(out)
+    open(os.path.join(out, MARKER), 'x').close()
     cfg, home, work, eng, forge = (
         os.path.join(out, p) for p in ('config', 'home/.kiro', 'work', 'engine', 'forge')
     )

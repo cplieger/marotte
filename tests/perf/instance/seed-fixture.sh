@@ -12,7 +12,7 @@ port=${PERF_PORT:-19951}
   printf 'seed-fixture.sh: PERF_PORT=%s is not a port number\n' "$port" >&2
   exit 2
 }
-[ -f "$fx/manifest.json" ] || {
+[ -f "$fx/.perf-fixture" ] || {
   printf 'seed-fixture.sh: no fixture at %s (run synth/fixtures.py)\n' "$fx" >&2
   exit 2
 }

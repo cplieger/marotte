@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -237,27 +238,56 @@ class Fixtures(unittest.TestCase):
         )
         return snapshot(out)
 
+    def refuse(self, script: pathlib.Path, out: str, cwd: pathlib.Path) -> None:
+        done = subprocess.run(
+            [sys.executable, str(script), '--out', out],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+            cwd=cwd,
+        )
+        self.assertEqual(done.returncode, 2, done.stderr)
+        self.assertIn(os.path.abspath(cwd / out), done.stderr)
+
     def test_refuses_a_directory_it_did_not_write(self):
+        for names in (['keep.txt'], ['manifest.json'], ['keep.txt', 'manifest.json']):
+            with self.subTest(names=names), tempfile.TemporaryDirectory() as tmp:
+                out = pathlib.Path(tmp) / 'notes'
+                out.mkdir()
+                for n in names:
+                    (out / n).write_text(n)
+                self.refuse(PERF / 'synth' / 'fixtures.py', 'notes', pathlib.Path(tmp))
+                self.assertEqual(sorted(p.name for p in out.iterdir()), names)
+                for n in names:
+                    self.assertEqual((out / n).read_text(), n)
+
+    def test_refuses_the_repositorys_static_and_internal_trees(self):
         with tempfile.TemporaryDirectory() as tmp:
-            out = pathlib.Path(tmp) / 'notes'
-            out.mkdir()
-            (out / 'keep.txt').write_text('keep')
-            done = subprocess.run(
-                [sys.executable, str(PERF / 'synth' / 'fixtures.py'), '--out', str(out)],
-                capture_output=True,
-                text=True,
-                timeout=120,
-                check=False,
+            repo = pathlib.Path(tmp)
+            shutil.copytree(
+                PERF / 'synth',
+                repo / 'tests' / 'perf' / 'synth',
+                ignore=shutil.ignore_patterns('__pycache__'),
             )
-            self.assertEqual(done.returncode, 2, done.stderr)
-            self.assertIn(str(out), done.stderr)
-            self.assertEqual([p.name for p in out.iterdir()], ['keep.txt'])
-            self.assertEqual((out / 'keep.txt').read_text(), 'keep')
+            script = repo / 'tests' / 'perf' / 'synth' / 'fixtures.py'
+            (repo / 'static').mkdir()
+            (repo / 'static' / 'index.html').write_text('index')
+            (repo / 'static' / 'manifest.json').write_text('{}')
+            (repo / 'static' / '.perf-fixture').touch()
+            (repo / 'internal').mkdir()
+            trees = [repo / 'static', repo / 'internal']
+            before = [snapshot(t) for t in trees]
+            for out in ('static', 'internal/perf', 'static/../internal'):
+                with self.subTest(out=out):
+                    self.refuse(script, out, repo)
+                    self.assertEqual([snapshot(t) for t in trees], before)
 
     def test_one_seed_writes_byte_identical_instances(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = pathlib.Path(tmp) / 'x1'
             first = self.write(out, '11')
+            self.assertIn('.perf-fixture', first)
             self.assertIn('manifest.json', first)
             self.assertTrue(any(p.startswith('config/chats/') for p in first))
             self.assertTrue(any(p.endswith('.git/index') for p in first))

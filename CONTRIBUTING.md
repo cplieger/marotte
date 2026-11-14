@@ -49,7 +49,7 @@ To measure one cell on your machine, build the test binary once, write the cell 
 ```sh
 tests/perf/build.sh /tmp/perf-build
 (cd static-src && npx playwright install chromium webkit)
-echo '[{"scenario": "chat-long", "scale": "x1", "engine": "chromium", "width": "desktop", "seconds": 240}]' >/tmp/cell.json
+echo '[{"scenario": "chat-long", "scale": "x10", "engine": "chromium", "width": "desktop", "seconds": 240}]' >/tmp/cell.json
 PERF_BUILD=/tmp/perf-build PERF_PORT=20151 PERF_REPS=1 tests/perf/run.sh /tmp/cell.json /tmp/perf-out
 ```
 
@@ -69,7 +69,9 @@ EOF
 python3 /tmp/cplieger-ci/scripts/perf_gate.py --budgets tests/perf/budgets.json \
   --base tests/perf/budgets.json --results /tmp/perf-res --calibrations tests/perf/calibrations \
   --repo cplieger/marotte --head "$(git rev-parse HEAD)" --plan-doc tests/perf/plan.json --set pr \
-  --remeasure-out /tmp/perf-remeasure.json
+  --only chat-long --remeasure-out /tmp/perf-remeasure.json
 ```
 
-An exact count that differs from its budget is listed under "Failures" with its reps, and the command exits 1. A timed cell over its budget shows `remeasure` in the "Status" column: CI measures it again on fresh runners before it fails the job.
+Two results concern the cell you measured. An exact count that differs from its budget is listed under "Failures" as one that "differs from its exact budget", with its reps, and the command exits 1. A timed cell over its budget shows `remeasure` in the "Status" column: CI measures it again on fresh runners before it fails the job.
+
+`--only chat-long` keeps every `pr` cell of that scenario, so the plan also holds its WebKit cell, which measures only the `cold` window. Once `budgets.json` holds a gated or exact entry for a cell the plan holds and your run did not measure, "Failures" lists it as an entry "that no shard measured" and the command exits 1. That line names a cell CI measures, not a fault in the cell you measured.
