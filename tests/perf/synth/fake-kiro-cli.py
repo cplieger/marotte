@@ -580,7 +580,7 @@ def prompt_turn(rid, sid, tag):
     try:
         shape.update(load_json(os.path.join(TRIGGER_DIR, 'prompt-shape.json')))
     except OSError, ValueError:
-        pass
+        pass  # no readable prompt-shape.json: the bare turn above
     started = time.time()
     err = None
     try:

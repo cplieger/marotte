@@ -195,6 +195,83 @@ class Serve(unittest.TestCase):
         self.assertIn('PERF_PORT', done.stderr)
 
 
+class View(unittest.TestCase):
+    """static-src/perf/view.mjs: the instance it refuses before it opens a browser."""
+
+    def run_view(self, port) -> subprocess.CompletedProcess:
+        with tempfile.TemporaryDirectory() as tmp:
+            instance = pathlib.Path(tmp)
+            (instance / 'instance.json').write_text(json.dumps({'port': port}))
+            return subprocess.run(
+                [
+                    'node',
+                    str(ROOT / 'static-src' / 'perf' / 'view.mjs'),
+                    *('--instance', str(instance), '--plan', str(PERF / 'plan.json')),
+                    *('--scenario', 'settings', '--engine', 'chromium', '--width', 'desktop'),
+                    *('--out', str(instance / 'out.json')),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+
+    def test_refuses_an_instance_port_that_is_not_one_to_65535(self):
+        for port in ('x', 0, 65536, '080', '1e3', None):
+            with self.subTest(port=port):
+                done = self.run_view(port)
+                self.assertNotEqual(done.returncode, 0, done.stderr)
+                self.assertIn('has no valid port', done.stderr)
+
+
+READY_SEEDED = {
+    'tabs': {
+        'c-a': 'b1',
+        'c-b': 'b2',
+        'c-c': 'b3',
+        'c-long': 'b4',
+        'files': 'bf',
+        'git': 'bg',
+        'settings': 'bs',
+        'docs': 'bd',
+        'run': 'br',
+    },
+    'long_chat': 'c-long',
+    'stream_chat': 'c-long',
+    'run_parent': 'c-long',
+    'run': 'wf_1',
+    'work': '/w',
+}
+
+
+class ReadyScripts(unittest.TestCase):
+    """The ready predicates views.mjs splices for page.evaluate."""
+
+    def ready(self, body: str):
+        views = ROOT / 'static-src' / 'perf' / 'views.mjs'
+        script = (
+            f'import {{ VIEWS, instanceFacts }} from {json.dumps(views.as_uri())};'
+            f'const f = instanceFacts({json.dumps(READY_SEEDED)});'
+            f'const ready = Object.fromEntries(Object.entries(VIEWS).map(([k, v]) => [k, v(f).ready]));'
+            f'{body}'
+        )
+        return json.loads(node(script))
+
+    def test_a_spliced_path_literal_has_its_slashes_escaped(self):
+        for name, src in self.ready('console.log(JSON.stringify(ready));').items():
+            with self.subTest(view=name):
+                self.assertNotIn('=== "/', src)
+                self.assertNotIn('</', src)
+
+    def test_an_escaped_path_literal_still_matches_its_path(self):
+        got = self.ready(
+            'const run = (src, pathname) => new Function("location", `return ${src}`)({ pathname });'
+            'console.log(JSON.stringify([run(ready["git-prs"].split(" && ")[0], "/git/prs"),'
+            ' run(ready["git-prs"].split(" && ")[0], "/git")]));'
+        )
+        self.assertEqual(got, [True, False])
+
+
 def snapshot(root: pathlib.Path) -> dict[str, str]:
     """Each file's sha256 by path. A git index records each file's stat
     times, so a repository's staged entries stand in for its index bytes."""

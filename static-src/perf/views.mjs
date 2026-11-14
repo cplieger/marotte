@@ -48,11 +48,17 @@ export const DRIVERS = {
   "run-drive": (x, s) => x.trigger({ op: "steps", workflowId: s.run, ...DRIVE }),
 };
 
+// CodeQL js/bad-code-sanitization takes a replace after JSON.stringify as its sanitizer: https://codeql.github.com/codeql-query-help/javascript/js-bad-code-sanitization/
+const jsString = (s) =>
+  JSON.stringify(s).replace(
+    /[<>/\u2028\u2029]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
 const shown = (sel, min = 30) =>
-  `(() => { const c = document.querySelector(${JSON.stringify(sel)}); return !!c && c.getClientRects().length > 0 && !c.querySelector(".skeleton,.skeleton-rows,.turn-skel") && c.getElementsByTagName("*").length >= ${String(min)}; })()`;
+  `(() => { const c = document.querySelector(${jsString(sel)}); return !!c && c.getClientRects().length > 0 && !c.querySelector(".skeleton,.skeleton-rows,.turn-skel") && c.getElementsByTagName("*").length >= ${String(min)}; })()`;
 const chatReady = (id) =>
-  `location.pathname === "/chat/${id}" && !!document.querySelector(".transcript-view.is-active .turn:not(.turn-skel)")`;
-const at = (path) => `location.pathname === ${JSON.stringify(path)}`;
+  `location.pathname === ${jsString(`/chat/${id}`)} && !!document.querySelector(".transcript-view.is-active .turn:not(.turn-skel)")`;
+const at = (path) => `location.pathname === ${jsString(path)}`;
 // The run page's detail shows a step: its transcript, or a settled note. The step the page follows
 // moves with the run, and a step that wrote nothing has no transcript host to wait for.
 const runStepShown = `(() => { const d = document.querySelector("#run-body .ev-detail"); if (!d || d.dataset.state === "pending") return false; const b = d.querySelector(".ev-d-body:not([hidden])"); if (b && b.childElementCount > 0) return true; const e = d.querySelector(".ev-d-empty"); return !!e && !e.hidden && e.textContent !== "" && !e.textContent.startsWith("Loading"); })()`;

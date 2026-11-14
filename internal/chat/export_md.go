@@ -691,7 +691,7 @@ func writeTurnCloseMarkdown(b *strings.Builder, p *marotte.EntryTurnClose) {
 		parts = append(parts, fmt.Sprintf("%.1fs", p.ElapsedMs/1000))
 	}
 	if p.Credits > 0 {
-		parts = append(parts, fmt.Sprintf("%.2f credits", p.Credits))
+		parts = append(parts, creditFigure(p.Credits)+" credits")
 	}
 	if p.Model != "" {
 		parts = append(parts, oneLine(p.Model))
@@ -700,6 +700,15 @@ func writeTurnCloseMarkdown(b *strings.Builder, p *marotte.EntryTurnClose) {
 	if reason := oneLine(p.FailureReason); reason != "" {
 		fmt.Fprintf(b, "_Reason: %s_\n\n", reason)
 	}
+}
+
+// creditFigure renders a positive credit charge to the cent, or "<0.01" under half a cent (the
+// client's creditFigure threshold in static-src/strings.ts), so a turn that spent never reads "0.00".
+func creditFigure(credits float64) string {
+	if credits < 0.005 {
+		return "<0.01"
+	}
+	return fmt.Sprintf("%.2f", credits)
 }
 
 // Empty or null yields "".

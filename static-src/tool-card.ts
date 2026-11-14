@@ -2,7 +2,7 @@
 
 import type { ToolStatus, TextSpan } from "./types.js";
 import type { BuildToolCardOpts } from "./tool-card-opts.js";
-import { escText, windowOutput, windowSpans } from "./strings.js";
+import { escText, truncate, windowOutput, windowSpans } from "./strings.js";
 import { renderOutput } from "./output-render.js";
 import { fileIcon, toolIcon, outcomeIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
@@ -313,7 +313,7 @@ export function extractSubtitle(input: Record<string, unknown> | undefined): str
   for (const key of ["query", "pattern", "command", "url", "path", "explanation"]) {
     const val = input[key];
     if (typeof val === "string" && val !== "") {
-      return val.length > 120 ? val.slice(0, 117) + "\u2026" : val;
+      return truncate(val, 120);
     }
   }
   return "";
