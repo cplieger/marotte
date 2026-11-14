@@ -1072,7 +1072,7 @@
   }
 }
 
-/* The head is the run's identity row in every state, never wrapped, and the panel's hit
+/* The head is the run's identity row in every state and the panel's hit
    target (`disclosure-row.ts` `wireRowToggle`), forwarding to the toggle that keeps
    `aria-expanded`; its controls are their own. The verbs end on its corner, so its end
    inset is theirs (`--head-act-in`, half of what a 44px expander adds to a dense verb, so
@@ -1084,7 +1084,7 @@
 
   position: relative;
   isolation: isolate;
-  anchor-scope: --ev-dock-act;
+  anchor-scope: --ev-sum-end;
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -1093,8 +1093,16 @@
   border-radius: var(--stack-in-r);
   cursor: pointer;
 
-  & > .ev-dock-act {
-    anchor-name: --ev-dock-act;
+  /* The toggle's anchor: the summary, or the filler that ends its line when it lays out as its
+     parts (a phone's pause). It grows to the verbs, or to the head's end when they wrap under
+     it. A verb's height, and with its block margins a verb's target's, so a verb's expander
+     under it stays off the toggle; the end margin, one value on both tiers, does so beside it. */
+  & > .ev-sum,
+  & > .ev-sum::after {
+    anchor-name: --ev-sum-end;
+    min-block-size: var(--ctl-h-dense);
+    margin-block: max(0px, var(--tap-gap-dense) / 2);
+    margin-inline-end: max(0px, var(--head-act-in) - var(--sp-1));
   }
 
   & .run-icon-btn {
@@ -1103,15 +1111,12 @@
 }
 
 /* The summary line's one target and wash, painted under the line's ink so its tooltips and
-   selection stay: from the head's start to the verbs, at their height and level with them
-   (anchored to `.ev-dock-act`; the whole head when there are none), ending a verb's expander
-   reach short of them so the two targets never overlap. */
+   selection stay: from the head's start over the summary's box (`--ev-sum-end`). */
 .ev-box-toggle {
   position: absolute;
   z-index: -1;
-  inset-inline: 0 anchor(--ev-dock-act start, 0);
-  inset-block: anchor(--ev-dock-act start, 0) anchor(--ev-dock-act end, 0);
-  margin-inline-end: max(var(--sp-1), var(--tap-gap-dense) / 2);
+  inset-inline: 0 anchor(--ev-sum-end end, 0);
+  inset-block: anchor(--ev-sum-end start, 0) anchor(--ev-sum-end end, 0);
   display: grid;
   grid-template-columns: var(--head-chev-w);
   place-items: center;
@@ -1749,15 +1754,26 @@
     column-gap: var(--sp-1);
   }
 
+  /* The verbs take a line of their own under the summary when they do not fit beside it. */
   .ev-dock-head {
+    flex-wrap: wrap;
     padding-inline-start: calc(var(--head-chev-w) + var(--sp-1));
+
+    & > .ev-sum {
+      min-inline-size: auto;
+    }
+
+    & > .ev-dock-act {
+      margin-inline-start: auto;
+    }
   }
 
-  /* The mini timeline becomes a band along the head's bottom edge. */
+  /* The mini timeline becomes a band along the head's bottom edge, or under the summary's line
+     when the verbs wrap under it, so it never crosses them. */
   .ev-dock-head .ev-mini {
     position: absolute;
     inset-inline: var(--sp-3);
-    inset-block-end: 2px;
+    inset-block-start: min(100% - 5px, anchor(--ev-sum-end end, 100%) + 1px);
     block-size: 3px;
     gap: 1px;
   }
@@ -1766,22 +1782,20 @@
     border-radius: 1px;
   }
 
-  /* A pause takes the head's second line, where the band it replaces sits, with the clock: beside
-     the verbs the one line leaves neither room. `::after` is the line break; the pause starts
-     under the state word. */
+  /* A pause takes the head's second line, where the band it replaces sits: beside the verbs the
+     one line has no room for it. The clock and credits stay on line one, inside the toggle.
+     The head's `::after` is the line break; the pause starts under the state word. */
   .ev-dock-head[data-alert] {
-    flex-wrap: wrap;
     row-gap: 0;
-    /* The verbs ride the first line's top edge; this keeps their expander inside the
-       dock's clip, past its `--stack-in` padding. */
-    padding-block: max(0px, calc(var(--tap-gap-dense) / 2 - var(--stack-in))) var(--sp-1);
+    padding-block-end: var(--sp-1);
 
     & > .ev-sum {
       display: contents;
     }
 
-    & > .ev-dock-act {
-      margin-inline-start: auto;
+    & > .ev-sum::after {
+      content: "";
+      flex: 1 0 0;
     }
 
     &::after {
@@ -1791,10 +1805,6 @@
     }
 
     & .ev-alert-line {
-      order: 2;
-    }
-
-    & :is(.ev-sum-clock, .ev-sum-credits) {
       order: 2;
     }
   }

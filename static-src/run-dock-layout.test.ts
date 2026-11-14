@@ -252,10 +252,14 @@ describe("the run tab's layout", () => {
     // The open panel is what gives way to the ask; once the ask goes, it has room for rows again.
     const body = byId("run-exec-dock").querySelector(".ev-dock-body")!;
     expect(getComputedStyle(body).overflowY).toBe("auto");
+    const withAsk = body.getBoundingClientRect().height;
     ask.replaceChildren();
     ask.classList.add("hidden");
     inside(byId("run-composer"), vv, "composer without the ask");
-    expect(body.getBoundingClientRect().height, "the open panel's body").toBeGreaterThan(80);
+    const freed = body.getBoundingClientRect().height;
+    expect(freed, "the open panel's body grows back").toBeGreaterThan(withAsk);
+    // At least one 44px touch row.
+    expect(freed, "the open panel's body holds a row").toBeGreaterThanOrEqual(44);
   });
 });
 
@@ -635,6 +639,7 @@ describe("the run dock head beside its verbs", () => {
         state: "waiting",
         nodes: lanes(true),
         live: true,
+        credits: 257.8,
         alert: { kind: "paused", text: LANES_PAUSE },
       });
       const dock = byId("run-exec-dock");
@@ -653,17 +658,33 @@ describe("the run dock head beside its verbs", () => {
         expect(line.top + line.height / 2).toBeCloseTo(state.top + state.height / 2, 0);
         expect(clock.right).toBeLessThanOrEqual(box(row).left + 0.5);
       } else {
-        // On a phone the verbs leave no room beside them: the head's second line with the clock,
-        // under the state word, most of the head's width.
+        // On a phone the pass-limit verbs leave the summary no room beside them: they take the
+        // head's second line at its end, under the state, clock and credits on the first, and the
+        // pause takes the third, under the state word, most of the head's width.
         const edge = head.getBoundingClientRect();
+        const credits = box(head.querySelector(".ev-sum-credits"));
+        for (const [name, part] of [
+          ["clock", clock],
+          ["credits", credits],
+        ] as const) {
+          expect(part.top + part.height / 2, `the ${name} level with the state`).toBeCloseTo(
+            state.top + state.height / 2,
+            0,
+          );
+          expect(box(row).top, `the verbs under the ${name}`).toBeGreaterThanOrEqual(
+            part.bottom - 0.5,
+          );
+        }
+        expect(box(row).right, "the verbs at the head's end").toBeCloseTo(
+          edge.right - parseFloat(getComputedStyle(head).paddingInlineEnd),
+          0,
+        );
         expect(line.top).toBeGreaterThanOrEqual(box(row).bottom - 0.5);
-        expect(clock.top).toBeGreaterThanOrEqual(box(row).bottom - 0.5);
         expect(
           line.left +
             parseFloat(getComputedStyle(head.querySelector(".ev-alert-line")!).paddingInlineStart),
         ).toBeCloseTo(state.left, 0);
-        expect(line.right).toBeLessThanOrEqual(clock.left + 0.5);
-        expect(clock.right).toBeLessThanOrEqual(edge.right + 0.5);
+        expect(line.right).toBeLessThanOrEqual(edge.right + 0.5);
         expect(line.width).toBeGreaterThan(0.6 * edge.width);
       }
       expect(text.scrollHeight, "one line").toBeLessThanOrEqual(text.clientHeight);
@@ -766,26 +787,20 @@ describe("the run dock head's toggle", () => {
     [1000, 800],
     [700, 1000],
     [390, 844],
+    [360, 780],
   ] as const;
 
   /** Mount the run tab `h` tall with `names` as its verbs and render `run`; the head and its verbs. */
   function mountHead(
     h: number,
-    names: readonly string[],
+    names: readonly string[] | "pass limit",
     run: ExecRun,
   ): { head: HTMLElement; row: HTMLElement } {
-    style ??= mountAppCSS();
+    style = mountAppCSS();
     const { byId } = mountRunView(h);
-    const row = verbs(false, names);
+    const row = names === "pass limit" ? verbs(true) : verbs(false, names);
     mountPage(byId, row).render(run);
     return { head: byId("run-exec-dock").querySelector<HTMLElement>(".ev-dock-head")!, row };
-  }
-
-  function unmount(): void {
-    view?.dispose();
-    view = null;
-    frame?.remove();
-    frame = null;
   }
 
   /** The toggle's box holds each of `parts`, is as tall as each verb and level with it, and ends
@@ -819,53 +834,130 @@ describe("the run dock head's toggle", () => {
     );
   }
 
+  /** The toggle's box holds each of `parts` on the head's first line, as tall as each verb and
+   *  the head's width; the verbs are on the next line, their targets clear of it. */
+  function coversAboveVerbs(
+    head: HTMLElement,
+    row: HTMLElement,
+    parts: readonly string[],
+    what: string,
+  ): void {
+    const t = head.querySelector(".ev-box-toggle")!.getBoundingClientRect();
+    for (const sel of parts) {
+      const p = head.querySelector(sel)!.getBoundingClientRect();
+      expect(
+        t.left <= p.left + 0.5 &&
+          t.right >= p.right - 0.5 &&
+          t.top <= p.top + 0.5 &&
+          t.bottom >= p.bottom - 0.5,
+        `${what}: the toggle [${t.left.toFixed(1)}..${t.right.toFixed(1)} x ${t.top.toFixed(1)}..${t.bottom.toFixed(1)}] holds ${sel} [${p.left.toFixed(1)}..${p.right.toFixed(1)} x ${p.top.toFixed(1)}..${p.bottom.toFixed(1)}]`,
+      ).toBe(true);
+    }
+    const edge = head.getBoundingClientRect();
+    const end = edge.right - parseFloat(getComputedStyle(head).paddingInlineEnd);
+    expect(t.left, `${what}: the toggle from the head's start`).toBeCloseTo(edge.left, 0);
+    expect(t.right, `${what}: the toggle to the head's end`).toBeGreaterThanOrEqual(end - 3);
+    // The hit floor: WCAG 2.5.8's 24px on a mouse, Apple HIG's 44px on touch.
+    const floor = document.documentElement.getAttribute("data-pointer") === "coarse" ? 44 : 24;
+    for (const b of row.querySelectorAll("button")) {
+      const r = b.getBoundingClientRect();
+      const name = b.getAttribute("aria-label") ?? "";
+      expect(t.height, `${what}: the toggle's height beside ${name}`).toBeCloseTo(r.height, 0);
+      const reach = Math.max(0, (floor - r.height) / 2);
+      expect(r.top - reach, `${what}: ${name}'s target under the toggle`).toBeGreaterThanOrEqual(
+        t.bottom - 0.5,
+      );
+    }
+  }
+
+  const RUNNING: ExecRun = {
+    label: "nightly",
+    state: "running",
+    nodes: inLoop(sixSteps("running")),
+    live: true,
+    credits: 257.8,
+  };
+  const PAUSED: ExecRun = {
+    label: "subflux-build-lanes-relaunch",
+    state: "waiting",
+    nodes: lanes(true),
+    live: true,
+    credits: 257.8,
+    alert: { kind: "paused", text: LANES_PAUSE },
+  };
+  const RUNNING_PARTS = [
+    ".disclosure-chevron",
+    ".ev-sum-state",
+    ".ev-sum-compact",
+    ".ev-sum-clock",
+    ".ev-sum-credits",
+  ];
+  const PAUSED_PARTS = [".disclosure-chevron", ".ev-sum-state", ".ev-sum-clock", ".ev-sum-credits"];
+
+  // Beside the verbs while the summary fits; at 360px a running run's summary with its credits
+  // (about 232px) and Pause and Stop (68px) overrun the head's 284px, as the pass-limit verbs
+  // (a field and three buttons) do at 390px.
+  const CASES = [
+    {
+      what: "a running run's",
+      names: ["Pause", "Stop"],
+      run: RUNNING,
+      parts: RUNNING_PARTS,
+      beside: [1000, 700, 390],
+      under: [360],
+    },
+    {
+      what: "a paused run's",
+      names: ["Resume", "Stop"],
+      run: PAUSED,
+      parts: PAUSED_PARTS,
+      beside: [1000, 700, 390, 360],
+      under: [],
+    },
+    {
+      what: "a pass-limit pause's",
+      names: "pass limit",
+      run: PAUSED,
+      parts: PAUSED_PARTS,
+      beside: [],
+      under: [390, 360],
+    },
+  ] as const;
+
   for (const pointer of ["fine", "coarse"] as const) {
-    it(`covers a running run's summary line at Pause and Stop's height at every width, ${pointer}`, async () => {
-      for (const [w, h] of WIDTHS) {
-        await browser.viewport(w, h);
-        document.documentElement.setAttribute("data-pointer", pointer);
-        const { head, row } = mountHead(h, ["Pause", "Stop"], {
-          label: "nightly",
-          state: "running",
-          nodes: inLoop(sixSteps("running")),
-          live: true,
-          credits: 257.8,
-        });
-        coversAtVerbHeight(
-          head,
-          row,
-          [
-            ".disclosure-chevron",
-            ".ev-sum-state",
-            ".ev-sum-compact",
-            ".ev-sum-clock",
-            ".ev-sum-credits",
-          ],
-          `${String(w)}px ${pointer}`,
-        );
-        unmount();
-      }
+    it(`keeps a running run's band clear of the verbs under its summary, 360px ${pointer}`, async () => {
+      await browser.viewport(360, 780);
+      document.documentElement.setAttribute("data-pointer", pointer);
+      const { head, row } = mountHead(780, ["Pause", "Stop"], RUNNING);
+      const band = head.querySelector(".ev-mini")!.getBoundingClientRect();
+      const t = head.querySelector(".ev-box-toggle")!.getBoundingClientRect();
+      expect(band.height, "the band renders").toBeGreaterThan(0);
+      expect(band.top, "the band under the summary line").toBeGreaterThanOrEqual(t.bottom - 0.5);
+      expect(band.bottom, "the band above the verbs").toBeLessThanOrEqual(
+        row.getBoundingClientRect().top + 0.5,
+      );
     });
 
-    it(`covers a paused run's state at Resume and Stop's height at every width, ${pointer}`, async () => {
+    for (const c of CASES) {
       for (const [w, h] of WIDTHS) {
-        await browser.viewport(w, h);
-        document.documentElement.setAttribute("data-pointer", pointer);
-        const { head, row } = mountHead(h, ["Resume", "Stop"], {
-          label: "subflux-build-lanes-relaunch",
-          state: "waiting",
-          nodes: lanes(true),
-          live: true,
-          alert: { kind: "paused", text: LANES_PAUSE },
-        });
-        coversAtVerbHeight(
-          head,
-          row,
-          [".disclosure-chevron", ".ev-sum-state"],
-          `${String(w)}px ${pointer}`,
-        );
-        unmount();
+        const at = `${String(w)}px ${pointer}`;
+        if ((c.beside as readonly number[]).includes(w)) {
+          it(`covers ${c.what} summary line beside its verbs at their height, ${at}`, async () => {
+            await browser.viewport(w, h);
+            document.documentElement.setAttribute("data-pointer", pointer);
+            const { head, row } = mountHead(h, c.names, c.run);
+            coversAtVerbHeight(head, row, c.parts, at);
+          });
+        }
+        if ((c.under as readonly number[]).includes(w)) {
+          it(`covers ${c.what} summary line above its verbs at their height, ${at}`, async () => {
+            await browser.viewport(w, h);
+            document.documentElement.setAttribute("data-pointer", pointer);
+            const { head, row } = mountHead(h, c.names, c.run);
+            coversAboveVerbs(head, row, c.parts, at);
+          });
+        }
       }
-    });
+    }
   }
 });

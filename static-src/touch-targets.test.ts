@@ -7,6 +7,7 @@ import { page, server } from "vitest/browser";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { BUTTON_BOX, GLYPH_STEP } from "./__test-helpers__/button-reference.js";
+import { ownsItsClick } from "./disclosure-row.js";
 import {
   ALL,
   SURFACES,
@@ -209,13 +210,14 @@ function reaches(p: Probe, x: number, y: number): string | null {
   }
   // A row's own ink forwards its press to the disclosure control it wraps (`wireRowToggle`), a
   // control nested in the row excepted.
-  const row = hit?.closest<HTMLElement>("[data-row-toggle]");
+  const row = hit?.closest("[data-row-toggle]");
   if (
+    hit !== null &&
     row !== null &&
     row !== undefined &&
     row.contains(p.el) &&
     p.el.hasAttribute("aria-expanded") &&
-    !row.contains(hit?.closest("button, [role='button'], a[href], summary, input") ?? null)
+    !ownsItsClick(hit, row)
   ) {
     return null;
   }

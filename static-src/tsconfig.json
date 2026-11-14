@@ -12,6 +12,8 @@
     // app. The Dockerfile's `--noEmit` flags were the workaround for its
     // absence; every sibling repo declares it here.
     "noEmit": true,
+    // audit/walkers.ts runs under node's type stripping too, which loads only a real `.ts` path.
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
