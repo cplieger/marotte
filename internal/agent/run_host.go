@@ -873,7 +873,7 @@ func (rs *Runs) answerInput(ctx context.Context, workflowID, askID, text string,
 	if c == nil {
 		return errAskGone
 	}
-	host, releaseHost, err := rs.residentForRequest(ctx, workflowID)
+	host, releaseHost, err := rs.residentUntil(answerDeadline())(ctx, workflowID)
 	defer releaseHost()
 	if err != nil {
 		return err

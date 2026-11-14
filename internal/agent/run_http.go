@@ -759,9 +759,8 @@ func (rr *runRoutes) handleStepPost(w http.ResponseWriter, r *http.Request) {
 		if !httpreply.DecodeJSON(w, r, &body) {
 			return
 		}
-		out, err := rr.runs.messageStep(
-			r.Context(), rr.runs.residentForRequest, id, nodePath, body.Text, body.MessageID, body.AskID, apiCaller(r),
-		)
+		out, err := rr.runs.messageStep(r.Context(), rr.runs.residentUntil(answerDeadline()),
+			id, nodePath, body.Text, body.MessageID, body.AskID, apiCaller(r))
 		if err != nil {
 			rr.writeStepErr(w, "message", id, nodePath, err)
 			return
@@ -938,10 +937,11 @@ func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err er
 	switch {
 	case writeStatusErr(w, err):
 	case errors.Is(err, errRunHostSlow):
-		slog.Warn("run control timed out loading the run's session", "verb", verb, "workflow_id", logsafe.Field(id))
+		slog.Warn("run control timed out waiting for the run, so nothing was sent",
+			"verb", verb, "workflow_id", logsafe.Field(id))
 		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
 	case engineHoldsSession(err):
-		slog.Warn("run control refused: kiro-cli still holds the run's launching session",
+		slog.Warn("run control refused: kiro-cli has not released the run's launching session",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
 		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(marotte.ErrSessionClosing.Error()))
 	case errors.Is(err, errRunHostStart):
@@ -997,8 +997,8 @@ func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err er
 	}
 }
 
-// engineHoldsSession reports a door kiro-cli still holds a predecessor for, whose remedy is an engine restart. A chat's
-// close ending the call matches ErrSessionClosing too, and a restart is no remedy for it.
+// engineHoldsSession reports a session kiro-cli has not let go of, whose remedy is an engine restart; a chat's close
+// also matches ErrSessionClosing and is excluded.
 func engineHoldsSession(err error) bool {
 	return errors.Is(err, marotte.ErrSessionClosing) && !errors.Is(err, marotte.ErrChatClosedDuringCall)
 }

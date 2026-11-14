@@ -479,52 +479,66 @@ var unansweredLoads = map[string]error{
 	"kiro-cli still holds the previous load": marotte.ErrSessionClosing,
 }
 
-// A live run's steps take its launching session's presets, so a new session would cut the run off for good.
+// A live run's steps take its launching session's presets, so a new session would cut the run off for good. A lease
+// whose launching session marotte has not recorded yet may be this session's.
 func TestSessionLoad_AReplayTimeoutKeepsALiveRunsLaunchingSession(t *testing.T) {
-	for name, loadErr := range unansweredLoads {
-		t.Run(name, func(t *testing.T) {
-			h, cs, fakes := lostRecordHub(t, func(b *fakeBridge) { b.loadErr = loadErr })
-			const chatID marotte.ChatID = "c1"
-			onSession(t, cs, chatID, lostSession)
-			boundTurn(t, cs, chatID, lostSession)
-			leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ChatID: string(chatID), ParentSessionID: lostSession})
+	leases := map[string]string{"a run launched from it": lostSession, "a run whose launching session is unrecorded": ""}
+	for leaseName, parent := range leases {
+		for name, loadErr := range unansweredLoads {
+			t.Run(leaseName+", "+name, func(t *testing.T) {
+				h, cs, fakes := lostRecordHub(t, func(b *fakeBridge) { b.loadErr = loadErr })
+				const chatID marotte.ChatID = "c1"
+				onSession(t, cs, chatID, lostSession)
+				boundTurn(t, cs, chatID, lostSession)
+				leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ChatID: string(chatID), ParentSessionID: parent})
 
-			_, err := h.coord.openReleased(t.Context(), chatID, "")
+				_, err := h.coord.openReleased(t.Context(), chatID, "")
 
-			if !errors.Is(err, loadErr) {
-				t.Errorf("openBridge = %v, want the load's own error", err)
-			}
-			if rec := chatRecord(t, cs, chatID); rec.ACPSessionID != lostSession {
-				t.Errorf("chat runs %q, want %q kept: the run's steps hold its presets", rec.ACPSessionID, lostSession)
-			}
-			if _, loads := fakes.doors(); slices.Contains(loads, false) {
-				t.Errorf("doors (load?) = %v, want no session/new", loads)
-			}
-			if got := contextResets(t, cs, chatID); len(got) != 0 {
-				t.Errorf("context resets = %v, want none", got)
-			}
-		})
+				if !errors.Is(err, loadErr) {
+					t.Errorf("openBridge = %v, want the load's own error", err)
+				}
+				if rec := chatRecord(t, cs, chatID); rec.ACPSessionID != lostSession {
+					t.Errorf("chat runs %q, want %q kept: the run's steps hold its presets", rec.ACPSessionID, lostSession)
+				}
+				if _, loads := fakes.doors(); slices.Contains(loads, false) {
+					t.Errorf("doors (load?) = %v, want no session/new", loads)
+				}
+				if got := contextResets(t, cs, chatID); len(got) != 0 {
+					t.Errorf("context resets = %v, want none", got)
+				}
+			})
+		}
 	}
 }
 
-func TestSessionLoad_AReplayTimeoutOfAChatWithNoLiveRunStillOpensANewOne(t *testing.T) {
-	for name, loadErr := range unansweredLoads {
-		t.Run(name, func(t *testing.T) {
-			h, cs, fakes := lostRecordHub(t, func(b *fakeBridge) { b.loadErr = loadErr })
-			const chatID marotte.ChatID = "c1"
-			onSession(t, cs, chatID, lostSession)
-			boundTurn(t, cs, chatID, lostSession)
+// A run launched from a session the chat already retired cannot be driven from this one, so it keeps nothing.
+func TestSessionLoad_AReplayTimeoutWithNoRunOfThatSessionStillOpensANewOne(t *testing.T) {
+	leases := map[string][]runlease.Lease{
+		"no run":                                nil,
+		"a run launched from a retired session": {{WorkflowID: "wf_1", ChatID: "c1", ParentSessionID: "sess_retired"}},
+	}
+	for leaseName, chatLeases := range leases {
+		for name, loadErr := range unansweredLoads {
+			t.Run(leaseName+", "+name, func(t *testing.T) {
+				h, cs, fakes := lostRecordHub(t, func(b *fakeBridge) { b.loadErr = loadErr })
+				const chatID marotte.ChatID = "c1"
+				onSession(t, cs, chatID, lostSession)
+				boundTurn(t, cs, chatID, lostSession)
+				for _, l := range chatLeases {
+					leaseRun(t, h, l)
+				}
 
-			if _, err := h.coord.openReleased(t.Context(), chatID, ""); err != nil {
-				t.Fatalf("openBridge: %v", err)
-			}
+				if _, err := h.coord.openReleased(t.Context(), chatID, ""); err != nil {
+					t.Fatalf("openBridge: %v", err)
+				}
 
-			if doors, loads := fakes.doors(); !slices.Equal(loads, []bool{false}) || len(doors) != 1 {
-				t.Errorf("completed doors (load?) = %v, want the one session/new", loads)
-			}
-			if got := contextResets(t, cs, chatID); !slices.Equal(got, []marotte.ContextResetCause{marotte.ContextResetLoadFailed}) {
-				t.Errorf("context resets = %v, want exactly one load_failed", got)
-			}
-		})
+				if doors, loads := fakes.doors(); !slices.Equal(loads, []bool{false}) || len(doors) != 1 {
+					t.Errorf("completed doors (load?) = %v, want the one session/new", loads)
+				}
+				if got := contextResets(t, cs, chatID); !slices.Equal(got, []marotte.ContextResetCause{marotte.ContextResetLoadFailed}) {
+					t.Errorf("context resets = %v, want exactly one load_failed", got)
+				}
+			})
+		}
 	}
 }

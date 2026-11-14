@@ -935,7 +935,7 @@ func TestMessageStep_AnUnansweredLoadOfTheLaunchingSessionAnswersWithinTheBudget
 	before := runLogLen(t, h)
 
 	err := answersWithin(t, func() error {
-		_, err := h.runs.messageStep(t.Context(), h.runs.residentForRequest, "wf_1", reviewPath, "carry on", "m-1", "", nil)
+		_, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "carry on", "m-1", "", nil)
 		return err
 	})
 
@@ -1012,6 +1012,47 @@ func TestRunRequestVerbs_AnUnansweredLoadAnswersRunHostSlow(t *testing.T) {
 	}
 }
 
+// After an engine restart marotte's own heal holds the run while it waits on the load; a person's verb queued behind
+// it answers inside the browser's budget too.
+func TestRunRequestVerbs_BehindAHealOnAnUnansweredLoadAnswersRunHostSlow(t *testing.T) {
+	cases := map[string]func(ctx context.Context, h *Runtime) error{
+		"a resume": func(ctx context.Context, h *Runtime) error { return h.runs.resume(ctx, "wf_1", callerPage) },
+		"a repeat's extension": func(ctx context.Context, h *Runtime) error {
+			return h.runs.extendRepeat(ctx, "wf_1", "loop", 1, callerPage)
+		},
+		"a repeat's finish": func(ctx context.Context, h *Runtime) error { return h.runs.finishRepeat(ctx, "wf_1", "loop") },
+		"a paused step's end": func(ctx context.Context, h *Runtime) error {
+			return h.runs.endStep(ctx, "wf_1", targetPath, runStepCompleted)
+		},
+		"a pause": func(ctx context.Context, h *Runtime) error { return h.runs.pause(ctx, "wf_1", callerPage) },
+	}
+	for name, call := range cases {
+		t.Run(name, func(t *testing.T) {
+			answerBudgetOf(t, 200*time.Millisecond)
+			h, host, release := gatedHostRun(t, inspectPaused(t, "wf_1", stalePauseReason))
+			parked := make(chan struct{})
+			host.onStart = sync.OnceFunc(func() { close(parked) })
+			healed := make(chan resumeOutcome, 1)
+			go func() { healed <- h.runs.resumeIfInterrupted(t.Context(), "", "wf_1") }()
+			select {
+			case <-parked:
+			case <-time.After(2 * time.Second):
+				t.Fatal("Setup: the heal never reached the run's host load")
+			}
+
+			err := answersWithin(t, func() error { return call(t.Context(), h) })
+
+			if !errors.Is(err, errRunHostSlow) {
+				t.Errorf("the verb behind the heal = %v, want errRunHostSlow", err)
+			}
+			release()
+			if got := <-healed; got != resumeWritten {
+				t.Errorf("the heal = %v once its load finished, want its resume written", got)
+			}
+		})
+	}
+}
+
 // The heal has nobody waiting on it: a load slower than the browser's budget still lets its answer land.
 func TestHealAnswer_WaitsForASlowLoadPastTheRequestBudget(t *testing.T) {
 	answerBudgetOf(t, 200*time.Millisecond)
@@ -1033,7 +1074,7 @@ func TestHealAnswer_WaitsForASlowLoadPastTheRequestBudget(t *testing.T) {
 	}
 }
 
-func TestResidentForRequest_AReplayTimeoutOfTheLoadIsRunHostSlow(t *testing.T) {
+func TestResidentUntil_AReplayTimeoutOfTheLoadIsRunHostSlow(t *testing.T) {
 	replayTimeout := fmt.Errorf("session resume did not finish within 5m0s. kiro-cli stopped answering: %w",
 		context.DeadlineExceeded)
 	cases := map[string]func(t *testing.T) *Runtime{
@@ -1057,11 +1098,11 @@ func TestResidentForRequest_AReplayTimeoutOfTheLoadIsRunHostSlow(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := setup(t)
 
-			_, release, err := h.runs.residentForRequest(t.Context(), "wf_1")
+			_, release, err := h.runs.residentUntil(answerDeadline())(t.Context(), "wf_1")
 			release()
 
 			if !errors.Is(err, errRunHostSlow) {
-				t.Fatalf("residentForRequest = %v, want errRunHostSlow: kiro-cli may still be replaying", err)
+				t.Fatalf("residentUntil = %v, want errRunHostSlow: kiro-cli may still be replaying", err)
 			}
 			if errors.Is(err, errRunHostStart) {
 				t.Error("a load that ran out of time was reported as a load fault on this server")
@@ -1135,7 +1176,7 @@ func TestControlHandler_AnUnansweredLoadIs503WithTheSentence(t *testing.T) {
 
 // A load kiro-cli still holds past the release report names its remedy; a chat close ending the load does not.
 func TestControlHandler_AHeldLaunchSessionNamesTheAgentRestart(t *testing.T) {
-	cases := map[string]struct {
+	loads := map[string]struct {
 		loadErr     error
 		want        int
 		wantRestart bool
@@ -1143,25 +1184,57 @@ func TestControlHandler_AHeldLaunchSessionNamesTheAgentRestart(t *testing.T) {
 		"kiro-cli still holds the session":   {loadErr: marotte.ErrSessionClosing, want: http.StatusServiceUnavailable, wantRestart: true},
 		"the chat's close ended the session": {loadErr: marotte.ErrChatClosedDuringCall, want: http.StatusInternalServerError},
 	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			h, _ := leasedNonResident(t, oneStepInspect(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused, "sess_step"))
-			host := newFakeBridge()
-			host.loadErr = tc.loadErr
-			fakeSourceOf(t, h).setFactory(func() engineSession { return host })
-			mux := http.NewServeMux()
-			h.runRoutes.register(mux)
+	routes := []struct {
+		name   string
+		reply  func(t *testing.T) json.RawMessage
+		target string
+		body   func(h *Runtime) any
+	}{
+		{
+			name: "a step message",
+			reply: func(t *testing.T) json.RawMessage {
+				return oneStepInspect(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused, "sess_step")
+			},
+			target: "/api/runs/wf_1/steps/" + url.PathEscape(reviewPath) + "/message",
+			body:   func(*Runtime) any { return marotte.RunStepMessageRequest{Text: "carry on", MessageID: "m-1"} },
+		},
+		{
+			name: "an answer",
+			reply: func(t *testing.T) json.RawMessage {
+				return inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step"))
+			},
+			target: "/api/runs/wf_1/answer",
+			body: func(h *Runtime) any {
+				return marotte.RunAnswerRequest{AskID: markerlessAskID(h, "wf_1", reviewPath, "sess_step"), Text: "the main branch"}
+			},
+		},
+		{
+			name:   "a repeat's finish",
+			reply:  inspectAtCap,
+			target: "/api/runs/wf_1/finish-loop",
+			body:   func(*Runtime) any { return marotte.RunFinishLoopRequest{NodeID: "loop"} },
+		},
+	}
+	for _, rt := range routes {
+		for name, tc := range loads {
+			t.Run(rt.name+", "+name, func(t *testing.T) {
+				h, _ := leasedNonResident(t, rt.reply(t))
+				host := newFakeBridge()
+				host.loadErr = tc.loadErr
+				fakeSourceOf(t, h).setFactory(func() engineSession { return host })
+				mux := http.NewServeMux()
+				h.runRoutes.register(mux)
 
-			rec := postStep(t, mux, "/api/runs/wf_1/steps/"+url.PathEscape(reviewPath)+"/message",
-				marotte.RunStepMessageRequest{Text: "carry on", MessageID: "m-1"})
+				rec := postStep(t, mux, rt.target, rt.body(h))
 
-			if rec.Code != tc.want {
-				t.Errorf("POST message = %d %s, want %d", rec.Code, rec.Body, tc.want)
-			}
-			if got := strings.Contains(rec.Body.String(), "restart the agent engine"); got != tc.wantRestart {
-				t.Errorf("the body %s names the agent restart = %v, want %v", rec.Body, got, tc.wantRestart)
-			}
-		})
+				if rec.Code != tc.want {
+					t.Errorf("POST %s = %d %s, want %d", rt.target, rec.Code, rec.Body, tc.want)
+				}
+				if got := strings.Contains(rec.Body.String(), "restart the agent engine"); got != tc.wantRestart {
+					t.Errorf("the body %s names the agent restart = %v, want %v", rec.Body, got, tc.wantRestart)
+				}
+			})
+		}
 	}
 }
 

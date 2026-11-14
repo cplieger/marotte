@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/ids"
@@ -171,6 +172,8 @@ var (
 type runRequest struct {
 	// resume is a person's resume's params beside the run's id: a repeat's extension.
 	resume map[string]any
+	// answerBy is when a person's request must have answered, set as it waits for the run (lockRun); zero otherwise.
+	answerBy time.Time
 	// verb names a person's request in its refusal.
 	verb string
 	// node is a finish's repeat node.
@@ -217,7 +220,7 @@ var transitionHook atomic.Pointer[func(rs *Runs, workflowID string, want runWant
 // read.
 func (rs *Runs) transition(ctx context.Context, workflowID string, req *runRequest) (runChange, error) {
 	c := runChange{outcome: resumeFailed, charged: req.charged}
-	release, err := rs.resumes.Lock(ctx, workflowID)
+	release, err := rs.lockRun(ctx, workflowID, req)
 	if err != nil {
 		return c, err
 	}
@@ -237,6 +240,22 @@ func (rs *Runs) transition(ctx context.Context, workflowID string, req *runReque
 	return c, cErr
 }
 
+// lockRun takes the run's resume lock. A person's request waits for it only until its answerBy, set here, because
+// marotte's own heal holds it across a session load kiro-cli may never answer; nothing is written before the lock.
+func (rs *Runs) lockRun(ctx context.Context, workflowID string, req *runRequest) (func(), error) {
+	if req.want.actor != byPerson {
+		return rs.resumes.Lock(ctx, workflowID)
+	}
+	req.answerBy = answerDeadline()
+	lctx, cancel := context.WithDeadline(ctx, req.answerBy)
+	defer cancel()
+	release, err := rs.resumes.Lock(lctx, workflowID)
+	if err != nil && ctx.Err() == nil {
+		return nil, errRunHostSlow
+	}
+	return release, err
+}
+
 // carryOut is transition's action for the cell c names, under the run's resume lock.
 func (rs *Runs) carryOut(ctx context.Context, workflowID string, req *runRequest, r *pauseRead, c *runChange) error {
 	switch c.act {
@@ -253,10 +272,10 @@ func (rs *Runs) carryOut(ctx context.Context, workflowID string, req *runRequest
 		return nil
 	case actResume:
 		if len(r.throttled) > 0 {
-			_, err := rs.answerThrottled(ctx, rs.residentForRequest, workflowID, r.throttled, req.caller.words())
+			_, err := rs.answerThrottled(ctx, rs.residentUntil(req.answerBy), workflowID, r.throttled, req.caller.words())
 			return rs.endAutoResumeStopAfter(ctx, workflowID, err)
 		}
-		return rs.endAutoResumeStopAfter(ctx, workflowID, rs.resumeAsked(ctx, workflowID, req.resumeParams()))
+		return rs.endAutoResumeStopAfter(ctx, workflowID, rs.resumeAsked(ctx, workflowID, req))
 	case actHoldPause:
 		return rs.holdPause(ctx, workflowID)
 	case actHeal:
@@ -266,7 +285,7 @@ func (rs *Runs) carryOut(ctx context.Context, workflowID string, req *runRequest
 		rs.disarmDeadline(ctx, workflowID)
 		return rs.cancelRPC(ctx, workflowID, runStop{})
 	case actFinish:
-		return rs.finishAsked(ctx, workflowID, req.node)
+		return rs.finishAsked(ctx, workflowID, req)
 	case actKeepHold:
 		rs.keepHold(workflowID)
 		return nil
@@ -426,32 +445,32 @@ func (rs *Runs) sendResume(ctx context.Context, a runAdmission, host *drivenHost
 }
 
 // resumeAsked is a person's resume, refused while the gate is closed.
-func (rs *Runs) resumeAsked(ctx context.Context, workflowID string, extra map[string]any) error {
+func (rs *Runs) resumeAsked(ctx context.Context, workflowID string, req *runRequest) error {
 	a, err := rs.admitRunWork(refuseClosed, workflowID, "")
 	if err != nil {
 		return err
 	}
 	defer a.settle(workflowID)
-	host, release, err := rs.residentForRequest(ctx, workflowID)
+	host, release, err := rs.residentUntil(req.answerBy)(ctx, workflowID)
 	defer release()
 	if err != nil {
 		return err
 	}
-	if err := rs.sendResume(ctx, a, host, workflowID, extra); err != nil {
+	if err := rs.sendResume(ctx, a, host, workflowID, req.resumeParams()); err != nil {
 		return err
 	}
 	rs.armDeadline(ctx, workflowID)
 	return nil
 }
 
-// finishAsked is a person's finish of the repeat at nodeID, refused while the gate is closed (drive admits it).
-func (rs *Runs) finishAsked(ctx context.Context, workflowID, nodeID string) error {
-	host, release, err := rs.residentForRequest(ctx, workflowID)
+// finishAsked is a person's finish of the repeat at req.node, refused while the gate is closed (drive admits it).
+func (rs *Runs) finishAsked(ctx context.Context, workflowID string, req *runRequest) error {
+	host, release, err := rs.residentUntil(req.answerBy)(ctx, workflowID)
 	defer release()
 	if err != nil {
 		return err
 	}
-	return rs.updateNodeStatus(ctx, host, workflowID, nodeID, runStepCompleted)
+	return rs.updateNodeStatus(ctx, host, workflowID, req.node, runStepCompleted)
 }
 
 // holdPause writes the gate's reasoned pause of a running run, whose reason KAS keeps as the run's stopReason;
