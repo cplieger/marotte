@@ -19,6 +19,7 @@ import {
   ICON_SHIELD,
 } from "./icons.js";
 import { setActive, setSessions } from "./store.js";
+import { watchPillRow } from "./pill-row-fit.js";
 import type { updateContextBar as updateContextBarFn } from "./status.js";
 import { makeSession } from "./__test-helpers__/model.js";
 import { BUTTON_REFERENCE, MENU_ROW } from "./__test-helpers__/button-reference.js";
@@ -73,6 +74,8 @@ const PROFILE = "Approve for me";
  *  resolves page elements at import, and `initRolePicker` installs a lasting effect, so it runs once. */
 let writers: { updateContextBar: typeof updateContextBarFn } | undefined;
 let sessionSeq = 0;
+/** The mounted row's fit, as app.ts installs it; each mount replaces the row. */
+let unwatch: (() => void) | undefined;
 
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => {
@@ -136,7 +139,7 @@ async function writeNames(): Promise<void> {
   writers.updateContextBar({
     pct: 66,
     contextSize: 200_000,
-    compaction: { band: null, t: 0 },
+    compaction: { at: null, t: 0 },
     credits: 0,
     turnCount: 0,
     lastTurnMs: 0,
@@ -203,8 +206,14 @@ async function mount(
   if (app === null) {
     throw new Error("index.html has no #app");
   }
+  unwatch?.();
   document.body.replaceChildren(document.importNode(app, true));
   await dress(state);
+  const row = document.querySelector<HTMLElement>(".prompt-pills");
+  if (row === null) {
+    throw new Error("index.html has no pill row");
+  }
+  unwatch = watchPillRow(row);
 }
 
 /** The run tab in place of the chat: its composer's Send and its resume button. */
@@ -434,10 +443,12 @@ describe("the composer's controls and the resume button, against the toolbar's b
 
 describe("the model, profile and mode pills, by the room the row has", () => {
   const labels = (): HTMLElement[] => [byId("ctx-model-pill"), byId("role-pill-label")];
-  /** The profile pill's label, which drops before the other two; null where the row leaves the pill out. */
+  /** The profile pill's label, which drops before the other two; null where it never shows (a phone-shaped
+   *  screen) or the row leaves the pill out. */
   const profileName = (): HTMLElement | null => {
     const name = byId("profile-pill-label");
-    return shown(byId("profile-pill")) ? name : null;
+    const phone = matchMedia("(width <= 48rem), (height <= 30rem)").matches;
+    return !phone && shown(byId("profile-pill")) ? name : null;
   };
 
   it("fits the row on one line at the phone preset, with no control cut", async () => {
@@ -469,39 +480,127 @@ describe("the model, profile and mode pills, by the room the row has", () => {
     }
   });
 
-  it("keeps the profile pill beside a turn on a phone, on one line with every target at the floor", async () => {
+  /** What the row breaks of its contract: an overflow, a wrap, a target under the floor. */
+  function rowFaults(at: string): string[] {
     const off: string[] = [];
+    const row = document.querySelector<HTMLElement>(".prompt-pills")!;
+    if (row.scrollWidth > row.clientWidth) {
+      off.push(`${at}: the row overflows by ${String(row.scrollWidth - row.clientWidth)}px`);
+    }
+    const items = controls().filter((el) => row.contains(el));
+    if (new Set(items.map((el) => el.getBoundingClientRect().top)).size !== 1) {
+      off.push(`${at}: the row wraps`);
+    }
+    const floor = floorPx();
+    for (const el of items) {
+      const hit = hitRect(el);
+      if (width(hit) < floor - 2 * STEP || height(hit) < floor - 2 * STEP) {
+        off.push(`${at}: ${nameOf(el)} reaches ${String(width(hit))}x${String(height(hit))}px`);
+      }
+    }
+    return off;
+  }
+
+  /** The pills the row moved into Chat options, by what is on screen. */
+  function movedNow(): string[] {
+    return [
+      ...(shown(byId("role-pill")) ? [] : ["mode"]),
+      ...(shown(byId("profile-pill")) ? [] : ["profile"]),
+    ];
+  }
+
+  /** Whether the row has room for one more pill at its square, the room the last moved pill needs back. */
+  function roomForOneMore(): boolean {
+    const row = document.querySelector<HTMLElement>(".prompt-pills")!;
+    const cs = getComputedStyle(row);
+    const content =
+      row.clientWidth - Number.parseFloat(cs.paddingLeft) - Number.parseFloat(cs.paddingRight);
+    const items = [...row.children].filter(
+      (el): el is HTMLElement =>
+        el instanceof HTMLElement && shown(el) && !el.classList.contains("pill-spacer"),
+    );
+    const used = items.reduce((sum, el) => {
+      const m = getComputedStyle(el);
+      return (
+        sum +
+        el.getBoundingClientRect().width +
+        Number.parseFloat(m.marginLeft) +
+        Number.parseFloat(m.marginRight)
+      );
+    }, 0);
+    const gap = Number.parseFloat(cs.columnGap);
+    const square = byId("chat-options-btn").getBoundingClientRect().width;
+    return used + gap * items.length + square <= content + 0.5;
+  }
+
+  it("keeps the fullest row on one line at a phone's widths, every target at the floor", async () => {
+    const off: string[] = [];
+    const moves: string[] = [];
     for (const w of [360, 390, 430]) {
       for (const pointer of ["coarse", "fine"] as const) {
         for (const state of ["steer", "queue"] as const) {
           await mount([w, 844], pointer, state);
           const at = `${String(w)} ${pointer} ${state}`;
-          const row = document.querySelector<HTMLElement>(".prompt-pills")!;
-          if (!shown(byId("profile-pill"))) {
-            off.push(`${at}: no profile pill`);
-            continue;
+          off.push(...rowFaults(at));
+          const moved = movedNow();
+          moves.push(`${at}: ${moved.join(" ") || "none"}`);
+          if (!shown(byId("context-indicator"))) {
+            off.push(`${at}: the context pill left the row`);
           }
-          if (row.scrollWidth > row.clientWidth) {
-            off.push(`${at}: the row overflows by ${String(row.scrollWidth - row.clientWidth)}px`);
+          if (moved.length === 1 && moved[0] !== "mode") {
+            off.push(`${at}: Security profile moved before Mode`);
           }
-          const items = controls().filter((el) => row.contains(el));
-          if (new Set(items.map((el) => el.getBoundingClientRect().top)).size !== 1) {
-            off.push(`${at}: the row wraps`);
-          }
-          const floor = floorPx();
-          for (const el of items) {
-            const hit = hitRect(el);
-            if (width(hit) < floor - 2 * STEP || height(hit) < floor - 2 * STEP) {
-              off.push(
-                `${at}: ${nameOf(el)} reaches ${String(width(hit))}x${String(height(hit))}px`,
-              );
-            }
+          if (moved.length > 0 && roomForOneMore()) {
+            off.push(`${at}: ${moved.join(" ")} moved with room to spare`);
           }
         }
       }
     }
+    console.log(`phone rows: ${moves.join("; ")}`);
     expect(off).toEqual([]);
-  });
+  }, 60_000);
+
+  it("moves Mode, then Security profile, as the row narrows, and takes them back as it widens", async () => {
+    const box = (): HTMLElement => byId("prompt-box");
+    for (const pointer of ["fine", "coarse"] as const) {
+      await mount(DESKTOP, pointer, "steer");
+      const widths: number[] = [];
+      for (let w = 720; w >= 364; w -= 4) {
+        widths.push(w);
+      }
+      const seen = new Map<string, number>();
+      const off: string[] = [];
+      const walk = async (order: number[], dir: string): Promise<string[]> => {
+        const states: string[] = [];
+        for (const w of order) {
+          box().style.width = `${String(w)}px`;
+          await nextFrame();
+          const moved = movedNow().join(" ") || "none";
+          if (states.at(-1) !== moved) {
+            states.push(moved);
+            seen.set(`${dir} ${moved}`, w);
+          }
+          off.push(...rowFaults(`${pointer} ${String(w)}`));
+          if (moved !== "none" && roomForOneMore()) {
+            off.push(`${pointer} ${String(w)}: ${moved} moved with room to spare`);
+          }
+        }
+        return states;
+      };
+      expect(await walk(widths, "narrowing"), `${pointer}: narrowing`).toEqual([
+        "none",
+        "mode",
+        "mode profile",
+      ]);
+      expect(await walk([...widths].reverse(), "widening"), `${pointer}: widening`).toEqual([
+        "mode profile",
+        "mode",
+        "none",
+      ]);
+      expect(off, `${pointer}: the row at every width`).toEqual([]);
+      console.log(`${pointer} thresholds: ${JSON.stringify(Object.fromEntries(seen))}`);
+    }
+  }, 60_000);
 
   it("keeps their text, uncut, at the iPad preset in touch mode", async () => {
     for (const state of STATES) {
@@ -971,7 +1070,6 @@ const COVERS: Readonly<Record<Surface, readonly string[]>> = {
     ".attachment-close",
   ],
   "chat steer": [
-    "#profile-pill",
     "#midturn-send-btn",
     "#midturn-alt-btn",
     "#task-list-pill",

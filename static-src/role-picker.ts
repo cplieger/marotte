@@ -71,6 +71,33 @@ export function initRolePicker(refreshCatalog: () => void): void {
   });
 }
 
+/** The mode pill's choices as a native select, for the Chat options card when the row has no room for the pill. */
+export function modeSelect(id: string): HTMLSelectElement {
+  const select = el("select", { id, className: "chat-opt-select" }) as HTMLSelectElement;
+  let listed = "";
+  effect(() => {
+    const modes = catalogBaseModes();
+    const current = normalizeModeID(activeSession.value?.current_mode_id ?? "");
+    if (wireSignature(modes) !== listed) {
+      listed = wireSignature(modes);
+      const option = (m: SessionMode): HTMLOptionElement =>
+        el("option", { value: m.id }, displayModeName(m.name || m.id)) as HTMLOptionElement;
+      const custom = modes.filter((m) => isCustomSource(m.source));
+      select.replaceChildren(
+        ...modes.filter((m) => !isCustomSource(m.source)).map(option),
+        ...(custom.length > 0
+          ? [el("optgroup", { label: "Custom agents" }, ...custom.map(option))]
+          : []),
+      );
+    }
+    select.value = current;
+  });
+  select.addEventListener("change", () => {
+    selectMode(select.value);
+  });
+  return select;
+}
+
 function refreshPill(modeID: string): void {
   byId<HTMLElement>("role-pill-icon").replaceChildren(iconEl(iconForMode(normalizeModeID(modeID))));
   const label = labelForMode(modeID);

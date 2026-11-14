@@ -17,8 +17,8 @@ import (
 )
 
 // baseCSPPolicy is the CSP applied to every response. script-src is 'self' alone: the page
-// carries no inline script. style-src keeps 'unsafe-inline' for editor highlighting,
-// context-ring fills and terminal rendering; img-src allows data: for Seti UI icons.
+// carries no inline script. style-src keeps 'unsafe-inline' for editor highlighting
+// and terminal rendering; img-src allows data: for Seti UI icons.
 const baseCSPPolicy = "default-src 'self'; " +
 	"connect-src 'self'; " +
 	"img-src 'self' data:; " +

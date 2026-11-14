@@ -288,12 +288,6 @@ class Elements {
   get contextIndicator(): HTMLButtonElement {
     return byId("context-indicator");
   }
-  get contextRingFill(): HTMLElement {
-    return byId("context-ring-fill");
-  }
-  get contextRingWedge(): HTMLElement {
-    return byId("context-ring-wedge");
-  }
   get contextLabel(): HTMLElement {
     return byId("context-label");
   }
@@ -322,6 +316,12 @@ class Elements {
   }
   get ctxTools(): HTMLElement {
     return byId("ctx-tools");
+  }
+  get ctxCompactRow(): HTMLElement {
+    return byId("ctx-compact-row");
+  }
+  get ctxCompactAt(): HTMLElement {
+    return byId("ctx-compact-at");
   }
   get ctxMetering(): HTMLElement {
     return byId("ctx-metering");

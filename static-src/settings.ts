@@ -36,7 +36,7 @@ import { logout, setEngineHeap, setKiroSetting } from "./actions/settings.js";
 import { runDiagnostics } from "./actions/tools.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { initSteeringEditor, loadSteeringDoc } from "./settings-steering.js";
-import { compactionPolicy } from "./context-ring.js";
+import { compactionPolicy } from "./context-indicator.js";
 import { onGovernanceChange, paintSettingLocks, writeSwitch } from "./governance.js";
 import { paintOutputStyle, paintOutputStyleHint } from "./output-style.js";
 import { resetAccountUsage } from "./account-usage.js";

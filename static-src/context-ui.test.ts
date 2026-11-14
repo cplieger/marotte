@@ -14,7 +14,7 @@ vi.mock("./picker.js", () => ({ getCachedModels: () => [] }));
 vi.mock("./session-context.js", () => ({ getLastEffortFor: () => "" }));
 
 import { refreshContextUI } from "./context-ui.js";
-import { compactionPolicy } from "./context-ring.js";
+import { compactionPolicy } from "./context-indicator.js";
 import { effect } from "@cplieger/reactive";
 
 /** `seq` feeds `entryRenders`' plan rule; `id` is what a compaction watermark names. */
@@ -147,21 +147,21 @@ describe("the compaction point handed to the ring", () => {
     return (mocks.updateContextBar.mock.lastCall?.[0] as { compaction: unknown }).compaction;
   }
 
-  it("at 80 the band sits at 80", () => {
+  it("at 80 the chat compacts at 80", () => {
     refreshContextUI(session());
-    expect(handed()).toEqual({ band: 80, t: 80 });
+    expect(handed()).toEqual({ at: 80, t: 80 });
   });
 
   it("takes the slider's value below the default", () => {
     compactionPolicy.value = { enabled: true, pct: 60 };
     refreshContextUI(session());
-    expect(handed()).toEqual({ band: 60, t: 60 });
+    expect(handed()).toEqual({ at: 60, t: 60 });
   });
 
-  it("withholds the band and keys the ramp on 100 when switched off", () => {
+  it("compacts nowhere and keys the ramp on 100 when switched off", () => {
     compactionPolicy.value = { enabled: false, pct: 60 };
     refreshContextUI(session());
-    expect(handed()).toEqual({ band: null, t: 100 });
+    expect(handed()).toEqual({ at: null, t: 100 });
   });
 
   it("repaints inside an effect when the setting changes, with no new usage", () => {
@@ -169,9 +169,9 @@ describe("the compaction point handed to the ring", () => {
     const stop = effect(() => {
       refreshContextUI(s);
     });
-    expect(handed()).toEqual({ band: 80, t: 80 });
+    expect(handed()).toEqual({ at: 80, t: 80 });
     compactionPolicy.value = { enabled: true, pct: 90 };
-    expect(handed()).toEqual({ band: 90, t: 90 });
+    expect(handed()).toEqual({ at: 90, t: 90 });
     stop();
   });
 });

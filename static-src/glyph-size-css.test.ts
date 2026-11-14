@@ -103,8 +103,6 @@ const BUTTON_GLYPH_READERS: readonly string[] = [
   "15-input.css .pill >> & > :where(.ic-ui) block-size",
   "15-input.css .pill >> & > :where(.ic-inline) inline-size",
   "15-input.css .pill >> & > :where(.ic-inline) block-size",
-  "15-input.css .pill-context >> & .context-ring inline-size",
-  "15-input.css .pill-context >> & .context-ring block-size",
   "15-input.css .pill-role-icon >> & svg width",
   "15-input.css .pill-role-icon >> & svg height",
   "15-input.css .send-btn >> & svg width",

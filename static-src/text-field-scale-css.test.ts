@@ -11,6 +11,7 @@ import indexHtml from "../static/index.html?raw";
 
 import { ICON_SEND } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { watchPillRow } from "./pill-row-fit.js";
 
 import { allRules, loadCSS, manifestSheets, mountAppCSS } from "./__test-helpers__/css-rules.js";
 
@@ -90,7 +91,12 @@ describe("the controls, measured over the shipped markup", () => {
     styleEl = mountAppCSS();
   });
 
+  /** The pill row's fit, as app.ts installs it. */
+  let unwatch: (() => void) | undefined;
+
   afterEach(() => {
+    unwatch?.();
+    unwatch = undefined;
     document.body.innerHTML = "";
     document.documentElement.removeAttribute("data-pointer");
   });
@@ -134,6 +140,11 @@ describe("the controls, measured over the shipped markup", () => {
     const send = document.getElementById("send-btn");
     if (send !== null) {
       send.replaceChildren(iconEl(ICON_SEND));
+    }
+    const pills = document.querySelector<HTMLElement>(".prompt-pills");
+    if (pills !== null) {
+      unwatch?.();
+      unwatch = watchPillRow(pills);
     }
   }
 

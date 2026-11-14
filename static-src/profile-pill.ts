@@ -14,6 +14,7 @@ import { createSession } from "./chat.js";
 import { setChatProfile } from "./actions/chat.js";
 import { forgetSig, sigChanged, wireSignature } from "./paint-sig.js";
 import {
+  CUSTOM_PROFILE,
   LOOSEST_PROFILE_HINT,
   confirmLoosest,
   profileDescription,
@@ -28,6 +29,8 @@ const BUSY_NOTE = "Applies after this turn";
 const SAVED_RULES_NOTE = "Your saved rules still apply";
 
 const view = signal<SecurityProfileView | null>(null);
+/** A pick made during a turn, until that chat's turn ends or the server refuses it. */
+const queued = signal<{ chatID: string; profile: string } | null>(null);
 let reading: AbortController | null = null;
 let nav: RovingFocusController | null = null;
 
@@ -57,6 +60,46 @@ function profileOf(s: Session | undefined, v: SecurityProfileView | null): strin
   return own !== "" ? own : (v?.default ?? "");
 }
 
+/** The profiles a chat is offered: Custom only where Settings starts new chats on it or the chat already runs it. */
+function listedProfiles(v: SecurityProfileView | null, current: string): string[] {
+  return (v?.profiles ?? [])
+    .map((p) => p.id)
+    .filter((id) => id !== CUSTOM_PROFILE || v?.default === CUSTOM_PROFILE || current === id);
+}
+
+/** The pill's choices as a native select, for the Chat options card when the row has no room for the pill. */
+export function profileSelect(id: string): HTMLSelectElement {
+  const select = el("select", { id, className: "chat-opt-select" }) as HTMLSelectElement;
+  let listed = "";
+  const current = (): string => profileOf(activeSession.peek(), view.peek());
+  effect(() => {
+    const s = activeSession.value;
+    const v = view.value;
+    const q = queued.value;
+    const now = profileOf(s, v);
+    const ids = listedProfiles(v, now);
+    if (wireSignature(ids) !== listed) {
+      listed = wireSignature(ids);
+      select.replaceChildren(...ids.map((p) => el("option", { value: p }, profileLabel(p))));
+    }
+    select.value = now;
+    select.classList.toggle("pending", q !== null && q.chatID === s?.id);
+  });
+  select.addEventListener("change", () => {
+    // A declined Unrestricted, or a pick with nowhere to go, leaves the chat as it was.
+    void choose(select.value).then(() => {
+      select.value = current();
+    });
+  });
+  return select;
+}
+
+/** What the profile select's row says under it: that a pick waits for the running turn. Tracked. */
+export function profileNote(): string {
+  const s = activeSession.value;
+  return s !== undefined && watchBusy(s.id) ? BUSY_NOTE : "";
+}
+
 /** Wire the composer's profile pill. Call once at startup. */
 export function initProfilePill(): void {
   byId("profile-pill-icon").replaceChildren(iconEl(ICON_SHIELD));
@@ -78,7 +121,15 @@ export function initProfilePill(): void {
     void readView();
   });
   effect(() => {
-    paintPill(profileOf(activeSession.value, view.value));
+    const q = queued.value;
+    if (q !== null && !watchBusy(q.chatID)) {
+      queued.value = null;
+    }
+  });
+  effect(() => {
+    const s = activeSession.value;
+    const q = queued.value;
+    paintPill(profileOf(s, view.value), q !== null && q.chatID === s?.id);
   });
   // An open card follows the chat's turn and the server's answer.
   effect(() => {
@@ -95,13 +146,16 @@ export function initProfilePill(): void {
   void readView();
 }
 
-function paintPill(id: string): void {
+function paintPill(id: string, pending: boolean): void {
   const pill = byId<HTMLButtonElement>("profile-pill");
   pill.classList.toggle("hidden", id === "");
+  pill.classList.toggle("pending", pending);
   const label = profileLabel(id);
   byId("profile-pill-label").textContent = label;
   // The tooltip repeats the accessible name because a phone's pill is icon-only.
-  const name = `Security profile, currently ${label}`;
+  const name = pending
+    ? `Security profile, ${label}, applies after this turn`
+    : `Security profile, currently ${label}`;
   pill.setAttribute("aria-label", name);
   pill.setAttribute("data-tooltip", name);
 }
@@ -176,5 +230,12 @@ async function choose(id: string): Promise<void> {
   if (chatID === "") {
     return;
   }
-  void setChatProfile.dispatch({ chatID, profile: id });
+  const pick = { chatID, profile: id };
+  if (untracked(() => watchBusy(chatID))) {
+    queued.value = pick;
+  }
+  const { outcome } = setChatProfile.dispatch(pick);
+  if ((await outcome).status === "error" && queued.peek() === pick) {
+    queued.value = null;
+  }
 }

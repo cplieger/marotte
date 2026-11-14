@@ -1,0 +1,74 @@
+// Which pills the composer row has room for. A row too narrow for every control at its tier's target moves Mode, then
+// Security profile, into the Chat options card (chat-options.ts), and takes each back once it fits again. The row's
+// controls never shrink (15-input.css), so an overflowing row is the one signal, whatever the device or pointer.
+
+import { signal } from "@cplieger/reactive";
+
+/** The pills that can leave the row, in the order they leave. */
+export type MovablePill = "mode" | "profile";
+const ORDER: readonly MovablePill[] = ["mode", "profile"];
+
+/** The pills the row has moved into the Chat options card. */
+export const movedPills = signal<readonly MovablePill[]>([]);
+
+/** Keep `row` fitting as its width or its controls change. `closeCards` runs when a moved pill's card was open, since
+ *  the card leaves with its slot. Returns the disconnect. */
+export function watchPillRow(
+  row: HTMLElement,
+  closeCards: () => void = () => undefined,
+): () => void {
+  const fit = (): void => {
+    let n = 0;
+    apply(row, n);
+    while (n < ORDER.length && row.scrollWidth > row.clientWidth) {
+      n += 1;
+      apply(row, n);
+    }
+    commit(row, ORDER.slice(0, n), closeCards);
+  };
+  const ro = new ResizeObserver(fit);
+  ro.observe(row);
+  // Mutations land before the frame paints, so a control that appears (a turn's split Send, the task list) and
+  // overflows the row is moved out before it is ever drawn.
+  const mo = new MutationObserver((records) => {
+    if (records.some((r) => !ownWrite(row, r))) {
+      fit();
+    }
+  });
+  mo.observe(row, { subtree: true, childList: true, attributes: true, characterData: true });
+  fit();
+  return () => {
+    ro.disconnect();
+    mo.disconnect();
+    movedPills.value = [];
+  };
+}
+
+function apply(row: HTMLElement, n: number): void {
+  const moved = ORDER.slice(0, n).join(" ");
+  if (moved === "") {
+    row.removeAttribute("data-moved");
+  } else if (row.dataset["moved"] !== moved) {
+    row.dataset["moved"] = moved;
+  }
+}
+
+function commit(row: HTMLElement, moved: readonly MovablePill[], closeCards: () => void): void {
+  const before = movedPills.peek();
+  if (moved.length === before.length) {
+    return;
+  }
+  movedPills.value = moved;
+  if (moved.some((m) => row.querySelector(`.pill-slot-${m} > .pill-expanded`) !== null)) {
+    closeCards();
+  }
+}
+
+/** The fit's own attribute, and the cards' contents, which take no room in the row. */
+function ownWrite(row: HTMLElement, r: MutationRecord): boolean {
+  if (r.target === row && r.attributeName === "data-moved") {
+    return true;
+  }
+  const target = r.target instanceof Element ? r.target : r.target.parentElement;
+  return (target?.closest(".pill-expand-content") ?? null) !== null;
+}

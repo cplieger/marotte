@@ -4,8 +4,8 @@ import { $ } from "./dom.js";
 import { formatTokens, formatMetering } from "./status-format.js";
 import { creditFigure, humanName } from "./strings.js";
 import { checkRuntimeHealth, runtimeStatusLine } from "./runtime-health.js";
-import { contextStroke, tokensUsed, wedgeDash } from "./context-ring.js";
-import type { CompactionPoint } from "./context-ring.js";
+import { contextInk, tokensUsed } from "./context-indicator.js";
+import type { CompactionPoint } from "./context-indicator.js";
 import { versionsSignal } from "./versions.js";
 import { el, effect, touch } from "@cplieger/reactive";
 import { announce } from "./legacy-ui/announce.js";
@@ -15,7 +15,7 @@ import type { MeteringItem, ConnectionStatus } from "./types.js";
 interface ContextBarUpdate {
   pct: number;
   contextSize: number;
-  /** The effective compaction point, resolved by context-ui.ts: where the band starts (null when
+  /** The effective compaction point, resolved by context-ui.ts: where the chat compacts (null when
    *  nothing compacts automatically) and the ramp's T. */
   compaction: CompactionPoint;
   credits: number;
@@ -60,16 +60,11 @@ class ContextBarController {
     const summarizedCount = opts.summarizedCount ?? 0;
     const clamped = Math.min(100, Math.max(0, pct));
 
-    // pathLength="100" on the element makes the dash pattern speak in percent, so the offset IS the
-    // unused remainder. The hardcoded 50.27 circumference this replaced was the ring's one magic
-    // constant.
-    $.contextRingFill.style.strokeDashoffset = String(100 - clamped);
-    $.contextRingFill.style.stroke = contextStroke(clamped, compaction.t);
-    // A band from 100% is zero-length, so a withheld band draws nothing.
-    const wedge = wedgeDash(compaction.band ?? 100);
-    $.contextRingWedge.style.strokeDasharray = wedge.dasharray;
-    $.contextRingWedge.style.strokeDashoffset = wedge.dashoffset;
-    $.contextIndicator.setAttribute("data-tooltip", ringTooltip(compaction.band));
+    $.contextLabel.style.setProperty("--ctx-ink", contextInk(clamped, compaction.t));
+    $.contextIndicator.setAttribute("data-tooltip", contextTooltip(compaction.at));
+    $.ctxCompactRow.classList.toggle("hidden", compaction.at === null);
+    $.ctxCompactAt.textContent =
+      compaction.at === null ? "" : `${String(Math.round(compaction.at))}%`;
     $.contextLabel.textContent = `${pct.toFixed(0)}%`;
 
     // Empty model = server-side default; label it "auto" rather than blank.
@@ -113,12 +108,12 @@ class ContextBarController {
 
 const contextBar = new ContextBarController();
 
-/** The ring's hover text, naming where the band sits or saying there is none. */
-function ringTooltip(band: number | null): string {
+/** The pill's hover text, naming where the chat compacts or saying nothing does. */
+function contextTooltip(at: number | null): string {
   const lead = "Context usage: tokens, credits and turns for this chat.";
-  return band === null
+  return at === null
     ? `${lead} Automatic compaction is off, so the conversation is compacted only when you compact it.`
-    : `${lead} The grey band marks ${String(Math.round(band))}%, where the conversation is compacted.`;
+    : `${lead} Compacts at ${String(Math.round(at))}%.`;
 }
 
 function renderMetering(items: MeteringItem[]): void {

@@ -39,7 +39,7 @@ vi.mock("./actions/chat.js", async (importOriginal) => ({
 }));
 
 const { mountChatView, activeTranscriptView } = await import("./messages.js");
-const { compactionPolicy } = await import("./context-ring.js");
+const { compactionPolicy } = await import("./context-indicator.js");
 const { setSessions, setActive, setPainted, bumpMessages } = await import("./store.js");
 
 mountChatView();

@@ -82,7 +82,7 @@ vi.mock("./store.js", async (importOriginal) => ({
   watchBusy: () => live.busy.value,
 }));
 
-const { initProfilePill } = await import("./profile-pill.js");
+const { initProfilePill, profileNote, profileSelect } = await import("./profile-pill.js");
 
 /** The ladder as policyfile.Profiles() orders it, Custom last. */
 const LADDER = ["guarded", "read-only", "trusted", "delegated", "unrestricted", "custom"].map(
@@ -393,6 +393,75 @@ describe("a pick made during a turn", () => {
     await flush();
     expect(pill().classList.contains("pending")).toBe(false);
     expect(pill().getAttribute("aria-label")).toBe("Security profile, currently Guarded");
+  });
+});
+
+describe("the profile select the Chat options card shows in the pill's place", () => {
+  function mountSelect(): HTMLSelectElement {
+    const select = profileSelect("profile-select");
+    document.body.append(select);
+    return select;
+  }
+  function pick(select: HTMLSelectElement, value: string): void {
+    select.value = value;
+    select.dispatchEvent(new Event("change"));
+  }
+  const values = (select: HTMLSelectElement): string[] => [...select.options].map((o) => o.value);
+
+  it("lists the ladder with the chat's profile selected, Custom only where it applies", async () => {
+    const select = mountSelect();
+    expect(values(select)).toEqual([
+      "guarded",
+      "read-only",
+      "trusted",
+      "delegated",
+      "unrestricted",
+    ]);
+    expect(select.value).toBe("trusted");
+    expect(select.selectedOptions[0]?.text).toBe("Trusted");
+    live.active.value = { id: "c-1", security_profile: "custom" };
+    expect(values(select)).toContain("custom");
+    expect(select.value).toBe("custom");
+    live.active.value = { id: "c-1", security_profile: "trusted" };
+    mocks.apiGetTyped.mockResolvedValue(view({ default: "custom" }));
+    mocks.sse.get("permissions_changed")?.("");
+    await flush();
+    expect(values(select)).toContain("custom");
+    expect(select.value).toBe("trusted");
+  });
+
+  it("sends a pick for the chat on screen, as the pill does", async () => {
+    const select = mountSelect();
+    pick(select, "read-only");
+    await flush();
+    expect(mocks.dispatch).toHaveBeenCalledWith({ chatID: "c-1", profile: "read-only" });
+    expect(select.value).toBe("read-only");
+    expect(document.getElementById("profile-pill-label")?.textContent).toBe("Read-only");
+  });
+
+  it("asks before Unrestricted, and goes back to the chat's profile when declined", async () => {
+    mocks.confirm.mockResolvedValue(false);
+    const select = mountSelect();
+    pick(select, "unrestricted");
+    await flush();
+    expect(mocks.confirm).toHaveBeenCalledTimes(1);
+    expect(mocks.dispatch).not.toHaveBeenCalled();
+    expect(select.value).toBe("trusted");
+  });
+
+  it("marks a pick made during a turn as waiting, as the pill does, and says why", async () => {
+    const select = mountSelect();
+    live.busy.value = true;
+    await flush();
+    expect(profileNote()).toBe("Applies after this turn");
+    pick(select, "guarded");
+    await flush();
+    expect(select.classList.contains("pending"), "the select's pending mark").toBe(true);
+    expect(pill().classList.contains("pending"), "the pill's, the same state").toBe(true);
+    live.busy.value = false;
+    await flush();
+    expect(select.classList.contains("pending")).toBe(false);
+    expect(profileNote()).toBe("");
   });
 });
 

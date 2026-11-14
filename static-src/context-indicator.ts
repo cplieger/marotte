@@ -1,5 +1,5 @@
-// How the 16px context indicator is drawn, DOM-free. The band and the colour ramp share one compaction point T (a
-// percentage of the window); `compactionPoint` is its owner.
+// How the context pill reads, DOM-free. The "Compacts at" figure and the share's colour ramp share one compaction
+// point T (a percentage of the window); `compactionPoint` is its owner.
 
 import { signal } from "@cplieger/reactive";
 
@@ -7,14 +7,14 @@ import { signal } from "@cplieger/reactive";
 const DEFAULT_AUTO_COMPACT_PCT = 80;
 
 /** How far below T the fill stops being green, and how far below T it is fully
- *  red, so red always arrives BEFORE the band. */
+ *  red, so red always arrives BEFORE the compaction point. */
 const GREEN_BELOW_T = 30;
 const RED_BELOW_T = 10;
 
 /** The ramp's T when nothing compacts: the window's own end. */
 const NO_COMPACTION_T = 100;
 
-/** The compaction settings the ring reads, mirrored from EffectiveSettings. */
+/** The compaction settings the pill reads, mirrored from EffectiveSettings. */
 interface CompactionPolicy {
   readonly enabled: boolean;
   readonly pct: number;
@@ -26,41 +26,34 @@ export const compactionPolicy = signal<CompactionPolicy>({
   pct: DEFAULT_AUTO_COMPACT_PCT,
 });
 
-/** Where the ring draws its band (null: nothing compacts automatically, so no
- *  band) and the T its colour ramp is keyed on. */
+/** Where the conversation is compacted (null: nothing compacts automatically) and the T its colour ramp is keyed on. */
 export interface CompactionPoint {
-  readonly band: number | null;
+  readonly at: number | null;
   readonly t: number;
 }
 
 /**
  * The effective compaction point: the slider's value, where marotte queues a compaction for the turn's end. Switched off:
- * no band, and the ramp keys on the window's end.
+ * nothing compacts, and the ramp keys on the window's end.
  */
 export function compactionPoint(policy: CompactionPolicy): CompactionPoint {
   if (!policy.enabled) {
-    return { band: null, t: NO_COMPACTION_T };
+    return { at: null, t: NO_COMPACTION_T };
   }
-  return { band: policy.pct, t: policy.pct };
+  return { at: policy.pct, t: policy.pct };
 }
 
-/** One decimal: two nearby percentages resolve to different strokes. */
+/** One decimal: two nearby percentages resolve to different inks. */
 const MIX_DECIMALS = 1;
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
 }
 
-/** Token operands only, so the ramp is theme-correct. */
+/** Token operands only, so the ramp is theme-correct and the pill's state picks the shades. */
 function mix(toToken: string, fromToken: string, ratio: number): string {
   const pct = (clamp(ratio, 0, 1) * 100).toFixed(MIX_DECIMALS);
   return `color-mix(in oklch, var(${toToken}) ${pct}%, var(${fromToken}))`;
-}
-
-/** Dash pattern for the band from `thresholdPct` to 100%. The period is exactly 100, so it cannot repeat on the path. */
-export function wedgeDash(thresholdPct: number): { dasharray: string; dashoffset: string } {
-  const band = 100 - clamp(thresholdPct, 0, 100);
-  return { dasharray: `${String(band)} ${String(100 - band)}`, dashoffset: String(band) };
 }
 
 /**
@@ -72,10 +65,11 @@ export function tokensUsed(pct: number, contextSize: number): number {
 }
 
 /**
- * Stroke at `pct` for compaction point `t`: green to `t - 30`, a continuous ramp through `--c-yellow`, saturating at
- * `--c-red` from `t - 10`. Percentages only, so one number is one colour whatever the window.
+ * The share's ink at `pct` for compaction point `t`: green to `t - 30`, a continuous ramp through yellow, saturating at
+ * red from `t - 10`. Percentages only, so one number is one colour whatever the window. The `--ctx-ink-*` shades are
+ * the pill's (15-input.css `.pill-context`), text-safe on each of its fills.
  */
-export function contextStroke(pct: number, t: number): string {
+export function contextInk(pct: number, t: number): string {
   const green = t - GREEN_BELOW_T;
   const red = t - RED_BELOW_T;
   // Derived rather than declared, so the hand-off is not a third number to keep
@@ -83,12 +77,12 @@ export function contextStroke(pct: number, t: number): string {
   const yellow = (green + red) / 2;
   const clamped = clamp(pct, 0, 100);
   if (clamped <= green) {
-    return "var(--c-green)";
+    return "var(--ctx-ink-green)";
   }
   if (clamped >= red) {
-    return "var(--c-red)";
+    return "var(--ctx-ink-red)";
   }
   return clamped < yellow
-    ? mix("--c-yellow", "--c-green", (clamped - green) / (yellow - green))
-    : mix("--c-red", "--c-yellow", (clamped - yellow) / (red - yellow));
+    ? mix("--ctx-ink-yellow", "--ctx-ink-green", (clamped - green) / (yellow - green))
+    : mix("--ctx-ink-red", "--ctx-ink-yellow", (clamped - yellow) / (red - yellow));
 }
