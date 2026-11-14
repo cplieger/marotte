@@ -99,21 +99,6 @@ func (s *Store) Customize(ctx context.Context) error {
 	return s.customize(ctx)
 }
 
-// EnsureCustom runs Customize unless the profile already is Custom, deciding under the same
-// lock, so of two concurrent callers only the first switches. switched reports whether this
-// call did.
-func (s *Store) EnsureCustom(ctx context.Context) (switched bool, err error) {
-	switchMu.Lock()
-	defer switchMu.Unlock()
-	if s.Active(ctx) == policyfile.ProfileCustom {
-		return false, nil
-	}
-	if err := s.customize(ctx); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
 func (s *Store) customize(ctx context.Context) error {
 	seeded, err := s.presetRulesInForce(ctx)
 	if err != nil {

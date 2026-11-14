@@ -559,3 +559,96 @@ func TestPolicyView_CarriesTheLadderAndTheActiveProfile(t *testing.T) {
 		t.Errorf("active profile = %q, want the default %q", view.Profile, policyfile.DefaultProfile)
 	}
 }
+
+func getProfileView(t *testing.T, s *Server) marotte.SecurityProfileView {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	s.handlePolicyProfile(rec, httptest.NewRequest(http.MethodGet, "/api/permissions/profile", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, body %s", rec.Code, rec.Body)
+	}
+	var view marotte.SecurityProfileView
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return view
+}
+
+// TestProfileView_CarriesTheLadderAndTheNewChatDefault: the chat pill renders the ladder and marks the
+// profile a new chat starts on, so a stale default here is a pill that names the wrong starting point.
+func TestProfileView_CarriesTheLadderAndTheNewChatDefault(t *testing.T) {
+	s, _, _, _ := profileFixture(t, nil)
+	view := getProfileView(t, s)
+	want := policyfile.Profiles()
+	if len(view.Profiles) != len(want) {
+		t.Fatalf("profiles = %d, want %d", len(view.Profiles), len(want))
+	}
+	for i := range want {
+		if view.Profiles[i].ID != want[i].ID {
+			t.Errorf("profile %d = %q, want %q", i, view.Profiles[i].ID, want[i].ID)
+		}
+	}
+	if view.Default != policyfile.ProfileTrusted {
+		t.Errorf("unset default = %q, want trusted", view.Default)
+	}
+	if rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileReadOnly}); rec.Code != http.StatusOK {
+		t.Fatalf("select: status = %d, body %s", rec.Code, rec.Body)
+	}
+	if got := getProfileView(t, s).Default; got != policyfile.ProfileReadOnly {
+		t.Errorf("default after selecting read-only = %q", got)
+	}
+}
+
+// TestProfileView_SavedGrants: a chat's profile adds presets on top of the files and cannot subtract, so the
+// pill must know when either file grants on its own.
+func TestProfileView_SavedGrants(t *testing.T) {
+	t.Run("no files", func(t *testing.T) {
+		s, _, _, _ := profileFixture(t, nil)
+		if getProfileView(t, s).SavedGrants {
+			t.Error("saved_grants = true with no permissions file")
+		}
+	})
+	t.Run("only a deny rule", func(t *testing.T) {
+		s, _, userPath, _ := profileFixture(t, nil)
+		if err := savePolicy(t.Context(), userPath, &policyfile.File{Rules: []policyfile.Rule{
+			{Capability: "shell", Effect: policyfile.EffectDeny, Match: []string{"rm *"}},
+		}}); err != nil {
+			t.Fatalf("Setup: %v", err)
+		}
+		if getProfileView(t, s).SavedGrants {
+			t.Error("saved_grants = true for a file that only denies")
+		}
+	})
+	t.Run("an allow rule in the user file", func(t *testing.T) {
+		s, _, userPath, _ := profileFixture(t, nil)
+		if err := savePolicy(t.Context(), userPath, &policyfile.File{Rules: []policyfile.Rule{
+			{Capability: "shell", Effect: policyfile.EffectAllow, Match: []string{"make *"}},
+		}}); err != nil {
+			t.Fatalf("Setup: %v", err)
+		}
+		if !getProfileView(t, s).SavedGrants {
+			t.Error("saved_grants = false with an allow rule in the user file")
+		}
+	})
+	t.Run("a preset reference in the workspace file", func(t *testing.T) {
+		s, _, _, wsPath := profileFixture(t, nil)
+		if err := os.MkdirAll(filepath.Dir(wsPath), 0o700); err != nil {
+			t.Fatalf("Setup: %v", err)
+		}
+		if err := os.WriteFile(wsPath, []byte("policies:\n  - dev-shell\n"), 0o600); err != nil {
+			t.Fatalf("Setup: %v", err)
+		}
+		if !getProfileView(t, s).SavedGrants {
+			t.Error("saved_grants = false with a preset reference in the workspace file")
+		}
+	})
+}
+
+func TestPolicyProfile_RefusesOtherMethods(t *testing.T) {
+	s, _, _, _ := profileFixture(t, nil)
+	rec := httptest.NewRecorder()
+	s.handlePolicyProfile(rec, httptest.NewRequest(http.MethodDelete, "/api/permissions/profile", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("DELETE status = %d, want 405", rec.Code)
+	}
+}

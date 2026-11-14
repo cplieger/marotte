@@ -64,7 +64,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.register(marotte.CmdSetAttachments, bind2(chats, r.Bus, cmdSetAttachments))
 	d.register(marotte.CmdDeleteChat, bind1(mem, cmdDeleteChat))
 
-	d.register(marotte.CmdPermissionResponse, bind2(r.Perms, r.Profiles, cmdPermission))
+	d.register(marotte.CmdPermissionResponse, bind1(r.Perms, cmdPermission))
 	d.register(marotte.CmdElicitationResponse, bind1(r.Perms, cmdElicitationResponse))
 	d.register(marotte.CmdUserInputResponse, bind1(r.Perms, cmdUserInputResponse))
 	d.RegisterChange(marotte.CmdRewindChat, bind6(r.Bridges, chats, r.Admission, r.Run, r.RunCutter, r.Bus, cmdRewindChat))
@@ -75,6 +75,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		bind5(r.Bridges, chats, r.Bus, r.Modes, keylock.New(cmp.Compare[marotte.ChatID]), cmdSetMode))
 	d.RegisterChange(marotte.CmdSetSupervisedMode,
 		bind3(r.Bridges, chats, keylock.New(cmp.Compare[marotte.ChatID]), cmdSetSupervisedMode))
+	d.register(marotte.CmdSetSecurityProfile, bind2(chats, r.ProfileReloads, cmdSetSecurityProfile))
 
 	d.register(marotte.CmdCancel, bind6(r.Run, r.Bridges, r.Perms, r.Terminals, r.Stops, r.SteerQueue, cmdCancel))
 	d.carryStop = func(ctx context.Context, chatID marotte.ChatID, rs RunStop) error {

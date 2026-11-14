@@ -741,7 +741,7 @@ type AlwaysReach = "user" | "session";
 
 const USER_RULE_HINT =
   "Saves the rule to your user permissions, which every kiro-cli session on this account reads, " +
-  "not only these chats. Switches Permissions to Custom if another profile is selected.";
+  "not only these chats. Each chat keeps its security profile.";
 
 const SESSION_RULE_HINT =
   "kiro-cli keeps this rule for this chat's session only. Nothing is saved and Permissions stay " +

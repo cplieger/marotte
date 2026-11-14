@@ -114,7 +114,7 @@ func TestCustomize_RefusesWithoutALivePolicy(t *testing.T) {
 }
 
 // A second Customize would save over the rule KAS wrote after the first switch.
-func TestEnsureCustom_ConcurrentCallersSwitchOnce(t *testing.T) {
+func TestCustomize_ConcurrentCallersSwitchOnce(t *testing.T) {
 	s, _ := storeOver(t, nil)
 	var lists atomic.Int32
 	second := make(chan struct{})
@@ -132,23 +132,23 @@ func TestEnsureCustom_ConcurrentCallersSwitchOnce(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	results := make([]bool, 2)
 	errs := make([]error, 2)
 	for i := range 2 {
-		wg.Go(func() { results[i], errs[i] = s.EnsureCustom(t.Context()) })
+		wg.Go(func() { errs[i] = s.Customize(t.Context()) })
 	}
 	wg.Wait()
 
+	switched := 0
 	for i, err := range errs {
-		if err != nil {
-			t.Fatalf("EnsureCustom #%d = %v", i, err)
+		switch {
+		case err == nil:
+			switched++
+		case !errors.Is(err, ErrNoLivePolicy):
+			t.Fatalf("Customize #%d = %v, want nil or ErrNoLivePolicy", i, err)
 		}
 	}
-	if got := lists.Load(); got != 1 || results[0] == results[1] {
-		t.Errorf("two concurrent EnsureCustom read the live policy %d times and switched %v, want one read and one switch", got, results)
-	}
-	if switched, err := s.EnsureCustom(t.Context()); err != nil || switched {
-		t.Errorf("EnsureCustom on custom = (%v, %v), want (false, nil)", switched, err)
+	if got := lists.Load(); got != 1 || switched != 1 {
+		t.Errorf("two concurrent Customize read the live policy %d times and switched %d times, want one of each", got, switched)
 	}
 }
 
@@ -157,8 +157,8 @@ func TestCustomize_AStaleRequestAfterTheSwitchLeavesTheUserFileAlone(t *testing.
 	s, userPath := storeOver(t, []marotte.PolicyRule{
 		{Capability: "fs_read", Effect: "allow", Scope: "session", Source: "preset:read-workspace", Match: []string{"/w/**"}},
 	})
-	if switched, err := s.EnsureCustom(t.Context()); err != nil || !switched {
-		t.Fatalf("Setup: EnsureCustom = (%v, %v), want (true, nil)", switched, err)
+	if err := s.Customize(t.Context()); err != nil {
+		t.Fatalf("Setup: Customize = %v", err)
 	}
 	kasRule := policyfile.Rule{Capability: "shell", Effect: "allow", Match: []string{"head *"}}
 	if err := policyfile.Mutate(t.Context(), userPath, func(f *policyfile.File) (bool, error) { return f.Upsert(&kasRule) }); err != nil {

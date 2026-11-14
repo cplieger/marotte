@@ -433,6 +433,14 @@
                 </button>
                 <span id="model-switch-list" class="pill-expand-content pill-model-list hidden"></span>
               </span>
+              <!-- The chat's security profile (profile-pill.ts), drawn with the mode pill's classes. -->
+              <span class="pill-slot">
+                <button id="profile-pill" class="pill pill-role pill-expandable hidden" type="button" data-tooltip="Security profile" aria-label="Security profile">
+                  <span id="profile-pill-icon" class="pill-role-icon"></span>
+                  <span id="profile-pill-label" class="pill-role-label"></span>
+                </button>
+                <span id="profile-list" class="pill-expand-content pill-role-list hidden"></span>
+              </span>
               <span class="pill-slot">
                 <button id="role-pill" class="pill pill-role pill-expandable" type="button" data-tooltip="Switch mode" aria-label="Switch mode">
                   <span id="role-pill-icon" class="pill-role-icon"></span>
@@ -1207,11 +1215,11 @@
 
           <!-- Permissions: active (Cedar) policy + supervised mode + agent ignore files -->
           <div class="settings-panel hidden" data-settings-panel="permissions">
-            <p class="settings-panel-intro">The <strong>Active policy</strong> below is the live permission policy kiro-cli actually enforces, including shell commands. Supervised mode and agent ignore files are separate layers under it. The review gate is kiro-cli's own, and marotte only sets a value for it. Defaults here apply to new conversations, and the chat-options menu next to the prompt changes the conversation you are in.</p>
+            <p class="settings-panel-intro">The <strong>Active policy</strong> below is the live permission policy kiro-cli actually enforces, including shell commands. Supervised mode and agent ignore files are separate layers under it. The review gate is kiro-cli's own, and marotte only sets a value for it. Defaults here apply to new conversations, and the pills and the chat-options menu next to the prompt change the conversation you are in.</p>
 
             <div class="page-section" id="security-profile-section">
               <h2 class="section-title">Security profile</h2>
-              <p class="section-hint">How much the agent may do here without asking. Outside Custom the table below is read-only. Rules <em>you</em> added stay in the table and keep applying alongside the profile. Open chats switch at their next message.</p>
+              <p class="section-hint">How much the agent may do here without asking. New chats start on this profile, Trusted unless you pick another, and the shield pill beside the model pill changes it for one chat. Outside Custom the table below is read-only. Rules <em>you</em> added stay in the table and keep applying alongside the profile.</p>
               <p id="security-profile-admin" class="section-hint governance-reason hidden">Your administrator has rules on this machine that apply under every profile and win over it.</p>
               <div id="security-profile-list" class="profile-list" role="radiogroup" aria-label="Security profile"></div>
               <div class="profile-actions">

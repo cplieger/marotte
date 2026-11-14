@@ -219,6 +219,7 @@ describe("the composer, measured at real viewport sizes", () => {
     ] as const) {
       await bandsAt(w, h, tier);
       document.getElementById("task-list-pill")?.classList.remove("hidden");
+      document.getElementById("profile-pill")?.classList.remove("hidden");
       const model = document.getElementById("ctx-model-pill");
       if (model !== null) {
         model.textContent = "model-alpha-4.5-thinking";
@@ -233,6 +234,7 @@ describe("the composer, measured at real viewport sizes", () => {
       ).toEqual([
         "context-indicator",
         "switch-model-btn",
+        "profile-pill",
         "role-pill",
         "chat-options-btn",
         "task-list-pill",
@@ -376,6 +378,7 @@ describe("the composer, measured at real viewport sizes", () => {
     ] as const) {
       await bandsAt(w, h, tier);
       document.getElementById("task-list-pill")?.classList.remove("hidden");
+      document.getElementById("profile-pill")?.classList.remove("hidden");
       const model = document.getElementById("ctx-model-pill");
       if (model !== null) {
         model.textContent = "model-alpha-4.5-thinking";

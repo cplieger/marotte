@@ -9,9 +9,11 @@ import (
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/marotte/internal/securityprofile"
+	"github.com/cplieger/marotte/internal/workspace"
 )
 
 // Seed is valid only when switching TO custom, and refused otherwise rather than ignored.
@@ -20,10 +22,54 @@ type profileBody struct {
 	Seed    bool   `json:"seed"`
 }
 
+// handlePolicyProfile serves /api/permissions/profile: GET is the chat pill's read, POST selects the Settings
+// profile, the one new chats start on.
 func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
+	switch r.Method {
+	case http.MethodGet:
+		s.handleProfileView(w, r)
+	case http.MethodPost:
+		s.handleProfileSelect(w, r)
+	default:
+		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
+}
+
+// handleProfileView reads only config.json and the two permission files, never an observer pass, because the
+// pill reads it on every chat it opens.
+func (s *Server) handleProfileView(w http.ResponseWriter, r *http.Request) {
+	httpserver.WriteJSON(w, marotte.SecurityProfileView{
+		Profiles:    securityProfileCatalog(),
+		Default:     s.activeProfile(r.Context()),
+		SavedGrants: s.savedGrants(),
+	})
+}
+
+// savedGrants reports whether the user or workspace permissions file grants on its own. A file it cannot read
+// counts as granting nothing, as KAS skips one it cannot load.
+func (s *Server) savedGrants() bool {
+	kiroHome, err := workspace.KiroHomeDir()
+	if err != nil {
+		return false
+	}
+	for _, scope := range []string{policyfile.ScopeUser, policyfile.ScopeWorkspace} {
+		path, err := policyfile.PathFor(scope, policyfile.Roots{KiroHome: kiroHome, WorkDir: s.workDir})
+		if err != nil {
+			continue
+		}
+		held, err := policyfile.HoldsGrant(path)
+		if err != nil {
+			slog.Debug("security profile view: permissions file unreadable", "scope", scope, "error", logsafe.Field(err.Error()))
+			continue
+		}
+		if held {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) handleProfileSelect(w http.ResponseWriter, r *http.Request) {
 	var body profileBody
 	if !decodeBody(w, r, &body) {
 		return

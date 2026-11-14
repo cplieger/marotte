@@ -19,6 +19,7 @@ import { initPointerModeToggle, revealPointerModeToggle } from "./pointer-mode.j
 import { initClockSetting } from "./clock-setting.js";
 import { initPageTitleFit } from "./page-title.js";
 import { initRolePicker } from "./role-picker.js";
+import { initProfilePill } from "./profile-pill.js";
 import * as sse from "./sse-adapter.js";
 import { installMirrors } from "./mirror.js";
 import { initUI, renderIdentity } from "./settings.js";
@@ -496,6 +497,7 @@ function setupInput(): void {
   initRolePicker(() => {
     void fetchCatalog();
   });
+  initProfilePill();
   // Queued-prompt chips (pending sends buffered while a turn is in flight).
   initPendingSteers();
   // The composer band's live-run rows; a pure projection of the run store.

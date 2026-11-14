@@ -9,27 +9,16 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/securityprofile"
 )
 
 type alwaysDeps struct {
 	*takeDeps
-	switchErr    error
-	duringSwitch func()
-	ask          marotte.PermissionNeededPayload
-	events       []string
+	ask    marotte.PermissionNeededPayload
+	events []string
 }
 
 func (d *alwaysDeps) PendingPermission(_ marotte.ChatID, id int64) (marotte.PermissionNeededPayload, bool) {
 	return d.ask, id == d.ask.RequestID
-}
-
-func (d *alwaysDeps) EnsureCustomProfile(context.Context) error {
-	d.events = append(d.events, "custom")
-	if d.duringSwitch != nil {
-		d.duringSwitch()
-	}
-	return d.switchErr
 }
 
 func (d *alwaysDeps) TakePendingPermissionOption(chatID marotte.ChatID, id int64, opt string, by marotte.SettledBy) (AskReply, bool, bool) {
@@ -77,7 +66,7 @@ func answerJSON(t *testing.T, v any) string {
 	return string(raw)
 }
 
-func TestCmdPermission_AlwaysSavesAUserRuleAfterSwitchingToCustom(t *testing.T) {
+func TestCmdPermission_AlwaysSavesAUserRuleAndKeepsTheProfile(t *testing.T) {
 	for _, tc := range []struct {
 		name, option, scope, want string
 	}{
@@ -100,12 +89,12 @@ func TestCmdPermission_AlwaysSavesAUserRuleAfterSwitchingToCustom(t *testing.T) 
 				RequestID: 7, OptionID: tc.option, AlwaysResource: "  head *  ", AlwaysScope: tc.scope,
 			})
 
-			if _, err := cmdPermission(t.Context(), d, d, cmd); err != nil {
+			if _, err := cmdPermission(t.Context(), d, cmd); err != nil {
 				t.Fatalf("CmdPermission = %v", err)
 			}
 
-			if got := d.events; len(got) != 3 || got[0] != "custom" || got[1] != "claim" || got[2] != "answer" {
-				t.Errorf("order = %v, want [custom claim answer]: kiro-cli's write must follow marotte's", got)
+			if got := d.events; len(got) != 2 || got[0] != "claim" || got[1] != "answer" {
+				t.Errorf("events = %v, want [claim answer]: a saved rule loosens every chat, so it switches no profile", got)
 			}
 			if len(br.answers) != 1 {
 				t.Fatalf("answers = %d, want 1", len(br.answers))
@@ -117,20 +106,18 @@ func TestCmdPermission_AlwaysSavesAUserRuleAfterSwitchingToCustom(t *testing.T) 
 	}
 }
 
-// A session rule lives only in KAS's memory, so switching to Custom would flip the profile for
-// a rule no file holds.
 func TestCmdPermission_AlwaysSessionScopeSavesNoFileAndKeepsTheProfile(t *testing.T) {
 	d, br := newAlwaysDeps()
 	cmd := decisionCommand(t, marotte.CmdPermissionResponse, marotte.PermissionResponseCommand{
 		RequestID: 7, OptionID: "always-accept", AlwaysResource: "head *", AlwaysScope: "session",
 	})
 
-	if _, err := cmdPermission(t.Context(), d, d, cmd); err != nil {
+	if _, err := cmdPermission(t.Context(), d, cmd); err != nil {
 		t.Fatalf("CmdPermission = %v", err)
 	}
 
 	if got := d.events; len(got) != 2 || got[0] != "claim" || got[1] != "answer" {
-		t.Errorf("events = %v, want [claim answer] with no switch to Custom", got)
+		t.Errorf("events = %v, want [claim answer] for a session rule", got)
 	}
 	if len(br.answers) != 1 {
 		t.Fatalf("answers = %d, want 1", len(br.answers))
@@ -158,7 +145,7 @@ func TestCmdPermission_AlwaysScopeIsChecked(t *testing.T) {
 				RequestID: 7, OptionID: tc.option, AlwaysResource: tc.resource, AlwaysScope: tc.scope,
 			})
 
-			_, err := cmdPermission(t.Context(), d, d, cmd)
+			_, err := cmdPermission(t.Context(), d, cmd)
 
 			if got := statusOf(err); got != http.StatusBadRequest || !errors.Is(err, errAlwaysScopeInvalid) {
 				t.Fatalf("CmdPermission(%q, scope %q) = %v (status %d), want 400 always_scope_invalid", tc.option, tc.scope, err, got)
@@ -167,24 +154,6 @@ func TestCmdPermission_AlwaysScopeIsChecked(t *testing.T) {
 				t.Errorf("events = %v after a refused scope, want none: the ask must stay pending", d.events)
 			}
 		})
-	}
-}
-
-func TestCmdPermission_AlwaysRefusalLeavesTheAskPending(t *testing.T) {
-	d, br := newAlwaysDeps()
-	d.switchErr = securityprofile.ErrNoLivePolicy
-	cmd := decisionCommand(t, marotte.CmdPermissionResponse, marotte.PermissionResponseCommand{
-		RequestID: 7, OptionID: "always-accept", AlwaysResource: "head *",
-	})
-
-	_, err := cmdPermission(t.Context(), d, d, cmd)
-
-	var se *statusError
-	if !errors.As(err, &se) || se.code != http.StatusConflict || se.reason != reasonAlwaysRuleNotSaved {
-		t.Fatalf("CmdPermission = %v, want a 409 carrying %q", err, reasonAlwaysRuleNotSaved)
-	}
-	if len(d.takes) != 0 || len(br.answers) != 0 {
-		t.Errorf("claims = %v, answers = %d after a refused switch, want none", d.takes, len(br.answers))
 	}
 }
 
@@ -202,7 +171,7 @@ func TestCmdPermission_AlwaysPatternIsChecked(t *testing.T) {
 				RequestID: 7, OptionID: tc.option, AlwaysResource: tc.resource,
 			})
 
-			_, err := cmdPermission(t.Context(), d, d, cmd)
+			_, err := cmdPermission(t.Context(), d, cmd)
 
 			if got := statusOf(err); got != http.StatusBadRequest || !errors.Is(err, errAlwaysResourceInvalid) {
 				t.Fatalf("CmdPermission(%q, %q) = %v (status %d), want 400 always_resource_invalid", tc.option, tc.resource, err, got)
@@ -218,7 +187,7 @@ func TestCmdPermission_OneTimeAnswerLeavesTheProfileAlone(t *testing.T) {
 	d, br := newAlwaysDeps()
 	cmd := decisionCommand(t, marotte.CmdPermissionResponse, marotte.PermissionResponseCommand{RequestID: 7, OptionID: "accept"})
 
-	if _, err := cmdPermission(t.Context(), d, d, cmd); err != nil {
+	if _, err := cmdPermission(t.Context(), d, cmd); err != nil {
 		t.Fatalf("CmdPermission = %v", err)
 	}
 
@@ -226,7 +195,7 @@ func TestCmdPermission_OneTimeAnswerLeavesTheProfileAlone(t *testing.T) {
 		t.Errorf("answer = %s, want a plain accept", got)
 	}
 	if len(d.events) != 2 || d.events[0] != "claim" {
-		t.Errorf("events = %v, want [claim answer] with no switch to Custom", d.events)
+		t.Errorf("events = %v, want [claim answer] for a one-time answer", d.events)
 	}
 }
 
@@ -271,7 +240,7 @@ func TestCmdPermission_AlwaysSubjectPatternSavesKASOwnSubject(t *testing.T) {
 				RequestID: 7, OptionID: "always-accept", AlwaysResource: tc.chosen,
 			})
 
-			if _, err := cmdPermission(t.Context(), d, d, cmd); err != nil {
+			if _, err := cmdPermission(t.Context(), d, cmd); err != nil {
 				t.Fatalf("CmdPermission(%q) = %v", tc.chosen, err)
 			}
 
@@ -286,24 +255,5 @@ func TestCmdPermission_AlwaysSubjectPatternSavesKASOwnSubject(t *testing.T) {
 				t.Errorf("CmdPermission(%q) saved %q, want %q", tc.chosen, got, tc.want)
 			}
 		})
-	}
-}
-
-// A claimed ask nobody answers wedges the turn, so the answer outlives the request.
-func TestCmdPermission_AlwaysAnswerSurvivesAClientThatLeftDuringTheSwitch(t *testing.T) {
-	d, br := newAlwaysDeps()
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	d.duringSwitch = cancel
-	cmd := decisionCommand(t, marotte.CmdPermissionResponse, marotte.PermissionResponseCommand{
-		RequestID: 7, OptionID: "always-accept", AlwaysResource: "head *",
-	})
-
-	if _, err := cmdPermission(ctx, d, d, cmd); err != nil {
-		t.Fatalf("CmdPermission = %v", err)
-	}
-
-	if got := d.events; len(got) != 3 || got[2] != "answer" || len(br.answers) != 1 {
-		t.Errorf("events = %v, answers = %d after the client left mid-switch, want [custom claim answer] and 1", got, len(br.answers))
 	}
 }

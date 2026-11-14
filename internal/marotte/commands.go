@@ -32,6 +32,7 @@ const (
 	CmdSetAttachments      CommandType = "set_attachments"
 	CmdSetMode             CommandType = "set_mode"
 	CmdSetSupervisedMode   CommandType = "set_supervised_mode"
+	CmdSetSecurityProfile  CommandType = "set_security_profile"
 	CmdSteer               CommandType = "steer"
 	CmdSteerClear          CommandType = "steer_clear"
 	CmdQueuePrompt         CommandType = "queue_prompt"
@@ -342,6 +343,12 @@ func (e EffortLevel) Valid() bool {
 // and asks for one approval, so there is no marotte-side queue to drain.
 type SetSupervisedModeCommand struct {
 	Enabled bool `json:"enabled"`
+}
+
+// SetSecurityProfileCommand is the payload for type="set_security_profile": a policyfile profile id for this chat's
+// session. A run's chat is refused, since its profile follows the chat that launched it.
+type SetSecurityProfileCommand struct {
+	Profile string `json:"profile"`
 }
 
 // SteerCommand is the payload for type="steer": a message that joins the RUNNING turn, merged by

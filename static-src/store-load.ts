@@ -541,6 +541,7 @@ async function readChatList(signal?: AbortSignal): Promise<boolean> {
       acp_session_id: h.acp_session_id ?? "",
       current_mode_id: h.current_mode_id ?? "",
       supervised_mode: h.supervised_mode ?? false,
+      security_profile: h.security_profile ?? "",
       run: newerRun(existing?.run, h.run),
       tangent: h.tangent ?? false,
       effort: h.effort ?? "",

@@ -162,6 +162,7 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.PolicyRuleCore](),
 	wiregen.TypeRef[marotte.PolicyRule](),
 	wiregen.TypeRef[marotte.SecurityProfile](),
+	wiregen.TypeRef[marotte.SecurityProfileView](),
 	wiregen.TypeRef[marotte.PolicyView](),
 	wiregen.TypeRef[marotte.PolicyExplainResult](),
 	wiregen.TypeRef[marotte.PolicyErrorItem](),

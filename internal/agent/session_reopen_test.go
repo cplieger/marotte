@@ -17,6 +17,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/policyfile"
+	"github.com/cplieger/marotte/internal/securityprofile"
 	"github.com/cplieger/marotte/internal/settings"
 )
 
@@ -81,6 +82,9 @@ func writeSetting(t *testing.T, configDir, key string, value any) {
 	}
 }
 
+// learnMemory is what memory_mode "learn" sends at a door.
+var learnMemory = marotte.MemoryPreference{Mode: "read_write", Reflection: true}
+
 func sessionClosed(br *fakeBridge) bool {
 	br.mu.Lock()
 	defer br.mu.Unlock()
@@ -88,12 +92,17 @@ func sessionClosed(br *fakeBridge) bool {
 }
 
 func TestMarkSessionsForReload_AnIdleChatReloadsAtItsNextOpen(t *testing.T) {
-	h, configDir := reopenFixture(t)
+	h, _ := reopenFixture(t)
 	first, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	writeSetting(t, configDir, settings.KeySecurityProfile, "unrestricted")
+	if _, err := h.chatStore.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.SecurityProfile = policyfile.ProfileUnrestricted
+		return true
+	}); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
 
 	h.markSessionsForReload("test")
 
@@ -133,52 +142,19 @@ func TestMarkSessionsForReload_LeavesHostSessionsUnmarked(t *testing.T) {
 	}
 }
 
-func TestSecurityProfileChanged_ReopensOpenChats(t *testing.T) {
+// The Settings profile is the default for new chats: an open chat keeps the profile its header names.
+func TestSecurityProfileChanged_LeavesOpenChatsOnTheirProfile(t *testing.T) {
 	h, configDir := reopenFixture(t)
 	first, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	writeSetting(t, configDir, settings.KeySecurityProfile, "unrestricted")
-
-	h.SecurityProfileChanged(t.Context())
-
-	if second, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil || second == first {
-		t.Errorf("after a profile change the chat's next open kept its bridge (err %v)", err)
-	}
-}
-
-func TestSecurityProfileChanged_KeepsTheBridgeWhenTheProfileInForceIsUnchanged(t *testing.T) {
-	h, _ := reopenFixture(t)
-	first, err := h.coord.openReleased(t.Context(), "c1", "")
-	if err != nil {
-		t.Fatalf("OpenBridge: %v", err)
-	}
+	writeSetting(t, configDir, settings.KeySecurityProfile, policyfile.ProfileUnrestricted)
 
 	h.SecurityProfileChanged(t.Context())
 
 	if second, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil || second != first {
-		t.Errorf("re-selecting the profile in force replaced the chat's bridge (err %v)", err)
-	}
-}
-
-// openBridge reconciles before the profile write's own callback runs; the callback must not
-// retire the session already opened under the new profile.
-func TestSecurityProfileChanged_KeepsABridgeAlreadyOpenedUnderTheNewProfile(t *testing.T) {
-	h, configDir := reopenFixture(t)
-	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
-		t.Fatalf("OpenBridge: %v", err)
-	}
-	writeSetting(t, configDir, settings.KeySecurityProfile, "unrestricted")
-	fresh, err := h.coord.openReleased(t.Context(), "c1", "")
-	if err != nil {
-		t.Fatalf("OpenBridge after the write: %v", err)
-	}
-
-	h.SecurityProfileChanged(t.Context())
-
-	if again, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil || again != fresh {
-		t.Errorf("the profile callback replaced a session already opened under the new profile (err %v)", err)
+		t.Errorf("a Settings profile change replaced an open chat's bridge (err %v); it is the default for new chats only", err)
 	}
 }
 
@@ -265,7 +241,7 @@ var configWrites = []struct {
 	reach settingReach
 }{
 	{key: settings.KeyMemoryMode, value: "learn", reach: reachReopen},
-	{key: settings.KeySecurityProfile, value: policyfile.ProfileTrusted, reach: reachReopen},
+	{key: settings.KeySecurityProfile, value: policyfile.ProfileUnrestricted, reach: reachNewChat},
 	{key: settings.KeyWorkflowsEnabled, value: false, reach: reachReopen},
 	{key: settings.KeyChatMessaging, value: true, reach: reachReopen},
 	{key: settings.KeyChatAwareness, value: true, reach: reachReopen},
@@ -442,72 +418,6 @@ func broadcastTypes(h *Runtime, since uint64) []marotte.EventType {
 	return out
 }
 
-func TestEnsureCustomProfile_SwitchesAGuardedProfileToCustom(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	h, configDir := reopenFixture(t)
-	// The preset rules are read on an observer pass.
-	fakeSourceOf(t, h).setObserver(func() engineSession {
-		br := newFakeBridge()
-		br.callResults = map[string]json.RawMessage{methodV3PermissionsList: json.RawMessage(`{"rules":[` +
-			`{"capability":"shell","effect":"allow","match":["ls *"],"scope":"session","source":"preset:read-workspace"}]}`)}
-		return br
-	})
-	writeSetting(t, configDir, settings.KeySecurityProfile, policyfile.ProfileGuarded)
-	first, err := h.coord.openReleased(t.Context(), "c1", "")
-	if err != nil {
-		t.Fatalf("OpenBridge: %v", err)
-	}
-	since := h.bus.fanout.Position().Head
-
-	if err := h.EnsureCustomProfile(t.Context()); err != nil {
-		t.Fatalf("EnsureCustomProfile on guarded = %v, want nil", err)
-	}
-
-	var active string
-	if !settings.FieldInto(t.Context(), configDir, settings.KeySecurityProfile, &active) || active != policyfile.ProfileCustom {
-		t.Errorf("security_profile after EnsureCustomProfile = %q, want %q", active, policyfile.ProfileCustom)
-	}
-	f, err := policyfile.Load(filepath.Join(home, ".kiro", "settings", "permissions.yaml"))
-	if err != nil {
-		t.Fatalf("Load the user permissions file: %v", err)
-	}
-	want := []policyfile.Rule{{Capability: "shell", Effect: "allow", Match: []string{"ls *"}}}
-	if !reflect.DeepEqual(f.Rules, want) {
-		t.Errorf("user permissions file rules = %+v, want Guarded's preset rules %+v", f.Rules, want)
-	}
-	if second, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil || second == first {
-		t.Errorf("after the switch to Custom the chat's next open kept its bridge (err %v)", err)
-	}
-	got := broadcastTypes(h, since)
-	for _, typ := range []marotte.EventType{marotte.EventSettingsUpdated, marotte.EventPermissionsChanged} {
-		if !slices.Contains(got, typ) {
-			t.Errorf("broadcasts after the switch = %v, want %s among them", got, typ)
-		}
-	}
-}
-
-func TestEnsureCustomProfile_IsANoOpOnCustom(t *testing.T) {
-	h, configDir := reopenFixture(t)
-	t.Setenv("HOME", t.TempDir())
-	writeSetting(t, configDir, settings.KeySecurityProfile, "custom")
-	first, err := h.coord.openReleased(t.Context(), "c1", "")
-	if err != nil {
-		t.Fatalf("OpenBridge: %v", err)
-	}
-
-	if err := h.EnsureCustomProfile(t.Context()); err != nil {
-		t.Fatalf("EnsureCustomProfile on custom = %v, want nil", err)
-	}
-
-	if second, _ := h.coord.openReleased(t.Context(), "c1", ""); second != first {
-		t.Error("EnsureCustomProfile on custom reopened an open chat")
-	}
-	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".kiro", "settings", "permissions.yaml")); !os.IsNotExist(err) {
-		t.Errorf("EnsureCustomProfile on custom touched the user permissions file (stat err %v)", err)
-	}
-}
-
 // wantTelemetryPending checks a busy engine's answer to a telemetry move: restart-pending for usage telemetry, the
 // chat's session left in place, and no second generation while the turn runs.
 func wantTelemetryPending(t *testing.T, h *Runtime, first, second *sharedBridge) {
@@ -614,7 +524,7 @@ func presetPolicy(br *fakeBridge) {
 	}
 }
 
-func TestEnsureCustomProfile_CopiesTheProfileAHandEditPicked(t *testing.T) {
+func TestCustomize_CopiesTheProfileAHandEditPicked(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	h, configDir := reopenFixtureWith(t, presetPolicy)
@@ -628,8 +538,11 @@ func TestEnsureCustomProfile_CopiesTheProfileAHandEditPicked(t *testing.T) {
 	rewriteConfigByHand(t, configDir, `{"`+settings.KeySecurityProfile+`":"`+policyfile.ProfileGuarded+`"}`)
 
 	// The policy read is an observer pass opened with the presets the document names now.
-	if err := h.EnsureCustomProfile(t.Context()); err != nil {
-		t.Fatalf("EnsureCustomProfile after a hand edit to guarded = %v, want nil", err)
+	store := &securityprofile.Store{
+		List: h.config.PolicyList, Publish: h.Broadcast, ConfigDir: h.lifecycle.configDir, WorkDir: h.lifecycle.workDir,
+	}
+	if err := store.Customize(t.Context()); err != nil {
+		t.Fatalf("Customize after a hand edit to guarded = %v, want nil", err)
 	}
 	f, err := policyfile.Load(filepath.Join(home, ".kiro", "settings", "permissions.yaml"))
 	if err != nil {
@@ -673,18 +586,18 @@ func TestOpenBridge_AHandEditOfConfigReopensTheChatAtItsNextOpen(t *testing.T) {
 	}
 	session := first.session().SessionID()
 
-	rewriteConfigByHand(t, configDir, `{"`+settings.KeySecurityProfile+`":"unrestricted"}`)
+	rewriteConfigByHand(t, configDir, `{"`+settings.KeyMemoryMode+`":"learn"}`)
 
 	second, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge after the hand edit: %v", err)
 	}
 	if second == first || !sessionClosed(fakeOf(first)) {
-		t.Fatal("a hand edit of security_profile left the chat on its old session")
+		t.Fatal("a hand edit of memory_mode left the chat on its old session")
 	}
 	opts := fakeOf(second).lastSessionOpts()
-	if !slices.Equal(opts.Presets, []string{"allow-all"}) || opts.SessionID != string(session) {
-		t.Errorf("the reopened bridge started with presets %v loading %q, want [allow-all] loading %q", opts.Presets, opts.SessionID, session)
+	if opts.Memory != learnMemory || opts.SessionID != string(session) {
+		t.Errorf("the reopened bridge started with memory %+v loading %q, want %+v loading %q", opts.Memory, opts.SessionID, learnMemory, session)
 	}
 }
 
@@ -696,7 +609,7 @@ func TestReconcileSessionSettings_ABusyChatSwitchesAfterItsTurn(t *testing.T) {
 			t.Fatalf("OpenBridge: %v", err)
 		}
 		turnID, _ := h.stagePromptTurn(t, "c1")
-		writeSetting(t, configDir, settings.KeySecurityProfile, "unrestricted")
+		writeSetting(t, configDir, settings.KeyMemoryMode, "learn")
 
 		h.ReconcileSessionSettings(t.Context())
 
@@ -710,11 +623,11 @@ func TestReconcileSessionSettings_ABusyChatSwitchesAfterItsTurn(t *testing.T) {
 			t.Fatalf("OpenBridge after the turn: %v", err)
 		}
 		if after == first || !sessionClosed(fakeOf(first)) {
-			t.Fatal("the first open after the turn kept the session opened under the old profile")
+			t.Fatal("the first open after the turn kept the session opened under the old settings")
 		}
 		opts := fakeOf(after).lastSessionOpts()
-		if !slices.Equal(opts.Presets, []string{"allow-all"}) || opts.SessionID != string(first.session().SessionID()) {
-			t.Errorf("the reopened bridge started with presets %v loading %q, want [allow-all] loading the chat's session", opts.Presets, opts.SessionID)
+		if opts.Memory != learnMemory || opts.SessionID != string(first.session().SessionID()) {
+			t.Errorf("the reopened bridge started with memory %+v loading %q, want %+v loading the chat's session", opts.Memory, opts.SessionID, learnMemory)
 		}
 	})
 }
@@ -726,7 +639,7 @@ func TestReconcileSessionSettings_AChatHostingALiveRunSwitchesAfterTheRun(t *tes
 		if err != nil {
 			t.Fatalf("OpenBridge: %v", err)
 		}
-		writeSetting(t, configDir, settings.KeySecurityProfile, "unrestricted")
+		writeSetting(t, configDir, settings.KeyMemoryMode, "learn")
 
 		endStep := hostStepOn(t, h, "sess-step")
 		h.ReconcileSessionSettings(t.Context())
@@ -741,10 +654,10 @@ func TestReconcileSessionSettings_AChatHostingALiveRunSwitchesAfterTheRun(t *tes
 			t.Fatalf("OpenBridge after the run: %v", err)
 		}
 		if after == first || !sessionClosed(fakeOf(first)) {
-			t.Fatal("the first open after the run kept the session opened under the old profile")
+			t.Fatal("the first open after the run kept the session opened under the old settings")
 		}
-		if got := fakeOf(after).lastSessionOpts().Presets; !slices.Equal(got, []string{"allow-all"}) {
-			t.Errorf("the reopened bridge's presets = %v, want [allow-all]", got)
+		if got := fakeOf(after).lastSessionOpts().Memory; got != learnMemory {
+			t.Errorf("the reopened bridge's memory = %+v, want %+v", got, learnMemory)
 		}
 	})
 }

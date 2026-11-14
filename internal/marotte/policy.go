@@ -72,6 +72,15 @@ type SecurityProfile struct {
 	Presets []string `json:"presets"`
 }
 
+// SecurityProfileView is the GET /api/permissions/profile response, the chat profile pill's read: the ladder in
+// picker order, the Settings profile a new chat starts on, and whether the user or workspace file grants on its
+// own (policyfile.HoldsGrant), which no chat's profile takes away.
+type SecurityProfileView struct {
+	Profiles    []SecurityProfile `json:"profiles"`
+	Default     string            `json:"default"`
+	SavedGrants bool              `json:"saved_grants"`
+}
+
 // PolicyExplainRequest is the POST /api/permissions/explain body. Exactly
 // one of Capability / ToolID is required; Resource is the path (fs caps) or
 // command (shell) being simulated. KAS requires a resource for the shell

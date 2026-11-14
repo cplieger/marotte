@@ -389,6 +389,9 @@ export interface Session {
   /** The tier parked with `pending_model` (`ChatHeader.pending_effort`); empty carries `effort`. */
   pending_effort?: string;
   supervised_mode?: boolean;
+  /** `ChatHeader.security_profile`: the profile this chat's session runs, "" until its first session pins the
+   *  Settings profile. */
+  security_profile?: string;
   /** The chat's run order (`ChatHeader.run`): what runs next, each entry's wait and the composer's
    *  verb. The server's statement; `newerRun` keeps the highest `version`. */
   run?: RunView;

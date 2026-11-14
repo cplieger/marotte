@@ -108,8 +108,7 @@ function customizeBtn(): HTMLButtonElement {
 function statusText(): string {
   return byId("security-profile-status").textContent ?? "";
 }
-/** Read out of the DOM rather than imported, because profileDescription is module-private and what a
- *  reader actually sees is the rendered row. */
+/** Read out of the DOM rather than imported, because what a reader sees is the rendered row. */
 function descriptionFor(id: string): string {
   return radioFor(id).closest("label")?.querySelector(".profile-desc")?.textContent ?? "";
 }
@@ -483,6 +482,16 @@ describe("what a profile description promises", () => {
 describe("the Security profile section hint", () => {
   it("says the user's own rules are kept beside the profile", () => {
     expect(securityProfileHint()).toContain("keep applying alongside the profile");
+  });
+
+  it("says it is the profile new chats start on, and names Trusted as the default", () => {
+    const hint = securityProfileHint();
+    expect(hint).toContain("New chats start on this profile");
+    expect(hint).toContain("Trusted unless you pick another");
+  });
+
+  it("claims no reach into open chats, which keep their own profile", () => {
+    expect(securityProfileHint()).not.toMatch(/open chats switch/i);
   });
 
   it("claims no write, no replacement and no step-coverage difference", () => {

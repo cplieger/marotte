@@ -1,12 +1,18 @@
 package policyfile
 
-import "slices"
+import (
+	"context"
+	"fmt"
+	"slices"
+
+	"go.yaml.in/yaml/v4"
+)
 
 // Named security profiles for the Settings -> Permissions picker. A named profile is
 // KAS policy presets alone, injected at SESSION scope as `source: preset:<id>`, so it
 // writes nothing to disk and cannot drift from upstream's review of which commands
-// are safe. Custom has no presets: its policy files are the whole policy. A preset is
-// only selected, never enumerated or changed live.
+// are safe. Custom has no presets: its policy files are the whole policy. KAS seeds a
+// session's presets when the session is built and has no live setter for them.
 
 // Preset ids KAS's registry accepts. Pinned because an unknown id is not a
 // degraded grant but a failed session: validatePresetIds throws InvalidParamsError
@@ -52,9 +58,7 @@ type Profile struct {
 // permissive rather than alphabetically.
 var profiles = []Profile{
 	{
-		// The baseline marotte already ships: reading THIS workspace is free and
-		// everything else asks. Named rather than implicit so "no profile" is not
-		// a state the picker has to render.
+		// Reading THIS workspace is free and everything else asks.
 		ID:      ProfileGuarded,
 		Presets: []string{PresetReadWorkspace},
 	},
@@ -115,7 +119,7 @@ func Profiles() []Profile {
 // ProfileFor returns the profile with the given id, and whether it exists.
 //
 // Absence is reported in band rather than through a default, because the two
-// callers want opposite things: the settings reader wants to fall back to Normal
+// callers want opposite things: the settings reader wants to fall back to DefaultProfile
 // with a logged reason, and the session door wants to send nothing rather than
 // guess a posture. A silent default would hand one of them the wrong answer.
 func ProfileFor(id string) (Profile, bool) {
@@ -135,7 +139,36 @@ func DelegatesToSafetyCheck(presets []string) bool {
 	return slices.Contains(presets, presetApproveForMe)
 }
 
-// DefaultProfile is what an unset or unrecognised setting resolves to. Guarded
-// rather than Custom: it reproduces the floor marotte ships today, where Custom
-// would silently remove the fs_read floor from an instance that never chose to.
-const DefaultProfile = ProfileGuarded
+// HoldsGrant reports whether the file KAS reads for path grants anything a session's presets cannot take
+// away: an allow or evaluate rule, or a preset its `policies` list names. Nothing to read grants nothing;
+// a file Load refuses is an error.
+func HoldsGrant(path string) (bool, error) {
+	data, name, err := readSource(context.Background(), path)
+	if err != nil {
+		return false, err
+	}
+	doc, f, err := parse(data, name)
+	if err != nil {
+		return false, err
+	}
+	for i := range f.Rules {
+		if e := f.Rules[i].Effect; e == EffectAllow || e == EffectEvaluate {
+			return true, nil
+		}
+	}
+	if doc == nil || doc.Kind != yaml.DocumentNode {
+		return false, nil
+	}
+	var refs struct {
+		Policies yaml.Node `yaml:"policies"`
+	}
+	if err := doc.Decode(&refs); err != nil {
+		return false, fmt.Errorf("parse %s: %w", name, err)
+	}
+	return refs.Policies.Kind == yaml.SequenceNode && len(refs.Policies.Content) > 0, nil
+}
+
+// DefaultProfile is what an unset or unrecognised setting resolves to, so a stored choice
+// is never moved by it. Never Custom, which would remove the fs_read floor from an
+// instance that never chose to.
+const DefaultProfile = ProfileTrusted

@@ -266,11 +266,11 @@ type AskReply interface {
 	Respond(ctx context.Context, result any) (AnswerOutcome, error)
 }
 
-// profileSwitcher moves the security profile to Custom before an always answer saves a rule.
-type profileSwitcher interface {
-	// EnsureCustomProfile is a no-op on Custom; otherwise it runs Customize and returns once
-	// the user permissions file is written. Errors are securityprofile's.
-	EnsureCustomProfile(ctx context.Context) error
+// profileReloader reloads one chat's resident session on the profile its header names.
+type profileReloader interface {
+	// ReloadChatProfile returns at once; a chat with no resident session opens on its header's profile at its next
+	// door.
+	ReloadChatProfile(chatID marotte.ChatID)
 }
 
 // terminalAccess is the interrupt's process half: a turn cancel must reach
@@ -820,11 +820,12 @@ type Roles struct {
 	Bus      broadcaster
 	Teardown chatTeardown
 	// Impact reads what closing a chat stops, for a confirmation's check.
-	Impact    closeImpactReader
-	Perms     pendingPermAccess
-	Profiles  profileSwitcher
-	Terminals terminalAccess
-	Stops     turnStopper
+	Impact closeImpactReader
+	Perms  pendingPermAccess
+	// ProfileReloads applies a chat's security profile change to its resident session.
+	ProfileReloads profileReloader
+	Terminals      terminalAccess
+	Stops          turnStopper
 	// Notices is the notice ledger: a tab's ack ends what it covers, and a tab's last close forgets it.
 	Notices noticeLedger
 	// Tabs is the open-tab set, and it may be nil: a build with no config
