@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { http, HttpResponse } from "msw";
+import { http, HttpResponse, type JsonBodyType } from "msw";
 import { setupWorker } from "msw/browser";
 import { userEvent } from "vitest/browser";
 import { settingsPayload } from "./__test-helpers__/settings.js";
@@ -14,7 +14,7 @@ const worker = setupWorker();
 let sent: unknown[] = [];
 
 beforeAll(async () => {
-  await worker.start({ quiet: true, onUnhandledRequest: "error" });
+  await worker.start({ quiet: true, onUnhandledFrame: "error" });
 });
 
 afterEach(() => {
@@ -28,7 +28,7 @@ afterAll(() => {
 });
 
 /** The server's answer to PUT /api/model-fallback, recording each body sent. */
-function answer(status: number, body: unknown): void {
+function answer(status: number, body: JsonBodyType): void {
   worker.use(
     http.put("/api/model-fallback", async ({ request }) => {
       sent.push(await request.json());

@@ -23,7 +23,7 @@ const READ_ONLY_WORDS: ReadonlyMap<string, string> = new Map([
   ["multiple-targets", "This fallback chain has multiple targets and cannot be edited here."],
 ]);
 
-export interface FallbackRowInput {
+interface FallbackRowInput {
   /** The chat's model id. */
   readonly model: string;
   readonly settings: EffectiveSettings | null;

@@ -15,9 +15,8 @@ import (
 // modelFallbackCapture is one exchange of internal/translate/testdata/configuration_model_fallback.json, captured on
 // kiro-cli 3.2.1.
 type modelFallbackCapture struct {
-	Params map[string]json.RawMessage `json:"params"`
-	Result json.RawMessage            `json:"result"`
-	Error  *marotte.RPCError          `json:"error"`
+	Result json.RawMessage   `json:"result"`
+	Error  *marotte.RPCError `json:"error"`
 }
 
 func modelFallbackExchange(t *testing.T, name string) modelFallbackCapture {

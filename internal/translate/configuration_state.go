@@ -95,6 +95,26 @@ type fallbackSetting struct {
 	} `json:"contributions"`
 }
 
+// layers names the last stated contribution's layer the compose used, and the first target of the last
+// vendor-layer statement ("" when it states an empty chain).
+func (st *fallbackSetting) layers() (usedLayer, vendorDefault string) {
+	for _, c := range st.Contributions {
+		if c.Stated == nil {
+			continue
+		}
+		if c.Stated.Used {
+			usedLayer = c.Layer
+		}
+		if slices.Contains(vendorFallbackLayers, c.Layer) {
+			vendorDefault = ""
+			if len(c.Stated.Value) > 0 {
+				vendorDefault = displayText(c.Stated.Value[0])
+			}
+		}
+	}
+	return usedLayer, vendorDefault
+}
+
 // vendorFallbackLayers state Kiro's own chains; a chain composed from any other layer is the account's or an
 // administrator's choice. kiro-cli's terminal UI reads the same two.
 var vendorFallbackLayers = []string{"kiro-service", agentDefaultsLayer}
@@ -133,22 +153,8 @@ func DecodeModelFallbackSetting(raw json.RawMessage) (marotte.ModelFallback, boo
 	if !ok || model == "" {
 		return marotte.ModelFallback{}, false
 	}
-	f := marotte.ModelFallback{Model: displayText(model)}
-	usedLayer := ""
-	for _, c := range st.Contributions {
-		if c.Stated == nil {
-			continue
-		}
-		if c.Stated.Used {
-			usedLayer = c.Layer
-		}
-		if slices.Contains(vendorFallbackLayers, c.Layer) {
-			f.VendorDefault = ""
-			if len(c.Stated.Value) > 0 {
-				f.VendorDefault = displayText(c.Stated.Value[0])
-			}
-		}
-	}
+	usedLayer, vendorDefault := st.layers()
+	f := marotte.ModelFallback{Model: displayText(model), VendorDefault: vendorDefault}
 	configured := usedLayer != "" && !slices.Contains(vendorFallbackLayers, usedLayer) && len(st.Value) > 0
 	if configured {
 		f.Configured = displayText(st.Value[0])
