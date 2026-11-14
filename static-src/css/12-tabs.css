@@ -1074,6 +1074,12 @@
       color: var(--c-text-primary);
     }
   }
+
+  /* The row a context menu acts on keeps its hover look while the menu shows; a touch has no hover. */
+  &[data-menu-open] {
+    background: var(--c-hover);
+    color: var(--c-text-primary);
+  }
 }
 
 /* A touch hold opens the row menu, so the row selects no text. */

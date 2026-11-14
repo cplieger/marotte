@@ -5,7 +5,7 @@
 // pressed row's scrollers, and no press on a row in a `data-folded` list.
 
 import { announce } from "./legacy-ui/announce.js";
-import { TOUCH_SLOP_PX } from "./legacy-ui/context-press.js";
+import { TOUCH_SLOP_PX } from "./context-hold.js";
 
 import type { ViewportBox } from "./viewport-frame.js";
 import { onViewportChange, viewportBox, viewportMoved } from "./viewport-frame.js";
@@ -284,8 +284,6 @@ class TabDragController {
     return this.dragEl !== null;
   }
 
-  /** A row's held menu asking for the press: refused under a travelling row, else an unmoved lift ends
-   *  abandoned, as a platform `contextmenu` ends it (`boundContextMenu`). */
   yieldToMenu(): boolean {
     if (this.dragMoved && this.dragEl !== null) {
       return false;
@@ -817,8 +815,8 @@ export function dragOwnsStrip(): boolean {
   return instance.ownsStrip();
 }
 
-/** Whether a row's touch-hold menu may open: false under a travelling row; an unmoved lift ends, as a
- *  platform long-press menu ends it. */
+/** Whether a row's touch-hold menu may open: false under a travelling row; an unmoved lift ends
+ *  abandoned, as a platform `contextmenu` ends it (`boundContextMenu`). */
 export function yieldDragToMenu(): boolean {
   return instance.yieldToMenu();
 }

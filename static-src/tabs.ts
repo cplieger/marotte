@@ -117,7 +117,8 @@ import { announce } from "./legacy-ui/announce.js";
 import type { ViewportBox } from "./viewport-frame.js";
 import { viewportBox, viewportMoved } from "./viewport-frame.js";
 import { showContextMenu } from "./context-menu.js";
-import { bindContextPress, isContextPressRelease } from "./legacy-ui/context-press.js";
+import { bindContextPress } from "./context-hold.js";
+import { isContextPressRelease } from "./legacy-ui/context-press.js";
 import type { ContextMenuItem } from "./context-menu.js";
 import { downloadChatExport } from "./chat-export.js";
 import { MAX_CHAT_NAME_UNITS, downloadKiroSession, renameChat } from "./actions/chat.js";
@@ -3245,7 +3246,6 @@ function createTabEl(row: TabRow): HTMLElement {
   return node;
 }
 
-/** A chat row's menu at `(x, y)`: pin/unpin, move up/down, rename, then the exports. */
 function openTabMenu(node: HTMLElement, id: string, x: number, y: number): void {
   // Read the CURRENT row: an applied frame replaces the subject, so the
   // closure's copy can be a generation behind on exactly the field this menu
@@ -3435,8 +3435,8 @@ function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean)
 
   // Click to activate (any target outside .tab-close). On `click`, never `pointerup`: activating
   // closes the phone drawer, and a tap's click is hit-tested after the release, at the same point,
-  // so it would land on whatever the drawer uncovered. A lifted hold released in place still
-  // clicks its row.
+  // so it would land on whatever the drawer uncovered. A drag lift released in place before the
+  // menu hold still clicks its row.
   node.addEventListener("click", (e) => {
     if (isDragHandled()) {
       return;

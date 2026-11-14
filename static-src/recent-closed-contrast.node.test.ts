@@ -33,13 +33,15 @@ function own(body: string, prop: string): string {
   return v ?? "";
 }
 
-function hoverBlock(body: string): string {
+function nestedBlock(body: string, selector: string): string {
   const clean = uncommented(body);
-  const at = clean.indexOf("&:hover");
-  expect(at, "the row declares a hover").toBeGreaterThan(-1);
+  const at = clean.indexOf(selector);
+  expect(at, `the row declares ${selector}`).toBeGreaterThan(-1);
   const open = clean.indexOf("{", at);
   return clean.slice(open + 1, clean.indexOf("}", open));
 }
+
+const hoverBlock = (body: string): string => nestedBlock(body, "&:hover");
 
 function ratios(fg: string, bg: string): { theme: string; ratio: number }[] {
   const out = execFileSync("python3", [script, "pair", fg, bg], { encoding: "utf8" });
@@ -92,6 +94,14 @@ describe.skipIf(!existsSync(script))("a Recently closed row's inks", () => {
 
   it("paints the rows' hover with --c-hover", () => {
     expect(row(ROWS).hoverFill).toBe("var(--c-hover)");
+  });
+
+  // The hover floors below then hold the row a menu is open on too.
+  it("paints a row whose menu is open with the hover's fill and ink", () => {
+    const r = row(ROWS);
+    const mark = nestedBlock(r.rule, "&[data-menu-open]");
+    expect(decl(mark, "background")).toBe(r.hoverFill);
+    expect(decl(mark, "color")).toBe(decl(r.hover, "color"));
   });
 
   it("holds the rows' secondary ink to 4.5:1 at rest and hovered", () => {

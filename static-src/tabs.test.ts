@@ -3983,6 +3983,15 @@ describe("the touch hold on a chat tab", () => {
   const menuLabels = (): string[] =>
     (vi.mocked(showContextMenu).mock.lastCall?.[0] ?? []).map((i) => i.label);
 
+  function backgroundOf(value: string): string {
+    const probe = document.createElement("div");
+    probe.style.background = value;
+    document.body.append(probe);
+    const color = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return color;
+  }
+
   it("opens the chat menu once the hold reaches 500 ms, with no contextmenu", async () => {
     const row = await rowA();
     touch("pointerdown", row);
@@ -4044,6 +4053,102 @@ describe("the touch hold on a chat tab", () => {
     touch("pointerdown", row);
     vi.advanceTimersByTime(HOLD_MS);
     expect(showContextMenu).not.toHaveBeenCalled();
+  });
+
+  // design.md §16 "The momentum-scroll guard": a finger that stops a fling rests on a row.
+  it("opens no menu when the scroller holding the row scrolls under the finger", async () => {
+    const row = await rowA();
+    touch("pointerdown", row);
+    row.parentElement?.dispatchEvent(new Event("scroll"));
+    vi.advanceTimersByTime(HOLD_MS);
+    expect(showContextMenu).not.toHaveBeenCalled();
+  });
+
+  it("keeps the hold while a scroller that does not hold the row scrolls", async () => {
+    const row = await rowA();
+    const elsewhere = document.createElement("div");
+    document.body.append(elsewhere);
+    touch("pointerdown", row);
+    elsewhere.dispatchEvent(new Event("scroll"));
+    elsewhere.remove();
+    vi.advanceTimersByTime(HOLD_MS);
+    expect(showContextMenu).toHaveBeenCalledTimes(1);
+  });
+
+  it("swallows the held finger's lift click when a second finger lands on the row", async () => {
+    const row = await rowA();
+    touch("pointerdown", row);
+    vi.advanceTimersByTime(HOLD_MS);
+    touch("pointerdown", row, 0, 2);
+    touch("pointerup", row);
+    row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+    touch("pointercancel", row, 0, 2);
+    expect(getActiveTabId()).toBe(chatID("b"));
+  });
+
+  it("swallows the lift click when the scroller holding the row scrolls after the menu opens", async () => {
+    const row = await rowA();
+    touch("pointerdown", row);
+    vi.advanceTimersByTime(HOLD_MS);
+    row.parentElement?.dispatchEvent(new Event("scroll"));
+    touch("pointerup", row);
+    row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+    expect(getActiveTabId()).toBe(chatID("b"));
+  });
+
+  it("holds again from a new first finger after a held finger's lift never arrived", async () => {
+    const row = await rowA();
+    touch("pointerdown", row);
+    vi.advanceTimersByTime(HOLD_MS);
+    row.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        pointerId: 3,
+        pointerType: "touch",
+        isPrimary: true,
+        clientX: AT.x,
+        clientY: AT.y,
+        bubbles: true,
+      }),
+    );
+    vi.advanceTimersByTime(HOLD_MS);
+    touch("pointercancel", row, 0, 3);
+    expect(showContextMenu).toHaveBeenCalledTimes(2);
+  });
+
+  it("places a keyboard-opened menu, which carries no point, at the row's left and bottom", async () => {
+    const row = await rowA();
+    const box = row.getBoundingClientRect();
+    row.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 0, clientY: 0 }),
+    );
+    expect(vi.mocked(showContextMenu).mock.lastCall?.[1]).toEqual({ x: box.left, y: box.bottom });
+  });
+
+  it("places a pointer-opened menu at the pointer", async () => {
+    const row = await rowA();
+    row.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: AT.x,
+        clientY: AT.y,
+      }),
+    );
+    expect(vi.mocked(showContextMenu).mock.lastCall?.[1]).toEqual(AT);
+  });
+
+  it("paints the row a menu is open on in its hover wash", async () => {
+    const style = mountAppCSS();
+    try {
+      const row = await rowA();
+      row.setAttribute("data-menu-open", "");
+      for (const a of row.getAnimations()) {
+        a.finish();
+      }
+      expect(getComputedStyle(row).backgroundColor).toBe(backgroundOf("var(--c-hover-select)"));
+    } finally {
+      style.remove();
+    }
   });
 
   it("selects no text and shows no callout on a chat row", async () => {

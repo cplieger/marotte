@@ -8,7 +8,7 @@ import { sectionFolded, setSectionFolded } from "./device-view.js";
 import { isSliding, slideBox } from "./disclosure-row.js";
 import { $, maybeEl, setText } from "./dom.js";
 import { iconEl } from "./icon-el.js";
-import { bindContextPress } from "./legacy-ui/context-press.js";
+import { bindContextPress } from "./context-hold.js";
 import { ICON_TAB_CHAT } from "./icons.js";
 import { formatClock, watchClock } from "./locale-time.js";
 import { isRetentionEnabled, onRetentionChange } from "./retention.js";

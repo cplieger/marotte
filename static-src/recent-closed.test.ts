@@ -937,6 +937,25 @@ describe("the Recently closed row menu", () => {
     expect(document.activeElement).toBe(row);
   });
 
+  it("paints its row in the hover wash until the menu closes", async () => {
+    await listed(entry("c-a", "Alpha"));
+    unfold();
+    const row = rowFor("Alpha");
+    row.focus();
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    for (const a of row.getAnimations()) {
+      a.finish();
+    }
+    const probe = document.createElement("div");
+    probe.style.background = "var(--c-hover)";
+    document.body.append(probe);
+    const wash = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    expect(getComputedStyle(row).backgroundColor).toBe(wash);
+    await userEvent.keyboard("{Escape}");
+    expect(row.hasAttribute("data-menu-open")).toBe(false);
+  });
+
   it("leaves focus in the composer after an outside click into it", async () => {
     await listed(entry("c-a", "Alpha"));
     unfold();
