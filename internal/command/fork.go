@@ -217,6 +217,7 @@ func forkCreate(p marotte.ForkChatCommand, chatID marotte.ChatID, parent *marott
 			// Inherited like the model, mode and effort: dropping the review gate would let a
 			// supervised chat's tangent write files without asking.
 			c.SupervisedMode = parent.SupervisedMode
+			c.SecurityProfile = parent.SecurityProfile
 			if sessionID != "" {
 				// RecordSession, not assignment: it is the sanctioned writer
 				// of this field and keeps the reaper's keep-list chain

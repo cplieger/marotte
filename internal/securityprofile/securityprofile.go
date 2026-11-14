@@ -47,8 +47,8 @@ type Store struct {
 	WorkDir   string
 }
 
-// Active is the profile in force with the session door's fallback, so a reader shows what the
-// sessions opened with.
+// Active is the Settings profile a new chat starts on, with the session door's fallback, so a
+// reader shows what that chat's door sends.
 func (s *Store) Active(ctx context.Context) string {
 	var id string
 	if !settings.FieldInto(ctx, s.ConfigDir, settings.KeySecurityProfile, &id) || id == "" {
@@ -97,21 +97,6 @@ func (s *Store) Customize(ctx context.Context) error {
 		return ErrNoLivePolicy
 	}
 	return s.customize(ctx)
-}
-
-// EnsureCustom runs Customize unless the profile already is Custom, deciding under the same
-// lock, so of two concurrent callers only the first switches. switched reports whether this
-// call did.
-func (s *Store) EnsureCustom(ctx context.Context) (switched bool, err error) {
-	switchMu.Lock()
-	defer switchMu.Unlock()
-	if s.Active(ctx) == policyfile.ProfileCustom {
-		return false, nil
-	}
-	if err := s.customize(ctx); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 func (s *Store) customize(ctx context.Context) error {

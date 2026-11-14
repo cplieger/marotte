@@ -34,6 +34,7 @@ import {
   getActiveId,
   setActive,
   setSupervisedMode,
+  setSecurityProfile,
   removeChat,
   reinsertSession,
   indexOfSession,
@@ -216,6 +217,42 @@ export const setSupervised = transportAction<
   error: errorAbout(
     onChat,
     stillOr("updating supervised mode", "Could not update supervised mode", "chat"),
+  ),
+});
+
+// The server reloads the chat's resident session on the new profile in the background; a turn running keeps the old
+// one until it ends.
+export const setChatProfile = transportAction<
+  { chatID: string; profile: string },
+  { prev: string }
+>({
+  name: "chat.set_security_profile",
+  networkMode: "always",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  command: ({ chatID, profile }) => ({
+    type: "set_security_profile",
+    chat_id: chatID,
+    payload: { profile },
+  }),
+  optimistic: ({ chatID, profile }) => {
+    const session = get(chatID);
+    if (session === undefined) {
+      return undefined;
+    }
+    const prev = session.security_profile ?? "";
+    setSecurityProfile(chatID, profile);
+    return { prev };
+  },
+  rollback: ({ chatID }, op) => {
+    if (op !== undefined) {
+      setSecurityProfile(chatID, op.prev);
+    }
+  },
+  retryable: retryUnlessStill,
+  retry: RETRY_STANDARD,
+  error: errorAbout(
+    onChat,
+    stillOr("changing the security profile", "Could not change the security profile", "chat"),
   ),
 });
 

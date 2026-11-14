@@ -176,3 +176,29 @@ func TestMembership_SupervisedDefaultUnwiredIsFalse(t *testing.T) {
 		t.Error("an unwired SupervisedDefault read as true; it must fail closed")
 	}
 }
+
+func TestCmdForkChat_InheritsTheParentsSecurityProfile(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedParent(t, store, "c-parent")
+	if _, err := store.Mutate(t.Context(), "c-parent", func(c *marotte.Chat, _ bool) bool {
+		c.SecurityProfile = "read-only"
+		return true
+	}); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
+	host := newForkHost(store, br, "c-parent")
+
+	if _, err := cmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host),
+		forkReq(t, "c-tangent", "c-parent", "Reaper detour")); err != nil {
+		t.Fatalf("CmdForkChat = %v", err)
+	}
+
+	c, ok := store.Get(t.Context(), "c-tangent")
+	if !ok {
+		t.Fatal("the tangent chat was not created")
+	}
+	if c.SecurityProfile != "read-only" {
+		t.Errorf("tangent SecurityProfile = %q, want the parent's read-only: a tangent continues the same conversation", c.SecurityProfile)
+	}
+}

@@ -35,9 +35,9 @@ const (
 	KeyNotifyRunOutcome    = "notify_run_outcome"
 	KeySupervisedDefault   = "supervised_default"
 
-	// KeySecurityProfile is the security posture every session opens with (a policyfile profile
-	// id sent as policy presets). Global: KAS cannot change a live session's policy. An unset or
-	// unknown value resolves to policyfile.DefaultProfile, never to Custom (no presets).
+	// KeySecurityProfile is the security profile a new chat starts on, and the one observer passes
+	// and parentless run hosts open with (a policyfile profile id sent as policy presets). An
+	// unset or unknown value resolves to policyfile.DefaultProfile, never to Custom (no presets).
 	KeySecurityProfile = "security_profile"
 
 	// KeyScheduledAutoApprove lets a scheduled or triggered run's tool requests be approved instead

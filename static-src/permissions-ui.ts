@@ -16,6 +16,13 @@ import { join } from "@cplieger/keyenc";
 import { onSSE } from "./bus.js";
 import { engineRead, type EngineRead } from "./engine-read.js";
 import { confirm } from "./confirm.js";
+import {
+  CUSTOM_PROFILE,
+  LOOSEST_PROFILE_HINT,
+  confirmLoosest,
+  profileDescription,
+  profileLabel,
+} from "./security-profiles.js";
 import type { PolicyView, PolicyRule, SecurityProfile } from "./types.js";
 // `types.js` re-exports the Policy* shapes the panel renders and not these two, which only an
 // explain result and a view's load errors carry.
@@ -239,59 +246,6 @@ const NATIVE_SCOPE_LABEL: Record<string, string> = {
   agent: "Agent, default mode, read-only",
   session: "Session, runtime, read-only",
 };
-
-/** The Custom profile's id, and the one id the client must know by name: it is the state the
- *  table becomes editable in, which is a UI fact rather than a policy one. Every other profile
- *  is rendered from whatever the server sent. */
-const CUSTOM_PROFILE = "custom";
-
-/** The loosest profile's id, needed only to decide which selection earns the extra confirm. The
- *  ladder's ORDER is the server's, so this is a hint the picker checks rather than a policy it
- *  enforces — the server would grant the same set either way, and a rename upstream costs the
- *  extra confirm rather than correctness. */
-const LOOSEST_PROFILE_HINT = "unrestricted";
-
-/** Prose for a person, so it lives on the client rather than travelling with the ladder; an id the
- *  client has no label for falls back to the id, which is ugly but true. */
-function profileLabel(id: string): string {
-  switch (id) {
-    case "guarded":
-      return "Guarded";
-    case "read-only":
-      return "Read-only";
-    case "trusted":
-      return "Trusted";
-    case "delegated":
-      return "Approve for me";
-    case "unrestricted":
-      return "Unrestricted";
-    case CUSTOM_PROFILE:
-      return "Custom";
-    default:
-      return id;
-  }
-}
-
-/** Each rung names what it reaches with no prompt: Read-only, files OUTSIDE the workspace; a rung
- *  that allows shell commands, any file through a redirect. */
-function profileDescription(id: string): string {
-  switch (id) {
-    case "guarded":
-      return "Reads files in this workspace. Everything else asks.";
-    case "read-only":
-      return "Also reads any file on this machine and reaches the web. That includes files outside this workspace, so an SSH key or a sibling project is readable with no prompt. Every shell command and every change asks.";
-    case "trusted":
-      return "Also edits files in this workspace and runs everyday development commands. Destructive and irreversible ones still ask, including git push, reset and clean. An allowed shell command can write any file through a redirect, including files outside this workspace and in .kiro/agents, with no prompt.";
-    case "delegated":
-      return "Grants what Trusted grants, and Kiro's safety check answers the requests no rule settles: it approves a request it judges safe, blocks one it judges unsafe, and asks you when it is unsure. A request a rule sends to you, such as a file-tool write to .git or .kiro/agents, still asks. Each check is a model call. An allowed shell command can write any file through a redirect, including files outside this workspace and in .kiro/agents, with no prompt.";
-    case "unrestricted":
-      return "Never asks, including before installing a power. Kiro still protects its own settings and asks before its file tool writes .git, .kiro/agents and .kiro/hooks. A shell command can write any of these, Kiro's settings included, with no prompt.";
-    case CUSTOM_PROFILE:
-      return "Your own rules, edited in the table below. Nothing is granted that you do not add.";
-    default:
-      return "";
-  }
-}
 
 /** A rule's globs in one vocabulary, shared by the table's rows and the explain box so a rule
  *  reads the same in both: a match is prefixed, an exclusion negated. */
@@ -528,12 +482,13 @@ class NativePolicyController {
     });
   }
 
-  /** Paint the Customize button and the status line, and lock the table outside Custom. The
-   *  button is present only on a named profile, because on Custom you are already there and a
-   *  control that does nothing teaches a reader to distrust every other one. */
+  /** Paint the Customize button with its hint and the status line, and lock the table outside
+   *  Custom. The button is present only on a named profile, because on Custom you are already
+   *  there and a control that does nothing teaches a reader to distrust every other one. */
   private renderProfileState(rules: PolicyRule[]): void {
     const custom = this.activeProfile === CUSTOM_PROFILE;
     maybeEl("security-profile-customize")?.classList.toggle("hidden", custom);
+    maybeEl("security-profile-customize-hint")?.classList.toggle("hidden", custom);
     this.lockPolicyTable(!custom);
     const status = maybeEl("security-profile-status");
     if (status === null) {
@@ -599,27 +554,11 @@ class NativePolicyController {
         return;
       }
     }
-    if (id === LOOSEST_PROFILE_HINT && !(await this.confirmLoosest())) {
+    if (id === LOOSEST_PROFILE_HINT && !(await confirmLoosest())) {
       void this.load();
       return;
     }
     await this.applyProfile(id, false);
-  }
-
-  /** It is the one that grants `power`, so a power installed afterwards runs its author's code at
-   *  this privilege with nothing asking, and it is also the one whose name invites a click. */
-  private confirmLoosest(): Promise<boolean> {
-    return confirm({
-      title: "Allow every capability without asking?",
-      body:
-        `This includes "power", so a power you ` +
-        `install runs its author's code at your privilege with no prompt. It does NOT ` +
-        `silence every prompt: Kiro still refuses file-tool writes to its own settings ` +
-        `directories and still asks before that tool writes .git, .kiro/agents, ` +
-        `.kiro/hooks and .vscode. A shell command can write any of them with no prompt.`,
-      confirmLabel: "Allow everything",
-      variant: "destructive",
-    });
   }
 
   /** Copy the profile in force into the editable table and switch to Custom. The starting-point

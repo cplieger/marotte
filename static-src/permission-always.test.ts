@@ -123,12 +123,12 @@ describe("an always option opens a chooser instead of answering", () => {
     expect(card.querySelector(".always-choice")).toBeNull();
   });
 
-  it("says the rule reaches every kiro-cli session and switches Permissions to Custom", () => {
+  it("says the rule reaches every kiro-cli session and leaves each chat's profile alone", () => {
     const { card } = mount(ask());
     button(card, "Always allow").click();
     expect(card.querySelector(".always-choice-hint")?.textContent).toBe(
       "Saves the rule to your user permissions, which every kiro-cli session on this account reads, " +
-        "not only these chats. Switches Permissions to Custom if another profile is selected.",
+        "not only these chats. Each chat keeps its security profile.",
     );
   });
 

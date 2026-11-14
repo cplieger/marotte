@@ -563,7 +563,7 @@ export const ICON_COMPACT = svg(
   '<path d="M12 22v-6"/><path d="M12 8V2"/><path d="M4 12H2"/><path d="M10 12H8"/><path d="M16 12h-2"/>' +
     '<path d="M22 12h-2"/><path d="m15 19-3-3-3 3"/><path d="m15 5-3 3-3-3"/>',
 );
-// A safety check blocked the turn (Lucide "shield").
+// Lucide "shield": a safety check blocked the turn, and the security profile pill.
 export const ICON_SHIELD = svg(
   "ui",
   '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',

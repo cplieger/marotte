@@ -2,14 +2,12 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"slices"
 	"sync"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/securityprofile"
 	"github.com/cplieger/marotte/internal/settings"
 )
 
@@ -26,8 +24,9 @@ func (rt *Runtime) markSessionsForReload(reason string) {
 	slog.Info("open chats reload their session at their next message", "reason", reason, "marked", marked)
 }
 
-// SecurityProfileChanged applies a persisted profile change: presets ride the session door and KAS has no live
-// setter, so resident sessions reload. A parentless run keeps the presets its lease recorded at launch.
+// SecurityProfileChanged applies a persisted Settings profile change, the default for new chats: it reloads no
+// resident session, since each chat keeps the profile its header names. A parentless run keeps the presets its
+// lease recorded at launch.
 func (rt *Runtime) SecurityProfileChanged(ctx context.Context) {
 	rt.reconcileSettingsWrite(ctx, "security profile")
 	rt.Broadcast(ctx, marotte.NewEvent(marotte.EventPermissionsChanged, "",
@@ -42,32 +41,6 @@ func (rt *Runtime) SettingsWritten(ctx context.Context, keys []string) {
 		return
 	}
 	rt.ReconcileSessionSettings(ctx)
-}
-
-// EnsureCustomProfile runs Customize unless the profile already is Custom, so a rule an answer
-// saves lands in the policy the picker names. It returns once the user file is written, and
-// leaves both files as they were on any refusal but securityprofile.ErrRestoreFailed.
-func (rt *Runtime) EnsureCustomProfile(ctx context.Context) error {
-	store := &securityprofile.Store{
-		List:      rt.config.PolicyList,
-		Publish:   rt.Broadcast,
-		ConfigDir: rt.lifecycle.configDir,
-		WorkDir:   rt.lifecycle.workDir,
-	}
-	switched, err := store.EnsureCustom(ctx)
-	if err != nil {
-		if errors.Is(err, securityprofile.ErrRestoreFailed) {
-			rt.Broadcast(ctx, marotte.NewEvent(marotte.EventPermissionsChanged, "",
-				marotte.PermissionsChangedPayload{}))
-		}
-		return err
-	}
-	if !switched {
-		return nil
-	}
-	slog.Info("security profile switched to custom by an always answer")
-	rt.SecurityProfileChanged(ctx)
-	return nil
 }
 
 // sessionBaseline holds the session-door fingerprints every resident session opened under, or was marked to

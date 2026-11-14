@@ -10,7 +10,14 @@ import { page } from "vitest/browser";
 import indexHtml from "../static/index.html?raw";
 import { buildAttachmentPill } from "./attachment-pill.js";
 import { iconEl } from "./icon-el.js";
-import { ICON_CANCEL, ICON_CLOSE, ICON_MODEL, ICON_QUEUE_UI, ICON_SEND } from "./icons.js";
+import {
+  ICON_CANCEL,
+  ICON_CLOSE,
+  ICON_MODEL,
+  ICON_QUEUE_UI,
+  ICON_SEND,
+  ICON_SHIELD,
+} from "./icons.js";
 import { setActive, setSessions } from "./store.js";
 import type { updateContextBar as updateContextBarFn } from "./status.js";
 import { makeSession } from "./__test-helpers__/model.js";
@@ -59,6 +66,8 @@ const MODEL = "model charlie 5.5";
 const EFFORT = "medium";
 const MODE_ID = "semantic_reviewer";
 const MODE = "Semantic Reviewer";
+/** The ladder's widest label, as `security-profiles.ts` names the Delegated rung. */
+const PROFILE = "Approve for me";
 
 /** The production writers of the model and mode pills, loaded once a page is mounted: their module graph
  *  resolves page elements at import, and `initRolePicker` installs a lasting effect, so it runs once. */
@@ -137,9 +146,12 @@ async function writeNames(): Promise<void> {
   await nextFrame();
 }
 
-/** The DOM `model-switcher.ts`, `prompt-input.ts` and `attachment-pill.ts` write. */
+/** The DOM `model-switcher.ts`, `profile-pill.ts`, `prompt-input.ts` and `attachment-pill.ts` write. */
 async function dress(state: State): Promise<void> {
   byId("switch-model-btn").prepend(iconEl(ICON_MODEL));
+  byId("profile-pill").classList.remove("hidden");
+  byId("profile-pill-icon").replaceChildren(iconEl(ICON_SHIELD));
+  byId("profile-pill-label").textContent = PROFILE;
   await writeNames();
   const send = byId("send-btn");
   if (state === "idle") {
@@ -420,8 +432,13 @@ describe("the composer's controls and the resume button, against the toolbar's b
   });
 });
 
-describe("the model and mode pills, by the room the row has", () => {
+describe("the model, profile and mode pills, by the room the row has", () => {
   const labels = (): HTMLElement[] => [byId("ctx-model-pill"), byId("role-pill-label")];
+  /** The profile pill's label, which drops before the other two; null where the row leaves the pill out. */
+  const profileName = (): HTMLElement | null => {
+    const name = byId("profile-pill-label");
+    return shown(byId("profile-pill")) ? name : null;
+  };
 
   it("fits the row on one line at the phone preset, with no control cut", async () => {
     for (const pointer of ["coarse", "fine"] as const) {
@@ -466,7 +483,7 @@ describe("the model and mode pills, by the room the row has", () => {
 
   it("keeps their text on a wide screen with a mouse", async () => {
     await mount(DESKTOP, "fine", "queue");
-    for (const el of labels()) {
+    for (const el of [...labels(), byId("profile-pill-label")]) {
       expect(shown(el), `#${el.id} shows`).toBe(true);
       expect(el.scrollWidth, `#${el.id} is not cut`).toBeLessThanOrEqual(el.clientWidth);
     }
@@ -475,13 +492,15 @@ describe("the model and mode pills, by the room the row has", () => {
   it("drops the text exactly where the fullest labelled row stops fitting", async () => {
     // The fullest row (mid-turn beside a steerable turn, both halves of the pill, a plan filed) decides, so the labels
     // do not come and go as a turn starts. A phone-shaped screen hides Send's word and the tier, a wider one shows
-    // them, so each regime has its own fit.
+    // them, so each regime has its own fit. The profile pill's name goes first, then the model's and the mode's.
     const box = (): HTMLElement => byId("prompt-box");
     for (const [viewport, pointer] of [
       [[768, 1024], "coarse"],
       [[768, 1024], "fine"],
       [IPAD, "coarse"],
       [IPAD, "fine"],
+      [DESKTOP, "coarse"],
+      [DESKTOP, "fine"],
     ] as const) {
       await mount(viewport, pointer, "steer");
       const row = document.querySelector<HTMLElement>(".prompt-pills");
@@ -494,20 +513,35 @@ describe("the model and mode pills, by the room the row has", () => {
           row.clientWidth - Number.parseFloat(cs.paddingLeft) - Number.parseFloat(cs.paddingRight)
         );
       };
-      // The labelled row's natural width, read where it has room: the controls and the gaps between them.
+      // A row's natural width, read where it has room: the controls and the gaps between them.
+      const natural = (): number => {
+        const gap = Number.parseFloat(getComputedStyle(row).columnGap);
+        const items = [...row.children]
+          .filter((el): el is HTMLElement => el instanceof HTMLElement && shown(el))
+          .filter((el) => !el.classList.contains("pill-spacer"));
+        return (
+          items.reduce((sum, el) => sum + el.getBoundingClientRect().width, 0) +
+          gap * (items.length - 1)
+        );
+      };
       box().style.width = "60rem";
-      const gap = Number.parseFloat(getComputedStyle(row).columnGap);
-      const items = [...row.children]
-        .filter((el): el is HTMLElement => el instanceof HTMLElement && shown(el))
-        .filter((el) => !el.classList.contains("pill-spacer"));
       for (const el of labels()) {
         expect(shown(el), `${String(viewport[0])}: #${el.id} shows with room`).toBe(true);
       }
-      const need =
-        items.reduce((sum, el) => sum + el.getBoundingClientRect().width, 0) +
-        gap * (items.length - 1);
+      // Its name's width is read even where the row is too narrow for it: an inline display outranks the query. The
+      // composer's measure caps the row near the labelled width, so its name is held to the pixel.
+      const profile = profileName();
+      let full = natural();
+      let need = full;
+      if (profile !== null) {
+        profile.style.display = "inline";
+        full = natural();
+        profile.style.display = "none";
+        need = natural();
+        profile.style.display = "";
+      }
       const wrong: string[] = [];
-      for (let w = 760; w >= 280; w -= 4) {
+      for (let w = 1000; w >= 280; w -= 4) {
         box().style.width = `${String(w)}px`;
         const avail = content();
         const labelled = labels().every(shown);
@@ -519,6 +553,19 @@ describe("the model and mode pills, by the room the row has", () => {
         } else if (iconOnly && avail >= need + 16) {
           wrong.push(
             `${String(w)}: icons only with ${String(avail)}px for a ${String(need)}px row`,
+          );
+        }
+        if (profile === null) {
+          continue;
+        }
+        const named = shown(profile);
+        if (named && (!labelled || avail < full - 0.5)) {
+          wrong.push(
+            `${String(w)}: the profile named in ${String(avail)}px of a ${String(full)}px row`,
+          );
+        } else if (!named && avail >= full + 2) {
+          wrong.push(
+            `${String(w)}: the profile unnamed with ${String(avail)}px for a ${String(full)}px row`,
           );
         }
       }

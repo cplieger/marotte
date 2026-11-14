@@ -817,6 +817,7 @@ export function upsertHeader(h: ChatHeader): void {
         acp_session_id: h.acp_session_id ?? "",
         current_mode_id: h.current_mode_id ?? "",
         supervised_mode: h.supervised_mode ?? false,
+        security_profile: h.security_profile ?? "",
         effort: h.effort ?? "",
         // Absent means the server has no session catalog to report (a chat with no bridge, or a
         // header built before session/new answered), NOT that the tiers went away.
@@ -866,6 +867,7 @@ export function upsertHeader(h: ChatHeader): void {
     acp_session_id: h.acp_session_id ?? "",
     current_mode_id: h.current_mode_id ?? "",
     supervised_mode: h.supervised_mode ?? false,
+    security_profile: h.security_profile ?? "",
     effort: h.effort ?? "",
     effort_levels: h.effort_levels ?? [],
     effort_active: h.effort_active ?? "",
@@ -1283,6 +1285,14 @@ export function setSupervisedMode(chatID: string, enabled: boolean): void {
     return;
   }
   sessions.update(chatID, (cur) => ({ ...cur, supervised_mode: enabled }));
+}
+
+export function setSecurityProfile(chatID: string, profile: string): void {
+  const s = get(chatID);
+  if (s === undefined || (s.security_profile ?? "") === profile) {
+    return;
+  }
+  sessions.update(chatID, (cur) => ({ ...cur, security_profile: profile }));
 }
 
 /** Set the chat's reasoning-effort level. Per-chat like model, mode and supervised, so a tab

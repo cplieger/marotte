@@ -128,7 +128,7 @@ func (*benchDeps) PendingElicitation(marotte.ChatID, int64) (marotte.Elicitation
 	return marotte.ElicitationNeededPayload{}, false
 }
 
-func (*benchDeps) EnsureCustomProfile(context.Context) error { return nil }
+func (*benchDeps) ReloadChatProfile(marotte.ChatID) {}
 
 func (*benchDeps) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithCancel(context.WithoutCancel(reqCtx))
@@ -361,7 +361,7 @@ type hostDouble interface {
 	broadcaster
 	chatTeardown
 	pendingPermAccess
-	profileSwitcher
+	profileReloader
 	terminalAccess
 	turnStopper
 	lifecycleAccess

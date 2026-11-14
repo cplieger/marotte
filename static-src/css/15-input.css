@@ -2084,30 +2084,48 @@
    button's aria-label still names it. */
 @media (width <= 48rem), (height <= 30rem) {
   .pill-model-effort,
-  .send-btn-label {
+  .send-btn-label,
+  [id="profile-pill-label"] {
+    display: none;
+  }
+
+  /* The fullest phone row (the mid-turn send beside Cancel and the task list) has no room for one more 44px
+     target, and a profile picked mid-turn applies only after the turn, so the pill leaves the row for the turn. */
+  .prompt-pills:has(> [id="midturn-send"]:not([hidden])) > .pill-slot-profile {
     display: none;
   }
 }
 
-/* The model and mode pills go icon-only where the fullest labelled row (mid-turn beside a
-   steerable turn, both halves of the send pill, task list shown) stops fitting with the
-   catalog's widest pills, a 17-character model name with its "medium" tier and "Semantic
-   Reviewer": 657px mouse with the tier and Steer's word, 661px touch with the tier and the
-   pill's glyphs, 530px and 570px without the tier; each threshold adds 3 to 7px
-   (`button-size.test.ts` sweeps it). A longer name, such as a custom agent's, ellipsises
-   within its cap. A container query cannot read `--pill-gap`, so the tier is a selector.
-   The names stay in aria-label and the tooltip (`status.ts`, `role-picker.ts`). */
+/* Labels drop where the fullest row (mid-turn, both send halves, task list, profile shield)
+   stops fitting the catalog's widest pills, a 17-character model with "medium" and "Semantic
+   Reviewer": 696px mouse, 707px touch, 530px and 570px without the tier, where a turn hides the
+   profile pill. The profile's name ("Approve for me") goes first, at 782px mouse and 788px
+   touch. Each threshold adds up to 7px (`button-size.test.ts` sweeps it); a container query
+   cannot read `--pill-gap`, so the tier is a selector. The names stay in aria-label and the
+   tooltip (`status.ts`, `role-picker.ts`, `profile-pill.ts`). */
 @media (width > 48rem) and (height > 30rem) {
-  @container pill-row (width < 41.25rem) {
+  @container pill-row (width < 43.75rem) {
     .pill-model > :is([id="ctx-model-pill"], .pill-model-effort),
     .pill-role-label {
       display: none;
     }
   }
 
-  @container pill-row (width < 41.5rem) {
+  @container pill-row (width < 44.375rem) {
     :root[data-pointer="coarse"]
       :is(.pill-model > [id="ctx-model-pill"], .pill-model-effort, .pill-role-label) {
+      display: none;
+    }
+  }
+
+  @container pill-row (width < 48.875rem) {
+    [id="profile-pill-label"] {
+      display: none;
+    }
+  }
+
+  @container pill-row (width < 49.25rem) {
+    :root[data-pointer="coarse"] [id="profile-pill-label"] {
       display: none;
     }
   }

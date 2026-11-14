@@ -108,8 +108,7 @@ function customizeBtn(): HTMLButtonElement {
 function statusText(): string {
   return byId("security-profile-status").textContent ?? "";
 }
-/** Read out of the DOM rather than imported, because profileDescription is module-private and what a
- *  reader actually sees is the rendered row. */
+/** Read out of the DOM rather than imported, because what a reader sees is the rendered row. */
 function descriptionFor(id: string): string {
   return radioFor(id).closest("label")?.querySelector(".profile-desc")?.textContent ?? "";
 }
@@ -158,6 +157,7 @@ beforeEach(() => {
 
   document.body.appendChild(tag("div", "security-profile-list"));
   document.body.appendChild(tag("button", "security-profile-customize"));
+  document.body.appendChild(tag("p", "security-profile-customize-hint"));
   document.body.appendChild(tag("p", "security-profile-status"));
 
   mocks.editDispatch.mockResolvedValue({ ok: true });
@@ -219,6 +219,24 @@ describe("the Customize button", () => {
     customizeBtn().click();
     await flush();
     expect(mocks.confirm).not.toHaveBeenCalled();
+  });
+
+  // The copied rules are saved rules, which every chat keeps whatever its own profile, so a chat
+  // set stricter on its pill gains them too: the door says so before it writes.
+  it("says beside it that the copied rules reach every chat, and only while it shows", async () => {
+    const hint = byId("security-profile-customize-hint");
+    await mount(view("trusted"));
+    expect(hint.classList.contains("hidden")).toBe(false);
+
+    await mount(view("custom", [userRule("shell")]));
+    expect(hint.classList.contains("hidden")).toBe(true);
+  });
+
+  it("ships a hint naming the copy into saved rules and their reach into every chat", () => {
+    const doc = new DOMParser().parseFromString(indexHtml, "text/html");
+    const text = doc.getElementById("security-profile-customize-hint")?.textContent ?? "";
+    expect(text).toContain("copies this profile's rules into your saved rules");
+    expect(text).toContain("Saved rules apply in every chat, whatever its shield pill says");
   });
 });
 
@@ -483,6 +501,16 @@ describe("what a profile description promises", () => {
 describe("the Security profile section hint", () => {
   it("says the user's own rules are kept beside the profile", () => {
     expect(securityProfileHint()).toContain("keep applying alongside the profile");
+  });
+
+  it("says it is the profile new chats start on, and names Trusted as the default", () => {
+    const hint = securityProfileHint();
+    expect(hint).toContain("New chats start on this profile");
+    expect(hint).toContain("Trusted unless you pick another");
+  });
+
+  it("claims no reach into open chats, which keep their own profile", () => {
+    expect(securityProfileHint()).not.toMatch(/open chats switch/i);
   });
 
   it("claims no write, no replacement and no step-coverage difference", () => {

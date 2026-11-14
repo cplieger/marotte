@@ -202,6 +202,8 @@ type chatLifecycle struct {
 	// epoch names this lifecycle among the chat's; a fence from another epoch never holds. Re-minted when the life
 	// ends, so a surviving drain opens nothing.
 	epoch uint64
+	// closeRefusals counts closes the life's session refused, leaving it open (noteCloseRefused).
+	closeRefusals uint64
 	// stopCount counts requestStop calls; atomic so a send's write commit reads it under the engine's write lock
 	// without mu (sendCommitLocked).
 	stopCount atomic.Uint64

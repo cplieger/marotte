@@ -56,6 +56,8 @@ type bridgeCoordinator struct {
 	engine *engineOwner
 	// sessionOpts is what a chat's session door sends.
 	sessionOpts func(ctx context.Context, rec *marotte.Chat, ask *sessionAsk, steering []marotte.ClientSteeringDoc) *marotte.SessionOpts
+	// settingsProfile is the profile a chat with none of its own is pinned to at its door (pinSecurityProfile).
+	settingsProfile func(context.Context) string
 	// syncLive pushes the engine each live setting it has not confirmed.
 	syncLive func(context.Context)
 	// configHeld is the configDoc owner's verdict, which holds a marked session's reload (reloadIfMarked).
@@ -152,13 +154,14 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		releaseTerminals: func(chatID marotte.ChatID, origin acpResponder) {
 			h.agentTerms.releaseForBridge(chatID, origin)
 		},
-		push:        h.push,
-		mcpRegistry: h.mcpRegistry,
-		lifecycle:   h.lifecycle,
-		engine:      h.engine,
-		sessionOpts: h.chatSessionOpts,
-		syncLive:    func(ctx context.Context) { h.engine.syncLive(ctx, h.liveSettings) },
-		configHeld:  h.configDoc.held,
+		push:            h.push,
+		mcpRegistry:     h.mcpRegistry,
+		lifecycle:       h.lifecycle,
+		engine:          h.engine,
+		sessionOpts:     h.chatSessionOpts,
+		settingsProfile: h.settingsProfile,
+		syncLive:        func(ctx context.Context) { h.engine.syncLive(ctx, h.liveSettings) },
+		configHeld:      h.configDoc.held,
 		// h implements replayProjector (load_projection.go).
 		replayProjection: h.replay,
 		chatHasLiveRun: func(chatID marotte.ChatID) bool {
@@ -365,6 +368,7 @@ func (bc *bridgeCoordinator) reloadIfMarked(
 		slog.Info("chat session closed for its reload", "chat_id", chatID, "session_id", sb.SessionID())
 		return nil, true, nil
 	case stillOpen:
+		lc.noteCloseRefused()
 		bc.endDoorClose(chatID, lc, g, false)
 		slog.Warn("a chat's session refused its reload; it keeps its current settings until the next message",
 			"chat_id", chatID, "error", closeErr)
@@ -505,6 +509,8 @@ func (bc *bridgeCoordinator) closeConfirmed(chatID marotte.ChatID, lc *chatLifec
 	closed := err == nil || !stillOpen
 	if closed {
 		bc.bridge.mgr.removeIfSame(chatID, g.sb)
+	} else {
+		lc.noteCloseRefused()
 	}
 	quiet := released || errors.Is(err, marotte.ErrChatClosedDuringCall)
 	if closed && !quiet {
@@ -571,6 +577,8 @@ func (bc *bridgeCoordinator) openGeneration(
 			return
 		}
 	}
+
+	bc.pinSecurityProfile(ctx, chatID, rec)
 
 	// No mcpServers parameter: KAS reads the config file marotte renders (internal/mcp/kasfile.go),
 	// and an inline copy would win over the file.

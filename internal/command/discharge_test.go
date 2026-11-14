@@ -79,6 +79,7 @@ func TestCommandDischarges_ClassifiesEveryCommand(t *testing.T) {
 		marotte.CmdSetAttachments:      "CmdSetAttachments",
 		marotte.CmdSetMode:             "CmdSetMode",
 		marotte.CmdSetSupervisedMode:   "CmdSetSupervisedMode",
+		marotte.CmdSetSecurityProfile:  "CmdSetSecurityProfile",
 		marotte.CmdSteer:               "CmdSteer",
 		marotte.CmdSteerClear:          "CmdSteerClear",
 		marotte.CmdQueuePrompt:         "CmdQueuePrompt",

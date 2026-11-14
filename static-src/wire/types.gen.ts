@@ -375,6 +375,8 @@ export interface ChatHeader {
   /** Thinking and ThinkingActive mirror Chat's for the effort slider's Off stop. */
   thinking?: string;
   thinking_active?: string;
+  /** SecurityProfile mirrors Chat's for the composer's profile pill. */
+  security_profile?: string;
   /** PendingModel and PendingEffort mirror Chat's for the model badge and the pill's card. */
   pending_model?: string;
   pending_effort?: string;
@@ -3812,6 +3814,17 @@ export interface SearchResult {
 export interface SecurityProfile {
   id: string;
   presets: string[];
+}
+
+/**
+ * SecurityProfileView is the GET /api/permissions/profile response, the chat profile pill's read: the ladder in
+ * picker order, the Settings profile a new chat starts on, and whether the user or workspace file grants on its
+ * own (policyfile.HoldsGrant), which no chat's profile takes away.
+ */
+export interface SecurityProfileView {
+  default: string;
+  profiles: SecurityProfile[];
+  saved_grants: boolean;
 }
 
 /**

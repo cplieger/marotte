@@ -118,6 +118,11 @@ var durableWriteSites = []durableSite{{
 	fn:      "writeRun",
 	calls:   []string{"Mutate"},
 	because: "the run list's projection: the messages waiting to be sent, which a reload and the next process show",
+}, {
+	file:    "internal/agent/security_profile.go",
+	fn:      "pinSecurityProfile",
+	calls:   []string{"Mutate"},
+	because: "the profile the chat opened with, which is on no KAS wire; without it a later Settings change moves the chat",
 }}
 
 // Writes ruled not durable, each with its reason, so the omission is a decision.

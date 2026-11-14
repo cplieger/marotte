@@ -519,6 +519,9 @@ type Chat struct {
 	// ThinkingActive is what the session last reported.
 	Thinking       string `json:"thinking,omitempty"`
 	ThinkingActive string `json:"thinking_active,omitempty"`
+	// SecurityProfile is the policyfile profile id this chat's session doors send. Empty until the chat's first
+	// door gives it the Settings profile; a fork or tangent copies its parent's.
+	SecurityProfile string `json:"security_profile,omitempty"`
 	// LastTurnOutcome is how the newest finished non-carrier turn ended, written with TurnCount.
 	LastTurnOutcome TurnOutcome `json:"last_turn_outcome,omitempty"`
 	// PendingModel is a model pick awaiting its apply between turns.
@@ -725,6 +728,7 @@ func (c *Chat) Header() ChatHeader {
 		EffortActive:        c.EffortActive,
 		Thinking:            c.Thinking,
 		ThinkingActive:      c.ThinkingActive,
+		SecurityProfile:     c.SecurityProfile,
 		Usage:               c.Usage,
 		CreatedAt:           c.CreatedAt,
 		UpdatedAt:           c.UpdatedAt,
@@ -801,6 +805,8 @@ type ChatHeader struct {
 	// Thinking and ThinkingActive mirror Chat's for the effort slider's Off stop.
 	Thinking       string `json:"thinking,omitempty"`
 	ThinkingActive string `json:"thinking_active,omitempty"`
+	// SecurityProfile mirrors Chat's for the composer's profile pill.
+	SecurityProfile string `json:"security_profile,omitempty"`
 	// PendingModel and PendingEffort mirror Chat's for the model badge and the pill's card.
 	PendingModel  string               `json:"pending_model,omitempty"`
 	PendingEffort string               `json:"pending_effort,omitempty"`
