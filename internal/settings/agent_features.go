@@ -41,11 +41,11 @@ var workflowCreatorEfforts = []string{"low", "medium", "high", "xhigh", "max"}
 // KAS's sessionToolsAwarenessMode vocabulary, unset reading as direct: direct gives the list, search and summary
 // tools, consult gives consult_sessions only.
 const (
-	ChatAwarenessDirect  = "direct"
+	chatAwarenessDirect  = "direct"
 	ChatAwarenessConsult = "consult"
 )
 
-var chatAwarenessModes = []string{ChatAwarenessDirect, ChatAwarenessConsult}
+var chatAwarenessModes = []string{chatAwarenessDirect, ChatAwarenessConsult}
 
 // OutputStyleDefault is KAS's default output style id, the one prompts never send.
 const OutputStyleDefault = "default"
