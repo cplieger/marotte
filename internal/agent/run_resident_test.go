@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -850,4 +851,335 @@ func TestStepGate_AnEndedWaitHoldsNothing(t *testing.T) {
 			})
 		}
 	})
+}
+
+// answersWithin runs call on its own goroutine and fails the test when it has not returned 2 s in, far past the
+// shortened answer budget the callers set.
+func answersWithin[T any](t *testing.T, call func() T) T {
+	t.Helper()
+	done := make(chan T, 1)
+	go func() { done <- call() }()
+	select {
+	case got := <-done:
+		return got
+	case <-time.After(2 * time.Second):
+		t.Fatal("the verb is still waiting on the run's launching session 2s in, want an answer at the answer budget")
+		var zero T
+		return zero
+	}
+}
+
+// gatedHostRun is a leased parentless run answering inspect with reply, whose host load waits until release.
+func gatedHostRun(t *testing.T, reply json.RawMessage) (h *Runtime, br, host *fakeBridge, release func()) {
+	t.Helper()
+	h, br = leasedNonResident(t, reply)
+	br.setCallResult(methodKiroWorkflowList, parentlessRunList("wf_1"))
+	h.runs.log = newRunLog(t.TempDir())
+	host = newFakeBridge()
+	gate := make(chan struct{})
+	host.startGate = gate
+	fakeSourceOf(t, h).setFactory(func() engineSession { return host })
+	release = sync.OnceFunc(func() { close(gate) })
+	// After the hub's own cleanup, so it runs first and the shutdown finds no door parked.
+	t.Cleanup(release)
+	return h, br, host, release
+}
+
+// gatedChatRun is wf_1 launched from chat c1's session sess_owned, its review step paused, with c1's load held until
+// release.
+func gatedChatRun(t *testing.T) (h *Runtime, cs *testChatStore, br *fakeBridge, release func()) {
+	t.Helper()
+	h, cs, br = newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	h.runs.log = newRunLog(t.TempDir())
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Name = "Launcher"
+		c.RecordSession("sess_owned")
+		return true
+	}); err != nil {
+		t.Fatalf("Setup: seeding the chat: %s", err)
+	}
+	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ChatID: "c1", ParentSessionID: "sess_owned"})
+	br.setCallResult(methodKiroWorkflowInspect, oneStepInspect(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused, "sess_step"))
+	h.runs.RunNodeStart(t.Context(), reviewStep("sess_step"), "")
+	gate := make(chan struct{})
+	br.mu.Lock()
+	br.startGate = gate
+	br.mu.Unlock()
+	release = sync.OnceFunc(func() { close(gate) })
+	t.Cleanup(release)
+	return h, cs, br, release
+}
+
+func runLogLen(t *testing.T, h *Runtime) int {
+	t.Helper()
+	l, err := h.runs.log.log(t.Context(), "wf_1")
+	if err != nil {
+		t.Fatalf("Setup: the run log is unreadable: %v", err)
+	}
+	if l == nil {
+		return 0
+	}
+	all, err := l.All()
+	if err != nil {
+		t.Fatalf("Setup: reading the run log: %v", err)
+	}
+	return len(all)
+}
+
+// kiro-cli can leave a session/load unanswered after an engine restart; the person's send answers inside the
+// browser's budget instead of waiting on the load, and places nothing.
+func TestMessageStep_AnUnansweredLoadOfTheLaunchingSessionAnswersWithinTheBudget(t *testing.T) {
+	answerBudgetOf(t, 200*time.Millisecond)
+	h, _, br, _ := gatedChatRun(t)
+	before := runLogLen(t, h)
+
+	err := answersWithin(t, func() error {
+		_, err := h.runs.messageStep(t.Context(), h.runs.residentForRequest, "wf_1", reviewPath, "carry on", "m-1", "", nil)
+		return err
+	})
+
+	if !errors.Is(err, errRunHostSlow) {
+		t.Fatalf("MessageStep under an unanswered load = %v, want errRunHostSlow", err)
+	}
+	if slices.Contains(br.callLog(), marotte.MethodPrompt) {
+		t.Error("the words were sent although the launching session never loaded")
+	}
+	if got := runLogLen(t, h); got != before {
+		t.Errorf("the run log holds %d entries after the refused send, want %d: the answer says nothing was sent", got, before)
+	}
+}
+
+func TestRunRequestVerbs_AnUnansweredLoadAnswersRunHostSlow(t *testing.T) {
+	cases := []struct {
+		name  string
+		reply func(t *testing.T) json.RawMessage
+		call  func(ctx context.Context, h *Runtime) error
+	}{
+		{
+			name:  "a resume",
+			reply: func(t *testing.T) json.RawMessage { return inspectPaused(t, "wf_1", "") },
+			call:  func(ctx context.Context, h *Runtime) error { return h.runs.resume(ctx, "wf_1", callerPage) },
+		},
+		{
+			name:  "a repeat's finish",
+			reply: inspectAtCap,
+			call:  func(ctx context.Context, h *Runtime) error { return h.runs.finishRepeat(ctx, "wf_1", "loop") },
+		},
+		{
+			name: "a paused step's end",
+			reply: func(t *testing.T) json.RawMessage {
+				return stepEndTree(t, &stepEndCase{Run: "paused", Node: "paused", Type: stepNodeType})
+			},
+			call: func(ctx context.Context, h *Runtime) error {
+				return h.runs.endStep(ctx, "wf_1", targetPath, runStepCompleted)
+			},
+		},
+		{
+			name: "an answer",
+			reply: func(t *testing.T) json.RawMessage {
+				return inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step"))
+			},
+			call: func(ctx context.Context, h *Runtime) error {
+				return h.runs.answerInput(ctx, "wf_1", markerlessAskID(h, "wf_1", reviewPath, "sess_step"), "the main branch", nil)
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			answerBudgetOf(t, 200*time.Millisecond)
+			h, _, host, release := gatedHostRun(t, tc.reply(t))
+
+			err := answersWithin(t, func() error { return tc.call(t.Context(), h) })
+			if !errors.Is(err, errRunHostSlow) {
+				t.Fatalf("the verb under an unanswered load = %v, want errRunHostSlow", err)
+			}
+
+			release()
+			deadline := time.Now().Add(2 * time.Second)
+			for h.runs.residentRunHost("wf_1") == nil && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+			if h.runs.residentRunHost("wf_1") == nil {
+				t.Error("the load the verb gave up on never became resident, so the next verb loads again")
+			}
+			for _, m := range []string{methodKiroWorkflowResume, methodKiroWorkflowUpdate, marotte.MethodPrompt} {
+				if slices.Contains(host.callLog(), m) {
+					t.Errorf("%s reached the host session after the verb answered that nothing was sent", m)
+				}
+			}
+		})
+	}
+}
+
+// The heal has nobody waiting on it: a load slower than the browser's budget still lets its answer land.
+func TestHealAnswer_WaitsForASlowLoadPastTheRequestBudget(t *testing.T) {
+	answerBudgetOf(t, 200*time.Millisecond)
+	h, _, host, release := gatedHostRun(t, oneStepInspect(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused, "sess_step"))
+	h.runs.RunNodeStart(t.Context(), reviewStep("sess_step"), "")
+	a, err := h.runs.admitRunWork(holdClosed, "wf_1", "")
+	if err != nil {
+		t.Fatalf("Setup: admitting the heal: %v", err)
+	}
+	time.AfterFunc(600*time.Millisecond, release)
+
+	wrote, err := h.runs.writeHealAnswer(t.Context(), a, "", "wf_1", []string{reviewPath})
+
+	if err != nil || !wrote {
+		t.Fatalf("writeHealAnswer = (%v, %v), want the answer written once the load finished", wrote, err)
+	}
+	if got := countCalls(host, marotte.MethodPrompt); got != 1 {
+		t.Errorf("%d session/prompt calls on the host session, want 1", got)
+	}
+}
+
+func TestResidentForRequest_AReplayTimeoutOfTheLoadIsRunHostSlow(t *testing.T) {
+	replayTimeout := fmt.Errorf("session resume did not finish within 5m0s. kiro-cli stopped answering: %w",
+		context.DeadlineExceeded)
+	cases := map[string]func(t *testing.T) *Runtime{
+		"a parentless run's host load": func(t *testing.T) *Runtime {
+			h, _ := leasedNonResident(t, inspectPaused(t, "wf_1", ""))
+			host := newFakeBridge()
+			host.loadErr = replayTimeout
+			fakeSourceOf(t, h).setFactory(func() engineSession { return host })
+			return h
+		},
+		"a chat-parented run's chat load": func(t *testing.T) *Runtime {
+			h, _, br, release := gatedChatRun(t)
+			br.mu.Lock()
+			br.loadErr = replayTimeout
+			br.mu.Unlock()
+			release()
+			return h
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := setup(t)
+
+			_, release, err := h.runs.residentForRequest(t.Context(), "wf_1")
+			release()
+
+			if !errors.Is(err, errRunHostSlow) {
+				t.Fatalf("residentForRequest = %v, want errRunHostSlow: kiro-cli may still be replaying", err)
+			}
+			if errors.Is(err, errRunHostStart) {
+				t.Error("a load that ran out of time was reported as a load fault on this server")
+			}
+		})
+	}
+}
+
+func TestControlHandler_AnUnansweredLoadIs503WithTheSentence(t *testing.T) {
+	cases := []struct {
+		name   string
+		reply  func(t *testing.T) json.RawMessage
+		target string
+		body   func(h *Runtime) any
+	}{
+		{
+			name: "a step message",
+			reply: func(t *testing.T) json.RawMessage {
+				return oneStepInspect(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused, "sess_step")
+			},
+			target: "/api/runs/wf_1/steps/" + url.PathEscape(reviewPath) + "/message",
+			body:   func(*Runtime) any { return marotte.RunStepMessageRequest{Text: "carry on", MessageID: "m-1"} },
+		},
+		{
+			name: "a step's end",
+			reply: func(t *testing.T) json.RawMessage {
+				return stepEndTree(t, &stepEndCase{Run: "paused", Node: "paused", Type: stepNodeType})
+			},
+			target: "/api/runs/wf_1/steps/" + url.PathEscape(targetPath) + "/end",
+			body:   func(*Runtime) any { return marotte.RunStepEndRequest{Status: marotte.RunStepEndCompleted} },
+		},
+		{
+			name: "an answer",
+			reply: func(t *testing.T) json.RawMessage {
+				return inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step"))
+			},
+			target: "/api/runs/wf_1/answer",
+			body: func(h *Runtime) any {
+				return marotte.RunAnswerRequest{AskID: markerlessAskID(h, "wf_1", reviewPath, "sess_step"), Text: "the main branch"}
+			},
+		},
+		{
+			name:   "a repeat's finish",
+			reply:  inspectAtCap,
+			target: "/api/runs/wf_1/finish-loop",
+			body:   func(*Runtime) any { return marotte.RunFinishLoopRequest{NodeID: "loop"} },
+		},
+		{
+			name:   "a resume",
+			reply:  func(t *testing.T) json.RawMessage { return inspectPaused(t, "wf_1", "") },
+			target: "/api/runs/wf_1/resume",
+			body:   func(*Runtime) any { return nil },
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			answerBudgetOf(t, 200*time.Millisecond)
+			h, _, _, _ := gatedHostRun(t, tc.reply(t))
+			mux := http.NewServeMux()
+			h.runRoutes.register(mux)
+
+			rec := answersWithin(t, func() *httptest.ResponseRecorder { return postStep(t, mux, tc.target, tc.body(h)) })
+
+			if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "nothing was sent") {
+				t.Errorf("POST %s under an unanswered load = %d %s, want 503 saying nothing was sent",
+					tc.target, rec.Code, rec.Body)
+			}
+		})
+	}
+}
+
+// A load kiro-cli still holds past the release report names its remedy; a chat close ending the load does not.
+func TestControlHandler_AHeldLaunchSessionNamesTheAgentRestart(t *testing.T) {
+	cases := map[string]struct {
+		loadErr     error
+		want        int
+		wantRestart bool
+	}{
+		"kiro-cli still holds the session":   {loadErr: marotte.ErrSessionClosing, want: http.StatusServiceUnavailable, wantRestart: true},
+		"the chat's close ended the session": {loadErr: marotte.ErrChatClosedDuringCall, want: http.StatusInternalServerError},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h, _ := leasedNonResident(t, oneStepInspect(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused, "sess_step"))
+			host := newFakeBridge()
+			host.loadErr = tc.loadErr
+			fakeSourceOf(t, h).setFactory(func() engineSession { return host })
+			mux := http.NewServeMux()
+			h.runRoutes.register(mux)
+
+			rec := postStep(t, mux, "/api/runs/wf_1/steps/"+url.PathEscape(reviewPath)+"/message",
+				marotte.RunStepMessageRequest{Text: "carry on", MessageID: "m-1"})
+
+			if rec.Code != tc.want {
+				t.Errorf("POST message = %d %s, want %d", rec.Code, rec.Body, tc.want)
+			}
+			if got := strings.Contains(rec.Body.String(), "restart the agent engine"); got != tc.wantRestart {
+				t.Errorf("the body %s names the agent restart = %v, want %v", rec.Body, got, tc.wantRestart)
+			}
+		})
+	}
+}
+
+func TestRetry_ASlowLoadAnswersRunHostSlow(t *testing.T) {
+	prev := retryTimeout
+	retryTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { retryTimeout = prev })
+	h, _, host, _ := gatedHostRun(t, nil)
+
+	err := answersWithin(t, func() error {
+		_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "aborted"}))
+		return err
+	})
+
+	if !errors.Is(err, errRunHostSlow) {
+		t.Fatalf("Retry under an unanswered load = %v, want errRunHostSlow", err)
+	}
+	if slices.Contains(host.callLog(), methodKiroWorkflowRetry) {
+		t.Error("the retry was sent although the launching session never loaded")
+	}
 }

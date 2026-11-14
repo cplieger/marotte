@@ -253,7 +253,7 @@ func (rs *Runs) carryOut(ctx context.Context, workflowID string, req *runRequest
 		return nil
 	case actResume:
 		if len(r.throttled) > 0 {
-			_, err := rs.answerThrottled(ctx, workflowID, r.throttled, req.caller.words())
+			_, err := rs.answerThrottled(ctx, rs.residentForRequest, workflowID, r.throttled, req.caller.words())
 			return rs.endAutoResumeStopAfter(ctx, workflowID, err)
 		}
 		return rs.endAutoResumeStopAfter(ctx, workflowID, rs.resumeAsked(ctx, workflowID, req.resumeParams()))
@@ -432,7 +432,7 @@ func (rs *Runs) resumeAsked(ctx context.Context, workflowID string, extra map[st
 		return err
 	}
 	defer a.settle(workflowID)
-	host, release, err := rs.ensureResident(ctx, workflowID)
+	host, release, err := rs.residentForRequest(ctx, workflowID)
 	defer release()
 	if err != nil {
 		return err
@@ -446,7 +446,7 @@ func (rs *Runs) resumeAsked(ctx context.Context, workflowID string, extra map[st
 
 // finishAsked is a person's finish of the repeat at nodeID, refused while the gate is closed (drive admits it).
 func (rs *Runs) finishAsked(ctx context.Context, workflowID, nodeID string) error {
-	host, release, err := rs.ensureResident(ctx, workflowID)
+	host, release, err := rs.residentForRequest(ctx, workflowID)
 	defer release()
 	if err != nil {
 		return err
@@ -598,7 +598,7 @@ func (rs *Runs) writeHealAnswer(
 	ctx context.Context, a runAdmission, chatID marotte.ChatID, workflowID string, paths []string,
 ) (wrote bool, err error) {
 	defer a.settle(workflowID)
-	wrote, err = rs.answerThrottled(ctx, workflowID, paths, healCaller)
+	wrote, err = rs.answerThrottled(ctx, rs.ensureResident, workflowID, paths, healCaller)
 	if err != nil {
 		slog.Warn("rehydrate: the question of a step a model error stopped could not be answered",
 			"workflow_id", workflowID, "chat_id", chatID, "error", err)
@@ -610,11 +610,13 @@ func (rs *Runs) writeHealAnswer(
 }
 
 // answerThrottled answers the question at each path with healContinueText, from from (nil for the user's own), through
-// the step message path; wrote is whether any answer may have reached KAS.
-func (rs *Runs) answerThrottled(ctx context.Context, workflowID string, paths []string, from *marotte.Caller) (wrote bool, err error) {
+// the step message path under resident (messageStep); wrote is whether any answer may have reached KAS.
+func (rs *Runs) answerThrottled(
+	ctx context.Context, resident residentFn, workflowID string, paths []string, from *marotte.Caller,
+) (wrote bool, err error) {
 	var errs []error
 	for _, path := range paths {
-		_, sErr := rs.messageStep(ctx, workflowID, path, healContinueText, ids.NewMessageID(), "", from)
+		_, sErr := rs.messageStep(ctx, resident, workflowID, path, healContinueText, ids.NewMessageID(), "", from)
 		wrote = wrote || sErr == nil || errors.Is(sErr, errStepUnconfirmed)
 		if sErr != nil {
 			errs = append(errs, sErr)

@@ -53,7 +53,7 @@ var lifecycleOps = []lifecycleOp{
 		name: "prompt", method: marotte.MethodPrompt,
 		run: marotte.RunStatusPaused, node: marotte.RunNodeStatusPaused, state: "paused",
 		do: func(ctx context.Context, h *Runtime) error {
-			_, err := h.runs.messageStep(ctx, "wf_1", reviewPath, "carry on", "m-op", "", nil)
+			_, err := h.runs.messageStep(ctx, h.runs.residentForRequest, "wf_1", reviewPath, "carry on", "m-op", "", nil)
 			return err
 		},
 	},
@@ -71,7 +71,7 @@ var lifecycleOps = []lifecycleOp{
 		name: "steer", method: marotte.MethodSessionSteer,
 		run: marotte.RunStatusRunning, node: marotte.RunNodeStatusRunning, state: "running",
 		do: func(ctx context.Context, h *Runtime) error {
-			_, err := h.runs.messageStep(ctx, "wf_1", reviewPath, "use main", "m-op", "", nil)
+			_, err := h.runs.messageStep(ctx, h.runs.residentForRequest, "wf_1", reviewPath, "use main", "m-op", "", nil)
 			return err
 		},
 	},
@@ -82,7 +82,7 @@ var lifecycleOps = []lifecycleOp{
 		setup: func(t *testing.T, h *Runtime, br *fakeBridge) {
 			t.Helper()
 			for _, id := range []string{"m-a", "m-b"} {
-				if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "words "+id, id, "", nil); err != nil {
+				if _, err := h.runs.messageStep(t.Context(), h.runs.residentForRequest, "wf_1", reviewPath, "words "+id, id, "", nil); err != nil {
 					t.Fatalf("Setup: MessageStep(%s) = %v", id, err)
 				}
 			}
@@ -307,7 +307,7 @@ func checkRunAfter(t *testing.T, h *Runtime, br *fakeBridge, op *lifecycleOp, ou
 	sends := []string{marotte.MethodPrompt, marotte.MethodSessionSteer}
 	counts := func() []int { return []int{countCalls(br, sends[0]), countCalls(br, sends[1])} }
 	before := counts()
-	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "and then", "m-probe", "", nil)
+	_, err := h.runs.messageStep(t.Context(), h.runs.residentForRequest, "wf_1", reviewPath, "and then", "m-probe", "", nil)
 	switch out.after {
 	case "open":
 		if err != nil {

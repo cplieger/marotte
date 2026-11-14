@@ -110,7 +110,7 @@ type bridgeCoordinator struct {
 	steerTurnBound   func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
 	steerBridgeGone  func(marotte.ChatID)                       `wiring:"optional"`
 	steerKASSettled  func(marotte.ChatID)                       `wiring:"optional"`
-	// chatHasLiveRun keeps pushTurnOutcome from claiming the work is over while a launched run continues. Nil means none.
+	// chatHasLiveRun reports whether the chat launched a run still live. Nil means none.
 	chatHasLiveRun func(marotte.ChatID) bool `wiring:"optional"`
 	// chatHasTab reports an open tab on the chat; it answers true when no tab set is wired, so nothing is released.
 	chatHasTab func(marotte.ChatID) bool
@@ -880,10 +880,11 @@ func (bc *bridgeCoordinator) reportSupervisedNotApplied(ctx context.Context, cha
 // tryLoadSession loads so.SessionID for chatID and reports loaded true only with a nil error, once the replay has
 // merged. An error keeps the chat's session for the next open: it wraps ErrBridgeExited when the engine ended under
 // the load and its one retry, under the replay, or before any engine became ready, wraps ErrChatClosedDuringCall
-// when the chat's close refused the door's forward, and otherwise is the replay's merge failing. A load KAS refuses
-// (the replay budget, an unavailable engine, a session still resident or closing included) and a load whose replay
-// restored none of the chat's turns (errReplayRestoredNothing) both return loaded false with a nil error after
-// retireSession, so the generation opens session/new.
+// when the chat's close refused the door's forward, is a load kiro-cli left unanswered (the replay budget, or a
+// predecessor it still holds: ErrSessionClosing) on a chat with a live run, and otherwise is the replay's merge
+// failing. Any other failed load (an unavailable engine, a session still resident, an unanswered load of a chat with
+// no live run) and a load whose replay restored none of the chat's turns (errReplayRestoredNothing) both return
+// loaded false with a nil error after retireSession, so the generation opens session/new.
 func (bc *bridgeCoordinator) tryLoadSession(
 	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, rec *marotte.Chat, so *marotte.SessionOpts,
 	held unservedSelection, stamp uint64,
@@ -903,6 +904,14 @@ func (bc *bridgeCoordinator) tryLoadSession(
 			bc.replayProjection.DiscardReplayProjection(chatID)
 		}
 		if errors.Is(err, marotte.ErrBridgeExited) || errors.Is(err, marotte.ErrChatClosedDuringCall) {
+			return false, err
+		}
+		unanswered := (errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil) ||
+			errors.Is(err, marotte.ErrSessionClosing)
+		if unanswered && bc.chatHasLiveRun != nil && bc.chatHasLiveRun(chatID) {
+			// KAS may still hold the session, and a new one would cut the run off from its launching session.
+			slog.Warn("session/load was not answered; the chat keeps its session for the run it launched",
+				"chat_id", chatID, "acp_session", acpSessionID, "error", err)
 			return false, err
 		}
 		slog.Warn("session/load failed, starting new",

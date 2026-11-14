@@ -15,6 +15,12 @@ import (
 // echoing an internal path.
 var errRunHostStart = errors.New("the run's launching session could not be loaded")
 
+// errRunHostSlow is a person's verb whose run's launching session was not resident within clientAnswerBudget, which
+// owns the bound: nothing was placed or sent, and the load runs on. Answered 503.
+var errRunHostSlow = errors.New(
+	"the run's session is still loading, so nothing was sent to the run. Try again in a moment",
+)
+
 // Driving it from another session would drop the profile's presets from its steps. Answered 409.
 var errLaunchSessionUnavailable = errors.New("the run's launching session cannot be opened here")
 
@@ -76,6 +82,22 @@ func (rs *Runs) ensureResident(ctx context.Context, workflowID string) (host *dr
 		return nil, func() {}, err
 	}
 	return &drivenHost{sb: sb, chatID: runChatID(workflowID)}, func() {}, nil
+}
+
+// residentFn makes a run's launching session resident for a verb: residentForRequest when a person waits on the
+// answer, ensureResident for marotte's own verbs.
+type residentFn func(ctx context.Context, workflowID string) (host *drivenHost, release func(), err error)
+
+// residentForRequest is ensureResident for a person's verb. It answers errRunHostSlow once clientAnswerBudget passes
+// first, or when the load ran out its own budget, so the browser reads a sentence rather than aborting.
+func (rs *Runs) residentForRequest(ctx context.Context, workflowID string) (*drivenHost, func(), error) {
+	bctx, cancel := context.WithTimeout(ctx, clientAnswerBudget)
+	defer cancel()
+	host, release, err := rs.ensureResident(bctx, workflowID)
+	if err != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+		return nil, release, errRunHostSlow
+	}
+	return host, release, err
 }
 
 // hostOnChat reaches a chat-parented run through the chat's own session, never a second one: that session must be
