@@ -890,8 +890,9 @@ export interface EffectiveSettings {
  */
   knowledge_enabled: boolean;
   /**
- * ContentCollection is the stored content-collection choice, default off. An
- * organization's lock overrides what marotte sends, not this value.
+ * ContentCollection is the stored content-collection choice, default on
+ * (settings.DefaultContentCollectionEnabled). An organization's lock
+ * overrides what marotte sends, not this value.
  */
   content_collection_enabled: boolean;
   /**
