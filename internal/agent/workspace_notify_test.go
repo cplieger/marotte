@@ -13,11 +13,11 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// workspaceMethods are the eleven workspace-global notifications KAS sends to every resident session or none.
+// workspaceMethods are the twelve workspace-global notifications KAS sends to every resident session or none.
 var workspaceMethods = []string{
 	methodKiroHooksDidChange, methodV3Powers, methodKiroWorkflowRecipesChanged, methodV3Governance,
 	methodKiroConfigurationState, methodV3PolicyChanged, methodV3PolicyError, methodV3SteeringDocs, methodV3SystemNotify,
-	methodKiroMemoryChanged, methodKiroMemorySyncStatus,
+	methodKiroMemoryChanged, methodKiroMemorySyncStatus, methodV3ProgressiveContext,
 }
 
 // countedSession is the session id of the frames countWorkspaceHandlers counts.
@@ -135,4 +135,16 @@ func TestWorkspaceNotifications_IsTheOnlyTable(t *testing.T) {
 			t.Errorf("%s is also dropped as a no-op: a copy on that lane would be lost", method)
 		}
 	}
+}
+
+// TestWorkspaceNotifications_CatalogMoveRefetchesTheDocsPage pins that a skill or steering file
+// another writer adds reaches an open Kiro docs page without a reload.
+func TestWorkspaceNotifications_CatalogMoveRefetchesTheDocsPage(t *testing.T) {
+	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	before := len(eventsOfType(h, marotte.EventKiroDocsChanged))
+	h.dispatchWorkspace(t.Context(), "c1", &marotte.RPCResponse{
+		Method: methodV3ProgressiveContext, Params: json.RawMessage(`{"status":"ok","items":[]}`),
+	})
+	awaitEventCount(t, h, marotte.EventKiroDocsChanged, before+1)
 }

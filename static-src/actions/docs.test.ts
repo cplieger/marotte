@@ -17,16 +17,13 @@ beforeEach(() => {
 });
 
 describe("docs.delete", () => {
-  it("POSTs a delete of the row's path to the file browser's action endpoint", async () => {
+  it("POSTs the row's path to the docs delete endpoint", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
     const { deleteDoc } = await import("./docs.js");
     await deleteDoc.dispatch({ path: "/w/.kiro/steering/a.md", name: "a.md" });
     const [url, opts] = mockFetch.mock.calls[0]!;
-    expect(url).toBe("/api/files/action");
-    expect(JSON.parse(opts.body as string)).toEqual({
-      action: "delete",
-      path: "/w/.kiro/steering/a.md",
-    });
+    expect(url).toBe("/api/workspace/kiro-docs/delete");
+    expect(JSON.parse(opts.body as string)).toEqual({ path: "/w/.kiro/steering/a.md" });
   });
 
   // A delete, a recreate and a second delete of one path within the server's replay window

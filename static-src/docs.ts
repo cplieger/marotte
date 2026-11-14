@@ -446,6 +446,14 @@ function initDocsView(): void {
       }
     }),
   );
+  // A delete on any device, and a skill or steering file another writer adds, which KAS's watcher reports.
+  registerCleanup(
+    onSSE("kiro_docs_changed", () => {
+      if ($.docsView.offsetParent !== null) {
+        loadDocs();
+      }
+    }),
+  );
   registerCleanup(
     onSSE("steering_issues_changed", () => {
       if ($.docsView.offsetParent !== null) {
@@ -1029,11 +1037,24 @@ function rowGates(doc: KiroDoc, hook: HookState | undefined): RowGates {
   return { openable: true, editable: true, deletable: true, explainDelete: false };
 }
 
+/** A hook row's delete removes its whole file, so the confirm names the other hooks it takes. */
+function deleteBody(doc: KiroDoc): string {
+  const others = docs
+    .filter(
+      (d) => d !== doc && d.category === "hook" && doc.category === "hook" && d.path === doc.path,
+    )
+    .map((d) => d.name);
+  if (others.length === 0) {
+    return "This cannot be undone.";
+  }
+  return `It shares ${doc.group ?? "its file"} with ${others.join(", ")}, which go too. This cannot be undone.`;
+}
+
 /** The confirm is the guard: a `.kiro` file has no undo. */
 async function deleteRow(doc: KiroDoc): Promise<void> {
   const ok = await confirmDialog({
     title: `Delete ${doc.name}?`,
-    body: "This cannot be undone.",
+    body: deleteBody(doc),
     confirmLabel: "Delete",
     variant: "destructive",
   });
@@ -1202,6 +1223,12 @@ export function _setHooksForTest(list: HookState[]): void {
 // deadset:ignore DS1102 -- test seam: reads the Hooks rows built from the docs inventory and the hook-state map
 export function _hookRowsForTest(): KiroDoc[] {
   return hookRows();
+}
+
+/** @internal Test seam for the delete confirm's body. */
+// deadset:ignore DS1102 -- test seam: reads the loaded inventory for a hook file's other hooks
+export function _deleteBodyForTest(doc: KiroDoc): string {
+  return deleteBody(doc);
 }
 
 /** @internal Test seam for one rendered row. */

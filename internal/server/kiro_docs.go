@@ -171,10 +171,17 @@ func (s *Server) kiroRoots() []kiroRoot {
 	return roots
 }
 
+// sigDepth is how many directory levels below each category the signature reads: the levels a
+// scan builds rows from. A change deeper than its category's depth here would serve a stale scan.
+var sigDepth = map[string]int{
+	"": 1, "steering": maxSpecWalkDepth, "skills": 2, "agents": 1,
+	"specs": maxSpecWalkDepth, "hooks": 1, "prompts": 1,
+}
+
 // dirSignature builds a cache key from each root's category directories: the mtime AND the
-// entry names. Names are load-bearing: Linux stamps mtimes from a coarse clock, so two
-// changes inside one tick (a write then the settings_updated refetch) give identical mtimes.
-// An in-place body edit is still undetected; it changes only the description.
+// entry names down to sigDepth. Names are load-bearing: Linux stamps mtimes from a coarse clock,
+// so two changes inside one tick (a write then the settings_updated refetch) give identical
+// mtimes. An in-place body edit is still undetected; it changes only the description.
 func dirSignature(roots []kiroRoot) string {
 	var b strings.Builder
 	for _, root := range roots {
@@ -189,17 +196,27 @@ func dirSignature(roots []kiroRoot) string {
 				continue
 			}
 			b.WriteString(p + "=" + info.ModTime().UTC().Format("20060102150405.000000000"))
-			entries, dirErr := os.ReadDir(p)
-			if dirErr != nil {
-				b.WriteString("#?")
-			}
-			for _, e := range entries {
-				b.WriteString("#" + e.Name())
-			}
+			writeEntryNames(&b, p, sigDepth[sub])
 			b.WriteString(";")
 		}
 	}
 	return b.String()
+}
+
+// writeEntryNames appends dir's entry names, descending into subdirectories while depth allows.
+func writeEntryNames(b *strings.Builder, dir string, depth int) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		b.WriteString("#?")
+	}
+	for _, e := range entries {
+		b.WriteString("#" + e.Name())
+		if depth > 1 && e.IsDir() {
+			b.WriteString("{")
+			writeEntryNames(b, filepath.Join(dir, e.Name()), depth-1)
+			b.WriteString("}")
+		}
+	}
 }
 
 // scanKiroRoots scans every root in category order, applying the total cap. A
@@ -255,7 +272,7 @@ func scanDocsSteering(ctx context.Context, root fs.FS, prefix string, guard path
 	})
 }
 
-// Other markdown under a skill directory is reference material.
+// scanDocsSkills emits one row per skill directory; other markdown under one is reference material.
 func scanDocsSkills(ctx context.Context, root fs.FS, prefix string, guard pathGuard) docScan {
 	entries, err := readGuardedDir(root, "skills", guard)
 	if err != nil {
@@ -267,38 +284,51 @@ func scanDocsSkills(ctx context.Context, root fs.FS, prefix string, guard pathGu
 			sc.truncated = true
 			return sc
 		}
-		if !e.IsDir() || strings.ContainsRune(e.Name(), 0) {
+		// A linked directory too, as KAS loads one; the guard refuses a link out of the tree.
+		if (!e.IsDir() && e.Type()&fs.ModeSymlink == 0) || strings.ContainsRune(e.Name(), 0) {
 			continue
 		}
-		rel := e.Name() + "/SKILL.md"
-		data, verdict, rErr := readGuardedFS(root, "skills/"+rel, guard)
-		if rErr != nil {
-			// A directory with no manifest is still a skill, keeping the editable default.
-			data = nil
-		}
-		fm := steering.Parse(data)
-		name := cmp.Or(fm.Name, e.Name())
-		// A DECLARED mode only, never steering.Parse's "always" default: KAS's skill schema declares
-		// no `inclusion`, so the default badged every skill always-loaded. A declared `manual` or
-		// `auto` does make a skill a slash command, so that is shown.
-		inclusion := ""
-		if fm.HasInclusion {
-			inclusion = fm.Inclusion
-		}
-		kept := sc.add(&KiroDoc{
-			Category:         catSkill,
-			Name:             name,
-			Path:             prefix + "/skills/" + rel,
-			Description:      fm.Description,
-			Inclusion:        inclusion,
-			SteeringOverride: fm.SteeringOverride,
-			DeleteProtected:  verdict.deleteProtected,
-		})
-		if !kept {
+		doc, ok := skillRow(root, prefix, e.Name(), guard)
+		if ok && !sc.add(&doc) {
 			return sc
 		}
 	}
 	return sc
+}
+
+// skillRow builds the row for skills/<name>, or reports there is no skill there.
+func skillRow(root fs.FS, prefix, name string, guard pathGuard) (KiroDoc, bool) {
+	dir := "skills/" + name
+	data, _, rErr := readGuardedFS(root, dir+"/SKILL.md", guard)
+	if rErr != nil && !holdsFiles(root, dir, guard) {
+		return KiroDoc{}, false
+	}
+	fm := steering.Parse(data)
+	// A DECLARED mode only, never steering.Parse's "always" default: KAS's skill schema declares
+	// no `inclusion`, so the default badged every skill always-loaded. A declared `manual` or
+	// `auto` does make a skill a slash command, so that is shown.
+	inclusion := ""
+	if fm.HasInclusion {
+		inclusion = fm.Inclusion
+	}
+	return KiroDoc{
+		Category:         catSkill,
+		Name:             cmp.Or(fm.Name, name),
+		Path:             prefix + "/" + dir + "/SKILL.md",
+		Description:      fm.Description,
+		Inclusion:        inclusion,
+		SteeringOverride: fm.SteeringOverride,
+		// The delete removes the directory, so a linked directory is what must not offer it.
+		DeleteProtected: guard != nil && guard(dir).deleteProtected,
+	}, true
+}
+
+// holdsFiles reports whether a manifest-less skill directory is a broken skill to repair or
+// delete (it holds something) rather than nothing at all. KAS loads no skill without a readable
+// SKILL.md, so an empty directory has nothing to show.
+func holdsFiles(root fs.FS, dir string, guard pathGuard) bool {
+	entries, err := readGuardedDir(root, dir, guard)
+	return err == nil && len(entries) > 0
 }
 
 // scanDocsAgents emits one row per agent, de-duplicating the `.json`/`.md` pair

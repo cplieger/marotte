@@ -474,7 +474,8 @@ func TestFindMdDocsInDir_KeepsAnAlwaysDocThatSortsAfterTheCap(t *testing.T) {
 }
 
 // TestFindRepoSkills_ScansSubdirsWithSkillMd pins skills as subdirectories pointing at
-// SKILL.md, classified by it, with a manifest-less subdir counted and a flat .md ignored.
+// SKILL.md, classified by it, with a manifest-less subdir counted, an empty one and a flat .md
+// ignored.
 func TestFindRepoSkills_ScansSubdirsWithSkillMd(t *testing.T) {
 	repo := t.TempDir()
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "alpha", "SKILL.md"),
@@ -482,8 +483,11 @@ func TestFindRepoSkills_ScansSubdirsWithSkillMd(t *testing.T) {
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "beta", "SKILL.md"), "# beta\n")
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "gamma", "notes.txt"), "no skill.md here\n")
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "loose.md"), "# not a skill\n")
+	if err := os.Mkdir(filepath.Join(repo, ".kiro", "skills", "emptied"), 0o750); err != nil {
+		t.Fatal(err)
+	}
 
-	skills, _ := findRepoSkills(repo)
+	skills, seen := findRepoSkills(repo)
 	// alpha, beta, gamma are directories -> 3 skills. loose.md is a flat
 	// file -> ignored.
 	if len(skills) != 3 {
@@ -508,6 +512,12 @@ func TestFindRepoSkills_ScansSubdirsWithSkillMd(t *testing.T) {
 	}
 	if _, ok := byFile["loose.md"]; ok {
 		t.Error("flat skills/loose.md should not be treated as a skill")
+	}
+	if _, ok := byFile["emptied/SKILL.md"]; ok {
+		t.Error("an empty skills/emptied directory was listed as a skill")
+	}
+	if seen.total != 3 {
+		t.Errorf("seen.total = %d, want 3: an empty directory is not counted", seen.total)
 	}
 }
 

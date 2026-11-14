@@ -96,11 +96,9 @@ func TestScanKiroDocs_SymlinkedFlatCategoryIsNotEnumerated(t *testing.T) {
 		plant    func(t *testing.T, outside string)
 	}{
 		{catSkill + "s", func(t *testing.T, outside string) {
-			// A manifest-less skill directory is still a row, the shape that leaked.
+			// A manifest-less skill directory holding files is still a row, the shape that leaked.
 			writeFile(t, outside, filepath.Join(leakName, "SKILL.md"), "---\nname: "+leakName+"\n---\n")
-			if err := os.MkdirAll(filepath.Join(outside, leakName+"-bare"), 0o750); err != nil {
-				t.Fatal(err)
-			}
+			writeFile(t, outside, filepath.Join(leakName+"-bare", "notes.md"), "# Notes\n")
 		}},
 		{catAgent + "s", func(t *testing.T, outside string) {
 			writeFile(t, outside, leakName+".md", "---\nname: "+leakName+"\n---\n")
@@ -290,5 +288,26 @@ func TestKiroDocsGuard_NilAdmitsEverything(t *testing.T) {
 	var guard pathGuard
 	if !guard.allows("anything/at/all.md") {
 		t.Error("a nil guard refused a path; the MapFS tests would silently scan nothing")
+	}
+}
+
+// TestScanKiroDocs_LinkedSkillDirectoryFollowsTheGuard pins that a linked skill directory is a
+// row inside the tree and none out of it.
+func TestScanKiroDocs_LinkedSkillDirectoryFollowsTheGuard(t *testing.T) {
+	base := t.TempDir()
+	work := filepath.Join(base, "work")
+	kiro := filepath.Join(work, ".kiro")
+	writeFile(t, kiro, "shared/inside/SKILL.md", "---\nname: inside\n---\n")
+	writeFile(t, base, "outside/"+leakName+"/SKILL.md", "---\nname: "+leakName+"\n---\n")
+	if err := os.MkdirAll(filepath.Join(kiro, "skills"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOr(t, filepath.Join(kiro, "shared", "inside"), filepath.Join(kiro, "skills", "inside"))
+	symlinkOr(t, filepath.Join(base, "outside", leakName), filepath.Join(kiro, "skills", leakName))
+
+	srv := &Server{workDir: work, kiroDocs: &docsCache{}}
+	skills := docsByCategory(srv.collectKiroDocs(t.Context()).Docs, catSkill)
+	if len(skills) != 1 || skills[0].Name != "inside" {
+		t.Errorf("skills = %+v, want only the in-tree link", skills)
 	}
 }

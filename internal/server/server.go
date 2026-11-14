@@ -33,6 +33,7 @@ type Server struct {
 	chats        routeHandler
 	git          routeHandler
 	files        routeHandler
+	docDeleter   docDeleter
 	auth         routeHandler
 	push         routeHandler
 	mcpStatus    routeHandler
@@ -111,6 +112,9 @@ func WithGit(g routeHandler) Option { return func(s *Server) { s.git = g } }
 
 // WithFiles sets the file handler for workspace file read/write endpoints.
 func WithFiles(f routeHandler) Option { return func(s *Server) { s.files = f } }
+
+// WithDocDeleter sets what removes a Kiro docs row's files; nil answers the delete route 503.
+func WithDocDeleter(d docDeleter) Option { return func(s *Server) { s.docDeleter = d } }
 
 // WithAuth sets the auth handler for login, logout, and whoami endpoints.
 func WithAuth(a routeHandler) Option { return func(s *Server) { s.auth = a } }
@@ -327,6 +331,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("/api/tabs", s.handleTabs)
 	mux.HandleFunc("/api/workspace/kiro-docs", s.handleKiroDocs)
 	mux.HandleFunc("/api/workspace/kiro-docs/new", s.handleKiroDocNew)
+	mux.HandleFunc("/api/workspace/kiro-docs/delete", s.handleKiroDocDelete)
 	mux.HandleFunc("/api/specs/{dir}", s.handleSpec)
 	s.mcpConfig.RegisterRoutes(mux)
 	s.mcpStatus.RegisterRoutes(mux)

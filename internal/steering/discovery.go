@@ -201,12 +201,16 @@ func findRepoSkills(repoDir string) (skills []docEntry, seen dirCount) {
 		if !isSkillDir(e) {
 			continue
 		}
+		// A missing SKILL.md yields empty data: the skill renders with no description. An empty
+		// directory is no skill at all.
+		data, readErr := readCappedFile(filepath.Join(dir, e.Name(), "SKILL.md"), FrontMatterReadCap)
+		if readErr != nil && isEmptyDir(filepath.Join(dir, e.Name())) {
+			continue
+		}
 		total++
 		if len(out) >= maxScannedEntries {
 			continue
 		}
-		// A missing SKILL.md yields empty data: the skill renders with no description.
-		data, _ := readCappedFile(filepath.Join(dir, e.Name(), "SKILL.md"), FrontMatterReadCap)
 		doc := parseSteeringFrontmatter(data)
 		doc.Filename = defuse(e.Name()) + "/SKILL.md"
 		out = append(out, doc)
@@ -400,6 +404,12 @@ func keepByRank(entries []docEntry, rankOf func(docEntry) int) []docEntry {
 
 func isSteeringDoc(e os.DirEntry) bool {
 	return !e.IsDir() && !strings.HasPrefix(e.Name(), ".") && strings.HasSuffix(e.Name(), ".md")
+}
+
+// isEmptyDir reports whether dir lists no entries; an unreadable one counts as empty.
+func isEmptyDir(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	return err != nil || len(entries) == 0
 }
 
 func isSkillDir(e os.DirEntry) bool {

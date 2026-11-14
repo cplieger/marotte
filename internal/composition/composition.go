@@ -337,6 +337,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithChats(chatStore),
 		server.WithGit(gitHandler),
 		server.WithFiles(fileHandler),
+		server.WithDocDeleter(fileHandler),
 		server.WithAuth(authHandler),
 		server.WithPush(pushSvc),
 		server.WithMCPConfig(mcpStore),
