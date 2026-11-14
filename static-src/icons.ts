@@ -639,24 +639,24 @@ const PATH_SHIELD =
 // Lucide "shield": a safety check blocked the turn, and the Unrestricted security profile.
 export const ICON_SHIELD = svg("ui", PATH_SHIELD);
 /**
- * The shield with one line per step of protection, for the security profile ladder. Each line is its own element
- * and every gap is at least 1px at 16px: 3.5 units apart, the top one clear of the shoulders, and the lowest one
- * shortened where the outline narrows.
+ * The shield with one line per step of protection, for the security profile ladder. At 16px a unit is 2/3px, so
+ * every y is 1.5k + 0.75 (the 1px stroke on a pixel row, or it smears into two) and lines sit 3 units apart (one
+ * clear row between); the lowest of four is shortened where the outline narrows.
  */
 export const ICON_SHIELD_LINES_FOUR = svg(
   "ui",
   PATH_SHIELD +
-    '<path d="M8 7.75h8"/><path d="M8 11.25h8"/><path d="M8 14.75h8"/><path d="M9.5 18.25h5"/>',
+    '<path d="M8 8.25h8"/><path d="M8 11.25h8"/><path d="M8 14.25h8"/><path d="M9 17.25h6"/>',
 );
 export const ICON_SHIELD_LINES_THREE = svg(
   "ui",
-  PATH_SHIELD + '<path d="M8 9h8"/><path d="M8 12.5h8"/><path d="M8 16h8"/>',
+  PATH_SHIELD + '<path d="M8 9.75h8"/><path d="M8 12.75h8"/><path d="M8 15.75h8"/>',
 );
 export const ICON_SHIELD_LINES_TWO = svg(
   "ui",
-  PATH_SHIELD + '<path d="M8 10.75h8"/><path d="M8 14.25h8"/>',
+  PATH_SHIELD + '<path d="M8 11.25h8"/><path d="M8 14.25h8"/>',
 );
-export const ICON_SHIELD_LINES_ONE = svg("ui", PATH_SHIELD + '<path d="M8 12.5h8"/>');
+export const ICON_SHIELD_LINES_ONE = svg("ui", PATH_SHIELD + '<path d="M8 12.75h8"/>');
 /** The shield with a dot: a profile with no rank on the ladder. */
 export const ICON_SHIELD_DOT = svg(
   "ui",
