@@ -91,9 +91,14 @@ describe("extractSubtitle", () => {
     { name: "empty string value skipped", input: { query: "", path: "/x" }, expected: "/x" },
     { name: "non-string value skipped", input: { query: 42, path: "/y" }, expected: "/y" },
     {
-      name: "truncation at 121 chars",
+      name: "truncation at 121 chars keeps 120, the last an ellipsis",
       input: { query: "a".repeat(121) },
-      expected: "a".repeat(117) + "\u2026",
+      expected: "a".repeat(119) + "\u2026",
+    },
+    {
+      name: "truncation never ends in a lone high surrogate",
+      input: { query: "a".repeat(116) + "\u{1F600}".repeat(10) },
+      expected: "a".repeat(116) + "\u{1F600}" + "\u2026",
     },
     {
       name: "exactly 120 chars not truncated",
