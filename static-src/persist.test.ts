@@ -30,6 +30,7 @@ import {
   adoptSettings,
   settingsAsShown,
   shownSettingsSignal,
+  showFallbackAnswer,
   __testResetTracking,
 } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
@@ -931,5 +932,74 @@ describe("shownSettingsSignal", () => {
     expect(shownSettingsSignal.value?.model_fallback_enabled).toBe(false);
     expect(shownSettingsSignal.value).toEqual(settingsAsShown());
     await vi.advanceTimersByTimeAsync(350);
+  });
+});
+
+describe("showFallbackAnswer", () => {
+  let answers: ((s: ReturnType<typeof settingsPayload>) => void)[];
+
+  beforeEach(() => {
+    answers = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            answers.push((s) => {
+              resolve(Response.json(s));
+            });
+          }),
+      ),
+    );
+    __testResetTracking();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const row = (configured: string, model = "model-a"): EffectiveSettings["model_fallbacks"][number] => ({
+    model,
+    configured,
+    vendor_default: "",
+    read_only_reason: "",
+  });
+  const at = (revision: number, ...rows: EffectiveSettings["model_fallbacks"]): EffectiveSettings =>
+    settingsPayload({ ...v(revision), model_fallbacks: rows });
+  const shownTarget = (model = "model-a"): string | undefined =>
+    shownSettingsSignal.value?.model_fallbacks.find((f) => f.model === model)?.configured;
+
+  it("shows the answer through the announce until a read sent after it is adopted", async () => {
+    adoptSettings(at(1, row("model-b"), row("model-c", "model-z")));
+    const before = loadSettings();
+    showFallbackAnswer(row("model-c"));
+    expect(shownTarget()).toBe("model-c");
+    expect(shownTarget("model-z"), "other models keep their rows").toBe("model-c");
+    expect(shownSettingsSignal.value).toEqual(settingsAsShown());
+
+    noteSettingsEvent(v(2));
+    expect(shownTarget(), "the announce step shows the answer").toBe("model-c");
+
+    await vi.waitFor(() => {
+      expect(answers).toHaveLength(1);
+    });
+    answers[0]?.(at(2, row("model-b")));
+    await before;
+    expect(shownTarget(), "a read sent before the answer does not end it").toBe("model-c");
+
+    const after = refreshSettings();
+    await vi.waitFor(() => {
+      expect(answers).toHaveLength(2);
+    });
+    // Another device wrote model-b back before this read: the server's row is shown.
+    answers[1]?.(at(2, row("model-b")));
+    await after;
+    expect(shownTarget()).toBe("model-b");
+  });
+
+  it("adds the answer for a model the adopted settings state no row for", () => {
+    adoptSettings(at(1));
+    showFallbackAnswer(row("model-c"));
+    expect(shownTarget()).toBe("model-c");
   });
 });

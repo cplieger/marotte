@@ -60,7 +60,11 @@ vi.mock("./actions/index.js", () => ({
 vi.mock("./actions/chat.js", () => ({ switchModel: { dispatch: vi.fn() } }));
 vi.mock("./actions/model-fallback.js", () => ({ setModelFallback: { dispatch: vi.fn() } }));
 // The Fallback row's inputs; no settings shown, so the card builds no row.
-vi.mock("./persist.js", () => ({ shownSettingsSignal: { value: null }, settingsAsShown: () => null }));
+vi.mock("./persist.js", () => ({
+  shownSettingsSignal: { value: null },
+  settingsAsShown: () => null,
+  showFallbackAnswer: vi.fn(),
+}));
 vi.mock("./settings.js", () => ({ currentIdentity: () => ({ state: "signed_out" }) }));
 // Real reconcile: the unkeyed notice must coexist with keyed option rows.
 vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));

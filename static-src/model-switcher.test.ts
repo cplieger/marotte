@@ -67,11 +67,22 @@ vi.mock("./store.js", async () => {
   };
 });
 
-// A real signal, as persist.ts's: the Fallback row repaints from it while the card is open.
+// A real signal, as persist.ts's: the Fallback row repaints from it while the card is open. A write's
+// answer enters the shown settings, as persist.ts's showFallbackAnswer does (persist.test.ts pins it).
 vi.mock("./persist.js", async () => {
   const { signal } = (await vi.importActual("@cplieger/reactive")) as { signal: SignalFactory };
   const shownSettingsSignal = signal<EffectiveSettings | null>(null);
-  return { shownSettingsSignal, settingsAsShown: () => shownSettingsSignal.value };
+  return {
+    shownSettingsSignal,
+    settingsAsShown: () => shownSettingsSignal.value,
+    showFallbackAnswer: (row: ModelFallback) => {
+      const s = shownSettingsSignal.value;
+      if (s !== null) {
+        const rows = s.model_fallbacks.filter((f) => f.model !== row.model);
+        shownSettingsSignal.value = { ...s, model_fallbacks: [...rows, row] };
+      }
+    },
+  };
 });
 vi.mock("./settings.js", () => ({
   currentIdentity: () => ({
@@ -658,43 +669,115 @@ describe("the Fallback row", () => {
     expect(fallbackSelect()).toBeNull();
   });
 
-  it("keeps the focused select and the answered target through the write's settings refetch", async () => {
-    cachedModels = [...cachedModels, model("model-c", "high")];
-    let settle: () => void = () => undefined;
-    fallbackDispatch.mockImplementation(
-      (_args: unknown, opts: { onSuccess: (answer: ModelFallback) => void }) =>
+  /** Makes the next fallback write wait for its settle: answered with `answer`, or refused. */
+  function pendingWrite(): { answer: (row: ModelFallback) => void; refuse: () => void } {
+    const out = { answer: (_row: ModelFallback) => undefined as void, refuse: () => undefined as void };
+    fallbackDispatch.mockImplementationOnce(
+      (
+        _args: unknown,
+        opts: { onSuccess: (a: ModelFallback) => void; onError: (e: { code: string }) => void },
+      ) =>
         new Promise<void>((resolve) => {
-          settle = () => {
-            opts.onSuccess(answered("model-c"));
+          out.answer = (row) => {
+            opts.onSuccess(row);
+            resolve();
+          };
+          out.refuse = () => {
+            opts.onError({ code: "locked" });
             resolve();
           };
         }),
     );
-    shownSettingsSignal.value = shown(true);
-    openCard();
+    return out;
+  }
+
+  async function pick(target: string): Promise<HTMLSelectElement> {
     const s = fallbackSelect();
     if (s === null) {
       throw new Error("no Fallback select");
     }
     s.focus();
-    await userEvent.selectOptions(s, "model-c");
-    expect(fallbackDispatch).toHaveBeenCalledOnce();
+    await userEvent.selectOptions(s, target);
+    return s;
+  }
 
-    // While the write is pending, a pushed view still holding the old target; then settings_updated
-    // steps announce (the old target) after the answer, and the refetch adopts the written target.
-    shownSettingsSignal.value = shown(true, "model-b", "model-b");
-    expect(s.value).toBe("model-c");
-    settle();
+  async function settled(s: HTMLSelectElement): Promise<void> {
     await vi.waitFor(() => {
       expect(s.getAttribute("aria-busy")).toBeNull();
     });
+  }
+
+  it("keeps the focused select and the answered target through the write's settings refetch", async () => {
+    cachedModels = [...cachedModels, model("model-c", "high")];
+    const write = pendingWrite();
     shownSettingsSignal.value = shown(true);
+    openCard();
+    const s = await pick("model-c");
+    expect(fallbackDispatch).toHaveBeenCalledOnce();
+
+    // While the write is pending, a pushed view still holding the old target; then the write's
+    // settings_updated steps (announce, then the refetch's adopt) after the answer.
+    shownSettingsSignal.value = shown(true, "model-b", "model-b");
+    expect(s.value).toBe("model-c");
+    write.answer(answered("model-c"));
+    await settled(s);
     expect(s.value).toBe("model-c");
     shownSettingsSignal.value = shown(true, "model-c");
 
     expect(fallbackSelect()).toBe(s);
     expect(document.activeElement).toBe(s);
     expect(s.value).toBe("model-c");
+  });
+
+  it("removes the row for a switch-off that came during a refused write", async () => {
+    cachedModels = [...cachedModels, model("model-c", "high")];
+    const write = pendingWrite();
+    shownSettingsSignal.value = shown(true);
+    openCard();
+    const s = await pick("model-c");
+    shownSettingsSignal.value = shown(false);
+    write.refuse();
+    await settled(s);
+    expect(fallbackSelect()).toBeNull();
+  });
+
+  it("removes the row for a switch-off that came during an answered write", async () => {
+    cachedModels = [...cachedModels, model("model-c", "high")];
+    const write = pendingWrite();
+    shownSettingsSignal.value = shown(true);
+    openCard();
+    const s = await pick("model-c");
+    shownSettingsSignal.value = shown(false);
+    write.answer(answered("model-c"));
+    await settled(s);
+    expect(fallbackSelect()).toBeNull();
+  });
+
+  it("shows another device's target that came during a refused write", async () => {
+    cachedModels = [...cachedModels, model("model-c", "high"), model("model-d", "high")];
+    const write = pendingWrite();
+    shownSettingsSignal.value = shown(true);
+    openCard();
+    const s = await pick("model-c");
+    shownSettingsSignal.value = shown(true, "model-d");
+    write.refuse();
+    await settled(s);
+    expect(fallbackSelect()).toBe(s);
+    expect(s.value).toBe("model-d");
+  });
+
+  it("paints another device's write-back of the old target before the refetch", async () => {
+    cachedModels = [...cachedModels, model("model-c", "high")];
+    const write = pendingWrite();
+    shownSettingsSignal.value = shown(true);
+    openCard();
+    const s = await pick("model-c");
+    write.answer(answered("model-c"));
+    await settled(s);
+    expect(s.value).toBe("model-c");
+    // The refetch adopts what KAS holds: another device wrote model-b back meanwhile.
+    shownSettingsSignal.value = shown(true, "model-b");
+    expect(s.value).toBe("model-b");
   });
 
   it("repaints in place when another device changes the choice", () => {

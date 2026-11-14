@@ -78,7 +78,7 @@ func TestModelFallbackPutWritesTheAccountLayer(t *testing.T) {
 			if got := h.config.ModelFallbacks(); len(got) != 1 || got[0] != want {
 				t.Errorf("ModelFallbacks() after the write = %+v, want [%+v] so GET /api/settings answers it", got, want)
 			}
-			// The announce runs after the reply is written, so it is awaited, not counted.
+			// The announce runs in the call goroutine, unordered with the reply, so it is awaited.
 			awaitEventCount(t, h, marotte.EventSettingsUpdated, before+1)
 		})
 	}
@@ -155,6 +155,7 @@ func TestModelFallbackPutRefusals(t *testing.T) {
 			if rec.Code != tc.wantCode || !strings.Contains(rec.Body.String(), tc.wantKey) {
 				t.Errorf("PUT = %d %s, want %d carrying %s", rec.Code, rec.Body.String(), tc.wantCode, tc.wantKey)
 			}
+			joinInflight(t, h)
 			if n := settingsUpdatedCount(t, h); n != before {
 				t.Errorf("settings_updated broadcasts after a refusal = %d, want %d", n, before)
 			}

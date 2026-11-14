@@ -6,7 +6,7 @@ import { setModelFallback } from "./actions/model-fallback.js";
 import { setBusy } from "./dom.js";
 import { humanName } from "./strings.js";
 import type { IdentityVerdict } from "./identity.js";
-import type { EffectiveSettings } from "./persist.js";
+import { showFallbackAnswer, type EffectiveSettings } from "./persist.js";
 import type { ModelInfo } from "./types.js";
 import type { ModelFallback } from "./wire/types.gen.js";
 
@@ -41,6 +41,8 @@ interface FallbackRow {
   readonly el: HTMLElement;
   /** True while a write the row sent is unanswered. */
   busy(): boolean;
+  /** The row the select shows once no write is pending. */
+  shown(): ModelFallback;
   /** Repaints the select and its reason in place, so a focused select keeps focus. */
   show(row: ModelFallback): void;
 }
@@ -62,8 +64,12 @@ function rowFor(input: FallbackRowInput): ModelFallback | null {
 }
 
 /** The row, or null while the Model fallback switch is off, for Auto, or when KAS states no fallback
- *  for the model and an account is signed in; signed out or with an API key, a read-only row. */
-export function buildFallbackRow(input: FallbackRowInput): FallbackRow | null {
+ *  for the model and an account is signed in; signed out or with an API key, a read-only row.
+ *  `onSettled` runs when the last write the row sent settles. */
+export function buildFallbackRow(
+  input: FallbackRowInput,
+  onSettled: () => void = () => undefined,
+): FallbackRow | null {
   const row = rowFor(input);
   if (row === null) {
     return null;
@@ -132,6 +138,7 @@ export function buildFallbackRow(input: FallbackRowInput): FallbackRow | null {
           silent: true,
           onSuccess: (answer) => {
             shown = answer;
+            showFallbackAnswer(answer);
           },
           onError: (err) => {
             if (err.code === "unavailable") {
@@ -148,6 +155,7 @@ export function buildFallbackRow(input: FallbackRowInput): FallbackRow | null {
           paint(shown);
           setBusy(select, false);
           select.disabled = hint.textContent !== "";
+          onSettled();
         }
       });
   });
@@ -161,6 +169,7 @@ export function buildFallbackRow(input: FallbackRowInput): FallbackRow | null {
       hint,
     ),
     busy: () => pending > 0,
+    shown: () => shown,
     show: (r) => {
       shown = r;
       paint(r);
@@ -178,13 +187,15 @@ function sameRow(a: ModelFallback, b: ModelFallback): boolean {
 }
 
 /** The card's one Fallback row, kept across settings steps: rebuilding it would replace a select the
- *  user has focus on, and the write's own settings_updated steps the shown settings twice. */
+ *  user has focus on. A step that comes while a write is pending is not applied then: `onSettled`
+ *  runs when the write settles, for the card to sync again from the settings shown by then. */
 export class FallbackSlot {
   private row: FallbackRow | null = null;
-  private built: { input: FallbackRowInput; row: ModelFallback } | null = null;
+  private built: FallbackRowInput | null = null;
 
-  /** Shows, repaints in place, or removes the row for `input`, last in `list`; never while a write is
-   *  pending, whose answer the row paints itself. */
+  constructor(private readonly onSettled: () => void) {}
+
+  /** Shows, repaints in place, or removes the row for `input`, last in `list`. */
   sync(list: HTMLElement, input: FallbackRowInput): void {
     if (this.row?.busy() === true) {
       return;
@@ -195,18 +206,18 @@ export class FallbackSlot {
       this.row !== null &&
       was !== null &&
       next !== null &&
-      was.input.model === input.model &&
-      was.input.catalog === input.catalog &&
-      noAccount(was.input.identity) === noAccount(input.identity)
+      was.model === input.model &&
+      was.catalog === input.catalog &&
+      noAccount(was.identity) === noAccount(input.identity)
     ) {
-      if (!sameRow(was.row, next)) {
+      if (!sameRow(this.row.shown(), next)) {
         this.row.show(next);
       }
     } else {
       this.row?.el.remove();
-      this.row = buildFallbackRow(input);
+      this.row = buildFallbackRow(input, this.onSettled);
     }
-    this.built = next === null ? null : { input, row: next };
+    this.built = next === null ? null : input;
     // Re-seating a node blurs it, so only a row that is not already last moves.
     if (this.row !== null && list.lastElementChild !== this.row.el) {
       list.appendChild(this.row.el);

@@ -22,7 +22,7 @@ import {
   type Source,
   type Stamp,
 } from "./settings-state.js";
-import type { EffectiveSettings } from "./wire/types.gen.js";
+import type { EffectiveSettings, ModelFallback } from "./wire/types.gen.js";
 
 // The GET /api/settings payload. GENERATED from the Go struct marotte.EffectiveSettings (see
 // internal/wirespec), so it is not maintained here and cannot drift from what the server sends.
@@ -55,6 +55,11 @@ const writeSwitches = new Map<number, readonly SettingsSwitch[]>();
 const bases = new Map<HTMLInputElement, boolean>();
 /** The settings events this page took. */
 let eventsNoted = 0;
+/** The settings reads this page sent. */
+let readsSent = 0;
+/** Each model's answered fallback write, with readsSent when it was answered: shown until a read sent
+ *  after it is adopted, so the write's own announce does not show the target it replaced. */
+const fallbackAnswers = new Map<string, { readonly row: ModelFallback; readonly afterReads: number }>();
 
 /** settingsAsShown as a signal, written on every settings-state step, for a surface that repaints when
  *  shown settings change outside the Settings panel. */
@@ -70,10 +75,28 @@ function asPayload(s: EffectiveSettings): Payload {
 }
 
 /** The adopted settings with this page's edit and writes in flight laid over them
- *  (settings-state.shownSettings), or null before any. For painting controls only: a consumer
- *  that acts on a setting takes a read's answer, which is what the server holds. */
+ *  (settings-state.shownSettings), and each fallback answer showFallbackAnswer holds, or null before
+ *  any. For painting controls only: a consumer that acts on a setting takes a read's answer, which is
+ *  what the server holds. */
 export function settingsAsShown(): EffectiveSettings | null {
-  return shownSettings(state) as unknown as EffectiveSettings | null;
+  const shown = shownSettings(state) as unknown as EffectiveSettings | null;
+  if (shown === null || fallbackAnswers.size === 0) {
+    return shown;
+  }
+  const rows = shown.model_fallbacks.map((f) => fallbackAnswers.get(f.model)?.row ?? f);
+  for (const { row } of fallbackAnswers.values()) {
+    if (!rows.some((f) => f.model === row.model)) {
+      rows.push(row);
+    }
+  }
+  return { ...shown, model_fallbacks: rows };
+}
+
+/** Shows an answered PUT /api/model-fallback in the shown settings until a settings read sent after
+ *  it is adopted. */
+export function showFallbackAnswer(row: ModelFallback): void {
+  fallbackAnswers.set(row.model, { row, afterReads: readsSent });
+  shownSettingsSignal.value = settingsAsShown();
 }
 
 function unsettled(el: HTMLInputElement): boolean {
@@ -110,6 +133,8 @@ export function __testResetTracking(): void {
   editSwitches = [];
   writeSwitches.clear();
   bases.clear();
+  fallbackAnswers.clear();
+  readsSent = 0;
   reading = null;
   rereading = null;
   eventsNoted = 0;
@@ -253,10 +278,18 @@ let rereading: Promise<EffectiveSettings | null> | null = null;
 
 function startRead(): Promise<EffectiveSettings | null> {
   const afterEvents = eventsNoted;
+  const readNo = ++readsSent;
   const sent = loadSettingsAction.dispatch(undefined);
   const answer = sent.then((s) => {
     if (s === null) {
       return null;
+    }
+    if (accepts(state, s, "read")) {
+      for (const [model, { afterReads }] of fallbackAnswers) {
+        if (afterReads < readNo) {
+          fallbackAnswers.delete(model);
+        }
+      }
     }
     if (adoptSettings(s)) {
       return s;

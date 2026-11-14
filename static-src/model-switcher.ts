@@ -311,7 +311,11 @@ class ModelSwitchController {
 
   private expanded = false;
 
-  private readonly fallback = new FallbackSlot();
+  private readonly fallback = new FallbackSlot(() => {
+    if (this.expanded) {
+      this.syncFallbackRow($.modelSwitchList, settingsAsShown());
+    }
+  });
 
   /** Rebuild the ticks only when the vocabulary changed. */
   private effortLevelsShown: readonly SessionEffortLevel[] = [];
