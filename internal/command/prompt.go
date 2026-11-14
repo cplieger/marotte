@@ -711,8 +711,8 @@ const (
 	automaticCallerLabel = "marotte"
 )
 
-// senderLabel is the sender p names to the engine: "" only for a prompt the user sent from the page, which a reader
-// of the session's rows takes as typed by the user, so every other prompt is named.
+// senderLabel is the sender p names to the engine: "" for a prompt with no caller, the page's (which a reader of the
+// session's rows takes as typed by the user) or a tangent's (which its displayText marks); every other is named.
 func senderLabel(p *marotte.PromptCommand) string {
 	switch {
 	case p.Automatic:

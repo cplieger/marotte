@@ -166,7 +166,8 @@ type Prompt struct {
 	Label string
 	// Tag is the chat turn id the engine echoes on this prompt's turn_start; empty for a step message.
 	Tag string
-	// Caller names who sent a chat prompt the user did not send from marotte's page; empty only for the user's own.
+	// Caller names who sent a chat prompt through marotte's API, or marotte for its own resume; empty for the user's
+	// own and for a tangent's, which Label marks.
 	Caller string
 }
 
