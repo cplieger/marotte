@@ -1256,7 +1256,7 @@ describe("a header's box and motion", () => {
         await paint();
         await settled(["kid", "c"]);
         // A slow frame lets the still window pass mid-lift, and the slot's own flash then plays on c.
-        const played = starts.filter((s) => !/^(vk-dot-beat|tab-slot-in) /.test(s));
+        const played = starts.filter((s) => !s.startsWith("vk-dot-beat ") && s !== "tab-slot-in c");
         expect(played.toSorted()).toEqual(
           [
             "vk-slide-in-x p",
