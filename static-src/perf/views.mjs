@@ -1,8 +1,8 @@
-// The measured scenarios and the stream drivers tests/perf/plan.json names. A view takes the
-// seeded instance (seeded.json) and answers where it lives, its tab, the tab an away window shows
-// instead, the element whose DOM it counts, and `ready`, a page expression that is true once it
-// painted. A driver takes the stream helpers view.mjs passes, the instance and the view, and
-// resolves when its stream ended.
+// The measured scenarios and the stream drivers tests/perf/plan.json names. A view takes the seeded
+// instance (seeded.json) and answers where it lives, its tab (or `opener`, the selector of the row
+// that reopens a view with no tab), the tab an away window shows instead, the element whose DOM it
+// counts, and `ready`, a page expression that is true once it painted. A driver takes the stream
+// helpers view.mjs passes, the instance and the view, and resolves when its stream ended.
 
 const TURN = { turns: 1, tools: 12, chunks: 10, text_chunks: 40, interval_ms: 50 };
 const STEPS = { count: 22, lanes: 11, chunks: 10, tools: 4, interval_ms: 50 };
@@ -30,7 +30,7 @@ const docEdits = (s) => {
 };
 
 export const DRIVERS = {
-  "prompt-shown": (x, s, v) => x.prompt(v.chat, TURN),
+  "prompt-shown": (x, _s, v) => x.prompt(v.chat, TURN),
   "prompt-background": (x, s) => x.prompt(s.background, TURN),
   "edit-tree": (x, s) => x.prompt(s.background, { ...TURN, edit_paths: treeEdits(s) }),
   "edit-repos": (x, s) => x.prompt(s.background, { ...TURN, edit_paths: repoEdits(s) }),
@@ -129,8 +129,12 @@ export const VIEWS = {
     shell: true,
     ready: `${chatReady(s.small[0])} && ${shown("#shell-panel", 5)}`,
   }),
-  history: (s) => page(s, "/history", "history", "#history-view"),
-  "history-runs": (s) => page(s, "/history/runs", "history", "#history-view"),
+  // History is no tab: its sidebar row reopens it on the list it last showed.
+  history: (s) => ({ ...page(s, "/history", null, "#history-view"), opener: "#history-btn" }),
+  "history-runs": (s) => ({
+    ...page(s, "/history/runs", null, "#history-view"),
+    opener: "#history-btn",
+  }),
 };
 
 /** The instance facts every view and driver reads: seeded.json plus the small chats, the open chats

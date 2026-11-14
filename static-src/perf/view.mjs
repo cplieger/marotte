@@ -288,7 +288,9 @@ function base() {
     errors: [],
   };
 }
-const write = (doc) => fs.writeFileSync(args.out, JSON.stringify(doc, null, 1));
+const write = (doc) => {
+  fs.writeFileSync(args.out, JSON.stringify(doc, null, 1));
+};
 
 /** The server-only cell: the drive with no stream listener, marotte's CPU from its trigger to one
  *  second after it ended. */
@@ -571,10 +573,13 @@ async function browserCell() {
       }
     }
   }
-  async function clickTab(id) {
+  // The row to press: a tab by its id, or a view's own opener by its selector.
+  async function clickRow(target) {
     return (
-      (await evaluate((tabId) => {
-        const row = document.querySelector(`#tab-list [data-tab-id="${CSS.escape(tabId)}"]`);
+      (await evaluate(({ tabId, selector }) => {
+        const row = document.querySelector(
+          selector ?? `#tab-list [data-tab-id="${CSS.escape(tabId)}"]`,
+        );
         if (!row) {
           return false;
         }
@@ -583,7 +588,7 @@ async function browserCell() {
         row.dispatchEvent(new PointerEvent("pointerup", pointer));
         row.click();
         return true;
-      }, id)) === true
+      }, target)) === true
     );
   }
   async function openShell() {
@@ -726,7 +731,7 @@ async function browserCell() {
     await measure("away", async () => {
       let tabSwitch;
       if (!view.shell) {
-        const clicked = await clickTab(view.away);
+        const clicked = await clickRow({ tabId: view.away });
         if (!clicked) {
           doc.failures.push("away: no tab row to click");
         }
@@ -740,8 +745,8 @@ async function browserCell() {
       const readyFrom = Date.now();
       if (view.shell) {
         await x.toggleShell();
-      } else if (!(await clickTab(view.tab))) {
-        doc.failures.push("back: no tab row to click");
+      } else if (!(await clickRow(view.opener ? { selector: view.opener } : { tabId: view.tab }))) {
+        doc.failures.push(`back: no ${view.opener ?? "tab row"} to click`);
       }
       return { readyFrom, settle: await settle(readyFrom, 150000, true) };
     });

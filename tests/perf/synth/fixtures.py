@@ -767,7 +767,7 @@ def main():
                     'owns': False,
                 }
             )
-    for kind in ('git', 'files', 'docs', 'history', 'settings'):
+    for kind in ('git', 'files', 'docs', 'settings'):
         ref = work + '/tree/big' if kind == 'files' else ''  # a files tab's ref is its folder
         tabs.append(
             {
