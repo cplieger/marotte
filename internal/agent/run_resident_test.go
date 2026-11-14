@@ -870,9 +870,9 @@ func answersWithin[T any](t *testing.T, call func() T) T {
 }
 
 // gatedHostRun is a leased parentless run answering inspect with reply, whose host load waits until release.
-func gatedHostRun(t *testing.T, reply json.RawMessage) (h *Runtime, br, host *fakeBridge, release func()) {
+func gatedHostRun(t *testing.T, reply json.RawMessage) (h *Runtime, host *fakeBridge, release func()) {
 	t.Helper()
-	h, br = leasedNonResident(t, reply)
+	h, br := leasedNonResident(t, reply)
 	br.setCallResult(methodKiroWorkflowList, parentlessRunList("wf_1"))
 	h.runs.log = newRunLog(t.TempDir())
 	host = newFakeBridge()
@@ -882,14 +882,14 @@ func gatedHostRun(t *testing.T, reply json.RawMessage) (h *Runtime, br, host *fa
 	release = sync.OnceFunc(func() { close(gate) })
 	// After the hub's own cleanup, so it runs first and the shutdown finds no door parked.
 	t.Cleanup(release)
-	return h, br, host, release
+	return h, host, release
 }
 
 // gatedChatRun is wf_1 launched from chat c1's session sess_owned, its review step paused, with c1's load held until
 // release.
-func gatedChatRun(t *testing.T) (h *Runtime, cs *testChatStore, br *fakeBridge, release func()) {
+func gatedChatRun(t *testing.T) (h *Runtime, br *fakeBridge, release func()) {
 	t.Helper()
-	h, cs, br = newTestHub()
+	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	h.runs.log = newRunLog(t.TempDir())
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -908,7 +908,7 @@ func gatedChatRun(t *testing.T) (h *Runtime, cs *testChatStore, br *fakeBridge, 
 	br.mu.Unlock()
 	release = sync.OnceFunc(func() { close(gate) })
 	t.Cleanup(release)
-	return h, cs, br, release
+	return h, br, release
 }
 
 func runLogLen(t *testing.T, h *Runtime) int {
@@ -931,7 +931,7 @@ func runLogLen(t *testing.T, h *Runtime) int {
 // browser's budget instead of waiting on the load, and places nothing.
 func TestMessageStep_AnUnansweredLoadOfTheLaunchingSessionAnswersWithinTheBudget(t *testing.T) {
 	answerBudgetOf(t, 200*time.Millisecond)
-	h, _, br, _ := gatedChatRun(t)
+	h, br, _ := gatedChatRun(t)
 	before := runLogLen(t, h)
 
 	err := answersWithin(t, func() error {
@@ -988,7 +988,7 @@ func TestRunRequestVerbs_AnUnansweredLoadAnswersRunHostSlow(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			answerBudgetOf(t, 200*time.Millisecond)
-			h, _, host, release := gatedHostRun(t, tc.reply(t))
+			h, host, release := gatedHostRun(t, tc.reply(t))
 
 			err := answersWithin(t, func() error { return tc.call(t.Context(), h) })
 			if !errors.Is(err, errRunHostSlow) {
@@ -1015,7 +1015,7 @@ func TestRunRequestVerbs_AnUnansweredLoadAnswersRunHostSlow(t *testing.T) {
 // The heal has nobody waiting on it: a load slower than the browser's budget still lets its answer land.
 func TestHealAnswer_WaitsForASlowLoadPastTheRequestBudget(t *testing.T) {
 	answerBudgetOf(t, 200*time.Millisecond)
-	h, _, host, release := gatedHostRun(t, oneStepInspect(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused, "sess_step"))
+	h, host, release := gatedHostRun(t, oneStepInspect(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused, "sess_step"))
 	h.runs.RunNodeStart(t.Context(), reviewStep("sess_step"), "")
 	a, err := h.runs.admitRunWork(holdClosed, "wf_1", "")
 	if err != nil {
@@ -1045,7 +1045,7 @@ func TestResidentForRequest_AReplayTimeoutOfTheLoadIsRunHostSlow(t *testing.T) {
 			return h
 		},
 		"a chat-parented run's chat load": func(t *testing.T) *Runtime {
-			h, _, br, release := gatedChatRun(t)
+			h, br, release := gatedChatRun(t)
 			br.mu.Lock()
 			br.loadErr = replayTimeout
 			br.mu.Unlock()
@@ -1119,7 +1119,7 @@ func TestControlHandler_AnUnansweredLoadIs503WithTheSentence(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			answerBudgetOf(t, 200*time.Millisecond)
-			h, _, _, _ := gatedHostRun(t, tc.reply(t))
+			h, _, _ := gatedHostRun(t, tc.reply(t))
 			mux := http.NewServeMux()
 			h.runRoutes.register(mux)
 
@@ -1169,7 +1169,7 @@ func TestRetry_ASlowLoadAnswersRunHostSlow(t *testing.T) {
 	prev := retryTimeout
 	retryTimeout = 300 * time.Millisecond
 	t.Cleanup(func() { retryTimeout = prev })
-	h, _, host, _ := gatedHostRun(t, nil)
+	h, host, _ := gatedHostRun(t, nil)
 
 	err := answersWithin(t, func() error {
 		_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "aborted"}))

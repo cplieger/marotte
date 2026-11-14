@@ -899,25 +899,7 @@ func (bc *bridgeCoordinator) tryLoadSession(
 	session, gen, forwardDone, err := bc.loadOnEngine(ctx, chatID, sb, so, replayed, stamp)
 	err = closeCut(ctx, err)
 	if err != nil {
-		// A failed load must not keep a partial replay.
-		if bc.replayProjection != nil {
-			bc.replayProjection.DiscardReplayProjection(chatID)
-		}
-		if errors.Is(err, marotte.ErrBridgeExited) || errors.Is(err, marotte.ErrChatClosedDuringCall) {
-			return false, err
-		}
-		unanswered := (errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil) ||
-			errors.Is(err, marotte.ErrSessionClosing)
-		if unanswered && bc.chatHasLiveRun != nil && bc.chatHasLiveRun(chatID) {
-			// KAS may still hold the session, and a new one would cut the run off from its launching session.
-			slog.Warn("session/load was not answered; the chat keeps its session for the run it launched",
-				"chat_id", chatID, "acp_session", acpSessionID, "error", err)
-			return false, err
-		}
-		slog.Warn("session/load failed, starting new",
-			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
-		bc.retireSession(ctx, chatID, marotte.ContextResetLoadFailed)
-		return false, nil
+		return false, bc.failedLoad(ctx, chatID, acpSessionID, err)
 	}
 	bc.markReplayLoaded(chatID, gen, session, replayed)
 	// The verdict comes before any fact is written from the session: a blank one must leave the record as the
@@ -958,6 +940,30 @@ func (bc *bridgeCoordinator) tryLoadSession(
 	reassertUserName(ctx, chatID, session, renameTo)
 	sb.setReady()
 	return true, nil
+}
+
+// failedLoad settles tryLoadSession's failed load and returns its error: non-nil keeps the chat's session, nil means
+// the session was retired for session/new.
+func (bc *bridgeCoordinator) failedLoad(ctx context.Context, chatID marotte.ChatID, acpSessionID string, err error) error {
+	// A failed load must not keep a partial replay.
+	if bc.replayProjection != nil {
+		bc.replayProjection.DiscardReplayProjection(chatID)
+	}
+	if errors.Is(err, marotte.ErrBridgeExited) || errors.Is(err, marotte.ErrChatClosedDuringCall) {
+		return err
+	}
+	unanswered := (errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil) ||
+		errors.Is(err, marotte.ErrSessionClosing)
+	if unanswered && bc.chatHasLiveRun != nil && bc.chatHasLiveRun(chatID) {
+		// KAS may still hold the session, and a new one would cut the run off from its launching session.
+		slog.Warn("session/load was not answered; the chat keeps its session for the run it launched",
+			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
+		return err
+	}
+	slog.Warn("session/load failed, starting new",
+		"chat_id", chatID, "acp_session", acpSessionID, "error", err)
+	bc.retireSession(ctx, chatID, marotte.ContextResetLoadFailed)
+	return nil
 }
 
 // closeBlankLoad closes the blank session a lost record's load produced (KAS keeps its blank record) and waits for
