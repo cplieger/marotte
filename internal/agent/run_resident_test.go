@@ -23,6 +23,7 @@ import (
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -863,7 +864,7 @@ func answersWithin[T any](t *testing.T, call func() T) T {
 	case got := <-done:
 		return got
 	case <-time.After(2 * time.Second):
-		t.Fatal("the verb is still waiting on the run's launching session 2s in, want an answer at the answer budget")
+		t.Fatal("the verb is still waiting 2s in, want an answer at the answer budget")
 		var zero T
 		return zero
 	}
@@ -1012,10 +1013,9 @@ func TestRunRequestVerbs_AnUnansweredLoadAnswersRunHostSlow(t *testing.T) {
 	}
 }
 
-// After an engine restart marotte's own heal holds the run while it waits on the load; a person's verb queued behind
-// it answers inside the browser's budget too.
-func TestRunRequestVerbs_BehindAHealOnAnUnansweredLoadAnswersRunHostSlow(t *testing.T) {
-	cases := map[string]func(ctx context.Context, h *Runtime) error{
+// personRunVerbs is every person's verb on wf_1 that waits for the run (transition).
+func personRunVerbs() map[string]func(ctx context.Context, h *Runtime) error {
+	return map[string]func(ctx context.Context, h *Runtime) error{
 		"a resume": func(ctx context.Context, h *Runtime) error { return h.runs.resume(ctx, "wf_1", callerPage) },
 		"a repeat's extension": func(ctx context.Context, h *Runtime) error {
 			return h.runs.extendRepeat(ctx, "wf_1", "loop", 1, callerPage)
@@ -1026,7 +1026,12 @@ func TestRunRequestVerbs_BehindAHealOnAnUnansweredLoadAnswersRunHostSlow(t *test
 		},
 		"a pause": func(ctx context.Context, h *Runtime) error { return h.runs.pause(ctx, "wf_1", callerPage) },
 	}
-	for name, call := range cases {
+}
+
+// After an engine restart marotte's own heal holds the run while it waits on the load; a person's verb queued behind
+// it answers inside the browser's budget too.
+func TestRunRequestVerbs_BehindAHealOnAnUnansweredLoadAnswersRunHostSlow(t *testing.T) {
+	for name, call := range personRunVerbs() {
 		t.Run(name, func(t *testing.T) {
 			answerBudgetOf(t, 200*time.Millisecond)
 			h, host, release := gatedHostRun(t, inspectPaused(t, "wf_1", stalePauseReason))
@@ -1048,6 +1053,116 @@ func TestRunRequestVerbs_BehindAHealOnAnUnansweredLoadAnswersRunHostSlow(t *test
 			release()
 			if got := <-healed; got != resumeWritten {
 				t.Errorf("the heal = %v once its load finished, want its resume written", got)
+			}
+		})
+	}
+}
+
+// A person's verb queued behind another person's verb parked on the load answers within its own budget, counted from
+// when it was asked, not from when it got the run.
+func TestRunRequestVerbs_QueuedBehindAParkedVerbAnswerWithinTheirOwnBudget(t *testing.T) {
+	cases := []struct {
+		name  string
+		reply func(t *testing.T) json.RawMessage
+		log   func(t *testing.T, h *Runtime)
+		call  func(ctx context.Context, h *Runtime) error
+	}{
+		{
+			name:  "a resume",
+			reply: func(t *testing.T) json.RawMessage { return inspectPaused(t, "wf_1", "") },
+			call:  func(ctx context.Context, h *Runtime) error { return h.runs.resume(ctx, "wf_1", callerPage) },
+		},
+		{
+			name:  "a resume that answers a throttled step's question",
+			reply: func(t *testing.T) json.RawMessage { return askPausedInspect(t, stepQuestionReason) },
+			log: func(t *testing.T, h *Runtime) {
+				h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: "wf_1", NodePath: askPath, SessionID: "sess_step"}, "")
+				stepAsks(t, h, askPath, true)
+				stepTurnEnds(t, h, []string{"root", "ask"}, clientThrottle, marotte.StopReasonError)
+			},
+			call: func(ctx context.Context, h *Runtime) error { return h.runs.resume(ctx, "wf_1", callerPage) },
+		},
+		{
+			name:  "a repeat's finish",
+			reply: inspectAtCap,
+			call:  func(ctx context.Context, h *Runtime) error { return h.runs.finishRepeat(ctx, "wf_1", "loop") },
+		},
+		{
+			name: "a paused step's end",
+			reply: func(t *testing.T) json.RawMessage {
+				return stepEndTree(t, &stepEndCase{Run: "paused", Node: "paused", Type: stepNodeType})
+			},
+			call: func(ctx context.Context, h *Runtime) error {
+				return h.runs.endStep(ctx, "wf_1", targetPath, runStepCompleted)
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			const budget = 800 * time.Millisecond
+			answerBudgetOf(t, budget)
+			h, host, _ := gatedHostRun(t, tc.reply(t))
+			if tc.log != nil {
+				tc.log(t, h)
+			}
+			parked := make(chan struct{})
+			host.onStart = sync.OnceFunc(func() { close(parked) })
+			first := make(chan error, 1)
+			firstAsked := time.Now()
+			go func() { first <- tc.call(t.Context(), h) }()
+			select {
+			case <-parked:
+			case <-time.After(2 * time.Second):
+				t.Fatal("Setup: the first verb never reached the run's host load")
+			}
+			// The second verb is asked while the first still holds the run, a quarter of the way into its budget.
+			time.Sleep(time.Until(firstAsked.Add(budget / 4)))
+
+			second := make(chan error, 1)
+			secondAsked := time.Now()
+			go func() { second <- tc.call(t.Context(), h) }()
+			var err error
+			select {
+			case err = <-second:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the queued verb is still waiting 5s in, want an answer at its own answer budget")
+			}
+			took := time.Since(secondAsked)
+
+			if !errors.Is(err, errRunHostSlow) {
+				t.Errorf("the queued verb = %v, want errRunHostSlow", err)
+			}
+			if limit := budget + budget*3/8; took > limit {
+				t.Errorf("the queued verb answered %v after it was asked, want within %v: its %v budget restarted "+
+					"once it got the run", took, limit, budget)
+			}
+			if fErr := <-first; !errors.Is(fErr, errRunHostSlow) {
+				t.Errorf("the first verb = %v, want errRunHostSlow", fErr)
+			}
+		})
+	}
+}
+
+// kiro-cli can leave `_kiro/workflow/inspect` unanswered too; a person's verb answers inside the browser's budget
+// that it changed nothing.
+func TestRunRequestVerbs_AnUnansweredInspectAnswersRunStateUnread(t *testing.T) {
+	for name, call := range personRunVerbs() {
+		t.Run(name, func(t *testing.T) {
+			answerBudgetOf(t, 200*time.Millisecond)
+			h, br := leasedNonResident(t, inspectPaused(t, "wf_1", ""))
+			gate := make(chan struct{})
+			br.setBlockOn(methodKiroWorkflowInspect, gate)
+			t.Cleanup(func() { close(gate) })
+
+			err := answersWithin(t, func() error { return call(t.Context(), h) })
+
+			if !errors.Is(err, errRunStateUnread) {
+				t.Errorf("the verb under an unanswered inspect = %v, want errRunStateUnread", err)
+			}
+			for _, m := range []string{methodKiroWorkflowPause, methodKiroWorkflowResume, methodKiroWorkflowUpdate} {
+				if slices.Contains(br.callLog(), m) {
+					t.Errorf("%s was sent although the run's state was never read", m)
+				}
 			}
 		})
 	}

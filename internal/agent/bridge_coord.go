@@ -112,7 +112,7 @@ type bridgeCoordinator struct {
 	steerKASSettled  func(marotte.ChatID)                       `wiring:"optional"`
 	// chatHasLiveRun reports whether the chat launched a run still live. Nil means none.
 	chatHasLiveRun func(marotte.ChatID) bool `wiring:"optional"`
-	// sessionHasLiveRun reports whether the chat launched a run still live from the session (sessionHoldsLiveRun).
+	// sessionHasLiveRun reports whether a live run of the chat keeps the session (sessionHoldsLiveRun). Nil means none.
 	sessionHasLiveRun func(chatID marotte.ChatID, acpSessionID string) bool `wiring:"optional"`
 	// chatHasTab reports an open tab on the chat; it answers true when no tab set is wired, so nothing is released.
 	chatHasTab func(marotte.ChatID) bool
@@ -885,8 +885,8 @@ func (bc *bridgeCoordinator) reportSupervisedNotApplied(ctx context.Context, cha
 // tryLoadSession loads so.SessionID for chatID and reports loaded true only with a nil error, once the replay has
 // merged. An error keeps the chat's session for the next open: it wraps ErrBridgeExited when the engine ended under
 // the load and its one retry, under the replay, or before any engine became ready, wraps ErrChatClosedDuringCall
-// when the chat's close refused the door's forward, is a load kiro-cli left unanswered (failedLoad) of a session a
-// live run was launched from, and otherwise is the replay's merge failing. Any other failed load, and a load whose
+// when the chat's close refused the door's forward, is a load kiro-cli left unanswered that sessionHoldsLiveRun
+// keeps (failedLoad), and otherwise is the replay's merge failing. Any other failed load, and a load whose
 // replay restored none of the chat's turns (errReplayRestoredNothing), returns loaded false with a nil error after
 // retireSession, so the generation opens session/new.
 func (bc *bridgeCoordinator) tryLoadSession(
@@ -958,7 +958,7 @@ func (bc *bridgeCoordinator) failedLoad(ctx context.Context, chatID marotte.Chat
 	}
 	unanswered := errors.Is(err, context.DeadlineExceeded) || errors.Is(err, marotte.ErrSessionClosing)
 	if unanswered && bc.sessionHasLiveRun != nil && bc.sessionHasLiveRun(chatID, acpSessionID) {
-		// KAS may still hold the session, and a new one would cut the run off from its launching session.
+		// KAS may still hold the session, and a new one may cut a run off from its launching session (sessionHoldsLiveRun).
 		slog.Warn("session/load was not answered; the chat keeps its session for the run it launched",
 			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
 		return err

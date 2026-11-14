@@ -225,7 +225,7 @@ func (rs *Runs) transition(ctx context.Context, workflowID string, req *runReque
 		return c, err
 	}
 	defer release()
-	r := rs.readPauseState(ctx, workflowID)
+	r := rs.readForRequest(ctx, workflowID, req)
 	if hook := transitionHook.Load(); hook != nil {
 		if hErr := (*hook)(rs, workflowID, req.want, r.seen); hErr != nil {
 			r = pauseRead{err: hErr, seen: seenUnreadable}
@@ -254,6 +254,17 @@ func (rs *Runs) lockRun(ctx context.Context, workflowID string, req *runRequest)
 		return nil, errRunHostSlow
 	}
 	return release, err
+}
+
+// readForRequest is readPauseState bounded by a person's answerBy, since rawInspect's own bound outlasts the
+// browser's; a read cut off there is seenUnreadable.
+func (rs *Runs) readForRequest(ctx context.Context, workflowID string, req *runRequest) pauseRead {
+	if req.answerBy.IsZero() {
+		return rs.readPauseState(ctx, workflowID)
+	}
+	rctx, cancel := context.WithDeadline(ctx, req.answerBy)
+	defer cancel()
+	return rs.readPauseState(rctx, workflowID)
 }
 
 // carryOut is transition's action for the cell c names, under the run's resume lock.
