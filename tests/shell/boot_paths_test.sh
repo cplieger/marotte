@@ -127,6 +127,10 @@ for sh in /bin/sh /bin/bash; do
   [ "$got" = "$want" ] && [ ! -s "$err" ] \
     && ok "$sh sources the login-shell drop-in to the boot's PATH" \
     || no "$sh drop-in" "PATH '$got', want '$want'; stderr: $(cat "$err")"
+  got=$(/usr/bin/env -i "$sh" -c '. "$1"; /bin/sh -c "printf %s \"\${KIRO_NO_AUTO_UPDATE-unset}\""' dropin "$dropin" </dev/null 2>"$err")
+  [ "$got" = 1 ] && [ ! -s "$err" ] \
+    && ok "$sh sources the login-shell drop-in to an exported KIRO_NO_AUTO_UPDATE=1 from an empty environment" \
+    || no "$sh drop-in self-update switch" "a child saw KIRO_NO_AUTO_UPDATE '$got', want 1; stderr: $(cat "$err")"
 done
 
 # install_path_dropin against a scratch profile.d. install_case <mktemp fails: 0|1> <rm fails: 0|1>

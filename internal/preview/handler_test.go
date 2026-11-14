@@ -167,6 +167,40 @@ func TestGrant_Refusals(t *testing.T) {
 	}
 }
 
+// The grant reads the path from its JSON body as sent, and the stamp from its query string, which
+// the server decodes once, so an encoded row reaches each route in a different form.
+func TestPage_EscapeAttemptsAreRefusedOnBothRoutes(t *testing.T) {
+	f := newFixture(t)
+	outside := filepath.Dir(f.h.workDir) + "/x.html"
+	escapeTarget := filepath.Join(t.TempDir(), "index.html")
+	write(t, escapeTarget, "<p>outside")
+	symlink(t, escapeTarget, filepath.Join(f.demo, "out.html"))
+	symlink(t, "index.html", filepath.Join(f.demo, "same.html"))
+	cases := []struct {
+		name, raw    string
+		grant, stamp int
+	}{
+		{"dotdot out of the workspace", f.demo + "/../../x.html", 400, 400},
+		{"encoded dotdot", f.demo + "/%2e%2e/%2e%2e/x.html", 404, 400},
+		{"encoded slash dotdot", f.demo + "%2f..%2f..%2fx.html", 400, 400},
+		{"absolute outside the workspace", outside, 403, 403},
+		{"page symlinked outside the workspace", filepath.Join(f.demo, "out.html"), 404, 404},
+		{"page symlinked inside the folder", filepath.Join(f.demo, "same.html"), 404, 404},
+		{"folder symlinked outside the workspace", filepath.Join(f.ws, "linked", "index.html"), 404, 404},
+		{"folder symlinked to its parent", filepath.Join(f.demo, "up", "demo", "index.html"), 404, 404},
+	}
+	for _, tc := range cases {
+		t.Run(strings.ReplaceAll(tc.name, " ", "_"), func(t *testing.T) {
+			if got, body := f.grantStatus(tc.raw); got != tc.grant {
+				t.Errorf("grant(%q) = %d %s, want %d", tc.raw, got, body, tc.grant)
+			}
+			if rec := f.do(http.MethodGet, "/api/preview/stamp?path="+tc.raw, ""); rec.Code != tc.stamp {
+				t.Errorf("stamp(%q) = %d %s, want %d", tc.raw, rec.Code, rec.Body, tc.stamp)
+			}
+		})
+	}
+}
+
 // testdata/page-shapes.json is the page-shape contract preview-page.test.ts reads too: the client
 // offers a preview only for a path this handler grants. Its paths are rooted at /workspace, its
 // config_dir included. A deny_listed row is a well-formed page the deny list alone refuses, so its
