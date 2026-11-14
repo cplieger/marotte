@@ -72,6 +72,16 @@ func workflowsValue(s *SessionSpawn) map[string]any {
 	return v
 }
 
+// awarenessValue builds settings.sessionTools.awareness. mode rides it only when stated: KAS reads an awareness
+// object without the member as direct.
+func awarenessValue(s *SessionSpawn) map[string]any {
+	v := enabledIf(s.Awareness)
+	if s.Awareness && s.AwarenessMode != "" {
+		v["mode"] = s.AwarenessMode
+	}
+	return v
+}
+
 // knowledgeValue builds settings.knowledge: enabled plus each stated member of KnowledgeTuning, under KAS's member
 // names (the kiroAgent knowledge entries in 3.2.0), which ResolvedKnowledgeConfig reads whatever enabled says.
 func knowledgeValue(s *EngineSpawn) map[string]any {
@@ -276,12 +286,13 @@ var table = []decl{
 	{
 		// KAS's sessionToolsMessaging and sessionToolsAwareness switches, read as settings.sessionTools.<switch>.enabled
 		// (record fields sessionMessagingEnabled, sessionAwarenessEnabled). Both always present: on load a stated value
-		// replaces the persisted field, so an explicit false is what turns a resumed chat's switch off.
+		// replaces the persisted field, so an explicit false is what turns a resumed chat's switch off. awareness.mode
+		// is fixed at session/new: on load KAS keeps the session record's mode and reads the member only with no record.
 		key:      "sessionTools",
 		door:     doorSession,
 		resolver: resolverSettingObject,
 		sessionGate: func(s *SessionSpawn) (any, bool) {
-			return map[string]any{"messaging": enabledIf(s.Messaging), "awareness": enabledIf(s.Awareness)}, true
+			return map[string]any{"messaging": enabledIf(s.Messaging), "awareness": awarenessValue(s)}, true
 		},
 		send: true,
 	},

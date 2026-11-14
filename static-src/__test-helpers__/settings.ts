@@ -38,6 +38,7 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     output_style: "default",
     workflow_launch: "when-asked",
     workflow_creator_effort: "",
+    chat_awareness_mode: "",
     knowledge_index_type: "",
     knowledge_include_patterns: [],
     knowledge_exclude_patterns: [],

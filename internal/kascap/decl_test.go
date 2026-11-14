@@ -384,7 +384,7 @@ var (
 			Presets:           []string{"read-workspace"},
 			SpecPlan:          "full", SpecAskClarification: true, WorkValidation: "on",
 			MemoryMode: "read_write", MemoryReflection: true,
-			Workflows: true, WorkflowCreatorEffort: "high", Messaging: true, Awareness: true,
+			Workflows: true, WorkflowCreatorEffort: "high", Messaging: true, Awareness: true, AwarenessMode: "consult",
 			DisableAutoCompaction: true, ProfileAgentTurns: true,
 			CustomAgents: []marotte.ClientCustomAgent{probeAgent},
 		}},

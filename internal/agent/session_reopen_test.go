@@ -200,6 +200,28 @@ func TestChatMessaging_ReachesEveryChatDoor(t *testing.T) {
 	}
 }
 
+// KAS fixes a session's search method at session/new and keeps it on load, so a change reloads no open chat and
+// reaches the next new chat.
+func TestChatAwarenessMode_ReachesNewChatsOnly(t *testing.T) {
+	h, configDir := reopenFixture(t)
+	writeSetting(t, configDir, settings.KeyChatAwareness, true)
+
+	if reloadsAfter(t, h, func() { writeSetting(t, configDir, settings.KeyChatAwarenessMode, settings.ChatAwarenessConsult) }) {
+		t.Error("writing chat_awareness_mode reloaded the open chat, whose session keeps the mode it was created with")
+	}
+
+	if _, err := h.chatStore.Mutate(t.Context(), "c2", func(c *marotte.Chat, _ bool) bool { c.Name = "B"; return true }); err != nil {
+		t.Fatalf("Setup: seed c2: %v", err)
+	}
+	next, err := h.coord.openReleased(t.Context(), "c2", "")
+	if err != nil {
+		t.Fatalf("OpenBridge(c2): %v", err)
+	}
+	if got := fakeOf(next).lastSessionOpts().Features.AwarenessMode; got != settings.ChatAwarenessConsult {
+		t.Errorf("the next new chat's Features.AwarenessMode = %q, want %q", got, settings.ChatAwarenessConsult)
+	}
+}
+
 func TestWorkflowLaunch_ReopensOnlyWhileWorkflowsAreOn(t *testing.T) {
 	for _, tc := range []struct {
 		workflows bool
@@ -245,6 +267,8 @@ var configWrites = []struct {
 	{key: settings.KeyWorkflowsEnabled, value: false, reach: reachReopen},
 	{key: settings.KeyChatMessaging, value: true, reach: reachReopen},
 	{key: settings.KeyChatAwareness, value: true, reach: reachReopen},
+	// KAS keeps a session's recorded mode on load: TestChatAwarenessMode_ReachesNewChatsOnly.
+	{key: settings.KeyChatAwarenessMode, value: settings.ChatAwarenessConsult, reach: reachNewChat},
 	// Saving kiro-cli's own 50 changes nothing: TestEngineFeatures_MessageDeliveryLimitWithholdsTheDefault.
 	{key: settings.KeyChatMessageDeliveryLimit, value: 12, reach: reachEngine},
 	// Read only while workflows are on: TestWorkflowLaunch_ReopensOnlyWhileWorkflowsAreOn.

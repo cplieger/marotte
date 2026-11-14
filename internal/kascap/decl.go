@@ -132,6 +132,9 @@ type SessionSpawn struct {
 	WorkValidation string
 	// WorkflowCreatorEffort rides the workflows object as creatorEffort; empty withholds the member.
 	WorkflowCreatorEffort string
+	// AwarenessMode rides the sessionTools awareness object as mode, sent only while Awareness is on; empty withholds
+	// the member.
+	AwarenessMode string
 	// Presets are the KAS policy-preset ids of the active security profile (policyfile.Profile). EMPTY means the
 	// Custom profile, so the key is withheld. KAS persists neither door's ids, so both doors resolve from this field.
 	Presets []string

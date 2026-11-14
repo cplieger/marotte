@@ -1009,6 +1009,20 @@
                   <p class="section-hint" id="flag-chat-awareness-hint">On: the agent can browse and search your other chats by branch, file or topic, and read what each one decided, changed and produced, to build on earlier work or find a chat to message. Off by default.</p>
                 </div>
               </div>
+              <div class="section-option section-option-fixed" id="chat-awareness-mode-row">
+                <div class="section-field">
+                  <div class="section-title-status-row">
+                    <label class="section-option-label" for="chat-awareness-mode">Search method</label>
+                    <span class="settings-save-status hidden" data-save-status="chat_awareness_mode" aria-live="polite"></span>
+                  </div>
+                  <select id="chat-awareness-mode" class="rf-select" aria-describedby="chat-awareness-mode-hint">
+                    <option value="" selected>Default</option>
+                    <option value="direct">Browse and read</option>
+                    <option value="consult">Ask a question</option>
+                  </select>
+                  <p class="section-hint" id="chat-awareness-mode-hint">How the agent reads your other chats. Browse and read: it lists and searches them and reads each one's summary itself. Ask a question: it asks once and a hidden helper reads the chats and answers, citing the chats it used, which keeps their text out of this chat but spends extra model calls. Default lets Kiro decide (Browse and read today). Applies to chats you start after the change.</p>
+                </div>
+              </div>
               <div class="section-option section-option-fixed">
                 <div class="section-field">
                   <div class="section-title-status-row">

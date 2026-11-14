@@ -100,6 +100,7 @@ func sessionSpawnOf(o *marotte.SessionOpts) kascap.SessionSpawn {
 		WorkflowCreatorEffort: o.Features.WorkflowCreatorEffort,
 		Messaging:             o.Features.Messaging,
 		Awareness:             o.Features.Awareness,
+		AwarenessMode:         o.Features.AwarenessMode,
 		Presets:               slices.Clone(o.Presets),
 		CustomAgents:          slices.Clone(o.CustomAgents),
 		DisableAutoCompaction: o.DisableAutoCompaction,

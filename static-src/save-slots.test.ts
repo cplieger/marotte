@@ -43,6 +43,7 @@ const EXPECTED_KEYS = [
   "chat_messaging_enabled",
   "chat_message_delivery_limit",
   "chat_awareness_enabled",
+  "chat_awareness_mode",
   "work_validation",
   "auto_routing",
   "auto_delegation",

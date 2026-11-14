@@ -152,6 +152,28 @@ func TestSessionFeatures_CreatorEffortOnlyWithWorkflows(t *testing.T) {
 	}
 }
 
+// The search method reaches a session only while Search other chats is on, and only from KAS's vocabulary.
+func TestSessionFeatures_AwarenessModeOnlyWithAwareness(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"unset", `{"chat_awareness_enabled": true}`, ""},
+		{"stated", `{"chat_awareness_enabled": true, "chat_awareness_mode": "consult"}`, "consult"},
+		{"awareness off", `{"chat_awareness_mode": "consult"}`, ""},
+		{"invalid", `{"chat_awareness_enabled": true, "chat_awareness_mode": "ask"}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeAgentSettings(t, dir, tc.body)
+			if got := sessionFeatures(docAt(t, dir)).AwarenessMode; got != tc.want {
+				t.Errorf("sessionFeatures(%s).AwarenessMode = %q, want %q", tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
 // The delivery limit reaches the engine only away from kiro-cli's own 50, so saving the default restarts nothing.
 func TestEngineFeatures_MessageDeliveryLimitWithholdsTheDefault(t *testing.T) {
 	for _, tc := range []struct {

@@ -136,6 +136,7 @@ describe("an always option opens a chooser instead of answering", () => {
     ["shell", "any command"],
     ["fs_write", "any file write, by any tool"],
     ["fs_read", "any file read, by any tool"],
+    ["sessions", "any read of your other chats, by any tool"],
     ["web_fetch", "any web_fetch request, by any tool"],
   ])("names the whole %s capability on the * pattern", (capability, covers) => {
     const { card } = mount(ask({ kind: "edit", consent: { capability, subject: "x" } }));

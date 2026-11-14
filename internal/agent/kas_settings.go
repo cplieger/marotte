@@ -52,6 +52,9 @@ func sessionFeatures(d settings.Document) marotte.SessionFeatures {
 	}
 	f.Messaging = settingBool(d, settings.KeyChatMessaging)
 	f.Awareness = settingBool(d, settings.KeyChatAwareness)
+	if f.Awareness {
+		f.AwarenessMode = settingString(d, settings.KeyChatAwarenessMode, settings.ValidChatAwarenessMode)
+	}
 	f.WorkValidation = settingString(d, settings.KeyWorkValidation, settings.ValidFeatureChoice)
 	return f
 }

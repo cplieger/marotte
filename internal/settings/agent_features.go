@@ -38,6 +38,15 @@ const (
 // workflowCreatorEfforts is KAS's workflowsCreatorEffort vocabulary (gce in 3.2.0); KAS drops any other value.
 var workflowCreatorEfforts = []string{"low", "medium", "high", "xhigh", "max"}
 
+// KAS's sessionToolsAwarenessMode vocabulary, unset reading as direct: direct gives the list, search and summary
+// tools, consult gives consult_sessions only.
+const (
+	ChatAwarenessDirect  = "direct"
+	ChatAwarenessConsult = "consult"
+)
+
+var chatAwarenessModes = []string{ChatAwarenessDirect, ChatAwarenessConsult}
+
 // OutputStyleDefault is KAS's default output style id, the one prompts never send.
 const OutputStyleDefault = "default"
 
@@ -61,6 +70,7 @@ const (
 	defaultChatMessaging            = false
 	defaultChatAwareness            = false
 	defaultWorkflowCreatorEffort    = ""
+	defaultChatAwarenessMode        = ""
 	defaultOutputStyle              = OutputStyleDefault
 	defaultWorkValidation           = FeatureFollowKiro
 	defaultCloudFormationSafety     = FeatureFollowKiro
@@ -99,6 +109,11 @@ func ValidChatMessageDeliveryLimit(n int) bool {
 // ValidWorkflowCreatorEffort reports whether v is unset ("") or one of KAS's creator effort levels.
 func ValidWorkflowCreatorEffort(v string) bool {
 	return v == "" || slices.Contains(workflowCreatorEfforts, v)
+}
+
+// ValidChatAwarenessMode reports whether v is unset ("") or one of KAS's awareness modes.
+func ValidChatAwarenessMode(v string) bool {
+	return v == "" || slices.Contains(chatAwarenessModes, v)
 }
 
 // ThreeStateChoice answers a follow-kiro-cli setting's effective choice by key, false for a key that
@@ -193,6 +208,10 @@ var agentPatchChecks = map[string]func(json.RawMessage) error{
 	KeyWorkflowCreatorEffort: func(r json.RawMessage) error {
 		var v string
 		return decodeChecked(&v, r, KeyWorkflowCreatorEffort, ValidWorkflowCreatorEffort)
+	},
+	KeyChatAwarenessMode: func(r json.RawMessage) error {
+		var v string
+		return decodeChecked(&v, r, KeyChatAwarenessMode, ValidChatAwarenessMode)
 	},
 	KeySpecPlanningAskFirst: func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
 	KeySteeringReminders:    func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
