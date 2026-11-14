@@ -76,8 +76,8 @@ type SecurityProfile struct {
 // picker order, the Settings profile a new chat starts on, and whether the user or workspace file grants on its
 // own (policyfile.HoldsGrant), which no chat's profile takes away.
 type SecurityProfileView struct {
-	Profiles    []SecurityProfile `json:"profiles"`
 	Default     string            `json:"default"`
+	Profiles    []SecurityProfile `json:"profiles"`
 	SavedGrants bool              `json:"saved_grants"`
 }
 

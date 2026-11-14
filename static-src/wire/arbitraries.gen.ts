@@ -2633,11 +2633,11 @@ const arbModel = fc.letrec<{
   ),
   SecurityProfileView: fc.record(
     {
-      profiles: fc.array(tie("SecurityProfile"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       default: fc.string(),
+      profiles: fc.array(tie("SecurityProfile"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       saved_grants: fc.boolean(),
     },
-    { requiredKeys: ["profiles", "default", "saved_grants"] },
+    { requiredKeys: ["default", "profiles", "saved_grants"] },
   ),
   SessionEffortLevel: fc.record(
     {

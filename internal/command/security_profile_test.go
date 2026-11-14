@@ -42,7 +42,6 @@ func TestCmdSetSecurityProfile_WritesTheHeaderAndReloadsOnlyThatChat(t *testing.
 	r := &reloadRecorder{}
 
 	out, err := cmdSetSecurityProfile(t.Context(), store, r, profileReq(t, "c1", policyfile.ProfileReadOnly))
-
 	if err != nil {
 		t.Fatalf("cmdSetSecurityProfile = %v", err)
 	}

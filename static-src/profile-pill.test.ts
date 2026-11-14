@@ -2,6 +2,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { SecurityProfileView } from "./wire/types.gen.js";
 
+// The real chat.js the spreads below load reads these app-shell elements at module load.
+vi.hoisted(() => {
+  for (const id of [
+    "messages",
+    "messages-wrap",
+    "messages-wrap-outer",
+    "chat-view",
+    "scroll-bottom",
+  ]) {
+    const el = document.createElement("div");
+    el.id = id;
+    document.body.append(el);
+  }
+});
+
 type SSEFn = (chatID: string, payload?: unknown) => void;
 
 const mocks = vi.hoisted(() => ({
@@ -13,24 +28,41 @@ const mocks = vi.hoisted(() => ({
   expand: undefined as (() => void) | undefined,
 }));
 
-vi.mock("./api-client.js", () => ({ apiGetTyped: mocks.apiGetTyped }));
-vi.mock("./actions/chat.js", () => ({ setChatProfile: { dispatch: mocks.dispatch } }));
-vi.mock("./chat.js", () => ({ createSession: mocks.createSession }));
-vi.mock("./confirm.js", () => ({ confirm: mocks.confirm }));
-vi.mock("./bus.js", () => ({
+vi.mock("./api-client.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  apiGetTyped: mocks.apiGetTyped,
+}));
+vi.mock("./actions/chat.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  setChatProfile: { dispatch: mocks.dispatch },
+}));
+vi.mock("./chat.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  createSession: mocks.createSession,
+}));
+vi.mock("./confirm.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  confirm: mocks.confirm,
+}));
+vi.mock("./bus.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   onSSE: (type: string, fn: SSEFn) => {
     mocks.sse.set(type, fn);
     return () => mocks.sse.delete(type);
   },
 }));
-vi.mock("./pill-expand.js", () => ({
+vi.mock("./pill-expand.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   makeExpandable: (_pill: HTMLElement, _card: HTMLElement, opts: { onExpand: () => void }) => {
     mocks.expand = opts.onExpand;
     return { open: opts.onExpand };
   },
   collapseAll: vi.fn(),
 }));
-vi.mock("./legacy-ui/roving-focus.js", () => ({ rovingFocus: () => ({ refresh: vi.fn() }) }));
+vi.mock("./legacy-ui/roving-focus.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  rovingFocus: () => ({ refresh: vi.fn() }),
+}));
 // The chat on screen and whether its turn runs, as the store's tracked reads report them.
 const live = await vi.hoisted(async () => {
   const { signal } = await import("@cplieger/reactive");
@@ -39,7 +71,8 @@ const live = await vi.hoisted(async () => {
     busy: signal(false),
   };
 });
-vi.mock("./store.js", () => ({
+vi.mock("./store.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   activeSession: live.active,
   getActive: () => live.active.peek(),
   watchBusy: () => live.busy.value,

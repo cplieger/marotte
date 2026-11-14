@@ -164,15 +164,19 @@ func TestHoldsGrant_NamesWhatAFileGrantsOnItsOwn(t *testing.T) {
 	}{
 		{"no file", "", "", false},
 		{"blank file", filename, "\n", false},
-		{"only deny and ask rules", filename,
+		{
+			"only deny and ask rules", filename,
 			"rules:\n  - capability: shell\n    effect: deny\n    match: [\"rm *\"]\n" +
-				"  - capability: fs_write\n    effect: ask\n", false},
+				"  - capability: fs_write\n    effect: ask\n", false,
+		},
 		{"an allow rule", filename, "rules:\n  - capability: fs_write\n    effect: allow\n", true},
 		{"an evaluate rule", filename, "rules:\n  - capability: shell\n    effect: evaluate\n", true},
 		{"a preset reference", filename, "policies:\n  - dev-shell\nrules: []\n", true},
 		{"an empty preset list", filename, "policies: []\n", false},
-		{"the json sibling KAS reads while the yaml is missing", jsonFilename,
-			`{"policies":["read-all"],"rules":[]}`, true},
+		{
+			"the json sibling KAS reads while the yaml is missing", jsonFilename,
+			`{"policies":["read-all"],"rules":[]}`, true,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

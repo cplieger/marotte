@@ -2091,7 +2091,7 @@
 
   /* The fullest phone row (the mid-turn send beside Cancel and the task list) has no room for one more 44px
      target, and a profile picked mid-turn applies only after the turn, so the pill leaves the row for the turn. */
-  .prompt-pills:has(> [id="midturn-send"]:not([hidden])) > .pill-slot:has(> [id="profile-pill"]) {
+  .prompt-pills:has(> [id="midturn-send"]:not([hidden])) > .pill-slot-profile {
     display: none;
   }
 }

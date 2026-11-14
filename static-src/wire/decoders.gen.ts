@@ -4361,8 +4361,8 @@ export const decodeSecurityProfile: Decoder<SecurityProfile> = (v) => {
 export const decodeSecurityProfileView: Decoder<SecurityProfileView> = (v) => {
   const o = asObject(v, "$.security_profile_view");
   const out: SecurityProfileView = {
-    profiles: own(o, "profiles") === null ? [] : decodeArray(own(o, "profiles"), decodeSecurityProfile, "$.security_profile_view.profiles"),
     default: reqStr(o, "default", "$.security_profile_view"),
+    profiles: own(o, "profiles") === null ? [] : decodeArray(own(o, "profiles"), decodeSecurityProfile, "$.security_profile_view.profiles"),
     saved_grants: reqBool(o, "saved_grants", "$.security_profile_view"),
   };
   return out;

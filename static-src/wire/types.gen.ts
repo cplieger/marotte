@@ -3822,8 +3822,8 @@ export interface SecurityProfile {
  * own (policyfile.HoldsGrant), which no chat's profile takes away.
  */
 export interface SecurityProfileView {
-  profiles: SecurityProfile[];
   default: string;
+  profiles: SecurityProfile[];
   saved_grants: boolean;
 }
 
