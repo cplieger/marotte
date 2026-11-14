@@ -563,10 +563,33 @@ export const ICON_COMPACT = svg(
   '<path d="M12 22v-6"/><path d="M12 8V2"/><path d="M4 12H2"/><path d="M10 12H8"/><path d="M16 12h-2"/>' +
     '<path d="M22 12h-2"/><path d="m15 19-3-3-3 3"/><path d="m15 5-3 3-3-3"/>',
 );
-// Lucide "shield": a safety check blocked the turn, and the security profile pill.
-export const ICON_SHIELD = svg(
+const PATH_SHIELD =
+  '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>';
+// Lucide "shield": a safety check blocked the turn, and the Unrestricted security profile.
+export const ICON_SHIELD = svg("ui", PATH_SHIELD);
+/**
+ * The shield with one line per step of protection, for the security profile ladder. Each line is its own element
+ * and every gap is at least 1px at 16px: 3.5 units apart, the top one clear of the shoulders, and the lowest one
+ * shortened where the outline narrows.
+ */
+export const ICON_SHIELD_LINES_4 = svg(
   "ui",
-  '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
+  PATH_SHIELD +
+    '<path d="M8 7.75h8"/><path d="M8 11.25h8"/><path d="M8 14.75h8"/><path d="M9.5 18.25h5"/>',
+);
+export const ICON_SHIELD_LINES_3 = svg(
+  "ui",
+  PATH_SHIELD + '<path d="M8 9h8"/><path d="M8 12.5h8"/><path d="M8 16h8"/>',
+);
+export const ICON_SHIELD_LINES_2 = svg(
+  "ui",
+  PATH_SHIELD + '<path d="M8 10.75h8"/><path d="M8 14.25h8"/>',
+);
+export const ICON_SHIELD_LINES_1 = svg("ui", PATH_SHIELD + '<path d="M8 12.5h8"/>');
+/** The shield with a dot: a profile with no rank on the ladder. */
+export const ICON_SHIELD_DOT = svg(
+  "ui",
+  PATH_SHIELD + '<circle cx="12" cy="12.5" r="2" fill="currentColor"/>',
 );
 // Model-refusal callout (Lucide "octagon-alert").
 export const ICON_REFUSAL = svg(

@@ -6,7 +6,6 @@ import { byId } from "./dom.js";
 import { apiGetTyped } from "./api-client.js";
 import { onSSE } from "./bus.js";
 import { iconEl } from "./icon-el.js";
-import { ICON_SHIELD } from "./icons.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { rovingFocus, type RovingFocusController } from "./legacy-ui/roving-focus.js";
 import { activeSession, getActive, watchBusy } from "./store.js";
@@ -18,6 +17,7 @@ import {
   LOOSEST_PROFILE_HINT,
   confirmLoosest,
   profileDescription,
+  profileIcon,
   profileLabel,
   savedRulesStillApply,
 } from "./security-profiles.js";
@@ -102,7 +102,6 @@ export function profileNote(): string {
 
 /** Wire the composer's profile pill. Call once at startup. */
 export function initProfilePill(): void {
-  byId("profile-pill-icon").replaceChildren(iconEl(ICON_SHIELD));
   let open = false;
   makeExpandable(byId("profile-pill"), byId("profile-list"), {
     haspopup: "listbox",
@@ -150,6 +149,11 @@ function paintPill(id: string, pending: boolean): void {
   const pill = byId<HTMLButtonElement>("profile-pill");
   pill.classList.toggle("hidden", id === "");
   pill.classList.toggle("pending", pending);
+  const icon = byId("profile-pill-icon");
+  if (icon.dataset["profileId"] !== id) {
+    icon.dataset["profileId"] = id;
+    icon.replaceChildren(shieldOf(id));
+  }
   const label = profileLabel(id);
   byId("profile-pill-label").textContent = label;
   // The tooltip repeats the accessible name because a phone's pill is icon-only.
@@ -208,6 +212,7 @@ function profileOption(id: string, current: string): HTMLButtonElement {
       "data-tooltip": profileDescription(id),
       "data-profile-id": id,
     },
+    el("span", { className: "pill-role-item-icon" }, shieldOf(id)),
     el("span", { className: "pill-role-name" }, profileLabel(id)),
   ) as HTMLButtonElement;
   opt.addEventListener("click", (e: MouseEvent) => {
@@ -218,6 +223,13 @@ function profileOption(id: string, current: string): HTMLButtonElement {
     }
   });
   return opt;
+}
+
+/** The label beside it names the profile, so the shield is hidden from assistive tech. */
+function shieldOf(id: string): Element {
+  const icon = iconEl(profileIcon(id));
+  icon.setAttribute("aria-hidden", "true");
+  return icon;
 }
 
 async function choose(id: string): Promise<void> {
