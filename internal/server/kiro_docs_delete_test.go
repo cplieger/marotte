@@ -286,6 +286,24 @@ func TestKiroDocsDelete_RefusesWhatTheRowDoesNotOwn(t *testing.T) {
 			t.Errorf("a denylisted agent file was removed: %v", err)
 		}
 	})
+	t.Run("twin_on_the_sensitive_denylist", func(t *testing.T) {
+		h, work := docsDeleteServerWithConfig(t, filepath.Join(".kiro", "agents"))
+		kiro := filepath.Join(work, ".kiro")
+		writeFile(t, kiro, "agents/mcp.md", "---\nname: mcp\n---\n")
+		writeFile(t, kiro, "agents/mcp.json", `{"name":"mcp"}`)
+		row := mustRow(t, listDocs(t, h), catAgent, "mcp")
+		if !row.DeleteProtected {
+			t.Errorf("an agent whose twin is on the deny list offers its delete: %+v", row)
+		}
+		if rec := deleteRow(t, h, &row); rec.Code != http.StatusForbidden {
+			t.Errorf("delete: status %d, want 403: %s", rec.Code, rec.Body.String())
+		}
+		for _, name := range []string{"mcp.md", "mcp.json"} {
+			if _, err := os.Stat(filepath.Join(kiro, "agents", name)); err != nil {
+				t.Errorf("a refused delete removed %s: %v", name, err)
+			}
+		}
+	})
 	t.Run("twin_is_a_directory", func(t *testing.T) {
 		h, work := docsDeleteServer(t)
 		kiro := filepath.Join(work, ".kiro")
@@ -491,6 +509,48 @@ func TestKiroDocs_AgentLinkListsOnlyWhenItsTargetIsARegularFile(t *testing.T) {
 			}
 			if agents := docsByCategory(listDocs(t, h), catAgent); len(agents) != want {
 				t.Errorf("agent rows = %+v, want %d", agents, want)
+			}
+		})
+	}
+}
+
+// TestKiroDocs_LinkRowFollowsItsTargetWithoutAReload pins live pickup for a row built through a
+// link: the target appearing or vanishing changes nothing in the category directory itself.
+func TestKiroDocs_LinkRowFollowsItsTargetWithoutAReload(t *testing.T) {
+	cases := []struct {
+		name     string
+		category string
+		link     string
+		body     string
+	}{
+		{name: "agent", category: catAgent, link: "agents/a.md", body: "---\nname: a\n---\n"},
+		{name: "steering", category: catSteering, link: "steering/a.md", body: "---\nname: a\n---\n"},
+		{name: "hook", category: catHook, link: "hooks/a.json", body: `{"version":"v1","hooks":[{"name":"a",` +
+			`"trigger":"PostFileSave","action":{"type":"command","command":"echo"}}]}`},
+		{name: "prompt", category: catPrompt, link: "prompts/a.md", body: "# A\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, work := docsDeleteServer(t)
+			kiro := filepath.Join(work, ".kiro")
+			writeFile(t, kiro, "steering/keep.md", "---\nname: keep\n---\n")
+			for _, dir := range []string{"shared", filepath.Dir(tc.link)} {
+				if err := os.MkdirAll(filepath.Join(kiro, dir), 0o750); err != nil {
+					t.Fatal(err)
+				}
+			}
+			target := filepath.Join(kiro, "shared", filepath.Base(tc.link))
+			symlinkOr(t, target, filepath.Join(kiro, filepath.FromSlash(tc.link)))
+			if d, ok := findDoc(docsByCategory(listDocs(t, h), tc.category), "a"); ok {
+				t.Fatalf("a dangling link is a row: %+v", d)
+			}
+			writeFile(t, kiro, "shared/"+filepath.Base(tc.link), tc.body)
+			mustRow(t, listDocs(t, h), tc.category, "a")
+			if err := os.Remove(target); err != nil {
+				t.Fatal(err)
+			}
+			if d, ok := findDoc(docsByCategory(listDocs(t, h), tc.category), "a"); ok {
+				t.Errorf("the row outlived its link's target: %+v", d)
 			}
 		})
 	}

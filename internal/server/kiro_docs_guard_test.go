@@ -356,6 +356,11 @@ func TestDirSignature_FollowsLinksOnlyWhereRowsComeFromThem(t *testing.T) {
 	roots := []kiroRoot{{fsPath: kiro}}
 	before := dirSignature(roots)
 	writeFile(t, outside, "behind.md", "# Behind\n")
+	// Coarse mtimes could hide the write; a moved mtime cannot.
+	later := time.Now().Add(time.Hour)
+	if err := os.Chtimes(outside, later, later); err != nil {
+		t.Fatal(err)
+	}
 	writeFile(t, inTree, "SKILL.md", "---\nname: linked\n---\n")
 	after := dirSignature(roots)
 

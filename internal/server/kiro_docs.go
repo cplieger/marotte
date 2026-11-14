@@ -201,7 +201,7 @@ func dirSignature(roots []kiroRoot) string {
 				b.WriteString(p + "=-;")
 				continue
 			}
-			b.WriteString(p + "=" + info.ModTime().UTC().Format("20060102150405.000000000"))
+			b.WriteString(p + "=" + info.ModTime().UTC().Format(sigTimeLayout))
 			// Only skills builds a row through a linked directory; the markdown walks never descend one.
 			writeEntryNames(&b, p, sigDepth[sub], sub == skillsDir)
 			b.WriteString(";")
@@ -210,8 +210,10 @@ func dirSignature(roots []kiroRoot) string {
 	return b.String()
 }
 
-// writeEntryNames appends dir's entry names, descending into subdirectories while depth allows,
-// and through a link only with followLinks.
+const sigTimeLayout = "20060102150405.000000000"
+
+// writeEntryNames appends dir's entry names, each link's target stat, and subdirectories' entries
+// while depth allows, descending through a link only with followLinks.
 func writeEntryNames(b *strings.Builder, dir string, depth int, followLinks bool) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -219,11 +221,29 @@ func writeEntryNames(b *strings.Builder, dir string, depth int, followLinks bool
 	}
 	for _, e := range entries {
 		b.WriteString("#" + e.Name())
+		if e.Type()&fs.ModeSymlink != 0 {
+			writeLinkTarget(b, filepath.Join(dir, e.Name()))
+		}
 		if depth > 1 && (e.IsDir() || followLinks && e.Type()&fs.ModeSymlink != 0) {
 			b.WriteString("{")
 			writeEntryNames(b, filepath.Join(dir, e.Name()), depth-1, followLinks)
 			b.WriteString("}")
 		}
+	}
+}
+
+// writeLinkTarget appends one stat of what link resolves to. A row built through a link comes and
+// goes with its target, and creating or removing the target changes nothing in the link's directory.
+// A directory target's mtime is left out: only skills builds rows behind one, and it descends.
+func writeLinkTarget(b *strings.Builder, link string) {
+	fi, err := os.Stat(link)
+	if err != nil {
+		b.WriteString("@absent")
+		return
+	}
+	b.WriteString("@" + fi.Mode().Type().String())
+	if !fi.IsDir() {
+		b.WriteString(fi.ModTime().UTC().Format(sigTimeLayout))
 	}
 }
 
@@ -357,23 +377,14 @@ func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGu
 	}
 	stat := func(name string) (fs.FileInfo, error) { return fs.Stat(root, "agents/"+name) }
 	agents := steering.DedupeAgentFiles(entries, stat)
-	// A link to no regular file is no agent spelling, and presentDocTargets skips it as a twin.
-	linked := make(map[string]bool)
-	for _, e := range entries {
-		if e.Type()&fs.ModeSymlink == 0 {
-			continue
-		}
-		if fi, err := stat(e.Name()); err == nil && fi.Mode().IsRegular() {
-			linked[e.Name()] = true
-		}
-	}
+	linked, regular := agentFileKinds(entries, stat)
 	sc := docScan{docs: make([]KiroDoc, 0, len(agents))}
 	for _, a := range agents {
 		if ctx.Err() != nil {
 			sc.truncated = true
 			return sc
 		}
-		base, file := a.Base, a.File
+		base, file, twin := a.Base, a.File, agentTwin(a.File)
 		data, verdict, rErr := readGuardedFS(root, "agents/"+file, guard)
 		if rErr != nil {
 			slog.Warn("kiro docs: read agent", "name", logsafe.Field(file), "error", logsafe.Field(rErr.Error()))
@@ -388,14 +399,34 @@ func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGu
 			Description: fm.Description,
 			Model:       fm.Model,
 			Tools:       fm.Tools,
-			// Withheld for each shape presentDocTargets refuses: a refused or linked own file, a linked twin.
-			DeleteProtected: !verdict.allowed || verdict.deleteProtected || linked[file] || linked[agentTwin(file)],
+			// Withheld for each shape presentDocTargets refuses: a refused or linked own file, a linked
+			// twin, a regular twin the guard refuses.
+			DeleteProtected: !verdict.allowed || verdict.deleteProtected || linked[file] || linked[twin] ||
+				(regular[twin] && !guard.allows("agents/"+twin)),
 		})
 		if !kept {
 			return sc
 		}
 	}
 	return sc
+}
+
+// agentFileKinds answers which agents/ entries are links to a regular file and which are regular
+// files. A link to no regular file is in neither: it is no agent spelling, and presentDocTargets
+// skips it as a twin.
+func agentFileKinds(entries []fs.DirEntry, stat func(string) (fs.FileInfo, error)) (linked, regular map[string]bool) {
+	linked, regular = make(map[string]bool), make(map[string]bool)
+	for _, e := range entries {
+		switch {
+		case e.Type().IsRegular():
+			regular[e.Name()] = true
+		case e.Type()&fs.ModeSymlink != 0:
+			if fi, err := stat(e.Name()); err == nil && fi.Mode().IsRegular() {
+				linked[e.Name()] = true
+			}
+		}
+	}
+	return linked, regular
 }
 
 // scanDocsSpecs walks `specs/` and groups each document under its feature directory. Specs
