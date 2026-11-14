@@ -4055,17 +4055,49 @@ describe("the touch hold on a chat tab", () => {
     expect(showContextMenu).not.toHaveBeenCalled();
   });
 
+  /** The sidebar's scroller, above the row's own list, as in the app. */
+  const sections = (): HTMLElement => document.getElementById("tab-sections") as HTMLElement;
+
   it("opens no menu for a touch that lands while the scroller holding the row is scrolling", async () => {
     const row = await rowA();
-    row.parentElement?.dispatchEvent(new Event("scroll"));
+    sections().dispatchEvent(new Event("scroll"));
     touch("pointerdown", row);
     vi.advanceTimersByTime(HOLD_MS);
     expect(showContextMenu).not.toHaveBeenCalled();
   });
 
+  it("opens no menu from the platform's contextmenu for a touch that caught a fling", async () => {
+    const row = await rowA();
+    sections().dispatchEvent(new Event("scroll"));
+    touch("pointerdown", row);
+    vi.advanceTimersByTime(HOLD_MS);
+    const menu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    row.dispatchEvent(menu);
+    expect(showContextMenu).not.toHaveBeenCalled();
+    expect(menu.defaultPrevented, "the platform's own menu").toBe(true);
+  });
+
+  it("lets a tap that caught a fling click its row", async () => {
+    const row = await rowA();
+    sections().dispatchEvent(new Event("scroll"));
+    touch("pointerdown", row);
+    touch("pointerup", row);
+    row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+    expect(getActiveTabId()).toBe(chatID("a"));
+  });
+
+  it("opens the menu from the platform's contextmenu for the next touch after a fling's lift", async () => {
+    const row = await rowA();
+    sections().dispatchEvent(new Event("scroll"));
+    touch("pointerdown", row);
+    touch("pointerup", row);
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    expect(showContextMenu).toHaveBeenCalledTimes(1);
+  });
+
   it("opens the menu for a touch that lands after the scroller holding the row came to rest", async () => {
     const row = await rowA();
-    row.parentElement?.dispatchEvent(new Event("scroll"));
+    sections().dispatchEvent(new Event("scroll"));
     await new Promise((resolve) => {
       setTimeout(resolve, 150);
     });
@@ -4077,7 +4109,7 @@ describe("the touch hold on a chat tab", () => {
   it("opens the menu when the scroller holding the row scrolls under a still finger", async () => {
     const row = await rowA();
     touch("pointerdown", row);
-    row.parentElement?.dispatchEvent(new Event("scroll"));
+    sections().dispatchEvent(new Event("scroll"));
     vi.advanceTimersByTime(HOLD_MS);
     expect(showContextMenu).toHaveBeenCalledTimes(1);
   });
@@ -4104,11 +4136,24 @@ describe("the touch hold on a chat tab", () => {
     expect(getActiveTabId()).toBe(chatID("b"));
   });
 
+  it("keeps the first finger's hold when a second finger lands before it completes", async () => {
+    const row = await rowA();
+    touch("pointerdown", row);
+    vi.advanceTimersByTime(200);
+    touch("pointerdown", row, 0, 2);
+    vi.advanceTimersByTime(HOLD_MS - 200);
+    expect(showContextMenu, "the first finger's hold").toHaveBeenCalledTimes(1);
+    touch("pointerup", row);
+    row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+    touch("pointercancel", row, 0, 2);
+    expect(getActiveTabId()).toBe(chatID("b"));
+  });
+
   it("swallows the lift click when the scroller holding the row scrolls after the menu opens", async () => {
     const row = await rowA();
     touch("pointerdown", row);
     vi.advanceTimersByTime(HOLD_MS);
-    row.parentElement?.dispatchEvent(new Event("scroll"));
+    sections().dispatchEvent(new Event("scroll"));
     touch("pointerup", row);
     row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
     expect(getActiveTabId()).toBe(chatID("b"));
@@ -4153,6 +4198,22 @@ describe("the touch hold on a chat tab", () => {
       }),
     );
     expect(vi.mocked(showContextMenu).mock.lastCall?.[1]).toEqual(AT);
+  });
+
+  it("places a held menu at the touch point, a 0 coordinate included", async () => {
+    const row = await rowA();
+    row.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        pointerId: 1,
+        pointerType: "touch",
+        isPrimary: true,
+        clientX: AT.x,
+        clientY: 0,
+        bubbles: true,
+      }),
+    );
+    vi.advanceTimersByTime(HOLD_MS);
+    expect(vi.mocked(showContextMenu).mock.lastCall?.[1]).toEqual({ x: AT.x, y: 0 });
   });
 
   it("paints the row a menu is open on in its hover wash", async () => {

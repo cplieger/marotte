@@ -12,14 +12,33 @@ const SCROLL_SETTLED_MS = 100;
 const lastScroll = new WeakMap<EventTarget, number>();
 let scrollsTracked = false;
 
-/** Whether a scroller holding `target` scrolled within `SCROLL_SETTLED_MS` before `at`: a touch landing then
- *  caught a fling, and its finger rests on whichever row the fling stopped under. A scroll after the touch is
- *  never the finger's, whose own travel ends the hold by the slop or a `pointercancel`; it is a layout clamp,
- *  such as the drag lift folding sub-tabs, or a programmatic scroll. */
-function caughtFling(target: Node, at: number): boolean {
-  for (let n: Node | null = target; n !== null; n = n.parentNode) {
+/** Start recording each scroller's last scroll time, which `caughtFling` reads. Idempotent. */
+export function watchForFlings(): void {
+  if (scrollsTracked) {
+    return;
+  }
+  scrollsTracked = true;
+  // `scroll` does not bubble, so the capture phase on `document` sees every scroller's.
+  document.addEventListener(
+    "scroll",
+    (e) => {
+      if (e.target !== null) {
+        lastScroll.set(e.target, e.timeStamp);
+      }
+    },
+    { capture: true, passive: true },
+  );
+}
+
+/** The one verdict on whether a press caught a fling: a scroller holding its target scrolled within
+ *  `SCROLL_SETTLED_MS` before it, so the finger rests on whichever row the fling stopped under. A
+ *  scroll after the press is never the finger's, whose own travel ends a hold by the slop or a
+ *  `pointercancel`: it is a layout clamp, such as the drag lift folding sub-tabs, or a programmatic
+ *  scroll. False for every press until `watchForFlings` has run. */
+export function caughtFling(e: PointerEvent): boolean {
+  for (let n = e.target instanceof Node ? e.target : null; n !== null; n = n.parentNode) {
     const t = lastScroll.get(n);
-    if (t !== undefined && at - t < SCROLL_SETTLED_MS) {
+    if (t !== undefined && e.timeStamp - t < SCROLL_SETTLED_MS) {
       return true;
     }
   }
@@ -28,28 +47,22 @@ function caughtFling(target: Node, at: number): boolean {
 
 /** Open `target`'s menu with `open(x, y)` from its `contextmenu` or from a touch held `HOLD_MS` within the slop,
  *  once per press: iOS WebKit fires no `contextmenu` for a long press (https://bugs.webkit.org/show_bug.cgi?id=213953).
- *  A touch that caught a fling holds nothing, and `mayOpen`, asked when the hold completes, can refuse it. The held
- *  touch's lift click is swallowed. */
+ *  A touch that caught a fling opens no menu by either path, and `mayOpen`, asked when the hold completes, can
+ *  refuse it. The held touch's lift click is swallowed. */
 export function bindContextPress(
   target: HTMLElement,
   open: (x: number, y: number) => void,
   mayOpen: () => boolean = () => true,
 ): void {
-  if (!scrollsTracked) {
-    scrollsTracked = true;
-    // `scroll` does not bubble, so the capture phase on `document` sees every scroller's.
-    document.addEventListener(
-      "scroll",
-      (e) => {
-        if (e.target !== null) {
-          lastScroll.set(e.target, e.timeStamp);
-        }
-      },
-      { capture: true, passive: true },
-    );
-  }
-  let press: { id: number; x: number; y: number; timer: number | null; opened: boolean } | null =
-    null;
+  watchForFlings();
+  let press: {
+    id: number;
+    x: number;
+    y: number;
+    timer: number | null;
+    opened: boolean;
+    fling: boolean;
+  } | null = null;
   const endPress = (): void => {
     if (press?.timer != null) {
       clearTimeout(press.timer);
@@ -87,7 +100,7 @@ export function bindContextPress(
     if (press === null) {
       return true;
     }
-    if (press.opened) {
+    if (press.opened || press.fling) {
       return false;
     }
     press.opened = true;
@@ -109,26 +122,24 @@ export function bindContextPress(
     open(keyed ? box.left : e.clientX, keyed ? box.bottom : e.clientY);
   });
   target.addEventListener("pointerdown", (e) => {
-    // A second finger (never primary) on a held row leaves the first finger's lift to be swallowed.
-    if (e.pointerType !== "touch" || (press?.opened === true && !e.isPrimary)) {
+    // A second finger (never primary) leaves the first finger's hold, and its lift's swallow, alone.
+    if (e.pointerType !== "touch" || (press !== null && !e.isPrimary)) {
       return;
     }
     endPress();
-    if (caughtFling(target, e.timeStamp)) {
-      return;
-    }
     const p = {
       id: e.pointerId,
       x: e.clientX,
       y: e.clientY,
       timer: null as number | null,
       opened: false,
+      // Not `opened`: a tap that caught a fling still clicks its row.
+      fling: caughtFling(e),
     };
     p.timer = window.setTimeout(() => {
       p.timer = null;
       if (press === p && mayOpen() && menuFromPress()) {
-        const box = target.getBoundingClientRect();
-        open(p.x || box.left, p.y || box.bottom);
+        open(p.x, p.y);
       }
     }, HOLD_MS);
     press = p;

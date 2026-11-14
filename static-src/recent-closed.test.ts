@@ -1039,6 +1039,32 @@ describe("the touch hold on a Recently closed row", () => {
     expect(menus()).toHaveLength(1);
   });
 
+  it("opens no menu from the platform's contextmenu for a touch that caught a fling", async () => {
+    await listed(entry("c-a", "Alpha"));
+    unfold();
+    const row = rowFor("Alpha");
+    el("tab-sections").dispatchEvent(new Event("scroll"));
+    touch("pointerdown", row);
+    await sleep(HOLD);
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    await settle();
+    expect(menus()).toHaveLength(0);
+  });
+
+  it("reopens from a tap that caught a fling", async () => {
+    await closedElsewhere({ "c-a": "Alpha" });
+    unfold();
+    const row = rowFor("Alpha");
+    el("tab-sections").dispatchEvent(new Event("scroll"));
+    touch("pointerdown", row);
+    touch("pointerup", row);
+    clickOn(row);
+    await settle();
+    expect(opens()).toHaveLength(1);
+    // The shell's `#tab-sections` outlives the case: its scroll must not make the next case's touch a fling.
+    await sleep(150);
+  });
+
   it("lets the next tap on the row reopen it", async () => {
     await closedElsewhere({ "c-a": "Alpha" });
     unfold();

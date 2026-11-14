@@ -1,11 +1,12 @@
 // Twin of web-terminal-ui src/features/tabs/{index,strip}.ts; when changing drag
 // behaviour or its constants, check the other app. Both judge a live drag's viewport
 // against the PRESS-time frame, so a move a hold lifted across still ends the drag.
-// marotte-only: the release hit test over `#tab-sections`, the scroll listener filtered to the
-// pressed row's scrollers, and no press on a row in a `data-folded` list.
+// marotte-only: the release hit test over `#tab-sections`, no press on a row in a `data-folded`
+// list, `yieldDragToMenu`, and the touch-hold menu's `context-hold.ts` owning the touch slop and the
+// caught-fling verdict, where the twin listens for a scroll during the press.
 
 import { announce } from "./legacy-ui/announce.js";
-import { TOUCH_SLOP_PX } from "./context-hold.js";
+import { TOUCH_SLOP_PX, caughtFling, watchForFlings } from "./context-hold.js";
 
 import type { ViewportBox } from "./viewport-frame.js";
 import { onViewportChange, viewportBox, viewportMoved } from "./viewport-frame.js";
@@ -228,14 +229,6 @@ class TabDragController {
       this.clearPending();
     }
   };
-  // A press landing during a momentum scroll must not lift. Only a scroller holding the row
-  // counts: the transcript streaming a reply scrolls all the time.
-  private readonly boundPendingScroll = (e: Event): void => {
-    const pending = this.pending;
-    if (pending !== null && e.target instanceof Node && e.target.contains(pending.el)) {
-      this.clearPending();
-    }
-  };
   private readonly boundPendingMove = (e: PointerEvent): void => {
     this.onPressMove(e);
   };
@@ -301,6 +294,7 @@ class TabDragController {
   }
 
   attachDrag(tabEl: HTMLElement): void {
+    watchForFlings();
     tabEl.addEventListener("pointerdown", (e) => {
       if ((e.target as HTMLElement).closest(".tab-close") !== null) {
         return;
@@ -323,6 +317,11 @@ class TabDragController {
     if (tabEl.parentElement?.hasAttribute("data-folded") === true) {
       return;
     }
+    const { holdMs } = pointerDragActivation(e.pointerType);
+    // A pointer that waits on a hold competes with the native pan, so it can land on a fling.
+    if (holdMs > 0 && caughtFling(e)) {
+      return;
+    }
     const pending: PendingPress = {
       el: tabEl,
       pointerId: e.pointerId,
@@ -334,9 +333,6 @@ class TabDragController {
       releaseViewport: onViewportChange(this.boundPendingViewport),
     };
     this.pending = pending;
-    // `scroll` does not bubble, so the capture phase on `document` sees every scroller's.
-    document.addEventListener("scroll", this.boundPendingScroll, { capture: true, passive: true });
-    const { holdMs } = pointerDragActivation(e.pointerType);
     if (holdMs > 0) {
       pending.holdTimer = setTimeout(() => {
         pending.holdTimer = null;
@@ -368,7 +364,6 @@ class TabDragController {
       clearTimeout(pending.holdTimer);
     }
     pending.releaseViewport();
-    document.removeEventListener("scroll", this.boundPendingScroll, true);
     window.removeEventListener("pointermove", this.boundPendingMove, true);
     window.removeEventListener("pointerup", this.boundPendingRelease, true);
     window.removeEventListener("pointercancel", this.boundPendingRelease, true);
