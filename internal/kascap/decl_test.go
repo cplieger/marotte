@@ -363,7 +363,7 @@ var (
 	}{
 		{"with every gate field off", EngineSpawn{}},
 		{"with every gate field on", EngineSpawn{
-			SecretStorage: true, Knowledge: true, InfraSafety: "enforce",
+			SecretStorage: true, Knowledge: true, InfraSafety: "enforce", ContentCollection: true,
 			AutoRouting: "on", AutoDelegation: "on",
 			TerminalCommandTimeoutMs: 300000, SteeringReminders: true,
 			DisableTelemetry: true, ModelFallback: true, MessageDeliveryLimit: 12,

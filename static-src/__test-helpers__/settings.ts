@@ -15,7 +15,7 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     kiro_defaults: {},
     last_merge_method: "",
     knowledge_enabled: true,
-    content_collection_enabled: false,
+    content_collection_enabled: true,
     guard_payload_links: true,
     interrupt_mode: "steer",
     model_fallback_enabled: true,

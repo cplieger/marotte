@@ -474,6 +474,15 @@ false and leaves the value to kiro-cli. With it on the gate runs even
 with monitor off, and a change that breaks a rule is held behind a permission ask
 (requestSafetyOverridePermission: Keep blocked or Allow anyway), which an unattended
 run never approves.`,
+	"setting-object.contentCollection": `ALWAYS SENT with the "Share content with AWS for service improvement" switch
+(content_collection_enabled, or the organization lock). KAS holds one
+content-collection value per process, the opt-out header on every model request,
+and initialize applies settings.contentCollection before startupRecovery, so a run
+resumed at startup never sends on the relay's environment default (unset reads
+on). A malformed value turns collection off. Read field by field, not through
+isSettingEnabled. A change reaches the running engine through
+_kiro/contentCollection/settings_changed (bridge.Engine.RefreshContentCollection);
+no session door carries it.`,
 	"setting-object.terminal": `SENT when "Shell command timeout" is set (terminal_command_timeout_ms).
 initialize stores wGt(settings), which returns commandTimeoutMs only while
 enabled is true, and the shell tool uses it as the DEFAULT when the model passes

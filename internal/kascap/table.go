@@ -401,6 +401,13 @@ var table = []decl{
 		send: true,
 	},
 	{
+		key:        "contentCollection",
+		door:       doorConnection,
+		resolver:   resolverSettingObject,
+		engineGate: func(s *EngineSpawn) (any, bool) { return enabledIf(s.ContentCollection), true },
+		send:       true,
+	},
+	{
 		key:      "specPhaseCheckpoints",
 		door:     doorConnection,
 		resolver: resolverCapability,

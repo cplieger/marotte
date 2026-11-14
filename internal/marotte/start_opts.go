@@ -39,11 +39,10 @@ type EngineOpts struct {
 	// reason. Start reads it before initialize and again after, and sends
 	// MethodTerminalSettingsChanged when the two differ. Nil keeps Features.TerminalCommandTimeoutMs.
 	TerminalTimeout func(context.Context) int
-	// ContentCollection RESOLVES whether model requests may be used for service improvement. KAS
-	// holds the value per PROCESS and persists none of it, so every session door asserts it, read
-	// when the session exists. readable false means the settings could not be read: a session door
-	// still sends enabled (kiro-cli starts opted in), a live refresh keeps a value KAS confirmed
-	// and sends enabled when none is confirmed. Nil sends nothing.
+	// ContentCollection RESOLVES whether model requests may be used for service improvement, at
+	// initialize and on every live sync. readable false means the settings could not be read:
+	// initialize sends the answer anyway, a live sync keeps the value KAS holds. Nil sends
+	// disabled at initialize and nothing live.
 	ContentCollection func(context.Context) (enabled, readable bool)
 	// ExtraArgs are the operator's kiro-cli flags (MAROTTE_KIRO_ACP_ARGS, bridge.ParseACPArgs),
 	// appended after marotte's own.

@@ -122,7 +122,7 @@ type livePushesSeen struct {
 	prefs             []map[marotte.PushKind]bool
 	ignore            []string
 	terminal          []string
-	contentCollection []string
+	contentCollection []bool
 	mcpWaits          []bool
 	debug             []bool
 }
@@ -160,8 +160,8 @@ func TestOpenBridge_AHandEditPushesExactlyTheLiveSurfacesItMoved(t *testing.T) {
 		{name: "ignore_files", body: `{"agent_ignore_files":[".gitignore"]}`, want: livePushesSeen{ignore: []string{ignoreFrame}}},
 		{name: "terminal_timeout", body: `{"terminal_command_timeout_ms":300000}`, want: livePushesSeen{terminal: []string{terminalFrame}}},
 		{
-			name: "content_collection", body: `{"content_collection_enabled":true}`,
-			want: livePushesSeen{contentCollection: []string{marotte.ConfigValueContentCollectionEnabled}},
+			name: "content_collection", body: `{"content_collection_enabled":false}`,
+			want: livePushesSeen{contentCollection: []bool{false}},
 		},
 		{name: "mcp_wait", body: `{"mcp_wait_for_ready":true}`, want: livePushesSeen{mcpWaits: []bool{true}}},
 		{
@@ -174,7 +174,7 @@ func TestOpenBridge_AHandEditPushesExactlyTheLiveSurfacesItMoved(t *testing.T) {
 		{name: "an_unrelated_key", body: `{"last_merge_method":"squash"}`},
 		{
 			name: "values_resolving_as_before",
-			body: `{"agent_ignore_files":[],"terminal_command_timeout_ms":500,"content_collection_enabled":false,` +
+			body: `{"agent_ignore_files":[],"terminal_command_timeout_ms":500,"content_collection_enabled":true,` +
 				`"mcp_wait_for_ready":false,"debug_logs":false,"notify_agent_finished":true,"notify_pr_status":false}`,
 		},
 	} {

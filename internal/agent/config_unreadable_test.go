@@ -135,11 +135,11 @@ func TestUnreadableConfig_AnAccountSwitchIsQueuedAndAppliedOnceConfigReads(t *te
 // lastReadableBody is the document the spawn tests boot on: every value a spawn reads from config.json set away
 // from its default.
 const lastReadableBody = `{"engine_heap_mib":1024,"debug_logs":true,"agent_ignore_files":[".gitignore"],` +
-	`"terminal_command_timeout_ms":300000,"content_collection_enabled":true}`
+	`"terminal_command_timeout_ms":300000,"content_collection_enabled":false}`
 
 // lastReadableHub boots on lastReadableBody with one fake as every session and the engine lane, then breaks
 // config.json.
-func lastReadableHub(t *testing.T) (*Runtime, *fakeEngineSource, *fakeBridge) {
+func lastReadableHub(t *testing.T) (*Runtime, *fakeEngineSource) {
 	t.Helper()
 	dir := writeSettings(t, lastReadableBody)
 	lane := newFakeBridge()
@@ -150,11 +150,11 @@ func lastReadableHub(t *testing.T) (*Runtime, *fakeEngineSource, *fakeBridge) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	settleBoot(t, h)
 	rewriteConfigByHand(t, dir, `{"agent_ignore_files":`)
-	return h, fakeSourceOf(t, h), lane
+	return h, fakeSourceOf(t, h)
 }
 
 // assertStartedOnTheLastReadable checks generation 2 started on lastReadableBody's values, never the defaults.
-func assertStartedOnTheLastReadable(t *testing.T, h *Runtime, src *fakeEngineSource, lane *fakeBridge) {
+func assertStartedOnTheLastReadable(t *testing.T, h *Runtime, src *fakeEngineSource) {
 	t.Helper()
 	e := src.current()
 	if opts, _ := spawnOf(e); opts == nil || opts.HeapMiB != 1024 || !opts.DebugLogs {
@@ -163,12 +163,11 @@ func assertStartedOnTheLastReadable(t *testing.T, h *Runtime, src *fakeEngineSou
 	if files, ms := e.StartLive(); !slices.Equal(files, []string{".kiroignore", ".gitignore"}) || ms != 300000 {
 		t.Errorf("generation 2 was sent ignore files %v and shell timeout %d, want [.kiroignore .gitignore] and 300000", files, ms)
 	}
-	openChat(t, h, "c2")
-	lane.mu.Lock()
-	applied := lane.contentCollectionApplied
-	lane.mu.Unlock()
-	if !applied {
-		t.Error("a door on generation 2 asserted content collection off, want the last readable switch on")
+	e.mu.Lock()
+	collect := e.contentCollection
+	e.mu.Unlock()
+	if collect {
+		t.Error("generation 2 started with content collection on, want the last readable switch off")
 	}
 	if h.engine.restartPending() {
 		t.Errorf("reasons after the spawn = %v, want none: it started on what the last readable document holds",
@@ -177,17 +176,17 @@ func assertStartedOnTheLastReadable(t *testing.T, h *Runtime, src *fakeEngineSou
 }
 
 func TestUnreadableConfig_ACrashRespawnStartsOnTheLastReadableSettings(t *testing.T) {
-	h, src, lane := lastReadableHub(t)
+	h, src := lastReadableHub(t)
 
 	src.current().crash()
 	waitGenerations(t, src, 2)
 	waitReady(t, h.engine, 2)
 
-	assertStartedOnTheLastReadable(t, h, src, lane)
+	assertStartedOnTheLastReadable(t, h, src)
 }
 
 func TestUnreadableConfig_AConfirmedRestartWithNothingQueuedStartsOnTheLastReadableSettings(t *testing.T) {
-	h, src, lane := lastReadableHub(t)
+	h, src := lastReadableHub(t)
 	if h.engine.restartPending() {
 		t.Fatalf("Setup: reasons = %v before the restart, want none", h.engine.status().Restart.Reasons)
 	}
@@ -199,7 +198,7 @@ func TestUnreadableConfig_AConfirmedRestartWithNothingQueuedStartsOnTheLastReada
 	}
 	assertOneRestart(t, h, src)
 
-	assertStartedOnTheLastReadable(t, h, src, lane)
+	assertStartedOnTheLastReadable(t, h, src)
 }
 
 // A boot over a file that never read starts on the defaults; a live reason raised then waits for the file too.

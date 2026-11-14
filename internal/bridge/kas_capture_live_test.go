@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode"
@@ -70,6 +71,7 @@ func TestCaptureKASCorpus(t *testing.T) {
 		{name: "bot_policy", about: "Under each Permission profile, _kiro/policy/check on a Default chat and on a Bot for the same probes, then the Bot's memory write; under Trusted, each session lists its own tools with sub-agents on.", run: runBotPolicy},
 		{name: "bot_memory", about: "A Bot whose memory file is a context file added before the file exists: a prompt, the file written, a prompt, an edit, a prompt, the file deleted and its listing, the file recreated, a prompt; then a regular session's context and a prompt, and a fork of the Bot loaded and its context.", run: runBotMemory},
 		{name: "bot_memory_write", about: "A Bot with memory on and its directory in additionalDirectories writes its memory file in a turn; reopens with memory off (no directory) and on again, a prompt; then a regular session asked to write the same file, which the client refuses.", run: runBotMemoryWrite},
+		{name: "content_collection", about: "An engine initialized with content collection disabled and a session/new; _kiro/contentCollection/settings_changed enabled, then disabled, each echoed to the session as a config_option_update.", run: runContentCollection},
 		{name: "bot_tangent", about: "A Bot with memory on and a prompt; a tangent forked from it on the default mode, loaded as a regular chat, asked to read the Bot's memory file, which the client refuses.", run: runBotTangent},
 	} {
 		t.Run(sc.name, func(t *testing.T) { captureScenario(t, &env, sc) })
@@ -163,16 +165,18 @@ func newCapture(t *testing.T, env *captureEnv) *capture {
 }
 
 func (c *capture) startEngine(ctx context.Context, features marotte.EngineFeatures) (*bridge.Engine, error) {
+	return c.startEngineWith(ctx, &marotte.EngineOpts{Features: features})
+}
+
+// startEngineWith starts an engine on o, whose Lifetime and AuthArgs it sets.
+func (c *capture) startEngineWith(ctx context.Context, o *marotte.EngineOpts) (*bridge.Engine, error) {
 	e := bridge.NewEngine(c.env.cli, c.work)
 	lifetime, cancel := context.WithCancel(context.Background())
 	c.engines = append(c.engines, e)
 	c.cancels = append(c.cancels, cancel)
 	go c.drainEngineLane(e)
-	if err := e.Start(ctx, &marotte.EngineOpts{
-		Lifetime: lifetime,
-		AuthArgs: []string{"--auth-method", "cli"},
-		Features: features,
-	}); err != nil {
+	o.Lifetime, o.AuthArgs = lifetime, []string{"--auth-method", "cli"}
+	if err := e.Start(ctx, o); err != nil {
 		return nil, fmt.Errorf("engine start: %w", err)
 	}
 	return e, nil
@@ -803,7 +807,11 @@ type frameView struct {
 			Status        string          `json:"status"`
 			Content       json.RawMessage `json:"content"`
 			RawOutput     json.RawMessage `json:"rawOutput"`
-			Meta          struct {
+			ConfigOptions []struct {
+				ID           string `json:"id"`
+				CurrentValue string `json:"currentValue"`
+			} `json:"configOptions"`
+			Meta struct {
 				Kiro map[string]any `json:"kiro"`
 			} `json:"_meta"`
 		} `json:"update"`
@@ -813,6 +821,11 @@ type frameView struct {
 func (c *capture) inFrames(lane int) []frameView {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.inFramesLocked(lane)
+}
+
+// inFramesLocked is inFrames for a caller holding c.mu.
+func (c *capture) inFramesLocked(lane int) []frameView {
 	var out []frameView
 	for _, l := range c.lines {
 		if l.Dir != "in" || !l.isFrame || l.lane != lane {
@@ -856,6 +869,85 @@ func indexOf(frames []frameView, from int, match func(*frameView) bool) int {
 func infoKind(kind string) func(*frameView) bool {
 	return func(f *frameView) bool {
 		return f.Params.Update.SessionUpdate == "session_info_update" && f.kind() == kind
+	}
+}
+
+func runContentCollection(ctx context.Context, c *capture) error {
+	var collect atomic.Bool
+	e, err := c.startEngineWith(ctx, &marotte.EngineOpts{ContentCollection: func(context.Context) (bool, bool) {
+		return collect.Load(), true
+	}})
+	if err != nil {
+		return err
+	}
+	_, lane, err := c.newSession(ctx, e)
+	if err != nil {
+		return err
+	}
+	if err := c.awaitContentCollection(lane, 0, "disabled"); err != nil {
+		return fmt.Errorf("after an initialize that sent disabled: %w", err)
+	}
+	for _, want := range []bool{true, false} {
+		from := len(c.inFrames(lane))
+		collect.Store(want)
+		c.out(lane, map[string]any{
+			"method": marotte.MethodContentCollectionSettingsChanged,
+			"params": marotte.ContentCollectionSettingsParams(want),
+		})
+		if _, err := e.RefreshContentCollection(ctx); err != nil {
+			return fmt.Errorf("notify %v: %w", want, err)
+		}
+		value := "disabled"
+		if want {
+			value = "enabled"
+		}
+		if err := c.awaitContentCollection(lane, from, value); err != nil {
+			return fmt.Errorf("after notifying %v: %w", want, err)
+		}
+	}
+	return nil
+}
+
+// awaitContentCollection waits up to 60 s for a config_option_update at or after frame from whose contentCollection
+// option is value. One holding another value is skipped: a model-registry broadcast can still carry the old value
+// after the notification.
+func (c *capture) awaitContentCollection(lane, from int, value string) error {
+	const wait = 60 * time.Second
+	deadline := time.Now().Add(wait)
+	stop := time.AfterFunc(wait, func() {
+		c.mu.Lock()
+		c.cond.Broadcast()
+		c.mu.Unlock()
+	})
+	defer stop.Stop()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	last := ""
+	for {
+		frames := c.inFramesLocked(lane)
+		for i := from; i < len(frames); i++ {
+			u := &frames[i].Params.Update
+			if u.SessionUpdate != "config_option_update" {
+				continue
+			}
+			for _, o := range u.ConfigOptions {
+				if o.ID != "contentCollection" {
+					continue
+				}
+				if o.CurrentValue == value {
+					return nil
+				}
+				last = o.CurrentValue
+			}
+		}
+		from = max(from, len(frames))
+		if time.Now().After(deadline) {
+			if last == "" {
+				return fmt.Errorf("no config_option_update reported contentCollection %q", value)
+			}
+			return fmt.Errorf("the session last reported contentCollection %q, want %q", last, value)
+		}
+		c.cond.Wait()
 	}
 }
 

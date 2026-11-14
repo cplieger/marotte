@@ -92,10 +92,8 @@ type engineLive struct {
 
 // syncLive sends the engine each live setting the document holds that it has not confirmed, once for every session.
 // The document is read under the engine's live lock, so a later push never carries an older read. A down engine reads
-// the document itself at its spawn. A failed push keeps the record, so the next use resends. kiro-cli's own
-// content-collection switch is kept on the resolved value whether or not an engine runs.
+// the document itself at its spawn. A failed push keeps the record, so the next use resends.
 func (o *engineOwner) syncLive(ctx context.Context, read func(context.Context) liveSettings) {
-	o.share.assert(ctx, o.source, false)
 	if !o.liveLock.lock(ctx) {
 		return
 	}
