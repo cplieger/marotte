@@ -500,16 +500,17 @@ var agentShell = sync.OnceValue(func() string {
 
 // KAS leaves `args` UNSET and puts the whole line in `command` (kiro-cli 2.18.0), so an absent
 // `args` runs through a shell and a present one, empty included, is an argv. Presence, not length,
-// decides. The env always goes through kirorelease.SpawnEnv: the command can run the pinned kiro-cli
+// decides. The env always goes through kirorelease.SetCommandEnv: the command can run the pinned kiro-cli
 // from PATH, and a marotte started under `env -i` has no image ENV to pass on.
-func agentCommand(ctx context.Context, line string, args *[]string, vars []termEnvVar) *exec.Cmd {
+func agentCommand(ctx context.Context, line string, args *[]string, dir string, vars []termEnvVar) *exec.Cmd {
 	var cmd *exec.Cmd
 	if args != nil {
 		cmd = exec.CommandContext(ctx, line, *args...) // #nosec G204 -- agent-controlled
 	} else {
 		cmd = exec.CommandContext(ctx, agentShell(), "-c", line) // #nosec G204 -- agent-controlled
 	}
-	cmd.Env = kirorelease.SpawnEnv(termEnv(vars))
+	cmd.Dir = dir
+	kirorelease.SetCommandEnv(cmd, termEnv(vars))
 	return cmd
 }
 
@@ -573,27 +574,25 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 		limit = params.OutputByteLimit
 	}
 
-	// The command must outlive the per-event ctx, which translateACPEvent cancels on return;
-	// the AfterFunc re-attaches shutdown.
-	cmdCtx, cmdCancel := context.WithCancel(context.WithoutCancel(ctx))
-	stop := context.AfterFunc(at.lifecycle.shutdownCtx, cmdCancel)
-	cmd := agentCommand(cmdCtx, params.Command, params.Args, params.Env)
-	// Own process group, so teardown can signal the whole tree (see procgroup.Kill).
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.WaitDelay = 2 * time.Second
+	dir := at.lifecycle.workDir
 	if params.Cwd != "" {
 		abs, err := at.lifecycle.resolveCwd(ctx, params.Cwd)
 		if err != nil {
-			stop()
-			cmdCancel()
 			at.failCreate(ctx, chatID, origin, msg, params.Command,
 				"cwd is outside the workspace and every additional directory: "+err.Error())
 			return
 		}
-		cmd.Dir = abs
-	} else {
-		cmd.Dir = at.lifecycle.workDir
+		dir = abs
 	}
+
+	// The command must outlive the per-event ctx, which translateACPEvent cancels on return;
+	// the AfterFunc re-attaches shutdown.
+	cmdCtx, cmdCancel := context.WithCancel(context.WithoutCancel(ctx))
+	stop := context.AfterFunc(at.lifecycle.shutdownCtx, cmdCancel)
+	cmd := agentCommand(cmdCtx, params.Command, params.Args, dir, params.Env)
+	// Own process group, so teardown can signal the whole tree (see procgroup.Kill).
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.WaitDelay = 2 * time.Second
 
 	term := newAgentTerminal(cmd, chatID, limit)
 	cmd.Cancel = func() error {

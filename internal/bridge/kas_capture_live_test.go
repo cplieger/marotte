@@ -156,7 +156,7 @@ func newCapture(t *testing.T, env *captureEnv) *capture {
 	// Unset, the pinned binary replaces itself with the newest release during a capture, so the next run on the same
 	// path is refused by checkBinaryVersion.
 	gate := exec.CommandContext(t.Context(), env.cli, kirorelease.AutoUpdateGate().Args...)
-	gate.Env = kirorelease.SpawnEnv(os.Environ())
+	kirorelease.SetCommandEnv(gate, os.Environ())
 	if out, err := gate.CombinedOutput(); err != nil {
 		t.Fatalf("turn off kiro-cli's self-update: %v: %s", err, out)
 	}
@@ -1238,7 +1238,7 @@ func pinnedKiroCLI(t *testing.T) string {
 func checkBinaryVersion(t *testing.T, bin, pin string) {
 	t.Helper()
 	probe := exec.CommandContext(t.Context(), bin, "--version")
-	probe.Env = kirorelease.SpawnEnv(os.Environ())
+	kirorelease.SetCommandEnv(probe, os.Environ())
 	out, err := probe.Output()
 	if err != nil {
 		t.Fatalf("%s --version: %v", bin, err)

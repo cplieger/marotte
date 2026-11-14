@@ -60,7 +60,7 @@ func (r *execCLIRunner) command(ctx context.Context, args ...string) *exec.Cmd {
 		// The overlay lands after the inherited environment: os/exec keeps the last value for a repeated key.
 		env = append(env, r.env()...)
 	}
-	cmd.Env = kirorelease.SpawnEnv(env)
+	kirorelease.SetCommandEnv(cmd, env)
 	return cmd
 }
 

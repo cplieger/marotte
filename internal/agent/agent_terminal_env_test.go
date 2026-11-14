@@ -1,8 +1,13 @@
 package agent
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
@@ -30,11 +35,45 @@ func TestAgentCommand_RunsWithKiroCLISelfUpdateOff(t *testing.T) {
 				if args == nil {
 					line = "'" + cli + "'"
 				}
-				if out, err := agentCommand(t.Context(), line, args, tc.vars).CombinedOutput(); err != nil {
+				if out, err := agentCommand(t.Context(), line, args, "", tc.vars).CombinedOutput(); err != nil {
 					t.Fatalf("agent command: %v: %s", err, out)
 				}
 				if got := seen(); got != "1" {
 					t.Errorf("kiro-cli saw KIRO_NO_AUTO_UPDATE %q, want 1", got)
+				}
+			})
+		}
+	}
+}
+
+// os/exec adds PWD=Dir only when Env is nil, and every agent command sets Env, so this covers both cwd sources with and
+// without agent vars under a parent PWD that names another directory.
+func TestTermCreate_CommandSeesItsCwdAsPWD(t *testing.T) {
+	for _, withVars := range []bool{false, true} {
+		for _, cwd := range []string{"", "sub"} {
+			t.Run(fmt.Sprintf("vars=%v cwd=%q", withVars, cwd), func(t *testing.T) {
+				t.Setenv("PWD", "/marotte-own-pwd")
+				work := t.TempDir()
+				if err := os.Mkdir(filepath.Join(work, "sub"), 0o750); err != nil {
+					t.Fatal(err)
+				}
+				h := hubWithBridge(t, work, newRecordingTermBridge())
+				id := int64(1)
+				params := map[string]any{"command": "printenv", "args": []string{"PWD"}}
+				if cwd != "" {
+					params["cwd"] = filepath.Join(work, cwd)
+				}
+				if withVars {
+					params["env"] = []map[string]string{{"name": "KIRO_SESSION_ID", "value": "s"}}
+				}
+				msg := &marotte.RPCResponse{ID: &id, Method: methodTermCreate, Params: mustJSON(t, params)}
+				got := strings.TrimSuffix(waitForTermExit(t, h, msg), "\n")
+				dir := singleTerm(t, h).cmd.Dir
+				if want := filepath.Join(work, cwd); dir != want {
+					t.Fatalf("command ran in %q, want %q", dir, want)
+				}
+				if got != dir {
+					t.Errorf("command saw PWD %q, want its cwd %q", got, dir)
 				}
 			})
 		}
