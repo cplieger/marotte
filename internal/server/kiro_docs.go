@@ -355,11 +355,15 @@ func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGu
 	if err != nil {
 		return docScan{}
 	}
-	entries = dropLinksToNonFiles(root, entries)
-	agents := steering.DedupeAgentFiles(entries)
+	stat := func(name string) (fs.FileInfo, error) { return fs.Stat(root, "agents/"+name) }
+	agents := steering.DedupeAgentFiles(entries, stat)
+	// A link to no regular file is no agent spelling, and presentDocTargets skips it as a twin.
 	linked := make(map[string]bool)
 	for _, e := range entries {
-		if e.Type()&fs.ModeSymlink != 0 {
+		if e.Type()&fs.ModeSymlink == 0 {
+			continue
+		}
+		if fi, err := stat(e.Name()); err == nil && fi.Mode().IsRegular() {
 			linked[e.Name()] = true
 		}
 	}
@@ -384,26 +388,14 @@ func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGu
 			Description: fm.Description,
 			Model:       fm.Model,
 			Tools:       fm.Tools,
-			// The delete removes both spellings, so a linked twin withholds it too.
-			DeleteProtected: verdict.deleteProtected || linked[agentTwin(file)],
+			// Withheld for each shape presentDocTargets refuses: a refused or linked own file, a linked twin.
+			DeleteProtected: !verdict.allowed || verdict.deleteProtected || linked[file] || linked[agentTwin(file)],
 		})
 		if !kept {
 			return sc
 		}
 	}
 	return sc
-}
-
-// dropLinksToNonFiles drops an agents/ link that does not resolve to a regular file, before
-// DedupeAgentFiles picks a spelling, so it cannot shadow a readable twin.
-func dropLinksToNonFiles(root fs.FS, entries []fs.DirEntry) []fs.DirEntry {
-	return slices.DeleteFunc(entries, func(e fs.DirEntry) bool {
-		if e.Type()&fs.ModeSymlink == 0 {
-			return false
-		}
-		fi, err := fs.Stat(root, "agents/"+e.Name())
-		return err != nil || !fi.Mode().IsRegular()
-	})
 }
 
 // scanDocsSpecs walks `specs/` and groups each document under its feature directory. Specs

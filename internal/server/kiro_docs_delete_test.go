@@ -22,12 +22,23 @@ import (
 // so a row deleted through the route the client calls is read back through the next listing.
 func docsDeleteServer(t *testing.T) (http.Handler, string) {
 	t.Helper()
+	return docsDeleteServerWithConfig(t, "")
+}
+
+// docsDeleteServerWithConfig roots the sensitive deny list at work/configRel, or outside the
+// workspace when configRel is empty.
+func docsDeleteServerWithConfig(t *testing.T, configRel string) (http.Handler, string) {
+	t.Helper()
 	base := t.TempDir()
 	work := filepath.Join(base, "work")
 	if err := os.MkdirAll(filepath.Join(work, ".kiro"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	sensitive := filebrowse.NewSensitive(filepath.Join(base, "config"))
+	config := filepath.Join(base, "config")
+	if configRel != "" {
+		config = filepath.Join(work, configRel)
+	}
+	sensitive := filebrowse.NewSensitive(config)
 	files, err := filebrowse.New(sensitive, []string{work})
 	if err != nil {
 		t.Fatal(err)
@@ -239,6 +250,42 @@ func TestKiroDocsDelete_RefusesWhatTheRowDoesNotOwn(t *testing.T) {
 			t.Errorf("after the refusal the row is %+v, want it still at %s", after, row.Path)
 		}
 	})
+	t.Run("agent_file_linked_out_of_the_tree", func(t *testing.T) {
+		h, work := docsDeleteServer(t)
+		kiro := filepath.Join(work, ".kiro")
+		outside := filepath.Join(filepath.Dir(work), "outside", "out.md")
+		writeFile(t, filepath.Dir(outside), "out.md", "---\nname: out\n---\n")
+		if err := os.MkdirAll(filepath.Join(kiro, "agents"), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		symlinkOr(t, outside, filepath.Join(kiro, "agents", "out.md"))
+		row := mustRow(t, listDocs(t, h), catAgent, "out")
+		if !row.DeleteProtected {
+			t.Errorf("an agent whose own file links out of .kiro offers its delete: %+v", row)
+		}
+		if rec := deleteRow(t, h, &row); rec.Code != http.StatusForbidden {
+			t.Errorf("delete: status %d, want 403: %s", rec.Code, rec.Body.String())
+		}
+		if _, err := os.Stat(outside); err != nil {
+			t.Errorf("the link's target was removed: %v", err)
+		}
+	})
+	t.Run("agent_file_on_the_sensitive_denylist", func(t *testing.T) {
+		// mcp.json is on the deny list, so a config dir at agents/ puts agents/mcp.json on it.
+		h, work := docsDeleteServerWithConfig(t, filepath.Join(".kiro", "agents"))
+		kiro := filepath.Join(work, ".kiro")
+		writeFile(t, kiro, "agents/mcp.json", `{"name":"mcp"}`)
+		row := mustRow(t, listDocs(t, h), catAgent, "mcp")
+		if !row.DeleteProtected {
+			t.Errorf("an agent file on the deny list offers its delete: %+v", row)
+		}
+		if rec := deleteRow(t, h, &row); rec.Code != http.StatusForbidden {
+			t.Errorf("delete: status %d, want 403: %s", rec.Code, rec.Body.String())
+		}
+		if _, err := os.Stat(filepath.Join(kiro, "agents", "mcp.json")); err != nil {
+			t.Errorf("a denylisted agent file was removed: %v", err)
+		}
+	})
 	t.Run("twin_is_a_directory", func(t *testing.T) {
 		h, work := docsDeleteServer(t)
 		kiro := filepath.Join(work, ".kiro")
@@ -403,4 +450,48 @@ func TestKiroDocs_ListsASkillAddedOnDiskWithoutARestart(t *testing.T) {
 	}
 	writeFile(t, kiro, "shared/linked/SKILL.md", "---\nname: linked\n---\n")
 	mustRow(t, listDocs(t, h), catSkill, "linked")
+}
+
+// TestKiroDocs_AgentLinkListsOnlyWhenItsTargetIsARegularFile is the docs half of the shared
+// agents/ rule: a link is an agent only when it resolves to a file.
+func TestKiroDocs_AgentLinkListsOnlyWhenItsTargetIsARegularFile(t *testing.T) {
+	cases := []struct {
+		plant   func(t *testing.T, kiro string) string
+		name    string
+		wantRow bool
+	}{
+		{name: "dangling", plant: func(t *testing.T, kiro string) string {
+			return filepath.Join(kiro, "shared", "missing.md")
+		}},
+		{name: "to_a_directory", plant: func(t *testing.T, kiro string) string {
+			writeFile(t, kiro, "shared/dir/keep.txt", "x\n")
+			return filepath.Join(kiro, "shared", "dir")
+		}},
+		{name: "to_a_fifo", plant: func(t *testing.T, kiro string) string {
+			p := filepath.Join(kiro, "shared", "pipe")
+			mkfifoOr(t, p)
+			return p
+		}},
+		{name: "to_a_file", wantRow: true, plant: func(t *testing.T, kiro string) string {
+			writeFile(t, kiro, "shared/real.md", "---\nname: linked\n---\n")
+			return filepath.Join(kiro, "shared", "real.md")
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, work := docsDeleteServer(t)
+			kiro := filepath.Join(work, ".kiro")
+			if err := os.MkdirAll(filepath.Join(kiro, "agents"), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			symlinkOr(t, tc.plant(t, kiro), filepath.Join(kiro, "agents", "linked.md"))
+			want := 0
+			if tc.wantRow {
+				want = 1
+			}
+			if agents := docsByCategory(listDocs(t, h), catAgent); len(agents) != want {
+				t.Errorf("agent rows = %+v, want %d", agents, want)
+			}
+		})
+	}
 }

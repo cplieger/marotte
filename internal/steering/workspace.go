@@ -120,7 +120,7 @@ func hasKiroContent(repoDir string) bool {
 	if anyEntry(filepath.Join(dir, "steering"), isSteeringDoc) || anyEntry(skills, isSkill) {
 		return true
 	}
-	if entries, err := os.ReadDir(filepath.Join(dir, "agents")); err == nil && len(DedupeAgentFiles(entries)) > 0 {
+	if len(readAgentFiles(filepath.Join(dir, "agents"))) > 0 {
 		return true
 	}
 	hooks, _ := findRepoHooks(repoDir)

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -224,17 +225,26 @@ type agentEntry struct {
 // `.json`/`.md` pair to ONE agent through DedupeAgentFiles. It returns the first
 // 10 distinct agents and how many there are.
 func findRepoAgents(repoDir string) (agents []agentEntry, total int) {
-	dir := filepath.Join(repoDir, ".kiro", "agents")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
+	all := readAgentFiles(filepath.Join(repoDir, ".kiro", "agents"))
+	if len(all) == 0 {
 		return nil, 0
 	}
-	all := DedupeAgentFiles(entries)
 	out := make([]agentEntry, 0, min(len(all), 10))
 	for _, a := range all[:min(len(all), 10)] {
 		out = append(out, agentEntry{Name: defuse(a.Base)})
 	}
 	return out, len(all)
+}
+
+// readAgentFiles is DedupeAgentFiles over the agents directory dir; an unreadable dir has none.
+func readAgentFiles(dir string) []AgentFile {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	return DedupeAgentFiles(entries, func(name string) (fs.FileInfo, error) {
+		return os.Stat(filepath.Join(dir, name))
+	})
 }
 
 // HookEntry is one hook from a `.kiro/hooks/*.json` document.

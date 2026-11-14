@@ -99,8 +99,7 @@ func deleteDocRow(d docDeleter, row *KiroDoc) error {
 	return nil
 }
 
-// docTarget is one path a row's delete removes. A twin is removed only as a regular file: the
-// scan builds an agent from nothing else, so anything else wearing the name is not this row's.
+// docTarget is one path a row's delete removes. A twin is removed only as a regular file.
 type docTarget struct {
 	path string
 	twin bool
