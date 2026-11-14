@@ -36,7 +36,7 @@ func TestEffectiveSettings_EveryFieldIsSettable(t *testing.T) {
 	// filesystem (AgentDirs.Assess), from the stored document's misfits and from the range constants.
 	resolved := map[string]struct{}{
 		"kiro_defaults": {}, "additional_directories_refused": {}, "hook_status_shown": {},
-		"rejected_keys": {}, "auto_compact_pct_range": {},
+		"rejected_keys": {}, "auto_compact_pct_range": {}, "model_fallbacks": {},
 	}
 	rt := reflect.TypeFor[marotte.EffectiveSettings]()
 	for f := range rt.Fields() {

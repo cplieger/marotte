@@ -28,6 +28,8 @@ import {
   newestSettings,
   refreshSettings,
   adoptSettings,
+  settingsAsShown,
+  shownSettingsSignal,
   __testResetTracking,
 } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
@@ -906,5 +908,28 @@ describe("patchSettings generation guard", () => {
       expect(showSaved).toHaveBeenCalled();
     });
     expect(showSaved).toHaveBeenCalledExactlyOnceWith(["debug_logs"]);
+  });
+});
+
+describe("shownSettingsSignal", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn(committed));
+    __testResetTracking();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("carries the settings as shown through an adopt and an unsent click", async () => {
+    expect(shownSettingsSignal.value).toBeNull();
+    adoptSettings(settingsPayload({ model_fallback_enabled: true }));
+    expect(shownSettingsSignal.value?.model_fallback_enabled).toBe(true);
+    void patchSettings({ model_fallback_enabled: false });
+    expect(shownSettingsSignal.value?.model_fallback_enabled).toBe(false);
+    expect(shownSettingsSignal.value).toEqual(settingsAsShown());
+    await vi.advanceTimersByTimeAsync(350);
   });
 });

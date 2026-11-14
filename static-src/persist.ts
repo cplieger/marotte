@@ -2,6 +2,7 @@
 // notification toggle changes into one round-trip), and owns the settings reads. The settings
 // state and every rule over it are settings-state.ts's; this module runs it.
 
+import { signal, type Signal } from "@cplieger/reactive";
 import { showSaving, showSaved, showError } from "./save-indicator.js";
 import { patchAppSettings, loadSettings as loadSettingsAction } from "./actions/settings.js";
 import { registerCleanup } from "./actions/index.js";
@@ -55,8 +56,13 @@ const bases = new Map<HTMLInputElement, boolean>();
 /** The settings events this page took. */
 let eventsNoted = 0;
 
+/** settingsAsShown as a signal, written on every settings-state step, for a surface that repaints when
+ *  shown settings change outside the Settings panel. */
+export const shownSettingsSignal: Signal<EffectiveSettings | null> = signal(null);
+
 function step(event: SettingsEvent): void {
   state = reduce(state, event);
+  shownSettingsSignal.value = settingsAsShown();
 }
 
 function asPayload(s: EffectiveSettings): Payload {
@@ -98,6 +104,7 @@ function repaint(switches: readonly SettingsSwitch[]): void {
 // deadset:ignore DS1102 -- test seam: resets the settings state, the queue, its resolvers and switches, the debounce timer and the event count
 export function __testResetTracking(): void {
   state = initialSettingsState;
+  shownSettingsSignal.value = null;
   writeSeq = 0;
   patchResolvers = [];
   editSwitches = [];

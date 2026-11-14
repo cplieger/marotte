@@ -253,10 +253,12 @@ func memoryFailure(err error) engineReply {
 	return engineReply{err: err, write: func(w http.ResponseWriter) { writeMemoryErr(w, err) }}
 }
 
-// registerMemoryRoutes wires the Memories endpoints, method-less so a refused method answers 405 + Allow.
+// registerMemoryRoutes wires the Memories endpoints and the other account-synced setting write, model fallback,
+// method-less so a refused method answers 405 + Allow.
 func (st *Settings) registerMemoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/memory", st.handleMemoryCollection)
 	mux.HandleFunc("/api/memory/sync", st.handleMemorySync)
+	mux.HandleFunc("/api/model-fallback", st.handleModelFallback)
 	mux.HandleFunc("/api/memory/import-prompt", st.handleMemoryImportPrompt)
 	mux.HandleFunc("/api/memory/import", st.handleMemoryImport)
 	mux.HandleFunc("/api/memory/export", st.handleMemoryExport)

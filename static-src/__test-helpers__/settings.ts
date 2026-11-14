@@ -24,6 +24,7 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     auto_compact_pct: 80,
     auto_compact_pct_range: { min: 50, max: 90, step: 5 },
     rejected_keys: [],
+    model_fallbacks: [],
     spec_planning: "off",
     spec_planning_ask_first: false,
     steering_reminders_enabled: false,

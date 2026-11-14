@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { userEvent } from "vitest/browser";
+import { settingsPayload } from "./__test-helpers__/settings.js";
+import type { EffectiveSettings } from "./persist.js";
 import type { ModelInfo } from "./types.js";
 import type * as Strings from "./strings.js";
 
@@ -61,6 +63,23 @@ vi.mock("./store.js", async () => {
   };
 });
 
+// A real signal, as persist.ts's: the Fallback row repaints from it while the card is open.
+vi.mock("./persist.js", async () => {
+  const { signal } = (await vi.importActual("@cplieger/reactive")) as { signal: SignalFactory };
+  const shownSettingsSignal = signal<EffectiveSettings | null>(null);
+  return { shownSettingsSignal, settingsAsShown: () => shownSettingsSignal.value };
+});
+vi.mock("./settings.js", () => ({
+  currentIdentity: () => ({
+    state: "signed_in",
+    email: "",
+    method: "",
+    startUrl: "",
+    region: "",
+    apiKey: false,
+  }),
+}));
+
 vi.mock("./picker.js", () => ({
   getCachedModels: () => cachedModels,
   refreshPickerIfVisible: vi.fn(),
@@ -75,6 +94,7 @@ vi.mock("./actions/index.js", () => ({
   transportAction: (def: { name: string }) => ({
     dispatch: def.name === "chat.set_thinking" ? thinkingDispatch : effortDispatch,
   }),
+  apiAction: () => ({ dispatch: vi.fn() }),
   retryNetwork: vi.fn(),
   RETRY_STANDARD: {},
 }));
@@ -99,6 +119,7 @@ vi.mock("./legacy-ui/roving-focus.js", () => ({
 }));
 
 import { activeSession } from "./store.js";
+import { shownSettingsSignal } from "./persist.js";
 import { initModelSwitcher } from "./model-switcher.js";
 
 function model(
@@ -577,5 +598,64 @@ describe("the effort slider's thinking Off stop", () => {
     closeCard();
 
     expect(effortDispatch).toHaveBeenCalledWith({ chatID: "c1", level: "low" });
+  });
+});
+
+describe("the Fallback row", () => {
+  beforeEach(() => {
+    document.body.replaceChildren();
+    const pill = document.createElement("button");
+    pill.id = "switch-model-btn";
+    const card = document.createElement("div");
+    card.id = "model-switch-list";
+    document.body.append(pill, card);
+    cachedModels = [model("model-a", "high"), model("model-b", "high")];
+    notice = null;
+    shownSettingsSignal.value = null;
+    initModelSwitcher();
+    setSession({ id: "c1", model: "model-a", effort: "", effort_levels: fiveTiers() });
+  });
+
+  function shown(enabled: boolean): EffectiveSettings {
+    return settingsPayload({
+      model_fallback_enabled: enabled,
+      model_fallbacks: [
+        { model: "model-a", configured: "model-b", vendor_default: "", read_only_reason: "" },
+      ],
+    });
+  }
+
+  function fallbackSelect(): HTMLSelectElement | null {
+    return document.querySelector<HTMLSelectElement>(
+      '#model-switch-list select[aria-label="Fallback model"]',
+    );
+  }
+
+  it("sits under the effort slider for the chat's model, showing the account's choice", () => {
+    shownSettingsSignal.value = shown(true);
+    openCard();
+    const rows = [...document.querySelectorAll("#model-switch-list > .effort-row")];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.querySelector('[role="slider"]')).not.toBeNull();
+    expect(rows[1]?.contains(fallbackSelect())).toBe(true);
+    expect(fallbackSelect()?.value).toBe("model-b");
+  });
+
+  it("appears and disappears on a live flip while the picker is open", () => {
+    shownSettingsSignal.value = shown(false);
+    openCard();
+    expect(fallbackSelect()).toBeNull();
+    shownSettingsSignal.value = shown(true);
+    expect(fallbackSelect()?.value).toBe("model-b");
+    shownSettingsSignal.value = shown(false);
+    expect(fallbackSelect()).toBeNull();
+  });
+
+  it("leaves a closed card alone on a settings change", () => {
+    shownSettingsSignal.value = shown(false);
+    openCard();
+    closeCard();
+    shownSettingsSignal.value = shown(true);
+    expect(fallbackSelect()).toBeNull();
   });
 });
