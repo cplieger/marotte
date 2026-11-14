@@ -212,11 +212,14 @@ describe("one hover recipe for every box header in a transcript", () => {
   it("writes the interaction wash and never a ramp rung or a hue", () => {
     // `--c-hover` without a fill of its own, `--layer-hover` with one; an accent mix would make
     // hover carry identity.
+    // A header yielding its wash to a hovered control inside it (`:has(... :hover)`) clears it.
     const allowed = new Set(["var(--c-hover)", "var(--layer-hover)"]);
     for (const r of population) {
-      expect(allowed.has(r.value), `${r.file}:${r.line} ${r.selector} hovers with ${r.value}`).toBe(
-        true,
-      );
+      const yields = /:has\([^{}]*:hover\)/.test(r.selector) && r.value === "transparent";
+      expect(
+        allowed.has(r.value) || yields,
+        `${r.file}:${r.line} ${r.selector} hovers with ${r.value}`,
+      ).toBe(true);
     }
   });
 

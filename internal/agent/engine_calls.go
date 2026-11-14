@@ -70,7 +70,7 @@ func (o *engineOwner) connectionConfigurationRaw(ctx context.Context) (json.RawM
 	return o.rawCall(ctx, "configuration getState call", methodKiroConfigurationGet, map[string]any{"observer": "connection"})
 }
 
-func (o *engineOwner) configurationSetRaw(ctx context.Context, krn, value, layer string) (json.RawMessage, error) {
+func (o *engineOwner) configurationSetRaw(ctx context.Context, krn string, value any, layer string) (json.RawMessage, error) {
 	return o.rawCall(ctx, "configuration set call", methodKiroConfigurationSet,
 		map[string]any{"krn": krn, "value": value, "layer": layer})
 }

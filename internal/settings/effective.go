@@ -118,6 +118,7 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		// Empty objects, not nil: nil marshals as null and no field here is optional.
 		LastEffortByModel: map[string]string{},
 		KiroDefaults:      map[string]marotte.KiroDefault{},
+		ModelFallbacks:    []marotte.ModelFallback{},
 		// Resolved per GET against the filesystem (AgentDirs.Assess); nothing stored is refused.
 		AdditionalDirectoriesRefused: map[string]string{},
 		// The per-kind push defaults are not uniform; no polarity is safe for a client to guess.

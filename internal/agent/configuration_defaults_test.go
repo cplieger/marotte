@@ -72,3 +72,55 @@ func TestConfigurationState_TheEngineViewResolvesWorkValidationsDefault(t *testi
 		t.Error("cloudformation_safety_check carries a Default; KAS's infraSafety reader does not read the store")
 	}
 }
+
+// modelFallbackStateMsg is a _kiro/configuration/state notification over a view captured on kiro-cli 3.2.1
+// (internal/translate/testdata/configuration_model_fallback.json).
+func modelFallbackStateMsg(t *testing.T, view string) *marotte.RPCResponse {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "translate", "testdata", "configuration_model_fallback.json"))
+	if err != nil {
+		t.Fatalf("read the configuration_model_fallback fixture: %v", err)
+	}
+	var fx map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fx); err != nil {
+		t.Fatalf("parse the configuration_model_fallback fixture: %v", err)
+	}
+	return &marotte.RPCResponse{Method: methodKiroConfigurationState, Params: fx[view]}
+}
+
+func TestConfigurationState_ModelFallbacksAnnounceOnChange(t *testing.T) {
+	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	dispatch := func(msg *marotte.RPCResponse) { h.dispatchWorkspace(t.Context(), "c1", msg) }
+	fallbackOf := func(model string) marotte.ModelFallback {
+		for _, f := range h.config.ModelFallbacks() {
+			if f.Model == model {
+				return f
+			}
+		}
+		return marotte.ModelFallback{}
+	}
+
+	if got := h.config.ModelFallbacks(); got == nil || len(got) != 0 {
+		t.Errorf("ModelFallbacks() before any view = %#v, want an empty, non-nil list", got)
+	}
+	dispatch(modelFallbackStateMsg(t, "connection"))
+	if got, want := fallbackOf("model-a"), (marotte.ModelFallback{Model: "model-a", VendorDefault: "model-k"}); got != want {
+		t.Errorf("model-a = %+v, want %+v", got, want)
+	}
+	if n := settingsUpdatedCount(t, h); n != 1 {
+		t.Fatalf("settings_updated broadcasts after the first view = %d, want 1", n)
+	}
+	dispatch(modelFallbackStateMsg(t, "connection"))
+	if n := settingsUpdatedCount(t, h); n != 1 {
+		t.Errorf("settings_updated broadcasts after an unchanged view = %d, want still 1", n)
+	}
+	// Only a fallback row differs between the two captured views; kiro_defaults is the same.
+	dispatch(modelFallbackStateMsg(t, "connection_configured"))
+	if got := fallbackOf("model-a").Configured; got != "model-b" {
+		t.Errorf("model-a configured = %q, want model-b", got)
+	}
+	if n := settingsUpdatedCount(t, h); n != 2 {
+		t.Errorf("settings_updated broadcasts after a fallback change = %d, want 2 so every tab repaints", n)
+	}
+}

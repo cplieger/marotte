@@ -81,6 +81,11 @@ async function readAt(wrap: HTMLElement, top: number): Promise<void> {
 
 const end = (wrap: HTMLElement): number => wrap.scrollHeight - wrap.clientHeight;
 
+/** The computed `justify-content` in its canonical spelling: `flow-start`/`flow-end` alias `flex-start`/`flex-end`
+ *  (w3c/csswg-drafts#14052), and Chromium 158 serializes the alias while the other engines keep `flex-*`. */
+const packing = (el: Element): string =>
+  getComputedStyle(el).justifyContent.replace(/^flex-/, "flow-");
+
 /** A `ResizeObserver` created after the owner's, on one of its targets: its callback runs at the end of the owner's
  *  delivery. Never on the view, whose own box the floor changes. */
 function afterDelivery(target: Element, read: () => void): ResizeObserver {
@@ -117,7 +122,7 @@ describe("a shrink read before the owner answers it", () => {
       text: Math.round(screenTop(wrap, held) - before.text),
       top: wrap.scrollTop - before.top,
       floor: v.hasAttribute("data-scroll-floor"),
-      packing: getComputedStyle(v).justifyContent,
+      packing: packing(v),
     };
     await frames(3);
     ro.disconnect();
@@ -129,7 +134,7 @@ describe("a shrink read before the owner answers it", () => {
       lowered: Math.abs(v.getBoundingClientRect().bottom - (last + 16)) < 0.5,
       floor: v.hasAttribute("data-scroll-floor"),
     }).toEqual({
-      forced: { text: 0, top: 0, floor: true, packing: "flex-start" },
+      forced: { text: 0, top: 0, floor: true, packing: "flow-start" },
       atDelivery: { text: 0, writes: 0 },
       lowered: true,
       floor: true,

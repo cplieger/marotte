@@ -7,6 +7,7 @@ import { page, server } from "vitest/browser";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { BUTTON_BOX, GLYPH_STEP } from "./__test-helpers__/button-reference.js";
+import { ownsItsClick } from "./disclosure-row.js";
 import {
   ALL,
   SURFACES,
@@ -205,6 +206,19 @@ function probesFor(s: Surface, which: "all" | "controls" = "all"): Probe[] {
 function reaches(p: Probe, x: number, y: number): string | null {
   const hit = document.elementFromPoint(x, y);
   if (hit !== null && p.el.contains(hit)) {
+    return null;
+  }
+  // A row's own ink forwards its press to the disclosure control it wraps (`wireRowToggle`), a
+  // control nested in the row excepted.
+  const row = hit?.closest("[data-row-toggle]");
+  if (
+    hit !== null &&
+    row !== null &&
+    row !== undefined &&
+    row.contains(p.el) &&
+    p.el.hasAttribute("aria-expanded") &&
+    !ownsItsClick(hit, row)
+  ) {
     return null;
   }
   // A declared overlay on `p` owns its own target there, as a control nested inside it would.

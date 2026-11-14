@@ -47,6 +47,10 @@ import {
   type PillKnob,
   type PillOpen,
 } from "./pill-commit.js";
+import { FallbackSlot } from "./model-fallback-row.js";
+import { settingsAsShown, shownSettingsSignal } from "./persist.js";
+import { currentIdentity } from "./settings.js";
+import type { EffectiveSettings } from "./persist.js";
 import type { ModelInfo, Session, SessionEffortLevel } from "./types.js";
 
 // effort.ts owns the effort vocabulary: the pill names the live tier too.
@@ -169,6 +173,7 @@ class ModelSwitchController {
     const expandContent = $.modelSwitchList;
     this.card = makeExpandable($.switchModelBtn, expandContent, {
       onExpand: () => {
+        this.expanded = true;
         const session = getActive();
         this.draft =
           session === undefined
@@ -191,8 +196,17 @@ class ModelSwitchController {
       },
       // Every close commits: a model click, Escape, a click away, the pill itself.
       onCollapse: () => {
+        this.expanded = false;
         this.commit();
       },
+    });
+    // App-lifetime: a settings change while the card is open (the Model fallback switch, another
+    // device's choice) shows, repaints or removes the Fallback row.
+    effect(() => {
+      const shown = shownSettingsSignal.value;
+      if (this.expanded) {
+        this.syncFallbackRow($.modelSwitchList, shown);
+      }
     });
     // Wired ONCE: re-wiring per render stacks keydown handlers.
     this.modelNav = rovingFocus(expandContent, ".pill-model-item");
@@ -204,6 +218,7 @@ class ModelSwitchController {
     const scroll = this.ensureScroll(list);
     const session = getActive();
     if (session === undefined) {
+      this.syncFallbackRow(list, null);
       // No options mount here, so the scroller is not a listbox (see syncCatalogNotice).
       scroll.removeAttribute("role");
       scroll.removeAttribute("aria-label");
@@ -221,6 +236,7 @@ class ModelSwitchController {
     } else {
       this.removeEffortRow();
     }
+    this.syncFallbackRow(list, settingsAsShown());
 
     this.syncCatalogNotice(scroll);
     reconcile(scroll, getCachedModels(), {
@@ -293,6 +309,14 @@ class ModelSwitchController {
   /** Null while the card is closed. */
   private draft: PillDraft | null = null;
 
+  private expanded = false;
+
+  private readonly fallback = new FallbackSlot(() => {
+    if (this.expanded) {
+      this.syncFallbackRow($.modelSwitchList, settingsAsShown());
+    }
+  });
+
   /** Rebuild the ticks only when the vocabulary changed. */
   private effortLevelsShown: readonly SessionEffortLevel[] = [];
 
@@ -313,6 +337,16 @@ class ModelSwitchController {
 
   private removeEffortRow(): void {
     this.effortSlider?.el.remove();
+  }
+
+  /** Last in the card, for the chat's model. */
+  private syncFallbackRow(list: HTMLElement, settings: EffectiveSettings | null): void {
+    this.fallback.sync(list, {
+      model: getActive()?.model ?? "",
+      settings,
+      catalog: getCachedModels(),
+      identity: currentIdentity(),
+    });
   }
 
   /** Ticks are rebuilt when the model's vocabulary changes: the set is per model, so
@@ -339,7 +373,7 @@ class ModelSwitchController {
       this.effortSlider.setLevels(levels);
       this.effortLevelsShown = [...levels];
     }
-    // Kept last and outside the scroller, so reconcile never sees it.
+    // Outside the scroller, so reconcile never sees it; syncFallbackRow then puts its row last.
     if (list.lastElementChild !== this.effortSlider.el) {
       list.appendChild(this.effortSlider.el);
     }

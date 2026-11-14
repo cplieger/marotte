@@ -25,7 +25,7 @@ require (
 	github.com/cplieger/go/httpserver v1.5.0-dev.2
 	github.com/cplieger/go/keyenc v1.3.0
 	github.com/cplieger/go/keylock v1.1.0
-	github.com/cplieger/go/measure v1.2.0
+	github.com/cplieger/go/measure v1.3.0-dev.1
 	github.com/cplieger/go/pathinside v1.1.0
 	github.com/cplieger/go/slogx v1.1.0
 	github.com/cplieger/go/sse/v2 v2.3.0-dev.4
@@ -34,7 +34,7 @@ require (
 	github.com/cplieger/go/wiregen v1.1.0-dev.2
 	github.com/cplieger/go/yamlenv v1.1.0
 	github.com/cplieger/toolbelt/v3 v3.16.0-dev.3
-	github.com/cplieger/web-terminal-engine/v6 v6.5.0
+	github.com/cplieger/web-terminal-engine/v6 v6.6.0-dev.1
 	github.com/evanw/esbuild v0.28.2
 	github.com/klauspost/compress v1.20.4
 	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f

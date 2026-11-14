@@ -18,6 +18,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/ansitext"
 	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/kirorelease"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/procgroup"
 	"github.com/cplieger/marotte/internal/sanitize"
@@ -130,11 +131,8 @@ func termLocaleEnv() []string {
 }
 
 // termEnv layers the requested vars over the process environment, then the locale pin
-// (last wins in os/exec). Nil when none are requested, so the child inherits os.Environ().
+// (last wins in os/exec).
 func termEnv(vars []termEnvVar) []string {
-	if len(vars) == 0 {
-		return nil
-	}
 	env := os.Environ()
 	for _, v := range vars {
 		env = append(env, v.Name+"="+v.Value)
@@ -502,12 +500,18 @@ var agentShell = sync.OnceValue(func() string {
 
 // KAS leaves `args` UNSET and puts the whole line in `command` (kiro-cli 2.18.0), so an absent
 // `args` runs through a shell and a present one, empty included, is an argv. Presence, not length,
-// decides.
-func agentCommand(ctx context.Context, line string, args *[]string) *exec.Cmd {
+// decides. The env always goes through kirorelease.SetCommandEnv: the command can run the pinned kiro-cli
+// from PATH, and a marotte started under `env -i` has no image ENV to pass on.
+func agentCommand(ctx context.Context, line string, args *[]string, dir string, vars []termEnvVar) *exec.Cmd {
+	var cmd *exec.Cmd
 	if args != nil {
-		return exec.CommandContext(ctx, line, *args...) // #nosec G204 -- agent-controlled
+		cmd = exec.CommandContext(ctx, line, *args...) // #nosec G204 -- agent-controlled
+	} else {
+		cmd = exec.CommandContext(ctx, agentShell(), "-c", line) // #nosec G204 -- agent-controlled
 	}
-	return exec.CommandContext(ctx, agentShell(), "-c", line) // #nosec G204 -- agent-controlled
+	cmd.Dir = dir
+	kirorelease.SetCommandEnv(cmd, termEnv(vars))
+	return cmd
 }
 
 func derefArgs(args *[]string) []string {
@@ -570,30 +574,25 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 		limit = params.OutputByteLimit
 	}
 
-	// The command must outlive the per-event ctx, which translateACPEvent cancels on return;
-	// the AfterFunc re-attaches shutdown.
-	cmdCtx, cmdCancel := context.WithCancel(context.WithoutCancel(ctx))
-	stop := context.AfterFunc(at.lifecycle.shutdownCtx, cmdCancel)
-	cmd := agentCommand(cmdCtx, params.Command, params.Args)
-	// Own process group, so teardown can signal the whole tree (see procgroup.Kill).
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.WaitDelay = 2 * time.Second
-	if env := termEnv(params.Env); env != nil {
-		cmd.Env = env
-	}
+	dir := at.lifecycle.workDir
 	if params.Cwd != "" {
 		abs, err := at.lifecycle.resolveCwd(ctx, params.Cwd)
 		if err != nil {
-			stop()
-			cmdCancel()
 			at.failCreate(ctx, chatID, origin, msg, params.Command,
 				"cwd is outside the workspace and every additional directory: "+err.Error())
 			return
 		}
-		cmd.Dir = abs
-	} else {
-		cmd.Dir = at.lifecycle.workDir
+		dir = abs
 	}
+
+	// The command must outlive the per-event ctx, which translateACPEvent cancels on return;
+	// the AfterFunc re-attaches shutdown.
+	cmdCtx, cmdCancel := context.WithCancel(context.WithoutCancel(ctx))
+	stop := context.AfterFunc(at.lifecycle.shutdownCtx, cmdCancel)
+	cmd := agentCommand(cmdCtx, params.Command, params.Args, dir, params.Env)
+	// Own process group, so teardown can signal the whole tree (see procgroup.Kill).
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.WaitDelay = 2 * time.Second
 
 	term := newAgentTerminal(cmd, chatID, limit)
 	cmd.Cancel = func() error {

@@ -9,6 +9,16 @@ type KiroDefault struct {
 	LayerName string `json:"layer_name"`
 }
 
+// ModelFallback is kiro-cli's fallback for one model, as KAS composes the account's choice over Kiro's own.
+// Configured is the model the account chose ("" when it follows Kiro), VendorDefault Kiro's own first
+// target ("" when Kiro states none), and ReadOnlyReason "locked", "multiple-targets" or "" when editable.
+type ModelFallback struct {
+	Model          string `json:"model"`
+	Configured     string `json:"configured"`
+	VendorDefault  string `json:"vendor_default"`
+	ReadOnlyReason string `json:"read_only_reason"`
+}
+
 // KnowledgeChunking is how KAS cuts an indexed file into passages: Size words each, the last Overlap of them
 // repeated at the start of the next.
 type KnowledgeChunking struct {
@@ -100,6 +110,8 @@ type EffectiveSettings struct {
 	AdditionalDirectories []string `json:"additional_directories"`
 	// RejectedKeys are the stored keys whose value did not fit, each served as its default; never stored.
 	RejectedKeys []string `json:"rejected_keys"`
+	// ModelFallbacks is kiro-cli's fallback for each model it serves, empty until the engine reported a view.
+	ModelFallbacks []ModelFallback `json:"model_fallbacks"`
 	// ChatRetentionDays is -1 (keep forever), 0 (delete on close) or a day count.
 	// Zero is the most destructive value in the document, so absent must never
 	// resolve to it.
@@ -140,8 +152,9 @@ type EffectiveSettings struct {
 	// switch, so an absent key read as false takes the knowledge tool away from
 	// every existing install.
 	KnowledgeEnabled bool `json:"knowledge_enabled"`
-	// ContentCollection is the stored content-collection choice, default off. An
-	// organization's lock overrides what marotte sends, not this value.
+	// ContentCollection is the stored content-collection choice, default on
+	// (settings.DefaultContentCollectionEnabled). An organization's lock
+	// overrides what marotte sends, not this value.
 	ContentCollection bool `json:"content_collection_enabled"`
 	// GuardPayloadLinks defaults to settings.defaultGuardPayloadLinks; no server path
 	// reads it.

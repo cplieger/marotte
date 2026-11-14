@@ -96,6 +96,8 @@ Whether the agent in one chat can send a message to another chat is a setting, n
 
 **Search other chats**, the next switch, lets the agent browse and search your other chats by branch, file or topic and read each one's saved summary: what it decided, which files it changed and what its workflows produced. It is off by default, as in kiro-cli, and a change reaches a chat at its next message or when you open it.
 
+**Search method**, below the switch and shown while it is on, says how the agent reads your other chats. **Browse and read**, which **Default** picks today, lets it list and search them and read each one's summary itself. **Ask a question** gives it one tool instead, which asks a hidden helper to read your other chats and answer, citing the chats it used. That keeps their text out of the chat, but each question spends extra model calls. A change applies only to chats you start after it.
+
 ## Knowledge index settings
 
 Five rows under **Knowledge base search** on the **General** tab in **Settings** shape how kiro-cli indexes the folders you add under **Knowledge bases**, whether or not the search is on. Each starts at kiro-cli's own default, and a change applies after the agent engine restarts.
@@ -111,6 +113,12 @@ A knowledge base keeps the index type and patterns it was added with, so remove 
 ## AWS CloudFormation safety check
 
 **AWS CloudFormation safety check** under **Agent capabilities** on the **General** tab in **Settings** checks a change against your Kiro account's safety rules when the agent edits a CloudFormation template or runs a CDK deploy or destroy. The check sends the template and recent chat to Kiro's service. **Default** follows kiro-cli. **Warn** tells you when a change breaks a rule and lets it through. **Block until you allow** stops the change and asks whether to keep it blocked or allow it; a scheduled or triggered run, with nobody to ask, keeps it blocked even with **Approve tool requests in scheduled and triggered runs instead of refusing them** on. **Off** turns the check off. A change applies after the agent engine restarts.
+
+## Content sharing with AWS
+
+Whether AWS may use your content to improve its service is a setting, not a variable: **Share content with AWS for service improvement** under **Data sharing** on the **General** tab in **Settings**. It covers what marotte sends the model, which is your chats and workflow runs. It is on by default, as in kiro-cli, and a switch you turned off stays off. On an enterprise account, the organization's setting decides it instead, and the switch is locked. A change applies at the next model request, in open chats too.
+
+The switch does not cover kiro-cli run in the Shell panel, which follows its own `codeWhisperer.shareCodeWhispererContentWithAWS` setting. An install that ran an earlier version of marotte may still have that setting off. Those versions kept it on marotte's switch, which was off by default. To turn it on, run `kiro-cli settings codeWhisperer.shareCodeWhispererContentWithAWS true` in the Shell panel.
 
 ## kiro-cli telemetry
 
