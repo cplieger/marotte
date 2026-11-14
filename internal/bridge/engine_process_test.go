@@ -6,7 +6,7 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// The engine carries kirorelease.NoAutoUpdateVar whatever HOME and parent environment it starts under.
+// The engine carries KIRO_NO_AUTO_UPDATE=1 from kirorelease.SpawnEnv whatever HOME and parent environment it starts under.
 func TestProcessEnv_TurnsOffKiroCLISelfUpdate(t *testing.T) {
 	t.Run("an env -i parent and no overlay, as the unpinned runtime starts it", func(t *testing.T) {
 		testsupport.EmptyEnv(t)

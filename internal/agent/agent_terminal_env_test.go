@@ -11,7 +11,7 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// Both forms carry kirorelease.NoAutoUpdateVar under an `env -i` parent, over a parent opt-out and over the agent's
+// Both forms carry KIRO_NO_AUTO_UPDATE=1 from kirorelease.SpawnEnv under an `env -i` parent, over a parent opt-out and over the agent's
 // own vars.
 func TestAgentCommand_RunsWithKiroCLISelfUpdateOff(t *testing.T) {
 	parents := map[string]struct {

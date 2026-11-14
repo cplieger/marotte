@@ -11,14 +11,15 @@ import (
 	"github.com/cplieger/toolbelt/v3/pin"
 )
 
-// NoAutoUpdateVar turns kiro-cli's self-updater off under any HOME. Without it, or HOME's app.disableAutoupdates, the
+// noAutoUpdateVar turns kiro-cli's self-updater off under any HOME. Without it, or HOME's app.disableAutoupdates, the
 // updater replaces the executable the process ran from when it exits, a pinned version directory included.
-const NoAutoUpdateVar = "KIRO_NO_AUTO_UPDATE"
+const noAutoUpdateVar = "KIRO_NO_AUTO_UPDATE"
 
-// SpawnEnv is env with self-update turned off as its last entry, which wins over an earlier value because os/exec
-// keeps a key's last one. Every kiro-cli process marotte starts takes its environment from here. env is not modified.
+// SpawnEnv is env with self-update turned off (KIRO_NO_AUTO_UPDATE=1) as its last entry, which wins over an earlier
+// value because os/exec keeps a key's last one. Every kiro-cli process marotte starts takes its environment from
+// here. env is not modified.
 func SpawnEnv(env []string) []string {
-	return append(slices.Clip(env), NoAutoUpdateVar+"=1")
+	return append(slices.Clip(env), noAutoUpdateVar+"=1")
 }
 
 // SetCommandEnv sets cmd.Env to SpawnEnv(env), then PWD to cmd.Dir when Dir is set: os/exec adds that PWD only when

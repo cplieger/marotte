@@ -13,7 +13,7 @@ import (
 )
 
 // The install's probe and assertions run the binary before app.disableAutoupdates is set, so every command the
-// install runs carries kirorelease.NoAutoUpdateVar, under an `env -i` parent too.
+// install runs carries KIRO_NO_AUTO_UPDATE=1 from kirorelease.SpawnEnv, under an `env -i` parent too.
 func TestStartKiroCLI_EveryInstallCommandRunsWithSelfUpdateOff(t *testing.T) {
 	const version = "9.9.9"
 	testsupport.EmptyEnv(t)

@@ -6,7 +6,7 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// Every settings, diagnostics and seed call runs the binary, so each carries kirorelease.NoAutoUpdateVar.
+// Every settings, diagnostics and seed call runs the binary, so each carries KIRO_NO_AUTO_UPDATE=1 from kirorelease.SpawnEnv.
 func TestExecCLIRunner_TurnsOffKiroCLISelfUpdate(t *testing.T) {
 	cases := map[string]func() []string{
 		"no overlay, as the unpinned runtime passes": nil,

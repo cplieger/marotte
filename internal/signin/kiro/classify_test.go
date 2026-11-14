@@ -136,7 +136,7 @@ func liveKiroCLIOutput(t *testing.T, bin string, args ...string) ([]byte, error)
 	return cmd.Output()
 }
 
-// The live comparison's spawns carry kirorelease.NoAutoUpdateVar under an `env -i` parent and over a parent opt-out.
+// The live comparison's spawns carry KIRO_NO_AUTO_UPDATE=1 from kirorelease.SpawnEnv under an `env -i` parent and over a parent opt-out.
 func TestLiveKiroCLIOutput_RunsWithSelfUpdateOff(t *testing.T) {
 	for name, parent := range map[string]string{"an env -i parent": "", "a parent that opts back in": "0"} {
 		t.Run(name, func(t *testing.T) {

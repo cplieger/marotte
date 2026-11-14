@@ -7,7 +7,7 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-// A powers run carries kirorelease.NoAutoUpdateVar under an `env -i` parent and over an overlay opting back in.
+// A powers run carries KIRO_NO_AUTO_UPDATE=1 from kirorelease.SpawnEnv under an `env -i` parent and over an overlay opting back in.
 func TestManager_TheCLIRunsWithSelfUpdateOff(t *testing.T) {
 	cases := map[string]func() []string{
 		"no overlay":                   noOverlay,
