@@ -32,7 +32,7 @@ You can also search inside a chat, export a chat, search across chats, and brows
 
 ## Sidebar
 
-The sidebar lists your tabs in sections, in this order: **Open**, **Pinned** and **Recently closed**. A section's header shows only while the section has rows, and it shows how many rows the section holds: **Open** and **Pinned** count their tabs and not the tangents under them, and **Recently closed** counts every chat it lists.
+The sidebar lists your tabs in sections, in this order: **Open**, **Pinned** and **Recently closed**. A section's header shows only while the section has rows, and it shows a count: **Open** and **Pinned** count their tabs and not the rows nested under them, such as tangents, and **Recently closed** counts every chat it lists.
 
 Right-click a chat tab, or press and hold it on a touch screen, to open its menu. **Pin** there moves the tab to **Pinned**, and **Unpin** moves it back. A tangent moves with its chat, so its menu has neither. Drag a tab, or use **Move up** and **Move down** in a chat tab's menu, to reorder it inside its section. A tab dropped on another section goes back where it was.
 
