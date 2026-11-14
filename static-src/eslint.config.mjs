@@ -29,6 +29,22 @@ export default [
     rules: { "no-console": "off" },
   },
   {
+    // The performance harness's Node drivers, which tests/perf/run.sh runs. The functions they
+    // hand to page.evaluate run in the page.
+    files: ["perf/*.mjs"],
+    ...tseslint.configs.disableTypeChecked,
+    languageOptions: {
+      ...tseslint.configs.disableTypeChecked.languageOptions,
+      globals: {
+        process: "readonly",
+        Buffer: "readonly",
+        CSS: "readonly",
+        PointerEvent: "readonly",
+      },
+    },
+    rules: { ...tseslint.configs.disableTypeChecked.rules, "no-console": "off" },
+  },
+  {
     // dom.ts owns page-wide lookups. The audit walkers are serialised into the page and may use
     // only page globals (audit/walkers.ts), so they cannot import it. legacy-ui/ is the moved widget
     // library, kept as it shipped: its page-wide reads find dialogs, not marotte's surfaces.

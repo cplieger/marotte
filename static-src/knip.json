@@ -8,11 +8,12 @@
     "sse-worker.ts",
     "prepaint.ts",
     "eslint.config.base.mjs",
+    "perf/view.mjs",
     "**/*.test.ts",
     "**/*.node.test.ts",
     "**/*.property.test.ts"
   ],
-  "project": ["**/*.ts", "!**/*.d.ts", "!node_modules/**"],
+  "project": ["**/*.ts", "perf/*.mjs", "!**/*.d.ts", "!node_modules/**"],
   "ignore": ["wire/*.gen.ts"],
   "ignoreDependencies": ["stylelint", "stylelint-config-standard"],
   "ignoreBinaries": ["go"],
