@@ -131,7 +131,7 @@ vi.mock("./strings.js", async (importOriginal) => ({
   humanName: (s: string) => s,
 }));
 vi.mock("./icon-el.js", () => ({ iconEl: () => document.createElement("span") }));
-vi.mock("./icons.js", () => ({ ICON_MODEL: "", modelIcon: () => "" }));
+vi.mock("./icons.js", () => ({ ICON_MODEL: "", ICON_CHEVRON_DOWN: "", modelIcon: () => "" }));
 vi.mock("./legacy-ui/roving-focus.js", () => ({
   rovingFocus: () => ({ refresh: vi.fn(), focusFirst: vi.fn(), dispose: vi.fn() }),
 }));
@@ -645,30 +645,57 @@ describe("the Fallback row", () => {
     });
   }
 
-  function fallbackSelect(): HTMLSelectElement | null {
-    return document.querySelector<HTMLSelectElement>(
-      '#model-switch-list select[aria-label="Fallback model"]',
+  function fallbackRow(): HTMLButtonElement | null {
+    return document.querySelector<HTMLButtonElement>(
+      '#model-switch-list button[aria-controls="model-fallback-panel"]',
     );
+  }
+
+  /** The target the row names, read off its accessible name. */
+  function choiceOf(row: HTMLButtonElement | null): string | undefined {
+    return row?.getAttribute("aria-label")?.replace(/^Fallback: /, "");
+  }
+
+  function panels(): HTMLElement[] {
+    return [...document.querySelectorAll<HTMLElement>("#model-switch-list > .model-panel")];
   }
 
   it("sits under the effort slider for the chat's model, showing the account's choice", () => {
     shownSettingsSignal.value = shown(true);
     openCard();
-    const rows = [...document.querySelectorAll("#model-switch-list > .effort-row")];
+    const [main, list] = panels();
+    const rows = [...(main?.querySelectorAll(":scope > .effort-row") ?? [])];
     expect(rows).toHaveLength(2);
     expect(rows[0]?.querySelector('[role="slider"]')).not.toBeNull();
-    expect(rows[1]?.contains(fallbackSelect())).toBe(true);
-    expect(fallbackSelect()?.value).toBe("model-b");
+    expect(rows[1]?.contains(fallbackRow())).toBe(true);
+    expect(choiceOf(fallbackRow())).toBe("model-b");
+    expect(list?.id).toBe("model-fallback-panel");
+    expect(list?.hidden).toBe(true);
   });
 
   it("appears and disappears on a live flip while the picker is open", () => {
     shownSettingsSignal.value = shown(false);
     openCard();
-    expect(fallbackSelect()).toBeNull();
+    expect(fallbackRow()).toBeNull();
     shownSettingsSignal.value = shown(true);
-    expect(fallbackSelect()?.value).toBe("model-b");
+    expect(choiceOf(fallbackRow())).toBe("model-b");
     shownSettingsSignal.value = shown(false);
-    expect(fallbackSelect()).toBeNull();
+    expect(fallbackRow()).toBeNull();
+    expect(panels()).toHaveLength(1);
+  });
+
+  it("closes on the first panel, whichever panel it was left on", () => {
+    shownSettingsSignal.value = shown(true);
+    openCard();
+    // A panel sliding away still paints until its slide ends.
+    const showing = (): boolean[] =>
+      panels().map((p) => !p.hidden && !p.classList.contains("model-panel-leaving"));
+    fallbackRow()?.click();
+    expect(showing()).toEqual([false, true]);
+    closeCard();
+    expect(showing()).toEqual([true, false]);
+    expect(panels().map((p) => p.hidden)).toEqual([false, true]);
+    expect(fallbackRow()?.getAttribute("aria-expanded")).toBe("false");
   });
 
   /** Makes the next fallback write wait for its settle: answered with `answer`, or refused. */
@@ -696,23 +723,29 @@ describe("the Fallback row", () => {
     return out;
   }
 
-  async function pick(target: string): Promise<HTMLSelectElement> {
-    const s = fallbackSelect();
+  async function pick(target: string): Promise<HTMLButtonElement> {
+    const s = fallbackRow();
     if (s === null) {
-      throw new Error("no Fallback select");
+      throw new Error("no Fallback row");
     }
-    s.focus();
-    await userEvent.selectOptions(s, target);
+    await userEvent.click(s);
+    const opt = document.querySelector<HTMLElement>(
+      `#model-fallback-panel [role="option"][data-target="${target}"]`,
+    );
+    if (opt === null) {
+      throw new Error(`no ${target} in the Fallback list`);
+    }
+    await userEvent.click(opt);
     return s;
   }
 
-  async function settled(s: HTMLSelectElement): Promise<void> {
+  async function settled(s: HTMLButtonElement): Promise<void> {
     await vi.waitFor(() => {
       expect(s.getAttribute("aria-busy")).toBeNull();
     });
   }
 
-  it("keeps the focused select and the answered target through the write's settings refetch", async () => {
+  it("keeps the focused row and the answered target through the write's settings refetch", async () => {
     cachedModels = [...cachedModels, model("model-c", "high")];
     const write = pendingWrite();
     shownSettingsSignal.value = shown(true);
@@ -723,15 +756,15 @@ describe("the Fallback row", () => {
     // While the write is pending, a pushed view still holding the old target; then the write's
     // settings_updated steps (announce, then the refetch's adopt) after the answer.
     shownSettingsSignal.value = shown(true, "model-b", "model-b");
-    expect(s.value).toBe("model-c");
+    expect(choiceOf(s)).toBe("model-c");
     write.answer(answered("model-c"));
     await settled(s);
-    expect(s.value).toBe("model-c");
+    expect(choiceOf(s)).toBe("model-c");
     shownSettingsSignal.value = shown(true, "model-c");
 
-    expect(fallbackSelect()).toBe(s);
+    expect(fallbackRow()).toBe(s);
     expect(document.activeElement).toBe(s);
-    expect(s.value).toBe("model-c");
+    expect(choiceOf(s)).toBe("model-c");
   });
 
   it("removes the row for a switch-off that came during a refused write", async () => {
@@ -743,7 +776,7 @@ describe("the Fallback row", () => {
     shownSettingsSignal.value = shown(false);
     write.refuse();
     await settled(s);
-    expect(fallbackSelect()).toBeNull();
+    expect(fallbackRow()).toBeNull();
   });
 
   it("removes the row for a switch-off that came during an answered write", async () => {
@@ -755,7 +788,7 @@ describe("the Fallback row", () => {
     shownSettingsSignal.value = shown(false);
     write.answer(answered("model-c"));
     await settled(s);
-    expect(fallbackSelect()).toBeNull();
+    expect(fallbackRow()).toBeNull();
   });
 
   it("shows another device's target that came during a refused write", async () => {
@@ -767,8 +800,8 @@ describe("the Fallback row", () => {
     shownSettingsSignal.value = shown(true, "model-d");
     write.refuse();
     await settled(s);
-    expect(fallbackSelect()).toBe(s);
-    expect(s.value).toBe("model-d");
+    expect(fallbackRow()).toBe(s);
+    expect(choiceOf(s)).toBe("model-d");
   });
 
   it("paints another device's write-back of the old target before the refetch", async () => {
@@ -779,20 +812,20 @@ describe("the Fallback row", () => {
     const s = await pick("model-c");
     write.answer(answered("model-c"));
     await settled(s);
-    expect(s.value).toBe("model-c");
+    expect(choiceOf(s)).toBe("model-c");
     // The refetch adopts what KAS holds: another device wrote model-b back meanwhile.
     shownSettingsSignal.value = shown(true, "model-b");
-    expect(s.value).toBe("model-b");
+    expect(choiceOf(s)).toBe("model-b");
   });
 
   it("repaints in place when another device changes the choice", () => {
     cachedModels = [...cachedModels, model("model-c", "high")];
     shownSettingsSignal.value = shown(true);
     openCard();
-    const s = fallbackSelect();
+    const s = fallbackRow();
     shownSettingsSignal.value = shown(true, "model-c");
-    expect(fallbackSelect()).toBe(s);
-    expect(s?.value).toBe("model-c");
+    expect(fallbackRow()).toBe(s);
+    expect(choiceOf(s)).toBe("model-c");
   });
 
   it("leaves a closed card alone on a settings change", () => {
@@ -800,6 +833,6 @@ describe("the Fallback row", () => {
     openCard();
     closeCard();
     shownSettingsSignal.value = shown(true);
-    expect(fallbackSelect()).toBeNull();
+    expect(fallbackRow()).toBeNull();
   });
 });

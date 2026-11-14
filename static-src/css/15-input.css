@@ -988,6 +988,52 @@
   overflow: hidden;
 }
 
+/* The model card's two panels (card-drill.ts slides between them): the models, effort and Fallback, then the
+ * Fallback list. Each is the card's column, so its scroller still shrinks under the card's cap. */
+.model-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: stretch;
+  min-block-size: 0;
+}
+
+.model-panel[hidden] {
+  display: none;
+}
+
+/* Out of flow while it slides away, so the card's height is the entering panel's. Pinned to the card's bottom, the
+   edge nearest the pill. */
+.model-panel-leaving {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+}
+
+/* The list's caption: which model it is the fallback for, one rung under the rows. */
+.fallback-note {
+  padding: var(--sp-2) var(--sp-3) 0;
+  font-size: var(--fs-popup-meta);
+  color: var(--c-text-tertiary);
+}
+
+/* The chevrons point the way the panels go: the row's trails it, Back's leads its label. */
+.fallback-back > .disclosure-chevron {
+  --chev-turn: 90deg;
+}
+
+.fallback-open > .disclosure-chevron:dir(rtl) {
+  --chev-turn: 90deg;
+}
+
+.fallback-back > .disclosure-chevron:dir(rtl) {
+  --chev-turn: -90deg;
+}
+
+.fallback-back {
+  justify-content: flex-start;
+}
+
 /* The only scrolling part of the card. It carries the padding the card gave
  * up, which is what keeps the model rows inset while the effort section below
  * them runs the full width. */
