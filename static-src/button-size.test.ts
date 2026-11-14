@@ -602,6 +602,54 @@ describe("the model, profile and mode pills, by the room the row has", () => {
     }
   }, 60_000);
 
+  it("drops Cancel's and Send's words after both pills have moved, down to a phone's composer", async () => {
+    const box = (): HTMLElement => byId("prompt-box");
+    const words = (): HTMLElement[] => [
+      ...document.querySelectorAll<HTMLElement>(
+        "#send-btn .send-btn-label, #midturn-send-btn .send-btn-label",
+      ),
+    ];
+    for (const pointer of ["fine", "coarse"] as const) {
+      await mount([360, 844], pointer, "steer");
+      const floor = Math.floor(box().getBoundingClientRect().width);
+      await mount(DESKTOP, pointer, "steer");
+      expect(words(), `${pointer}: the words this test reads`).toHaveLength(2);
+      const widths: number[] = [];
+      for (let w = 420; w >= floor; w -= 2) {
+        widths.push(w);
+      }
+      const off: string[] = [];
+      const walk = async (order: number[]): Promise<string[]> => {
+        const states: string[] = [];
+        for (const w of order) {
+          box().style.width = `${String(w)}px`;
+          await nextFrame();
+          const shownWords = words().filter(shown).length;
+          if (shownWords === 1) {
+            off.push(`${pointer} ${String(w)}: one word shows without the other`);
+          }
+          const state = [...movedNow(), ...(shownWords === 0 ? ["words"] : [])].join(" ") || "none";
+          if (states.at(-1) !== state) {
+            states.push(state);
+          }
+          off.push(...rowFaults(`${pointer} ${String(w)}`));
+        }
+        return states;
+      };
+      expect(await walk(widths), `${pointer}: narrowing to ${String(floor)}px`).toEqual([
+        "mode",
+        "mode profile",
+        "mode profile words",
+      ]);
+      expect(await walk([...widths].reverse()), `${pointer}: widening`).toEqual([
+        "mode profile words",
+        "mode profile",
+        "mode",
+      ]);
+      expect(off, `${pointer}: the row at every width`).toEqual([]);
+    }
+  }, 60_000);
+
   it("keeps their text, uncut, at the iPad preset in touch mode", async () => {
     for (const state of STATES) {
       await mount(IPAD, "coarse", state);

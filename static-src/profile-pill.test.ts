@@ -550,4 +550,29 @@ describe("each profile's shield", () => {
       expect(document.getElementById("profile-pill-label")?.textContent, id).toBe(LABELS[id]);
     }
   });
+
+  it("keeps the pill's shield on the level in force across a pick, a turn's pick and its reload", async () => {
+    await openOn("trusted");
+    const pillShield = (): string =>
+      iconOf(document.getElementById("profile-pill-icon")!).innerHTML;
+    const rowShield = (id: string): string => iconOf(row(id)).innerHTML;
+
+    row("read-only").click();
+    await flush();
+    await open();
+    expect(pillShield(), "an idle pick").toBe(rowShield("read-only"));
+
+    live.busy.value = true;
+    await flush();
+    row("guarded").click();
+    await flush();
+    await open();
+    expect(pillShield(), "a pick waiting for the turn").toBe(rowShield("guarded"));
+
+    live.busy.value = false;
+    live.active.value = { id: "c-1", security_profile: "guarded" };
+    await flush();
+    expect(pillShield(), "the reload landed").toBe(rowShield("guarded"));
+    expect(pill().classList.contains("pending")).toBe(false);
+  });
 });

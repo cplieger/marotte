@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { formatTokens, formatMetering } from "./status-format.js";
+import { ICON_MODEL, modelIcon } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 
 describe("formatTokens", () => {
   const cases: [number, string][] = [
@@ -161,6 +163,84 @@ describe("the model pill", () => {
     // Empty model = server-side default; "auto" rather than blank.
     expect($.ctxModelPill.textContent).toBe("auto");
     expect($.ctxEffortPill.textContent).toBe("· high");
+  });
+});
+
+// One model of each family `kiro-cli chat --list-models` offers, and the ids that name no vendor.
+const FAMILIES = [
+  "claude-opus-5.5",
+  "gpt-5.6-sol",
+  "grok-4.7",
+  "kimi-k3",
+  "deepseek-3.2",
+  "minimax-m2.5",
+  "glm-5",
+  "qwen3-coder-next",
+  "agi-nova-beta-1m",
+] as const;
+
+describe("the model pill's icon", () => {
+  /** The pill's own glyph: the svg before its label. */
+  async function glyphFor(model: string): Promise<string> {
+    await paint(model, "");
+    const { $ } = await import("./dom.js");
+    const icons = $.switchModelBtn.querySelectorAll(":scope > svg");
+    expect(icons, "the pill holds one glyph").toHaveLength(1);
+    expect(icons[0]?.getAttribute("aria-hidden"), "the label names the model").toBe("true");
+    return icons[0]?.innerHTML ?? "";
+  }
+
+  const bot = iconEl(ICON_MODEL).innerHTML;
+
+  it("shows the vendor's mark for each model family, one mark per vendor", async () => {
+    mountContextBar();
+    const marks: string[] = [];
+    for (const id of FAMILIES) {
+      marks.push(await glyphFor(id));
+    }
+
+    expect(
+      marks.filter((m) => m === bot),
+      "no vendor falls back to the bot",
+    ).toEqual([]);
+    expect(new Set(marks).size, "each vendor has its own mark").toBe(FAMILIES.length);
+  });
+
+  it("shows one vendor's mark across its models", async () => {
+    mountContextBar();
+    const opus = await glyphFor("claude-opus-5.5");
+
+    expect(await glyphFor("claude-sonnet-4.6")).toBe(opus);
+    expect(await glyphFor("claude-haiku-4.5")).toBe(opus);
+    expect(await glyphFor("gpt-5.6-luna")).toBe(await glyphFor("gpt-5.6-terra"));
+  });
+
+  it("keeps the bot for Auto and for a model with no mark", async () => {
+    mountContextBar();
+
+    expect(await glyphFor("")).toBe(bot);
+    expect(await glyphFor("auto")).toBe(bot);
+    expect(await glyphFor("someone-else-1")).toBe(bot);
+    expect(await glyphFor("claudette-1"), "a family is its whole first word").toBe(bot);
+  });
+
+  it("follows a switch to another vendor and back, naming the model in words", async () => {
+    mountContextBar();
+    const claude = await glyphFor("claude-opus-5.5");
+    const gpt = await glyphFor("gpt-5.6-sol");
+
+    expect(gpt).not.toBe(claude);
+    expect(await glyphFor("claude-opus-5.5")).toBe(claude);
+    const { $ } = await import("./dom.js");
+    expect($.switchModelBtn.getAttribute("aria-label")).toBe(
+      "Switch model, currently claude opus 5.5",
+    );
+  });
+
+  it("draws the pill's mark from the lookup the model card's rows read", async () => {
+    mountContextBar();
+
+    expect(await glyphFor("grok-4.7")).toBe(iconEl(modelIcon("grok-4.7", "inline")).innerHTML);
   });
 });
 

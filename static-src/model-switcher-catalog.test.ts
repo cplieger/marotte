@@ -77,14 +77,14 @@ vi.mock("./strings.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Strings>()),
   humanName: (s: string) => s,
 }));
-vi.mock("./icon-el.js", () => ({ iconEl: () => document.createElement("span") }));
-vi.mock("./icons.js", () => ({ ICON_MODEL: "" }));
 vi.mock("./legacy-ui/roving-focus.js", () => ({
   rovingFocus: () => ({ refresh: vi.fn(), focusFirst: vi.fn(), dispose: vi.fn() }),
 }));
 
 import { activeSession } from "./store.js";
 import { initModelSwitcher } from "./model-switcher.js";
+import { ICON_MODEL_UI, modelIcon } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 
 function model(id: string): ModelInfo {
   return { model_id: id, model_name: id, rate_multiplier: 1 };
@@ -211,5 +211,56 @@ describe("the model card with no models", () => {
 
     expect(retryBtn()).toBe(null);
     expect(scroller().querySelector(".list-empty")).toBe(null);
+  });
+});
+
+describe("the model card's rows", () => {
+  beforeAll(() => {
+    if (document.getElementById("switch-model-btn") === null) {
+      const pill = document.createElement("button");
+      pill.id = "switch-model-btn";
+      const card = document.createElement("div");
+      card.id = "model-switch-list";
+      document.body.append(pill, card);
+      initModelSwitcher();
+    }
+  });
+
+  beforeEach(() => {
+    notice = null;
+    (activeSession as unknown as { value: TestSession }).value = {
+      id: "c1",
+      model: "claude-opus-5.5",
+      effort: "",
+    };
+  });
+
+  /** Each row's glyph, which sits before its name and is hidden from assistive tech. */
+  function rowGlyph(id: string): string {
+    const row = scroller().querySelector<HTMLElement>(`[data-model="${id}"]`);
+    const svg = row?.querySelector("svg");
+    expect(svg, `${id}'s row has a glyph`).not.toBeNull();
+    expect(svg?.closest("[aria-hidden='true']") ?? svg?.getAttribute("aria-hidden")).toBeTruthy();
+    expect(row?.textContent, "the row still names the model").toContain(id);
+    return svg?.innerHTML ?? "";
+  }
+
+  it("shows each model's vendor mark, the bot for Auto", () => {
+    cachedModels = ["auto", "claude-opus-5.5", "claude-haiku-4.5", "gpt-5.6-sol", "glm-5"].map(
+      model,
+    );
+    onExpand.fn?.();
+
+    expect(rowGlyph("auto")).toBe(iconEl(ICON_MODEL_UI).innerHTML);
+    expect(rowGlyph("claude-haiku-4.5")).toBe(rowGlyph("claude-opus-5.5"));
+    expect(rowGlyph("gpt-5.6-sol")).not.toBe(rowGlyph("claude-opus-5.5"));
+    expect(rowGlyph("glm-5")).not.toBe(iconEl(ICON_MODEL_UI).innerHTML);
+  });
+
+  it("draws the mark the pill shows for the same model", () => {
+    cachedModels = [model("deepseek-3.2")];
+    onExpand.fn?.();
+
+    expect(rowGlyph("deepseek-3.2")).toBe(iconEl(modelIcon("deepseek-3.2", "inline")).innerHTML);
   });
 });

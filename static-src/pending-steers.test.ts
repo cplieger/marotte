@@ -117,6 +117,8 @@ const {
 import { setSessions, setActive, recordSteerQueued, openTurn, appendEntry, get } from "./store.js";
 import { initPendingSteers, mountSteerStack, type SteerStackSource } from "./pending-steers.js";
 import { signal } from "@cplieger/reactive";
+import { ICON_QUEUE_UI, ICON_STEER } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 // `vitest/browser` is the Vitest 5 spelling; `@vitest/browser/context` throws.
 import { page } from "vitest/browser";
 import type {
@@ -231,6 +233,15 @@ function rowAt(i: number): HTMLElement {
   return el;
 }
 
+/** The row's state glyph against a registry icon, as markup: two different drawings never match. */
+function stateGlyph(row: HTMLElement): string {
+  return row.querySelector(".steer-state-icon svg")?.outerHTML ?? "no glyph";
+}
+
+function glyph(icon: string): string {
+  return iconEl(icon).outerHTML;
+}
+
 function textOf(row: HTMLElement): string {
   return row.querySelector(".steer-text")?.textContent ?? "";
 }
@@ -324,6 +335,18 @@ describe("the steer stack", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead", origin: "user" });
     expect(firstRow().closest("#steer-stack")).not.toBeNull();
     expect(firstRow().closest("#prompt-box")).toBeNull();
+  });
+
+  it("marks a steer the agent has not read with the steer glyph, sent or unsent", () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: "read this", origin: "user" });
+    recordSteerQueued("chat-1", {
+      id: "steer-2",
+      text: "then this",
+      origin: "user",
+      state: "unsent",
+    });
+
+    expect(rows().map(stateGlyph)).toEqual([glyph(ICON_STEER), glyph(ICON_STEER)]);
   });
 
   it("hides the stack entirely when there is nothing in it", () => {
@@ -977,6 +1000,16 @@ describe("the steer stack", () => {
     expect(rowAt(2).getAttribute("aria-label")).toBe("After 3 turns: third");
   });
 
+  it("marks each follow-up with the queue glyph", () => {
+    withRun(behindTurn(three));
+
+    expect(rows().map(stateGlyph)).toEqual([
+      glyph(ICON_QUEUE_UI),
+      glyph(ICON_QUEUE_UI),
+      glyph(ICON_QUEUE_UI),
+    ]);
+  });
+
   it("draws no row for a running turn, kiro-cli's run or a retry: their messages are the transcript's", () => {
     withRun([
       rowEntry("retry-1", { after: "turns", turns: 1, this: true }, { kind: "retry" }),
@@ -1400,6 +1433,16 @@ describe("the steer stack", () => {
       ),
     ];
   }
+
+  it("marks marotte's queued resume and the paused follow-ups with the queue glyph", () => {
+    withRun(failsafeRun(), { send: "queue" }, false);
+
+    expect(rows().slice(1).map(stateGlyph)).toEqual([
+      glyph(ICON_QUEUE_UI),
+      glyph(ICON_QUEUE_UI),
+      glyph(ICON_QUEUE_UI),
+    ]);
+  });
 
   it("draws the failsafe's compaction, then marotte's resume, then the rows the stop paused", () => {
     withRun(failsafeRun(), { send: "queue" }, false);
