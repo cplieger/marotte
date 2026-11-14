@@ -101,8 +101,7 @@ const (
 	// the session doors' workflows object and read only while KeyWorkflowsEnabled is on; empty sends nothing.
 	KeyWorkflowCreatorEffort = "workflow_creator_effort"
 	// KeyChatAwarenessMode is how a chat searches the others, sent in the session doors' sessionTools.awareness.mode
-	// and read only while KeyChatAwareness is on; empty sends nothing. KAS fixes it at session/new, so a change
-	// reaches new chats only.
+	// and read only while KeyChatAwareness is on; empty sends nothing.
 	KeyChatAwarenessMode = "chat_awareness_mode"
 	// KeyChatMessageDeliveryLimit caps one agent-to-agent exchange between two chats (KAS's
 	// sendMessageDeliveryLimit), sent at initialize, so it applies when the engine restarts.

@@ -38,14 +38,9 @@ const (
 // workflowCreatorEfforts is KAS's workflowsCreatorEffort vocabulary (gce in 3.2.0); KAS drops any other value.
 var workflowCreatorEfforts = []string{"low", "medium", "high", "xhigh", "max"}
 
-// KAS's sessionToolsAwarenessMode vocabulary, unset reading as direct: direct gives the list, search and summary
-// tools, consult gives consult_sessions only.
-const (
-	chatAwarenessDirect  = "direct"
-	ChatAwarenessConsult = "consult"
-)
-
-var chatAwarenessModes = []string{chatAwarenessDirect, ChatAwarenessConsult}
+// chatAwarenessModes is KAS's sessionToolsAwarenessMode vocabulary, unset reading as direct: direct gives the list,
+// search and summary tools, consult gives consult_sessions only.
+var chatAwarenessModes = []string{"direct", "consult"}
 
 // OutputStyleDefault is KAS's default output style id, the one prompts never send.
 const OutputStyleDefault = "default"
@@ -115,6 +110,12 @@ func ValidWorkflowCreatorEffort(v string) bool {
 func ValidChatAwarenessMode(v string) bool {
 	return v == "" || slices.Contains(chatAwarenessModes, v)
 }
+
+// WorkflowCreatorEfforts returns a copy of the creator effort levels workflow_creator_effort accepts besides unset.
+func WorkflowCreatorEfforts() []string { return slices.Clone(workflowCreatorEfforts) }
+
+// ChatAwarenessModes returns a copy of the awareness modes chat_awareness_mode accepts besides unset.
+func ChatAwarenessModes() []string { return slices.Clone(chatAwarenessModes) }
 
 // ThreeStateChoice answers a follow-kiro-cli setting's effective choice by key, false for a key that
 // is not one.

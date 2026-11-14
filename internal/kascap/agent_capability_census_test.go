@@ -156,7 +156,7 @@ func TestCreatorEffortVocabularyMatchesTheBundle(t *testing.T) {
 				t.Errorf("kiro-cli's creator effort %q is not a value workflow_creator_effort accepts", l)
 			}
 		}
-		for _, l := range []string{"low", "medium", "high", "xhigh", "max"} {
+		for _, l := range settings.WorkflowCreatorEfforts() {
 			if !slices.Contains(levels, l) {
 				t.Errorf("workflow_creator_effort accepts %q, which kiro-cli's %v does not", l, levels)
 			}
@@ -181,7 +181,7 @@ func TestAwarenessModeMatchesTheBundle(t *testing.T) {
 				t.Errorf("kiro-cli's awareness mode %q is not a value chat_awareness_mode accepts", m)
 			}
 		}
-		for _, m := range []string{"direct", "consult"} {
+		for _, m := range settings.ChatAwarenessModes() {
 			if !slices.Contains(modes, m) {
 				t.Errorf("chat_awareness_mode accepts %q, which kiro-cli's %v does not", m, modes)
 			}
