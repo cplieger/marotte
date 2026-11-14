@@ -184,7 +184,7 @@ func TestHoldsGrant_NamesWhatAFileGrantsOnItsOwn(t *testing.T) {
 			if tc.file != "" {
 				writeFixture(t, filepath.Join(dir, tc.file), tc.body)
 			}
-			got, err := HoldsGrant(filepath.Join(dir, filename))
+			got, err := HoldsGrant(t.Context(), filepath.Join(dir, filename))
 			if err != nil {
 				t.Fatalf("HoldsGrant: %v", err)
 			}
@@ -198,7 +198,7 @@ func TestHoldsGrant_NamesWhatAFileGrantsOnItsOwn(t *testing.T) {
 func TestHoldsGrant_AnUnparseableFileIsAnError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), filename)
 	writeFixture(t, path, "rules: [\n")
-	if _, err := HoldsGrant(path); err == nil {
+	if _, err := HoldsGrant(t.Context(), path); err == nil {
 		t.Error("HoldsGrant read an unparseable file as granting nothing; the caller cannot tell it from an empty one")
 	}
 }

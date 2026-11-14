@@ -123,6 +123,8 @@ type chatLifecycle struct {
 	role botRoleKeeper
 	// reloadFor is the entry a reload is marked for (markReload), so a later generation never inherits the mark.
 	reloadFor *sharedBridge
+	// closeRefusals counts closes the life's session refused, leaving it open (noteCloseRefused).
+	closeRefusals uint64
 	// call is the sent prompt whose session/prompt is unanswered, from its send to endPromptCall; it outlives the
 	// turn when a later turn_start closed it. One: the admission reservation serializes calls.
 	call *activeTurn

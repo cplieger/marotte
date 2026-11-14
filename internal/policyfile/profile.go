@@ -118,10 +118,9 @@ func Profiles() []Profile {
 
 // ProfileFor returns the profile with the given id, and whether it exists.
 //
-// Absence is reported in band rather than through a default, because the two
-// callers want opposite things: the settings reader wants to fall back to DefaultProfile
-// with a logged reason, and the session door wants to send nothing rather than
-// guess a posture. A silent default would hand one of them the wrong answer.
+// Absence is reported in band rather than through a default, so each caller picks
+// its answer: a settings reader falls back to DefaultProfile with a logged reason,
+// and a command naming an unknown id is refused.
 func ProfileFor(id string) (Profile, bool) {
 	for i := range profiles {
 		if profiles[i].ID == id {
@@ -142,8 +141,8 @@ func DelegatesToSafetyCheck(presets []string) bool {
 // HoldsGrant reports whether the file KAS reads for path grants anything a session's presets cannot take
 // away: an allow or evaluate rule, or a preset its `policies` list names. Nothing to read grants nothing;
 // a file Load refuses is an error.
-func HoldsGrant(path string) (bool, error) {
-	data, name, err := readSource(context.Background(), path)
+func HoldsGrant(ctx context.Context, path string) (bool, error) {
+	data, name, err := readSource(ctx, path)
 	if err != nil {
 		return false, err
 	}

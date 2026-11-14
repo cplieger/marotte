@@ -482,12 +482,13 @@ class NativePolicyController {
     });
   }
 
-  /** Paint the Customize button and the status line, and lock the table outside Custom. The
-   *  button is present only on a named profile, because on Custom you are already there and a
-   *  control that does nothing teaches a reader to distrust every other one. */
+  /** Paint the Customize button with its hint and the status line, and lock the table outside
+   *  Custom. The button is present only on a named profile, because on Custom you are already
+   *  there and a control that does nothing teaches a reader to distrust every other one. */
   private renderProfileState(rules: PolicyRule[]): void {
     const custom = this.activeProfile === CUSTOM_PROFILE;
     maybeEl("security-profile-customize")?.classList.toggle("hidden", custom);
+    maybeEl("security-profile-customize-hint")?.classList.toggle("hidden", custom);
     this.lockPolicyTable(!custom);
     const status = maybeEl("security-profile-status");
     if (status === null) {

@@ -346,7 +346,7 @@ type SetSupervisedModeCommand struct {
 }
 
 // SetSecurityProfileCommand is the payload for type="set_security_profile": a policyfile profile id for this chat's
-// session. A run's chat is refused, since its profile follows the chat that launched it.
+// session. A run's subject is refused.
 type SetSecurityProfileCommand struct {
 	Profile string `json:"profile"`
 }

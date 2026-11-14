@@ -47,8 +47,8 @@ type Store struct {
 	WorkDir   string
 }
 
-// Active is the profile in force with the session door's fallback, so a reader shows what the
-// sessions opened with.
+// Active is the Settings profile a new chat starts on, with the session door's fallback, so a
+// reader shows what that chat's door sends.
 func (s *Store) Active(ctx context.Context) string {
 	var id string
 	if !settings.FieldInto(ctx, s.ConfigDir, settings.KeySecurityProfile, &id) || id == "" {

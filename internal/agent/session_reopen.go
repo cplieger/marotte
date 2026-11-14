@@ -24,8 +24,9 @@ func (rt *Runtime) markSessionsForReload(reason string) {
 	slog.Info("open chats reload their session at their next message", "reason", reason, "marked", marked)
 }
 
-// SecurityProfileChanged applies a persisted profile change: presets ride the session door and KAS has no live
-// setter, so resident sessions reload. A parentless run keeps the presets its lease recorded at launch.
+// SecurityProfileChanged applies a persisted Settings profile change, the default for new chats: it reloads no
+// resident session, since each chat keeps the profile its header names. A parentless run keeps the presets its
+// lease recorded at launch.
 func (rt *Runtime) SecurityProfileChanged(ctx context.Context) {
 	rt.reconcileSettingsWrite(ctx, "security profile")
 	rt.Broadcast(ctx, marotte.NewEvent(marotte.EventPermissionsChanged, "",

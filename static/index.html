@@ -1215,7 +1215,7 @@
 
           <!-- Permissions: active (Cedar) policy + supervised mode + agent ignore files -->
           <div class="settings-panel hidden" data-settings-panel="permissions">
-            <p class="settings-panel-intro">The <strong>Active policy</strong> below is the live permission policy kiro-cli actually enforces, including shell commands. Supervised mode and agent ignore files are separate layers under it. The review gate is kiro-cli's own, and marotte only sets a value for it. Defaults here apply to new conversations, and the pills and the chat-options menu next to the prompt change the conversation you are in.</p>
+            <p class="settings-panel-intro">The <strong>Active policy</strong> below is the permission policy a new chat starts with, including shell commands; a chat whose shield pill names another profile runs that profile's presets with the same saved rules. Supervised mode and agent ignore files are separate layers under it. The review gate is kiro-cli's own, and marotte only sets a value for it. Defaults here apply to new conversations, and the pills and the chat-options menu next to the prompt change the conversation you are in.</p>
 
             <div class="page-section" id="security-profile-section">
               <h2 class="section-title">Security profile</h2>
@@ -1224,6 +1224,7 @@
               <div id="security-profile-list" class="profile-list" role="radiogroup" aria-label="Security profile"></div>
               <div class="profile-actions">
                 <button id="security-profile-customize" class="btn btn-small hidden" type="button">Customize</button>
+                <p id="security-profile-customize-hint" class="section-hint hidden">Customize copies this profile's rules into your saved rules. Saved rules apply in every chat, whatever its shield pill says.</p>
                 <p id="security-profile-status" class="section-hint hidden"></p>
               </div>
             </div>

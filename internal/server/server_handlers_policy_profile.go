@@ -41,13 +41,13 @@ func (s *Server) handleProfileView(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, marotte.SecurityProfileView{
 		Profiles:    securityProfileCatalog(),
 		Default:     s.activeProfile(r.Context()),
-		SavedGrants: s.savedGrants(),
+		SavedGrants: s.savedGrants(r.Context()),
 	})
 }
 
 // savedGrants reports whether the user or workspace permissions file grants on its own. A file it cannot read
 // counts as granting nothing, as KAS skips one it cannot load.
-func (s *Server) savedGrants() bool {
+func (s *Server) savedGrants(ctx context.Context) bool {
 	kiroHome, err := workspace.KiroHomeDir()
 	if err != nil {
 		return false
@@ -57,7 +57,7 @@ func (s *Server) savedGrants() bool {
 		if err != nil {
 			continue
 		}
-		held, err := policyfile.HoldsGrant(path)
+		held, err := policyfile.HoldsGrant(ctx, path)
 		if err != nil {
 			slog.Debug("security profile view: permissions file unreadable", "scope", scope, "error", logsafe.Field(err.Error()))
 			continue

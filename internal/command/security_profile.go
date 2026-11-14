@@ -14,7 +14,7 @@ import (
 
 var (
 	errUnknownSecurityProfile = errors.New("unknown security profile")
-	errRunSecurityProfile     = errors.New("a run follows the security profile of the chat that launched it")
+	errRunSecurityProfile     = errors.New("a run's security profile cannot be changed")
 )
 
 // cmdSetSecurityProfile records the chat's security profile and reloads only that chat's resident session on it:

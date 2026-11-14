@@ -37,14 +37,11 @@ func securityPresets(id string) []string {
 	return p.Presets
 }
 
-// settingsProfile is the Settings profile as a known id, the profile a chat with none of its own is pinned to. ok is
-// false while config.json has never been readable: its defaults are no choice to pin.
-func (rt *Runtime) settingsProfile(ctx context.Context) (id string, ok bool) {
-	doc, src := rt.configDocument(ctx)
-	if src == fromDefaults {
-		return "", false
-	}
-	return knownProfile(doc.session.profile), true
+// settingsProfile is the Settings profile as a known id, the profile a chat with none of its own is pinned to: the
+// one its door sends (readSessionSettings), the default while config.json has never been readable.
+func (rt *Runtime) settingsProfile(ctx context.Context) string {
+	doc, _ := rt.configDocument(ctx)
+	return knownProfile(doc.session.profile)
 }
 
 // pinSecurityProfile gives a chat with no profile of its own the Settings profile at its door, so a later Settings
@@ -53,10 +50,7 @@ func (bc *bridgeCoordinator) pinSecurityProfile(ctx context.Context, chatID maro
 	if rec.SecurityProfile != "" {
 		return
 	}
-	id, ok := bc.settingsProfile(ctx)
-	if !ok {
-		return
-	}
+	id := bc.settingsProfile(ctx)
 	pinned := id
 	if _, err := bc.chatStore.Mutate(durable.Context(ctx), chatID, func(c *marotte.Chat, ex bool) bool {
 		if !ex || c.SecurityProfile != "" {
@@ -86,14 +80,19 @@ func (rt *Runtime) ReloadChatProfile(chatID marotte.ChatID) {
 }
 
 // reloadWhenUnheld loads chatID's next generation once nothing holds sb's marked reload. It waits itself because a
-// kept chat's closer never closes it, so a reload a turn held would otherwise wait for the next send.
+// kept chat's closer never closes it, so a reload a turn held would otherwise wait for the next send. A close the
+// session refuses ends it, leaving the mark to the chat's next send, so a refusing session is never asked again here.
 func (bc *bridgeCoordinator) reloadWhenUnheld(chatID marotte.ChatID, lc *chatLifecycle, sb *sharedBridge) {
 	ctx, cancel := bc.lifecycle.derivedContext()
 	defer cancel()
 	for lc.awaitReloadUnheld(ctx, sb) && !bc.configHeld() && bc.bridge.mgr.get(chatID) == sb {
+		refused := lc.closeRefusalCount()
 		if err := bc.LoadSession(ctx, chatID); err != nil {
 			slog.Warn("a chat's session could not reload on its new security profile; its next message reloads it",
 				"chat_id", chatID, "error", err)
+			return
+		}
+		if lc.closeRefusalCount() != refused {
 			return
 		}
 	}

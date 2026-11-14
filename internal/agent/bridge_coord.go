@@ -57,7 +57,7 @@ type bridgeCoordinator struct {
 	// sessionOpts is what a chat's session door sends.
 	sessionOpts func(ctx context.Context, rec *marotte.Chat, ask *sessionAsk, steering []marotte.ClientSteeringDoc) *marotte.SessionOpts
 	// settingsProfile is the profile a chat with none of its own is pinned to at its door (pinSecurityProfile).
-	settingsProfile func(context.Context) (string, bool)
+	settingsProfile func(context.Context) string
 	// syncLive pushes the engine each live setting it has not confirmed.
 	syncLive func(context.Context)
 	// configHeld is the configDoc owner's verdict, which holds a marked session's reload (reloadIfMarked).
@@ -368,6 +368,7 @@ func (bc *bridgeCoordinator) reloadIfMarked(
 		slog.Info("chat session closed for its reload", "chat_id", chatID, "session_id", sb.SessionID())
 		return nil, true, nil
 	case stillOpen:
+		lc.noteCloseRefused()
 		bc.endDoorClose(chatID, lc, g, false)
 		slog.Warn("a chat's session refused its reload; it keeps its current settings until the next message",
 			"chat_id", chatID, "error", closeErr)
@@ -508,6 +509,8 @@ func (bc *bridgeCoordinator) closeConfirmed(chatID marotte.ChatID, lc *chatLifec
 	closed := err == nil || !stillOpen
 	if closed {
 		bc.bridge.mgr.removeIfSame(chatID, g.sb)
+	} else {
+		lc.noteCloseRefused()
 	}
 	quiet := released || errors.Is(err, marotte.ErrChatClosedDuringCall)
 	if closed && !quiet {

@@ -2,9 +2,11 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -149,6 +151,36 @@ func TestChatDoor_PinsAChatWithNoProfileToTheSettingsProfile(t *testing.T) {
 	}
 }
 
+// While config.json has never read, the door sends the default profile, so the header names it: a later readable
+// Settings profile is the default for new chats only.
+func TestChatDoor_PinsTheDefaultProfileWhileConfigHasNeverRead(t *testing.T) {
+	configDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	h := reopenFixtureIn(t, configDir, nil)
+
+	sb, err := h.coord.openReleased(t.Context(), "c1", "")
+	if err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+	if got, want := fakeOf(sb).lastSessionOpts().Presets, profilePresets(t, policyfile.DefaultProfile); !slices.Equal(got, want) {
+		t.Fatalf("Setup: the door sent %v, want the default profile's %v", got, want)
+	}
+	if rec, _ := h.chatStore.Get(t.Context(), "c1"); rec.SecurityProfile != policyfile.DefaultProfile {
+		t.Errorf("the header's security_profile = %q, want %q, the profile its session opened on", rec.SecurityProfile, policyfile.DefaultProfile)
+	}
+
+	writeProfileSetting(t, configDir, policyfile.ProfileGuarded)
+	h.ReconcileSessionSettings(t.Context())
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
+		t.Fatalf("OpenBridge after config.json reads: %v", err)
+	}
+	if rec, _ := h.chatStore.Get(t.Context(), "c1"); rec.SecurityProfile != policyfile.DefaultProfile {
+		t.Errorf("a readable guarded config.json moved the header to %q, want it left on %q", rec.SecurityProfile, policyfile.DefaultProfile)
+	}
+}
+
 func TestChatDoor_AnUnknownChatProfileFallsBackToTheDefault(t *testing.T) {
 	h, _ := reopenFixture(t)
 	if _, err := h.chatStore.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -242,5 +274,48 @@ func TestReloadChatProfile_ARunningTurnHoldsTheReloadUntilItEnds(t *testing.T) {
 	second := awaitNextGeneration(t, h, "c1", first)
 	if want := profilePresets(t, policyfile.ProfileReadOnly); !slices.Equal(fakeOf(second).lastSessionOpts().Presets, want) {
 		t.Errorf("the session loaded after the turn has presets %v, want %v", fakeOf(second).lastSessionOpts().Presets, want)
+	}
+}
+
+// A session that refuses its close keeps the reload owed to the chat's next send: the background reload tries once.
+func TestReloadChatProfile_ARefusedCloseLeavesTheReloadToTheNextSend(t *testing.T) {
+	h, _ := reopenFixture(t)
+	first, err := h.coord.openReleased(t.Context(), "c1", "")
+	if err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+	var closes atomic.Int32
+	br := fakeOf(first)
+	br.mu.Lock()
+	br.closeErr = errors.New("session/close refused")
+	br.onCloseStart = func() { closes.Add(1) }
+	br.mu.Unlock()
+	setChatProfile(t, h, "c1", policyfile.ProfileReadOnly)
+
+	h.ReloadChatProfile("c1")
+
+	for deadline := time.Now().Add(5 * time.Second); closes.Load() == 0 && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if n := closes.Load(); n != 1 {
+		t.Fatalf("the background reload asked the session to close %d times, want 1: a refusal waits for the next send", n)
+	}
+	if h.bridge.mgr.get("c1") != first {
+		t.Fatal("the refused close replaced the session")
+	}
+
+	br.mu.Lock()
+	br.closeErr = nil
+	br.mu.Unlock()
+	second, err := h.coord.openReleased(t.Context(), "c1", "")
+	if err != nil {
+		t.Fatalf("OpenBridge after the refusal: %v", err)
+	}
+	if second == first {
+		t.Fatal("the next door kept the session whose reload was refused")
+	}
+	if want := profilePresets(t, policyfile.ProfileReadOnly); !slices.Equal(fakeOf(second).lastSessionOpts().Presets, want) {
+		t.Errorf("the next door loaded presets %v, want the chat's new profile %v", fakeOf(second).lastSessionOpts().Presets, want)
 	}
 }
