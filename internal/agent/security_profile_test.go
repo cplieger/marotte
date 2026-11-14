@@ -238,7 +238,7 @@ func TestReloadChatProfile_LoadsAnIdleChatOnItsNewProfileInTheBackground(t *test
 	}
 	setChatProfile(t, h, "c1", policyfile.ProfileReadOnly)
 
-	h.ReloadChatProfile("c1")
+	h.reloadChatProfile("c1")
 
 	second := awaitNextGeneration(t, h, "c1", first)
 	if !sessionClosed(fakeOf(first)) {
@@ -265,7 +265,7 @@ func TestReloadChatProfile_ARunningTurnHoldsTheReloadUntilItEnds(t *testing.T) {
 	h.coord.WireTurnStart(t.Context(), "c1", translate.TurnStartFrame{})
 	setChatProfile(t, h, "c1", policyfile.ProfileReadOnly)
 
-	h.ReloadChatProfile("c1")
+	h.reloadChatProfile("c1")
 
 	if h.bridge.mgr.get("c1") != first || sessionClosed(fakeOf(first)) {
 		t.Fatal("the reload closed the session under a running turn")
@@ -292,7 +292,7 @@ func TestReloadChatProfile_ARefusedCloseLeavesTheReloadToTheNextSend(t *testing.
 	br.mu.Unlock()
 	setChatProfile(t, h, "c1", policyfile.ProfileReadOnly)
 
-	h.ReloadChatProfile("c1")
+	h.reloadChatProfile("c1")
 
 	for deadline := time.Now().Add(5 * time.Second); closes.Load() == 0 && time.Now().Before(deadline); {
 		time.Sleep(5 * time.Millisecond)

@@ -262,7 +262,8 @@ func (r *turnRender) writeEntry(b *strings.Builder, e *marotte.Entry) {
 		}
 	case marotte.EntryKindCompaction, marotte.EntryKindCompactionFailed,
 		marotte.EntryKindSafetyBlocked, marotte.EntryKindModelSwitched, marotte.EntryKindModelRouted,
-		marotte.EntryKindModelFallback, marotte.EntryKindModeSwitched, marotte.EntryKindContextReset:
+		marotte.EntryKindModelFallback, marotte.EntryKindModeSwitched, marotte.EntryKindProfileSwitched,
+		marotte.EntryKindContextReset:
 		r.writeEvent(b, e)
 	case marotte.EntryKindTurnClose:
 		writeTurnCloseEntry(b, e)
@@ -297,6 +298,8 @@ func writeEventMarkdown(b *strings.Builder, e *marotte.Entry) {
 		writeModelFallbackMarkdown(b, e)
 	case marotte.EntryKindModeSwitched:
 		writeModeSwitchedMarkdown(b, e)
+	case marotte.EntryKindProfileSwitched:
+		writeProfileSwitchedMarkdown(b, e)
 	case marotte.EntryKindContextReset:
 		writeContextResetMarkdown(b, e)
 	}
@@ -456,6 +459,13 @@ func writeContextResetMarkdown(b *strings.Builder, e *marotte.Entry) {
 	var p marotte.EntryContextReset
 	if decodePayload(e, &p) {
 		fmt.Fprintf(b, "**Event: context_reset** %s\n\n", oneLine(string(p.Cause)))
+	}
+}
+
+func writeProfileSwitchedMarkdown(b *strings.Builder, e *marotte.Entry) {
+	var p marotte.EntryProfileSwitched
+	if decodePayload(e, &p) {
+		fmt.Fprintf(b, "**Event: profile_switched** %s → %s\n\n", oneLine(p.From), oneLine(p.To))
 	}
 }
 

@@ -267,11 +267,11 @@ type AskReply interface {
 	Respond(ctx context.Context, result any) (AnswerOutcome, error)
 }
 
-// profileReloader reloads one chat's resident session on the profile its header names.
+// profileReloader applies one chat's security profile move after its header names to.
 type profileReloader interface {
-	// ReloadChatProfile returns at once; a chat with no resident session opens on its header's profile at its next
-	// door.
-	ReloadChatProfile(chatID marotte.ChatID)
+	// ChatProfileChanged returns at once: it reloads the chat's resident session on to and records the move in the
+	// chat where the agent starts running under it. A chat with no resident session opens on to at its next door.
+	ChatProfileChanged(chatID marotte.ChatID, from, to string)
 }
 
 // terminalAccess is the interrupt's process half: a turn cancel must reach

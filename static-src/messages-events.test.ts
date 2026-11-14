@@ -11,6 +11,9 @@ import {
   ICON_REFRESH,
   ICON_REWIND,
   ICON_SHIELD,
+  ICON_SHIELD_DOT,
+  ICON_SHIELD_LINES_FOUR,
+  ICON_SHIELD_LINES_THREE,
   ICON_TOOL_SWITCH,
 } from "./icons.js";
 
@@ -318,6 +321,30 @@ describe("mode_switched", () => {
     expect(labelOf(switched("spec", "semantic_reviewer", "user"))).toBe(
       "Mode: Spec \u2192 Semantic Reviewer",
     );
+  });
+});
+
+describe("profile_switched", () => {
+  const switched = (from: string, to: string): HTMLElement =>
+    buildEvent(event("profile_switched", { from, to }));
+
+  it("names the profile the chat runs from here, as the composer's pill names it", () => {
+    expect(labelOf(switched("trusted", "read-only"))).toBe("Security profile: Read-only");
+    expect(labelOf(switched("read-only", "delegated"))).toBe("Security profile: Approve for me");
+  });
+
+  it("draws the switch face with the new level's shield, hidden from assistive tech", () => {
+    for (const [to, glyph] of [
+      ["guarded", ICON_SHIELD_LINES_FOUR],
+      ["read-only", ICON_SHIELD_LINES_THREE],
+      ["custom", ICON_SHIELD_DOT],
+    ] as const) {
+      const node = switched("trusted", to);
+      expect(node.className, to).toContain("boundary-switched");
+      const icon = node.querySelector(".boundary-icon");
+      expect(icon?.getAttribute("aria-hidden"), to).toBe("true");
+      expect(glyphMarkup(icon?.firstElementChild), to).toBe(registryMarkup(glyph));
+    }
   });
 });
 

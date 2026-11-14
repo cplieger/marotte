@@ -17,8 +17,8 @@ var (
 	errRunSecurityProfile     = errors.New("a run's security profile cannot be changed")
 )
 
-// cmdSetSecurityProfile records the chat's security profile and reloads only that chat's resident session on it:
-// presets ride the session door and KAS has no live setter.
+// cmdSetSecurityProfile records the chat's security profile and applies the move to that chat alone: presets ride the
+// session door and KAS has no live setter.
 func cmdSetSecurityProfile(
 	ctx context.Context, chats chatStore, reloads profileReloader, cmd *marotte.ClientCommand,
 ) (any, error) {
@@ -36,7 +36,7 @@ func cmdSetSecurityProfile(
 	if !ok {
 		return nil, StatusError(http.StatusBadRequest, errUnknownSecurityProfile)
 	}
-	found, changed := false, false
+	found, changed, from := false, false, ""
 	if _, err := chats.Mutate(ctx, cmd.ChatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
@@ -45,7 +45,7 @@ func cmdSetSecurityProfile(
 		if c.SecurityProfile == profile.ID {
 			return false
 		}
-		c.SecurityProfile = profile.ID
+		from, c.SecurityProfile = c.SecurityProfile, profile.ID
 		changed = true
 		return true
 	}); err != nil {
@@ -55,7 +55,7 @@ func cmdSetSecurityProfile(
 		return nil, StatusError(http.StatusNotFound, ErrChatNotFound)
 	}
 	if changed {
-		reloads.ReloadChatProfile(cmd.ChatID)
+		reloads.ChatProfileChanged(cmd.ChatID, from, profile.ID)
 		slog.Info("chat security profile set", "chat_id", cmd.ChatID, "profile", profile.ID)
 	}
 	return responseWith(map[string]any{"profile": profile.ID}), nil

@@ -67,6 +67,11 @@ var durableWriteSites = []durableSite{{
 	calls:   []string{"AppendBetweenTurns"},
 	because: "the mode_switched entry a landed mode switch leaves, which is on no KAS wire",
 }, {
+	file:    "internal/agent/security_profile.go",
+	fn:      "appendProfileSwitched",
+	calls:   []string{"AppendBetweenTurns"},
+	because: "the profile_switched entry a chat's profile move leaves, which is on no KAS wire",
+}, {
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "recordContextReset",
 	calls:   []string{"AppendBetweenTurns"},

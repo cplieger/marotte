@@ -200,6 +200,7 @@ describe("entryRenders", () => {
     "model_routed",
     "model_fallback",
     "mode_switched",
+    "profile_switched",
   ] as const)("draws a %s at its own position", (kind) => {
     expect(entryRenders(entry(1, kind), "", NO_FOLDS)).toBe(true);
   });

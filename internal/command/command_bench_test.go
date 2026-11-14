@@ -128,7 +128,7 @@ func (*benchDeps) PendingElicitation(marotte.ChatID, int64) (marotte.Elicitation
 	return marotte.ElicitationNeededPayload{}, false
 }
 
-func (*benchDeps) ReloadChatProfile(marotte.ChatID) {}
+func (*benchDeps) ChatProfileChanged(marotte.ChatID, string, string) {}
 
 func (*benchDeps) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithCancel(context.WithoutCancel(reqCtx))

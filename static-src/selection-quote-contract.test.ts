@@ -89,6 +89,7 @@ function everyKind(turn: string): Entry[] {
     ],
     ["model_switched", { from: "model-b-5", to: "model-a-5" }],
     ["mode_switched", { from: "plan", to: "vibe", source: "user" }],
+    ["profile_switched", { from: "trusted", to: "read-only" }],
     ["context_reset", { cause: "empty_retry" }],
     ["compaction", { summary: "Kept the plan and the failing test." }],
     ["compaction_failed", { reason: "the summary was empty" }],

@@ -3,11 +3,13 @@ package agent
 import (
 	"context"
 	"log/slog"
+	"sync"
 
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 // securityProfileID is the stored security_profile; empty when absent or invalid.
@@ -66,10 +68,70 @@ func (bc *bridgeCoordinator) pinSecurityProfile(ctx context.Context, chatID maro
 	rec.SecurityProfile = pinned
 }
 
-// ReloadChatProfile reloads chatID's resident session on the profile its header now names, in the background so the
+// ChatProfileChanged applies set_security_profile's move of chatID from from to to (command.profileReloader).
+func (rt *Runtime) ChatProfileChanged(chatID marotte.ChatID, from, to string) {
+	rt.coord.recordProfileSwitch(chatID, from, to)
+	rt.reloadChatProfile(chatID)
+}
+
+// parkedProfiles holds, per chat, the profile a turn runs on while a pick made during it waits for the turn's close.
+type parkedProfiles struct {
+	from map[marotte.ChatID]string
+	mu   sync.Mutex
+}
+
+// recordProfileSwitch files the profile_switched entry where the agent starts running under to: at once between
+// turns, else at the open turn's close (landParkedProfile), since the reload waits for it. The lock spans the open
+// check and the park, so a close that won meanwhile still finds the park.
+func (bc *bridgeCoordinator) recordProfileSwitch(chatID marotte.ChatID, from, to string) {
+	p := &bc.parkedProfiles
+	p.mu.Lock()
+	if bc.turns.turnOpen(chatID) {
+		if _, parked := p.from[chatID]; !parked {
+			if p.from == nil {
+				p.from = map[marotte.ChatID]string{}
+			}
+			p.from[chatID] = from
+		}
+		p.mu.Unlock()
+		return
+	}
+	p.mu.Unlock()
+	bc.appendProfileSwitched(context.Background(), chatID, from, to)
+}
+
+// landParkedProfile files a closed turn's parked move against the profile the chat ends it on, and nothing when the
+// picks came back to the one it started on.
+func (bc *bridgeCoordinator) landParkedProfile(ctx context.Context, chatID marotte.ChatID) {
+	p := &bc.parkedProfiles
+	p.mu.Lock()
+	from, parked := p.from[chatID]
+	delete(p.from, chatID)
+	p.mu.Unlock()
+	if !parked {
+		return
+	}
+	if rec, ok := bc.chatStore.Get(ctx, chatID); ok && rec.SecurityProfile != from {
+		bc.appendProfileSwitched(ctx, chatID, from, rec.SecurityProfile)
+	}
+}
+
+// appendProfileSwitched writes one profile_switched entry after the newest close; an unstarted chat gets none.
+func (bc *bridgeCoordinator) appendProfileSwitched(ctx context.Context, chatID marotte.ChatID, from, to string) {
+	ctx = durable.Context(ctx)
+	if !bc.conversationStarted(ctx, chatID) {
+		return
+	}
+	if err := translate.AppendBetweenTurns(ctx, broadcastFunc(bc.broadcast), bc.chatStore, chatID,
+		marotte.EntryKindProfileSwitched, "", marotte.EntryProfileSwitched{From: from, To: to}); err != nil {
+		slog.Error("set_security_profile: record the switch between turns", "chat_id", chatID, "error", err)
+	}
+}
+
+// reloadChatProfile reloads chatID's resident session on the profile its header now names, in the background so the
 // chat's next send does not wait on the load. A run's host session and a chat with none resident are left alone: the
 // next door sends the header's profile.
-func (rt *Runtime) ReloadChatProfile(chatID marotte.ChatID) {
+func (rt *Runtime) reloadChatProfile(chatID marotte.ChatID) {
 	sb := rt.bridge.mgr.get(chatID)
 	lc, ok := rt.coord.turns.closeOwner(chatID, sb)
 	if !ok {

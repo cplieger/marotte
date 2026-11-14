@@ -34,6 +34,7 @@ const (
 	EntryKindModelRouted      EntryKind = "model_routed"
 	EntryKindModelFallback    EntryKind = "model_fallback"
 	EntryKindModeSwitched     EntryKind = "mode_switched"
+	EntryKindProfileSwitched  EntryKind = "profile_switched"
 	EntryKindTurnRevert       EntryKind = "turn_revert"
 	EntryKindContextReset     EntryKind = "context_reset"
 	EntryKindReconciled       EntryKind = "reconciled"
@@ -441,6 +442,13 @@ type EntryModeSwitched struct {
 	From   string           `json:"from"`
 	To     string           `json:"to"`
 	Source ModeSwitchSource `json:"source"`
+}
+
+// EntryProfileSwitched is the profile_switched payload: the chat's security profile moved From To, and the agent runs
+// under To from this entry on. Both are profile ids; From is empty when the chat had none recorded.
+type EntryProfileSwitched struct {
+	From string `json:"from"`
+	To   string `json:"to"`
 }
 
 // EntryTurnRevert is the turn_revert payload, the record that makes a reverted range

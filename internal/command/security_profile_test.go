@@ -11,10 +11,15 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
-type reloadRecorder struct{ reloaded []marotte.ChatID }
+type profileMove struct {
+	chatID   marotte.ChatID
+	from, to string
+}
 
-func (r *reloadRecorder) ReloadChatProfile(chatID marotte.ChatID) {
-	r.reloaded = append(r.reloaded, chatID)
+type reloadRecorder struct{ reloaded []profileMove }
+
+func (r *reloadRecorder) ChatProfileChanged(chatID marotte.ChatID, from, to string) {
+	r.reloaded = append(r.reloaded, profileMove{chatID: chatID, from: from, to: to})
 }
 
 func profileReq(t *testing.T, chatID marotte.ChatID, profile string) *marotte.ClientCommand {
@@ -51,8 +56,8 @@ func TestCmdSetSecurityProfile_WritesTheHeaderAndReloadsOnlyThatChat(t *testing.
 	if got := chatProfile(t, store, "c2"); got != "" {
 		t.Errorf("c2 security_profile = %q, want it untouched", got)
 	}
-	if !slices.Equal(r.reloaded, []marotte.ChatID{"c1"}) {
-		t.Errorf("reloaded = %v, want [c1]", r.reloaded)
+	if want := []profileMove{{chatID: "c1", from: "", to: policyfile.ProfileReadOnly}}; !slices.Equal(r.reloaded, want) {
+		t.Errorf("moves = %+v, want %+v", r.reloaded, want)
 	}
 	raw, _ := json.Marshal(out)
 	var resp struct {
@@ -78,6 +83,25 @@ func TestCmdSetSecurityProfile_TheSameProfileReloadsNothing(t *testing.T) {
 
 	if len(r.reloaded) != 0 {
 		t.Errorf("reloaded = %v for an unchanged profile, want none", r.reloaded)
+	}
+}
+
+func TestCmdSetSecurityProfile_AMoveNamesTheProfileItLeaves(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedEmptyChat(t, store, "c1")
+	r := &reloadRecorder{}
+	if _, err := cmdSetSecurityProfile(t.Context(), store, r, profileReq(t, "c1", policyfile.ProfileTrusted)); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	r.reloaded = nil
+
+	if _, err := cmdSetSecurityProfile(t.Context(), store, r, profileReq(t, "c1", policyfile.ProfileGuarded)); err != nil {
+		t.Fatalf("cmdSetSecurityProfile = %v", err)
+	}
+
+	want := []profileMove{{chatID: "c1", from: policyfile.ProfileTrusted, to: policyfile.ProfileGuarded}}
+	if !slices.Equal(r.reloaded, want) {
+		t.Errorf("moves = %+v, want %+v", r.reloaded, want)
 	}
 }
 

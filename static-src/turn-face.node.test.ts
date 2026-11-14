@@ -348,6 +348,7 @@ describe("turnFoldHides", () => {
     ["mode_switched", { from: "spec", to: "vibe", source: "user" }],
     ["context_reset", { cause: "session_missing" }],
     ["model_fallback", { from: "a", trigger: "availability", reason: "chainExhausted" }],
+    ["profile_switched", { from: "trusted", to: "read-only" }],
   ] as const)("hides a %s entry", (kind, payload) => {
     const t = oneTurn([sealed(kind, payload), text("a-say", "done")]);
     expect(turnFoldHides(t)).toBe(true);

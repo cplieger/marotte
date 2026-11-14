@@ -129,6 +129,7 @@ function afterAppend(chatID: string, entry: Entry): void {
     case "model_routed":
     case "model_fallback":
     case "mode_switched":
+    case "profile_switched":
     case "turn_revert":
     case "context_reset":
     case "reconciled":

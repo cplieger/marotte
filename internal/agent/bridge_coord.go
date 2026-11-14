@@ -37,7 +37,9 @@ type bridgeCoordinator struct {
 	// apply, the session open's fold): otherwise two appliers read one pick and apply it twice, or a landing falls
 	// between an admission's read and its park. Keyed by chat id, so it needs no lifecycle; held across the bridge
 	// call.
-	switchLocks      *keylock.Set[marotte.ChatID]
+	switchLocks *keylock.Set[marotte.ChatID]
+	// parkedProfiles is the profile moves picked during a turn (recordProfileSwitch).
+	parkedProfiles   parkedProfiles
 	broadcast        func(ctx context.Context, e marotte.ServerEvent)
 	translateEvent   func(chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse)
 	releaseTerminals func(chatID marotte.ChatID, origin acpResponder)
