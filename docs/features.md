@@ -32,7 +32,9 @@ You can also search inside a chat, export a chat, search across chats, and brows
 
 ## Sidebar
 
-The sidebar lists your tabs in sections, in this order: **Open**, **Pinned** and **Recently closed**. A section's header shows only while the section has rows, and it shows how many tabs the section holds, not counting tangents. Right-click a chat tab, or press and hold it on a touch screen, to open its menu. **Pin** there moves the tab to **Pinned**, and **Unpin** moves it back. A tangent moves with its chat, so its menu has neither. Drag a tab, or use **Move up** and **Move down** in a chat tab's menu, to reorder it inside its section. A tab dropped on another section goes back where it was.
+The sidebar lists your tabs in sections, in this order: **Open**, **Pinned** and **Recently closed**. A section's header shows only while the section has rows, and it shows how many tabs the section holds, not counting tangents.
+
+Right-click a chat tab, or press and hold it on a touch screen, to open its menu. **Pin** there moves the tab to **Pinned**, and **Unpin** moves it back. A tangent moves with its chat, so its menu has neither. Drag a tab, or use **Move up** and **Move down** in a chat tab's menu, to reorder it inside its section. A tab dropped on another section goes back where it was.
 
 Pressing a header folds its section or opens it again, and each browser remembers its own folds. A folded section still shows the tab you are on. Its header shows a dot for the most urgent of the tabs it hides, such as one waiting for your answer or one still working, in the colour that tab's row uses.
 
@@ -40,7 +42,7 @@ Pressing a header folds its section or opens it again, and each browser remember
 
 Click a row, or press Enter on it, to reopen the chat. **Reopen** in the row's menu does the same. A pinned chat reopens pinned, and a reopened chat leaves the list. While **Days kept** is 0 in Settings, the section is hidden, because a chat closed then is deleted at once.
 
-A message another service sends through the [notify route](configuration.md#waking-a-chat-from-another-service-marotte_notify_token) to a chat whose tab you closed opens that tab again on every device, as that page describes.
+When another service sends a message through the [notify route](configuration.md#waking-a-chat-from-another-service-marotte_notify_token) to a chat whose tab you closed, that tab opens again on every device.
 
 The **History** row ends the sections. It opens History in the main area without opening a tab, and picking a tab, starting a chat or going back leaves it. It reads **More history** while **Recently closed** shows.
 
