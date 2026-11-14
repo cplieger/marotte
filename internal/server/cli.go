@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/marotte/internal/kirorelease"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/procgroup"
@@ -47,17 +48,19 @@ type cliRunner interface {
 // construction.
 type execCLIRunner struct {
 	cliPath func() string
-	// env returns assignments that override the inherited environment; nil inherits it unchanged.
+	// env returns assignments that override the inherited environment; nil adds none.
 	env func() []string
 }
 
 func (r *execCLIRunner) command(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, r.cliPath(), args...) //nolint:gosec // G204: binary path from the install manager, never user input
 	procgroup.OwnGroup(cmd, cliWaitDelay)
+	env := os.Environ()
 	if r.env != nil {
-		// The overlay lands LAST: os/exec keeps the last value for a repeated key.
-		cmd.Env = append(os.Environ(), r.env()...)
+		// The overlay lands after the inherited environment: os/exec keeps the last value for a repeated key.
+		env = append(env, r.env()...)
 	}
+	cmd.Env = kirorelease.SpawnEnv(env)
 	return cmd
 }
 

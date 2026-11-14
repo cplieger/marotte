@@ -252,6 +252,10 @@ ENV HOME="/config/home"
 ENV KIRO_HOME="/config/home/.kiro"
 # pin never rewrites a version directory, so kiro-cli's per-session binary copy protects nothing.
 ENV KIRO_SKIP_BINARY_PINNING=1
+# kiro-cli's self-updater rewrites the executable it ran from on exit, and app.disableAutoupdates
+# covers one HOME only, so any process here running the pinned binary under another HOME would
+# replace it. The server sets this on its own kiro-cli spawns too, for a parent that clears the env.
+ENV KIRO_NO_AUTO_UPDATE=1
 # kiro-cli unpacks node, the agent server and the terminal UI here and deletes every
 # other version's copy at each start, so a child running another kiro-cli version
 # unsets it.
