@@ -175,6 +175,10 @@ async function dress(state: State): Promise<void> {
     byId("midturn-send").classList.toggle("send-split-both", state === "steer");
     alt.replaceChildren(iconEl(ICON_QUEUE_UI));
     byId("task-list-pill").classList.remove("hidden");
+    // A turn's task list counts its open items, so the live pill is wider than its icon.
+    const badge = byId("task-list-badge");
+    badge.textContent = "12";
+    badge.classList.remove("hidden");
   }
   const row = byId("attachment-row");
   row.classList.remove("hidden");
@@ -381,7 +385,11 @@ describe("the composer's controls and the resume button, against the toolbar's b
         if (width(hit) < floor - 2 * STEP) {
           off.push(`${nameOf(el)} reaches ${String(width(hit))}px wide`);
         }
-        if (SQUARE.includes(el.id) && Math.abs(width(hit) - ref.hit.w - reach) > SLACK) {
+        if (
+          SQUARE.includes(el.id) &&
+          iconOnly(el) &&
+          Math.abs(width(hit) - ref.hit.w - reach) > SLACK
+        ) {
           off.push(`${nameOf(el)} reaches ${String(width(hit))}px wide, not the toolbar's`);
         }
       }
@@ -512,6 +520,19 @@ describe("the model, profile and mode pills, by the room the row has", () => {
     ];
   }
 
+  /** The steps the fit has taken past moving pills: the send buttons' words, then the task list's count. */
+  function narrowed(): string[] {
+    const words = [
+      ...document.querySelectorAll<HTMLElement>(
+        "#send-btn .send-btn-label, #midturn-send-btn .send-btn-label",
+      ),
+    ];
+    return [
+      ...(words.some(shown) ? [] : ["words"]),
+      ...(shown(byId("task-list-badge")) ? [] : ["count"]),
+    ];
+  }
+
   /** Whether the row has room for one more pill at its square, the room the last moved pill needs back. */
   function roomForOneMore(): boolean {
     const row = document.querySelector<HTMLElement>(".prompt-pills")!;
@@ -553,7 +574,12 @@ describe("the model, profile and mode pills, by the room the row has", () => {
           if (moved.length === 1 && moved[0] !== "mode") {
             off.push(`${at}: Security profile moved before Mode`);
           }
-          if (moved.length > 0 && roomForOneMore()) {
+          const steps = narrowed();
+          if (steps.includes("count") && !steps.includes("words")) {
+            off.push(`${at}: the task list dropped its count before the send buttons their words`);
+          }
+          // Past the moves, the room a dropped word or count frees is not a pill's to take back.
+          if (moved.length > 0 && narrowed().length === 0 && roomForOneMore()) {
             off.push(`${at}: ${moved.join(" ")} moved with room to spare`);
           }
         }
@@ -585,7 +611,7 @@ describe("the model, profile and mode pills, by the room the row has", () => {
             seen.set(`${dir} ${moved}`, w);
           }
           off.push(...rowFaults(`${pointer} ${String(w)}`, changed || w === order.at(-1)));
-          if (moved !== "none" && roomForOneMore()) {
+          if (moved !== "none" && narrowed().length === 0 && roomForOneMore()) {
             off.push(`${pointer} ${String(w)}: ${moved} moved with room to spare`);
           }
         }
@@ -606,7 +632,7 @@ describe("the model, profile and mode pills, by the room the row has", () => {
     }
   }, 60_000);
 
-  it("drops the send buttons' words after both pills have moved, down to a phone's composer", async () => {
+  it("drops the send buttons' words, then the task list's count, after both pills have moved, down to a phone's composer", async () => {
     const box = (): HTMLElement => byId("prompt-box");
     const words = (): HTMLElement[] => [
       ...document.querySelectorAll<HTMLElement>(
@@ -619,7 +645,7 @@ describe("the model, profile and mode pills, by the room the row has", () => {
       await mount(DESKTOP, pointer, "steer");
       expect(words().filter(shown), `${pointer}: the words this test reads`).not.toEqual([]);
       const widths: number[] = [];
-      for (let w = 420; w >= floor; w -= 2) {
+      for (let w = 520; w >= floor; w -= 2) {
         widths.push(w);
       }
       const off: string[] = [];
@@ -629,8 +655,7 @@ describe("the model, profile and mode pills, by the room the row has", () => {
         for (const w of order) {
           box().style.width = `${String(w)}px`;
           await nextFrame();
-          const shownWords = words().filter(shown).length;
-          const state = [...movedNow(), ...(shownWords === 0 ? ["words"] : [])].join(" ") || "none";
+          const state = [...movedNow(), ...narrowed()].join(" ") || "none";
           const changed = states.at(-1) !== state;
           if (changed) {
             states.push(state);
@@ -640,15 +665,22 @@ describe("the model, profile and mode pills, by the room the row has", () => {
         }
         return states;
       };
+      // A touch phone's composer is too narrow for the row's two-digit count; a mouse's square is smaller.
+      const ladder = [
+        "none",
+        "mode",
+        "mode profile",
+        "mode profile words",
+        "mode profile words count",
+      ];
+      const steps = pointer === "coarse" ? ladder : ladder.slice(0, 4);
       expect(
         await walk(widths, "narrowing"),
         `${pointer}: narrowing to ${String(floor)}px`,
-      ).toEqual(["mode", "mode profile", "mode profile words"]);
-      expect(await walk([...widths].reverse(), "widening"), `${pointer}: widening`).toEqual([
-        "mode profile words",
-        "mode profile",
-        "mode",
-      ]);
+      ).toEqual(steps);
+      expect(await walk([...widths].reverse(), "widening"), `${pointer}: widening`).toEqual(
+        [...steps].reverse(),
+      );
       expect(off, `${pointer}: the row at every width`).toEqual([]);
       console.log(
         `${pointer} words from ${String(floor)}px: ${JSON.stringify(Object.fromEntries(seen))}`,
