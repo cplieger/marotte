@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/go/wiregen"
+	"github.com/cplieger/go/wiregen/v2"
 	"github.com/cplieger/marotte/internal/forges"
 	"github.com/cplieger/marotte/internal/wirespec"
 )
