@@ -152,8 +152,9 @@ type EffectiveSettings struct {
 	// switch, so an absent key read as false takes the knowledge tool away from
 	// every existing install.
 	KnowledgeEnabled bool `json:"knowledge_enabled"`
-	// ContentCollection is the stored content-collection choice, default off. An
-	// organization's lock overrides what marotte sends, not this value.
+	// ContentCollection is the stored content-collection choice, default on
+	// (settings.DefaultContentCollectionEnabled). An organization's lock
+	// overrides what marotte sends, not this value.
 	ContentCollection bool `json:"content_collection_enabled"`
 	// GuardPayloadLinks defaults to settings.defaultGuardPayloadLinks; no server path
 	// reads it.
