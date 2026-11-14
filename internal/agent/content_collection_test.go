@@ -57,7 +57,6 @@ func TestGovernanceLockChange_ReachesTheEngineReadableOrNot(t *testing.T) {
 				rewriteConfigByHand(t, h.lifecycle.configDir, tc.document)
 			}
 
-			// Usage analytics left on, so the lock itself moves no engine-wide value.
 			h.config.SetGovernance(t.Context(), orgTelemetry(true))
 			select {
 			case <-pushed:

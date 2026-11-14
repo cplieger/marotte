@@ -821,6 +821,11 @@ type frameView struct {
 func (c *capture) inFrames(lane int) []frameView {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.inFramesLocked(lane)
+}
+
+// inFramesLocked is inFrames for a caller holding c.mu.
+func (c *capture) inFramesLocked(lane int) []frameView {
 	var out []frameView
 	for _, l := range c.lines {
 		if l.Dir != "in" || !l.isFrame || l.lane != lane {
@@ -903,12 +908,23 @@ func runContentCollection(ctx context.Context, c *capture) error {
 	return nil
 }
 
-// awaitContentCollection waits for a config_option_update at or after frame from whose contentCollection option is
-// value, failing at once on one holding another value.
+// awaitContentCollection waits up to 60 s for a config_option_update at or after frame from whose contentCollection
+// option is value. One holding another value is skipped: a model-registry broadcast can still carry the old value
+// after the notification.
 func (c *capture) awaitContentCollection(lane, from int, value string) error {
-	deadline := time.Now().Add(60 * time.Second)
-	for time.Now().Before(deadline) {
-		frames := c.inFrames(lane)
+	const wait = 60 * time.Second
+	deadline := time.Now().Add(wait)
+	stop := time.AfterFunc(wait, func() {
+		c.mu.Lock()
+		c.cond.Broadcast()
+		c.mu.Unlock()
+	})
+	defer stop.Stop()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	last := ""
+	for {
+		frames := c.inFramesLocked(lane)
 		for i := from; i < len(frames); i++ {
 			u := &frames[i].Params.Update
 			if u.SessionUpdate != "config_option_update" {
@@ -918,15 +934,21 @@ func (c *capture) awaitContentCollection(lane, from int, value string) error {
 				if o.ID != "contentCollection" {
 					continue
 				}
-				if o.CurrentValue != value {
-					return fmt.Errorf("the session reports contentCollection %q, want %q", o.CurrentValue, value)
+				if o.CurrentValue == value {
+					return nil
 				}
-				return nil
+				last = o.CurrentValue
 			}
 		}
-		time.Sleep(100 * time.Millisecond)
+		from = max(from, len(frames))
+		if time.Now().After(deadline) {
+			if last == "" {
+				return fmt.Errorf("no config_option_update reported contentCollection %q", value)
+			}
+			return fmt.Errorf("the session last reported contentCollection %q, want %q", last, value)
+		}
+		c.cond.Wait()
 	}
-	return fmt.Errorf("no config_option_update reported contentCollection %q", value)
 }
 
 func runSteer(ctx context.Context, c *capture) error {
