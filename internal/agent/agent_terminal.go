@@ -18,6 +18,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/ansitext"
 	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/kirorelease"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/procgroup"
 	"github.com/cplieger/marotte/internal/sanitize"
@@ -502,12 +503,21 @@ var agentShell = sync.OnceValue(func() string {
 
 // KAS leaves `args` UNSET and puts the whole line in `command` (kiro-cli 2.18.0), so an absent
 // `args` runs through a shell and a present one, empty included, is an argv. Presence, not length,
-// decides.
-func agentCommand(ctx context.Context, line string, args *[]string) *exec.Cmd {
+// decides. The env always goes through kirorelease.SpawnEnv: the command can run the pinned kiro-cli
+// from PATH, and a marotte started under `env -i` has no image ENV to pass on.
+func agentCommand(ctx context.Context, line string, args *[]string, vars []termEnvVar) *exec.Cmd {
+	var cmd *exec.Cmd
 	if args != nil {
-		return exec.CommandContext(ctx, line, *args...) // #nosec G204 -- agent-controlled
+		cmd = exec.CommandContext(ctx, line, *args...) // #nosec G204 -- agent-controlled
+	} else {
+		cmd = exec.CommandContext(ctx, agentShell(), "-c", line) // #nosec G204 -- agent-controlled
 	}
-	return exec.CommandContext(ctx, agentShell(), "-c", line) // #nosec G204 -- agent-controlled
+	env := termEnv(vars)
+	if env == nil {
+		env = os.Environ()
+	}
+	cmd.Env = kirorelease.SpawnEnv(env)
+	return cmd
 }
 
 func derefArgs(args *[]string) []string {
@@ -574,13 +584,10 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 	// the AfterFunc re-attaches shutdown.
 	cmdCtx, cmdCancel := context.WithCancel(context.WithoutCancel(ctx))
 	stop := context.AfterFunc(at.lifecycle.shutdownCtx, cmdCancel)
-	cmd := agentCommand(cmdCtx, params.Command, params.Args)
+	cmd := agentCommand(cmdCtx, params.Command, params.Args, params.Env)
 	// Own process group, so teardown can signal the whole tree (see procgroup.Kill).
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.WaitDelay = 2 * time.Second
-	if env := termEnv(params.Env); env != nil {
-		cmd.Env = env
-	}
 	if params.Cwd != "" {
 		abs, err := at.lifecycle.resolveCwd(ctx, params.Cwd)
 		if err != nil {
