@@ -283,6 +283,23 @@ describe("the Fallback list", () => {
     expect(back.querySelector(".disclosure-chevron")?.getAttribute("aria-hidden")).toBe("true");
   });
 
+  it("starts each row's name beside its glyph, whether or not a multiplier ends the row", async () => {
+    const c = mount([fallback()]);
+    await userEvent.click(openerOf(c));
+    await settle();
+    const rows: [HTMLElement, string][] = [
+      ...optionsOf(c).map((o): [HTMLElement, string] => [o, ".pill-model-item-icon"]),
+      [backOf(c), ".disclosure-chevron"],
+    ];
+    for (const [row, glyphSel] of rows) {
+      const glyph = row.querySelector(glyphSel)?.getBoundingClientRect();
+      const name = row.querySelector(".pill-model-name")?.getBoundingClientRect();
+      const gap = Number.parseFloat(getComputedStyle(row).columnGap);
+      expect(glyph, row.textContent).toBeDefined();
+      expect((name?.left ?? 0) - (glyph?.right ?? 0), row.textContent ?? "").toBeCloseTo(gap, 0);
+    }
+  });
+
   it("lists a stored target the catalog no longer offers", async () => {
     const c = mount([fallback({ configured: "model-z" })]);
     await userEvent.click(openerOf(c));

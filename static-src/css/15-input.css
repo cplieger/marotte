@@ -1030,10 +1030,6 @@
   --chev-turn: -90deg;
 }
 
-.fallback-back {
-  justify-content: flex-start;
-}
-
 /* The only scrolling part of the card. It carries the padding the card gave
  * up, which is what keeps the model rows inset while the effort section below
  * them runs the full width. */
@@ -1054,7 +1050,9 @@
   min-block-size: var(--menu-row-h);
   display: flex;
   align-items: center;
-  justify-content: space-between;
+
+  /* The name follows the row's glyph; `.pill-model-meta`'s auto margin sends the multiplier to the end. */
+  justify-content: flex-start;
   gap: var(--sp-2);
 
   /* The menu row's padding less the 1px edge 70-selection.css reserves. */
