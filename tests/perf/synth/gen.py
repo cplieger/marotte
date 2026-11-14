@@ -36,8 +36,8 @@ LANES = [
 ]
 
 OUT_TEXT = (
-    'ST-2-b2 round 3 is now with the gate: the patch is ready for its check of the change, with '
-    'no review round. Checks: the statedb tests pass with -race, golangci-lint reports 0 issues, '
+    'The patch adds a retry to the fetch client, bounded at three attempts, and a unit test for '
+    'every error arm. Checks: the statedb tests pass with -race, golangci-lint reports 0 issues, '
     "and deadset reports 0 findings at CI's pins. "
 )
 BACKDATE_MS = 3 * 86400 * 1000

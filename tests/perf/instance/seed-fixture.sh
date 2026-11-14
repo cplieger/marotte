@@ -9,18 +9,18 @@ fx=$(cd "${1:?fixture directory}" && pwd)
 inst=${2:?instance directory}
 port=${PERF_PORT:-19951}
 [[ $port =~ ^[0-9]+$ ]] || {
-  echo "seed-fixture.sh: PERF_PORT=$port is not a port number" >&2
+  printf 'seed-fixture.sh: PERF_PORT=%s is not a port number\n' "$port" >&2
   exit 2
 }
 [ -f "$fx/manifest.json" ] || {
-  echo "seed-fixture.sh: no fixture at $fx (run synth/fixtures.py)" >&2
+  printf 'seed-fixture.sh: no fixture at %s (run synth/fixtures.py)\n' "$fx" >&2
   exit 2
 }
 mkdir -p "$inst"
 inst=$(cd "$inst" && pwd)
 # The marker is what lets a re-seed empty the directory: never one this script did not seed.
 if [ -n "$(ls -A "$inst")" ] && [ ! -f "$inst/.perf-instance" ]; then
-  echo "seed-fixture.sh: $inst is not empty and was not seeded by this script" >&2
+  printf 'seed-fixture.sh: %s is not empty and was not seeded by this script\n' "$inst" >&2
   exit 2
 fi
 "$here/stop.sh" "$inst"
@@ -73,4 +73,4 @@ seeded = {
 }
 (inst / 'seeded.json').write_text(json.dumps(seeded, indent=1))
 EOF
-echo "seeded $inst from $fx"
+printf 'seeded %s from %s\n' "$inst" "$fx"

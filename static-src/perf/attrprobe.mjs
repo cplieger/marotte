@@ -1,5 +1,5 @@
 // The decode share of a profiled window: which part of the page's busy CPU-profile samples ran in
-// each decode family (design section 6.3's trigger is one family above 10%), with every frame
+// each decode family (one family above 10% is worth moving off the main thread), with every frame
 // mapped through the served bundle's sourcemap.
 import { TraceMap, originalPositionFor } from "@jridgewell/trace-mapping";
 

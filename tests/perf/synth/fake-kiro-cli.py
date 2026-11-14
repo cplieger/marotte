@@ -231,9 +231,9 @@ def next_phase(lane):
     return [(g, [*base, g['nodeId']], [cur])]
 
 
-THOUGHT = "Reading the lane's patch and the gate's last verdict before the next change. "
+THOUGHT = "Reading the patch and the failing test's output before making the next edit. "
 OUTPUT = (
-    'UNIT-READY. The change applies the ruling and the checks pass: the package tests with -race, '
+    'UNIT-READY. The change adds the retry arm and the checks pass: the package tests with -race, '
     'golangci-lint 0 issues, deadset 0 findings. '
 ) * 12
 

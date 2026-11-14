@@ -13,10 +13,12 @@ import { parseArgs } from "node:util";
 import playwright from "playwright";
 
 import { decodeShares } from "./attrprobe.mjs";
+import { windowFailures } from "./failures.mjs";
 import { DRIVERS, VIEWS, instanceFacts } from "./views.mjs";
 
 const LIVE_PORT = "9847";
-const TICK_MS = 10; // USER_HZ, the unit of /proc/<pid>/stat's utime and stime on Linux
+// Milliseconds per /proc/<pid>/stat utime and stime tick (Linux USER_HZ is 100 a second).
+const TICK_MS = 10;
 const REST_MS = 15000;
 const QUIET_MS = 2500;
 const SLOW_PING_MS = 50;
@@ -680,16 +682,7 @@ async function browserCell() {
     w.sseFrames = cdp
       ? linesIn(scope.sseFile, start, end, 1).filter((f) => !f.event.startsWith("sse:")).length
       : null;
-    if (w.settle && !w.settle.settled) {
-      const st = w.settle;
-      doc.failures.push(
-        `${name}: did not settle (at ${String(st.path)}, ready ${String(st.ready)}, ` +
-          `${String(st.inflight)} reads in flight)`,
-      );
-    }
-    if (w.drive && !w.drive.done) {
-      doc.failures.push(`${name}: the driver did not finish`);
-    }
+    doc.failures.push(...windowFailures(name, w));
     if (windows.has(name)) {
       doc.windows[name] = w;
     }
@@ -731,15 +724,16 @@ async function browserCell() {
   }
   if (windows.has("away") || windows.has("back")) {
     await measure("away", async () => {
+      let tabSwitch;
       if (!view.shell) {
         const clicked = await clickTab(view.away);
         if (!clicked) {
           doc.failures.push("away: no tab row to click");
         }
-        await settle(Date.now(), 60000, false);
+        tabSwitch = await settle(Date.now(), 60000, false);
       }
       const d = await drive("away");
-      return { drive: d, settle: await settle(Date.now(), 120000, false) };
+      return { tabSwitch, drive: d, settle: await settle(Date.now(), 120000, false) };
     });
     await measure("back", async () => {
       await evaluate(() => window.__perf.armReady());

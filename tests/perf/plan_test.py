@@ -1,5 +1,6 @@
 """The performance harness's own contract: the plan cplieger/ci's perf-ci.yaml
-reads, the instance's refusal of the live port, and a seeded fixture.
+reads, the instance's refusal of the live port, a seeded fixture, the git shim
+that counts fetches, and the window failures that fail a rep.
 
 run.sh runs this before it measures anything, so a broken plan fails the shard.
 """
@@ -56,13 +57,7 @@ def server(scale: str) -> tuple:
     return ('run-drive', scale, SERVER_UNIT['engine'], SERVER_UNIT['width'], None)
 
 
-def harness(name: str) -> set[str]:
-    """The names an export of static-src/perf/views.mjs holds: DRIVERS or VIEWS."""
-    views = ROOT / 'static-src' / 'perf' / 'views.mjs'
-    script = (
-        f'import {{ {name} }} from {json.dumps(views.as_uri())};'
-        f'console.log(JSON.stringify(Object.keys({name})));'
-    )
+def node(script: str) -> str:
     out = subprocess.run(
         ['node', '--input-type=module', '-e', script],
         capture_output=True,
@@ -70,7 +65,17 @@ def harness(name: str) -> set[str]:
         check=True,
         timeout=60,
     )
-    return set(json.loads(out.stdout))
+    return out.stdout
+
+
+def harness(name: str) -> set[str]:
+    """The names an export of static-src/perf/views.mjs holds: DRIVERS or VIEWS."""
+    views = ROOT / 'static-src' / 'perf' / 'views.mjs'
+    script = (
+        f'import {{ {name} }} from {json.dumps(views.as_uri())};'
+        f'console.log(JSON.stringify(Object.keys({name})));'
+    )
+    return set(json.loads(node(script)))
 
 
 class Plan(unittest.TestCase):
@@ -232,6 +237,23 @@ class Fixtures(unittest.TestCase):
         )
         return snapshot(out)
 
+    def test_refuses_a_directory_it_did_not_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = pathlib.Path(tmp) / 'notes'
+            out.mkdir()
+            (out / 'keep.txt').write_text('keep')
+            done = subprocess.run(
+                [sys.executable, str(PERF / 'synth' / 'fixtures.py'), '--out', str(out)],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            self.assertEqual(done.returncode, 2, done.stderr)
+            self.assertIn(str(out), done.stderr)
+            self.assertEqual([p.name for p in out.iterdir()], ['keep.txt'])
+            self.assertEqual((out / 'keep.txt').read_text(), 'keep')
+
     def test_one_seed_writes_byte_identical_instances(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = pathlib.Path(tmp) / 'x1'
@@ -243,6 +265,80 @@ class Fixtures(unittest.TestCase):
             self.assertEqual(first, second)
             other = self.write(out, '12')
             self.assertNotEqual(first, other)
+
+
+class Shim(unittest.TestCase):
+    """tests/perf/instance/git, the instance's git, behind marotte's own argv prefix."""
+
+    def run_shim(self, cwd: pathlib.Path, tmp: pathlib.Path, *args: str):
+        argv = tmp / 'argv'
+        stub = tmp / 'real-git'
+        stub.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@" >"$STUB_ARGV"\n')
+        stub.chmod(0o755)
+        log = tmp / 'git.jsonl'
+        env = {**os.environ, 'PERF_GIT_REAL': str(stub), 'PERF_GIT_LOG': str(log)}
+        env['STUB_ARGV'] = str(argv)
+        subprocess.run(
+            [str(PERF / 'instance' / 'git'), *args], cwd=cwd, env=env, check=True, timeout=30
+        )
+        lines = log.read_text().splitlines() if log.exists() else []
+        return lines, argv.read_text().splitlines()
+
+    def test_logs_a_fetch_behind_the_config_prefix_and_runs_git_unchanged(self):
+        args = ('-c', 'core.fsmonitor=', '-c', 'core.quotePath=false', 'fetch', '--quiet')
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(os.path.realpath(tmp)) / 'repo "q" \\b'
+            repo.mkdir()
+            lines, argv = self.run_shim(repo, pathlib.Path(tmp), *args)
+            self.assertEqual(len(lines), 1, lines)
+            entry = json.loads(lines[0])
+            self.assertEqual((entry['op'], entry['dir']), ('fetch', str(repo)))
+            self.assertIsInstance(entry['t'], float)
+            self.assertEqual(argv, list(args))
+
+    def test_logs_nothing_for_another_subcommand(self):
+        args = ('-c', 'fetch', 'status', '--porcelain')
+        with tempfile.TemporaryDirectory() as tmp:
+            lines, argv = self.run_shim(pathlib.Path(tmp), pathlib.Path(tmp), *args)
+            self.assertEqual(lines, [])
+            self.assertEqual(argv, list(args))
+
+
+UNSETTLED = {'settled': False, 'ms': 60000, 'inflight': 2, 'path': '/files', 'ready': True}
+
+
+class Failures(unittest.TestCase):
+    """static-src/perf/failures.mjs: what makes view.mjs exit 1 for one window."""
+
+    def failures(self, name: str, window: dict) -> list[str]:
+        module = ROOT / 'static-src' / 'perf' / 'failures.mjs'
+        script = (
+            f'import {{ windowFailures }} from {json.dumps(module.as_uri())};'
+            f'console.log(JSON.stringify(windowFailures({json.dumps(name)}, '
+            f'{json.dumps(window)})));'
+        )
+        return json.loads(node(script))
+
+    def test_an_unsettled_tab_switch_fails_the_away_window(self):
+        got = self.failures(
+            'away',
+            {'tabSwitch': UNSETTLED, 'settle': {'settled': True}, 'drive': {'done': True}},
+        )
+        self.assertEqual(len(got), 1, got)
+        self.assertTrue(got[0].startswith('away: the tab switch did not settle'), got)
+        self.assertIn('/files', got[0])
+        self.assertIn('2 reads in flight', got[0])
+
+    def test_a_window_that_settled_and_finished_its_drive_has_no_failure(self):
+        settled = {'settled': True, 'ms': 2600}
+        window = {'tabSwitch': settled, 'settle': settled, 'drive': {'done': True}}
+        self.assertEqual(self.failures('away', window), [])
+
+    def test_an_unsettled_window_and_an_unfinished_drive_are_each_named(self):
+        got = self.failures('live', {'settle': UNSETTLED, 'drive': {'done': False}})
+        self.assertEqual(len(got), 2, got)
+        self.assertTrue(got[0].startswith('live: did not settle'), got)
+        self.assertEqual(got[1], 'live: the driver did not finish')
 
 
 if __name__ == '__main__':

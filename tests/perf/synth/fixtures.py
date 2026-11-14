@@ -15,6 +15,9 @@ Layout under --out:
   forge/         forge.json, the fake Gitea's repositories and pull requests
   manifest.json  what was written, with counts and bytes
 
+An existing --out is emptied first only when it holds a manifest.json; any other non-empty
+directory is refused with exit 2.
+
 Usage: fixtures.py --out DIR [--scale N] [--seed S] [--now UNIX_SECONDS] [--forge-base URL]
 """
 
@@ -658,7 +661,13 @@ def main():
     now = a.now if a.now is not None else int(time.time())
     rg = R(a.seed * 1000 + s, now * 1000 - BACKDATE_MS)
     out = os.path.abspath(a.out)
-    if os.path.exists(out):
+    if os.path.lexists(out):
+        if not os.path.isdir(out) or os.path.islink(out):
+            print(f'fixtures.py: {out} is not a directory', file=sys.stderr)
+            return 2
+        if os.listdir(out) and not os.path.isfile(os.path.join(out, 'manifest.json')):
+            print(f'fixtures.py: {out} is not empty and holds no manifest.json', file=sys.stderr)
+            return 2
         shutil.rmtree(out)
     cfg, home, work, eng, forge = (
         os.path.join(out, p) for p in ('config', 'home/.kiro', 'work', 'engine', 'forge')
@@ -805,7 +814,8 @@ def main():
         'prs': man['forge']['prs'],
     }
     print(json.dumps(summary))
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

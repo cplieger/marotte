@@ -19,7 +19,7 @@ UNIT_FIELDS = ('scenario', 'scale', 'engine', 'width')
 EXACT_READ_WINDOWS = {'cold', 'rest', 'back'}
 STREAM_WINDOWS = {'live', 'away'}
 SETTLED_WINDOWS = {'cold', 'back'}
-# The routes whose answer is the whole run or the whole log by definition (requirements Q7).
+# Routes answering the whole run or the whole log: their server CPU is reported, never gated.
 WHOLE_ROUTES = re.compile(r'^GET /api/runs/\{run\}$|^GET /api/chats/\{chat\}/(export|search)\b')
 REP = re.compile(r'\.r(\d+)\.json$')
 
