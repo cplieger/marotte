@@ -1,11 +1,10 @@
 import { $ } from "./dom.js";
-import { toggleHistoryView } from "./tabs.js";
+import { showHistoryView } from "./tabs.js";
 
-/** Wire the History row at the foot of the sidebar's sections: a toggle like the toolbar's. */
+/** Wire the History row at the foot of the sidebar's sections: a destination, so a second press
+ *  keeps History. */
 export function initSidebarHistory(): void {
   $.historyBtn.addEventListener("click", () => {
-    void toggleHistoryView();
-    // At once, as a chat row's tap does: the toggle settles only after its round trip.
-    $.sidebar.classList.remove("open");
+    showHistoryView();
   });
 }

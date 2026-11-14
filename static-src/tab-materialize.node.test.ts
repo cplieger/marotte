@@ -4,7 +4,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import type { TabKind, TabSubject } from "./types.js";
-import type { Route } from "./route-path.js";
+import type { TabRoute } from "./route-path.js";
 import type { TabDotStatus, TabViewSpec } from "./tab-view.js";
 // The mocked module's own type, for the partial factory below. A top-level
 // `import type` rather than an inline `import()` annotation, which the lint forbids.
@@ -47,11 +47,6 @@ vi.mock("./files.js", () => ({
   showFilesTab: vi.fn(),
   releaseFilesTab: vi.fn(),
 }));
-vi.mock("./history.js", () => ({
-  loadHistoryView: vi.fn(),
-  refreshHistoryView: vi.fn(),
-  teardownHistoryView: vi.fn(),
-}));
 vi.mock("./docs.js", () => ({
   showDocsTab: vi.fn(),
   refreshDocsView: vi.fn(),
@@ -62,7 +57,6 @@ import { runLabelOf } from "./run-store.js";
 import { showDocsTab, refreshDocsView } from "./docs.js";
 import { showFilesTab, releaseFilesTab } from "./files.js";
 import { loadGitRepos, refreshGitView } from "./git.js";
-import { loadHistoryView, refreshHistoryView, teardownHistoryView } from "./history.js";
 import { loadSettingsTabData, refreshSettingsPanel } from "./settings-tabs.js";
 
 // --- Fixtures ---
@@ -148,7 +142,7 @@ beforeEach(() => {
 // --- Totality ---
 
 // One row per kind, so a kind that stops producing a spec fails here. `ref` is each kind's identity.
-const CASES: readonly { kind: TabKind; ref: string; view: string; route: Route }[] = [
+const CASES: readonly { kind: TabKind; ref: string; view: string; route: TabRoute }[] = [
   { kind: "chat", ref: "c-abc", view: "#chat-view", route: { kind: "chat", id: "c-abc" } },
   {
     kind: "editor",
@@ -170,12 +164,6 @@ const CASES: readonly { kind: TabKind; ref: string; view: string; route: Route }
     view: "#files-view",
     route: { kind: "files", path: "/workspace/x" },
   },
-  {
-    kind: "history",
-    ref: "",
-    view: "#history-view",
-    route: { kind: "history", tab: "chats" },
-  },
   { kind: "docs", ref: "", view: "#docs-view", route: { kind: "docs", tab: "steering" } },
   {
     kind: "spec",
@@ -195,7 +183,7 @@ const CASES: readonly { kind: TabKind; ref: string; view: string; route: Route }
  *  their × closes a view and stops nothing. */
 const VIEW_KINDS: readonly TabKind[] = ["run", "subagent", "spec"];
 
-describe("materializeTab is total over the eleven kinds", () => {
+describe("materializeTab is total over the ten kinds", () => {
   // The view selector is asserted against a LITERAL rather than against
   // TAB_VIEWS[kind], which would be tautological: reading the table to check the
   // table cannot see a kind pointing at another kind's view.
@@ -544,7 +532,6 @@ describe("names", () => {
   it.each([
     ["settings", "Settings"],
     ["git", "Git"],
-    ["history", "History"],
     ["docs", "Kiro docs"],
   ] as const)("names the %s singleton", (kind, name) => {
     register();
@@ -595,10 +582,9 @@ describe("subjectForRoute inverts the factory's route", () => {
   // Not round-tripping for the three kinds whose route carries a SUB-TAB (corrected by applyRoute);
   // a files path is the folder a route mints, so it survives into the ref.
   it.each([
-    [{ kind: "settings", tab: "tools" } as Route, "settings"],
-    [{ kind: "git", tab: "prs" } as Route, "git"],
-    [{ kind: "docs", tab: "hooks" } as Route, "docs"],
-    [{ kind: "history", tab: "runs" } as Route, "history"],
+    [{ kind: "settings", tab: "tools" } as TabRoute, "settings"],
+    [{ kind: "git", tab: "prs" } as TabRoute, "git"],
+    [{ kind: "docs", tab: "hooks" } as TabRoute, "docs"],
   ])("drops a singleton's sub-position: %o", (route, kind) => {
     expect(subjectForRoute(route)).toEqual({ kind, ref: "" });
   });
@@ -668,18 +654,7 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
     expect(releaseFilesTab).toHaveBeenCalledWith("/workspace/x");
   });
 
-  it("history, both directions", async () => {
-    register();
-    const spec = materializeTab(subject({ kind: "history" }));
-    spec.onShow?.();
-    await settle();
-    expect(loadHistoryView).toHaveBeenCalled();
-    spec.onClose?.();
-    await settle();
-    expect(teardownHistoryView).toHaveBeenCalled();
-  });
-
-  // The five singletons' DATA half, each reaching its own module's refresh and not
+  // The singletons' DATA half, each reaching its own module's refresh and not
   // the loader beside it.
   it("settings refresh loads the active panel", async () => {
     register();
@@ -706,14 +681,6 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
     expect(showFilesTab).toHaveBeenCalledWith("/workspace/x");
   });
 
-  it("history refresh refetches the list", async () => {
-    register();
-    materializeTab(subject({ kind: "history" })).refresh(signal);
-    await settle();
-    expect(refreshHistoryView).toHaveBeenCalled();
-    expect(loadHistoryView).not.toHaveBeenCalled();
-  });
-
   it("docs refresh refetches the inventory", async () => {
     register();
     materializeTab(subject({ kind: "docs" })).refresh(signal);
@@ -722,8 +689,7 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
     expect(showDocsTab).not.toHaveBeenCalled();
   });
 
-  // Docs is the one singleton with no teardown: it holds no dispatch, no
-  // AbortController and no timer, unlike History.
+  // Docs holds no dispatch, no AbortController and no timer, so it needs no teardown.
   it("docs carries no onClose", () => {
     register();
     expect("onClose" in materializeTab(subject({ kind: "docs" }))).toBe(false);

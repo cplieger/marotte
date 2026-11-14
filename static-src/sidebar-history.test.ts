@@ -20,12 +20,11 @@ vi.mock("./router.js", async (importOriginal) => ({
   pushRoute: vi.fn(),
   replaceRoute: vi.fn(),
 }));
-// The History page's own content is not this suite's subject; its tab and view are.
+// The History page's own content is not this suite's subject; its row and view are.
 vi.mock("./history.js", async (importOriginal) => ({
   ...(await importOriginal<typeof History>()),
   loadHistoryView: vi.fn(),
   refreshHistoryView: vi.fn(),
-  teardownHistoryView: vi.fn(),
 }));
 vi.mock("./device-view.js", async (importOriginal) => {
   let active = "";
@@ -88,12 +87,10 @@ vi.mock("./api-client.js", async (importOriginal) => {
 import { initSidebarHistory } from "./sidebar-history.js";
 import { adoptRetention } from "./retention.js";
 import {
-  openTab,
   tabIdFor,
   getActiveTabId,
   toggleDocsView,
   toggleGitView,
-  toggleHistoryView,
   toggleSettingsView,
   _resetForTest,
 } from "./tabs.js";
@@ -120,7 +117,7 @@ beforeAll(async () => {
   document.body.appendChild(shell);
   style = mountAppCSS();
   initSidebarHistory();
-  // The History tab imports this lazily and unawaited; loaded here, once the shell exists, its
+  // Showing History imports this lazily and unawaited; loaded here, once the shell exists, its
   // real graph is not still resolving through the mock route when the file ends.
   await import("./history.js");
 });
@@ -177,7 +174,7 @@ async function settle(): Promise<void> {
 }
 
 describe("the sidebar's History button", () => {
-  it("opens History and marks the button active, closing the phone drawer", async () => {
+  it("shows History with no tab and selects the row, closing the phone drawer", async () => {
     const sidebar = el("sidebar");
     sidebar.classList.add("open");
 
@@ -185,37 +182,11 @@ describe("the sidebar's History button", () => {
     expect(sidebar.classList.contains("open")).toBe(false);
     await settle();
 
-    const id = tabIdFor("history");
-    expect(id).not.toBe("");
-    expect(getActiveTabId()).toBe(id);
+    expect(tabServer.subjects()).toHaveLength(0);
+    expect(getActiveTabId()).toBe("");
     expect(el("history-view").classList.contains("hidden")).toBe(false);
     expect(el("history-btn").classList.contains("active")).toBe(true);
-  });
-
-  it("closes the tab it is showing when pressed again, and drops the active mark", async () => {
-    await openTab({ kind: "history" });
-    expect(el("history-btn").classList.contains("active")).toBe(true);
-
-    el("history-btn").click();
-    await settle();
-
-    expect(tabIdFor("history")).toBe("");
-    expect(el("history-btn").classList.contains("active")).toBe(false);
-  });
-
-  it("brings an open but hidden History forward instead of closing it", async () => {
-    await openTab({ kind: "history" });
-    const id = tabIdFor("history");
-    await openTab({ kind: "settings" });
-    expect(getActiveTabId()).not.toBe(id);
-    expect(el("history-btn").classList.contains("active")).toBe(false);
-
-    el("history-btn").click();
-    await settle();
-
-    expect(tabIdFor("history")).toBe(id);
-    expect(getActiveTabId()).toBe(id);
-    expect(el("history-btn").classList.contains("active")).toBe(true);
+    expect(el("history-btn").getAttribute("aria-current")).toBe("page");
   });
 
   it("is a row named by its visible label, with no tooltip", () => {
@@ -285,13 +256,12 @@ describe("the sidebar's scroll region", () => {
 });
 
 // The toolbar's page toggles share one contract: lit while their page is the one on screen, and a second
-// press closes it. The docs button was the one that never lit.
-describe("the page toggles in the toolbar and sidebar", () => {
+// press closes it.
+describe("the page toggles in the toolbar", () => {
   const toggles = [
     { button: "docs-btn", kind: "docs", toggle: () => toggleDocsView() },
     { button: "git-btn", kind: "git", toggle: () => toggleGitView() },
     { button: "settings-btn", kind: "settings", toggle: () => toggleSettingsView() },
-    { button: "history-btn", kind: "history", toggle: () => toggleHistoryView() },
   ] as const;
 
   it.each(toggles)(

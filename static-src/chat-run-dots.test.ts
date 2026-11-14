@@ -737,7 +737,7 @@ describe("a mixed strip keeps one text origin", () => {
 
   it("lines a chat row's title up with every other top-level kind's", async () => {
     const chat = await openSubject("chat", "c1");
-    const kinds: TabKind[] = ["files", "git", "history", "settings", "docs"];
+    const kinds: TabKind[] = ["files", "git", "settings", "docs"];
     const ids = [];
     for (const kind of kinds) {
       ids.push(await openSubject(kind));

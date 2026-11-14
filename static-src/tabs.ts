@@ -8,7 +8,15 @@
 
 import { pushRoute } from "./router.js";
 import { parseRoute } from "./route-path.js";
-import type { Route, SettingsTab, GitTab, DocsTab, HistoryTab, SubTabRoute } from "./route-path.js";
+import type {
+  Route,
+  SettingsTab,
+  GitTab,
+  DocsTab,
+  HistoryTab,
+  SubTabRoute,
+  TabRoute,
+} from "./route-path.js";
 // The kinds' one definition is the Go const block (internal/marotte/domain_tabs.go), emitted as a
 // registered enum, so per-kind handling is TOTAL.
 import type { TabKind, TabSubject, TabsChangedPayload } from "./types.js";
@@ -327,6 +335,26 @@ const recentList = signal<readonly RecentClose[]>([]);
 /** The Recently closed list as a TRACKED read. */
 export function recentClosed(): readonly RecentClose[] {
   return recentList.value;
+}
+
+/** History's pane while it fills the main area, else null. Per-device and never a tab: `state.active`
+ *  keeps the tab under it, marked unshown, so leaving History lands there. */
+const historyPane = signal<HistoryTab | null>(null);
+
+/** History's view; not in `TAB_VIEWS`, which is keyed by tab kind. */
+const HISTORY_VIEW = "#history-view";
+
+/** The pane History shows, or null while it is not on screen. Reactive. */
+export function historyPaneTab(): HistoryTab | null {
+  return historyPane.value;
+}
+
+/** The pane the foot row opens on: the one History last showed on this screen. */
+let lastHistoryPane: HistoryTab = "chats";
+
+/** The tab drawn selected in the sections: none while History shows. */
+function selectedTabId(): string {
+  return historyPane.peek() === null ? state.active : "";
 }
 
 /** Reactive counter for DOT writes, which do not `emit()`; only `subscribeTabCues` reads it. */
@@ -813,10 +841,18 @@ interface ActivationOpts {
  *  undefined when nothing changed. */
 function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | undefined {
   const row = rowOfID(id);
-  if (
-    row === undefined ||
-    (id === state.active && opts.again !== true && internal.unshown !== id)
-  ) {
+  if (row === undefined) {
+    return undefined;
+  }
+  if (historyPane.peek() !== null) {
+    if (opts.quiet) {
+      // The app moved the view, not the reader: History stays up over its new tab.
+      parkUnderHistory(id);
+      return undefined;
+    }
+    historyPane.value = null;
+  }
+  if (id === state.active && opts.again !== true && internal.unshown !== id) {
     return undefined;
   }
   internal.unshown = "";
@@ -986,6 +1022,10 @@ function showLoadFailure(row: TabRow): void {
  *  resume). A no-op on an empty strip and while an activation is pending, whose own refresh runs a
  *  moment later. Owns its failure; emits nothing, pushes no route and touches no state. */
 export function refreshActiveView(): void {
+  if (historyPane.peek() !== null) {
+    loadHistoryPane();
+    return;
+  }
   const row = rowOfID(state.active);
   if (row === undefined || activationPending()) {
     return;
@@ -1024,7 +1064,7 @@ let activeCloses = 0;
  *  half has run (or was superseded); the tab already active starts nothing and resolves with its
  *  own activation. */
 export function activateTab(id: string): Promise<void> {
-  if (state.active !== id && rowOfID(id) !== undefined) {
+  if ((state.active !== id || historyPane.peek() !== null) && rowOfID(id) !== undefined) {
     navigationSeq++;
   }
   revealActiveView();
@@ -1038,6 +1078,85 @@ export function activateTab(id: string): Promise<void> {
   // The gesture half runs inside this call (the action's `optimistic`), so the record is current.
   void switchCommand.dispatch({ to: id, subject: noticeSubjectOf(row) });
   return currentActivation?.id === id ? currentActivation.done : Promise.resolve();
+}
+
+/** Make `id` the tab under History without showing it, so leaving History lands there. */
+function parkUnderHistory(id: string): void {
+  state.active = id;
+  internal.unshown = id;
+  setActiveView(id);
+  emit();
+}
+
+function loadHistoryPane(): void {
+  void import("./history.js")
+    .then(({ loadHistoryView, refreshHistoryView }) => {
+      loadHistoryView();
+      refreshHistoryView();
+    })
+    .catch(() => {
+      /* noop: a failed chunk load leaves the page's own placeholder */
+    });
+}
+
+/** Show History in the main area, on `tab` or else the pane it last showed: the reader picked a
+ *  destination, so it supersedes a pending activation and an open still in flight. Opens no tab;
+ *  the active tab stays under it, unshown. */
+export function showHistoryView(tab?: HistoryTab): void {
+  navigationSeq++;
+  revealActiveView();
+  const pane = tab ?? historyPane.peek() ?? lastHistoryPane;
+  lastHistoryPane = pane;
+  if (historyPane.peek() !== null) {
+    if (historyPane.peek() !== pane) {
+      historyPane.value = pane;
+      emit();
+    }
+    return;
+  }
+  dropParkReads();
+  moveFocusOffTranscript();
+  internal.unshown = state.active;
+  switchGen += 1;
+  if (currentActivation !== null) {
+    currentActivation.controller.abort();
+    currentActivation.resolveDone();
+    currentActivation = null;
+  }
+  reselectPaintedChat();
+  historyPane.value = pane;
+  emit();
+  dropCover();
+  paintStripNow();
+  loadHistoryPane();
+}
+
+/** Switch the pane History shows; a no-op while History is not on screen. */
+export function setHistoryPane(tab: HistoryTab): void {
+  if (historyPane.peek() === null || historyPane.peek() === tab) {
+    return;
+  }
+  historyPane.value = tab;
+  lastHistoryPane = tab;
+  emit();
+}
+
+/** Leave History for the tab under it, else the most recent one, else the empty strip: Back to
+ *  the root route. A no-op while History is not on screen. */
+export function leaveHistoryView(): void {
+  if (historyPane.peek() === null) {
+    return;
+  }
+  const next =
+    state.active !== "" ? state.active : mostRecentOpenTab() || (state.tabs[0]?.subject.id ?? "");
+  if (next !== "") {
+    void activateTab(next);
+    return;
+  }
+  historyPane.value = null;
+  emit();
+  showEmptySurface();
+  scheduleEmpty();
 }
 
 /** Activate a tab WITHOUT dismissing the drawer: the app moved the view, the reader did not (a
@@ -1993,7 +2112,6 @@ const DOT_SUBJECT: Readonly<Record<TabKind, string>> = {
   settings: "settings",
   git: "git",
   files: "file browser",
-  history: "history",
   docs: "docs",
   spec: "spec",
   web: "preview",
@@ -2207,17 +2325,24 @@ export function tabIdForRoute(route: Route): string {
   if (route.kind === "files") {
     return filesTabForRoute(route.path).id;
   }
+  if (route.kind === "history") {
+    return "";
+  }
   const { kind, ref } = subjectForRoute(route);
   return tabIdFor(kind, ref);
 }
 
+/** The tab on screen, or "" while none is, History included. */
 export function getActiveTabId(): string {
-  return state.active;
+  return selectedTabId();
 }
 
-/** Route of the currently active tab, or null when no tab is active. Used by
- *  app.ts to canonicalize the URL to a restored non-chat tab. */
+/** Route of what is on screen: History's, the active tab's, or null when neither shows. */
 export function getActiveTabRoute(): Route | null {
+  const pane = historyPane.peek();
+  if (pane !== null) {
+    return { kind: "history", tab: pane };
+  }
   return rowOfID(state.active)?.spec.route ?? null;
 }
 
@@ -2226,16 +2351,13 @@ export function getActiveTabRoute(): Route | null {
 export function subTabOf(kind: "settings"): SettingsTab | null;
 export function subTabOf(kind: "git"): GitTab | null;
 export function subTabOf(kind: "docs"): DocsTab | null;
-export function subTabOf(kind: "history"): HistoryTab | null;
-export function subTabOf(kind: SubTabKind): SettingsTab | GitTab | DocsTab | HistoryTab | null {
+export function subTabOf(kind: SubTabKind): SettingsTab | GitTab | DocsTab | null {
   // eslint-disable-next-line @typescript-eslint/no-unused-expressions
   stateVersion.value;
   // eslint-disable-next-line @typescript-eslint/no-unused-expressions
   routeVersion.value;
   const route = rowOfID(tabIdFor(kind))?.spec.route;
   switch (route?.kind) {
-    case "history":
-      return route.tab ?? "chats";
     case "settings":
     case "git":
     case "docs":
@@ -2251,13 +2373,13 @@ export function getActiveTabKind(): TabKind | null {
   // Subscribe: the toolbar's find affordance derives from the tab SET inside an effect.
   // eslint-disable-next-line @typescript-eslint/no-unused-expressions
   stateVersion.value;
-  return rowOfID(state.active)?.subject.kind ?? null;
+  return historyPane.value === null ? (rowOfID(state.active)?.subject.kind ?? null) : null;
 }
 
 /** The ACTIVE tab's chat ref, or "". The projection's answer to create-vs-send: the store keeps a
  *  closed chat's row until confirmation, so this reads what the strip shows. */
 export function activeChatRef(): string {
-  const row = rowOfID(state.active);
+  const row = rowOfID(selectedTabId());
   return row?.subject.kind === "chat" ? row.subject.ref : "";
 }
 
@@ -2413,6 +2535,11 @@ function scheduleEmpty(): void {
   if (internal.emptyTimer !== null) {
     clearTimeout(internal.emptyTimer);
   }
+  // A respawned chat would take the view from History; leaving History schedules again.
+  if (historyPane.peek() !== null) {
+    internal.emptyTimer = null;
+    return;
+  }
   // DEFERRED while any remove is pending or verifying: a respawned chat would race the rollback that
   // could bring the closed one back. The removes-settled notification re-arms this.
   if (removesPending()) {
@@ -2441,9 +2568,11 @@ function settleDeferredEmpty(): void {
 
 // --- Module subscribers ---
 
-/** The id last announced on BUS_TAB_CHANGED. Module state rather than a closure
- *  so _resetForTest can clear it with the rest. */
+/** The id last announced on BUS_TAB_CHANGED, or `HISTORY_ANNOUNCED`. Module state rather than a
+ *  closure so _resetForTest can clear it with the rest. */
 let lastAnnouncedTab = "";
+/** Never a tab id, which is server-minted and printable. */
+const HISTORY_ANNOUNCED = "\u0000history";
 
 function registerModuleSubscribers(): void {
   // The removes-settled notification, which is what un-defers scheduleEmpty.
@@ -2462,6 +2591,15 @@ function registerModuleSubscribers(): void {
 
   // View / route sync.
   tabsEffect((s) => {
+    const pane = historyPane.peek();
+    if (pane !== null) {
+      showHistoryPane(pane);
+      if (lastAnnouncedTab !== HISTORY_ANNOUNCED) {
+        lastAnnouncedTab = HISTORY_ANNOUNCED;
+        emitBus(BUS_TAB_CHANGED, { to: "", kind: "history" });
+      }
+      return;
+    }
     if (s.tabs.length === 0 && s.active === "") {
       // The empty-state surface, only once a tab has EVER opened: at boot the HTML already shows the chat
       // view, while after a last-tab close the closed tab's view must not linger.
@@ -2533,7 +2671,6 @@ const ACTIVE_BTN: Readonly<Partial<Record<TabKind, () => HTMLButtonElement>>> = 
   settings: () => $.settingsBtn,
   git: () => $.gitBtn,
   files: () => $.filesBtn,
-  history: () => $.historyBtn,
   docs: () => $.docsBtn,
 };
 
@@ -2544,6 +2681,31 @@ function syncSidebarButtons(activeKind: TabKind | null): void {
     btn.classList.toggle("active", on);
     btn.setAttribute("aria-pressed", String(on));
   }
+  syncHistoryRow(false);
+}
+
+/** The foot row is a destination, so it is selected as a section row is, never pressed. */
+function syncHistoryRow(on: boolean): void {
+  $.historyBtn.classList.toggle("active", on);
+  if (on) {
+    $.historyBtn.setAttribute("aria-current", "page");
+  } else {
+    $.historyBtn.removeAttribute("aria-current");
+  }
+}
+
+function historyRoute(pane: HistoryTab): Route {
+  return pane === "chats" ? { kind: "history" } : { kind: "history", tab: pane };
+}
+
+/** History alone in the main area, with the foot row selected and its route on the URL. */
+function showHistoryPane(pane: HistoryTab): void {
+  showTranscript();
+  showOnlyView(queryEl<HTMLElement>(HISTORY_VIEW));
+  pushRoute(historyRoute(pane));
+  setPageTitle("History", "history");
+  syncSidebarButtons(null);
+  syncHistoryRow(true);
 }
 
 function showView(row: TabRow): void {
@@ -2599,7 +2761,7 @@ function revealAtSwap(row: TabRow): void {
   }
   deferReveal(() => {
     const current = rowOfID(id);
-    if (state.active === id && current !== undefined) {
+    if (state.active === id && current !== undefined && historyPane.peek() === null) {
       revealView(current);
     }
   });
@@ -2836,8 +2998,9 @@ function seatRow(
       }
     }
   }
-  node.classList.toggle("active", row.subject.id === state.active);
-  node.setAttribute("aria-selected", row.subject.id === state.active ? "true" : "false");
+  const selected = row.subject.id === selectedTabId();
+  node.classList.toggle("active", selected);
+  node.setAttribute("aria-selected", selected ? "true" : "false");
   // Sub-tab indent and pin marker, both from the SUBJECT. Toggled here rather
   // than only at creation so a pin applied to an already-rendered tab shows as
   // soon as its frame lands.
@@ -2870,14 +3033,14 @@ function paintFold(
   const rows = liveRows(list);
   if (!slideOwnsRows) {
     for (const node of rows) {
-      node.hidden = folded && node.dataset["tabId"] !== state.active;
+      node.hidden = folded && node.dataset["tabId"] !== selectedTabId();
       if (node.hidden) {
         // A row seated hidden never starts its entry, so no animation event clears the class.
         node.classList.remove("entering");
       }
     }
   }
-  const active = rows.find((n) => n.dataset["tabId"] === state.active);
+  const active = rows.find((n) => n.dataset["tabId"] === selectedTabId());
   const stop = active ?? (folded ? undefined : rows[0]);
   for (const node of rows) {
     node.tabIndex = node === stop ? 0 : -1;
@@ -2913,7 +3076,7 @@ function dropBoxlessExits(list: HTMLElement): void {
 
 function foldDot(rows: readonly HTMLElement[]): SectionHeaderView["dot"] {
   const hidden = rows
-    .filter((n) => n.dataset["tabId"] !== state.active)
+    .filter((n) => n.dataset["tabId"] !== selectedTabId())
     .map((n) => rowOfID(n.dataset["tabId"] ?? ""))
     .filter((r) => r !== undefined);
   for (const status of FOLD_DOT_PRECEDENCE) {
@@ -3394,7 +3557,7 @@ function focusAfterClose(node: HTMLElement): void {
  *  second click race the first. */
 async function toggleSingleton(kind: TabKind): Promise<void> {
   const open = tabIdFor(kind);
-  if (open !== "" && state.active === open) {
+  if (open !== "" && selectedTabId() === open) {
     await closeTab(open);
     return;
   }
@@ -3441,7 +3604,7 @@ export function setGitTab(tab: GitTab): void {
 export async function toggleFilesView(openAt: string): Promise<void> {
   const row = activeOrRecentFilesTab();
   if (row !== undefined) {
-    if (state.active === row.subject.id) {
+    if (selectedTabId() === row.subject.id) {
       await closeTab(row.subject.id);
     } else {
       void activateTab(row.subject.id);
@@ -3457,22 +3620,12 @@ export async function toggleFilesView(openAt: string): Promise<void> {
 export async function openFilesView(openAt: string): Promise<void> {
   const row = activeOrRecentFilesTab();
   if (row !== undefined) {
-    if (state.active !== row.subject.id) {
+    if (selectedTabId() !== row.subject.id) {
       void activateTab(row.subject.id);
     }
     return;
   }
   await openTab({ kind: "files", ref: openAt });
-}
-
-/** Toggle the History tab: the sidebar button closes the page it is showing, like every toolbar toggle. */
-export async function toggleHistoryView(): Promise<void> {
-  await toggleSingleton("history");
-}
-
-/** Switch the History page's pane route. No-op when it isn't open. */
-export function setHistoryTab(tab: HistoryTab): void {
-  setTabRoute(tabIdFor("history"), { kind: "history", tab });
 }
 
 /** Switch the docs browser's sub-tab route. No-op when it isn't open. */
@@ -3488,7 +3641,7 @@ export async function toggleDocsView(): Promise<void> {
 
 /** Point ONE row's LOCAL route somewhere, by id. The readonly spec is replaced, not mutated; emits
  *  only when the tab is active, since the route subscriber pushes the URL. */
-function setTabRoute(id: string, route: Route): void {
+function setTabRoute(id: string, route: TabRoute): void {
   const row = rowOfID(id);
   if (row === undefined) {
     return;
@@ -3628,6 +3781,8 @@ export function _resetForTest(): void {
   settledActive = "";
   shownChat = "";
   lastAnnouncedTab = "";
+  historyPane.value = null;
+  lastHistoryPane = "chats";
   // Re-register the target: a test that reset tabs-sync dropped it.
   registerTabsTarget(target);
   // Dispose existing module effects and re-register so tests observe the same

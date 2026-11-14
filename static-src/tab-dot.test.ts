@@ -574,7 +574,6 @@ describe("the announced phrase names the subject of the tab it is on", () => {
     settings: "",
     git: "",
     files: "",
-    history: "",
     docs: "",
     web: "/workspace/demo/index.html",
   };

@@ -9,8 +9,8 @@ import {
   activeChatRef,
   descendantChatsOf,
   hasTab,
-  setHistoryTab,
-  subTabOf,
+  historyPaneTab,
+  setHistoryPane,
   tabSetVersion,
 } from "./tabs.js";
 import type { TabRunDotStatus } from "./tabs.js";
@@ -346,8 +346,8 @@ function underFloor(q: string): boolean {
 /** The note while the typed text is under the floor. */
 const UNDER_FLOOR_NOTE = "Type 3 characters, or press Enter to search";
 
-/** The pane the history row's route names, null while no history row is open. */
-const shownTab = computed(() => subTabOf("history"));
+/** The pane History shows, null while it is not on screen. */
+const shownTab = computed(() => historyPaneTab());
 
 function chatsContainer(): HTMLElement | null {
   return maybeEl("history-table");
@@ -355,6 +355,11 @@ function chatsContainer(): HTMLElement | null {
 
 function runsContainer(): HTMLElement | null {
   return maybeEl("history-runs");
+}
+
+/** A note shown in place of a pane's rows; a list item, since both panes are ARIA lists. */
+function paneNote(className: string, ...children: (Node | string)[]): HTMLElement {
+  return el("div", { className, role: "listitem" }, ...children);
 }
 
 class HistoryController {
@@ -432,14 +437,20 @@ class HistoryController {
     });
   }
 
-  teardown(): void {
+  /** History left the screen: drop its reads and stop following the dock; the boxes keep their text for the next
+   *  show, which reads again. */
+  suspend(): void {
     loadSessions.cancel();
     searchChats.cancel();
     this.abort?.abort();
     this.abort = null;
     historyRead.reset();
-    // A null verdict stops the effect re-deriving rows for a closed page; `load()` re-sets it.
+    // A null verdict stops the effect re-deriving rows off screen; `load()` re-sets it.
     this.verdict.value = null;
+  }
+
+  teardown(): void {
+    this.suspend();
     // reset(), not close(): close's clear would repaint, a fetch no reader needs.
     this.query = "";
     this.underFloor = false;
@@ -494,9 +505,7 @@ class HistoryController {
           NOUNS,
         ),
       );
-      container.replaceChildren(
-        el("div", { className: "list-empty" }, "No matching conversations."),
-      );
+      container.replaceChildren(paneNote("list-empty", "No matching conversations."));
       return;
     }
     this.setNote(scanNote(res, res.matches.length, NOUNS));
@@ -608,7 +617,7 @@ class HistoryController {
       }
     }
     if (rows.length === 0) {
-      container.replaceChildren(el("div", { className: "list-empty" }, emptyText));
+      container.replaceChildren(paneNote("list-empty", emptyText));
       return;
     }
     const refresh = (): void => {
@@ -643,9 +652,8 @@ class HistoryController {
     retry.addEventListener("click", () => {
       void this.load();
     });
-    return el(
-      "div",
-      { className: "list-empty history-error" },
+    return paneNote(
+      "list-empty history-error",
       el("span", {}, "Could not load previous sessions. Check your connection and try again."),
       retry,
     );
@@ -910,11 +918,11 @@ function initHistoryView(): void {
     attr: "data-history-tab",
     idPrefix: "history",
     tabs: HISTORY_TABS.map((id) => ({ id, label: TAB_LABELS[id] })),
-    onSelect: setHistoryTab,
+    onSelect: setHistoryPane,
   });
   subscribe(shownTab, (tab) => {
-    // No row: nothing is on screen to repaint.
     if (tab === null) {
+      historyCtrl.suspend();
       return;
     }
     paint(tab);
@@ -939,22 +947,17 @@ function initHistoryView(): void {
 }
 
 /**
- * The history tab's activation: wire the bar once and register the page's find. No fetch: `tabs.ts` calls
- * `refreshHistoryView` next.
+ * History's show: wire the bar once and register the page's find. No fetch: `tabs.ts` calls `refreshHistoryView`
+ * next.
  */
 export function loadHistoryView(): void {
   initHistoryView();
   registerFind("history", historyFind);
 }
 
-/** A history tab's `refresh`. */
+/** Fetch History's lists again: on each show and each invalidation while it shows. */
 export function refreshHistoryView(): void {
   void historyCtrl.refresh();
-}
-
-/** Cancel the page's in-flight work; the restore path passes this as its tab's `onClose`. */
-export function teardownHistoryView(): void {
-  historyCtrl.teardown();
 }
 
 function historyShowing(): boolean {

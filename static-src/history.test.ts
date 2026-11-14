@@ -64,14 +64,13 @@ const { actionNotice, deleteStopsWork, descendantChatsOf } = vi.hoisted(() => ({
 const deleteRunDispatch = vi.fn(async () => ({ ok: true }));
 const confirmMock = vi.fn(async (_q: Confirmation) => true);
 const closeTab = vi.fn();
-/** The History row's route as the strip holds it: null while no row is open. A signal, since the real `subTabOf` is
- *  a tracked read, and a fresh one per case: every re-imported module instance stays subscribed to the cell it first
- *  read. */
-let historyRoute = signal<HistoryTab | null>("chats");
-// The real setter's no-op while no row is open.
-const setHistoryTab = vi.fn((tab: HistoryTab) => {
-  if (historyRoute.peek() !== null) {
-    historyRoute.value = tab;
+/** The pane History shows: null while it is not on screen. A signal, since the real `historyPaneTab` is a tracked
+ *  read, and a fresh one per case: every re-imported module instance stays subscribed to the cell it first read. */
+let historyPane = signal<HistoryTab | null>("chats");
+// The real setter's no-op while History is not on screen.
+const setHistoryPane = vi.fn((tab: HistoryTab) => {
+  if (historyPane.peek() !== null) {
+    historyPane.value = tab;
   }
 });
 const pushRoute = vi.fn();
@@ -131,8 +130,8 @@ vi.mock("./tabs.js", () => ({
   activeChatRef,
   descendantChatsOf,
   hasTab,
-  setHistoryTab,
-  subTabOf: (kind: string) => (kind === "history" ? historyRoute.value : null),
+  historyPaneTab: () => historyPane.value,
+  setHistoryPane,
   tabSetVersion: () => tabsVersion.value,
 }));
 // The strip pushes the URL, never the page: a spy, so a push from this graph fails the switch cases.
@@ -231,7 +230,7 @@ async function freshModule(): Promise<typeof ModHistory> {
 async function render(payload: unknown): Promise<HTMLElement> {
   const view = mountView();
   dispatch.mockResolvedValue(payload);
-  // The pair `activateTabQuietly` runs; `openTab` opens the tab and paints nothing here.
+  // The pair `showHistoryView` runs.
   const { loadHistoryView, refreshHistoryView } = await freshModule();
   loadHistoryView();
   refreshHistoryView();
@@ -244,13 +243,14 @@ async function render(payload: unknown): Promise<HTMLElement> {
 }
 
 function resetAll(): void {
-  current?.teardownHistoryView();
+  // Leaving the screen is what makes the previous case's module stop painting into this one's view.
+  historyPane.value = null;
   current = null;
   vi.clearAllMocks();
   vi.resetModules();
   bootSeq++;
   hasTab.mockReturnValue(false);
-  historyRoute = signal<HistoryTab | null>("chats");
+  historyPane = signal<HistoryTab | null>("chats");
   asking.value = new Set();
   forgetRun("wf_1");
 }
@@ -287,7 +287,7 @@ describe("history: two panes behind one bar", () => {
     expect(runsPanel.classList.contains("hidden")).toBe(true);
   });
 
-  it("switches panes from the bar by writing the row's route, and pushes no URL of its own", async () => {
+  it("switches panes from the bar through the pane setter, and pushes no URL of its own", async () => {
     const view = await render({ sessions: [chatRow], runs: [runRow] });
     view.querySelector<HTMLElement>('[data-history-tab="runs"]')!.click();
     expect(view.querySelector('[data-history-panel="runs"]')!.classList.contains("hidden")).toBe(
@@ -299,7 +299,7 @@ describe("history: two panes behind one bar", () => {
     expect(view.querySelector('[data-history-tab="runs"]')!.getAttribute("aria-selected")).toBe(
       "true",
     );
-    expect(setHistoryTab).toHaveBeenCalledWith("runs");
+    expect(setHistoryPane).toHaveBeenCalledWith("runs");
     expect(pushRoute).not.toHaveBeenCalled();
   });
 
@@ -309,12 +309,12 @@ describe("history: two panes behind one bar", () => {
     expect(pushRoute).not.toHaveBeenCalled();
   });
 
-  it("paints a row born on Runs on the first paint, without a push", async () => {
+  it("paints Runs on the first paint when History is shown on Runs, without a push", async () => {
     const view = mountView();
     dispatch.mockResolvedValue({ sessions: [chatRow], runs: [runRow] });
     const { loadHistoryView } = await freshModule();
-    // Before the page is wired, as a deep link's row arrives.
-    historyRoute.value = "runs";
+    // Before the page is wired, as a deep link to /history/runs does.
+    historyPane.value = "runs";
     loadHistoryView();
     expect(view.querySelector('[data-history-panel="runs"]')!.classList.contains("hidden")).toBe(
       false,
@@ -322,16 +322,16 @@ describe("history: two panes behind one bar", () => {
     expect(pushRoute).not.toHaveBeenCalled();
   });
 
-  it("a row born on Chats after one closed on Runs shows Chats", async () => {
+  it("shows Chats when History is shown on Chats after it left on Runs", async () => {
     const view = await render({ sessions: [chatRow], runs: [runRow] });
-    historyRoute.value = "chats";
+    historyPane.value = "chats";
     view.querySelector<HTMLElement>('[data-history-tab="runs"]')!.click();
     expect(view.querySelector('[data-history-panel="runs"]')!.classList.contains("hidden")).toBe(
       false,
     );
 
-    historyRoute.value = null;
-    historyRoute.value = "chats";
+    historyPane.value = null;
+    historyPane.value = "chats";
 
     expect(view.querySelector('[data-history-panel="chats"]')!.classList.contains("hidden")).toBe(
       false,
@@ -449,7 +449,7 @@ describe("history: opening a row", () => {
 
   it("keeps a failed reload's Retry on the Runs pane when the filter is typed", async () => {
     await failReload();
-    historyRoute.value = "runs";
+    historyPane.value = "runs";
     await openFind();
     const input = document.getElementById("hist-run-search-input") as HTMLInputElement;
     input.value = "feature";
@@ -790,15 +790,14 @@ describe("history: a run's state is its leading slot", () => {
     expect(dispatch.mock.calls.length).toBe(fetches);
   });
 
-  it("stops following the dock once the page is torn down", async () => {
-    // A closed page must not keep re-deriving rows on every dock change; reopening re-sets the answer via `load()`.
+  it("stops following the dock once History leaves the screen", async () => {
+    // A page off screen must not keep re-deriving rows on every dock change; the next show re-sets the answer.
     await render({ sessions: [], runs: [runAt("running")] });
     const row = rowOf("r:wf_1");
     const mark = (): string | undefined =>
       row.querySelector<HTMLElement>(".entry-lead > .entry-mark")?.dataset["status"];
     expect(mark()).toBe("working");
-    const { teardownHistoryView } = await freshModule();
-    teardownHistoryView();
+    historyPane.value = null;
     asking.value = new Set(["wf_1"]);
     expect(mark()).toBe("working");
   });
@@ -949,7 +948,7 @@ describe("history: an overrun reads differently from a cancel", () => {
 
 // A plain loader, because the toggle-style opener would close the active tab it was fired from.
 
-describe("history: the tab-restore loader", () => {
+describe("history: the show loader", () => {
   beforeEach(resetAll);
 
   async function restore(): Promise<HTMLElement> {
@@ -1020,11 +1019,10 @@ describe("history: the tab-restore loader", () => {
     expect(skeletonTimingMock).toHaveBeenCalledTimes(1);
   });
 
-  it("tears the page's in-flight work down on close", async () => {
+  it("drops the page's in-flight read when History leaves the screen", async () => {
     await restore();
-    const { teardownHistoryView } = await freshModule();
     cancelSessions.mockClear();
-    teardownHistoryView();
+    historyPane.value = null;
     expect(cancelSessions).toHaveBeenCalled();
   });
 });
@@ -1070,7 +1068,7 @@ async function search(
   mountView();
   dispatch.mockResolvedValue({ sessions: [], runs: [] });
   searchDispatch.mockResolvedValue(result as never);
-  // The page's own loader, which every door reaches through the tab factory's lazy import.
+  // The page's own loader, which every door reaches through `showHistoryView`'s lazy import.
   const { loadHistoryView } = await freshModule();
   loadHistoryView();
   const find = await openFind();
@@ -1120,6 +1118,19 @@ describe("history: cross-chat search", () => {
     expect(count.hasAttribute("data-tooltip")).toBe(false);
     // Under the Chats pane, not a third container.
     expect(table.id).toBe("history-table");
+  });
+
+  it("keeps the typed search when History leaves the screen, and runs it again on the next show", async () => {
+    await search({ matches: [match()], scanned: 1, matched: 1, truncated: false });
+    historyPane.value = null;
+    searchDispatch.mockClear();
+    historyPane.value = "chats";
+    current!.loadHistoryView();
+    current!.refreshHistoryView();
+    await vi.waitFor(() => {
+      expect(searchDispatch).toHaveBeenCalledWith("redis");
+    });
+    expect((document.getElementById("hist-search-input") as HTMLInputElement).value).toBe("redis");
   });
 
   // Words another program posted through the API say who sent them, so the row does not read as the user's.
@@ -1424,7 +1435,7 @@ describe("history: the runs search", () => {
     const view = mountView();
     dispatch.mockResolvedValue({ sessions: [], runs: [nightly, lint] });
     const { loadHistoryView, refreshHistoryView } = await freshModule();
-    historyRoute.value = "runs";
+    historyPane.value = "runs";
     loadHistoryView();
     refreshHistoryView();
     await vi.waitFor(() => {
@@ -1502,7 +1513,7 @@ describe("history: the runs search", () => {
     const { pageFind } = await import("./find-registry.js");
     const find = pageFind("history")!;
     expect(find.kind()).toBe("search");
-    historyRoute.value = "runs";
+    historyPane.value = "runs";
     expect(find.kind()).toBe("search");
   });
 });

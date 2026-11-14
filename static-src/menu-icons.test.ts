@@ -12,7 +12,6 @@ import {
   ICON_TAB_DOCS,
   ICON_TAB_FILES,
   ICON_TAB_GIT,
-  ICON_TAB_HISTORY,
   ICON_TAB_RUN,
   ICON_TAB_SETTINGS,
   ICON_TAB_SPEC,
@@ -64,7 +63,6 @@ const PAIRS: readonly (readonly [
 ])[] = [
   // The button and the tab it opens are one destination.
   ["sidebar Kiro docs", 'id="docs-btn"', ICON_TAB_DOCS],
-  ["sidebar History", 'id="history-btn"', ICON_TAB_HISTORY],
   ["sidebar Files", 'id="files-btn"', ICON_TAB_FILES],
   ["sidebar Git", 'id="git-btn"', ICON_TAB_GIT],
   ["toolbar Settings", 'id="settings-btn"', ICON_TAB_SETTINGS],

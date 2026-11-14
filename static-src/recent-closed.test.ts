@@ -35,12 +35,11 @@ vi.mock("./router.js", async (importOriginal) => ({
   pushRoute: vi.fn(),
   replaceRoute: vi.fn(),
 }));
-// The History page's own content is not this suite's subject; its tab is.
+// The History page's own content is not this suite's subject; its row is.
 vi.mock("./history.js", async (importOriginal) => ({
   ...(await importOriginal<typeof History>()),
   loadHistoryView: vi.fn(),
   refreshHistoryView: vi.fn(),
-  teardownHistoryView: vi.fn(),
 }));
 vi.mock("./store.js", async (importOriginal) => {
   const { signal } = await import("@cplieger/reactive");
@@ -115,7 +114,14 @@ import { formatClock, setClock } from "./locale-time.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_TAB_CHAT } from "./icons.js";
 import { LS_UI_STATE_KEY } from "./ls-keys.js";
-import { closeTab, getActiveTabId, openTab, tabIdFor, _resetForTest } from "./tabs.js";
+import {
+  closeTab,
+  getActiveTabId,
+  historyPaneTab,
+  openTab,
+  tabIdFor,
+  _resetForTest,
+} from "./tabs.js";
 import * as tabsModule from "./tabs.js";
 import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.js";
 import { ingestTabsChanged, listTabs, _resetTabsSyncForTest } from "./tabs-sync.js";
@@ -149,7 +155,7 @@ beforeAll(async () => {
   style = mountAppCSS();
   initSidebarHistory();
   initRecentClosed();
-  // The History tab imports this lazily and unawaited; loaded here, once the shell exists.
+  // Showing History imports this lazily and unawaited; loaded here, once the shell exists.
   await import("./history.js");
 });
 
@@ -566,14 +572,15 @@ describe("the History row under Recently closed", () => {
         await settle();
       },
     },
-  ])("opens the History tab when pressed $state", async ({ arrange }) => {
+  ])("shows History, with no tab, when pressed $state", async ({ arrange }) => {
     await arrange();
+    const opens = h.sentOpens();
     historyBtn().click();
     await settle();
     await settleTabs();
-    const id = tabIdFor("history");
-    expect(id).not.toBe("");
-    expect(getActiveTabId()).toBe(id);
+    expect(historyPaneTab()).toBe("chats");
+    expect(getActiveTabId()).toBe("");
+    expect(h.sentOpens(), "History opens no tab").toBe(opens);
   });
 });
 

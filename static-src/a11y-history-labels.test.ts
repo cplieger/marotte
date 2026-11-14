@@ -47,8 +47,9 @@ vi.mock("./tabs.js", () => ({
   activeChatRef: () => "",
   descendantChatsOf: () => [],
   hasTab: () => false,
-  // The pane's route sync: a no-op here, because no tab is open to point.
-  setHistoryTab: noop,
+  historyPaneTab: () => "chats",
+  // The pane switch: a no-op here, since this suite reads labels, not panes.
+  setHistoryPane: noop,
   tabSetVersion: () => 0,
 }));
 vi.mock("./router.js", () => ({ pushRoute: noop }));
@@ -70,6 +71,7 @@ vi.mock("./navigate.js", () => ({
 vi.mock("./scroll.js", () => ({
   pressHold: noop,
 }));
+import indexHtml from "../static/index.html?raw";
 import { loadHistoryView, refreshHistoryView } from "./history.js";
 
 describe("a11y: History row accessible names", () => {
@@ -109,6 +111,23 @@ describe("a11y: History row accessible names", () => {
     expect(row.querySelector(".tool-icon")?.getAttribute("aria-hidden")).toBe("true");
     expect(row.textContent).not.toContain("failed");
 
+    // ARIA: a list owns only list items, so the empty Chats pane's note is one too.
+    const chats = document.getElementById("history-table")!;
+    expect(chats.textContent).toContain("No previous conversations");
+    expect([...chats.children].map((c) => c.getAttribute("role"))).toEqual(["listitem"]);
+
     document.body.removeChild(view);
+  });
+
+  it("ships each History list's first note as a list item", () => {
+    const doc = new DOMParser().parseFromString(indexHtml, "text/html");
+    for (const id of ["history-table", "history-runs"]) {
+      const list = doc.getElementById(id)!;
+      expect(list.getAttribute("role"), id).toBe("list");
+      expect(
+        [...list.children].map((c) => c.getAttribute("role")),
+        id,
+      ).toEqual(["listitem"]);
+    }
   });
 });

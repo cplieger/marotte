@@ -133,7 +133,7 @@
           </h2>
           <ul id="recent-list" class="recent-list" hidden></ul>
         </section>
-        <button type="button" id="history-btn" class="side-history-row" aria-pressed="false">
+        <button type="button" id="history-btn" class="side-history-row">
           <svg class="ic-ui" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
           <span class="side-history-label">History</span>
         </button>
@@ -1728,12 +1728,12 @@
           </header>
           <div data-history-panel="chats" class="history-panel">
             <div id="history-table" class="list-container" role="list">
-              <div class="list-empty">No previous conversations in this workspace.</div>
+              <div class="list-empty" role="listitem">No previous conversations in this workspace.</div>
             </div>
           </div>
           <div data-history-panel="runs" class="history-panel hidden">
             <div id="history-runs" class="list-container" role="list">
-              <div class="list-empty">No previous workflow runs in this workspace.</div>
+              <div class="list-empty" role="listitem">No previous workflow runs in this workspace.</div>
             </div>
           </div>
         </div>

@@ -1,7 +1,7 @@
 // Find belongs to the active tab, and so does the toolbar button: the chord opens the tab's find, and a second press
 // from inside its box goes to the browser's native find.
 
-import { getActiveTabKind } from "./tabs.js";
+import { getActiveTabKind, historyPaneTab } from "./tabs.js";
 import type { TabKind } from "./tabs.js";
 import { handleFindHotkey, toggleChatFind } from "./find-in-chat.js";
 import { handleFindInFilesHotkey, toggleFilesSearch } from "./files-search.js";
@@ -27,7 +27,6 @@ const DESTINATION: Readonly<Record<TabKind, FindDestination>> = {
   editor: "editor",
   files: "files",
   docs: "page",
-  history: "page",
   git: "page",
   run: "none",
   subagent: "none",
@@ -46,8 +45,16 @@ const BUILTIN_KIND: Readonly<Record<FindDestination, FindKind>> = {
   none: "filter",
 };
 
+/** The page find registered for what is on screen: History's, else the active tab kind's. */
+function findKey(): string {
+  return historyPaneTab() === null ? (getActiveTabKind() ?? "") : "history";
+}
+
 /** No tab open reads as the transcript, which the app shows then. */
 function destination(): FindDestination {
+  if (historyPaneTab() !== null) {
+    return "page";
+  }
   const kind = getActiveTabKind();
   return kind === null ? "transcript" : DESTINATION[kind];
 }
@@ -89,7 +96,7 @@ export function toggleFindForActiveTab(): void {
       toggleFilesSearch();
       return;
     case "page":
-      pageFind(getActiveTabKind() ?? "")?.toggle();
+      pageFind(findKey())?.toggle();
       return;
     case "none":
       return;
@@ -101,7 +108,7 @@ export function toggleFindForActiveTab(): void {
 /** What the toolbar magnifier paints for the active tab, from one table read so the two halves cannot disagree. */
 export function findAffordanceForActiveTab(): { available: boolean; kind: FindKind } {
   // Read the registry first: `pageFind` is what subscribes the caller's effect to registration.
-  const find = pageFind(getActiveTabKind() ?? "");
+  const find = pageFind(findKey());
   const dest = destination();
   if (dest === "page") {
     if (find === undefined) {
@@ -123,7 +130,7 @@ function openRegistered(e: KeyboardEvent): boolean {
   if (!isFindChord(e)) {
     return false;
   }
-  const find = pageFind(getActiveTabKind() ?? "");
+  const find = pageFind(findKey());
   if (find === undefined || find.focused()) {
     return false;
   }
