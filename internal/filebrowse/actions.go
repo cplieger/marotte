@@ -198,19 +198,41 @@ func (e DeleteRefusedError) Error() string { return e.Reason }
 // Delete removes reqPath and everything under it behind the guards of POST /api/files/action's
 // delete, answering a DeleteRefusedError for a path those refuse. An absent path is success.
 func (h *Handler) Delete(reqPath string) error {
+	l, err := h.deletable(reqPath)
+	if err != nil {
+		return err
+	}
+	return h.unlink(l)
+}
+
+// CheckDelete answers the DeleteRefusedError Delete would for reqPath and removes nothing, so a
+// caller removing several paths can refuse the lot before touching the first.
+func (h *Handler) CheckDelete(reqPath string) error {
+	_, err := h.deletable(reqPath)
+	return err
+}
+
+func (h *Handler) deletable(reqPath string) (loc, error) {
 	l, err := h.resolvePath(filepath.Clean("/" + reqPath))
 	if err != nil {
 		slog.Warn("filebrowse: delete path rejected",
 			"path", logsafe.Field(reqPath), "reason", logsafe.Field(err.Error()))
-		return DeleteRefusedError{Reason: err.Error()}
+		return loc{}, DeleteRefusedError{Reason: err.Error()}
 	}
 	if h.ownerFor(l) != nil {
-		return DeleteRefusedError{Reason: filepath.Base(l.abs) + " is written through its editor; edit it instead"}
+		return loc{}, DeleteRefusedError{Reason: filepath.Base(l.abs) + " is written through its editor; edit it instead"}
 	}
-	return h.remove(l)
+	return l, h.refuseRemove(l)
 }
 
 func (h *Handler) remove(l loc) error {
+	if err := h.refuseRemove(l); err != nil {
+		return err
+	}
+	return h.unlink(l)
+}
+
+func (h *Handler) refuseRemove(l loc) error {
 	// Refuse to delete a granted root itself; everything INSIDE a mount is
 	// deletable.
 	if l.isMountPoint() {
@@ -222,6 +244,10 @@ func (h *Handler) remove(l loc) error {
 		slog.Warn("filebrowse: delete blocked on protected dir", "path", l.abs)
 		return DeleteRefusedError{Reason: "refusing to delete protected directory"}
 	}
+	return nil
+}
+
+func (h *Handler) unlink(l loc) error {
 	// The mount's os.Root confines the unlink but follows an in-root symlink, so a multi-component
 	// rel could reach a different file than protectedDir judged. OpenParentInRoot descends refusing
 	// symlinks, so only the final element is named through the pinned parent.

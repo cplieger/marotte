@@ -154,6 +154,12 @@ func TestKiroDocsDelete_EveryCategoryRowLeavesTheNextListing(t *testing.T) {
 		{name: "prompt", category: catPrompt, row: "gone", files: map[string]string{
 			"prompts/gone.md": "# Gone\n",
 		}},
+		{name: "steering_deepest_walked_level", category: catSteering, row: "gone", files: map[string]string{
+			"steering/a/b/c/gone.md": "---\nname: gone\n---\n",
+		}},
+		{name: "spec_deepest_walked_level", category: catSpec, row: "Gone", files: map[string]string{
+			"specs/a/b/c/gone.md": "# Gone\n",
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -202,11 +208,20 @@ func TestKiroDocsDelete_RefusesWhatTheRowDoesNotOwn(t *testing.T) {
 		writeFile(t, kiro, "shared/other.json", `{"name":"other"}`)
 		symlinkOr(t, filepath.Join(kiro, "shared", "other.json"), filepath.Join(kiro, "agents", "pair.json"))
 		row := mustRow(t, listDocs(t, h), catAgent, "pair")
+		if !row.DeleteProtected {
+			t.Errorf("an agent whose twin is a link offers its delete: %+v", row)
+		}
 		if rec := deleteRow(t, h, &row); rec.Code != http.StatusForbidden {
 			t.Errorf("delete: status %d, want 403: %s", rec.Code, rec.Body.String())
 		}
 		if _, err := os.Stat(filepath.Join(kiro, "shared", "other.json")); err != nil {
 			t.Errorf("the twin link's target was removed: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(kiro, "agents", "pair.md")); err != nil {
+			t.Errorf("a refused delete removed pair.md: %v", err)
+		}
+		if after := mustRow(t, listDocs(t, h), catAgent, "pair"); after.Path != row.Path {
+			t.Errorf("after the refusal the row is %+v, want it still at %s", after, row.Path)
 		}
 	})
 	t.Run("unlisted_path", func(t *testing.T) {
@@ -246,7 +261,7 @@ func TestKiroDocsDelete_BroadcastsSoEveryDeviceRefetches(t *testing.T) {
 }
 
 // TestKiroDocs_ListsASkillAddedOnDiskWithoutARestart pins live pickup through the memoized scan,
-// including a skill whose directory was listed before its SKILL.md landed.
+// including a skill whose directory, or a link to it, was listed before its SKILL.md landed.
 func TestKiroDocs_ListsASkillAddedOnDiskWithoutARestart(t *testing.T) {
 	h, work := docsDeleteServer(t)
 	kiro := filepath.Join(work, ".kiro")
@@ -263,4 +278,14 @@ func TestKiroDocs_ListsASkillAddedOnDiskWithoutARestart(t *testing.T) {
 	}
 	writeFile(t, kiro, "skills/other/SKILL.md", "---\nname: other\n---\n")
 	mustRow(t, listDocs(t, h), catSkill, "other")
+
+	if err := os.MkdirAll(filepath.Join(kiro, "shared", "linked"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOr(t, filepath.Join(kiro, "shared", "linked"), filepath.Join(kiro, "skills", "linked"))
+	if d, ok := findDoc(docsByCategory(listDocs(t, h), catSkill), "linked"); ok {
+		t.Errorf("a link to an empty directory is a row: %+v", d)
+	}
+	writeFile(t, kiro, "shared/linked/SKILL.md", "---\nname: linked\n---\n")
+	mustRow(t, listDocs(t, h), catSkill, "linked")
 }

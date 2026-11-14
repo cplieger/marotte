@@ -44,6 +44,9 @@ const (
 	// maxSpecWalkDepth bounds the specs walk: `.kiro/specs/<feature>/<file>.md`
 	// is two levels, so three allows one unexpected nesting level and no more.
 	maxSpecWalkDepth = 3
+	// mdSigDepth is sigDepth for a walkMarkdown category: the walk enters directories down to
+	// maxSpecWalkDepth, so its files sit one level deeper.
+	mdSigDepth = maxSpecWalkDepth + 1
 )
 
 // KiroDoc is one row on the configuration browser. Fields are per-category and mostly
@@ -174,8 +177,8 @@ func (s *Server) kiroRoots() []kiroRoot {
 // sigDepth is how many directory levels below each category the signature reads: the levels a
 // scan builds rows from. A change deeper than its category's depth here would serve a stale scan.
 var sigDepth = map[string]int{
-	"": 1, "steering": maxSpecWalkDepth, "skills": 2, "agents": 1,
-	"specs": maxSpecWalkDepth, "hooks": 1, "prompts": 1,
+	"": 1, "steering": mdSigDepth, "skills": 2, "agents": 1,
+	"specs": mdSigDepth, "hooks": 1, "prompts": 1,
 }
 
 // dirSignature builds a cache key from each root's category directories: the mtime AND the
@@ -204,6 +207,7 @@ func dirSignature(roots []kiroRoot) string {
 }
 
 // writeEntryNames appends dir's entry names, descending into subdirectories while depth allows.
+// It descends through a link too, since a linked skill directory is a row.
 func writeEntryNames(b *strings.Builder, dir string, depth int) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -211,7 +215,7 @@ func writeEntryNames(b *strings.Builder, dir string, depth int) {
 	}
 	for _, e := range entries {
 		b.WriteString("#" + e.Name())
-		if depth > 1 && e.IsDir() {
+		if depth > 1 && (e.IsDir() || e.Type()&fs.ModeSymlink != 0) {
 			b.WriteString("{")
 			writeEntryNames(b, filepath.Join(dir, e.Name()), depth-1)
 			b.WriteString("}")
@@ -284,8 +288,10 @@ func scanDocsSkills(ctx context.Context, root fs.FS, prefix string, guard pathGu
 			sc.truncated = true
 			return sc
 		}
-		// A linked directory too, as KAS loads one; the guard refuses a link out of the tree.
-		if (!e.IsDir() && e.Type()&fs.ModeSymlink == 0) || strings.ContainsRune(e.Name(), 0) {
+		// A linked directory too, as KAS loads one; the guard refuses a link out of the tree. A dot
+		// directory is skipped, as steering's skill list skips it.
+		if (!e.IsDir() && e.Type()&fs.ModeSymlink == 0) || strings.HasPrefix(e.Name(), ".") ||
+			strings.ContainsRune(e.Name(), 0) {
 			continue
 		}
 		doc, ok := skillRow(root, prefix, e.Name(), guard)
@@ -339,6 +345,12 @@ func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGu
 		return docScan{}
 	}
 	agents := steering.DedupeAgentFiles(entries)
+	linked := make(map[string]bool)
+	for _, e := range entries {
+		if e.Type()&fs.ModeSymlink != 0 {
+			linked[e.Name()] = true
+		}
+	}
 	sc := docScan{docs: make([]KiroDoc, 0, len(agents))}
 	for _, a := range agents {
 		if ctx.Err() != nil {
@@ -354,13 +366,14 @@ func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGu
 		fm := steering.Parse(data)
 		name := cmp.Or(fm.Name, base)
 		kept := sc.add(&KiroDoc{
-			Category:        catAgent,
-			Name:            name,
-			Path:            prefix + "/agents/" + file,
-			Description:     fm.Description,
-			Model:           fm.Model,
-			Tools:           fm.Tools,
-			DeleteProtected: verdict.deleteProtected,
+			Category:    catAgent,
+			Name:        name,
+			Path:        prefix + "/agents/" + file,
+			Description: fm.Description,
+			Model:       fm.Model,
+			Tools:       fm.Tools,
+			// The delete removes both spellings, so a linked twin withholds it too.
+			DeleteProtected: verdict.deleteProtected || linked[agentTwin(file)],
 		})
 		if !kept {
 			return sc

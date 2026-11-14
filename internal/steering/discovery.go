@@ -186,9 +186,9 @@ func normalizeInclusion(v string) string {
 	}
 }
 
-// findRepoSkills scans `.kiro/skills/` for skill directories (any non-dot directory; one with no
-// SKILL.md is counted and renders with no description) and returns keepByRank's share of the
-// first maxScannedEntries, with the directory's dirCount.
+// findRepoSkills scans `.kiro/skills/` for skills (isSkillDir; one with no SKILL.md renders with
+// no description) and returns keepByRank's share of the first maxScannedEntries, with the
+// directory's dirCount.
 func findRepoSkills(repoDir string) (skills []docEntry, seen dirCount) {
 	dir := filepath.Join(repoDir, ".kiro", "skills")
 	entries, err := os.ReadDir(dir)
@@ -198,15 +198,10 @@ func findRepoSkills(repoDir string) (skills []docEntry, seen dirCount) {
 	out := make([]docEntry, 0, min(len(entries), maxScannedEntries))
 	total := 0
 	for _, e := range entries {
-		if !isSkillDir(e) {
+		if !isSkillDir(dir, e) {
 			continue
 		}
-		// A missing SKILL.md yields empty data: the skill renders with no description. An empty
-		// directory is no skill at all.
-		data, readErr := readCappedFile(filepath.Join(dir, e.Name(), "SKILL.md"), FrontMatterReadCap)
-		if readErr != nil && isEmptyDir(filepath.Join(dir, e.Name())) {
-			continue
-		}
+		data, _ := readCappedFile(filepath.Join(dir, e.Name(), "SKILL.md"), FrontMatterReadCap)
 		total++
 		if len(out) >= maxScannedEntries {
 			continue
@@ -412,6 +407,35 @@ func isEmptyDir(dir string) bool {
 	return err != nil || len(entries) == 0
 }
 
-func isSkillDir(e os.DirEntry) bool {
-	return e.IsDir() && !strings.HasPrefix(e.Name(), ".")
+// isSkillDir reports whether skills/<e> is a skill: a non-dot directory, or a link to one inside
+// `.kiro` (KAS follows a linked skill directory), that holds anything. KAS skips one with no
+// SKILL.md, but it is listed as a broken skill to repair; an empty one has nothing to show.
+func isSkillDir(skills string, e os.DirEntry) bool {
+	if strings.HasPrefix(e.Name(), ".") {
+		return false
+	}
+	p := filepath.Join(skills, e.Name())
+	switch {
+	case e.Type()&os.ModeSymlink != 0:
+		if !linksInside(p, filepath.Dir(skills)) {
+			return false
+		}
+	case !e.IsDir():
+		return false
+	}
+	return !isEmptyDir(p)
+}
+
+// linksInside reports whether link resolves beneath root, both resolved first since `.kiro` may
+// itself be a link.
+func linksInside(link, root string) bool {
+	target, err := filepath.EvalSymlinks(link)
+	if err != nil {
+		return false
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false
+	}
+	return strings.HasPrefix(target, resolvedRoot+string(filepath.Separator))
 }

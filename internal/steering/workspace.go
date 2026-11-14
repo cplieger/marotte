@@ -115,7 +115,9 @@ func (k *kiroRepo) empty() bool {
 // front-matter read: a hooks dir counts only once a document in it parses to a hook.
 func hasKiroContent(repoDir string) bool {
 	dir := filepath.Join(repoDir, ".kiro")
-	if anyEntry(filepath.Join(dir, "steering"), isSteeringDoc) || anyEntry(filepath.Join(dir, "skills"), isSkillDir) {
+	skills := filepath.Join(dir, "skills")
+	isSkill := func(e os.DirEntry) bool { return isSkillDir(skills, e) }
+	if anyEntry(filepath.Join(dir, "steering"), isSteeringDoc) || anyEntry(skills, isSkill) {
 		return true
 	}
 	if entries, err := os.ReadDir(filepath.Join(dir, "agents")); err == nil && len(DedupeAgentFiles(entries)) > 0 {

@@ -128,6 +128,7 @@ func TestScanKiroDocs_SkillsAreManifestsOnly(t *testing.T) {
 		"skills/triage/triage-agent-guide.md":  {Data: []byte("# Guide\n")},
 		"skills/nomanifest/notes.md":           {Data: []byte("# Notes\n")},
 		"skills/emptied":                       {Mode: fs.ModeDir},
+		"skills/.git/config":                   {Data: []byte("[core]\n")},
 	}
 	skills := docsByCategory(scanKiroDocsFS(t.Context(), fsys, "ws/.kiro", nil).docs, catSkill)
 	if len(skills) != 2 {
@@ -152,6 +153,9 @@ func TestScanKiroDocs_SkillsAreManifestsOnly(t *testing.T) {
 	}
 	if d, eOK := findDoc(skills, "emptied"); eOK {
 		t.Errorf("an empty skill directory got a row: %+v", d)
+	}
+	if d, gOK := findDoc(skills, ".git"); gOK {
+		t.Errorf("a dot directory got a row: %+v", d)
 	}
 	for _, s := range skills {
 		if strings.Contains(s.Path, "/references/") || strings.Contains(s.Path, "/regulations/") {
