@@ -139,7 +139,7 @@ const lastReadableBody = `{"engine_heap_mib":1024,"debug_logs":true,"agent_ignor
 
 // lastReadableHub boots on lastReadableBody with one fake as every session and the engine lane, then breaks
 // config.json.
-func lastReadableHub(t *testing.T) (*Runtime, *fakeEngineSource, *fakeBridge) {
+func lastReadableHub(t *testing.T) (*Runtime, *fakeEngineSource) {
 	t.Helper()
 	dir := writeSettings(t, lastReadableBody)
 	lane := newFakeBridge()
@@ -150,11 +150,11 @@ func lastReadableHub(t *testing.T) (*Runtime, *fakeEngineSource, *fakeBridge) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	settleBoot(t, h)
 	rewriteConfigByHand(t, dir, `{"agent_ignore_files":`)
-	return h, fakeSourceOf(t, h), lane
+	return h, fakeSourceOf(t, h)
 }
 
 // assertStartedOnTheLastReadable checks generation 2 started on lastReadableBody's values, never the defaults.
-func assertStartedOnTheLastReadable(t *testing.T, h *Runtime, src *fakeEngineSource, lane *fakeBridge) {
+func assertStartedOnTheLastReadable(t *testing.T, h *Runtime, src *fakeEngineSource) {
 	t.Helper()
 	e := src.current()
 	if opts, _ := spawnOf(e); opts == nil || opts.HeapMiB != 1024 || !opts.DebugLogs {
@@ -176,17 +176,17 @@ func assertStartedOnTheLastReadable(t *testing.T, h *Runtime, src *fakeEngineSou
 }
 
 func TestUnreadableConfig_ACrashRespawnStartsOnTheLastReadableSettings(t *testing.T) {
-	h, src, lane := lastReadableHub(t)
+	h, src := lastReadableHub(t)
 
 	src.current().crash()
 	waitGenerations(t, src, 2)
 	waitReady(t, h.engine, 2)
 
-	assertStartedOnTheLastReadable(t, h, src, lane)
+	assertStartedOnTheLastReadable(t, h, src)
 }
 
 func TestUnreadableConfig_AConfirmedRestartWithNothingQueuedStartsOnTheLastReadableSettings(t *testing.T) {
-	h, src, lane := lastReadableHub(t)
+	h, src := lastReadableHub(t)
 	if h.engine.restartPending() {
 		t.Fatalf("Setup: reasons = %v before the restart, want none", h.engine.status().Restart.Reasons)
 	}
@@ -198,7 +198,7 @@ func TestUnreadableConfig_AConfirmedRestartWithNothingQueuedStartsOnTheLastReada
 	}
 	assertOneRestart(t, h, src)
 
-	assertStartedOnTheLastReadable(t, h, src, lane)
+	assertStartedOnTheLastReadable(t, h, src)
 }
 
 // A boot over a file that never read starts on the defaults; a live reason raised then waits for the file too.

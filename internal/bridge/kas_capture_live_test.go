@@ -885,8 +885,10 @@ func runContentCollection(ctx context.Context, c *capture) error {
 	for _, want := range []bool{true, false} {
 		from := len(c.inFrames(lane))
 		collect.Store(want)
-		c.out(lane, map[string]any{"method": marotte.MethodContentCollectionSettingsChanged,
-			"params": marotte.ContentCollectionSettingsParams(want)})
+		c.out(lane, map[string]any{
+			"method": marotte.MethodContentCollectionSettingsChanged,
+			"params": marotte.ContentCollectionSettingsParams(want),
+		})
 		if _, err := e.RefreshContentCollection(ctx); err != nil {
 			return fmt.Errorf("notify %v: %w", want, err)
 		}

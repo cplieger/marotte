@@ -318,9 +318,6 @@ func (b *fakeBridge) lastSessionOpts() *marotte.SessionOpts {
 }
 
 // Read it as a delta.
-// fake is the plain fake under a wrapper that embeds it.
-func (b *fakeBridge) fake() *fakeBridge { return b }
-
 func (b *fakeBridge) startCount() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
