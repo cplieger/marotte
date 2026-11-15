@@ -119,11 +119,12 @@ func withParentNames(runs []marotte.WorkflowRun, headers []marotte.ChatHeader) {
 	}
 }
 
-// sessionListOversizeError is a session list whose answer the engine dropped for being over its frame cap.
+// sessionListOversizeError is a session list the engine failed because a kiro-cli message over its frame cap was
+// dropped: the list's own answer, or a sessionless frame, which fails every pending call.
 type sessionListOversizeError struct{ cause error }
 
 func (e sessionListOversizeError) Error() string {
-	return "session list: kiro-cli's answer was over the engine's frame cap and was dropped"
+	return "session list: a message from kiro-cli was over the engine's frame cap and was dropped, so the list was not read"
 }
 
 func (e sessionListOversizeError) Unwrap() error { return e.cause }

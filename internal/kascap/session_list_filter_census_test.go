@@ -10,9 +10,11 @@ var (
 	sessionListFilterSchemaRe = regexp.MustCompile(
 		`filter:` + jsIdent + `\.object\(\{workflowSessions:` + jsIdent + `\.enum\(\["include","exclude"\]\)`,
 	)
-	// sessionListExcludeRe is listSessions dropping a step row when the filter says "exclude".
+	// sessionListExcludeRe is listSessions dropping a step row when the filter says "exclude"; the negated step
+	// predicate is part of the anchor, since an arm that keeps step rows is the oversize list again.
 	sessionListExcludeRe = regexp.MustCompile(
-		`\?\.filter\?\.workflowSessions==="exclude"\?` + jsIdent + `\.filter\(`,
+		`\?\.filter\?\.workflowSessions==="exclude"\?` + jsIdent + `\.filter\(\(\{summary:` + jsIdent + `\}\)=>!` +
+			jsIdent + `\(`,
 	)
 )
 
