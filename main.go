@@ -10,12 +10,15 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"slices"
 
 	"github.com/cplieger/marotte/internal/composition"
 	"github.com/cplieger/marotte/internal/forges"
 	"github.com/cplieger/marotte/internal/kasnode"
 	"github.com/cplieger/marotte/internal/workspace"
 	"github.com/cplieger/toolbelt/v3"
+	"github.com/cplieger/web-terminal-engine/v6/osc52copy"
 )
 
 // requiredToolsList is the required-tools.txt the image build verifies the baked catalog
@@ -30,7 +33,11 @@ func main() {
 
 // runMain is the startup sequence, split from main so deferred shutdown runs (os.Exit skips defers).
 func runMain() int {
-	// First: as the agent server's node launcher this process is replaced by node, and must log nothing on the way.
+	// Started through the image's xclip link, this binary is the clipboard tool kiro-cli calls, and must log nothing.
+	if slices.Contains(osc52copy.Names(), filepath.Base(os.Args[0])) {
+		return osc52copy.Main(os.Args[0], os.Args[1:], osc52copy.Streams{Stdin: os.Stdin, Stderr: os.Stderr})
+	}
+	// As the agent server's node launcher this process is replaced by node, and must log nothing on the way.
 	if _, ok := os.LookupEnv(kasnode.LaunchVar); ok {
 		err := kasnode.Exec(os.Environ(), os.Args)
 		fmt.Fprintf(os.Stderr, "marotte: cannot start the agent engine's node: %v\n", err)
