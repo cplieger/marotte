@@ -64,10 +64,15 @@ func newHealthHub(t *testing.T, opts ...Option) *healthHub {
 
 func (s *healthHub) signIn(t *testing.T) {
 	t.Helper()
-	if _, err := s.vault.StartSignIn(t.Context(), gateBackendID, signin.FlowParams{Flow: signin.FlowDevice}); err != nil {
+	p, err := s.vault.StartSignIn(t.Context(), gateBackendID, signin.FlowParams{Flow: signin.FlowDevice})
+	if err != nil {
 		t.Fatalf("StartSignIn: %v", err)
 	}
-	waitUntil(t, "the sign-in to commit", func() bool { return s.vault.Answerability(gateBackendID) == signin.Answerable })
+	// Answerable alone is already true on a second sign-in, before this one commits.
+	waitUntil(t, "the sign-in to commit", func() bool {
+		a := s.vault.Status(gateBackendID).SignIn
+		return (a.ID > p.Attempt || a.State != signin.AttemptPending) && s.vault.Answerability(gateBackendID) == signin.Answerable
+	})
 	waitUntil(t, "the sign-in's health", func() bool { return s.h.SignInHealth().State == marotte.SignInOK })
 }
 

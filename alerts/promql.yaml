@@ -125,6 +125,33 @@ groups:
             The log line names the file, which you can delete inside the
             container.
 
+      # The state reads failing only after 2 minutes of failed renewals, so a
+      # normal renewal blip never fires it.
+      - alert: MarotteSignInFailing
+        expr: marotte_signin_state{state="failing"} == 1
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "marotte cannot renew the Kiro sign-in"
+          description: >
+            Kiro's sign-in service has not answered marotte's renewals for 2
+            minutes or more, which is usually an outage on Kiro's side. Chats
+            and workflow steps fail until it answers again. marotte keeps
+            retrying and resumes the workflows it held by itself.
+
+      - alert: MarotteSignedOut
+        expr: marotte_signin_state{state="signed_out"} == 1
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "marotte's Kiro sign-in ended"
+          description: >
+            Kiro refused marotte's sign-in or its renewal, so every chat and
+            workflow step fails. Sign in again from the account menu in
+            marotte.
+
       # A slot missed while marotte was not running is skipped and does not
       # count. rule_id is the schedule's id.
       - alert: MarotteScheduleFailing

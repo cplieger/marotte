@@ -46,6 +46,12 @@ marotte_schedule_slots_not_started_total{event="signin_held"} 0
 # HELP marotte_build_info Build information, always 1.
 # TYPE marotte_build_info gauge
 marotte_build_info{version="dev"} 1
+# HELP marotte_signin_state 1 for the Kiro sign-in's current state and 0 for the others: ok, failing (renewals have failed for 2 minutes and the identity provider is unreachable), signed_out (the sign-in ended), none (no account).
+# TYPE marotte_signin_state gauge
+marotte_signin_state{state="failing"} 0
+marotte_signin_state{state="none"} 0
+marotte_signin_state{state="ok"} 0
+marotte_signin_state{state="signed_out"} 0
 # HELP marotte_engine_up 1 while the agent engine is ready to take prompts, else 0.
 # TYPE marotte_engine_up gauge
 marotte_engine_up 0
@@ -101,6 +107,12 @@ marotte_schedule_slots_not_started_total{event="signin_held"} 0
 # HELP marotte_build_info Build information, always 1.
 # TYPE marotte_build_info gauge
 marotte_build_info{version="dev"} 1
+# HELP marotte_signin_state 1 for the Kiro sign-in's current state and 0 for the others: ok, failing (renewals have failed for 2 minutes and the identity provider is unreachable), signed_out (the sign-in ended), none (no account).
+# TYPE marotte_signin_state gauge
+marotte_signin_state{state="failing"} 0
+marotte_signin_state{state="none"} 0
+marotte_signin_state{state="ok"} 0
+marotte_signin_state{state="signed_out"} 0
 # HELP marotte_engine_resident_memory_bytes Resident memory of the running agent engine's node process at its last sample.
 # TYPE marotte_engine_resident_memory_bytes gauge
 marotte_engine_resident_memory_bytes 3145728
@@ -185,6 +197,12 @@ marotte_schedule_slots_not_started_total{event="signin_held"} 0
 # HELP marotte_build_info Build information, always 1.
 # TYPE marotte_build_info gauge
 marotte_build_info{version="dev"} 1
+# HELP marotte_signin_state 1 for the Kiro sign-in's current state and 0 for the others: ok, failing (renewals have failed for 2 minutes and the identity provider is unreachable), signed_out (the sign-in ended), none (no account).
+# TYPE marotte_signin_state gauge
+marotte_signin_state{state="failing"} 0
+marotte_signin_state{state="none"} 0
+marotte_signin_state{state="ok"} 0
+marotte_signin_state{state="signed_out"} 0
 # HELP marotte_engine_resident_memory_bytes Resident memory of the running agent engine's node process at its last sample.
 # TYPE marotte_engine_resident_memory_bytes gauge
 marotte_engine_resident_memory_bytes 4194304
@@ -265,6 +283,12 @@ marotte_schedule_slots_not_started_total{event="signin_held"} 0
 # HELP marotte_build_info Build information, always 1.
 # TYPE marotte_build_info gauge
 marotte_build_info{version="dev"} 1
+# HELP marotte_signin_state 1 for the Kiro sign-in's current state and 0 for the others: ok, failing (renewals have failed for 2 minutes and the identity provider is unreachable), signed_out (the sign-in ended), none (no account).
+# TYPE marotte_signin_state gauge
+marotte_signin_state{state="failing"} 0
+marotte_signin_state{state="none"} 0
+marotte_signin_state{state="ok"} 0
+marotte_signin_state{state="signed_out"} 0
 # HELP marotte_engine_up 1 while the agent engine is ready to take prompts, else 0.
 # TYPE marotte_engine_up gauge
 marotte_engine_up 0

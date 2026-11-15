@@ -747,6 +747,7 @@ export const decodeEffectiveSettings: Decoder<EffectiveSettings> = (v) => {
     notify_agent_finished: reqBool(o, "notify_agent_finished", "$.effective_settings"),
     notify_pr_status: reqBool(o, "notify_pr_status", "$.effective_settings"),
     notify_run_outcome: reqBool(o, "notify_run_outcome", "$.effective_settings"),
+    notify_sign_in: reqBool(o, "notify_sign_in", "$.effective_settings"),
     spec_planning_ask_first: reqBool(o, "spec_planning_ask_first", "$.effective_settings"),
     steering_reminders_enabled: reqBool(o, "steering_reminders_enabled", "$.effective_settings"),
     workflows_enabled: reqBool(o, "workflows_enabled", "$.effective_settings"),

@@ -32,6 +32,9 @@ func RequestedStop(cause string) bool { return slices.Contains(requestedStopCaus
 // promptFailureClasses are the names internal/command gives a failed prompt's class.
 var promptFailureClasses = []string{"fatal", "pipe_death", "busy", "transient", "throttled", "rejected", "auth"}
 
+// signInStates are the names marotte.SignInState gives the Kiro sign-in's state.
+var signInStates = []string{"ok", "failing", "signed_out", "none"}
+
 // The reasons a sign-in save fails.
 const (
 	// SignInStagedCopyLeft is a save refused because an earlier save's staged copy is still on disk.
@@ -96,6 +99,10 @@ var (
 	signInSaveFailures = measure.NewLabeledCounter("signin_save_failures_total",
 		"Sign-in changes the sign-in file could not take, by backend and reason.", measure.UnitCount,
 		[]string{"backend", labelReason})
+	signInState = measure.NewLabeledGauge("signin_state",
+		"1 for the Kiro sign-in's current state and 0 for the others: ok, failing (renewals have failed for 2 "+
+			"minutes and the identity provider is unreachable), signed_out (the sign-in ended), none (no account).",
+		measure.UnitNone, []string{"state"}, measure.WithSeed(each(signInStates)...))
 	engineUp = measure.NewGauge("engine_up", "1 while the agent engine is ready to take prompts, else 0.",
 		measure.UnitNone)
 	// The memory gauges carry no label; a labeled gauge is what lets Delete take a series off the page.
@@ -133,7 +140,7 @@ var (
 )
 
 func init() {
-	registry.MustRegister(buildInfo, engineExits, promptFailures, signInSaveFailures, engineUp, engineResident,
+	registry.MustRegister(buildInfo, engineExits, promptFailures, signInSaveFailures, signInState, engineUp, engineResident,
 		engineHeapLimit, unattendedRunFailures, unattendedApprovals, slotsNotStarted, scheduleFailedSlots,
 		scheduleNextDue, triggerBlocked, triggerQueueFull, triggerPollFailures, triggerGaps)
 	buildInfo.Set(version.Build)
@@ -184,8 +191,16 @@ func SignInBackend(backend string) {
 // SignInWriteFailed.
 func SignInSaveFailed(backend, reason string) { signInSaveFailures.Inc(backend, reason) }
 
-// SignInState sets marotte_signin_state: 1 for state, 0 for the others.
-func SignInState(state string) {}
+// SignInState sets marotte_signin_state: 1 for state, one of signInStates, and 0 for the others.
+func SignInState(state string) {
+	for _, st := range signInStates {
+		v := 0.0
+		if st == state {
+			v = 1
+		}
+		signInState.Set(v, st)
+	}
+}
 
 // EngineUp sets marotte_engine_up: 1 when the engine is ready, else 0.
 func EngineUp(ready bool) {

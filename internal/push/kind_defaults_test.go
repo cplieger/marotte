@@ -20,6 +20,7 @@ func TestKindRegistry_DefaultsMatchEffectiveDefaults(t *testing.T) {
 		settings.KeyNotifyAgentFinished: eff.NotifyAgentFinished,
 		settings.KeyNotifyPRStatus:      eff.NotifyPRStatus,
 		settings.KeyNotifyRunOutcome:    eff.NotifyRunOutcome,
+		settings.KeyNotifySignIn:        eff.NotifySignIn,
 	}
 
 	var keyed int
