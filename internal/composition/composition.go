@@ -162,6 +162,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	// The sign-in the agent engine is answered from, on the app's lifetime: its poll and renewals outlive a request.
 	vault := signin.Open(appCtx, cfg.ConfigDir, signinBackends()...)
+	startQASignIn(appCtx, vault, engineBackend)
 	apiKey := apiKeyReachesEngine(cfg)
 
 	mcpStore, err := mcp.New(appCtx, cfg.ConfigDir, nil,
