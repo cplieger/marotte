@@ -8,8 +8,8 @@ export type { ToolKind };
 /** What a tool card reveals when opened ("depth 1"), per KIND. `none` is claim-only (no
  *  toggle); `diff` is windowed to whole hunks; `output` is the first and last N lines;
  *  `search` per-file counts and first matches; `move` from -> to; `fetch` URL, status and
- *  body head; `mcp` server badge, input, output; `load` the ids a tool_load or
- *  load_resource call loaded; `generic` the raw input/output block. */
+ *  body head; `mcp` server badge, input, output; `load` the ids a tool_load, load_resource
+ *  or disclose_context call loaded; `generic` the raw input/output block. */
 export type ToolDepth1 =
   "none" | "diff" | "output" | "search" | "move" | "fetch" | "mcp" | "load" | "generic";
 
@@ -74,7 +74,8 @@ export interface ToolRenderInfo {
   mcp: MCPToolIdentity | null;
   /** The skill or steering doc a `disclose_context` call loaded, or null. */
   disclosed: ToolDisclosed | null;
-  /** What a `tool_load` or `load_resource` call loaded, or null for any other call. */
+  /** What a `tool_load`, `load_resource` or `disclose_context` call loaded, or null for any
+   *  other call. */
   loaded: readonly LoadedResource[] | null;
   /** The policy verdict that refused this call, or null; the card then reads as a
    *  refusal, not a failure. */
@@ -134,9 +135,11 @@ export function profileFor(kind: string, mcp: MCPToolIdentity | null): ToolProfi
  *  Power's overview, or an id outside KAS's grammar. */
 export type LoadedType = "mcp" | "tool" | "skill" | "steering" | "overview" | "unknown";
 
-/** One resource a `tool_load` or `load_resource` call loaded, read from KAS's resource id. */
+/** One resource a load call loaded, read from its resource id or, for a disclose_context
+ *  that sent none, from its disclosed block. */
 export interface LoadedResource {
-  /** The id as the call sent it. */
+  /** The id as the call sent it; for a disclose_context that sent only a name,
+   *  `<type>::<display_name>` built from its disclosed block. */
   id: string;
   type: LoadedType;
   /** The tool, skill, document or Power name. */
@@ -145,9 +148,10 @@ export interface LoadedResource {
   server: string;
 }
 
-/** The built-in tools that load a resource by id: `tool_load`, and `load_resource`, which
- *  replaces it and `disclose_context` under KAS's consolidate_disclosures experiment. */
-const LOAD_TOOLS: ReadonlySet<string> = new Set(["tool_load", "load_resource"]);
+/** The built-in tools that load a resource by id: `tool_load`, `disclose_context` (a skill or
+ *  steering id), and `load_resource`, which replaces both under KAS's consolidate_disclosures
+ *  experiment. */
+const LOAD_TOOLS: ReadonlySet<string> = new Set(["tool_load", "disclose_context", "load_resource"]);
 
 /** Parse one KAS resource id: `tool::<server>::<tool>`, `tool::<name>`, the older
  *  `builtin::<name>`, `skill::<name>`, `steering::<name>`, `power::<name>::overview`, and a
@@ -180,6 +184,17 @@ function parseResourceID(id: string): LoadedResource {
     : unknown;
 }
 
+/** One of an older tool_load's `tool_ids`, whose schema is `builtin::<tool>` or
+ *  `<server>::<tool>`: the catalogue grammar, else a two-part id is that server's MCP tool. */
+function parseToolLoadID(id: string): LoadedResource {
+  const r = parseResourceID(id);
+  const parts = id.split("::");
+  const [server = "", name = ""] = parts;
+  return r.type === "unknown" && parts.length === 2 && server !== "" && name !== ""
+    ? { id, type: "mcp", name, server }
+    : r;
+}
+
 /** What a load call loaded, from its `id` or an older call's `tool_ids`; null for a call
  *  that is not a load or names no id yet. */
 export function loadedResources(
@@ -190,15 +205,36 @@ export function loadedResources(
     return null;
   }
   const one = input["id"];
+  if (typeof one === "string") {
+    return one === "" ? null : [parseResourceID(one)];
+  }
   const many = input["tool_ids"];
-  const ids =
-    typeof one === "string"
-      ? [one]
-      : Array.isArray(many)
-        ? many.filter((v): v is string => typeof v === "string")
-        : [];
-  const real = ids.filter((id) => id !== "");
-  return real.length === 0 ? null : real.map(parseResourceID);
+  const ids = Array.isArray(many)
+    ? many.filter((v): v is string => typeof v === "string" && v !== "")
+    : [];
+  return ids.length === 0 ? null : ids.map(parseToolLoadID);
+}
+
+/** The document KAS's disclosedContext names, for a disclose_context that sent no id. */
+function disclosedResource(d: ToolDisclosed): LoadedResource | null {
+  if (d.type !== "skill" && d.type !== "steering") {
+    return null;
+  }
+  return { id: `${d.type}::${d.display_name}`, type: d.type, name: d.display_name, server: "" };
+}
+
+/** What a call loaded: the ids it sent, else the document its disclosed block names. */
+function callLoaded(
+  toolName: string,
+  input: Record<string, unknown> | undefined,
+  disclosed: ToolDisclosed | null,
+): readonly LoadedResource[] | null {
+  const loaded = loadedResources(toolName, input);
+  if (loaded !== null || disclosed === null) {
+    return loaded;
+  }
+  const doc = disclosedResource(disclosed);
+  return doc === null ? null : [doc];
 }
 
 function loadedLabel(r: LoadedResource): string {
@@ -338,6 +374,7 @@ export function renderInfoFor(
   const filePath = profile.kind === "hook" ? (meta?.sourcePath ?? "") : pickFilePath(input);
   const fileBasename = filePath !== "" ? (filePath.split("/").pop() ?? filePath) : "";
   const diffSources = profile.writesFile ? pickDiffSources(input) : null;
+  const disclosed = meta?.disclosed ?? null;
   return {
     kind: profile.kind,
     toolName,
@@ -346,8 +383,8 @@ export function renderInfoFor(
     fileBasename,
     diffSources,
     mcp,
-    disclosed: meta?.disclosed ?? null,
-    loaded: loadedResources(toolName, input),
+    disclosed,
+    loaded: callLoaded(toolName, input, disclosed),
     denial: meta?.denial ?? null,
   };
 }

@@ -283,6 +283,23 @@
     }
   },
   {
+    "name": "tool_load server ids",
+    "call": {
+      "id": "tc-tool_load-server-ids",
+      "title": "Tool Load",
+      "kind": "other",
+      "status": "completed",
+      "tool_name": "tool_load",
+      "input": {
+        "tool_ids": [
+          "agent-mail::fetch_inbox",
+          "agent-mail::send_message"
+        ]
+      },
+      "ts": 0
+    }
+  },
+  {
     "name": "read_file",
     "call": {
       "id": "tc-read_file",
@@ -504,6 +521,34 @@
       "tool_name": "disclose_context",
       "input": {
         "name": "code-style"
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "disclose_context skill id",
+    "call": {
+      "id": "tc-disclose_context-skill-id",
+      "title": "Load skill: sync-clones",
+      "kind": "other",
+      "status": "pending",
+      "tool_name": "disclose_context",
+      "input": {
+        "id": "skill::sync-clones"
+      },
+      "ts": 0
+    }
+  },
+  {
+    "name": "disclose_context steering id",
+    "call": {
+      "id": "tc-disclose_context-steering-id",
+      "title": "Load steering: git-commits",
+      "kind": "other",
+      "status": "pending",
+      "tool_name": "disclose_context",
+      "input": {
+        "id": "steering::git-commits"
       },
       "ts": 0
     }
