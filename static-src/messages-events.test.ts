@@ -121,11 +121,17 @@ describe("model_fallback", () => {
     labelOf(buildEvent(event("model_fallback", payload)));
 
   it.each([
-    ["refusal", "Switched to model-b-5: model-a-5 declined the request \u00b7 for this turn only"],
-    ["availability", "Switched to model-b-5: model-a-5 was unavailable \u00b7 for this turn only"],
+    [
+      "refusal",
+      "Switched to model-b-5: model-a-5 declined the request\u00a0\u00b7 for this turn only",
+    ],
+    [
+      "availability",
+      "Switched to model-b-5: model-a-5 was unavailable\u00a0\u00b7 for this turn only",
+    ],
     [
       "latency",
-      "Switched to model-b-5: model-a-5 stopped for an unknown reason \u00b7 for this turn only",
+      "Switched to model-b-5: model-a-5 stopped for an unknown reason\u00a0\u00b7 for this turn only",
     ],
   ])(
     "names the model a turn-scope %s fallback moved to, its cause, and this turn",
@@ -145,7 +151,7 @@ describe("model_fallback", () => {
     );
     expect(node.className).toContain("boundary-switched");
     expect(labelOf(node)).toBe(
-      "Switched to model-b-5: model-a-5 declined the request \u00b7 this chat stays on it from now on",
+      "Switched to model-b-5: model-a-5 declined the request\u00a0\u00b7 this chat stays on it from now on",
     );
   });
 
@@ -168,13 +174,13 @@ describe("model_fallback", () => {
     ["raceLost", "the model changed while Kiro was switching"],
   ])("words the %s decline", (reason, why) => {
     expect(label({ from: "model-a-5", trigger: "availability", reason })).toBe(
-      `model-a-5 was unavailable, no fallback model available \u00b7 ${why}`,
+      `model-a-5 was unavailable, no fallback model available\u00a0\u00b7 ${why}`,
     );
   });
 
   it("names a decline's cause from its trigger", () => {
     expect(label({ from: "model-a-5", trigger: "refusal", reason: "chainExhausted" })).toBe(
-      "model-a-5 declined the request, no fallback model available \u00b7 every fallback model was already tried",
+      "model-a-5 declined the request, no fallback model available\u00a0\u00b7 every fallback model was already tried",
     );
   });
 
@@ -189,16 +195,16 @@ describe("model_fallback", () => {
         reason: "raceLost",
       }),
     ).toBe(
-      "model-a-5 was unavailable, no fallback model available \u00b7 the model changed while Kiro was switching",
+      "model-a-5 was unavailable, no fallback model available\u00a0\u00b7 the model changed while Kiro was switching",
     );
   });
 
   it("shows a decline code it does not know as sent, and an inherited name as a code", () => {
     expect(label({ from: "model-a-5", trigger: "availability", reason: "quotaGone" })).toBe(
-      "model-a-5 was unavailable, no fallback model available \u00b7 quotaGone",
+      "model-a-5 was unavailable, no fallback model available\u00a0\u00b7 quotaGone",
     );
     expect(label({ from: "model-a-5", trigger: "availability", reason: "constructor" })).toBe(
-      "model-a-5 was unavailable, no fallback model available \u00b7 constructor",
+      "model-a-5 was unavailable, no fallback model available\u00a0\u00b7 constructor",
     );
   });
 
@@ -233,7 +239,7 @@ describe("model_switched", () => {
       }),
     );
     expect(labelOf(node)).toBe(
-      "Switched from model-a-9 to model-b-5 · not available for this account",
+      "Switched from model-a-9 to model-b-5\u00a0\u00b7 not available for this account",
     );
   });
 
@@ -241,7 +247,9 @@ describe("model_switched", () => {
     const node = buildEvent(
       event("model_switched", { from: "model-a-9", to: "model-b-5", reason: "repinned" }),
     );
-    expect(labelOf(node)).toBe("Switched to model-b-5 \u00b7 Kiro moved this chat off model-a-9");
+    expect(labelOf(node)).toBe(
+      "Switched to model-b-5\u00a0\u00b7 Kiro moved this chat off model-a-9",
+    );
   });
 
   it("says so when the new model does not offer the tier the chat wanted", () => {
@@ -338,7 +346,7 @@ describe("context_reset", () => {
     const labels = causes.map((cause) => {
       const node = buildEvent(event("context_reset", { cause }));
       expect(node.className, cause).toContain("boundary-reset");
-      expect(labelOf(node), cause).toMatch(/^Context reset · /);
+      expect(labelOf(node), cause).toMatch(/^Context reset\u00a0\u00b7 /);
       return labelOf(node);
     });
     expect(new Set(labels).size).toBe(causes.length);
@@ -346,7 +354,7 @@ describe("context_reset", () => {
 
   it("says the agent had lost the chat when its session record was gone", () => {
     expect(labelOf(buildEvent(event("context_reset", { cause: "session_missing" })))).toBe(
-      "Context reset · the agent had lost this chat's earlier turns, so a new session started",
+      "Context reset\u00a0\u00b7 the agent had lost this chat's earlier turns, so a new session started",
     );
   });
 });

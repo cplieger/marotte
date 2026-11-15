@@ -44,15 +44,17 @@ export type EventEntry = { [K in EventEntryKind]: KindedEntry<K> }[EventEntryKin
 
 type BoundaryKind = "switched" | "compacted" | "failed" | "blocked" | "rewound" | "reset";
 
+/** The boundary labels' separator; the no-break space keeps the dot from starting a wrapped line. */
+const SEP = "\u00a0\u00b7 ";
+
 /** Total over the cause by type, so a second `TurnRevertCause` cannot render another cause's sentence. */
 const REVERT_LABELS: Record<TurnRevertCause, string> = { rewind: "Rewound to here" };
 
 /** Total over the cause by type: each says why the agent no longer remembers the turns above the row. */
 const CONTEXT_RESET_LABELS: Record<ContextResetCause, string> = {
-  session_missing:
-    "Context reset · the agent had lost this chat's earlier turns, so a new session started",
-  load_failed: "Context reset · the agent could not reopen this chat, so a new session started",
-  empty_retry: "Context reset · an empty reply was retried in a new session",
+  session_missing: `Context reset${SEP}the agent had lost this chat's earlier turns, so a new session started`,
+  load_failed: `Context reset${SEP}the agent could not reopen this chat, so a new session started`,
+  empty_retry: `Context reset${SEP}an empty reply was retried in a new session`,
 };
 
 /** The row one event entry draws, total over `EventEntry` by type: a new kind fails the type check. */
@@ -132,8 +134,8 @@ const SWITCH_REASONS: Record<
   ModelSwitchReason,
   (p: { readonly from: string; readonly to: string }) => string
 > = {
-  unavailable: (p) => `Switched from ${p.from} to ${p.to} · not available for this account`,
-  repinned: (p) => `Switched to ${p.to} · Kiro moved this chat off ${p.from}`,
+  unavailable: (p) => `Switched from ${p.from} to ${p.to}${SEP}not available for this account`,
+  repinned: (p) => `Switched to ${p.to}${SEP}Kiro moved this chat off ${p.from}`,
 };
 
 /**
@@ -147,7 +149,7 @@ function fallbackLabel(p: EntryModelFallback): LabelPart[] {
   const reason = p.reason ?? "";
   if (reason !== "") {
     const why = DECLINE_REASONS.get(reason) ?? reason;
-    return [p.from, cause, worded(`, no fallback model available \u00b7 ${why}`)];
+    return [p.from, cause, worded(`, no fallback model available${SEP}${why}`)];
   }
   const to = p.to ?? "";
   if (to === "") {
@@ -159,9 +161,9 @@ function fallbackLabel(p: EntryModelFallback): LabelPart[] {
   const moved: LabelPart[] = [worded("Switched to "), to, worded(": "), p.from, cause];
   switch (p.scope) {
     case "session":
-      return [...moved, worded(" \u00b7 this chat stays on it from now on")];
+      return [...moved, worded(`${SEP}this chat stays on it from now on`)];
     case "turn":
-      return [...moved, worded(" \u00b7 for this turn only")];
+      return [...moved, worded(`${SEP}for this turn only`)];
     default:
       return moved;
   }

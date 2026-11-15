@@ -150,7 +150,7 @@ function lines(turnID: string): string[] {
 }
 
 const SESSION_LINE =
-  "Switched to claude-opus-4.8: claude-opus-5.5 declined the request \u00b7 this chat stays on it from now on";
+  "Switched to claude-opus-4.8: claude-opus-5.5 declined the request\u00a0\u00b7 this chat stays on it from now on";
 
 beforeEach(() => {
   messages.teardownAll();
@@ -219,7 +219,7 @@ describe("a model fallback's line", () => {
     streamToRepin("fb-lone");
     await vi.waitFor(() => {
       expect(lines(TURN)).toEqual([
-        "Switched from claude-opus-5.5 to claude-opus-4.8 · not available for this account",
+        "Switched from claude-opus-5.5 to claude-opus-4.8\u00a0\u00b7 not available for this account",
       ]);
     });
   });
@@ -247,7 +247,7 @@ describe("a model fallback's line", () => {
     load("fb-turn", [turn431({ scope: "turn", trigger: "availability" }, false), nextTurn()]);
     await vi.waitFor(() => {
       expect(lines(TURN)).toEqual([
-        "Switched to claude-opus-4.8: claude-opus-5.5 was unavailable \u00b7 for this turn only",
+        "Switched to claude-opus-4.8: claude-opus-5.5 was unavailable\u00a0\u00b7 for this turn only",
       ]);
     });
   });
