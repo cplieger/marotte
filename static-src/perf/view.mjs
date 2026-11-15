@@ -14,6 +14,7 @@ import playwright from "playwright";
 
 import { decodeShares } from "./attrprobe.mjs";
 import { windowFailures } from "./failures.mjs";
+import { donePids } from "./shell-end.mjs";
 import { DRIVERS, VIEWS, instanceFacts } from "./views.mjs";
 
 const LIVE_PORT = "9847";
@@ -176,9 +177,11 @@ function routeOf(method, url) {
   return `${method} ${p}${keys.length ? `?${keys.join("&")}` : ""}`;
 }
 
-// The stream helpers a driver calls; each resolves {done, ms, ...} when its stream ended.
+// The stream helpers a driver calls; each resolves {done, ms, ...} when its stream ended. `ws`
+// reads the page's sockets: bytes in, shell sockets opened, and the emit.py pids done lines named.
 let triggers = 0;
-const helpers = (page, wsBytesIn) => ({
+const NO_SOCKETS = { bytesIn: () => 0, shellSockets: () => 0, donePids: new Set() };
+const helpers = (page, ws) => ({
   async trigger(op, capMs = 300000) {
     const f = path.join(
       trigDir,
@@ -227,7 +230,7 @@ const helpers = (page, wsBytesIn) => ({
   },
   toggleShell: () => page.evaluate(() => document.getElementById("shell-btn")?.click()),
   // Typing must reach the terminal, never the chat composer, which would send it as a prompt.
-  async shell(cmd, lines, onTyped) {
+  async shell(cmd, onTyped) {
     const inShell = async () =>
       (
         await withTimeout(
@@ -249,30 +252,43 @@ const helpers = (page, wsBytesIn) => ({
     if (!(await inShell())) {
       return { cmd, done: false, error: "the terminal is not focused" };
     }
-    const before = wsBytesIn();
+    const before = ws.bytesIn();
+    const sockets = ws.shellSockets();
+    const seen = new Set(ws.donePids);
     await page.keyboard.type(cmd);
     await page.keyboard.press("Enter");
     if (onTyped) {
       await onTyped();
     }
     const from = Date.now();
+    const result = (done) => ({
+      cmd,
+      done,
+      ms: Date.now() - from,
+      wsBytesIn: ws.bytesIn() - before,
+      reconnects: ws.shellSockets() - sockets,
+    });
     let last = before;
     let lastAt = from;
-    // emit.py writes more than 60 bytes a line, so the output is whole past lines * 60 bytes.
+    // shell-end.mjs owns why the end is the done line, not a byte count.
     for (;;) {
       await sleep(250);
-      const b = wsBytesIn();
+      const b = ws.bytesIn();
       if (b !== last) {
         [last, lastAt] = [b, Date.now()];
       }
-      if (Date.now() - lastAt > 3000 && b - before > lines * 60) {
-        break;
+      const ended = [...ws.donePids].some((pid) => !seen.has(pid));
+      if (ended && Date.now() - lastAt > 3000) {
+        return result(true);
       }
       if (Date.now() - from > 300000) {
-        return { cmd, done: false, ms: Date.now() - from };
+        const r = result(false);
+        return {
+          ...r,
+          error: `no emit.py done line in 300 s (${String(r.wsBytesIn)} bytes in, ${String(r.reconnects)} reconnects)`,
+        };
       }
     }
-    return { cmd, done: true, ms: Date.now() - from, wsBytesIn: last - before };
   },
 });
 
@@ -300,7 +316,7 @@ const write = (doc) => {
  *  second after it ended. */
 async function serverCell() {
   const doc = base();
-  const x = helpers(null, () => 0);
+  const x = helpers(null, NO_SOCKETS);
   const c0 = processCpuMs(inst.pid);
   const start = Date.now();
   const drive = await DRIVERS[scenario.drivers.drive](x, facts, null);
@@ -531,13 +547,20 @@ async function browserCell() {
   context.on("requestfinished", (r) => void finish(r, false));
   context.on("requestfailed", (r) => void finish(r, true));
   let wsIn = 0;
-  let shellSocket = false;
+  let shellSockets = 0;
+  const shellDone = new Set();
   page.on("websocket", (ws) => {
-    if (ws.url().includes("/api/shell/")) {
-      shellSocket = true;
+    const shell = ws.url().includes("/api/shell/");
+    if (shell) {
+      shellSockets++;
     }
     ws.on("framereceived", (f) => {
       wsIn += typeof f.payload === "string" ? Buffer.byteLength(f.payload) : f.payload.length;
+      if (shell) {
+        for (const pid of donePids(f.payload)) {
+          shellDone.add(pid);
+        }
+      }
     });
   });
   page.on("pageerror", (e) => doc.errors.push(String(e).slice(0, 300)));
@@ -546,7 +569,11 @@ async function browserCell() {
       doc.errors.push(`console: ${m.text().slice(0, 240)}`);
     }
   });
-  const x = helpers(page, () => wsIn);
+  const x = helpers(page, {
+    bytesIn: () => wsIn,
+    shellSockets: () => shellSockets,
+    donePids: shellDone,
+  });
   const evaluate = async (fn, arg) => (await withTimeout(page.evaluate(fn, arg), 30000)).v;
 
   // Settled: the page answered every ping within SLOW_PING_MS for QUIET_MS, no read is in flight,
@@ -597,7 +624,7 @@ async function browserCell() {
   }
   async function openShell() {
     await x.toggleShell();
-    for (let i = 0; i < 100 && !shellSocket; i++) {
+    for (let i = 0; i < 100 && shellSockets === 0; i++) {
       await sleep(100);
     }
     await sleep(1500);

@@ -1,6 +1,6 @@
 """The performance harness's own contract: the plan cplieger/ci's perf-ci.yaml
 reads, the instance's refusal of the live port, a seeded fixture, the git shim
-that counts fetches, and the window failures that fail a rep.
+that counts fetches, the window failures that fail a rep, and the line that ends a shell drive.
 
 run.sh runs this before it measures anything, so a broken plan fails the shard.
 """
@@ -373,6 +373,22 @@ class Fixtures(unittest.TestCase):
             other = self.write(out, '12')
             self.assertNotEqual(first, other)
 
+    def test_emit_py_ends_on_a_done_line_naming_its_pid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = pathlib.Path(tmp) / 'x1'
+            self.write(out, '11')
+            done = subprocess.run(
+                [str(out / 'work' / 'emit.py'), '3'],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+            )
+            lines = done.stdout.splitlines()
+            self.assertEqual(len(lines), 4, lines)
+            self.assertIn('000002', lines[2])
+            self.assertRegex(lines[3], r'^emit\.py done \d+$')
+
 
 class Shim(unittest.TestCase):
     """tests/perf/instance/git, the instance's git, behind marotte's own argv prefix."""
@@ -446,6 +462,49 @@ class Failures(unittest.TestCase):
         self.assertEqual(len(got), 2, got)
         self.assertTrue(got[0].startswith('live: did not settle'), got)
         self.assertEqual(got[1], 'live: the driver did not finish')
+
+    def test_an_unfinished_drive_names_why(self):
+        drive = {'done': False, 'error': 'no emit.py done line in 300 s'}
+        got = self.failures('away', {'settle': {'settled': True}, 'drive': drive})
+        self.assertEqual(got, ['away: the driver did not finish (no emit.py done line in 300 s)'])
+
+
+def scroll_frame(lines: list[str]) -> bytes:
+    """A web-terminal-engine scroll frame (docs/wire-protocol.md): type 1, inputAck, first_index,
+    then each line as one default-coloured run."""
+    out = bytearray([1]) + (0).to_bytes(8, 'little') + (49990).to_bytes(8, 'little')
+    out += len(lines).to_bytes(2, 'little')
+    for line in lines:
+        text = line.encode()
+        out += (1).to_bytes(2, 'little') + len(text).to_bytes(2, 'little') + text
+        out += (-1).to_bytes(4, 'little', signed=True) * 2 + (0).to_bytes(2, 'little')
+        out += (-1).to_bytes(4, 'little', signed=True) + (0).to_bytes(2, 'little')
+    return bytes(out)
+
+
+class ShellEnd(unittest.TestCase):
+    """static-src/perf/shell-end.mjs: the line that ends a shell driver's command."""
+
+    def pids(self, frame: bytes | str) -> list[str]:
+        module = ROOT / 'static-src' / 'perf' / 'shell-end.mjs'
+        payload = (
+            json.dumps(frame)
+            if isinstance(frame, str)
+            else f'Buffer.from({json.dumps(frame.hex())}, "hex")'
+        )
+        script = (
+            f'import {{ donePids }} from {json.dumps(module.as_uri())};'
+            f'console.log(JSON.stringify(donePids({payload})));'
+        )
+        return json.loads(node(script))
+
+    def test_a_resumed_sockets_tail_frame_names_the_done_pid(self):
+        frame = scroll_frame(['049998 INFO request handled', '049999 INFO', 'emit.py done 4242'])
+        self.assertEqual(self.pids(frame), ['4242'])
+
+    def test_the_typed_commands_echo_names_no_pid(self):
+        self.assertEqual(self.pids(scroll_frame(['$ sleep 3 && ./emit.py 50000'])), [])
+        self.assertEqual(self.pids('sleep 3 && ./emit.py 50000'), [])
 
 
 if __name__ == '__main__':
