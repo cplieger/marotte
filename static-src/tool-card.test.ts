@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } 
 import fc from "fast-check";
 import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
 import { makeToolCall } from "./__test-helpers__/model.js";
-import type { EntryToolCall } from "./types.js";
+import type { EntryToolCall, ToolCall } from "./types.js";
 
 // The root is module state, and every case but one asserts the pass-through form.
 // Here rather than at the end of that case, which a failed assertion would skip.
@@ -2208,4 +2208,112 @@ describe("a tool_load or load_resource card names what it loaded", () => {
       drawing(await glyphOf("tool")),
     );
   });
+
+  // KAS 3.3.0's own disclose_context call, as a chat log records it: `{id}` on the create, disclosedContext on the
+  // settle.
+  const disclosures: { id: string; type: "skill" | "steering"; name: string; glyph: Glyph }[] = [
+    { id: "skill::sync-clones", type: "skill", name: "sync-clones", glyph: "skills" },
+    { id: "steering::git-commits", type: "steering", name: "git-commits", glyph: "steering" },
+  ];
+  for (const d of disclosures) {
+    const create = (): ToolCall =>
+      makeToolCall({
+        id: `disclose-${d.id}`,
+        title: `Load ${d.type}: ${d.name}`,
+        kind: "other",
+        status: "pending",
+        tool_name: "disclose_context",
+        input: { id: d.id },
+      });
+    const settled = (): ToolCall => ({
+      ...create(),
+      title: `Loaded ${d.type}: ${d.name}`,
+      status: "completed",
+      disclosed: { type: d.type, display_name: d.name, uri: `file:///x/${d.name}` },
+      output: "body",
+    });
+
+    it(`a disclose_context of ${d.id} draws its docs tab's glyph from create to settle`, async () => {
+      const { buildToolCard } = await import("./tool-card.js");
+      const { applyToolCallUpdate } = await import("./messages-tools.js");
+      const card = buildToolCard(toolCardOptsFor(create(), true, "c-disclose"));
+      const want = drawing(await glyphOf(d.glyph));
+      expect(drawing(card.querySelector(".tool-icon")?.innerHTML ?? ""), "while it runs").toBe(
+        want,
+      );
+      applyToolCallUpdate(card, settled(), "c-disclose");
+      expect(drawing(card.querySelector(".tool-icon")?.innerHTML ?? ""), "once it settles").toBe(
+        want,
+      );
+      expect(card.dataset["title"]).toBe(`Loaded ${d.type}: ${d.name}`);
+    });
+
+    it(`a reloaded disclose_context of ${d.id} keeps its glyph`, async () => {
+      const { buildToolCard } = await import("./tool-card.js");
+      const card = buildToolCard(toolCardOptsFor(settled(), false, "c-disclose"));
+      expect(drawing(card.querySelector(".tool-icon")?.innerHTML ?? "")).toBe(
+        drawing(await glyphOf(d.glyph)),
+      );
+      expect(card.dataset["title"]).toBe(`Loaded ${d.type}: ${d.name}`);
+    });
+
+    // An older KAS sent `{name}`, so the settle's disclosedContext is the first thing naming the document's kind.
+    it(`an older disclose_context of a ${d.type} takes its glyph from the settle, and keeps it on reload`, async () => {
+      const { buildToolCard } = await import("./tool-card.js");
+      const { applyToolCallUpdate } = await import("./messages-tools.js");
+      const older = (tc: ToolCall): ToolCall => ({ ...tc, input: { name: d.name } });
+      const live = buildToolCard(toolCardOptsFor(older(create()), true, "c-disclose"));
+      applyToolCallUpdate(live, older(settled()), "c-disclose");
+      const reloaded = buildToolCard(toolCardOptsFor(older(settled()), false, "c-disclose"));
+      const want = drawing(await glyphOf(d.glyph));
+      expect(drawing(live.querySelector(".tool-icon")?.innerHTML ?? ""), "live").toBe(want);
+      expect(drawing(reloaded.querySelector(".tool-icon")?.innerHTML ?? ""), "reloaded").toBe(want);
+    });
+  }
+
+  // One slot, one glyph: a multi-id load draws the glyph its ids share, else the wrench.
+  const multi: { ids: string[]; glyph: Glyph }[] = [
+    { ids: ["agent-mail::fetch_inbox", "agent-mail::send_message"], glyph: "mcp" },
+    { ids: ["tool::agent-mail::fetch_inbox", "tool::docs::search"], glyph: "mcp" },
+    { ids: ["skill::land", "plugin::kit::skill::release"], glyph: "skills" },
+    { ids: ["steering::a", "power::aws::steering::b"], glyph: "steering" },
+    { ids: ["skill::land", "steering::a"], glyph: "tool" },
+    { ids: ["skill::land", "tool::agent-mail::fetch_inbox"], glyph: "tool" },
+  ];
+  for (const m of multi) {
+    it(`a tool_load of ${m.ids.join(", ")} draws the ${m.glyph} glyph`, async () => {
+      const { buildToolCard } = await import("./tool-card.js");
+      const card = buildToolCard({
+        id: `multi-${m.ids.join("+")}`,
+        title: "Tool Load",
+        kind: "other",
+        status: "completed",
+        toolName: "tool_load",
+        input: { tool_ids: m.ids },
+        live: false,
+      });
+      expect(drawing(card.querySelector(".tool-icon")?.innerHTML ?? "")).toBe(
+        drawing(await glyphOf(m.glyph)),
+      );
+    });
+  }
+
+  for (const tool of ["disclose_context", "load_resource", "tool_load"]) {
+    it(`a ${tool} of an id outside KAS's grammar draws the wrench and names the id`, async () => {
+      const { buildToolCard } = await import("./tool-card.js");
+      const card = buildToolCard({
+        id: `unknown-${tool}`,
+        title: "Load Resource",
+        kind: "other",
+        status: "completed",
+        toolName: tool,
+        input: { id: "memory::x" },
+        live: false,
+      });
+      expect(drawing(card.querySelector(".tool-icon")?.innerHTML ?? "")).toBe(
+        drawing(await glyphOf("tool")),
+      );
+      expect(card.dataset["title"]).toBe("Loaded memory::x");
+    });
+  }
 });

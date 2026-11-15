@@ -1,6 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { ICON_TAB_DOCS, toolIcon, workflowIcon, type WorkflowBadge } from "./icons.js";
+import {
+  ICON_SUBAGENT_INTROSPECT,
+  ICON_TAB_DOCS,
+  toolIcon,
+  workflowIcon,
+  type WorkflowBadge,
+} from "./icons.js";
 import { renderInfoFor } from "./tool-schema.js";
 import type { ToolCall, ToolKind } from "./types.js";
 
@@ -24,8 +30,8 @@ type Want =
   | { workflow: WorkflowBadge }
   | { library: true }
   | { mcp: string }
-  // A load draws what it loaded: an MCP tool's plug, a built-in's wrench.
-  | { load: "mcp" | "tool" };
+  // A load draws what it loaded: an MCP tool's plug, a built-in's wrench, a document its docs tab's glyph.
+  | { load: "mcp" | "tool" | "skill" | "steering" };
 
 function wantGlyph(w: Want): string {
   if ("workflow" in w) {
@@ -35,7 +41,16 @@ function wantGlyph(w: Want): string {
     return ICON_TAB_DOCS;
   }
   if ("load" in w) {
-    return toolIcon({ kind: w.load === "mcp" ? "mcp" : "other", toolName: "" });
+    switch (w.load) {
+      case "skill":
+        return ICON_SUBAGENT_INTROSPECT;
+      case "steering":
+        return toolIcon({ kind: "steering", toolName: "" });
+      case "mcp":
+        return toolIcon({ kind: "mcp", toolName: "" });
+      case "tool":
+        return toolIcon({ kind: "other", toolName: "" });
+    }
   }
   return toolIcon({ kind: "mcp" in w ? "mcp" : w.kind, toolName: "" });
 }
@@ -58,8 +73,12 @@ const WANT: Record<string, Want> = {
   "unloaded built-in via tool_call": { workflow: "inspect" },
   "unloaded MCP tool via tool_call": { mcp: "mailbox" },
   tool_load: { load: "tool" },
+  "tool_load server ids": { load: "mcp" },
+  // A `{name}` create names no kind; the settle's disclosedContext does (tool-card.test.ts).
   "disclose_context skill": { library: true },
   "disclose_context steering": { library: true },
+  "disclose_context skill id": { load: "skill" },
+  "disclose_context steering id": { load: "steering" },
   read_file: { kind: "read" },
   fs_write: { kind: "edit" },
   str_replace: { kind: "edit" },

@@ -214,6 +214,46 @@ describe("renderInfoFor", () => {
     expect(info.filePath).toBe(".kiro/hooks/lint.json");
     expect(info.fileBasename).toBe("lint.json");
   });
+
+  // An older disclose_context sends `{name}`; the document's kind arrives only with KAS's disclosedContext.
+  it.each([
+    ["skill", "land"],
+    ["steering", "marotte"],
+  ] as const)(
+    "a disclose_context with no id loads the %s its disclosed block names",
+    (type, name) => {
+      const info = renderInfoFor(
+        "other",
+        { name },
+        {
+          toolName: "disclose_context",
+          disclosed: { type, display_name: name, uri: `file:///x/${name}` },
+        },
+      );
+      expect(info.loaded).toEqual([{ id: `${type}::${name}`, type, name, server: "" }]);
+    },
+  );
+
+  it("a disclosed block of a type KAS does not define loads nothing", () => {
+    const info = renderInfoFor(
+      "other",
+      { name: "x" },
+      { disclosed: { type: "memory", display_name: "x", uri: "file:///x" } },
+    );
+    expect(info.loaded).toBeNull();
+  });
+
+  it("an id the call sent wins over the disclosed block", () => {
+    const info = renderInfoFor(
+      "other",
+      { id: "skill::land" },
+      {
+        toolName: "disclose_context",
+        disclosed: { type: "skill", display_name: "Land", uri: "file:///x/land" },
+      },
+    );
+    expect(info.loaded?.map((r) => r.id)).toEqual(["skill::land"]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -349,6 +389,47 @@ describe("loadedResources", () => {
     expect(loadedResources("load_resource", undefined)).toBeNull();
     expect(loadedResources("load_resource", {})).toBeNull();
     expect(loadedResources("tool_load", { tool_ids: [] })).toBeNull();
+  });
+
+  // KAS 3.3.0 calls disclose_context itself, with the id load_resource takes.
+  it.each([
+    ["skill::sync-clones", "skill", "sync-clones"],
+    ["steering::git-commits", "steering", "git-commits"],
+  ] as const)("reads a disclose_context call's %s", (id, type, name) => {
+    expect(loadedResources("disclose_context", { id })).toEqual([{ id, type, name, server: "" }]);
+  });
+
+  it("is null for an older disclose_context that names its document without an id", () => {
+    expect(loadedResources("disclose_context", { name: "release-notes" })).toBeNull();
+  });
+
+  // tool_load's tool_ids schema: `builtin::<tool_name>` or `<server_name>::<tool_name>`.
+  it("reads an older tool_load's <server>::<tool> ids as MCP tools", () => {
+    expect(
+      loadedResources("tool_load", {
+        tool_ids: [
+          "agent-mail::fetch_inbox",
+          "agent-mail::send_message",
+          "builtin::control_process",
+        ],
+      }),
+    ).toEqual([
+      { id: "agent-mail::fetch_inbox", type: "mcp", name: "fetch_inbox", server: "agent-mail" },
+      { id: "agent-mail::send_message", type: "mcp", name: "send_message", server: "agent-mail" },
+      { id: "builtin::control_process", type: "tool", name: "control_process", server: "" },
+    ]);
+  });
+
+  // load_resource's `id` is a catalogue id, where a bare two-part id is no tool.
+  it("keeps a two-part id outside the catalogue grammar unknown when it is a load_resource id", () => {
+    expect(loadedResources("load_resource", { id: "agent-mail::fetch_inbox" })).toEqual([
+      {
+        id: "agent-mail::fetch_inbox",
+        type: "unknown",
+        name: "agent-mail::fetch_inbox",
+        server: "",
+      },
+    ]);
   });
 
   it("names what loaded on the claim line", () => {
