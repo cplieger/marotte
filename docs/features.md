@@ -91,6 +91,8 @@ marotte renews the sign-in by itself. When Kiro's sign-in service stops answerin
 
 While either banner shows, the dot on the account button turns amber for a failing renewal and red for an ended sign-in, and the account menu's sign-in row says "Kiro sign-in failing" or "Kiro sign-in ended". A chat turn that fails on the sign-in says "Kiro sign-in failed" and why in its failure row, and the chat's latest such turn has a **Sign in again** button. A workflow run held on the sign-in names the same cause on its tab.
 
+Once marotte has found Kiro's sign-in service unreachable, a message you send first gets one quick retry of the sign-in, which waits at most 3 seconds. If the service answers, the message goes through as usual. If it still does not, the turn fails at once with "Kiro sign-in failed" instead of waiting about a minute and a half, and your message goes back to the message box, unless you have typed something there since. A message sent in the first 2 minutes of an outage, before marotte has decided, runs and fails as it would otherwise.
+
 ## The agent engine
 
 One agent engine runs every chat and workflow. **Agent engine** on the **General** tab in **Settings** holds **Restart now** and **Agent engine memory limit**, which caps the engine's JavaScript heap and is empty by default, leaving kiro-cli's own limit of about 4 GB.

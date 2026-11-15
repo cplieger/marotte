@@ -570,6 +570,9 @@ type promptSendGate interface {
 type signInReach interface {
 	// ProviderUnreachable reports whether the identity provider gives no usable renewal, an outage no sign-in fixes.
 	ProviderUnreachable() bool
+	// TurnBlocked reports whether a turn can only fail on the sign-in: the identity provider is known down and one
+	// reprobe, shared with concurrent callers and bounded by a short deadline under ctx, did not bring it back.
+	TurnBlocked(ctx context.Context) bool
 	// NoteEngineRefusal reports a turn the engine failed on a refused credential while the provider answers;
 	// NoteEngineAccepted a turn it accepted. They feed the sign-in's health.
 	NoteEngineRefusal()

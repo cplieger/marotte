@@ -445,6 +445,11 @@ func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *prompt
 	defer cancel()
 	chatID := res.Chat
 	defer roles.turnOutcome.ReleaseTurn(chatID, turnID)
+	if roles.signIn != nil && roles.signIn.TurnBlocked(ctx) {
+		roles.admission.ReleaseTurnReservation(res)
+		refuseDuringSignInOutage(ctx, roles, chatID, turnID)
+		return
+	}
 	sb, release, err := roles.bridges.OpenBridgeAt(ctx, chatID, p.Model, res)
 	defer release()
 	if closedCancelled(err) {
@@ -461,6 +466,22 @@ func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *prompt
 		return
 	}
 	promptAdmittedTurn(ctx, roles, sb, res, turnID, p)
+}
+
+// refuseDuringSignInOutage closes a turn that met a known sign-in outage before any engine call: every credential
+// ask would wait out the vault's answer window and fail. It is a sign-in failure the closer words from the standing;
+// the client hands the unsent prompt back (its turn has no turn_bind).
+func refuseDuringSignInOutage(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, turnID string) {
+	reason := marotte.SignInFailedUnreachableReason
+	roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, turnID, marotte.StopReasonInterrupted, reason, marotte.FailureKindSignIn, 0)
+	if result, err := roles.turnOutcome.AwaitTurn(ctx, chatID, turnID); err == nil && result.Reason != "" {
+		reason = result.Reason
+	}
+	obs.PromptFailed(classAuth.String())
+	slog.Warn("prompt refused: the Kiro sign-in service is unreachable", "chat_id", chatID, "turn", turnID)
+	roles.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
+		Code: marotte.ErrCodeAuthTokenUnavailable, Message: reason, TurnScoped: true,
+	}))
 }
 
 // closedCancelled reports a prompt the chat's close ended past its ack: its door refused or its lease was cut

@@ -638,6 +638,24 @@ func (v *Vault) afterRenewal(
 	return nil, nil, true
 }
 
+// Reprobe renews a record the vault holds ProviderUnreachable once, joining a renewal already in flight, and reports
+// the Answerability after it; any other record is reported with no renewal. ctx bounds only this caller's wait: the
+// renewal runs under the vault's lifetime, so a caller giving up never cancels the renewal others share.
+func (v *Vault) Reprobe(ctx context.Context, id BackendID) Answerability {
+	s := v.slots[id]
+	if s == nil {
+		return NeedsSignIn
+	}
+	s.mu.Lock()
+	r, a := s.effective, s.answerabilityLocked()
+	s.mu.Unlock()
+	if a != ProviderUnreachable {
+		return a
+	}
+	v.awaitRenewal(ctx, s, r)
+	return v.Answerability(id)
+}
+
 // errAnswerWindow is the cause of Answer's own window ending, which an asker's earlier deadline or cancel is not.
 var errAnswerWindow = errors.New("the answer window elapsed without a usable renewal")
 

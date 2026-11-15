@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/signin"
@@ -90,6 +91,20 @@ func (l signinLink) providerDown() bool {
 		return false
 	}
 	return l.vault.Answerability(l.backend) == signin.ProviderUnreachable
+}
+
+// turnReprobeWait bounds the reprobe a prompt that meets a known outage waits for.
+const turnReprobeWait = 3 * time.Second
+
+// turnBlocked reports whether the vault holds the identity provider unreachable and one reprobe, bounded by
+// turnReprobeWait, found it still down; false when the vault answers no ask.
+func (l signinLink) turnBlocked(ctx context.Context) bool {
+	if l.vault == nil || l.apiKey || l.vault.Answerability(l.backend) != signin.ProviderUnreachable {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, turnReprobeWait)
+	defer cancel()
+	return l.vault.Reprobe(ctx, l.backend) == signin.ProviderUnreachable
 }
 
 // onAnswerability registers fn for every move of the engine backend's Answerability; none when answerability is nil.

@@ -17,7 +17,9 @@ import {
   steerCount,
   setAgentStatus,
   tabStatusFor,
+  appendEntry,
 } from "../store.js";
+import { composerDraft, dropComposerState } from "../composer-state.js";
 import type { Session } from "../types.js";
 import type { Entry, EntryTurnClose } from "../wire/types.gen.js";
 import type * as ApiClient from "../api-client.js";
@@ -865,5 +867,67 @@ describe("decision_settled handler", () => {
       request_id: 45,
     });
     expect(mockCloseNotificationsFor).toHaveBeenCalledWith({ kind: "chat", chatID: "chat-1" });
+  });
+});
+
+// A prompt the server refused during a known sign-in outage never reached the engine (no turn_bind), so its words
+// come back to the chat's composer; one the engine took stays in the transcript only.
+describe("turn_closed for a prompt failed on the sign-in", () => {
+  function openPromptOn(chatID: string, prompt: Record<string, unknown>): void {
+    openTurn(chatID, {
+      id: "t1-open",
+      turn: "t1",
+      kind: "turn_open",
+      seq: 0,
+      ts: 1,
+      payload: { source: "prompt", n: 1, prompt: { id: "m-1", ...prompt } },
+    } as Entry);
+  }
+  const signInClose = {
+    outcome: "interrupted",
+    failure_kind: "sign_in",
+  } as Partial<EntryTurnClose>;
+
+  beforeEach(() => {
+    dropComposerState("give-back");
+  });
+
+  it("hands an unsent typed prompt back to its composer", () => {
+    setSessions([makeSession("give-back")]);
+    openPromptOn("give-back", { text: "do the thing" });
+    fireClose("give-back", { payload: signInClose });
+    expect(composerDraft("give-back")).toBe("do the thing");
+  });
+
+  it("keeps a prompt the engine took, an automatic one and an API caller's out of the composer", () => {
+    const cases: [string, Record<string, unknown>, boolean][] = [
+      ["bound", { text: "sent to the engine" }, true],
+      ["automatic", { text: "marotte's own", automatic: true }, false],
+      ["caller", { text: "an API call", caller: { kind: "chat", id: "c-2" } }, false],
+    ];
+    for (const [name, prompt, bound] of cases) {
+      dropComposerState("give-back");
+      setSessions([makeSession("give-back")]);
+      openPromptOn("give-back", prompt);
+      if (bound) {
+        appendEntry("give-back", {
+          id: "t1-bind",
+          turn: "t1",
+          kind: "turn_bind",
+          seq: 1,
+          ts: 1,
+          payload: { kas_message_id: "k-1", session_id: "s-1" },
+        } as Entry);
+      }
+      fireClose("give-back", { payload: signInClose, seq: bound ? 2 : 1 });
+      expect(composerDraft("give-back"), name).toBe("");
+    }
+  });
+
+  it("hands nothing back for a failure of another kind", () => {
+    setSessions([makeSession("give-back")]);
+    openPromptOn("give-back", { text: "do the thing" });
+    fireClose("give-back", { payload: { outcome: "interrupted", failure_reason: "boom" } });
+    expect(composerDraft("give-back")).toBe("");
   });
 });
