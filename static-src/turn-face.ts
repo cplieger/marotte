@@ -18,7 +18,7 @@ import type { Entry } from "./types.js";
 import type { EventEntry } from "./messages-events.js";
 
 /** One part of a collapsed turn's face, in body order: a last-message bubble's prose, or a fallback line. */
-export type FacePart =
+type FacePart =
   | { readonly kind: "prose"; readonly text: string }
   | { readonly kind: "row"; readonly entry: EventEntry };
 
