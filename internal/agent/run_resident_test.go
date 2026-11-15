@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -1099,48 +1100,78 @@ func TestRunRequestVerbs_QueuedBehindAParkedVerbAnswerWithinTheirOwnBudget(t *te
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			const budget = 800 * time.Millisecond
-			answerBudgetOf(t, budget)
+			const budget = 300 * time.Millisecond
 			h, host, _ := gatedHostRun(t, tc.reply(t))
 			if tc.log != nil {
 				tc.log(t, h)
 			}
+			// The first verb's budget outlasts the test, so it holds the run until its caller leaves.
+			var taken atomic.Int32
+			deadlines := make(chan time.Time, 4)
+			answerDeadlineOf(t, func() time.Time {
+				if taken.Add(1) == 1 {
+					return time.Now().Add(time.Minute)
+				}
+				d := time.Now().Add(budget)
+				deadlines <- d
+				return d
+			})
 			parked := make(chan struct{})
 			host.onStart = sync.OnceFunc(func() { close(parked) })
+			firstCtx, leave := context.WithCancel(t.Context())
+			defer leave()
 			first := make(chan error, 1)
-			firstAsked := time.Now()
-			go func() { first <- tc.call(t.Context(), h) }()
+			go func() { first <- tc.call(firstCtx, h) }()
 			select {
 			case <-parked:
 			case <-time.After(2 * time.Second):
 				t.Fatal("Setup: the first verb never reached the run's host load")
 			}
-			// The second verb is asked while the first still holds the run, a quarter of the way into its budget.
-			time.Sleep(time.Until(firstAsked.Add(budget / 4)))
 
 			second := make(chan error, 1)
-			secondAsked := time.Now()
 			go func() { second <- tc.call(t.Context(), h) }()
+			var asked time.Time
+			select {
+			case asked = <-deadlines:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the queued verb took no answer deadline while the first verb held the run, want its budget " +
+					"to start when it is asked")
+			}
+			leave()
 			var err error
 			select {
 			case err = <-second:
 			case <-time.After(5 * time.Second):
 				t.Fatal("the queued verb is still waiting 5s in, want an answer at its own answer budget")
 			}
-			took := time.Since(secondAsked)
+			answered := time.Now()
 
 			if !errors.Is(err, errRunHostSlow) {
 				t.Errorf("the queued verb = %v, want errRunHostSlow", err)
 			}
-			if limit := budget + budget*3/8; took > limit {
-				t.Errorf("the queued verb answered %v after it was asked, want within %v: its %v budget restarted "+
-					"once it got the run", took, limit, budget)
+			if answered.Before(asked) {
+				t.Errorf("the queued verb answered %v before the deadline it took when asked, want it to wait that "+
+					"budget out on the load", asked.Sub(answered))
 			}
-			if fErr := <-first; !errors.Is(fErr, errRunHostSlow) {
-				t.Errorf("the first verb = %v, want errRunHostSlow", fErr)
+			select {
+			case again := <-deadlines:
+				t.Errorf("the queued verb took another answer deadline (%v after the first) once it got the run, "+
+					"want its budget counted from when it was asked", again.Sub(asked))
+			default:
+			}
+			if fErr := <-first; !errors.Is(fErr, context.Canceled) {
+				t.Errorf("the first verb = %v once its caller left, want context.Canceled", fErr)
 			}
 		})
 	}
+}
+
+// answerDeadlineOf replaces answerDeadline for one test, which must not run in parallel.
+func answerDeadlineOf(t *testing.T, f func() time.Time) {
+	t.Helper()
+	prev := answerDeadline
+	answerDeadline = f
+	t.Cleanup(func() { answerDeadline = prev })
 }
 
 // kiro-cli can leave `_kiro/workflow/inspect` unanswered too; a person's verb answers inside the browser's budget
@@ -1354,13 +1385,13 @@ func TestControlHandler_AHeldLaunchSessionNamesTheAgentRestart(t *testing.T) {
 }
 
 func TestRetry_ASlowLoadAnswersRunHostSlow(t *testing.T) {
-	prev := retryTimeout
-	retryTimeout = 300 * time.Millisecond
-	t.Cleanup(func() { retryTimeout = prev })
 	h, host, _ := gatedHostRun(t, nil)
+	ctx, expire := expiringContext(t, t.Context())
+	// The retry's deadline passes once its load has begun and is held.
+	host.onStart = expire
 
 	err := answersWithin(t, func() error {
-		_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "aborted"}))
+		_, err := h.runs.retry(ctx, "wf_1", h.runs.affordance("wf_1", &runHead{Status: "aborted"}))
 		return err
 	})
 

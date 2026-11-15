@@ -205,10 +205,22 @@ const (
 type purgedRun struct {
 	updated, started time.Time
 	refusal          *marotte.RPCError
-	id, parent       string
-	status           marotte.RunStatus
-	mu               sync.Mutex
-	retried          retryEffect
+	// expire, when set, ends the deadline of the attempt whose retryLost verb KAS takes next.
+	expire     func()
+	id, parent string
+	status     marotte.RunStatus
+	mu         sync.Mutex
+	retried    retryEffect
+}
+
+// attempt is a context for one retry attempt on k, whose deadline passes once KAS takes its retryLost verb.
+func (k *purgedRun) attempt(t *testing.T, parent context.Context) context.Context {
+	t.Helper()
+	ctx, expire := expiringContext(t, parent)
+	k.mu.Lock()
+	k.expire = expire
+	k.mu.Unlock()
+	return ctx
 }
 
 func (k *purgedRun) answer(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
@@ -238,7 +250,13 @@ func (k *purgedRun) retry() (json.RawMessage, []*marotte.RPCResponse, bool) {
 		runNotif(methodWFRunStart, map[string]any{"workflowId": k.id, "workflowName": "build", "parentSessionId": k.parent}),
 	}
 	switch k.retried {
-	case retryLost, retryRefused:
+	case retryLost:
+		if k.expire != nil {
+			k.expire()
+			k.expire = nil
+		}
+		return nil, nil, false
+	case retryRefused:
 		return nil, nil, false
 	case retryRevives:
 		k.status = marotte.RunStatusRunning
@@ -287,7 +305,7 @@ func newPurgedRunRig(
 		},
 	}
 	if kas.retried == retryLost {
-		// Never closed: the retry's own deadline abandons the call.
+		// Never closed: the attempt's deadline abandons the call.
 		rig.blockOn = map[string]chan struct{}{methodKiroWorkflowRetry: make(chan struct{})}
 	}
 	if kas.retried == retryRefused {
@@ -324,28 +342,59 @@ func waitDrivesSettled(t *testing.T, h *Runtime) {
 func retryDuringTheScan(t *testing.T, kas *purgedRun, retryErr *error) func(context.Context, *Runtime) {
 	t.Helper()
 	return func(ctx context.Context, h *Runtime) {
-		_, *retryErr = h.runs.retry(ctx, kas.id, failedAffordance(h, kas.id))
+		_, *retryErr = h.runs.retry(kas.attempt(t, ctx), kas.id, failedAffordance(h, kas.id))
 		waitDrivesSettled(t, h)
 	}
+}
+
+// expiringCtx is a context that ends with context.DeadlineExceeded once expired, or as its parent ends; Deadline is
+// still the parent's. Done is its own channel, never the parent's: a context derived from it then takes its Err
+// through Err, where one sharing a cancelCtx's channel would take that cancelCtx's context.Canceled.
+type expiringCtx struct {
+	context.Context
+	done    chan struct{}
+	expired atomic.Bool
+}
+
+func (c *expiringCtx) Done() <-chan struct{} { return c.done }
+
+func (c *expiringCtx) Err() error {
+	select {
+	case <-c.done:
+	default:
+		return nil
+	}
+	if c.expired.Load() {
+		return context.DeadlineExceeded
+	}
+	return c.Context.Err()
+}
+
+// expiringContext is parent with an end that comes when expire runs, an instant the test chooses; the cleanup expires
+// it.
+func expiringContext(t *testing.T, parent context.Context) (ctx context.Context, expire func()) {
+	t.Helper()
+	c := &expiringCtx{Context: parent, done: make(chan struct{})}
+	end := sync.OnceFunc(func() { close(c.done) })
+	stop := context.AfterFunc(parent, end)
+	expire = sync.OnceFunc(func() {
+		if stop() {
+			c.expired.Store(true)
+			end()
+		}
+	})
+	t.Cleanup(expire)
+	return c, expire
 }
 
 func failedAffordance(h *Runtime, workflowID string) *runAffordance {
 	return h.runs.affordance(workflowID, &runHead{Status: string(marotte.RunStatusFailed)})
 }
 
-// shortRetryTimeout makes a lost retry give up within the test.
-func shortRetryTimeout(t *testing.T) {
-	t.Helper()
-	prev := retryTimeout
-	retryTimeout = 300 * time.Millisecond
-	t.Cleanup(func() { retryTimeout = prev })
-}
-
 // The purge judges a run on its list row and again, in full, on a fresh read under the delete's hold, so a retry
 // landing between the list and the delete decides the outcome as it would had the purge listed the run after it. A
 // retry after the list marks the run before its row is judged; one during admission is seen only by the fresh read.
 func TestPurgeFinishedRuns_DeletesOnlyARunAFreshReadStillFindsPurgeable(t *testing.T) {
-	shortRetryTimeout(t)
 	const window = 24 * time.Hour
 	type outcome struct {
 		deadline bool
@@ -461,7 +510,6 @@ func TestPurgeFinishedRuns_SweepsLapsedRetryMarksOfRunsItDoesNotJudge(t *testing
 // A lost retry keeps its run only for retryInFlightBound: past it, with KAS still showing the run unchanged, the
 // purge deletes the run.
 func TestPurgeFinishedRuns_PurgesARunOnceItsLostRetryLapses(t *testing.T) {
-	shortRetryTimeout(t)
 	const window = 24 * time.Hour
 	kas := &purgedRun{
 		id: "wf_1", parent: "sess_host", status: marotte.RunStatusFailed, updated: time.Now().Add(-2 * window),
@@ -499,7 +547,6 @@ func lapseRetryMarks(h *Runtime) {
 // attempt KAS may still be running (a just-claimed refusal means one is). With KAS showing nothing since, the run is
 // kept until the bound.
 func TestPurgeFinishedRuns_KeepsARunWhoseRetryWasRefused(t *testing.T) {
-	shortRetryTimeout(t)
 	const window = 24 * time.Hour
 	justClaimed := &marotte.RPCError{
 		Code: -32603, Message: "Internal error",
@@ -573,8 +620,9 @@ func TestPurgeFinishedRuns_KeepsARunWhoseRetryWasRefused(t *testing.T) {
 }
 
 // retryAttempts retries kas's run once, or with overlap twice: the second attempt starts while the first waits
-// unanswered, and KAS refuses it with kas's refusal. It returns every attempt's error, first first, once all have
-// ended and marotte's registry of unsettled writes has settled them.
+// unanswered, and KAS refuses it with kas's refusal; the first's deadline passes once the second waits on the run. It
+// returns every attempt's error, first first, once all have ended and marotte's registry of unsettled writes has
+// settled them.
 func retryAttempts(ctx context.Context, t *testing.T, h *Runtime, rig *deleteRig, kas *purgedRun, overlap bool) []error {
 	t.Helper()
 	if !overlap {
@@ -582,27 +630,35 @@ func retryAttempts(ctx context.Context, t *testing.T, h *Runtime, rig *deleteRig
 		waitDrivesSettled(t, h)
 		return []error{err}
 	}
+	fctx, expire := expiringContext(t, ctx)
 	first := make(chan error, 1)
-	// A run's ask cell holds the second attempt until the first ends, inside the second's own retryTimeout, so the
-	// first gives up well before it.
-	fctx, cancel := context.WithTimeout(ctx, retryTimeout/3)
-	defer cancel()
 	go func() {
 		_, err := h.runs.retry(fctx, kas.id, failedAffordance(h, kas.id))
 		first <- err
 	}()
-	deadline := time.Now().Add(5 * time.Second)
-	for len(rig.of(methodKiroWorkflowRetry)) == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("Setup: the first retry sent no verb within 5s")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	waitFor(t, func() bool { return len(rig.of(methodKiroWorkflowRetry)) > 0 })
 	rig.of(methodKiroWorkflowRetry)[0].bridge.setRefuseAfterCall(methodKiroWorkflowRetry, kas.refusal)
-	_, second := h.runs.retry(ctx, kas.id, failedAffordance(h, kas.id))
-	errs := []error{<-first, second}
+	second := make(chan error, 1)
+	go func() {
+		_, err := h.runs.retry(ctx, kas.id, failedAffordance(h, kas.id))
+		second <- err
+	}()
+	waitFor(t, func() bool { return ownerTurnUsers(h, kas.id) == 2 })
+	expire()
+	errs := []error{<-first, <-second}
 	waitDrivesSettled(t, h)
 	return errs
+}
+
+// ownerTurnUsers is how many callers hold or wait for workflowID's owner turn (runOwners.hold).
+func ownerTurnUsers(h *Runtime, workflowID string) int {
+	o := &h.runs.owners
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if t := o.turns[workflowID]; t != nil {
+		return t.users
+	}
+	return 0
 }
 
 // A retry mark keeps its run until KAS shows activity of the run at or after the send, to KAS's millisecond, or until
@@ -869,13 +925,13 @@ func TestPurgeFinishedRuns_ARunTabCannotOpenWhileItsDeleteIsInFlight(t *testing.
 	h, rig := newPurgeRig(t, purgeRuns(t, purgeRow("wf_1", "completed", "sess_a", recent)), nil, true)
 	var openErr error
 	opened := false
-	rig.onCall = func(method string, _ map[string]any) {
+	rig.setOnCall(func(method string, _ map[string]any) {
 		if method != methodKiroWorkflowDelete || opened {
 			return
 		}
 		opened = true
 		_, openErr = h.Membership().OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}, "op-race")
-	}
+	})
 
 	h.PurgeFinishedRuns(t.Context(), RunRetention{Enabled: true})
 
@@ -929,13 +985,13 @@ func TestPurgeFinishedRuns_AClaimDuringTheDeleteIsRefusedThenLands(t *testing.T)
 	h, rig := newPurgeRig(t, purgeRuns(t, purgeRow("wf_1", "completed", "sess_run", recent)), nil, true)
 	var claimErr error
 	claimed := false
-	rig.onCall = func(method string, _ map[string]any) {
+	rig.setOnCall(func(method string, _ map[string]any) {
 		if method != methodKiroWorkflowDelete || claimed {
 			return
 		}
 		claimed = true
 		_, claimErr = h.Membership().CreateChatAndOpen(t.Context(), resumeSession("op-race", "sess_run"))
-	}
+	})
 
 	h.PurgeFinishedRuns(t.Context(), RunRetention{Enabled: true})
 

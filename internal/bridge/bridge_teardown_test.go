@@ -313,18 +313,37 @@ func TestStop_SignalsOnlyAfterTheEOFGrace(t *testing.T) {
 	setTeardownGrace(t, 2*time.Second)
 	logs := capture.Default(t)
 	dir := t.TempDir()
-	stamp, ready := filepath.Join(dir, "termed"), filepath.Join(dir, "ready")
-	b := startEOFFixture(t, `trap ': > "`+stamp+`"; exit 0' TERM; : > "`+ready+`"; while :; do sleep 0.05; done`)
+	termed, ready := filepath.Join(dir, "termed"), filepath.Join(dir, "ready")
+	// The trap reports through a FIFO, read on the test's own clock: a file's mtime comes from the kernel's coarse
+	// clock, up to a tick behind time.Now(). Opened read-write, which on Linux never waits for a writer, so the trap's
+	// own open never waits for a reader either (fifo(7)).
+	if err := syscall.Mkfifo(termed, 0o600); err != nil {
+		t.Fatalf("mkfifo: %v", err)
+	}
+	fifo, err := os.OpenFile(termed, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open the fifo: %v", err)
+	}
+	t.Cleanup(func() { _ = fifo.Close() })
+	signalled := make(chan time.Time, 1)
+	go func() {
+		if _, rErr := fifo.Read(make([]byte, 1)); rErr == nil {
+			signalled <- time.Now()
+		}
+	}()
+	b := startEOFFixture(t, `trap 'echo > "`+termed+`"; exit 0' TERM; : > "`+ready+`"; while :; do sleep 0.05; done`)
 	waitForFile(t, ready)
 
 	start := time.Now()
 	b.Stop()
 
-	info, err := os.Stat(stamp)
-	if err != nil {
-		t.Fatalf("the EOF-ignoring process was never signalled: %v", err)
+	var at time.Time
+	select {
+	case at = <-signalled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the EOF-ignoring process was never signalled")
 	}
-	if after := info.ModTime().Sub(start); after < 300*time.Millisecond {
+	if after := at.Sub(start); after < 300*time.Millisecond {
 		t.Errorf("SIGTERM landed %v after Stop began, want at least the 300ms EOF grace", after)
 	}
 	if n := logs.CountExact("kiro-cli did not exit within the teardown grace; killed"); n != 0 {

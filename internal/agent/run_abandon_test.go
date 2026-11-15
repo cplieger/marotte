@@ -174,16 +174,21 @@ func TestAbandonedRunOwner_Concurrent(t *testing.T) {
 // A retry that waits out its timeout behind the rule's cancel is refused with nothing changed.
 func TestRetryBehindAbandonedCancelTimesOut(t *testing.T) {
 	fc := &fakeConfirmer{retried: true}
-	prev := retryTimeout
-	retryTimeout = 50 * time.Millisecond
-	t.Cleanup(func() { retryTimeout = prev })
 	h, br := triggeredRetryHub(t, fc, t.TempDir())
 	answer := blockCancel(t, br)
 	cancelled := make(chan error, 1)
 	go func() { cancelled <- h.runs.CancelAbandoned(t.Context(), "wf_1") }()
 	awaitCalls(t, br, methodKiroWorkflowCancel, 1, "the rule's cancel never went out")
+	ctx, expire := expiringContext(t, t.Context())
+	retried := make(chan error, 1)
+	go func() {
+		_, err := h.runs.retry(ctx, "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"}))
+		retried <- err
+	}()
+	waitFor(t, func() bool { return ownerTurnUsers(h, "wf_1") == 2 })
 
-	err := retryFailed(t, h)
+	expire()
+	err := <-retried
 	answer()
 	<-cancelled
 

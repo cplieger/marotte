@@ -287,15 +287,29 @@ func TestHandleRetry_AnEngineThatWillNotStartAnswersInsideTheClientsWindow(t *te
 func TestHandleRetry_AVerbLeftUnansweredKeepsItsLeaseAndIsStillApplying(t *testing.T) {
 	h, br := seedChatParentedRun(t, true, "final-verify")
 	br.setBlockOn(methodKiroWorkflowRetry, make(chan struct{}))
-	prev := retryTimeout
-	retryTimeout = 300 * time.Millisecond
-	t.Cleanup(func() { retryTimeout = prev })
+	// KAS taking the verb ends the caller's context, which carries no deadline of its own, so the deadline the verb
+	// carried can only be retryTimeout's.
+	ctx, expire := expiringContext(t, t.Context())
+	br.setOnCall(func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method == methodKiroWorkflowRetry {
+			expire()
+		}
+		return nil, nil, false
+	})
 
+	asked := time.Now()
 	rec := httptest.NewRecorder()
-	h.runRoutes.handleRetry(rec, retryReq("wf_1"))
+	h.runRoutes.handleRetry(rec, retryReq("wf_1").WithContext(ctx))
+	answered := time.Now()
 
 	if !slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
 		t.Fatalf("Setup: the verb never reached KAS; calls were %v", br.callLog())
+	}
+	if dl := br.deadlineOf(methodKiroWorkflowRetry); dl.IsZero() {
+		t.Errorf("the verb carried no deadline, want one retryTimeout (%s) after the retry began", retryTimeout)
+	} else if dl.Before(asked.Add(retryTimeout)) || dl.After(answered.Add(retryTimeout)) {
+		t.Errorf("the verb's deadline was %s after the retry was asked, want retryTimeout (%s) from within the retry's %s",
+			dl.Sub(asked), retryTimeout, answered.Sub(asked))
 	}
 	assertStillApplying(t, rec)
 	if body := rec.Body.String(); strings.Contains(body, "nothing was retried") {

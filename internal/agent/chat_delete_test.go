@@ -19,7 +19,8 @@ import (
 type deleteRig struct {
 	results map[string]json.RawMessage
 	rpcErrs map[string]*marotte.RPCError
-	// onCall runs inside the fake bridge's Call, before it answers, outside mu.
+	// onCall runs inside the fake bridge's Call, before it answers, outside mu; set it through setOnCall once the
+	// rig's runtime is built, since the runtime's own calls read it.
 	onCall func(method string, params map[string]any)
 	// answer, set before the rig's runtime is built, answers a call in place of results, delivering its frames first,
 	// when it reports true.
@@ -53,9 +54,10 @@ func (r *deleteRig) factory() engineSession {
 		stopped := br.isClosed()
 		r.mu.Lock()
 		r.calls = append(r.calls, rigCall{bridge: br, method: method, params: params, stopped: stopped})
+		onCall := r.onCall
 		r.mu.Unlock()
-		if r.onCall != nil {
-			r.onCall(method, params)
+		if onCall != nil {
+			onCall(method, params)
 		}
 		if r.answer != nil {
 			if res, frames, ok := r.answer(method, params); ok {
@@ -90,6 +92,12 @@ func (r *deleteRig) of(method string) []rigCall {
 		}
 	}
 	return out
+}
+
+func (r *deleteRig) setOnCall(onCall func(method string, params map[string]any)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.onCall = onCall
 }
 
 func (r *deleteRig) setAnswer(answer func(method string, params map[string]any) (json.RawMessage, bool, error)) {
@@ -165,13 +173,13 @@ func TestDeleteChatStateByChain_DeletesEveryChainSessionThroughTheEngine(t *test
 	owner := insertChatSession(t, h, rig, "c1", "sess_cur")
 	var mu sync.Mutex
 	var closedAtDelete []bool
-	rig.onCall = func(method string, _ map[string]any) {
+	rig.setOnCall(func(method string, _ map[string]any) {
 		if method == marotte.MethodSessionDelete {
 			mu.Lock()
 			closedAtDelete = append(closedAtDelete, owner.isClosed())
 			mu.Unlock()
 		}
-	}
+	})
 
 	h.DeleteChatStateByChain(t.Context(), "c1", []string{"sess_old", "sess_cur"}, command.RunStopTabClosed)
 
