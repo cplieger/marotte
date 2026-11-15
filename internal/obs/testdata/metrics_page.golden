@@ -1,0 +1,270 @@
+== start ==
+Content-Type: text/plain; version=0.0.4; charset=utf-8
+# HELP marotte_engine_exits_total Agent engine exits, by the cause the exit line names.
+# TYPE marotte_engine_exits_total counter
+marotte_engine_exits_total{cause="crash"} 0
+marotte_engine_exits_total{cause="external_stop"} 0
+marotte_engine_exits_total{cause="lane_overflow"} 0
+marotte_engine_exits_total{cause="parse_breaker"} 0
+marotte_engine_exits_total{cause="restart_auto"} 0
+marotte_engine_exits_total{cause="restart_confirmed"} 0
+marotte_engine_exits_total{cause="shutdown"} 0
+marotte_engine_exits_total{cause="stdin_stalled"} 0
+marotte_engine_exits_total{cause="stopped"} 0
+# HELP marotte_prompt_failures_total Failed prompts, failed empty-turn retries included, by failure class; pipe_death is a prompt the engine's own exit ended.
+# TYPE marotte_prompt_failures_total counter
+marotte_prompt_failures_total{class="auth"} 0
+marotte_prompt_failures_total{class="busy"} 0
+marotte_prompt_failures_total{class="fatal"} 0
+marotte_prompt_failures_total{class="pipe_death"} 0
+marotte_prompt_failures_total{class="rejected"} 0
+marotte_prompt_failures_total{class="throttled"} 0
+marotte_prompt_failures_total{class="transient"} 0
+# HELP marotte_unattended_run_failures_total Scheduled and triggered runs that failed with nobody watching, by origin and reason.
+# TYPE marotte_unattended_run_failures_total counter
+marotte_unattended_run_failures_total{origin="scheduled",reason="cancel_given_up"} 0
+marotte_unattended_run_failures_total{origin="scheduled",reason="needs_approval"} 0
+marotte_unattended_run_failures_total{origin="scheduled",reason="orphaned"} 0
+marotte_unattended_run_failures_total{origin="scheduled",reason="overran"} 0
+marotte_unattended_run_failures_total{origin="scheduled",reason="paused"} 0
+marotte_unattended_run_failures_total{origin="scheduled",reason="stalled"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="cancel_given_up"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="needs_approval"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="orphaned"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="overran"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="paused"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="stalled"} 0
+# HELP marotte_unattended_approvals_total Permission asks of scheduled and triggered runs approved automatically, by origin.
+# TYPE marotte_unattended_approvals_total counter
+marotte_unattended_approvals_total{origin="scheduled"} 0
+marotte_unattended_approvals_total{origin="triggered"} 0
+# HELP marotte_schedule_slots_not_started_total Schedule slots that produced no run, by what stopped them.
+# TYPE marotte_schedule_slots_not_started_total counter
+marotte_schedule_slots_not_started_total{event="engine_busy"} 0
+marotte_schedule_slots_not_started_total{event="launch_failed"} 0
+marotte_schedule_slots_not_started_total{event="signin_held"} 0
+# HELP marotte_build_info Build information, always 1.
+# TYPE marotte_build_info gauge
+marotte_build_info{version="dev"} 1
+# HELP marotte_engine_up 1 while the agent engine is ready to take prompts, else 0.
+# TYPE marotte_engine_up gauge
+marotte_engine_up 0
+== recorded ==
+Content-Type: text/plain; version=0.0.4; charset=utf-8
+# HELP marotte_engine_exits_total Agent engine exits, by the cause the exit line names.
+# TYPE marotte_engine_exits_total counter
+marotte_engine_exits_total{cause="crash"} 1
+marotte_engine_exits_total{cause="external_stop"} 0
+marotte_engine_exits_total{cause="lane_overflow"} 0
+marotte_engine_exits_total{cause="parse_breaker"} 0
+marotte_engine_exits_total{cause="restart_auto"} 0
+marotte_engine_exits_total{cause="restart_confirmed"} 0
+marotte_engine_exits_total{cause="shutdown"} 0
+marotte_engine_exits_total{cause="stdin_stalled"} 0
+marotte_engine_exits_total{cause="stopped"} 0
+# HELP marotte_prompt_failures_total Failed prompts, failed empty-turn retries included, by failure class; pipe_death is a prompt the engine's own exit ended.
+# TYPE marotte_prompt_failures_total counter
+marotte_prompt_failures_total{class="auth"} 1
+marotte_prompt_failures_total{class="busy"} 0
+marotte_prompt_failures_total{class="fatal"} 0
+marotte_prompt_failures_total{class="pipe_death"} 0
+marotte_prompt_failures_total{class="rejected"} 0
+marotte_prompt_failures_total{class="throttled"} 0
+marotte_prompt_failures_total{class="transient"} 0
+# HELP marotte_signin_save_failures_total Sign-in changes the sign-in file could not take, by backend and reason.
+# TYPE marotte_signin_save_failures_total counter
+marotte_signin_save_failures_total{backend="golden-backend",reason="staged_copy_left"} 0
+marotte_signin_save_failures_total{backend="golden-backend",reason="write_failed"} 1
+# HELP marotte_unattended_run_failures_total Scheduled and triggered runs that failed with nobody watching, by origin and reason.
+# TYPE marotte_unattended_run_failures_total counter
+marotte_unattended_run_failures_total{origin="scheduled",reason="cancel_given_up"} 0
+marotte_unattended_run_failures_total{origin="scheduled",reason="needs_approval"} 0
+marotte_unattended_run_failures_total{origin="scheduled",reason="orphaned"} 0
+marotte_unattended_run_failures_total{origin="scheduled",reason="overran"} 0
+marotte_unattended_run_failures_total{origin="scheduled",reason="paused"} 0
+marotte_unattended_run_failures_total{origin="scheduled",reason="stalled"} 1
+marotte_unattended_run_failures_total{origin="triggered",reason="cancel_given_up"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="needs_approval"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="orphaned"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="overran"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="paused"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="stalled"} 0
+# HELP marotte_unattended_approvals_total Permission asks of scheduled and triggered runs approved automatically, by origin.
+# TYPE marotte_unattended_approvals_total counter
+marotte_unattended_approvals_total{origin="scheduled"} 0
+marotte_unattended_approvals_total{origin="triggered"} 1
+# HELP marotte_schedule_slots_not_started_total Schedule slots that produced no run, by what stopped them.
+# TYPE marotte_schedule_slots_not_started_total counter
+marotte_schedule_slots_not_started_total{event="engine_busy"} 1
+marotte_schedule_slots_not_started_total{event="launch_failed"} 0
+marotte_schedule_slots_not_started_total{event="signin_held"} 0
+# HELP marotte_build_info Build information, always 1.
+# TYPE marotte_build_info gauge
+marotte_build_info{version="dev"} 1
+# HELP marotte_engine_resident_memory_bytes Resident memory of the running agent engine's node process at its last sample.
+# TYPE marotte_engine_resident_memory_bytes gauge
+marotte_engine_resident_memory_bytes 3145728
+# HELP marotte_engine_heap_limit_bytes JavaScript heap limit of the running agent engine; absent while the limit is unknown.
+# TYPE marotte_engine_heap_limit_bytes gauge
+marotte_engine_heap_limit_bytes 8388608
+# HELP marotte_schedule_failed_slots Consecutive slots of an enabled schedule that ended without a completed run.
+# TYPE marotte_schedule_failed_slots gauge
+marotte_schedule_failed_slots{rule_id="rule-a"} 2
+# HELP marotte_schedule_next_due_timestamp_seconds When an enabled schedule's next slot not yet judged falls due, or the end of its wait on the agent engine, in Unix seconds.
+# TYPE marotte_schedule_next_due_timestamp_seconds gauge
+marotte_schedule_next_due_timestamp_seconds{rule_id="rule-a"} 1794189600
+marotte_schedule_next_due_timestamp_seconds{rule_id="rule-b"} 1794186000
+# HELP marotte_trigger_rule_blocked 1 while an enabled event rule launches nothing until someone acts, by reason, else 0.
+# TYPE marotte_trigger_rule_blocked gauge
+marotte_trigger_rule_blocked{reason="launch_failed",rule_id="rule-c"} 0
+marotte_trigger_rule_blocked{reason="state_unreadable",rule_id="rule-c"} 0
+marotte_trigger_rule_blocked{reason="state_unwritten",rule_id="rule-c"} 0
+marotte_trigger_rule_blocked{reason="too_many_items",rule_id="rule-c"} 0
+marotte_trigger_rule_blocked{reason="unnamed_run",rule_id="rule-c"} 1
+# HELP marotte_trigger_queue_full 1 while an enabled event rule's last poll left an event at the forge for its full queue, else 0.
+# TYPE marotte_trigger_queue_full gauge
+marotte_trigger_queue_full{rule_id="rule-c"} 1
+# HELP marotte_trigger_poll_failures Consecutive polls in which an enabled event rule's read of its repository failed.
+# TYPE marotte_trigger_poll_failures gauge
+marotte_trigger_poll_failures{rule_id="rule-c"} 4
+# HELP marotte_trigger_catch_up_gaps Undismissed time ranges an enabled event rule could not read back, so events in them may never launch.
+# TYPE marotte_trigger_catch_up_gaps gauge
+marotte_trigger_catch_up_gaps{rule_id="rule-c"} 1
+# HELP marotte_engine_up 1 while the agent engine is ready to take prompts, else 0.
+# TYPE marotte_engine_up gauge
+marotte_engine_up 1
+== limit and next slot unknown ==
+Content-Type: text/plain; version=0.0.4; charset=utf-8
+# HELP marotte_engine_exits_total Agent engine exits, by the cause the exit line names.
+# TYPE marotte_engine_exits_total counter
+marotte_engine_exits_total{cause="crash"} 1
+marotte_engine_exits_total{cause="external_stop"} 0
+marotte_engine_exits_total{cause="lane_overflow"} 0
+marotte_engine_exits_total{cause="parse_breaker"} 0
+marotte_engine_exits_total{cause="restart_auto"} 0
+marotte_engine_exits_total{cause="restart_confirmed"} 0
+marotte_engine_exits_total{cause="shutdown"} 0
+marotte_engine_exits_total{cause="stdin_stalled"} 0
+marotte_engine_exits_total{cause="stopped"} 0
+# HELP marotte_prompt_failures_total Failed prompts, failed empty-turn retries included, by failure class; pipe_death is a prompt the engine's own exit ended.
+# TYPE marotte_prompt_failures_total counter
+marotte_prompt_failures_total{class="auth"} 1
+marotte_prompt_failures_total{class="busy"} 0
+marotte_prompt_failures_total{class="fatal"} 0
+marotte_prompt_failures_total{class="pipe_death"} 0
+marotte_prompt_failures_total{class="rejected"} 0
+marotte_prompt_failures_total{class="throttled"} 0
+marotte_prompt_failures_total{class="transient"} 0
+# HELP marotte_signin_save_failures_total Sign-in changes the sign-in file could not take, by backend and reason.
+# TYPE marotte_signin_save_failures_total counter
+marotte_signin_save_failures_total{backend="golden-backend",reason="staged_copy_left"} 0
+marotte_signin_save_failures_total{backend="golden-backend",reason="write_failed"} 1
+# HELP marotte_unattended_run_failures_total Scheduled and triggered runs that failed with nobody watching, by origin and reason.
+# TYPE marotte_unattended_run_failures_total counter
+marotte_unattended_run_failures_total{origin="scheduled",reason="cancel_given_up"} 0
+marotte_unattended_run_failures_total{origin="scheduled",reason="needs_approval"} 0
+marotte_unattended_run_failures_total{origin="scheduled",reason="orphaned"} 0
+marotte_unattended_run_failures_total{origin="scheduled",reason="overran"} 0
+marotte_unattended_run_failures_total{origin="scheduled",reason="paused"} 0
+marotte_unattended_run_failures_total{origin="scheduled",reason="stalled"} 1
+marotte_unattended_run_failures_total{origin="triggered",reason="cancel_given_up"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="needs_approval"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="orphaned"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="overran"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="paused"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="stalled"} 0
+# HELP marotte_unattended_approvals_total Permission asks of scheduled and triggered runs approved automatically, by origin.
+# TYPE marotte_unattended_approvals_total counter
+marotte_unattended_approvals_total{origin="scheduled"} 0
+marotte_unattended_approvals_total{origin="triggered"} 1
+# HELP marotte_schedule_slots_not_started_total Schedule slots that produced no run, by what stopped them.
+# TYPE marotte_schedule_slots_not_started_total counter
+marotte_schedule_slots_not_started_total{event="engine_busy"} 1
+marotte_schedule_slots_not_started_total{event="launch_failed"} 0
+marotte_schedule_slots_not_started_total{event="signin_held"} 0
+# HELP marotte_build_info Build information, always 1.
+# TYPE marotte_build_info gauge
+marotte_build_info{version="dev"} 1
+# HELP marotte_engine_resident_memory_bytes Resident memory of the running agent engine's node process at its last sample.
+# TYPE marotte_engine_resident_memory_bytes gauge
+marotte_engine_resident_memory_bytes 4194304
+# HELP marotte_schedule_failed_slots Consecutive slots of an enabled schedule that ended without a completed run.
+# TYPE marotte_schedule_failed_slots gauge
+marotte_schedule_failed_slots{rule_id="rule-a"} 0
+# HELP marotte_schedule_next_due_timestamp_seconds When an enabled schedule's next slot not yet judged falls due, or the end of its wait on the agent engine, in Unix seconds.
+# TYPE marotte_schedule_next_due_timestamp_seconds gauge
+marotte_schedule_next_due_timestamp_seconds{rule_id="rule-b"} 1794186000
+# HELP marotte_trigger_rule_blocked 1 while an enabled event rule launches nothing until someone acts, by reason, else 0.
+# TYPE marotte_trigger_rule_blocked gauge
+marotte_trigger_rule_blocked{reason="launch_failed",rule_id="rule-c"} 0
+marotte_trigger_rule_blocked{reason="state_unreadable",rule_id="rule-c"} 0
+marotte_trigger_rule_blocked{reason="state_unwritten",rule_id="rule-c"} 0
+marotte_trigger_rule_blocked{reason="too_many_items",rule_id="rule-c"} 0
+marotte_trigger_rule_blocked{reason="unnamed_run",rule_id="rule-c"} 1
+# HELP marotte_trigger_queue_full 1 while an enabled event rule's last poll left an event at the forge for its full queue, else 0.
+# TYPE marotte_trigger_queue_full gauge
+marotte_trigger_queue_full{rule_id="rule-c"} 1
+# HELP marotte_trigger_poll_failures Consecutive polls in which an enabled event rule's read of its repository failed.
+# TYPE marotte_trigger_poll_failures gauge
+marotte_trigger_poll_failures{rule_id="rule-c"} 4
+# HELP marotte_trigger_catch_up_gaps Undismissed time ranges an enabled event rule could not read back, so events in them may never launch.
+# TYPE marotte_trigger_catch_up_gaps gauge
+marotte_trigger_catch_up_gaps{rule_id="rule-c"} 1
+# HELP marotte_engine_up 1 while the agent engine is ready to take prompts, else 0.
+# TYPE marotte_engine_up gauge
+marotte_engine_up 1
+== gone ==
+Content-Type: text/plain; version=0.0.4; charset=utf-8
+# HELP marotte_engine_exits_total Agent engine exits, by the cause the exit line names.
+# TYPE marotte_engine_exits_total counter
+marotte_engine_exits_total{cause="crash"} 1
+marotte_engine_exits_total{cause="external_stop"} 0
+marotte_engine_exits_total{cause="lane_overflow"} 0
+marotte_engine_exits_total{cause="parse_breaker"} 0
+marotte_engine_exits_total{cause="restart_auto"} 0
+marotte_engine_exits_total{cause="restart_confirmed"} 0
+marotte_engine_exits_total{cause="shutdown"} 0
+marotte_engine_exits_total{cause="stdin_stalled"} 0
+marotte_engine_exits_total{cause="stopped"} 0
+# HELP marotte_prompt_failures_total Failed prompts, failed empty-turn retries included, by failure class; pipe_death is a prompt the engine's own exit ended.
+# TYPE marotte_prompt_failures_total counter
+marotte_prompt_failures_total{class="auth"} 1
+marotte_prompt_failures_total{class="busy"} 0
+marotte_prompt_failures_total{class="fatal"} 0
+marotte_prompt_failures_total{class="pipe_death"} 0
+marotte_prompt_failures_total{class="rejected"} 0
+marotte_prompt_failures_total{class="throttled"} 0
+marotte_prompt_failures_total{class="transient"} 0
+# HELP marotte_signin_save_failures_total Sign-in changes the sign-in file could not take, by backend and reason.
+# TYPE marotte_signin_save_failures_total counter
+marotte_signin_save_failures_total{backend="golden-backend",reason="staged_copy_left"} 0
+marotte_signin_save_failures_total{backend="golden-backend",reason="write_failed"} 1
+# HELP marotte_unattended_run_failures_total Scheduled and triggered runs that failed with nobody watching, by origin and reason.
+# TYPE marotte_unattended_run_failures_total counter
+marotte_unattended_run_failures_total{origin="scheduled",reason="cancel_given_up"} 0
+marotte_unattended_run_failures_total{origin="scheduled",reason="needs_approval"} 0
+marotte_unattended_run_failures_total{origin="scheduled",reason="orphaned"} 0
+marotte_unattended_run_failures_total{origin="scheduled",reason="overran"} 0
+marotte_unattended_run_failures_total{origin="scheduled",reason="paused"} 0
+marotte_unattended_run_failures_total{origin="scheduled",reason="stalled"} 1
+marotte_unattended_run_failures_total{origin="triggered",reason="cancel_given_up"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="needs_approval"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="orphaned"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="overran"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="paused"} 0
+marotte_unattended_run_failures_total{origin="triggered",reason="stalled"} 0
+# HELP marotte_unattended_approvals_total Permission asks of scheduled and triggered runs approved automatically, by origin.
+# TYPE marotte_unattended_approvals_total counter
+marotte_unattended_approvals_total{origin="scheduled"} 0
+marotte_unattended_approvals_total{origin="triggered"} 1
+# HELP marotte_schedule_slots_not_started_total Schedule slots that produced no run, by what stopped them.
+# TYPE marotte_schedule_slots_not_started_total counter
+marotte_schedule_slots_not_started_total{event="engine_busy"} 1
+marotte_schedule_slots_not_started_total{event="launch_failed"} 0
+marotte_schedule_slots_not_started_total{event="signin_held"} 0
+# HELP marotte_build_info Build information, always 1.
+# TYPE marotte_build_info gauge
+marotte_build_info{version="dev"} 1
+# HELP marotte_engine_up 1 while the agent engine is ready to take prompts, else 0.
+# TYPE marotte_engine_up gauge
+marotte_engine_up 0

@@ -12,7 +12,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/cplieger/go/measure"
+	"github.com/cplieger/go/measure/v2"
 	"github.com/cplieger/marotte/internal/version"
 )
 
@@ -83,67 +83,80 @@ const (
 	labelRuleID = "rule_id"
 )
 
-var buildInfo = measure.NewLabeledGauge("build_info", "Build information, always 1.", []string{"version"})
+var buildInfo = measure.NewInfo("build_info", "Build information, always 1.", []string{"version"})
 
 var (
 	engineExits = measure.NewLabeledCounter("engine_exits_total",
-		"Agent engine exits, by the cause the exit line names.", []string{"cause"})
+		"Agent engine exits, by the cause the exit line names.", measure.UnitCount, []string{"cause"},
+		measure.WithSeed(each(engineExitCauses)...))
 	promptFailures = measure.NewLabeledCounter("prompt_failures_total",
 		"Failed prompts, failed empty-turn retries included, by failure class; "+
-			"pipe_death is a prompt the engine's own exit ended.", []string{"class"})
+			"pipe_death is a prompt the engine's own exit ended.", measure.UnitCount, []string{"class"},
+		measure.WithSeed(each(promptFailureClasses)...))
 	signInSaveFailures = measure.NewLabeledCounter("signin_save_failures_total",
-		"Sign-in changes the sign-in file could not take, by backend and reason.", []string{"backend", labelReason})
-	engineUp = measure.NewGauge("engine_up", "1 while the agent engine is ready to take prompts, else 0.")
+		"Sign-in changes the sign-in file could not take, by backend and reason.", measure.UnitCount,
+		[]string{"backend", labelReason})
+	engineUp = measure.NewGauge("engine_up", "1 while the agent engine is ready to take prompts, else 0.",
+		measure.UnitNone)
 	// The memory gauges carry no label; a labeled gauge is what lets Delete take a series off the page.
 	engineResident = measure.NewLabeledGauge("engine_resident_memory_bytes",
-		"Resident memory of the running agent engine's node process at its last sample.", nil)
+		"Resident memory of the running agent engine's node process at its last sample.", measure.UnitBytes, nil)
 	engineHeapLimit = measure.NewLabeledGauge("engine_heap_limit_bytes",
-		"JavaScript heap limit of the running agent engine; absent while the limit is unknown.", nil)
+		"JavaScript heap limit of the running agent engine; absent while the limit is unknown.", measure.UnitBytes, nil)
 	unattendedRunFailures = measure.NewLabeledCounter("unattended_run_failures_total",
-		"Scheduled and triggered runs that failed with nobody watching, by origin and reason.",
-		[]string{"origin", labelReason})
+		"Scheduled and triggered runs that failed with nobody watching, by origin and reason.", measure.UnitCount,
+		[]string{"origin", labelReason}, measure.WithSeed(product(unattendedOrigins, unattendedRunFailureReasons)...))
 	unattendedApprovals = measure.NewLabeledCounter("unattended_approvals_total",
-		"Permission asks of scheduled and triggered runs approved automatically, by origin.", []string{"origin"})
+		"Permission asks of scheduled and triggered runs approved automatically, by origin.", measure.UnitCount,
+		[]string{"origin"}, measure.WithSeed(each(unattendedOrigins)...))
 	slotsNotStarted = measure.NewLabeledCounter("schedule_slots_not_started_total",
-		"Schedule slots that produced no run, by what stopped them.", []string{"event"})
+		"Schedule slots that produced no run, by what stopped them.", measure.UnitCount, []string{"event"},
+		measure.WithSeed(each(slotNotStartedEvents)...))
 	scheduleFailedSlots = measure.NewLabeledGauge("schedule_failed_slots",
-		"Consecutive slots of an enabled schedule that ended without a completed run.", []string{labelRuleID})
+		"Consecutive slots of an enabled schedule that ended without a completed run.", measure.UnitCount,
+		[]string{labelRuleID})
 	scheduleNextDue = measure.NewLabeledGauge("schedule_next_due_timestamp_seconds",
 		"When an enabled schedule's next slot not yet judged falls due, or the end of its wait on the agent engine, "+
-			"in Unix seconds.", []string{labelRuleID})
+			"in Unix seconds.", measure.UnitSeconds, []string{labelRuleID})
 	triggerBlocked = measure.NewLabeledGauge("trigger_rule_blocked",
-		"1 while an enabled event rule launches nothing until someone acts, by reason, else 0.",
+		"1 while an enabled event rule launches nothing until someone acts, by reason, else 0.", measure.UnitNone,
 		[]string{labelRuleID, labelReason})
 	triggerQueueFull = measure.NewLabeledGauge("trigger_queue_full",
 		"1 while an enabled event rule's last poll left an event at the forge for its full queue, else 0.",
-		[]string{labelRuleID})
+		measure.UnitNone, []string{labelRuleID})
 	triggerPollFailures = measure.NewLabeledGauge("trigger_poll_failures",
-		"Consecutive polls in which an enabled event rule's read of its repository failed.", []string{labelRuleID})
+		"Consecutive polls in which an enabled event rule's read of its repository failed.", measure.UnitCount,
+		[]string{labelRuleID})
 	triggerGaps = measure.NewLabeledGauge("trigger_catch_up_gaps",
 		"Undismissed time ranges an enabled event rule could not read back, so events in them may never launch.",
-		[]string{labelRuleID})
+		measure.UnitCount, []string{labelRuleID})
 )
 
 func init() {
 	registry.MustRegister(buildInfo, engineExits, promptFailures, signInSaveFailures, engineUp, engineResident,
 		engineHeapLimit, unattendedRunFailures, unattendedApprovals, slotsNotStarted, scheduleFailedSlots,
 		scheduleNextDue, triggerBlocked, triggerQueueFull, triggerPollFailures, triggerGaps)
-	buildInfo.Set(1, version.Build)
-	for _, c := range engineExitCauses {
-		engineExits.Add(0, c)
+	buildInfo.Set(version.Build)
+}
+
+// each is one label set per value, for a one-label seed.
+func each(values []string) [][]string {
+	sets := make([][]string, 0, len(values))
+	for _, v := range values {
+		sets = append(sets, []string{v})
 	}
-	for _, c := range promptFailureClasses {
-		promptFailures.Add(0, c)
-	}
-	for _, o := range unattendedOrigins {
-		for _, r := range unattendedRunFailureReasons {
-			unattendedRunFailures.Add(0, o, r)
+	return sets
+}
+
+// product is every pair of a first and a second value, for a two-label seed.
+func product(first, second []string) [][]string {
+	sets := make([][]string, 0, len(first)*len(second))
+	for _, f := range first {
+		for _, s := range second {
+			sets = append(sets, []string{f, s})
 		}
-		unattendedApprovals.Add(0, o)
 	}
-	for _, e := range slotNotStartedEvents {
-		slotsNotStarted.Add(0, e)
-	}
+	return sets
 }
 
 // Handler serves the Prometheus text exposition: every marotte series plus the
