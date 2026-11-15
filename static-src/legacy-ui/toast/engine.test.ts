@@ -694,4 +694,26 @@ describe("ToastEngine: onClose runs once when the toast goes, however it goes", 
     engine.show("new");
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("runs once for a dismissed toast that clear() removes during its leave", () => {
+    const { view, mounts } = makeFakeView(false);
+    const engine = new ToastEngine<FakeToast>({ view, maxVisible: 3, defaultDuration: 0 });
+    const onClose = vi.fn();
+    engine.show("leaving", { onClose });
+    mounts[0]!.ctx.dismiss();
+    engine.clear();
+    expect(mounts[0]!.removed).toBe(true);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs once for a dismissed toast a replace-mode show replaces during its leave", () => {
+    const { view, mounts } = makeFakeView(false);
+    const engine = new ToastEngine<FakeToast>({ view, mode: "replace", defaultDuration: 0 });
+    const onClose = vi.fn();
+    engine.show("leaving", { onClose });
+    mounts[0]!.ctx.dismiss();
+    engine.show("new");
+    expect(mounts[0]!.removed).toBe(true);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

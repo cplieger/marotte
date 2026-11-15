@@ -327,6 +327,10 @@ export class ToastEngine<H> {
       clearTimeout(t.timer);
       t.timer = null;
     }
+    // A dismissed toast stays visible through its leave, where clear() or a replace closes it again.
+    if (t.dismissed) {
+      return;
+    }
     t.dismissed = true;
     t.onClose?.();
   }

@@ -710,17 +710,30 @@ func TestAutoCompact_ASummaryKiroCliReportsFailedLeavesOneRow(t *testing.T) {
 	}
 }
 
-// An attempt the chat's close ended leaves no row and no toast: no later turn end of that life tries again.
-func TestAutoCompact_AnAttemptTheChatsCloseEndedLeavesNoRow(t *testing.T) {
-	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+// An attempt the chat's close ended leaves no row and no toast, and lists no attempt for a kiro-cli turn that
+// closed beside it: no later turn end of that life tries again.
+func TestAutoCompact_AnAttemptTheChatsCloseEndedLeavesNoRowAndListsNothing(t *testing.T) {
+	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, true, 95)
 	calls.err = marotte.ErrChatClosedDuringCall
+	var once sync.Once
+	prev := testHookAfterCompactionReturn
+	t.Cleanup(func() { testHookAfterCompactionReturn = prev })
+	testHookAfterCompactionReturn = func(marotte.ChatID) {
+		once.Do(func() {
+			wireOpen(t, cs, br)
+			br.deliver(newChunkMsg("kiro-cli on its own"))
+			br.deliver(newTurnEndMsg("end_turn"))
+			waitFor(t, func() bool { return !slices.Contains(runStates(t, cs, "c1"), "wire running") })
+		})
+	}
 
 	runPrompt(t, h, cs, "c1", "m-2")
 
 	waitFor(t, func() bool { return calls.count() == 1 && !listLive(h, "c1") })
-	staysFalse(t, 100*time.Millisecond, func() bool { return len(failedRows(t, cs, "c1")) != 0 || len(calls.toasts()) != 0 },
-		"the closed chat's attempt left a row or a toast")
+	staysFalse(t, 100*time.Millisecond, func() bool {
+		return len(failedRows(t, cs, "c1")) != 0 || len(calls.toasts()) != 0 || calls.count() != 1
+	}, "the closed chat's attempt left a row or a toast, or listed the turn end beside it")
 }
 
 // An attempt requeued behind kiro-cli's turn after kiro-cli reported its summary failed is a new attempt: its own
@@ -819,5 +832,236 @@ func TestAutoCompact_AFailedRowLandsAheadOfTheTurnQueuedBehindIt(t *testing.T) {
 	}
 	if row < 0 || open < 0 || row > open {
 		t.Errorf("first row at %d, m-behind's turn opens at %d; want the row first", row, open)
+	}
+}
+
+// attemptSlot is a point in a failed compaction attempt where a kiro-cli turn's open or close lands.
+type attemptSlot int
+
+const (
+	// slotTaken: the attempt is taken, before its start.
+	slotTaken attemptSlot = iota
+	// slotCall: its call returned, before its end is settled.
+	slotCall
+	// slotRowDue: it owes its row, before the row is written.
+	slotRowDue
+	// slotRowWritten: its row is written, before its end is applied.
+	slotRowWritten
+	// slotSettled: its end is applied.
+	slotSettled
+)
+
+var attemptSlotNames = [...]string{"taken", "call", "row_due", "row_written", "settled"}
+
+// orderAllowed reports whether a turn can open at open and close at shut: a turn open before the start puts the
+// attempt back until it closed, and a bare refusal with a turn open beside its call is listed again, owing no row.
+func orderAllowed(err error, open, shut attemptSlot) bool {
+	switch {
+	case open == slotTaken:
+		return shut == slotTaken
+	case err == nil && open == slotCall:
+		return shut == slotCall || shut == slotSettled
+	}
+	return true
+}
+
+// A kiro-cli turn that opens and closes at any point a failed attempt allows, beside a message queued behind that
+// attempt: every turn end over the point is followed by exactly one attempt, no attempt starts while a turn is live,
+// and the message's turn opens only after the attempts ahead of it wrote their rows.
+func TestAutoCompact_EveryOrderOfATurnBesideAFailedAttemptKeepsItsTurnEndAttempt(t *testing.T) {
+	outcomes := []struct {
+		err  error
+		name string
+	}{{nil, "refused"}, {errors.New("the pipe broke"), "errored"}}
+	for _, oc := range outcomes {
+		for open := range slotSettled {
+			for shut := open; shut <= slotSettled; shut++ {
+				if !orderAllowed(oc.err, open, shut) {
+					continue
+				}
+				name := oc.name + "_open_" + attemptSlotNames[open] + "_close_" + attemptSlotNames[shut]
+				t.Run(name, func(t *testing.T) { turnBesideAFailedAttempt(t, oc.err, open, shut) })
+			}
+		}
+	}
+}
+
+func turnBesideAFailedAttempt(t *testing.T, callErr error, open, shut attemptSlot) {
+	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+	calls := onCompactor(h, 90, true, 95)
+	calls.setRefuse(true)
+	calls.err = callErr
+	var (
+		mu     sync.Mutex
+		events []string
+	)
+	note := func(ev string) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, ev)
+	}
+	count := h.coord.autoCompact.compact
+	h.coord.autoCompact.compact = func(ctx context.Context, s command.CompactBridge) (bool, uint64, error) {
+		if h.coord.turns.live("c1") {
+			note("call mid-turn")
+		} else {
+			note("call")
+		}
+		return count(ctx, s)
+	}
+	tailHooks(h, func(_ marotte.ChatID, ended bool) {
+		if !ended {
+			note("close")
+		}
+	})
+	wireLive := func() bool { return slices.Contains(runStates(t, cs, "c1"), "wire running") }
+	act := func(slot attemptSlot) {
+		if slot == slotTaken {
+			rec := postCmd(t, h, marotte.ClientCommand{
+				Type: marotte.CmdPrompt, ChatID: "c1", Payload: json.RawMessage(`{"text":"queued","message_id":"m-queued"}`),
+			})
+			if rec.Code != 200 {
+				t.Errorf("Setup: prompt = %d %s", rec.Code, rec.Body.String())
+			}
+		}
+		if slot == open {
+			br.deliver(newTurnStartMsg())
+			waitFor(t, wireLive)
+		}
+		if slot == shut {
+			// A wire turn that emitted nothing closes unclean, which would pause m-queued.
+			br.deliver(newChunkMsg("kiro-cli on its own"))
+			br.deliver(newTurnEndMsg("end_turn"))
+			waitFor(t, func() bool { return !wireLive() })
+		}
+	}
+	hooks := []*func(marotte.ChatID){
+		&testHookBeforeCompactionStart, &testHookAfterCompactionReturn,
+		&testHookBeforeCompactionRow, &testHookAfterCompactionRow,
+	}
+	for i, hook := range hooks {
+		var once sync.Once
+		prev := *hook
+		*hook = func(marotte.ChatID) { once.Do(func() { act(attemptSlot(i)) }) }
+		t.Cleanup(func() { *hook = prev })
+	}
+
+	_, _ = h.RequestCompact(t.Context(), "c1")
+	act(slotSettled)
+
+	done := func() bool {
+		mu.Lock()
+		last := len(events) > 0 && strings.HasPrefix(events[len(events)-1], "call")
+		mu.Unlock()
+		return last && slices.Contains(promptIDs(t, cs, "c1"), "m-queued") && !listLive(h, "c1")
+	}
+	for deadline := time.Now().Add(5 * time.Second); !done(); time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			mu.Lock()
+			got := slices.Clone(events)
+			mu.Unlock()
+			t.Fatalf("the run did not settle: events %v, list %v, prompts %v", got, runStates(t, cs, "c1"),
+				promptIDs(t, cs, "c1"))
+		}
+	}
+	mu.Lock()
+	got := slices.Clone(events)
+	mu.Unlock()
+	if slices.Contains(got, "call mid-turn") {
+		t.Errorf("an attempt started while a turn was live: %v", got)
+	}
+	for i, ev := range got {
+		if ev != "close" {
+			continue
+		}
+		next := len(got)
+		if j := slices.Index(got[i+1:], "close"); j >= 0 {
+			next = i + 1 + j
+		}
+		if n := next - i - 1; n != 1 {
+			t.Errorf("the turn end at event %d was followed by %d attempts, want 1: %v", i, n, got)
+		}
+	}
+	rowsBefore, rowsInside, inside := 0, 0, ""
+	for _, e := range logOf(t, cs, "c1") {
+		switch {
+		case e.Kind == marotte.EntryKindTurnOpen:
+			var o marotte.EntryTurnOpen
+			decodePayload(t, e, &o)
+			if o.Prompt != nil && o.Prompt.ID == "m-queued" {
+				inside = e.Turn
+			}
+		case e.Kind == marotte.EntryKindTurnClose && e.Turn == inside:
+			inside = "-"
+		case e.Kind == marotte.EntryKindCompactionFailed && inside == "":
+			rowsBefore++
+		case e.Kind == marotte.EntryKindCompactionFailed && e.Turn == inside:
+			rowsInside++
+		}
+	}
+	if rowsBefore == 0 || rowsInside != 0 {
+		t.Errorf("rows before the queued turn = %d, inside it = %d; want at least 1 before and none inside",
+			rowsBefore, rowsInside)
+	}
+}
+
+// A cancel of a running call declines the turn ends that came before it, never one after: a kiro-cli turn that
+// closed beside the call before the cancel gets no attempt when the call ends, one that closed after it does.
+func TestAutoCompact_ACancelDeclinesOnlyTheTurnEndsBeforeIt(t *testing.T) {
+	cases := []struct {
+		name        string
+		closeFirst  bool
+		wantAttempt bool
+	}{
+		{"a_turn_end_before_the_cancel", true, false},
+		{"a_turn_end_after_the_cancel", false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+			calls := onCompactor(h, 90, true, 95)
+			gate := make(chan struct{})
+			calls.gate, calls.refuse = gate, true
+			release := sync.OnceFunc(func() { close(gate) })
+			t.Cleanup(release)
+			pressed := make(chan struct{})
+			go func() {
+				defer close(pressed)
+				_, _ = h.RequestCompact(context.WithoutCancel(t.Context()), "c1")
+			}()
+			waitFor(t, func() bool { return calls.count() == 1 })
+			id := compactionEntry(t, cs, "c1").ID
+			wireTurn := func() {
+				wireOpen(t, cs, br)
+				br.deliver(newChunkMsg("kiro-cli on its own"))
+				br.deliver(newTurnEndMsg("end_turn"))
+				waitFor(t, func() bool { return !slices.Contains(runStates(t, cs, "c1"), "wire running") })
+			}
+			if tc.closeFirst {
+				wireTurn()
+			}
+			rec := postCmd(t, h, marotte.ClientCommand{
+				Type: marotte.CmdCancelCompact, ChatID: "c1", Payload: json.RawMessage(`{"id":"` + id + `"}`),
+			})
+			if rec.Code != 200 {
+				t.Fatalf("Setup: cancel_compact = %d %s", rec.Code, rec.Body.String())
+			}
+			if !tc.closeFirst {
+				wireTurn()
+			}
+			calls.mu.Lock()
+			calls.gate = nil
+			calls.mu.Unlock()
+			release()
+			<-pressed
+
+			if tc.wantAttempt {
+				waitFor(t, func() bool { return calls.count() == 2 })
+				return
+			}
+			waitFor(t, func() bool { return !listLive(h, "c1") })
+			staysFalse(t, 200*time.Millisecond, func() bool { return calls.count() != 1 },
+				"the call cancelled after the turn end was followed by an attempt")
+		})
 	}
 }

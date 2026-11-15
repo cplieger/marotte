@@ -369,6 +369,9 @@ var testHookAfterCompactionReturn = func(marotte.ChatID) {}
 // the window where a wake racing the row lands.
 var testHookBeforeCompactionRow = func(marotte.ChatID) {}
 
+// testHookAfterCompactionRow runs once a failed compaction's row is written, before its end is applied.
+var testHookAfterCompactionRow = func(marotte.ChatID) {}
+
 // testHookBeforeCompactionStart runs once a compaction is taken, before its start's first section: the window where
 // a request racing the compaction's start lands.
 var testHookBeforeCompactionStart = func(marotte.ChatID) {}
@@ -397,6 +400,7 @@ func (bc *bridgeCoordinator) runCompaction(lc *chatLifecycle, id string) {
 		lc.mu.Unlock()
 		testHookBeforeCompactionRow(lc.chatID)
 		bc.recordCompactionFailed(lc.ctx, lc.chatID, a.failureReason(lc.ctx, lc.chatID, compactNotRunCause(err)))
+		testHookAfterCompactionRow(lc.chatID)
 		lc.mu.Lock()
 	}
 	end, origin := lc.run.compactionEnded(id, accepted, err)
