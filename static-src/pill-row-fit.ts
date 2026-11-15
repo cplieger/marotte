@@ -1,7 +1,7 @@
 // Which pills the composer row has room for. A row too narrow for every control at its tier's target moves Mode, then
 // Security profile, into the Chat options card (chat-options.ts), then drops Cancel's and Send's words, then the task
-// list's count, and undoes each once it fits again. The row's controls never shrink (15-input.css), so an overflowing row is the one signal, whatever
-// the device or pointer.
+// list's count, and undoes each once it fits again. The row's controls never shrink below their square (15-input.css),
+// so an overflowing row is the one signal, whatever the device or pointer.
 
 import { signal } from "@cplieger/reactive";
 
@@ -35,11 +35,17 @@ export function watchPillRow(
   // Mutations land before the frame paints, so a control that appears (a turn's split Send, the task list) and
   // overflows the row is moved out before it is ever drawn.
   const mo = new MutationObserver((records) => {
-    if (records.some((r) => !ownWrite(row, r))) {
+    if (records.some((r) => !ownWrite(r))) {
       fit();
     }
   });
-  mo.observe(row, { subtree: true, childList: true, attributes: true, characterData: true });
+  // Only class and hidden move a control's width here; the rest (names, tooltips, --ctx-ink) would re-fit for nothing.
+  mo.observe(row, {
+    subtree: true,
+    childList: true,
+    characterData: true,
+    attributeFilter: ["class", "hidden"],
+  });
   fit();
   return () => {
     ro.disconnect();
@@ -76,16 +82,8 @@ function commit(row: HTMLElement, moved: readonly MovablePill[], closeCards: () 
   }
 }
 
-/** The fit's own attributes, and the cards' contents, which take no room in the row. */
-function ownWrite(row: HTMLElement, r: MutationRecord): boolean {
-  if (
-    r.target === row &&
-    (r.attributeName === "data-moved" ||
-      r.attributeName === "data-wordless" ||
-      r.attributeName === "data-countless")
-  ) {
-    return true;
-  }
+/** The cards' contents, which take no room in the row. */
+function ownWrite(r: MutationRecord): boolean {
   const target = r.target instanceof Element ? r.target : r.target.parentElement;
   return (target?.closest(".pill-expand-content") ?? null) !== null;
 }

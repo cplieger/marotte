@@ -106,3 +106,64 @@ func TestChatProfileChanged_AnUnstartedChatRecordsNoLine(t *testing.T) {
 		t.Errorf("log after a pick on an unstarted chat = %+v, want no entry", got)
 	}
 }
+
+// A pick in a turn's close window, after a closer claimed it and before its parked move lands, still files one line,
+// after the turn's turn_close.
+func TestChatProfileChanged_APickDuringTheCloseRecordsOneLineAfterIt(t *testing.T) {
+	tests := map[string]struct {
+		parkFirst bool
+		window    string
+	}{
+		"claimed, no park":        {window: "claimed"},
+		"claimed, a park stands":  {window: "claimed", parkFirst: true},
+		"finished, a park stands": {window: "finished", parkFirst: true},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			h, cs, _ := newTestHub()
+			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
+			finishedTurn(t, h, "c1")
+			id, _ := h.stagePromptTurn(t, "c1")
+			from := policyfile.ProfileTrusted
+			if tc.parkFirst {
+				pickProfile(t, h, "c1", from, policyfile.ProfileGuarded)
+				from = policyfile.ProfileGuarded
+			}
+			resp := &marotte.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}
+			switch tc.window {
+			case "claimed":
+				claimed, ok := h.coord.turns.claimTurn(t.Context(), "c1", id, nil)
+				if !ok {
+					t.Fatal("Setup: the turn could not be claimed")
+				}
+				pickProfile(t, h, "c1", from, policyfile.ProfileReadOnly)
+				h.coord.finalizeTurn(t.Context(), "c1",
+					&turnClose{Closer: closerPromptResponse, Resp: resp, Turn: id, Claimed: claimed})
+			case "finished":
+				closed := h.coord.onTurnClosed
+				h.coord.onTurnClosed = func(chatID marotte.ChatID, turnID string) {
+					if closed != nil {
+						closed(chatID, turnID)
+					}
+					pickProfile(t, h, chatID, from, policyfile.ProfileReadOnly)
+				}
+				endTurn(t, h, "c1", id)
+			}
+			joinInflight(t, h)
+
+			entries := logOf(t, cs, "c1")
+			got := profileSwitchesOf(t, entries)
+			want := []marotte.EntryProfileSwitched{{From: policyfile.ProfileTrusted, To: policyfile.ProfileReadOnly}}
+			if !slices.Equal(got, want) {
+				t.Errorf("profile_switched entries = %+v, want %+v", got, want)
+			}
+			closedAt := slices.IndexFunc(entries, func(e marotte.Entry) bool {
+				return e.Turn == id && e.Kind == marotte.EntryKindTurnClose
+			})
+			line := slices.IndexFunc(entries, func(e marotte.Entry) bool { return e.Kind == marotte.EntryKindProfileSwitched })
+			if closedAt < 0 || line < closedAt {
+				t.Errorf("the line sits at %d and the turn's close at %d, want the line after the close", line, closedAt)
+			}
+		})
+	}
+}

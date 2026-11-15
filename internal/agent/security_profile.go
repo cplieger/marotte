@@ -81,13 +81,13 @@ type parkedProfiles struct {
 }
 
 // recordProfileSwitch files the profile_switched entry where the agent starts running under to: at once between
-// turns, else at the open turn's close (landParkedProfile), since the reload waits for it. The lock spans the open
-// check and the park, so a close that won meanwhile still finds the park.
+// turns, else at the turn's close (landParkedProfile), since the reload waits for it. A finalizing turn and a standing
+// park both still owe that land, so either parks. The lock spans the check and the park, so the land finds it.
 func (bc *bridgeCoordinator) recordProfileSwitch(chatID marotte.ChatID, from, to string) {
 	p := &bc.parkedProfiles
 	p.mu.Lock()
-	if bc.turns.turnOpen(chatID) {
-		if _, parked := p.from[chatID]; !parked {
+	if _, parked := p.from[chatID]; parked || bc.turns.turnUnlanded(chatID) {
+		if !parked {
 			if p.from == nil {
 				p.from = map[marotte.ChatID]string{}
 			}

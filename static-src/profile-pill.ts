@@ -29,8 +29,8 @@ const BUSY_NOTE = "Applies after this turn";
 const SAVED_RULES_NOTE = "Your saved rules still apply";
 
 const view = signal<SecurityProfileView | null>(null);
-/** A pick made during a turn, until that chat's turn ends or the server refuses it. */
-const queued = signal<{ chatID: string; profile: string } | null>(null);
+/** Per chat, a pick made during its turn, until that turn ends or the server refuses it. */
+const queued = signal<ReadonlyMap<string, string>>(new Map());
 let reading: AbortController | null = null;
 let nav: RovingFocusController | null = null;
 
@@ -75,7 +75,7 @@ export function profileSelect(id: string): HTMLSelectElement {
   effect(() => {
     const s = activeSession.value;
     const v = view.value;
-    const q = queued.value;
+    const pending = s !== undefined && queued.value.has(s.id);
     const now = profileOf(s, v);
     const ids = listedProfiles(v, now);
     if (wireSignature(ids) !== listed) {
@@ -83,7 +83,7 @@ export function profileSelect(id: string): HTMLSelectElement {
       select.replaceChildren(...ids.map((p) => el("option", { value: p }, profileLabel(p))));
     }
     select.value = now;
-    select.classList.toggle("pending", q !== null && q.chatID === s?.id);
+    select.classList.toggle("pending", pending);
   });
   select.addEventListener("change", () => {
     // A declined Unrestricted, or a pick with nowhere to go, leaves the chat as it was.
@@ -121,14 +121,14 @@ export function initProfilePill(): void {
   });
   effect(() => {
     const q = queued.value;
-    if (q !== null && !watchBusy(q.chatID)) {
-      queued.value = null;
+    const landed = [...q.keys()].filter((chatID) => !watchBusy(chatID));
+    if (landed.length > 0) {
+      queued.value = new Map([...q].filter(([chatID]) => !landed.includes(chatID)));
     }
   });
   effect(() => {
     const s = activeSession.value;
-    const q = queued.value;
-    paintPill(profileOf(s, view.value), q !== null && q.chatID === s?.id);
+    paintPill(profileOf(s, view.value), s !== undefined && queued.value.has(s.id));
   });
   // An open card follows the chat's turn and the server's answer.
   effect(() => {
@@ -242,12 +242,14 @@ async function choose(id: string): Promise<void> {
   if (chatID === "") {
     return;
   }
-  const pick = { chatID, profile: id };
   if (untracked(() => watchBusy(chatID))) {
-    queued.value = pick;
+    queued.value = new Map(queued.peek()).set(chatID, id);
   }
-  const { outcome } = setChatProfile.dispatch(pick);
-  if ((await outcome).status === "error" && queued.peek() === pick) {
-    queued.value = null;
+  const { outcome } = setChatProfile.dispatch({ chatID, profile: id });
+  // A later pick in the same chat owns the entry now; this refusal must not clear its mark.
+  if ((await outcome).status === "error" && queued.peek().get(chatID) === id) {
+    const next = new Map(queued.peek());
+    next.delete(chatID);
+    queued.value = next;
   }
 }

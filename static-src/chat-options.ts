@@ -1,7 +1,7 @@
-// The chat-options menu, and the test a new row has to pass: a pill earns its prompt-row
-// slot by changing per MESSAGE, which none of these do. Every row is built here;
-// static/index.html carries an empty card. The pills the prompt row has no room for
-// (pill-row-fit.ts) first, then the actions, the two switches last.
+// The chat-options menu, and the test a row of its own has to pass: it would earn a
+// prompt-row slot by changing per MESSAGE, which none of them do. Every row is built
+// here; static/index.html carries an empty card. The pills the prompt row has no room
+// for (pill-row-fit.ts) come first, then the actions, the two switches last.
 
 import { el, effect } from "@cplieger/reactive";
 import { $ } from "./dom.js";

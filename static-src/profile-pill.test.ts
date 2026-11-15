@@ -394,6 +394,22 @@ describe("a pick made during a turn", () => {
     expect(pill().classList.contains("pending")).toBe(false);
     expect(pill().getAttribute("aria-label")).toBe("Security profile, currently Guarded");
   });
+
+  it("keeps a chat's mark while a pick in another busy chat waits too", async () => {
+    live.busy.value = true;
+    await open();
+    row("read-only").click();
+    await flush();
+    live.active.value = { id: "c-2", security_profile: "trusted" };
+    await open();
+    row("guarded").click();
+    await flush();
+    expect(pill().classList.contains("pending"), "the second chat's mark").toBe(true);
+    live.active.value = { id: "c-1", security_profile: "read-only" };
+    await flush();
+    expect(pill().classList.contains("pending"), "the first chat's mark").toBe(true);
+    expect(pill().getAttribute("aria-label")).toMatch(PENDING);
+  });
 });
 
 describe("the profile select the Chat options card shows in the pill's place", () => {
