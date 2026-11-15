@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// The marotte families' page through one fixed sequence of states, as the shipped alert rules and dashboards read
-// it. The Go and process families are left out: their values change between scrapes, and the library pins them.
+// The marotte families' page through one fixed sequence of states, as the shipped alert rules and users' dashboards
+// read it. The Go and process families are left out: their values change between scrapes, and the library pins them.
 const (
 	pageGoldenPath = "testdata/metrics_page.golden"
 	pageGoldenCmd  = "UPDATE_GOLDEN=1 go test ./internal/obs/ -run TestMetricsPage_MatchesTheGolden"
@@ -42,8 +42,8 @@ func TestMetricsPage_MatchesTheGolden(t *testing.T) {
 		t.Fatalf("%v (write it with %s)", err, pageGoldenCmd)
 	}
 	if !bytes.Equal(got, want) {
-		t.Errorf("the metrics page differs from %s; a rule or dashboard reading it may break.\ngot:\n%s\nwant:\n%s",
-			pageGoldenPath, got, want)
+		t.Errorf("the metrics page differs from %s (rewrite it with %s); a rule or dashboard reading it may break."+
+			"\ngot:\n%s\nwant:\n%s", pageGoldenPath, pageGoldenCmd, got, want)
 	}
 }
 
