@@ -30,10 +30,14 @@ Q7_SERVER_CPU_MS = 63
 PR_JOB_SECONDS = 25 * 60
 PR_SETUP_SECONDS = 82 + 108
 # An answer whose size carries a clock value is not a count: GET /api/engine's `since` is a
-# time.Time, whose RFC 3339 text drops trailing zero nanoseconds, and its boot_ms and seq change
-# digit width, so its size moves rep to rep on one runner. perf_gate.py reports a measured cell
-# that has no entry.
+# time.Time, whose RFC 3339 text drops trailing zero nanoseconds, and its seq can gain a digit,
+# so its size moves rep to rep on one runner. perf_gate.py reports a measured cell that has no
+# entry.
 CLOCK_SIZED = frozenset({'max_bytes:GET /api/engine'})
+# view.mjs counts the server's 15 s `heartbeat` keepalive (internal/liveness) as a stream frame,
+# so a cold load that runs past one gains a frame: whole held-out runs of unchanged code read 4
+# against an agreed 3. Until the harness stops counting it, these cells gate nothing.
+HEARTBEAT_COUNTED = ('cold', 'sse_frames')
 
 
 def key(d: dict) -> tuple:
@@ -85,8 +89,9 @@ class Budgets(unittest.TestCase):
                         self.assertIn((*unit(c), w), windows)
 
     def test_every_exact_entry_is_every_rep_its_calibrations_measured(self):
-        # perf_gate.py measures an exact count once and never again, so one rep of unchanged code
-        # off the baseline in any checked-in calibration is a pull request that fails on noise.
+        # perf_gate.py --calibrate makes a count exact only when every rep agrees. A count that
+        # moved in either checked-in calibration can hold its middle reps off on unchanged code,
+        # which fails the six-rep verdict.
         for e in self.budgets['budgets']:
             if e['tier'] != 'exact':
                 continue
@@ -101,6 +106,14 @@ class Budgets(unittest.TestCase):
     def test_no_entry_holds_an_answer_size_that_carries_a_clock(self):
         held = [key(e) for e in self.budgets['budgets'] if e['metric'] in CLOCK_SIZED]
         self.assertEqual(held, [])
+
+    def test_no_cold_stream_frame_count_gates(self):
+        gating = [
+            key(e)
+            for e in self.budgets['budgets']
+            if (e['window'], e['metric']) == HEARTBEAT_COUNTED and e['tier'] != 'reported'
+        ]
+        self.assertEqual(gating, [])
 
     def test_each_cell_has_one_entry(self):
         for k, es in self.entries.items():
