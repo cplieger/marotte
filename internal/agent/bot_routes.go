@@ -28,7 +28,7 @@ func (rt *Runtime) handleBotSetup(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	out := marotte.BotSetup{Bot: c.Bot, Name: c.Name, Model: c.Model, Effort: c.Effort, Supervised: c.SupervisedMode}
+	out := marotte.BotSetup{Bot: c.Bot, Name: c.Name, Model: c.NextModel(), Effort: c.NextEffort(), Supervised: c.SupervisedMode}
 	if c.Bot.Memory {
 		read, _, err := bot.ReadMemory(c, botPaths())
 		if err != nil {

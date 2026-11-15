@@ -661,7 +661,10 @@ describe("history: a Bot with no stored session", () => {
     });
     const pane = chatsPane();
     expect(keysIn(pane)).toEqual(["b:c-bot-a"]);
-    expect(pane.firstElementChild?.textContent).toBe("Could not read previous conversations.");
+    expect(pane.querySelectorAll(".list-empty")).toHaveLength(0);
+    const status = pane.previousElementSibling;
+    expect(status?.getAttribute("role")).toBe("status");
+    expect(status?.textContent).toBe("Could not read previous conversations.");
 
     const before = dispatch.mock.calls.length;
     current!.refreshHistoryView();
@@ -670,7 +673,29 @@ describe("history: a Bot with no stored session", () => {
     });
     await new Promise((r) => setTimeout(r, 0));
     expect(keysIn(pane)).toEqual(["b:c-bot-a"]);
-    expect(pane.querySelectorAll(".list-empty")).toHaveLength(1);
+    expect(document.querySelectorAll(".history-status")).toHaveLength(1);
+  });
+
+  it("drops the failure line once the conversation read recovers", async () => {
+    await render({
+      sessions: [botA],
+      runs: [],
+      sessions_state: "unavailable",
+      runs_state: "ready",
+    });
+    expect(chatsPane().previousElementSibling?.getAttribute("role")).toBe("status");
+
+    dispatch.mockResolvedValue({
+      sessions: [botA],
+      runs: [],
+      sessions_state: "ready",
+      runs_state: "ready",
+    });
+    current!.refreshHistoryView();
+    await vi.waitFor(() => {
+      expect(chatsPane().previousElementSibling).toBeNull();
+    });
+    expect(keysIn(chatsPane())).toEqual(["b:c-bot-a"]);
   });
 
   it("states no failure over the rows of a read that succeeded", async () => {

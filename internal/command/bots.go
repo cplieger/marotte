@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -91,8 +92,8 @@ type botRoles struct {
 	kickoff func(ctx context.Context, chatID marotte.ChatID, p *marotte.PromptCommand) error
 	// supervisedLocks is set_supervised_mode's own lock set, so a save and the switch never interleave.
 	supervisedLocks *keylock.Set[marotte.ChatID]
-	// saveLocks holds one bot_save per Bot from its read to its write. SpecVersion has no other writer, so the base
-	// check made under it stays true through the write.
+	// saveLocks holds one bot_save per Bot from its read until it answers. SpecVersion has no other writer, so the
+	// base check made under it stays true through the write.
 	saveLocks *keylock.Set[marotte.ChatID]
 	paths     bot.Paths
 }
@@ -108,14 +109,14 @@ type botSave struct {
 	base       int
 	memory     bool
 	start      bool
-	// choicesChanged is set once the model pick or the supervised switch changed the record.
-	choicesChanged bool
 }
 
-// cmdBotSave writes a Bot's setup in one record write and applies what the write changed: a renamed started Bot's
+// cmdBotSave writes a Bot's setup in one record write and applies what the save changed: a renamed started Bot's
 // KAS sessions, a reload mark when the role's text moved, and on a draft's start the memory file and the kickoff
-// prompt. A stale base_version, or a model pick the switch refuses, saves nothing. A supervised switch refused after
-// an applied model pick answers 502 bot_supervised naming the field, and keeps that pick with spec_version bumped.
+// prompt. spec_version bumps exactly when the Bot's view (botView) differs from the one this save read. A stale
+// base_version, or a model pick the switch refuses, saves nothing. A supervised switch refused after a model pick
+// that changed the record answers 502 bot_supervised naming the field, and keeps that pick with spec_version
+// bumped; after 502 bot_supervised the base is stale, so the page reloads the setup before its next save.
 func cmdBotSave(ctx context.Context, roles *botRoles, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
@@ -140,10 +141,16 @@ func cmdBotSave(ctx context.Context, roles *botRoles, cmd *marotte.ClientCommand
 	if cur.Bot.SpecVersion != s.base {
 		return nil, StatusErrorReason(http.StatusConflict, reasonBotChanged, errBotChanged)
 	}
-	if err := applyBotChatChoices(ctx, roles, cmd.ChatID, cur, &s); err != nil {
-		return nil, err
+	read := botViewOf(cur)
+	if err := pickBotModel(ctx, roles.models, cmd.ChatID, &read, &s); err != nil {
+		return nil, refusedChoice(ctx, roles.chats, cmd.ChatID, &read, err, false)
 	}
-	w, err := writeBotSave(ctx, roles.chats, cmd.ChatID, &s)
+	if s.supervised != nil && *s.supervised != read.supervised {
+		if err := applySupervised(ctx, roles.bridges, roles.chats, roles.supervisedLocks, cmd.ChatID, *s.supervised); err != nil {
+			return nil, refusedChoice(ctx, roles.chats, cmd.ChatID, &read, err, true)
+		}
+	}
+	w, err := writeBotSave(ctx, roles.chats, cmd.ChatID, &read, &s)
 	if err != nil {
 		return nil, err
 	}
@@ -152,14 +159,18 @@ func cmdBotSave(ctx context.Context, roles *botRoles, cmd *marotte.ClientCommand
 
 // afterBotSave applies what a save's write changed and answers the save's body.
 func afterBotSave(ctx context.Context, roles *botRoles, chatID marotte.ChatID, w *botWrite) map[string]any {
-	if w.started && w.nameChanged {
+	if len(w.changes) > 0 {
+		slog.Info("bots: Bot saved", "chat_id", chatID, "changed", w.changes, "spec_version", w.version)
+	}
+	startedNow := w.changes.has(fieldStarted)
+	if w.rec.Bot.StartedAt != 0 && w.changes.has(fieldName) {
 		renameSessions(ctx, roles.renamer, chatID, w.chain, w.rec.Name)
 	}
-	if w.started && !w.startedNow && (w.nameChanged || w.roleChanged) {
+	if w.rec.Bot.StartedAt != 0 && !startedNow && w.changes.has(fieldName, fieldGoal, fieldSteering, fieldMemory) {
 		roles.reload.MarkBotReload(chatID)
 	}
 	out := map[string]any{"chat": w.header, "spec_version": w.version}
-	if w.startedNow {
+	if startedNow {
 		if msg := startBot(ctx, roles, chatID, w.rec); msg != "" {
 			out["kickoff_error"] = msg
 		}
@@ -216,65 +227,98 @@ func botText(text string, limit int) error {
 	return nil
 }
 
-// applyBotChatChoices applies the save's model pick, then its supervised switch, where they differ from cur. The
-// pick goes first because the switch refuses it on the account's own terms before anything lands.
-func applyBotChatChoices(ctx context.Context, roles *botRoles, chatID marotte.ChatID, cur *marotte.Chat, s *botSave) error {
-	if (s.model != "" && s.model != cur.Model) || (s.effort != "" && string(s.effort) != cur.Effort) {
-		if err := roles.models.SwitchModel(ctx, chatID, marotte.SwitchModelCommand{Model: s.model, Effort: s.effort}); err != nil {
-			return err
-		}
-		s.choicesChanged = true
-	}
-	if s.supervised == nil || *s.supervised == cur.SupervisedMode {
+// pickBotModel hands the save's model and effort to the model pill's switch when they differ from the Bot's view;
+// an empty one keeps the view's. The switch decides what the pick changes, and the view's diff counts it.
+func pickBotModel(ctx context.Context, models modelSwitcher, chatID marotte.ChatID, read *botView, s *botSave) error {
+	model := cmp.Or(s.model, read.model)
+	if model == read.model && (s.effort == "" || string(s.effort) == read.effort) {
 		return nil
 	}
-	err := applySupervised(ctx, roles.bridges, roles.chats, roles.supervisedLocks, chatID, *s.supervised)
+	return models.SwitchModel(ctx, chatID, marotte.SwitchModelCommand{Model: model, Effort: s.effort})
+}
+
+// refusedChoice answers a refused model pick or supervised switch, bumping spec_version for what the record took
+// before it. A supervised refusal after such a change answers 502 bot_supervised naming the field.
+func refusedChoice(ctx context.Context, chats chatStore, chatID marotte.ChatID, read *botView, err error, supervised bool) error {
+	w, wErr := writeBotSave(ctx, chats, chatID, read, nil)
 	switch {
-	case err == nil:
-		s.choicesChanged = true
-		return nil
-	case !s.choicesChanged:
+	case wErr != nil:
+		return wErr
+	case !supervised || len(w.changes) == 0:
 		return err
-	}
-	if bumpErr := bumpBotSpecVersion(ctx, roles.chats, chatID); bumpErr != nil {
-		return bumpErr
 	}
 	code, _, _ := StatusOf(err)
 	return statusErrorFields(cmp.Or(code, http.StatusInternalServerError), reasonSupervised,
 		[]fieldError{{Field: "supervised", Error: rpcerr.Text(err)}}, errSupervised)
 }
 
-// bumpBotSpecVersion moves chatID's spec_version and nothing else, for a save that changed the record only in part.
-func bumpBotSpecVersion(ctx context.Context, chats chatStore, chatID marotte.ChatID) error {
-	if _, err := chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
-		if !exists || c.Bot == nil {
-			return false
-		}
-		b := *c.Bot
-		b.SpecVersion++
-		c.Bot = &b
-		return true
-	}); err != nil {
-		return StatusError(http.StatusInternalServerError, err)
+// The botView fields a save can change, as botChanges names them.
+const (
+	fieldName       = "name"
+	fieldGoal       = "goal"
+	fieldSteering   = "steering"
+	fieldMemory     = "memory"
+	fieldStarted    = "started"
+	fieldModel      = "model"
+	fieldEffort     = "effort"
+	fieldSupervised = "supervised"
+)
+
+// botView is a Bot as a save states it: the model and effort its next turn runs on, so a pick parked behind a turn
+// or thinking already off compares equal to the save that sends it back.
+type botView struct {
+	name, goal, steering, model, effort string
+	memory, started, supervised         bool
+}
+
+func botViewOf(c *marotte.Chat) botView {
+	return botView{
+		name: c.Name, goal: c.Bot.Goal, steering: c.Bot.Steering, model: c.NextModel(), effort: c.NextEffort(),
+		memory: c.Bot.Memory, started: c.Bot.StartedAt != 0, supervised: c.SupervisedMode,
 	}
-	return nil
 }
 
-// botWrite is what writeBotSave changed.
+// botChanges names each field where two views of one Bot differ.
+type botChanges []string
+
+func diffBotViews(was, now *botView) botChanges {
+	var out botChanges
+	for _, d := range []struct {
+		field  string
+		differ bool
+	}{
+		{fieldName, was.name != now.name},
+		{fieldGoal, was.goal != now.goal},
+		{fieldSteering, was.steering != now.steering},
+		{fieldMemory, was.memory != now.memory},
+		{fieldStarted, was.started != now.started},
+		{fieldModel, was.model != now.model},
+		{fieldEffort, was.effort != now.effort},
+		{fieldSupervised, was.supervised != now.supervised},
+	} {
+		if d.differ {
+			out = append(out, d.field)
+		}
+	}
+	return out
+}
+
+func (c botChanges) has(fields ...string) bool {
+	return slices.ContainsFunc(fields, func(f string) bool { return slices.Contains(c, f) })
+}
+
+// botWrite is what writeBotSave wrote.
 type botWrite struct {
-	rec         *marotte.Chat
-	chain       []string
-	header      marotte.ChatHeader
-	version     int
-	started     bool
-	startedNow  bool
-	nameChanged bool
-	roleChanged bool
+	rec     *marotte.Chat
+	chain   []string
+	changes botChanges
+	header  marotte.ChatHeader
+	version int
 }
 
-// writeBotSave writes s onto chatID's Bot block, refusing a record that stopped being a Bot since the caller read it.
-// Only a change, s's model pick or supervised switch included, bumps SpecVersion.
-func writeBotSave(ctx context.Context, chats chatStore, chatID marotte.ChatID, s *botSave) (botWrite, error) {
+// writeBotSave writes s onto chatID's Bot block, nil writing only what the save's switches already landed, and bumps
+// SpecVersion when the record's view differs from read. It refuses a record that stopped being a Bot.
+func writeBotSave(ctx context.Context, chats chatStore, chatID marotte.ChatID, read *botView, s *botSave) (botWrite, error) {
 	var w botWrite
 	var refused error
 	if _, err := chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
@@ -283,25 +327,25 @@ func writeBotSave(ctx context.Context, chats chatStore, chatID marotte.ChatID, s
 			return false
 		}
 		b := *c.Bot
-		w.roleChanged = b.Goal != s.goal || b.Memory != s.memory || b.Steering != s.steering
-		w.startedNow = s.start && b.StartedAt == 0
-		w.nameChanged = setUserName(c, s.name)
-		changed := w.nameChanged || w.roleChanged || w.startedNow || s.choicesChanged
-		if changed {
+		c.Bot = &b
+		if s != nil {
+			setUserName(c, s.name)
 			b.Goal, b.Memory, b.Steering = s.goal, s.memory, s.steering
-			if w.startedNow {
+			if s.start && b.StartedAt == 0 {
 				b.StartedAt = time.Now().UnixMilli()
 			}
-			b.SpecVersion++
-			c.Bot = &b
 		}
-		w.started = b.StartedAt != 0
+		now := botViewOf(c)
+		w.changes = diffBotViews(read, &now)
+		if len(w.changes) > 0 {
+			b.SpecVersion++
+		}
 		w.version = b.SpecVersion
 		w.chain = c.SessionChain()
 		rec := *c
 		w.rec = &rec
 		w.header = c.Header()
-		return changed
+		return len(w.changes) > 0
 	}); err != nil {
 		return w, StatusError(http.StatusInternalServerError, err)
 	}

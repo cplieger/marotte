@@ -682,8 +682,8 @@ func (m *Membership) launcherTab(ctx context.Context, launcher marotte.ChatID) (
 	return opened.Subject.ID, nil
 }
 
-// closeTab closes a tab and its descendants and, with retention off, deletes each chat
-// the close left tabless. An id that is not open closes nothing and is not an error.
+// closeTab closes a tab and its descendants and deletes each chat the close left tabless that doomedChats dooms.
+// An id that is not open closes nothing and is not an error.
 //
 // Under mu it holds each closed chat's life gate, refuses a stale impact with 409
 // close_impact_changed (holds released, nothing committed), then commits with tabs.Close (the doomed chats unlisted),

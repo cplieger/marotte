@@ -340,6 +340,24 @@ function chatsContainer(): HTMLElement | null {
   return maybeEl("history-table");
 }
 
+const CHATS_STATUS_ID = "history-chats-status";
+
+/** A line before the Chats list, outside its frame; null removes it. A note inside the list would read as an
+ *  empty list above rows. */
+function setChatsStatus(chats: HTMLElement, text: string | null): void {
+  const current = maybeEl(CHATS_STATUS_ID);
+  if (text === null) {
+    current?.remove();
+    return;
+  }
+  const line =
+    current ?? el("p", { id: CHATS_STATUS_ID, className: "history-status", role: "status" });
+  line.textContent = text;
+  if (line.nextElementSibling !== chats) {
+    chats.before(line);
+  }
+}
+
 function runsContainer(): HTMLElement | null {
   return maybeEl("history-runs");
 }
@@ -487,10 +505,12 @@ class HistoryController {
           NOUNS,
         ),
       );
+      setChatsStatus(container, null);
       container.replaceChildren(paneNote("list-empty", "No matching conversations."));
       return;
     }
     this.setNote(scanNote(res, res.matches.length, NOUNS));
+    setChatsStatus(container, null);
     container.replaceChildren(...res.matches.map((m) => buildMatchRow(m, q)));
   }
 
@@ -532,6 +552,7 @@ class HistoryController {
       this.verdict.value = null;
       runs.replaceChildren(this.buildError());
       if (this.query === "") {
+        setChatsStatus(chats, null);
         chats.replaceChildren(this.buildError());
       }
       settle(false);
@@ -557,9 +578,7 @@ class HistoryController {
     );
     // A failed read still lists the Bots marotte's own records name, so the failure heads them or the lost
     // conversations read as gone.
-    if (failed && rows.length > 0) {
-      chats.prepend(paneNote("list-empty", CHATS_UNREADABLE));
-    }
+    setChatsStatus(chats, failed && rows.length > 0 ? CHATS_UNREADABLE : null);
   }
 
   private paintRuns(): void {

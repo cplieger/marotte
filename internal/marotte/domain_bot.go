@@ -53,11 +53,12 @@ var ErrBotDraft = errors.New("this Bot has not been created yet; create it to se
 type BotSetup struct {
 	Bot *Bot `json:"bot"`
 	// Memory describes the memory file; nil while memory is off.
-	Memory     *BotMemoryStat `json:"memory,omitempty"`
-	Name       string         `json:"name"`
-	Model      string         `json:"model"`
-	Effort     string         `json:"effort"`
-	Supervised bool           `json:"supervised"`
+	Memory *BotMemoryStat `json:"memory,omitempty"`
+	Name   string         `json:"name"`
+	// Model and Effort are Chat.NextModel and Chat.NextEffort, the pick a bot_save sending them back leaves as it is.
+	Model      string `json:"model"`
+	Effort     string `json:"effort"`
+	Supervised bool   `json:"supervised"`
 }
 
 // BotMemoryStat is the memory file's size and last write, both 0 before the file exists.

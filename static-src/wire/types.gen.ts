@@ -317,6 +317,7 @@ export interface BotSetup {
   /** Memory describes the memory file; nil while memory is off. */
   memory?: BotMemoryStat;
   name: string;
+  /** Model and Effort are Chat.NextModel and Chat.NextEffort, the pick a bot_save sending them back leaves as it is. */
   model: string;
   effort: string;
   supervised: boolean;

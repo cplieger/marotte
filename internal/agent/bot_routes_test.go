@@ -82,6 +82,40 @@ func TestBotSetupRoute_AnswersTheBotsSetup(t *testing.T) {
 	}
 }
 
+func TestBotSetupRoute_AnswersThePickTheNextTurnRunsOn(t *testing.T) {
+	h, cs, _ := newTestHub()
+	seedSetupBot(t, cs, false)
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.PendingModel, c.PendingEffort = "model-b", "max"
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := decodeBody[marotte.BotSetup](t, getRoute(t, h, "/api/bots/c1"))
+
+	if got.Model != "model-b" || got.Effort != "max" {
+		t.Errorf("setup = model %q effort %q, want the parked model-b at max", got.Model, got.Effort)
+	}
+}
+
+func TestBotSetupRoute_AnswersThinkingOffAsTheSwitchsOffStop(t *testing.T) {
+	h, cs, _ := newTestHub()
+	seedSetupBot(t, cs, false)
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Thinking = marotte.ThinkingOff
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := decodeBody[marotte.BotSetup](t, getRoute(t, h, "/api/bots/c1"))
+
+	if got.Effort != string(marotte.SwitchEffortOff) {
+		t.Errorf("setup effort = %q, want %q", got.Effort, marotte.SwitchEffortOff)
+	}
+}
+
 func TestBotSetupRoute_StatesNoMemoryWhileItIsOff(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedSetupBot(t, cs, false)

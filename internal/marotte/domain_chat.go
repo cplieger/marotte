@@ -756,6 +756,26 @@ func (c *Chat) MoveToModel(model string) {
 	c.EffortLevels = nil
 }
 
+// NextModel is the model the chat's next turn runs on: a pick parked behind a turn, else Model.
+func (c *Chat) NextModel() string {
+	if c.PendingModel != "" {
+		return c.PendingModel
+	}
+	return c.Model
+}
+
+// NextEffort is the effort pick the chat's next turn runs at, in switch_model's terms: a tier parked with a pick,
+// else SwitchEffortOff while the chat chose thinking off, else Effort.
+func (c *Chat) NextEffort() string {
+	if c.PendingEffort != "" {
+		return c.PendingEffort
+	}
+	if c.Thinking == ThinkingOff {
+		return string(SwitchEffortOff)
+	}
+	return c.Effort
+}
+
 // ThinkingIsOff reports whether the chat's session runs, or will run, with thinking off:
 // the session's report, else the chat's choice, else the model's default. Callers apply
 // it only on a toggleable model.

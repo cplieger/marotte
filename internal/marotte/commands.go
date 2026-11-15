@@ -305,10 +305,11 @@ type BotSaveCommand struct {
 	Name       string `json:"name"`
 	Goal       string `json:"goal"`
 	Steering   string `json:"steering,omitempty"`
-	// Model and Effort go through the model pill's switch when they differ from the record; empty keeps it.
+	// Model and Effort go through the model pill's switch when they differ from BotSetup's; empty keeps it.
 	Model  string `json:"model,omitempty"`
 	Effort string `json:"effort,omitempty"`
-	// BaseVersion is the Bot.SpecVersion the page loaded; another answers 409 bot_changed and saves nothing.
+	// BaseVersion is the Bot.SpecVersion the page loaded; another answers 409 bot_changed and saves nothing. After 502
+	// bot_supervised the base is stale, so the page reloads the setup before its next save.
 	BaseVersion int  `json:"base_version"`
 	Memory      bool `json:"memory"`
 	// Start on a draft stamps started_at and sends the kickoff prompt; on a started Bot it is ignored.

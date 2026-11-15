@@ -111,8 +111,8 @@ func TestChatSessionOpts_ARegularChatCarriesNoRole(t *testing.T) {
 	}
 }
 
-// TestBotDoor_ADraftOpensNoSession pins that a draft has no session at all: every door refuses it with 409 bot_draft
-// before a generation starts, so no session/new or session/load reaches the engine.
+// TestBotDoor_ADraftOpensNoSession pins that a draft has no session at all: the door's generation refuses it with 409
+// bot_draft on its own record read, so no session/new or session/load reaches the engine.
 func TestBotDoor_ADraftOpensNoSession(t *testing.T) {
 	for _, door := range doors {
 		t.Run(door.name, func(t *testing.T) {

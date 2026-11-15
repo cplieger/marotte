@@ -24,13 +24,16 @@ import (
 // botFakes records what bot_save hands its collaborators: reload marks, KAS renames, model switches and kickoffs.
 type botFakes struct {
 	kickoffErr error
-	reloads    []marotte.ChatID
-	renames    []string
-	switches   []marotte.SwitchModelCommand
-	kickoffs   []*marotte.PromptCommand
+	store      chatStore
 	renameErr  error
 	switchErr  error
-	mu         sync.Mutex
+	// land is what an accepted switch writes onto the record; nil writes nothing, as a pick already in force does.
+	land     func(c *marotte.Chat, p marotte.SwitchModelCommand)
+	reloads  []marotte.ChatID
+	renames  []string
+	switches []marotte.SwitchModelCommand
+	kickoffs []*marotte.PromptCommand
+	mu       sync.Mutex
 }
 
 func (f *botFakes) MarkBotReload(id marotte.ChatID) {
@@ -46,11 +49,43 @@ func (f *botFakes) RenameSession(_ context.Context, sessionID, title string) err
 	return f.renameErr
 }
 
-func (f *botFakes) SwitchModel(_ context.Context, _ marotte.ChatID, p marotte.SwitchModelCommand) error {
+func (f *botFakes) SwitchModel(ctx context.Context, chatID marotte.ChatID, p marotte.SwitchModelCommand) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.switches = append(f.switches, p)
-	return f.switchErr
+	err, land := f.switchErr, f.land
+	f.mu.Unlock()
+	if err != nil || land == nil {
+		return err
+	}
+	_, mErr := f.store.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool {
+		land(c, p)
+		return true
+	})
+	return mErr
+}
+
+// landPick is switch_model on a Bot with no live session: the pick lands on the record at once, and a tier picked
+// while thinking is off turns it on.
+func landPick(c *marotte.Chat, p marotte.SwitchModelCommand) {
+	c.MoveToModel(cmp.Or(p.Model, c.Model))
+	c.PendingModel, c.PendingEffort = "", ""
+	switch p.Effort {
+	case "":
+	case marotte.SwitchEffortOff:
+		c.Thinking = marotte.ThinkingOff
+	default:
+		c.Effort = string(p.Effort)
+		if c.Thinking == marotte.ThinkingOff {
+			c.Thinking = marotte.ThinkingOn
+		}
+	}
+}
+
+// parkPick is switch_model behind a running turn: a pick of another model is parked with its tier.
+func parkPick(c *marotte.Chat, p marotte.SwitchModelCommand) {
+	if p.Model != c.Model {
+		c.PendingModel, c.PendingEffort = p.Model, string(p.Effort)
+	}
 }
 
 func (f *botFakes) kickoff(_ context.Context, _ marotte.ChatID, p *marotte.PromptCommand) error {
@@ -64,7 +99,7 @@ func (f *botFakes) kickoff(_ context.Context, _ marotte.ChatID, p *marotte.Promp
 // KIRO_HOME.
 func newBotRoles(t *testing.T, store chatStore) (*botRoles, *botFakes) {
 	t.Helper()
-	f := &botFakes{}
+	f := &botFakes{store: store}
 	return &botRoles{
 		chats:           store,
 		bridges:         newTestHost(t, store),
@@ -302,6 +337,112 @@ func TestCmdBotSave_ASaveThatChangesNothingKeepsTheSpecVersion(t *testing.T) {
 	}
 }
 
+// equalBotPayload is the save that sends back exactly what seedEqualBot stored.
+func equalBotPayload() *marotte.BotSaveCommand {
+	return &marotte.BotSaveCommand{Name: "Watcher", Goal: "Watch.", Steering: "Be brief.", Memory: true, Model: "model-a", Effort: "low"}
+}
+
+// seedEqualBot writes the started Bot equalBotPayload describes, then applies edit to its record.
+func seedEqualBot(t *testing.T, store chatStore, edit func(c *marotte.Chat)) {
+	t.Helper()
+	seedBot(t, store, "c-bot", "Watcher", &marotte.Bot{Goal: "Watch.", Steering: "Be brief.", Memory: true, StartedAt: 1})
+	if _, err := store.Mutate(t.Context(), "c-bot", func(c *marotte.Chat, _ bool) bool {
+		c.Model, c.Effort = "model-a", "low"
+		if edit != nil {
+			edit(c)
+		}
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCmdBotSave_AnEqualSaveKeepsTheSpecVersionAndAChangeBumpsItOnce(t *testing.T) {
+	on, off := true, false
+	cases := []struct {
+		name string
+		// seed edits the stored Bot; equal edits the save so it still states that Bot; change edits it to a change.
+		seed          func(c *marotte.Chat)
+		land          func(c *marotte.Chat, p marotte.SwitchModelCommand)
+		equal, change func(p *marotte.BotSaveCommand)
+	}{
+		{name: "the name", change: func(p *marotte.BotSaveCommand) { p.Name = "CI watcher" }},
+		{name: "the goal", change: func(p *marotte.BotSaveCommand) { p.Goal = "Watch closely." }},
+		{name: "the steering", change: func(p *marotte.BotSaveCommand) { p.Steering = "" }},
+		{name: "memory", change: func(p *marotte.BotSaveCommand) { p.Memory = false }},
+		{
+			name:   "the start",
+			seed:   func(c *marotte.Chat) { c.Bot.StartedAt = 0 },
+			change: func(p *marotte.BotSaveCommand) { p.Start = true },
+		},
+		{
+			name:   "the model",
+			land:   landPick,
+			equal:  func(p *marotte.BotSaveCommand) { p.Model = "" },
+			change: func(p *marotte.BotSaveCommand) { p.Model = "model-b" },
+		},
+		{
+			name:   "the effort",
+			land:   landPick,
+			equal:  func(p *marotte.BotSaveCommand) { p.Effort = "" },
+			change: func(p *marotte.BotSaveCommand) { p.Effort = "high" },
+		},
+		{
+			name:   "thinking turned off",
+			land:   landPick,
+			change: func(p *marotte.BotSaveCommand) { p.Effort = string(marotte.SwitchEffortOff) },
+		},
+		{
+			name:   "Off on a Bot whose thinking is off",
+			seed:   func(c *marotte.Chat) { c.Thinking = marotte.ThinkingOff },
+			equal:  func(p *marotte.BotSaveCommand) { p.Effort = string(marotte.SwitchEffortOff) },
+			change: func(p *marotte.BotSaveCommand) { p.Effort = "high" },
+		},
+		{
+			name:   "a parked pick sent back",
+			seed:   func(c *marotte.Chat) { c.PendingModel, c.PendingEffort = "model-b", "high" },
+			land:   parkPick,
+			equal:  func(p *marotte.BotSaveCommand) { p.Model, p.Effort = "model-b", "high" },
+			change: func(p *marotte.BotSaveCommand) { p.Model = "model-c" },
+		},
+		{
+			name:   "supervised",
+			equal:  func(p *marotte.BotSaveCommand) { p.Supervised = &off },
+			change: func(p *marotte.BotSaveCommand) { p.Supervised = &on },
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := testsupport.NewInMemoryChatStore()
+			seedEqualBot(t, store, tc.seed)
+			roles, f := newBotRoles(t, store)
+			f.land = landPick
+			if tc.land != nil {
+				f.land = tc.land
+			}
+			equal := equalBotPayload()
+			if tc.equal != nil {
+				tc.equal(equal)
+			}
+
+			if body := saveBot(t, roles, "c-bot", equal); body["spec_version"] != 0 || botOf(t, store, "c-bot").Bot.SpecVersion != 0 {
+				t.Errorf("an equal save answered spec_version %v, stored %d, want 0 kept",
+					body["spec_version"], botOf(t, store, "c-bot").Bot.SpecVersion)
+			}
+			change := equalBotPayload()
+			tc.change(change)
+			if body := saveBot(t, roles, "c-bot", change); body["spec_version"] != 1 {
+				t.Errorf("a change answered spec_version %v, want 1", body["spec_version"])
+			}
+			change.BaseVersion = 1
+			if body := saveBot(t, roles, "c-bot", change); body["spec_version"] != 1 || botOf(t, store, "c-bot").Bot.SpecVersion != 1 {
+				t.Errorf("the change sent again answered spec_version %v, stored %d, want 1 kept",
+					body["spec_version"], botOf(t, store, "c-bot").Bot.SpecVersion)
+			}
+		})
+	}
+}
+
 func TestCmdBotSave_AChatChoiceChangeAloneBumpsTheSpecVersion(t *testing.T) {
 	on := true
 	cases := []struct {
@@ -322,6 +463,7 @@ func TestCmdBotSave_AChatChoiceChangeAloneBumpsTheSpecVersion(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			seedBot(t, store, "c-bot", "Watcher", &marotte.Bot{Goal: "Watch.", StartedAt: 1})
 			roles, f := newBotRoles(t, store)
+			f.land = landPick
 			p := &marotte.BotSaveCommand{Name: "Watcher", Goal: "Watch."}
 			tc.edit(p)
 
@@ -532,6 +674,20 @@ func TestCmdBotSave_AModelOrEffortChangeGoesThroughTheModelSwitch(t *testing.T) 
 	}
 }
 
+func TestCmdBotSave_AnEffortPickKeepsTheModelPickedBehindATurn(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedEqualBot(t, store, func(c *marotte.Chat) { c.PendingModel, c.PendingEffort = "model-b", "high" })
+	roles, f := newBotRoles(t, store)
+	p := equalBotPayload()
+	p.Model, p.Effort = "", "max"
+
+	saveBot(t, roles, "c-bot", p)
+
+	if want := []marotte.SwitchModelCommand{{Model: "model-b", Effort: "max"}}; !slices.Equal(f.switches, want) {
+		t.Errorf("switches = %+v, want %+v: an empty model keeps the one picked", f.switches, want)
+	}
+}
+
 func TestCmdBotSave_SupervisedIsWrittenOnlyWhenSent(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedBot(t, store, "c-bot", "New Bot", &marotte.Bot{})
@@ -580,6 +736,7 @@ func TestCmdBotSave_ASupervisedRefusalAfterAModelSwitchNamesWhatLanded(t *testin
 	store := testsupport.NewInMemoryChatStore()
 	seedBot(t, store, "c-bot", "Watcher", &marotte.Bot{Goal: "Watch.", StartedAt: 1, SpecVersion: 2})
 	roles, f := newBotRoles(t, store)
+	f.land = landPick
 	roles.bridges = newBridgeHost(store, &recordingBridge{callErr: errors.New("broken pipe"), sessionID: "sess-1"})
 	on := true
 
@@ -602,6 +759,112 @@ func TestCmdBotSave_ASupervisedRefusalAfterAModelSwitchNamesWhatLanded(t *testin
 	}
 	if c.Bot.SpecVersion != 3 {
 		t.Errorf("spec_version = %d, want 3: the model pick landed", c.Bot.SpecVersion)
+	}
+}
+
+func TestCmdBotSave_ANoOpPickBesideARefusedSupervisedSwitchAnswersThePlainRefusal(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedEqualBot(t, store, func(c *marotte.Chat) {
+		c.Thinking = marotte.ThinkingOff
+		c.Bot.SpecVersion = 2
+	})
+	roles, _ := newBotRoles(t, store)
+	roles.bridges = newBridgeHost(store, &recordingBridge{callErr: errors.New("broken pipe"), sessionID: "sess-1"})
+	on := true
+	p := equalBotPayload()
+	p.Effort, p.Supervised, p.BaseVersion = string(marotte.SwitchEffortOff), &on, 2
+
+	_, err := cmdBotSave(t.Context(), roles, botSaveReq(t, "c-bot", p))
+
+	if err == nil || reasonOf(err) == "bot_supervised" {
+		t.Errorf("err = %v reason %q, want the switch's own refusal: the pick changed nothing", err, reasonOf(err))
+	}
+	if c := botOf(t, store, "c-bot"); c.SupervisedMode || c.Bot.SpecVersion != 2 {
+		t.Errorf("supervised %v version %d, want the record unchanged at 2", c.SupervisedMode, c.Bot.SpecVersion)
+	}
+}
+
+// stopThenRefuse is switch_model whose Off stop lands on the live session and whose park then fails.
+type stopThenRefuse struct{ store chatStore }
+
+var errParkFailed = StatusError(http.StatusInternalServerError, errors.New("write pending_model failed"))
+
+func (s stopThenRefuse) SwitchModel(ctx context.Context, chatID marotte.ChatID, _ marotte.SwitchModelCommand) error {
+	if _, err := s.store.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool {
+		c.Thinking = marotte.ThinkingOff
+		return true
+	}); err != nil {
+		return err
+	}
+	return errParkFailed
+}
+
+func TestCmdBotSave_APickRefusedAfterItsStopLandedBumpsAndAnswersTheSwitchsError(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedEqualBot(t, store, nil)
+	roles, f := newBotRoles(t, store)
+	roles.models = stopThenRefuse{store: store}
+	p := equalBotPayload()
+	p.Model, p.Effort, p.Goal = "model-b", string(marotte.SwitchEffortOff), "A new goal."
+
+	_, err := cmdBotSave(t.Context(), roles, botSaveReq(t, "c-bot", p))
+
+	if !errors.Is(err, errParkFailed) || reasonOf(err) == "bot_supervised" {
+		t.Errorf("err = %v reason %q, want the switch's own error", err, reasonOf(err))
+	}
+	c := botOf(t, store, "c-bot")
+	if c.Bot.SpecVersion != 1 || c.Bot.Goal != "Watch." {
+		t.Errorf("version %d goal %q, want 1 for the landed stop and the goal unsaved", c.Bot.SpecVersion, c.Bot.Goal)
+	}
+	if len(f.kickoffs) != 0 {
+		t.Errorf("a refused save sent %d kickoff(s)", len(f.kickoffs))
+	}
+}
+
+// mutateRefusingStore reads through and refuses every write.
+type mutateRefusingStore struct {
+	*testsupport.InMemoryChatStore
+}
+
+var errWriteRefused = errors.New("simulated record write failure")
+
+func (*mutateRefusingStore) Mutate(context.Context, marotte.ChatID, func(*marotte.Chat, bool) bool) (string, error) {
+	return "", errWriteRefused
+}
+
+func TestCmdBotSave_AFailedWriteAfterARefusedSupervisedSwitchAnswersTheWriteFailure(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedBot(t, store, "c-bot", "Watcher", &marotte.Bot{Goal: "Watch.", StartedAt: 1, SpecVersion: 2})
+	roles, f := newBotRoles(t, store)
+	f.land = landPick
+	roles.chats = &mutateRefusingStore{InMemoryChatStore: store}
+	roles.bridges = newBridgeHost(store, &recordingBridge{callErr: errors.New("broken pipe"), sessionID: "sess-1"})
+	on := true
+
+	_, err := cmdBotSave(t.Context(), roles, botSaveReq(t, "c-bot", &marotte.BotSaveCommand{
+		Name: "Watcher", Goal: "Watch.", Model: "model-b", Supervised: &on, BaseVersion: 2,
+	}))
+
+	if statusOf(err) != http.StatusInternalServerError || !errors.Is(err, errWriteRefused) {
+		t.Errorf("err = %v status %d, want the 500 write failure", err, statusOf(err))
+	}
+}
+
+func TestCmdBotSave_ASupervisedValueAlreadyStoredSendsNoSwitch(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedEqualBot(t, store, nil)
+	roles, _ := newBotRoles(t, store)
+	bridge := &recordingBridge{callErr: errors.New("broken pipe"), sessionID: "sess-1"}
+	roles.bridges = newBridgeHost(store, bridge)
+	off := false
+	p := equalBotPayload()
+	p.Goal, p.Supervised = "A new goal.", &off
+
+	if _, err := cmdBotSave(t.Context(), roles, botSaveReq(t, "c-bot", p)); err != nil {
+		t.Fatalf("save: %v, want the goal saved without a supervised switch", err)
+	}
+	if c := botOf(t, store, "c-bot"); c.Bot.Goal != "A new goal." || c.Bot.SpecVersion != 1 {
+		t.Errorf("goal %q version %d, want the new goal at 1", c.Bot.Goal, c.Bot.SpecVersion)
 	}
 }
 
