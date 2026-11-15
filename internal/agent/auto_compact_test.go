@@ -736,6 +736,30 @@ func TestAutoCompact_AnAttemptTheChatsCloseEndedLeavesNoRowAndListsNothing(t *te
 	}, "the closed chat's attempt left a row or a toast, or listed the turn end beside it")
 }
 
+// A successful attempt covers the kiro-cli turn that closed beside it: the reading taken before the call is stale, so
+// listing that turn end would start a second compaction right after the one that worked.
+func TestAutoCompact_ASuccessBesideATurnEndListsNothing(t *testing.T) {
+	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+	calls := onCompactor(h, 90, true, 95)
+	var once sync.Once
+	prev := testHookAfterCompactionReturn
+	t.Cleanup(func() { testHookAfterCompactionReturn = prev })
+	testHookAfterCompactionReturn = func(marotte.ChatID) {
+		once.Do(func() {
+			wireOpen(t, cs, br)
+			br.deliver(newChunkMsg("kiro-cli on its own"))
+			br.deliver(newTurnEndMsg("end_turn"))
+			waitFor(t, func() bool { return !slices.Contains(runStates(t, cs, "c1"), "wire running") })
+		})
+	}
+
+	runPrompt(t, h, cs, "c1", "m-2")
+
+	waitFor(t, func() bool { return calls.count() == 1 && !listLive(h, "c1") })
+	staysFalse(t, 300*time.Millisecond, func() bool { return calls.count() != 1 },
+		"the successful attempt listed the turn end beside it")
+}
+
 // An attempt requeued behind kiro-cli's turn after kiro-cli reported its summary failed is a new attempt: its own
 // bare refusal leaves its own row, after kiro-cli's.
 func TestAutoCompact_ARequeuedAttemptAfterAReportedFailureLeavesItsOwnRow(t *testing.T) {
