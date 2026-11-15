@@ -216,37 +216,36 @@ func TestCmdResumeSession_NameLengthCap(t *testing.T) {
 	})
 }
 
-// stepSessionsDouble answers StepSessionOf from a fixed table, or fails.
-type stepSessionsDouble struct {
-	err   error
-	steps map[string]string
+// conversationsDouble answers ListedConversation from a fixed set, or fails.
+type conversationsDouble struct {
+	err    error
+	listed map[string]bool
 }
 
-func (d stepSessionsDouble) StepSessionOf(_ context.Context, sessionID string) (string, bool, error) {
+func (d conversationsDouble) ListedConversation(_ context.Context, sessionID string) (bool, error) {
 	if d.err != nil {
-		return "", false, d.err
+		return false, d.err
 	}
-	wf, ok := d.steps[sessionID]
-	return wf, ok, nil
+	return d.listed[sessionID], nil
 }
 
-// A step's session resumed as a chat would answer its run from a second resident, so it is refused,
-// and so is a session whose kind cannot be read; any other session is resumed.
-func TestCmdResumeSession_RefusesAWorkflowStepsSession(t *testing.T) {
-	steps := stepSessionsDouble{steps: map[string]string{"sess_step": "wf_1"}}
+// A step's session resumed as a chat would answer its run from a second resident, so only a session KAS lists as a
+// conversation is resumed, and a session whose listing cannot be read is refused retryably.
+func TestCmdResumeSession_ResumesOnlyAListedConversation(t *testing.T) {
+	conversations := conversationsDouble{listed: map[string]bool{"sess_chat": true}}
 	cases := []struct {
-		steps   stepSessions
-		session string
-		want    int
+		conversations listedConversations
+		session       string
+		want          int
 	}{
-		{steps, "sess_step", http.StatusConflict},
-		{stepSessionsDouble{err: errors.New("engine down")}, "sess_chat", http.StatusServiceUnavailable},
-		{steps, "sess_chat", http.StatusOK},
+		{conversations, "sess_step", http.StatusConflict},
+		{conversationsDouble{err: errors.New("engine down")}, "sess_chat", http.StatusServiceUnavailable},
+		{conversations, "sess_chat", http.StatusOK},
 	}
 	for _, tc := range cases {
 		t.Run(tc.session+" "+http.StatusText(tc.want), func(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
-			_, err := cmdResumeSession(t.Context(), newTestMembership(t, newTestHost(t, store)), tc.steps,
+			_, err := cmdResumeSession(t.Context(), newTestMembership(t, newTestHost(t, store)), tc.conversations,
 				resumeReq(t, "c1", tc.session, "Earlier work"))
 			if statusOf(err) != tc.want {
 				t.Fatalf("status = %d, want %d (%s)", statusOf(err), tc.want, errText(err))

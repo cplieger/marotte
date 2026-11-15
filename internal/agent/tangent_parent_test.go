@@ -100,6 +100,18 @@ func TestTangentParent_FollowsKASsParentLinkOverTheChain(t *testing.T) {
 	}
 }
 
+func TestTangentParent_ResolvesInAStepHeavyWorkspace(t *testing.T) {
+	h, cs, br := newTestHub()
+	seedChain(t, cs, "c-parent", "s-parent")
+	seedChain(t, cs, "c-tangent", "s-fork")
+	stepHeavyKAS(br, sessionRowsJSON(t, map[string]string{"s-fork": "s-parent", "s-parent": ""}))
+
+	got, err := h.TangentParent(t.Context(), "c-tangent")
+	if err != nil || got != "c-parent" {
+		t.Errorf("TangentParent = (%q, %v), want (c-parent, nil)", got, err)
+	}
+}
+
 func TestTangentParent_AnUnreadableListIsNeitherAnswer(t *testing.T) {
 	h, cs, br := newTestHub()
 	seedChain(t, cs, "c-tangent", "s-fork")

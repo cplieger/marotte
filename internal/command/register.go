@@ -47,7 +47,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	// The handlers take the narrower chatStore; only the coordinator writes keep facts.
 	var chats chatStore = r.Chats
 	d.register(marotte.CmdCreateChat, bind1(mem, cmdCreateChat))
-	d.register(marotte.CmdResumeSession, bind2(mem, r.StepSessions, cmdResumeSession))
+	d.register(marotte.CmdResumeSession, bind2(mem, r.Conversations, cmdResumeSession))
 	d.RegisterChange(marotte.CmdCompact, bind1[compactRequester](r.Compactor, cmdCompact))
 	d.register(marotte.CmdCancelCompact, bind1[compactRequester](r.Compactor, cmdCancelCompact))
 

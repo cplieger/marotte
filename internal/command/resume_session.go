@@ -20,7 +20,7 @@ import (
 // cmdResumeSession creates a chat bound to an existing KAS session so the
 // stored conversation can be opened, and returns the chat plus its tab.
 // The id is minted here when the envelope carries none.
-func cmdResumeSession(ctx context.Context, mem *Membership, steps stepSessions, cmd *marotte.ClientCommand) (any, error) {
+func cmdResumeSession(ctx context.Context, mem *Membership, conversations listedConversations, cmd *marotte.ClientCommand) (any, error) {
 	var p marotte.ResumeSessionCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
@@ -34,7 +34,7 @@ func cmdResumeSession(ctx context.Context, mem *Membership, steps stepSessions, 
 	if len(name) > marotte.MaxChatNameBytes {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	if err := refuseStepSession(ctx, steps, p.SessionID); err != nil {
+	if err := refuseUnlistedSession(ctx, conversations, p.SessionID); err != nil {
 		return nil, err
 	}
 
@@ -59,26 +59,27 @@ func cmdResumeSession(ctx context.Context, mem *Membership, steps stepSessions, 
 	return openedResponse(&opened, nil), nil
 }
 
-// errStepSession refuses resuming a workflow step's session as a chat: the step's run still owns it.
-var errStepSession = errors.New("this session belongs to a workflow step")
+// errNotAConversation refuses resuming a session KAS does not list as one of the workspace's conversations, a
+// workflow step's among them: the step's run still owns it.
+var errNotAConversation = errors.New("this session is not a conversation in this workspace")
 
-// refuseStepSession fails closed: a step session loaded into a chat would answer the step's run
-// from a second resident, so an unreadable session list refuses too, retryably.
-func refuseStepSession(ctx context.Context, steps stepSessions, sessionID string) error {
-	if steps == nil {
+// refuseUnlistedSession fails closed: a step session loaded into a chat would answer the step's run from a second
+// resident, and KAS's whole list is too large to name the steps, so only a listed conversation is resumed, and an
+// unreadable list refuses too, retryably.
+func refuseUnlistedSession(ctx context.Context, conversations listedConversations, sessionID string) error {
+	if conversations == nil {
 		return nil
 	}
-	workflowID, isStep, err := steps.StepSessionOf(ctx, sessionID)
+	listed, err := conversations.ListedConversation(ctx, sessionID)
 	switch {
 	case err != nil:
-		slog.Warn("could not read whether a session is a workflow step's, so it was not resumed",
+		slog.Warn("could not read whether a session is a conversation, so it was not resumed",
 			"acp_session", sessionID, "error", err)
 		return StatusError(http.StatusServiceUnavailable,
 			errors.New("could not check this session just now; try again in a moment"))
-	case isStep:
-		slog.Info("refused resuming a workflow step's session as a chat",
-			"acp_session", sessionID, "workflow_id", workflowID)
-		return StatusError(http.StatusConflict, errStepSession)
+	case !listed:
+		slog.Info("refused resuming a session KAS does not list as a conversation", "acp_session", sessionID)
+		return StatusError(http.StatusConflict, errNotAConversation)
 	}
 	return nil
 }
