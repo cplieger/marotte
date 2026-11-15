@@ -66,8 +66,10 @@ def exact_entry_problems(e: dict, files: dict, cells: dict) -> list[str]:
     """Why exact entry e does not hold against the checked-in calibrations (files and cells by
     run id), or [] when it holds.
 
-    Its source must be a file of the newest commit that measured the cell, newest by run id
-    (perf-calibrate's dispatch order), since an older commit measured other code. Every rep
+    Its source must be a file of the newest commit that measured the cell, since an older
+    commit measured other code. Newest is by run id, a dispatch-order pre-check: a shard's
+    shallow checkout has no history, so perf_gate.py's provenance check owns the rule by git
+    ancestry. Every rep
     of that commit's files must be the baseline: perf_gate.py --calibrate makes a count exact
     only when every rep agrees, and one that moved holds its middle reps off on unchanged code.
     """
