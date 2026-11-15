@@ -486,6 +486,7 @@ func TestWriteFrame_AllocatesNothingPerFrame(t *testing.T) {
 	b.stdin.Store(&stdinPipe{w: pw})
 	frame := []byte(`{"jsonrpc":"2.0","id":42,"result":{}}` + "\n")
 
+	// A per-call average, not a total: SetWriteDeadline now and then grows the runtime's timer heap, which allocates.
 	allocs := testing.AllocsPerRun(100, func() {
 		if err := b.writeFrame(frame); err != nil {
 			t.Fatalf("writeFrame: %v", err)

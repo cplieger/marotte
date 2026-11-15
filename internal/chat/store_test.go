@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -105,14 +106,28 @@ func TestLock_AnExistingChatAllocatesNothing(t *testing.T) {
 	id := marotte.ChatID("c1")
 	first := s.lock(id)
 
-	allocs := testing.AllocsPerRun(100, func() {
+	n := mallocs(100, func() {
 		if s.lock(id) != first {
 			t.Fatal("lock returned a different mutex for the same chat")
 		}
 	})
-	if allocs != 0 {
-		t.Fatalf("lock allocates %.0f times for a chat that has its mutex, want 0", allocs)
+	if n != 0 {
+		t.Fatalf("100 lock calls for a chat that has its mutex allocated %d times, want 0", n)
 	}
+}
+
+// mallocs is the total heap allocations n calls of f make after one warmup call, on one P as testing.AllocsPerRun
+// runs. AllocsPerRun divides that total by n as integers, so an allocation on fewer than every call reads 0.
+func mallocs(n int, f func()) uint64 {
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
+	f()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	for range n {
+		f()
+	}
+	runtime.ReadMemStats(&after)
+	return after.Mallocs - before.Mallocs
 }
 
 func TestMutate_CreatesChatAndBroadcasts(t *testing.T) {
