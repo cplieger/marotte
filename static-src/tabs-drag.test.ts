@@ -1414,14 +1414,14 @@ describe("ending a live drag", () => {
 });
 
 /** The sectioned column: `#tab-sections` scrolls and holds `#open-section` (the harness strip
- *  under a header) above `#pinned-section` (p and q under a header), then the History row, then
+ *  under a header) above `#pinned-section` (p and q under a header), then `#history-section`, then
  *  empty tail down to 500px. */
 describe("a strip split into sections", () => {
   let sections: HTMLElement;
   let pinnedSection: HTMLElement;
   let pinnedList: HTMLElement;
   let pinnedHead: HTMLElement;
-  let historyRow: HTMLElement;
+  let historySection: HTMLElement;
   let transcript: HTMLElement;
   let committedPinned: string[];
 
@@ -1468,11 +1468,8 @@ describe("a strip split into sections", () => {
     pinnedSection = sectionOf("pinned-section", pinnedList, "Pinned");
     pinnedSection.hidden = !withPinned;
     pinnedHead = pinnedSection.firstElementChild as HTMLElement;
-    historyRow = document.createElement("button");
-    historyRow.id = "history-btn";
-    historyRow.className = "side-history-row";
-    historyRow.style.cssText = `display:block;width:100%;height:${String(ROW_H)}px`;
-    sections.append(sectionOf("open-section", list, "Open"), pinnedSection, historyRow);
+    historySection = sectionOf("history-section", document.createElement("ul"), "History");
+    sections.append(sectionOf("open-section", list, "Open"), pinnedSection, historySection);
     document.body.appendChild(sections);
     transcript = document.createElement("div");
     transcript.style.cssText =
@@ -1546,14 +1543,25 @@ describe("a strip split into sections", () => {
       expect(vi.mocked(announce)).toHaveBeenLastCalledWith("Move cancelled");
     });
 
-    it.each([
-      { on: "the empty tail below the rows", y: (): number => tailY },
-      { on: "the History row", y: (): number => mid(historyRow) },
-    ])("commits the top Open row last on a release in $on", ({ y }) => {
+    it("cancels a release on the History section, which holds no tab", () => {
       build(false);
       const row = rows["a"] as HTMLElement;
-      startRealDrag(row, y());
-      row.dispatchEvent(ptr("pointerup", { clientX: 10, clientY: y() }));
+      const y = mid(historySection);
+      startRealDrag(row, y);
+      vi.advanceTimersByTime(REORDER_STILL_MS);
+      expect(domOrder(), "the preview moved the row").not.toEqual(START);
+      row.dispatchEvent(ptr("pointerup", { clientX: 10, clientY: y }));
+
+      expect(reorder).not.toHaveBeenCalled();
+      expect(domOrder()).toEqual(START);
+      expect(vi.mocked(announce)).toHaveBeenLastCalledWith("Move cancelled");
+    });
+
+    it("commits the top Open row last on a release in the empty tail below the rows", () => {
+      build(false);
+      const row = rows["a"] as HTMLElement;
+      startRealDrag(row, tailY);
+      row.dispatchEvent(ptr("pointerup", { clientX: 10, clientY: tailY }));
 
       expect(reorder.mock.calls).toEqual([[["b", "c", "a"]]]);
       expect(domOrder()).toEqual(["b", "c", "a", "s"]);

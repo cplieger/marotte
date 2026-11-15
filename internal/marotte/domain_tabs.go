@@ -132,7 +132,7 @@ type RunLaunch struct {
 }
 
 // RecentClose is one chat whose last tab closed in the last tabs.RecentWindow, a row of the
-// sidebar's Recently closed list. Field order is fieldalignment's.
+// sidebar's History section. Field order is fieldalignment's.
 type RecentClose struct {
 	Ref string `json:"ref"`
 	// Name is the chat's name at the close, "" when its record could not be read: the client

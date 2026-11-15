@@ -64,7 +64,7 @@ interface State {
   readBounds: Map<string, number>;
   /** The chat that launched each run, as the server's run owner answers it. */
   runLaunchers: Map<string, string>;
-  /** The Recently closed list, newest first, or null when the case did not ask for it
+  /** The list of recent closes, newest first, or null when the case did not ask for it
    *  (`trackRecent`): then no frame carries `recent` and a read answers `[]`. */
   recent: RecentClose[] | null;
   /** The name a closed chat's entry is stamped with, per ref; "" when absent. */
@@ -111,7 +111,7 @@ export const tabServer = {
     state.chatNames = new Map();
   },
 
-  /** Keep the server's Recently closed list from here on: a close of a chat's tab lists it under
+  /** Keep the server's list of recent closes from here on: a close of a chat's tab lists it under
    *  the name `names` gives (the record's name at the close), an open takes it out, and each frame
    *  that changed the list carries it whole as `recent`, as the server's frames do. */
   trackRecent(names: Readonly<Record<string, string>> = {}): void {
@@ -119,7 +119,15 @@ export const tabServer = {
     state.chatNames = new Map(Object.entries(names));
   },
 
-  /** The server's Recently closed list; `[]` when not tracked. */
+  /** Replace the list of recent closes with `entries` and emit a frame carrying the list alone, at
+   *  the next version, the shape of the server's expiry frame. */
+  emitRecent(entries: readonly RecentClose[]): void {
+    state.recent = [...entries];
+    state.version++;
+    ingest({ recent: { items: [...entries] }, version: state.version });
+  },
+
+  /** The server's list of recent closes; `[]` when not tracked. */
   recent(): readonly RecentClose[] {
     return state.recent ?? [];
   },
@@ -415,7 +423,7 @@ interface SendResultLike {
   body?: unknown;
 }
 
-function handle(type: string, payload: Record<string, unknown>): SendResultLike {
+function handle(type: string, payload: Record<string, unknown>, chatID: string): SendResultLike {
   const failAt = state.failures.findIndex((f) => f.type === type);
   if (failAt >= 0) {
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by the index check
@@ -553,6 +561,15 @@ function handle(type: string, payload: Record<string, unknown>): SendResultLike 
       stamp(payload);
       return { ok: true, status: 200, body: { version: state.version } };
     }
+    // The server forgets a deleted chat's entry and announces the list (`Membership.forgetRecent`).
+    case "delete_chat": {
+      if (state.recent?.some((e) => e.ref === chatID) === true) {
+        state.recent = state.recent.filter((e) => e.ref !== chatID);
+        state.version++;
+        state.pending.push({ recent: { items: [...state.recent] }, version: state.version });
+      }
+      return { ok: true, status: 200, body: { ok: true } };
+    }
     default:
       return { ok: true, status: 200, body: { ok: true } };
   }
@@ -572,7 +589,7 @@ function stamp(payload: Record<string, unknown>): void {
  *  correlation id. Other commands answer a bare success, since none is the subject. */
 export function tabTransportMock(): {
   send: (
-    cmd: { type: string; payload?: unknown },
+    cmd: { type: string; chat_id?: string; payload?: unknown },
     opts?: { signal?: AbortSignal },
   ) => Promise<SendResultLike>;
   newOpID: () => string;
@@ -583,36 +600,41 @@ export function tabTransportMock(): {
 } {
   let ops = 0;
   return {
-    send: vi.fn((cmd: { type: string; payload?: unknown }, opts?: { signal?: AbortSignal }) => {
-      const payload = (cmd.payload ?? {}) as Record<string, unknown>;
-      state.sent.push({ type: cmd.type, payload });
-      const before = state.pending.length;
-      const committedResult = handle(cmd.type, payload);
-      const lateAt = state.lateAnswers.findIndex((a) => a.type === cmd.type);
-      const result =
-        lateAt < 0
-          ? committedResult
-          : (state.lateAnswers.splice(lateAt, 1)[0]?.result ?? committedResult);
-      const committed = state.pending.slice(before);
-      const deliver = (): void => {
-        state.pending = state.pending.filter((f) => !committed.includes(f));
-        for (const frame of committed) {
-          ingest(frame);
+    send: vi.fn(
+      (
+        cmd: { type: string; chat_id?: string; payload?: unknown },
+        opts?: { signal?: AbortSignal },
+      ) => {
+        const payload = (cmd.payload ?? {}) as Record<string, unknown>;
+        state.sent.push({ type: cmd.type, payload });
+        const before = state.pending.length;
+        const committedResult = handle(cmd.type, payload, cmd.chat_id ?? "");
+        const lateAt = state.lateAnswers.findIndex((a) => a.type === cmd.type);
+        const result =
+          lateAt < 0
+            ? committedResult
+            : (state.lateAnswers.splice(lateAt, 1)[0]?.result ?? committedResult);
+        const committed = state.pending.slice(before);
+        const deliver = (): void => {
+          state.pending = state.pending.filter((f) => !committed.includes(f));
+          for (const frame of committed) {
+            ingest(frame);
+          }
+        };
+        if (committed.length > 0 && state.mode === "event-first") {
+          deliver();
+        } else if (committed.length > 0 && state.mode === "response-first") {
+          setTimeout(deliver, 0);
         }
-      };
-      if (committed.length > 0 && state.mode === "event-first") {
-        deliver();
-      } else if (committed.length > 0 && state.mode === "response-first") {
-        setTimeout(deliver, 0);
-      }
-      const delayedAt = state.delayedAnswers.findIndex((a) => a.type === cmd.type);
-      const delayed = delayedAt < 0 ? undefined : state.delayedAnswers.splice(delayedAt, 1)[0];
-      if (delayed !== undefined) {
-        return answerAfter(delayed.afterMs, delayed.result, opts?.signal);
-      }
-      const answer = answerWith(result);
-      return answer;
-    }),
+        const delayedAt = state.delayedAnswers.findIndex((a) => a.type === cmd.type);
+        const delayed = delayedAt < 0 ? undefined : state.delayedAnswers.splice(delayedAt, 1)[0];
+        if (delayed !== undefined) {
+          return answerAfter(delayed.afterMs, delayed.result, opts?.signal);
+        }
+        const answer = answerWith(result);
+        return answer;
+      },
+    ),
     newOpID: vi.fn(() => {
       ops++;
       return `op-${String(ops)}`;

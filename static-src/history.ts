@@ -4,14 +4,7 @@
 import { computed, el, signal, subscribe, effect } from "@cplieger/reactive";
 import { skeletonTiming } from "./legacy-ui/skeleton.js";
 import { $, maybeEl, queryAll } from "./dom.js";
-import {
-  activeChatRef,
-  descendantChatsOf,
-  hasTab,
-  historyPaneTab,
-  setHistoryPane,
-  tabSetVersion,
-} from "./tabs.js";
+import { activeChatRef, hasTab, historyPaneTab, setHistoryPane, tabSetVersion } from "./tabs.js";
 import type { TabRunDotStatus } from "./tabs.js";
 import type { HistoryTab } from "./route-path.js";
 import { onBus, BUS_RUNS_CHANGED } from "./bus.js";
@@ -25,10 +18,8 @@ import { setPageSubtitle } from "./page-title.js";
 import { entryRow, entrySkeleton } from "./entry-row.js";
 import { sigChanged, wireSignature } from "./paint-sig.js";
 import { loadSessions } from "./actions/chat.js";
-import { registerCleanup, retryNetwork } from "./actions/index.js";
-import { serverImpactOf } from "./actions/close-impact.js";
-import { deleteStopsWork } from "./close-busy.js";
-import { actionNotice } from "./notice-subject.js";
+import { registerCleanup } from "./actions/index.js";
+import { confirmDeleteChat, runsLaunched } from "./chat-delete.js";
 import { openPreviousSession, openChatTab } from "./chat.js";
 import { searchChats } from "./actions/chat-search.js";
 import { openChatFindAt } from "./find-in-chat.js";
@@ -36,12 +27,11 @@ import { CHAT_SEARCH_DEBOUNCE_MS } from "./chat-search.js";
 import { parseChatQuery } from "./chat-query.js";
 import { classify, emptyNote, scanNote } from "./textsearch/copy.js";
 import type { Nouns } from "./textsearch/copy.js";
-import type { CloseImpact, Match, RunStandingKind } from "./wire/types.gen.js";
+import type { Match, RunStandingKind } from "./wire/types.gen.js";
 import { openRunView } from "./run-view.js";
 import { runChatID } from "./run-store.js";
 import { runPendingAsks } from "./decision-dock.js";
 import { deleteRun } from "./actions/runs.js";
-import { deleteChat as deleteChatAction } from "./actions/chat.js";
 import { confirm } from "./confirm.js";
 import { labelForMode } from "./roles.js";
 import { applyOutcome } from "./tool-card.js";
@@ -270,13 +260,7 @@ function runOpenHere(r: WorkflowRun): boolean {
 function toRows(sessions: ResumableSession[], runs: WorkflowRun[]): HistoryRow[] {
   const rows: HistoryRow[] = [];
   // Over every run, hidden or not: deleting a chat also deletes a run hidden by its own open tab.
-  const launched = new Map<string, number>();
-  for (const r of runs) {
-    const parent = r.parent_chat_id ?? "";
-    if (parent !== "") {
-      launched.set(parent, (launched.get(parent) ?? 0) + 1);
-    }
-  }
+  const launched = runsLaunched(runs);
   for (const s of sessions) {
     // Filtered here so the key never reaches reconcile.
     if (isOpenHere(s)) {
@@ -670,81 +654,23 @@ function openRow(row: HistoryRow, onGone: () => void): void {
   }
 }
 
-/**
- * Neither kind is recoverable. A chat runs `delete_chat` (chat file, its runs, its KAS session chain, and the chat tabs
- * under its tabs, whose work the confirm names); a run runs `_kiro/workflow/delete` (cancels if moving, then the run
- * directory, lease, timer, end reason). True when gone.
- */
+/** A run runs `_kiro/workflow/delete` (cancels if moving, then the run directory, lease, timer, end
+ *  reason); a chat goes through `confirmDeleteChat`. Neither is recoverable. True when gone. */
 async function deleteRow(row: HistoryRow): Promise<boolean> {
-  const label = row.kind === "run" ? "run" : "conversation";
-  const n = row.runCount;
-  const runs =
-    n === 0
-      ? ""
-      : ` It also deletes the ${n === 1 ? "workflow run" : `${String(n)} workflow runs`} it started.`;
-  const chatID = row.kind === "run" ? "" : (row.session?.chat_id ?? "");
-  const stops = deleteStopsWork(chatID === "" ? [] : descendantChatsOf(chatID));
+  if (row.kind === "chat") {
+    const chatID = row.session?.chat_id ?? "";
+    return chatID !== "" && confirmDeleteChat(chatID, row.title, row.runCount);
+  }
+  if (row.run === undefined) {
+    return false;
+  }
   const ok = await confirm({
-    title: `Delete this ${label}?`,
-    body: `"${row.title}" and its stored history are removed for good.${runs}${
-      stops.text === "" ? "" : ` ${stops.text}`
-    }`,
+    title: "Delete this run?",
+    body: `"${row.title}" and its stored history are removed for good.`,
     confirmLabel: "Delete",
     variant: "destructive",
   });
-  if (!ok) {
-    return false;
-  }
-  if (row.kind === "run" && row.run !== undefined) {
-    return (await deleteRun.dispatch(row.run.workflow_id)) !== null;
-  }
-  if (chatID === "") {
-    return false;
-  }
-  return deleteChatAsked(chatID, row.title, stops.impact);
-}
-
-/** Send the delete with what the confirm named; a stale confirm (another device changed what the delete stops in
- *  the chats under its tabs) asks again on the merge, and each answer is a person's, so the loop needs no cap.
- *  The tab is not closed here: the membership coordinator closes tabs for a deleted chat under the same lock. */
-async function deleteChatAsked(
-  chatID: string,
-  title: string,
-  named: CloseImpact,
-): Promise<boolean> {
-  let impact = named;
-  for (;;) {
-    const args = { id: chatID, impact };
-    const outcome = await deleteChatAction.dispatch(args).outcome;
-    if (outcome.status !== "error") {
-      return outcome.status === "success";
-    }
-    const server = serverImpactOf(outcome.error);
-    if (server === undefined) {
-      if (outcome.error.code !== "cancelled") {
-        const retry = retryNetwork(outcome.error)
-          ? {
-              onClick: () => {
-                void deleteChatAction.dispatch(args);
-              },
-            }
-          : undefined;
-        actionNotice(chatID, `Could not delete chat: ${outcome.error.message}`, "error", retry);
-      }
-      return false;
-    }
-    const again = deleteStopsWork(descendantChatsOf(chatID), { sent: impact, server });
-    const yes = await confirm({
-      title: `Delete "${title}" anyway?`,
-      body: `What deleting it also stops changed.${again.text === "" ? "" : ` ${again.text}`}`,
-      confirmLabel: "Delete",
-      variant: "destructive",
-    });
-    if (!yes) {
-      return false;
-    }
-    impact = again.impact;
-  }
+  return ok && (await deleteRun.dispatch(row.run.workflow_id)) !== null;
 }
 
 function buildRow(row: HistoryRow, refresh: () => void): HTMLElement {

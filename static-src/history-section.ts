@@ -1,45 +1,71 @@
-// The sidebar's Recently closed section: the server's list of chats whose last tab closed lately,
-// drawn as sent (`recentClosed()`), each row reopening its chat, and the History row's label under it.
+// The sidebar's History section: the server's list of chats whose last tab closed lately, drawn as
+// sent (`recentClosed()`), each row reopening its chat, and More, its last row, opening History.
 
 import { effect, el, signal } from "@cplieger/reactive";
 import { reopenChat } from "./chat.js";
 import { showContextMenu } from "./context-menu.js";
 import { sectionFolded, setSectionFolded } from "./device-view.js";
 import { isSliding, slideBox } from "./disclosure-row.js";
-import { $, maybeEl, setText } from "./dom.js";
+import { $, maybeEl, queryEl, setText } from "./dom.js";
 import { iconEl } from "./icon-el.js";
 import { bindContextPress } from "./context-hold.js";
-import { ICON_TAB_CHAT } from "./icons.js";
+import { ICON_TRASH } from "./icons.js";
+import { deleteClosedChat } from "./chat-delete.js";
 import { formatClock, watchClock } from "./locale-time.js";
 import { isRetentionEnabled, onRetentionChange } from "./retention.js";
 import { watchSession } from "./store.js";
 import { dragOwnsStrip } from "./tabs-drag.js";
-import { focusTabRow, getActiveTabId, recentClosed, tabIdFor } from "./tabs.js";
+import {
+  focusTabRow,
+  getActiveTabId,
+  recentClosed,
+  refreshActiveView,
+  showHistoryView,
+  statusDotEl,
+  tabIdFor,
+} from "./tabs.js";
 import type { RecentClose } from "./wire/types.gen.js";
 
-const FOLD_KEY = "recent";
+const FOLD_KEY = "history";
 
 let descSeq = 0;
 
 interface Row {
   readonly li: HTMLLIElement;
   readonly button: HTMLButtonElement;
+  readonly remove: HTMLButtonElement;
   readonly name: HTMLElement;
   readonly time: HTMLTimeElement;
   readonly closedAt: HTMLElement;
   entry: RecentClose;
+  label: string;
   drawn: string;
 }
 
-/** Wire `#recent-section` once its markup is in the page. */
-export function initRecentClosed(): void {
-  const section = maybeEl("recent-section");
-  const list = maybeEl("recent-list");
+/** The entries the section draws: none while retention is off, since a chat closed then is deleted.
+ *  A closed Bot survives that close, so the Bots change narrows this to its entries. */
+function drawnEntries(all: readonly RecentClose[], retentionOn: boolean): readonly RecentClose[] {
+  return retentionOn ? all : [];
+}
+
+/** A row's leading mark: an open chat row's dot as an empty ring. A closed Bot's row takes the
+ *  open Bot row's mark the same way once entries carry `bot`. */
+function rowMark(_entry: RecentClose): Element {
+  return statusDotEl("closed");
+}
+
+/** Wire `#history-section` once its markup is in the page. */
+export function initHistorySection(): void {
+  const section = maybeEl("history-section");
+  const list = maybeEl("history-list");
   const header = section?.querySelector<HTMLElement>(":scope > h2.side-section-h") ?? null;
   const toggle = header?.querySelector<HTMLButtonElement>(".side-section-toggle") ?? null;
   if (section === null || list === null || header === null || toggle === null) {
     return;
   }
+  $.historyMore.addEventListener("click", () => {
+    showHistoryView();
+  });
   const retentionOn = signal(isRetentionEnabled());
   onRetentionChange(() => {
     retentionOn.value = isRetentionEnabled();
@@ -76,6 +102,45 @@ export function initRecentClosed(): void {
     }
   }
 
+  /** Delete for good through the History page's own door; the server's frame then drops the row. */
+  async function remove(row: Row): Promise<void> {
+    const ref = row.entry.ref;
+    if (busy.has(ref)) {
+      return;
+    }
+    busy.add(ref);
+    row.remove.setAttribute("aria-busy", "true");
+    const next = row.li.nextElementSibling;
+    const prev = row.li.previousElementSibling;
+    try {
+      if (!(await deleteClosedChat(ref, row.label))) {
+        return;
+      }
+      // History refreshes when it shows, so the chat leaves it too.
+      refreshActiveView();
+      const land = (): void => {
+        const focus = document.activeElement;
+        if (focus !== null && focus !== document.body && focus !== row.remove) {
+          return;
+        }
+        const to = [next, prev]
+          .map((li) => li?.querySelector<HTMLButtonElement>(":scope > button"))
+          .find((b) => b?.isConnected === true && b.getClientRects().length > 0);
+        (to ?? $.promptInput).focus();
+      };
+      // The confirm answers before its dialog has faded, and the page is inert until it closes.
+      const modal = queryEl<HTMLDialogElement>("dialog:modal");
+      if (modal === null) {
+        land();
+      } else {
+        modal.addEventListener("close", land, { once: true });
+      }
+    } finally {
+      busy.delete(ref);
+      row.remove.removeAttribute("aria-busy");
+    }
+  }
+
   function openMenu(row: Row, x: number, y: number): void {
     showContextMenu(
       [
@@ -83,6 +148,12 @@ export function initRecentClosed(): void {
           label: "Reopen",
           action: () => {
             void reopen(row);
+          },
+        },
+        {
+          label: "Delete",
+          action: () => {
+            void remove(row);
           },
         },
       ],
@@ -98,25 +169,37 @@ export function initRecentClosed(): void {
     bindContextPress(row.button, (x, y) => {
       openMenu(row, x, y);
     });
+    row.remove.addEventListener("click", () => {
+      void remove(row);
+    });
   }
 
   function makeRow(entry: RecentClose): Row {
-    const name = el("bdi", { className: "recent-row-name" });
-    const time = el("time", { className: "recent-row-time" }) as HTMLTimeElement;
-    const glyph = iconEl(ICON_TAB_CHAT);
-    glyph.setAttribute("aria-hidden", "true");
+    const name = el("bdi", { className: "history-row-name" });
+    const time = el("time", { className: "history-row-time" }) as HTMLTimeElement;
     const button = el(
       "button",
-      { className: "recent-row", type: "button" },
-      glyph,
+      { className: "history-row", type: "button" },
+      rowMark(entry),
       name,
       time,
     ) as HTMLButtonElement;
     descSeq++;
-    const closedAt = el("span", { className: "sr-only", id: `recent-row-desc-${String(descSeq)}` });
+    const closedAt = el("span", {
+      className: "sr-only",
+      id: `history-row-desc-${String(descSeq)}`,
+    });
     button.setAttribute("aria-describedby", closedAt.id);
-    const li = el("li", {}, button, closedAt) as HTMLLIElement;
-    const row: Row = { li, button, name, time, closedAt, entry, drawn: "" };
+    // A closed Bot's row takes this same Delete.
+    const trash = iconEl(ICON_TRASH);
+    trash.setAttribute("aria-hidden", "true");
+    const remove = el(
+      "button",
+      { className: "history-row-delete", type: "button" },
+      trash,
+    ) as HTMLButtonElement;
+    const li = el("li", { className: "history-item" }, button, remove, closedAt) as HTMLLIElement;
+    const row: Row = { li, button, remove, name, time, closedAt, entry, label: "", drawn: "" };
     bindRow(row);
     return row;
   }
@@ -132,18 +215,21 @@ export function initRecentClosed(): void {
       return;
     }
     row.drawn = drawn;
+    row.label = label;
     setText(row.name, label);
     setText(row.time, clock);
     row.time.dateTime = new Date(entry.closed_at).toISOString();
     row.button.setAttribute("aria-label", `Reopen ${label}`);
     setText(row.closedAt, `Closed at ${clock}`);
     row.button.dataset["tooltip"] = `Reopen ${label}\nClosed at ${clock}`;
+    row.remove.setAttribute("aria-label", `Delete ${label}`);
+    row.remove.dataset["tooltip"] = `Delete ${label}`;
   }
 
   effect(() => {
     // A Clock change redraws each row's time through paintRow's drawn key.
     watchClock();
-    const entries = retentionOn.value ? recentClosed() : [];
+    const entries = drawnEntries(recentClosed(), retentionOn.value);
     const keep = new Set(entries.map((e) => e.ref));
     for (const [ref, row] of rows) {
       if (!keep.has(ref)) {
@@ -159,7 +245,7 @@ export function initRecentClosed(): void {
         rows.set(entry.ref, row);
       }
       paintRow(row, entry);
-      // Seated only when out of place, since a re-seat blurs a focused row.
+      // Seated only when out of place, since a re-seat blurs a focused row; More stays last.
       const want: Element | null = prev === null ? list.firstElementChild : prev.nextElementSibling;
       if (want !== row.li) {
         if (prev === null) {
@@ -171,12 +257,7 @@ export function initRecentClosed(): void {
       prev = row.li;
     }
     const count = entries.length;
-    // The label follows the section's visibility, set in the same step.
     section.hidden = count === 0;
-    setText(
-      $.historyBtn.querySelector(".side-history-label"),
-      count === 0 ? "History" : "More history",
-    );
     setText(toggle.querySelector(".side-section-count"), String(count));
     setText(toggle.querySelector(".sr-only"), `${String(count)} ${count === 1 ? "chat" : "chats"}`);
     const folded = sectionFolded(FOLD_KEY, true);

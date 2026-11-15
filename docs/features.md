@@ -28,23 +28,25 @@ Conversations stay in sync across devices, so a chat open on a phone and a deskt
 - **Output style** in **Settings** lists the response styles kiro-cli offers, such as Concise, Explanatory or Learning, each with kiro-cli's description. A new style applies from your next message on.
 - **Clock** under **Display** on the **General** tab in **Settings** picks how times of day are shown: **Automatic**, **24-hour** or **12-hour**. Automatic follows your browser's languages, or its operating-system time format where the browser offers one, as Firefox does. The choice is kept in the browser, so each device keeps its own, and a change redraws the clock times already shown in chats at once. Other times, such as file dates and schedules, follow the new choice the next time they are drawn.
 
-You can also search inside a chat, export a chat, search across chats, and browse past conversations and workflow runs in **History**, from its row in the [sidebar](#sidebar). Both searches find a message, tool card or prompt holding every word you type, in any order, ignoring case and accents (**Match case** in Find in chat makes it exact). Put words in quotes to match them as an exact phrase. Find in chat opens only the turn and the sections that hold the match you are on, and folds them again when you move on or close it. Settings decides how long closed chats are kept. With **Days kept** above 0, finished workflow runs are deleted that many days after they last ran, even while their chat stays open.
+You can also search inside a chat, export a chat, search across chats, and browse past conversations and workflow runs in **History**, from **More** in the [sidebar](#sidebar)'s **History** section or at `/history`. Both searches find a message, tool card or prompt holding every word you type, in any order, ignoring case and accents (**Match case** in Find in chat makes it exact). Put words in quotes to match them as an exact phrase. Find in chat opens only the turn and the sections that hold the match you are on, and folds them again when you move on or close it. Settings decides how long closed chats are kept. With **Days kept** above 0, finished workflow runs are deleted that many days after they last ran, even while their chat stays open.
 
 ## Sidebar
 
-The sidebar lists your tabs in sections, in this order: **Open**, **Pinned** and **Recently closed**. A section's header shows only while the section has rows, and it shows a count: **Open** and **Pinned** count their tabs and not the rows nested under them, such as tangents, and **Recently closed** counts every chat it lists.
+The sidebar lists your tabs in sections, in this order: **Open**, **Pinned** and **History**. A section's header shows only while the section has rows, and it shows a count: **Open** and **Pinned** count their tabs and not the rows nested under them, such as tangents, and **History** counts every chat it lists.
 
 Right-click a chat tab, or press and hold it on a touch screen, to open its menu. **Pin** there moves the tab to **Pinned**, and **Unpin** moves it back. A tangent moves with its chat, so its menu has neither. Drag a tab, or use **Move up** and **Move down** in a chat tab's menu, to reorder it inside its section. A tab dropped on another section goes back where it was.
 
 Pressing a header folds its section or opens it again, and each browser remembers its own folds. A folded section still shows the tab you are on. Its header shows a dot for the most urgent of the tabs it hides, such as one waiting for your answer or one still working, in the colour that tab's row uses.
 
-**Recently closed** lists the chats whose last tab you closed in the past 6 hours, newest first, up to 10, each with the time it closed. It starts folded. Closing a chat lists its tangents too, and closing any other tab, such as a file, Settings or a workflow run, lists nothing.
+**History** lists the chats whose last tab you closed in the past 6 hours, newest first, up to 10, each with the time it closed. A closed chat's row starts with the same dot as an open chat's tab, drawn as an empty ring. It starts folded, showing only its header and count, and opening it shows the chats and, under them, **More**. Closing a chat lists its tangents too, and closing any other tab, such as a file, Settings or a workflow run, lists nothing.
 
-Click a row, or press Enter on it, to reopen the chat. **Reopen** in the row's menu does the same. A pinned chat reopens pinned, and a reopened chat leaves the list. While **Days kept** is 0 in Settings, the section is hidden, because a chat closed then is deleted at once.
+Click a row, or press Enter on it, to reopen the chat. **Reopen** in the row's menu does the same. A pinned chat reopens pinned, and a reopened chat leaves the list. The trash button at the end of a row, or **Delete** in its menu, deletes the chat for good after asking, as **Delete** on the History page does, and the chat leaves both lists.
 
 When another service sends a message through the [notify route](configuration.md#waking-a-chat-from-another-service-marotte_notify_token) to a chat whose tab you closed, that tab opens again on every device. With 48 tabs open, the message is still delivered and the tab stays closed.
 
-The **History** row ends the sections. It opens History in the main area without opening a tab, and picking a tab, starting a chat or going back leaves it. It reads **More history** while **Recently closed** shows.
+**More** opens the History page in the main area without opening a tab, and stays selected while the page shows. Picking a tab, starting a chat or going back leaves it.
+
+The **History** section is not shown when no chat was closed in the past 6 hours, or while **Days kept** is 0 in Settings, because a chat closed then is deleted at once. The sidebar then has no way to the History page, which still opens at `/history`.
 
 ## Agent control
 

@@ -44,6 +44,7 @@ export function tabsMock(): Record<string, unknown> {
     paintProvisionalTabs: vi.fn(),
     renameTab: vi.fn(),
     setTabStatus: vi.fn(),
+    statusDotEl: vi.fn(() => document.createElement("span")),
     setTabRunStatus: vi.fn(),
     setTabDirty: vi.fn(),
     setSettingsTab: vi.fn(),

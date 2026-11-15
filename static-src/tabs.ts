@@ -331,11 +331,11 @@ const stateVersion = signal(0);
  *  background row's route move. */
 const routeVersion = signal(0);
 
-/** The server's Recently closed list, newest first: replaced by a snapshot and by each applied frame
+/** The server's list of recent closes, newest first, drawn by the History section: replaced by a snapshot and by each applied frame
  *  carrying `recent`, never edited here. */
 const recentList = signal<readonly RecentClose[]>([]);
 
-/** The Recently closed list as a TRACKED read. */
+/** The list of recent closes as a TRACKED read. */
 export function recentClosed(): readonly RecentClose[] {
   return recentList.value;
 }
@@ -352,7 +352,7 @@ export function historyPaneTab(): HistoryTab | null {
   return historyPane.value;
 }
 
-/** The pane the foot row opens on: the one History last showed on this screen. */
+/** The pane More opens on: the one History last showed on this screen. */
 let lastHistoryPane: HistoryTab = "chats";
 
 /** The tab drawn selected in the sections: none while History shows. */
@@ -1405,7 +1405,7 @@ function revertSwitch(args: SwitchArgs, op: SwitchOp, err: ActionErrorLike): boo
       beginActivation(under, { quiet: true, now: true });
     }
     if (focusOnRow) {
-      $.historyBtn.focus();
+      focusHistoryEntry();
     }
     stays = true;
   } else if (target !== "") {
@@ -2179,6 +2179,17 @@ function withAge(phrase: string, since?: number): string {
 
 const CLS_DOT = "tab-status-dot";
 const CLS_DOT_SR = "tab-status-sr";
+
+/** A chat row's leading activity dot, decorative: its words ride a separate `.tab-status-sr`.
+ *  `paintDot` writes an open tab's state; a closed chat's row (history-section.ts) passes
+ *  `closed`, the empty ring, which never changes since reopening the chat removes that row. */
+export function statusDotEl(status: "closed" | "" = ""): HTMLElement {
+  const dot = el("span", { className: CLS_DOT, "aria-hidden": "true" });
+  if (status !== "") {
+    dot.dataset["status"] = status;
+  }
+  return dot;
+}
 const CLS_RUN_DOT = "tab-run-dot";
 const CLS_RUN_DOT_SR = "tab-run-sr";
 
@@ -2718,17 +2729,29 @@ function syncSidebarButtons(activeKind: TabKind | null): void {
   syncHistoryRow(false);
 }
 
-/** The foot row is a destination, so it is selected as a section row is, never pressed. */
+/** More is a destination, so it is selected as a section row is, never pressed. */
 function syncHistoryRow(on: boolean): void {
-  $.historyBtn.classList.toggle("active", on);
+  $.historyMore.classList.toggle("active", on);
   if (on) {
-    $.historyBtn.setAttribute("aria-current", "page");
+    $.historyMore.setAttribute("aria-current", "page");
   } else {
-    $.historyBtn.removeAttribute("aria-current");
+    $.historyMore.removeAttribute("aria-current");
   }
 }
 
-/** History alone in the main area, with the foot row selected and its route on the URL. */
+/** Focus More, else, when no closed chat draws it or its section is folded, the shown pane's pill,
+ *  so focus never falls to `<body>`. */
+function focusHistoryEntry(): void {
+  if ($.historyMore.getClientRects().length > 0) {
+    $.historyMore.focus();
+    return;
+  }
+  queryEl<HTMLElement>(HISTORY_VIEW)
+    ?.querySelector<HTMLElement>('[data-history-tab][aria-selected="true"]')
+    ?.focus();
+}
+
+/** History alone in the main area, with More selected and its route on the URL. */
 function showHistoryPane(pane: HistoryTab): void {
   showTranscript();
   showOnlyView(queryEl<HTMLElement>(HISTORY_VIEW));
@@ -3158,7 +3181,7 @@ function createTabEl(row: TabRow): HTMLElement {
   // The dot is decoration; `statusSR` is what a screen reader hears. Both ride
   // every row and paintDot writes both, so no node is added or removed as a state
   // changes — the same reasoning as the pin marker below.
-  const statusDot = el("span", { className: CLS_DOT, "aria-hidden": "true" });
+  const statusDot = statusDotEl();
   const statusSR = el("span", { className: `${CLS_DOT_SR} sr-only` });
 
   // The WORKFLOW mark and its phrase, chat rows only. A second element, not a second dot state: a

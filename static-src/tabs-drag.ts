@@ -704,7 +704,7 @@ class TabDragController {
 
   /** A release decides by POSITION, never by a slot a timer had pending. It commits inside the
    *  dragged list, or inside `#tab-sections` outside every other section (its own header, the
-   *  empty tail, the History row), where the slot is the list's end or its nearest row. Anywhere
+   *  empty tail), where the slot is the list's end or its nearest row. Anywhere
    *  else is a refused drop and reverts, as an HTML5 drop outside its target does. */
   private onRelease(e: PointerEvent): void {
     this.endRestNet();
