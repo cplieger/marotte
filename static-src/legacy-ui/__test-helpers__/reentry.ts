@@ -263,6 +263,8 @@ class Ledger {
 interface RawFrame {
   readonly dialog: HTMLDialogElement;
   seen: boolean;
+  /** A bare attribute write, which ends no toggle. */
+  readonly attrOnly: boolean;
 }
 
 /** A browser close of an open dialog. */
@@ -328,8 +330,9 @@ export class World<E = unknown> {
   admit: ((write: Write) => boolean | undefined) | null = null;
   private window: EffectWindow | null = null;
   private readonly writes = new MutationObserver(() => undefined);
-  /** Each dialog's toggles between their `beforetoggle` and the `open` write that
-   *  ends them, with their new states, innermost last: a toggle can nest in another's `beforetoggle`. */
+  /** Each dialog's toggles from their `beforetoggle` to the call's own `open` write, or
+   *  to the outermost entry's return, with their new states, innermost last: a toggle
+   *  can nest in another's `beforetoggle`. */
   private readonly toggling = new Map<Element, string[]>();
   /** Why an ended window's effects were not admissible, for the next check. */
   private readonly inadmissible: string[] = [];
@@ -373,21 +376,23 @@ export class World<E = unknown> {
       (e) => {
         const ev = e as ToggleEvent;
         const target = ev.target as Element;
-        // At the target, after every capture listener: a cancelled toggle is not under way.
-        nativeAdd.call(
-          target,
-          "beforetoggle",
-          (te: Event) => {
-            if (te.defaultPrevented) {
-              this.endToggle(target);
-            }
-            // A close that finds `open` gone after its listeners writes nothing.
-            if ((te as ToggleEvent).newState === "closed" && !target.hasAttribute("open")) {
-              this.ownClosing.delete(target);
-            }
-          },
-          { once: true },
-        );
+        // At the target, after the listeners already there: a close that finds `open`
+        // gone writes nothing (HTML "close the dialog"), so its `ownClosing` mark ends
+        // here. A toggle nested in this one's listeners reaches this listener first, so
+        // it waits for its own event.
+        const atTarget = (te: Event): void => {
+          if (te !== ev) {
+            return;
+          }
+          nativeRemove.call(target, "beforetoggle", atTarget);
+          if (ev.newState === "closed" && !target.hasAttribute("open")) {
+            this.ownClosing.delete(target);
+          }
+        };
+        nativeAdd.call(target, "beforetoggle", atTarget);
+        this.cleanups.push(() => {
+          nativeRemove.call(target, "beforetoggle", atTarget);
+        });
         this.armToggleHit(target);
         if (isProbe(ev.target)) {
           probeHit(ev.target as Element, `beforetoggle:${ev.newState}`);
@@ -503,7 +508,9 @@ export class World<E = unknown> {
       const next = records.find((n, j) => j > i && n.target === el && n.attributeName === name);
       const value = next === undefined ? el.getAttribute(name) : next.oldValue;
       if (name === "open" && (r.oldValue === null) !== (value === null)) {
-        this.endToggle(el);
+        if (this.raw?.attrOnly !== true || this.raw.dialog !== el) {
+          this.endToggle(el);
+        }
         if (value === null && this.raw?.dialog !== el) {
           this.ownClosing.delete(el);
         }
@@ -596,12 +603,12 @@ export class World<E = unknown> {
         this.endWindow(true);
       }
     } finally {
+      // The injected actions' own writes are not the window's, nor the raw frame's.
+      this.takeWrites(null);
       this.raw = raw;
       if (raw !== null) {
         raw.seen = raw.dialog.open;
       }
-      // The injected actions' own writes are not the window's.
-      this.takeWrites(null);
       this.window = {
         at: kind,
         inFlight: new Set(this.toggling.keys()),
@@ -680,6 +687,8 @@ export class World<E = unknown> {
     });
   }
 
+  /** A call's own `open` write ends its toggle, the innermost; the harness's
+   *  attribute-only writes never do. */
   private endToggle(el: Element): void {
     const stack = this.toggling.get(el);
     stack?.pop();
@@ -688,9 +697,16 @@ export class World<E = unknown> {
     }
   }
 
-  /** Whether a showModal of `dialog` is under way: it will be open when the call returns. */
+  /** Whether the innermost call under way is a raw platform call on `dialog`: an
+   *  injection's actions run outside it. */
+  inRaw(dialog: Element): boolean {
+    return this.raw?.dialog === dialog;
+  }
+
+  /** Whether a showModal or show of `dialog` is under way and still to write `open`:
+   *  a close nested in its listeners ends first. */
   opening(dialog: Element): boolean {
-    return this.toggling.get(dialog)?.at(-1) === "open" && !dialog.hasAttribute("open");
+    return this.toggling.get(dialog)?.includes("open") === true && !dialog.hasAttribute("open");
   }
 
   /** A probe write or focus: ruled on now by `admit`, or kept for the default rule at the window's end. */
@@ -822,7 +838,11 @@ export class World<E = unknown> {
     // Taken at both ends, so every `open` record is read with the raw frame that made it.
     this.takeWrites(this.window);
     const previous = this.raw;
-    this.raw = { dialog, seen: dialog.open };
+    this.raw = {
+      dialog,
+      seen: dialog.open,
+      attrOnly: kind === "addOpen" || kind === "removeOpen" || kind === "sameOpen",
+    };
     try {
       switch (kind) {
         case "form":
