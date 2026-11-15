@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -51,5 +53,34 @@ func TestObserverPass_InflightCoversFramesAfterThePassReturned(t *testing.T) {
 	}
 	if got := h.steeringIssues.snapshot(); len(got["workspace/.kiro/steering/a.md"]) != 1 {
 		t.Errorf("issues after the drain = %+v, want the frame the stream delivered after the pass returned", got)
+	}
+}
+
+// Once Shutdown has begun an observer pass is refused at its door: no frame consumer would join inflight, so the
+// door's requests would wait out the handshake budget.
+func TestObserverPass_RefusedOnceShutdownBegan(t *testing.T) {
+	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	var doors atomic.Int32
+	fakeSourceOf(t, h).setObserver(func() engineSession {
+		b := newFakeBridge()
+		b.onStart = func() { doors.Add(1) }
+		return b
+	})
+	beginDraining(h)
+
+	ran := false
+	err := h.observe(t.Context(), func(context.Context, engineSession) error {
+		ran = true
+		return nil
+	})
+	if !errors.Is(err, errRuntimeDraining) {
+		t.Errorf("observer pass once Shutdown began: err = %v, want errRuntimeDraining", err)
+	}
+	if ran {
+		t.Error("the pass's fn ran once Shutdown began")
+	}
+	if n := doors.Load(); n != 0 {
+		t.Errorf("doors opened = %d once Shutdown began, want 0", n)
 	}
 }
