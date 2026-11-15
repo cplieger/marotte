@@ -214,14 +214,14 @@
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 170
+          "seconds": 178
         },
         {
           "scenario": "chat-stream",
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 174
+          "seconds": 175
         },
         {
           "scenario": "tabs",
@@ -322,7 +322,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 35
+          "seconds": 32
         },
         {
           "scenario": "chat-stream",
@@ -332,7 +332,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 36
+          "seconds": 32
         },
         {
           "scenario": "tabs",
@@ -481,28 +481,28 @@
           "scale": "x1",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 165
-        },
-        {
-          "scenario": "chat-long",
-          "scale": "x1",
-          "engine": "chromium",
-          "width": "phone",
           "seconds": 164
         },
         {
           "scenario": "chat-long",
           "scale": "x1",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 163
+        },
+        {
+          "scenario": "chat-long",
+          "scale": "x1",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 169
+          "seconds": 165
         },
         {
           "scenario": "chat-long",
           "scale": "x1",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 170
+          "seconds": 166
         },
         {
           "scenario": "chat-long",
@@ -510,56 +510,56 @@
           "engine": "chromium",
           "width": "desktop",
           "profile": true,
-          "seconds": 237
+          "seconds": 240
         },
         {
           "scenario": "chat-long",
           "scale": "x10",
           "engine": "chromium",
+          "width": "phone",
+          "seconds": 173
+        },
+        {
+          "scenario": "chat-long",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 176
+        },
+        {
+          "scenario": "chat-long",
+          "scale": "x10",
+          "engine": "webkit",
           "width": "phone",
           "seconds": 175
         },
         {
-          "scenario": "chat-long",
-          "scale": "x10",
-          "engine": "webkit",
-          "width": "desktop",
-          "seconds": 178
-        },
-        {
-          "scenario": "chat-long",
-          "scale": "x10",
-          "engine": "webkit",
-          "width": "phone",
-          "seconds": 178
-        },
-        {
           "scenario": "chat-stream",
           "scale": "x1",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 165
+          "seconds": 163
         },
         {
           "scenario": "chat-stream",
           "scale": "x1",
           "engine": "chromium",
           "width": "phone",
-          "seconds": 165
+          "seconds": 163
         },
         {
           "scenario": "chat-stream",
           "scale": "x1",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 166
+          "seconds": 167
         },
         {
           "scenario": "chat-stream",
           "scale": "x1",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 165
+          "seconds": 167
         },
         {
           "scenario": "chat-stream",
@@ -567,28 +567,28 @@
           "engine": "chromium",
           "width": "desktop",
           "profile": true,
-          "seconds": 233
+          "seconds": 229
         },
         {
           "scenario": "chat-stream",
           "scale": "x10",
           "engine": "chromium",
           "width": "phone",
-          "seconds": 170
+          "seconds": 171
         },
         {
           "scenario": "chat-stream",
           "scale": "x10",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 173
+          "seconds": 178
         },
         {
           "scenario": "chat-stream",
           "scale": "x10",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 174
+          "seconds": 176
         },
         {
           "scenario": "tabs",

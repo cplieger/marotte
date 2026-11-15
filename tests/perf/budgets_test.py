@@ -90,14 +90,16 @@ class Budgets(unittest.TestCase):
 
     def test_every_exact_entry_is_every_rep_its_calibrations_measured(self):
         # perf_gate.py --calibrate makes a count exact only when every rep agrees. A count that
-        # moved in either checked-in calibration can hold its middle reps off on unchanged code,
-        # which fails the six-rep verdict.
+        # moved in any calibration of its source's commit can hold its middle reps off on
+        # unchanged code, which fails the six-rep verdict. A calibration of another commit
+        # measured other code: a later `only` calibration re-measures what a change moved.
         for e in self.budgets['budgets']:
             if e['tier'] != 'exact':
                 continue
+            commit = self.files[SOURCE_RE.match(e['source']).group(1)]['commit']
             for run_id, cells in self.cells.items():
                 c = cells.get(key(e))
-                if c is None:
+                if c is None or self.files[run_id]['commit'] != commit:
                     continue
                 with self.subTest(entry=key(e), run=run_id):
                     reps = {r for run in c['reps_by_run'] for r in run}
