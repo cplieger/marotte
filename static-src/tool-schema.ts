@@ -8,8 +8,8 @@ export type { ToolKind };
 /** What a tool card reveals when opened ("depth 1"), per KIND. `none` is claim-only (no
  *  toggle); `diff` is windowed to whole hunks; `output` is the first and last N lines;
  *  `search` per-file counts and first matches; `move` from -> to; `fetch` URL, status and
- *  body head; `mcp` server badge, input, output; `load` the ids a tool_load or
- *  load_resource call loaded; `generic` the raw input/output block. */
+ *  body head; `mcp` server badge, input, output; `load` the ids a tool_load, load_resource
+ *  or disclose_context call loaded; `generic` the raw input/output block. */
 export type ToolDepth1 =
   "none" | "diff" | "output" | "search" | "move" | "fetch" | "mcp" | "load" | "generic";
 
@@ -135,10 +135,11 @@ export function profileFor(kind: string, mcp: MCPToolIdentity | null): ToolProfi
  *  Power's overview, or an id outside KAS's grammar. */
 export type LoadedType = "mcp" | "tool" | "skill" | "steering" | "overview" | "unknown";
 
-/** One resource a `tool_load` or `load_resource` call loaded, read from KAS's resource id. */
+/** One resource a load call loaded, read from its resource id or, for a disclose_context
+ *  that sent none, from its disclosed block. */
 export interface LoadedResource {
-  /** The id as the call sent it; for a disclose_context that sent only a name, the
-   *  `skill::` or `steering::` id KAS's catalogue gives that document. */
+  /** The id as the call sent it; for a disclose_context that sent only a name,
+   *  `<type>::<display_name>` built from its disclosed block. */
   id: string;
   type: LoadedType;
   /** The tool, skill, document or Power name. */
