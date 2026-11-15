@@ -1,6 +1,9 @@
 package agent
 
-import "github.com/cplieger/marotte/internal/marotte"
+import (
+	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/marotte"
+)
 
 // compactionFailsafePct is the context use, in percent, at which a running turn is stopped, compacted and resumed:
 // KAS's own compaction is off on every chat session, so nothing else saves a turn that crosses the point mid-turn.
@@ -20,13 +23,11 @@ const failsafeStopNotice = "The context was nearly full, so marotte stopped this
 	"before it ran out."
 
 // compactFailsafeFailed is the toast for a failsafe compaction that did not run, whose stopped turn is not resumed.
-const compactFailsafeFailed = "The compaction did not run (the agent was busy, or the summary failed or the chat " +
-	"changed before it finished), so marotte did not continue the stopped turn. Send a message to go on."
+const compactFailsafeFailed = "The compaction did not run (" + compactNotRunCauses + "), so marotte did not " +
+	"continue the stopped turn. Send a message to go on."
 
 // compactFailsafeFailedRetrying is compactFailsafeFailed on a chat whose next turn end tries the compaction again.
-const compactFailsafeFailedRetrying = "The compaction did not run (the agent was busy, or the summary failed or the " +
-	"chat changed before it finished), so marotte did not continue the stopped turn. Send a message to go on: " +
-	"marotte tries the compaction again at the end of the next turn."
+const compactFailsafeFailedRetrying = compactFailsafeFailed + " " + command.CompactRetryNote + "."
 
 // resumeLimitNotice tells the reader a failsafe stop at compactionFailsafeResumes lists no resume.
 const resumeLimitNotice = "The context filled up again, so marotte stopped the turn to compact the context. It " +

@@ -58,11 +58,9 @@ export function reportFailure(
     latched.set(chatID, { key, at: now });
     return;
   }
-  // One failed attempt reports twice: the compaction notice, which says whether the next turn end tries again, and the
-  // turn-scoped reason, which would erase that; the reason stays in the chat's "Compaction failed" row.
-  const twinOfCompactionNotice =
-    turnScoped && code === "compaction_failed" && liveCode.get(chatID) === "compaction_failed";
-  if (twinOfCompactionNotice && last !== undefined && now - last.at < DEDUPE_WINDOW_MS) {
+  // A summary kiro-cli reports failed arrives twice: the compaction notice, which says whether the next turn end tries
+  // again, and the turn-scoped reason, which would erase it; the reason stays in the chat's "Compaction failed" row.
+  if (turnScoped && code === "compaction_failed" && liveCode.get(chatID) === "compaction_failed") {
     return;
   }
   // A sticky remedy is replaced by its own repeat and by nothing else; an ordinary

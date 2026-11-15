@@ -439,6 +439,13 @@ describe("compaction_failed", () => {
     expect(textOf(node)).toContain("Compaction failed: the summary was refused");
   });
 
+  it("keeps a reason that says when the compaction is tried again whole", () => {
+    const reason =
+      "the agent was busy, or the summary failed or the chat changed before it finished. marotte tries again at the end of the next turn";
+    const node = buildEvent(event("compaction_failed", { reason }));
+    expect(textOf(node)).toContain(`Compaction failed: ${reason}`);
+  });
+
   it("falls back to naming the failure when no reason arrived", () => {
     const node = buildEvent(event("compaction_failed", { reason: "" }));
     expect(textOf(node)).toContain("Compaction failed");

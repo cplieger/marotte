@@ -436,6 +436,9 @@ type usageObserver interface {
 	// ObserveToolCall hears each tool call the chat's own agent opens. KAS sends a response's tool_call
 	// frames before that response's reading, so a call since the last reading means the turn goes on.
 	ObserveToolCall(chatID marotte.ChatID)
+	// ObserveCompactionFailed hears kiro-cli report a summary failed with reason, and answers the reason the chat's
+	// compaction_failed row records.
+	ObserveCompactionFailed(ctx context.Context, chatID marotte.ChatID, reason string) string
 }
 
 // turnMetering is the per-turn accounting a turn_completion frame writes, split

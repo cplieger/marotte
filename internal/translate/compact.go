@@ -63,6 +63,7 @@ func (t *Translator) handleCompactionFailed(ctx context.Context, chatID marotte.
 	detail := cmp.Or(errMsg, "compaction failed")
 	detail = textsafe.SanitizeSingleLineBounded(detail, maxCompactionDetailBytes)
 	slog.Warn("kiro-cli reported the summary failed", "chat_id", chatID, "reason", detail)
+	detail = t.usage.ObserveCompactionFailed(ctx, chatID, detail)
 	// A refused append means the chat is gone: no banner for a chat nobody holds.
 	turnID := ""
 	if !t.appendLaneless(durable.Context(ctx), chatID, marotte.EntryKindCompactionFailed,

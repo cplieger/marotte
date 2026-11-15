@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -161,8 +165,8 @@ func TestAutoCompact_AFailedCompactionIsAttemptedAgainAtTheNextTurnEnd(t *testin
 	waitFor(t, func() bool { return calls.count() == 2 })
 }
 
-// Every turn end over the point attempts a compaction until one succeeds; the reading a success leaves (0) then
-// compacts nothing.
+// Every turn end over the point attempts a compaction until one succeeds; the test then sets the reading a success
+// leaves (0), which compacts nothing.
 func TestAutoCompact_EveryTurnEndOverThePointAttemptsUntilOneSucceeds(t *testing.T) {
 	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, true, 95)
@@ -186,50 +190,66 @@ func TestAutoCompact_EveryTurnEndOverThePointAttemptsUntilOneSucceeds(t *testing
 
 // Once the reading is back under the point, a turn end after a failure attempts nothing.
 func TestAutoCompact_UnderThePointAfterAFailureAttemptsNothing(t *testing.T) {
-	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
-	calls := onCompactor(h, 90, true, 95)
-	calls.setRefuse(true)
-	runPrompt(t, h, cs, "c1", "m-2")
-	waitFor(t, func() bool { return calls.count() == 1 })
-	calls.setReading(40)
+	synctest.Test(t, func(t *testing.T) {
+		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+		calls := onCompactor(h, 90, true, 95)
+		calls.setRefuse(true)
+		runPrompt(t, h, cs, "c1", "m-2")
+		waitFor(t, func() bool { return calls.count() == 1 })
+		calls.setReading(40)
 
-	runPrompt(t, h, cs, "c1", "m-3")
+		runPrompt(t, h, cs, "c1", "m-3")
+		waitFor(t, func() bool { return !listLive(h, "c1") })
+		time.Sleep(2 * time.Hour)
+		synctest.Wait()
 
-	staysFalse(t, 100*time.Millisecond, func() bool { return calls.count() != 1 }, "a turn end under the point compacted")
+		if got := calls.count(); got != 1 {
+			t.Errorf("calls = %d, want 1: a compaction ran after the reading fell under the point", got)
+		}
+	})
 }
 
 // A failure starts no attempt while the next turn runs; that turn's end does.
 func TestAutoCompact_NoAttemptStartsMidTurnAfterAFailure(t *testing.T) {
-	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
-	calls := onCompactor(h, 90, true, 95)
-	calls.setRefuse(true)
-	runPrompt(t, h, cs, "c1", "m-2")
-	waitFor(t, func() bool { return calls.count() == 1 && compactionEntry(t, cs, "c1").ID == "" })
-	open := promptGates(t, br)
-	if code := postPrompt(t, h, "parked"); code != 200 {
-		t.Fatalf("Setup: prompt = %d", code)
-	}
-	waitFor(t, func() bool { return h.coord.turns.live("c1") })
+	synctest.Test(t, func(t *testing.T) {
+		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+		calls := onCompactor(h, 90, true, 95)
+		calls.setRefuse(true)
+		runPrompt(t, h, cs, "c1", "m-2")
+		waitFor(t, func() bool { return calls.count() == 1 && compactionEntry(t, cs, "c1").ID == "" })
+		open := promptGates(t, br)
+		if code := postPrompt(t, h, "parked"); code != 200 {
+			t.Fatalf("Setup: prompt = %d", code)
+		}
+		waitFor(t, func() bool { return h.coord.turns.live("c1") })
+		time.Sleep(2 * time.Hour)
+		synctest.Wait()
 
-	staysFalse(t, 100*time.Millisecond, func() bool {
-		return calls.count() != 1 || compactionEntry(t, cs, "c1").ID != ""
-	}, "a compaction was listed or called while the turn ran")
-	open(0)
+		if got, entry := calls.count(), compactionEntry(t, cs, "c1").ID; got != 1 || entry != "" {
+			t.Errorf("calls = %d, listed compaction %q while the turn ran; want 1 and none", got, entry)
+		}
+		open(0)
 
-	waitFor(t, func() bool { return calls.count() == 2 })
+		waitFor(t, func() bool { return calls.count() == 2 })
+	})
 }
 
-// After a failure an idle chat starts nothing, however long it stays idle: the next attempt waits for a turn end.
+// An idle chat two hours after a failure has listed and called nothing more: the next attempt waits for a turn end.
 func TestAutoCompact_AnIdleChatAfterAFailureStartsNothing(t *testing.T) {
-	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
-	calls := onCompactor(h, 90, true, 95)
-	calls.setRefuse(true)
-	runPrompt(t, h, cs, "c1", "m-2")
-	waitFor(t, func() bool { return calls.count() == 1 && !listLive(h, "c1") })
+	synctest.Test(t, func(t *testing.T) {
+		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+		calls := onCompactor(h, 90, true, 95)
+		calls.setRefuse(true)
+		runPrompt(t, h, cs, "c1", "m-2")
+		waitFor(t, func() bool { return calls.count() == 1 && !listLive(h, "c1") })
 
-	staysFalse(t, 300*time.Millisecond, func() bool {
-		return calls.count() != 1 || compactionEntry(t, cs, "c1").ID != ""
-	}, "an idle chat listed or called a compaction after the failure")
+		time.Sleep(2 * time.Hour)
+		synctest.Wait()
+
+		if got, entry := calls.count(), compactionEntry(t, cs, "c1").ID; got != 1 || entry != "" {
+			t.Errorf("calls = %d, listed compaction %q after two idle hours; want 1 and none", got, entry)
+		}
+	})
 }
 
 // The retry needs no state of its own: a runtime restarted between the failure and the next turn end reads the
@@ -329,6 +349,9 @@ func TestAutoCompact_ACancelledRunningCompactionIsAttemptedAgainAtTheNextTurnEnd
 	<-pressed
 	waitFor(t, func() bool { return compactionEntry(t, cs, "c1").ID == "" })
 	staysFalse(t, 100*time.Millisecond, func() bool { return len(calls.toasts()) != 0 }, "the cancelled call raised a toast")
+	if got := failedRows(t, cs, "c1"); len(got) != 0 {
+		t.Errorf("rows after the cancel = %q, want none", got)
+	}
 
 	runPrompt(t, h, cs, "c1", "m-next")
 
@@ -366,6 +389,34 @@ func TestAutoCompact_AFailedPressUnderThePointSaysNothingOfARetry(t *testing.T) 
 	waitFor(t, func() bool { return len(calls.toasts()) == 1 && compactionEntry(t, cs, "c1").ID == "" })
 	if got := calls.toasts(); !slices.Equal(got, []string{compactFailed}) {
 		t.Errorf("toasts = %v, want one %q", got, compactFailed)
+	}
+}
+
+// The page clips a toast past its MAX_TOAST_CHARS, so a longer compaction toast would lose its last words, the retry
+// sentence among them.
+func TestCompactionToasts_FitThePagesToastCap(t *testing.T) {
+	const page = "../../static-src/failure-notice.ts"
+	src, err := os.ReadFile(page)
+	if err != nil {
+		t.Fatalf("read %s: %v", page, err)
+	}
+	m := regexp.MustCompile(`const MAX_TOAST_CHARS = (\d+);`).FindSubmatch(src)
+	if m == nil {
+		t.Fatalf("%s declares no `const MAX_TOAST_CHARS = <n>;`", page)
+	}
+	capChars, _ := strconv.Atoi(string(m[1]))
+	toasts := map[string]string{
+		"failed":                    compactFailedDetail(false, false),
+		"failed, retrying":          compactFailedDetail(false, true),
+		"failsafe failed":           compactFailedDetail(true, false),
+		"failsafe failed, retrying": compactFailedDetail(true, true),
+		"resume limit":              resumeLimitNotice,
+		"resume refused":            resumeRefusedNotice,
+	}
+	for name, text := range toasts {
+		if n := len([]rune(text)); n > capChars {
+			t.Errorf("%s toast is %d characters, over the page's %d: %q", name, n, capChars, text)
+		}
 	}
 }
 
@@ -539,4 +590,81 @@ func TestCompaction_AFailedAttemptLogsWarnWithItsReason(t *testing.T) {
 			t.Errorf("a cancelled call logged %v, want no WARN", rec)
 		}
 	})
+}
+
+// retryWording is what the brief requires a failure over the point to say.
+const retryWording = "tries again at the end of the next turn"
+
+// failedRows is the reasons of the chat's compaction_failed entries, in log order.
+func failedRows(t *testing.T, cs *testChatStore, chatID marotte.ChatID) []string {
+	t.Helper()
+	log, err := cs.All(t.Context(), chatID)
+	if err != nil {
+		t.Fatalf("All(%q): %v", chatID, err)
+	}
+	var out []string
+	for _, e := range entriesOfKind(t, log, marotte.EntryKindCompactionFailed) {
+		var p marotte.EntryCompactionFailed
+		decodePayload(t, e, &p)
+		out = append(out, p.Reason)
+	}
+	return out
+}
+
+// A refused attempt leaves one durable "Compaction failed" row; over the point it says the next turn end tries
+// again, under it it does not.
+func TestAutoCompact_ARefusalLeavesOneFailedRow(t *testing.T) {
+	t.Run("over the point", func(t *testing.T) {
+		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+		calls := onCompactor(h, 90, true, 95)
+		calls.setRefuse(true)
+
+		runPrompt(t, h, cs, "c1", "m-2")
+
+		waitFor(t, func() bool { return calls.count() == 1 && len(failedRows(t, cs, "c1")) == 1 })
+		if got := failedRows(t, cs, "c1"); !strings.Contains(got[0], retryWording) {
+			t.Errorf("row reason = %q, want it to say marotte %s", got[0], retryWording)
+		}
+	})
+	t.Run("under the point", func(t *testing.T) {
+		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+		calls := onCompactor(h, 90, true, 30)
+		calls.setRefuse(true)
+
+		if out, _ := h.RequestCompact(t.Context(), "c1"); out != command.CompactRefused {
+			t.Fatalf("Setup: press = %v, want refused", out)
+		}
+
+		waitFor(t, func() bool { return len(failedRows(t, cs, "c1")) == 1 })
+		if got := failedRows(t, cs, "c1"); strings.Contains(got[0], retryWording) {
+			t.Errorf("row reason = %q, want no retry under the point", got[0])
+		}
+	})
+}
+
+// A summary kiro-cli reports failed, then refuses, is one attempt: one row, with kiro-cli's reason and the retry.
+func TestAutoCompact_ASummaryKiroCliReportsFailedLeavesOneRow(t *testing.T) {
+	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+	ac := h.coord.autoCompact
+	ac.policy = func(context.Context) (bool, int) { return true, 90 }
+	ac.usage = func(context.Context, marotte.ChatID) marotte.Usage {
+		return marotte.Usage{ContextPct: 95, HasRealData: true}
+	}
+	br.setCallResult(marotte.MethodSessionCompact, json.RawMessage(`{"success":false}`))
+	br.mu.Lock()
+	br.notifsOnCall = map[string][]*marotte.RPCResponse{marotte.MethodSessionCompact: {
+		newSessionInfoMsg(map[string]any{"summarization": map[string]any{"status": "model error"}}),
+	}}
+	br.mu.Unlock()
+
+	if out, _ := h.RequestCompact(t.Context(), "c1"); out != command.CompactRefusedRetrying {
+		t.Fatalf("Setup: press = %v, want refused, retrying", out)
+	}
+
+	waitFor(t, func() bool { return len(failedRows(t, cs, "c1")) >= 1 })
+	staysFalse(t, 100*time.Millisecond, func() bool { return len(failedRows(t, cs, "c1")) != 1 },
+		"the attempt left more than one row")
+	if got := failedRows(t, cs, "c1")[0]; !strings.Contains(got, "model error") || !strings.Contains(got, retryWording) {
+		t.Errorf("row reason = %q, want kiro-cli's reason and the retry", got)
+	}
 }

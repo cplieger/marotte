@@ -504,13 +504,15 @@ describe("a background chat's compaction notice keeps saying the next turn end t
     expect(lastToast()).toBe("Write the docs: model error");
   });
 
-  it("shows a turn-scoped compaction reason that arrives after the dedupe window", () => {
+  it("keeps the retry notice when the turn-scoped reason arrives after the dedupe window", () => {
     vi.useFakeTimers();
     try {
       reportFailure("c2", RETRYING, undefined, false, "", "compaction_failed");
       vi.advanceTimersByTime(6_000);
       reportFailure("c2", "model error", undefined, true, "", "compaction_failed");
-      expect(lastToast()).toBe("Write the docs: model error");
+      expect(toastCount()).toBe(1);
+      expect(lastToast()).toBe(`Write the docs: ${RETRYING}`);
+      expect(mockDismiss).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }

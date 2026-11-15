@@ -21,12 +21,13 @@ import (
 var errCompactRefused = errors.New(compactRefusedCauses + ". Try again once the chat is idle, or check the hook")
 
 // errCompactRefusedRetrying is the refusal of a chat over the Compact at point, whose next turn end tries again.
-var errCompactRefusedRetrying = errors.New(compactRefusedCauses + ". " + compactRetryNote)
+var errCompactRefusedRetrying = errors.New(compactRefusedCauses + ". " + CompactRetryNote)
 
-const (
-	compactRefusedCauses = "the agent was still busy with a turn, a new message or another compaction, the summary failed or the chat changed before it finished, or a PreCompact hook blocked it (its card shows why)"
-	compactRetryNote     = "marotte tries again at the end of the next turn"
-)
+const compactRefusedCauses = "the agent was still busy with a turn, a new message or another compaction, the summary failed or the chat changed before it finished, or a PreCompact hook blocked it (its card shows why)"
+
+// CompactRetryNote is the sentence every account of a compaction that did not run carries on a chat whose next turn
+// end tries again.
+const CompactRetryNote = "marotte tries again at the end of the next turn"
 
 // CompactBridge is what Compact needs of a bridge: one call on its own session.
 type CompactBridge interface {
@@ -80,7 +81,7 @@ func cmdCompact(ctx context.Context, compacts compactRequester, cmd *marotte.Cli
 	switch {
 	case err != nil && out == CompactRefusedRetrying:
 		slog.Warn("compact: call failed", "chat", cmd.ChatID, keyError, err)
-		return nil, StatusError(http.StatusBadGateway, fmt.Errorf("%w. "+compactRetryNote, err))
+		return nil, StatusError(http.StatusBadGateway, fmt.Errorf("%w. "+CompactRetryNote, err))
 	case err != nil:
 		slog.Warn("compact: call failed", "chat", cmd.ChatID, keyError, err)
 		return nil, StatusError(http.StatusBadGateway, err)
