@@ -1733,8 +1733,8 @@ describe("dialog: re-entry property", () => {
             },
           ],
           // A raw show() and close in the engine's own showModal's beforetoggle, the close's
-          // `open` removed by hand in its own beforetoggle: that close writes nothing, and
-          // the showModal still opens the dialog.
+          // `open` removed by hand in its own beforetoggle: the showModal is still to write
+          // `open` while the close's toggle is on top of it, and the dialog ends open.
           [
             {
               guard: "none",

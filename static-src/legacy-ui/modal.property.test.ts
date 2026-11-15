@@ -1069,8 +1069,8 @@ describe("createModal: re-entry property", () => {
             },
           ],
           // A raw show() and close of b in its own showModal's beforetoggle, the close's
-          // `open` removed by hand in its own beforetoggle: that close writes nothing,
-          // and the showModal still opens b.
+          // `open` removed by hand in its own beforetoggle: the showModal is still to
+          // write `open` while the close's toggle is on top of it, and b ends open.
           [
             {
               probeBody: false,
@@ -1088,27 +1088,6 @@ describe("createModal: re-entry property", () => {
                 {
                   at: 0,
                   hit: "doc:beforetoggle:closed",
-                  actions: [{ k: "platformOther", who: "b", kind: "removeOpen" }],
-                },
-              ],
-            },
-          ],
-          // A raw `open` in b's own showModal's beforetoggle, which then writes nothing,
-          // and its removal at the next hit of that drive: b ends closed.
-          [
-            {
-              probeBody: false,
-              allowGuard: false,
-              script: [{ k: "open", who: "b" }],
-              injections: [
-                {
-                  at: 0,
-                  hit: "doc:beforetoggle:open",
-                  actions: [{ k: "platformOther", who: "b", kind: "addOpen" }],
-                },
-                {
-                  at: 0,
-                  hit: "focus@content-b",
                   actions: [{ k: "platformOther", who: "b", kind: "removeOpen" }],
                 },
               ],

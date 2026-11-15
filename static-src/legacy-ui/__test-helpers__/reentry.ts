@@ -263,7 +263,7 @@ class Ledger {
 interface RawFrame {
   readonly dialog: HTMLDialogElement;
   seen: boolean;
-  /** A bare attribute write, which no toggle is under way for. */
+  /** A bare attribute write, which ends no toggle. */
   readonly attrOnly: boolean;
 }
 
@@ -330,8 +330,9 @@ export class World<E = unknown> {
   admit: ((write: Write) => boolean | undefined) | null = null;
   private window: EffectWindow | null = null;
   private readonly writes = new MutationObserver(() => undefined);
-  /** Each dialog's toggles from their `beforetoggle` to their end, with their new
-   *  states, innermost last: a toggle can nest in another's `beforetoggle`. */
+  /** Each dialog's toggles from their `beforetoggle` to the call's own `open` write, or
+   *  to the outermost entry's return, with their new states, innermost last: a toggle
+   *  can nest in another's `beforetoggle`. */
   private readonly toggling = new Map<Element, string[]>();
   /** Why an ended window's effects were not admissible, for the next check. */
   private readonly inadmissible: string[] = [];
@@ -375,10 +376,10 @@ export class World<E = unknown> {
       (e) => {
         const ev = e as ToggleEvent;
         const target = ev.target as Element;
-        const depth = this.toggling.get(target)?.length ?? 0;
         // At the target, after the listeners already there: a close that finds `open`
-        // gone writes nothing and ends here (HTML "close the dialog"). A toggle nested in
-        // this one's listeners reaches this listener first, so it waits for its own event.
+        // gone writes nothing (HTML "close the dialog"), so its `ownClosing` mark ends
+        // here. A toggle nested in this one's listeners reaches this listener first, so
+        // it waits for its own event.
         const atTarget = (te: Event): void => {
           if (te !== ev) {
             return;
@@ -386,7 +387,6 @@ export class World<E = unknown> {
           nativeRemove.call(target, "beforetoggle", atTarget);
           if (ev.newState === "closed" && !target.hasAttribute("open")) {
             this.ownClosing.delete(target);
-            this.endUnwritten(target, depth);
           }
         };
         nativeAdd.call(target, "beforetoggle", atTarget);
@@ -436,31 +436,6 @@ export class World<E = unknown> {
       document.documentElement.replaceChild(body, document.body);
     }
     this.ledger.install();
-    this.wrapOpens();
-  }
-
-  /** A show() or showModal() that returns with its toggle still under way wrote
-   *  nothing: one whose listeners left `open` set, or cancelled. */
-  private wrapOpens(): void {
-    const proto = HTMLDialogElement.prototype;
-    const end = (d: Element, depth: number): void => {
-      this.endUnwritten(d, depth);
-    };
-    const depthOf = (d: Element): number => this.toggling.get(d)?.length ?? 0;
-    for (const name of ["show", "showModal"] as const) {
-      const original = proto[name];
-      proto[name] = function (this: HTMLDialogElement): void {
-        const depth = depthOf(this);
-        try {
-          original.call(this);
-        } finally {
-          end(this, depth);
-        }
-      };
-      this.cleanups.push(() => {
-        proto[name] = original;
-      });
-    }
   }
 
   /** A listener of the harness's own, invisible to the ledger. */
@@ -719,21 +694,6 @@ export class World<E = unknown> {
     stack?.pop();
     if (stack?.length === 0) {
       this.toggling.delete(el);
-    }
-  }
-
-  /** End the toggles above `depth` that the platform ended without writing `open`. */
-  private endUnwritten(el: Element, depth: number): void {
-    // The records queued so far are read against the toggles they ended.
-    this.takeWrites(this.window);
-    const stack = this.toggling.get(el);
-    if (stack === undefined || stack.length <= depth) {
-      return;
-    }
-    stack.length = depth;
-    if (depth === 0) {
-      this.toggling.delete(el);
-      this.window?.inFlight.delete(el);
     }
   }
 
