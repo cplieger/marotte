@@ -4,6 +4,10 @@ shard count against the times those calibrations measured.
 cplieger/ci's perf_gate.py checks the same rule, the bundles' signatures and the base's tiers in
 the compare job; run.sh runs this first, so a budget file that breaks the rule fails the shard
 before anything is measured.
+
+The tier and headroom of an entry from a file of fewer than ten runs are not checked here: that
+entry takes its base entry's tier, or is reported when the base has none, and perf_gate.py
+--check-file checks it against the base, which this test does not read.
 """
 
 import json
@@ -25,6 +29,11 @@ Q7_SERVER_CPU_MS = 63
 # setup (at most 108 s there: checkout, Node, Playwright, the build artifact).
 PR_JOB_SECONDS = 25 * 60
 PR_SETUP_SECONDS = 82 + 108
+# An answer whose size carries a clock value is not a count: GET /api/engine's `since` is a
+# time.Time, whose RFC 3339 text drops trailing zero nanoseconds, and its boot_ms and seq change
+# digit width, so its size moves rep to rep on one runner. perf_gate.py reports a measured cell
+# that has no entry.
+CLOCK_SIZED = frozenset({'max_bytes:GET /api/engine'})
 
 
 def key(d: dict) -> tuple:
@@ -59,16 +68,39 @@ class Budgets(unittest.TestCase):
             for p in sorted(calibrations.glob('*.json')):
                 if not p.name.endswith('.sigstore.json'):
                     cls.files[p.stem] = json.loads(p.read_text())
+        cls.cells = {run_id: {key(c): c for c in doc['cells']} for run_id, doc in cls.files.items()}
         cls.entries = {}
         for e in cls.budgets['budgets']:
             cls.entries.setdefault(key(e), []).append(e)
 
-    def test_every_planned_unit_has_entries(self):
+    def test_every_planned_window_has_entries(self):
         units = {k[:4] for k in self.entries}
+        windows = {k[:5] for k in self.entries}
         for set_name, s in self.plan['sets'].items():
             for c in s['cells']:
                 with self.subTest(set=set_name, unit=unit(c)):
                     self.assertIn(unit(c), units)
+                for w in c.get('windows', self.plan['scenarios'][c['scenario']]['windows']):
+                    with self.subTest(set=set_name, unit=unit(c), window=w):
+                        self.assertIn((*unit(c), w), windows)
+
+    def test_every_exact_entry_is_every_rep_its_calibrations_measured(self):
+        # perf_gate.py measures an exact count once and never again, so one rep of unchanged code
+        # off the baseline in any checked-in calibration is a pull request that fails on noise.
+        for e in self.budgets['budgets']:
+            if e['tier'] != 'exact':
+                continue
+            for run_id, cells in self.cells.items():
+                c = cells.get(key(e))
+                if c is None:
+                    continue
+                with self.subTest(entry=key(e), run=run_id):
+                    reps = {r for run in c['reps_by_run'] for r in run}
+                    self.assertEqual(sorted(reps - {e['baseline']}), [])
+
+    def test_no_entry_holds_an_answer_size_that_carries_a_clock(self):
+        held = [key(e) for e in self.budgets['budgets'] if e['metric'] in CLOCK_SIZED]
+        self.assertEqual(held, [])
 
     def test_each_cell_has_one_entry(self):
         for k, es in self.entries.items():
@@ -83,7 +115,7 @@ class Budgets(unittest.TestCase):
                 doc = self.files.get(m.group(1))
                 self.assertIsNotNone(doc, f'calibrations/{m.group(1)}.json is checked in')
                 self.assertEqual(doc['run_url'], e['source'])
-                c = {key(c): c for c in doc['cells']}.get(key(e))
+                c = self.cells[m.group(1)].get(key(e))
                 self.assertIsNotNone(c, 'its calibration measured the cell')
                 self.assertEqual(e.get('baseline'), c['baseline'])
                 if doc['runs'] >= TIER_RUNS:
