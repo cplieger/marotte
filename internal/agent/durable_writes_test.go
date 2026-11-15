@@ -160,7 +160,7 @@ var abandonableWriteSites = []durableSite{{
 	file:    "internal/agent/security_profile.go",
 	fn:      "moveProfile",
 	calls:   []string{"Mutate"},
-	because: "the header's pick on the request's context, as the command/* writes: a pick a shutdown cuts is refused, and the pill puts back the profile it showed",
+	because: "the header's pick on the request's context, as the command/* writes: a pick a shutdown cuts is refused, and the pill drops it",
 }, {
 	file:    "internal/agent/turn_open.go",
 	fn:      "openTurn",

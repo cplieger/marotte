@@ -183,51 +183,109 @@ func TestMoveChatProfile_APickDuringTheCloseRecordsOneLineAfterIt(t *testing.T) 
 	}
 }
 
-// A pick whose header write lands while the close reads the header for its parked move files each move once, each
-// from the profile it left.
-func TestMoveChatProfile_APickDuringTheLandsHeaderReadFilesEachMoveOnce(t *testing.T) {
+// pickOnGet makes a pick of to when the store's nth Get from now runs. Where the caller holds the park's lock there,
+// the pick waits for it in its own goroutine, as a second device's would, instead of deadlocking inside it; the
+// returned channel closes once the pick is done.
+func pickOnGet(t *testing.T, h *Runtime, cs *testChatStore, chatID marotte.ChatID, nth int, to string) <-chan struct{} {
+	t.Helper()
+	picked := make(chan struct{})
+	n := 0
+	hook := func(marotte.ChatID) {
+		if n++; n < nth {
+			return
+		}
+		cs.onGet.Store(nil)
+		pick := func() {
+			defer close(picked)
+			pickProfile(t, h, chatID, to)
+		}
+		if !h.coord.parkedProfiles.mu.TryLock() {
+			go pick()
+			return
+		}
+		h.coord.parkedProfiles.mu.Unlock()
+		pick()
+	}
+	cs.onGet.Store(&hook)
+	return picked
+}
+
+func awaitPick(t *testing.T, picked <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-picked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the injected pick never finished")
+	}
+}
+
+// A pick made while the close lands its parked move, whether on the land's header read or on its line's append, files
+// its line after the land's: the transcript's last line names the profile the chat runs.
+func TestMoveChatProfile_APickDuringTheLandFilesItsLineAfterTheLands(t *testing.T) {
+	tests := map[string]int{
+		"on the land's header read": 1,
+		"on the land's append":      2,
+	}
+	for name, nth := range tests {
+		t.Run(name, func(t *testing.T) {
+			h, cs, _ := newTestHub()
+			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+				c.Name, c.SecurityProfile = "A", policyfile.ProfileTrusted
+				return true
+			})
+			finishedTurn(t, h, "c1")
+			id, _ := h.stagePromptTurn(t, "c1")
+			pickProfile(t, h, "c1", policyfile.ProfileGuarded)
+			var picked <-chan struct{}
+			h.coord.onTurnClosed = func(marotte.ChatID, string) {
+				picked = pickOnGet(t, h, cs, "c1", nth, policyfile.ProfileReadOnly)
+			}
+			endTurn(t, h, "c1", id)
+			awaitPick(t, picked)
+			joinInflight(t, h)
+
+			entries := logOf(t, cs, "c1")
+			got := profileSwitchesOf(t, entries)
+			want := []marotte.EntryProfileSwitched{
+				{From: policyfile.ProfileTrusted, To: policyfile.ProfileGuarded},
+				{From: policyfile.ProfileGuarded, To: policyfile.ProfileReadOnly},
+			}
+			if !slices.Equal(got, want) {
+				t.Errorf("profile_switched entries in log order = %+v, want %+v", got, want)
+			}
+			closedAt := slices.IndexFunc(entries, func(e marotte.Entry) bool {
+				return e.Turn == id && e.Kind == marotte.EntryKindTurnClose
+			})
+			line := slices.IndexFunc(entries, func(e marotte.Entry) bool { return e.Kind == marotte.EntryKindProfileSwitched })
+			if closedAt < 0 || line < closedAt {
+				t.Errorf("the first line sits at %d and the turn's close at %d, want every line after the close", line, closedAt)
+			}
+		})
+	}
+}
+
+// Two picks between turns, the second made while the first files its line, file their lines in the order they moved
+// the header.
+func TestMoveChatProfile_IdlePicksFileTheirLinesInTheOrderTheyMoved(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name, c.SecurityProfile = "A", policyfile.ProfileTrusted
 		return true
 	})
 	finishedTurn(t, h, "c1")
-	id, _ := h.stagePromptTurn(t, "c1")
+
+	// The first pick's only Get is its append's.
+	picked := pickOnGet(t, h, cs, "c1", 1, policyfile.ProfileReadOnly)
 	pickProfile(t, h, "c1", policyfile.ProfileGuarded)
-	picked := make(chan struct{})
-	h.coord.onTurnClosed = func(marotte.ChatID, string) {
-		// The close's next read is its parked move's header read.
-		hook := func(marotte.ChatID) {
-			cs.onGet.Store(nil)
-			pick := func() {
-				defer close(picked)
-				pickProfile(t, h, "c1", policyfile.ProfileReadOnly)
-			}
-			// Where the land holds the park's lock across that read, the pick must wait for it, not run inside it.
-			if !h.coord.parkedProfiles.mu.TryLock() {
-				go pick()
-				return
-			}
-			h.coord.parkedProfiles.mu.Unlock()
-			pick()
-		}
-		cs.onGet.Store(&hook)
-	}
-	endTurn(t, h, "c1", id)
-	select {
-	case <-picked:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the pick made during the land never finished")
-	}
-	joinInflight(t, h)
+	awaitPick(t, picked)
 
 	got := profileSwitchesOf(t, logOf(t, cs, "c1"))
 	want := []marotte.EntryProfileSwitched{
 		{From: policyfile.ProfileTrusted, To: policyfile.ProfileGuarded},
 		{From: policyfile.ProfileGuarded, To: policyfile.ProfileReadOnly},
 	}
-	if len(got) != len(want) || !slices.Contains(got, want[0]) || !slices.Contains(got, want[1]) {
-		t.Errorf("profile_switched entries = %+v, want each of %+v once", got, want)
+	if !slices.Equal(got, want) {
+		t.Errorf("profile_switched entries in log order = %+v, want %+v", got, want)
 	}
 }
 

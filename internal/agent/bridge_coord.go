@@ -38,7 +38,7 @@ type bridgeCoordinator struct {
 	// between an admission's read and its park. Keyed by chat id, so it needs no lifecycle; held across the bridge
 	// call.
 	switchLocks *keylock.Set[marotte.ChatID]
-	// parkedProfiles is the profile moves picked during a turn (recordProfileSwitch).
+	// parkedProfiles is the profile moves picked during a turn (moveProfile).
 	parkedProfiles   parkedProfiles
 	broadcast        func(ctx context.Context, e marotte.ServerEvent)
 	translateEvent   func(chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse)

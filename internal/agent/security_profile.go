@@ -78,7 +78,8 @@ func (rt *Runtime) MoveChatProfile(ctx context.Context, chatID marotte.ChatID, t
 }
 
 // parkedProfiles holds, per chat, the profile a turn runs on while a pick made during it waits for the turn's close.
-// mu orders every header move against the land's header read, so each move is filed once.
+// mu is held from each header move or land's header read through the append of its line, so each move is filed once
+// and the lines fall in the order the header moved: the chat's last line names the profile it runs.
 type parkedProfiles struct {
 	from map[marotte.ChatID]string
 	mu   sync.Mutex
@@ -113,8 +114,8 @@ func (bc *bridgeCoordinator) moveProfile(ctx context.Context, chatID marotte.Cha
 		p.mu.Unlock()
 		return found, true, nil
 	}
-	p.mu.Unlock()
 	bc.appendProfileSwitched(ctx, chatID, from, to)
+	p.mu.Unlock()
 	return found, true, nil
 }
 
@@ -132,10 +133,10 @@ func (bc *bridgeCoordinator) landParkedProfile(ctx context.Context, chatID marot
 			to = rec.SecurityProfile
 		}
 	}
-	p.mu.Unlock()
 	if ok && to != from {
 		bc.appendProfileSwitched(ctx, chatID, from, to)
 	}
+	p.mu.Unlock()
 }
 
 // appendProfileSwitched writes one profile_switched entry after the newest close; an unstarted chat gets none.
