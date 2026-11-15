@@ -96,7 +96,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 			}
 			return d.Run(ctx, &marotte.ClientCommand{Type: marotte.CmdPrompt, ChatID: chatID, Payload: payload})
 		},
-		supervisedLocks: supervisedLocks, paths: r.BotPaths,
+		supervisedLocks: supervisedLocks, saveLocks: keylock.New(cmp.Compare[marotte.ChatID]), paths: r.BotPaths,
 	}
 	d.RegisterChange(marotte.CmdBotSave, bind1(bots, cmdBotSave))
 	d.register(marotte.CmdBotSetPaused, bind1(bots, cmdBotSetPaused))

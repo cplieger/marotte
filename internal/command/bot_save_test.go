@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 
 	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/marotte/internal/bot"
@@ -73,6 +74,7 @@ func newBotRoles(t *testing.T, store chatStore) (*botRoles, *botFakes) {
 		kickoff:         f.kickoff,
 		paths:           bot.Paths{KiroHome: t.TempDir()},
 		supervisedLocks: keylock.New(cmp.Compare[marotte.ChatID]),
+		saveLocks:       keylock.New(cmp.Compare[marotte.ChatID]),
 	}, f
 }
 
@@ -211,8 +213,7 @@ func TestCmdBotSave_AStaleBaseVersionSavesNothing(t *testing.T) {
 	}
 }
 
-// saveAfterRead is a chat store where another device's save lands right after the first Get, between this save's
-// read and its write.
+// saveAfterRead is a chat store that runs other once, inside the first Get: between this save's read and its write.
 type saveAfterRead struct {
 	chatStore
 	other func()
@@ -228,25 +229,44 @@ func (s *saveAfterRead) Get(ctx context.Context, id marotte.ChatID) (*marotte.Ch
 	return c, ok
 }
 
-func TestCmdBotSave_ASaveLandingBetweenTheReadAndTheWriteWins(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedBot(t, store, "c-bot", "Watcher", &marotte.Bot{Goal: "Old goal", StartedAt: 1, SpecVersion: 3})
-	racing := &saveAfterRead{chatStore: store}
-	roles, f := newBotRoles(t, racing)
-	racing.other = func() {
-		saveBot(t, &botRoles{chats: store, renamer: f, reload: f, models: f, kickoff: f.kickoff, paths: roles.paths},
-			"c-bot", &marotte.BotSaveCommand{Name: "Watcher", Goal: "Their goal", BaseVersion: 3})
-	}
+func TestCmdBotSave_ASecondDevicesSaveWaitsAndIsRefusedOnTheStaleBase(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store := testsupport.NewInMemoryChatStore()
+		seedBot(t, store, "c-bot", "Watcher", &marotte.Bot{Goal: "Old goal", StartedAt: 1, SpecVersion: 3})
+		racing := &saveAfterRead{chatStore: store}
+		roles, f := newBotRoles(t, racing)
+		other := *roles
+		other.chats = store
+		on := true
+		var otherErr error
+		done := make(chan struct{})
+		racing.other = func() {
+			go func() {
+				defer close(done)
+				_, otherErr = cmdBotSave(t.Context(), &other, botSaveReq(t, "c-bot", &marotte.BotSaveCommand{
+					Name: "Watcher", Goal: "Their goal", Model: "model-b", Supervised: &on, BaseVersion: 3,
+				}))
+			}()
+			synctest.Wait()
+		}
 
-	_, err := cmdBotSave(t.Context(), roles, botSaveReq(t, "c-bot",
-		&marotte.BotSaveCommand{Name: "Watcher", Goal: "My goal", BaseVersion: 3}))
+		body := saveBot(t, roles, "c-bot", &marotte.BotSaveCommand{Name: "Watcher", Goal: "My goal", BaseVersion: 3})
+		<-done
 
-	if statusOf(err) != http.StatusConflict || reasonOf(err) != "bot_changed" {
-		t.Errorf("status %d reason %q, want 409 bot_changed", statusOf(err), reasonOf(err))
-	}
-	if c := botOf(t, store, "c-bot"); c.Bot.Goal != "Their goal" || c.Bot.SpecVersion != 4 {
-		t.Errorf("goal %q version %d, want the other device's save at version 4", c.Bot.Goal, c.Bot.SpecVersion)
-	}
+		if body["spec_version"] != 4 {
+			t.Errorf("first save answered spec_version %v, want 4", body["spec_version"])
+		}
+		if statusOf(otherErr) != http.StatusConflict || reasonOf(otherErr) != "bot_changed" {
+			t.Errorf("second save = %d %q, want 409 bot_changed", statusOf(otherErr), reasonOf(otherErr))
+		}
+		if len(f.switches) != 0 {
+			t.Errorf("the refused save switched the model: %+v", f.switches)
+		}
+		if c := botOf(t, store, "c-bot"); c.Bot.Goal != "My goal" || c.Bot.SpecVersion != 4 || c.SupervisedMode {
+			t.Errorf("goal %q version %d supervised %v, want the first save's at version 4, unsupervised",
+				c.Bot.Goal, c.Bot.SpecVersion, c.SupervisedMode)
+		}
+	})
 }
 
 func TestCmdBotSave_AChangeBumpsTheSpecVersionAndAnswersIt(t *testing.T) {
@@ -279,6 +299,49 @@ func TestCmdBotSave_ASaveThatChangesNothingKeepsTheSpecVersion(t *testing.T) {
 	}
 	if len(f.reloads) != 0 {
 		t.Errorf("an unchanged save marked %v for reload", f.reloads)
+	}
+}
+
+func TestCmdBotSave_AChatChoiceChangeAloneBumpsTheSpecVersion(t *testing.T) {
+	on := true
+	cases := []struct {
+		name string
+		edit func(p *marotte.BotSaveCommand)
+		kept func(c *marotte.Chat) bool
+	}{
+		{
+			name: "supervised",
+			edit: func(p *marotte.BotSaveCommand) { p.Supervised = &on },
+			kept: func(c *marotte.Chat) bool { return c.SupervisedMode },
+		},
+		{name: "the model", edit: func(p *marotte.BotSaveCommand) { p.Model = "model-b" }},
+		{name: "the effort", edit: func(p *marotte.BotSaveCommand) { p.Effort = "high" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := testsupport.NewInMemoryChatStore()
+			seedBot(t, store, "c-bot", "Watcher", &marotte.Bot{Goal: "Watch.", StartedAt: 1})
+			roles, f := newBotRoles(t, store)
+			p := &marotte.BotSaveCommand{Name: "Watcher", Goal: "Watch."}
+			tc.edit(p)
+
+			body := saveBot(t, roles, "c-bot", p)
+
+			if got := botOf(t, store, "c-bot").Bot.SpecVersion; got != 1 || body["spec_version"] != 1 {
+				t.Fatalf("spec_version = %d, answered %v, want 1", got, body["spec_version"])
+			}
+			switches := len(f.switches)
+			_, err := cmdBotSave(t.Context(), roles, botSaveReq(t, "c-bot", &marotte.BotSaveCommand{Name: "Watcher", Goal: "Watch."}))
+			if statusOf(err) != http.StatusConflict || reasonOf(err) != "bot_changed" {
+				t.Errorf("a save on the old base = %d %q, want 409 bot_changed", statusOf(err), reasonOf(err))
+			}
+			if len(f.switches) != switches {
+				t.Errorf("the stale save switched the model: %+v", f.switches[switches:])
+			}
+			if tc.kept != nil && !tc.kept(botOf(t, store, "c-bot")) {
+				t.Error("the stale save reverted the first save's choice")
+			}
+		})
 	}
 }
 
@@ -496,18 +559,73 @@ func TestCmdBotSave_ARefusedModelSwitchSavesNothing(t *testing.T) {
 	seedBot(t, store, "c-bot", "New Bot", &marotte.Bot{})
 	roles, f := newBotRoles(t, store)
 	f.switchErr = StatusError(http.StatusConflict, errors.New("that model is not available on this account"))
+	on := true
 
 	_, err := cmdBotSave(t.Context(), roles, botSaveReq(t, "c-bot",
-		&marotte.BotSaveCommand{Name: "Watcher", Goal: "Watch.", Model: "model-z", Start: true}))
+		&marotte.BotSaveCommand{Name: "Watcher", Goal: "Watch.", Model: "model-z", Supervised: &on, Start: true}))
 
 	if statusOf(err) != http.StatusConflict {
 		t.Errorf("status = %d, want the switch's 409", statusOf(err))
 	}
-	if c := botOf(t, store, "c-bot"); c.Name != "New Bot" || c.Bot.StartedAt != 0 || c.Bot.SpecVersion != 0 {
-		t.Errorf("record = %q started %d version %d, want it unchanged", c.Name, c.Bot.StartedAt, c.Bot.SpecVersion)
+	if c := botOf(t, store, "c-bot"); c.Name != "New Bot" || c.Bot.StartedAt != 0 || c.Bot.SpecVersion != 0 || c.SupervisedMode {
+		t.Errorf("record = %q started %d version %d supervised %v, want it unchanged",
+			c.Name, c.Bot.StartedAt, c.Bot.SpecVersion, c.SupervisedMode)
 	}
 	if len(f.kickoffs) != 0 {
 		t.Errorf("a refused save sent %d kickoff(s)", len(f.kickoffs))
+	}
+}
+
+func TestCmdBotSave_ASupervisedRefusalAfterAModelSwitchNamesWhatLanded(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedBot(t, store, "c-bot", "Watcher", &marotte.Bot{Goal: "Watch.", StartedAt: 1, SpecVersion: 2})
+	roles, f := newBotRoles(t, store)
+	roles.bridges = newBridgeHost(store, &recordingBridge{callErr: errors.New("broken pipe"), sessionID: "sess-1"})
+	on := true
+
+	_, err := cmdBotSave(t.Context(), roles, botSaveReq(t, "c-bot", &marotte.BotSaveCommand{
+		Name: "Watcher", Goal: "A new goal.", Model: "model-b", Supervised: &on, BaseVersion: 2,
+	}))
+
+	if statusOf(err) != http.StatusBadGateway || reasonOf(err) != "bot_supervised" {
+		t.Errorf("status %d reason %q, want 502 bot_supervised", statusOf(err), reasonOf(err))
+	}
+	if got := fieldsOf(err); !slices.Equal(got, []string{"supervised"}) {
+		t.Errorf("fields = %v, want the supervised switch named", got)
+	}
+	if want := []marotte.SwitchModelCommand{{Model: "model-b"}}; !slices.Equal(f.switches, want) {
+		t.Errorf("switches = %+v, want %+v", f.switches, want)
+	}
+	c := botOf(t, store, "c-bot")
+	if c.SupervisedMode || c.Bot.Goal != "Watch." {
+		t.Errorf("supervised %v goal %q, want neither saved", c.SupervisedMode, c.Bot.Goal)
+	}
+	if c.Bot.SpecVersion != 3 {
+		t.Errorf("spec_version = %d, want 3: the model pick landed", c.Bot.SpecVersion)
+	}
+}
+
+func TestCmdBotSave_ARefusedSupervisedSwitchAloneSavesNothing(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedBot(t, store, "c-bot", "Watcher", &marotte.Bot{Goal: "Watch.", StartedAt: 1, SpecVersion: 2})
+	roles, f := newBotRoles(t, store)
+	roles.bridges = newBridgeHost(store, &recordingBridge{callErr: errors.New("broken pipe"), sessionID: "sess-1"})
+	on := true
+
+	_, err := cmdBotSave(t.Context(), roles, botSaveReq(t, "c-bot", &marotte.BotSaveCommand{
+		Name: "Watcher", Goal: "A new goal.", Supervised: &on, BaseVersion: 2,
+	}))
+
+	if err == nil || reasonOf(err) == "bot_supervised" {
+		t.Errorf("err = %v reason %q, want the switch's own refusal: nothing landed", err, reasonOf(err))
+	}
+	if len(f.switches) != 0 {
+		t.Errorf("switches = %+v, want none", f.switches)
+	}
+	c := botOf(t, store, "c-bot")
+	if c.SupervisedMode || c.Bot.Goal != "Watch." || c.Bot.SpecVersion != 2 {
+		t.Errorf("supervised %v goal %q version %d, want the record unchanged",
+			c.SupervisedMode, c.Bot.Goal, c.Bot.SpecVersion)
 	}
 }
 

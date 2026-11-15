@@ -924,11 +924,11 @@ func (m *Membership) deleteDoomedRecords(ctx context.Context, doomed []marotte.C
 	for _, chatID := range doomed {
 		chain, err := m.chats.Delete(ctx, chatID)
 		if err != nil {
-			slog.Error("close: retention-off record delete failed after the tab close committed; the record survives with close-grade teardown",
+			slog.Error("close: record delete failed after the tab close committed; the record survives with close-grade teardown",
 				"chat_id", chatID, keyError, err)
 			continue
 		}
-		slog.Info("chat deleted on close (retention off)", "chat_id", chatID)
+		slog.Info("chat deleted on close", "chat_id", chatID)
 		deleted[chatID] = chain
 	}
 	return deleted

@@ -331,6 +331,8 @@ function underFloor(q: string): boolean {
 /** The note while the typed text is under the floor. */
 const UNDER_FLOOR_NOTE = "Type 3 characters, or press Enter to search";
 
+const CHATS_UNREADABLE = "Could not read previous conversations.";
+
 /** The pane History shows, null while it is not on screen. */
 const shownTab = computed(() => historyPaneTab());
 
@@ -546,13 +548,18 @@ class HistoryController {
     if (chats === null || this.query !== "") {
       return;
     }
+    const failed = d.sessions_state === "unavailable";
+    const rows = this.rows.filter((r) => r.kind === "chat");
     this.paintPane(
       chats,
-      this.rows.filter((r) => r.kind === "chat"),
-      d.sessions_state === "unavailable"
-        ? "Could not read previous conversations."
-        : "No previous conversations in this workspace.",
+      rows,
+      failed ? CHATS_UNREADABLE : "No previous conversations in this workspace.",
     );
+    // A failed read still lists the Bots marotte's own records name, so the failure heads them or the lost
+    // conversations read as gone.
+    if (failed && rows.length > 0) {
+      chats.prepend(paneNote("list-empty", CHATS_UNREADABLE));
+    }
   }
 
   private paintRuns(): void {

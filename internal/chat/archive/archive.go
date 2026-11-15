@@ -39,7 +39,7 @@ const (
 	KeptByUnreconciled = "unreconciled"
 	KeptByUnattributed = "unattributed"
 	KeptByWords        = "words"
-	// KeptByBot is a record with a bot block: retention never deletes a Bot, whatever its age.
+	// KeptByBot is a started Bot: retention never deletes one, whatever its age.
 	KeptByBot = "bot"
 )
 

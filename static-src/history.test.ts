@@ -652,6 +652,34 @@ describe("history: a Bot with no stored session", () => {
     expect(deleteChatDispatch.mock.calls[0]?.[0].id).toBe("c-bot-a");
   });
 
+  it("states a failed conversation read above the Bot rows it could still list", async () => {
+    await render({
+      sessions: [botA],
+      runs: [],
+      sessions_state: "unavailable",
+      runs_state: "ready",
+    });
+    const pane = chatsPane();
+    expect(keysIn(pane)).toEqual(["b:c-bot-a"]);
+    expect(pane.firstElementChild?.textContent).toBe("Could not read previous conversations.");
+
+    const before = dispatch.mock.calls.length;
+    current!.refreshHistoryView();
+    await vi.waitFor(() => {
+      expect(dispatch.mock.calls.length).toBeGreaterThan(before);
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(keysIn(pane)).toEqual(["b:c-bot-a"]);
+    expect(pane.querySelectorAll(".list-empty")).toHaveLength(1);
+  });
+
+  it("states no failure over the rows of a read that succeeded", async () => {
+    await render({ sessions: [botA], runs: [], sessions_state: "ready", runs_state: "ready" });
+    const pane = chatsPane();
+    expect(keysIn(pane)).toEqual(["b:c-bot-a"]);
+    expect(pane.querySelectorAll(".list-empty")).toHaveLength(0);
+  });
+
   it("hides an open Bot's row", async () => {
     hasTab.mockImplementation((_kind: string, ref?: string) => ref === "c-bot-a");
     await render({ sessions: [botA, botB], runs: [] });

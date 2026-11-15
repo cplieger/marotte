@@ -1,9 +1,11 @@
 package command
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -24,6 +26,7 @@ const (
 	reasonBotInvalid  = "bot_invalid"
 	reasonBotTab      = "bot_tab"
 	reasonMemoryOff   = "memory_off"
+	reasonSupervised  = "bot_supervised"
 )
 
 const (
@@ -41,6 +44,7 @@ var (
 	errBotInvalid  = errors.New("some of this Bot's setup cannot be saved")
 	errBotTab      = errors.New("a Bot's tab is always top level and never pinned")
 	errMemoryOff   = errors.New("this Bot keeps no memory file")
+	errSupervised  = errors.New("the model was switched, but supervised mode could not be changed")
 )
 
 // BotDraftRefusal answers marotte.ErrBotDraft as 409 bot_draft when c is a Bot not yet started, else nil: a draft
@@ -61,9 +65,13 @@ func startedBotRefusal(c *marotte.Chat, exists bool) error {
 	return BotDraftRefusal(c)
 }
 
-// refuseBotDraft is BotDraftRefusal over chatID's record; a missing or unreadable one is left to the caller's own path.
+// refuseBotDraft is BotDraftRefusal over chatID's record, 503 when it cannot be read; a missing one is left to the
+// caller's own path.
 func refuseBotDraft(ctx context.Context, chats chatStore, chatID marotte.ChatID) error {
-	c, _ := chats.Get(ctx, chatID)
+	c, _, err := chats.Lookup(ctx, chatID)
+	if err != nil {
+		return StatusError(http.StatusServiceUnavailable, fmt.Errorf("%w: %w", errChatUnread, err))
+	}
 	return BotDraftRefusal(c)
 }
 
@@ -83,7 +91,10 @@ type botRoles struct {
 	kickoff func(ctx context.Context, chatID marotte.ChatID, p *marotte.PromptCommand) error
 	// supervisedLocks is set_supervised_mode's own lock set, so a save and the switch never interleave.
 	supervisedLocks *keylock.Set[marotte.ChatID]
-	paths           bot.Paths
+	// saveLocks holds one bot_save per Bot from its read to its write. SpecVersion has no other writer, so the base
+	// check made under it stays true through the write.
+	saveLocks *keylock.Set[marotte.ChatID]
+	paths     bot.Paths
 }
 
 // botSave is a validated bot_save payload.
@@ -97,11 +108,14 @@ type botSave struct {
 	base       int
 	memory     bool
 	start      bool
+	// choicesChanged is set once the model pick or the supervised switch changed the record.
+	choicesChanged bool
 }
 
 // cmdBotSave writes a Bot's setup in one record write and applies what the write changed: a renamed started Bot's
 // KAS sessions, a reload mark when the role's text moved, and on a draft's start the memory file and the kickoff
-// prompt. Supervised and the model go through their own commands' paths first, so a refused pick saves nothing.
+// prompt. A stale base_version, or a model pick the switch refuses, saves nothing. A supervised switch refused after
+// an applied model pick answers 502 bot_supervised naming the field, and keeps that pick with spec_version bumped.
 func cmdBotSave(ctx context.Context, roles *botRoles, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
@@ -114,6 +128,11 @@ func cmdBotSave(ctx context.Context, roles *botRoles, cmd *marotte.ClientCommand
 	if len(bad) > 0 {
 		return nil, statusErrorFields(http.StatusBadRequest, reasonBotInvalid, bad, errBotInvalid)
 	}
+	unlock, lockErr := lockSessionChange(ctx, roles.saveLocks, cmd.ChatID)
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	defer unlock()
 	cur, ok := roles.chats.Get(ctx, cmd.ChatID)
 	if !ok || cur.Bot == nil {
 		return nil, StatusErrorReason(http.StatusConflict, reasonBotNotFound, errBotNotFound)
@@ -197,15 +216,46 @@ func botText(text string, limit int) error {
 	return nil
 }
 
-// applyBotChatChoices applies the save's supervised switch and model pick where they differ from cur.
+// applyBotChatChoices applies the save's model pick, then its supervised switch, where they differ from cur. The
+// pick goes first because the switch refuses it on the account's own terms before anything lands.
 func applyBotChatChoices(ctx context.Context, roles *botRoles, chatID marotte.ChatID, cur *marotte.Chat, s *botSave) error {
-	if s.supervised != nil && *s.supervised != cur.SupervisedMode {
-		if err := applySupervised(ctx, roles.bridges, roles.chats, roles.supervisedLocks, chatID, *s.supervised); err != nil {
+	if (s.model != "" && s.model != cur.Model) || (s.effort != "" && string(s.effort) != cur.Effort) {
+		if err := roles.models.SwitchModel(ctx, chatID, marotte.SwitchModelCommand{Model: s.model, Effort: s.effort}); err != nil {
 			return err
 		}
+		s.choicesChanged = true
 	}
-	if (s.model != "" && s.model != cur.Model) || (s.effort != "" && string(s.effort) != cur.Effort) {
-		return roles.models.SwitchModel(ctx, chatID, marotte.SwitchModelCommand{Model: s.model, Effort: s.effort})
+	if s.supervised == nil || *s.supervised == cur.SupervisedMode {
+		return nil
+	}
+	err := applySupervised(ctx, roles.bridges, roles.chats, roles.supervisedLocks, chatID, *s.supervised)
+	switch {
+	case err == nil:
+		s.choicesChanged = true
+		return nil
+	case !s.choicesChanged:
+		return err
+	}
+	if bumpErr := bumpBotSpecVersion(ctx, roles.chats, chatID); bumpErr != nil {
+		return bumpErr
+	}
+	code, _, _ := StatusOf(err)
+	return statusErrorFields(cmp.Or(code, http.StatusInternalServerError), reasonSupervised,
+		[]fieldError{{Field: "supervised", Error: rpcerr.Text(err)}}, errSupervised)
+}
+
+// bumpBotSpecVersion moves chatID's spec_version and nothing else, for a save that changed the record only in part.
+func bumpBotSpecVersion(ctx context.Context, chats chatStore, chatID marotte.ChatID) error {
+	if _, err := chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
+		if !exists || c.Bot == nil {
+			return false
+		}
+		b := *c.Bot
+		b.SpecVersion++
+		c.Bot = &b
+		return true
+	}); err != nil {
+		return StatusError(http.StatusInternalServerError, err)
 	}
 	return nil
 }
@@ -222,25 +272,21 @@ type botWrite struct {
 	roleChanged bool
 }
 
-// writeBotSave writes s onto chatID's Bot block, refusing a record that stopped being a Bot or moved past s.base since
-// the caller read it. Only a change bumps SpecVersion.
+// writeBotSave writes s onto chatID's Bot block, refusing a record that stopped being a Bot since the caller read it.
+// Only a change, s's model pick or supervised switch included, bumps SpecVersion.
 func writeBotSave(ctx context.Context, chats chatStore, chatID marotte.ChatID, s *botSave) (botWrite, error) {
 	var w botWrite
 	var refused error
 	if _, err := chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
-		switch {
-		case !exists || c.Bot == nil:
+		if !exists || c.Bot == nil {
 			refused = StatusErrorReason(http.StatusConflict, reasonBotNotFound, errBotNotFound)
-			return false
-		case c.Bot.SpecVersion != s.base:
-			refused = StatusErrorReason(http.StatusConflict, reasonBotChanged, errBotChanged)
 			return false
 		}
 		b := *c.Bot
 		w.roleChanged = b.Goal != s.goal || b.Memory != s.memory || b.Steering != s.steering
 		w.startedNow = s.start && b.StartedAt == 0
 		w.nameChanged = setUserName(c, s.name)
-		changed := w.nameChanged || w.roleChanged || w.startedNow
+		changed := w.nameChanged || w.roleChanged || w.startedNow || s.choicesChanged
 		if changed {
 			b.Goal, b.Memory, b.Steering = s.goal, s.memory, s.steering
 			if w.startedNow {

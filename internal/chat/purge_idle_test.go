@@ -140,11 +140,21 @@ func TestPurgeIdle_DecidesFromTheRecordAlone(t *testing.T) {
 			wantOutcome: archive.PurgeKept, wantKeptBy: archive.KeptByBot,
 		},
 		{
-			name: "a_bot_draft",
+			// A draft's close deletes it; one whose delete failed is a plain closed chat.
+			name: "a_closed_bot_draft",
 			setup: func(t *testing.T, s *Store) {
+				rewriteChat(t, s, "c1", func(c *marotte.Chat) { c.Bot = &marotte.Bot{ClosedAt: 2} })
+			},
+			wantOutcome: archive.PurgePurged,
+		},
+		{
+			name: "an_open_bot_draft",
+			setup: func(t *testing.T, s *Store) {
+				holdKey(t, s, "c1", marotte.KeyTab, KeepDurable)
+				ageChat(t, s, "c1", 3*purgeWindow)
 				rewriteChat(t, s, "c1", func(c *marotte.Chat) { c.Bot = &marotte.Bot{} })
 			},
-			wantOutcome: archive.PurgeKept, wantKeptBy: archive.KeptByBot,
+			wantOutcome: archive.PurgeKept, wantKeptBy: archive.KeptByTab,
 		},
 		{
 			name: "a_bot_not_reconciled_this_boot",

@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sync"
 	"testing"
@@ -102,6 +103,30 @@ func TestDraftBot_AStartedBotTakesAPrompt(t *testing.T) {
 
 	if got := run.submitted(); got != 1 {
 		t.Errorf("submissions = %d, want 1", got)
+	}
+}
+
+// unreadableLookups answers every Lookup as a record that exists but cannot be read.
+type unreadableLookups struct{ *testsupport.InMemoryChatStore }
+
+func (unreadableLookups) Lookup(context.Context, marotte.ChatID) (*marotte.Chat, bool, error) {
+	return nil, false, errors.New("chat.json: unexpected end of JSON input")
+}
+
+func TestDraftBot_APromptIntoAnUnreadableRecordIsRefusedAsUnavailable(t *testing.T) {
+	store := unreadableLookups{testsupport.NewInMemoryChatStore()}
+	seedBot(t, store.InMemoryChatStore, "c-bot", "New Bot", &marotte.Bot{})
+	roles := promptRolesOf(newTestHost(t, store))
+	run := &countingRun{}
+	roles.runq = run
+
+	_, err := cmdPrompt(t.Context(), roles, promptReq(t, "c-bot", "hello"))
+
+	if statusOf(err) != http.StatusServiceUnavailable {
+		t.Errorf("status %d (%v), want 503", statusOf(err), err)
+	}
+	if got := run.submitted(); got != 0 {
+		t.Errorf("%d submission(s) reached the run order, want none", got)
 	}
 }
 

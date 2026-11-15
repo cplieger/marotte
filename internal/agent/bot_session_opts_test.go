@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"path/filepath"
 	"slices"
 	"sync/atomic"
@@ -144,6 +145,42 @@ func TestBotDoor_ADraftOpensNoSession(t *testing.T) {
 				t.Errorf("the engine was asked for %d session(s), want none", got)
 			}
 		})
+	}
+}
+
+// draftDoorRuntime is a runtime over a store holding c1, written by write, whose engine counts the sessions asked for.
+func draftDoorRuntime(t *testing.T, write func(c *marotte.Chat)) (*Runtime, *testChatStore, *atomic.Int32) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	cs := newTestChatStore()
+	spawned := &atomic.Int32{}
+	h := newRuntimeOn(context.Background(), "/tmp/work", fakeEngineOf(func() engineSession {
+		spawned.Add(1)
+		return newFakeBridge()
+	}, nil), cs)
+	cs.wire(h)
+	t.Cleanup(func() { shutdownHub(t, h) })
+	cs.seed(t, "c1", write)
+	return h, cs, spawned
+}
+
+func TestBotDoor_AnUnreadableRecordAnswersUnavailableAndOpensNoSession(t *testing.T) {
+	h, cs, spawned := draftDoorRuntime(t, func(c *marotte.Chat) {
+		c.Name = "New Bot"
+		c.CurrentModeID = marotte.BotRoleID
+		c.Bot = &marotte.Bot{Goal: "Not started yet."}
+	})
+	if err := os.WriteFile(filepath.Join(cs.Dir(), "c1", "chat.json"), []byte("{"), 0o600); err != nil {
+		t.Fatalf("Setup: malformed header: %v", err)
+	}
+
+	_, err := h.coord.openReleased(t.Context(), "c1", "")
+
+	if code, _, _ := command.StatusOf(err); code != http.StatusServiceUnavailable {
+		t.Errorf("open over an unreadable record = %d %v, want 503", code, err)
+	}
+	if got := spawned.Load(); got != 0 {
+		t.Errorf("the engine was asked for %d session(s), want none", got)
 	}
 }
 

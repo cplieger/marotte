@@ -36,8 +36,7 @@ func cmdSetSupervisedMode(
 	return responseWith(map[string]any{"enabled": p.Enabled}), nil
 }
 
-// applySupervised applies enabled to chatID's running session, then records it; bot_save shares it with
-// set_supervised_mode, so both serialize on supervisedLocks.
+// applySupervised applies enabled to chatID's running session under supervisedLocks, then records it.
 func applySupervised(
 	ctx context.Context, bridges bridgeAccess, chats chatStore, supervisedLocks *keylock.Set[marotte.ChatID],
 	chatID marotte.ChatID, enabled bool,
