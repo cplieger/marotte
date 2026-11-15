@@ -24,7 +24,9 @@ var awsRegionRe = regexp.MustCompile(`^[a-z]{2}(?:-[a-z]+)+-\d+$`)
 
 // Handler is the /api/whoami, /api/login and /api/logout bundle for one backend of the vault.
 type Handler struct {
-	vault   *signin.Vault
+	vault *signin.Vault
+	// health reads the sign-in's state for whoami; nil leaves it out.
+	health  func() marotte.SignInHealth
 	backend signin.BackendID
 	// managedSettingsPath is the administrator's file the sign-in controls come from.
 	managedSettingsPath string
@@ -33,8 +35,6 @@ type Handler struct {
 	// apiKey: the engine is signed in by KIRO_API_KEY, which kiro-cli prefers to marotte's answer, so sign-in and
 	// sign-out here would change nothing the engine uses.
 	apiKey bool
-	// health reads the sign-in's state for whoami; nil leaves it out.
-	health func() marotte.SignInHealth
 }
 
 // Option configures a Handler at construction time.

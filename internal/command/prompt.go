@@ -533,8 +533,8 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, res 
 		return
 	}
 	slog.Info("prompt complete", "chat_id", chatID, "elapsed", elapsed)
-	if roles.auth != nil {
-		roles.auth.record(nil)
+	if roles.signIn != nil {
+		roles.signIn.NoteEngineAccepted()
 	}
 
 	// The close settles the withheld steer carry and decides the turn's empty retry on the run order; the
@@ -643,7 +643,7 @@ type failedTurnGrade struct {
 
 // gradeFailedTurn reads the close of turnID, already abandoned for err, and grades it: reason is
 // what its turn_close carries (fallback when it carries none), so a toast says what the card
-// says, and a refused credential latches AuthReadiness. A failure inside the execution names its
+// says, and a refused credential is noted to the sign-in's health. A failure inside the execution names its
 // class only on the turn.
 func gradeFailedTurn(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, turnID string, err error, fallback string) failedTurnGrade {
 	g := failedTurnGrade{reason: fallback, onCard: true}
@@ -662,8 +662,8 @@ func gradeFailedTurn(ctx context.Context, roles *promptRoles, chatID marotte.Cha
 		}
 	}
 	g.auth = true
-	if roles.auth != nil {
-		roles.auth.record(err)
+	if roles.signIn != nil {
+		roles.signIn.NoteEngineRefusal()
 	}
 	return g
 }

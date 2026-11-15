@@ -91,6 +91,9 @@ type slot struct {
 	basis      *record
 	flight     *flight
 	cancelPoll context.CancelFunc
+	// failingSince is the first transient or short renewal of effective since its last usable one; replacing
+	// effective, a usable renewal or a rejection zeroes it.
+	failingSince time.Time
 	// unavailable is the user text for a file refused or unreadable at Open, until a write
 	// replaces that file.
 	unavailable  string
@@ -334,7 +337,7 @@ func (v *Vault) EngineSpawned(id BackendID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.effective != s.desired {
-		s.unreachable = false
+		s.unreachable, s.failingSince = false, time.Time{}
 	}
 	s.effective = s.desired
 	s.basis = nil
@@ -356,7 +359,17 @@ func (v *Vault) Answerability(id BackendID) Answerability {
 
 // Standing reads the backend's Standing with no renewal; an unknown backend needs a sign-in it cannot get.
 func (v *Vault) Standing(id BackendID) Standing {
-	return Standing{}
+	s := v.slots[id]
+	if s == nil {
+		return Standing{Answerability: NeedsSignIn}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return Standing{
+		Answerability: s.answerabilityLocked(),
+		Lapsed:        s.effective != nil && s.effective.lapsed,
+		FailingSince:  s.failingSince,
+	}
 }
 
 // UnreachableReason returns the backend's own refusal text for RefusedUnreachable while its Answerability is
@@ -814,6 +827,7 @@ func (v *Vault) renew(s *slot, f *flight) {
 			probe = !s.unreachable
 		}
 		s.unreachable = short
+		s.failingSince = failingFrom(s.failingSince, short, now)
 		f.renewed = &record{cred: cred, gen: f.from.gen}
 		s.effective = f.renewed
 		if paired {
@@ -823,7 +837,7 @@ func (v *Vault) renew(s *slot, f *flight) {
 	case errors.Is(err, ErrRejected):
 		f.out = renewRejected
 		lapsed := &record{cred: f.from.cred, gen: f.from.gen, lapsed: true}
-		s.effective, s.unreachable = lapsed, false
+		s.effective, s.unreachable, s.failingSince = lapsed, false, time.Time{}
 		if paired {
 			from := s.kindLocked()
 			s.desired = lapsed
@@ -834,6 +848,7 @@ func (v *Vault) renew(s *slot, f *flight) {
 		}
 	default:
 		f.out = renewTransient
+		s.failingSince = failingFrom(s.failingSince, true, now)
 	}
 	// After the Change's ticket, so a lapse reaches OnChange before OnAnswerability.
 	at, a := v.noteAnswerLocked(s)
@@ -858,6 +873,19 @@ func (v *Vault) renew(s *slot, f *flight) {
 		v.deliver(t, c)
 	}
 	v.deliverAnswer(at, s.decl.Backend, a)
+}
+
+// failingFrom is a renewal's next failingSince: kept while failing, set at now on the first failure, zero after a
+// usable renewal.
+func failingFrom(since time.Time, failed bool, now time.Time) time.Time {
+	switch {
+	case !failed:
+		return time.Time{}
+	case since.IsZero():
+		return now
+	default:
+		return since
+	}
 }
 
 func (r renewal) String() string {

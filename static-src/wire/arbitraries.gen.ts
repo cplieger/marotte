@@ -3276,6 +3276,7 @@ const arbModel = fc.letrec<{
   ),
   WhoamiResponse: fc.record(
     {
+      health: tie("SignInHealth"),
       state: arbWhoamiState,
       email: fc.string(),
       auth: fc.string(),
@@ -3286,7 +3287,6 @@ const arbModel = fc.letrec<{
       loginState: fc.string(),
       loginError: fc.string(),
       loginAttempt: fc.double({ noNaN: true, noDefaultInfinity: true }),
-      health: tie("SignInHealth"),
       apiKey: fc.boolean(),
     },
     { requiredKeys: ["state"] },

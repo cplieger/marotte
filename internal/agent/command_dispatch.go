@@ -42,7 +42,6 @@ func (rt *Runtime) registerCommandHandlers() {
 		SteerQueue:    rt.steerQueue,
 		SteerJobs:     rt.steerQueue,
 		Status:        rt,
-		AuthReadiness: rt.authReadiness,
 		Compactor:     rt,
 		SignIn:        rt,
 		SendGate:      rt.coord,

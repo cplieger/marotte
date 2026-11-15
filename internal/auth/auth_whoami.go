@@ -28,7 +28,9 @@ const (
 // arm. The Login* fields report the latest sign-in attempt on every arm: a poll waits for its own attempt to leave
 // pending, since a switch keeps the old account signed in until the new one commits.
 type WhoamiResponse struct {
-	State WhoamiState `json:"state"`
+	// Health is the sign-in's state on every arm, absent when no health source is wired.
+	Health *marotte.SignInHealth `json:"health,omitempty"`
+	State  WhoamiState           `json:"state"`
 	// Email and the four labels below belong to the signed_in arm.
 	Email       string `json:"email,omitempty"`
 	Auth        string `json:"auth,omitempty"`
@@ -41,8 +43,6 @@ type WhoamiResponse struct {
 	LoginState   string `json:"loginState,omitempty"`
 	LoginError   string `json:"loginError,omitempty"`
 	LoginAttempt uint64 `json:"loginAttempt,omitempty"`
-	// Health is the sign-in's state on every arm, absent when no health source is wired.
-	Health *marotte.SignInHealth `json:"health,omitempty"`
 	// APIKey is true while KIRO_API_KEY signs the engine in: sign-in and sign-out answer 409, so the UI offers neither.
 	APIKey bool `json:"apiKey,omitempty"`
 }
@@ -56,12 +56,18 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
+	var out WhoamiResponse
 	if h.apiKey {
-		httpserver.WriteJSON(w, WhoamiResponse{State: whoamiSignedIn, Auth: textAPIKeyAuth, APIKey: true})
-		return
+		out = WhoamiResponse{State: whoamiSignedIn, Auth: textAPIKeyAuth, APIKey: true}
+	} else {
+		st := h.vault.Status(h.backend)
+		out = whoamiFrom(&st)
 	}
-	st := h.vault.Status(h.backend)
-	httpserver.WriteJSON(w, whoamiFrom(&st))
+	if h.health != nil {
+		health := h.health()
+		out.Health = &health
+	}
+	httpserver.WriteJSON(w, out)
 }
 
 // whoamiFrom is a Status as the account menu reads it, every upstream string bounded to one line.

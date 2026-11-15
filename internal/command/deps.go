@@ -865,8 +865,6 @@ type Roles struct {
 	// Status ends a chat's retained waiting_on_user claim after a command that IS
 	// the user answering.
 	Status chatStatus
-	// AuthReadiness carries prompt authentication outcomes to readiness.
-	AuthReadiness *AuthReadiness
 	// Compactor takes the reader's compaction requests, which the run order places.
 	Compactor compactRequester
 	// SignIn tells an unreachable identity provider apart from a refused credential. Nil reads every
@@ -909,7 +907,6 @@ type promptRoles struct {
 	jobs        SteerJobs
 	runq        runQueue
 	sendGate    promptSendGate
-	auth        *AuthReadiness
 	signIn      signInReach
 	reopen      chatReopener
 	workspace   Workspace // last for fieldalignment, as in Roles

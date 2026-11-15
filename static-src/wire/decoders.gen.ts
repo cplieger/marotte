@@ -5555,6 +5555,10 @@ export const decodeWhoamiResponse: Decoder<WhoamiResponse> = (v) => {
     state: reqOneOf(o, "state", WHOAMI_STATES, "$.whoami_response"),
   };
   {
+    const $v = own(o, "health");
+    if ($v !== undefined && $v !== null) out.health = decodeSignInHealth(own(o, "health"));
+  }
+  {
     const $v = own(o, "email");
     if ($v !== undefined && $v !== null) out.email = reqStr(o, "email", "$.whoami_response");
   }
@@ -5589,10 +5593,6 @@ export const decodeWhoamiResponse: Decoder<WhoamiResponse> = (v) => {
   {
     const $v = own(o, "loginAttempt");
     if ($v !== undefined && $v !== null) out.loginAttempt = reqNum(o, "loginAttempt", "$.whoami_response");
-  }
-  {
-    const $v = own(o, "health");
-    if ($v !== undefined && $v !== null) out.health = decodeSignInHealth(own(o, "health"));
   }
   {
     const $v = own(o, "apiKey");

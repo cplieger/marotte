@@ -4937,6 +4937,8 @@ export interface WakeSteer {
  * pending, since a switch keeps the old account signed in until the new one commits.
  */
 export interface WhoamiResponse {
+  /** Health is the sign-in's state on every arm, absent when no health source is wired. */
+  health?: SignInHealth;
   state: WhoamiState;
   /** Email and the four labels below belong to the signed_in arm. */
   email?: string;
@@ -4950,8 +4952,6 @@ export interface WhoamiResponse {
   loginState?: string;
   loginError?: string;
   loginAttempt?: number;
-  /** Health is the sign-in's state on every arm, absent when no health source is wired. */
-  health?: SignInHealth;
   /** APIKey is true while KIRO_API_KEY signs the engine in: sign-in and sign-out answer 409, so the UI offers neither. */
   apiKey?: boolean;
 }

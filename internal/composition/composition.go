@@ -21,7 +21,6 @@ import (
 	"github.com/cplieger/marotte/internal/bot"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/chat/archive"
-	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/forges"
 	"github.com/cplieger/marotte/internal/git"
@@ -193,7 +192,6 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	listenerBound := make(chan struct{})
 	tabStore := openTabStore(cfg.ConfigDir)
 	approvalStore := openSpecApprovalStore(cfg.ConfigDir)
-	authReadiness := new(command.AuthReadiness)
 	lockedSettings := new(lateLockSink)
 	h := agent.New(appCtx, cfg.WorkDir, engineSource{kiro: kiro, allow: cfg.BridgeEnvAllow}, chatStore,
 		agent.WithSignIn(vault, engineBackend), agent.WithAPIKey(apiKey),
@@ -203,7 +201,6 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		agent.WithPresence(presence),
 		agent.WithACPArgs(cfg.ACPArgs),
 		agent.WithPowers(powersMgr),
-		agent.WithAuthReadiness(authReadiness),
 		agent.WithSessionReaper(sessionReaper),
 		agent.WithLaunchRules(launchRules),
 		withTriggerConfirmer(confirmer),
@@ -297,7 +294,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	fileHandler.AllowToolOutputs(filepath.Join(workspace.KiroHome(), "sessions"))
 	authHandler := auth.NewHandler(vault, engineBackend,
 		auth.WithTrustedProxies(cfg.TrustedProxies),
-		auth.WithAPIKey(apiKey))
+		auth.WithAPIKey(apiKey),
+		auth.WithSignInHealth(h.SignInHealth))
 	forgesHTTP := forges.NewHTTPHandler(forgesManager)
 
 	prPoller := newPRStatusPoller(forgesManager, gitHandler, h, prPollGate(presence, pushSvc),
@@ -358,7 +356,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithKiroCLI(kiro.cliPath, kiro.env),
 		server.WithKiroReady(kiro.ready),
 		server.WithKiroRescan(kiro.rescan),
-		server.WithAuthUnavailable(authReadiness.Unavailable),
+		server.WithAuthUnavailable(h.SignInRefused),
 		server.WithListenAddr(cfg.ListenAddr),
 		server.WithConfigDir(cfg.ConfigDir),
 		server.WithSensitive(sensitive),
