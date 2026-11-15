@@ -181,7 +181,7 @@ export function initHistorySection(): void {
     }
     busy.set(ref, "delete");
     row.remove.setAttribute("aria-busy", "true");
-    // From the row menu, focus is in the menu: the row it was opened on stands for it.
+    // A click that moves no focus (confirm.ts owns the WebKit case) can leave it outside the section: the row stands for it.
     const mark = noteFocus() ?? { at: "row", ref, order };
     try {
       if (await deleteClosedChat(ref, row.label)) {
@@ -351,7 +351,7 @@ export function initHistorySection(): void {
     paintFold(folded);
     // The header is the section's whole height while its list is hidden, so the close needs no measuring layout.
     const closed = folded ? { closedHeight: header.getBoundingClientRect().height } : {};
-    // A click that moves no focus (WebKit's) leaves it on a row the fold hides.
+    // A click that moves no focus (confirm.ts owns the WebKit case) leaves it on a row the fold hides.
     const mark = noteFocus();
     slideBox(
       section,
