@@ -1156,6 +1156,8 @@ describe("the touch hold on a closed row", () => {
     await listed(entry("c-a", "Alpha"));
     unfold();
     const row = rowFor("Alpha");
+    // Laid out first, so the press's own box read cannot push it past the fling window after the scroll.
+    row.getBoundingClientRect();
     el("tab-sections").dispatchEvent(new Event("scroll"));
     touch("pointerdown", row);
     await sleep(HOLD);
@@ -1690,4 +1692,162 @@ describe("focus when a frame from elsewhere takes what it was on", () => {
     await framed();
     expect(document.activeElement).toBe(prompt());
   });
+});
+
+describe("focus when the History section changes under it", () => {
+  const A = entry("c-a", "Alpha");
+  const B = entry("c-b", "Beta", 5);
+  const C = entry("c-c", "Gamma", 10);
+  type On = "row" | "delete" | "more";
+  const focusOn = (on: On): void => {
+    ({ row: () => rowFor("Beta"), delete: () => deleteFor("Beta"), more })[on]().focus();
+  };
+  const framed = async (...recent: RecentClose[]): Promise<void> => {
+    tabServer.emitRecent(recent);
+    await settle();
+  };
+  /** The Open section's one row, the landing once the section hides. Its chat is new to each case, since a
+   *  case at Days kept 0 closes it as a delete that may land in the next case. */
+  let openRef = "";
+  let opened = 0;
+  const openRow = (): HTMLElement | null => tabRow(openRef);
+  /** `/api/sessions` held until `answer()` replies 503, so a frame can land while the delete reads it. */
+  const holdSessions = (): { answer: () => void } => {
+    let reply = (): void => undefined;
+    configureApi({
+      fetchFn: () =>
+        new Promise<Response>((resolve) => {
+          reply = () => {
+            resolve(new Response("{}", { status: 503 }));
+          };
+        }),
+    });
+    return {
+      answer: () => {
+        reply();
+      },
+    };
+  };
+
+  const causes: {
+    cause: string;
+    on: On;
+    run: () => Promise<void>;
+    want: () => Element | null;
+  }[] = [
+    ...(["row", "delete"] as const).map((on) => ({
+      cause: "a frame drops its row",
+      on,
+      run: () => framed(A, C),
+      want: () => rowFor("Gamma"),
+    })),
+    {
+      cause: "a frame drops another row",
+      on: "more",
+      run: () => framed(A, C),
+      want: more,
+    },
+    ...(["row", "delete", "more"] as const).map((on) => ({
+      cause: "a frame moves its row first",
+      on,
+      run: () => framed(entry("c-b", "Beta", -1), A, C),
+      want: () => ({ row: () => rowFor("Beta"), delete: () => deleteFor("Beta"), more })[on](),
+    })),
+    ...(["row", "delete", "more"] as const).map((on) => ({
+      cause: "a frame empties the list",
+      on,
+      run: () => framed(),
+      want: openRow,
+    })),
+    ...(["row", "delete", "more"] as const).map((on) => ({
+      cause: "Days kept turns 0",
+      on,
+      run: async () => {
+        adoptRetention(settingsPayload({ chat_retention_days: 0 }));
+        await settle();
+      },
+      want: openRow,
+    })),
+    ...(["row", "delete", "more"] as const).map((on) => ({
+      cause: "a fold by a click that moves no focus",
+      on,
+      run: async () => {
+        stubReducedMotion();
+        clickOn(toggle());
+        vi.unstubAllGlobals();
+        await settle();
+      },
+      want: toggle,
+    })),
+    {
+      cause: "its delete",
+      on: "delete",
+      run: async () => {
+        await userEvent.keyboard("{Enter}");
+        await answer("Delete");
+      },
+      want: () => rowFor("Gamma"),
+    },
+    {
+      cause: "a delete cancelled after a frame dropped its chat",
+      on: "delete",
+      run: async () => {
+        await userEvent.keyboard("{Enter}");
+        await askShown();
+        await framed(A, C);
+        await answer("Cancel");
+      },
+      want: () => rowFor("Gamma"),
+    },
+    {
+      cause: "a delete the server refuses after a frame dropped its chat",
+      on: "delete",
+      run: async () => {
+        tabServer.failNext("delete_chat", 500);
+        await userEvent.keyboard("{Enter}");
+        await askShown();
+        await framed(A, C);
+        await answer("Delete");
+      },
+      want: () => rowFor("Gamma"),
+    },
+    {
+      cause: "a frame dropping its chat while the delete reads the run list",
+      on: "delete",
+      run: async () => {
+        const sessions = holdSessions();
+        await userEvent.keyboard("{Enter}");
+        await framed(A, C);
+        sessions.answer();
+        for (let i = 0; i < 10; i++) {
+          await settle();
+        }
+      },
+      want: () => rowFor("Gamma"),
+    },
+  ];
+
+  it.each(causes)(
+    "lands as the rule says after $cause, from its $on",
+    async ({ on, run, want }) => {
+      stubSessions([]);
+      openRef = `c-o${String(++opened)}`;
+      await tabServer.seed({ kind: "chat", ref: openRef });
+      // The strip paints on an animation frame, which a loaded runner can hold past `settle()`.
+      for (let i = 0; i < 40 && openRow() === null; i++) {
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      await framed(A, B, C);
+      unfold();
+      focusOn(on);
+      const target = want();
+      expect(target, "the landing is drawn before the change").not.toBeNull();
+      expect(section().contains(document.activeElement), "focus starts inside the section").toBe(
+        true,
+      );
+      await run();
+      expect(document.activeElement, "never <body>").not.toBe(document.body);
+      expect(document.activeElement).toBe(target);
+    },
+  );
 });

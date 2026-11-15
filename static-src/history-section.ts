@@ -43,6 +43,15 @@ interface Row {
   drawn: string;
 }
 
+/** Where focus was inside the section before a repaint: a row's button or Delete, More or the header. */
+type Mark =
+  | { readonly at: "row" | "delete"; readonly ref: string; readonly order: readonly string[] }
+  | { readonly at: "more" | "header" };
+
+function isShown(e: Element | null | undefined): e is HTMLElement {
+  return e instanceof HTMLElement && e.isConnected && e.getClientRects().length > 0;
+}
+
 /** The entries the section draws: none while retention is off, since a chat closed then is deleted.
  *  A closed Bot survives that close, so the Bots change narrows this to its entries. */
 function drawnEntries(all: readonly RecentClose[], retentionOn: boolean): readonly RecentClose[] {
@@ -71,8 +80,67 @@ export function initHistorySection(): void {
   onRetentionChange(() => {
     retentionOn.value = isRetentionEnabled();
   });
+  const tabList = maybeEl("tab-list");
   const rows = new Map<string, Row>();
-  const busy = new Set<string>();
+  /** The refs as last drawn, newest first. */
+  let order: readonly string[] = [];
+  const busy = new Map<string, "reopen" | "delete">();
+
+  const noteFocus = (): Mark | null => {
+    const f = document.activeElement;
+    if (f === null || !section.contains(f)) {
+      return null;
+    }
+    if (f === $.historyMore) {
+      return { at: "more" };
+    }
+    for (const [ref, row] of rows) {
+      if (row.li.contains(f)) {
+        return { at: f === row.remove ? "delete" : "row", ref, order };
+      }
+    }
+    return { at: "header" };
+  };
+
+  /** Put focus back after a repaint when it was at `mark` and is now lost: on the same control, re-seated or
+   *  not, else the nearest row after, before, More, the header, the Open section's first row, History's entry,
+   *  the composer or the active tab's row. Focus anywhere shown is left alone. */
+  const restoreFocus = (mark: Mark | null): void => {
+    const now = document.activeElement;
+    if (mark === null || (now !== document.body && isShown(now))) {
+      return;
+    }
+    const near: (HTMLElement | undefined)[] = [];
+    if (mark.at === "row" || mark.at === "delete") {
+      const row = rows.get(mark.ref);
+      const i = mark.order.indexOf(mark.ref);
+      near.push(
+        mark.at === "row" ? row?.button : row?.remove,
+        ...mark.order.slice(i + 1).map((r) => rows.get(r)?.button),
+        ...mark.order
+          .slice(0, i)
+          .reverse()
+          .map((r) => rows.get(r)?.button),
+      );
+    }
+    const openRow = [
+      ...(tabList?.querySelectorAll<HTMLElement>(":scope > [data-tab-id]") ?? []),
+    ].find((r) => !r.classList.contains("exiting") && isShown(r));
+    for (const to of [...near, $.historyMore, toggle, openRow]) {
+      if (isShown(to)) {
+        to.focus();
+        if (document.activeElement === to) {
+          return;
+        }
+      }
+    }
+    if (!focusHistoryEntry()) {
+      $.promptInput.focus();
+      if (document.activeElement !== $.promptInput) {
+        focusTabRow(getActiveTabId());
+      }
+    }
+  };
 
   const paintFold = (folded: boolean): void => {
     toggle.setAttribute("aria-expanded", String(!folded));
@@ -83,8 +151,9 @@ export function initHistorySection(): void {
     if (busy.has(ref)) {
       return;
     }
-    busy.add(ref);
+    busy.set(ref, "reopen");
     row.button.setAttribute("aria-busy", "true");
+    const mark = noteFocus();
     try {
       const outcome = await reopenChat(ref, row.entry.name);
       const tabID = tabIdFor("chat", ref);
@@ -100,6 +169,7 @@ export function initHistorySection(): void {
     } finally {
       busy.delete(ref);
       row.button.removeAttribute("aria-busy");
+      restoreFocus(mark);
     }
   }
 
@@ -109,25 +179,32 @@ export function initHistorySection(): void {
     if (busy.has(ref)) {
       return;
     }
-    busy.add(ref);
+    busy.set(ref, "delete");
     row.remove.setAttribute("aria-busy", "true");
-    const land = focusLanding(row.remove);
+    // From the row menu, focus is in the menu: the row it was opened on stands for it.
+    const mark = noteFocus() ?? { at: "row", ref, order };
     try {
-      if (!(await deleteClosedChat(ref, row.label))) {
-        return;
-      }
-      // History refreshes when it shows, so the chat leaves it too.
-      refreshActiveView();
-      // The confirm answers before its dialog has faded, and the page is inert until it closes.
-      const modal = queryEl<HTMLDialogElement>("dialog:modal");
-      if (modal === null) {
-        land();
-      } else {
-        modal.addEventListener("close", land, { once: true });
+      if (await deleteClosedChat(ref, row.label)) {
+        // History refreshes when it shows, so the chat leaves it too.
+        refreshActiveView();
       }
     } finally {
       busy.delete(ref);
       row.remove.removeAttribute("aria-busy");
+      // The confirm answers before its dialog has faded; its close then puts focus back on what opened it,
+      // which a frame may have taken meanwhile.
+      const modal = queryEl<HTMLDialogElement>("dialog:modal");
+      if (modal === null) {
+        restoreFocus(mark);
+      } else {
+        modal.addEventListener(
+          "close",
+          () => {
+            restoreFocus(mark);
+          },
+          { once: true },
+        );
+      }
     }
   }
 
@@ -216,50 +293,15 @@ export function initHistorySection(): void {
     row.remove.dataset["tooltip"] = `Delete ${label}`;
   }
 
-  /** Where focus goes once `from` is taken or hidden: the nearest row after it, else before it,
-   *  else More, the header, History's entry, the composer or the active tab's row, so it never
-   *  falls to `<body>`. Read before the change, since the rows around `from` go with it. */
-  function focusLanding(from: Element): () => void {
-    const li = from.closest("#history-list > li");
-    const near: Element[] = [];
-    for (let n = li?.nextElementSibling; n != null; n = n.nextElementSibling) {
-      near.push(n);
-    }
-    for (let n = li?.previousElementSibling; n != null; n = n.previousElementSibling) {
-      near.push(n);
-    }
-    return () => {
-      const now = document.activeElement;
-      const moved = now !== null && now !== document.body && now !== from;
-      if (moved || (from.isConnected && from.getClientRects().length > 0)) {
-        return;
-      }
-      const to = [
-        ...near.map((n) => n.querySelector<HTMLElement>(":scope > button.history-row")),
-        $.historyMore,
-        toggle,
-      ].find((b) => b?.isConnected === true && b.getClientRects().length > 0);
-      if (to != null) {
-        to.focus();
-      } else if (!focusHistoryEntry()) {
-        $.promptInput.focus();
-        if (document.activeElement !== $.promptInput) {
-          focusTabRow(getActiveTabId());
-        }
-      }
-    };
-  }
-
   effect(() => {
     // A Clock change redraws each row's time through paintRow's drawn key.
     watchClock();
     const focused = document.activeElement;
-    const held = focused !== null && section.contains(focused);
-    // A reopen in flight puts focus on its tab's row itself.
-    const reopening = [...rows.values()].some(
-      (r) => busy.has(r.entry.ref) && r.li.contains(focused),
+    // A reopen in flight moves focus off its row itself when it settles.
+    const reopening = [...busy].some(
+      ([ref, job]) => job === "reopen" && rows.get(ref)?.li.contains(focused) === true,
     );
-    const land = held && !reopening ? focusLanding(focused) : null;
+    const mark = reopening ? null : noteFocus();
     const entries = drawnEntries(recentClosed(), retentionOn.value);
     const keep = new Set(entries.map((e) => e.ref));
     for (const [ref, row] of rows) {
@@ -287,6 +329,7 @@ export function initHistorySection(): void {
       }
       prev = row.li;
     }
+    order = entries.map((e) => e.ref);
     const count = entries.length;
     section.hidden = count === 0;
     setText(toggle.querySelector(".side-section-count"), String(count));
@@ -296,7 +339,7 @@ export function initHistorySection(): void {
     if (!isSliding(section)) {
       list.hidden = folded;
     }
-    land?.();
+    restoreFocus(mark);
   });
 
   toggle.addEventListener("click", () => {
@@ -308,11 +351,14 @@ export function initHistorySection(): void {
     paintFold(folded);
     // The header is the section's whole height while its list is hidden, so the close needs no measuring layout.
     const closed = folded ? { closedHeight: header.getBoundingClientRect().height } : {};
+    // A click that moves no focus (WebKit's) leaves it on a row the fold hides.
+    const mark = noteFocus();
     slideBox(
       section,
       !folded,
       (open) => {
         list.hidden = !open;
+        restoreFocus(mark);
       },
       closed,
     );
