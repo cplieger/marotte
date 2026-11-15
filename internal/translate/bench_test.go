@@ -747,6 +747,11 @@ func (d *baseDeps) ObserveToolCall(marotte.ChatID) {
 	d.compactorHeard = append(d.compactorHeard, "tool")
 }
 
+// ObserveCompactionFailed answers the reason unchanged: a chat whose next turn end does not try again.
+func (d *baseDeps) ObserveCompactionFailed(_ context.Context, _ marotte.ChatID, reason string) string {
+	return reason
+}
+
 // AccumulateSpend and StageConversationTurnSummary stand in for the host's per-turn
 // accounting by writing the chat's usage directly (the host's no-open-turn path).
 func (d *baseDeps) AccumulateSpend(ctx context.Context, chatID marotte.ChatID, credits float64) {

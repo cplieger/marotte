@@ -10,16 +10,49 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 // compactCallBudget bounds one compaction call. Above KAS's 300 s _kiro/session/compact bound, so it only covers a
 // wedged bridge. A var for tests.
 var compactCallBudget = 310 * time.Second
 
-// compactFailed is the toast for a compaction the dock showed that KAS refused or that failed.
-const compactFailed = "The compaction did not run: the agent was busy, or the summary failed or the chat changed before it finished"
+// compactNotRunCauses is what a reader can act on of KAS's bare refusal (command.Compact names every cause).
+const compactNotRunCauses = "the agent was busy, or the summary failed or the chat changed before it finished"
+
+// compactCallFailedCause is a call that ended in an error, not KAS's refusal: its budget ran out, or the bridge or
+// the engine failed. The error itself goes to the log only.
+const compactCallFailedCause = "the call to kiro-cli failed or timed out"
+
+// compactNotRunCause is the cause a reader is told of a compaction call that did not run and ended with err.
+func compactNotRunCause(err error) string {
+	if err != nil {
+		return compactCallFailedCause
+	}
+	return compactNotRunCauses
+}
+
+// compactFailedDetail is the toast for a compaction the dock showed that did not run for cause; retrying is a chat
+// whose next turn end tries again (retriesAtTurnEnd).
+func compactFailedDetail(failsafe, retrying bool, cause string) string {
+	if failsafe {
+		s := "The compaction did not run (" + cause + "), so marotte did not continue the stopped turn. " +
+			"Send a message to go on."
+		if retrying {
+			s += " " + command.CompactRetryNote + "."
+		}
+		return s
+	}
+	s := "The compaction did not run: " + cause
+	if retrying {
+		s += ". " + command.CompactRetryNote + "."
+	}
+	return s
+}
 
 // compactHandoffReason is the account of a fold-opened turn a compaction's start closed to make its call.
 const compactHandoffReason = "The agent's turn had no start marker, so marotte closed it to compact the context."
@@ -227,22 +260,35 @@ func (a *autoCompactor) stopForCompaction(lc *chatLifecycle, rs command.RunStop)
 }
 
 // turnEndCompaction is the compaction a closing turn's end asks for: the model refused the turn for the context's
-// size, or the reading is at the point; "" for none or with the policy off.
+// size, or the reading is at the point; "" for none or with the policy off. A failed attempt leaves no state this
+// reads, so every close over the point attempts again.
 func (a *autoCompactor) turnEndCompaction(ctx context.Context, chatID marotte.ChatID, contextLimit bool) marotte.RunEntryOrigin {
 	if a == nil || a.bridgeOf(chatID) == nil {
 		return ""
 	}
-	enabled, point := a.policy(ctx)
 	switch {
-	case !enabled:
-		return ""
-	case contextLimit:
+	case contextLimit && a.enabled(ctx):
 		return marotte.RunFromContextLimit
-	}
-	if u := a.usage(ctx, chatID); u.HasRealData && u.ContextPct >= float64(point) {
+	case a.retriesAtTurnEnd(ctx, chatID):
 		return marotte.RunFromTurnEnd
 	}
 	return ""
+}
+
+func (a *autoCompactor) enabled(ctx context.Context) bool {
+	on, _ := a.policy(ctx)
+	return on
+}
+
+// retriesAtTurnEnd reports whether the chat's next turn end attempts a compaction: the policy is on and the stored
+// reading is at the point. It reads the chat store, so callers do not hold lc.mu.
+func (a *autoCompactor) retriesAtTurnEnd(ctx context.Context, chatID marotte.ChatID) bool {
+	if a == nil {
+		return false
+	}
+	enabled, point := a.policy(ctx)
+	u := a.usage(ctx, chatID)
+	return enabled && u.HasRealData && u.ContextPct >= float64(point)
 }
 
 // request is the reader's compaction: it joins the chat's compaction, or lists one. One behind anything live, or
@@ -284,14 +330,16 @@ func (a *autoCompactor) request(ctx context.Context, chatID marotte.ChatID) (com
 		return command.CompactRefused, wait.Err()
 	}
 	switch {
-	case done.err != nil:
-		return command.CompactRefused, done.err
 	case done.accepted:
 		return command.CompactAccepted, nil
 	case done.queued:
 		return command.CompactQueued, nil
+	case errors.Is(done.err, marotte.ErrChatClosedDuringCall):
+		return command.CompactRefused, done.err
+	case a.retriesAtTurnEnd(ctx, chatID):
+		return command.CompactRefusedRetrying, done.err
 	}
-	return command.CompactRefused, nil
+	return command.CompactRefused, done.err
 }
 
 // cancel withdraws the chat's compaction entry with that id ("" names the chat's one): a pending one goes and its
@@ -317,13 +365,21 @@ func (a *autoCompactor) cancel(_ context.Context, chatID marotte.ChatID, id stri
 // where a request racing the compaction's end lands.
 var testHookAfterCompactionReturn = func(marotte.ChatID) {}
 
+// testHookBeforeCompactionRow runs once a failed compaction owes its compaction_failed row, before the row is written:
+// the window where a wake racing the row lands.
+var testHookBeforeCompactionRow = func(marotte.ChatID) {}
+
+// testHookAfterCompactionRow runs once a failed compaction's row is written, before its end is applied.
+var testHookAfterCompactionRow = func(marotte.ChatID) {}
+
 // testHookBeforeCompactionStart runs once a compaction is taken, before its start's first section: the window where
 // a request racing the compaction's start lands.
 var testHookBeforeCompactionStart = func(marotte.ChatID) {}
 
 // runCompaction is a taken compaction's start (runList.compactionStart): behind a fold-opened turn it closes that
-// turn first and waits for its entry to end, then makes the call and applies its end (runList.compactionEnded).
-// Every check is made under lc.mu and every wait with it released.
+// turn first and waits for its entry to end, then makes the call and applies its end (runList.compactionEnded); a
+// failed call's row is written while its entry still holds the list (runList.compactionRowDue). Every check is made
+// under lc.mu and every wait with it released.
 func (bc *bridgeCoordinator) runCompaction(lc *chatLifecycle, id string) {
 	testHookBeforeCompactionStart(lc.chatID)
 	if !bc.compactionReady(lc, id) {
@@ -334,14 +390,95 @@ func (bc *bridgeCoordinator) runCompaction(lc *chatLifecycle, id string) {
 		accepted bool
 		err      = marotte.ErrSessionClosed
 	)
+	pct := a.usage(lc.ctx, lc.chatID).ContextPct
 	if b := a.bridgeOf(lc.chatID); b != nil {
-		accepted, err = a.call(lc.ctx, lc.chatID, b, a.usage(lc.ctx, lc.chatID).ContextPct)
+		accepted, err = a.call(lc.ctx, lc.chatID, b)
 	}
 	testHookAfterCompactionReturn(lc.chatID)
 	lc.mu.Lock()
-	lc.run.compactionEnded(id, accepted, err)
+	if lc.run.compactionRowDue(id, accepted, err) {
+		lc.mu.Unlock()
+		testHookBeforeCompactionRow(lc.chatID)
+		bc.recordCompactionFailed(lc.ctx, lc.chatID, a.failureReason(lc.ctx, lc.chatID, compactNotRunCause(err)))
+		testHookAfterCompactionRow(lc.chatID)
+		lc.mu.Lock()
+	}
+	end, origin := lc.run.compactionEnded(id, accepted, err)
 	lc.wakeLocked()
 	lc.mu.Unlock()
+	a.logEnd(lc.ctx, lc.chatID, end, origin, pct, err)
+}
+
+// maxRetryingRowBytes is the page's MAX_TOAST_CHARS (static-src/failure-notice.ts), past which the toast showing a
+// row's text cuts its end, the retry sentence; a byte bound also bounds the page's characters.
+const maxRetryingRowBytes = 240
+
+// failureReason is the text of a failed attempt's row: reason, closed by the retry sentence on a chat whose next
+// turn end tries again, with reason cut to keep that sentence whole.
+func (a *autoCompactor) failureReason(ctx context.Context, chatID marotte.ChatID, reason string) string {
+	if !a.retriesAtTurnEnd(ctx, chatID) {
+		return reason
+	}
+	const retry = ". " + command.CompactRetryNote + "."
+	reason, _ = textsafe.SanitizeSingleLineCapped(reason, maxRetryingRowBytes-len(retry), "...")
+	return reason + retry
+}
+
+// ObserveCompactionFailed hears kiro-cli report a summary failed, which records the attempt's row, and answers the
+// reason that row records.
+func (bc *bridgeCoordinator) ObserveCompactionFailed(ctx context.Context, chatID marotte.ChatID, reason string) string {
+	if lc, ok := bc.turns.lookup(chatID); ok {
+		lc.mu.Lock()
+		lc.run.compactionFailureReported()
+		lc.mu.Unlock()
+	}
+	return bc.autoCompact.failureReason(ctx, chatID, reason)
+}
+
+// recordCompactionFailed appends a compaction_failed row, into the open turn or after the newest close; an unstarted
+// chat gets none.
+func (bc *bridgeCoordinator) recordCompactionFailed(ctx context.Context, chatID marotte.ChatID, reason string) {
+	ctx = durable.Context(ctx)
+	if log, ok := bc.turns.foldTarget(chatID); ok {
+		sealed, err := log.CompactionFailed(ctx, reason)
+		translate.PublishSealed(ctx, broadcastFunc(bc.broadcast), chatID, "", sealed)
+		if err != nil {
+			slog.Error("compaction: record the failure in the turn", "chat_id", chatID, "error", err)
+		}
+		return
+	}
+	if !bc.conversationStarted(ctx, chatID) {
+		return
+	}
+	if err := translate.AppendBetweenTurns(ctx, broadcastFunc(bc.broadcast), bc.chatStore, chatID,
+		marotte.EntryKindCompactionFailed, "", marotte.EntryCompactionFailed{Reason: reason}); err != nil {
+		slog.Error("compaction: record the failure between turns", "chat_id", chatID, "error", err)
+	}
+}
+
+// logEnd logs a compaction call's end; every attempt that did not run is a WARN with its reason.
+func (a *autoCompactor) logEnd(
+	ctx context.Context, chatID marotte.ChatID, end compactEnd, origin marotte.RunEntryOrigin, pct float64, err error,
+) {
+	attrs := []any{"chat_id", chatID, "origin", origin, "context_pct", pct}
+	switch {
+	case errors.Is(err, marotte.ErrChatClosedDuringCall):
+		slog.Debug("compaction stood down: the chat closed", attrs...)
+	case end == compactEndCompacted:
+		slog.Info("compaction accepted", attrs...)
+	case end == compactEndCancelled:
+		slog.Info("compaction cancelled while its call ran", attrs...)
+	case end == compactEndRequeued:
+		slog.Warn("compaction did not run", append(attrs,
+			"reason", "refused while kiro-cli ran a turn beside it; listed again for that turn's end")...)
+	case end == compactEndNotRun:
+		reason := "refused: kiro-cli answered success false"
+		if err != nil {
+			reason = err.Error()
+		}
+		slog.Warn("compaction did not run", append(attrs,
+			"reason", reason, "retry_at_turn_end", a.retriesAtTurnEnd(ctx, chatID))...)
+	}
 }
 
 // compactionReady runs the compaction's start until its call may be written, reporting false when the start
@@ -382,9 +519,9 @@ func (bc *bridgeCoordinator) compactionReady(lc *chatLifecycle, id string) bool 
 	}
 }
 
-// call makes one compaction call. An accepted call waits for the frames before its reply, so a prompt sent next
-// opens after the summary.
-func (a *autoCompactor) call(ctx context.Context, chatID marotte.ChatID, b *sharedBridge, atPct float64) (bool, error) {
+// call makes one compaction call. A call KAS answered waits for the frames before its reply: accepted, a prompt sent
+// next opens after the summary; refused, kiro-cli's own failure report is heard before the end is settled.
+func (a *autoCompactor) call(ctx context.Context, chatID marotte.ChatID, b *sharedBridge) (bool, error) {
 	callCtx, cancel := a.callContext(ctx)
 	defer cancel()
 	var (
@@ -396,18 +533,8 @@ func (a *autoCompactor) call(ctx context.Context, chatID marotte.ChatID, b *shar
 		accepted, seq, cErr = a.compact(ctx, s)
 		return cErr
 	})
-	if err == nil && accepted && a.folded != nil && !a.folded(callCtx, chatID, seq) {
+	if err == nil && a.folded != nil && !a.folded(callCtx, chatID, seq) {
 		slog.Warn("compaction: the frames before its reply never folded", "chat_id", chatID)
-	}
-	switch {
-	case errors.Is(err, marotte.ErrChatClosedDuringCall):
-		slog.Debug("compaction stood down: the chat closed", "chat_id", chatID)
-	case err != nil:
-		slog.Warn("compaction failed", "chat_id", chatID, "context_pct", atPct, "error", err)
-	case !accepted:
-		slog.Info("compaction refused", "chat_id", chatID)
-	default:
-		slog.Info("compaction accepted", "chat_id", chatID, "context_pct", atPct)
 	}
 	return accepted, err
 }

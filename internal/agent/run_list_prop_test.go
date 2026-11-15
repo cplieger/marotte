@@ -634,6 +634,9 @@ func (w *listWorld) endCall() {
 	if accepted && !w.cancelled[id] {
 		w.accepted[id] = true
 	}
+	if w.l.compactionRowDue(id, accepted, err) {
+		w.reached["compaction row owed"]++
+	}
 	w.l.compactionEnded(id, accepted, err)
 	if _, still := w.l.find(id); still != nil {
 		w.reached["compaction requeued"]++
@@ -962,7 +965,7 @@ func TestRunList_Invariants(t *testing.T) {
 	for _, want := range []string{
 		"turn under a compaction", "wire turn beside a taken turn", "wire turn beside a sent prompt",
 		"fold turn ahead of its compaction", "run entry", "take row", "take compaction", "take unread", "take retry",
-		"compaction requeued", "withdraw", "stop unsent", "stop running", "stop undone", "idle revert", "idle turn",
+		"compaction requeued", "compaction row owed", "withdraw", "stop unsent", "stop running", "stop undone", "idle revert", "idle turn",
 		"failsafe fired", "failsafe undone", "take resume", "failsafe ahead of a waiting resume",
 		"failsafe at the resume limit", "resume limit notice at the close",
 		"reader stop ahead of a resume",

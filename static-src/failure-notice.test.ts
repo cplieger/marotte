@@ -1,19 +1,39 @@
 // The failure toast: dedupes its two channels, names its chat, links a background one, carries a remedy.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-const { mockDismiss, mockToastError, mockErrorWithAction, mockActivateTab } = vi.hoisted(() => {
-  const dismiss = vi.fn();
-  return {
-    mockDismiss: dismiss,
-    mockToastError: vi.fn(
-      (_message: string, _retry?: { label?: string; onClick: () => void }): (() => void) => dismiss,
-    ),
-    mockErrorWithAction: vi.fn(
-      (_message: string, _action: { label?: string; onClick: () => void }): (() => void) => dismiss,
-    ),
-    mockActivateTab: vi.fn(),
-  };
-});
+const { mockDismiss, mockToastError, mockErrorWithAction, mockActivateTab, closers } = vi.hoisted(
+  () => {
+    const dismiss = vi.fn();
+    // Each raised toast's onClose, in raise order: calling one is that toast expiring. Each toast
+    // gets its own dismiss handle, as the real stack gives, all counted on one spy.
+    const onCloses: ((() => void) | undefined)[] = [];
+    return {
+      mockDismiss: dismiss,
+      mockToastError: vi.fn(
+        (
+          _message: string,
+          _retry?: { label?: string; onClick: () => void },
+          onClose?: () => void,
+        ): (() => void) => {
+          onCloses.push(onClose);
+          return () => dismiss();
+        },
+      ),
+      mockErrorWithAction: vi.fn(
+        (
+          _message: string,
+          _action: { label?: string; onClick: () => void },
+          onClose?: () => void,
+        ): (() => void) => {
+          onCloses.push(onClose);
+          return () => dismiss();
+        },
+      ),
+      mockActivateTab: vi.fn(),
+      closers: onCloses,
+    };
+  },
+);
 vi.mock("./toast.js", async () => ({
   ...(await import("./__test-helpers__/toast-mock.js")).toastMock(),
   error: mockToastError,
@@ -33,7 +53,12 @@ vi.mock("./tabs.js", async () => ({
   tabIdFor: mockTabIdFor,
 }));
 
-import { reportFailure, clearFailure, _resetForTest } from "./failure-notice.js";
+import {
+  reportFailure,
+  clearFailure,
+  clearCompactionFailure,
+  _resetForTest,
+} from "./failure-notice.js";
 import { BUS_COMMAND_FAILED, emitBus } from "./bus.js";
 import { setSessions, setActive } from "./store.js";
 import type { Session } from "./types.js";
@@ -81,6 +106,7 @@ function toastCount(): number {
 
 beforeEach(() => {
   _resetForTest();
+  closers.length = 0;
   mockToastError.mockClear();
   mockErrorWithAction.mockClear();
   mockDismiss.mockClear();
@@ -432,5 +458,109 @@ describe("failure-notice subscribes to the transport's failure event", () => {
       message: "at capacity",
     });
     expect(lastToast()).toBe("Fix the parser: at capacity");
+  });
+});
+
+// The compaction notice says the next turn end tries again, so the success that turn end brings retracts it.
+describe("clearCompactionFailure retracts a compaction_failed notice and leaves another failure's", () => {
+  const COMPACTION = "The compaction did not run. marotte tries again at the end of the next turn.";
+
+  it("retracts the chat's live compaction failure notice", () => {
+    reportFailure("c1", COMPACTION, undefined, false, "", "compaction_failed");
+    clearCompactionFailure("c1");
+    expect(mockDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves another failure's notice on screen", () => {
+    reportFailure("c1", "at capacity", undefined, false, "", "rate_limit");
+    clearCompactionFailure("c1");
+    expect(mockDismiss).not.toHaveBeenCalled();
+  });
+
+  it("leaves the notice that replaced a compaction failure", () => {
+    reportFailure("c1", COMPACTION, undefined, false, "", "compaction_failed");
+    reportFailure("c1", "at capacity", undefined, false, "", "rate_limit");
+    mockDismiss.mockClear();
+    clearCompactionFailure("c1");
+    expect(mockDismiss).not.toHaveBeenCalled();
+  });
+
+  it("leaves another chat's compaction failure notice", () => {
+    reportFailure("c2", COMPACTION, undefined, false, "", "compaction_failed");
+    clearCompactionFailure("c1");
+    expect(mockDismiss).not.toHaveBeenCalled();
+  });
+
+  // The next turn end's attempt can fail again within the dedupe window; that failure must show.
+  it("lets the same failure show again at once after it was retracted", () => {
+    reportFailure("c1", COMPACTION, undefined, false, "", "compaction_failed");
+    clearCompactionFailure("c1");
+    reportFailure("c1", COMPACTION, undefined, false, "", "compaction_failed");
+    expect(toastCount()).toBe(2);
+  });
+});
+
+// A summary kiro-cli reports failed arrives as both the retry notice and the chat's turn-scoped reason, in either order.
+describe("a background chat's compaction notice keeps saying the next turn end tries again", () => {
+  const RETRYING = "The compaction did not run. marotte tries again at the end of the next turn.";
+
+  it("keeps the retry notice when the turn-scoped reason arrives after it", () => {
+    reportFailure("c2", RETRYING, undefined, false, "", "compaction_failed");
+    reportFailure("c2", "model error", undefined, true, "", "compaction_failed");
+    expect(toastCount()).toBe(1);
+    expect(lastToast()).toBe(`Write the docs: ${RETRYING}`);
+    expect(mockDismiss).not.toHaveBeenCalled();
+  });
+
+  it("replaces the turn-scoped reason with the retry notice arriving after it", () => {
+    reportFailure("c2", "model error", undefined, true, "", "compaction_failed");
+    reportFailure("c2", RETRYING, undefined, false, "", "compaction_failed");
+    expect(toastCount()).toBe(2);
+    expect(lastToast()).toBe(`Write the docs: ${RETRYING}`);
+    expect(mockDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a turn-scoped compaction reason when no retry notice is live", () => {
+    reportFailure("c2", "model error", undefined, true, "", "compaction_failed");
+    expect(lastToast()).toBe("Write the docs: model error");
+  });
+
+  it("keeps the retry notice when the turn-scoped reason arrives after the dedupe window", () => {
+    vi.useFakeTimers();
+    try {
+      reportFailure("c2", RETRYING, undefined, false, "", "compaction_failed");
+      vi.advanceTimersByTime(6_000);
+      reportFailure("c2", "model error", undefined, true, "", "compaction_failed");
+      expect(toastCount()).toBe(1);
+      expect(lastToast()).toBe(`Write the docs: ${RETRYING}`);
+      expect(mockDismiss).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows the turn-scoped reason once the retry notice has expired", () => {
+    reportFailure("c2", RETRYING, undefined, false, "", "compaction_failed");
+    closers.at(-1)?.();
+    reportFailure("c2", "model error", undefined, true, "", "compaction_failed");
+    expect(toastCount()).toBe(2);
+    expect(lastToast()).toBe("Write the docs: model error");
+  });
+
+  it("keeps dropping the twin while a newer retry notice is up, when an older one expires", () => {
+    const SECOND =
+      "The compaction did not run: the call failed. marotte tries again at the end of the next turn.";
+    reportFailure("c2", RETRYING, undefined, false, "", "compaction_failed");
+    reportFailure("c2", SECOND, undefined, false, "", "compaction_failed");
+    closers[0]?.();
+    reportFailure("c2", "model error", undefined, true, "", "compaction_failed");
+    expect(toastCount()).toBe(2);
+    expect(lastToast()).toBe(`Write the docs: ${SECOND}`);
+  });
+
+  it("lets another failure's turn-scoped report replace the retry notice", () => {
+    reportFailure("c2", RETRYING, undefined, false, "", "compaction_failed");
+    reportFailure("c2", "at capacity", undefined, true, "", "rate_limit");
+    expect(lastToast()).toBe("Write the docs: at capacity");
   });
 });

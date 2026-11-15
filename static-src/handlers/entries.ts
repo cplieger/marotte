@@ -18,6 +18,7 @@ import {
 } from "../store.js";
 import { requestTurnRange } from "../store-load.js";
 import { markGitDirty } from "../git.js";
+import { clearCompactionFailure } from "../failure-notice.js";
 import { isRepoMutatingKind } from "../tool-schema.js";
 import { payloadOf } from "../turns.js";
 import type { Entry } from "../types.js";
@@ -97,6 +98,7 @@ function afterAppend(chatID: string, entry: Entry): void {
       // Arrival order is the whole rule: every row the dock holds NOW was queued before this
       // compaction, so it will be read against a summarized context.
       markSteersCompacted(chatID);
+      clearCompactionFailure(chatID);
       return;
     case "tool_result": {
       // A repo-mutating call SETTLING is the fact that the tree changed, where a 15-second

@@ -556,7 +556,14 @@ describe("error handler", () => {
     expect(get("chat-1")?.thinking).toBe(true);
     // `false` is the turn-scoped flag: a rate-limit notice ends no turn, so it has
     // no transcript row to duplicate and keeps its toast whatever is on screen.
-    expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "slow down", undefined, false);
+    expect(mockReportFailure).toHaveBeenCalledWith(
+      "chat-1",
+      "slow down",
+      undefined,
+      false,
+      "",
+      "rate_limit",
+    );
     expect(mockSetAgentDown).not.toHaveBeenCalled();
   });
 
@@ -587,6 +594,8 @@ describe("error handler", () => {
       "bad agent front matter",
       expect.objectContaining({ label: "Open custom instructions" }),
       false,
+      "",
+      "agent_config_error",
     );
     expect(mockSetAgentDown).not.toHaveBeenCalled();
   });
@@ -632,6 +641,8 @@ describe("error handler", () => {
       expect.objectContaining({ label: "Sign in" }),
       // Turn-scoped and still raised: failure-notice.ts never suppresses an action-bearing notice.
       true,
+      "",
+      "auth_token_unavailable",
     );
     const action = mockReportFailure.mock.calls[0]?.[2] as
       { label: string; onClick: () => void } | undefined;
@@ -651,7 +662,7 @@ describe("error handler", () => {
       setSessions([makeSession("chat-1", { thinking: true })]);
       setActive("chat-1");
       fireSSE("error", "chat-1", { code, message: "boom", turn_scoped: true });
-      expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "boom", undefined, true);
+      expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "boom", undefined, true, "", code);
       expect(mockSetAgentDown).not.toHaveBeenCalled();
     },
   );
@@ -672,6 +683,8 @@ describe("error handler", () => {
         "The prompt could not start.",
         undefined,
         false,
+        "",
+        code,
       );
     },
   );
@@ -682,17 +695,32 @@ describe("error handler", () => {
       setSessions([makeSession("chat-1", { thinking: true })]);
       setActive("chat-1");
       fireSSE("error", "chat-1", { code, message: "at capacity", turn_scoped: true });
-      expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "at capacity", undefined, true);
+      expect(mockReportFailure).toHaveBeenCalledWith(
+        "chat-1",
+        "at capacity",
+        undefined,
+        true,
+        "",
+        code,
+      );
     },
   );
 
+  // The code travels too: failure-notice retracts a `compaction_failed` notice when the compaction lands.
   it("reads a frame carrying no turn_scoped field as NOT turn-scoped", () => {
     // Fails safe: an absent field (an older server, a forgetful emitter) reads as `false`, leaving the
     // failure REPORTED.
     setSessions([makeSession("chat-1", { thinking: true })]);
     setActive("chat-1");
     fireSSE("error", "chat-1", { code: "compaction_failed", message: "nope" });
-    expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "nope", undefined, false);
+    expect(mockReportFailure).toHaveBeenCalledWith(
+      "chat-1",
+      "nope",
+      undefined,
+      false,
+      "",
+      "compaction_failed",
+    );
   });
 
   // NO error code touches the turn lifecycle: the server closes every turn exactly
@@ -734,7 +762,14 @@ describe("error handler", () => {
     });
     // Turn-scoped, and raised anyway: chat-2 is on screen, so chat-1's own card is
     // not, and the toast is the only surface that can report at all.
-    expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "at capacity", undefined, true);
+    expect(mockReportFailure).toHaveBeenCalledWith(
+      "chat-1",
+      "at capacity",
+      undefined,
+      true,
+      "",
+      "prompt_failed",
+    );
 
     mockReportFailure.mockClear();
     fireSSE("error", "chat-1", { code: "bridge_start_failed", message: "spawn failed" });

@@ -7,6 +7,7 @@ import { error as toastError, errorWithAction, type ToastRetry } from "./toast.j
 import { getActiveTabId, tabIdFor } from "./tabs.js";
 import { truncate } from "./strings.js";
 import { named, noticeSubject } from "./notice-subject.js";
+import type { ErrorCode } from "./wire/types.gen.js";
 
 /**
  * A failed prompt is reported twice by design (POST body and SSE `error` frame) milliseconds apart; 5s leaves room
@@ -27,12 +28,16 @@ const latched = new Map<string, { key: string; at: number }>();
  *  chat because two chats can fail independently and each owns its own notice. */
 const live = new Map<string, () => void>();
 
+/** The error code that raised each chat's `live` notice, so a retraction can name the failure it answers.
+ *  Both entries go when that notice closes, so neither outlives what is on screen. */
+const liveCode = new Map<string, ErrorCode>();
+
 /** Remedy-bearing toasts, per failure: sticky, so only an identical repeat replaces one. */
 const remedies = new Map<string, () => void>();
 
 /**
  * Report a failure. `chatID` may be any chat; "" is workspace-global. `action` is the route's own remedy: it takes
- * the action slot and makes the toast sticky.
+ * the action slot and makes the toast sticky. `code` is the server's error code, when the failure came with one.
  */
 export function reportFailure(
   chatID: string,
@@ -40,6 +45,7 @@ export function reportFailure(
   action?: ToastRetry,
   turnScoped = false,
   chatName = "",
+  code?: ErrorCode,
 ): void {
   if (suppressedAsAlreadyOnScreen(chatID, action, turnScoped)) {
     return;
@@ -53,6 +59,11 @@ export function reportFailure(
     latched.set(chatID, { key, at: now });
     return;
   }
+  // A summary kiro-cli reports failed arrives twice: the compaction notice, which says whether the next turn end tries
+  // again, and the turn-scoped reason, which would erase it; the reason stays in the chat's "Compaction failed" row.
+  if (turnScoped && code === "compaction_failed" && liveCode.get(chatID) === "compaction_failed") {
+    return;
+  }
   // A sticky remedy is replaced by its own repeat and by nothing else; an ordinary
   // notice is replaced by whatever this chat reports next.
   if (action !== undefined) {
@@ -62,11 +73,22 @@ export function reportFailure(
   }
   // Latch after the retraction: `clearFailure` drops the latch.
   latched.set(chatID, { key, at: now });
-  const dismiss = raise(chatID, truncate(reason, MAX_TOAST_CHARS), action, chatName);
+  const text = truncate(reason, MAX_TOAST_CHARS);
   if (action !== undefined) {
-    remedies.set(key, dismiss);
-  } else {
-    live.set(chatID, dismiss);
+    remedies.set(key, raise(chatID, text, action, chatName));
+    return;
+  }
+  // A notice closing after a newer one replaced it must leave the newer one's entries.
+  const forget = (): void => {
+    if (live.get(chatID) === dismiss) {
+      live.delete(chatID);
+      liveCode.delete(chatID);
+    }
+  };
+  const dismiss = raise(chatID, text, undefined, chatName, forget);
+  live.set(chatID, dismiss);
+  if (code !== undefined) {
+    liveCode.set(chatID, code);
   }
 }
 
@@ -100,9 +122,17 @@ export function clearFailure(chatID: string): void {
     return;
   }
   live.delete(chatID);
+  liveCode.delete(chatID);
   // The latch too, or the retracted text stays suppressed for the rest of the window.
   latched.delete(chatID);
   dismiss();
+}
+
+/** Retract this chat's notice only if a `compaction_failed` report raised it: the compaction it reported has now run. */
+export function clearCompactionFailure(chatID: string): void {
+  if (liveCode.get(chatID) === "compaction_failed") {
+    clearFailure(chatID);
+  }
 }
 
 /** Named for its chat (`noticeSubject`). A remedy takes the action slot, sticky; otherwise the slot is Open. */
@@ -111,13 +141,16 @@ function raise(
   reason: string,
   action: ToastRetry | undefined,
   chatName: string,
+  onClose?: () => void,
 ): () => void {
   const subject = noticeSubject(chatID, chatName);
   const message = named(subject, reason);
   if (action !== undefined) {
     return toastError(message, action);
   }
-  return subject.open === undefined ? toastError(message) : errorWithAction(message, subject.open);
+  return subject.open === undefined
+    ? toastError(message, undefined, onClose)
+    : errorWithAction(message, subject.open, onClose);
 }
 
 /** Test-only: drop the dedupe latch and every tracked toast handle. */
@@ -125,5 +158,6 @@ function raise(
 export function _resetForTest(): void {
   latched.clear();
   live.clear();
+  liveCode.clear();
   remedies.clear();
 }

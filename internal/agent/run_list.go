@@ -90,6 +90,10 @@ type runEntry struct {
 	// when the failsafe's stop is undone.
 	fsPrior    marotte.RunEntryOrigin
 	fsPriorFor string
+	// turnEnd and turnEndFor are the compaction a turn that closed beside this running call asked for, listed when
+	// the call does not run (compactionEnded).
+	turnEnd    marotte.RunEntryOrigin
+	turnEndFor string
 	want       marotte.RunWant
 	// joined are the Unread rows of the lead's sender its prompt carries, taken off the list with it.
 	joined   []*runEntry
@@ -115,7 +119,11 @@ type runEntry struct {
 	clean     bool
 	cancelled bool
 	sawTurn   bool
-	waiter    bool
+	// failReported: kiro-cli's own failure report recorded this call's row (compactionFailureReported).
+	failReported bool
+	// rowOwed: the call ended not run and its row is being written (compactionRowDue).
+	rowOwed bool
+	waiter  bool
 	// fsStopped marks a turn the failsafe stopped: a close whose own outcome is clean (listClose.completed) has nothing
 	// to resume.
 	fsStopped bool
@@ -192,7 +200,7 @@ type orderFacts struct {
 type runEffects struct {
 	// launch lists the entries advance took, in take order.
 	launch []*runEntry
-	// toast lists the compactions whose failure the reader is told of (compactFailed).
+	// toast lists the compactions whose failure the reader is told of (compactFailedDetail).
 	toast []*runEntry
 	// notices are the words the reader is told a stopped turn is not continued in (ErrCodeResumeNotSent).
 	notices []string
@@ -1047,12 +1055,30 @@ func (l *runList) requestCompaction(origin marotte.RunEntryOrigin, forTurn strin
 	if c := l.compaction(); c != nil {
 		return c, true
 	}
-	e = &runEntry{
+	e = l.newCompaction(origin, forTurn)
+	l.insert(l.frontOfPending(false), e)
+	return e, false
+}
+
+func (l *runList) newCompaction(origin marotte.RunEntryOrigin, forTurn string) *runEntry {
+	return &runEntry{
 		id: l.mint("compact-"), kind: marotte.RunKindCompaction, origin: origin, state: marotte.RunPending,
 		forTurn: forTurn, done: newCompactWait(),
 	}
-	l.insert(l.frontOfPending(false), e)
-	return e, false
+}
+
+// listTurnEnd lists the compaction turnID's end asked for (origin, "" for none) unless the reader declined it: a
+// listed pending one is that end's attempt, and a running call records it, since the call's own end may not run.
+func (l *runList) listTurnEnd(origin marotte.RunEntryOrigin, turnID string) {
+	if origin == "" || l.declined == turnID {
+		return
+	}
+	switch c := l.compaction(); {
+	case c == nil:
+		l.insert(l.frontOfPending(false), l.newCompaction(origin, turnID))
+	case c.state == marotte.RunRunning:
+		c.turnEnd, c.turnEndFor = origin, turnID
+	}
 }
 
 // crossing records a threshold reading at the point for turnID: false when that turn already crossed or the reader
@@ -1066,7 +1092,7 @@ func (l *runList) crossing(turnID string) bool {
 }
 
 // cancelCompaction withdraws the compaction with that id: a pending one goes, a running one is marked cancelled
-// (no requeue, no toast). A stale id changes nothing.
+// (no requeue, no toast) and declines the turn ends it recorded so far. A stale id changes nothing.
 func (l *runList) cancelCompaction(id string) {
 	_, e := l.find(id)
 	if e == nil || e.kind != marotte.RunKindCompaction {
@@ -1081,7 +1107,7 @@ func (l *runList) cancelCompaction(id string) {
 		l.remove(e)
 		return
 	}
-	e.cancelled = true
+	e.cancelled, e.turnEnd = true, ""
 }
 
 var errCompactCancelled = errors.New("the compaction was cancelled")
@@ -1137,21 +1163,64 @@ func (l *runList) kasReportedActive() {
 	}
 }
 
+// compactionFailureReported notes that kiro-cli reported the running compaction call's summary failed, which wrote
+// that attempt's row, so its end writes none.
+func (l *runList) compactionFailureReported() {
+	if c := l.compaction(); c != nil && c.state == marotte.RunRunning {
+		c.failReported = true
+	}
+}
+
+// compactEnd is how compactionEnded settled a call.
+type compactEnd uint8
+
+const (
+	// compactEndStale: the id names no running compaction; nothing changed.
+	compactEndStale compactEnd = iota
+	compactEndCompacted
+	// compactEndCancelled: the reader cancelled the running call; nothing is requeued or toasted.
+	compactEndCancelled
+	// compactEndRequeued: a refusal while kiro-cli ran a turn beside the call, listed again at the front.
+	compactEndRequeued
+	// compactEndNotRun: removed (compactionNotRun).
+	compactEndNotRun
+)
+
+// compactionRowDue reports whether the compaction call with that id, ending with accepted and err, owes the chat's
+// compaction_failed row: it did not run, left no row of kiro-cli's and was not ended by the chat's close. An entry
+// that owes one stays running, so nothing listed behind it starts, until compactionEnded removes it once the row is
+// written.
+func (l *runList) compactionRowDue(id string, accepted bool, err error) bool {
+	e := l.runningCompaction(id)
+	if e == nil || endOf(e, accepted, err) != compactEndNotRun || e.failReported ||
+		errors.Is(err, marotte.ErrChatClosedDuringCall) {
+		return false
+	}
+	e.rowOwed = true
+	return true
+}
+
 // compactionEnded settles the compaction call with that id by the facts the list recorded, never by a refusal
 // reason (KAS answers every refusal as a bare {success: false}). A failure no /compact waits on is toasted (fx.toast).
-func (l *runList) compactionEnded(id string, accepted bool, err error) {
-	_, e := l.find(id)
-	if e == nil || e.kind != marotte.RunKindCompaction || e.state != marotte.RunRunning {
-		return
+// One that owed its row (compactionRowDue) ends not run. A call that did not run lists the compaction a turn that
+// closed beside it asked for, so that turn end still gets its attempt.
+func (l *runList) compactionEnded(id string, accepted bool, err error) (compactEnd, marotte.RunEntryOrigin) {
+	e := l.runningCompaction(id)
+	if e == nil {
+		return compactEndStale, ""
+	}
+	end := compactEndNotRun
+	if !e.rowOwed {
+		end = endOf(e, accepted, err)
 	}
 	failsafe := e.origin == marotte.RunFromFailsafe
-	switch {
-	case accepted || e.cancelled:
+	switch end {
+	case compactEndCompacted, compactEndCancelled:
 		e.done.finish(accepted, false, nil)
 		l.remove(e)
-		l.failsafeHeld = l.failsafeHeld || (failsafe && accepted && !e.cancelled)
-	case err == nil && e.sawTurn:
-		e.sawTurn = false
+		l.failsafeHeld = l.failsafeHeld || (failsafe && end == compactEndCompacted && !e.cancelled)
+	case compactEndRequeued:
+		e.sawTurn, e.failReported, e.turnEnd = false, false, ""
 		if e.waiter {
 			e.done.finish(false, true, nil)
 			e.done, e.waiter = newCompactWait(), false
@@ -1162,6 +1231,31 @@ func (l *runList) compactionEnded(id string, accepted bool, err error) {
 	default:
 		l.compactionNotRun(e, err, failsafe)
 	}
+	if (end == compactEndNotRun || end == compactEndCancelled) && !errors.Is(err, marotte.ErrChatClosedDuringCall) {
+		l.listTurnEnd(e.turnEnd, e.turnEndFor)
+	}
+	return end, e.origin
+}
+
+func (l *runList) runningCompaction(id string) *runEntry {
+	_, e := l.find(id)
+	if e == nil || e.kind != marotte.RunKindCompaction || e.state != marotte.RunRunning {
+		return nil
+	}
+	return e
+}
+
+// endOf is how a call ending with accepted and err settles e.
+func endOf(e *runEntry, accepted bool, err error) compactEnd {
+	switch {
+	case accepted:
+		return compactEndCompacted
+	case e.cancelled:
+		return compactEndCancelled
+	case err == nil && e.sawTurn:
+		return compactEndRequeued
+	}
+	return compactEndNotRun
 }
 
 // compactionNotRun removes a compaction call that failed or was refused. A failsafe compaction's resume goes with it,
@@ -1511,12 +1605,7 @@ func retryOwed(e *runEntry, c listClose, f *orderFacts) bool {
 // afterHeadClose inserts what the chat's last close owes: the turn-end compaction the policy asks for, and the
 // re-send of an empty turn (retry), after the rows already queued.
 func (l *runList) afterHeadClose(e *runEntry, c listClose, retry bool) {
-	if c.compact != "" && l.compaction() == nil && l.declined != c.turnID {
-		l.insert(l.frontOfPending(false), &runEntry{
-			id: l.mint("compact-"), kind: marotte.RunKindCompaction, origin: c.compact,
-			state: marotte.RunPending, forTurn: c.turnID, done: newCompactWait(),
-		})
-	}
+	l.listTurnEnd(c.compact, c.turnID)
 	if retry {
 		row := *e.row
 		l.insertPending(&runEntry{
@@ -1528,7 +1617,8 @@ func (l *runList) afterHeadClose(e *runEntry, c listClose, retry bool) {
 
 // closedBeside is turnClosed's arms for a two-entry prefix, reporting whether one applied: a wire turn closing while
 // the turn taken beside it is live goes at once; the second entry's close, and a fold turn's ahead of its
-// compaction, happen in place and decide nothing, since the chat's next close (or the compaction) does.
+// compaction, happen in place and decide nothing, since the chat's next close (or the compaction) does. A close
+// behind a running compaction call records its turn end's compaction on that call (listTurnEnd).
 func (l *runList) closedBeside(i int, e *runEntry, c listClose, stopped bool) bool {
 	other := l.entries[1-i]
 	switch {
@@ -1540,7 +1630,12 @@ func (l *runList) closedBeside(i int, e *runEntry, c listClose, stopped bool) bo
 			l.pauseRule(c.clean, stopped)
 		}
 		return true
-	case i == 1, other.kind == marotte.RunKindCompaction:
+	case i == 1:
+		if other.kind == marotte.RunKindCompaction {
+			l.listTurnEnd(c.compact, c.turnID)
+		}
+		return true
+	case other.kind == marotte.RunKindCompaction:
 		return true
 	}
 	return false

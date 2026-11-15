@@ -35,6 +35,9 @@ type runEffectsHost interface {
 	steerEntry(lc *chatLifecycle, e *runEntry)
 	// toast tells the chat's pages, in detail's words, of a run-list outcome the dock alone does not explain.
 	toast(chatID marotte.ChatID, code marotte.ErrorCode, detail string)
+	// retriesAtTurnEnd reports whether the chat's next turn end attempts a compaction (autoCompactor's). Not called
+	// under lc.mu: it reads the chat store.
+	retriesAtTurnEnd(chatID marotte.ChatID) bool
 	// spawnRun runs fn on the process's in-flight count, refused once shutdown began.
 	spawnRun(fn func())
 }
@@ -69,11 +72,12 @@ func (lc *chatLifecycle) flushRunLocked() {
 		host.steerEntry(lc, e)
 	}
 	if len(fx.toast) > 0 {
-		detail := compactFailed
-		if slices.ContainsFunc(fx.toast, func(e *runEntry) bool { return e.origin == marotte.RunFromFailsafe }) {
-			detail = compactFailsafeFailed
-		}
-		host.spawnRun(func() { host.toast(lc.chatID, marotte.ErrCodeCompactionFailed, detail) })
+		failsafe := slices.ContainsFunc(fx.toast, func(e *runEntry) bool { return e.origin == marotte.RunFromFailsafe })
+		cause := compactNotRunCause(fx.toast[len(fx.toast)-1].done.err)
+		host.spawnRun(func() {
+			detail := compactFailedDetail(failsafe, host.retriesAtTurnEnd(lc.chatID), cause)
+			host.toast(lc.chatID, marotte.ErrCodeCompactionFailed, detail)
+		})
 	}
 	for _, detail := range fx.notices {
 		host.spawnRun(func() { host.toast(lc.chatID, marotte.ErrCodeResumeNotSent, detail) })
@@ -256,6 +260,10 @@ func (bc *bridgeCoordinator) writeRun(chatID marotte.ChatID, mutate func(c *maro
 		return errRunRecordGone
 	}
 	return err
+}
+
+func (bc *bridgeCoordinator) retriesAtTurnEnd(chatID marotte.ChatID) bool {
+	return bc.autoCompact.retriesAtTurnEnd(context.Background(), chatID)
 }
 
 func (bc *bridgeCoordinator) toast(chatID marotte.ChatID, code marotte.ErrorCode, detail string) {

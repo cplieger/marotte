@@ -583,3 +583,137 @@ describe("ToastEngine: a countdown that drained while the toast was held", () =>
     expect(shown(mounts)).toBe(1);
   });
 });
+
+describe("ToastEngine: onClose runs once when the toast goes, however it goes", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("runs when a timed toast expires, not before", () => {
+    vi.useFakeTimers();
+    const { view } = makeFakeView(true);
+    const engine = new ToastEngine<FakeToast>({ view, maxVisible: 3 });
+    const onClose = vi.fn();
+    engine.show("e", { level: "error", duration: 12_000, onClose });
+    vi.advanceTimersByTime(11_999);
+    expect(onClose).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits out a hover hold and runs when the held toast expires on release", () => {
+    vi.useFakeTimers();
+    const { view, mounts } = makeFakeView(true);
+    const engine = new ToastEngine<FakeToast>({ view, maxVisible: 3 });
+    const onClose = vi.fn();
+    engine.show("e", { level: "error", duration: 1000, onClose });
+    mounts[0]!.ctx.pause();
+    vi.advanceTimersByTime(60_000);
+    expect(onClose).not.toHaveBeenCalled();
+    mounts[0]!.ctx.resume();
+    vi.advanceTimersByTime(1000);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs once for a dismissed toast, however often it is dismissed", () => {
+    const { view, mounts } = makeFakeView(true);
+    const engine = new ToastEngine<FakeToast>({ view, maxVisible: 3, defaultDuration: 0 });
+    const onClose = vi.fn();
+    const dismiss = engine.show("m", { onClose });
+    dismiss();
+    dismiss();
+    mounts[0]!.ctx.dismiss();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs for a visible and a queued toast on clear()", () => {
+    const { view } = makeFakeView(true);
+    const engine = new ToastEngine<FakeToast>({ view, maxVisible: 1, defaultDuration: 0 });
+    const visible = vi.fn();
+    const queued = vi.fn();
+    engine.show("on screen", { onClose: visible });
+    engine.show("waiting", { onClose: queued });
+    engine.clear();
+    expect(visible).toHaveBeenCalledTimes(1);
+    expect(queued).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs for a queued toast dismissed before it mounts, and for one the full queue drops", () => {
+    const { view } = makeFakeView(true);
+    const engine = new ToastEngine<FakeToast>({
+      view,
+      maxVisible: 1,
+      maxQueue: 1,
+      defaultDuration: 0,
+    });
+    engine.show("on screen");
+    const cancelled = vi.fn();
+    const dismiss = engine.show("cancelled", { onClose: cancelled });
+    dismiss();
+    dismiss();
+    expect(cancelled).toHaveBeenCalledTimes(1);
+    const dropped = vi.fn();
+    engine.show("dropped", { onClose: dropped });
+    engine.show("newer");
+    expect(dropped).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs for a toast a stack with no queue cannot hold", () => {
+    const { view } = makeFakeView(true);
+    const engine = new ToastEngine<FakeToast>({
+      view,
+      maxVisible: 1,
+      maxQueue: 0,
+      defaultDuration: 0,
+    });
+    engine.show("on screen");
+    const onClose = vi.fn();
+    const dismiss = engine.show("never shown", { onClose });
+    dismiss();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs for a promoted toast when it leaves, not when it is promoted", () => {
+    const { view, mounts } = makeFakeView(true);
+    const engine = new ToastEngine<FakeToast>({ view, maxVisible: 1, defaultDuration: 0 });
+    engine.show("first");
+    const onClose = vi.fn();
+    engine.show("second", { onClose });
+    mounts[0]!.ctx.dismiss();
+    expect(mounts[1]!.data.message).toBe("second");
+    expect(onClose).not.toHaveBeenCalled();
+    mounts[1]!.ctx.dismiss();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs for a toast a replace-mode stack replaces", () => {
+    const { view } = makeFakeView(true);
+    const engine = new ToastEngine<FakeToast>({ view, mode: "replace", defaultDuration: 0 });
+    const onClose = vi.fn();
+    engine.show("old", { onClose });
+    engine.show("new");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs once for a dismissed toast that clear() removes during its leave", () => {
+    const { view, mounts } = makeFakeView(false);
+    const engine = new ToastEngine<FakeToast>({ view, maxVisible: 3, defaultDuration: 0 });
+    const onClose = vi.fn();
+    engine.show("leaving", { onClose });
+    mounts[0]!.ctx.dismiss();
+    engine.clear();
+    expect(mounts[0]!.removed).toBe(true);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs once for a dismissed toast a replace-mode show replaces during its leave", () => {
+    const { view, mounts } = makeFakeView(false);
+    const engine = new ToastEngine<FakeToast>({ view, mode: "replace", defaultDuration: 0 });
+    const onClose = vi.fn();
+    engine.show("leaving", { onClose });
+    mounts[0]!.ctx.dismiss();
+    engine.show("new");
+    expect(mounts[0]!.removed).toBe(true);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});

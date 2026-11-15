@@ -349,19 +349,33 @@ func TestHandleV3Summarization_RunningStarts(t *testing.T) {
 // TestHandleV3Summarization_ALandedCompactionIsSilent pins no log line on the ordinary path
 // (the refusal's Warn is pinned in tombstone_drop_test.go).
 func TestHandleV3Summarization_ALandedCompactionIsSilent(t *testing.T) {
-	for _, status := range []string{"success", "error"} {
-		t.Run(status, func(t *testing.T) {
-			var logs bytes.Buffer
-			captureSlog(t, &logs)
-			deps, _, _ := depsWithStore(t, "c1")
-			tr := New(rolesOf(deps))
+	var logs bytes.Buffer
+	captureSlog(t, &logs)
+	deps, _, _ := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
 
-			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, status, "history summary"), FrameAttribution{})
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), FrameAttribution{})
 
-			if got := logs.String(); strings.Contains(got, "level=WARN") || strings.Contains(got, "level=ERROR") {
-				t.Errorf("a landed %q compaction logged:\n%s", status, got)
-			}
-		})
+	if got := logs.String(); strings.Contains(got, "level=WARN") || strings.Contains(got, "level=ERROR") {
+		t.Errorf("a landed compaction logged:\n%s", got)
+	}
+}
+
+// A summary kiro-cli reports failed logs one WARN carrying its reason.
+func TestHandleV3Summarization_AFailedSummaryLogsWarnWithItsReason(t *testing.T) {
+	var logs bytes.Buffer
+	captureSlog(t, &logs)
+	deps, _, _ := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "the model timed out", ""), FrameAttribution{})
+
+	got := logs.String()
+	if n := strings.Count(got, "level=WARN"); n != 1 {
+		t.Errorf("WARN lines = %d, want 1:\n%s", n, got)
+	}
+	if !strings.Contains(got, `msg="kiro-cli reported the summary failed"`) || !strings.Contains(got, "the model timed out") {
+		t.Errorf("log = %q, want the failure WARN with its reason", got)
 	}
 }
 

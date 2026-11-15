@@ -27,6 +27,9 @@ export interface ToastOptions {
   /** Auto-dismiss after this many ms. `0` = sticky (manual dismiss only). */
   duration?: number;
   retry?: ToastRetry;
+  /** Runs once when the toast goes: dismissed, expired, cleared, replaced, or dropped from the
+   *  queue before it mounted. */
+  onClose?: () => void;
 }
 
 const DEFAULT_MAX_VISIBLE = 3;
@@ -90,6 +93,7 @@ interface ActiveToast<H> {
   timer: ReturnType<typeof setTimeout> | null;
   handle: H;
   dismissed: boolean;
+  readonly onClose: (() => void) | undefined;
 }
 
 interface QueuedToast {
@@ -98,6 +102,7 @@ interface QueuedToast {
   readonly level: ToastLevel;
   readonly duration: number;
   readonly retry?: ToastRetry;
+  readonly onClose: (() => void) | undefined;
   bindDismiss(dismiss: () => void): void;
 }
 
@@ -128,23 +133,20 @@ export class ToastEngine<H> {
     const level = opts?.level ?? "info";
     const duration = opts?.duration ?? defaultDurationFor(level, this.defaultDuration);
     const retry = opts?.retry;
+    const onClose = opts?.onClose;
     const id = ++this.idSeq;
 
     // No leave animation — the new message must not coexist with or wait for the old one.
     if (this.replace && this.visible.length > 0) {
       for (const t of [...this.visible]) {
-        if (t.timer !== null) {
-          clearTimeout(t.timer);
-          t.timer = null;
-        }
-        t.dismissed = true;
+        this.close(t);
         this.view.remove(t.handle);
       }
       this.visible.length = 0;
     }
 
     if (this.visible.length < this.maxVisible) {
-      this.mountToast(id, message, level, duration, retry);
+      this.mountToast(id, message, level, duration, retry, onClose);
       return () => {
         this.dismiss(id);
       };
@@ -158,6 +160,7 @@ export class ToastEngine<H> {
       level,
       duration,
       ...(retry !== undefined ? { retry } : {}),
+      onClose,
       bindDismiss: (dismiss) => {
         if (cancelled) {
           dismiss();
@@ -176,6 +179,7 @@ export class ToastEngine<H> {
       const i = this.queue.indexOf(queued);
       if (i !== -1) {
         this.queue.splice(i, 1);
+        onClose?.();
       }
     };
   }
@@ -191,15 +195,13 @@ export class ToastEngine<H> {
   /** Immediately remove all visible toasts and clear the queue (test-friendly). */
   clear(): void {
     for (const t of [...this.visible]) {
-      if (t.timer !== null) {
-        clearTimeout(t.timer);
-        t.timer = null;
-      }
-      t.dismissed = true;
+      this.close(t);
       this.view.remove(t.handle);
     }
     this.visible.length = 0;
-    this.queue.length = 0;
+    for (const q of this.queue.splice(0)) {
+      q.onClose?.();
+    }
   }
 
   private mountToast(
@@ -208,6 +210,7 @@ export class ToastEngine<H> {
     level: ToastLevel,
     duration: number,
     retry: ToastRetry | undefined,
+    onClose: (() => void) | undefined,
   ): void {
     const data: ToastRenderData = {
       message,
@@ -235,6 +238,7 @@ export class ToastEngine<H> {
       timer: null,
       handle,
       dismissed: false,
+      onClose,
     };
     this.visible.push(record);
     this.startTimer(record);
@@ -242,10 +246,11 @@ export class ToastEngine<H> {
 
   private enqueue(entry: QueuedToast): void {
     if (this.maxQueue <= 0) {
+      entry.onClose?.();
       return;
     }
     while (this.queue.length >= this.maxQueue) {
-      this.queue.shift();
+      this.queue.shift()?.onClose?.();
     }
     this.queue.push(entry);
   }
@@ -256,7 +261,7 @@ export class ToastEngine<H> {
       if (next === undefined) {
         return;
       }
-      this.mountToast(next.id, next.message, next.level, next.duration, next.retry);
+      this.mountToast(next.id, next.message, next.level, next.duration, next.retry, next.onClose);
       next.bindDismiss(() => {
         this.dismiss(next.id);
       });
@@ -307,11 +312,7 @@ export class ToastEngine<H> {
     if (record === undefined || record.dismissed) {
       return;
     }
-    record.dismissed = true;
-    if (record.timer !== null) {
-      clearTimeout(record.timer);
-      record.timer = null;
-    }
+    this.close(record);
     this.view.scheduleLeave(record.handle, () => {
       const i = this.visible.indexOf(record);
       if (i !== -1) {
@@ -319,6 +320,19 @@ export class ToastEngine<H> {
       }
       this.promote();
     });
+  }
+
+  private close(t: ActiveToast<H>): void {
+    if (t.timer !== null) {
+      clearTimeout(t.timer);
+      t.timer = null;
+    }
+    // A dismissed toast stays visible through its leave, where clear() or a replace closes it again.
+    if (t.dismissed) {
+      return;
+    }
+    t.dismissed = true;
+    t.onClose?.();
   }
 
   private find(id: number): ActiveToast<H> | undefined {

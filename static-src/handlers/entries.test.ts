@@ -19,6 +19,7 @@ vi.mock("../store.js", () => ({
 }));
 vi.mock("../store-load.js", () => ({ requestTurnRange: vi.fn() }));
 vi.mock("../git.js", () => ({ markGitDirty: vi.fn() }));
+vi.mock("../failure-notice.js", () => ({ clearCompactionFailure: vi.fn() }));
 
 import "./entries.js";
 import { dispatch } from "../bus.js";
@@ -39,6 +40,7 @@ import {
 } from "../store.js";
 import { requestTurnRange } from "../store-load.js";
 import { markGitDirty } from "../git.js";
+import { clearCompactionFailure } from "../failure-notice.js";
 import type { Entry } from "../types.js";
 
 const opened = vi.mocked(openTurn);
@@ -54,6 +56,7 @@ const thinking = vi.mocked(setThinking);
 const row = vi.mocked(get);
 const rangeRead = vi.mocked(requestTurnRange);
 const gitDirty = vi.mocked(markGitDirty);
+const clearedFailure = vi.mocked(clearCompactionFailure);
 
 const CHAT = "c1";
 const TURN = "turn-1";
@@ -273,6 +276,18 @@ describe("what an appended entry means beside its position", () => {
     expect(compacted).toHaveBeenCalledWith(CHAT);
   });
 
+  it("clears the chat's compaction failure notice when a compaction lands", () => {
+    send("entry_appended", { entry: entry("compaction", { summary: "..." }) });
+
+    expect(clearedFailure).toHaveBeenCalledExactlyOnceWith(CHAT);
+  });
+
+  it("leaves the failure notice alone when the entry says the compaction failed", () => {
+    send("entry_appended", { entry: entry("compaction_failed", { reason: "error" }) });
+
+    expect(clearedFailure).not.toHaveBeenCalled();
+  });
+
   it("marks the git badge dirty with the paths a settled write touched", () => {
     // CARRIED from the deleted message suite. Two sources because neither is complete alone:
     // `locations` is what a command reports, `diffs[].path` what a write carries.
@@ -347,6 +362,7 @@ describe("what an appended entry means beside its position", () => {
 
     expect(appended).toHaveBeenCalledTimes(6);
     expect(compacted).not.toHaveBeenCalled();
+    expect(clearedFailure).not.toHaveBeenCalled();
     expect(gitDirty).not.toHaveBeenCalled();
   });
 });
