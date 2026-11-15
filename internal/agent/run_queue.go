@@ -475,8 +475,13 @@ func (bc *bridgeCoordinator) Submit(ctx context.Context, chatID marotte.ChatID, 
 	if err != nil || e == nil {
 		return out, err
 	}
+	testHookSubmitPlaced(chatID)
 	return lc.awaitLaunch(ctx, e, w)
 }
+
+// testHookSubmitPlaced runs once Submit has placed its entry and released the chat's lock, before it waits: the
+// window where a Stop's putBack swaps the entry's wait.
+var testHookSubmitPlaced = func(marotte.ChatID) {}
 
 // submitLocked decides a send by VerbFor and places it, answering the entry whose first outcome the caller waits on
 // (nil when it answers at once). Caller holds mu.
