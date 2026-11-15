@@ -1710,6 +1710,56 @@ describe("dialog: re-entry property", () => {
               ],
             },
           ],
+          // A raw `open` and its removal in the engine's own showModal's beforetoggle:
+          // neither is a toggle, so the showModal writes `open` after them and it ends open.
+          [
+            {
+              guard: "none",
+              cancelWorld: false,
+              onCloseDisposes: false,
+              onCloseThrows: false,
+              closeOnBackdrop: false,
+              script: [{ k: "open" }],
+              injections: [
+                {
+                  at: 0,
+                  hit: "beforetoggle:open@dialog",
+                  actions: [
+                    { k: "platformOther", kind: "addOpen" },
+                    { k: "platformOther", kind: "removeOpen" },
+                  ],
+                },
+              ],
+            },
+          ],
+          // A raw show() and close in the engine's own showModal's beforetoggle, the close's
+          // `open` removed by hand in its own beforetoggle: that close writes nothing, and
+          // the showModal still opens the dialog.
+          [
+            {
+              guard: "none",
+              cancelWorld: false,
+              onCloseDisposes: false,
+              onCloseThrows: false,
+              closeOnBackdrop: false,
+              script: [{ k: "open" }],
+              injections: [
+                {
+                  at: 0,
+                  hit: "beforetoggle:open@dialog",
+                  actions: [
+                    { k: "platformOther", kind: "show" },
+                    { k: "platformClose", kind: "close" },
+                  ],
+                },
+                {
+                  at: 0,
+                  hit: "beforetoggle:closed@dialog",
+                  actions: [{ k: "platformOther", kind: "removeOpen" }],
+                },
+              ],
+            },
+          ],
         ],
       },
     );

@@ -1049,6 +1049,71 @@ describe("createModal: re-entry property", () => {
               ],
             },
           ],
+          // A raw `open` and its removal in b's own showModal's beforetoggle: neither is
+          // a toggle, so the showModal writes `open` after them and b ends open and modal.
+          [
+            {
+              probeBody: false,
+              allowGuard: false,
+              script: [{ k: "open", who: "b" }],
+              injections: [
+                {
+                  at: 0,
+                  hit: "doc:beforetoggle:open",
+                  actions: [
+                    { k: "platformOther", who: "b", kind: "addOpen" },
+                    { k: "platformOther", who: "b", kind: "removeOpen" },
+                  ],
+                },
+              ],
+            },
+          ],
+          // A raw show() and close of b in its own showModal's beforetoggle, the close's
+          // `open` removed by hand in its own beforetoggle: that close writes nothing,
+          // and the showModal still opens b.
+          [
+            {
+              probeBody: false,
+              allowGuard: false,
+              script: [{ k: "open", who: "b" }],
+              injections: [
+                {
+                  at: 0,
+                  hit: "doc:beforetoggle:open",
+                  actions: [
+                    { k: "platformOther", who: "b", kind: "show" },
+                    { k: "platformClose", who: "b", kind: "close" },
+                  ],
+                },
+                {
+                  at: 0,
+                  hit: "doc:beforetoggle:closed",
+                  actions: [{ k: "platformOther", who: "b", kind: "removeOpen" }],
+                },
+              ],
+            },
+          ],
+          // A raw `open` in b's own showModal's beforetoggle, which then writes nothing,
+          // and its removal at the next hit of that drive: b ends closed.
+          [
+            {
+              probeBody: false,
+              allowGuard: false,
+              script: [{ k: "open", who: "b" }],
+              injections: [
+                {
+                  at: 0,
+                  hit: "doc:beforetoggle:open",
+                  actions: [{ k: "platformOther", who: "b", kind: "addOpen" }],
+                },
+                {
+                  at: 0,
+                  hit: "focus@content-b",
+                  actions: [{ k: "platformOther", who: "b", kind: "removeOpen" }],
+                },
+              ],
+            },
+          ],
         ],
       },
     );
