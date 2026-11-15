@@ -731,7 +731,8 @@ describe("the full-screen view", () => {
     svg.focus();
     expect(document.activeElement).toBe(svg);
     // The close resets the zoom as it destroys the view, so the viewBox cannot tell pele's Escape from the close;
-    // the key reaching the drawing at all can. The close ends by focusing the Expand button.
+    // the key reaching the drawing at all can. The close's last callback focuses the Expand button,
+    // and the dialog leaves the document later in that same task, before `await closed` resumes.
     const reached = vi.fn();
     svg.addEventListener("keydown", reached, { capture: true });
     const closed = new Promise((resolve) => {
