@@ -28,7 +28,8 @@ const latched = new Map<string, { key: string; at: number }>();
  *  chat because two chats can fail independently and each owns its own notice. */
 const live = new Map<string, () => void>();
 
-/** The error code that raised each chat's `live` notice, so a retraction can name the failure it answers. */
+/** The error code that raised each chat's `live` notice, so a retraction can name the failure it answers.
+ *  Both entries go when that notice closes, so neither outlives what is on screen. */
 const liveCode = new Map<string, ErrorCode>();
 
 /** Remedy-bearing toasts, per failure: sticky, so only an identical repeat replaces one. */
@@ -72,14 +73,22 @@ export function reportFailure(
   }
   // Latch after the retraction: `clearFailure` drops the latch.
   latched.set(chatID, { key, at: now });
-  const dismiss = raise(chatID, truncate(reason, MAX_TOAST_CHARS), action, chatName);
+  const text = truncate(reason, MAX_TOAST_CHARS);
   if (action !== undefined) {
-    remedies.set(key, dismiss);
-  } else {
-    live.set(chatID, dismiss);
-    if (code !== undefined) {
-      liveCode.set(chatID, code);
+    remedies.set(key, raise(chatID, text, action, chatName));
+    return;
+  }
+  // A notice closing after a newer one replaced it must leave the newer one's entries.
+  const forget = (): void => {
+    if (live.get(chatID) === dismiss) {
+      live.delete(chatID);
+      liveCode.delete(chatID);
     }
+  };
+  const dismiss = raise(chatID, text, undefined, chatName, forget);
+  live.set(chatID, dismiss);
+  if (code !== undefined) {
+    liveCode.set(chatID, code);
   }
 }
 
@@ -132,13 +141,16 @@ function raise(
   reason: string,
   action: ToastRetry | undefined,
   chatName: string,
+  onClose?: () => void,
 ): () => void {
   const subject = noticeSubject(chatID, chatName);
   const message = named(subject, reason);
   if (action !== undefined) {
     return toastError(message, action);
   }
-  return subject.open === undefined ? toastError(message) : errorWithAction(message, subject.open);
+  return subject.open === undefined
+    ? toastError(message, undefined, onClose)
+    : errorWithAction(message, subject.open, onClose);
 }
 
 /** Test-only: drop the dedupe latch and every tracked toast handle. */

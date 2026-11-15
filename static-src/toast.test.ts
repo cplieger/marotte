@@ -1,7 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mountLiveRegions } from "./legacy-ui/announce.js";
 
-import { info, success, error, jumpToast, notice, showToast, _resetForTest } from "./toast.js";
+import {
+  info,
+  success,
+  error,
+  errorWithAction,
+  jumpToast,
+  notice,
+  showToast,
+  _resetForTest,
+} from "./toast.js";
 
 // The marotte wrapper against legacy-ui/toast's DOM contract (.uip-toast--<level>, announce())
 // and behaviour. State is reset with _resetForTest(), not resetModules(), which would strand the
@@ -116,6 +125,26 @@ describe("toast — auto-dismiss", () => {
     flushRaf();
     vi.advanceTimersByTime(60_000);
     expect(toasts().length).toBe(1);
+  });
+
+  it("tells a plain error's caller when it expires", () => {
+    const onClose = vi.fn();
+    error("fail", undefined, onClose);
+    flushRaf();
+    vi.advanceTimersByTime(11_000);
+    expect(onClose).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(2000);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells an actioned error's caller when it expires", () => {
+    const onClose = vi.fn();
+    errorWithAction("fail", { label: "Open", onClick: vi.fn() }, onClose);
+    flushRaf();
+    vi.advanceTimersByTime(11_000);
+    expect(onClose).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(2000);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("showToast accepts an explicit duration", () => {

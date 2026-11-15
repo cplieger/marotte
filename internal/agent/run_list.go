@@ -117,7 +117,9 @@ type runEntry struct {
 	sawTurn   bool
 	// failReported: kiro-cli's own failure report recorded this call's row (compactionFailureReported).
 	failReported bool
-	waiter       bool
+	// rowOwed: the call ended not run and its row is being written (compactionRowDue).
+	rowOwed bool
+	waiter  bool
 	// fsStopped marks a turn the failsafe stopped: a close whose own outcome is clean (listClose.completed) has nothing
 	// to resume.
 	fsStopped bool
@@ -194,7 +196,7 @@ type orderFacts struct {
 type runEffects struct {
 	// launch lists the entries advance took, in take order.
 	launch []*runEntry
-	// toast lists the compactions whose failure the reader is told of (compactFailed).
+	// toast lists the compactions whose failure the reader is told of (compactFailedDetail).
 	toast []*runEntry
 	// notices are the words the reader is told a stopped turn is not continued in (ErrCodeResumeNotSent).
 	notices []string
@@ -1162,27 +1164,39 @@ const (
 	compactEndNotRun
 )
 
+// compactionRowDue reports whether the compaction call with that id, ending with accepted and err, owes the chat's
+// compaction_failed row: it did not run, left no row of kiro-cli's and was not ended by the chat's close. An entry
+// that owes one stays running, so nothing listed behind it starts, until compactionEnded removes it once the row is
+// written.
+func (l *runList) compactionRowDue(id string, accepted bool, err error) bool {
+	e := l.runningCompaction(id)
+	if e == nil || endOf(e, accepted, err) != compactEndNotRun || e.failReported ||
+		errors.Is(err, marotte.ErrChatClosedDuringCall) {
+		return false
+	}
+	e.rowOwed = true
+	return true
+}
+
 // compactionEnded settles the compaction call with that id by the facts the list recorded, never by a refusal
 // reason (KAS answers every refusal as a bare {success: false}). A failure no /compact waits on is toasted (fx.toast).
-// rowDue is a call that did not run and left no row of kiro-cli's: its end writes the chat's one.
-func (l *runList) compactionEnded(
-	id string, accepted bool, err error,
-) (end compactEnd, origin marotte.RunEntryOrigin, rowDue bool) {
-	_, e := l.find(id)
-	if e == nil || e.kind != marotte.RunKindCompaction || e.state != marotte.RunRunning {
-		return compactEndStale, "", false
+// One that owed its row (compactionRowDue) ends not run whatever the list heard since.
+func (l *runList) compactionEnded(id string, accepted bool, err error) (compactEnd, marotte.RunEntryOrigin) {
+	e := l.runningCompaction(id)
+	if e == nil {
+		return compactEndStale, ""
+	}
+	end := compactEndNotRun
+	if !e.rowOwed {
+		end = endOf(e, accepted, err)
 	}
 	failsafe := e.origin == marotte.RunFromFailsafe
-	switch {
-	case accepted || e.cancelled:
+	switch end {
+	case compactEndCompacted, compactEndCancelled:
 		e.done.finish(accepted, false, nil)
 		l.remove(e)
-		l.failsafeHeld = l.failsafeHeld || (failsafe && accepted && !e.cancelled)
-		if !accepted {
-			return compactEndCancelled, e.origin, false
-		}
-		return compactEndCompacted, e.origin, false
-	case err == nil && e.sawTurn:
+		l.failsafeHeld = l.failsafeHeld || (failsafe && end == compactEndCompacted && !e.cancelled)
+	case compactEndRequeued:
 		e.sawTurn, e.failReported = false, false
 		if e.waiter {
 			e.done.finish(false, true, nil)
@@ -1191,10 +1205,31 @@ func (l *runList) compactionEnded(
 		l.remove(e)
 		e.state = marotte.RunPending
 		l.insert(l.frontOfPending(false), e)
-		return compactEndRequeued, e.origin, false
+	default:
+		l.compactionNotRun(e, err, failsafe)
 	}
-	l.compactionNotRun(e, err, failsafe)
-	return compactEndNotRun, e.origin, !e.failReported && !errors.Is(err, marotte.ErrChatClosedDuringCall)
+	return end, e.origin
+}
+
+func (l *runList) runningCompaction(id string) *runEntry {
+	_, e := l.find(id)
+	if e == nil || e.kind != marotte.RunKindCompaction || e.state != marotte.RunRunning {
+		return nil
+	}
+	return e
+}
+
+// endOf is how a call ending with accepted and err settles e.
+func endOf(e *runEntry, accepted bool, err error) compactEnd {
+	switch {
+	case accepted:
+		return compactEndCompacted
+	case e.cancelled:
+		return compactEndCancelled
+	case err == nil && e.sawTurn:
+		return compactEndRequeued
+	}
+	return compactEndNotRun
 }
 
 // compactionNotRun removes a compaction call that failed or was refused. A failsafe compaction's resume goes with it,

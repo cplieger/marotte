@@ -441,7 +441,7 @@ describe("compaction_failed", () => {
 
   it("keeps a reason that says when the compaction is tried again whole", () => {
     const reason =
-      "the agent was busy, or the summary failed or the chat changed before it finished. marotte tries again at the end of the next turn";
+      "the agent was busy, or the summary failed or the chat changed before it finished. marotte tries again at the end of the next turn.";
     const node = buildEvent(event("compaction_failed", { reason }));
     expect(textOf(node)).toContain(`Compaction failed: ${reason}`);
   });

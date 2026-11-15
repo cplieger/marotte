@@ -1,19 +1,39 @@
 // The failure toast: dedupes its two channels, names its chat, links a background one, carries a remedy.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-const { mockDismiss, mockToastError, mockErrorWithAction, mockActivateTab } = vi.hoisted(() => {
-  const dismiss = vi.fn();
-  return {
-    mockDismiss: dismiss,
-    mockToastError: vi.fn(
-      (_message: string, _retry?: { label?: string; onClick: () => void }): (() => void) => dismiss,
-    ),
-    mockErrorWithAction: vi.fn(
-      (_message: string, _action: { label?: string; onClick: () => void }): (() => void) => dismiss,
-    ),
-    mockActivateTab: vi.fn(),
-  };
-});
+const { mockDismiss, mockToastError, mockErrorWithAction, mockActivateTab, closers } = vi.hoisted(
+  () => {
+    const dismiss = vi.fn();
+    // Each raised toast's onClose, in raise order: calling one is that toast expiring. Each toast
+    // gets its own dismiss handle, as the real stack gives, all counted on one spy.
+    const onCloses: ((() => void) | undefined)[] = [];
+    return {
+      mockDismiss: dismiss,
+      mockToastError: vi.fn(
+        (
+          _message: string,
+          _retry?: { label?: string; onClick: () => void },
+          onClose?: () => void,
+        ): (() => void) => {
+          onCloses.push(onClose);
+          return () => dismiss();
+        },
+      ),
+      mockErrorWithAction: vi.fn(
+        (
+          _message: string,
+          _action: { label?: string; onClick: () => void },
+          onClose?: () => void,
+        ): (() => void) => {
+          onCloses.push(onClose);
+          return () => dismiss();
+        },
+      ),
+      mockActivateTab: vi.fn(),
+      closers: onCloses,
+    };
+  },
+);
 vi.mock("./toast.js", async () => ({
   ...(await import("./__test-helpers__/toast-mock.js")).toastMock(),
   error: mockToastError,
@@ -86,6 +106,7 @@ function toastCount(): number {
 
 beforeEach(() => {
   _resetForTest();
+  closers.length = 0;
   mockToastError.mockClear();
   mockErrorWithAction.mockClear();
   mockDismiss.mockClear();
@@ -516,6 +537,25 @@ describe("a background chat's compaction notice keeps saying the next turn end t
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("shows the turn-scoped reason once the retry notice has expired", () => {
+    reportFailure("c2", RETRYING, undefined, false, "", "compaction_failed");
+    closers.at(-1)?.();
+    reportFailure("c2", "model error", undefined, true, "", "compaction_failed");
+    expect(toastCount()).toBe(2);
+    expect(lastToast()).toBe("Write the docs: model error");
+  });
+
+  it("keeps dropping the twin while a newer retry notice is up, when an older one expires", () => {
+    const SECOND =
+      "The compaction did not run: the call failed. marotte tries again at the end of the next turn.";
+    reportFailure("c2", RETRYING, undefined, false, "", "compaction_failed");
+    reportFailure("c2", SECOND, undefined, false, "", "compaction_failed");
+    closers[0]?.();
+    reportFailure("c2", "model error", undefined, true, "", "compaction_failed");
+    expect(toastCount()).toBe(2);
+    expect(lastToast()).toBe(`Write the docs: ${SECOND}`);
   });
 
   it("lets another failure's turn-scoped report replace the retry notice", () => {

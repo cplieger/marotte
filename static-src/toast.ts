@@ -107,11 +107,15 @@ function track(
 
 /** Raise a notice that never expires, dropping the OLDEST one past the cap: the
  *  reader has had longest to act on that, and the newest says what is wrong now. */
-function showSticky(message: string, retry: ToastRetry): () => void {
+function showSticky(
+  message: string,
+  retry: ToastRetry,
+  closing: { onClose?: () => void },
+): () => void {
   while (sticky.length >= MAX_STICKY) {
     sticky.shift()?.();
   }
-  const dismiss = track(null, () => toast.show(message, { level: "error", retry }));
+  const dismiss = track(null, () => toast.show(message, { level: "error", retry, ...closing }));
   sticky.push(dismiss);
   return dismiss;
 }
@@ -119,19 +123,33 @@ function showSticky(message: string, retry: ToastRetry): () => void {
 /** Show an error-level toast. Auto-dismisses after 12s (paused on hover/focus);
  *  click or press Escape to dismiss sooner. Optionally accepts a retry config;
  *  the toast renders a button that invokes onClick + dismisses, and stays put
- *  until answered or until MAX_STICKY newer ones displace it. */
-export function error(message: string, retry?: ToastRetry): () => void {
+ *  until answered or until MAX_STICKY newer ones displace it. `onClose` runs once
+ *  when the toast goes, however it goes. */
+export function error(message: string, retry?: ToastRetry, onClose?: () => void): () => void {
+  const closing = onClose !== undefined ? { onClose } : {};
   if (retry !== undefined) {
-    return showSticky(message, retry);
+    return showSticky(message, retry, closing);
   }
-  return track(null, () => toast.show(message, { level: "error", duration: ERROR_DURATION_MS }));
+  return track(null, () =>
+    toast.show(message, { level: "error", duration: ERROR_DURATION_MS, ...closing }),
+  );
 }
 
 /** An error toast whose ACTION button is a convenience, so it keeps the 12s timeout. Sticky is for
- *  an action offered nowhere else; failure-notice.ts's jump target is one click away anyway. */
-export function errorWithAction(message: string, action: ToastRetry): () => void {
+ *  an action offered nowhere else; failure-notice.ts's jump target is one click away anyway.
+ *  `onClose` as `error`'s. */
+export function errorWithAction(
+  message: string,
+  action: ToastRetry,
+  onClose?: () => void,
+): () => void {
   return track(null, () =>
-    toast.show(message, { level: "error", duration: ERROR_DURATION_MS, retry: action }),
+    toast.show(message, {
+      level: "error",
+      duration: ERROR_DURATION_MS,
+      retry: action,
+      ...(onClose !== undefined ? { onClose } : {}),
+    }),
   );
 }
 

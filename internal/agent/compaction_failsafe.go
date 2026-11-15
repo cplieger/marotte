@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -21,13 +20,6 @@ const resumeText = "The context window was nearly full, so marotte stopped your 
 // failsafeStopNotice is the stopped turn's close reason, the transcript's account of the stop.
 const failsafeStopNotice = "The context was nearly full, so marotte stopped this turn to compact the context " +
 	"before it ran out."
-
-// compactFailsafeFailed is the toast for a failsafe compaction that did not run, whose stopped turn is not resumed.
-const compactFailsafeFailed = "The compaction did not run (" + compactNotRunCauses + "), so marotte did not " +
-	"continue the stopped turn. Send a message to go on."
-
-// compactFailsafeFailedRetrying is compactFailsafeFailed on a chat whose next turn end tries the compaction again.
-const compactFailsafeFailedRetrying = compactFailsafeFailed + " " + command.CompactRetryNote + "."
 
 // resumeLimitNotice tells the reader a failsafe stop at compactionFailsafeResumes lists no resume.
 const resumeLimitNotice = "The context filled up again, so marotte stopped the turn to compact the context. It " +

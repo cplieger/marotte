@@ -73,8 +73,9 @@ func (lc *chatLifecycle) flushRunLocked() {
 	}
 	if len(fx.toast) > 0 {
 		failsafe := slices.ContainsFunc(fx.toast, func(e *runEntry) bool { return e.origin == marotte.RunFromFailsafe })
+		cause := compactNotRunCause(fx.toast[len(fx.toast)-1].done.err)
 		host.spawnRun(func() {
-			detail := compactFailedDetail(failsafe, host.retriesAtTurnEnd(lc.chatID))
+			detail := compactFailedDetail(failsafe, host.retriesAtTurnEnd(lc.chatID), cause)
 			host.toast(lc.chatID, marotte.ErrCodeCompactionFailed, detail)
 		})
 	}

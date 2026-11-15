@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -23,22 +24,34 @@ var compactCallBudget = 310 * time.Second
 // compactNotRunCauses is what a reader can act on of KAS's bare refusal (command.Compact names every cause).
 const compactNotRunCauses = "the agent was busy, or the summary failed or the chat changed before it finished"
 
-// compactFailed is the toast for a compaction the dock showed that KAS refused or that failed.
-const compactFailed = "The compaction did not run: " + compactNotRunCauses
+// compactCallFailedCause is a call that ended in an error, not KAS's refusal: its budget ran out, or the bridge or
+// the engine failed. The error itself goes to the log only.
+const compactCallFailedCause = "the call to kiro-cli failed or timed out"
 
-// compactFailedRetrying is compactFailed on a chat whose next turn end tries again (retriesAtTurnEnd).
-const compactFailedRetrying = compactFailed + ". " + command.CompactRetryNote + "."
-
-func compactFailedDetail(failsafe, retrying bool) string {
-	switch {
-	case failsafe && retrying:
-		return compactFailsafeFailedRetrying
-	case failsafe:
-		return compactFailsafeFailed
-	case retrying:
-		return compactFailedRetrying
+// compactNotRunCause is the cause a reader is told of a compaction call that did not run and ended with err.
+func compactNotRunCause(err error) string {
+	if err != nil {
+		return compactCallFailedCause
 	}
-	return compactFailed
+	return compactNotRunCauses
+}
+
+// compactFailedDetail is the toast for a compaction the dock showed that did not run for cause; retrying is a chat
+// whose next turn end tries again (retriesAtTurnEnd).
+func compactFailedDetail(failsafe, retrying bool, cause string) string {
+	if failsafe {
+		s := "The compaction did not run (" + cause + "), so marotte did not continue the stopped turn. " +
+			"Send a message to go on."
+		if retrying {
+			s += " " + command.CompactRetryNote + "."
+		}
+		return s
+	}
+	s := "The compaction did not run: " + cause
+	if retrying {
+		s += ". " + command.CompactRetryNote + "."
+	}
+	return s
 }
 
 // compactHandoffReason is the account of a fold-opened turn a compaction's start closed to make its call.
@@ -247,8 +260,8 @@ func (a *autoCompactor) stopForCompaction(lc *chatLifecycle, rs command.RunStop)
 }
 
 // turnEndCompaction is the compaction a closing turn's end asks for: the model refused the turn for the context's
-// size, or the reading is at the point; "" for none or with the policy off. A failed attempt leaves nothing behind,
-// so every close over the point attempts again.
+// size, or the reading is at the point; "" for none or with the policy off. A failed attempt leaves no state this
+// reads, so every close over the point attempts again.
 func (a *autoCompactor) turnEndCompaction(ctx context.Context, chatID marotte.ChatID, contextLimit bool) marotte.RunEntryOrigin {
 	if a == nil || a.bridgeOf(chatID) == nil {
 		return ""
@@ -352,13 +365,18 @@ func (a *autoCompactor) cancel(_ context.Context, chatID marotte.ChatID, id stri
 // where a request racing the compaction's end lands.
 var testHookAfterCompactionReturn = func(marotte.ChatID) {}
 
+// testHookBeforeCompactionRow runs once a failed compaction owes its compaction_failed row, before the row is written:
+// the window where a wake racing the row lands.
+var testHookBeforeCompactionRow = func(marotte.ChatID) {}
+
 // testHookBeforeCompactionStart runs once a compaction is taken, before its start's first section: the window where
 // a request racing the compaction's start lands.
 var testHookBeforeCompactionStart = func(marotte.ChatID) {}
 
 // runCompaction is a taken compaction's start (runList.compactionStart): behind a fold-opened turn it closes that
-// turn first and waits for its entry to end, then makes the call and applies its end (runList.compactionEnded).
-// Every check is made under lc.mu and every wait with it released.
+// turn first and waits for its entry to end, then makes the call and applies its end (runList.compactionEnded); a
+// failed call's row is written while its entry still holds the list (runList.compactionRowDue). Every check is made
+// under lc.mu and every wait with it released.
 func (bc *bridgeCoordinator) runCompaction(lc *chatLifecycle, id string) {
 	testHookBeforeCompactionStart(lc.chatID)
 	if !bc.compactionReady(lc, id) {
@@ -375,23 +393,31 @@ func (bc *bridgeCoordinator) runCompaction(lc *chatLifecycle, id string) {
 	}
 	testHookAfterCompactionReturn(lc.chatID)
 	lc.mu.Lock()
-	end, origin, rowDue := lc.run.compactionEnded(id, accepted, err)
-	if rowDue {
-		// The row is written before the wake, so it lands ahead of the turn the wake may open.
+	if lc.run.compactionRowDue(id, accepted, err) {
 		lc.mu.Unlock()
-		bc.recordCompactionFailed(lc.ctx, lc.chatID, a.failureReason(lc.ctx, lc.chatID, compactNotRunCauses))
+		testHookBeforeCompactionRow(lc.chatID)
+		bc.recordCompactionFailed(lc.ctx, lc.chatID, a.failureReason(lc.ctx, lc.chatID, compactNotRunCause(err)))
 		lc.mu.Lock()
 	}
+	end, origin := lc.run.compactionEnded(id, accepted, err)
 	lc.wakeLocked()
 	lc.mu.Unlock()
 	a.logEnd(lc.ctx, lc.chatID, end, origin, pct, err)
 }
 
+// maxRetryingRowBytes is the page's MAX_TOAST_CHARS (static-src/failure-notice.ts), past which the toast showing a
+// row's text cuts its end, the retry sentence; a byte bound also bounds the page's characters.
+const maxRetryingRowBytes = 240
+
+// failureReason is the text of a failed attempt's row: reason, closed by the retry sentence on a chat whose next
+// turn end tries again, with reason cut to keep that sentence whole.
 func (a *autoCompactor) failureReason(ctx context.Context, chatID marotte.ChatID, reason string) string {
-	if a.retriesAtTurnEnd(ctx, chatID) {
-		return reason + ". " + command.CompactRetryNote
+	if !a.retriesAtTurnEnd(ctx, chatID) {
+		return reason
 	}
-	return reason
+	const retry = ". " + command.CompactRetryNote + "."
+	reason, _ = textsafe.SanitizeSingleLineCapped(reason, maxRetryingRowBytes-len(retry), "...")
+	return reason + retry
 }
 
 // ObserveCompactionFailed hears kiro-cli report a summary failed, which records the attempt's row, and answers the

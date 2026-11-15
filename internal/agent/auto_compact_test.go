@@ -13,6 +13,7 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -369,8 +370,8 @@ func TestAutoCompact_ARefusedTurnEndCompactionIsDroppedAndReported(t *testing.T)
 	if compactionEntry(t, cs, "c1").ID != "" {
 		t.Error("the refused compaction is still listed")
 	}
-	if got := calls.toasts(); !slices.Equal(got, []string{compactFailedRetrying}) {
-		t.Errorf("toasts = %v, want one %q", got, compactFailedRetrying)
+	if got, want := calls.toasts(), compactFailedDetail(false, true, compactNotRunCauses); !slices.Equal(got, []string{want}) {
+		t.Errorf("toasts = %v, want one %q", got, want)
 	}
 }
 
@@ -387,8 +388,8 @@ func TestAutoCompact_AFailedPressUnderThePointSaysNothingOfARetry(t *testing.T) 
 	endTurn(t, h, "c1", id)
 
 	waitFor(t, func() bool { return len(calls.toasts()) == 1 && compactionEntry(t, cs, "c1").ID == "" })
-	if got := calls.toasts(); !slices.Equal(got, []string{compactFailed}) {
-		t.Errorf("toasts = %v, want one %q", got, compactFailed)
+	if got, want := calls.toasts(), compactFailedDetail(false, false, compactNotRunCauses); !slices.Equal(got, []string{want}) {
+		t.Errorf("toasts = %v, want one %q", got, want)
 	}
 }
 
@@ -406,12 +407,31 @@ func TestCompactionToasts_FitThePagesToastCap(t *testing.T) {
 	}
 	capChars, _ := strconv.Atoi(string(m[1]))
 	toasts := map[string]string{
-		"failed":                    compactFailedDetail(false, false),
-		"failed, retrying":          compactFailedDetail(false, true),
-		"failsafe failed":           compactFailedDetail(true, false),
-		"failsafe failed, retrying": compactFailedDetail(true, true),
-		"resume limit":              resumeLimitNotice,
-		"resume refused":            resumeRefusedNotice,
+		"resume limit":   resumeLimitNotice,
+		"resume refused": resumeRefusedNotice,
+	}
+	for _, cause := range []string{compactNotRunCauses, compactCallFailedCause} {
+		toasts["failed: "+cause] = compactFailedDetail(false, false, cause)
+		toasts["failed, retrying: "+cause] = compactFailedDetail(false, true, cause)
+		toasts["failsafe failed: "+cause] = compactFailedDetail(true, false, cause)
+		toasts["failsafe failed, retrying: "+cause] = compactFailedDetail(true, true, cause)
+	}
+	retrying := &autoCompactor{
+		policy: func(context.Context) (bool, int) { return true, 90 },
+		usage: func(context.Context, marotte.ChatID) marotte.Usage {
+			return marotte.Usage{ContextPct: 95, HasRealData: true}
+		},
+	}
+	// kiro-cli's longest reason: translate bounds it to 200 bytes and marks the cut past them.
+	for name, reason := range map[string]string{
+		"ascii":      strings.Repeat("x", 200) + "...",
+		"multi-byte": strings.Repeat("é", 100) + "...",
+	} {
+		row := retrying.failureReason(t.Context(), "c1", reason)
+		toasts["row of kiro-cli's longest reason, "+name] = row
+		if !strings.HasSuffix(row, ". "+command.CompactRetryNote+".") || !utf8.ValidString(row) {
+			t.Errorf("%s row = %q, want valid text ending in the whole retry sentence", name, row)
+		}
 	}
 	for name, text := range toasts {
 		if n := len([]rune(text)); n > capChars {
@@ -592,8 +612,11 @@ func TestCompaction_AFailedAttemptLogsWarnWithItsReason(t *testing.T) {
 	})
 }
 
-// retryWording is what the brief requires a failure over the point to say.
+// retryWording is the retry sentence (command.CompactRetryNote) a failure over the point carries.
 const retryWording = "tries again at the end of the next turn"
+
+// retryingRow is the row of a failure over the point whose reason is cause.
+func retryingRow(cause string) string { return cause + ". " + command.CompactRetryNote + "." }
 
 // failedRows is the reasons of the chat's compaction_failed entries, in log order.
 func failedRows(t *testing.T, cs *testChatStore, chatID marotte.ChatID) []string {
@@ -622,8 +645,26 @@ func TestAutoCompact_ARefusalLeavesOneFailedRow(t *testing.T) {
 		runPrompt(t, h, cs, "c1", "m-2")
 
 		waitFor(t, func() bool { return calls.count() == 1 && len(failedRows(t, cs, "c1")) == 1 })
-		if got := failedRows(t, cs, "c1"); !strings.Contains(got[0], retryWording) {
-			t.Errorf("row reason = %q, want it to say marotte %s", got[0], retryWording)
+		if got, want := failedRows(t, cs, "c1")[0], retryingRow(compactNotRunCauses); got != want {
+			t.Errorf("row reason = %q, want %q", got, want)
+		}
+	})
+	t.Run("a call that errored", func(t *testing.T) {
+		const cause = "the call to kiro-cli failed or timed out"
+		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+		calls := onCompactor(h, 90, true, 95)
+		calls.mu.Lock()
+		calls.err = errors.New("the pipe broke")
+		calls.mu.Unlock()
+
+		runPrompt(t, h, cs, "c1", "m-2")
+
+		waitFor(t, func() bool { return len(failedRows(t, cs, "c1")) == 1 && len(calls.toasts()) == 1 })
+		if got, want := failedRows(t, cs, "c1")[0], retryingRow(cause); got != want {
+			t.Errorf("row reason = %q, want %q", got, want)
+		}
+		if got := calls.toasts()[0]; !strings.Contains(got, cause) || strings.Contains(got, compactNotRunCauses) {
+			t.Errorf("toast = %q, want it to name %q, not the refusal's causes", got, cause)
 		}
 	})
 	t.Run("under the point", func(t *testing.T) {
@@ -664,7 +705,119 @@ func TestAutoCompact_ASummaryKiroCliReportsFailedLeavesOneRow(t *testing.T) {
 	waitFor(t, func() bool { return len(failedRows(t, cs, "c1")) >= 1 })
 	staysFalse(t, 100*time.Millisecond, func() bool { return len(failedRows(t, cs, "c1")) != 1 },
 		"the attempt left more than one row")
-	if got := failedRows(t, cs, "c1")[0]; !strings.Contains(got, "model error") || !strings.Contains(got, retryWording) {
-		t.Errorf("row reason = %q, want kiro-cli's reason and the retry", got)
+	if got, want := failedRows(t, cs, "c1")[0], retryingRow("model error"); got != want {
+		t.Errorf("row reason = %q, want %q", got, want)
+	}
+}
+
+// An attempt the chat's close ended leaves no row and no toast: no later turn end of that life tries again.
+func TestAutoCompact_AnAttemptTheChatsCloseEndedLeavesNoRow(t *testing.T) {
+	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+	calls := onCompactor(h, 90, true, 95)
+	calls.err = marotte.ErrChatClosedDuringCall
+
+	runPrompt(t, h, cs, "c1", "m-2")
+
+	waitFor(t, func() bool { return calls.count() == 1 && !listLive(h, "c1") })
+	staysFalse(t, 100*time.Millisecond, func() bool { return len(failedRows(t, cs, "c1")) != 0 || len(calls.toasts()) != 0 },
+		"the closed chat's attempt left a row or a toast")
+}
+
+// An attempt requeued behind kiro-cli's turn after kiro-cli reported its summary failed is a new attempt: its own
+// bare refusal leaves its own row, after kiro-cli's.
+func TestAutoCompact_ARequeuedAttemptAfterAReportedFailureLeavesItsOwnRow(t *testing.T) {
+	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+	calls := onCompactor(h, 90, true, 95)
+	release := holdCall(t, br, marotte.MethodSessionCompact)
+	h.coord.autoCompact.compact = func(ctx context.Context, b command.CompactBridge) (bool, uint64, error) {
+		_, _, _ = b.CallAt(ctx, marotte.MethodSessionCompact, map[string]any{})
+		calls.mu.Lock()
+		defer calls.mu.Unlock()
+		calls.calls++
+		return false, 0, nil
+	}
+	out := make(chan command.CompactOutcome, 1)
+	go func() {
+		o, _ := h.RequestCompact(context.WithoutCancel(t.Context()), "c1")
+		out <- o
+	}()
+	waitForCall(t, br, marotte.MethodSessionCompact)
+	br.deliver(newTurnStartMsg())
+	waitFor(t, func() bool { return slices.Contains(runStates(t, cs, "c1"), "wire running") })
+	br.deliver(newSessionInfoMsg(map[string]any{"summarization": map[string]any{"status": "model error"}}))
+	waitFor(t, func() bool { return len(failedRows(t, cs, "c1")) == 1 })
+	release()
+	if got := <-out; got != command.CompactQueued {
+		t.Fatalf("Setup: /compact answered %v, want queued behind kiro-cli's turn", got)
+	}
+
+	br.deliver(newTurnEndMsg("end_turn"))
+
+	waitFor(t, func() bool { return calls.count() == 2 && !listLive(h, "c1") })
+	staysFalse(t, 100*time.Millisecond, func() bool { return len(failedRows(t, cs, "c1")) > 2 },
+		"the two attempts left more than two rows")
+	got := failedRows(t, cs, "c1")
+	if len(got) != 2 {
+		t.Fatalf("rows = %q, want kiro-cli's then the requeued attempt's", got)
+	}
+	if !strings.Contains(got[0], "model error") {
+		t.Errorf("first row = %q, want kiro-cli's reason", got[0])
+	}
+	if want := retryingRow(compactNotRunCauses); got[1] != want {
+		t.Errorf("second row = %q, want %q", got[1], want)
+	}
+}
+
+// withCompactionRowHook runs fn once, the first time a failed compaction's row is about to be written.
+func withCompactionRowHook(t *testing.T, fn func(marotte.ChatID)) {
+	t.Helper()
+	var once sync.Once
+	prev := testHookBeforeCompactionRow
+	testHookBeforeCompactionRow = func(chatID marotte.ChatID) { once.Do(func() { fn(chatID) }) }
+	t.Cleanup(func() { testHookBeforeCompactionRow = prev })
+}
+
+// A message sent as a refused compaction ends goes behind that compaction's row: the attempt's "Compaction failed"
+// mark sits ahead of the message's turn, never inside it.
+func TestAutoCompact_AFailedRowLandsAheadOfTheTurnQueuedBehindIt(t *testing.T) {
+	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+	calls := onCompactor(h, 90, true, 95)
+	calls.setRefuse(true)
+	withCompactionRowHook(t, func(chatID marotte.ChatID) {
+		rec := postCmd(t, h, marotte.ClientCommand{
+			Type: marotte.CmdPrompt, ChatID: chatID, Payload: json.RawMessage(`{"text":"sent as it ends","message_id":"m-behind"}`),
+		})
+		if rec.Code != 200 {
+			t.Errorf("Setup: prompt = %d %s", rec.Code, rec.Body.String())
+		}
+		// Long enough for a turn the wake started to open before the row is written.
+		deadline := time.Now().Add(300 * time.Millisecond)
+		for !h.coord.turns.live(chatID) && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+	})
+
+	if out, _ := h.RequestCompact(t.Context(), "c1"); out != command.CompactRefusedRetrying {
+		t.Fatalf("Setup: press = %v, want refused, retrying", out)
+	}
+
+	waitFor(t, func() bool { return slices.Contains(promptIDs(t, cs, "c1"), "m-behind") && !listLive(h, "c1") })
+	row, open := -1, -1
+	for i, e := range logOf(t, cs, "c1") {
+		switch e.Kind {
+		case marotte.EntryKindCompactionFailed:
+			if row < 0 {
+				row = i
+			}
+		case marotte.EntryKindTurnOpen:
+			var o marotte.EntryTurnOpen
+			decodePayload(t, e, &o)
+			if o.Prompt != nil && o.Prompt.ID == "m-behind" {
+				open = i
+			}
+		}
+	}
+	if row < 0 || open < 0 || row > open {
+		t.Errorf("first row at %d, m-behind's turn opens at %d; want the row first", row, open)
 	}
 }
