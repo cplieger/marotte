@@ -86,7 +86,7 @@ function rowFor(input: FallbackRowInput): ModelFallback | null {
 /** The row, or null while the Model fallback switch is off, for Auto, or when KAS states no fallback
  *  for the model and an account is signed in; signed out or with an API key, a read-only row.
  *  `onSettled` runs when the last write the row sent settles. */
-export function buildFallbackRow(
+function buildFallbackRow(
   input: FallbackRowInput,
   host: FallbackHost,
   onSettled: () => void,
