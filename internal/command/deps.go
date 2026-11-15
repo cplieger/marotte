@@ -267,11 +267,12 @@ type AskReply interface {
 	Respond(ctx context.Context, result any) (AnswerOutcome, error)
 }
 
-// profileReloader applies one chat's security profile move after its header names to.
-type profileReloader interface {
-	// ChatProfileChanged returns at once: it reloads the chat's resident session on to and records the move in the
-	// chat where the agent starts running under it. A chat with no resident session opens on to at its next door.
-	ChatProfileChanged(chatID marotte.ChatID, from, to string)
+// profileMover moves one chat's security profile.
+type profileMover interface {
+	// MoveChatProfile writes to as chatID's profile, reporting whether the chat exists (an unknown one is not created)
+	// and whether its profile changed. A change reloads the chat's resident session on to in the background and records
+	// the move where the agent starts running under it; a chat with no resident session opens on to at its next door.
+	MoveChatProfile(ctx context.Context, chatID marotte.ChatID, to string) (found, changed bool, err error)
 }
 
 // terminalAccess is the interrupt's process half: a turn cancel must reach
@@ -823,10 +824,10 @@ type Roles struct {
 	// Impact reads what closing a chat stops, for a confirmation's check.
 	Impact closeImpactReader
 	Perms  pendingPermAccess
-	// ProfileReloads applies a chat's security profile change to its resident session.
-	ProfileReloads profileReloader
-	Terminals      terminalAccess
-	Stops          turnStopper
+	// ProfileMoves writes a chat's security profile and applies the move to its resident session.
+	ProfileMoves profileMover
+	Terminals    terminalAccess
+	Stops        turnStopper
 	// Notices is the notice ledger: a tab's ack ends what it covers, and a tab's last close forgets it.
 	Notices noticeLedger
 	// Tabs is the open-tab set, and it may be nil: a build with no config

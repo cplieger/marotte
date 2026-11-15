@@ -1,7 +1,8 @@
 // The chat-options menu, and the test a row of its own has to pass: it would earn a
 // prompt-row slot by changing per MESSAGE, which none of them do. Every row is built
-// here; static/index.html carries an empty card. The pills the prompt row has no room
-// for (pill-row-fit.ts) come first, then the actions, the two switches last.
+// here; static/index.html carries an empty card. The chat strip comes first, then the
+// pills the prompt row has no room for (pill-row-fit.ts), then the actions, then the
+// Supervised mode switch.
 
 import { el, effect } from "@cplieger/reactive";
 import { $ } from "./dom.js";

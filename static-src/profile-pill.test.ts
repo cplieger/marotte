@@ -72,14 +72,14 @@ const live = await vi.hoisted(async () => {
   const { signal } = await import("@cplieger/reactive");
   return {
     active: signal<{ id: string; security_profile?: string } | undefined>(undefined),
-    busy: signal(false),
+    busy: signal<ReadonlySet<string>>(new Set()),
   };
 });
 vi.mock("./store.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   activeSession: live.active,
   getActive: () => live.active.peek(),
-  watchBusy: () => live.busy.value,
+  watchBusy: (chatID: string) => live.busy.value.has(chatID),
 }));
 
 const { initProfilePill, profileNote, profileSelect } = await import("./profile-pill.js");
@@ -120,24 +120,55 @@ async function open(): Promise<void> {
   await flush();
 }
 
-/** `setChatProfile` as the pill sees it: the pick shows on the chat at once, and a refusal puts the old one back. */
-function answerPicks(outcome: Promise<Outcome>): void {
-  mocks.dispatch.mockImplementation(({ profile }) => {
-    const before = live.active.peek();
-    if (before !== undefined) {
-      live.active.value = { ...before, security_profile: profile };
+/** `setChatProfile` as the pill sees it: the pick shows on its chat at once, and a refusal puts the old one back. */
+function settlePick(chatID: string, profile: string, outcome: Promise<Outcome>): Handle {
+  const before = live.active.peek();
+  const prev = before?.id === chatID ? before.security_profile : undefined;
+  if (before?.id === chatID) {
+    live.active.value = { ...before, security_profile: profile };
+  }
+  const settled = outcome.then((o) => {
+    const now = live.active.peek();
+    if (o.status === "error" && now?.id === chatID) {
+      live.active.value = prev === undefined ? { id: chatID } : { ...now, security_profile: prev };
     }
-    const settled = outcome.then((o) => {
-      if (o.status === "error") {
-        live.active.value = before;
-      }
-      return o;
-    });
-    return Object.assign(
-      settled.then(() => undefined),
-      { outcome: settled, abort: vi.fn() },
-    );
+    return o;
   });
+  return Object.assign(
+    settled.then(() => undefined),
+    { outcome: settled, abort: vi.fn() },
+  );
+}
+function answerPicks(outcome: Promise<Outcome>): void {
+  mocks.dispatch.mockImplementation(({ chatID, profile }) => settlePick(chatID, profile, outcome));
+}
+/** Each pick waits for its own answer: the returned functions accept or refuse the nth pick sent. */
+function answerEachPick(): { accept: (n: number) => void; refuse: (n: number) => void } {
+  const answers: ((o: Outcome) => void)[] = [];
+  mocks.dispatch.mockImplementation(({ chatID, profile }) =>
+    settlePick(
+      chatID,
+      profile,
+      new Promise((resolve) => {
+        answers.push(resolve);
+      }),
+    ),
+  );
+  const answer = (n: number, o: Outcome): void => {
+    const resolve = answers[n];
+    if (resolve === undefined) {
+      throw new Error(`no pick ${String(n)} was sent`);
+    }
+    resolve(o);
+  };
+  return {
+    accept: (n) => {
+      answer(n, { status: "success", value: undefined });
+    },
+    refuse: (n) => {
+      answer(n, { status: "error", error: new Error("refused") });
+    },
+  };
 }
 
 function rowIds(): (string | undefined)[] {
@@ -156,7 +187,7 @@ beforeEach(async () => {
   mocks.apiGetTyped.mockResolvedValue(view());
   answerPicks(Promise.resolve({ status: "success", value: undefined }));
   mocks.confirm.mockResolvedValue(true);
-  live.busy.value = false;
+  live.busy.value = new Set();
   live.active.value = { id: "c-1" };
   if (!initialised) {
     initProfilePill();
@@ -254,7 +285,7 @@ describe("picking a profile", () => {
 
 describe("the card's notes", () => {
   it("says a pick applies after the turn while one runs", async () => {
-    live.busy.value = true;
+    live.busy.value = new Set(["c-1"]);
     await open();
     expect(notes()).toContain("Applies after this turn");
   });
@@ -329,7 +360,7 @@ describe("a pick made during a turn", () => {
   const PENDING = /applies after this turn/i;
 
   it("shows the picked profile at once, marked as waiting for the turn", async () => {
-    live.busy.value = true;
+    live.busy.value = new Set(["c-1"]);
     await open();
     row("read-only").click();
     await flush();
@@ -342,12 +373,12 @@ describe("a pick made during a turn", () => {
   });
 
   it("drops the mark when the turn ends and the chat reloads on it", async () => {
-    live.busy.value = true;
+    live.busy.value = new Set(["c-1"]);
     await open();
     row("read-only").click();
     await flush();
     expect(pill().classList.contains("pending")).toBe(true);
-    live.busy.value = false;
+    live.busy.value = new Set();
     await flush();
     expect(pill().classList.contains("pending")).toBe(false);
     expect(pill().getAttribute("aria-label")).toBe("Security profile, currently Read-only");
@@ -363,7 +394,7 @@ describe("a pick made during a turn", () => {
         };
       }),
     );
-    live.busy.value = true;
+    live.busy.value = new Set(["c-1"]);
     await open();
     row("read-only").click();
     await flush();
@@ -385,7 +416,7 @@ describe("a pick made during a turn", () => {
   });
 
   it("marks only the chat the pick was made in", async () => {
-    live.busy.value = true;
+    live.busy.value = new Set(["c-1"]);
     await open();
     row("read-only").click();
     await flush();
@@ -396,7 +427,7 @@ describe("a pick made during a turn", () => {
   });
 
   it("keeps a chat's mark while a pick in another busy chat waits too", async () => {
-    live.busy.value = true;
+    live.busy.value = new Set(["c-1", "c-2"]);
     await open();
     row("read-only").click();
     await flush();
@@ -409,6 +440,89 @@ describe("a pick made during a turn", () => {
     await flush();
     expect(pill().classList.contains("pending"), "the first chat's mark").toBe(true);
     expect(pill().getAttribute("aria-label")).toMatch(PENDING);
+  });
+
+  async function pickRow(id: string): Promise<void> {
+    await open();
+    row(id).click();
+    await flush();
+  }
+  function shown(): string {
+    return document.getElementById("profile-pill-label")?.textContent ?? "";
+  }
+
+  it("keeps the newer pick's mark when the server refuses an earlier one", async () => {
+    const server = answerEachPick();
+    live.busy.value = new Set(["c-1"]);
+    await pickRow("read-only");
+    await pickRow("guarded");
+    server.refuse(0);
+    await flush();
+    expect(shown()).toBe("Guarded");
+    expect(pill().classList.contains("pending")).toBe(true);
+    expect(pill().getAttribute("aria-label")).toBe(
+      "Security profile, Guarded, applies after this turn",
+    );
+  });
+
+  it("keeps a re-picked profile's mark when the server refuses its first pick", async () => {
+    const server = answerEachPick();
+    live.busy.value = new Set(["c-1"]);
+    await pickRow("read-only");
+    await pickRow("guarded");
+    await pickRow("read-only");
+    server.refuse(0);
+    await flush();
+    expect(shown()).toBe("Read-only");
+    expect(pill().getAttribute("aria-label")).toBe(
+      "Security profile, Read-only, applies after this turn",
+    );
+  });
+
+  it("goes back to the accepted pick, still marked, when the server refuses the next", async () => {
+    const server = answerEachPick();
+    live.busy.value = new Set(["c-1"]);
+    await pickRow("read-only");
+    server.accept(0);
+    await flush();
+    await pickRow("guarded");
+    server.refuse(1);
+    await flush();
+    expect(shown()).toBe("Read-only");
+    expect(pill().getAttribute("aria-label")).toBe(
+      "Security profile, Read-only, applies after this turn",
+    );
+  });
+
+  it("settles a refusal in its own chat only", async () => {
+    const server = answerEachPick();
+    live.busy.value = new Set(["c-1", "c-2"]);
+    await pickRow("read-only");
+    live.active.value = { id: "c-2", security_profile: "trusted" };
+    await pickRow("guarded");
+    server.refuse(1);
+    await flush();
+    expect(pill().classList.contains("pending"), "c-2's refused pick").toBe(false);
+    expect(shown()).toBe("Trusted");
+    live.active.value = { id: "c-1", security_profile: "read-only" };
+    await flush();
+    expect(pill().getAttribute("aria-label")).toBe(
+      "Security profile, Read-only, applies after this turn",
+    );
+  });
+
+  it("drops only the mark of the chat whose turn ended", async () => {
+    live.busy.value = new Set(["c-1", "c-2"]);
+    await pickRow("read-only");
+    live.active.value = { id: "c-2", security_profile: "trusted" };
+    await pickRow("guarded");
+    live.busy.value = new Set(["c-1"]);
+    await flush();
+    expect(pill().classList.contains("pending"), "c-2, whose turn ended").toBe(false);
+    expect(pill().getAttribute("aria-label")).toBe("Security profile, currently Guarded");
+    live.active.value = { id: "c-1", security_profile: "read-only" };
+    await flush();
+    expect(pill().classList.contains("pending"), "c-1, whose turn runs").toBe(true);
   });
 });
 
@@ -467,14 +581,14 @@ describe("the profile select the Chat options card shows in the pill's place", (
 
   it("marks a pick made during a turn as waiting, as the pill does, and says why", async () => {
     const select = mountSelect();
-    live.busy.value = true;
+    live.busy.value = new Set(["c-1"]);
     await flush();
     expect(profileNote()).toBe("Applies after this turn");
     pick(select, "guarded");
     await flush();
     expect(select.classList.contains("pending"), "the select's pending mark").toBe(true);
     expect(pill().classList.contains("pending"), "the pill's, the same state").toBe(true);
-    live.busy.value = false;
+    live.busy.value = new Set();
     await flush();
     expect(select.classList.contains("pending")).toBe(false);
     expect(profileNote()).toBe("");
@@ -578,14 +692,14 @@ describe("each profile's shield", () => {
     await open();
     expect(pillShield(), "an idle pick").toBe(rowShield("read-only"));
 
-    live.busy.value = true;
+    live.busy.value = new Set(["c-1"]);
     await flush();
     row("guarded").click();
     await flush();
     await open();
     expect(pillShield(), "a pick waiting for the turn").toBe(rowShield("guarded"));
 
-    live.busy.value = false;
+    live.busy.value = new Set();
     live.active.value = { id: "c-1", security_profile: "guarded" };
     await flush();
     expect(pillShield(), "the reload landed").toBe(rowShield("guarded"));

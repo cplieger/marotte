@@ -1,25 +1,32 @@
 package command
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"slices"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/policyfile"
-	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 type profileMove struct {
-	chatID   marotte.ChatID
-	from, to string
+	chatID marotte.ChatID
+	to     string
 }
 
-type reloadRecorder struct{ reloaded []profileMove }
+// moveRecorder answers every move with found and err, and changed for every found chat.
+type moveRecorder struct {
+	moves []profileMove
+	found bool
+	err   error
+}
 
-func (r *reloadRecorder) ChatProfileChanged(chatID marotte.ChatID, from, to string) {
-	r.reloaded = append(r.reloaded, profileMove{chatID: chatID, from: from, to: to})
+func (r *moveRecorder) MoveChatProfile(_ context.Context, chatID marotte.ChatID, to string) (found, changed bool, err error) {
+	r.moves = append(r.moves, profileMove{chatID: chatID, to: to})
+	return r.found, r.found && r.err == nil, r.err
 }
 
 func profileReq(t *testing.T, chatID marotte.ChatID, profile string) *marotte.ClientCommand {
@@ -31,33 +38,15 @@ func profileReq(t *testing.T, chatID marotte.ChatID, profile string) *marotte.Cl
 	return &marotte.ClientCommand{Type: marotte.CmdSetSecurityProfile, ChatID: chatID, Payload: payload}
 }
 
-func chatProfile(t *testing.T, store chatStore, id marotte.ChatID) string {
-	t.Helper()
-	c, ok := store.Get(t.Context(), id)
-	if !ok {
-		t.Fatalf("chat %s is gone", id)
-	}
-	return c.SecurityProfile
-}
+func TestCmdSetSecurityProfile_MovesThatChatAndAnswersTheProfile(t *testing.T) {
+	r := &moveRecorder{found: true}
 
-func TestCmdSetSecurityProfile_WritesTheHeaderAndReloadsOnlyThatChat(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedEmptyChat(t, store, "c1")
-	seedEmptyChat(t, store, "c2")
-	r := &reloadRecorder{}
-
-	out, err := cmdSetSecurityProfile(t.Context(), store, r, profileReq(t, "c1", policyfile.ProfileReadOnly))
+	out, err := cmdSetSecurityProfile(t.Context(), r, profileReq(t, "c1", policyfile.ProfileReadOnly))
 	if err != nil {
 		t.Fatalf("cmdSetSecurityProfile = %v", err)
 	}
-	if got := chatProfile(t, store, "c1"); got != policyfile.ProfileReadOnly {
-		t.Errorf("c1 security_profile = %q, want %q", got, policyfile.ProfileReadOnly)
-	}
-	if got := chatProfile(t, store, "c2"); got != "" {
-		t.Errorf("c2 security_profile = %q, want it untouched", got)
-	}
-	if want := []profileMove{{chatID: "c1", from: "", to: policyfile.ProfileReadOnly}}; !slices.Equal(r.reloaded, want) {
-		t.Errorf("moves = %+v, want %+v", r.reloaded, want)
+	if want := []profileMove{{chatID: "c1", to: policyfile.ProfileReadOnly}}; !slices.Equal(r.moves, want) {
+		t.Errorf("moves = %+v, want %+v", r.moves, want)
 	}
 	raw, _ := json.Marshal(out)
 	var resp struct {
@@ -68,73 +57,45 @@ func TestCmdSetSecurityProfile_WritesTheHeaderAndReloadsOnlyThatChat(t *testing.
 	}
 }
 
-func TestCmdSetSecurityProfile_TheSameProfileReloadsNothing(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedEmptyChat(t, store, "c1")
-	r := &reloadRecorder{}
-	if _, err := cmdSetSecurityProfile(t.Context(), store, r, profileReq(t, "c1", policyfile.ProfileTrusted)); err != nil {
-		t.Fatalf("Setup: %v", err)
-	}
-	r.reloaded = nil
-
-	if _, err := cmdSetSecurityProfile(t.Context(), store, r, profileReq(t, "c1", policyfile.ProfileTrusted)); err != nil {
-		t.Fatalf("cmdSetSecurityProfile = %v", err)
-	}
-
-	if len(r.reloaded) != 0 {
-		t.Errorf("reloaded = %v for an unchanged profile, want none", r.reloaded)
-	}
-}
-
-func TestCmdSetSecurityProfile_AMoveNamesTheProfileItLeaves(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedEmptyChat(t, store, "c1")
-	r := &reloadRecorder{}
-	if _, err := cmdSetSecurityProfile(t.Context(), store, r, profileReq(t, "c1", policyfile.ProfileTrusted)); err != nil {
-		t.Fatalf("Setup: %v", err)
-	}
-	r.reloaded = nil
-
-	if _, err := cmdSetSecurityProfile(t.Context(), store, r, profileReq(t, "c1", policyfile.ProfileGuarded)); err != nil {
-		t.Fatalf("cmdSetSecurityProfile = %v", err)
-	}
-
-	want := []profileMove{{chatID: "c1", from: policyfile.ProfileTrusted, to: policyfile.ProfileGuarded}}
-	if !slices.Equal(r.reloaded, want) {
-		t.Errorf("moves = %+v, want %+v", r.reloaded, want)
-	}
-}
-
-func TestCmdSetSecurityProfile_RefusesWithoutWritingOrReloading(t *testing.T) {
+func TestCmdSetSecurityProfile_RefusesWithoutMoving(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		chatID  marotte.ChatID
 		profile string
-		want    int
 	}{
-		{name: "unknown profile", chatID: "c1", profile: "wide-open", want: http.StatusBadRequest},
-		{name: "empty profile", chatID: "c1", profile: "", want: http.StatusBadRequest},
-		{name: "run chat", chatID: "run:wf-1", profile: policyfile.ProfileReadOnly, want: http.StatusBadRequest},
-		{name: "unknown chat", chatID: "nope", profile: policyfile.ProfileReadOnly, want: http.StatusNotFound},
+		{name: "unknown profile", chatID: "c1", profile: "wide-open"},
+		{name: "empty profile", chatID: "c1", profile: ""},
+		{name: "run chat", chatID: "run:wf-1", profile: policyfile.ProfileReadOnly},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			store := testsupport.NewInMemoryChatStore()
-			seedEmptyChat(t, store, "c1")
-			r := &reloadRecorder{}
+			r := &moveRecorder{found: true}
 
-			_, err := cmdSetSecurityProfile(t.Context(), store, r, profileReq(t, tc.chatID, tc.profile))
+			_, err := cmdSetSecurityProfile(t.Context(), r, profileReq(t, tc.chatID, tc.profile))
+
+			if got := statusOf(err); got != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d (err %v)", got, http.StatusBadRequest, err)
+			}
+			if len(r.moves) != 0 {
+				t.Errorf("moves = %+v after a refusal, want none", r.moves)
+			}
+		})
+	}
+}
+
+func TestCmdSetSecurityProfile_AnswersWhatTheMoveFound(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		r    *moveRecorder
+		want int
+	}{
+		{name: "unknown chat", r: &moveRecorder{}, want: http.StatusNotFound},
+		{name: "store failure", r: &moveRecorder{found: true, err: errors.New("disk full")}, want: http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := cmdSetSecurityProfile(t.Context(), tc.r, profileReq(t, "c1", policyfile.ProfileReadOnly))
 
 			if got := statusOf(err); got != tc.want {
-				t.Fatalf("status = %d, want %d (err %v)", got, tc.want, err)
-			}
-			if got := chatProfile(t, store, "c1"); got != "" {
-				t.Errorf("c1 security_profile = %q after a refusal, want it untouched", got)
-			}
-			if _, ok := store.Get(t.Context(), tc.chatID); ok && tc.chatID != "c1" {
-				t.Errorf("a refusal created chat %s", tc.chatID)
-			}
-			if len(r.reloaded) != 0 {
-				t.Errorf("reloaded = %v after a refusal, want none", r.reloaded)
+				t.Errorf("status = %d, want %d (err %v)", got, tc.want, err)
 			}
 		})
 	}

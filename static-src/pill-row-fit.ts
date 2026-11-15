@@ -39,7 +39,8 @@ export function watchPillRow(
       fit();
     }
   });
-  // Only class and hidden move a control's width here; the rest (names, tooltips, --ctx-ink) would re-fit for nothing.
+  // Among attributes only class and hidden move a control's width (names, tooltips and --ctx-ink do not); text stays
+  // observed because the task list's count is a text node.
   mo.observe(row, {
     subtree: true,
     childList: true,

@@ -29,8 +29,14 @@ const BUSY_NOTE = "Applies after this turn";
 const SAVED_RULES_NOTE = "Your saved rules still apply";
 
 const view = signal<SecurityProfileView | null>(null);
-/** Per chat, a pick made during its turn, until that turn ends or the server refuses it. */
-const queued = signal<ReadonlyMap<string, string>>(new Map());
+/** One pick made during its chat's turn. Its identity names it to the request that settles it, since two picks can
+ *  name one profile. */
+interface PendingPick {
+  readonly profile: string;
+}
+/** Per chat, the picks made during its turn in pick order, each until the turn ends or the server refuses that pick.
+ *  The newest is the profile the chat moves to; an earlier accepted pick stands behind a refused newer one. */
+const pending = signal<ReadonlyMap<string, readonly PendingPick[]>>(new Map());
 let reading: AbortController | null = null;
 let nav: RovingFocusController | null = null;
 
@@ -60,6 +66,25 @@ function profileOf(s: Session | undefined, v: SecurityProfileView | null): strin
   return own !== "" ? own : (v?.default ?? "");
 }
 
+/** What the pill names for s: its newest pending pick, else the profile it runs. */
+function shownProfile(
+  s: Session | undefined,
+  v: SecurityProfileView | null,
+  picks: ReadonlyMap<string, readonly PendingPick[]>,
+): string {
+  return (s !== undefined ? picks.get(s.id)?.at(-1)?.profile : undefined) ?? profileOf(s, v);
+}
+
+function setPicks(chatID: string, picks: readonly PendingPick[]): void {
+  const next = new Map(pending.peek());
+  if (picks.length > 0) {
+    next.set(chatID, picks);
+  } else {
+    next.delete(chatID);
+  }
+  pending.value = next;
+}
+
 /** The profiles a chat is offered: Custom only where Settings starts new chats on it or the chat already runs it. */
 function listedProfiles(v: SecurityProfileView | null, current: string): string[] {
   return (v?.profiles ?? [])
@@ -71,19 +96,19 @@ function listedProfiles(v: SecurityProfileView | null, current: string): string[
 export function profileSelect(id: string): HTMLSelectElement {
   const select = el("select", { id, className: "chat-opt-select" }) as HTMLSelectElement;
   let listed = "";
-  const current = (): string => profileOf(activeSession.peek(), view.peek());
+  const current = (): string => shownProfile(activeSession.peek(), view.peek(), pending.peek());
   effect(() => {
     const s = activeSession.value;
     const v = view.value;
-    const pending = s !== undefined && queued.value.has(s.id);
-    const now = profileOf(s, v);
+    const picks = pending.value;
+    const now = shownProfile(s, v, picks);
     const ids = listedProfiles(v, now);
     if (wireSignature(ids) !== listed) {
       listed = wireSignature(ids);
       select.replaceChildren(...ids.map((p) => el("option", { value: p }, profileLabel(p))));
     }
     select.value = now;
-    select.classList.toggle("pending", pending);
+    select.classList.toggle("pending", s !== undefined && picks.has(s.id));
   });
   select.addEventListener("change", () => {
     // A declined Unrestricted, or a pick with nowhere to go, leaves the chat as it was.
@@ -119,22 +144,26 @@ export function initProfilePill(): void {
   onSSE("permissions_changed", () => {
     void readView();
   });
+  // A chat's picks land together when its turn ends: the reload then runs the profile its header names.
   effect(() => {
-    const q = queued.value;
-    const landed = [...q.keys()].filter((chatID) => !watchBusy(chatID));
+    const picks = pending.value;
+    const landed = [...picks.keys()].filter((chatID) => !watchBusy(chatID));
     if (landed.length > 0) {
-      queued.value = new Map([...q].filter(([chatID]) => !landed.includes(chatID)));
+      pending.value = new Map([...picks].filter(([chatID]) => !landed.includes(chatID)));
     }
   });
   effect(() => {
     const s = activeSession.value;
-    paintPill(profileOf(s, view.value), s !== undefined && queued.value.has(s.id));
+    const picks = pending.value;
+    paintPill(shownProfile(s, view.value, picks), s !== undefined && picks.has(s.id));
   });
   // An open card follows the chat's turn and the server's answer.
   effect(() => {
     const s = activeSession.value;
     // eslint-disable-next-line @typescript-eslint/no-unused-expressions
     view.value;
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+    pending.value;
     if (s !== undefined) {
       watchBusy(s.id);
     }
@@ -172,7 +201,7 @@ function renderCard(): void {
   const list = byId("profile-list");
   list.setAttribute("role", "listbox");
   list.setAttribute("aria-label", "Security profile");
-  const current = profileOf(s, v);
+  const current = shownProfile(s, v, pending.peek());
   const saved = savedRulesStillApply(current, v?.saved_grants ?? false);
   const profiles = listedProfiles(v, current);
   // A repaint that changes nothing must not rebuild an open card: the rebuild takes focus off the row the user is on.
@@ -242,14 +271,15 @@ async function choose(id: string): Promise<void> {
   if (chatID === "") {
     return;
   }
+  const pick: PendingPick = { profile: id };
   if (untracked(() => watchBusy(chatID))) {
-    queued.value = new Map(queued.peek()).set(chatID, id);
+    setPicks(chatID, [...(pending.peek().get(chatID) ?? []), pick]);
   }
   const { outcome } = setChatProfile.dispatch({ chatID, profile: id });
-  // A later pick in the same chat owns the entry now; this refusal must not clear its mark.
-  if ((await outcome).status === "error" && queued.peek().get(chatID) === id) {
-    const next = new Map(queued.peek());
-    next.delete(chatID);
-    queued.value = next;
+  if ((await outcome).status === "error") {
+    setPicks(
+      chatID,
+      (pending.peek().get(chatID) ?? []).filter((p) => p !== pick),
+    );
   }
 }

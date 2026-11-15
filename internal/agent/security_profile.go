@@ -68,24 +68,41 @@ func (bc *bridgeCoordinator) pinSecurityProfile(ctx context.Context, chatID maro
 	rec.SecurityProfile = pinned
 }
 
-// ChatProfileChanged applies set_security_profile's move of chatID from from to to (command.profileReloader).
-func (rt *Runtime) ChatProfileChanged(chatID marotte.ChatID, from, to string) {
-	rt.coord.recordProfileSwitch(chatID, from, to)
-	rt.reloadChatProfile(chatID)
+// MoveChatProfile is set_security_profile's header write and its effects on chatID alone (command.profileMover).
+func (rt *Runtime) MoveChatProfile(ctx context.Context, chatID marotte.ChatID, to string) (found, changed bool, err error) {
+	found, changed, err = rt.coord.moveProfile(ctx, chatID, to)
+	if changed {
+		rt.reloadChatProfile(chatID)
+	}
+	return found, changed, err
 }
 
 // parkedProfiles holds, per chat, the profile a turn runs on while a pick made during it waits for the turn's close.
+// mu orders every header move against the land's header read, so each move is filed once.
 type parkedProfiles struct {
 	from map[marotte.ChatID]string
 	mu   sync.Mutex
 }
 
-// recordProfileSwitch files the profile_switched entry where the agent starts running under to: at once between
-// turns, else at the turn's close (landParkedProfile), since the reload waits for it. A finalizing turn and a standing
-// park both still owe that land, so either parks. The lock spans the check and the park, so the land finds it.
-func (bc *bridgeCoordinator) recordProfileSwitch(chatID marotte.ChatID, from, to string) {
+// moveProfile writes to into chatID's header and files the profile_switched entry where the agent starts running
+// under it: at once between turns, else at the turn's close (landParkedProfile), since the reload waits for it. A
+// finalizing turn and a standing park both still owe that land, so either parks.
+func (bc *bridgeCoordinator) moveProfile(ctx context.Context, chatID marotte.ChatID, to string) (found, changed bool, err error) {
 	p := &bc.parkedProfiles
 	p.mu.Lock()
+	from := ""
+	if _, err = bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
+		found = exists
+		if !exists || c.SecurityProfile == to {
+			return false
+		}
+		from, c.SecurityProfile = c.SecurityProfile, to
+		changed = true
+		return true
+	}); err != nil || !changed {
+		p.mu.Unlock()
+		return found, false, err
+	}
 	if _, parked := p.from[chatID]; parked || bc.turns.turnUnlanded(chatID) {
 		if !parked {
 			if p.from == nil {
@@ -94,10 +111,11 @@ func (bc *bridgeCoordinator) recordProfileSwitch(chatID marotte.ChatID, from, to
 			p.from[chatID] = from
 		}
 		p.mu.Unlock()
-		return
+		return found, true, nil
 	}
 	p.mu.Unlock()
-	bc.appendProfileSwitched(context.Background(), chatID, from, to)
+	bc.appendProfileSwitched(ctx, chatID, from, to)
+	return found, true, nil
 }
 
 // landParkedProfile files a closed turn's parked move against the profile the chat ends it on, and nothing when the
@@ -107,12 +125,16 @@ func (bc *bridgeCoordinator) landParkedProfile(ctx context.Context, chatID marot
 	p.mu.Lock()
 	from, parked := p.from[chatID]
 	delete(p.from, chatID)
-	p.mu.Unlock()
-	if !parked {
-		return
+	to, ok := "", false
+	if parked {
+		var rec *marotte.Chat
+		if rec, ok = bc.chatStore.Get(ctx, chatID); ok {
+			to = rec.SecurityProfile
+		}
 	}
-	if rec, ok := bc.chatStore.Get(ctx, chatID); ok && rec.SecurityProfile != from {
-		bc.appendProfileSwitched(ctx, chatID, from, rec.SecurityProfile)
+	p.mu.Unlock()
+	if ok && to != from {
+		bc.appendProfileSwitched(ctx, chatID, from, to)
 	}
 }
 
