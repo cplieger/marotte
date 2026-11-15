@@ -34,7 +34,7 @@ func (h EntryHeader) Read(ctx context.Context) (*marotte.Chat, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	f, info, err := openChatFile(h.path(), "chat header "+h.root)
+	f, info, err := openChatFile(h.path())
 	if err != nil {
 		return nil, err
 	}

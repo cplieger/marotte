@@ -18,7 +18,11 @@ import (
 // caller that already fetched the *sync.Mutex pointer, letting two
 // goroutines hold distinct mutexes for the same id.
 func (s *Store) lock(chatID marotte.ChatID) *sync.Mutex {
-	v, _ := s.locks.LoadOrStore(chatID, &sync.Mutex{})
+	// Load first: LoadOrStore's new mutex escapes even when the id already has one.
+	v, ok := s.locks.Load(chatID)
+	if !ok {
+		v, _ = s.locks.LoadOrStore(chatID, &sync.Mutex{})
+	}
 	//nolint:errcheck // LoadOrStore guarantees v is the stored *sync.Mutex.
 	return v.(*sync.Mutex)
 }

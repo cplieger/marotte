@@ -1656,7 +1656,7 @@ func (l *EntryLog) SnapshotTurns(turns []string, from uint64) (*TurnRead, error)
 	if len(held) == 0 {
 		return nil, nil
 	}
-	f, _, err := openChatFile(l.path(), "entry log "+l.root)
+	f, _, err := openChatFile(l.path())
 	if err != nil {
 		return nil, err
 	}
@@ -1699,7 +1699,7 @@ func (l *EntryLog) readSetLocked(set []string) ([]marotte.Entry, error) {
 		return nil, nil
 	}
 	want, ranges := l.rangesLocked(set)
-	f, _, err := openChatFile(l.path(), "entry log "+l.root)
+	f, _, err := openChatFile(l.path())
 	if err != nil {
 		return nil, err
 	}
