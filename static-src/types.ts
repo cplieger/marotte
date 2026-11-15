@@ -148,6 +148,7 @@ import type {
   EntryModelRouted,
   EntryModelSwitched,
   EntryPlan,
+  EntryProfileSwitched,
   EntryReconciled,
   EntrySafetyBlocked,
   EntrySteer,
@@ -200,6 +201,7 @@ export interface EntryPayload {
   model_routed: EntryModelRouted;
   model_fallback: EntryModelFallback;
   mode_switched: EntryModeSwitched;
+  profile_switched: EntryProfileSwitched;
   turn_revert: EntryTurnRevert;
   context_reset: EntryContextReset;
   reconciled: EntryReconciled;

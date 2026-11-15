@@ -77,25 +77,6 @@
     --c-red: oklch(79% 0.13 2.8deg);
     --c-yellow: oklch(91.9% 0.07 86.5deg);
 
-    /* The context indicator's compaction band: a NEUTRAL at the surface family's
-     * hue, sized per theme, a SEED rather than one mix over anything. It carries
-     * effectively no chroma, and that is what separates it from the fill: the
-     * fill's hues run 2.8-142.7deg continuously, so a band with chroma of its own
-     * reads as a point on that ramp — which is what the amber band this replaced
-     * was doing.
-     *
-     * L is then the one free axis, and it is boxed in from both sides. Above 3:1
-     * against the --c-border track and against the page (WCAG 1.4.11 for a
-     * graphical object) puts a floor under it here at L 58%; staying QUIETER than
-     * every hue the fill can take — a band as loud as the fill reads as
-     * already-filled — puts the ceiling where the quietest fill sits, --c-red at
-     * 6.294:1 against that track (5.561 before the ink ramp was authored against
-     * the hovered box, which moved every status ink AWAY from the surfaces and so
-     * only widened this window). Sitting well inside it: 4.11:1 vs the track,
-     * 6.29:1 vs the page, 0.1603 in OKLab from the nearest stroke the fill can
-     * emit (`css-contrast.py pair`, and context-wedge-contrast.node.test.ts). */
-    --c-context-wedge: oklch(66% 0.01 284.1deg);
-
     /* Seeds rather than alpha washes of the status hues: alpha moves LIGHTNESS,
      * and no alpha from 12% to 26% reaches AA in either theme. These hold the
      * pane's lightness and spend CHROMA instead. */
@@ -703,17 +684,6 @@
     --c-diff-add-bg: oklch(98% 0.035 142.7deg);
     --c-diff-del-bg: oklch(94% 0.03 2.8deg);
     --c-yellow: oklch(43.7% 0.09 86.5deg);
-
-    /* Sized against light's own track, which the band has to read DARKER than —
-     * see the dark declaration for the two sides the window is boxed in by. It is
-     * NARROWER here: light's fills are all mid-dark, so the quietest of them,
-     * --c-green at 5.372:1 against a near-white track, is the ceiling (it was
-     * --c-red at 4.086:1 and a window of L 52-56% before the ink ramp moved every
-     * light status ink down, which only widened it). The two themes' windows are
-     * adjacent and do NOT overlap, which is why this cannot collapse into one
-     * value. 3.46:1 vs that track, 4.85:1 vs the page, 0.1217 in OKLab from the
-     * nearest fill stroke. */
-    --c-context-wedge: oklch(54% 0.01 284.1deg);
 
     /* At the dark block's hues exactly — only L and C move, because dark's four
      * inks read 1.099-1.678:1 here. Chroma is a gamut fact: yellow cannot hold

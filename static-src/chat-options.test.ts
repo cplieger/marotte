@@ -115,6 +115,18 @@ vi.mock("./actions/runs.js", () => ({
 vi.mock("./submit.js", () => ({ submitPrompt }));
 vi.mock("./chat-commands.js", () => ({ sendPromptTo }));
 vi.mock("./transport.js", () => ({ send: transportSend, newMessageID: () => "m-1" }));
+// The pills' own selects, by the id the card names them with; role-picker-select.test.ts and
+// profile-pill.test.ts pin what each one lists and sends.
+const note = vi.hoisted(() => ({ text: "" }));
+vi.mock("./role-picker.js", () => ({
+  modeSelect: (id: string) => Object.assign(document.createElement("select"), { id }),
+}));
+vi.mock("./profile-pill.js", () => ({
+  profileSelect: (id: string) => Object.assign(document.createElement("select"), { id }),
+  profileNote: () => note.text,
+}));
+
+const { movedPills } = await import("./pill-row-fit.js");
 
 import type * as ChatOptionsModule from "./chat-options.js";
 
@@ -203,11 +215,14 @@ beforeEach(() => {
 });
 
 describe("the chat-options menu", () => {
-  // Six actions, then the switch: an addition or loss shows here. What Send does mid-turn is Settings, General.
-  it("holds exactly seven entries, the switch last", async () => {
+  // The two pills the prompt row can move here, six actions, then the switch: an addition or loss shows here. What
+  // Send does mid-turn is Settings, General.
+  it("holds exactly nine entries, the moved pills first and the switch last", async () => {
     const { card } = await mountMenu();
     const names = Array.from(card.querySelectorAll(".chat-opt-name")).map((n) => n.textContent);
     expect(names).toEqual([
+      "Mode",
+      "Security profile",
       "Attach a file",
       "Set a goal",
       "Start a tangent",
@@ -353,7 +368,8 @@ describe("attach a file", () => {
   // Against uploadLimitHint, not a copied numeral that could disagree with the pre-flight.
   it("states the upload cap on the row", async () => {
     const { card } = await mountMenu();
-    const hint = card.querySelector(".chat-opt-hint")?.textContent ?? "";
+    const hint =
+      rowButton(card, "Attach a file").querySelector(".chat-opt-hint")?.textContent ?? "";
     expect(hint).toContain(uploadLimitHint().toLowerCase());
     expect(hint).not.toContain("\u2014");
   });
@@ -734,10 +750,52 @@ describe("supervised mode", () => {
 
 // initChatOptions is called once from app.ts, but the latch is what makes a
 // second call safe — without it a re-init would append a second set of rows.
+describe("a pill the prompt row moved here", () => {
+  function selectRow(card: HTMLElement, id: string): HTMLElement {
+    const select = card.querySelector<HTMLSelectElement>(`select#${id}`);
+    if (select === null) {
+      throw new Error(`no select #${id}`);
+    }
+    return select.closest(".chat-opt-select-row") as HTMLElement;
+  }
+  const shownRows = (card: HTMLElement): string[] =>
+    ["chat-opt-mode", "chat-opt-profile"].filter(
+      (id) => !selectRow(card, id).classList.contains("hidden"),
+    );
+
+  it("shows Mode, then Security profile, only while the row has moved them, named by the pill's name", async () => {
+    movedPills.value = [];
+    const { card } = await mountMenu();
+    expect(shownRows(card)).toEqual([]);
+    movedPills.value = ["mode"];
+    expect(shownRows(card)).toEqual(["chat-opt-mode"]);
+    movedPills.value = ["mode", "profile"];
+    expect(shownRows(card)).toEqual(["chat-opt-mode", "chat-opt-profile"]);
+    const mode = card.querySelector<HTMLSelectElement>("select#chat-opt-mode")!;
+    const profile = card.querySelector<HTMLSelectElement>("select#chat-opt-profile")!;
+    expect([...mode.labels].map((l) => l.textContent)).toEqual(["Mode"]);
+    expect([...profile.labels].map((l) => l.textContent)).toEqual(["Security profile"]);
+    movedPills.value = [];
+    expect(shownRows(card), "both back on the row").toEqual([]);
+  });
+
+  it("says under the profile select that a pick waits for the running turn", async () => {
+    note.text = "Applies after this turn";
+    movedPills.value = ["mode", "profile"];
+    const { card } = await mountMenu();
+    const profile = card.querySelector<HTMLSelectElement>("select#chat-opt-profile")!;
+    const described = document.getElementById(profile.getAttribute("aria-describedby") ?? "");
+    expect(described?.textContent).toBe("Applies after this turn");
+    expect(described?.classList.contains("hidden")).toBe(false);
+    note.text = "";
+    movedPills.value = [];
+  });
+});
+
 describe("initChatOptions", () => {
   it("is idempotent", async () => {
     const { card, mod } = await mountMenu();
     mod.initChatOptions();
-    expect(card.querySelectorAll(".chat-opt-name")).toHaveLength(7);
+    expect(card.querySelectorAll(".chat-opt-name")).toHaveLength(9);
   });
 });

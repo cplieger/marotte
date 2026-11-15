@@ -169,6 +169,7 @@ function deriveFoldHides(t: Turn): boolean {
       case "safety_blocked":
       case "model_routed":
       case "mode_switched":
+      case "profile_switched":
       case "context_reset":
         return true;
       // A re-pin its fallback explains draws nothing, and the face keeps the fallback's line.

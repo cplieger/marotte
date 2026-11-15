@@ -336,7 +336,8 @@ func entrySegments(e *marotte.Entry, t *searchTurn, names map[string]string) []s
 	case marotte.EntryKindTurnWake:
 		return turnWakeSegments(e.Payload, names)
 	case marotte.EntryKindTurnBind, marotte.EntryKindCompaction,
-		marotte.EntryKindModelSwitched, marotte.EntryKindModeSwitched, marotte.EntryKindSteerDelivered,
+		marotte.EntryKindModelSwitched, marotte.EntryKindModeSwitched, marotte.EntryKindProfileSwitched,
+		marotte.EntryKindSteerDelivered,
 		marotte.EntryKindSteerCleared, marotte.EntryKindRunNamed, marotte.EntryKindContextReset,
 		marotte.EntryKindStepGraded:
 		// A compaction summary restates history searchable at its source, and a bind draws nothing. A switch or

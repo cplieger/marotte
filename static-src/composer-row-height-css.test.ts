@@ -8,8 +8,9 @@ import indexHtml from "../static/index.html?raw";
 
 import { buildAttachmentPill } from "./attachment-pill.js";
 import { el } from "@cplieger/reactive";
-import { ICON_QUEUE_UI, ICON_SEND } from "./icons.js";
+import { ICON_QUEUE_UI, ICON_SEND, ICON_STEER } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { watchPillRow } from "./pill-row-fit.js";
 import { BUTTON_BOX } from "./__test-helpers__/button-reference.js";
 import {
   allRules,
@@ -159,7 +160,17 @@ describe("the composer, measured at real viewport sizes", () => {
     styleEl = mountAppCSS();
   });
 
+  /** The row's fit, as app.ts installs it. */
+  let unwatch: (() => void) | undefined;
+
+  /** The fit answers a row change from its MutationObserver, a microtask after the change. */
+  async function fitted(): Promise<void> {
+    await Promise.resolve();
+  }
+
   afterEach(() => {
+    unwatch?.();
+    unwatch = undefined;
     document.body.innerHTML = "";
     document.documentElement.removeAttribute("data-pointer");
   });
@@ -197,6 +208,8 @@ describe("the composer, measured at real viewport sizes", () => {
     if (input === null || pills === null || pill === null) {
       throw new Error("the composer subtree did not mount");
     }
+    unwatch?.();
+    unwatch = watchPillRow(pills);
     const row = pills.getBoundingClientRect().height;
     const divider = Number.parseFloat(getComputedStyle(pills).borderTopWidth);
     return {
@@ -390,6 +403,7 @@ describe("the composer, measured at real viewport sizes", () => {
       const at = `${String(w)}x${String(h)} ${tier}`;
       const before = row.getBoundingClientRect().height;
       const { midTurn, cancel } = withMidTurnSend();
+      await fitted();
       const m = midTurn.getBoundingClientRect();
       const c = cancel.getBoundingClientRect();
       const r = row.getBoundingClientRect();
@@ -420,6 +434,7 @@ describe("the composer, measured at real viewport sizes", () => {
       await bandsAt(w, h, tier);
       const at = `${String(w)}x${String(h)} ${tier}`;
       const { midTurn, cancel } = withMidTurnSend();
+      await fitted();
       const role = document.getElementById("role-pill");
       const options = document.getElementById("chat-options-btn");
       if (role === null || options === null) {
@@ -465,7 +480,7 @@ describe("the composer, measured at real viewport sizes", () => {
     if (group === null || main === null || alt === null) {
       throw new Error("the composer subtree has no split pill");
     }
-    main.replaceChildren(el("span", { className: "send-btn-label" }, "Steer"), iconEl(ICON_SEND));
+    main.replaceChildren(el("span", { className: "send-btn-label" }, "Steer"), iconEl(ICON_STEER));
     alt.replaceChildren(iconEl(ICON_QUEUE_UI));
     group.hidden = false;
     group.classList.add("send-split-both");
@@ -476,16 +491,16 @@ describe("the composer, measured at real viewport sizes", () => {
 
   it("fits the split pill beside Cancel at every width, both halves one touch box under a coarse pointer", async () => {
     // From 390 up the worst case carries the task list; below, a phone's row holds it only by squeezing a neighbour.
-    // Under 24rem of row the context pill gives way, with or without the task list.
-    for (const [w, h, tier, tasks, contextGives] of [
-      [320, 568, "coarse", false, true],
-      [360, 740, "coarse", false, true],
-      [390, 844, "coarse", false, true],
-      [430, 932, "coarse", true, false],
-      [390, 844, "coarse", true, true],
-      [820, 1180, "coarse", true, false],
-      [1180, 820, "fine", true, false],
-      [1440, 900, "fine", true, false],
+    // The context pill never gives way.
+    for (const [w, h, tier, tasks] of [
+      [320, 568, "coarse", false],
+      [360, 740, "coarse", false],
+      [390, 844, "coarse", false],
+      [430, 932, "coarse", true],
+      [390, 844, "coarse", true],
+      [820, 1180, "coarse", true],
+      [1180, 820, "fine", true],
+      [1440, 900, "fine", true],
     ] as const) {
       await bandsAt(w, h, tier);
       document.getElementById("task-list-pill")?.classList.toggle("hidden", !tasks);
@@ -503,10 +518,9 @@ describe("the composer, measured at real viewport sizes", () => {
       const at = `${String(w)}x${String(h)} ${tier}${tasks ? " tasks" : ""}`;
       const before = row.getBoundingClientRect().height;
       const { main, alt, cancel } = withSplitPill();
+      await fitted();
       const gauge = document.getElementById("context-indicator");
-      expect(gauge?.getClientRects().length === 0, `${at}: the context pill gives way`).toBe(
-        contextGives,
-      );
+      expect(gauge?.getClientRects().length, `${at}: the context pill stays`).toBeGreaterThan(0);
       const shown = [...row.querySelectorAll<HTMLElement>("button")].filter(
         (b) => b.getClientRects().length > 0,
       );
@@ -558,6 +572,7 @@ describe("the composer, measured at real viewport sizes", () => {
     for (const tier of ["fine", "coarse"] as const) {
       await bandsAt(1440, 900, tier);
       const { main, alt, cancel } = withSplitPill();
+      await fitted();
       const ms = getComputedStyle(main);
       const as = getComputedStyle(alt);
       const radius = getComputedStyle(cancel).borderTopRightRadius;

@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 
 import { makeSession, makeTurn } from "./__test-helpers__/model.js";
-import { setActive, setSessions } from "./store.js";
+import { bumpMessages, setActive, setSessions } from "./store.js";
 import { initTaskListPill } from "./task-list.js";
 
 function mountPill(): { pill: HTMLButtonElement; popover: HTMLElement } {
@@ -58,5 +58,41 @@ describe("task list pill", () => {
     expect(popover.hidden).toBe(false);
     expect(popover.classList.contains("hidden")).toBe(false);
     expect(pill.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("names its open items in its accessible name and tooltip, which keep the count when the row drops it", () => {
+    const { pill } = mountPill();
+    const plan = (statuses: readonly ("pending" | "in_progress" | "completed")[]): void => {
+      setSessions([
+        makeSession({
+          turns: [
+            makeTurn({
+              body: [
+                {
+                  kind: "plan",
+                  payload: {
+                    entries: statuses.map((status, i) => ({
+                      content: `Step ${String(i)}`,
+                      priority: "medium",
+                      status,
+                    })),
+                  },
+                },
+              ],
+            }),
+          ],
+        }),
+      ]);
+      setActive("c-1");
+      bumpMessages("c-1");
+    };
+    plan(["completed", "in_progress", "pending"]);
+    initTaskListPill();
+    expect(pill.getAttribute("aria-label")).toBe("Task list, 2 open");
+    expect(pill.getAttribute("data-tooltip")).toBe("Task list, 2 open");
+
+    plan(["completed", "completed"]);
+    expect(pill.getAttribute("aria-label")).toBe("Task list");
+    expect(pill.getAttribute("data-tooltip")).toBe("Task list");
   });
 });

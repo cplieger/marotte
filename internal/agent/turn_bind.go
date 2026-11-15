@@ -81,6 +81,17 @@ func (r *turnRegistry) turnOpen(chatID marotte.ChatID) bool {
 	return (lc.pending != nil && !lc.pending.finalizing) || (lc.own != nil && !lc.own.finalizing)
 }
 
+// turnUnlanded reports whether chatID has an own or pending turn, finalizing included: one its close has not finished.
+func (r *turnRegistry) turnUnlanded(chatID marotte.ChatID) bool {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return false
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.own != nil || lc.pending != nil
+}
+
 func (r *turnRegistry) promptTurn(chatID marotte.ChatID) (*turnlog.Turn, bool) {
 	lc, ok := r.lookup(chatID)
 	if !ok {

@@ -11,7 +11,7 @@ import { mountLiveRegions } from "./legacy-ui/announce.js";
 import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_RECONCILE } from "./bus.js";
 import { findGlyph } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import { $ } from "./dom.js";
+import { $, queryEl } from "./dom.js";
 import { initSidebarSwipe } from "./platform.js";
 import { initShellViewport } from "./shell-viewport.js";
 import { initPointerTier } from "./pointer-tier.js";
@@ -90,7 +90,7 @@ import {
   chatTabDot,
 } from "./chat.js";
 import { initModelSwitcher, pickModel } from "./model-switcher.js";
-import { makeExpandable } from "./pill-expand.js";
+import { collapseAll, makeExpandable, placeOpenCard } from "./pill-expand.js";
 import { initContextCard } from "./context-card.js";
 import { loadAccountUsage } from "./account-usage.js";
 import { initPromptInput, sendComposer } from "./prompt-input.js";
@@ -102,6 +102,7 @@ import { stagedAttachment } from "./attachments.js";
 import { initPendingSteers } from "./pending-steers.js";
 import { initRunBar } from "./run-bar.js";
 import { initChatOptions } from "./chat-options.js";
+import { watchPillRow } from "./pill-row-fit.js";
 import { initSelectionQuote } from "./selection-quote.js";
 import { mountDecisionDock } from "./decision-dock.js";
 
@@ -503,6 +504,10 @@ function setupInput(): void {
   // The composer band's live-run rows; a pure projection of the run store.
   initRunBar();
   initChatOptions();
+  const pillRow = queryEl<HTMLElement>(".prompt-pills");
+  if (pillRow !== null) {
+    watchPillRow(pillRow, collapseAll, placeOpenCard);
+  }
   initSelectionQuote();
   // The interaction dock takes its host as an argument so a future run tab's bottom bar
   // can host one too.

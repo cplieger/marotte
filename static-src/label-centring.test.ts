@@ -18,7 +18,8 @@ const TRIMMED: { name: string; sheet: string; clips: boolean }[] = [
   // Shares its flex line with `#ctx-model-pill`, so untrimmed the two labels disagreed.
   { name: "pill-model-effort", sheet: "15-input.css", clips: false },
   // Every row was low; the active one's accent fill showed it.
-  { name: "pill-model-item", sheet: "15-input.css", clips: false },
+  { name: "pill-model-name", sheet: "15-input.css", clips: false },
+  { name: "pill-model-meta", sheet: "15-input.css", clips: false },
   // The effort knob carries no text, and `.effort-label` sits on its own line.
 ];
 

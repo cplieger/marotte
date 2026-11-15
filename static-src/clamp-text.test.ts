@@ -352,12 +352,17 @@ describe("opening and closing", () => {
     await finishSlides(p.text);
     p.more.click();
     expect(p.more.textContent, "the label flips at once").toBe("Show more");
+    // Paused so the slide outlasts the observer's frames on a loaded runner.
+    for (const a of p.text.getAnimations()) {
+      a.pause();
+    }
     host.style.inlineSize = "380px";
     await observerRuns();
     expect(p.text.getAnimations(), "still sliding").not.toHaveLength(0);
     expect(p.text.hasAttribute("data-clamped"), "unclamped until the slide ends").toBe(false);
     await finishSlides(p.text);
     expect(p.text.hasAttribute("data-clamped")).toBe(true);
+    expect(p.more.hidden, "the opener stays for the clamped text").toBe(false);
   });
 
   it("collapse() snaps shut, cancelling a slide still running", async () => {

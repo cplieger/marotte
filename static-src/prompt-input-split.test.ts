@@ -6,7 +6,7 @@ import { signal } from "@cplieger/reactive";
 import { initPromptInput, setSendState } from "./prompt-input.js";
 import { adoptInterruptDefault } from "./interrupt-default.js";
 import { setSessions, setActive } from "./store.js";
-import { ICON_QUEUE_UI, ICON_SEND } from "./icons.js";
+import { ICON_QUEUE_UI, ICON_SEND, ICON_STEER } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import type { InterruptMode } from "./wire/types.gen.js";
 import type { RunView, Session } from "./types.js";
@@ -127,7 +127,11 @@ describe("with Steer the default", () => {
     expect(main().querySelector(".send-btn-label")?.textContent).toBe("Steer");
     expect(main().getAttribute("aria-label")).toBe("Steer the running turn");
     expect(main().getAttribute("data-tooltip")).toBe("Steer the running turn");
-    expect(glyphOf(main())).toBe(glyph(ICON_SEND));
+    expect(glyphOf(main())).toBe(glyph(ICON_STEER));
+    expect(glyph(ICON_STEER), "Steer's glyph is its own, not Send's or Queue's").not.toBe(
+      glyph(ICON_SEND),
+    );
+    expect(glyph(ICON_STEER)).not.toBe(glyph(ICON_QUEUE_UI));
     expect(alt().hidden).toBe(false);
     expect(alt().querySelector(".send-btn-label")).toBeNull();
     expect(alt().getAttribute("aria-label")).toBe("Queue instead");
@@ -177,7 +181,7 @@ describe("with Queue the default", () => {
     expect(alt().querySelector(".send-btn-label")).toBeNull();
     expect(alt().getAttribute("aria-label")).toBe("Steer instead");
     expect(alt().getAttribute("data-tooltip")).toBe("Steer instead");
-    expect(glyphOf(alt())).toBe(glyph(ICON_SEND));
+    expect(glyphOf(alt())).toBe(glyph(ICON_STEER));
     expect(box().placeholder).toBe("Queue a follow-up for after this turn…");
   });
 

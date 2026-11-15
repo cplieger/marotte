@@ -387,29 +387,7 @@
                    open menu, and a card nested in the trigger would put
                    interactive content inside a <button>. -->
               <span class="pill-slot">
-                <button id="context-indicator" class="pill pill-context pill-expandable" type="button" data-tooltip="Context usage: tokens, credits and turns for this chat. The grey band marks 80%, where the conversation is compacted." aria-label="Context usage">
-                  <!-- A PIE, not a ring. Both circles share one radius and
-                       one stroke width: r=4 with an 8-wide stroke spans r 0..8,
-                       so each stroke IS a filled sector, and pathLength="100"
-                       makes every dash number a percentage. That is what let the
-                       hardcoded 50.27 circumference go.
-
-                       No stroke-linecap anywhere: butt is the default, and it is
-                       load-bearing, because a round cap bulges a sector's two
-                       radial edges outward. -->
-                  <svg class="context-ring" viewBox="0 0 20 20" width="16" height="16">
-                    <circle cx="10" cy="10" r="8" fill="var(--c-border)"/>
-                    <!-- The band the fill sweeps into when compaction is imminent.
-                         Beneath the fill in document order, so the fill paints over
-                         it. Its dash is the 80% fallback; status.ts rewrites it from
-                         whatever threshold the session reported. -->
-                    <circle id="context-ring-wedge" cx="10" cy="10" r="4" fill="none"
-                      stroke-width="8" pathLength="100" stroke-dasharray="20 80" stroke-dashoffset="20"
-                      transform="rotate(-90 10 10)"/>
-                    <circle id="context-ring-fill" cx="10" cy="10" r="4" fill="none" stroke="var(--c-green)"
-                      stroke-width="8" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"
-                      transform="rotate(-90 10 10)"/>
-                  </svg>
+                <button id="context-indicator" class="pill pill-context pill-expandable" type="button" data-tooltip="Context usage: tokens, credits and turns for this chat. Compacts at 80%." aria-label="Context usage">
                   <span id="context-label">0%</span>
                 </button>
                 <span id="context-card" class="pill-expand-content pill-context-content hidden">
@@ -419,6 +397,7 @@
                   <span class="pill-ctx-row"><span class="pill-ctx-label">Last turn</span><span id="ctx-last-turn" class="pill-detail">-</span></span>
                   <span class="pill-ctx-row"><span class="pill-ctx-label">Entries</span><span id="ctx-entries" class="pill-detail">0</span></span>
                   <span class="pill-ctx-row"><span class="pill-ctx-label">Tool calls</span><span id="ctx-tools" class="pill-detail">0</span></span>
+                  <span id="ctx-compact-row" class="pill-ctx-row"><span class="pill-ctx-label">Compacts at</span><span id="ctx-compact-at" class="pill-detail">80%</span></span>
                   <span id="ctx-metering" class="pill-metering hidden" role="group"></span>
                 </span>
               </span>
@@ -441,7 +420,7 @@
                 </button>
                 <span id="profile-list" class="pill-expand-content pill-role-list hidden"></span>
               </span>
-              <span class="pill-slot">
+              <span class="pill-slot pill-slot-mode">
                 <button id="role-pill" class="pill pill-role pill-expandable" type="button" data-tooltip="Switch mode" aria-label="Switch mode">
                   <span id="role-pill-icon" class="pill-role-icon"></span>
                   <span id="role-pill-label" class="pill-role-label">Default</span>

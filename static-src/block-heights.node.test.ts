@@ -193,6 +193,7 @@ describe("what one entry is worth", () => {
     "model_routed",
     "model_fallback",
     "mode_switched",
+    "profile_switched",
   ] as const)("prices the %s event at one row", (kind) => {
     expect(stood(turn("t", [entry(1, kind, {})]))).toBe(48 + GAP_PX);
   });

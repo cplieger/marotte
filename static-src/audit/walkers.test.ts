@@ -944,6 +944,21 @@ describe("contrast", () => {
     expect(findingFor(r, "fx-c-invis")).toBeUndefined();
   });
 
+  it("skips text under a content-visibility:hidden ANCESTOR, such as a parked chat's transcript", () => {
+    // Laid out first, then hidden: the subtree keeps its boxes while nothing in it is painted.
+    mount(
+      `<div class="fx-c-parked" style="background:#fff">
+         <span class="fx-c-skipped" style="color:#fefefe;font-size:14px">not painted</span>
+       </div>`,
+    );
+    const parked = document.querySelector<HTMLElement>(".fx-c-parked");
+    expect(parked?.querySelector(".fx-c-skipped")?.getClientRects().length).toBe(1);
+    parked?.style.setProperty("content-visibility", "hidden");
+    const r = run<Contrast>("contrast", {});
+    expect(findingFor(r, "fx-c-skipped")).toBeUndefined();
+    expect(r.passes.some((p) => hasClass(p.sel, "fx-c-skipped"))).toBe(false);
+  });
+
   it("names the ink token it found and reports the palette consistent", () => {
     document.documentElement.style.setProperty("--c-text-primary", "#111111");
     mount(`<div class="fx-c-tok" style="background:#fff;color:#000;font-size:14px">x</div>`);

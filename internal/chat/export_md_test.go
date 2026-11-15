@@ -422,6 +422,18 @@ func TestRenderChatMarkdown_NamesAContextResetsCause(t *testing.T) {
 	}
 }
 
+func TestRenderChatMarkdown_NamesBothEndsOfAProfileSwitch(t *testing.T) {
+	entries, _ := chatOf(openTurn("t-1", 1, nil).
+		add("", "profile-1", marotte.EntryKindProfileSwitched,
+			marotte.EntryProfileSwitched{From: "trusted", To: "read-only"}))
+
+	md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Profiled"}, entries)
+
+	if want := "**Event: profile_switched** trusted → read-only\n\n"; !strings.Contains(md, want) {
+		t.Errorf("renderChatMarkdown over a profile_switched missing %q\n---\n%s", want, md)
+	}
+}
+
 // A fallback line carries KAS's trigger, both models, a decline's code and a session-wide move.
 func TestRenderChatMarkdown_NamesAModelFallbacksDecision(t *testing.T) {
 	cases := []struct {

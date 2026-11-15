@@ -30,6 +30,7 @@ const KIND_SET: Record<EntryKind, true> = {
   model_routed: true,
   model_fallback: true,
   mode_switched: true,
+  profile_switched: true,
   turn_revert: true,
   reconciled: true,
   turn_close: true,

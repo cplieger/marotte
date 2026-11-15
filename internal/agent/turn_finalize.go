@@ -185,6 +185,8 @@ func (bc *bridgeCoordinator) publishClose(lifeCtx context.Context, t *activeTurn
 	if bc.onTurnClosed != nil {
 		bc.onTurnClosed(t.Chat, t.ID)
 	}
+	// Before the tail, whose hold keeps the chat's next turn from opening above the line.
+	bc.landParkedProfile(lifeCtx, t.Chat)
 	// The tail is the life's work: a turn closed once its life ended runs none.
 	if !ok {
 		done()

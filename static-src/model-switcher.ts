@@ -30,7 +30,7 @@ import { el, effect } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
 import { errorAbout } from "./actions/subject.js";
 import { retryUnlessStill, stillOr } from "./actions/still-applying.js";
-import { ICON_MODEL } from "./icons.js";
+import { ICON_MODEL, modelIcon } from "./icons.js";
 import {
   THINKING_OFF,
   effortVocabulary,
@@ -171,6 +171,7 @@ class ModelSwitchController {
     // descendant selector, so it must not be wrapped.
     $.switchModelBtn.prepend(iconEl(ICON_MODEL));
     const expandContent = $.modelSwitchList;
+    expandContent.append(this.mainPanel);
     this.card = makeExpandable($.switchModelBtn, expandContent, {
       onExpand: () => {
         this.expanded = true;
@@ -197,6 +198,7 @@ class ModelSwitchController {
       // Every close commits: a model click, Escape, a click away, the pill itself.
       onCollapse: () => {
         this.expanded = false;
+        this.fallback.reset();
         this.commit();
       },
     });
@@ -205,20 +207,20 @@ class ModelSwitchController {
     effect(() => {
       const shown = shownSettingsSignal.value;
       if (this.expanded) {
-        this.syncFallbackRow($.modelSwitchList, shown);
+        this.syncFallbackRow(shown);
       }
     });
-    // Wired ONCE: re-wiring per render stacks keydown handlers.
-    this.modelNav = rovingFocus(expandContent, ".pill-model-item");
+    // Wired ONCE: re-wiring per render stacks keydown handlers. The first panel's own: the Fallback list has its.
+    this.modelNav = rovingFocus(this.mainPanel, '.pill-model-item[role="option"]');
     bindLoadingState("chat.switch_model", $.switchModelBtn, { pendingClass: "switching" });
   }
 
   private renderCondensedList(): void {
-    const list = $.modelSwitchList;
+    const list = this.mainPanel;
     const scroll = this.ensureScroll(list);
     const session = getActive();
     if (session === undefined) {
-      this.syncFallbackRow(list, null);
+      this.syncFallbackRow(null);
       // No options mount here, so the scroller is not a listbox (see syncCatalogNotice).
       scroll.removeAttribute("role");
       scroll.removeAttribute("aria-label");
@@ -236,7 +238,7 @@ class ModelSwitchController {
     } else {
       this.removeEffortRow();
     }
-    this.syncFallbackRow(list, settingsAsShown());
+    this.syncFallbackRow(settingsAsShown());
 
     this.syncCatalogNotice(scroll);
     reconcile(scroll, getCachedModels(), {
@@ -311,9 +313,12 @@ class ModelSwitchController {
 
   private expanded = false;
 
+  /** The card's first panel: the models, the effort row and the Fallback row, which drills into its own. */
+  private readonly mainPanel = el("div", { className: "model-panel model-panel-main" });
+
   private readonly fallback = new FallbackSlot(() => {
     if (this.expanded) {
-      this.syncFallbackRow($.modelSwitchList, settingsAsShown());
+      this.syncFallbackRow(settingsAsShown());
     }
   });
 
@@ -339,14 +344,17 @@ class ModelSwitchController {
     this.effortSlider?.el.remove();
   }
 
-  /** Last in the card, for the chat's model. */
-  private syncFallbackRow(list: HTMLElement, settings: EffectiveSettings | null): void {
-    this.fallback.sync(list, {
-      model: getActive()?.model ?? "",
-      settings,
-      catalog: getCachedModels(),
-      identity: currentIdentity(),
-    });
+  /** Last in the first panel, for the chat's model. */
+  private syncFallbackRow(settings: EffectiveSettings | null): void {
+    this.fallback.sync(
+      { card: $.modelSwitchList, main: this.mainPanel },
+      {
+        model: getActive()?.model ?? "",
+        settings,
+        catalog: getCachedModels(),
+        identity: currentIdentity(),
+      },
+    );
   }
 
   /** Ticks are rebuilt when the model's vocabulary changes: the set is per model, so
@@ -459,7 +467,12 @@ class ModelSwitchController {
         role: "option",
         "aria-label": rate === "" ? label : `${label}, ${rate} credits`,
       },
-      el("span", null, label),
+      el(
+        "span",
+        { className: "pill-model-item-icon", "aria-hidden": "true" },
+        iconEl(modelIcon(m.model_id, "ui")),
+      ),
+      el("span", { className: "pill-model-name" }, label),
     );
     if (rate !== "") {
       opt.append(el("span", { className: "pill-model-meta" }, rate));

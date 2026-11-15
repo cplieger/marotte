@@ -64,6 +64,7 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.EntryModelRouted](),
 	wiregen.TypeRef[marotte.EntryModelFallback](),
 	wiregen.TypeRef[marotte.EntryModeSwitched](),
+	wiregen.TypeRef[marotte.EntryProfileSwitched](),
 	wiregen.TypeRef[marotte.EntryTurnRevert](),
 	wiregen.TypeRef[marotte.EntryContextReset](),
 	wiregen.TypeRef[marotte.EntryReconciled](),

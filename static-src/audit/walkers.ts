@@ -1015,7 +1015,8 @@ function contrast(opts: { inkToken?: string | null }): unknown {
       continue;
     }
     const cs = getComputedStyle(el);
-    if (cs.visibility !== "visible" || cs.contentVisibility === "hidden") {
+    // checkVisibility() is false inside a content-visibility:hidden ANCESTOR, whose subtree keeps its boxes unpainted.
+    if (cs.visibility !== "visible" || cs.contentVisibility === "hidden" || !el.checkVisibility()) {
       continue;
     }
     // NOT PAINTED, so its contrast concerns nothing a reader sees (collapsed disclosures, unexpanded

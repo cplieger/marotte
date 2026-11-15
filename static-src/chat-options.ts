@@ -1,6 +1,8 @@
-// The chat-options menu, and the test a new row has to pass: a pill earns its prompt-row
-// slot by changing per MESSAGE, which none of these do. Every row is built here;
-// static/index.html carries an empty card. Actions first, the two switches last.
+// The chat-options menu, and the test a row of its own has to pass: it would earn a
+// prompt-row slot by changing per MESSAGE, which none of them do. Every row is built
+// here; static/index.html carries an empty card. The chat strip comes first, then the
+// pills the prompt row has no room for (pill-row-fit.ts), then the actions, then the
+// Supervised mode switch.
 
 import { el, effect } from "@cplieger/reactive";
 import { $ } from "./dom.js";
@@ -23,6 +25,9 @@ import { uploadLimitHint } from "./upload-policy.js";
 import { openTangentChat } from "./chat.js";
 import { NO_CONVERSATION_TANGENT, tangentRefusal } from "./tangent-refusal.js";
 import { mergeTangentChat } from "./tangent-merge.js";
+import { movedPills, type MovablePill } from "./pill-row-fit.js";
+import { modeSelect } from "./role-picker.js";
+import { profileNote, profileSelect } from "./profile-pill.js";
 import { submitPrompt } from "./submit.js";
 import { compactRefusal } from "./typed-commands.js";
 import * as toast from "./toast.js";
@@ -64,6 +69,13 @@ export function initChatOptions(): void {
 
   card.append(
     chatStrip(),
+    movedRow({ pill: "mode", name: "Mode", select: modeSelect("chat-opt-mode") }),
+    movedRow({
+      pill: "profile",
+      name: "Security profile",
+      select: profileSelect("chat-opt-profile"),
+      note: profileNote,
+    }),
     attachRow(),
     goalRow(),
     tangentRow(),
@@ -74,6 +86,31 @@ export function initChatOptions(): void {
   );
 
   makeExpandable(pill, card, { haspopup: "dialog" });
+}
+
+/** A pill the prompt row has moved here: its select under the pill's own name, shown only while the pill is away. */
+function movedRow(opts: {
+  pill: MovablePill;
+  name: string;
+  select: HTMLSelectElement;
+  note?: () => string;
+}): HTMLElement {
+  const hint = el("span", { className: "chat-opt-hint", id: `${opts.select.id}-note` });
+  opts.select.setAttribute("aria-describedby", hint.id);
+  const row = el(
+    "div",
+    { className: "chat-opt-select-row" },
+    el("label", { className: "chat-opt-name", for: opts.select.id }, opts.name),
+    opts.select,
+    hint,
+  );
+  effect(() => {
+    row.classList.toggle("hidden", !movedPills.value.includes(opts.pill));
+    const note = opts.note?.() ?? "";
+    hint.textContent = note;
+    hint.classList.toggle("hidden", note === "");
+  });
+  return row;
 }
 
 /** How long the Link button reads "Copied" after a copy. */

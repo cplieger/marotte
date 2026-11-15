@@ -512,7 +512,8 @@
   [id="ctx-model-pill"],
   .pill-role-label,
   .pill-model-effort,
-  .pill-model-item > span,
+  .pill-model-name,
+  .pill-model-meta,
   .send-btn-label,
   .send-btn-label > span
 ) {
@@ -534,31 +535,11 @@
   padding-block: 0.35em;
 }
 
-/* Context ring pill */
+/* Context pill: its share as text, inked along the compaction ramp (`context-indicator.ts` `contextInk`). */
 .pill-context {
-  gap: var(--sp-1);
-  padding-inline-start: 0.25rem;
-
-  & .context-ring {
-    flex-shrink: 0;
-    inline-size: calc(1rem + var(--icon-grow));
-    block-size: calc(1rem + var(--icon-grow));
-  }
-
-  /* The fill's transitions live HERE rather than on a style attribute: the served
-   * markup carries zero style attributes, which is what lets the CSP drop
-   * style-src 'unsafe-inline' (internal/server/security.go). */
-  & [id="context-ring-fill"] {
-    transition:
-      stroke-dashoffset 0.4s,
-      stroke 0.4s;
-  }
-
-  /* No transition: the band's geometry moves only when a session reports a
-   * different threshold, which is not an animation. */
-  & [id="context-ring-wedge"] {
-    stroke: var(--c-context-wedge);
-  }
+  --ctx-ink-green: var(--c-green);
+  --ctx-ink-yellow: var(--c-yellow);
+  --ctx-ink-red: var(--c-red);
 
   & [id="context-label"] {
     font-family: var(--font-mono);
@@ -571,7 +552,20 @@
      * unreachable in practice; keeping the pill tight here saves
      * real estate next to the model pill on narrow viewports. */
     text-align: center;
+    color: var(--ctx-ink, currentcolor);
   }
+}
+
+/* The open pill's fill is the selected one, where the status inks drop under 4.5:1. */
+.pill-context.pill-expanded {
+  --ctx-ink-green: var(--c-selected-green-fg);
+  --ctx-ink-yellow: var(--c-selected-yellow-fg);
+  --ctx-ink-red: var(--c-selected-red-fg);
+}
+
+/* A press darkens the fill past 4.5:1 for every ramp ink, so the share takes the pill's own ink for it. */
+.pill-context:active [id="context-label"] {
+  color: inherit;
 }
 
 /* Model pill */
@@ -626,10 +620,15 @@
     );
     animation: vk-spin var(--spin-dur) linear infinite;
   }
+}
 
-  &.pending {
-    border-color: var(--c-accent);
-    color: var(--c-accent);
+/* A pick parked until the running turn ends: the model's (`status.ts`) and the profile's (`profile-pill.ts`). */
+:is(.pill-model, [id="profile-pill"]).pending {
+  border-color: var(--c-accent);
+  color: var(--c-accent);
+
+  /* Only the icon breathes: a dimmed name drops under its contrast floor at the pulse's trough. */
+  & svg {
     animation: vk-breathe 1.8s ease-in-out infinite;
   }
 }
@@ -700,16 +699,6 @@
    carries, so there both halves are glyphs, as on a phone. */
 :root[data-pointer="coarse"] .send-split-both .send-btn-label {
   display: none;
-}
-
-/* A PHONE'S FULL ROW holds both halves at their touch size only once the context pill gives
-   way: a readout, back as soon as the box empties or the turn ends, and the one control in
-   the row whose job a turn in flight does not need. 24rem is the row's need with both
-   halves, the task list and a share's two digits (`composer-row-height-css` sweeps it). */
-@container pill-row (width < 24rem) {
-  .prompt-pills:has(.send-split-both) > .pill-slot:has(> .pill-context) {
-    display: none;
-  }
 }
 
 .pill-spacer {
@@ -797,17 +786,23 @@
   align-items: center;
 }
 
-/* The pill row runs out of width on a phone, and the slot is an extra flex
- * layer between the row and the pill: a pill's own automatic minimum size no
- * longer reaches the row, so nothing could shrink and the row overflowed by
- * ~27px at 390px wide. Elasticity is restored ONLY where a label can
- * ellipsize (`#ctx-model-pill`, `.pill-role-label`), because padding does not
- * shrink — squeezing an icon-only pill drifts its glyph off centre instead of
- * shortening anything. Measured at 390px: the row ends on the same pixel it
- * did before the slot existed. */
+/* Only a label that can ellipsize (`#ctx-model-pill`, `.pill-role-label`) gives
+ * the row width back, and never below the pill's own square: an icon-only pill
+ * squeezed under its target drifts its glyph off centre and shrinks its hit
+ * area. A row that still runs out moves pills into Chat options instead
+ * (`pill-row-fit.ts`), which reads the overflow this leaves. */
 .pill-slot:has(> .pill-model),
 .pill-slot:has(> .pill-role) {
-  min-width: 0;
+  min-width: var(--btn-h);
+}
+
+/* `pill-row-fit.ts` owns `data-moved`, `data-wordless` and `data-countless`; the Chat options card shows each moved
+   pill as a select, each send button keeps its name in aria-label and the tooltip, and the task list its count. */
+.prompt-pills[data-moved~="mode"] > .pill-slot-mode,
+.prompt-pills[data-moved~="profile"] > .pill-slot-profile,
+.prompt-pills[data-wordless] .send-btn-label,
+.prompt-pills[data-countless] [id="task-list-badge"] {
+  display: none;
 }
 
 /* A hidden trigger takes its slot with it. Without this the empty slot still
@@ -993,6 +988,48 @@
   overflow: hidden;
 }
 
+/* The model card's two panels (card-drill.ts slides between them): the models, effort and Fallback, then the
+ * Fallback list. Each is the card's column, so its scroller still shrinks under the card's cap. */
+.model-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: stretch;
+  min-block-size: 0;
+}
+
+.model-panel[hidden] {
+  display: none;
+}
+
+/* Out of flow while it slides away, so the card's height is the entering panel's. Pinned to the card's bottom, the
+   edge nearest the pill. */
+.model-panel-leaving {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+}
+
+/* The list's caption: which model it is the fallback for, one rung under the rows. */
+.fallback-note {
+  padding: var(--sp-2) var(--sp-3) 0;
+  font-size: var(--fs-popup-meta);
+  color: var(--c-text-tertiary);
+}
+
+/* The chevrons point the way the panels go: the row's trails it, Back's leads its label. */
+.fallback-back > .disclosure-chevron {
+  --chev-turn: 90deg;
+}
+
+.fallback-open > .disclosure-chevron:dir(rtl) {
+  --chev-turn: 90deg;
+}
+
+.fallback-back > .disclosure-chevron:dir(rtl) {
+  --chev-turn: -90deg;
+}
+
 /* The only scrolling part of the card. It carries the padding the card gave
  * up, which is what keeps the model rows inset while the effort section below
  * them runs the full width. */
@@ -1013,7 +1050,9 @@
   min-block-size: var(--menu-row-h);
   display: flex;
   align-items: center;
-  justify-content: space-between;
+
+  /* The name follows the row's glyph; `.pill-model-meta`'s auto margin sends the multiplier to the end. */
+  justify-content: flex-start;
   gap: var(--sp-2);
 
   /* The menu row's padding less the 1px edge 70-selection.css reserves. */
@@ -1040,6 +1079,7 @@
 }
 
 .pill-model-meta {
+  margin-inline-start: auto;
   color: var(--c-text-tertiary);
   font-size: var(--fs-popup-meta);
 }
@@ -1104,7 +1144,8 @@
   /* Selected: 70-selection.css, with every other selected surface. */
 }
 
-.pill-role-item-icon {
+.pill-role-item-icon,
+.pill-model-item-icon {
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
@@ -1796,6 +1837,34 @@
   font: inherit;
 }
 
+/* A pill the composer row has no room for, as a native select under the pill's name (`pill-row-fit.ts`). */
+.chat-opt-select-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.125rem var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+
+  & > .chat-opt-hint {
+    grid-column: 1 / -1;
+  }
+}
+
+.chat-opt-select {
+  min-block-size: var(--menu-row-h);
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--card-radius);
+  background: var(--c-bg-secondary);
+  color: var(--c-text-primary);
+  font: inherit;
+  cursor: pointer;
+
+  &.pending {
+    border-color: var(--c-accent);
+  }
+}
+
 .chat-opt-text {
   display: flex;
   flex-direction: column;
@@ -2088,58 +2157,46 @@
   [id="profile-pill-label"] {
     display: none;
   }
-
-  /* The fullest phone row (the mid-turn send beside Cancel and the task list) has no room for one more 44px
-     target, and a profile picked mid-turn applies only after the turn, so the pill leaves the row for the turn. */
-  .prompt-pills:has(> [id="midturn-send"]:not([hidden])) > .pill-slot-profile {
-    display: none;
-  }
 }
 
-/* Labels drop where the fullest row (mid-turn, both send halves, task list, profile shield)
-   stops fitting the catalog's widest pills, a 17-character model with "medium" and "Semantic
-   Reviewer": 696px mouse, 707px touch, 530px and 570px without the tier, where a turn hides the
-   profile pill. The profile's name ("Approve for me") goes first, at 782px mouse and 788px
-   touch. Each threshold adds up to 7px (`button-size.test.ts` sweeps it); a container query
-   cannot read `--pill-gap`, so the tier is a selector. The names stay in aria-label and the
-   tooltip (`status.ts`, `role-picker.ts`, `profile-pill.ts`). */
+/* Labels drop where the fullest row (mid-turn, both send halves, task list and its count, profile
+   shield) stops fitting the catalog's widest pills, a 17-character model with "medium" and "Semantic
+   Reviewer": 706px mouse, 716px touch, 580px and 624px without the tier and the profile's
+   name. The profile's name ("Approve for me") goes first, at 788px on both tiers. Each
+   threshold adds up to 7px (`button-size.test.ts` sweeps it); a container query cannot read
+   `--pill-gap`, so the tier is a selector. The names stay in aria-label and the tooltip
+   (`status.ts`, `role-picker.ts`, `profile-pill.ts`). */
 @media (width > 48rem) and (height > 30rem) {
-  @container pill-row (width < 43.75rem) {
+  @container pill-row (width < 44.125rem) {
     .pill-model > :is([id="ctx-model-pill"], .pill-model-effort),
     .pill-role-label {
       display: none;
     }
   }
 
-  @container pill-row (width < 44.375rem) {
+  @container pill-row (width < 44.75rem) {
     :root[data-pointer="coarse"]
       :is(.pill-model > [id="ctx-model-pill"], .pill-model-effort, .pill-role-label) {
       display: none;
     }
   }
 
-  @container pill-row (width < 48.875rem) {
-    [id="profile-pill-label"] {
-      display: none;
-    }
-  }
-
   @container pill-row (width < 49.25rem) {
-    :root[data-pointer="coarse"] [id="profile-pill-label"] {
+    [id="profile-pill-label"] {
       display: none;
     }
   }
 }
 
 @media (width <= 48rem), (height <= 30rem) {
-  @container pill-row (width < 33.5rem) {
+  @container pill-row (width < 36.25rem) {
     .pill-model > [id="ctx-model-pill"],
     .pill-role-label {
       display: none;
     }
   }
 
-  @container pill-row (width < 36rem) {
+  @container pill-row (width < 39rem) {
     :root[data-pointer="coarse"] :is(.pill-model > [id="ctx-model-pill"], .pill-role-label) {
       display: none;
     }

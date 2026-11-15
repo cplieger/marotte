@@ -20,7 +20,7 @@ import { isRetentionEnabled } from "./retention.js";
 import { initNotificationToggles } from "./settings-notifications.js";
 import { getLastModel, setLastModel } from "./session-context.js";
 import { initPermissionsUI } from "./permissions-ui.js";
-import { compactionPolicy } from "./context-ring.js";
+import { compactionPolicy } from "./context-indicator.js";
 import { LS_NOTIFY_ASK_KEY } from "./ls-keys.js";
 
 interface Held {

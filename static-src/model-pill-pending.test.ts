@@ -8,8 +8,6 @@ document.body.innerHTML = `
     <span id="ctx-model-pill"></span><span id="ctx-effort-pill" class="hidden"></span>
   </button>
   <span id="context-indicator"></span>
-  <span id="context-ring-fill"></span>
-  <span id="context-ring-wedge"></span>
   <span id="context-label"></span>
   <span id="ctx-tokens"></span>
   <span id="ctx-credits"></span>
@@ -17,6 +15,8 @@ document.body.innerHTML = `
   <span id="ctx-last-turn"></span>
   <span id="ctx-entries"></span>
   <span id="ctx-tools"></span>
+  <span id="ctx-compact-row"></span>
+  <span id="ctx-compact-at"></span>
   <span id="ctx-metering"></span>`;
 
 const store = await import("./store.js");

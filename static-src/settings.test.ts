@@ -1046,7 +1046,7 @@ describe("the automatic-compaction switch and slider", () => {
   });
 
   it("hides the slider while the switch is off and publishes the policy", async () => {
-    const { compactionPolicy } = await import("./context-ring.js");
+    const { compactionPolicy } = await import("./context-indicator.js");
     applyGeneralPanel(settingsPayload({ auto_compaction_enabled: false, auto_compact_pct: 70 }));
     expect(toggle().checked).toBe(false);
     expect(row().classList.contains("hidden")).toBe(true);
@@ -1061,7 +1061,7 @@ describe("the automatic-compaction switch and slider", () => {
 
   it("writes the value on change and not while dragging", async () => {
     const { patchSettings } = await import("./persist.js");
-    const { compactionPolicy } = await import("./context-ring.js");
+    const { compactionPolicy } = await import("./context-indicator.js");
     initRetention(settingsPayload({ auto_compaction_enabled: true, auto_compact_pct: 80 }));
     vi.mocked(patchSettings).mockClear();
     range().value = "65";
@@ -1087,7 +1087,7 @@ describe("the automatic-compaction switch and slider", () => {
 
   it("shows the slider and the policy again when the write that turned the switch off fails", async () => {
     const { patchSettings } = await import("./persist.js");
-    const { compactionPolicy } = await import("./context-ring.js");
+    const { compactionPolicy } = await import("./context-indicator.js");
     initRetention(settingsPayload({ auto_compaction_enabled: true, auto_compact_pct: 80 }));
     vi.mocked(patchSettings).mockImplementationOnce(failAndRollBack);
     toggle().checked = false;

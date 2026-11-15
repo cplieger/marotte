@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { formatTokens, formatMetering } from "./status-format.js";
+import { ICON_MODEL, modelIcon } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 
 describe("formatTokens", () => {
   const cases: [number, string][] = [
@@ -60,8 +62,6 @@ function mountContextBar(): void {
   document.body.appendChild(btn);
   for (const id of [
     "context-indicator",
-    "context-ring-fill",
-    "context-ring-wedge",
     "context-label",
     "ctx-tokens",
     "ctx-credits",
@@ -69,6 +69,8 @@ function mountContextBar(): void {
     "ctx-last-turn",
     "ctx-entries",
     "ctx-tools",
+    "ctx-compact-row",
+    "ctx-compact-at",
     "ctx-metering",
   ]) {
     const span = document.createElement("span");
@@ -83,7 +85,7 @@ async function paint(model: string, effort: string): Promise<void> {
   updateContextBar({
     pct: 0,
     contextSize: 0,
-    compaction: { band: 80, t: 80 },
+    compaction: { at: 80, t: 80 },
     credits: 0,
     turnCount: 0,
     lastTurnMs: 0,
@@ -164,20 +166,98 @@ describe("the model pill", () => {
   });
 });
 
-// context-ring.ts owns both computations and this module is their one writer, so what is under test
+// One model of each family `kiro-cli chat --list-models` offers, and the ids that name no vendor.
+const FAMILIES = [
+  "claude-opus-5.5",
+  "gpt-5.6-sol",
+  "grok-4.7",
+  "kimi-k3",
+  "deepseek-3.2",
+  "minimax-m2.5",
+  "glm-5",
+  "qwen3-coder-next",
+  "agi-nova-beta-1m",
+] as const;
+
+describe("the model pill's icon", () => {
+  /** The pill's own glyph: the svg before its label. */
+  async function glyphFor(model: string): Promise<string> {
+    await paint(model, "");
+    const { $ } = await import("./dom.js");
+    const icons = $.switchModelBtn.querySelectorAll(":scope > svg");
+    expect(icons, "the pill holds one glyph").toHaveLength(1);
+    expect(icons[0]?.getAttribute("aria-hidden"), "the label names the model").toBe("true");
+    return icons[0]?.innerHTML ?? "";
+  }
+
+  const bot = iconEl(ICON_MODEL).innerHTML;
+
+  it("shows the vendor's mark for each model family, one mark per vendor", async () => {
+    mountContextBar();
+    const marks: string[] = [];
+    for (const id of FAMILIES) {
+      marks.push(await glyphFor(id));
+    }
+
+    expect(
+      marks.filter((m) => m === bot),
+      "no vendor falls back to the bot",
+    ).toEqual([]);
+    expect(new Set(marks).size, "each vendor has its own mark").toBe(FAMILIES.length);
+  });
+
+  it("shows one vendor's mark across its models", async () => {
+    mountContextBar();
+    const opus = await glyphFor("claude-opus-5.5");
+
+    expect(await glyphFor("claude-sonnet-4.6")).toBe(opus);
+    expect(await glyphFor("claude-haiku-4.5")).toBe(opus);
+    expect(await glyphFor("gpt-5.6-luna")).toBe(await glyphFor("gpt-5.6-terra"));
+  });
+
+  it("keeps the bot for Auto and for a model with no mark", async () => {
+    mountContextBar();
+
+    expect(await glyphFor("")).toBe(bot);
+    expect(await glyphFor("auto")).toBe(bot);
+    expect(await glyphFor("someone-else-1")).toBe(bot);
+    expect(await glyphFor("claudette-1"), "a family is its whole first word").toBe(bot);
+  });
+
+  it("follows a switch to another vendor and back, naming the model in words", async () => {
+    mountContextBar();
+    const claude = await glyphFor("claude-opus-5.5");
+    const gpt = await glyphFor("gpt-5.6-sol");
+
+    expect(gpt).not.toBe(claude);
+    expect(await glyphFor("claude-opus-5.5")).toBe(claude);
+    const { $ } = await import("./dom.js");
+    expect($.switchModelBtn.getAttribute("aria-label")).toBe(
+      "Switch model, currently claude opus 5.5",
+    );
+  });
+
+  it("draws the pill's mark from the lookup the model card's rows read", async () => {
+    mountContextBar();
+
+    expect(await glyphFor("grok-4.7")).toBe(iconEl(modelIcon("grok-4.7", "inline")).innerHTML);
+  });
+});
+
+// context-indicator.ts owns both computations and this module is their one writer, so what is under test
 // here is that each computed value reaches its own element.
 
-async function paintRing(
+async function paintContext(
   pct: number,
   contextSize: number,
-  band: number | null,
-  t: number = band ?? 100,
+  at: number | null,
+  t: number = at ?? 100,
 ): Promise<void> {
   const { updateContextBar } = await import("./status.js");
   updateContextBar({
     pct,
     contextSize,
-    compaction: { band, t },
+    compaction: { at, t },
     credits: 0,
     turnCount: 0,
     lastTurnMs: 0,
@@ -197,7 +277,7 @@ describe("the credits line", () => {
     updateContextBar({
       pct: 0,
       contextSize: 0,
-      compaction: { band: 80, t: 80 },
+      compaction: { at: 80, t: 80 },
       credits,
       turnCount: 0,
       lastTurnMs: 0,
@@ -222,70 +302,69 @@ describe("the credits line", () => {
   });
 });
 
-describe("the context ring", () => {
-  it("writes the fill's sweep and stroke and the band's dash from one update", async () => {
+describe("the context pill", () => {
+  it("inks the share along the ramp, through the pill's own shades", async () => {
     mountContextBar();
 
-    // 65% sits inside the ramp's second segment, so the stroke is a mix rather than a saturated
+    // 65% sits inside the ramp's second segment, so the ink is a mix rather than a saturated
     // token — a constant would satisfy a green or a red arm.
-    await paintRing(65, 200_000, 80);
+    await paintContext(65, 200_000, 80);
 
     const { $ } = await import("./dom.js");
-    expect($.contextRingFill.style.strokeDashoffset).toBe("35");
-    expect($.contextRingFill.style.stroke).toBe(
-      "color-mix(in oklch, var(--c-red) 50.0%, var(--c-yellow))",
+    expect($.contextLabel.textContent).toBe("65%");
+    expect($.contextLabel.style.getPropertyValue("--ctx-ink")).toBe(
+      "color-mix(in oklch, var(--ctx-ink-red) 50.0%, var(--ctx-ink-yellow))",
     );
-    // Read back COMMA-separated: the CSSOM reserializes a dash list, so `wedgeDash`'s own "20 80"
-    // is not what the element reports.
-    expect($.contextRingWedge.style.strokeDasharray).toBe("20, 80");
-    expect($.contextRingWedge.style.strokeDashoffset).toBe("20");
   });
 
-  it("moves the band when the wire reports a different threshold", async () => {
+  it("names where the chat compacts in the tooltip and the card", async () => {
     mountContextBar();
 
-    await paintRing(10, 200_000, 95);
+    await paintContext(10, 200_000, 95);
 
     const { $ } = await import("./dom.js");
-    expect($.contextRingWedge.style.strokeDasharray).toBe("5, 95");
-    expect($.contextRingWedge.style.strokeDashoffset).toBe("5");
+    expect($.contextIndicator.getAttribute("data-tooltip")).toBe(
+      "Context usage: tokens, credits and turns for this chat. Compacts at 95%.",
+    );
+    expect($.ctxCompactAt.textContent).toBe("95%");
+    expect($.ctxCompactRow.classList.contains("hidden")).toBe(false);
   });
 
-  it("draws no band and says so when automatic compaction is off", async () => {
+  it("says nothing compacts, and drops the card's row, when automatic compaction is off", async () => {
     mountContextBar();
 
-    await paintRing(85, 200_000, null, 100);
+    await paintContext(85, 200_000, null, 100);
 
     const { $ } = await import("./dom.js");
-    expect($.contextRingWedge.style.strokeDasharray).toBe("0, 100");
     // Off keys the ramp on 100: 85 is past 70 and short of 90, so still a mix.
-    expect($.contextRingFill.style.stroke).toBe(
-      "color-mix(in oklch, var(--c-red) 50.0%, var(--c-yellow))",
+    expect($.contextLabel.style.getPropertyValue("--ctx-ink")).toBe(
+      "color-mix(in oklch, var(--ctx-ink-red) 50.0%, var(--ctx-ink-yellow))",
     );
     expect($.contextIndicator.getAttribute("data-tooltip")).toContain(
       "Automatic compaction is off",
     );
+    expect($.contextIndicator.getAttribute("data-tooltip")).not.toContain("Compacts at");
+    expect($.ctxCompactRow.classList.contains("hidden")).toBe(true);
   });
 
-  it("names the band's percentage and keys the ramp on it", async () => {
+  it("keys the ramp on the compaction point it names", async () => {
     mountContextBar();
 
-    await paintRing(65, 200_000, 90);
+    await paintContext(65, 200_000, 90);
 
     const { $ } = await import("./dom.js");
-    expect($.contextRingWedge.style.strokeDasharray).toBe("10, 90");
-    expect($.contextRingFill.style.stroke).toBe(
-      "color-mix(in oklch, var(--c-yellow) 50.0%, var(--c-green))",
+    expect($.ctxCompactAt.textContent).toBe("90%");
+    expect($.contextLabel.style.getPropertyValue("--ctx-ink")).toBe(
+      "color-mix(in oklch, var(--ctx-ink-yellow) 50.0%, var(--ctx-ink-green))",
     );
-    expect($.contextIndicator.getAttribute("data-tooltip")).toContain("marks 90%");
   });
 
   it("reads the token count out of the ramp's own derivation", async () => {
     mountContextBar();
 
-    await paintRing(25, 200_000, 80);
+    await paintContext(25, 200_000, 80);
 
-    // The readout and the ramp are one derivation: 25% of 200K is the 50K that put the stroke half
+    // The readout and the ramp are one derivation: 25% of 200K is the 50K that put the ink half
     // way through the first segment above.
     const { $ } = await import("./dom.js");
     expect($.ctxTokens.textContent).toBe("50.0K / 200.0K");
@@ -294,7 +373,7 @@ describe("the context ring", () => {
   it("reads a percentage when the window is unknown", async () => {
     mountContextBar();
 
-    await paintRing(25, 0, 80);
+    await paintContext(25, 0, 80);
 
     const { $ } = await import("./dom.js");
     expect($.ctxTokens.textContent).toBe("25.0%");

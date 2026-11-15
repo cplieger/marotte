@@ -1,4 +1,4 @@
-// The boundary rows nine entry kinds draw inside a turn's body. `messages.ts` hands this to the dispatcher as
+// The boundary rows ten entry kinds draw inside a turn's body. `messages.ts` hands this to the dispatcher as
 // `makeEvent`, so the block renderer declares no event vocabulary.
 
 import type {
@@ -24,6 +24,7 @@ import { wireDetailsSlide } from "./disclosure-row.js";
 import { effortLabel } from "./effort.js";
 import { renderMarkdownInto } from "./markdown.js";
 import { labelForMode } from "./roles.js";
+import { profileIcon, profileLabel } from "./security-profiles.js";
 
 type EventEntryKind =
   | "compaction"
@@ -33,12 +34,13 @@ type EventEntryKind =
   | "model_routed"
   | "model_fallback"
   | "mode_switched"
+  | "profile_switched"
   | "turn_revert"
   | "context_reset";
 
 /**
- * The nine entry kinds that render as a boundary row; `placeEntry` routes every other kind. Distributed over the
- * nine: `KindedEntry` of a union kind is one object with a union payload, which no switch can narrow.
+ * The ten entry kinds that render as a boundary row; `placeEntry` routes every other kind. Distributed over the
+ * ten: `KindedEntry` of a union kind is one object with a union payload, which no switch can narrow.
  */
 export type EventEntry = { [K in EventEntryKind]: KindedEntry<K> }[EventEntryKind];
 
@@ -78,6 +80,11 @@ export function buildEvent(e: EventEntry): HTMLElement {
     case "mode_switched": {
       // One boundary row for both switches, so a reader learns one shape whichever thing moved.
       return boundary("switched", ICON_TOOL_SWITCH, modeSwitchedLabel(e.payload));
+    }
+    case "profile_switched": {
+      // The level's shield, as the composer's pill draws it, so the row says how strict the chat now is.
+      const to = e.payload.to;
+      return boundary("switched", profileIcon(to), `Security profile: ${profileLabel(to)}`);
     }
     case "turn_revert": {
       // The simple form, never `compactionBreak`: a revert has no summary to disclose.

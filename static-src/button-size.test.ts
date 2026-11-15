@@ -17,8 +17,11 @@ import {
   ICON_QUEUE_UI,
   ICON_SEND,
   ICON_SHIELD,
+  ICON_STEER,
 } from "./icons.js";
 import { setActive, setSessions } from "./store.js";
+import { watchPillRow } from "./pill-row-fit.js";
+import { collapseAll, makeExpandable, placeOpenCard } from "./pill-expand.js";
 import type { updateContextBar as updateContextBarFn } from "./status.js";
 import { makeSession } from "./__test-helpers__/model.js";
 import { BUTTON_REFERENCE, MENU_ROW } from "./__test-helpers__/button-reference.js";
@@ -73,6 +76,8 @@ const PROFILE = "Approve for me";
  *  resolves page elements at import, and `initRolePicker` installs a lasting effect, so it runs once. */
 let writers: { updateContextBar: typeof updateContextBarFn } | undefined;
 let sessionSeq = 0;
+/** The mounted row's fit, as app.ts installs it; each mount replaces the row. */
+let unwatch: (() => void) | undefined;
 
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => {
@@ -136,7 +141,7 @@ async function writeNames(): Promise<void> {
   writers.updateContextBar({
     pct: 66,
     contextSize: 200_000,
-    compaction: { band: null, t: 0 },
+    compaction: { at: null, t: 0 },
     credits: 0,
     turnCount: 0,
     lastTurnMs: 0,
@@ -163,7 +168,7 @@ async function dress(state: State): Promise<void> {
     midTurn.hidden = false;
     midTurn.replaceChildren(
       label(state === "steer" ? "Steer" : "Queue"),
-      iconEl(state === "steer" ? ICON_SEND : ICON_QUEUE_UI),
+      iconEl(state === "steer" ? ICON_STEER : ICON_QUEUE_UI),
     );
     // Beside a steerable turn the pill's second half offers the other action; a queue-only turn has none.
     const alt = byId("midturn-alt-btn");
@@ -171,6 +176,10 @@ async function dress(state: State): Promise<void> {
     byId("midturn-send").classList.toggle("send-split-both", state === "steer");
     alt.replaceChildren(iconEl(ICON_QUEUE_UI));
     byId("task-list-pill").classList.remove("hidden");
+    // A turn's task list counts its open items, so the live pill is wider than its icon.
+    const badge = byId("task-list-badge");
+    badge.textContent = "12";
+    badge.classList.remove("hidden");
   }
   const row = byId("attachment-row");
   row.classList.remove("hidden");
@@ -203,8 +212,14 @@ async function mount(
   if (app === null) {
     throw new Error("index.html has no #app");
   }
+  unwatch?.();
   document.body.replaceChildren(document.importNode(app, true));
   await dress(state);
+  const row = document.querySelector<HTMLElement>(".prompt-pills");
+  if (row === null) {
+    throw new Error("index.html has no pill row");
+  }
+  unwatch = watchPillRow(row, collapseAll, placeOpenCard);
 }
 
 /** The run tab in place of the chat: its composer's Send and its resume button. */
@@ -371,7 +386,11 @@ describe("the composer's controls and the resume button, against the toolbar's b
         if (width(hit) < floor - 2 * STEP) {
           off.push(`${nameOf(el)} reaches ${String(width(hit))}px wide`);
         }
-        if (SQUARE.includes(el.id) && Math.abs(width(hit) - ref.hit.w - reach) > SLACK) {
+        if (
+          SQUARE.includes(el.id) &&
+          iconOnly(el) &&
+          Math.abs(width(hit) - ref.hit.w - reach) > SLACK
+        ) {
           off.push(`${nameOf(el)} reaches ${String(width(hit))}px wide, not the toolbar's`);
         }
       }
@@ -434,10 +453,12 @@ describe("the composer's controls and the resume button, against the toolbar's b
 
 describe("the model, profile and mode pills, by the room the row has", () => {
   const labels = (): HTMLElement[] => [byId("ctx-model-pill"), byId("role-pill-label")];
-  /** The profile pill's label, which drops before the other two; null where the row leaves the pill out. */
+  /** The profile pill's label, which drops before the other two; null where it never shows (a phone-shaped
+   *  screen) or the row leaves the pill out. */
   const profileName = (): HTMLElement | null => {
     const name = byId("profile-pill-label");
-    return shown(byId("profile-pill")) ? name : null;
+    const phone = matchMedia("(width <= 48rem), (height <= 30rem)").matches;
+    return !phone && shown(byId("profile-pill")) ? name : null;
   };
 
   it("fits the row on one line at the phone preset, with no control cut", async () => {
@@ -468,6 +489,205 @@ describe("the model, profile and mode pills, by the room the row has", () => {
       }
     }
   });
+
+  /** What the row breaks of its contract: an overflow, a wrap, and with `hits` a target under the floor. A walk probes
+   *  targets where its state changes and at its last width, since a control never shrinks (15-input.css) and one probe
+   *  is hundreds of hit tests. */
+  function rowFaults(at: string, hits = true): string[] {
+    const off: string[] = [];
+    const row = document.querySelector<HTMLElement>(".prompt-pills")!;
+    if (row.scrollWidth > row.clientWidth) {
+      off.push(`${at}: the row overflows by ${String(row.scrollWidth - row.clientWidth)}px`);
+    }
+    const items = controls().filter((el) => row.contains(el));
+    if (new Set(items.map((el) => el.getBoundingClientRect().top)).size !== 1) {
+      off.push(`${at}: the row wraps`);
+    }
+    const floor = floorPx();
+    for (const el of hits ? items : []) {
+      const hit = hitRect(el);
+      if (width(hit) < floor - 2 * STEP || height(hit) < floor - 2 * STEP) {
+        off.push(`${at}: ${nameOf(el)} reaches ${String(width(hit))}x${String(height(hit))}px`);
+      }
+    }
+    return off;
+  }
+
+  /** The pills the row moved into Chat options, by what is on screen. */
+  function movedNow(): string[] {
+    return [
+      ...(shown(byId("role-pill")) ? [] : ["mode"]),
+      ...(shown(byId("profile-pill")) ? [] : ["profile"]),
+    ];
+  }
+
+  /** The steps the fit has taken past moving pills: the send buttons' words, then the task list's count. */
+  function narrowed(): string[] {
+    const words = [
+      ...document.querySelectorAll<HTMLElement>(
+        "#send-btn .send-btn-label, #midturn-send-btn .send-btn-label",
+      ),
+    ];
+    return [
+      ...(words.some(shown) ? [] : ["words"]),
+      ...(shown(byId("task-list-badge")) ? [] : ["count"]),
+    ];
+  }
+
+  /** Whether the row has room for one more pill at its square, the room the last moved pill needs back. */
+  function roomForOneMore(): boolean {
+    const row = document.querySelector<HTMLElement>(".prompt-pills")!;
+    const cs = getComputedStyle(row);
+    const content =
+      row.clientWidth - Number.parseFloat(cs.paddingLeft) - Number.parseFloat(cs.paddingRight);
+    const items = [...row.children].filter(
+      (el): el is HTMLElement =>
+        el instanceof HTMLElement && shown(el) && !el.classList.contains("pill-spacer"),
+    );
+    const used = items.reduce((sum, el) => {
+      const m = getComputedStyle(el);
+      return (
+        sum +
+        el.getBoundingClientRect().width +
+        Number.parseFloat(m.marginLeft) +
+        Number.parseFloat(m.marginRight)
+      );
+    }, 0);
+    const gap = Number.parseFloat(cs.columnGap);
+    const square = byId("chat-options-btn").getBoundingClientRect().width;
+    return used + gap * items.length + square <= content + 0.5;
+  }
+
+  it("keeps the fullest row on one line at a phone's widths, every target at the floor", async () => {
+    const off: string[] = [];
+    const moves: string[] = [];
+    for (const w of [360, 390, 430]) {
+      for (const pointer of ["coarse", "fine"] as const) {
+        for (const state of ["steer", "queue"] as const) {
+          await mount([w, 844], pointer, state);
+          const at = `${String(w)} ${pointer} ${state}`;
+          off.push(...rowFaults(at));
+          const moved = movedNow();
+          moves.push(`${at}: ${moved.join(" ") || "none"}`);
+          if (!shown(byId("context-indicator"))) {
+            off.push(`${at}: the context pill left the row`);
+          }
+          if (moved.length === 1 && moved[0] !== "mode") {
+            off.push(`${at}: Security profile moved before Mode`);
+          }
+          const steps = narrowed();
+          if (steps.includes("count") && !steps.includes("words")) {
+            off.push(`${at}: the task list dropped its count before the send buttons their words`);
+          }
+          // Past the moves, the room a dropped word or count frees is not a pill's to take back.
+          if (moved.length > 0 && narrowed().length === 0 && roomForOneMore()) {
+            off.push(`${at}: ${moved.join(" ")} moved with room to spare`);
+          }
+        }
+      }
+    }
+    console.log(`phone rows: ${moves.join("; ")}`);
+    expect(off).toEqual([]);
+  }, 60_000);
+
+  it("moves Mode, then Security profile, as the row narrows, and takes them back as it widens", async () => {
+    const box = (): HTMLElement => byId("prompt-box");
+    for (const pointer of ["fine", "coarse"] as const) {
+      await mount(DESKTOP, pointer, "steer");
+      const widths: number[] = [];
+      for (let w = 720; w >= 364; w -= 4) {
+        widths.push(w);
+      }
+      const seen = new Map<string, number>();
+      const off: string[] = [];
+      const walk = async (order: number[], dir: string): Promise<string[]> => {
+        const states: string[] = [];
+        for (const w of order) {
+          box().style.width = `${String(w)}px`;
+          await nextFrame();
+          const moved = movedNow().join(" ") || "none";
+          const changed = states.at(-1) !== moved;
+          if (changed) {
+            states.push(moved);
+            seen.set(`${dir} ${moved}`, w);
+          }
+          off.push(...rowFaults(`${pointer} ${String(w)}`, changed || w === order.at(-1)));
+          if (moved !== "none" && narrowed().length === 0 && roomForOneMore()) {
+            off.push(`${pointer} ${String(w)}: ${moved} moved with room to spare`);
+          }
+        }
+        return states;
+      };
+      expect(await walk(widths, "narrowing"), `${pointer}: narrowing`).toEqual([
+        "none",
+        "mode",
+        "mode profile",
+      ]);
+      expect(await walk([...widths].reverse(), "widening"), `${pointer}: widening`).toEqual([
+        "mode profile",
+        "mode",
+        "none",
+      ]);
+      expect(off, `${pointer}: the row at every width`).toEqual([]);
+      console.log(`${pointer} thresholds: ${JSON.stringify(Object.fromEntries(seen))}`);
+    }
+  }, 60_000);
+
+  it("drops the send buttons' words, then the task list's count, after both pills have moved, down to a phone's composer", async () => {
+    const box = (): HTMLElement => byId("prompt-box");
+    const words = (): HTMLElement[] => [
+      ...document.querySelectorAll<HTMLElement>(
+        "#send-btn .send-btn-label, #midturn-send-btn .send-btn-label",
+      ),
+    ];
+    for (const pointer of ["fine", "coarse"] as const) {
+      await mount([360, 844], pointer, "steer");
+      const floor = Math.floor(box().getBoundingClientRect().width);
+      await mount(DESKTOP, pointer, "steer");
+      expect(words().filter(shown), `${pointer}: the words this test reads`).not.toEqual([]);
+      const widths: number[] = [];
+      for (let w = 520; w >= floor; w -= 2) {
+        widths.push(w);
+      }
+      const off: string[] = [];
+      const seen = new Map<string, number>();
+      const walk = async (order: number[], dir: string): Promise<string[]> => {
+        const states: string[] = [];
+        for (const w of order) {
+          box().style.width = `${String(w)}px`;
+          await nextFrame();
+          const state = [...movedNow(), ...narrowed()].join(" ") || "none";
+          const changed = states.at(-1) !== state;
+          if (changed) {
+            states.push(state);
+            seen.set(`${dir} ${state}`, w);
+          }
+          off.push(...rowFaults(`${pointer} ${String(w)}`, changed || w === order.at(-1)));
+        }
+        return states;
+      };
+      // A touch phone's composer is too narrow for the row's two-digit count; a mouse's square is smaller.
+      const ladder = [
+        "none",
+        "mode",
+        "mode profile",
+        "mode profile words",
+        "mode profile words count",
+      ];
+      const steps = pointer === "coarse" ? ladder : ladder.slice(0, 4);
+      expect(
+        await walk(widths, "narrowing"),
+        `${pointer}: narrowing to ${String(floor)}px`,
+      ).toEqual(steps);
+      expect(await walk([...widths].reverse(), "widening"), `${pointer}: widening`).toEqual(
+        [...steps].reverse(),
+      );
+      expect(off, `${pointer}: the row at every width`).toEqual([]);
+      console.log(
+        `${pointer} words from ${String(floor)}px: ${JSON.stringify(Object.fromEntries(seen))}`,
+      );
+    }
+  }, 60_000);
 
   it("keeps their text, uncut, at the iPad preset in touch mode", async () => {
     for (const state of STATES) {
@@ -571,6 +791,61 @@ describe("the model, profile and mode pills, by the room the row has", () => {
       }
       expect(wrong, `${String(viewport[0])} ${pointer}: the text follows the fit`).toEqual([]);
     }
+  });
+});
+
+describe("an open card on a row that re-fits", () => {
+  /** `--pill-viewport-margin`, `--sp-3` at the root's 16px. */
+  const MARGIN = 12;
+  let close: AbortController | undefined;
+
+  afterEach(() => {
+    close?.abort();
+    close = undefined;
+  });
+
+  /** Opens Chat options' card as app.ts wires it, beside the row's fit. */
+  function openChatOptions(): HTMLElement {
+    close = new AbortController();
+    makeExpandable(byId("chat-options-btn"), byId("chat-options-card"), { signal: close.signal });
+    byId("chat-options-btn").click();
+    return byId("chat-options-card");
+  }
+
+  /** Where the card's layout box starts against where it belongs: at its slot, moved in only as far as keeps it
+   *  `MARGIN` inside the screen. Layout offsets, because the enter animation scales the painted box. */
+  function placement(card: HTMLElement): { at: number; want: number } {
+    const slot = card.parentElement!.getBoundingClientRect().left;
+    const want = Math.min(Math.max(slot, MARGIN), window.innerWidth - MARGIN - card.offsetWidth);
+    return { at: slot + card.offsetLeft, want };
+  }
+
+  it("follows its slot when the turn ends and Security profile comes back before it", async () => {
+    await mount([390, 844], "coarse", "steer");
+    const card = openChatOptions();
+    expect(shown(byId("profile-pill")), "the turn's row moved the profile pill").toBe(false);
+    const open = placement(card);
+    expect(open.at, "placed at open").toBeCloseTo(open.want, 0);
+
+    byId("midturn-send").hidden = true;
+    byId("task-list-pill").classList.add("hidden");
+    byId("send-btn").replaceChildren(label("Send"), iconEl(ICON_SEND));
+    await nextFrame();
+    expect(shown(byId("profile-pill")), "the idle row took the profile pill back").toBe(true);
+    const after = placement(card);
+    expect(after.at, "placed after the row re-fit").toBeCloseTo(after.want, 0);
+  });
+
+  it("stays on screen when the screen turns and turns back", async () => {
+    await mount([360, 844], "coarse", "steer");
+    const card = openChatOptions();
+    await page.viewport(780, 360);
+    await nextFrame();
+    await page.viewport(360, 844);
+    await nextFrame();
+    await nextFrame();
+    const back = placement(card);
+    expect(back.at, "placed after the turn back").toBeCloseTo(back.want, 0);
   });
 });
 
@@ -943,7 +1218,13 @@ const COVERS: Readonly<Record<Surface, readonly string[]>> = {
     "#send-btn",
     ".attachment-close",
   ],
-  "chat queue": ["#midturn-send-btn", "#task-list-pill", "#send-btn", "#scroll-bottom"],
+  "chat queue": [
+    "#profile-pill",
+    "#midturn-send-btn",
+    "#task-list-pill",
+    "#send-btn",
+    "#scroll-bottom",
+  ],
   run: ["#settings-btn", "#run-send-btn", "#run-scroll-bottom"],
 };
 

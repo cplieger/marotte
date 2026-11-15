@@ -1,7 +1,15 @@
 // The security profile vocabulary a person reads, shared by the Settings picker and the composer's pill. The ladder
-// itself is the server's (policyfile.Profiles); only the words and the confirm live here.
+// itself is the server's (policyfile.Profiles); only the words, the shields and the confirm live here.
 
 import { confirm } from "./confirm.js";
+import {
+  ICON_SHIELD,
+  ICON_SHIELD_DOT,
+  ICON_SHIELD_LINES_ONE,
+  ICON_SHIELD_LINES_TWO,
+  ICON_SHIELD_LINES_THREE,
+  ICON_SHIELD_LINES_FOUR,
+} from "./icons.js";
 
 /** The Custom profile's id, the one rung the client knows by name: the policy table is editable only there. */
 export const CUSTOM_PROFILE = "custom";
@@ -27,6 +35,25 @@ export function profileLabel(id: string): string {
       return "Custom";
     default:
       return id;
+  }
+}
+
+/** A rung's shield carries one line per ranked rung looser than it, so more lines mean more protection. An id the
+ *  client has no drawing for gets the plain shield. */
+export function profileIcon(id: string): string {
+  switch (id) {
+    case "guarded":
+      return ICON_SHIELD_LINES_FOUR;
+    case "read-only":
+      return ICON_SHIELD_LINES_THREE;
+    case "trusted":
+      return ICON_SHIELD_LINES_TWO;
+    case "delegated":
+      return ICON_SHIELD_LINES_ONE;
+    case CUSTOM_PROFILE:
+      return ICON_SHIELD_DOT;
+    default:
+      return ICON_SHIELD;
   }
 }
 

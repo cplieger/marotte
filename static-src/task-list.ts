@@ -68,8 +68,14 @@ function refreshTaskList(): void {
 
   pill.classList.remove("hidden");
 
-  // Badge: count of pending + in_progress items.
+  // Badge: count of pending + in_progress items. The name carries it too, since a full row hides the badge
+  // (pill-row-fit.ts).
   const active = plan.filter((e) => e.status !== "completed").length;
+  const name = active > 0 ? `Task list, ${String(active)} open` : "Task list";
+  if (pill.getAttribute("aria-label") !== name) {
+    pill.setAttribute("aria-label", name);
+    pill.dataset["tooltip"] = name;
+  }
   if (active > 0) {
     badge.textContent = String(active);
     badge.classList.remove("hidden");

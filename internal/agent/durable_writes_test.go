@@ -67,6 +67,11 @@ var durableWriteSites = []durableSite{{
 	calls:   []string{"AppendBetweenTurns"},
 	because: "the mode_switched entry a landed mode switch leaves, which is on no KAS wire",
 }, {
+	file:    "internal/agent/security_profile.go",
+	fn:      "appendProfileSwitched",
+	calls:   []string{"AppendBetweenTurns"},
+	because: "the profile_switched entry a chat's profile move leaves, which is on no KAS wire",
+}, {
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "recordContextReset",
 	calls:   []string{"AppendBetweenTurns"},
@@ -151,6 +156,11 @@ var abandonableWriteSites = []durableSite{{
 	fn:      "persistNewSessionMetadata",
 	calls:   []string{"Mutate"},
 	because: "the new session's id and facts — no conversational record; a record that did not take them fails the generation, which reaps the session, and the next open runs again",
+}, {
+	file:    "internal/agent/security_profile.go",
+	fn:      "moveProfile",
+	calls:   []string{"Mutate"},
+	because: "the header's pick on the request's context, as the command/* writes: a pick a shutdown cuts is refused, and the pill drops it",
 }, {
 	file:    "internal/agent/turn_open.go",
 	fn:      "openTurn",
