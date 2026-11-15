@@ -25,10 +25,10 @@ TIER_RUNS = 10
 SERVER_CPU = 'server_cpu_ms'
 Q7_SERVER_CPU_MS = 63
 # Q8: the pull request's performance job finishes in about 25 minutes. Besides its slowest
-# shard's cells it runs plan and build (82 s in pr calibration 43591500420) and the shard's own
-# setup (at most 108 s there: checkout, Node, Playwright, the build artifact).
+# shard's cells it runs plan and build (104 s in pr calibration 43683563629) and the shard's own
+# setup (at most 93 s there: checkout, Node, Playwright, the build artifact).
 PR_JOB_SECONDS = 25 * 60
-PR_SETUP_SECONDS = 82 + 108
+PR_SETUP_SECONDS = 104 + 93
 # An answer whose size carries a clock value is not a count: GET /api/engine's `since` is a
 # time.Time, whose RFC 3339 text drops trailing zero nanoseconds, and its seq can gain a digit,
 # so its size moves rep to rep on one runner. perf_gate.py reports a measured cell that has no

@@ -214,7 +214,7 @@
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 177
+          "seconds": 170
         },
         {
           "scenario": "chat-stream",
@@ -228,14 +228,14 @@
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 173
+          "seconds": 172
         },
         {
           "scenario": "run-dock",
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 150
+          "seconds": 142
         },
         {
           "scenario": "run-page",
@@ -249,7 +249,7 @@
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 177
+          "seconds": 176
         },
         {
           "scenario": "git-changes",
@@ -263,21 +263,21 @@
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 896
+          "seconds": 897
         },
         {
           "scenario": "settings",
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 176
+          "seconds": 168
         },
         {
           "scenario": "settings-tools",
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 175
+          "seconds": 174
         },
         {
           "scenario": "docs",
@@ -298,7 +298,7 @@
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 196
+          "seconds": 172
         },
         {
           "scenario": "history",
@@ -312,7 +312,7 @@
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 179
+          "seconds": 180
         },
         {
           "scenario": "chat-long",
@@ -322,7 +322,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 34
+          "seconds": 35
         },
         {
           "scenario": "chat-stream",
@@ -332,7 +332,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 35
+          "seconds": 36
         },
         {
           "scenario": "tabs",
@@ -342,7 +342,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 35
+          "seconds": 29
         },
         {
           "scenario": "run-dock",
@@ -352,7 +352,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 34
+          "seconds": 33
         },
         {
           "scenario": "run-page",
@@ -362,7 +362,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 32
+          "seconds": 31
         },
         {
           "scenario": "files",
@@ -372,7 +372,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 31
+          "seconds": 35
         },
         {
           "scenario": "git-changes",
@@ -382,7 +382,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 28
+          "seconds": 32
         },
         {
           "scenario": "git-prs",
@@ -392,7 +392,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 27
+          "seconds": 22
         },
         {
           "scenario": "settings",
@@ -402,7 +402,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 27
+          "seconds": 26
         },
         {
           "scenario": "settings-tools",
@@ -412,7 +412,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 27
+          "seconds": 26
         },
         {
           "scenario": "docs",
@@ -422,7 +422,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 29
+          "seconds": 31
         },
         {
           "scenario": "docs-workflows",
@@ -432,7 +432,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 26
+          "seconds": 28
         },
         {
           "scenario": "shell",
@@ -442,7 +442,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 25
+          "seconds": 21
         },
         {
           "scenario": "history",
@@ -462,14 +462,14 @@
           "windows": [
             "cold"
           ],
-          "seconds": 28
+          "seconds": 27
         },
         {
           "scenario": "run-drive",
           "scale": "x10",
           "engine": "server",
           "width": "none",
-          "seconds": 105
+          "seconds": 104
         }
       ]
     },
@@ -481,28 +481,28 @@
           "scale": "x1",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 166
+          "seconds": 165
         },
         {
           "scenario": "chat-long",
           "scale": "x1",
           "engine": "chromium",
           "width": "phone",
-          "seconds": 165
+          "seconds": 164
         },
         {
           "scenario": "chat-long",
           "scale": "x1",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 168
+          "seconds": 169
         },
         {
           "scenario": "chat-long",
           "scale": "x1",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 169
+          "seconds": 170
         },
         {
           "scenario": "chat-long",
@@ -510,56 +510,56 @@
           "engine": "chromium",
           "width": "desktop",
           "profile": true,
-          "seconds": 235
+          "seconds": 237
         },
         {
           "scenario": "chat-long",
           "scale": "x10",
           "engine": "chromium",
           "width": "phone",
-          "seconds": 176
+          "seconds": 175
         },
         {
           "scenario": "chat-long",
           "scale": "x10",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 179
+          "seconds": 178
         },
         {
           "scenario": "chat-long",
           "scale": "x10",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 180
+          "seconds": 178
         },
         {
           "scenario": "chat-stream",
           "scale": "x1",
           "engine": "chromium",
-          "width": "desktop",
-          "seconds": 165
-        },
-        {
-          "scenario": "chat-stream",
-          "scale": "x1",
-          "engine": "chromium",
-          "width": "phone",
-          "seconds": 164
-        },
-        {
-          "scenario": "chat-stream",
-          "scale": "x1",
-          "engine": "webkit",
           "width": "desktop",
           "seconds": 165
         },
         {
           "scenario": "chat-stream",
           "scale": "x1",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 165
+        },
+        {
+          "scenario": "chat-stream",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 166
+        },
+        {
+          "scenario": "chat-stream",
+          "scale": "x1",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 167
+          "seconds": 165
         },
         {
           "scenario": "chat-stream",
@@ -574,42 +574,42 @@
           "scale": "x10",
           "engine": "chromium",
           "width": "phone",
-          "seconds": 172
+          "seconds": 170
         },
         {
           "scenario": "chat-stream",
           "scale": "x10",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 174
-        },
-        {
-          "scenario": "chat-stream",
-          "scale": "x10",
-          "engine": "webkit",
-          "width": "phone",
           "seconds": 173
         },
         {
+          "scenario": "chat-stream",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 174
+        },
+        {
           "scenario": "tabs",
           "scale": "x1",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 164
+          "seconds": 163
         },
         {
           "scenario": "tabs",
           "scale": "x1",
           "engine": "chromium",
           "width": "phone",
-          "seconds": 164
+          "seconds": 163
         },
         {
           "scenario": "tabs",
           "scale": "x1",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 165
+          "seconds": 164
         },
         {
           "scenario": "tabs",
@@ -624,56 +624,56 @@
           "engine": "chromium",
           "width": "desktop",
           "profile": true,
-          "seconds": 230
+          "seconds": 231
         },
         {
           "scenario": "tabs",
           "scale": "x10",
           "engine": "chromium",
           "width": "phone",
-          "seconds": 170
+          "seconds": 171
         },
         {
           "scenario": "tabs",
           "scale": "x10",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 172
+          "seconds": 173
         },
         {
           "scenario": "tabs",
           "scale": "x10",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 172
+          "seconds": 173
         },
         {
           "scenario": "run-dock",
           "scale": "x1",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 137
+          "seconds": 138
         },
         {
           "scenario": "run-dock",
           "scale": "x1",
           "engine": "chromium",
           "width": "phone",
-          "seconds": 137
+          "seconds": 136
         },
         {
           "scenario": "run-dock",
           "scale": "x1",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 141
+          "seconds": 138
         },
         {
           "scenario": "run-dock",
           "scale": "x1",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 135
+          "seconds": 136
         },
         {
           "scenario": "run-dock",
@@ -681,28 +681,28 @@
           "engine": "chromium",
           "width": "desktop",
           "profile": true,
-          "seconds": 198
+          "seconds": 199
         },
         {
           "scenario": "run-dock",
           "scale": "x10",
           "engine": "chromium",
           "width": "phone",
-          "seconds": 145
+          "seconds": 147
         },
         {
           "scenario": "run-dock",
           "scale": "x10",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 148
+          "seconds": 147
         },
         {
           "scenario": "run-dock",
           "scale": "x10",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 154
+          "seconds": 150
         },
         {
           "scenario": "run-page",
@@ -716,14 +716,14 @@
           "scale": "x1",
           "engine": "chromium",
           "width": "phone",
-          "seconds": 136
+          "seconds": 137
         },
         {
           "scenario": "run-page",
           "scale": "x1",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 140
+          "seconds": 141
         },
         {
           "scenario": "run-page",
@@ -738,71 +738,71 @@
           "engine": "chromium",
           "width": "desktop",
           "profile": true,
-          "seconds": 198
+          "seconds": 197
         },
         {
           "scenario": "run-page",
           "scale": "x10",
           "engine": "chromium",
           "width": "phone",
-          "seconds": 145
+          "seconds": 146
         },
         {
           "scenario": "run-page",
           "scale": "x10",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 149
+          "seconds": 151
         },
         {
           "scenario": "run-page",
           "scale": "x10",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 149
+          "seconds": 150
         },
         {
           "scenario": "files",
           "scale": "x1",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 163
-        },
-        {
-          "scenario": "files",
-          "scale": "x1",
-          "engine": "chromium",
-          "width": "phone",
-          "seconds": 163
-        },
-        {
-          "scenario": "files",
-          "scale": "x1",
-          "engine": "webkit",
-          "width": "desktop",
-          "seconds": 166
-        },
-        {
-          "scenario": "files",
-          "scale": "x1",
-          "engine": "webkit",
-          "width": "phone",
           "seconds": 164
         },
         {
           "scenario": "files",
+          "scale": "x1",
+          "engine": "chromium",
+          "width": "phone",
+          "seconds": 163
+        },
+        {
+          "scenario": "files",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 164
+        },
+        {
+          "scenario": "files",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 161
+        },
+        {
+          "scenario": "files",
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
           "profile": true,
-          "seconds": 234
+          "seconds": 236
         },
         {
           "scenario": "files",
           "scale": "x10",
           "engine": "chromium",
           "width": "phone",
-          "seconds": 173
+          "seconds": 171
         },
         {
           "scenario": "files",
@@ -816,7 +816,7 @@
           "scale": "x10",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 187
+          "seconds": 191
         },
         {
           "scenario": "git-changes",
@@ -844,7 +844,7 @@
           "scale": "x1",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 165
+          "seconds": 163
         },
         {
           "scenario": "git-changes",
@@ -852,30 +852,30 @@
           "engine": "chromium",
           "width": "desktop",
           "profile": true,
-          "seconds": 238
+          "seconds": 237
         },
         {
           "scenario": "git-changes",
           "scale": "x10",
           "engine": "chromium",
           "width": "phone",
-          "seconds": 171
+          "seconds": 169
         },
         {
           "scenario": "git-changes",
           "scale": "x10",
           "engine": "webkit",
           "width": "desktop",
+          "seconds": 177
+        },
+        {
+          "scenario": "git-changes",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "phone",
           "seconds": 178
         },
         {
-          "scenario": "git-changes",
-          "scale": "x10",
-          "engine": "webkit",
-          "width": "phone",
-          "seconds": 175
-        },
-        {
           "scenario": "git-prs",
           "scale": "x1",
           "engine": "chromium",
@@ -894,14 +894,14 @@
           "scale": "x1",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 888
+          "seconds": 886
         },
         {
           "scenario": "git-prs",
           "scale": "x1",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 887
+          "seconds": 886
         },
         {
           "scenario": "git-prs",
@@ -909,30 +909,30 @@
           "engine": "chromium",
           "width": "desktop",
           "profile": true,
-          "seconds": 1195
+          "seconds": 1197
         },
         {
           "scenario": "git-prs",
           "scale": "x10",
           "engine": "chromium",
           "width": "phone",
-          "seconds": 895
+          "seconds": 894
         },
         {
           "scenario": "git-prs",
           "scale": "x10",
           "engine": "webkit",
           "width": "desktop",
+          "seconds": 899
+        },
+        {
+          "scenario": "git-prs",
+          "scale": "x10",
+          "engine": "webkit",
+          "width": "phone",
           "seconds": 897
         },
         {
-          "scenario": "git-prs",
-          "scale": "x10",
-          "engine": "webkit",
-          "width": "phone",
-          "seconds": 900
-        },
-        {
           "scenario": "settings",
           "scale": "x1",
           "engine": "chromium",
@@ -944,14 +944,14 @@
           "scale": "x1",
           "engine": "chromium",
           "width": "phone",
-          "seconds": 163
-        },
-        {
-          "scenario": "settings",
-          "scale": "x1",
-          "engine": "webkit",
-          "width": "desktop",
           "seconds": 164
+        },
+        {
+          "scenario": "settings",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "desktop",
+          "seconds": 162
         },
         {
           "scenario": "settings",
@@ -966,7 +966,7 @@
           "engine": "chromium",
           "width": "desktop",
           "profile": true,
-          "seconds": 233
+          "seconds": 231
         },
         {
           "scenario": "settings",
@@ -1008,14 +1008,14 @@
           "scale": "x1",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 160
+          "seconds": 161
         },
         {
           "scenario": "settings-tools",
           "scale": "x1",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 161
+          "seconds": 162
         },
         {
           "scenario": "settings-tools",
@@ -1023,7 +1023,7 @@
           "engine": "chromium",
           "width": "desktop",
           "profile": true,
-          "seconds": 230
+          "seconds": 231
         },
         {
           "scenario": "settings-tools",
@@ -1037,21 +1037,21 @@
           "scale": "x10",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 172
+          "seconds": 171
         },
         {
           "scenario": "settings-tools",
           "scale": "x10",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 175
+          "seconds": 174
         },
         {
           "scenario": "docs",
           "scale": "x1",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 236
+          "seconds": 235
         },
         {
           "scenario": "docs",
@@ -1072,7 +1072,7 @@
           "scale": "x1",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 233
+          "seconds": 235
         },
         {
           "scenario": "docs",
@@ -1080,7 +1080,7 @@
           "engine": "chromium",
           "width": "desktop",
           "profile": true,
-          "seconds": 328
+          "seconds": 330
         },
         {
           "scenario": "docs",
@@ -1094,14 +1094,14 @@
           "scale": "x10",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 247
+          "seconds": 248
         },
         {
           "scenario": "docs",
           "scale": "x10",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 253
+          "seconds": 249
         },
         {
           "scenario": "docs-workflows",
@@ -1115,21 +1115,21 @@
           "scale": "x1",
           "engine": "chromium",
           "width": "phone",
-          "seconds": 167
+          "seconds": 168
         },
         {
           "scenario": "docs-workflows",
           "scale": "x1",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 169
+          "seconds": 167
         },
         {
           "scenario": "docs-workflows",
           "scale": "x1",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 164
+          "seconds": 165
         },
         {
           "scenario": "docs-workflows",
@@ -1137,21 +1137,21 @@
           "engine": "chromium",
           "width": "desktop",
           "profile": true,
-          "seconds": 236
+          "seconds": 237
         },
         {
           "scenario": "docs-workflows",
           "scale": "x10",
           "engine": "chromium",
           "width": "phone",
-          "seconds": 176
+          "seconds": 174
         },
         {
           "scenario": "docs-workflows",
           "scale": "x10",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 176
+          "seconds": 175
         },
         {
           "scenario": "docs-workflows",
@@ -1165,7 +1165,7 @@
           "scale": "x1",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 129
+          "seconds": 130
         },
         {
           "scenario": "shell",
@@ -1179,7 +1179,7 @@
           "scale": "x1",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 128
+          "seconds": 129
         },
         {
           "scenario": "shell",
@@ -1194,14 +1194,14 @@
           "engine": "chromium",
           "width": "desktop",
           "profile": true,
-          "seconds": 254
+          "seconds": 249
         },
         {
           "scenario": "shell",
           "scale": "x10",
           "engine": "chromium",
           "width": "phone",
-          "seconds": 173
+          "seconds": 160
         },
         {
           "scenario": "shell",
@@ -1215,7 +1215,7 @@
           "scale": "x10",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 147
+          "seconds": 151
         },
         {
           "scenario": "history",
@@ -1236,14 +1236,14 @@
           "scale": "x1",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 164
+          "seconds": 163
         },
         {
           "scenario": "history",
           "scale": "x1",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 161
+          "seconds": 162
         },
         {
           "scenario": "history",
@@ -1251,14 +1251,14 @@
           "engine": "chromium",
           "width": "desktop",
           "profile": true,
-          "seconds": 232
+          "seconds": 229
         },
         {
           "scenario": "history",
           "scale": "x10",
           "engine": "chromium",
           "width": "phone",
-          "seconds": 170
+          "seconds": 171
         },
         {
           "scenario": "history",
@@ -1272,7 +1272,7 @@
           "scale": "x10",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 173
+          "seconds": 174
         },
         {
           "scenario": "history-runs",
@@ -1293,14 +1293,14 @@
           "scale": "x1",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 168
-        },
-        {
-          "scenario": "history-runs",
-          "scale": "x1",
-          "engine": "webkit",
-          "width": "phone",
           "seconds": 166
+        },
+        {
+          "scenario": "history-runs",
+          "scale": "x1",
+          "engine": "webkit",
+          "width": "phone",
+          "seconds": 165
         },
         {
           "scenario": "history-runs",
@@ -1322,7 +1322,7 @@
           "scale": "x10",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 177
+          "seconds": 176
         },
         {
           "scenario": "history-runs",
@@ -1336,7 +1336,7 @@
           "scale": "x1",
           "engine": "server",
           "width": "none",
-          "seconds": 97
+          "seconds": 96
         },
         {
           "scenario": "run-drive",
