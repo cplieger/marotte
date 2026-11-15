@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/marotte/internal/bot"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/workspace"
@@ -874,6 +875,10 @@ type Roles struct {
 	// Renamer renames every KAS session in a chat's chain, so a closed chat's
 	// rename reaches History at once.
 	Renamer SessionRenamer
+	// BotReloads marks an edited Bot's resident session to reload with its new role.
+	BotReloads BotReloader
+	// Models applies a model or effort pick through the model pill's own switch.
+	Models modelSwitcher
 	// SpecApprovals is the spec-phase approval record, and it may be nil: a build
 	// with no config dir has no store to persist one to. The handler answers a
 	// 503 in that state rather than reporting an approval nothing kept.
@@ -882,9 +887,11 @@ type Roles struct {
 	Tangents TangentAccess
 	// Conversations refuses resuming a session KAS does not list as a conversation. Nil checks nothing.
 	Conversations listedConversations
-	// Workspace and AnswerBudget are last for fieldalignment (trailing
+	// Workspace, BotPaths and AnswerBudget are last for fieldalignment (trailing
 	// non-pointer words stop the leading-pointer count early).
 	Workspace Workspace
+	// BotPaths are where each Bot's directory and memory file live.
+	BotPaths bot.Paths
 	// AnswerBudget is how long a session change's request waits on kiro-cli before it answers still_applying;
 	// zero waits for the change on the request.
 	AnswerBudget time.Duration

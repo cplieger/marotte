@@ -239,6 +239,11 @@ func (bc *bridgeCoordinator) openBridge(ctx context.Context, chatID marotte.Chat
 func (bc *bridgeCoordinator) openBridgeAt(
 	ctx context.Context, chatID marotte.ChatID, modelOverride string, res command.Reservation,
 ) (*sharedBridge, func(), error) {
+	if rec, ok := bc.chatStore.Get(ctx, chatID); ok {
+		if err := command.BotDraftRefusal(rec); err != nil {
+			return nil, func() {}, err
+		}
+	}
 	syncBy := time.Now().Add(ignorePushTimeout)
 	sb, release, err := bc.openBridgeBy(ctx, chatID, modelOverride, syncBy, res)
 	if err != nil {

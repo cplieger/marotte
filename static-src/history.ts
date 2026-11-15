@@ -268,7 +268,8 @@ function toRows(sessions: ResumableSession[], runs: WorkflowRun[]): HistoryRow[]
     }
     const description = s.description ?? "";
     rows.push({
-      key: `s:${s.session_id}`,
+      // A Bot listed by its record has no session id; its chat id keys it, so two such Bots stay two rows.
+      key: s.session_id === "" ? `b:${s.chat_id ?? ""}` : `s:${s.session_id}`,
       kind: "chat",
       title: s.title === "" ? "Untitled session" : s.title,
       updatedAt: s.updated_at,

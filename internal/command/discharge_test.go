@@ -96,6 +96,9 @@ func TestCommandDischarges_ClassifiesEveryCommand(t *testing.T) {
 		marotte.CmdAckTab:              "CmdAckTab",
 		marotte.CmdApproveSpecPhase:    "CmdApproveSpecPhase",
 		marotte.CmdMergeTangent:        "CmdMergeTangent",
+		marotte.CmdBotSave:             "CmdBotSave",
+		marotte.CmdBotSetPaused:        "CmdBotSetPaused",
+		marotte.CmdBotClearMemory:      "CmdBotClearMemory",
 	}
 	classified := make(map[string]bool, len(commandDischarges))
 	for value := range commandDischarges {

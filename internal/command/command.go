@@ -55,7 +55,15 @@ type statusError struct {
 	// It sits after the string fields so the struct's pointer-bearing prefix
 	// stays at govet fieldalignment's optimum.
 	runs []LiveRunRef
-	code int
+	// fields names each payload field a refused save could not take; nil elsewhere.
+	fields []fieldError
+	code   int
+}
+
+// fieldError is one payload field a refused command names, with why, so a form can mark the field.
+type fieldError struct {
+	Field string `json:"field"`
+	Error string `json:"error"`
 }
 
 func (e *statusError) Error() string { return e.err.Error() }
@@ -84,6 +92,11 @@ func statusErrorRuns(code int, reason string, runs []LiveRunRef, err error) erro
 // again on what the close would stop.
 func statusErrorImpact(code int, reason string, impact *marotte.CloseImpact, err error) error {
 	return &statusError{code: code, reason: reason, impact: impact, err: err}
+}
+
+// statusErrorFields is StatusErrorReason plus every payload field the command refused.
+func statusErrorFields(code int, reason string, fields []fieldError, err error) error {
+	return &statusError{code: code, reason: reason, fields: fields, err: err}
 }
 
 // statusErrorCurrentHash is StatusErrorReason plus the hash a refused
@@ -200,6 +213,8 @@ type errorResponse struct {
 	// statusErrorRuns. It sits after the string fields so the struct's
 	// pointer-bearing prefix stays at govet fieldalignment's optimum.
 	Runs []LiveRunRef `json:"runs,omitempty"`
+	// Fields are the payload fields a refused save names. See statusErrorFields.
+	Fields []fieldError `json:"fields,omitempty"`
 }
 
 // writeError writes a JSON error response at the status the handler chose (a StatusError*
@@ -214,6 +229,7 @@ func writeError(w http.ResponseWriter, err error) {
 		resp.Runs = se.runs
 		resp.Impact = se.impact
 		resp.CurrentHash = se.currentHash
+		resp.Fields = se.fields
 	}
 	httpserver.WriteJSONStatus(w, statusOf(err), resp)
 }

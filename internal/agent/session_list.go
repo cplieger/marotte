@@ -71,8 +71,9 @@ func (rt *Runtime) handleSessionList(w http.ResponseWriter, r *http.Request) {
 		runs = []marotte.WorkflowRun{}
 		out.RunsState = marotte.ReadUnavailable
 	}
-	withParentNames(runs, rt.chatStore.List(r.Context()))
-	out.Sessions = rows
+	headers := rt.chatStore.List(r.Context())
+	withParentNames(runs, headers)
+	out.Sessions = withSessionlessBots(rows, headers)
 	out.Runs = runs
 	httpserver.WriteJSON(w, out)
 }
@@ -106,6 +107,30 @@ func withChatFacts(rows []marotte.ResumableSession, headers []marotte.ChatHeader
 		rows[i].Credits = h.Usage.Credits
 		rows[i].Bot = h.Bot != nil
 	}
+}
+
+// withSessionlessBots adds a row built from its header for each Bot no row lists, so a Bot whose kickoff was refused,
+// or whose sessions KAS no longer lists, stays reachable in History; it answers the rows newest first.
+func withSessionlessBots(rows []marotte.ResumableSession, headers []marotte.ChatHeader) []marotte.ResumableSession {
+	listed := make(map[string]bool, len(rows))
+	for i := range rows {
+		listed[rows[i].ChatID] = true
+	}
+	added := false
+	for i := range headers {
+		h := &headers[i]
+		if h.Bot == nil || listed[h.ID] {
+			continue
+		}
+		rows = append(rows, marotte.ResumableSession{
+			ChatID: h.ID, Title: h.Name, UpdatedAt: h.UpdatedAt, CreatedAt: h.CreatedAt, Model: h.Model, Bot: true,
+		})
+		added = true
+	}
+	if added {
+		slices.SortStableFunc(rows, func(a, b marotte.ResumableSession) int { return cmp.Compare(b.UpdatedAt, a.UpdatedAt) })
+	}
+	return rows
 }
 
 // withParentNames copies each launching chat's name from its stored header onto the run row.

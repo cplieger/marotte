@@ -74,7 +74,8 @@ func (s *Store) publish(st *state) {
 // minted here; the position follows the client's insertSpec. A spec naming an unopened parent
 // is PROMOTED to top level, so use the returned subject. A chat listed as recently closed leaves
 // the list in the same version and, opened top level, gets its closed tab's Pinned back. Returns
-// ErrBadKind, ErrBadRef or ErrTooMany; on any error nothing is applied and the version is 0.
+// ErrBadKind, ErrBadRef or ErrTooMany (at MaxOpenTabs, or MaxTabs with OverCap); on any error nothing is applied and
+// the version is 0.
 func (s *Store) Open(ctx context.Context, spec marotte.OpenTab) (subject marotte.TabSubject, created bool, version uint64, err error) {
 	err = checkSubject(spec.Kind, spec.Ref)
 	if err != nil {
@@ -85,8 +86,12 @@ func (s *Store) Open(ctx context.Context, spec marotte.OpenTab) (subject marotte
 			subject = st.tabs[i]
 			return false, nil
 		}
-		if len(st.tabs) >= MaxOpenTabs {
-			return false, fmt.Errorf("%w: %d open, limit %d", ErrTooMany, len(st.tabs), MaxOpenTabs)
+		limit := MaxOpenTabs
+		if spec.OverCap {
+			limit = MaxTabs
+		}
+		if len(st.tabs) >= limit {
+			return false, fmt.Errorf("%w: %d open, limit %d", ErrTooMany, len(st.tabs), limit)
 		}
 		subject = marotte.TabSubject{
 			ID:     newID(),

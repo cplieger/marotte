@@ -15,6 +15,9 @@ const SecretMask = "***"
 // client does not supply one.
 const DefaultChatName = "New conversation"
 
+// DefaultBotName is a new Bot draft's name, set by the user from creation so no title rung renames it.
+const DefaultBotName = "New Bot"
+
 // MaxDraftBytes caps a chat's persisted composer draft, far below a prompt's 512 KiB because a
 // draft is re-saved every 600ms of typing and read on every chat open.
 const MaxDraftBytes = 16 * 1024

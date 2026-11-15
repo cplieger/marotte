@@ -97,7 +97,7 @@ func newCallerFixture(t *testing.T) *callerFixture {
 		return cmdSteer(ctx, steerRoles, cmd)
 	})
 	d.register(marotte.CmdQueuePrompt, func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
-		return cmdQueuePrompt(ctx, queue, roles.admission, reopens, cmd)
+		return cmdQueuePrompt(ctx, queue, roles.admission, reopens, roles.chats, cmd)
 	})
 	return &callerFixture{d: d, opens: opens, store: store, steers: steers, queue: queue, join: join, reopens: reopens, host: host}
 }

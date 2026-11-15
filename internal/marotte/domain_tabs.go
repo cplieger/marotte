@@ -124,6 +124,8 @@ type OpenTab struct {
 	Owns bool `json:"owns,omitempty"`
 	// Bot is copied onto a chat tab's TabSubject.Bot. Never decoded, so no client states it.
 	Bot bool `json:"-"`
+	// OverCap lets the boot heal open a Bot's lost tab past MaxOpenTabs, up to MaxTabs. Never decoded.
+	OverCap bool `json:"-"`
 }
 
 // RunLaunch is what the run-tab door resolved about a run's holders, stored as TabSubject.LaunchChats.
@@ -141,6 +143,8 @@ type RecentClose struct {
 	ClosedAt int64  `json:"closed_at"`
 	// Pinned is the closed tab's flag; a top-level reopen restores it.
 	Pinned bool `json:"pinned,omitempty"`
+	// Bot is the closed chat's record fact, so the row draws a Bot without its header.
+	Bot bool `json:"bot,omitempty"`
 }
 
 // RecentList is the whole Recently closed list, newest first. A frame carries it as an object so

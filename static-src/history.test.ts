@@ -609,6 +609,56 @@ describe("history: chats already open in a tab here", () => {
   });
 });
 
+describe("history: a Bot with no stored session", () => {
+  beforeEach(resetAll);
+
+  const botA = {
+    session_id: "",
+    chat_id: "c-bot-a",
+    title: "CI watcher",
+    updated_at: 2600,
+    bot: true,
+  };
+  const botB = { session_id: "", chat_id: "c-bot-b", title: "Inbox", updated_at: 2400, bot: true };
+
+  it("keys each by its chat, so two render as two rows and a reload keeps both", async () => {
+    await render({ sessions: [chatRow, botA, botB], runs: [] });
+    expect(keysIn(chatsPane())).toEqual(["s:sess_chat", "b:c-bot-a", "b:c-bot-b"]);
+
+    const before = dispatch.mock.calls.length;
+    current!.refreshHistoryView();
+    await vi.waitFor(() => {
+      expect(dispatch.mock.calls.length).toBeGreaterThan(before);
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(keysIn(chatsPane())).toEqual(["s:sess_chat", "b:c-bot-a", "b:c-bot-b"]);
+  });
+
+  it("opens the Bot's chat through the reopen door", async () => {
+    await render({ sessions: [botA, botB], runs: [] });
+    openBtn(rowOf("b:c-bot-b")).click();
+    expect(openPreviousSession).toHaveBeenCalledTimes(1);
+    expect(openPreviousSession).toHaveBeenCalledWith(
+      expect.objectContaining({ chat_id: "c-bot-b", session_id: "" }),
+    );
+  });
+
+  it("deletes the Bot by its chat id", async () => {
+    await render({ sessions: [botA, botB], runs: [] });
+    rowOf("b:c-bot-a").querySelector<HTMLElement>("[data-history-delete]")!.click();
+    await vi.waitFor(() => {
+      expect(deleteChatDispatch).toHaveBeenCalledTimes(1);
+    });
+    expect(deleteChatDispatch.mock.calls[0]?.[0].id).toBe("c-bot-a");
+  });
+
+  it("hides an open Bot's row", async () => {
+    hasTab.mockImplementation((_kind: string, ref?: string) => ref === "c-bot-a");
+    await render({ sessions: [botA, botB], runs: [] });
+    expect(keysIn(chatsPane())).toEqual(["b:c-bot-b"]);
+  });
+});
+
 describe("history: runs covered by an open tab", () => {
   beforeEach(resetAll);
 

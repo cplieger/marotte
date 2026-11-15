@@ -63,7 +63,7 @@ func TestCmdRenameChat_RenamesThroughTheEngine(t *testing.T) {
 	seedRenameChat(t, store, "c1", "s1")
 	renamer := &spyRenamer{}
 
-	_, err := cmdRenameChat(t.Context(), store, renamer, renameReq(t, "c1", "Closed chat"))
+	_, err := cmdRenameChat(t.Context(), store, renamer, &botFakes{}, renameReq(t, "c1", "Closed chat"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("CmdRenameChat status = %d, want 200 (%s)", statusOf(err), errText(err))
@@ -78,7 +78,7 @@ func TestCmdRenameChat_NoSessionSendsNothing(t *testing.T) {
 	seedRenameChat(t, store, "c1", "")
 	renamer := &spyRenamer{}
 
-	_, err := cmdRenameChat(t.Context(), store, renamer, renameReq(t, "c1", "Fresh"))
+	_, err := cmdRenameChat(t.Context(), store, renamer, &botFakes{}, renameReq(t, "c1", "Fresh"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("CmdRenameChat status = %d, want 200 (%s)", statusOf(err), errText(err))
@@ -102,7 +102,7 @@ func TestCmdRenameChat_RenamesEverySessionInTheChain(t *testing.T) {
 			seedRenameChain(t, store, "c1", "p1", "p2", "s1")
 			renamer := &spyRenamer{err: tc.renameErr}
 
-			_, err := cmdRenameChat(t.Context(), store, renamer, renameReq(t, "c1", "Named"))
+			_, err := cmdRenameChat(t.Context(), store, renamer, &botFakes{}, renameReq(t, "c1", "Named"))
 
 			if statusOf(err) != http.StatusOK {
 				t.Fatalf("CmdRenameChat status = %d, want 200 (%s)", statusOf(err), errText(err))
@@ -129,7 +129,7 @@ func TestCmdRenameChat_RefusesEmptyAndOverlongNames(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			seedRenameChat(t, store, "c1", "")
 
-			_, err := cmdRenameChat(t.Context(), store, &spyRenamer{}, renameReq(t, "c1", tc.in))
+			_, err := cmdRenameChat(t.Context(), store, &spyRenamer{}, &botFakes{}, renameReq(t, "c1", tc.in))
 
 			if statusOf(err) != tc.want {
 				t.Errorf("CmdRenameChat(%q) status = %d, want %d", tc.in, statusOf(err), tc.want)
@@ -145,7 +145,7 @@ func TestCmdRenameChat_RefusesEmptyAndOverlongNames(t *testing.T) {
 func TestCmdRenameChat_UnknownChatIs404(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 
-	_, err := cmdRenameChat(t.Context(), store, &spyRenamer{}, renameReq(t, "nope", "x"))
+	_, err := cmdRenameChat(t.Context(), store, &spyRenamer{}, &botFakes{}, renameReq(t, "nope", "x"))
 
 	if statusOf(err) != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", statusOf(err))
@@ -159,7 +159,7 @@ func TestCmdRenameChat_ARefusedRPCStillRenamesTheRecord(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedRenameChat(t, store, "c1", "s1")
 
-	_, err := cmdRenameChat(t.Context(), store, &spyRenamer{err: errors.New("engine gone")}, renameReq(t, "c1", "Kept"))
+	_, err := cmdRenameChat(t.Context(), store, &spyRenamer{err: errors.New("engine gone")}, &botFakes{}, renameReq(t, "c1", "Kept"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200: the record is canonical", statusOf(err))

@@ -779,6 +779,9 @@ func (s *Store) keptBy(ctx context.Context, chatID marotte.ChatID, c *marotte.Ch
 		}
 		return archive.KeptByPending
 	}
+	if c.Bot != nil {
+		return archive.KeptByBot
+	}
 	if !s.reconciled(chatID) {
 		return archive.KeptByUnreconciled
 	}

@@ -3,6 +3,7 @@ package command
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 
 	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/marotte/internal/chat"
@@ -73,8 +74,8 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.RegisterChange(marotte.CmdSetThinking, bind3(r.Bridges, chats, configLocks, cmdSetThinking))
 	d.RegisterChange(marotte.CmdSetMode,
 		bind5(r.Bridges, chats, r.Bus, r.Modes, keylock.New(cmp.Compare[marotte.ChatID]), cmdSetMode))
-	d.RegisterChange(marotte.CmdSetSupervisedMode,
-		bind3(r.Bridges, chats, keylock.New(cmp.Compare[marotte.ChatID]), cmdSetSupervisedMode))
+	supervisedLocks := keylock.New(cmp.Compare[marotte.ChatID])
+	d.RegisterChange(marotte.CmdSetSupervisedMode, bind3(r.Bridges, chats, supervisedLocks, cmdSetSupervisedMode))
 	d.register(marotte.CmdSetSecurityProfile, bind1(r.ProfileMoves, cmdSetSecurityProfile))
 
 	d.register(marotte.CmdCancel, bind6(r.Run, r.Bridges, r.Perms, r.Terminals, r.Stops, r.SteerQueue, cmdCancel))
@@ -84,8 +85,22 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	}
 	d.RegisterChange(marotte.CmdForkChat, bind4(r.Bridges, chats, r.Workspace, mem, cmdForkChat))
 
-	d.register(marotte.CmdQueuePrompt, bind3(r.Run, r.Admission, chatReopener(mem), cmdQueuePrompt))
-	d.register(marotte.CmdRenameChat, bind2(chats, r.Renamer, cmdRenameChat))
+	d.register(marotte.CmdQueuePrompt, bind4(r.Run, r.Admission, chatReopener(mem), chats, cmdQueuePrompt))
+	d.register(marotte.CmdRenameChat, bind3(chats, r.Renamer, r.BotReloads, cmdRenameChat))
+	bots := &botRoles{
+		chats: chats, bridges: r.Bridges, renamer: r.Renamer, reload: r.BotReloads, models: r.Models,
+		kickoff: func(ctx context.Context, chatID marotte.ChatID, p *marotte.PromptCommand) error {
+			payload, err := json.Marshal(p)
+			if err != nil {
+				return err
+			}
+			return d.Run(ctx, &marotte.ClientCommand{Type: marotte.CmdPrompt, ChatID: chatID, Payload: payload})
+		},
+		supervisedLocks: supervisedLocks, paths: r.BotPaths,
+	}
+	d.RegisterChange(marotte.CmdBotSave, bind1(bots, cmdBotSave))
+	d.register(marotte.CmdBotSetPaused, bind1(bots, cmdBotSetPaused))
+	d.register(marotte.CmdBotClearMemory, bind1(bots, cmdBotClearMemory))
 
 	prompt := &promptRoles{
 		bridges:     r.Bridges,

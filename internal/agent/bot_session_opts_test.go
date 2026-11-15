@@ -2,10 +2,14 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"path/filepath"
 	"slices"
+	"sync/atomic"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -89,31 +93,57 @@ func TestChatSessionOpts_ABotWithNoSteeringSendsOnlyTheChatSteering(t *testing.T
 	}
 }
 
-func TestChatSessionOpts_ADraftAndARegularChatCarryNeither(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		bot  *marotte.Bot
-	}{
-		{"a draft", &marotte.Bot{Goal: "Not started yet.", Steering: "Answer in French."}},
-		{"a regular chat", nil},
-	} {
-		for _, door := range doors {
-			t.Run(tc.name+" on "+door.name, func(t *testing.T) {
-				opts, _ := botDoorOpts(t, door.resumed, func(c *marotte.Chat) {
-					c.CurrentModeID = "kiro_spec"
-					c.Bot = tc.bot
-				})
-				if len(opts.CustomAgents) != 0 {
-					t.Errorf("CustomAgents = %+v, want none", opts.CustomAgents)
+func TestChatSessionOpts_ARegularChatCarriesNoRole(t *testing.T) {
+	for _, door := range doors {
+		t.Run(door.name, func(t *testing.T) {
+			opts, _ := botDoorOpts(t, door.resumed, func(c *marotte.Chat) { c.CurrentModeID = "kiro_spec" })
+			if len(opts.CustomAgents) != 0 {
+				t.Errorf("CustomAgents = %+v, want none", opts.CustomAgents)
+			}
+			if !slices.Equal(opts.Steering, []marotte.ClientSteeringDoc{chatDoc}) {
+				t.Errorf("Steering = %+v, want only the chat steering", opts.Steering)
+			}
+			if opts.Mode != "kiro_spec" {
+				t.Errorf("Mode = %q, want the record's", opts.Mode)
+			}
+		})
+	}
+}
+
+// TestBotDoor_ADraftOpensNoSession pins that a draft has no session at all: every door refuses it with 409 bot_draft
+// before a generation starts, so no session/new or session/load reaches the engine.
+func TestBotDoor_ADraftOpensNoSession(t *testing.T) {
+	for _, door := range doors {
+		t.Run(door.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			cs := newTestChatStore()
+			var spawned atomic.Int32
+			h := newRuntimeOn(context.Background(), "/tmp/work", fakeEngineOf(func() engineSession {
+				spawned.Add(1)
+				return newFakeBridge()
+			}, nil), cs)
+			cs.wire(h)
+			t.Cleanup(func() { shutdownHub(t, h) })
+			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+				c.Name = "New Bot"
+				c.CurrentModeID = marotte.BotRoleID
+				c.Bot = &marotte.Bot{Goal: "Not started yet."}
+				if door.resumed {
+					c.ACPSessionID = "sess_bot_resume"
 				}
-				if !slices.Equal(opts.Steering, []marotte.ClientSteeringDoc{chatDoc}) {
-					t.Errorf("Steering = %+v, want only the chat steering", opts.Steering)
-				}
-				if opts.Mode != "kiro_spec" {
-					t.Errorf("Mode = %q, want the record's", opts.Mode)
-				}
+				return true
 			})
-		}
+
+			_, err := h.coord.openReleased(t.Context(), "c1", "")
+
+			code, reason, _ := command.StatusOf(err)
+			if code != http.StatusConflict || reason != "bot_draft" || !errors.Is(err, marotte.ErrBotDraft) {
+				t.Errorf("open = %d %q %v, want 409 bot_draft wrapping ErrBotDraft", code, reason, err)
+			}
+			if got := spawned.Load(); got != 0 {
+				t.Errorf("the engine was asked for %d session(s), want none", got)
+			}
+		})
 	}
 }
 
@@ -126,7 +156,6 @@ func TestChatSessionOpts_ARoleRecordThatIsNoStartedBotAsksForTheDefaultMode(t *t
 		bot  *marotte.Bot
 	}{
 		{"a record with no bot block", nil},
-		{"a draft", &marotte.Bot{Goal: "Not started yet."}},
 	} {
 		for _, door := range doors {
 			t.Run(tc.name+" on "+door.name, func(t *testing.T) {
@@ -156,7 +185,6 @@ func TestChatSessionOpts_AStartedBotWithMemoryListsItsDirectory(t *testing.T) {
 	}{
 		{"a started Bot with memory on", &marotte.Bot{Goal: "Answer the weekly questions.", StartedAt: 1, Memory: true}, true},
 		{"a started Bot with memory off", &marotte.Bot{Goal: "Answer the weekly questions.", StartedAt: 1}, false},
-		{"a draft with memory on", &marotte.Bot{Goal: "Not started yet.", Memory: true}, false},
 		{"a regular chat", nil, false},
 	} {
 		for _, door := range doors {

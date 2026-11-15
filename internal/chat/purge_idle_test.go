@@ -124,6 +124,47 @@ func TestPurgeIdle_DecidesFromTheRecordAlone(t *testing.T) {
 			wantOutcome: archive.PurgeKept, wantKeptBy: archive.KeptByWords,
 		},
 		{
+			name: "an_open_bot",
+			setup: func(t *testing.T, s *Store) {
+				holdKey(t, s, "c1", marotte.KeyTab, KeepDurable)
+				ageChat(t, s, "c1", 3*purgeWindow)
+				rewriteChat(t, s, "c1", func(c *marotte.Chat) { c.Bot = &marotte.Bot{Goal: "Watch CI.", StartedAt: 1} })
+			},
+			wantOutcome: archive.PurgeKept, wantKeptBy: archive.KeptByBot,
+		},
+		{
+			name: "a_closed_bot",
+			setup: func(t *testing.T, s *Store) {
+				rewriteChat(t, s, "c1", func(c *marotte.Chat) { c.Bot = &marotte.Bot{Goal: "Watch CI.", StartedAt: 1, ClosedAt: 2} })
+			},
+			wantOutcome: archive.PurgeKept, wantKeptBy: archive.KeptByBot,
+		},
+		{
+			name: "a_bot_draft",
+			setup: func(t *testing.T, s *Store) {
+				rewriteChat(t, s, "c1", func(c *marotte.Chat) { c.Bot = &marotte.Bot{} })
+			},
+			wantOutcome: archive.PurgeKept, wantKeptBy: archive.KeptByBot,
+		},
+		{
+			name: "a_bot_not_reconciled_this_boot",
+			setup: func(t *testing.T, s *Store) {
+				rewriteChat(t, s, "c1", func(c *marotte.Chat) { c.Bot = &marotte.Bot{Goal: "Watch CI.", StartedAt: 1, ClosedAt: 2} })
+				s.forgetReconciled("c1")
+			},
+			wantOutcome: archive.PurgeKept, wantKeptBy: archive.KeptByBot,
+		},
+		{
+			name: "a_bot_inside_the_window",
+			setup: func(t *testing.T, s *Store) {
+				rewriteChat(t, s, "c1", func(c *marotte.Chat) {
+					c.Bot = &marotte.Bot{Goal: "Watch CI.", StartedAt: 1, ClosedAt: 2}
+					c.UpdatedAt = time.Now().UnixMilli()
+				})
+			},
+			wantOutcome: archive.PurgeKept,
+		},
+		{
 			name: "queued_prompt",
 			setup: func(t *testing.T, s *Store) {
 				rewriteChat(t, s, "c1", func(c *marotte.Chat) {

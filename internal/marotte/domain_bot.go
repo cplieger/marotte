@@ -1,5 +1,7 @@
 package marotte
 
+import "errors"
+
 // BotRoleID is the mode id of every Bot's session-scoped role, and the only mode a Bot's record names.
 const BotRoleID = "marotte-bot"
 
@@ -38,8 +40,38 @@ type Bot struct {
 	StartedAt int64 `json:"started_at,omitempty"`
 	// ClosedAt is the unix ms the Bot's tab was closed; 0 while it is open.
 	ClosedAt int64 `json:"closed_at,omitempty"`
-	Memory   bool  `json:"memory"`
-	Paused   bool  `json:"paused,omitempty"`
+	// SpecVersion is bumped by every bot_save that changes the Bot, which a save sends back as its base_version.
+	SpecVersion int  `json:"spec_version"`
+	Memory      bool `json:"memory"`
+	Paused      bool `json:"paused,omitempty"`
+}
+
+// ErrBotDraft refuses a session, prompt or fork for a Bot not yet started: a draft has no role to run on.
+var ErrBotDraft = errors.New("this Bot has not been created yet; create it to send it a message")
+
+// BotSetup is GET /api/bots/{id}: what the Bot's setup shows, read from its record. Field order is fieldalignment's.
+type BotSetup struct {
+	Bot *Bot `json:"bot"`
+	// Memory describes the memory file; nil while memory is off.
+	Memory     *BotMemoryStat `json:"memory,omitempty"`
+	Name       string         `json:"name"`
+	Model      string         `json:"model"`
+	Effort     string         `json:"effort"`
+	Supervised bool           `json:"supervised"`
+}
+
+// BotMemoryStat is the memory file's size and last write, both 0 before the file exists.
+type BotMemoryStat struct {
+	Bytes int64 `json:"bytes"`
+	// UpdatedAt is the file's modification time in unix ms.
+	UpdatedAt int64 `json:"updated_at"`
+}
+
+// BotMemoryText is GET /api/bots/{id}/memory: the Bot's notes, empty before the file exists.
+type BotMemoryText struct {
+	Text      string `json:"text"`
+	Bytes     int64  `json:"bytes"`
+	UpdatedAt int64  `json:"updated_at"`
 }
 
 // BotState is a Bot's lifecycle state.

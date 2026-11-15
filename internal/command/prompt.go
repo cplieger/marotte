@@ -338,6 +338,9 @@ func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 	if vErr != nil {
 		return nil, StatusError(code, vErr)
 	}
+	if err := refuseBotDraft(ctx, roles.chats, cmd.ChatID); err != nil {
+		return nil, err
+	}
 	p.Caller = cmd.From
 	// The prompt's intent begins here: a close that commits after this stamp ends it wherever it waits.
 	stamp := roles.admission.LifeStamp()

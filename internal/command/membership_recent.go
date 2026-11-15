@@ -21,7 +21,7 @@ func (m *Membership) recentFacts(ctx context.Context, chats []marotte.ChatID) ma
 	for _, id := range chats {
 		var f tabs.RecentFacts
 		if c, ok := m.chats.Get(ctx, id); ok {
-			f.Name = c.Name
+			f.Name, f.Bot = c.Name, c.Bot != nil
 		}
 		facts[string(id)] = f
 	}

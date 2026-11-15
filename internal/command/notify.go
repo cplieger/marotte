@@ -36,6 +36,9 @@ func (d *Dispatcher) Notify(ctx context.Context, chatID marotte.ChatID, text str
 		return "", StatusError(http.StatusBadRequest, errNotifyMention)
 	}
 	roles := d.prompts
+	if err := refuseBotDraft(ctx, roles.chats, chatID); err != nil {
+		return "", err
+	}
 	// Before the submit, as a prompt's: a message into an idle chat starts a turn, whose tab must exist first.
 	roles.reopen.ReopenForMessage(ctx, chatID)
 	s := Submission{

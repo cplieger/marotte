@@ -34,6 +34,7 @@ type keepMembership interface {
 	ReconcileTabs(ctx context.Context, id marotte.ChatID, fn func(r *chat.KeepRecord, open []marotte.TabSubject)) error
 	SettleOwed(ctx context.Context) archive.PurgeResult
 	SetLaunchChats(ctx context.Context, tabID string, chats []string, resolved bool) error
+	HealBotTabs(ctx context.Context, ids []marotte.ChatID) command.BotHeal
 }
 
 type keepTabs interface {
@@ -82,7 +83,8 @@ type keepStateDeps struct {
 // reconcileKeepState is the per-boot keep-state reconcile: it adds the keep facts every record read this boot is
 // missing, releases a previous boot's tab and turn facts on evidence of their end, and marks each record it reconciled, which is
 // what lets the purge consider it. A round that cannot read a source reconciles nothing and is retried; the pass
-// ends once every record is reconciled.
+// ends once every record is reconciled and a round with a complete scan has healed every Bot's tab
+// (Membership.HealBotTabs).
 func reconcileKeepState(ctx context.Context, d *keepStateDeps) {
 	retry, listRetry := cmpOr(d.retry, keepStateRetry), cmpOr(d.listRetry, keepStateListRetry)
 	if !waitKeepReady(ctx, d.ready, retry) {
@@ -150,6 +152,7 @@ type keepRoundState struct {
 	added      map[string]int
 	boot       string
 	stuckTabs  []keepFact
+	heal       command.BotHeal
 	released   int
 	stateless  int
 	tabsUnread bool
@@ -160,7 +163,7 @@ type keepFactRef struct {
 	key    string
 }
 
-// keepRound runs one round and answers when to retry, or done when no record is left unreconciled.
+// keepRound runs one round and answers when to retry, or done when no record is left unreconciled and no Bot unhealed.
 func keepRound(ctx context.Context, d *keepStateDeps, retry, listRetry time.Duration) (time.Duration, bool) {
 	if aside := d.leases.Unread(); aside != "" {
 		slog.Warn("keep-state reconcile: the run lease file was unreadable; purging nothing", "aside", aside)
@@ -195,12 +198,15 @@ func keepRound(ctx context.Context, d *keepStateDeps, retry, listRetry time.Dura
 		keepOwed(st, &e)
 	}
 	left := keepReconcileRead(ctx, d, st, &scan)
+	if scan.Complete {
+		st.heal = d.membership.HealBotTabs(ctx, scan.Bots)
+	}
 	for _, f := range st.stuckTabs {
 		slog.Warn("keep fact stuck: no open tab shows it and no close recorded its release; the chat stays kept",
 			"chat_id", f.chatID, "key", f.key, "age", keepAge(f.fact.Since))
 	}
 	keepReport(st, left)
-	return retry, left == 0
+	return retry, left == 0 && st.heal.Failed == 0 && scan.Complete
 }
 
 // keepReconcileRead reconciles every record the scan read and answers how many stay unreconciled, the scan's
@@ -457,5 +463,6 @@ func keepReport(st *keepRoundState, left int) {
 		"added_tab", st.added[marotte.KeepKindTab], "added_runtab", st.added[marotte.KeepKindRunTab],
 		"added_run", st.added[marotte.KeepKindRun],
 		"released_process", st.released, "stuck_tab_facts", len(st.stuckTabs),
-		"runs_without_engine_state", st.stateless, "unreconciled", left)
+		"runs_without_engine_state", st.stateless, "bot_tabs_reopened", st.heal.Opened,
+		"bot_closes_cleared", st.heal.Cleared, "bot_heals_failed", st.heal.Failed, "unreconciled", left)
 }
