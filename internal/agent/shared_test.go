@@ -71,8 +71,8 @@ func awaitBoot(h *Runtime) error {
 	if !awaitEngine(h) {
 		return errors.New("setup: the fake engine was not ready within 5s")
 	}
-	// The profile's handler adds its follow-ups to inflight from the observer's forward loop, which is off inflight:
-	// draining before it ran could Wait while it Adds from zero.
+	// The profile arrives while the boot pass holds inflight, so the drain below cannot Wait before the boot's work
+	// was added.
 	if src, ok := h.engine.source.(*fakeEngineSource); ok && !src.noGovernance {
 		select {
 		case <-h.config.governance.warm:

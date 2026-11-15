@@ -24,7 +24,7 @@ var workspaceMethods = []string{
 const countedSession marotte.SessionID = "sess_any"
 
 // countedHub is newTestHub whose workspace handlers count the frames for countedSession they were handed. The
-// counters go in before the engine starts: an observer pass's pump, untracked by the boot drain, reads the table.
+// counters go in before the engine starts: the boot observer pass's pump reads the table.
 func countedHub(t *testing.T) (*Runtime, *testChatStore, *fakeBridge, func(method string) int) {
 	t.Helper()
 	cs := newTestChatStore()

@@ -76,7 +76,7 @@ func (c *slashCatalog) snapshot() (cmds []marotte.SlashCommand, ready bool) {
 
 type steeringIssues struct {
 	issues map[string][]marotte.SteeringIssue
-	// seeded closes on the first documents_changed frame KAS sent, success or failed.
+	// seeded closes once the first documents_changed frame KAS sent, success or failed, is applied.
 	seeded chan struct{}
 	mu     sync.Mutex
 }

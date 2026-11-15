@@ -155,7 +155,7 @@ func TestTurnClose_OnceShutdownBeganLeavesAParkedModelPickParked(t *testing.T) {
 	}
 }
 
-// A frame pump Shutdown does not join (an observer pass's, a host relay's) answers through it, so once Shutdown began
+// A frame pump Shutdown does not join (a host relay's) answers through it, so once Shutdown began
 // a request it would answer on inflight is answered at once.
 func TestAnswerConnectionRequest_OnceShutdownBeganAnswersAtOnceWithoutJoiningInflight(t *testing.T) {
 	h, src := declRuntime(t, &declBackend{callback: "_test/auth/token"})
