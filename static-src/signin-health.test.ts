@@ -3,6 +3,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type * as BannerStack from "./banner-stack.js";
 import type * as ApiClient from "./api-client.js";
+import type * as Modals from "./modals.js";
 import type { SignInCause, SignInHealth, SignInState, WhoamiResponse } from "./wire/types.gen.js";
 import pauseReasonsRaw from "../internal/agent/testdata/pause_reasons.json?raw";
 
@@ -15,7 +16,10 @@ const { mockLogin, mockGet } = vi.hoisted(() => ({
   mockLogin: vi.fn(),
   mockGet: vi.fn<(path: string) => Promise<unknown>>(),
 }));
-vi.mock("./modals.js", () => ({ showLoginModal: mockLogin }));
+vi.mock("./modals.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Modals>()),
+  showLoginModal: mockLogin,
+}));
 vi.mock("./api-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ApiClient>()),
   apiGetTyped: mockGet,

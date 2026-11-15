@@ -22,16 +22,17 @@ import (
 // work dispatched while the vault cannot answer turns a state the user can fix into a terminal failure.
 var (
 	errRunsNeedSignIn = command.StatusErrorReason(http.StatusConflict, "sign_in_required",
-		errors.New("sign in to Kiro first: runs wait until marotte can answer the agent's sign-in"))
+		errors.New(marotte.SignInRequiredCause+" first: runs wait until marotte can answer the agent's sign-in"))
 	errRunsProviderDown = command.StatusErrorReason(http.StatusServiceUnavailable, "identity_provider_unreachable",
-		errors.New("the Kiro sign-in service is unreachable: runs wait until it answers"))
+		errors.New(marotte.SignInUnreachableCause+": runs wait until it answers"))
 )
 
 // The reasons marotte gives KAS when it pauses a running run while the gate is closed. KAS attributes every
-// reasoned pause to the user and keeps the reason as the run's stopReason, which is the gate pause's hold.
+// reasoned pause to the user and keeps the reason as the run's stopReason, which is the gate pause's hold: a run
+// paused by an older build is recognised by these exact bytes (testdata/pause_reasons.json).
 const (
-	signInHoldReason   = "sign in to Kiro to continue; marotte resumes the run when you do"
-	providerHoldReason = "the Kiro sign-in service is unreachable; marotte resumes the run when it answers"
+	signInHoldReason   = marotte.SignInRequiredCause + " to continue; marotte resumes the run when you do"
+	providerHoldReason = marotte.SignInUnreachableCause + "; marotte resumes the run when it answers"
 )
 
 func isHoldReason(reason string) bool {

@@ -83,13 +83,13 @@ func (l signinLink) answerability() func() signin.Answerability {
 	return func() signin.Answerability { return l.vault.Answerability(l.backend) }
 }
 
-// providerDown returns the vault's reason while the engine's credential ask fails because the identity provider gave no
-// usable renewal; false when the vault answers no ask.
-func (l signinLink) providerDown() (string, bool) {
+// providerDown reports whether the engine's credential ask fails because the identity provider gave no usable
+// renewal; false when the vault answers no ask.
+func (l signinLink) providerDown() bool {
 	if l.vault == nil || l.apiKey {
-		return "", false
+		return false
 	}
-	return l.vault.UnreachableReason(l.backend)
+	return l.vault.Answerability(l.backend) == signin.ProviderUnreachable
 }
 
 // onAnswerability registers fn for every move of the engine backend's Answerability; none when answerability is nil.

@@ -17,7 +17,6 @@ import { reportFailure } from "../failure-notice.js";
 import { refreshGitBadge } from "../git.js";
 import type { ToastRetry } from "../toast.js";
 import { openSetting } from "../settings-highlight.js";
-import { showLoginModal } from "../modals.js";
 import { respondPermission, respondElicitation, respondUserInput } from "../actions/chat.js";
 import { ERROR_ROUTES, type ErrorAction } from "./error-routing.js";
 import { clearTurnState } from "../turn-teardown.js";
@@ -149,20 +148,12 @@ function toastActionFor(action: ErrorAction | undefined): ToastRetry | undefined
   if (action === undefined) {
     return undefined;
   }
-  switch (action.kind) {
-    case "setting":
-      return {
-        label: action.label,
-        onClick: () => {
-          openSetting(action.tab, action.control);
-        },
-      };
-    case "sign-in":
-      return { label: action.label, onClick: showLoginModal };
-    default:
-      action satisfies never;
-      return undefined;
-  }
+  return {
+    label: action.label,
+    onClick: () => {
+      openSetting(action.tab, action.control);
+    },
+  };
 }
 
 // This handler touches no turn state: the server closes every turn exactly once

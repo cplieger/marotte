@@ -285,9 +285,7 @@ describe("ERROR_ROUTES", () => {
     string,
     {
       surface: string;
-      action?:
-        | { kind: "setting"; tab: string; control: string; label: string }
-        | { kind: "sign-in"; label: string };
+      action?: { tab: string; control: string; label: string };
     },
   ][] = [
     ["agent_not_found", { surface: "toast" }],
@@ -298,7 +296,6 @@ describe("ERROR_ROUTES", () => {
       {
         surface: "toast",
         action: {
-          kind: "setting",
           tab: "instructions",
           control: "steering-input",
           label: "Open custom instructions",

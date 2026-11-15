@@ -573,9 +573,27 @@ func TestRequestSizeCapIsPermanentAndOffersCompact(t *testing.T) {
 	}
 }
 
-// TestFailureKind_OnlyTheContextOverflowIsClassified pins that the predicate
-// keys on the error TYPE: a sibling -32000 class carries no kind.
-func TestFailureKind_OnlyTheContextOverflowIsClassified(t *testing.T) {
+// A refused credential, typed or matched on KAS's internal error, closes as a sign-in failure; the agent's closer
+// words it from the sign-in's standing.
+func TestFailureKind_ARefusedCredentialIsASignInFailure(t *testing.T) {
+	cases := map[string]error{
+		"a mapped auth class":           rpcErr(t, kasServerError, "Internal error", rpcerr.Mapped{ErrorType: "ModelRegistryUnauthenticatedError"}),
+		"an auth-shaped internal error": rpcErr(t, marotte.RPCCodeInternal, "Authentication failed. Please sign in again.", nil),
+	}
+	for name, err := range cases {
+		t.Run(name, func(t *testing.T) {
+			stop, reason, kind := promptFailureAccount(t.Context(), err, false)
+			if stop != marotte.StopReasonInterrupted || kind != marotte.FailureKindSignIn || reason != marotte.SignInFailedReason {
+				t.Errorf("promptFailureAccount = %q, %q, %q; want %q, %q, %q", stop, reason, kind,
+					marotte.StopReasonInterrupted, marotte.SignInFailedReason, marotte.FailureKindSignIn)
+			}
+		})
+	}
+}
+
+// TestFailureKind_ASiblingClassCarriesNoKind pins that the predicate keys on the error TYPE: a sibling -32000 class
+// carries no kind.
+func TestFailureKind_ASiblingClassCarriesNoKind(t *testing.T) {
 	err := rpcErr(t, kasServerError, "Kiro could not load the available models.", rpcerr.Mapped{
 		ErrorType:      "ModelRegistryUnavailableError",
 		RetryErrorType: "SERVER_ERROR",

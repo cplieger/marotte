@@ -190,9 +190,8 @@ func (rt *Runtime) AbandonInFlightTurn(ctx context.Context, chatID marotte.ChatI
 	rt.coord.abandonInFlightTurn(ctx, chatID, turnID, stop, reason, kind, seq)
 }
 
-// ProviderUnreachable returns the vault's reason while the identity provider gives the engine's account no usable
-// renewal.
-func (rt *Runtime) ProviderUnreachable() (string, bool) { return rt.signin.providerDown() }
+// ProviderUnreachable reports whether the identity provider gives the engine's account no usable renewal.
+func (rt *Runtime) ProviderUnreachable() bool { return rt.signin.providerDown() }
 
 var _ command.SessionRenamer = (*Runtime)(nil)
 

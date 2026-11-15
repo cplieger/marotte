@@ -114,6 +114,9 @@ type bridgeCoordinator struct {
 	steerKASSettled  func(marotte.ChatID)                       `wiring:"optional"`
 	// chatHasLiveRun reports whether the chat launched a run still live. Nil means none.
 	chatHasLiveRun func(marotte.ChatID) bool `wiring:"optional"`
+	// signInReason words a turn that failed on the Kiro sign-in from the sign-in's standing. Nil gives
+	// marotte.SignInFailedReason.
+	signInReason func() string `wiring:"optional"`
 	// sessionHasLiveRun reports whether a live run of the chat keeps the session (sessionHoldsLiveRun). Nil means none.
 	sessionHasLiveRun func(chatID marotte.ChatID, acpSessionID string) bool `wiring:"optional"`
 	// chatHasTab reports an open tab on the chat; it answers true when no tab set is wired, so nothing is released.
@@ -170,6 +173,12 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		replayProjection: h.replay,
 		chatHasLiveRun: func(chatID marotte.ChatID) bool {
 			return chatHoldsLiveRun(h.runs.leaseStore().List(), chatID)
+		},
+		signInReason: func() string {
+			if h.signin.providerDown() {
+				return marotte.SignInFailedUnreachableReason
+			}
+			return marotte.SignInFailedRefusedReason
 		},
 		sessionHasLiveRun: func(chatID marotte.ChatID, acpSessionID string) bool {
 			return sessionHoldsLiveRun(h.runs.leaseStore().List(), chatID, acpSessionID)

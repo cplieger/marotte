@@ -116,6 +116,7 @@ func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 	// Detached here, below awaitPosition, whose only timed escape is ctx.Done(); both doors hand a shutdown-cancelled context.
 	ctx = durable.Context(ctx)
 	stop, reason, kind := tc.Stop, tc.Reason, tc.Kind
+	claimed := false
 	switch tc.Closer {
 	case closerPromptResponse:
 		stop = extractStopReason(tc.Resp)
@@ -124,12 +125,12 @@ func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 	case closerPromptFailure, closerBridgeDeath:
 		// A cause claimed on the turn beats the closer's own account.
 		if cause := bc.turns.interruptCause(t); cause != "" {
-			reason, kind = string(cause), ""
+			reason, kind, claimed = string(cause), "", true
 		}
 	case closerWireEnd, closerCancelGrace, closerKASIdle, closerPromptHandoff:
 	}
-	if reason == "" && kind == "" {
-		reason, kind = engineAccount(t, stop)
+	if !claimed {
+		reason, kind = bc.unclaimedAccount(t, stop, reason, kind)
 	}
 	var answerWait time.Duration
 	if tc.Closer == closerPromptFailure && graceClosed(tc.Closer, stop) {
@@ -144,6 +145,18 @@ func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 	bc.turns.finish(t, result)
 	bc.publishClose(lifeCtx, t, &cf, done, ok)
 	return true
+}
+
+// unclaimedAccount is what a close no cause was claimed on says: a sign-in failure in the sign-in's words, else the
+// closer's account, else the engine's latched one.
+func (bc *bridgeCoordinator) unclaimedAccount(t *activeTurn, stop marotte.StopReason, reason string, kind marotte.FailureKind) (string, marotte.FailureKind) {
+	if signedOutTurn(t, stop, kind) {
+		return bc.signInAccount(), marotte.FailureKindSignIn
+	}
+	if reason == "" && kind == "" {
+		return engineAccount(t, stop)
+	}
+	return reason, kind
 }
 
 func (bc *bridgeCoordinator) closeFactsOf(t *activeTurn, closer turnCloser, outcome marotte.TurnOutcome) closeFacts {
@@ -221,6 +234,26 @@ func engineAccount(t *activeTurn, stop marotte.StopReason) (string, marotte.Fail
 		return text, marotte.FailureKindContextLimit
 	}
 	return text, ""
+}
+
+// signedOutTurn reports a broken turn that failed on the Kiro sign-in: the command layer classified it so (kind), or
+// the engine latched a refused-credential class on it, which beats the closer's own account of the reply.
+func signedOutTurn(t *activeTurn, stop marotte.StopReason, kind marotte.FailureKind) bool {
+	if kind == marotte.FailureKindSignIn {
+		return true
+	}
+	e := t.Log.EngineError()
+	c := marotte.ConcludeStopReason(stop)
+	return kind == "" && e != nil && rpcerr.AuthClass(e.ErrorType) &&
+		c.FailureKind == "" && marotte.SeverityOf(c.Outcome) == marotte.TurnSeverityBroken
+}
+
+// signInAccount is a sign-in failure's sentence, worded from the sign-in's standing when one is wired.
+func (bc *bridgeCoordinator) signInAccount() string {
+	if bc.signInReason == nil {
+		return marotte.SignInFailedReason
+	}
+	return bc.signInReason()
 }
 
 // closeFacts is what a won close hands its pipeline: the outcome, the closed turn's id and the fence naming it, a

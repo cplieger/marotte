@@ -9,7 +9,6 @@ import (
 	"math"
 	"net/http"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -204,8 +203,8 @@ func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, res Reservati
 		if stop != marotte.StopReasonCancelled {
 			// Suppressed on a cancel, the reader's own Stop and the chat's close included. The abandon above
 			// already stamped the reason on the retry's turn_close.
-			logPromptFailure("retry prompt failed", chatID, retryErr)
 			g := gradeFailedTurn(ctx, roles, chatID, retryTurn, retryErr, reason)
+			logPromptFailure("retry prompt failed", chatID, g.class, retryErr)
 			code := marotte.ErrCodeRecoveryFailed
 			if g.auth {
 				code = marotte.ErrCodeAuthTokenUnavailable
@@ -590,11 +589,10 @@ func historyInlineImages(ctx context.Context, chats chatStore, chatID marotte.Ch
 
 const logMsgPromptEngineEnded = "prompt ended because the agent engine exited"
 
-// logPromptFailure logs a failed prompt and counts it under its class. It logs at Error under msg,
-// except an engine-exit casualty: the engine's one exit line is that failure, so the casualty is a
+// logPromptFailure logs a failed prompt and counts it under class, its graded class (gradeFailedTurn). It logs at
+// Error under msg, except an engine-exit casualty: the engine's one exit line is that failure, so the casualty is a
 // Warn under logMsgPromptEngineEnded.
-func logPromptFailure(msg string, chatID marotte.ChatID, err error, attrs ...any) {
-	class := classifyPromptFailure(err)
+func logPromptFailure(msg string, chatID marotte.ChatID, class promptFailureClass, err error, attrs ...any) {
 	obs.PromptFailed(class.String())
 	attrs = append([]any{"chat_id", chatID, "class", class.String(), keyError, err}, attrs...)
 	if class == classPipeDeath {
@@ -621,9 +619,9 @@ func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID marotte
 		roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, turnID, stop, reason, kind, seq)
 		return
 	}
-	logPromptFailure("prompt failed", chatID, err, "elapsed", elapsed)
 	roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, turnID, stop, reason, kind, seq)
 	g := gradeFailedTurn(ctx, roles, chatID, turnID, err, reason)
+	logPromptFailure("prompt failed", chatID, g.class, err, "elapsed", elapsed)
 	code := marotte.ErrCodePromptFailed
 	if g.auth {
 		code = marotte.ErrCodeAuthTokenUnavailable
@@ -635,34 +633,32 @@ func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID marotte
 // failedTurnGrade is how a failed prompt's error frame reports it.
 type failedTurnGrade struct {
 	reason string
+	// class is the failure's class, auth when the turn's latched engine class is one even if err names none.
+	class promptFailureClass
 	// auth: a refused credential, the one failure whose remedy is not "send again".
 	auth bool
 	// onCard: reason is the text the turn's card carries (ErrorPayload.TurnScoped).
 	onCard bool
 }
 
-// gradeFailedTurn reads the close of turnID, already abandoned for err, and grades it: reason is
-// what its turn_close carries (fallback when it carries none), so a toast says what the card
-// says, and a refused credential is noted to the sign-in's health. A failure inside the execution names its
-// class only on the turn.
+// gradeFailedTurn reads the close of turnID, already abandoned for err, and grades it: reason is what its turn_close
+// carries (fallback when it carries none), so a toast says what the card says. A refused credential is noted to the
+// sign-in's health only while the identity provider answers: KAS grades every credential ask the vault refused as
+// unauthenticated, so a refusal during the provider's outage is the outage, not the account's.
 func gradeFailedTurn(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, turnID string, err error, fallback string) failedTurnGrade {
-	g := failedTurnGrade{reason: fallback, onCard: true}
+	g := failedTurnGrade{reason: fallback, class: classifyPromptFailure(err), onCard: true}
 	result, aErr := roles.turnOutcome.AwaitTurn(ctx, chatID, turnID)
 	if aErr == nil && result.Reason != "" {
 		g.reason = result.Reason
 	}
-	if classifyPromptFailure(err) != classAuth && (aErr != nil || !authClass(result.EngineErrorType)) {
+	if g.class != classAuth && (aErr != nil || !rpcerr.AuthClass(result.EngineErrorType)) {
 		return g
 	}
-	// KAS grades every refused credential ask as unauthenticated, so only the vault knows the provider was
-	// down; the card then carries KAS's sign-in sentence, which the vault's reason replaces.
-	if roles.signIn != nil {
-		if why, down := roles.signIn.ProviderUnreachable(); down {
-			return failedTurnGrade{reason: why}
-		}
+	g.class, g.auth = classAuth, true
+	if roles.signIn == nil {
+		return g
 	}
-	g.auth = true
-	if roles.signIn != nil {
+	if !roles.signIn.ProviderUnreachable() {
 		roles.signIn.NoteEngineRefusal()
 	}
 	return g
@@ -749,8 +745,7 @@ const (
 	// Non-retryable by construction: the payload is what was refused.
 	classRejected
 	// classAuth is the backend refusing the token rather than the
-	// request. gradeFailedTurn owns when it sends marotte.ErrCodeAuthTokenUnavailable,
-	// the only code the client routes to a Sign in CTA.
+	// request. gradeFailedTurn owns when it sends marotte.ErrCodeAuthTokenUnavailable.
 	classAuth
 )
 
@@ -769,27 +764,6 @@ var validationErrorNames = []string{
 	"DocumentSizeExceeded",
 	"DocumentMaximumPagesExceeded",
 	"DocumentCountExceeded",
-}
-
-// authErrorNames are the backend's own names for a request refused because
-// the credential was not usable; kascap.TestAuthClassesMatchBundle pins them
-// to the pinned bundle's auth classes.
-//
-// ModelRegistryAccessDeniedError is deliberately absent: upstream tells
-// that user the account lacks model access, which no sign-in fixes.
-var authErrorNames = []string{
-	"TokenInvalidError",
-	"TokenExpiredError",
-	"CredentialAbsentError",
-	"AuthRefreshFailedError",
-	"SignInRequiredError",
-	"ModelRegistryUnauthenticatedError",
-	"AccessDeniedError",
-	"MISSING_TOKEN",
-	"MALFORMED_TOKEN",
-	"INVALID_AUTH",
-	"INVALID_SSO_AUTH",
-	"INVALID_IDC_AUTH",
 }
 
 func classifyPromptFailure(err error) promptFailureClass {
@@ -845,15 +819,10 @@ func classifyMapped(m rpcerr.Mapped) promptFailureClass {
 	if m.RetryErrorType == rpcerr.RetryThrottling {
 		return classThrottled
 	}
-	if authClass(m.ErrorType) {
+	if rpcerr.AuthClass(m.ErrorType) {
 		return classAuth
 	}
 	return classFatal
-}
-
-// authClass reports whether name is a KAS class for a refused credential.
-func authClass(name string) bool {
-	return slices.Contains(authErrorNames, name)
 }
 
 // isAuthShaped reports whether an internal error is really an authentication failure, matched on
@@ -861,10 +830,8 @@ func authClass(name string) bool {
 // AWS SDK message promising a refresh.
 func isAuthShaped(re *marotte.RPCError) bool {
 	hay := re.Message + string(re.ErrorData())
-	for _, name := range authErrorNames {
-		if strings.Contains(hay, name) {
-			return true
-		}
+	if rpcerr.NamesAuthClass(hay) {
+		return true
 	}
 	markers := []string{
 		"Authentication failed",
@@ -919,6 +886,10 @@ func promptFailureAccount(ctx context.Context, err error, inlinedImage bool) (st
 			return marotte.StopReasonCancelled, "", ""
 		}
 		return marotte.StopReasonInterrupted, "The turn was cancelled before the agent answered.", ""
+	}
+	// The agent's closer words a sign-in failure from the sign-in's standing; this reason is the fallback.
+	if classifyPromptFailure(err) == classAuth {
+		return marotte.StopReasonInterrupted, marotte.SignInFailedReason, marotte.FailureKindSignIn
 	}
 	if re, ok := errors.AsType[*marotte.RPCError](err); ok {
 		if m, mapped := rpcerr.MappedOf(re); mapped {

@@ -219,9 +219,9 @@ type reachRecorder struct {
 	accepts  atomic.Int64
 }
 
-func (r *reachRecorder) ProviderUnreachable() (string, bool) { return r.down, r.down != "" }
-func (r *reachRecorder) NoteEngineRefusal()                  { r.refusals.Add(1) }
-func (r *reachRecorder) NoteEngineAccepted()                 { r.accepts.Add(1) }
+func (r *reachRecorder) ProviderUnreachable() bool { return r.down != "" }
+func (r *reachRecorder) NoteEngineRefusal()        { r.refusals.Add(1) }
+func (r *reachRecorder) NoteEngineAccepted()       { r.accepts.Add(1) }
 
 // The unreachable refusal internal/signin/kiro words for KAS, which KAS still grades unauthenticated.
 const vaultUnreachable = "marotte could not reach the identity provider to renew the Kiro sign-in; it will try again."

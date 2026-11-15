@@ -90,7 +90,7 @@ func (s *promptBridgeSpy) Broadcast(_ context.Context, evt marotte.ServerEvent) 
 }
 
 // TestCmdPrompt_AnAuthFailureTravelsAsTheSignInCode: a rejected token travels as
-// auth_token_unavailable, the only code the client routes to a Sign in CTA.
+// auth_token_unavailable, the code the client reads as the turn's sign-in failure.
 func TestCmdPrompt_AnAuthFailureTravelsAsTheSignInCode(t *testing.T) {
 	cases := map[string]struct {
 		callErr  error

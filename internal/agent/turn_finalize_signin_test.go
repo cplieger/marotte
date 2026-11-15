@@ -82,3 +82,24 @@ func TestCloseTurn_AThrottleKeepsItsOwnAccountDuringAnOutage(t *testing.T) {
 		t.Errorf("turn_close = {%q %q}, want the throttle's own account", closes[0].FailureKind, closes[0].FailureReason)
 	}
 }
+
+// A prompt the command layer graded a sign-in failure, with no class latched on the turn, is worded from the
+// sign-in's standing as the latched case is.
+func TestCloseTurn_ASignInKindFromThePromptIsWordedFromTheStanding(t *testing.T) {
+	s := newHealthHub(t)
+	s.signIn(t)
+	s.providerDown(t)
+	id, _ := streamingPromptTurn(t, s.h, "c1", "half an answer")
+
+	s.h.coord.abandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, marotte.SignInFailedReason,
+		marotte.FailureKindSignIn, 0)
+
+	closes := closesOf(t, logOf(t, s.cs, "c1"))
+	if len(closes) != 1 {
+		t.Fatalf("turn_close entries = %d, want exactly one", len(closes))
+	}
+	if closes[0].FailureKind != marotte.FailureKindSignIn || closes[0].FailureReason != marotte.SignInFailedUnreachableReason {
+		t.Errorf("turn_close = {%q %q}, want {%q %q}", closes[0].FailureKind, closes[0].FailureReason,
+			marotte.FailureKindSignIn, marotte.SignInFailedUnreachableReason)
+	}
+}
