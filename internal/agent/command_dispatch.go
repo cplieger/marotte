@@ -49,7 +49,7 @@ func (rt *Runtime) registerCommandHandlers() {
 		Renamer:       rt,
 		SpecApprovals: specApprovalsOrNil(rt.specApprovals),
 		Tangents:      rt,
-		StepSessions:  rt,
+		Conversations: rt,
 	})
 
 	rt.dispatcher.RegisterChange(marotte.CmdSwitchModel, rt.cmdSwitchModel)

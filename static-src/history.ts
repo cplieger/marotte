@@ -1,6 +1,5 @@
 // Previous chats and workflow runs from KAS, on two panes (`/history`, `/history/runs`). marotte archives nothing: a
-// picker over `GET /api/sessions`. A chat row opens its chat or adopts it via `resume_session`; a run row opens the
-// read-only run view.
+// picker over `GET /api/sessions`. A chat row opens its chat; a run row opens the read-only run view.
 
 import { computed, el, signal, subscribe, effect } from "@cplieger/reactive";
 import { skeletonTiming } from "./legacy-ui/skeleton.js";

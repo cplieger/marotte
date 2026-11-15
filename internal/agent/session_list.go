@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -118,15 +119,32 @@ func withParentNames(runs []marotte.WorkflowRun, headers []marotte.ChatHeader) {
 	}
 }
 
-// workspaceSessionRows is KAS's session/list for this workspace, an engine call.
+// sessionListOversizeError is a session list the engine failed because a kiro-cli message over its frame cap was
+// dropped: the list's own answer, or a sessionless frame, which fails every pending call.
+type sessionListOversizeError struct{ cause error }
+
+func (sessionListOversizeError) Error() string {
+	return "session list: a message from kiro-cli was over the engine's frame cap and was dropped, so the list was not read"
+}
+
+func (e sessionListOversizeError) Unwrap() error { return e.cause }
+
+// workspaceSessionRows is KAS's session/list for this workspace's sessions that are not a workflow step's, an
+// engine call.
 func (rt *Runtime) workspaceSessionRows(ctx context.Context) ([]kasSessionRow, error) {
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
 
-	// cwd scopes the answer to this workspace; unscoped it returned 399 rows across 55 directories. The "user"
-	// scope is that unscoped answer.
-	raw, err := rt.engine.rawCall(cctx, "session list call", marotte.MethodSessionList,
-		map[string]any{"cwd": rt.lifecycle.workDir})
+	// cwd scopes the answer to this workspace; unscoped it returned 399 rows across 55 directories. The step filter
+	// is the only narrowing kiro-cli 3.3.0 reads (it ignores cursor and limit): a workspace with 16,900 step sessions
+	// answered 16.36 MiB unfiltered, over the frame cap, and 1.26 MiB filtered.
+	raw, err := rt.engine.rawCall(cctx, "session list call", marotte.MethodSessionList, map[string]any{
+		"cwd":   rt.lifecycle.workDir,
+		"_meta": map[string]any{"kiro": map[string]any{"filter": map[string]any{"workflowSessions": "exclude"}}},
+	})
+	if errors.Is(err, marotte.ErrFrameTooLarge) {
+		return nil, sessionListOversizeError{cause: err}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -159,6 +177,8 @@ func toResumable(claimed map[string]marotte.ChatID, rows []kasSessionRow) []maro
 		if row.SessionID == "" {
 			continue
 		}
+		// KAS's filter schema ends in .catch(void 0), so a filter it cannot parse is dropped without an error and
+		// step rows come back; this keeps them out of History.
 		if len(row.Meta.Kiro.Workflow) > 0 {
 			continue
 		}

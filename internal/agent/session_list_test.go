@@ -418,6 +418,74 @@ func TestHandleSessionList_SaysWhichListFailed(t *testing.T) {
 	}
 }
 
+// stepHeavyKAS answers session/list as kiro-cli 3.3.0 did for a workspace holding 16,900 step sessions: the
+// unfiltered answer, 17,150,712 bytes, is over the engine's 16 MiB frame cap, so the call fails as a dropped frame,
+// and the answer with `_meta.kiro.filter.workflowSessions: "exclude"` carries rows.
+func stepHeavyKAS(br *fakeBridge, rows json.RawMessage) {
+	br.onCallFails = func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool, error) {
+		if method != marotte.MethodSessionList {
+			return nil, nil, false, nil
+		}
+		meta, _ := params["_meta"].(map[string]any)
+		kiro, _ := meta["kiro"].(map[string]any)
+		filter, _ := kiro["filter"].(map[string]any)
+		if filter["workflowSessions"] != "exclude" {
+			return nil, nil, false, &marotte.TransportError{Err: marotte.ErrFrameTooLarge}
+		}
+		return rows, nil, true, nil
+	}
+}
+
+// TestHandleSessionList_ListsChatsInAStepHeavyWorkspace pins that History lists a workspace's chats however many
+// workflow step sessions it holds.
+func TestHandleSessionList_ListsChatsInAStepHeavyWorkspace(t *testing.T) {
+	_ = captureLogs(t)
+	h, cs, br := newTestHub()
+	seedChain(t, cs, "c1", "sess_chat")
+	stepHeavyKAS(br, json.RawMessage(`{"sessions":[
+		{"sessionId":"sess_chat","title":"Fix the rail","updatedAt":"2026-11-14T22:00:00.000Z","_meta":{"kiro":{"status":"idle"}}}]}`))
+
+	rec := httptest.NewRecorder()
+	h.handleSessionList(rec, httptest.NewRequest(http.MethodGet, "/api/sessions", nil))
+
+	var got marotte.SessionListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode reply %q: %v", rec.Body.String(), err)
+	}
+	if got.SessionsState != marotte.ReadReady {
+		t.Fatalf("sessions_state = %q, want %q", got.SessionsState, marotte.ReadReady)
+	}
+	if len(got.Sessions) != 1 || got.Sessions[0].SessionID != "sess_chat" || got.Sessions[0].ChatID != "c1" {
+		t.Errorf("sessions = %+v, want sess_chat owned by c1", got.Sessions)
+	}
+}
+
+// TestHandleSessionList_NamesAnOversizeList pins that a chat list KAS answers past the frame cap is logged as a
+// session list too large to read, not as a stopped turn.
+func TestHandleSessionList_NamesAnOversizeList(t *testing.T) {
+	logs := captureLogs(t)
+	h, _, br := newTestHub()
+	br.callErrs = map[string]error{marotte.MethodSessionList: &marotte.TransportError{Err: marotte.ErrFrameTooLarge}}
+
+	rec := httptest.NewRecorder()
+	h.handleSessionList(rec, httptest.NewRequest(http.MethodGet, "/api/sessions", nil))
+
+	var warn struct {
+		Error string `json:"error"`
+	}
+	for line := range strings.Lines(logs.String()) {
+		if strings.Contains(line, `"msg":"session list failed"`) {
+			if err := json.Unmarshal([]byte(line), &warn); err != nil {
+				t.Fatalf("decode log line %q: %v", line, err)
+			}
+		}
+	}
+	if !strings.Contains(warn.Error, "session list") || !strings.Contains(warn.Error, "frame cap") ||
+		strings.Contains(warn.Error, "turn") {
+		t.Errorf("session list WARN error = %q, want it to name a session list over the frame cap", warn.Error)
+	}
+}
+
 // TestWithChatFacts_CopiesHeaderFacts pins that a History row states its chat's model, mode, turns and credits from
 // the stored header, so a chat opened from History and closed again keeps its second line.
 func TestWithChatFacts_CopiesHeaderFacts(t *testing.T) {
