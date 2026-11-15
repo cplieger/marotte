@@ -1225,3 +1225,27 @@ func TestSessionInfoUpdate_SessionUsageIsCensusQuiet(t *testing.T) {
 		})
 	}
 }
+
+// A frame that lists no models (only its effort option carries a list) says nothing about the old one, so the move
+// claims no cause.
+func TestHandleConfigOptionUpdate_AMoveInAFrameWithNoCatalogNamesNoCause(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	_, _ = store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Model = "model-a"
+		return true
+	})
+
+	raw := mustJSON(t, map[string]any{"configOptions": []map[string]any{
+		{"id": "model", "type": "select", "currentValue": "model-d", "options": []map[string]any{}},
+		{"id": "effortLevel", "type": "select", "currentValue": "medium", "options": []map[string]any{{"value": "medium", "name": "Medium"}}},
+	}})
+
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", raw, FrameAttribution{})
+
+	got := modelSwitchesOf(t, deps.between["c1"])
+	want := []marotte.EntryModelSwitched{{From: "model-a", To: "model-d", Reason: marotte.ModelSwitchReasonRepinned}}
+	if !slices.Equal(got, want) {
+		t.Errorf("model_switched entries = %+v, want %+v", got, want)
+	}
+}

@@ -387,8 +387,10 @@
 
 /* `.boundary`'s `--sp-4` is the air BETWEEN rows and there is no row after this one, so
    the body's own padding is the air. Measured on an interrupted turn: 36.5px above the
-   reason framed below it, against the 12px every other pair of rows sits at. */
-.turn-body > .boundary:last-child {
+   reason framed below it, against the 12px every other pair of rows sits at. The face
+   is a flex column too, so its trailing fallback line would carry the same extra air. */
+.turn-body > .boundary:last-child,
+.turn-face > .boundary:last-child {
   margin-block-end: 0;
 }
 

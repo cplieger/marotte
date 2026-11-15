@@ -5,7 +5,14 @@ import { describe, it, expect, vi } from "vitest";
 import { buildEvent, type EventEntry } from "./messages-events.js";
 import type { EntryKind, KindedEntry } from "./types.js";
 import { glyphMarkup, registryMarkup } from "./__test-helpers__/glyph.js";
-import { ICON_ALERT, ICON_COMPACT, ICON_REWIND, ICON_SHIELD, ICON_TOOL_SWITCH } from "./icons.js";
+import {
+  ICON_ALERT,
+  ICON_COMPACT,
+  ICON_REFRESH,
+  ICON_REWIND,
+  ICON_SHIELD,
+  ICON_TOOL_SWITCH,
+} from "./icons.js";
 
 function event<K extends EntryKind & EventEntry["kind"]>(
   kind: K,
@@ -81,11 +88,14 @@ describe("the row a kind draws", () => {
       ],
       ["a failed compaction", event("compaction_failed", { reason: "" }), ICON_ALERT],
       ["a safety block", event("safety_blocked", { properties: [] }), ICON_SHIELD],
+      ["a context reset", event("context_reset", { cause: "load_failed" }), ICON_REFRESH],
     ];
     for (const [name, entry, glyph] of glyphs) {
       const icon = buildEvent(entry).querySelector(".boundary-icon, .compaction-icon");
       expect(icon?.getAttribute("aria-hidden"), name).toBe("true");
       expect(icon?.childElementCount, name).toBe(1);
+      // An icon string with no element root parses to an empty <svg>, which paints as a blank 300x150 box.
+      expect(icon?.firstElementChild?.childElementCount, name).toBeGreaterThan(0);
       expect(glyphMarkup(icon?.firstElementChild), name).toBe(registryMarkup(glyph));
     }
   });
@@ -124,7 +134,7 @@ describe("model_fallback", () => {
     },
   );
 
-  it("says a session-wide fallback's model now serves the chat, in the same row", () => {
+  it("says a session-wide fallback's model stays on the chat, in the same row", () => {
     const node = buildEvent(
       event("model_fallback", {
         from: "model-a-5",
@@ -135,7 +145,7 @@ describe("model_fallback", () => {
     );
     expect(node.className).toContain("boundary-switched");
     expect(labelOf(node)).toBe(
-      "Switched to model-b-5: model-a-5 declined the request \u00b7 this chat now stays on model-b-5",
+      "Switched to model-b-5: model-a-5 declined the request \u00b7 this chat stays on it from now on",
     );
   });
 

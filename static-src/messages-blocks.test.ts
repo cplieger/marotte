@@ -832,10 +832,10 @@ describe("an event kind renders a row at its own seq", () => {
     expect(shape(r.body)).toEqual(["text(tried)", "event(model_fallback)"]);
   });
 
-  it("removes the mounted re-pin row when its fallback arrives live", () => {
+  it("holds the live re-pin row hidden and removes it when its fallback arrives", () => {
     const before = [text("t", 1, "tried"), repin(2)];
     const r = render(before, { live: true });
-    expect(shape(r.body)).toEqual(["text(tried)", "event(model_switched)"]);
+    expect(shape(r.body)).toEqual(["text(tried)", "event(model_switched is-held)"]);
     update(r, [...before, fallback(3)], true);
     expect(shape(r.body)).toEqual(["text(tried)", "event(model_fallback)"]);
     expect(blockElement(r.turnID, 2)).toBeUndefined();

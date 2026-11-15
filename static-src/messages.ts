@@ -2172,7 +2172,7 @@ function setCardsFolded(items: readonly { card: HTMLElement; folded: boolean }[]
   slideTurnFolds(slides);
 }
 
-// A collapsed turn keeps the open layout: header, a face with the turn's last message and setting lines (`turnFace`)
+// A collapsed turn keeps the open layout: header, a face with the turn's last message and fallback lines (`turnFace`)
 // where the body was, and the ledger. The face carries no run card; the composer's run bar is a live run's persistent surface.
 
 /** Per-card content key that detects when the face must be rebuilt; the face's tables are released when it goes. */

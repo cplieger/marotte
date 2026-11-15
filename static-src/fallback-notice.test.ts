@@ -32,6 +32,7 @@ const store = await import("./store.js");
 const messages = await import("./messages.js");
 const { setTurnOpen, resetFoldState } = await import("./fold-state.js");
 const { KEY_ATTR } = await import("./reconcile.js");
+const { REPIN_HOLD_MS } = await import("./messages-blocks.js");
 
 messages.mountChatView();
 
@@ -142,12 +143,14 @@ function lines(turnID: string): string[] {
   const c = card(turnID);
   const scope = c.hasAttribute("data-folded") ? ".turn-face" : ".turn-body";
   return [
-    ...c.querySelectorAll<HTMLElement>(`:scope > ${scope} .boundary-switched .boundary-label`),
+    ...c.querySelectorAll<HTMLElement>(
+      `:scope > ${scope} .boundary-switched:not(.is-held) .boundary-label`,
+    ),
   ].map((b) => b.textContent ?? "");
 }
 
 const SESSION_LINE =
-  "Switched to claude-opus-4.8: claude-opus-5.5 declined the request \u00b7 this chat now stays on claude-opus-4.8";
+  "Switched to claude-opus-4.8: claude-opus-5.5 declined the request \u00b7 this chat stays on it from now on";
 
 beforeEach(() => {
   messages.teardownAll();
@@ -167,8 +170,8 @@ describe("a model fallback's line", () => {
     expect(card(TURN).hasAttribute("data-folded")).toBe(false);
   });
 
-  it("draws once while the turn streams, the re-pin and the notice arriving apart", async () => {
-    const chat = "fb-stream";
+  /** Open turn #431 live and append its entries through the re-pin; returns the entries after it but the close. */
+  function streamToRepin(chat: string): Entry[] {
     store.setSessions([makeSession({ id: chat, name: chat, thinking: true })]);
     store.setActive(chat);
     store.setPainted(chat);
@@ -177,14 +180,47 @@ describe("a model fallback's line", () => {
     for (const e of rest.slice(0, 3)) {
       store.appendEntry(chat, e);
     }
+    return rest.slice(3, -1);
+  }
+
+  /** Every switch label shown in `turnID`'s body from now on, read at each DOM change. */
+  function watchShown(turnID: string): { shown: Set<string>; stop: () => void } {
+    const shown = new Set<string>();
+    const read = (): void => {
+      for (const line of lines(turnID)) {
+        shown.add(line);
+      }
+    };
+    const obs = new MutationObserver(read);
+    obs.observe(card(turnID), { subtree: true, childList: true, attributes: true });
+    return { shown, stop: () => obs.disconnect() };
+  }
+
+  it("never shows the re-pin while the turn streams, the re-pin and the notice arriving apart", async () => {
+    const rest = streamToRepin("fb-stream");
     await vi.waitFor(() => {
-      expect(lines(TURN)).toHaveLength(1);
+      expect(card(TURN).querySelector(".boundary-switched.is-held")).not.toBeNull();
     });
-    for (const e of rest.slice(3, -1)) {
-      store.appendEntry(chat, e);
+    const watch = watchShown(TURN);
+    expect(lines(TURN)).toEqual([]);
+    for (const e of rest) {
+      store.appendEntry("fb-stream", e);
     }
     await vi.waitFor(() => {
       expect(lines(TURN)).toEqual([SESSION_LINE]);
+    });
+    await new Promise((r) => setTimeout(r, REPIN_HOLD_MS + 50));
+    watch.stop();
+    expect([...watch.shown]).toEqual([SESSION_LINE]);
+    expect(card(TURN).querySelectorAll(".boundary-switched")).toHaveLength(1);
+  });
+
+  it("shows a live re-pin no notice explains once the hold ends", async () => {
+    streamToRepin("fb-lone");
+    await vi.waitFor(() => {
+      expect(lines(TURN)).toEqual([
+        "Switched from claude-opus-5.5 to claude-opus-4.8 · not available for this account",
+      ]);
     });
   });
 

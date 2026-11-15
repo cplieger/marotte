@@ -1,5 +1,5 @@
-// What a collapsed turn's face shows (its last message and the lines that changed a setting), and whether folding
-// the turn hides anything. Pure and DOM-free.
+// What a collapsed turn's face shows (its last message and the fallback lines that moved its model), and whether
+// folding the turn hides anything. Pure and DOM-free.
 
 import {
   entryAt,
@@ -17,14 +17,14 @@ import { appliedFallback, payloadOf, type Turn } from "./turns.js";
 import type { Entry } from "./types.js";
 import type { EventEntry } from "./messages-events.js";
 
-/** One part of a collapsed turn's face, in body order: a last-message bubble's prose, or a setting line. */
+/** One part of a collapsed turn's face, in body order: a last-message bubble's prose, or a fallback line. */
 export type FacePart =
   | { readonly kind: "prose"; readonly text: string }
   | { readonly kind: "row"; readonly entry: EventEntry };
 
 /**
- * The face a collapsed turn draws: every line the body draws for a change that outlives the turn (`settingRow`),
- * wherever it sits, and the last message's bubbles (`lastMessageItems`), each trimmed, in body order.
+ * The face a collapsed turn draws: every line the body draws for a fallback that moved the turn's model
+ * (`fallbackRow`), wherever it sits, and the last message's bubbles (`lastMessageItems`), each trimmed, in body order.
  */
 export function turnFace(t: Turn): readonly FacePart[] {
   // `entryRenders` reads `hookStatusShown`.
@@ -32,7 +32,7 @@ export function turnFace(t: Turn): readonly FacePart[] {
     const folds = turnFolds(t, "");
     const parts: { readonly seq: number; readonly part: FacePart }[] = [];
     for (const e of t.body) {
-      if (settingRow(e, folds)) {
+      if (fallbackRow(e, folds)) {
         parts.push({ seq: e.seq, part: { kind: "row", entry: e as EventEntry } });
       }
     }
@@ -49,25 +49,15 @@ export function turnFace(t: Turn): readonly FacePart[] {
 const faces = bodyMemo<readonly FacePart[]>();
 
 /**
- * Whether the body draws `e` as a line for a change the reader needs after the turn ends: the chat's model, effort or
- * mode moved, or its context was reset. A fallback that moved nothing (a decline, a same-model retry) is not one.
+ * Whether the body draws `e` as the line of a fallback that moved the turn's model, which the face keeps so the fold
+ * never hides a model the reader did not pick. A decline or a same-model retry moved nothing, so it is not one.
  */
-function settingRow(e: Entry, folds: TurnFolds): boolean {
-  if ((e.lane ?? "") !== "" || !entryRenders(e, "", folds)) {
+function fallbackRow(e: Entry, folds: TurnFolds): boolean {
+  if ((e.lane ?? "") !== "" || !entryRenders(e, "", folds) || !appliedFallback(e)) {
     return false;
   }
-  switch (e.kind) {
-    case "model_switched":
-    case "mode_switched":
-    case "context_reset":
-      return true;
-    case "model_fallback": {
-      const p = payloadOf(e, "model_fallback");
-      return p !== undefined && appliedFallback(e) && p.to !== p.from;
-    }
-    default:
-      return false;
-  }
+  const p = payloadOf(e, "model_fallback");
+  return p !== undefined && p.to !== p.from;
 }
 
 /**
@@ -155,9 +145,9 @@ function itemText(t: Turn, item: EntryRange): string {
   return out;
 }
 
-/** Whether folding this turn would HIDE anything. The face shows run cards, the last message,
- *  the setting lines and a failed turn's error row; a turn with nothing else folds to an
- *  identical face, so no fold is offered. A revert's boundary row is not counted, so it stays on screen. */
+/** Whether folding this turn would HIDE anything: an entry the face leaves out. A turn with only the last message and
+ *  its fallback lines folds to an identical face, so no fold is offered. A revert's boundary row is not counted, so it
+ *  stays on screen. */
 export function turnFoldHides(t: Turn): boolean {
   return foldHides(t.body, String(hookStatusShown()), () => deriveFoldHides(t));
 }
@@ -178,9 +168,13 @@ function deriveFoldHides(t: Turn): boolean {
       case "compaction_failed":
       case "safety_blocked":
       case "model_routed":
+      case "mode_switched":
+      case "context_reset":
         return true;
+      // A re-pin its fallback explains draws nothing, and the face keeps the fallback's line.
+      case "model_switched":
       case "model_fallback":
-        if (entryRenders(e, "", folds) && !settingRow(e, folds)) {
+        if (entryRenders(e, "", folds) && !fallbackRow(e, folds)) {
           return true;
         }
         break;
@@ -208,7 +202,7 @@ function faceLeavesOut(t: Turn): boolean {
   const end = items.at(-1)?.to ?? first;
   for (let seq = first; seq < end; seq++) {
     const e = entryAt(t, seq);
-    const drawn = e !== undefined && entryRenders(e, "", folds) && !settingRow(e, folds);
+    const drawn = e !== undefined && entryRenders(e, "", folds) && !fallbackRow(e, folds);
     if (drawn && !items.some((r) => seq >= r.from && seq < r.to)) {
       return true;
     }

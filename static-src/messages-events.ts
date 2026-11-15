@@ -12,7 +12,14 @@ import { el } from "@cplieger/reactive";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { chevronEl } from "./chevron.js";
 import { iconEl } from "./icon-el.js";
-import { ICON_ALERT, ICON_COMPACT, ICON_REWIND, ICON_SHIELD, ICON_TOOL_SWITCH } from "./icons.js";
+import {
+  ICON_ALERT,
+  ICON_COMPACT,
+  ICON_REFRESH,
+  ICON_REWIND,
+  ICON_SHIELD,
+  ICON_TOOL_SWITCH,
+} from "./icons.js";
 import { wireDetailsSlide } from "./disclosure-row.js";
 import { effortLabel } from "./effort.js";
 import { renderMarkdownInto } from "./markdown.js";
@@ -75,7 +82,7 @@ export function buildEvent(e: EventEntry): HTMLElement {
       return boundary("rewound", ICON_REWIND, REVERT_LABELS[e.payload.cause]);
     }
     case "context_reset": {
-      return boundary("reset", "\u21bb", CONTEXT_RESET_LABELS[e.payload.cause]);
+      return boundary("reset", ICON_REFRESH, CONTEXT_RESET_LABELS[e.payload.cause]);
     }
     case "compaction": {
       const summary = e.payload.summary;
@@ -133,7 +140,7 @@ const SWITCH_REASONS: Record<
  * KAS's fallback notice. A move to another model reads as a model switch, with the cause from `trigger` and how long
  * the new model stays (`scope`); a decline (a non-empty `reason`, whatever `to` holds) names the cause and why
  * nothing moved; a retry on the same model (KAS re-asking Auto) names no target. Model ids stay raw, as
- * `switchedLabel` shows them; the scope's repeat of `to` is chrome, so find counts each id once as the server does.
+ * `switchedLabel` shows them.
  */
 function fallbackLabel(p: EntryModelFallback): LabelPart[] {
   const cause = worded(` ${fallbackCause(p.trigger)}`);
@@ -152,7 +159,7 @@ function fallbackLabel(p: EntryModelFallback): LabelPart[] {
   const moved: LabelPart[] = [worded("Switched to "), to, worded(": "), p.from, cause];
   switch (p.scope) {
     case "session":
-      return [...moved, worded(` \u00b7 this chat now stays on ${to}`)];
+      return [...moved, worded(" \u00b7 this chat stays on it from now on")];
     case "turn":
       return [...moved, worded(" \u00b7 for this turn only")];
     default:

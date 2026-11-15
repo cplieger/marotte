@@ -57,7 +57,7 @@ function ack(s: string): Entry {
 
 // --- The last message -------------------------------------------------------
 
-describe("turnLastMessage", () => {
+describe("the face's last-message prose", () => {
   it("takes the prose after the last tool call", () => {
     const t = oneTurn([
       text("a-say", "working on it"),
@@ -273,16 +273,25 @@ describe("turnFace", () => {
     expect(faceOf(t)).toEqual(["half an", "row:model_fallback", "answer"]);
   });
 
-  it.each([
-    ["model_switched", { from: "a", to: "b", effort: "high" }],
-    ["model_switched", { from: "a", to: "a", effort: "high" }],
-    ["mode_switched", { from: "spec", to: "vibe", source: "agent" }],
-    ["context_reset", { cause: "load_failed" }],
-  ] as const)("keeps a %s line, a setting that outlives the turn", (kind, payload) => {
-    expect(faceOf(oneTurn([sealed(kind, payload), text("a-say", "done")]))).toEqual([
-      `row:${kind}`,
+  it("keeps a turn-scope fallback's line, a fallback that moved the turn's model", () => {
+    const turnScope = sealed("model_fallback", {
+      from: "a",
+      to: "b",
+      scope: "turn",
+      trigger: "availability",
+    });
+    expect(faceOf(oneTurn([turnScope, text("a-say", "done")]))).toEqual([
+      "row:model_fallback",
       "done",
     ]);
+  });
+
+  it.each([
+    ["model_switched", { from: "a", to: "b", effort: "high" }],
+    ["mode_switched", { from: "spec", to: "vibe", source: "agent" }],
+    ["context_reset", { cause: "load_failed" }],
+  ] as const)("leaves out a %s line, which the body keeps", (kind, payload) => {
+    expect(faceOf(oneTurn([sealed(kind, payload), text("a-say", "done")]))).toEqual(["done"]);
   });
 
   it.each([
@@ -334,20 +343,18 @@ describe("turnFoldHides", () => {
     ["compaction", {}],
     ["compaction_failed", {}],
     ["safety_blocked", {}],
+    ["model_switched", { from: "a", to: "b" }],
     ["model_routed", { message: "" }],
+    ["mode_switched", { from: "spec", to: "vibe", source: "user" }],
+    ["context_reset", { cause: "session_missing" }],
     ["model_fallback", { from: "a", trigger: "availability", reason: "chainExhausted" }],
   ] as const)("hides a %s entry", (kind, payload) => {
     const t = oneTurn([sealed(kind, payload), text("a-say", "done")]);
     expect(turnFoldHides(t)).toBe(true);
   });
 
-  it.each([
-    ["a model fallback", [REPIN, FALLBACK]],
-    ["a model switch", [sealed("model_switched", { from: "a", to: "b" })]],
-    ["a mode switch", [sealed("mode_switched", { from: "spec", to: "vibe", source: "user" })]],
-    ["a context reset", [sealed("context_reset", { cause: "session_missing" })]],
-  ] as const)("hides nothing behind %s, which the face shows", (_why, rows) => {
-    expect(turnFoldHides(oneTurn([...rows, text("a-say", "done")]))).toBe(false);
+  it("hides nothing behind a model fallback and the re-pin it explains, which the face shows as one line", () => {
+    expect(turnFoldHides(oneTurn([REPIN, FALLBACK, text("a-say", "done")]))).toBe(false);
   });
 
   it("hides nothing behind a sub-agent's model_fallback, which the body does not draw", () => {
