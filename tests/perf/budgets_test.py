@@ -102,8 +102,8 @@ class ExactEntryRule(unittest.TestCase):
 
     def check(self, run_id: str, baseline: float) -> list[str]:
         files = {
-            '100': self.calibration('100', 'old', [4384] * 3),
-            '200': self.calibration('200', 'new', [4400] * 3),
+            '99': self.calibration('99', 'old', [4384] * 3),
+            '100': self.calibration('100', 'new', [4400] * 3),
         }
         cells = {r: {key(c): c for c in d['cells']} for r, d in files.items()}
         url = f'https://github.com/cplieger/ci/actions/runs/{run_id}'
@@ -112,13 +112,13 @@ class ExactEntryRule(unittest.TestCase):
         )
 
     def test_an_entry_of_the_newest_commit_holds(self):
-        self.assertEqual(self.check('200', 4400.0), [])
+        self.assertEqual(self.check('100', 4400.0), [])
 
     def test_an_entry_re_sourced_to_an_older_commit_fails(self):
-        self.assertTrue(self.check('100', 4384.0))
+        self.assertTrue(self.check('99', 4384.0))
 
     def test_an_entry_off_its_commits_reps_fails(self):
-        self.assertTrue(self.check('200', 4384.0))
+        self.assertTrue(self.check('100', 4384.0))
 
     def test_an_unchecked_in_source_fails(self):
         self.assertTrue(self.check('300', 4400.0))
