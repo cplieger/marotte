@@ -32,7 +32,7 @@ require (
 	github.com/cplieger/go/textsafe v1.1.0
 	github.com/cplieger/go/wiregen/v2 v2.3.0-dev.4
 	github.com/cplieger/go/yamlenv v1.1.0
-	github.com/cplieger/toolbelt/v3 v3.16.0-dev.3
+	github.com/cplieger/toolbelt/v3 v3.16.0-dev.4
 	github.com/cplieger/web-terminal-engine/v6 v6.6.0-dev.3
 	github.com/creack/pty v1.1.24
 	github.com/evanw/esbuild v0.28.2
