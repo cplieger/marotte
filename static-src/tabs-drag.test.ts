@@ -760,6 +760,45 @@ describe("the touch hold", () => {
       style.remove();
     }
   });
+
+  // The lift folds `s` above `b`, so the pen's long press lands its `contextmenu` on `c`.
+  it("opens a pen-held row's menu from a contextmenu that lands on the row the lift's fold moved under the pen", () => {
+    const style = document.createElement("style");
+    style.textContent = tabsCss;
+    document.head.append(style);
+    try {
+      // The strip's inline `display` would outrank the fold's `display: none`.
+      (rows["s"] as HTMLElement).style.removeProperty("display");
+      const b = rows["b"] as HTMLElement;
+      const c = rows["c"] as HTMLElement;
+      const openB = vi.fn();
+      const openC = vi.fn();
+      bindContextPress(b, openB, yieldDragToMenu);
+      bindContextPress(c, openC, yieldDragToMenu);
+      const at = { clientX: 20, clientY: mid(b), pointerType: "pen" };
+      b.dispatchEvent(ptr("pointerdown", { ...at, buttons: 1 }));
+      vi.advanceTimersByTime(TOUCH_HOLD);
+      const box = c.getBoundingClientRect();
+      expect(
+        box.top <= at.clientY && at.clientY < box.bottom,
+        "the fold moved c under the pen",
+      ).toBe(true);
+      c.dispatchEvent(
+        new PointerEvent("contextmenu", {
+          ...at,
+          pointerId: POINTER_ID,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      expect(openC).not.toHaveBeenCalled();
+      expect(openB).toHaveBeenCalledTimes(1);
+      expect(openB).toHaveBeenCalledWith(at.clientX, at.clientY);
+      b.dispatchEvent(ptr("pointerup", at));
+    } finally {
+      style.remove();
+    }
+  });
 });
 
 // The activation contract every gesture in this file is measured against, and the

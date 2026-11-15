@@ -1117,6 +1117,30 @@ describe("the touch hold on a Recently closed row", () => {
     expect(opens()).toHaveLength(1);
   });
 
+  it("reopens nothing from the lift of a touch that travelled past the slop and got the platform's contextmenu", async () => {
+    await closedElsewhere({ "c-a": "Alpha" });
+    unfold();
+    const row = rowFor("Alpha");
+    touch("pointerdown", row);
+    const box = row.getBoundingClientRect();
+    row.dispatchEvent(
+      new PointerEvent("pointermove", {
+        pointerType: "touch",
+        pointerId: 7,
+        isPrimary: true,
+        bubbles: true,
+        clientX: box.left + 10 + TOUCH_SLOP_PX + 1,
+        clientY: box.top + 5,
+      }),
+    );
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    touch("pointerup", row);
+    clickOn(row);
+    await settle();
+    expect(menus()).toHaveLength(1);
+    expect(opens()).toHaveLength(0);
+  });
+
   it("lets the next tap on the row reopen it", async () => {
     await closedElsewhere({ "c-a": "Alpha" });
     unfold();

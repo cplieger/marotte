@@ -45,14 +45,18 @@ export function caughtFling(e: PointerEvent): boolean {
   return false;
 }
 
-/** `pending` until settled once: `menu` opened one, `refused` was a caught fling reaching its hold or a
- *  platform `contextmenu`, `ended` travelled past the slop or was refused by `mayOpen` and lifts as a tap. */
+/** `pending` until settled: `menu` opened one, `refused` was a caught fling reaching its hold or a platform
+ *  `contextmenu`, `ended` travelled past the slop or was refused by `mayOpen` and lifts as a tap, unless a
+ *  platform `contextmenu` still opens its menu, which makes it `menu`. */
 type Outcome = "pending" | "menu" | "refused" | "ended";
+
+type Opener = (x: number, y: number) => void;
 
 interface Press {
   readonly id: number;
   readonly type: string;
   readonly target: HTMLElement;
+  readonly open: Opener;
   readonly fling: boolean;
   readonly x: number;
   readonly y: number;
@@ -108,20 +112,30 @@ function onLift(e: PointerEvent): void {
   }
 }
 
-/** Whether `target`'s `contextmenu` may open its menu, settling the live press it belongs to. A press
- *  on another row refuses it: a second finger's long press starts nothing. */
-function menuFromContextEvent(target: HTMLElement): boolean {
+/** The press a `contextmenu` belongs to, by its pointer (https://www.w3.org/TR/pointerevents3/#the-click-auxclick-and-contextmenu-events):
+ *  the live press for its own pointer, or for one with no pointer type; null for a mouse, the keyboard or no press.
+ *  Another touch or pen pointer answers `"other"`: a second finger's long press starts nothing. */
+function pressOf(e: MouseEvent): Press | "other" | null {
   if (press === null) {
-    return true;
+    return null;
   }
-  if (press.target !== target) {
-    return false;
+  if (!(e instanceof PointerEvent)) {
+    return press;
   }
-  switch (press.outcome) {
+  if (e.pointerType !== "touch" && e.pointerType !== "pen") {
+    return null;
+  }
+  return e.pointerId === press.id ? press : "other";
+}
+
+/** Settle `p` for its pointer's `contextmenu`, answering whether its menu opens. */
+function menuFromPress(p: Press): boolean {
+  switch (p.outcome) {
     case "pending":
-      settle(press, press.fling ? "refused" : "menu");
-      return !press.fling;
+      settle(p, p.fling ? "refused" : "menu");
+      return !p.fling;
     case "ended":
+      settle(p, "menu");
       return true;
     case "menu":
     case "refused":
@@ -135,19 +149,22 @@ function menuFromContextEvent(target: HTMLElement): boolean {
  *  completes, can refuse it. The lift's click is swallowed after a menu or a refusal. */
 export function bindContextPress(
   target: HTMLElement,
-  open: (x: number, y: number) => void,
+  open: Opener,
   mayOpen: () => boolean = () => true,
 ): void {
   watchForFlings();
   target.addEventListener("contextmenu", (e) => {
     e.preventDefault();
-    if (!menuFromContextEvent(target)) {
+    const p = pressOf(e);
+    if (p === "other" || (p !== null && !menuFromPress(p))) {
       return;
     }
+    // The pressed row's menu, wherever the press's own event landed: the drag lift can fold rows under it.
+    const row = p?.target ?? target;
     // A keyboard-opened menu carries no point of its own.
-    const box = target.getBoundingClientRect();
+    const box = row.getBoundingClientRect();
     const keyed = e.clientX === 0 && e.clientY === 0;
-    open(keyed ? box.left : e.clientX, keyed ? box.bottom : e.clientY);
+    (p?.open ?? open)(keyed ? box.left : e.clientX, keyed ? box.bottom : e.clientY);
   });
   target.addEventListener("pointerdown", (e) => {
     if (e.pointerType !== "touch" && e.pointerType !== "pen") {
@@ -163,6 +180,7 @@ export function bindContextPress(
       id: e.pointerId,
       type: e.pointerType,
       target,
+      open,
       fling: caughtFling(e),
       x: e.clientX,
       y: e.clientY,
@@ -177,7 +195,7 @@ export function bindContextPress(
           settle(p, "refused");
         } else if (mayOpen()) {
           settle(p, "menu");
-          open(p.x, p.y);
+          p.open(p.x, p.y);
         } else {
           settle(p, "ended");
         }

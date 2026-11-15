@@ -4177,11 +4177,14 @@ describe("the touch hold on a chat tab", () => {
     touch("pointercancel", rowB(), 30, 2);
   });
 
+  // A pointer's `contextmenu` is a PointerEvent carrying its id (https://www.w3.org/TR/pointerevents3/#the-click-auxclick-and-contextmenu-events).
   it("opens no menu from a second finger's contextmenu on another row", async () => {
     const row = await rowA();
     touch("pointerdown", row);
     touch("pointerdown", rowB(), 30, 2);
-    const menu = new MouseEvent("contextmenu", {
+    const menu = new PointerEvent("contextmenu", {
+      pointerId: 2,
+      pointerType: "touch",
       bubbles: true,
       cancelable: true,
       clientX: AT.x + 30,
@@ -4237,12 +4240,63 @@ describe("the touch hold on a chat tab", () => {
     expect(vi.mocked(showContextMenu).mock.lastCall?.[1], "the first finger's point").toEqual(AT);
   });
 
-  it("opens the platform's contextmenu on a row whose touch travelled past the slop", async () => {
+  it("opens the platform's contextmenu on a row whose touch travelled past the slop, and swallows its lift", async () => {
     const row = await rowA();
     touch("pointerdown", row);
     touch("pointermove", row, pointerDragActivation("touch").slopPx + 1);
     row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
     expect(showContextMenu).toHaveBeenCalledTimes(1);
+    touch("pointerup", row, pointerDragActivation("touch").slopPx + 1);
+    clickRow(row);
+    expect(getActiveTabId()).toBe(chatID("b"));
+  });
+
+  it.each([
+    { how: "a mouse", pointerType: "mouse" },
+    { how: "the keyboard", pointerType: "" },
+  ])("opens another row's menu from $how while a touch press is live", async ({ pointerType }) => {
+    const row = await rowA();
+    touch("pointerdown", row);
+    rowB().dispatchEvent(
+      new PointerEvent("contextmenu", {
+        pointerId: 1,
+        pointerType,
+        bubbles: true,
+        cancelable: true,
+        clientX: AT.x + 30,
+        clientY: AT.y,
+      }),
+    );
+    expect(showContextMenu).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(showContextMenu).mock.lastCall?.[2]?.returnFocus).toBe(rowB());
+    touch("pointercancel", row);
+  });
+
+  it("credits a contextmenu that carries no pointer to the live press's row", async () => {
+    const row = await rowA();
+    touch("pointerdown", row);
+    rowB().dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: AT.x,
+        clientY: AT.y + 30,
+      }),
+    );
+    expect(showContextMenu).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(showContextMenu).mock.lastCall?.[1]).toEqual({ x: AT.x, y: AT.y + 30 });
+    expect(vi.mocked(showContextMenu).mock.lastCall?.[2]?.returnFocus, "the pressed row").toBe(row);
+    vi.advanceTimersByTime(HOLD_MS);
+    expect(showContextMenu, "the hold after the menu").toHaveBeenCalledTimes(1);
+  });
+
+  it("places a credited menu that carries no point at the pressed row", async () => {
+    const row = await rowA();
+    touch("pointerdown", row);
+    rowB().dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    const box = row.getBoundingClientRect();
+    expect(vi.mocked(showContextMenu).mock.lastCall?.[1]).toEqual({ x: box.left, y: box.bottom });
+    touch("pointercancel", row);
   });
 
   it("leaves the lift's click to the row's drag when the drag refuses the hold", async () => {
