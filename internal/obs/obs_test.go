@@ -121,6 +121,24 @@ func TestEngineUp_IsOneOnlyForAReadyEngine(t *testing.T) {
 	}
 }
 
+// The sign-in's state is one-hot over all four states, every one on the page from the start.
+func TestSignInState_IsOneForTheCurrentStateOnly(t *testing.T) {
+	states := []string{"ok", "failing", "signed_out", "none"}
+	for _, current := range []string{"failing", "ok"} {
+		SignInState(current)
+		for _, st := range states {
+			want := "0"
+			if st == current {
+				want = "1"
+			}
+			series := `marotte_signin_state{state="` + st + `"}`
+			if v, ok := sample(series); !ok || v != want {
+				t.Errorf("after %s, %s = %q (on the page %v), want %s", current, series, v, ok, want)
+			}
+		}
+	}
+}
+
 // A schedule's next slot is a Unix time on the page; a slot nobody can name leaves no series rather than a 0 a
 // "time() > next_due" rule would read as long overdue.
 func TestSchedule_ExportsTheCountAndTheNextSlotUntilTheScheduleGoes(t *testing.T) {

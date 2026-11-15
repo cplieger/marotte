@@ -146,6 +146,16 @@ const (
 	ProviderUnreachable
 )
 
+// Standing is one read of the record the running engine is answered from.
+type Standing struct {
+	// FailingSince is the first transient or short renewal since the record's last usable one, zero when the last
+	// renewal was usable or the record was replaced since.
+	FailingSince  time.Time
+	Answerability Answerability
+	// Lapsed: the identity provider rejected the record's renewal.
+	Lapsed bool
+}
+
 // Credential is a backend's record, stored and handed back by the vault without being read.
 type Credential struct {
 	Data json.RawMessage

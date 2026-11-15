@@ -305,15 +305,9 @@ describe("ERROR_ROUTES", () => {
         },
       },
     ],
-    // Unauthenticated runtime: the only fix is signing in, which no Settings control does, hence the
-    // discriminated action. Turn-scoped AND actionable, so the toast is raised beside the inline reason.
-    [
-      "auth_token_unavailable",
-      {
-        surface: "toast",
-        action: { kind: "sign-in", label: "Sign in" },
-      },
-    ],
+    // A turn refused on its credential: its row and the app-wide sign-in banner carry Sign in again, so the
+    // toast carries no action and stands down for the chat on screen.
+    ["auth_token_unavailable", { surface: "toast" }],
     ["rate_limit", { surface: "toast" }],
     ["compaction_failed", { surface: "toast" }],
     ["resume_not_sent", { surface: "toast" }],
@@ -622,35 +616,26 @@ describe("error handler", () => {
     expect(mockOpenSetting).not.toHaveBeenCalled();
   });
 
-  // KAS answers an auth failure by running unauthenticated, so without this toast every turn fails
-  // silently.
-  it("routes the auth failure to a toast carrying the sign-in CTA", () => {
+  // The turn's row says the sign-in cause and offers Sign in again, so the toast is a plain turn-scoped one:
+  // failure-notice suppresses it for the chat on screen and names the chat elsewhere.
+  it("routes the auth failure to a plain turn-scoped toast, the row carrying Sign in again", () => {
     setSessions([makeSession("chat-1", { thinking: true })]);
     setActive("chat-1");
     fireSSE("error", "chat-1", {
       code: "auth_token_unavailable",
-      message: "kiro-cli: refresh token expired",
+      message: "Kiro sign-in failed: the Kiro sign-in service is unreachable.",
       turn_scoped: true,
     });
 
     expect(mockReportFailure).toHaveBeenCalledWith(
       "chat-1",
-      // kiro-cli's own reason travels through: it names which leg of the login
-      // chain is dead, and no wording invented client-side is more specific.
-      "kiro-cli: refresh token expired",
-      expect.objectContaining({ label: "Sign in" }),
-      // Turn-scoped and still raised: failure-notice.ts never suppresses an action-bearing notice.
+      "Kiro sign-in failed: the Kiro sign-in service is unreachable.",
+      undefined,
       true,
       "",
       "auth_token_unavailable",
     );
-    const action = mockReportFailure.mock.calls[0]?.[2] as
-      { label: string; onClick: () => void } | undefined;
-    action?.onClick();
-    expect(mockShowLoginModal).toHaveBeenCalledTimes(1);
-    // Not a Settings jump: the login modal is not in Settings at all.
-    expect(mockOpenSetting).not.toHaveBeenCalled();
-    // And not the send button: it is not one send that is broken.
+    expect(mockShowLoginModal).not.toHaveBeenCalled();
     expect(mockSetAgentDown).not.toHaveBeenCalled();
   });
 

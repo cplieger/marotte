@@ -630,6 +630,10 @@ const FailureKindModelCallLimit FailureKind = "model_call_limit"
 // empty: the steps after it ran without its work, and the remedy is running it again.
 const FailureKindEmptyAnswer FailureKind = "empty_answer"
 
+// FailureKindSignIn is a turn the engine failed because its credential was refused or could not be renewed: the
+// remedy is signing in again, or waiting out an outage of the sign-in service.
+const FailureKindSignIn FailureKind = "sign_in"
+
 // SaySegmentID is the id of the k-th segment of a say a seal split: `<say>#k`.
 func SaySegmentID(say string, k int) string {
 	return say + "#" + strconv.Itoa(k)

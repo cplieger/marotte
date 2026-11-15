@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"regexp"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/signin"
 )
 
@@ -32,6 +33,8 @@ type Handler struct {
 	// apiKey: the engine is signed in by KIRO_API_KEY, which kiro-cli prefers to marotte's answer, so sign-in and
 	// sign-out here would change nothing the engine uses.
 	apiKey bool
+	// health reads the sign-in's state for whoami; nil leaves it out.
+	health func() marotte.SignInHealth
 }
 
 // Option configures a Handler at construction time.
@@ -47,6 +50,11 @@ func WithTrustedProxies(trusted []netip.Prefix) Option {
 // while it does, keeping the vault's stored account for when the key is removed.
 func WithAPIKey(active bool) Option {
 	return func(h *Handler) { h.apiKey = active }
+}
+
+// WithSignInHealth wires the sign-in's state, which whoami reports on every arm.
+func WithSignInHealth(health func() marotte.SignInHealth) Option {
+	return func(h *Handler) { h.health = health }
 }
 
 // NewHandler returns the routes over backend's sign-in in vault.

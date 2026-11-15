@@ -184,6 +184,9 @@ func SignInBackend(backend string) {
 // SignInWriteFailed.
 func SignInSaveFailed(backend, reason string) { signInSaveFailures.Inc(backend, reason) }
 
+// SignInState sets marotte_signin_state: 1 for state, 0 for the others.
+func SignInState(state string) {}
+
 // EngineUp sets marotte_engine_up: 1 when the engine is ready, else 0.
 func EngineUp(ready bool) {
 	v := 0.0

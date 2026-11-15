@@ -187,6 +187,8 @@ const (
 	// EventEngineStatus carries EngineStatus on every engine state change, and on every pending or busy change while a
 	// restart is pending.
 	EventEngineStatus EventType = "engine_status"
+	// EventSignInHealth carries SignInHealth on every move of the Kiro sign-in's state. Workspace-wide.
+	EventSignInHealth EventType = "signin_health"
 	// EventConfigStandingChanged is an empty refetch signal for GET /api/config/standing.
 	EventConfigStandingChanged EventType = "config_standing_changed"
 	// EventStatusSnapshot is every retained waiting_on_user row as ONE frame on a

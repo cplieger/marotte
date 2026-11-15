@@ -240,3 +240,9 @@ func clip(s string, n int) string {
 	r := []rune(s)
 	return strings.TrimSpace(string(r[:n-1])) + ellipsis
 }
+
+// SignInFailing is the Kiro sign-in failing for longer than marotte's grace: no renewal is usable.
+func SignInFailing() marotte.NotificationPayload { return marotte.NotificationPayload{} }
+
+// SignInEnded is the Kiro sign-in ending without a sign-out.
+func SignInEnded() marotte.NotificationPayload { return marotte.NotificationPayload{} }

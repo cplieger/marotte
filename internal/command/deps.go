@@ -571,6 +571,10 @@ type signInReach interface {
 	// ProviderUnreachable returns the vault's reason while the identity provider gives no usable renewal, an outage
 	// no sign-in fixes; false otherwise.
 	ProviderUnreachable() (reason string, ok bool)
+	// NoteEngineRefusal reports a turn the engine failed on a refused credential while the provider answers;
+	// NoteEngineAccepted a turn it accepted. They feed the sign-in's health.
+	NoteEngineRefusal()
+	NoteEngineAccepted()
 }
 
 // compactRequester takes the reader's compaction requests.

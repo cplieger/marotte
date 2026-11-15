@@ -12,6 +12,7 @@ import { announce } from "./legacy-ui/announce.js";
 import { iconEl } from "./icon-el.js";
 import { modelIcon } from "./icons.js";
 import type { MeteringItem, ConnectionStatus } from "./types.js";
+import type { SignInState } from "./wire/types.gen.js";
 
 /** Options for updateContextBar — named fields prevent argument-order bugs. */
 interface ContextBarUpdate {
@@ -196,6 +197,9 @@ export function setStatus(s: ConnectionStatus): void {
     announce(`Connection ${s}`);
   }, 2000);
 }
+
+/** Mark the account button with the Kiro sign-in's state, beside the connection's. */
+export function setSignInMark(_state: SignInState): void {}
 
 /** The status the transport last reported, held so the version arriving later can repaint the
  *  line without a second status change. */

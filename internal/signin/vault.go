@@ -354,6 +354,11 @@ func (v *Vault) Answerability(id BackendID) Answerability {
 	return s.answerabilityLocked()
 }
 
+// Standing reads the backend's Standing with no renewal; an unknown backend needs a sign-in it cannot get.
+func (v *Vault) Standing(id BackendID) Standing {
+	return Standing{}
+}
+
 // UnreachableReason returns the backend's own refusal text for RefusedUnreachable while its Answerability is
 // ProviderUnreachable, and false in every other state.
 func (v *Vault) UnreachableReason(id BackendID) (string, bool) {

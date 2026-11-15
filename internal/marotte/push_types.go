@@ -46,6 +46,8 @@ const (
 	// on for minutes — and a manual or scheduled run never had a chat at all, so
 	// nothing else tells anyone it finished.
 	PushKindRunOutcome PushKind = "run_outcome"
+	// PushKindSignIn fires once when the Kiro sign-in starts failing or ends, and again only after it recovered.
+	PushKindSignIn PushKind = "sign_in"
 )
 
 // pushKinds is the authoritative set of push notification kinds, from which PushKind.Valid()
@@ -56,6 +58,7 @@ var pushKinds = map[PushKind]struct{}{
 	PushKindPermission:    {},
 	PushKindPRStatus:      {},
 	PushKindRunOutcome:    {},
+	PushKindSignIn:        {},
 }
 
 // Valid reports whether k is a known push notification kind.

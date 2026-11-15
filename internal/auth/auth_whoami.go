@@ -6,6 +6,7 @@ import (
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/signin"
 )
 
@@ -40,6 +41,8 @@ type WhoamiResponse struct {
 	LoginState   string `json:"loginState,omitempty"`
 	LoginError   string `json:"loginError,omitempty"`
 	LoginAttempt uint64 `json:"loginAttempt,omitempty"`
+	// Health is the sign-in's state on every arm, absent when no health source is wired.
+	Health *marotte.SignInHealth `json:"health,omitempty"`
 	// APIKey is true while KIRO_API_KEY signs the engine in: sign-in and sign-out answer 409, so the UI offers neither.
 	APIKey bool `json:"apiKey,omitempty"`
 }

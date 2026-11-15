@@ -22,7 +22,7 @@ export type EntryKind = "turn_open" | "turn_bind" | "turn_wake" | "run_named" | 
 
 export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "memory_not_loaded" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed" | "resume_not_sent";
 
-export type FailureKind = "context_limit" | "model_call_limit" | "empty_answer";
+export type FailureKind = "context_limit" | "model_call_limit" | "empty_answer" | "sign_in";
 
 export type FileMatchKind = "content" | "name" | "dir";
 
@@ -56,7 +56,7 @@ export type PreviewHintSource = "meta" | "viewport";
 
 export type PreviewPreset = "phone" | "tablet" | "desktop";
 
-export type PushKind = "agent_finished" | "permission" | "pr_status" | "run_outcome";
+export type PushKind = "agent_finished" | "permission" | "pr_status" | "run_outcome" | "sign_in";
 
 export type ReadState = "ready" | "unavailable";
 
@@ -111,6 +111,10 @@ export type SendVerb = "prompt" | "steer" | "queue";
 export type SettledBy = "user" | "unattended" | "moot" | "ended";
 
 export type ShowRefusalCode = "too_large" | "binary" | "not_utf8";
+
+export type SignInCause = "provider_unreachable" | "rejected" | "refused";
+
+export type SignInState = "ok" | "failing" | "signed_out" | "none";
 
 export type SlashCommandKind = "steering" | "prompt" | "goal";
 
@@ -3945,6 +3949,27 @@ export interface ShowResponse {
   absent?: boolean;
 }
 
+/** SignInHealth is the signin_health event's payload and GET /api/whoami's health. */
+export interface SignInHealth {
+  /**
+   * Since is when the episode began: the first failed renewal of a failing one, the moment a signed_out one was
+   * seen. Absent while ok or none.
+   */
+  since?: string;
+  state: SignInState;
+  cause?: SignInCause;
+  version: SignInHealthVersion;
+}
+
+/**
+ * SignInHealthVersion orders snapshots that reach a reader by two paths, GET /api/whoami and the signin_health
+ * event, as EngineStatusVersion does: newer is the higher (BootMS, Seq), compared in that order.
+ */
+export interface SignInHealthVersion {
+  boot_ms: number;
+  seq: number;
+}
+
 /** SlashArgument is one declared argument of a saved prompt. */
 export interface SlashArgument {
   name: string;
@@ -4925,6 +4950,8 @@ export interface WhoamiResponse {
   loginState?: string;
   loginError?: string;
   loginAttempt?: number;
+  /** Health is the sign-in's state on every arm, absent when no health source is wired. */
+  health?: SignInHealth;
   /** APIKey is true while KIRO_API_KEY signs the engine in: sign-in and sign-out answer 409, so the UI offers neither. */
   apiKey?: boolean;
 }
