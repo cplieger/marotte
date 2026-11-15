@@ -14,8 +14,8 @@ github.com/cplieger/go/httpcache v1.1.0 h1:v5BOjRilWhWMKvi9ygNgfw/q/SufZLcO6y/CS
 github.com/cplieger/go/httpcache v1.1.0/go.mod h1:RRV3+h+xRN2W+/0GemF1wEqKLEun6sqPleyBI6zDcL4=
 github.com/cplieger/go/httpclient v1.2.0 h1:E+lbIpiNkUkcq3fxdMDYn116cwx6tU1XWmn4mDdBGU0=
 github.com/cplieger/go/httpclient v1.2.0/go.mod h1:couTQSCNdgNwOotbaQREGcM4CjUKZJ4Bdb7FSkNwL8U=
-github.com/cplieger/go/httpserver v1.5.0-dev.2 h1:PXRoXCN/C9CSHG/jx8lX7VNSndNwi4B1PHw4JHxvWzw=
-github.com/cplieger/go/httpserver v1.5.0-dev.2/go.mod h1:MuZxKRRjQG6DAJBO88cTGhVdhSCmBu2PMeA/DWRbiTQ=
+github.com/cplieger/go/httpserver v1.5.0-dev.3 h1:n07ZhhJRPDYBE9f8imDJ7jpQuLCdMesWoJ8PZYglTv0=
+github.com/cplieger/go/httpserver v1.5.0-dev.3/go.mod h1:MuZxKRRjQG6DAJBO88cTGhVdhSCmBu2PMeA/DWRbiTQ=
 github.com/cplieger/go/jsonx v1.1.0 h1:/XBHr3vJVqKYVDteO8cZEMAdTgmT3Df/SeyNw1pdak8=
 github.com/cplieger/go/jsonx v1.1.0/go.mod h1:ry6co0JYAadIhjHtkktBSK3to4YdtEak1P7mdmQlr7U=
 github.com/cplieger/go/keyenc v1.3.0 h1:v0zvHSY4ZOZapGNYGAkghEXPz1SeifT/Trg0b9A8IBU=
@@ -38,8 +38,8 @@ github.com/cplieger/go/textsafe v1.1.0 h1:D+p7ZDBQmABv/empI2TNMZfvhMXNlfii8E2e5V
 github.com/cplieger/go/textsafe v1.1.0/go.mod h1:x29RmZpMO2yjPt1zRbjtcXWVdkekukl+jA5FN1wXUlI=
 github.com/cplieger/go/urlform v1.2.0 h1:AQkwiRasHq1e57dzpFyrSRZWgp503XNPJ0DikXQLt1E=
 github.com/cplieger/go/urlform v1.2.0/go.mod h1:o7cRPRmslS3o05jpTJHqGKebD4eawAV7rIOB4AdGLao=
-github.com/cplieger/go/wiregen/v2 v2.3.0-dev.3 h1:uarVO8YmhGoSifRy+NRFNlnJF9U9fuGmIBa8aCL0GY8=
-github.com/cplieger/go/wiregen/v2 v2.3.0-dev.3/go.mod h1:nQ6ftWl/tPZj9tZf3kErrZgPFNBsP2vJrs6O6E8ta2I=
+github.com/cplieger/go/wiregen/v2 v2.3.0-dev.4 h1:Pu05sCxMGStxXkBvh5QWG8rbTvlL5H9xL/y5L+kSvEI=
+github.com/cplieger/go/wiregen/v2 v2.3.0-dev.4/go.mod h1:nQ6ftWl/tPZj9tZf3kErrZgPFNBsP2vJrs6O6E8ta2I=
 github.com/cplieger/go/yamlenv v1.1.0 h1:vNaxHJnJMmg7MfRhqTBDaFPhMylEzzEtNefCvqU9ZPc=
 github.com/cplieger/go/yamlenv v1.1.0/go.mod h1:2kEi6iiRSxaaAusNrPoC6l0BUqvVVskkR1Cdpt15nUg=
 github.com/cplieger/toolbelt/v3 v3.16.0-dev.3 h1:fF0qPPPmksjXeboER5CVetcoH/pc5BugpYfqF8uRZnw=
