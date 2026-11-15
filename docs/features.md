@@ -97,7 +97,7 @@ These settings apply only when the engine restarts, and their rows say so: **Kno
 - A preview tab that shows an HTML page from the workspace in a sandbox, at phone, tablet, desktop or full width. Clicking an `.html` or `.htm` page that sits in its own folder in the file browser opens it there, and so does a link to one in the chat. **Edit** in the tab's bottom bar opens the page's source in the editor, and the editor's **Open preview** button goes back to the page. The preview reloads when the page's files change, and it starts no downloads. **Open in browser** opens the page in a new browser tab, still sandboxed away from marotte, where its download links work over plain HTTP and HTTPS alike. That tab does not reload by itself.
 - Diffs against the last save or against git `HEAD`.
 - A merge-conflict view that takes ours, theirs or both for each hunk.
-- A terminal, built on [web-terminal-engine](https://github.com/cplieger/web-terminal-engine), that survives sleep and network drops.
+- A terminal, built on [web-terminal-engine](https://github.com/cplieger/web-terminal-engine), that survives sleep and network drops. In kiro-cli's full-screen view in the Shell panel, text you select by dragging is copied to your browser's clipboard when marotte is opened over HTTPS or on `localhost`.
 
 ## Git and forges
 

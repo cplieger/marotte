@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -18,12 +19,14 @@ import (
 	"github.com/cplieger/go/keyenc"
 	"github.com/cplieger/marotte/internal/composition"
 	"github.com/cplieger/marotte/internal/forges"
+	"github.com/cplieger/web-terminal-engine/v6/osc52copy"
 )
 
-// TestMain runs runMain when invoked the way git invokes the helper or Docker the healthcheck, so the
-// test drives the real argv dispatch.
+// TestMain runs runMain when invoked the way git invokes the helper, Docker the healthcheck or
+// kiro-cli its clipboard tool, so the test drives the real argv dispatch.
 func TestMain(m *testing.M) {
-	if len(os.Args) > 1 && (os.Args[1] == forges.HelperCommand || os.Args[1] == composition.HealthCommand) {
+	if slices.Contains(osc52copy.Names(), filepath.Base(os.Args[0])) ||
+		len(os.Args) > 1 && (os.Args[1] == forges.HelperCommand || os.Args[1] == composition.HealthCommand) {
 		os.Exit(runMain())
 	}
 	os.Exit(m.Run())

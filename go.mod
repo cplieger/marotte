@@ -10,7 +10,6 @@ require (
 	github.com/cplieger/go/jsonx v1.1.0 // indirect
 	github.com/cplieger/go/scheduler v1.1.0 // indirect
 	github.com/cplieger/go/urlform v1.2.0 // indirect
-	github.com/creack/pty v1.1.24 // indirect
 	github.com/expr-lang/expr v1.17.8 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
 	golang.org/x/mod v0.43.0 // indirect
@@ -35,6 +34,7 @@ require (
 	github.com/cplieger/go/yamlenv v1.1.0
 	github.com/cplieger/toolbelt/v3 v3.16.0-dev.3
 	github.com/cplieger/web-terminal-engine/v6 v6.6.0-dev.2
+	github.com/creack/pty v1.1.24
 	github.com/evanw/esbuild v0.28.2
 	github.com/klauspost/compress v1.20.4
 	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f

@@ -278,6 +278,11 @@ RUN sed -i 's|^root:x:0:0:root:/root:|root:x:0:0:root:/config/home:|' /etc/passw
 COPY --from=builder /app /app
 COPY --from=builder /out/usr/share/licenses /usr/share/licenses
 
+# kiro-cli's TUI in the Shell panel reports a copy only when a clipboard tool succeeds; this
+# one writes it to the terminal as OSC 52, which the browser puts on its clipboard.
+# dpkg overwrites a path no package owns, so installing the real xclip (apt:xclip) replaces this link.
+RUN ln -s /app/marotte /usr/bin/xclip
+
 # /opt is hidden from the file browser (internal/filebrowse/paths.go).
 COPY --chmod=755 entrypoint.sh /opt/marotte/entrypoint.sh
 COPY --from=builder /tmp/tool-catalog.json /opt/marotte/tool-catalog.json
