@@ -379,7 +379,7 @@ export class World<E = unknown> {
           "beforetoggle",
           (te: Event) => {
             if (te.defaultPrevented) {
-              this.endToggle(target);
+              this.endToggle(target, (te as ToggleEvent).newState);
             }
             // A close that finds `open` gone after its listeners writes nothing.
             if ((te as ToggleEvent).newState === "closed" && !target.hasAttribute("open")) {
@@ -503,7 +503,7 @@ export class World<E = unknown> {
       const next = records.find((n, j) => j > i && n.target === el && n.attributeName === name);
       const value = next === undefined ? el.getAttribute(name) : next.oldValue;
       if (name === "open" && (r.oldValue === null) !== (value === null)) {
-        this.endToggle(el);
+        this.endToggle(el, value === null ? "closed" : "open");
         if (value === null && this.raw?.dialog !== el) {
           this.ownClosing.delete(el);
         }
@@ -680,12 +680,25 @@ export class World<E = unknown> {
     });
   }
 
-  private endToggle(el: Element): void {
+  /** An `open` write, or a cancelled `beforetoggle`, ends the innermost toggle to
+   *  `state`. A write the other way is the page's own (a raw removal of `open` while a
+   *  show() inside a showModal's `beforetoggle` left it set), and the showModal still
+   *  writes `open` after it. */
+  private endToggle(el: Element, state: string): void {
     const stack = this.toggling.get(el);
-    stack?.pop();
-    if (stack?.length === 0) {
+    if (stack?.at(-1) !== state) {
+      return;
+    }
+    stack.pop();
+    if (stack.length === 0) {
       this.toggling.delete(el);
     }
+  }
+
+  /** Whether the innermost call under way is a raw platform call on `dialog`: an
+   *  injection's actions run outside it. */
+  inRaw(dialog: Element): boolean {
+    return this.raw?.dialog === dialog;
   }
 
   /** Whether a showModal of `dialog` is under way: it will be open when the call returns. */

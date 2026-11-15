@@ -1027,6 +1027,28 @@ describe("createModal: re-entry property", () => {
               ],
             },
           ],
+          // A raw show() of b in its own showModal's beforetoggle, then a raw removal of
+          // `open` while that showModal hides the popover: the showModal writes `open`
+          // again, so b ends open and modal.
+          [
+            {
+              probeBody: false,
+              allowGuard: false,
+              script: [{ k: "open", who: "b" }],
+              injections: [
+                {
+                  at: 0,
+                  hit: "doc:beforetoggle:open",
+                  actions: [{ k: "platformOther", who: "b", kind: "show" }],
+                },
+                {
+                  at: 0,
+                  hit: "beforetoggle:closed@popover",
+                  actions: [{ k: "platformOther", who: "b", kind: "removeOpen" }],
+                },
+              ],
+            },
+          ],
         ],
       },
     );

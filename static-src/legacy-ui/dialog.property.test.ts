@@ -60,6 +60,8 @@ type Ev =
   | { readonly t: "rollback"; readonly movable: number }
   | { readonly t: "guard-start" | "guard-throw" }
   | { readonly t: "guard-end"; readonly answer: boolean; readonly shown: boolean }
+  /** The world cancelled the `beforetoggle` of a showModal() the page did not make. */
+  | { readonly t: "refused"; readonly open: boolean }
   | {
       readonly t: "edge";
       readonly open: boolean;
@@ -89,6 +91,12 @@ class Model {
   /** A page close made while an open is under way, which writes `open` before the next
    *  microtask: the engine folds it closed at its next call, else as a reopen. */
   closePending = false;
+  /** The world will cancel the engine's showModal: its `beforetoggle` listeners run
+   *  first, and what they do before the refusal stands. */
+  refusing = false;
+  /** The callbacks a release inside that showModal found waiting: dropped only if the
+   *  open goes through after all, which the page decides by opening it before the refusal. */
+  uncut: number[] | null = null;
   /** Shown-to-closed changes of the attached facet: at most one onClose each. */
   closes = 0;
   private ranks = 0;
@@ -101,6 +109,7 @@ class Model {
     const m = Object.assign(Object.create(Model.prototype) as Model, this);
     m.cbs = this.cbs.map((cb) => ({ ...cb }));
     m.pending = this.pending.map((p) => ({ ...p }));
+    m.uncut = this.uncut === null ? null : [...this.uncut];
     return m;
   }
 
@@ -136,8 +145,8 @@ class Model {
 
   private engineOpen(): void {
     if (this.phase === "closed") {
-      // A cancelled beforetoggle refuses the open; the cycle still moved.
-      this.set(this.c.cancelWorld ? "closed" : "open", true);
+      this.set("open", true);
+      this.refusing = this.c.cancelWorld;
     } else if (this.phase === "leaving") {
       this.set("open", true);
     }
@@ -152,6 +161,8 @@ class Model {
 
   /** At a quiescent point: an unshown leave no open edge reached had nothing to fade. */
   resolve(open: boolean): void {
+    this.refusing = false;
+    this.uncut = null;
     if (this.closePending && open) {
       // The open under way was the engine's own call, which the platform completed.
       this.closePending = false;
@@ -236,6 +247,24 @@ class Model {
         }
         return;
       }
+      case "refused":
+        // The refusal leaves the dialog closed unless the page opened it from a listener
+        // before it; the cycle the open started stays.
+        if (this.refusing) {
+          this.refusing = false;
+          if (!ev.open && this.phase !== "closed") {
+            this.set("closed", false);
+          }
+          const uncut = this.uncut ?? [];
+          for (const cb of this.cbs) {
+            if (ev.open && uncut.includes(cb.id)) {
+              cb.closedInCycle = false;
+              cb.rank = 0;
+            }
+          }
+        }
+        this.uncut = null;
+        return;
       case "settle":
         if (this.phase === "leaving") {
           this.set("closed", false);
@@ -274,7 +303,12 @@ class Model {
         this.ended = true;
         this.facet = false;
         this.rev++;
-        if (this.phase !== "closed") {
+        if (this.phase !== "closed" && this.refusing) {
+          this.uncut = this.cbs
+            .filter((cb) => cb.cycle === this.cycle && !cb.closedInCycle)
+            .map((cb) => cb.id);
+          this.set("closed", false);
+        } else if (this.phase !== "closed") {
           this.set("closed", true);
         }
         return;
@@ -388,25 +422,11 @@ interface Outcome {
   readonly failure: string | null;
 }
 
-/** A generated injection that ran a native showModal() from a beforetoggle of the dialog, read
- *  from the real run's `kinds` (it places each injection on the dry run's `traceLength`). The
- *  engine mishandles it (the seed-1573708530 case below); no marotte caller does it, which
- *  `dialog-premises.node.test.ts` keeps true. */
-function opensNativelyInToggle(c: Case, traceLength: number, kinds: readonly string[]): boolean {
-  return c.injections.some(
-    (inj) =>
-      inj.hit === undefined &&
-      /^beforetoggle:\w+@dialog$/.test(kinds[traceLength === 0 ? 0 : inj.at % traceLength] ?? "") &&
-      inj.actions.some(
-        (a) => a.k === "platformOpen" || (a.k === "platformOther" && a.kind === "reopenModal"),
-      ),
-  );
-}
-
 /** A generated injection that created a controller from the opening beforetoggle of the dialog
- *  in a world that cancels every open, read as `opensNativelyInToggle` reads its hit. The engine
- *  mishandles it (the seed-419639567 case below); no marotte code outside legacy-ui listens for
- *  beforetoggle, so nothing cancels an open, which `dialog-premises.node.test.ts` keeps true. */
+ *  in a world that cancels every open, read from the real run's `kinds` (it places each injection
+ *  on the dry run's `traceLength`). The engine mishandles it (the seed-419639567 case below); no
+ *  marotte code outside legacy-ui listens for beforetoggle, so nothing cancels an open, which
+ *  `dialog-premises.node.test.ts` keeps true. */
 function controlsCancelledOpen(c: Case, traceLength: number, kinds: readonly string[]): boolean {
   return (
     c.cancelWorld &&
@@ -470,6 +490,9 @@ async function runCase(c: Case, traceLength: number | null): Promise<Outcome> {
       (e) => {
         if (e.target === dialog && (e as ToggleEvent).newState === "open") {
           e.preventDefault();
+          if (!w.inRaw(dialog)) {
+            w.emit({ t: "refused", open: dialog.open });
+          }
         }
       },
       true,
@@ -923,10 +946,7 @@ describe("dialog: re-entry property", () => {
       fc.asyncProperty(caseArb, async (c) => {
         const dry = await runCase(c, null);
         const out = await runCase(c, dry.trace);
-        fc.pre(
-          !opensNativelyInToggle(c, dry.trace, out.kinds) &&
-            !controlsCancelledOpen(c, dry.trace, out.kinds),
-        );
+        fc.pre(!controlsCancelledOpen(c, dry.trace, out.kinds));
         expect(out.failure).toBeNull();
       }),
       {
@@ -1643,32 +1663,57 @@ describe("dialog: re-entry property", () => {
               ],
             },
           ],
+          // A native showModal() and a closeDialog() from the beforetoggle of the engine's own
+          // showModal(), then a raw removal of `open` while the native one hides the popover:
+          // the engine's showModal still writes `open` after them, and the engine closes it again.
+          [
+            {
+              guard: "none",
+              cancelWorld: false,
+              onCloseDisposes: false,
+              onCloseThrows: false,
+              closeOnBackdrop: false,
+              script: [{ k: "open" }, { k: "platformOther", kind: "show" }],
+              injections: [
+                {
+                  at: 0,
+                  hit: "beforetoggle:open@dialog",
+                  actions: [{ k: "platformOpen" }, { k: "helperClose", cb: "log" }],
+                },
+                {
+                  at: 0,
+                  hit: "beforetoggle:closed@popover",
+                  actions: [{ k: "platformOther", kind: "removeOpen" }],
+                },
+              ],
+            },
+          ],
+          // A closeDialog() and a raw `open` from the beforetoggle of an open the page then
+          // refuses: the page's open stands, so the leave fades it.
+          [
+            {
+              guard: "none",
+              cancelWorld: true,
+              onCloseDisposes: false,
+              onCloseThrows: false,
+              closeOnBackdrop: false,
+              script: [{ k: "open" }],
+              injections: [
+                {
+                  at: 0,
+                  hit: "beforetoggle:open@dialog",
+                  actions: [
+                    { k: "helperClose", cb: "log" },
+                    { k: "platformOther", kind: "addOpen" },
+                  ],
+                },
+              ],
+            },
+          ],
         ],
       },
     );
   }, 60000);
-
-  // Seed 1573708530 pins a defect of the copied engine: a native showModal() and then
-  // closeDialog() from the beforetoggle of the engine's own showModal(). The dialog ends closed,
-  // but the browser's showModal writes `open` after the close and the engine closes it again.
-  // A fixed engine turns this red: then delete it and `opensNativelyInToggle`.
-  it("writes open again after a native showModal() then closeDialog() in its own opening beforetoggle", async () => {
-    const c: Case = {
-      guard: "none",
-      cancelWorld: false,
-      onCloseDisposes: false,
-      onCloseThrows: false,
-      closeOnBackdrop: false,
-      script: [{ k: "open" }, { k: "platformOther", kind: "show" }],
-      injections: [
-        { at: 92, actions: [{ k: "platformOpen" }, { k: "helperClose", cb: "log" }] },
-        { at: 17, actions: [{ k: "platformOther", kind: "removeOpen" }] },
-      ],
-    };
-    const dry = await runCase(c, null);
-    const out = await runCase(c, dry.trace);
-    expect(out.failure).toMatch(/after the injection at beforetoggle:open@dialog, dialog open=/);
-  });
 
   // Seed 419639567 pins a defect of the copied engine: a controller created from the opening
   // beforetoggle of an open the page cancels takes the dialog as shown, so the cancelled open
