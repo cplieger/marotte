@@ -282,17 +282,21 @@ func TestHandleRetry_AnEngineThatWillNotStartAnswersInsideTheClientsWindow(t *te
 	}
 }
 
-// A retry verb KAS read but did not answer within retryTimeout may still run, so the reply says it is still applying
+// A retry verb KAS read but did not answer by the retry's deadline may still run, so the reply says it is still applying
 // rather than that nothing was retried, and the run keeps the lease the retry minted for its deadline.
 func TestHandleRetry_AVerbLeftUnansweredKeepsItsLeaseAndIsStillApplying(t *testing.T) {
 	h, br := seedChatParentedRun(t, true, "final-verify")
 	br.setBlockOn(methodKiroWorkflowRetry, make(chan struct{}))
-	prev := retryTimeout
-	retryTimeout = 300 * time.Millisecond
-	t.Cleanup(func() { retryTimeout = prev })
+	ctx, expire := expiringContext(t, t.Context())
+	go func() {
+		for !slices.Contains(br.callLog(), methodKiroWorkflowRetry) && ctx.Err() == nil {
+			time.Sleep(5 * time.Millisecond)
+		}
+		expire()
+	}()
 
 	rec := httptest.NewRecorder()
-	h.runRoutes.handleRetry(rec, retryReq("wf_1"))
+	h.runRoutes.handleRetry(rec, retryReq("wf_1").WithContext(ctx))
 
 	if !slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
 		t.Fatalf("Setup: the verb never reached KAS; calls were %v", br.callLog())

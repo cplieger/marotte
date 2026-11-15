@@ -395,28 +395,44 @@ func TestWriteFrame_PartialChunkProgressIsNotAStall(t *testing.T) {
 	t.Cleanup(func() { _ = pw.Close(); _ = pr.Close() })
 	shortenWriteStall(t, 100*time.Millisecond)
 	shortenStallProbe(t, 20*time.Millisecond, 10*time.Second)
-	go func() {
-		buf := make([]byte, 8<<10)
-		for {
-			// A chunk needs eight of these reads, about 400 ms, four stall windows.
-			time.Sleep(50 * time.Millisecond)
-			if _, rErr := pr.Read(buf); rErr != nil {
-				return
-			}
-		}
-	}()
 	b := NewEngine("/nonexistent", "/work")
 	b.cpuTicks = func() (uint64, bool) { return 42, true }
-	b.stdin.Store(&stdinPipe{w: pw})
+	// The first chunk fills the pipe, and each later write frees an eighth of a chunk: the second chunk spans at least
+	// seven write deadlines.
+	b.stdin.Store(&stdinPipe{w: &drainsBeforeEachWrite{File: pw, r: pr, piece: make([]byte, writeChunk/8)}})
 
-	if err := awaitWrite(t, writeInBackground(b, 256*1024), 10*time.Second); err != nil {
+	start := time.Now()
+	if err := awaitWrite(t, writeInBackground(b, 2*writeChunk), 10*time.Second); err != nil {
 		t.Fatalf("writeFrame to a reader draining part of a chunk in each window = %v, want no stall", err)
+	}
+	if took := time.Since(start); took < 2*writeStall {
+		t.Fatalf("Setup: the frame took %v, want at least two %v stall windows for the case to mean anything", took, writeStall)
 	}
 	select {
 	case <-b.done:
 		t.Errorf("a reader that drained inside every window was reaped as %q", b.Exit().Reason)
 	default:
 	}
+}
+
+// drainsBeforeEachWrite is a stdin whose reader drains one piece before every write but the first, so every write that
+// meets its deadline has moved bytes however late the scheduler delivers the expiry: a reader on its own clock can
+// miss a whole window on a loaded host.
+type drainsBeforeEachWrite struct {
+	*os.File
+	r      *os.File
+	piece  []byte
+	writes int
+}
+
+func (s *drainsBeforeEachWrite) Write(p []byte) (int, error) {
+	s.writes++
+	if s.writes > 1 {
+		if _, err := io.ReadFull(s.r, s.piece); err != nil {
+			return 0, err
+		}
+	}
+	return s.File.Write(p)
 }
 
 // A frame read while stdin does not move means node's event loop runs and the relay is the stuck reader, so node's
