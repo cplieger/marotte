@@ -16,11 +16,13 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"syscall"
 
 	"github.com/cplieger/go/pathinside"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/route"
 )
 
 // WholeFileMax is the largest file the viewer reads, identifies and saves. A larger file
@@ -34,8 +36,6 @@ const (
 	// tmpfile, net/http's 1 MiB default, so concurrent uploads do not stack in RAM; the body cap is
 	// MaxBytesReader's.
 	multipartMaxMemory = 1 * 1024 * 1024
-
-	respPath = "path"
 )
 
 // Handler serves /api/file/* and /api/files/*.
@@ -135,16 +135,72 @@ func New(sensitive Sensitive, rootDirs []string, opts ...Option) (*Handler, erro
 // DownloadPath is the file download route, answered by http.ServeContent with byte ranges.
 const DownloadPath = "/api/file/download"
 
-// RegisterRoutes wires all /api/file* and /api/files* routes onto mux.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/file", h.scoped((*Handler).handleFile))
-	mux.HandleFunc("/api/file/stat", h.scoped((*Handler).handleStat))
-	mux.HandleFunc(DownloadPath, h.scoped((*Handler).handleDownload))
-	mux.HandleFunc("/api/file/upload", h.scoped((*Handler).handleUpload))
-	mux.HandleFunc("/api/files", h.scoped((*Handler).handleFiles))
-	mux.HandleFunc("/api/files/action", h.scoped((*Handler).handleFilesAction))
-	mux.HandleFunc("/api/files/download", h.scoped((*Handler).handleDownloadZip))
-	mux.HandleFunc("/api/files/search", h.scoped((*Handler).handleFilesSearch))
+// routeMux is what a route registration needs: the server's registrar, or a test's mux. An alias, so
+// RegisterRoutes has the server's routeHandler signature.
+type routeMux = interface{ Bind(route.Binding) }
+
+// PathQuery is the query of the routes that address one path.
+type PathQuery struct {
+	Path string `json:"path"`
+}
+
+// DownloadQuery is GET /api/file/download's query: the path, and the identity it was read under.
+type DownloadQuery struct {
+	Path   string `json:"path"`
+	FileID string `json:"file_id,omitempty"`
+}
+
+// FilesSearchQuery is GET /api/files/search's query; Case, Ignored and Deep are "1" to match case,
+// to search ignored files and to search with the deep budget.
+type FilesSearchQuery struct {
+	Q       string `json:"q,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Mode    string `json:"mode,omitempty"`
+	Files   string `json:"files,omitempty"`
+	Case    string `json:"case,omitempty"`
+	Ignored string `json:"ignored,omitempty"`
+	Deep    string `json:"deep,omitempty"`
+}
+
+// FileList is GET /api/files' body.
+type FileList struct {
+	Path     string      `json:"path"`
+	Files    []FileEntry `json:"files"`
+	Writable bool        `json:"writable"`
+}
+
+// UploadResult is POST /api/file/upload's body: the names written.
+type UploadResult struct {
+	Uploaded []string `json:"uploaded"`
+	OK       bool     `json:"ok"`
+}
+
+// ZipRequest is POST /api/files/download's body.
+type ZipRequest struct {
+	Paths []string `json:"paths"`
+}
+
+// RegisterRoutes binds every /api/file* and /api/files* route.
+func (h *Handler) RegisterRoutes(m routeMux) {
+	path := reflect.TypeFor[PathQuery]()
+	bind := func(p string, fn func(*Handler, http.ResponseWriter, *http.Request), ms ...route.MethodTypes) {
+		m.Bind(route.Methods(p, h.scoped(fn), ms...))
+	}
+	bind("/api/file", (*Handler).handleFile,
+		route.Typed[struct{}, FileRead](http.MethodGet).WithQuery(path),
+		route.Typed[FileWrite, FileWriteResult](http.MethodPut).WithQuery(path))
+	bind("/api/file/stat", (*Handler).handleStat, route.Typed[struct{}, FileStat](http.MethodGet).WithQuery(path))
+	m.Bind(route.WithQuery[DownloadQuery](route.Raw(DownloadPath, h.scoped((*Handler).handleDownload))))
+	// A multipart form (dir, files), which the endpoint table does not type; the reply is JSON.
+	bind("/api/file/upload", (*Handler).handleUpload, route.Typed[struct{}, UploadResult](http.MethodPost))
+	bind("/api/files", (*Handler).handleFiles, route.Typed[struct{}, FileList](http.MethodGet).WithQuery(path))
+	bind("/api/files/action", (*Handler).handleFilesAction, route.Typed[FileAction, httpreply.OKBody](http.MethodPost))
+	m.Bind(route.Binding{
+		Pattern: "/api/files/download", Handler: h.scoped((*Handler).handleDownloadZip), Kind: route.KindRaw,
+		Methods: []route.MethodTypes{{Method: http.MethodPost, Request: reflect.TypeFor[ZipRequest]()}},
+	})
+	bind("/api/files/search", (*Handler).handleFilesSearch,
+		route.Typed[struct{}, FileSearchResult](http.MethodGet).WithQuery(reflect.TypeFor[FilesSearchQuery]()))
 }
 
 // errHandled signals that an action function has already written its
@@ -183,7 +239,7 @@ func (h *Handler) handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.Method {
-	case http.MethodGet:
+	case http.MethodGet, http.MethodHead:
 		h.handleRead(w, r, reqPath)
 	case http.MethodPut:
 		l, ok := h.resolveOrForbid(w, reqPath)
@@ -191,7 +247,5 @@ func (h *Handler) handleFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeFile(w, r, l, h.ownerFor(l))
-	default:
-		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPut)
 	}
 }

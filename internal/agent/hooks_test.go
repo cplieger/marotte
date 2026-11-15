@@ -177,7 +177,7 @@ func TestToHookInfo_MatcherWarning(t *testing.T) {
 	h := &Settings{lifecycle: &lifetime{workDir: work}}
 	fp := filepath.Join(work, ".kiro", "hooks", "h.json")
 
-	info := func(trigger, matcher string) hookInfo {
+	info := func(trigger, matcher string) HookInfo {
 		return h.toHookInfo(&kasHook{
 			ID:     fp + "#hook-0",
 			Name:   "h",

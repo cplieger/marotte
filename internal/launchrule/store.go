@@ -119,7 +119,7 @@ func (s *Store) Create(ctx context.Context, in *Rule) (Rule, error) {
 	rs := &ruleState{state: State{Population: Population(&r)}, event: r.When.Event != nil}
 	if r.When.Clock != nil {
 		// Written before the rule, so no load finds the rule without its anchor.
-		st := State{Status: Status{Anchor: s.now()}}
+		st := State{Status: RuleStatus{Anchor: s.now()}}
 		if err := s.writeStateLocked(ctx, r.ID, rs, &st); err != nil {
 			return Rule{}, err
 		}

@@ -17,7 +17,7 @@ func TestValidate_AcceptReject(t *testing.T) {
 			srv: &Server{
 				Transport: TransportStdio, Name: "ok",
 				Command: "bash", Args: []string{"-c", "echo"},
-				Env: []keyPair{{Name: "FOO", Value: "bar"}},
+				Env: []KeyPair{{Name: "FOO", Value: "bar"}},
 			},
 			wantErr: false,
 		},
@@ -35,7 +35,7 @@ func TestValidate_AcceptReject(t *testing.T) {
 			name: "RemoteHTTP",
 			srv: &Server{
 				Transport: transportHTTP, Name: "ok", URL: "https://x.example/mcp",
-				Headers: []keyPair{{Name: "Authorization", Value: "Bearer x"}},
+				Headers: []KeyPair{{Name: "Authorization", Value: "Bearer x"}},
 			},
 			wantErr: false,
 		},
@@ -64,7 +64,7 @@ func TestValidate_AcceptReject(t *testing.T) {
 			name: "EnvValueAllowsSymbols",
 			srv: &Server{
 				Transport: TransportStdio, Name: "x", Command: "bash",
-				Env: []keyPair{{Name: "KEY", Value: `{"nested":"json"}`}},
+				Env: []KeyPair{{Name: "KEY", Value: `{"nested":"json"}`}},
 			},
 			wantErr: false,
 		},
@@ -72,7 +72,7 @@ func TestValidate_AcceptReject(t *testing.T) {
 			name: "HeaderRejectControlChars",
 			srv: &Server{
 				Transport: transportHTTP, Name: "x", URL: "https://x.example",
-				Headers: []keyPair{{Name: "X-Foo", Value: "line1\rline2"}},
+				Headers: []KeyPair{{Name: "X-Foo", Value: "line1\rline2"}},
 			},
 			wantErr: true,
 		},
@@ -85,7 +85,7 @@ func TestValidate_AcceptReject(t *testing.T) {
 			name: "SSEAccepted",
 			srv: &Server{
 				Transport: transportSSE, Name: "ok", URL: "https://x.example/sse",
-				Headers: []keyPair{{Name: "Authorization", Value: "Bearer x"}},
+				Headers: []KeyPair{{Name: "Authorization", Value: "Bearer x"}},
 			},
 			wantErr: false,
 		},
@@ -182,7 +182,7 @@ func TestValidate_EnvHeaderKeyLengthBoundary(t *testing.T) {
 	for _, tc := range cases {
 		err := validate(&Server{
 			Transport: TransportStdio, Name: "ok", Command: "bash",
-			Env: []keyPair{{Name: tc.keyName, Value: "v"}},
+			Env: []KeyPair{{Name: tc.keyName, Value: "v"}},
 		})
 		gotErr := err != nil
 		if gotErr != tc.wantErr {
@@ -249,7 +249,7 @@ func TestValidate_EnvValueLengthCap(t *testing.T) {
 	big := strings.Repeat("x", envValueMax+1)
 	err := validate(&Server{
 		Transport: TransportStdio, Name: "x", Command: "bash",
-		Env: []keyPair{{Name: "K", Value: big}},
+		Env: []KeyPair{{Name: "K", Value: big}},
 	})
 	if err == nil {
 		t.Error("Validate accepted oversized env value")
@@ -257,11 +257,11 @@ func TestValidate_EnvValueLengthCap(t *testing.T) {
 }
 
 // Duplicate env names must be rejected: mergeSecrets's map-based lookup
-// cannot honour the keyPair ordered contract otherwise.
+// cannot honour the KeyPair ordered contract otherwise.
 func TestValidate_RejectsDuplicateEnvNames(t *testing.T) {
 	err := validate(&Server{
 		Transport: TransportStdio, Name: "x", Command: "bash",
-		Env: []keyPair{
+		Env: []KeyPair{
 			{Name: "FOO", Value: "a"},
 			{Name: "FOO", Value: "b"},
 		},
@@ -275,7 +275,7 @@ func TestValidate_RejectsDuplicateEnvNames(t *testing.T) {
 func TestValidate_RejectsDuplicateHeaderNames(t *testing.T) {
 	err := validate(&Server{
 		Transport: transportHTTP, Name: "x", URL: "https://x.example",
-		Headers: []keyPair{
+		Headers: []KeyPair{
 			{Name: "Authorization", Value: "Bearer a"},
 			{Name: "authorization", Value: "Bearer b"},
 		},
@@ -342,7 +342,7 @@ func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 			name: "stdio_with_headers_rejected",
 			srv: &Server{
 				Transport: TransportStdio, Name: "ok", Command: "bash",
-				Headers: []keyPair{{Name: "X-Foo", Value: "bar"}},
+				Headers: []KeyPair{{Name: "X-Foo", Value: "bar"}},
 			},
 			wantSubstr: "stdio transport cannot have headers",
 		},
@@ -374,7 +374,7 @@ func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 			name: "remote_with_env_rejected",
 			srv: &Server{
 				Transport: transportHTTP, Name: "ok", URL: "https://x.example",
-				Env: []keyPair{{Name: "LEAK", Value: "v"}},
+				Env: []KeyPair{{Name: "LEAK", Value: "v"}},
 			},
 			wantSubstr: "remote transport cannot have env",
 		},
@@ -398,7 +398,7 @@ func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 			name: "remote_header_value_too_long",
 			srv: &Server{
 				Transport: transportHTTP, Name: "ok", URL: "https://x.example",
-				Headers: []keyPair{{
+				Headers: []KeyPair{{
 					Name:  "Authorization",
 					Value: strings.Repeat("x", headerValueMax+1),
 				}},
@@ -425,17 +425,17 @@ func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 func TestValidate_MoreErrorBranches(t *testing.T) {
 	// Helpers build N unique KeyPairs so the length cap fires before
 	// the duplicate-name detection inside the shared helper.
-	envN := func(n int) []keyPair {
-		out := make([]keyPair, n)
+	envN := func(n int) []KeyPair {
+		out := make([]KeyPair, n)
 		for i := range out {
-			out[i] = keyPair{Name: fmt.Sprintf("K%d", i), Value: "v"}
+			out[i] = KeyPair{Name: fmt.Sprintf("K%d", i), Value: "v"}
 		}
 		return out
 	}
-	headerN := func(n int) []keyPair {
-		out := make([]keyPair, n)
+	headerN := func(n int) []KeyPair {
+		out := make([]KeyPair, n)
 		for i := range out {
-			out[i] = keyPair{Name: fmt.Sprintf("H%d", i), Value: "v"}
+			out[i] = KeyPair{Name: fmt.Sprintf("H%d", i), Value: "v"}
 		}
 		return out
 	}
@@ -457,7 +457,7 @@ func TestValidate_MoreErrorBranches(t *testing.T) {
 			name: "stdio_env_value_control_char",
 			srv: &Server{
 				Transport: TransportStdio, Name: "ok", Command: "bash",
-				Env: []keyPair{{Name: "K", Value: "line1\nline2"}},
+				Env: []KeyPair{{Name: "K", Value: "line1\nline2"}},
 			},
 			wantSubstr: "env[0]: value contains a control character",
 		},
@@ -483,7 +483,7 @@ func TestValidate_MoreErrorBranches(t *testing.T) {
 			srv: &Server{
 				Transport: transportHTTP, Name: "ok",
 				URL:     "https://x.example",
-				Headers: []keyPair{{Name: "bad header!", Value: "v"}},
+				Headers: []KeyPair{{Name: "bad header!", Value: "v"}},
 			},
 			wantSubstr: "headers[0]: bad name",
 		},
@@ -531,10 +531,10 @@ func FuzzValidate(f *testing.F) {
 			s.Args = []string{arg}
 		}
 		if envKey != "" {
-			s.Env = []keyPair{{Name: envKey, Value: envVal}}
+			s.Env = []KeyPair{{Name: envKey, Value: envVal}}
 		}
 		if hdrKey != "" {
-			s.Headers = []keyPair{{Name: hdrKey, Value: hdrVal}}
+			s.Headers = []KeyPair{{Name: hdrKey, Value: hdrVal}}
 		}
 
 		err1 := validate(s)
@@ -655,12 +655,12 @@ func TestValidateKeyPairs_entryCountBoundary(t *testing.T) {
 	const maxEntries = 2
 	const maxValue = 1024
 
-	atMax := []keyPair{{Name: "Ga", Value: "v"}, {Name: "Gb", Value: "v"}}
+	atMax := []KeyPair{{Name: "Ga", Value: "v"}, {Name: "Gb", Value: "v"}}
 	if err := validateKeyPairs("env", atMax, maxEntries, maxValue, false); err != nil {
 		t.Errorf("validateKeyPairs(%d pairs, max %d) = %v, want nil", len(atMax), maxEntries, err)
 	}
 
-	over := []keyPair{{Name: "Ga", Value: "v"}, {Name: "Gb", Value: "v"}, {Name: "Gc", Value: "v"}}
+	over := []KeyPair{{Name: "Ga", Value: "v"}, {Name: "Gb", Value: "v"}, {Name: "Gc", Value: "v"}}
 	err := validateKeyPairs("env", over, maxEntries, maxValue, false)
 	if err == nil {
 		t.Fatalf("validateKeyPairs(%d pairs, max %d) = nil, want too-many-entries error",
@@ -680,12 +680,12 @@ func TestValidateKeyPairs_valueLengthBoundary(t *testing.T) {
 	const maxEntries = 8
 	const maxValue = 4
 
-	atMax := []keyPair{{Name: "Gk", Value: strings.Repeat("v", maxValue)}}
+	atMax := []KeyPair{{Name: "Gk", Value: strings.Repeat("v", maxValue)}}
 	if err := validateKeyPairs("env", atMax, maxEntries, maxValue, false); err != nil {
 		t.Errorf("validateKeyPairs(value len=%d, max %d) = %v, want nil", maxValue, maxValue, err)
 	}
 
-	over := []keyPair{{Name: "Gk", Value: strings.Repeat("v", maxValue+1)}}
+	over := []KeyPair{{Name: "Gk", Value: strings.Repeat("v", maxValue+1)}}
 	err := validateKeyPairs("env", over, maxEntries, maxValue, false)
 	if err == nil {
 		t.Fatalf("validateKeyPairs(value len=%d, max %d) = nil, want value-too-long error",

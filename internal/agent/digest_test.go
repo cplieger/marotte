@@ -15,6 +15,7 @@ import (
 
 	"github.com/cplieger/go/sse/v2"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/translate"
@@ -308,7 +309,7 @@ func TestResolveDigest_ContextExpiryWhileWaitingReturnsCtxErr(t *testing.T) {
 func TestSyncRoute_RefusesWrongMethodAndContentType(t *testing.T) {
 	h, _, _ := newTestHub()
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/sync", nil))

@@ -1,20 +1,18 @@
-import { defineAction, ActionError, apiAction, retryNetwork } from "./index.js";
+import { defineAction, ActionError, apiAction, fromEndpoint, retryNetwork } from "./index.js";
 import { apiGet, apiPost } from "../api-client.js";
 import { urlBase64ToUint8Array } from "../push-util.js";
-
-const API_PUSH_SUBSCRIBE = "/api/push/subscribe";
-const API_PUSH_UNSUBSCRIBE = "/api/push/unsubscribe";
-const API_PUSH_VAPID_KEY = "/api/push/vapid-key";
+import {
+  getPushVapidKeyEndpoint,
+  postPushSubscribeEndpoint,
+  postPushUnsubscribeEndpoint,
+} from "../wire/client.gen.js";
 
 /** Fire-and-forget unsubscribe from push notifications. No toast, no
  *  retry — best-effort cleanup when the user disables notifications. */
 export const unsubscribePush = apiAction<{ endpoint: string }>({
   name: "notify.unsubscribe_push",
-  request: ({ endpoint }) => ({
-    method: "POST",
-    path: API_PUSH_UNSUBSCRIBE,
-    body: { endpoint },
-  }),
+  request: ({ endpoint }) =>
+    fromEndpoint(postPushUnsubscribeEndpoint.request({ body: { endpoint } })),
   error: false,
   success: false,
 });
@@ -40,7 +38,7 @@ export const registerPush = defineAction<void, ServiceWorkerRegistration>({
       throw new ActionError("cancelled", { code: "cancelled" });
     }
 
-    const keyData = await apiGet<{ publicKey: string }>(API_PUSH_VAPID_KEY, signal);
+    const keyData = await apiGet<{ publicKey: string }>(getPushVapidKeyEndpoint.path, signal);
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: signal can abort during await
     if (signal.aborted) {
       throw new ActionError("cancelled", { code: "cancelled" });
@@ -66,7 +64,7 @@ export const registerPush = defineAction<void, ServiceWorkerRegistration>({
 
     let posted: unknown;
     try {
-      posted = await apiPost(API_PUSH_SUBSCRIBE, sub.toJSON(), signal);
+      posted = await apiPost(postPushSubscribeEndpoint.path, sub.toJSON(), signal);
     } catch (e) {
       try {
         await sub.unsubscribe();
@@ -82,7 +80,7 @@ export const registerPush = defineAction<void, ServiceWorkerRegistration>({
       } catch {
         /* best-effort */
       }
-      void apiPost(API_PUSH_UNSUBSCRIBE, {});
+      void apiPost(postPushUnsubscribeEndpoint.path, {});
       throw new ActionError("cancelled", { code: "cancelled" });
     }
     if (posted === null) {

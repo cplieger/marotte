@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -90,34 +91,39 @@ func TestRecipeRoutes_RefuseASourceGoneSinceTheHold(t *testing.T) {
 // Lookups arriving while a listing runs share it: KAS admits every recipe file per call, so overlapping walks are
 // what stretched the 2026-11-02 listing past its deadline.
 func TestListRecipes_ConcurrentReadersShareOneListing(t *testing.T) {
-	h, _, br := newTestHub()
-	launchableRecipe(br, "wf_shared")
-	release := make(chan struct{})
-	br.blockOn = map[string]chan struct{}{methodKiroWorkflowListRecipes: release}
+	// The bubble's Wait returns once every reader is blocked, on the listing or on joining it, so all four
+	// overlap the one call however the scheduler orders them.
+	synctest.Test(t, func(t *testing.T) {
+		h, _, br := newTestHub()
+		launchableRecipe(br, "wf_shared")
+		release := make(chan struct{})
+		br.blockOn = map[string]chan struct{}{methodKiroWorkflowListRecipes: release}
 
-	const readers = 4
-	var wg sync.WaitGroup
-	errs := make([]error, readers)
-	for i := range readers {
-		wg.Go(func() {
-			got, err := h.runs.recipeBySource(t.Context(), "bundled://publish")
-			if err == nil && got.Name != "publish" {
-				err = fmt.Errorf("got recipe %q, want publish", got.Name)
-			}
-			errs[i] = err
-		})
-	}
-	waitFor(t, func() bool { return listRecipesCalls(br) >= 1 })
-	close(release)
-	wg.Wait()
-	for i, err := range errs {
-		if err != nil {
-			t.Errorf("reader %d: %v", i, err)
+		const readers = 4
+		var wg sync.WaitGroup
+		errs := make([]error, readers)
+		for i := range readers {
+			wg.Go(func() {
+				got, err := h.runs.recipeBySource(t.Context(), "bundled://publish")
+				if err == nil && got.Name != "publish" {
+					err = fmt.Errorf("got recipe %q, want publish", got.Name)
+				}
+				errs[i] = err
+			})
 		}
-	}
-	if n := listRecipesCalls(br); n != 1 {
-		t.Errorf("%d concurrent readers made %d listRecipes calls, want 1", readers, n)
-	}
+		synctest.Wait()
+		close(release)
+		wg.Wait()
+		for i, err := range errs {
+			if err != nil {
+				t.Errorf("reader %d: %v", i, err)
+			}
+		}
+		if n := listRecipesCalls(br); n != 1 {
+			t.Errorf("%d concurrent readers made %d listRecipes calls, want 1", readers, n)
+		}
+		shutdownHub(t, h)
+	})
 }
 
 // One reader walking away leaves the shared listing running for the others.

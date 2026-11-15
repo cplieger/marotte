@@ -13,6 +13,7 @@ import {
   subscribeByName,
   type DebouncedDispatch,
 } from "./actions/index.js";
+import { getSteeringEndpoint } from "./wire/client.gen.js";
 
 /** There is no terminal state: the tab's loader runs on every activation, and re-seeding on one is
  *  the only invalidation this box has — `_kiro/steering/documents_changed` reaches no handler and no
@@ -60,7 +61,7 @@ export function loadSteeringDoc(): void {
   }
   reading = true;
   const textarea = $.steeringInput;
-  void apiGet<{ content?: unknown; etag?: unknown }>("/api/steering").then((data) => {
+  void apiGet<{ content?: unknown; etag?: unknown }>(getSteeringEndpoint.path).then((data) => {
     reading = false;
     if (typeof data?.content !== "string") {
       // The box stays locked, because an empty box is not an empty document and the save cannot

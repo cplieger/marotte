@@ -39,6 +39,7 @@ import {
   getToolsStatus,
 } from "./tools.js";
 import { resetActionFramework, headerValue } from "./__test-helpers__/action-test-setup.js";
+import { asked } from "../__test-helpers__/url.js";
 
 const mockFetch = vi.fn();
 
@@ -303,7 +304,10 @@ describe("tools.search", () => {
     await vi.advanceTimersByTimeAsync(50);
     await Promise.all([p1, p2]);
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(mockFetch.mock.calls[0]![0]).toBe("/api/tools/search?q=rip%20grep");
+    expect(asked(String(mockFetch.mock.calls[0]![0]))).toEqual({
+      path: "/api/tools/search",
+      query: { q: "rip grep" },
+    });
   });
 });
 

@@ -1,6 +1,10 @@
 // Actions for the Kiro configuration browser (/docs).
 
-import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+import { apiAction, fromEndpoint, retryNetwork, RETRY_STANDARD } from "./index.js";
+import {
+  postWorkspaceKiroDocsDeleteEndpoint,
+  postWorkspaceKiroDocsNewEndpoint,
+} from "../wire/client.gen.js";
 import { asObject, reqStr } from "../wire/validators.gen.js";
 
 /** Delete what one `.kiro` row stands for, which the server decides. `path` is the row's `doc.path`
@@ -11,11 +15,8 @@ export const deleteDoc = apiAction<{ path: string; name: string }>({
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   idempotencyKey: true,
-  request: (args) => ({
-    method: "POST",
-    path: "/api/workspace/kiro-docs/delete",
-    body: { path: args.path },
-  }),
+  request: (args) =>
+    fromEndpoint(postWorkspaceKiroDocsDeleteEndpoint.request({ body: { path: args.path } })),
   success: (args) => `Deleted ${args.name}`,
   error: (args) => `Could not delete ${args.name}`,
 });
@@ -41,7 +42,7 @@ export const createDoc = apiAction<NewDocRequest, { path: string }>({
   idempotencyKey: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  request: (body) => ({ method: "POST", path: "/api/workspace/kiro-docs/new", body }),
+  request: (body) => fromEndpoint(postWorkspaceKiroDocsNewEndpoint.request({ body })),
   decode: (data) => ({ path: reqStr(asObject(data, NP), "path", NP) }),
   error: false,
 });

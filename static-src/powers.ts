@@ -21,6 +21,7 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { installPower, uninstallPower } from "./actions/powers.js";
 import { onSSE } from "./bus.js";
 import { engineRead, type EngineRead } from "./engine-read.js";
+import { getPowersByNameServersEndpoint, getPowersEndpoint } from "./wire/client.gen.js";
 
 export interface PowerRow {
   readonly name: string;
@@ -199,7 +200,7 @@ async function refresh(): Promise<void> {
   const gen = ++generation;
   requestPending = true;
   const settle = listRead?.begin();
-  const res = await apiGetTypedOrError("/api/powers", decodePowerList);
+  const res = await apiGetTypedOrError(getPowersEndpoint.path, decodePowerList);
   if (gen !== generation) {
     return;
   }
@@ -467,7 +468,7 @@ export function serverSentence(list: ServerList | null): string {
 
 async function installOne(p: PowerRow): Promise<void> {
   const servers = await apiGetTyped(
-    `/api/powers/${encodeURIComponent(p.name)}/servers`,
+    getPowersByNameServersEndpoint.request({ name: p.name }).path,
     decodeServers,
   );
   const ok = await confirmDialog({

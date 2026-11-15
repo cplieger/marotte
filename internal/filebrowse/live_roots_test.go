@@ -41,7 +41,7 @@ func rootNames(t *testing.T, h *Handler) []string {
 	if rec.Code != 200 {
 		t.Fatalf("root listing status %d: %s", rec.Code, rec.Body.String())
 	}
-	var resp struct{ Files []fileEntry }
+	var resp struct{ Files []FileEntry }
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}

@@ -17,6 +17,11 @@ import {
 } from "./wire/decoders.gen.js";
 import type { KiroDoc, MCPResourceInfo, MCPResourceTemplateInfo } from "./wire/types.gen.js";
 import { relToWorkspace, workspaceRoot } from "./workspace.js";
+import {
+  getFilesSearchEndpoint,
+  getMcpPoolEndpoint,
+  getWorkspaceKiroDocsEndpoint,
+} from "./wire/client.gen.js";
 
 /** One row under a provider. A `template` row asks for its variables before it
  *  becomes a token; every other row's `query` is the token's query as is. */
@@ -54,13 +59,13 @@ async function searchPaths(needle: string, kind: "name" | "dir"): Read<string[]>
   // Quoted and escaped, so the name search reads the typed fragment as one literal rather than as terms and globs.
   // Ignored files stay mentionable (a gitignored `.agents/` holds task reports); node_modules stays pruned, which
   // also keeps the walk inside the endpoint's entry budget.
-  const params = new URLSearchParams({
+  const search = getFilesSearchEndpoint.request({
     path: root,
     q: `"${needle.replace(/[\\"]/g, "\\$&")}"`,
     ignored: "1",
     files: "!node_modules",
   });
-  const res = await apiGetTyped(`/api/files/search?${params.toString()}`, decodeFileSearchResult);
+  const res = await apiGetTyped(search.path, decodeFileSearchResult);
   if (res === null) {
     return null;
   }
@@ -123,9 +128,10 @@ function terminalItems(query: string): MentionItem[] {
 let docs: Read<readonly KiroDoc[]> | null = null;
 
 function kiroDocs(): Read<readonly KiroDoc[]> {
-  const read = (docs ??= apiGetTyped("/api/workspace/kiro-docs", decodeKiroDocsResponse).then(
-    (d) => d?.docs ?? null,
-  ));
+  const read = (docs ??= apiGetTyped(
+    getWorkspaceKiroDocsEndpoint.path,
+    decodeKiroDocsResponse,
+  ).then((d) => d?.docs ?? null));
   void read.then((list) => {
     // A failed read is not kept, so the menu's retry asks again.
     if (list === null && docs === read) {
@@ -189,8 +195,10 @@ const decodePool: Decoder<PoolServer[]> = (v) =>
 
 // The active chat's own pool when its session is live, else every live session's.
 async function mcpItems(query: string): Read<MentionItem[]> {
-  const params = new URLSearchParams({ chat_id: getActiveId() });
-  const pool = await apiGetTyped(`/api/mcp/pool?${params.toString()}`, decodePool);
+  const pool = await apiGetTyped(
+    getMcpPoolEndpoint.request({ chat_id: getActiveId() }).path,
+    decodePool,
+  );
   if (pool === null) {
     return null;
   }

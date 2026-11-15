@@ -55,6 +55,11 @@ import {
   standingLabel,
 } from "./config-standing.js";
 import type { Nouns } from "./textsearch/copy.js";
+import {
+  getHooksEndpoint,
+  getSteeringIssuesEndpoint,
+  getWorkspaceKiroDocsEndpoint,
+} from "./wire/client.gen.js";
 
 /**
  * The wire's `KiroDoc` plus `hook_scope`, client-derived: `kiroRoots()` scans only the workspace, so a scanned row
@@ -238,7 +243,7 @@ const loadDocsAction = defineAction<undefined, KiroDocsResponse>({
   retryable: retryNetwork,
   retry: { count: 2, delay: 300 },
   run: async (_args, sig) => {
-    const data = await apiGetTyped("/api/workspace/kiro-docs", decodeKiroDocsResponse, sig);
+    const data = await apiGetTyped(getWorkspaceKiroDocsEndpoint.path, decodeKiroDocsResponse, sig);
     if (sig.aborted) {
       throw new DOMException("aborted", "AbortError");
     }
@@ -320,7 +325,7 @@ function loadDocs(): void {
 }
 
 function loadSteeringIssues(): void {
-  void apiGetTyped("/api/steering/issues", decodeSteeringIssuesResponse).then((d) => {
+  void apiGetTyped(getSteeringIssuesEndpoint.path, decodeSteeringIssuesResponse).then((d) => {
     if (d === null) {
       return;
     }
@@ -339,7 +344,7 @@ const hookRead = engineRead(loadHookState, () => $.docsView.offsetParent !== nul
 
 function loadHookState(): void {
   const settle = hookRead.begin();
-  void apiGetTyped("/api/hooks", decodeHookList).then((d) => {
+  void apiGetTyped(getHooksEndpoint.path, decodeHookList).then((d) => {
     if (d === null) {
       settle(false);
       return;

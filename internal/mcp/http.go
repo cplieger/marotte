@@ -5,21 +5,56 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"path"
+	"reflect"
 
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route"
 )
 
-// RegisterRoutes wires the MCP config endpoints: GET/POST /api/mcp (list masked with the count of
+// routeMux is what a route registration needs: the server's registrar, or a test's mux. An alias, so
+// RegisterRoutes has the server's routeHandler signature.
+type routeMux = interface{ Bind(route.Binding) }
+
+// ServerList is GET /api/mcp's body: the masked servers, and how many record entries could not be read.
+type ServerList struct {
+	Servers    []*Server `json:"servers"`
+	Unreadable int       `json:"unreadable"`
+}
+
+// ImportBlock is POST /api/mcp/import's body: a publisher's pasted JSON object, an "mcpServers" block
+// or one server object, whose keys parseImportBody reads.
+type ImportBlock map[string]json.RawMessage
+
+// ImportResults is POST /api/mcp/import's answer.
+type ImportResults struct {
+	Results []ImportResult `json:"results"`
+	Notes   []string       `json:"notes"`
+}
+
+// EnabledPatch is PATCH /api/mcp/{name}'s body.
+type EnabledPatch struct {
+	Enabled *bool `json:"enabled"`
+}
+
+// RegisterRoutes binds the MCP config endpoints: GET/POST /api/mcp (list masked with the count of
 // record entries that could not be read as `unreadable`, create), POST
 // /api/mcp/import (every server of a pasted README block), and GET (masked), PUT (keeps "***"
-// values), PATCH ({"enabled": bool}) and DELETE on /api/mcp/{id}.
-func (s *Store) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/mcp", s.handleCollection)
-	mux.HandleFunc("/api/mcp/import", s.handleImport)
-	mux.HandleFunc("/api/mcp/", s.handleOne)
+// values), PATCH ({"enabled": bool}) and DELETE on /api/mcp/{name}.
+func (s *Store) RegisterRoutes(m routeMux) {
+	name := reflect.TypeFor[marotte.NamePath]()
+	m.Bind(route.Methods("/api/mcp", http.HandlerFunc(s.handleCollection),
+		route.Typed[struct{}, ServerList](http.MethodGet),
+		route.Typed[Server, Server](http.MethodPost)))
+	m.Bind(route.Methods("/api/mcp/import", http.HandlerFunc(s.handleImport),
+		route.Typed[ImportBlock, ImportResults](http.MethodPost)))
+	m.Bind(route.Methods("/api/mcp/{name}", http.HandlerFunc(s.handleOne),
+		route.Typed[struct{}, Server](http.MethodGet).WithParams(name),
+		route.Typed[Server, Server](http.MethodPut).WithParams(name),
+		route.Typed[EnabledPatch, Server](http.MethodPatch).WithParams(name),
+		route.Typed[struct{}, httpreply.OKBody](http.MethodDelete).WithParams(name)))
 }
 
 // handleImport handles POST /api/mcp/import: translate a pasted publisher block
@@ -30,10 +65,6 @@ func (s *Store) RegisterRoutes(mux *http.ServeMux) {
 // store, and about a name it had to adjust — so an accepted `timeout` does not
 // read as a silently-dropped field.
 func (s *Store) handleImport(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
 	var raw json.RawMessage
 	if !httpreply.DecodeJSON(w, r, &raw) {
 		return
@@ -49,13 +80,13 @@ func (s *Store) handleImport(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
-	httpserver.WriteJSON(w, map[string]any{"results": results, "notes": req.notes})
+	httpserver.WriteJSON(w, ImportResults{Results: results, Notes: req.notes})
 }
 
 func (s *Store) handleCollection(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
-	case http.MethodGet:
-		httpserver.WriteJSON(w, map[string]any{"servers": s.list(r.Context()), "unreadable": len(s.unreadable)})
+	case http.MethodGet, http.MethodHead:
+		httpserver.WriteJSON(w, ServerList{Servers: s.list(r.Context()), Unreadable: len(s.unreadable)})
 	case http.MethodPost:
 		var in Server
 		if !httpreply.DecodeJSON(w, r, &in) {
@@ -67,28 +98,17 @@ func (s *Store) handleCollection(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		httpserver.WriteJSON(w, created)
-	default:
-		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
 }
 
 func (s *Store) handleOne(w http.ResponseWriter, r *http.Request) {
-	// Mux registers "/api/mcp/" as this handler, so path.Base on the
-	// bare route yields "mcp" which we explicitly reject. id == "" is
-	// unreachable from path.Base on any real URL (it always returns
-	// "." on empty input), so only the "mcp" case needs a guard.
-	raw := path.Base(r.URL.Path)
-	if raw == "mcp" {
-		httpreply.NotFound(w, "server not found")
-		return
-	}
-	id, err := parseServerID(raw)
+	id, err := parseServerID(r.PathValue("name"))
 	if err != nil {
 		httpreply.BadRequest(w, "invalid server id")
 		return
 	}
 	switch r.Method {
-	case http.MethodGet:
+	case http.MethodGet, http.MethodHead:
 		s.writeOne(w, r, id)
 	case http.MethodPut:
 		s.putOne(w, r, id)
@@ -96,8 +116,6 @@ func (s *Store) handleOne(w http.ResponseWriter, r *http.Request) {
 		s.patchOne(w, r, id)
 	case http.MethodDelete:
 		s.deleteOne(w, r, id)
-	default:
-		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodPatch, http.MethodDelete)
 	}
 }
 
@@ -129,9 +147,7 @@ func (s *Store) putOne(w http.ResponseWriter, r *http.Request, id serverID) {
 // patchOne handles PATCH /api/mcp/{id} with body {"enabled": bool}: a
 // missing enabled field is a 400; otherwise toggle and return the record.
 func (s *Store) patchOne(w http.ResponseWriter, r *http.Request, id serverID) {
-	var patch struct {
-		Enabled *bool `json:"enabled"`
-	}
+	var patch EnabledPatch
 	if !httpreply.DecodeJSON(w, r, &patch) {
 		return
 	}
@@ -156,7 +172,7 @@ func (s *Store) deleteOne(w http.ResponseWriter, r *http.Request, id serverID) {
 		s.writeErr(w, err)
 		return
 	}
-	httpserver.OK(w)
+	httpreply.OK(w)
 }
 
 // writeErr maps package-level sentinel errors to the right HTTP status.
@@ -188,13 +204,13 @@ func (*Store) writeErr(w http.ResponseWriter, err error) {
 	}
 }
 
-// validationErrorBody is the 400 a failed validate produces.
+// validationRefusal is the 400 a failed validate produces.
 //
 // `error` is the joined message text, so a client reading only that field
 // keeps working unchanged. `fields` is the addition: one entry per
 // failure, carrying the wire field name so the form can mark inputs
 // individually.
-type validationErrorBody struct {
+type validationRefusal struct {
 	Error  string       `json:"error"`
 	Fields []fieldError `json:"fields,omitempty"`
 }
@@ -210,5 +226,5 @@ func writeValidationErr(w http.ResponseWriter, err error) {
 		return
 	}
 	httpserver.WriteJSONStatus(w, http.StatusBadRequest,
-		validationErrorBody{Error: err.Error(), Fields: fields})
+		validationRefusal{Error: err.Error(), Fields: fields})
 }

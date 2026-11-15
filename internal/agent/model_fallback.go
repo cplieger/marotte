@@ -16,8 +16,9 @@ import (
 
 const modelFallbackKRN = "krn:::setting/modelFallback/"
 
-// modelFallbackUpdateReq names the model whose fallback changes and its new target, "" for Kiro's own.
-type modelFallbackUpdateReq struct {
+// ModelFallbackUpdate is PUT /api/model-fallback's body: the model whose fallback changes and its new target, ""
+// for Kiro's own.
+type ModelFallbackUpdate struct {
 	Model  string `json:"model"`
 	Target string `json:"target"`
 }
@@ -26,11 +27,7 @@ type modelFallbackUpdateReq struct {
 // layer and answers the row KAS composes from it. KAS validates the pair (both served, not the model itself, no
 // consent needed); an empty chain clears the account's choice, so there is no way to turn one model's fallback off.
 func (st *Settings) handleModelFallback(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPut {
-		httpreply.MethodNotAllowed(w, http.MethodPut)
-		return
-	}
-	var body modelFallbackUpdateReq
+	var body ModelFallbackUpdate
 	if !httpreply.DecodeJSON(w, r, &body) {
 		return
 	}

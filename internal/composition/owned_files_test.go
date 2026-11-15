@@ -23,6 +23,7 @@ import (
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/ownedfile"
+	"github.com/cplieger/marotte/internal/route/routetest"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/toolbelt/v3"
 )
@@ -160,7 +161,7 @@ func newOwnedFilesFixtureWith(t *testing.T, ts toolsSetup) *ownedFilesFixture {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	files.RegisterRoutes(mux)
+	files.RegisterRoutes(routetest.On(mux))
 	fx.handler = mux
 	return fx
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route"
 	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/trigger"
@@ -27,11 +28,11 @@ type eventRuleChecker interface {
 	CheckEventRule(ctx context.Context, ev *launchrule.EventSpec) error
 }
 
-// launchRuleView is a stored rule with its row, and a clock rule's next run computed server-side so the summary
+// LaunchRuleView is a stored rule with its row, and a clock rule's next run computed server-side so the summary
 // matches what will happen. Status is absent, and Error set, for a rule whose state file would not load.
-type launchRuleView struct {
-	NextRunAt *time.Time         `json:"next_run_at,omitempty"`
-	Status    *launchrule.Status `json:"status,omitempty"`
+type LaunchRuleView struct {
+	NextRunAt *time.Time             `json:"next_run_at,omitempty"`
+	Status    *launchrule.RuleStatus `json:"status,omitempty"`
 	// Set only for event rules.
 	Cursor     *trigger.CursorSummary `json:"cursor,omitempty"`
 	Error      string                 `json:"error,omitempty"`
@@ -40,8 +41,8 @@ type launchRuleView struct {
 	Held int `json:"held"`
 }
 
-func launchRuleViewOf(r *launchrule.Rule, st *launchrule.State, readErr error) launchRuleView {
-	v := launchRuleView{Rule: *r}
+func launchRuleViewOf(r *launchrule.Rule, st *launchrule.State, readErr error) LaunchRuleView {
+	v := LaunchRuleView{Rule: *r}
 	if readErr != nil {
 		v.Error = readErr.Error()
 		return v
@@ -65,23 +66,52 @@ func launchRuleViewOf(r *launchrule.Rule, st *launchrule.State, readErr error) l
 	return v
 }
 
-func (rr *runRoutes) registerLaunchRules(mux *http.ServeMux, write func(string, http.HandlerFunc)) {
-	if rr.runs.launchRules == nil {
-		return
+// LaunchRuleList is GET /api/launch-rules' body.
+type LaunchRuleList struct {
+	Rules []LaunchRuleView `json:"rules"`
+}
+
+// LaunchRuleWrite is POST /api/launch-rules' body: a launchrule.Rule without the id the store mints and the
+// name prepareRule fills from the recipe. readRuleBody decodes it as a launchrule.Rule.
+type LaunchRuleWrite struct {
+	Inputs  map[string]string `json:"inputs,omitempty"`
+	When    launchrule.When   `json:"when"`
+	Source  string            `json:"source"`
+	Model   string            `json:"model,omitempty"`
+	Effort  string            `json:"effort,omitempty"`
+	Enabled bool              `json:"enabled"`
+}
+
+// LaunchRuleReplace is PUT /api/launch-rules/{id}'s body: the rule, plus the held-event count an edit of the
+// watched population drops, which readRuleBody takes out before the rule decodes.
+type LaunchRuleReplace struct {
+	LaunchRuleWrite
+	ConfirmDrop int `json:"confirm_drop,omitempty"`
+}
+
+// registerLaunchRules binds every launch-rule route; while the store did not open, or for dismiss-gap the trigger
+// confirmer is absent, each answers the unmounted 404.
+func (rr *runRoutes) registerLaunchRules(m routeMux, write func(route.Binding) route.Binding) {
+	present := func(ok bool, h http.HandlerFunc) http.Handler {
+		if !ok {
+			return httpreply.UnknownEndpoint
+		}
+		return h
 	}
-	mux.HandleFunc("GET /api/launch-rules", rr.handleLaunchRuleList)
-	write("POST /api/launch-rules", rr.handleLaunchRuleCreate)
-	write("PUT /api/launch-rules/{id}", rr.handleLaunchRuleReplace)
-	write("DELETE /api/launch-rules/{id}", rr.handleLaunchRuleDelete)
-	if rr.runs.confirmer != nil {
-		write("POST /api/launch-rules/{id}/dismiss-gap", rr.handleLaunchRuleDismissGap)
-	}
+	have := rr.runs.launchRules != nil
+	idp := route.WithParams[marotte.IDPath]
+	m.Bind(route.JSON[struct{}, LaunchRuleList]("GET /api/launch-rules", present(have, rr.handleLaunchRuleList)))
+	m.Bind(write(route.JSON[LaunchRuleWrite, LaunchRuleView]("POST /api/launch-rules", present(have, rr.handleLaunchRuleCreate))))
+	m.Bind(write(idp(route.JSON[LaunchRuleReplace, LaunchRuleView]("PUT /api/launch-rules/{id}", present(have, rr.handleLaunchRuleReplace)))))
+	m.Bind(write(idp(route.JSON[struct{}, httpreply.OKBody]("DELETE /api/launch-rules/{id}", present(have, rr.handleLaunchRuleDelete)))))
+	m.Bind(write(idp(route.JSON[struct{}, LaunchRuleView]("POST /api/launch-rules/{id}/dismiss-gap",
+		present(have && rr.runs.confirmer != nil, rr.handleLaunchRuleDismissGap)))))
 }
 
 func (rr *runRoutes) handleLaunchRuleList(w http.ResponseWriter, _ *http.Request) {
 	st := rr.runs.launchRules
 	rules := st.List()
-	out := make([]launchRuleView, 0, len(rules))
+	out := make([]LaunchRuleView, 0, len(rules))
 	for i := range rules {
 		state, err := rr.ruleState(&rules[i])
 		if errors.Is(err, launchrule.ErrNotFound) {
@@ -89,7 +119,7 @@ func (rr *runRoutes) handleLaunchRuleList(w http.ResponseWriter, _ *http.Request
 		}
 		out = append(out, launchRuleViewOf(&rules[i], &state, err))
 	}
-	httpserver.WriteJSON(w, map[string]any{"rules": out})
+	httpserver.WriteJSON(w, LaunchRuleList{Rules: out})
 }
 
 // ruleState is the state a rule's view shows: an event rule's as the confirmer holds it, since a row text or a
@@ -163,7 +193,7 @@ func (rr *runRoutes) handleLaunchRuleDelete(w http.ResponseWriter, r *http.Reque
 		rr.ruleChanged(deleted.ID, launchrule.ChangeDelete)
 	}
 	slog.Info("launch rule deleted", "id", logsafe.Field(id))
-	httpserver.WriteJSON(w, map[string]any{"ok": true})
+	httpreply.OK(w)
 }
 
 // handleLaunchRuleDismissGap serves POST /api/launch-rules/{id}/dismiss-gap, answering the rule as it now reads; only

@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 func newRoutedService(t *testing.T) (*Service, *http.ServeMux) {
@@ -23,7 +24,7 @@ func newRoutedService(t *testing.T) (*Service, *http.ServeMux) {
 	s := New(context.Background(), t.TempDir(), "mailto:test@example.com")
 	t.Cleanup(s.Close)
 	mux := http.NewServeMux()
-	s.RegisterRoutes(mux)
+	s.RegisterRoutes(routetest.On(mux))
 	return s, mux
 }
 

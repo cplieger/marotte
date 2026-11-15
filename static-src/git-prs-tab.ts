@@ -91,6 +91,7 @@ import { gitRepoSkeleton, paintPlaceholder } from "./skeleton.js";
 import { iconEl } from "./icon-el.js";
 
 import type { GitPR as PR, GitRepoGroup as RepoGroup } from "./git-types.js";
+import { getForgesInventoryEndpoint, getGitBranchCommitsEndpoint } from "./wire/client.gen.js";
 
 let filterText = "";
 /** Each section's disclosure, so every paint re-decides its open state: reconcile keeps the section element. */
@@ -556,7 +557,7 @@ async function readInventory(signal: AbortSignal): Promise<{ list: InventoryList
   // The store's rows supply each connection's kind and host, so the tab cannot paint without them.
   const [forgesRes, list] = await Promise.all([
     ensureForges(),
-    apiGetTyped("/api/forges/inventory", decodeInventoryList, signal),
+    apiGetTyped(getForgesInventoryEndpoint.path, decodeInventoryList, signal),
   ]);
   if (signal.aborted) {
     return null;
@@ -2084,13 +2085,13 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
     const base = baseInput.value.trim();
     let body = "";
     if (base !== "") {
-      const q = new URLSearchParams({
+      const commits = getGitBranchCommitsEndpoint.request({
         // The clone's own directory when the inventory joins one; it need not share the forge's name.
         repo: cloneDirOf(g.forge_id, g.repo_id) ?? g.name,
         base,
         head: headInput.value.trim(),
       });
-      const res = await apiGet<unknown>(`/api/git/branch-commits?${q.toString()}`, signal);
+      const res = await apiGet<unknown>(commits.path, signal);
       if (signal.aborted) {
         return;
       }

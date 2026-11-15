@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 // readBudget is a bound no engine-backed read reaches when it answers at once; a read that waits for the engine
@@ -71,7 +72,7 @@ func TestRecipesRoute_AReadWithoutEngineWaitAnswersAtOnceWhileTheEngineStarts(t 
 			runs := &Runs{engine: o, lifecycle: o.lt}
 			runs.recipes.held = tc.held
 			mux := http.NewServeMux()
-			(&runRoutes{runs: runs}).register(mux)
+			(&runRoutes{runs: runs}).register(routetest.On(mux))
 			ctx, cancel := context.WithTimeout(marotte.WithoutEngineWait(t.Context()), readBudget)
 			defer cancel()
 			rec := httptest.NewRecorder()

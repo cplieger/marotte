@@ -285,7 +285,7 @@ func (s *stepper) leaveLive(rec *record) {
 	}
 }
 
-func (s *stepper) status() *launchrule.Status { return &s.rv.es.raw.Status }
+func (s *stepper) status() *launchrule.RuleStatus { return &s.rv.es.raw.Status }
 
 func (s *stepper) wakeLauncher() {
 	s.res.effects = append(s.res.effects, attemptEffect{kind: effectWakeLauncher})

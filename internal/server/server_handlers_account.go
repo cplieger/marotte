@@ -30,9 +30,6 @@ type acctUsageCache struct {
 // nothing, because a fetch would read the account the engine still holds.
 func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 	// Gated here, not on the pattern (see ListenAndServe).
-	if !httpreply.RequireMethod(w, r, http.MethodGet) {
-		return
-	}
 	if s.accountUsage == nil {
 		writeUsageUnavailable(w)
 		return

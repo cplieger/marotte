@@ -43,11 +43,11 @@ func TestSweep_AWeeklyAndAMonthlyScheduleExportTheirNextSlot(t *testing.T) {
 	anchor := at(2026, time.August, 4, 12, 0) // a Tuesday
 	weekly := putClock(t, st, clockSeed{
 		Source: "bundled://weekly", Anchor: anchor,
-		Spec: launchrule.Spec{Freq: launchrule.FreqWeekly, Weekdays: []int{int(time.Monday)}, Hour: 2},
+		Spec: launchrule.ClockSpec{Freq: launchrule.FreqWeekly, Weekdays: []int{int(time.Monday)}, Hour: 2},
 	})
 	monthly := putClock(t, st, clockSeed{
 		Source: "bundled://monthly", Anchor: anchor,
-		Spec: launchrule.Spec{Freq: launchrule.FreqMonthly, MonthDay: 15, Hour: 3, Minute: 30},
+		Spec: launchrule.ClockSpec{Freq: launchrule.FreqMonthly, MonthDay: 15, Hour: 3, Minute: 30},
 	})
 	r := NewRunner(st, &fakeLauncher{})
 	r.now = func() time.Time { return at(2026, time.August, 5, 9, 0) }
@@ -130,7 +130,7 @@ func pageHas(series string) bool {
 // sweep never finds a live schedule's series missing.
 func TestSweep_ADeletedScheduleLosesOnlyItsSeriesWhileAScrapeRuns(t *testing.T) {
 	st := mustStore(t)
-	daily := launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}
+	daily := launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2}
 	kept := putClock(t, st, clockSeed{Source: "bundled://kept", Spec: daily})
 	deleted := putClock(t, st, clockSeed{Source: "bundled://deleted", Spec: daily})
 	disabled := putClock(t, st, clockSeed{Source: "bundled://disabled", Spec: daily})
@@ -228,7 +228,7 @@ func TestSweep_ABlockedScheduleReadsDueSinceItWasFirstSeenBlocked(t *testing.T) 
 	dir := t.TempDir()
 	readable := mustStoreIn(t, dir)
 	rule := putClock(t, readable, clockSeed{
-		Source: "bundled://blocked", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2},
+		Source: "bundled://blocked", Spec: launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2},
 	})
 	NewRunner(readable, &fakeLauncher{}).publish(readable.Clocks())
 	if !pageHas(failedSlotsSeries(rule.ID)) {
@@ -282,7 +282,7 @@ func mustStoreIn(t *testing.T, dir string) *launchrule.Store {
 // in which a schedule has none.
 func TestRun_ExportsTheSeriesBeforeItsFirstTick(t *testing.T) {
 	st := mustStore(t)
-	rule := putClock(t, st, clockSeed{Source: "bundled://boot", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}})
+	rule := putClock(t, st, clockSeed{Source: "bundled://boot", Spec: launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2}})
 	r := NewRunner(st, &fakeLauncher{})
 	r.tick = time.Hour
 	ctx, cancel := context.WithCancel(t.Context())

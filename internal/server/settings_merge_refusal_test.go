@@ -155,38 +155,3 @@ func TestSettingsWrite_StillMergesAReadableDocument(t *testing.T) {
 			settings.KeyTheme, got[settings.KeyTheme])
 	}
 }
-
-// TestHandleSettings_RefusesEveryMethodButGETAndPATCH drives handleSettings (the refusal IS
-// the method gate) and checks the stored document is untouched.
-func TestHandleSettings_RefusesEveryMethodButGETAndPATCH(t *testing.T) {
-	const stored = `{"chat_retention_days":-1,"security_profile":"unrestricted"}`
-
-	for _, method := range []string{http.MethodPut, http.MethodPost, http.MethodDelete} {
-		t.Run(method, func(t *testing.T) {
-			dir := t.TempDir()
-			path := filepath.Join(dir, settings.Filename)
-			if err := os.WriteFile(path, []byte(stored), 0o600); err != nil {
-				t.Fatalf("write %s: %v", path, err)
-			}
-			s := &Server{agent: &fakeEngine{}, push: &testPush{}, configDir: dir}
-
-			req := httptest.NewRequest(method, "/api/settings", bytes.NewReader([]byte(`{"last_model":"new"}`)))
-			rec := httptest.NewRecorder()
-			s.handleSettings(rec, req)
-
-			if rec.Code != http.StatusMethodNotAllowed {
-				t.Fatalf("%s /api/settings = %d, want 405", method, rec.Code)
-			}
-			if got := rec.Header().Get("Allow"); got != "GET, PATCH" {
-				t.Errorf("Allow = %q, want %q", got, "GET, PATCH")
-			}
-			after, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatalf("read back %s: %v", path, err)
-			}
-			if string(after) != stored {
-				t.Errorf("config.json after a refused %s =\n%s\nwant it untouched:\n%s", method, after, stored)
-			}
-		})
-	}
-}

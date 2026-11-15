@@ -8,6 +8,7 @@ import { activateTab, getActiveTabId, openTab, tabIdFor } from "./tabs.js";
 import { truncate } from "./strings.js";
 import { runLabelOf } from "./run-store.js";
 import { apiGetOrError } from "./api-client.js";
+import { getRunsByIdEndpoint } from "./wire/client.gen.js";
 
 /** A chat is named from its first prompt (an 80-char cut server-side), which is a
  *  paragraph opener rather than a title, so the prefix keeps its leading words. */
@@ -139,7 +140,7 @@ async function openRunEnd(
 
 /** True only when the server answers 404 for the run: any other failure is left for the open to report. */
 async function runIsGone(workflowID: string): Promise<boolean> {
-  const r = await apiGetOrError<unknown>(`/api/runs/${encodeURIComponent(workflowID)}`);
+  const r = await apiGetOrError<unknown>(getRunsByIdEndpoint.request({ id: workflowID }).path);
   return r.status === 404;
 }
 

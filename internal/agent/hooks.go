@@ -21,6 +21,7 @@ import (
 	"github.com/cplieger/go/pathinside"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route"
 )
 
 // hookCallTimeout bounds a list or setEnabled round-trip, the wait for the engine included, extended through an
@@ -64,10 +65,11 @@ type kasHookResult struct {
 	Success bool   `json:"success"`
 }
 
+// HookInfo is one GET /api/hooks row.
 // ID is a base64url handle of the KAS id. Scope is "workspace" or "global" ($HOME/.kiro/hooks,
 // kiro-cli 2.13+, derived from _meta.filePath). A global FilePath is a ~-prefixed display path
 // only; filebrowse blocks that tree.
-type hookInfo struct {
+type HookInfo struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
 	Trigger    string `json:"trigger"`
@@ -84,14 +86,15 @@ type hookInfo struct {
 	Enabled        bool   `json:"enabled"`
 }
 
-// Hook scopes for hookInfo.Scope.
+// Hook scopes for HookInfo.Scope.
 const (
 	hookScopeWorkspace = "workspace"
 	hookScopeGlobal    = "global"
 )
 
-type hooksListResponse struct {
-	Hooks []hookInfo `json:"hooks"`
+// HooksList is GET /api/hooks' body.
+type HooksList struct {
+	Hooks []HookInfo `json:"hooks"`
 }
 
 // encodeHookID and decodeHookID map a KAS hook id (an absolute path plus "#hook-N") to a
@@ -146,9 +149,9 @@ func (st *Settings) hooksListRaw(ctx context.Context) ([]kasHook, error) {
 	return res.Hooks, nil
 }
 
-func (st *Settings) toHookInfo(k *kasHook) hookInfo {
+func (st *Settings) toHookInfo(k *kasHook) HookInfo {
 	scope, path := st.hookScopeAndPath(k.Meta.FilePath)
-	info := hookInfo{
+	info := HookInfo{
 		ID:             encodeHookID(k.ID),
 		Name:           k.Name,
 		Trigger:        k.Meta.Trigger,
@@ -175,15 +178,15 @@ func (st *Settings) handleHooksList(w http.ResponseWriter, r *http.Request) {
 		writeHookErr(w, err)
 		return
 	}
-	out := make([]hookInfo, 0, len(hooks))
+	out := make([]HookInfo, 0, len(hooks))
 	for i := range hooks {
 		out = append(out, st.toHookInfo(&hooks[i]))
 	}
 	// Workspace hooks first, stable within each group.
-	slices.SortStableFunc(out, func(a, b hookInfo) int {
+	slices.SortStableFunc(out, func(a, b HookInfo) int {
 		return hookScopeRank(a.Scope) - hookScopeRank(b.Scope)
 	})
-	httpserver.WriteJSON(w, hooksListResponse{Hooks: out})
+	httpserver.WriteJSON(w, HooksList{Hooks: out})
 }
 
 // hookScopeRank orders hook scopes for the dashboard: workspace first.
@@ -194,7 +197,8 @@ func hookScopeRank(scope string) int {
 	return 0
 }
 
-type hookEnabledReq struct {
+// HookEnabledWrite is POST /api/hooks/{id}/enabled's body.
+type HookEnabledWrite struct {
 	Enabled bool `json:"enabled"`
 }
 
@@ -204,7 +208,7 @@ func (st *Settings) handleHookSetEnabled(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	var body hookEnabledReq
+	var body HookEnabledWrite
 	if !httpreply.DecodeJSON(w, r, &body) {
 		return
 	}
@@ -225,7 +229,7 @@ func (st *Settings) handleHookSetEnabled(w http.ResponseWriter, r *http.Request)
 			if !res.Success {
 				return engineReply{write: func(w http.ResponseWriter) { writeHookResultErr(w, res) }}
 			}
-			return engineReply{write: httpserver.OK, applied: true}
+			return engineReply{write: httpreply.OK, applied: true}
 		},
 	})
 }
@@ -277,7 +281,8 @@ func writeHookErr(w http.ResponseWriter, err error) {
 }
 
 // There is deliberately no trigger route: it would restore the executeHook shell path.
-func (st *Settings) registerHooksRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/hooks", st.handleHooksList)
-	mux.HandleFunc("POST /api/hooks/{id}/enabled", st.handleHookSetEnabled)
+func (st *Settings) registerHooksRoutes(m routeMux) {
+	m.Bind(route.JSON[struct{}, HooksList]("GET /api/hooks", http.HandlerFunc(st.handleHooksList)))
+	m.Bind(route.WithParams[marotte.IDPath](route.JSON[HookEnabledWrite, httpreply.OKBody]("POST /api/hooks/{id}/enabled",
+		http.HandlerFunc(st.handleHookSetEnabled))))
 }

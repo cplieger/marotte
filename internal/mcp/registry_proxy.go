@@ -15,6 +15,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +26,7 @@ import (
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/mcp/prewarm"
+	"github.com/cplieger/marotte/internal/route"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -95,18 +97,19 @@ func NewRegistryProxy() *RegistryProxy {
 	}
 }
 
-// RegisterRoutes wires /api/mcp/registry/search.
-//
-//	GET /api/mcp/registry/search?q=<query>&limit=<n>
-func (p *RegistryProxy) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/mcp/registry/search", p.handleSearch)
+// RegistrySearchQuery is GET /api/mcp/registry/search's query.
+type RegistrySearchQuery struct {
+	Q     string `json:"q,omitempty"`
+	Limit int    `json:"limit,omitempty"`
+}
+
+// RegisterRoutes binds GET /api/mcp/registry/search?q=<query>&limit=<n>.
+func (p *RegistryProxy) RegisterRoutes(m routeMux) {
+	m.Bind(route.Methods("/api/mcp/registry/search", http.HandlerFunc(p.handleSearch),
+		route.Typed[struct{}, RegistrySearchResult](http.MethodGet).WithQuery(reflect.TypeFor[RegistrySearchQuery]())))
 }
 
 func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if len(q) > maxSearchQueryLen {
 		slog.Debug("mcp: registry search query too long",

@@ -1,12 +1,11 @@
 // The one action that reads GET /api/forges (forge-store.ts's request), and its wire decoder.
 
-import { apiAction } from "./index.js";
+import { apiAction, fromEndpoint } from "./index.js";
+import { getForgesEndpoint } from "../wire/client.gen.js";
 import type { Decoder } from "../wire/validators.gen.js";
 import { asObject, decodeArray } from "../wire/validators.gen.js";
 import { decodeConfiguredForge } from "../wire/decoders.gen.js";
 import type { ConfiguredForge, ForgeKind } from "../wire/types.gen.js";
-
-const API_PATH_FORGES = "/api/forges" as const;
 
 /** The /api/forges response. `oauth` reports which kinds support the browser
  *  device flow, so the Sources tab can offer it only where it exists. */
@@ -51,7 +50,7 @@ const decodeForgesListResponse: Decoder<ForgesListResponse> = (v) => {
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void as a generic argument for an action taking no args
 export const listForges = apiAction<void, ForgesListResponse>({
   name: "forges.list",
-  request: () => ({ method: "GET", path: API_PATH_FORGES }),
+  request: () => fromEndpoint(getForgesEndpoint.request()),
   decode: (data) => decodeForgesListResponse(data),
   error: false,
   success: false,

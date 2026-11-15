@@ -23,6 +23,7 @@ import (
 
 	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 func testDir(t *testing.T) (h *Handler, dir, prefix string) {
@@ -62,7 +63,7 @@ func locAt(h *Handler, abs string) loc {
 func getReq(t *testing.T, h *Handler, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -72,7 +73,7 @@ func getReq(t *testing.T, h *Handler, path string) *httptest.ResponseRecorder {
 func postReq(t *testing.T, h *Handler, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -83,7 +84,7 @@ func postReq(t *testing.T, h *Handler, path, body string) *httptest.ResponseReco
 func putReq(t *testing.T, h *Handler, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	req := httptest.NewRequest(http.MethodPut, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -432,7 +433,7 @@ func TestWriteFile_InvalidJSON(t *testing.T) {
 func TestFile_MethodNotAllowed(t *testing.T) {
 	h, _, prefix := testDir(t)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	req := httptest.NewRequest(http.MethodDelete, "/api/file?path="+prefix+"/x", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -456,7 +457,7 @@ func TestListFiles_Root_ListsMounts(t *testing.T) {
 	}
 	var resp struct {
 		Path     string `json:"path"`
-		Files    []fileEntry
+		Files    []FileEntry
 		Writable bool
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
@@ -492,7 +493,7 @@ func TestListFiles_Subdir(t *testing.T) {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
 	var resp struct {
-		Files    []fileEntry
+		Files    []FileEntry
 		Writable bool
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
@@ -571,7 +572,7 @@ func TestListFiles_UnderAFileCarriesNoFileCode(t *testing.T) {
 func TestListFiles_MethodNotAllowed(t *testing.T) {
 	h, _, _ := testDir(t)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	req := httptest.NewRequest(http.MethodPost, "/api/files?path=.", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -679,7 +680,7 @@ func TestActionDelete_RefusesASwappedAncestor(t *testing.T) {
 	h, dir, _ := testDir(t)
 	victim, l := swappedAncestor(t, h, dir)
 
-	err := actionDelete(context.Background(), httptest.NewRecorder(), fileAction{Action: "delete"}, l, h)
+	err := actionDelete(context.Background(), httptest.NewRecorder(), FileAction{Action: "delete"}, l, h)
 	if err == nil {
 		t.Error("delete through a symlinked ancestor was accepted, want a refusal")
 	}
@@ -871,7 +872,7 @@ func TestAction_UnknownAction(t *testing.T) {
 func TestAction_MethodNotAllowed(t *testing.T) {
 	h, _, _ := testDir(t)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	req := httptest.NewRequest(http.MethodGet, "/api/files/action", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -926,7 +927,7 @@ func TestHandleDownload_File(t *testing.T) {
 func condGet(t *testing.T, h *Handler, path, etag, lastMod string) *httptest.ResponseRecorder {
 	t.Helper()
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	if etag != "" {
 		req.Header.Set("If-None-Match", etag)
@@ -1097,7 +1098,7 @@ func TestHandleDownload_ErrorPaths(t *testing.T) {
 			}
 
 			mux := http.NewServeMux()
-			h.RegisterRoutes(mux)
+			h.RegisterRoutes(routetest.On(mux))
 			req := httptest.NewRequest(method, url, nil)
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
@@ -1112,7 +1113,7 @@ func TestHandleDownload_ErrorPaths(t *testing.T) {
 func TestHandleUpload_SingleFile(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 
 	req := multipartUpload(t, prefix, map[string][]byte{"hello.txt": []byte("world")})
 	rec := httptest.NewRecorder()
@@ -1143,7 +1144,7 @@ func TestHandleUpload_SingleFile(t *testing.T) {
 func TestHandleUpload_NoPartialFileOnSuccess(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 
 	req := multipartUpload(t, prefix, map[string][]byte{"ok.txt": []byte("contents")})
 	rec := httptest.NewRecorder()
@@ -1166,7 +1167,7 @@ func TestHandleUpload_NoPartialFileOnSuccess(t *testing.T) {
 func TestHandleUpload_MultipleFiles(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 
 	req := multipartUpload(t, prefix, map[string][]byte{
 		"a.txt": []byte("A"),
@@ -1187,7 +1188,7 @@ func TestHandleUpload_MultipleFiles(t *testing.T) {
 func TestHandleUpload_StripsPathPrefixInFilename(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 
 	req := multipartUpload(t, prefix,
 		map[string][]byte{"subdir/hidden.txt": []byte("naughty")})
@@ -1209,7 +1210,7 @@ func TestHandleUpload_StripsPathPrefixInFilename(t *testing.T) {
 func TestHandleUpload_DotDotFilenameReturns400(t *testing.T) {
 	h, _, prefix := testDir(t)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 
 	req := multipartUpload(t, prefix, map[string][]byte{"..": []byte("skip")})
 	rec := httptest.NewRecorder()
@@ -1225,7 +1226,7 @@ func TestHandleUpload_DotDotFilenameReturns400(t *testing.T) {
 func TestHandleUpload_NoFiles(t *testing.T) {
 	h, _, prefix := testDir(t)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
@@ -1243,7 +1244,7 @@ func TestHandleUpload_NoFiles(t *testing.T) {
 func TestHandleUpload_OutsideRootsDir(t *testing.T) {
 	h, _, _ := testDir(t)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	req := multipartUpload(t, "etc", map[string][]byte{"x.txt": []byte("x")})
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -1257,7 +1258,7 @@ func TestHandleUpload_OutsideRootsDir(t *testing.T) {
 func TestHandleUpload_RefusesProtectedDir(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 
 	h.sensitive = h.sensitive.with(sensitivePath{Path: filepath.Join("/", prefix, "chats") + "/", IsDir: true})
 
@@ -1282,7 +1283,7 @@ func TestHandleUpload_RefusesProtectedDir(t *testing.T) {
 func TestHandleUpload_RefusesSensitiveFilename(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 
 	secret := filepath.Join(dir, "keys.json")
 	h.sensitive = h.sensitive.with(sensitivePath{Path: secret, IsDir: false})
@@ -1387,7 +1388,7 @@ func TestWriteFile_RelativeSymlinkSwappedAfterResolve(t *testing.T) {
 func TestHandleUpload_MethodNotAllowed(t *testing.T) {
 	h, _, _ := testDir(t)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	req := httptest.NewRequest(http.MethodGet, "/api/file/upload", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -1399,7 +1400,7 @@ func TestHandleUpload_MethodNotAllowed(t *testing.T) {
 func TestHandleUpload_InvalidMultipart(t *testing.T) {
 	h, _, _ := testDir(t)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	req := httptest.NewRequest(http.MethodPost, "/api/file/upload",
 		strings.NewReader("not multipart"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1414,7 +1415,7 @@ func TestHandleUpload_InvalidMultipart(t *testing.T) {
 func TestHandleUpload_TooLargeReturns413(t *testing.T) {
 	h, _, prefix := testDir(t)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 
 	// Streamed rather than built, so the test is not the package's memory peak.
 	pr, pw := io.Pipe()
@@ -1846,7 +1847,7 @@ func TestAction_Mkdir_InsideMount(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := locAt(h, filepath.Join(dir, "a", "b"))
-	err := actionMkdir(t.Context(), httptest.NewRecorder(), fileAction{}, l, h)
+	err := actionMkdir(t.Context(), httptest.NewRecorder(), FileAction{}, l, h)
 	if err != nil {
 		t.Fatalf("actionMkdir(%q) = %v, want nil (paths inside a mount must be creatable)", l.abs, err)
 	}
@@ -1863,7 +1864,7 @@ func TestAction_Mkdir_PropagatesError(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := locAt(h, filepath.Join(dir, "afile", "sub"))
-	err := actionMkdir(t.Context(), httptest.NewRecorder(), fileAction{}, l, h)
+	err := actionMkdir(t.Context(), httptest.NewRecorder(), FileAction{}, l, h)
 	if err == nil {
 		t.Fatalf("actionMkdir(%q) = nil, want non-nil (mkdir under a regular file must error)", l.abs)
 	}
@@ -1880,7 +1881,7 @@ func TestAction_Touch_InsideMount(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := locAt(h, filepath.Join(dir, "x", "y"))
-	err := actionTouch(t.Context(), httptest.NewRecorder(), fileAction{}, l, h)
+	err := actionTouch(t.Context(), httptest.NewRecorder(), FileAction{}, l, h)
 	if err != nil {
 		t.Fatalf("actionTouch(%q) = %v, want nil (paths inside a mount must be touchable)", l.abs, err)
 	}
@@ -1897,7 +1898,7 @@ func TestAction_Touch_PropagatesOpenError(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := locAt(h, filepath.Join(dir, "pfile", "child"))
-	err := actionTouch(t.Context(), httptest.NewRecorder(), fileAction{}, l, h)
+	err := actionTouch(t.Context(), httptest.NewRecorder(), FileAction{}, l, h)
 	if err == nil {
 		t.Fatalf("actionTouch(%q) = nil, want non-nil (OpenFile under a regular file must error)", l.abs)
 	}
@@ -1914,7 +1915,7 @@ func TestAction_Delete_InsideMount(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := locAt(h, filepath.Join(dir, "p", "q"))
-	err := actionDelete(t.Context(), httptest.NewRecorder(), fileAction{}, l, h)
+	err := actionDelete(t.Context(), httptest.NewRecorder(), FileAction{}, l, h)
 	if err != nil {
 		t.Fatalf("actionDelete(%q) = %v, want nil (paths inside a mount must be deletable)", l.abs, err)
 	}
@@ -1931,7 +1932,7 @@ func TestAction_Delete_PropagatesRemoveError(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := locAt(h, filepath.Join(dir, "escape", "leaf"))
-	err := actionDelete(t.Context(), httptest.NewRecorder(), fileAction{}, l, h)
+	err := actionDelete(t.Context(), httptest.NewRecorder(), FileAction{}, l, h)
 	if err == nil {
 		t.Fatalf("actionDelete(%q) = nil, want non-nil (RemoveAll through an escaping symlink must error)", l.abs)
 	}
@@ -1946,7 +1947,7 @@ func TestAction_Rename_PropagatesError(t *testing.T) {
 	h, dir, _ := testDir(t)
 	l := locAt(h, filepath.Join(dir, "ghost.txt"))
 	err := actionRename(t.Context(), httptest.NewRecorder(),
-		fileAction{Name: "renamed.txt"}, l, h)
+		FileAction{Name: "renamed.txt"}, l, h)
 	if err == nil {
 		t.Fatalf("actionRename(%q -> renamed.txt) = nil, want non-nil (renaming a missing source must error)", l.abs)
 	}
@@ -2202,28 +2203,6 @@ func TestHandleDownloadZip_Rejects(t *testing.T) {
 	}
 }
 
-// handleFile serves one resource under two methods, so its 405 must list
-// both. Routes are registered as plain paths (no ServeMux method patterns),
-// which is why an unsupported method reaches the handler at all. The path
-// must resolve inside the granted mount: the resolve prelude runs before the
-// method switch, so an unresolvable path yields 403 and never reaches 405.
-func TestHandleFile_RejectionListsEveryPermittedMethod(t *testing.T) {
-	h, _, prefix := testDir(t)
-
-	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
-	req := httptest.NewRequest(http.MethodDelete, "/api/file?path="+prefix+"/f.txt", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("DELETE status = %d, want 405", rec.Code)
-	}
-	if got := rec.Header().Get("Allow"); got != "GET, PUT" {
-		t.Errorf("Allow = %q, want %q", got, "GET, PUT")
-	}
-}
-
 // TestSensitivePaths_CredentialStoresRefused: the container HOME under /config/home holds the real
 // credential stores, which must all be refused.
 func TestSensitivePaths_CredentialStoresRefused(t *testing.T) {
@@ -2379,7 +2358,7 @@ func TestListFiles_Root_MountEntriesCarryStattedMetadata(t *testing.T) {
 		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 	var resp struct {
-		Files []fileEntry
+		Files []FileEntry
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -2428,7 +2407,7 @@ func TestAction_Touch_CreationIsLogged(t *testing.T) {
 	buf := captureFilebrowseLogs(t)
 
 	l := locAt(h, filepath.Join(dir, "fresh.txt"))
-	if err := actionTouch(t.Context(), httptest.NewRecorder(), fileAction{}, l, h); err != nil {
+	if err := actionTouch(t.Context(), httptest.NewRecorder(), FileAction{}, l, h); err != nil {
 		t.Fatalf("actionTouch(%q) = %v, want nil", l.abs, err)
 	}
 	if got := buf.String(); !strings.Contains(got, "filebrowse: touch") {
@@ -2513,7 +2492,7 @@ func TestHandleDownloadZip_WriterWithoutFlushSupport(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/files/download",
 		strings.NewReader(`{"paths":["`+prefix+`/a.txt"]}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -2599,5 +2578,25 @@ func TestWriteFileError_Statuses(t *testing.T) {
 					tc.err, rec.Body.String(), tc.wantBody)
 			}
 		})
+	}
+}
+
+// /api/file binds GET and PUT, so HEAD reads the file as GET does.
+func TestFileRoute_HEADAnswersAsGET(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("world"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	h.RegisterRoutes(routetest.On(mux))
+	head := httptest.NewRecorder()
+	mux.ServeHTTP(head, httptest.NewRequest(http.MethodHead, "/api/file?path="+prefix+"/hello.txt", http.NoBody))
+
+	get := getReq(t, h, "/api/file?path="+prefix+"/hello.txt")
+	if get.Code != http.StatusOK {
+		t.Fatalf("GET = %d %s, want 200", get.Code, get.Body)
+	}
+	if hct, gct := head.Header().Get("Content-Type"), get.Header().Get("Content-Type"); head.Code != get.Code || hct != gct {
+		t.Errorf("HEAD = %d %q, want GET's %d %q", head.Code, hct, get.Code, gct)
 	}
 }

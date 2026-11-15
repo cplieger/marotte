@@ -14,6 +14,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/forges"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 	"github.com/cplieger/marotte/internal/steering"
 	"github.com/cplieger/marotte/internal/subject"
 )
@@ -92,7 +93,7 @@ func wireForges(t *testing.T) *wiredForges {
 		quietNotifier{}, func() forges.Gate { return forges.Gate{} })
 	notifier.poller, notifier.steer = poller, quietSteering(t, m)
 	mux := http.NewServeMux()
-	forges.NewHTTPHandler(m).RegisterRoutes(mux)
+	forges.NewHTTPHandler(m).RegisterRoutes(routetest.On(mux))
 	return &wiredForges{m: m, mux: mux, notifier: notifier, hub: hub, dir: dir}
 }
 

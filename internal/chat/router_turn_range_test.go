@@ -15,7 +15,7 @@ func getTurnRange(t *testing.T, s *Store, id marotte.ChatID, turn string) *httpt
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id)+"/turns/"+turn, nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleOne(rec, req)
+	serveRouter(s, rec, req)
 	return rec
 }
 

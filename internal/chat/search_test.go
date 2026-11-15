@@ -432,7 +432,7 @@ func searchVia(t *testing.T, s *Store, id marotte.ChatID, query string) SearchRe
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id)+"/search"+query, nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleOne(rec, req)
+	serveRouter(s, rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /search%s = %d, body = %s", query, rec.Code, rec.Body.String())
 	}

@@ -468,14 +468,14 @@ func TestErrorRoute_RateLimitedSetsRetryAfterAndBody(t *testing.T) {
 	}
 }
 
-func TestErrorRoute_ReconnectRequiredIs401(t *testing.T) {
+func TestErrorRoute_ReconnectRequiredIs409(t *testing.T) {
 	bodies := failEveryMutation(t, &forgeapi.Error{
 		Op: "Token", Code: forgeapi.CodeReconnectRequired, Kind: forgeapi.KindUnauthorized,
 		Message: "the credential needs a new sign-in",
 	})
 	for op, body := range bodies {
-		if body["status"] != float64(http.StatusUnauthorized) || body["code"] != forgeapi.CodeReconnectRequired || body["kind"] != "unauthorized" {
-			t.Errorf("%s answered %v, want 401 %s kind unauthorized", op, body, forgeapi.CodeReconnectRequired)
+		if body["status"] != float64(http.StatusConflict) || body["code"] != forgeapi.CodeReconnectRequired || body["kind"] != "unauthorized" {
+			t.Errorf("%s answered %v, want 409 %s kind unauthorized", op, body, forgeapi.CodeReconnectRequired)
 		}
 	}
 }

@@ -1,10 +1,15 @@
 // Knowledge-base actions. The list is server-canonical (kiro-cli's global store) and refetched
 // after every mutation, so no optimistic state.
 
-import { apiAction, RETRY_STANDARD } from "./index.js";
+import { apiAction, fromEndpoint, RETRY_STANDARD } from "./index.js";
+import {
+  deleteKnowledgeByNameEndpoint,
+  deleteKnowledgeEndpoint,
+  postKnowledgeByNameCancelEndpoint,
+  postKnowledgeByNameReindexEndpoint,
+  postKnowledgeEndpoint,
+} from "../wire/client.gen.js";
 import { retryUnlessStill, stillOr } from "./still-applying.js";
-
-const KNOWLEDGE_API = "/api/knowledge";
 
 interface AddArgs {
   path: string;
@@ -18,11 +23,12 @@ export const addKnowledge = apiAction<AddArgs, { message?: string }>({
   idempotencyKey: true,
   retryable: retryUnlessStill,
   retry: RETRY_STANDARD,
-  request: ({ path, name }) => ({
-    method: "POST",
-    path: KNOWLEDGE_API,
-    body: name !== undefined && name !== "" ? { path, name } : { path },
-  }),
+  request: ({ path, name }) =>
+    fromEndpoint(
+      postKnowledgeEndpoint.request({
+        body: name !== undefined && name !== "" ? { path, name } : { path },
+      }),
+    ),
   error: false,
 });
 
@@ -36,10 +42,7 @@ interface RemoveArgs {
 export const removeKnowledge = apiAction<RemoveArgs, void>({
   name: "knowledge.remove",
   dedupe: (args) => `knowledge.remove:${args.name}`,
-  request: ({ name }) => ({
-    method: "DELETE",
-    path: `${KNOWLEDGE_API}/${encodeURIComponent(name)}`,
-  }),
+  request: ({ name }) => fromEndpoint(deleteKnowledgeByNameEndpoint.request({ name })),
   error: stillOr("removing the knowledge base", "Could not remove knowledge base"),
 });
 
@@ -52,10 +55,7 @@ interface ReindexArgs {
 export const reindexKnowledge = apiAction<ReindexArgs, { message?: string }>({
   name: "knowledge.reindex",
   dedupe: (args) => `knowledge.reindex:${args.name}`,
-  request: ({ name }) => ({
-    method: "POST",
-    path: `${KNOWLEDGE_API}/${encodeURIComponent(name)}/reindex`,
-  }),
+  request: ({ name }) => fromEndpoint(postKnowledgeByNameReindexEndpoint.request({ name })),
   error: stillOr("starting the re-index", "Could not re-index knowledge base"),
 });
 
@@ -67,10 +67,7 @@ interface CancelArgs {
 export const cancelKnowledgeIndexing = apiAction<CancelArgs, { message?: string }>({
   name: "knowledge.cancel",
   dedupe: (args) => `knowledge.cancel:${args.name}`,
-  request: ({ name }) => ({
-    method: "POST",
-    path: `${KNOWLEDGE_API}/${encodeURIComponent(name)}/cancel`,
-  }),
+  request: ({ name }) => fromEndpoint(postKnowledgeByNameCancelEndpoint.request({ name })),
   error: stillOr("stopping the index", "Couldn't stop indexing"),
 });
 
@@ -78,6 +75,6 @@ export const cancelKnowledgeIndexing = apiAction<CancelArgs, { message?: string 
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for an action with no result
 export const clearKnowledge = apiAction<void, void>({
   name: "knowledge.clear",
-  request: () => ({ method: "DELETE", path: KNOWLEDGE_API }),
+  request: () => fromEndpoint(deleteKnowledgeEndpoint.request()),
   error: stillOr("clearing the knowledge bases", "Couldn't clear knowledge bases"),
 });

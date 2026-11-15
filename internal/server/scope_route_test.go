@@ -17,6 +17,7 @@ import (
 	"github.com/cplieger/go/sse/v2/ssetest"
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 // scopeStack serves the agent's real event routes behind the production middleware stack, so the scope POST a
@@ -29,7 +30,7 @@ func scopeStack(t *testing.T) *httptest.Server {
 	}
 	rt := agent.New(t.Context(), t.TempDir(), nil, chats)
 	mux := http.NewServeMux()
-	rt.RegisterRoutes(mux)
+	rt.RegisterRoutes(routetest.On(mux))
 	idem := newIdempotencyCache(idempotencyTTL)
 	s := &Server{}
 	srv := httptest.NewServer(httpserver.Chain(mux, s.middlewareStack(baseCSPPolicy, idem)...))

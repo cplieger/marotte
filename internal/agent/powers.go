@@ -17,6 +17,7 @@ import (
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/powers"
+	"github.com/cplieger/marotte/internal/route"
 )
 
 const (
@@ -83,8 +84,8 @@ type kasPower struct {
 	IsAgentPlugin    bool              `json:"isAgentPlugin"`
 }
 
-// powerRow is one GET /api/powers row: a catalogue entry, an installed Power, or both.
-type powerRow struct {
+// PowerRow is one GET /api/powers row: a catalogue entry, an installed Power, or both.
+type PowerRow struct {
 	Name          string   `json:"name"`
 	DisplayName   string   `json:"display_name,omitempty"`
 	Description   string   `json:"description,omitempty"`
@@ -112,27 +113,29 @@ const (
 // maxPowerLoadErrors bounds one list: KAS reports one entry per failed Power directory.
 const maxPowerLoadErrors = 32
 
-// powerLoadError is one `_kiro/powers/list` errors[] entry. Its `source`, a home-tree path, is never decoded or forwarded.
-type powerLoadError struct {
+// PowerLoadError is one `_kiro/powers/list` errors[] entry. Its `source`, a home-tree path, is never decoded or forwarded.
+type PowerLoadError struct {
 	Name    string `json:"name"`
 	Message string `json:"message"`
 }
 
-type powersListResponse struct {
+// PowersList is GET /api/powers' body.
+type PowersList struct {
 	Catalog    string           `json:"catalog"`
 	Installed  string           `json:"installed"`
 	Blocked    string           `json:"blocked,omitempty"`
-	Powers     []powerRow       `json:"powers"`
-	LoadErrors []powerLoadError `json:"load_errors,omitempty"`
+	Powers     []PowerRow       `json:"powers"`
+	LoadErrors []PowerLoadError `json:"load_errors,omitempty"`
 	// PolicyPending is true until the administrator rules are read; installs are refused until then.
 	PolicyPending bool `json:"policy_pending,omitempty"`
 }
 
-func (ps *powersSurface) register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/powers", ps.handleList)
-	mux.HandleFunc("GET /api/powers/{name}/servers", ps.handleServers)
-	mux.HandleFunc("POST /api/powers/{name}/install", ps.handleInstall)
-	mux.HandleFunc("DELETE /api/powers/{name}", ps.handleUninstall)
+func (ps *powersSurface) register(m routeMux) {
+	name := route.WithParams[marotte.NamePath]
+	m.Bind(route.JSON[struct{}, PowersList]("GET /api/powers", http.HandlerFunc(ps.handleList)))
+	m.Bind(name(route.JSON[struct{}, PowerServers]("GET /api/powers/{name}/servers", http.HandlerFunc(ps.handleServers))))
+	m.Bind(name(route.JSON[struct{}, httpreply.OKBody]("POST /api/powers/{name}/install", http.HandlerFunc(ps.handleInstall))))
+	m.Bind(name(route.JSON[struct{}, httpreply.OKBody]("DELETE /api/powers/{name}", http.HandlerFunc(ps.handleUninstall))))
 }
 
 func (ps *powersSurface) unavailable(w http.ResponseWriter) bool {
@@ -162,13 +165,13 @@ func (ps *powersSurface) handleList(w http.ResponseWriter, r *http.Request) {
 		catalog             []powers.Entry
 		catalogErr, listErr error
 		installed           []kasPower
-		loadErrors          []powerLoadError
+		loadErrors          []PowerLoadError
 		wg                  sync.WaitGroup
 	)
 	wg.Go(func() { catalog, catalogErr = ps.backend.Catalog(ctx) })
 	wg.Go(func() { installed, loadErrors, listErr = ps.installed(ctx) })
 	wg.Wait()
-	resp := powersListResponse{Catalog: powersReady, Installed: powersReady, PolicyPending: !ps.adminKnown()}
+	resp := PowersList{Catalog: powersReady, Installed: powersReady, PolicyPending: !ps.adminKnown()}
 	resp.Blocked, _ = ps.blocked()
 	if catalogErr != nil {
 		slog.Warn("powers: catalogue unavailable", "error", catalogErr)
@@ -186,7 +189,7 @@ func (ps *powersSurface) handleList(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, resp)
 }
 
-func (ps *powersSurface) installed(ctx context.Context) ([]kasPower, []powerLoadError, error) {
+func (ps *powersSurface) installed(ctx context.Context) ([]kasPower, []PowerLoadError, error) {
 	cctx, cancel := context.WithTimeout(ctx, powersCallTimeout)
 	defer cancel()
 	raw, err := ps.engine.rawCall(cctx, "powers list", methodKiroPowersList, map[string]any{})
@@ -195,7 +198,7 @@ func (ps *powersSurface) installed(ctx context.Context) ([]kasPower, []powerLoad
 	}
 	var res struct {
 		Powers []kasPower       `json:"powers"`
-		Errors []powerLoadError `json:"errors"`
+		Errors []PowerLoadError `json:"errors"`
 	}
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &res); err != nil {
@@ -205,8 +208,8 @@ func (ps *powersSurface) installed(ctx context.Context) ([]kasPower, []powerLoad
 	return res.Powers, loadErrorsFrom(res.Errors), nil
 }
 
-func loadErrorsFrom(in []powerLoadError) []powerLoadError {
-	var out []powerLoadError
+func loadErrorsFrom(in []PowerLoadError) []PowerLoadError {
+	var out []PowerLoadError
 	for _, e := range in {
 		if len(out) == maxPowerLoadErrors {
 			break
@@ -215,41 +218,41 @@ func loadErrorsFrom(in []powerLoadError) []powerLoadError {
 		if name == "" && msg == "" {
 			continue
 		}
-		out = append(out, powerLoadError{Name: name, Message: msg})
+		out = append(out, PowerLoadError{Name: name, Message: msg})
 	}
 	return out
 }
 
 // withUnconfigured adds a load error for each Power whose servers marotte skipped
 // and KAS did not already report, within maxPowerLoadErrors.
-func withUnconfigured(errs []powerLoadError, names []string) []powerLoadError {
+func withUnconfigured(errs []PowerLoadError, names []string) []PowerLoadError {
 	for _, name := range names {
 		if len(errs) == maxPowerLoadErrors {
 			break
 		}
 		name = powerText(name)
-		if slices.ContainsFunc(errs, func(e powerLoadError) bool { return e.Name == name }) {
+		if slices.ContainsFunc(errs, func(e PowerLoadError) bool { return e.Name == name }) {
 			continue
 		}
-		errs = append(errs, powerLoadError{Name: name, Message: powerUnconfiguredText})
+		errs = append(errs, PowerLoadError{Name: name, Message: powerUnconfiguredText})
 	}
 	return errs
 }
 
 // mergePowers lists every catalogue entry in catalogue order, marked installed
 // when KAS reports it, then the installed Powers the catalogue does not carry.
-func mergePowers(catalog []powers.Entry, installed []kasPower) []powerRow {
+func mergePowers(catalog []powers.Entry, installed []kasPower) []PowerRow {
 	byName := make(map[string]*kasPower, len(installed))
 	for i := range installed {
 		if powers.ValidName(installed[i].Name) {
 			byName[installed[i].Name] = &installed[i]
 		}
 	}
-	out := make([]powerRow, 0, len(catalog)+len(byName))
+	out := make([]PowerRow, 0, len(catalog)+len(byName))
 	seen := make(map[string]bool, len(catalog))
 	for i := range catalog {
 		e := &catalog[i]
-		row := powerRow{
+		row := PowerRow{
 			Name: e.Name, DisplayName: e.DisplayName, Description: e.Description,
 			Author: e.Author, Category: e.Category, PublisherTier: e.PublisherTier,
 			AuthType: e.AuthType, InCatalog: true,
@@ -265,14 +268,14 @@ func mergePowers(catalog []powers.Entry, installed []kasPower) []powerRow {
 		if byName[k.Name] != k || seen[k.Name] {
 			continue
 		}
-		row := powerRow{Name: k.Name, DisplayName: powerText(k.DisplayName), Description: powerText(k.Description)}
+		row := PowerRow{Name: k.Name, DisplayName: powerText(k.DisplayName), Description: powerText(k.Description)}
 		applyInstalled(&row, k)
 		out = append(out, row)
 	}
 	return out
 }
 
-func applyInstalled(row *powerRow, k *kasPower) {
+func applyInstalled(row *PowerRow, k *kasPower) {
 	row.Installed = true
 	row.Origin = powerText(k.Meta.Kiro.Resource.Source.Origin)
 	row.MCPServers = powerTexts(k.MCPServerNames)
@@ -297,7 +300,8 @@ func powerTexts(in []string) []string {
 	return out
 }
 
-type powerServersResponse struct {
+// PowerServers is GET /api/powers/{name}/servers' body.
+type PowerServers struct {
 	Servers []string `json:"servers"`
 	Known   bool     `json:"known"`
 }
@@ -318,7 +322,7 @@ func (ps *powersSurface) handleServers(w http.ResponseWriter, r *http.Request) {
 	if servers == nil {
 		servers = []string{}
 	}
-	httpserver.WriteJSON(w, powerServersResponse{Servers: servers, Known: known})
+	httpserver.WriteJSON(w, PowerServers{Servers: servers, Known: known})
 }
 
 // handleInstall refuses under an administrator powers lock; removal stays open.
@@ -389,7 +393,7 @@ func (ps *powersSurface) runVerb(w http.ResponseWriter, r *http.Request, done st
 		httpserver.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSONWithCode(msg, powerRenderFailedCode))
 		return
 	}
-	httpserver.OK(w)
+	httpreply.OK(w)
 }
 
 // refresh tells the engine to rescan installed Powers, once for every session; a down engine rescans at its spawn.

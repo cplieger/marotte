@@ -16,8 +16,9 @@ import (
 	"github.com/cplieger/marotte/internal/workspace"
 )
 
+// PolicyProfileWrite is POST /api/permissions/profile's body.
 // Seed is valid only when switching TO custom, and refused otherwise rather than ignored.
-type profileBody struct {
+type PolicyProfileWrite struct {
 	Profile string `json:"profile"`
 	Seed    bool   `json:"seed"`
 }
@@ -26,12 +27,10 @@ type profileBody struct {
 // profile, the one new chats start on.
 func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
-	case http.MethodGet:
+	case http.MethodGet, http.MethodHead:
 		s.handleProfileView(w, r)
 	case http.MethodPost:
 		s.handleProfileSelect(w, r)
-	default:
-		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
 }
 
@@ -70,7 +69,7 @@ func (s *Server) savedGrants(ctx context.Context) bool {
 }
 
 func (s *Server) handleProfileSelect(w http.ResponseWriter, r *http.Request) {
-	var body profileBody
+	var body PolicyProfileWrite
 	if !decodeBody(w, r, &body) {
 		return
 	}
@@ -95,7 +94,7 @@ func (s *Server) handleProfileSelect(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("security profile selected", "profile", profile.ID,
 		"presets", profile.Presets, "seeded", body.Seed)
-	httpserver.OK(w)
+	httpreply.OK(w)
 	if s.policyReload != nil {
 		s.policyReload.SecurityProfileChanged(durable.Context(r.Context()))
 	}

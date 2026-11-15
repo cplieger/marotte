@@ -27,7 +27,7 @@ var statusArgs = []string{
 // unmerged RECORD TYPE, not from reading XY letters.
 type porcelainStatus struct {
 	Branch     string
-	Files      []gitFile
+	Files      []StatusFile
 	Ahead      int
 	Behind     int
 	Stashes    int

@@ -46,7 +46,7 @@ func docsDeleteServerWithConfig(t *testing.T, configRel string) (http.Handler, s
 	srv := docServer(work, WithSensitive(sensitive))
 	srv.files = files
 	srv.docDeleter = files
-	return srv.routes(), work
+	return srv.mux(), work
 }
 
 // listDocs fails rather than hangs when the scan blocks, as an open of a fifo does.
@@ -430,7 +430,7 @@ func TestKiroDocsDelete_BroadcastsSoEveryDeviceRefetches(t *testing.T) {
 	srv := docServer(work, WithSensitive(sensitive), WithDocDeleter(files))
 	engine := &fakeEngine{}
 	srv.agent = engine
-	h := srv.routes()
+	h := srv.mux()
 	row := mustRow(t, listDocs(t, h), catPrompt, "gone")
 	if rec := deleteRow(t, h, &row); rec.Code != http.StatusOK {
 		t.Fatalf("delete: status %d: %s", rec.Code, rec.Body.String())

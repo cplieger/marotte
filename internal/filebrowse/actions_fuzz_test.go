@@ -14,7 +14,7 @@ func FuzzFileActionParsing(f *testing.F) {
 	f.Add([]byte(`null`))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		var body fileAction
+		var body FileAction
 		if err := json.Unmarshal(data, &body); err != nil {
 			return
 		}

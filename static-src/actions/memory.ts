@@ -1,11 +1,16 @@
 // Memory actions (Docs → Memories). kiro-cli's store is refetched after every mutation, so no
 // optimistic state. Addressed by id: a title can repeat across scopes.
 
-import { API_TIMEOUT_MS, apiAction, defineAction } from "./index.js";
+import { API_TIMEOUT_MS, apiAction, defineAction, fromEndpoint } from "./index.js";
 import { readDownload } from "./download.js";
+import {
+  deleteMemoryByIdEndpoint,
+  getMemoryExportEndpoint,
+  patchMemoryByIdEndpoint,
+  postMemoryImportEndpoint,
+  putMemorySyncEndpoint,
+} from "../wire/client.gen.js";
 import { stillOr } from "./still-applying.js";
-
-const MEMORY_API = "/api/memory";
 
 /** The fields an edit may change; an absent one is left as it is. */
 export interface MemoryEdit {
@@ -23,11 +28,7 @@ interface UpdateArgs {
 export const updateMemory = apiAction<UpdateArgs>({
   name: "memory.update",
   dedupe: (args) => `memory.update:${args.id}`,
-  request: ({ id, edit }) => ({
-    method: "PATCH",
-    path: `${MEMORY_API}/${encodeURIComponent(id)}`,
-    body: edit,
-  }),
+  request: ({ id, edit }) => fromEndpoint(patchMemoryByIdEndpoint.request({ id, body: edit })),
   error: stillOr("saving the memory", "Couldn't save the memory"),
 });
 
@@ -38,10 +39,7 @@ interface DeleteArgs {
 export const deleteMemory = apiAction<DeleteArgs>({
   name: "memory.delete",
   dedupe: (args) => `memory.delete:${args.id}`,
-  request: ({ id }) => ({
-    method: "DELETE",
-    path: `${MEMORY_API}/${encodeURIComponent(id)}`,
-  }),
+  request: ({ id }) => fromEndpoint(deleteMemoryByIdEndpoint.request({ id })),
   error: stillOr("deleting the memory", "Couldn't delete the memory"),
 });
 
@@ -53,7 +51,7 @@ interface SyncArgs {
 export const setMemorySync = apiAction<SyncArgs>({
   name: "memory.sync",
   dedupe: () => "memory.sync",
-  request: (body) => ({ method: "PUT", path: `${MEMORY_API}/sync`, body }),
+  request: (body) => fromEndpoint(putMemorySyncEndpoint.request({ body })),
   error: stillOr("changing memory sync", "Couldn't change memory sync"),
 });
 
@@ -62,8 +60,7 @@ export const importMemories = apiAction<{ content: string }>({
   name: "memory.import",
   dedupe: () => "memory.import",
   request: ({ content }) => ({
-    method: "POST",
-    path: `${MEMORY_API}/import`,
+    ...fromEndpoint(postMemoryImportEndpoint.request()),
     rawBody: content,
     headers: { "Content-Type": "text/plain; charset=utf-8" },
   }),
@@ -81,11 +78,7 @@ export const downloadMemoryExport = defineAction<Record<string, never>, void>({
   name: "memory.export",
   dedupe: () => "memory.export",
   run: async (_args, signal) => {
-    const blob = await readDownload(
-      { method: "GET", path: `${MEMORY_API}/export` },
-      signal,
-      API_TIMEOUT_MS,
-    );
+    const blob = await readDownload(getMemoryExportEndpoint.request(), signal, API_TIMEOUT_MS);
     if (signal.aborted) {
       return;
     }

@@ -628,7 +628,7 @@ func validateOAuthField(field, value string, maxLen int) error {
 // follow the "<kind>[i]: ..." format both call sites relied on, so the
 // existing validate_test.go assertions continue to match substring-
 // wise. See validateStdio / validateRemote for the call sites.
-func validateKeyPairs(kind string, pairs []keyPair, maxEntries, maxValue int, caseInsensitiveDedup bool) error {
+func validateKeyPairs(kind string, pairs []KeyPair, maxEntries, maxValue int, caseInsensitiveDedup bool) error {
 	var errs fieldErrs
 	if len(pairs) > maxEntries {
 		errs.addf(kind, "%s: too many entries (%d, max %d)",

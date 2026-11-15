@@ -6,12 +6,14 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/cplieger/go/pathinside"
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/route"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -80,29 +82,141 @@ func WithShowMax(n int64) Option {
 	}
 }
 
-// RegisterRoutes installs the /api/git/* mux entries.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/git/repos", h.handleRepos)
-	mux.HandleFunc("/api/git/status", h.handleStatus)
-	mux.HandleFunc("/api/git/status-all", h.handleStatusAll)
-	mux.HandleFunc("/api/git/stage", h.handleStage)
-	mux.HandleFunc("/api/git/unstage", h.handleUnstage)
-	mux.HandleFunc("/api/git/discard", h.handleDiscard)
-	mux.HandleFunc("/api/git/commit", h.handleCommit)
-	mux.HandleFunc("/api/git/push", h.handlePush)
-	mux.HandleFunc("/api/git/pull", h.handlePull)
-	mux.HandleFunc("/api/git/pull-all", h.handlePullAll)
-	mux.HandleFunc("/api/git/show", h.handleShow)
-	mux.HandleFunc("/api/git/clone", h.handleClone)
-	mux.HandleFunc("/api/git/log", h.handleLog)
-	mux.HandleFunc("/api/git/branch-commits", h.handleBranchCommits)
-	mux.HandleFunc("/api/git/branches", h.handleBranches)
-	mux.HandleFunc("/api/git/checkout", h.handleCheckout)
-	mux.HandleFunc("/api/git/stash", h.handleStash)
-	mux.HandleFunc("/api/git/stash-pop", h.handleStashPop)
-	mux.HandleFunc("/api/git/remove", h.handleRemove)
-	mux.HandleFunc("/api/git/reclone", h.handleReclone)
-	mux.HandleFunc("/api/git/pr-fetch", h.handlePRFetch)
+// routeMux is what a route registration needs: the server's registrar, or a test's mux. An alias, so
+// RegisterRoutes has the server's routeHandler signature.
+type routeMux = interface{ Bind(route.Binding) }
+
+// RegisterRoutes binds every /api/git/* route.
+func (h *Handler) RegisterRoutes(m routeMux) {
+	get := func(p string, f http.HandlerFunc, mt route.MethodTypes) { m.Bind(route.Methods(p, f, mt)) }
+	repo := reflect.TypeFor[RepoQuery]()
+	get("/api/git/repos", h.handleRepos, route.Typed[struct{}, RepoNames](http.MethodGet))
+	get("/api/git/status", h.handleStatus, route.Typed[struct{}, Status](http.MethodGet).WithQuery(reflect.TypeFor[StatusQuery]()))
+	get("/api/git/status-all", h.handleStatusAll, route.Typed[struct{}, StatusAll](http.MethodGet).WithQuery(reflect.TypeFor[StatusAllQuery]()))
+	get("/api/git/show", h.handleShow, route.Typed[struct{}, ShowResponse](http.MethodGet).WithQuery(reflect.TypeFor[ShowQuery]()))
+	get("/api/git/log", h.handleLog, route.Typed[struct{}, Log](http.MethodGet).WithQuery(repo))
+	get("/api/git/branch-commits", h.handleBranchCommits,
+		route.Typed[struct{}, BranchCommits](http.MethodGet).WithQuery(reflect.TypeFor[BranchCommitsQuery]()))
+	get("/api/git/branches", h.handleBranches, route.Typed[struct{}, Branches](http.MethodGet).WithQuery(repo))
+	post := func(p string, f http.HandlerFunc, mt route.MethodTypes) { m.Bind(route.Methods(p, f, mt)) }
+	post("/api/git/stage", h.handleStage, route.Typed[FilesRequest, ChangeResult](http.MethodPost))
+	post("/api/git/unstage", h.handleUnstage, route.Typed[FilesRequest, ChangeResult](http.MethodPost))
+	post("/api/git/discard", h.handleDiscard, route.Typed[FilesRequest, ChangeResult](http.MethodPost))
+	post("/api/git/commit", h.handleCommit, route.Typed[CommitRequest, CommandOutput](http.MethodPost))
+	post("/api/git/push", h.handlePush, route.Typed[RepoRequest, CommandOutput](http.MethodPost))
+	post("/api/git/pull", h.handlePull, route.Typed[RepoRequest, CommandOutput](http.MethodPost))
+	post("/api/git/pull-all", h.handlePullAll, route.Typed[struct{}, PullAll](http.MethodPost))
+	// An NDJSON stream of progress lines, then the outcome line.
+	m.Bind(route.Binding{
+		Pattern: "/api/git/clone", Handler: http.HandlerFunc(h.handleClone), Kind: route.KindRaw,
+		Methods: []route.MethodTypes{{Method: http.MethodPost, Request: reflect.TypeFor[CloneRequest]()}},
+	})
+	post("/api/git/checkout", h.handleCheckout, route.Typed[CheckoutRequest, CommandOutput](http.MethodPost))
+	post("/api/git/stash", h.handleStash, route.Typed[RepoRequest, CommandOutput](http.MethodPost))
+	post("/api/git/stash-pop", h.handleStashPop, route.Typed[RepoRequest, CommandOutput](http.MethodPost))
+	post("/api/git/remove", h.handleRemove, route.Typed[RepoRequest, ChangeResult](http.MethodPost))
+	post("/api/git/reclone", h.handleReclone, route.Typed[RepoRequest, CommandOutput](http.MethodPost))
+	post("/api/git/pr-fetch", h.handlePRFetch, route.Typed[PRFetchRequest, CommandOutput](http.MethodPost))
+}
+
+// RepoQuery is the query of the reads that address one repo; empty is the workspace root.
+type RepoQuery struct {
+	Repo string `json:"repo,omitempty"`
+}
+
+// StatusQuery is GET /api/git/status' query; any Quick skips the fetch.
+type StatusQuery struct {
+	Repo  string `json:"repo,omitempty"`
+	Quick string `json:"quick,omitempty"`
+}
+
+// StatusAllQuery is GET /api/git/status-all's query: Fetch "1" fetches first, Paths scopes the scan.
+type StatusAllQuery struct {
+	Fetch string `json:"fetch,omitempty"`
+	Paths string `json:"paths,omitempty"`
+}
+
+// ShowQuery is GET /api/git/show's query.
+type ShowQuery struct {
+	Repo string `json:"repo,omitempty"`
+	Path string `json:"path"`
+	Ref  string `json:"ref,omitempty"`
+}
+
+// BranchCommitsQuery is GET /api/git/branch-commits' query.
+type BranchCommitsQuery struct {
+	Repo string `json:"repo,omitempty"`
+	Base string `json:"base"`
+	Head string `json:"head,omitempty"`
+}
+
+// RepoNames is GET /api/git/repos' body.
+type RepoNames struct {
+	Repos []string `json:"repos"`
+}
+
+// Log is GET /api/git/log's body.
+type Log struct {
+	Remote          string   `json:"remote"`
+	CommitURLPrefix string   `json:"commit_url_prefix"`
+	Entries         []string `json:"entries"`
+	Behind          int      `json:"behind"`
+}
+
+// BranchCommits is GET /api/git/branch-commits' body.
+type BranchCommits struct {
+	Subjects []string `json:"subjects"`
+}
+
+// Branch is one row of GET /api/git/branches.
+type Branch struct {
+	Name    string `json:"name"`
+	Current bool   `json:"current"`
+}
+
+// Branches is GET /api/git/branches' body.
+type Branches struct {
+	Current  string   `json:"current"`
+	Branches []Branch `json:"branches"`
+}
+
+// PullAll is POST /api/git/pull-all's body.
+type PullAll struct {
+	Repos []PullResult `json:"repos"`
+}
+
+// FilesRequest is a stage, unstage or discard body.
+type FilesRequest struct {
+	RepoRequest
+
+	Files []string `json:"files"`
+}
+
+// CommitRequest is POST /api/git/commit's body.
+type CommitRequest struct {
+	RepoRequest
+
+	Message string `json:"message"`
+}
+
+// CheckoutRequest is POST /api/git/checkout's body.
+type CheckoutRequest struct {
+	RepoRequest
+
+	Branch string `json:"branch"`
+	Create bool   `json:"create"`
+}
+
+// PRFetchRequest is POST /api/git/pr-fetch's body.
+type PRFetchRequest struct {
+	Repo   string `json:"repo"`
+	Head   string `json:"head"`
+	Number int    `json:"number"`
+}
+
+// CloneRequest is POST /api/git/clone's body.
+type CloneRequest struct {
+	URL string `json:"url"`
 }
 
 // Empty, "." and rejected inputs fall back to workDir. HasDotDot judges the name as written, before
@@ -122,33 +236,28 @@ func (h *Handler) repoDir(repo string) string {
 
 func repoFromQuery(r *http.Request) string { return r.URL.Query().Get("repo") }
 
-type repoBody struct {
+// RepoRequest names the repo a write addresses; empty is the workspace root.
+type RepoRequest struct {
 	Repo string `json:"repo"`
 }
 
-type gitStatusResp struct {
-	Branch   string    `json:"branch"`
-	Remote   string    `json:"remote"`
-	Files    []gitFile `json:"files"`
-	Ahead    int       `json:"ahead"`
-	Behind   int       `json:"behind"`
-	Stashes  int       `json:"stashes"`
-	IsRepo   bool      `json:"is_repo"`
-	HasDirty bool      `json:"has_dirty"`
+// Status is GET /api/git/status' body.
+type Status struct {
+	Branch   string       `json:"branch"`
+	Remote   string       `json:"remote"`
+	Files    []StatusFile `json:"files"`
+	Ahead    int          `json:"ahead"`
+	Behind   int          `json:"behind"`
+	Stashes  int          `json:"stashes"`
+	IsRepo   bool         `json:"is_repo"`
+	HasDirty bool         `json:"has_dirty"`
 }
 
 // handlePRFetch fetches a pull request's head ref into a local branch named
 // "pr-<number>", or body.Head when set. prRefShape owns which ref shape the
 // remote uses.
 func (h *Handler) handlePRFetch(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
-	var body struct {
-		Repo   string `json:"repo"`
-		Head   string `json:"head"`
-		Number int    `json:"number"`
-	}
+	var body PRFetchRequest
 	if !decodePostBody(w, r, &body, "bad request") {
 		return
 	}

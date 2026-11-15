@@ -11,6 +11,7 @@ import (
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/launchrule"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 // TestLaunchRuleDelete_ThroughTheRequestPathGuard drives the agent's real launch-rule routes behind
@@ -28,7 +29,7 @@ func TestLaunchRuleDelete_ThroughTheRequestPathGuard(t *testing.T) {
 				t.Fatalf("launchrule.NewStore: %v", err)
 			}
 			if _, err := st.Create(t.Context(), &launchrule.Rule{
-				Source: source, When: launchrule.When{Clock: &launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 3}},
+				Source: source, When: launchrule.When{Clock: &launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 3}},
 			}); err != nil {
 				t.Fatalf("Create: %v", err)
 			}
@@ -69,6 +70,6 @@ func launchRuleMux(t *testing.T, st *launchrule.Store) *http.ServeMux {
 		}
 	})
 	mux := http.NewServeMux()
-	rt.RegisterRoutes(mux)
+	rt.RegisterRoutes(routetest.On(mux))
 	return mux
 }

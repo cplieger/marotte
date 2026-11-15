@@ -3,10 +3,9 @@
 // guards whose failure IS one of those responses.
 //
 // httpserver owns the headers, the status and the encode; this package owns
-// marotte's error taxonomy. Every helper writes the bare {"error": "msg"}
-// envelope marotte's clients decode, leaving httpserver.ErrorResponse's Code and
-// RequestID empty, so a handler must use these helpers rather than hand-roll
-// the envelope.
+// marotte's error taxonomy. Every helper writes the {"error": "msg"} envelope
+// marotte's clients decode, with a Code only where Codes lists one and RequestID
+// empty, so a handler must use these helpers rather than hand-roll the envelope.
 package httpreply
 
 import (
@@ -17,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/marotte/internal/route"
 )
 
 // jsonKeyError is the standard JSON error response key.
@@ -102,13 +102,35 @@ func setAllow(w http.ResponseWriter, method string, more ...string) {
 }
 
 // MethodNotAllowed writes a 405 plus the Allow header RFC 9110 §15.5.6 requires. Pass exactly the
-// methods the addressed resource dispatches: an over-promising Allow makes a client retry a method
-// that 405s again. HEAD is not implied by GET, because these handlers compare r.Method for equality
-// and HEAD also lands here.
+// methods the addressed resource dispatches, HEAD among them only when it is served: an
+// over-promising Allow makes a client retry a method that 405s again.
 func MethodNotAllowed(w http.ResponseWriter, method string, more ...string) {
 	setAllow(w, method, more...)
-	httpserver.WriteJSONStatus(w, http.StatusMethodNotAllowed, httpserver.ErrorResponse{Error: "method not allowed"})
+	httpserver.WriteJSONStatus(w, http.StatusMethodNotAllowed, httpserver.ErrorResponse{Error: "method not allowed", Code: codeMethodNotAllowed})
 }
+
+const codeMethodNotAllowed = "method_not_allowed"
+
+// Codes are the envelope codes any handler can answer through this package.
+var Codes = route.CodeSet{
+	{Code: codeMethodNotAllowed, Status: http.StatusMethodNotAllowed},
+}
+
+// MsgUnknownEndpoint is the message of the 404 UnknownEndpoint writes.
+const MsgUnknownEndpoint = "unknown endpoint"
+
+// UnknownEndpoint is the 404 for a path no route claims, and for a route whose dependency is absent.
+var UnknownEndpoint = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	NotFound(w, MsgUnknownEndpoint)
+})
+
+// OKBody is the {"ok": true} acknowledgement OK writes.
+type OKBody struct {
+	OK bool `json:"ok"`
+}
+
+// OK writes 200 {"ok": true}.
+func OK(w http.ResponseWriter) { httpserver.WriteJSON(w, OKBody{OK: true}) }
 
 // InternalError writes a 500 with {"error": "internal error"} and logs
 // the actual error at slog.Error for correlation. Never exposes internal

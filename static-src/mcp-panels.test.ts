@@ -62,7 +62,6 @@ vi.mock(import("./icons.js"), async (importOriginal) => {
 });
 vi.mock("./actions/mcp.js", () => ({
   // Present-but-undefined for real-ESM linking.
-  MCP_API: undefined,
   validationFieldsOf: undefined,
   registryFailureOf: undefined,
   saveServer: { dispatch: async () => ({}) },

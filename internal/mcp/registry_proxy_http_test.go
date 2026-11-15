@@ -18,6 +18,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 // redirectTransport rewrites any request to a fake upstream URL. The
@@ -51,7 +53,7 @@ func newProxyAgainst(t *testing.T, upstream *httptest.Server) (*RegistryProxy, *
 		CheckRedirect: p.client.CheckRedirect,
 	}
 	mux := http.NewServeMux()
-	p.RegisterRoutes(mux)
+	p.RegisterRoutes(routetest.On(mux))
 	return p, mux
 }
 
@@ -460,7 +462,7 @@ func TestRegistryProxy_Search_refusesNonAllowlistedRedirect(t *testing.T) {
 	p.client.Transport = &redirectTransport{base: upstream.URL}
 	p.client.Timeout = 2 * time.Second
 	mux := http.NewServeMux()
-	p.RegisterRoutes(mux)
+	p.RegisterRoutes(routetest.On(mux))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/mcp/registry/search?q=x", nil)
 	rec := httptest.NewRecorder()

@@ -23,14 +23,16 @@ import (
 // permissions.yaml write KAS hot-reloads). The writer is conservative: a new rule defaults to
 // `ask`, only user and workspace scopes are writable, and widening needs an explicit confirm.
 
+// PolicyViewQuery is GET /api/permissions' query.
+type PolicyViewQuery struct {
+	Scope string `json:"scope,omitempty"`
+}
+
 // handlePolicyView serves GET /api/permissions via _kiro/permissions/list on an observer
 // session, with the load errors of that session's door, degrading to the editable files
 // (Available=false, no load errors) when the engine does not answer.
 func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 	// Gated here, not on the pattern (see ListenAndServe).
-	if !httpreply.RequireMethod(w, r, http.MethodGet) {
-		return
-	}
 	scope := r.URL.Query().Get("scope")
 	view := marotte.PolicyView{
 		WritableScopes: []string{policyfile.ScopeUser, policyfile.ScopeWorkspace},
@@ -157,9 +159,6 @@ func (s *Server) policyRulesFromFiles(scope string) []marotte.PolicyRule {
 // handlePolicyExplain serves POST /api/permissions/explain: a pure simulation (KAS's
 // evaluateSingleResource raises no consent prompt).
 func (s *Server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
 	if s.policy == nil {
 		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("policy explain unavailable"))
 		return
@@ -186,17 +185,18 @@ func (s *Server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, res)
 }
 
+// PolicyRuleWrite is POST /api/permissions/rules' body.
 // op is "add", "remove" or "update". An add's empty effect defaults to "ask". For remove and update
 // the rule fields identify the EXISTING rule; a widening change needs confirm=true.
-type policyRuleBody struct {
+type PolicyRuleWrite struct {
 	Op         string   `json:"op"`
 	Scope      string   `json:"scope"`
 	Capability string   `json:"capability"`
 	Effect     string   `json:"effect"`
-	NewEffect  string   `json:"new_effect"`
-	Match      []string `json:"match"`
-	Exclude    []string `json:"exclude"`
-	Confirm    bool     `json:"confirm"`
+	NewEffect  string   `json:"new_effect,omitempty"`
+	Match      []string `json:"match,omitempty"`
+	Exclude    []string `json:"exclude,omitempty"`
+	Confirm    bool     `json:"confirm,omitempty"`
 }
 
 // capShell is the capability whose decisions are always resource-scoped.
@@ -214,10 +214,7 @@ var effectRank = map[string]int{
 // Writes the scope's permissions.yaml; KAS hot-reloads and emits _kiro/policy/changed → the
 // permissions_changed SSE.
 func (s *Server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
-	var body policyRuleBody
+	var body PolicyRuleWrite
 	if !decodeBody(w, r, &body) {
 		return
 	}
@@ -247,7 +244,7 @@ func (s *Server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (*Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *policyRuleBody, path string) {
+func (*Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *PolicyRuleWrite, path string) {
 	// Conservative default: a new rule with no explicit effect is `ask`, never `allow`.
 	effect := cmp.Or(body.Effect, policyfile.EffectAsk)
 	rule, err := policyfile.SanitizeRule(&policyfile.Rule{
@@ -272,14 +269,14 @@ func (*Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *polic
 		return
 	}
 	if present {
-		httpserver.OK(w) // idempotent: identical rule already present
+		httpreply.OK(w) // idempotent: identical rule already present
 		return
 	}
 	slog.Info("policy rule added", "scope", body.Scope, "capability", logsafe.Field(rule.Capability), "effect", rule.Effect)
-	httpserver.OK(w)
+	httpreply.OK(w)
 }
 
-func policyRuleRemove(w http.ResponseWriter, r *http.Request, body *policyRuleBody, path string) {
+func policyRuleRemove(w http.ResponseWriter, r *http.Request, body *PolicyRuleWrite, path string) {
 	if !policyfile.ValidEffect(body.Effect) {
 		httpreply.BadRequest(w, "effect required to remove a rule")
 		return
@@ -308,15 +305,15 @@ func policyRuleRemove(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 		return
 	}
 	if !removed {
-		httpserver.OK(w) // idempotent: rule already absent
+		httpreply.OK(w) // idempotent: rule already absent
 		return
 	}
 	slog.Info("policy rule removed", "scope", body.Scope, "capability", logsafe.Field(rule.Capability), "effect", rule.Effect)
-	httpserver.OK(w)
+	httpreply.OK(w)
 }
 
 // A widening change requires confirm=true.
-func policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *policyRuleBody, path string) {
+func policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *PolicyRuleWrite, path string) {
 	if !policyfile.ValidEffect(body.Effect) {
 		httpreply.BadRequest(w, "effect required to identify the rule")
 		return
@@ -345,12 +342,12 @@ func policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 		return
 	}
 	if replayed {
-		httpserver.OK(w)
+		httpreply.OK(w)
 		return
 	}
 	slog.Info("policy rule updated", "scope", body.Scope,
 		"capability", logsafe.Field(rule.Capability), "effect", body.Effect, "new_effect", body.NewEffect)
-	httpserver.OK(w)
+	httpreply.OK(w)
 }
 
 // addRuleEdit is the add route's edit; present reports whether the attempt that ran last found the

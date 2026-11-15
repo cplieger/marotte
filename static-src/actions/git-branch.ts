@@ -1,4 +1,5 @@
-import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+import { apiAction, fromEndpoint, retryNetwork, RETRY_STANDARD } from "./index.js";
+import { postGitCheckoutEndpoint } from "../wire/client.gen.js";
 import { decodeGitResult } from "./git-changes.js";
 
 import { truncate } from "../strings.js";
@@ -14,11 +15,8 @@ interface CheckoutArgs {
 export const checkoutBranch = apiAction<CheckoutArgs, void>({
   name: "git.checkout_branch",
   scope: (args) => "git:" + args.repo,
-  request: ({ repo, branch, create }) => ({
-    method: "POST",
-    path: "/api/git/checkout",
-    body: { repo, branch, create },
-  }),
+  request: ({ repo, branch, create }) =>
+    fromEndpoint(postGitCheckoutEndpoint.request({ body: { repo, branch, create } })),
   // Like every git mutation, a failed checkout arrives as HTTP 200 + {"error": …} (writeCmdResult).
   decode: (data) => {
     decodeGitResult(data);

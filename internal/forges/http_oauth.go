@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/cplieger/forgeapi/v2"
@@ -62,39 +61,16 @@ var (
 		"so client_id names none")
 )
 
-// grantBody is a device-grant start: the instance, and the OAuth application
+// GrantStart is a device-grant start: the instance, and the OAuth application
 // it signs in with when the instance is not the public one.
-type grantBody struct {
+type GrantStart struct {
 	Host     string `json:"host"`
-	ClientID string `json:"client_id"`
+	ClientID string `json:"client_id,omitempty"`
 	connectionFields
 }
 
-func (h *HTTPHandler) handleDeviceGrant(w http.ResponseWriter, r *http.Request) {
-	name, op, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/api/forges/oauth/"), "/")
-	kind := Kind(name)
-	if _, ok := marotteApp(kind.family()); !ok {
-		httpreply.NotFound(w, "no device grant for that forge")
-		return
-	}
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
-	switch op {
-	case "start":
-		h.handleGrantStart(w, r, kind)
-	case "poll":
-		h.handleGrantPoll(w, r)
-	case "cancel":
-		h.handleGrantCancel(w, r)
-	default:
-		httpreply.NotFound(w, "unknown device-grant operation")
-	}
-}
-
 func (h *HTTPHandler) handleGrantStart(w http.ResponseWriter, r *http.Request, kind Kind) {
-	var body grantBody
+	var body GrantStart
 	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 		httpreply.BadRequest(w, "invalid json")
@@ -121,7 +97,7 @@ func (h *HTTPHandler) handleGrantStart(w http.ResponseWriter, r *http.Request, k
 
 // grantFor is the connection a start signs in and the application it signs in
 // with: Marotte's own on the public instance, the body's anywhere else.
-func (*HTTPHandler) grantFor(kind Kind, body *grantBody) (connectionSpec, creds.GrantRequest, error) {
+func (*HTTPHandler) grantFor(kind Kind, body *GrantStart) (connectionSpec, creds.GrantRequest, error) {
 	rec, err := body.record(kind, body.Host)
 	if err != nil {
 		return connectionSpec{}, creds.GrantRequest{}, err
@@ -243,9 +219,7 @@ func (h *HTTPHandler) handleGrantCancel(w http.ResponseWriter, r *http.Request) 
 }
 
 func grantIDOf(w http.ResponseWriter, r *http.Request) (string, bool) {
-	var body struct {
-		GrantID string `json:"grant_id"`
-	}
+	var body GrantRef
 	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpreply.BadRequest(w, "invalid json")

@@ -28,7 +28,7 @@ type Rule struct {
 
 // When is when a rule launches: exactly one of a clock and a forge event.
 type When struct {
-	Clock *Spec      `json:"clock,omitempty"`
+	Clock *ClockSpec `json:"clock,omitempty"`
 	Event *EventSpec `json:"event,omitempty"`
 }
 

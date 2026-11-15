@@ -221,7 +221,7 @@ func TestPopulationMismatchAppliesRebaseline(t *testing.T) {
 		r := tc.createRule(runSpec("success"))
 		minted := time.Now().Add(-time.Hour)
 		tc.enqueue(r.ID, held("k1", "c1"), held("k2", "c2"))
-		tc.setStatus(r.ID, func(st *launchrule.Status) { st.LastMinted, st.BoundAbandons = minted, 1 })
+		tc.setStatus(r.ID, func(st *launchrule.RuleStatus) { st.LastMinted, st.BoundAbandons = minted, 1 })
 		tc.persist(r.ID)
 		moved := r
 		moved.When.Event = cloneSpec(r.When.Event)

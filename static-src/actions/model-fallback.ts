@@ -1,7 +1,8 @@
 // The account's fallback for one model (the model picker's Fallback row).
 
-import { apiAction } from "./index.js";
+import { apiAction, fromEndpoint } from "./index.js";
 import { stillOr } from "./still-applying.js";
+import { putModelFallbackEndpoint } from "../wire/client.gen.js";
 import { decodeModelFallback } from "../wire/decoders.gen.js";
 import type { ModelFallback } from "../wire/types.gen.js";
 
@@ -16,7 +17,7 @@ interface FallbackArgs {
 export const setModelFallback = apiAction<FallbackArgs, ModelFallback>({
   name: "model.fallback",
   scope: ({ model }) => `model.fallback:${model}`,
-  request: (body) => ({ method: "PUT", path: "/api/model-fallback", body }),
+  request: (body) => fromEndpoint(putModelFallbackEndpoint.request({ body })),
   decode: (data) => decodeModelFallback(data),
   error: stillOr("changing the fallback model", "Couldn't change the fallback model", "chat"),
 });

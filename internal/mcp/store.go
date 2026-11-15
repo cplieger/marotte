@@ -101,8 +101,8 @@ type Server struct {
 	// only by a paste or a raw-JSON edit.
 	VersionNegotiation versionNegotiation `json:"version_negotiation,omitempty"`
 	Args               []string           `json:"args,omitempty"`
-	Env                []keyPair          `json:"env,omitempty"`
-	Headers            []keyPair          `json:"headers,omitempty"`
+	Env                []KeyPair          `json:"env,omitempty"`
+	Headers            []KeyPair          `json:"headers,omitempty"`
 	DisabledTools      []string           `json:"disabled_tools,omitempty"`
 	// OAuthScopes is KAS's oauthScopes (remote only), sent space-joined as the registration scope and used for the
 	// authorization request when the server names none itself.
@@ -119,10 +119,10 @@ type Server struct {
 	WaitForReady bool `json:"wait_for_ready,omitempty"`
 }
 
-// keyPair is an ordered env-var or header entry. Ordered (vs map) so
+// KeyPair is an ordered env-var or header entry. Ordered (vs map) so
 // the UI can edit entries without dropping duplicates; the on-wire ACP
 // format is a JSON object so we flatten on export.
-type keyPair struct {
+type KeyPair struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/cplieger/forgeapi/v2"
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/trigger"
 )
@@ -104,7 +105,7 @@ func newRuleHub(t *testing.T, forge *fakeEventRuleChecker, listing string) *rule
 	h.runs.launchRules = rh.st
 	h.runs.confirmer = rh.conf
 	h.SetEventRuleChecker(forge)
-	(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(rh.mux)
+	(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(routetest.On(rh.mux))
 	return rh
 }
 
@@ -177,14 +178,14 @@ func TestRegisterLaunchRules_MountsTheSurfaceOnlyWithAStoreBehindIt(t *testing.T
 			t.Fatalf("launchrule.NewStore: %v", err)
 		}
 		mux := http.NewServeMux()
-		(&runRoutes{runs: &Runs{launchRules: st}}).register(mux)
+		(&runRoutes{runs: &Runs{launchRules: st}}).register(routetest.On(mux))
 		if rec := sendRoute(t, mux, http.MethodGet, "/api/launch-rules", ""); rec.Code != http.StatusOK {
 			t.Errorf("GET /api/launch-rules = %d, want 200: %s", rec.Code, rec.Body.String())
 		}
 	})
 	t.Run("no store means no routes, not broken ones", func(t *testing.T) {
 		mux := http.NewServeMux()
-		(&runRoutes{runs: &Runs{}}).register(mux)
+		(&runRoutes{runs: &Runs{}}).register(routetest.On(mux))
 		if rec := sendRoute(t, mux, http.MethodGet, "/api/launch-rules", ""); rec.Code != http.StatusNotFound {
 			t.Errorf("GET /api/launch-rules = %d with no store, want 404: %s", rec.Code, rec.Body.String())
 		}
@@ -199,8 +200,8 @@ func TestRegisterLaunchRules_MountsTheSurfaceOnlyWithAStoreBehindIt(t *testing.T
 
 type ruleListView struct {
 	Rules []struct {
-		NextRunAt *time.Time         `json:"next_run_at"`
-		Status    *launchrule.Status `json:"status"`
+		NextRunAt *time.Time             `json:"next_run_at"`
+		Status    *launchrule.RuleStatus `json:"status"`
 		launchrule.Rule
 		Held int `json:"held"`
 	} `json:"rules"`
@@ -293,7 +294,7 @@ func TestLaunchRuleWritesNeedWriteGuard(t *testing.T) {
 	h.SetEventRuleChecker(&fakeEventRuleChecker{})
 	h.runs.confirmer = trigger.NewConfirmer(h.runs.launchRules, nil, nil)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	h.lifecycle.draining.Store(true)
 	for _, tc := range []struct{ name, method, path, body string }{
 		{"create", http.MethodPost, "/api/launch-rules", runRuleBody},
@@ -350,8 +351,8 @@ func TestDismissGapClearsSegment(t *testing.T) {
 		before := rh.w.writes()
 		rec := sendRoute(t, rh.mux, http.MethodPost, dismiss, "")
 		var view struct {
-			Status *launchrule.Status `json:"status"`
-			ID     string             `json:"id"`
+			Status *launchrule.RuleStatus `json:"status"`
+			ID     string                 `json:"id"`
 		}
 		if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil || rec.Code != http.StatusOK {
 			t.Fatalf("POST = %d %s, want 200 with the rule", rec.Code, rec.Body.String())
@@ -385,7 +386,7 @@ func TestDismissGapClearsSegment(t *testing.T) {
 	})
 	t.Run("a clock rule has no gaps to dismiss", func(t *testing.T) {
 		clock, err := rh.st.Create(t.Context(), &launchrule.Rule{Source: "bundled://publish", When: launchrule.When{
-			Clock: &launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2},
+			Clock: &launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2},
 		}})
 		if err != nil {
 			t.Fatalf("Create: %v", err)
@@ -398,14 +399,14 @@ func TestDismissGapClearsSegment(t *testing.T) {
 }
 
 // listedStatus is the rule's status as GET /api/launch-rules answers it.
-func listedStatus(t *testing.T, mux *http.ServeMux, id string) launchrule.Status {
+func listedStatus(t *testing.T, mux *http.ServeMux, id string) launchrule.RuleStatus {
 	t.Helper()
 	rec := sendRoute(t, mux, http.MethodGet, "/api/launch-rules", "")
 	var body struct {
 		Rules []struct {
-			Status *launchrule.Status `json:"status"`
-			ID     string             `json:"id"`
-			Error  string             `json:"error"`
+			Status *launchrule.RuleStatus `json:"status"`
+			ID     string                 `json:"id"`
+			Error  string                 `json:"error"`
 		} `json:"rules"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
@@ -417,7 +418,7 @@ func listedStatus(t *testing.T, mux *http.ServeMux, id string) launchrule.Status
 		}
 	}
 	t.Fatalf("GET = %s, want rule %s with a status", rec.Body.String(), id)
-	return launchrule.Status{}
+	return launchrule.RuleStatus{}
 }
 
 // busyLauncher refuses every triggered launch as a recipe that run wf holds does.
@@ -465,7 +466,7 @@ func TestLaunchRuleListShowsUnwrittenRowText(t *testing.T) {
 	wg.Go(func() { _ = trigger.NewLauncher(rh.conf.Confirmer, l).Run(ctx, ready) })
 	waitFor(t, func() bool { return l.calls.Load() > 0 })
 	want := "waiting for run wf_blocker to finish"
-	var got launchrule.Status
+	var got launchrule.RuleStatus
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
 		if got = listedStatus(t, rh.mux, r.ID); got.RowText == want {
 			break
@@ -487,7 +488,7 @@ func TestLaunchRuleListShowsWriteFailureBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	seeded := launchrule.State{Population: launchrule.Population(&r), Status: launchrule.Status{Gaps: []launchrule.Gap{{
+	seeded := launchrule.State{Population: launchrule.Population(&r), Status: launchrule.RuleStatus{Gaps: []launchrule.Gap{{
 		From: time.Date(2026, time.November, 7, 2, 10, 0, 0, time.UTC), To: time.Date(2026, time.November, 10, 9, 0, 0, 0, time.UTC),
 		Cause: launchrule.GapOutage,
 	}}}}
@@ -498,7 +499,7 @@ func TestLaunchRuleListShowsWriteFailureBlock(t *testing.T) {
 	want := "could not write launch-state/" + r.ID + ".json: disk full"
 	rec := sendRoute(t, rh.mux, http.MethodPost, "/api/launch-rules/"+r.ID+"/dismiss-gap", "")
 	var view struct {
-		Status *launchrule.Status `json:"status"`
+		Status *launchrule.RuleStatus `json:"status"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil || rec.Code != http.StatusOK {
 		t.Fatalf("POST = %d %s, want 200 with the rule", rec.Code, rec.Body.String())
@@ -546,7 +547,7 @@ func TestLaunchRuleRouteRefusesInvalidSpec(t *testing.T) {
 					seed := eventRuleOf("cplieger/animap-source")
 					if strings.HasPrefix(tc.body, clockPrefix) {
 						seed = &launchrule.Rule{Source: "bundled://publish", When: launchrule.When{
-							Clock: &launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2},
+							Clock: &launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2},
 						}}
 					}
 					r, err := st.Create(t.Context(), seed)
@@ -702,7 +703,7 @@ func TestSaveRefusesUndatedRuns(t *testing.T) {
 // heldQueue is a state holding n events, a cursor, a launched and a superseded slot, and a confirmed run.
 func heldQueue(n int) *launchrule.State {
 	st := &launchrule.State{
-		Status:     launchrule.Status{LastRunID: "wf_confirmed", LastMinted: time.Date(2026, time.November, 2, 9, 0, 0, 0, time.UTC)},
+		Status:     launchrule.RuleStatus{LastRunID: "wf_confirmed", LastMinted: time.Date(2026, time.November, 2, 9, 0, 0, 0, time.UTC)},
 		Cursor:     json.RawMessage(`{"r":{"runs":{"baseline_at":"2026-11-01T00:00:00Z","last_complete":"2026-11-01T00:00:00Z"}}}`),
 		Launched:   json.RawMessage(`[{"key":"run:1"}]`),
 		Superseded: json.RawMessage(`[{"key":"run:0"}]`),
@@ -823,7 +824,7 @@ func TestRebaselineEditDropsHeldEvents(t *testing.T) {
 func TestPutRefusesWhenBranchSwitch(t *testing.T) {
 	const clockBody = `{"source":"bundled://publish","enabled":true,"when":{"clock":{"freq":"daily","hour":3}}}`
 	clock := &launchrule.Rule{Source: "bundled://publish", Enabled: true, When: launchrule.When{
-		Clock: &launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 3},
+		Clock: &launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 3},
 	}}
 	for _, tc := range []struct {
 		name, body string
@@ -864,13 +865,13 @@ func TestPutRefusesWhenBranchSwitch(t *testing.T) {
 // anchorClockRule moves a clock rule's anchor off its creation time.
 func anchorClockRule(t *testing.T, st *launchrule.Store, row launchrule.Row, anchor time.Time) {
 	t.Helper()
-	if err := st.UpdateClock(t.Context(), row, func(s *launchrule.Status) bool { s.Anchor = anchor; return true }); err != nil {
+	if err := st.UpdateClock(t.Context(), row, func(s *launchrule.RuleStatus) bool { s.Anchor = anchor; return true }); err != nil {
 		t.Fatalf("UpdateClock: %v", err)
 	}
 }
 
 // putClockRule stores a clock rule for source, anchored at its creation.
-func putClockRule(t *testing.T, st *launchrule.Store, source string, spec launchrule.Spec, enabled bool) launchrule.Rule {
+func putClockRule(t *testing.T, st *launchrule.Store, source string, spec launchrule.ClockSpec, enabled bool) launchrule.Rule {
 	t.Helper()
 	r, err := st.Create(t.Context(), &launchrule.Rule{Source: source, Enabled: enabled, When: launchrule.When{Clock: &spec}})
 	if err != nil {

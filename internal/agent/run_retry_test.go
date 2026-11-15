@@ -522,14 +522,9 @@ func TestRetry_KeepsTheParentItReadBeforeTheVerb(t *testing.T) {
 	}
 }
 
-func TestHandleRetry_RejectsNonPOSTAndAMissingID(t *testing.T) {
+func TestHandleRetry_RejectsAMissingID(t *testing.T) {
 	h, _ := seedChatParentedRun(t, true)
 	rec := httptest.NewRecorder()
-	h.runRoutes.handleRetry(rec, httptest.NewRequest(http.MethodGet, "/api/runs/wf_1/retry", nil))
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("GET = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
-	}
-	rec = httptest.NewRecorder()
 	h.runRoutes.handleRetry(rec, httptest.NewRequest(http.MethodPost, "/api/runs//retry", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("no id = %d, want %d", rec.Code, http.StatusBadRequest)

@@ -399,7 +399,7 @@ var busyCases = []attemptCase{
 		name: "69 abandoned-cancelling, failing for 23 hours, restart, busy an hour later: A16 on the loaded clock",
 		setup: func(tc *testConfirmer, r *launchrule.Rule) {
 			abandonedOnDisk(tc, r)
-			tc.setStatus(r.ID, func(st *launchrule.Status) { st.FailingSince = time.Now().Add(-23 * time.Hour) })
+			tc.setStatus(r.ID, func(st *launchrule.RuleStatus) { st.FailingSince = time.Now().Add(-23 * time.Hour) })
 			tc.persist(r.ID)
 		},
 		deliver: func(tc *testConfirmer, r *launchrule.Rule) {

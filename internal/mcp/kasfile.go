@@ -133,7 +133,7 @@ type kasRenderPolicy struct {
 // pairsRecord flattens ordered KeyPairs into KAS's record shape. Later entries
 // win on a duplicate name, which is the same resolution the inline path's own
 // record build produced.
-func pairsRecord(in []keyPair) map[string]string {
+func pairsRecord(in []KeyPair) map[string]string {
 	if len(in) == 0 {
 		return nil
 	}

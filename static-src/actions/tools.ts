@@ -4,6 +4,7 @@
 import {
   apiAction,
   defineAction,
+  fromEndpoint,
   ActionError,
   classifyFetchError,
   hasErrorString,
@@ -13,6 +14,22 @@ import {
   IDEMPOTENCY_HEADER,
 } from "./index.js";
 import type { ActionContext } from "./index.js";
+import type { EndpointSpec } from "../api-client.js";
+import {
+  postDiagnosticsEndpoint,
+  getToolsStatusEndpoint,
+  toolsDeleteByNameEndpoint,
+  toolsGetCatalogEndpoint,
+  toolsGetEndpoint,
+  toolsGetJobsEndpoint,
+  toolsGetSearchEndpoint,
+  toolsPatchByNameEndpoint,
+  toolsPostByNameInstallEndpoint,
+  toolsPostCatalogRefreshEndpoint,
+  toolsPostEndpoint,
+  toolsPostJobsByIdCancelEndpoint,
+  toolsPostUpdateEndpoint,
+} from "../wire/client.gen.js";
 import type {
   CatalogInfo,
   Inventory,
@@ -38,7 +55,7 @@ export const loadTools = apiAction<void, Inventory>({
   retryable: (err) => err.code !== TOOLS_UNAVAILABLE && retryNetwork(err),
   retry: RETRY_STANDARD,
   dedupe: true,
-  request: () => ({ method: "GET", path: "/api/tools" }),
+  request: () => fromEndpoint(toolsGetEndpoint.request()),
   error: false,
 });
 
@@ -49,7 +66,7 @@ export const createTool = apiAction<CreateToolRequest, JobResponse>({
   name: "tools.create",
   scope: "tools",
   idempotencyKey: true,
-  request: (body) => ({ method: "POST", path: "/api/tools", body }),
+  request: (body) => fromEndpoint(toolsPostEndpoint.request({ body })),
   decodeError: (info) =>
     info.status === 503 && info.code === RATE_LIMITED
       ? {
@@ -68,11 +85,7 @@ export const installTool = apiAction<{ name: string }, JobResponse>({
   name: "tools.install",
   scope: "tools",
   idempotencyKey: true,
-  request: ({ name }) => ({
-    method: "POST",
-    path: `/api/tools/${encodeURIComponent(name)}/install`,
-    body: {},
-  }),
+  request: ({ name }) => fromEndpoint(toolsPostByNameInstallEndpoint.request({ name })),
   error: "Could not start install",
 });
 
@@ -80,7 +93,7 @@ export const updateTools = apiAction<{ names?: string[] } | undefined, JobRespon
   name: "tools.update",
   scope: "tools",
   idempotencyKey: true,
-  request: (body) => ({ method: "POST", path: "/api/tools/update", body: body ?? {} }),
+  request: (body) => fromEndpoint(toolsPostUpdateEndpoint.request({ body: body ?? {} })),
   error: "Could not start update",
 });
 
@@ -111,11 +124,7 @@ export const patchTool = apiAction<
   idempotencyKey: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  request: ({ name, ...body }) => ({
-    method: "PATCH",
-    path: `/api/tools/${encodeURIComponent(name)}`,
-    body,
-  }),
+  request: ({ name, ...body }) => fromEndpoint(toolsPatchByNameEndpoint.request({ name, body })),
   decode: (data) => data ?? {},
   decodeError: (info) =>
     info.status === 409 ? { kind: "success", value: info.body ?? {} } : undefined,
@@ -135,10 +144,10 @@ export const deleteTool = apiAction<{ name: string; force?: boolean }, DeleteToo
   name: "tools.delete",
   scope: "tools",
   idempotencyKey: true,
-  request: ({ name, force }) => ({
-    method: "DELETE",
-    path: `/api/tools/${encodeURIComponent(name)}${force === true ? "?force=1" : ""}`,
-  }),
+  request: ({ name, force }) =>
+    fromEndpoint(
+      toolsDeleteByNameEndpoint.request(force === true ? { name, force: "1" } : { name }),
+    ),
   // Callers never see undefined on an empty-body 2xx.
   decode: (data) => data ?? {},
   decodeError: (info) =>
@@ -157,12 +166,12 @@ async function runEnsure(
   if (ctx?.idempotencyKey !== undefined) {
     headers[IDEMPOTENCY_HEADER] = ctx.idempotencyKey;
   }
-  const send = async (method: string, path: string, body: unknown): Promise<Response> => {
+  const send = async (spec: EndpointSpec): Promise<Response> => {
     try {
-      return await fetch(path, {
-        method,
+      return await fetch(spec.path, {
+        method: spec.method,
         headers,
-        body: JSON.stringify(body),
+        body: JSON.stringify(spec.body ?? {}),
         signal: withTimeout(signal, DELETE_TIMEOUT_MS),
       });
     } catch (e) {
@@ -170,12 +179,14 @@ async function runEnsure(
     }
   };
   // An already-manifested name 400s -> plain install; a disabled template 409s -> enable (PATCH).
-  let res = await send("POST", "/api/tools", { name: args.name });
+  let res = await send(toolsPostEndpoint.request({ body: { name: args.name } }));
   if (res.status === 400) {
-    res = await send("POST", `/api/tools/${encodeURIComponent(args.name)}/install`, {});
+    res = await send(toolsPostByNameInstallEndpoint.request({ name: args.name }));
   }
   if (res.status === 409) {
-    res = await send("PATCH", `/api/tools/${encodeURIComponent(args.name)}`, { disabled: false });
+    res = await send(
+      toolsPatchByNameEndpoint.request({ name: args.name, body: { disabled: false } }),
+    );
   }
   let parsed: unknown;
   try {
@@ -238,10 +249,7 @@ export const searchTools = apiAction<{ q: string }, ToolSearchResponse>({
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   dedupe: true,
-  request: ({ q }) => ({
-    method: "GET",
-    path: `/api/tools/search?q=${encodeURIComponent(q)}`,
-  }),
+  request: ({ q }) => fromEndpoint(toolsGetSearchEndpoint.request({ q })),
   decode: decodeSearch,
   error: false,
 });
@@ -252,7 +260,7 @@ export const getToolsJobs = apiAction<void, JobsResponse>({
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   dedupe: true,
-  request: () => ({ method: "GET", path: "/api/tools/jobs" }),
+  request: () => fromEndpoint(toolsGetJobsEndpoint.request()),
   error: false,
 });
 
@@ -262,7 +270,7 @@ export const getCatalogInfo = apiAction<void, CatalogInfo>({
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   dedupe: true,
-  request: () => ({ method: "GET", path: "/api/tools/catalog" }),
+  request: () => fromEndpoint(toolsGetCatalogEndpoint.request()),
   error: false,
 });
 
@@ -271,7 +279,7 @@ export const getCatalogInfo = apiAction<void, CatalogInfo>({
 export const refreshCatalog = apiAction<void, JobResponse>({
   name: "tools.refresh_catalog",
   scope: "tools",
-  request: () => ({ method: "POST", path: "/api/tools/catalog/refresh" }),
+  request: () => fromEndpoint(toolsPostCatalogRefreshEndpoint.request()),
   error: "Could not refresh the tool catalog",
 });
 
@@ -279,11 +287,7 @@ export const cancelToolJob = apiAction<{ id: string }>({
   name: "tools.cancel_job",
   scope: "tools",
   idempotencyKey: true,
-  request: ({ id }) => ({
-    method: "POST",
-    path: `/api/tools/jobs/${encodeURIComponent(id)}/cancel`,
-    body: {},
-  }),
+  request: ({ id }) => fromEndpoint(toolsPostJobsByIdCancelEndpoint.request({ id })),
   error: "Could not cancel job",
 });
 
@@ -293,7 +297,7 @@ export const runDiagnostics = apiAction<void, { report?: string; error?: string 
   dedupe: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  request: () => ({ method: "POST", path: "/api/diagnostics", body: {} }),
+  request: () => fromEndpoint(postDiagnosticsEndpoint.request()),
   error: false,
 });
 
@@ -304,6 +308,6 @@ export const getToolsStatus = apiAction<void, Record<string, boolean>>({
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   dedupe: true,
-  request: () => ({ method: "GET", path: "/api/tools/status" }),
+  request: () => fromEndpoint(getToolsStatusEndpoint.request()),
   error: false,
 });

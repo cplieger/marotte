@@ -22,6 +22,7 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/workflow"
@@ -1277,7 +1278,7 @@ func TestControlHandler_AnUnansweredLoadIs503WithTheSentence(t *testing.T) {
 			answerBudgetOf(t, 200*time.Millisecond)
 			h, _, _ := gatedHostRun(t, tc.reply(t))
 			mux := http.NewServeMux()
-			h.runRoutes.register(mux)
+			h.runRoutes.register(routetest.On(mux))
 
 			rec := answersWithin(t, func() *httptest.ResponseRecorder { return postStep(t, mux, tc.target, tc.body(h)) })
 
@@ -1338,7 +1339,7 @@ func TestControlHandler_AHeldLaunchSessionNamesTheAgentRestart(t *testing.T) {
 				host.loadErr = tc.loadErr
 				fakeSourceOf(t, h).setFactory(func() engineSession { return host })
 				mux := http.NewServeMux()
-				h.runRoutes.register(mux)
+				h.runRoutes.register(routetest.On(mux))
 
 				rec := postStep(t, mux, rt.target, rt.body(h))
 

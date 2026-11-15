@@ -198,7 +198,7 @@ var writeCases = []attemptCase{
 		name:  "64 none, write-blocked, edit (filter) whose write lands: E1 lifts the block by W2's rule",
 		setup: writeBlocked,
 		deliver: func(tc *testConfirmer, r *launchrule.Rule) {
-			tc.setStatus(r.ID, func(st *launchrule.Status) { st.BoundAbandons = 1 })
+			tc.setStatus(r.ID, func(st *launchrule.RuleStatus) { st.BoundAbandons = 1 })
 			tc.failWrites(nil)
 			tc.woken()
 			if n := edit(tc, r, 0, widenFilter); n != 1 {
@@ -221,7 +221,7 @@ var writeCases = []attemptCase{
 		name: "64 none, write-blocked, edit (filter) whose write fails: the block stays",
 		setup: func(tc *testConfirmer, r *launchrule.Rule) {
 			writeBlocked(tc, r)
-			tc.setStatus(r.ID, func(st *launchrule.Status) { st.Blocked = "session not idle" })
+			tc.setStatus(r.ID, func(st *launchrule.RuleStatus) { st.Blocked = "session not idle" })
 		},
 		deliver: func(tc *testConfirmer, r *launchrule.Rule) {
 			edit(tc, r, 0, widenFilter)

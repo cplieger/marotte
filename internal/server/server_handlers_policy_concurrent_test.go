@@ -21,7 +21,7 @@ func TestPolicyRuleAdd_ConcurrentAddsKeepEveryRule(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range adds {
 		wg.Go(func() {
-			body := policyRuleBody{Op: "add", Scope: "user", Capability: "fs_write", Effect: "allow", Match: []string{fmt.Sprintf("dir%02d/**", i)}}
+			body := PolicyRuleWrite{Op: "add", Scope: "user", Capability: "fs_write", Effect: "allow", Match: []string{fmt.Sprintf("dir%02d/**", i)}}
 			rec := postRules(t, s, body)
 			codes[i] = rec.Code
 		})

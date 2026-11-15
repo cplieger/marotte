@@ -40,6 +40,12 @@ import { adoptSubscriptionTag, persistedTag, tagWrittenElsewhere } from "./sse-t
 import { observeStamp, setObserveSink, versionMap } from "./subject-versions.js";
 import { listTabs } from "./tabs-sync.js";
 import type { ConnectionStatus, ServerEvent, SubjectStamp } from "./types.js";
+import {
+  getEventsEndpoint,
+  postEventsAliveEndpoint,
+  postEventsScopeEndpoint,
+  postSyncEndpoint,
+} from "./wire/client.gen.js";
 
 type MsgHandler = (evt: ServerEvent) => void;
 type StatusHandler = (s: ConnectionStatus) => void;
@@ -85,7 +91,7 @@ let pending: ServerEvent[] = [];
 /** Watchdog that opens the gate if hydration never reports in. */
 let hydrateTimer: ReturnType<typeof setTimeout> | null = null;
 
-const digest = createDigestClient({ url: "/api/sync", timeoutMs: DIGEST_TIMEOUT_MS });
+const digest = createDigestClient({ url: postSyncEndpoint.path, timeoutMs: DIGEST_TIMEOUT_MS });
 
 function statusOf(kind: string): ConnectionStatus {
   switch (kind) {
@@ -524,7 +530,7 @@ function createTabStream(): TabFallback {
   const versions = versionMap();
   const headers: Record<string, string> = {};
   const stream = createStream({
-    url: "/api/events",
+    url: getEventsEndpoint.path,
     headers,
     versions,
     onFrame: applyFrame,
@@ -532,8 +538,8 @@ function createTabStream(): TabFallback {
     revalidate,
     // The receipt for every keepalive received, carrying SSE-Client: what lets the server read a
     // suspended or half-open profile gone at the alive window.
-    alive: { url: "/api/events/alive" },
-    scopeUrl: "/api/events/scope",
+    alive: { url: postEventsAliveEndpoint.path },
+    scopeUrl: postEventsScopeEndpoint.path,
   });
   return { stream, versions, headers };
 }

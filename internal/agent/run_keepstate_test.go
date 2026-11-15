@@ -291,7 +291,7 @@ func confirmForDeletedClockRule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	rule := putClockRule(t, st, "bundled://publish", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+	rule := putClockRule(t, st, "bundled://publish", launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2}, true)
 	if _, err := st.Delete(t.Context(), rule.ID); err != nil {
 		t.Fatalf("Setup: Delete: %v", err)
 	}

@@ -8,7 +8,19 @@ import {
   type ActionDefinition,
   type ApiActionDefinition,
 } from "@cplieger/reactive/actions";
+import type { RequestSpec } from "@cplieger/reactive/actions";
+import type { EndpointSpec } from "../api-client.js";
 import { captureSubjectNames } from "./subject.js";
+
+/** An apiAction request from a generated endpoint descriptor's request (wire/client.gen.ts). */
+export function fromEndpoint(spec: EndpointSpec): RequestSpec {
+  const headers = spec.headers === undefined ? {} : { headers: spec.headers };
+  if (spec.method === "GET") {
+    return { method: "GET", path: spec.path, ...headers };
+  }
+  const body = spec.body === undefined ? {} : { body: spec.body };
+  return { method: spec.method, path: spec.path, ...body, ...headers };
+}
 
 export function defineAction<TArgs, TResult, TOp = unknown>(
   def: ActionDefinition<TArgs, TResult, TOp>,

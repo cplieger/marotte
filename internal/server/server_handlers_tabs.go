@@ -5,7 +5,6 @@ import (
 	"strconv"
 
 	"github.com/cplieger/go/httpserver"
-	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
 )
@@ -23,11 +22,7 @@ type tabReader interface {
 // read separately, a mutation landing between them stamps old tabs with a newer version, and
 // the client discards the event the snapshot omitted. The version rules are on
 // marotte.TabsChangedPayload.Version.
-func (s *Server) handleTabs(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
+func (s *Server) handleTabs(w http.ResponseWriter, _ *http.Request) {
 	if s.tabs == nil {
 		// Unwired: the empty collection at version 0, not 404, so a client can still boot.
 		httpserver.WriteJSON(w, marotte.TabList{Tabs: []marotte.TabSubject{}, Recent: []marotte.RecentClose{}})

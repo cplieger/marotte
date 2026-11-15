@@ -58,31 +58,3 @@ func FuzzParseID(f *testing.F) {
 		}
 	})
 }
-
-// FuzzSplitFirst verifies the head/tail split round-trips: when a
-// separator is found, head+"/"+tail reconstructs the input; otherwise
-// head is the whole input and tail is empty.
-func FuzzSplitFirst(f *testing.F) {
-	f.Add("api/forges/github:github.com")
-	f.Add("noslash")
-	f.Add("")
-	f.Add("/leading")
-	f.Add("a/b/c")
-
-	f.Fuzz(func(t *testing.T, s string) {
-		head, tail, found := splitFirst(s)
-		if found {
-			reconstructed := head + "/" + tail
-			if reconstructed != s {
-				t.Fatalf("splitFirst(%q): head=%q tail=%q doesn't reconstruct", s, head, tail)
-			}
-		} else {
-			if head != s {
-				t.Fatalf("splitFirst(%q): no slash but head=%q != input", s, head)
-			}
-			if tail != "" {
-				t.Fatalf("splitFirst(%q): no slash but tail=%q", s, tail)
-			}
-		}
-	})
-}

@@ -151,7 +151,7 @@ func callsOf(src *fakeSource, list string) int {
 	return n
 }
 
-func (h *harness) status(ruleID string) launchrule.Status {
+func (h *harness) status(ruleID string) launchrule.RuleStatus {
 	h.t.Helper()
 	return h.state(ruleID).raw.Status
 }

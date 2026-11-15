@@ -81,7 +81,7 @@ type EventSpec struct {
 	Repo        string          `json:"repo"`
 	Kind        Kind            `json:"kind"`
 	Filter      Filter          `json:"filter"`
-	IntervalMin int             `json:"interval_min"`
+	IntervalMin int             `json:"interval_min,omitempty"`
 }
 
 const (

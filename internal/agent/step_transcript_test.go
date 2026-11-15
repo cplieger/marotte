@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 	"github.com/cplieger/marotte/internal/translate"
 )
 
@@ -458,7 +459,7 @@ func TestEngineCallAt_CarriesTheResponsePosition(t *testing.T) {
 func getStepTranscript(t *testing.T, h *Runtime, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	mux := http.NewServeMux()
-	(&runRoutes{runs: h.Runs()}).register(mux)
+	(&runRoutes{runs: h.Runs()}).register(routetest.On(mux))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
 	return rec
@@ -547,11 +548,11 @@ func TestHandleStepTranscript_Refusals(t *testing.T) {
 			want:   http.StatusNotFound,
 		},
 		{
-			// {path} is one segment, so two after steps/ are a step verb's address, which only POST serves.
+			// {path} is one segment, so two after steps/ address no step and no step verb.
 			desc:   "the run id repeated ahead of the key is no step to GET",
 			method: http.MethodGet,
 			target: "/api/runs/wf_1/steps/wf_1/wf_1%3Aloop%3Aiter-0%3Abuild",
-			want:   http.StatusMethodNotAllowed,
+			want:   http.StatusNotFound,
 		},
 		{
 			desc:   "a non-GET method is refused",
@@ -562,7 +563,7 @@ func TestHandleStepTranscript_Refusals(t *testing.T) {
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
 			mux := http.NewServeMux()
-			(&runRoutes{runs: h.Runs()}).register(mux)
+			(&runRoutes{runs: h.Runs()}).register(routetest.On(mux))
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.target, nil))
 			if rec.Code != tc.want {

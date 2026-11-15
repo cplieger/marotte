@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 func TestParseKnowledgeResult(t *testing.T) {
@@ -88,7 +89,7 @@ func TestHandleKnowledgeList_OK(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
-	var body knowledgeListResponse
+	var body KnowledgeList
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
@@ -247,47 +248,7 @@ func TestCleanKnowledgeMsg(t *testing.T) {
 	}
 }
 
-// TestRegisterKnowledgeRoutes_RefusedMethodsCarryAllow pins 405 + Allow under the /api/ subtree fallback stand-in.
-func TestRegisterKnowledgeRoutes_RefusedMethodsCarryAllow(t *testing.T) {
-	h, _, _ := newTestHub()
-	const fallbackStatus = 299 // a status no marotte handler produces
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(fallbackStatus)
-	})
-	h.config.registerKnowledgeRoutes(mux)
-
-	tests := map[string]struct {
-		method    string
-		path      string
-		wantAllow string
-	}{
-		"the collection refuses PUT":        {http.MethodPut, "/api/knowledge", "GET, POST, DELETE"},
-		"the collection refuses HEAD":       {http.MethodHead, "/api/knowledge", "GET, POST, DELETE"},
-		"one base refuses GET":              {http.MethodGet, "/api/knowledge/docs", "DELETE"},
-		"the re-index route refuses GET":    {http.MethodGet, "/api/knowledge/docs/reindex", "POST"},
-		"the re-index route refuses DELETE": {http.MethodDelete, "/api/knowledge/docs/reindex", "POST"},
-		"the cancel route refuses GET":      {http.MethodGet, "/api/knowledge/docs/cancel", "POST"},
-	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-			mux.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, nil))
-			if rec.Code == fallbackStatus {
-				t.Fatalf("%s %s reached the /api/ fallback, want the route's own 405", tc.method, tc.path)
-			}
-			if rec.Code != http.StatusMethodNotAllowed {
-				t.Fatalf("%s %s = %d, want 405 (%s)", tc.method, tc.path, rec.Code, rec.Body.String())
-			}
-			if got := rec.Header().Get("Allow"); got != tc.wantAllow {
-				t.Errorf("Allow = %q, want %q", got, tc.wantAllow)
-			}
-		})
-	}
-}
-
-// TestRegisterKnowledgeRoutes_TheDispatchedMethodsReachTheirHandler is the control: a wall would 405 everything.
+// TestRegisterKnowledgeRoutes_TheDispatchedMethodsReachTheirHandler pins that each bound method reaches its handler.
 func TestRegisterKnowledgeRoutes_TheDispatchedMethodsReachTheirHandler(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -304,7 +265,7 @@ func TestRegisterKnowledgeRoutes_TheDispatchedMethodsReachTheirHandler(t *testin
 		"POST stops an index":      {http.MethodPost, "/api/knowledge/docs/cancel"},
 	}
 	mux := http.NewServeMux()
-	h.config.registerKnowledgeRoutes(mux)
+	h.config.registerKnowledgeRoutes(routetest.On(mux))
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			rec := httptest.NewRecorder()

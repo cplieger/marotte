@@ -201,7 +201,7 @@ func TestPolicyProfile_SelectionAnnouncesTheWrittenVersion(t *testing.T) {
 	if !ok {
 		t.Fatalf("agent = %T, want *fakeEngine", s.agent)
 	}
-	if rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileReadOnly}); rec.Code != http.StatusOK {
+	if rec := postProfile(t, s, PolicyProfileWrite{Profile: policyfile.ProfileReadOnly}); rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
 	}
 	got := getEffective(t, s.configDir)

@@ -12,12 +12,14 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route"
 )
 
 const keySubcommand = "subcommand"
@@ -45,8 +47,9 @@ type kasKnowledgeEntry struct {
 	Indexing     bool   `json:"indexing"`
 }
 
+// KnowledgeContext is one GET /api/knowledge row.
 // The client keys rows by ID and draws progress from Indexing and ItemsDisplay.
-type knowledgeContext struct {
+type KnowledgeContext struct {
 	Name         string `json:"name"`
 	ID           string `json:"id"`
 	Description  string `json:"description,omitempty"`
@@ -56,12 +59,13 @@ type knowledgeContext struct {
 	Indexing     bool   `json:"indexing,omitempty"`
 }
 
-type knowledgeListResponse struct {
-	Contexts []knowledgeContext `json:"contexts"`
+// KnowledgeList is GET /api/knowledge's body.
+type KnowledgeList struct {
+	Contexts []KnowledgeContext `json:"contexts"`
 }
 
-// knowledgeMessageResponse is the POST /api/knowledge success body: KAS's confirmation, verbatim.
-type knowledgeMessageResponse struct {
+// KnowledgeMessage is the POST /api/knowledge success body: KAS's confirmation, verbatim.
+type KnowledgeMessage struct {
 	Message string `json:"message"`
 }
 
@@ -83,7 +87,7 @@ func parseKnowledgeResult(raw json.RawMessage) (*kasKnowledgeResult, error) {
 	return &r, nil
 }
 
-func (st *Settings) knowledgeShow(ctx context.Context) ([]knowledgeContext, error) {
+func (st *Settings) knowledgeShow(ctx context.Context) ([]KnowledgeContext, error) {
 	raw, err := st.knowledgeCall(ctx, map[string]any{keySubcommand: "show"})
 	if err != nil {
 		return nil, err
@@ -96,9 +100,9 @@ func (st *Settings) knowledgeShow(ctx context.Context) ([]knowledgeContext, erro
 		return nil, errors.New(cleanKnowledgeMsg(res.Message))
 	}
 	// Identical field layout, so a direct conversion suffices.
-	out := make([]knowledgeContext, 0, len(res.Entries))
+	out := make([]KnowledgeContext, 0, len(res.Entries))
 	for _, e := range res.Entries {
-		out = append(out, knowledgeContext(e))
+		out = append(out, KnowledgeContext(e))
 	}
 	return out, nil
 }
@@ -133,18 +137,14 @@ func cleanKnowledgeMsg(s string) string {
 	return s
 }
 
-// Anything else answers 405 with Allow, which a per-method pattern cannot (the /api/ fallback would
-// 404).
 func (st *Settings) handleKnowledge(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
-	case http.MethodGet:
+	case http.MethodGet, http.MethodHead:
 		st.handleKnowledgeList(w, r)
 	case http.MethodPost:
 		st.handleKnowledgeAdd(w, r)
 	case http.MethodDelete:
 		st.handleKnowledgeClear(w, r)
-	default:
-		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost, http.MethodDelete)
 	}
 }
 
@@ -158,16 +158,12 @@ func (st *Settings) handleKnowledgeClear(w http.ResponseWriter, r *http.Request)
 			refusal := errors.New(cleanKnowledgeMsg(res.Message))
 			return engineReply{err: refusal, write: func(w http.ResponseWriter) { httpreply.ServerError(w, "clear failed", refusal) }}
 		}
-		return engineReply{write: httpserver.OK, applied: true}
+		return engineReply{write: httpreply.OK, applied: true}
 	})
 }
 
 // handleKnowledgeCancel resolves the name to the operation's short id, which only `show` reports.
 func (st *Settings) handleKnowledgeCancel(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
 	name := strings.TrimSpace(r.PathValue("name"))
 	if name == "" {
 		httpreply.BadRequest(w, "name required")
@@ -201,15 +197,6 @@ func (st *Settings) knowledgeOperationID(ctx context.Context, name string) (stri
 	return "", nil
 }
 
-// handleKnowledgeOne dispatches one base by name: DELETE removes it.
-func (st *Settings) handleKnowledgeOne(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		httpreply.MethodNotAllowed(w, http.MethodDelete)
-		return
-	}
-	st.handleKnowledgeRemove(w, r)
-}
-
 // The client polls it while anything indexes.
 func (st *Settings) handleKnowledgeList(w http.ResponseWriter, r *http.Request) {
 	ctxs, err := st.knowledgeShow(r.Context())
@@ -217,18 +204,19 @@ func (st *Settings) handleKnowledgeList(w http.ResponseWriter, r *http.Request) 
 		writeKnowledgeErr(w, err)
 		return
 	}
-	httpserver.WriteJSON(w, knowledgeListResponse{Contexts: ctxs})
+	httpserver.WriteJSON(w, KnowledgeList{Contexts: ctxs})
 }
 
-type knowledgeAddReq struct {
+// KnowledgeAdd is POST /api/knowledge's body; an empty name defaults to the path's base name.
+type KnowledgeAdd struct {
 	Path string `json:"path"`
-	Name string `json:"name"`
+	Name string `json:"name,omitempty"`
 }
 
 // handleKnowledgeAdd serves POST /api/knowledge {path, name?}: a background index, name defaulting
 // to the base name. 200 with KAS's message, or 400 with it.
 func (st *Settings) handleKnowledgeAdd(w http.ResponseWriter, r *http.Request) {
-	var body knowledgeAddReq
+	var body KnowledgeAdd
 	if !httpreply.DecodeJSON(w, r, &body) {
 		return
 	}
@@ -282,16 +270,12 @@ func (st *Settings) handleKnowledgeRemove(w http.ResponseWriter, r *http.Request
 		if !res.Success {
 			return knowledgeNotFound(cleanKnowledgeMsg(res.Message))
 		}
-		return engineReply{write: httpserver.OK, applied: true}
+		return engineReply{write: httpreply.OK, applied: true}
 	})
 }
 
 // The name is resolved here because KAS's `update` matches `path` against sourcePath exactly.
 func (st *Settings) handleKnowledgeReindex(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
 	name := strings.TrimSpace(r.PathValue("name"))
 	if name == "" {
 		httpreply.BadRequest(w, "name required")
@@ -357,7 +341,7 @@ func knowledgeMessage(res *kasKnowledgeResult, err error) engineReply {
 }
 
 func knowledgeConfirmed(res *kasKnowledgeResult) engineReply {
-	body := knowledgeMessageResponse{Message: res.Message}
+	body := KnowledgeMessage{Message: res.Message}
 	return engineReply{write: func(w http.ResponseWriter) { httpserver.WriteJSON(w, body) }, applied: true}
 }
 
@@ -374,10 +358,17 @@ func writeKnowledgeErr(w http.ResponseWriter, err error) {
 	httpserver.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("knowledge request failed"))
 }
 
-// Patterns carry no method, so each handler answers a refused method with 405 + Allow.
-func (st *Settings) registerKnowledgeRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/knowledge", st.handleKnowledge)
-	mux.HandleFunc("/api/knowledge/{name}", st.handleKnowledgeOne)
-	mux.HandleFunc("/api/knowledge/{name}/reindex", st.handleKnowledgeReindex)
-	mux.HandleFunc("/api/knowledge/{name}/cancel", st.handleKnowledgeCancel)
+// Plain paths, so the registrar answers a refused method with 405 + Allow.
+func (st *Settings) registerKnowledgeRoutes(m routeMux) {
+	name := reflect.TypeFor[marotte.NamePath]()
+	m.Bind(route.Methods("/api/knowledge", http.HandlerFunc(st.handleKnowledge),
+		route.Typed[struct{}, KnowledgeList](http.MethodGet),
+		route.Typed[KnowledgeAdd, KnowledgeMessage](http.MethodPost),
+		route.Typed[struct{}, httpreply.OKBody](http.MethodDelete)))
+	m.Bind(route.Methods("/api/knowledge/{name}", http.HandlerFunc(st.handleKnowledgeRemove),
+		route.Typed[struct{}, httpreply.OKBody](http.MethodDelete).WithParams(name)))
+	m.Bind(route.Methods("/api/knowledge/{name}/reindex", http.HandlerFunc(st.handleKnowledgeReindex),
+		route.Typed[struct{}, KnowledgeMessage](http.MethodPost).WithParams(name)))
+	m.Bind(route.Methods("/api/knowledge/{name}/cancel", http.HandlerFunc(st.handleKnowledgeCancel),
+		route.Typed[struct{}, KnowledgeMessage](http.MethodPost).WithParams(name)))
 }

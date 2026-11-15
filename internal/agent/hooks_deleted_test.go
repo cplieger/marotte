@@ -12,6 +12,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 // TestHooksRoutes_HaveNoTriggerVerb pins the route table through the real mux: POST
@@ -19,7 +21,7 @@ import (
 func TestHooksRoutes_HaveNoTriggerVerb(t *testing.T) {
 	t.Parallel()
 	mux := http.NewServeMux()
-	(&Settings{}).registerHooksRoutes(mux)
+	(&Settings{}).registerHooksRoutes(routetest.On(mux))
 
 	for _, tc := range []struct {
 		name    string

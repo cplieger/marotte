@@ -12,7 +12,7 @@ import (
 )
 
 func clockRule(source string) *Rule {
-	return &Rule{Source: source, Name: "demo", Enabled: true, When: When{Clock: &Spec{Freq: FreqDaily, Hour: 2}}}
+	return &Rule{Source: source, Name: "demo", Enabled: true, When: When{Clock: &ClockSpec{Freq: FreqDaily, Hour: 2}}}
 }
 
 func eventRule(source string, ev *EventSpec) *Rule {
@@ -248,7 +248,7 @@ func TestEventSpecValidation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Create: %v", err)
 			}
-			if err := writerOf(st).WriteState(t.Context(), r.ID, &State{Status: Status{LastRunID: "wf-1"}}); err != nil {
+			if err := writerOf(st).WriteState(t.Context(), r.ID, &State{Status: RuleStatus{LastRunID: "wf-1"}}); err != nil {
 				t.Fatalf("WriteState: %v", err)
 			}
 			rules, state := readRules(t, dir), readFile(t, statePath(dir, r.ID))
@@ -428,7 +428,7 @@ func TestRefusedStoredRuleBlocksOnlyItself(t *testing.T) {
 			if byID[refused].Err == nil || byID[valid].Err != nil {
 				t.Errorf("Clocks errors = refused %v, valid %v; want the refused one blocked only", byID[refused].Err, byID[valid].Err)
 			}
-			if err := st.UpdateClock(t.Context(), Row{ID: refused}, func(*Status) bool { return true }); err == nil {
+			if err := st.UpdateClock(t.Context(), Row{ID: refused}, func(*RuleStatus) bool { return true }); err == nil {
 				t.Error("UpdateClock(refused) = nil, want the refusal")
 			}
 			if end == "delete" {
@@ -446,7 +446,7 @@ func TestRefusedStoredRuleBlocksOnlyItself(t *testing.T) {
 			if _, err := st.State(refused); err != nil {
 				t.Errorf("State after Replace error = %v, want nil", err)
 			}
-			if err := st.UpdateClock(t.Context(), Row{ID: refused}, func(*Status) bool { return true }); err != nil {
+			if err := st.UpdateClock(t.Context(), Row{ID: refused}, func(*RuleStatus) bool { return true }); err != nil {
 				t.Errorf("UpdateClock after Replace = %v, want nil", err)
 			}
 		})
@@ -474,7 +474,7 @@ func TestRefusedEventRuleStateStaysReadable(t *testing.T) {
 	if err != nil || got.Held() != 1 {
 		t.Fatalf("LoadedState = %d held, %v; want the file's one", got.Held(), err)
 	}
-	if err := writerOf(st).WriteState(t.Context(), id, &State{Status: Status{LastRunID: "wf"}}); err != nil {
+	if err := writerOf(st).WriteState(t.Context(), id, &State{Status: RuleStatus{LastRunID: "wf"}}); err != nil {
 		t.Errorf("WriteState of a refused event rule: %v, want it written", err)
 	}
 }
@@ -553,7 +553,7 @@ func TestClientCannotWriteCursor(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := writerOf(st).WriteState(t.Context(), r.ID, &State{Status: Status{LastRunID: "wf-1"}}); err != nil {
+		if err := writerOf(st).WriteState(t.Context(), r.ID, &State{Status: RuleStatus{LastRunID: "wf-1"}}); err != nil {
 			t.Fatalf("WriteState: %v", err)
 		}
 		before := readFile(t, statePath(dir, r.ID))
@@ -581,12 +581,12 @@ func TestStateWriteTouchesOnlyItsRuleFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writerOf(st).WriteState(t.Context(), b.ID, &State{Status: Status{LastRunID: "wf-b"}}); err != nil {
+	if err := writerOf(st).WriteState(t.Context(), b.ID, &State{Status: RuleStatus{LastRunID: "wf-b"}}); err != nil {
 		t.Fatalf("WriteState(b): %v", err)
 	}
 	rulesBefore, bBefore := readRules(t, dir), readFile(t, statePath(dir, b.ID))
 	held := []json.RawMessage{json.RawMessage(`{"key":"k1"}`), json.RawMessage(`{"key":"k2","observed_at":"x"}`)}
-	if err := writerOf(st).WriteState(t.Context(), a.ID, &State{Status: Status{LastRunID: "wf-a"}, Queue: held}); err != nil {
+	if err := writerOf(st).WriteState(t.Context(), a.ID, &State{Status: RuleStatus{LastRunID: "wf-a"}, Queue: held}); err != nil {
 		t.Fatalf("WriteState(a): %v", err)
 	}
 	t.Run("the definitions are byte-identical", func(t *testing.T) {
@@ -654,7 +654,7 @@ func TestOrphanStateFileReportedNotRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writerOf(st).WriteState(t.Context(), r.ID, &State{Status: Status{LastRunID: "wf"}}); err != nil {
+	if err := writerOf(st).WriteState(t.Context(), r.ID, &State{Status: RuleStatus{LastRunID: "wf"}}); err != nil {
 		t.Fatal(err)
 	}
 	orphan := statePath(dir, "AAAAAAAAAAAAAAAAAAAAAA")
@@ -732,7 +732,7 @@ func TestUnreadableClockStateFileBlocksRule(t *testing.T) {
 			if err := writerOf(reloaded).WriteState(t.Context(), r.ID, &State{}); err == nil {
 				t.Errorf("WriteState overwrote an unreadable clock rule's state file")
 			}
-			if err := reloaded.UpdateClock(t.Context(), Row{ID: r.ID}, func(*Status) bool { return true }); err == nil {
+			if err := reloaded.UpdateClock(t.Context(), Row{ID: r.ID}, func(*RuleStatus) bool { return true }); err == nil {
 				t.Errorf("UpdateClock wrote an unreadable clock rule's row")
 			}
 			if _, _, err := reloaded.Replace(t.Context(), r.ID, clockRule("bundled://a"), 0); err != nil {
@@ -764,7 +764,7 @@ func TestClockRuleDeleteRemovesStateFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writerOf(st).WriteState(t.Context(), r.ID, &State{Status: Status{LastRunID: "wf"}}); err != nil {
+	if err := writerOf(st).WriteState(t.Context(), r.ID, &State{Status: RuleStatus{LastRunID: "wf"}}); err != nil {
 		t.Fatal(err)
 	}
 	t.Run("delete removes it", func(t *testing.T) {
@@ -780,7 +780,7 @@ func TestClockRuleDeleteRemovesStateFile(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := writerOf(st).WriteState(t.Context(), r2.ID, &State{Status: Status{LastRunID: "wf"}}); err != nil {
+		if err := writerOf(st).WriteState(t.Context(), r2.ID, &State{Status: RuleStatus{LastRunID: "wf"}}); err != nil {
 			t.Fatal(err)
 		}
 		prev := removeFile
@@ -1133,7 +1133,7 @@ func TestEditKeepsTheWaitOnlyForTheSameSlot(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := st.UpdateClock(t.Context(), r.Row(), func(s *Status) bool { s.WaitingFor = due; return true }); err != nil {
+			if err := st.UpdateClock(t.Context(), r.Row(), func(s *RuleStatus) bool { s.WaitingFor = due; return true }); err != nil {
 				t.Fatalf("UpdateClock: %v", err)
 			}
 			edit := r.clone()

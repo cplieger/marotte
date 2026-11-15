@@ -25,6 +25,12 @@ const configurationNotStoredCode = -32000
 // maxConfigurationTextBytes bounds each engine string (a layer id or name, a refusal message) relayed to the client.
 const maxConfigurationTextBytes = 256
 
+// A configuration write's refusals, each named by KAS's reason and answered with it as the code.
+const (
+	codeSettingLocked      = "locked"
+	codeSettingUnavailable = "unavailable"
+)
+
 // kasSetting is one composed setting row of a configuration view.
 type kasSetting struct {
 	KRN        string          `json:"krn"`
@@ -79,13 +85,13 @@ func writeConfigurationSetErr(w http.ResponseWriter, err error, subject string) 
 	}
 	_ = json.Unmarshal(rpc.Data, &data)
 	switch {
-	case data.Reason == "locked":
+	case data.Reason == codeSettingLocked:
 		httpserver.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(
-			sentenceCase(subject)+" is locked by the "+configurationText(data.Layer)+" layer.", "locked",
+			sentenceCase(subject)+" is locked by the "+configurationText(data.Layer)+" layer.", codeSettingLocked,
 		))
-	case data.Reason == "unavailable":
+	case data.Reason == codeSettingUnavailable:
 		httpserver.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(
-			"kiro-cli cannot change "+subject+" now. Sign in to Kiro, then try again.", "unavailable",
+			"kiro-cli cannot change "+subject+" now. Sign in to Kiro, then try again.", codeSettingUnavailable,
 		))
 	case data.Reason == "notGranted":
 		httpreply.BadRequest(w, configurationText(rpc.Message))

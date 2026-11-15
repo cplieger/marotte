@@ -74,7 +74,7 @@ func TestEveryAttemptWriteGoesThroughStep(t *testing.T) {
 	h.poll()
 	_ = changeRule(t, tc.Confirmer, r.ID, 0, moveRepo)
 
-	tc.setStatus(r.ID, func(st *launchrule.Status) {
+	tc.setStatus(r.ID, func(st *launchrule.RuleStatus) {
 		st.LastRunID, st.LastStatus = "wf_0", launchrule.StatusStarted
 		st.Gaps = []launchrule.Gap{{Cause: launchrule.GapOutage}}
 	})

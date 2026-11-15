@@ -13,6 +13,7 @@ import (
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/preview"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 // previewStack is the full middleware stack over a mux holding the preview
@@ -36,7 +37,7 @@ func previewStack(t *testing.T) (http.Handler, *preview.Handler, string) {
 	mux := http.NewServeMux()
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("spa")) }))
 	mux.HandleFunc(healthzPath, func(w http.ResponseWriter, _ *http.Request) { httpserver.OK(w) })
-	ph.RegisterRoutes(mux)
+	ph.RegisterRoutes(routetest.On(mux))
 	idem := newIdempotencyCache(idempotencyTTL)
 	t.Cleanup(idem.stop)
 	s := &Server{}

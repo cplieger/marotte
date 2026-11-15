@@ -18,7 +18,7 @@ func newRemoteServer(t *testing.T, s *Store, transport Transport, rawURL string)
 		Transport: transport,
 		Name:      "hosted",
 		URL:       rawURL,
-		Headers:   []keyPair{{Name: "Authorization", Value: "Bearer old-origin-token"}},
+		Headers:   []KeyPair{{Name: "Authorization", Value: "Bearer old-origin-token"}},
 		Enabled:   true,
 	})
 	if err != nil {
@@ -38,7 +38,7 @@ func TestUpdate_URLOriginChangeRefusesAPreservedHeader(t *testing.T) {
 				Name:      "hosted",
 				URL:       "https://new.example.com/mcp",
 				// What the edit modal re-submits for a row the user did not touch.
-				Headers: []keyPair{{Name: "Authorization", Value: secretMask}},
+				Headers: []KeyPair{{Name: "Authorization", Value: secretMask}},
 				Enabled: true,
 			})
 			if err == nil {
@@ -76,7 +76,7 @@ func TestUpdate_URLOriginChangeAcceptsARetypedSecret(t *testing.T) {
 		Transport: transportHTTP,
 		Name:      "hosted",
 		URL:       "https://new.example.com/mcp",
-		Headers:   []keyPair{{Name: "Authorization", Value: "Bearer new-origin-token"}},
+		Headers:   []KeyPair{{Name: "Authorization", Value: "Bearer new-origin-token"}},
 		Enabled:   true,
 	}); err != nil {
 		t.Fatalf("a retyped secret must be accepted: %v", err)
@@ -105,7 +105,7 @@ func TestUpdate_SameOriginStillPreservesSecrets(t *testing.T) {
 				Transport: transportHTTP,
 				Name:      "hosted",
 				URL:       next,
-				Headers:   []keyPair{{Name: "Authorization", Value: secretMask}},
+				Headers:   []KeyPair{{Name: "Authorization", Value: secretMask}},
 				Enabled:   true,
 			}); err != nil {
 				t.Fatalf("same-origin edit must preserve secrets: %v", err)
@@ -136,7 +136,7 @@ func TestUpdate_OriginChangeWithNoStoredSecretIsAllowed(t *testing.T) {
 	if _, err := s.update(t.Context(), created.ID, &Server{
 		Transport: transportHTTP, Name: "hosted",
 		URL:     "https://new.example.com/mcp",
-		Headers: []keyPair{{Name: "X-Api-Key", Value: secretMask}},
+		Headers: []KeyPair{{Name: "X-Api-Key", Value: secretMask}},
 		Enabled: true,
 	}); err != nil {
 		t.Fatalf("no stored secret means nothing to protect: %v", err)
@@ -156,7 +156,7 @@ func TestHandleOne_PUT_URLOriginChangeIs400(t *testing.T) {
 		Transport: transportHTTP,
 		Name:      "hosted",
 		URL:       "https://new.example.com/mcp",
-		Headers:   []keyPair{{Name: "Authorization", Value: secretMask}},
+		Headers:   []KeyPair{{Name: "Authorization", Value: secretMask}},
 		Enabled:   true,
 	})
 	if rec.Code != http.StatusBadRequest {

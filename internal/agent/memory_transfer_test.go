@@ -9,12 +9,13 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 // serveMemoryRoute answers req through the routes the Memories tab is registered on.
 func serveMemoryRoute(h *Runtime, req *http.Request) *httptest.ResponseRecorder {
 	mux := http.NewServeMux()
-	h.config.registerMemoryRoutes(mux)
+	h.config.registerMemoryRoutes(routetest.On(mux))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	return rec
@@ -95,17 +96,17 @@ func TestMemoryImport_SendsTheBodyAsContentAndReportsPerLine(t *testing.T) {
 	if _, has := params["sessionId"]; has {
 		t.Error("import carries a sessionId")
 	}
-	var got memoryImportReport
+	var got MemoryImportReport
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
 	if got.Added != 1 || got.Duplicates != 1 {
 		t.Errorf("report = %+v, want 1 added, 1 duplicate", got)
 	}
-	if len(got.Skipped) != 1 || got.Skipped[0] != (memoryImportLine{Line: 3, Reason: "validation", Detail: "title: title is empty"}) {
+	if len(got.Skipped) != 1 || got.Skipped[0] != (MemoryImportLine{Line: 3, Reason: "validation", Detail: "title: title is empty"}) {
 		t.Errorf("skipped = %+v, want line 3 validation with its detail", got.Skipped)
 	}
-	if len(got.Failed) != 1 || got.Failed[0] != (memoryImportLine{Line: 4, Reason: "parse_error", Detail: "line is not valid JSON"}) {
+	if len(got.Failed) != 1 || got.Failed[0] != (MemoryImportLine{Line: 4, Reason: "parse_error", Detail: "line is not valid JSON"}) {
 		t.Errorf("failed = %+v, want line 4 parse_error with its detail", got.Failed)
 	}
 	awaitEventCount(t, h, marotte.EventMemoriesChanged, before+1)

@@ -329,7 +329,7 @@ func TestToolBulk_ServesTheWholeCall(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/tools/tc1", nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleOne(rec, req)
+	serveRouter(s, rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -362,7 +362,7 @@ func TestToolBulk_ResultInputWins(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/tools/tc1", nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleOne(rec, req)
+	serveRouter(s, rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -389,13 +389,13 @@ func TestToolBulk_Rejections(t *testing.T) {
 			"a tool id outside the safe character set is refused",
 			"/api/chats/c1/tools/a%20b", http.StatusBadRequest,
 		},
-		{"an empty tool id is refused", "/api/chats/c1/tools/", http.StatusBadRequest},
+		{"an empty tool id matches no route", "/api/chats/c1/tools/", http.StatusNotFound},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, c.path, nil)
 			rec := httptest.NewRecorder()
-			newRouter(s).handleOne(rec, req)
+			serveRouter(s, rec, req)
 			if rec.Code != c.want {
 				t.Errorf("GET %s = %d, want %d (body %s)", c.path, rec.Code, c.want, rec.Body.String())
 			}
@@ -408,7 +408,7 @@ func TestToolBulk_RejectsNonGet(t *testing.T) {
 	s := storeWith(t, marotte.EntryToolCall{ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute}, settled("ok"))
 	req := httptest.NewRequest(http.MethodPost, "/api/chats/c1/tools/tc1", nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleOne(rec, req)
+	serveRouter(s, rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("POST = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
 	}

@@ -7,6 +7,7 @@ import { apiGetTyped } from "./api-client.js";
 import { decodeGovernanceStatePayload } from "./wire/decoders.gen.js";
 import type { GovernanceStatePayload, GovernanceFeatures, GovernanceLock } from "./types.js";
 import { maybeEl } from "./dom.js";
+import { getGovernanceEndpoint } from "./wire/client.gen.js";
 
 let current: GovernanceStatePayload | null = null;
 const listeners = new Set<(g: GovernanceStatePayload) => void>();
@@ -73,15 +74,16 @@ export function initGovernance(): void {
   onSSE("governance_state", (_chatID, p) => {
     set(p);
   });
-  void apiGetTyped<GovernanceStatePayload>("/api/governance", decodeGovernanceStatePayload).then(
-    (g) => {
-      // A cold Known=false snapshot still carries the locks; consumers gate on `known` themselves. An SSE frame that landed
-      // first is newer than this response.
-      if (g !== null && current === null) {
-        set(g);
-      }
-    },
-  );
+  void apiGetTyped<GovernanceStatePayload>(
+    getGovernanceEndpoint.path,
+    decodeGovernanceStatePayload,
+  ).then((g) => {
+    // A cold Known=false snapshot still carries the locks; consumers gate on `known` themselves. An SSE frame that landed
+    // first is newer than this response.
+    if (g !== null && current === null) {
+      set(g);
+    }
+  });
 }
 
 /** A locked switch shows the required value, cannot be flipped, and names who set it. */

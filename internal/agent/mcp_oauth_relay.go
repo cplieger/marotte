@@ -89,12 +89,14 @@ func relayClientFor(target *url.URL) (*http.Client, error) {
 	}, nil
 }
 
-type mcpOAuthRelayReq struct {
+// MCPOAuthRelay is POST /api/mcp/oauth-relay's body.
+type MCPOAuthRelay struct {
 	Server      string `json:"server"`
 	RedirectURL string `json:"redirect_url"`
 }
 
-type mcpOAuthRelayResp struct {
+// MCPOAuthRelayResult is POST /api/mcp/oauth-relay's answer.
+type MCPOAuthRelayResult struct {
 	// Status is the loopback listener's HTTP status, so the UI says what answered.
 	Status int `json:"status"`
 }
@@ -103,11 +105,7 @@ type mcpOAuthRelayResp struct {
 // callback into KAS's listener. Every paste resolves through its own state; the named server is only logged. Not
 // LoopbackOnly: a remote browser must reach it; the loopback constraint is on the outbound dial.
 func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
-	var body mcpOAuthRelayReq
+	var body MCPOAuthRelay
 	if !httpreply.DecodeJSON(w, req, &body) {
 		return
 	}
@@ -155,7 +153,7 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 	slog.Info("mcp oauth relay: delivered a stranded callback to the loopback listener",
 		"pasted_under", body.Server, "port", target.Port(), "status", status)
 	// KAS ends a connect with the server's next _kiro/mcp/status and a mid-session re-auth with _kiro/mcp/oauthCompleted.
-	httpserver.WriteJSON(w, mcpOAuthRelayResp{Status: status})
+	httpserver.WriteJSON(w, MCPOAuthRelayResult{Status: status})
 }
 
 func replayCallback(ctx context.Context, target *url.URL) (int, error) {

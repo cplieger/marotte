@@ -15,6 +15,11 @@ import {
 } from "./wire/decoders.gen.js";
 import type { LoginOptions, LoginResponse, WhoamiResponse } from "./wire/types.gen.js";
 import { isHttpMailtoOrRelativeURL } from "./utils-url.js";
+import {
+  getLoginOptionsEndpoint,
+  getWhoamiEndpoint,
+  postLoginEndpoint,
+} from "./wire/client.gen.js";
 
 const controllers = new Map<HTMLElement, ModalController>();
 /** Open order; closeTopModal closes the last. */
@@ -277,7 +282,7 @@ function startLogin(): AbortSignal {
 
 export function showLoginModal(): void {
   openModal($.loginModal);
-  void apiGetTyped<LoginOptions>("/api/login/options", decodeLoginOptions).then((opts) => {
+  void apiGetTyped<LoginOptions>(getLoginOptionsEndpoint.path, decodeLoginOptions).then((opts) => {
     if (opts !== null) {
       applyLoginOptions(opts);
     }
@@ -359,7 +364,7 @@ function doLogin(
 ): void {
   const signal = startLogin();
   setLoginButtonsDisabled(true);
-  void apiPostTypedOrError("/api/login", body, decodeLoginResponse, signal).then((r) => {
+  void apiPostTypedOrError(postLoginEndpoint.path, body, decodeLoginResponse, signal).then((r) => {
     if (signal.aborted) {
       return;
     }
@@ -408,12 +413,15 @@ async function pollLoginAttempt(
   onLoggedIn: () => void,
   signal: AbortSignal,
 ): Promise<void> {
-  const outcome = await pollUntil((s) => apiGetTyped("/api/whoami", decodeWhoamiResponse, s), {
-    intervalMs: LOGIN_POLL_INTERVAL_MS,
-    until: (wd) => loginPollVerdict(wd, attempt).kind !== "waiting",
-    timeoutMs: LOGIN_POLL_DEADLINE_MS,
-    signal,
-  });
+  const outcome = await pollUntil(
+    (s) => apiGetTyped(getWhoamiEndpoint.path, decodeWhoamiResponse, s),
+    {
+      intervalMs: LOGIN_POLL_INTERVAL_MS,
+      until: (wd) => loginPollVerdict(wd, attempt).kind !== "waiting",
+      timeoutMs: LOGIN_POLL_DEADLINE_MS,
+      signal,
+    },
+  );
   if (signal.aborted) {
     return;
   }

@@ -18,13 +18,13 @@ func TestNextRunFromNeverResolvesIntoThePast(t *testing.T) {
 	now := at(2026, time.August, 12, 14, 37)
 	tests := []struct {
 		name string
-		spec launchrule.Spec
+		spec launchrule.ClockSpec
 	}{
-		{"hourly", launchrule.Spec{Freq: launchrule.FreqHourly, Interval: 6, Minute: 15}},
-		{"daily", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2, Minute: 30}},
-		{"weekly", launchrule.Spec{Freq: launchrule.FreqWeekly, Weekdays: []int{int(time.Monday)}, Hour: 9}},
-		{"monthly", launchrule.Spec{Freq: launchrule.FreqMonthly, MonthDay: 1, Hour: 3}},
-		{"monthly on the last day", launchrule.Spec{Freq: launchrule.FreqMonthly, MonthDay: -1, Hour: 3}},
+		{"hourly", launchrule.ClockSpec{Freq: launchrule.FreqHourly, Interval: 6, Minute: 15}},
+		{"daily", launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2, Minute: 30}},
+		{"weekly", launchrule.ClockSpec{Freq: launchrule.FreqWeekly, Weekdays: []int{int(time.Monday)}, Hour: 9}},
+		{"monthly", launchrule.ClockSpec{Freq: launchrule.FreqMonthly, MonthDay: 1, Hour: 3}},
+		{"monthly on the last day", launchrule.ClockSpec{Freq: launchrule.FreqMonthly, MonthDay: -1, Hour: 3}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -59,7 +59,7 @@ func TestNextRunFromNeverResolvesIntoThePast(t *testing.T) {
 // TestNextRunFromKeepsTheAnchorAsOrigin pins that a floor before the anchor cannot drag a
 // just-fired schedule back to an earlier slot.
 func TestNextRunFromKeepsTheAnchorAsOrigin(t *testing.T) {
-	spec := launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2, Minute: 0}
+	spec := launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2, Minute: 0}
 	anchor := at(2026, time.August, 12, 3, 0) // fired late, past today's slot
 	floor := at(2026, time.August, 12, 1, 0)  // before the anchor
 
@@ -75,7 +75,7 @@ func TestNextRunFromKeepsTheAnchorAsOrigin(t *testing.T) {
 // TestNextRunFromZeroFloorIsTheRawSlot pins that a zero floor returns a past slot: sweep's
 // fire and skip branches both read it.
 func TestNextRunFromZeroFloorIsTheRawSlot(t *testing.T) {
-	spec := launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2, Minute: 0}
+	spec := launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2, Minute: 0}
 	anchor := at(2026, time.August, 5, 2, 0)
 	wantDue := at(2026, time.August, 6, 2, 0) // long past by any real "now"
 
@@ -99,10 +99,10 @@ func TestNextRunFromZeroFloorIsTheRawSlot(t *testing.T) {
 // through rather than becoming a zero time rendered as a real date.
 func TestNextRunFromPassesValidationErrorsThrough(t *testing.T) {
 	now := at(2026, time.August, 12, 14, 0)
-	if _, err := NextRunFrom(launchrule.Spec{Freq: "yearly"}, now, now); err == nil {
+	if _, err := NextRunFrom(launchrule.ClockSpec{Freq: "yearly"}, now, now); err == nil {
 		t.Error("expected an error for an unknown frequency")
 	}
-	if _, err := NextRunFrom(launchrule.Spec{Freq: launchrule.FreqWeekly, Hour: 9}, now, now); err == nil {
+	if _, err := NextRunFrom(launchrule.ClockSpec{Freq: launchrule.FreqWeekly, Hour: 9}, now, now); err == nil {
 		t.Error("expected an error for a weekly spec with no weekdays")
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/cplieger/marotte/internal/chat/archive"
 	"github.com/cplieger/marotte/internal/kirosession"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/tabs"
 )
@@ -458,7 +459,7 @@ func bootSeam(t *testing.T, root string, eng *seamEngine, logs *seamLogs, o seam
 	b.sched = sched
 	b.schedCtx, b.schedStop = context.WithCancel(ctx)
 	b.mux = http.NewServeMux()
-	b.h.RegisterRoutes(b.mux)
+	b.h.RegisterRoutes(routetest.On(b.mux))
 	t.Cleanup(func() { b.shutdown(t) })
 	if !o.noReconcile {
 		n := logs.count(seamReconcileLine)

@@ -11,6 +11,7 @@ import (
 	"testing/synctest"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -166,7 +167,7 @@ func TestEndStepMapsKASDecline(t *testing.T) {
 	const decline = "Cannot update node 'target': step 'target' is running, not paused; only a paused step can be ended with a nodeId."
 	br.setCallResult(methodKiroWorkflowUpdate, json.RawMessage(`{"workflowId":"wf_1","updated":false,"message":"`+decline+`"}`))
 	mux := http.NewServeMux()
-	(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(mux)
+	(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(routetest.On(mux))
 
 	rec := postStep(t, mux, "/api/runs/wf_1/steps/"+url.PathEscape(targetPath)+"/end", map[string]string{"status": "completed"})
 
@@ -183,7 +184,7 @@ func TestEndStep_TheRouteRefusesAStatusKASRefuses(t *testing.T) {
 		t.Run(body, func(t *testing.T) {
 			h, br := endHub(t, stepEndTree(t, &stepEndCase{Run: "paused", Node: "paused", Type: stepNodeType}))
 			mux := http.NewServeMux()
-			(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(mux)
+			(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(routetest.On(mux))
 			var raw json.RawMessage = []byte(body)
 			rec := postStep(t, mux, "/api/runs/wf_1/steps/"+url.PathEscape(targetPath)+"/end", raw)
 			if rec.Code != http.StatusBadRequest {

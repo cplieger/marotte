@@ -54,7 +54,7 @@ func getPage(t *testing.T, s *Store, id marotte.ChatID, query string) chatPage {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id)+query, nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleOne(rec, req)
+	serveRouter(s, rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /api/chats/%s%s = %d, want 200; body = %s", id, query, rec.Code, rec.Body.String())
 	}
@@ -75,7 +75,7 @@ func getChat(t *testing.T, s *Store, id marotte.ChatID) map[string]any {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id), nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleOne(rec, req)
+	serveRouter(s, rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
 	}
@@ -178,7 +178,7 @@ func railRows(t *testing.T, s *Store, id marotte.ChatID) []marotte.TurnSummary {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id)+"/turns", nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleOne(rec, req)
+	serveRouter(s, rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET turns = %d, want 200; body = %s", rec.Code, rec.Body.String())
 	}
@@ -269,7 +269,7 @@ func TestChatGet_ABadBeforeCursorIs400(t *testing.T) {
 	for _, query := range []string{"?before=t-nosuchturn", "?before=not%20an%20id"} {
 		req := httptest.NewRequest(http.MethodGet, "/api/chats/c1"+query, nil)
 		rec := httptest.NewRecorder()
-		newRouter(s).handleOne(rec, req)
+		serveRouter(s, rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("GET /api/chats/c1%s = %d, want 400; body = %s", query, rec.Code, rec.Body.String())
 		}
@@ -287,7 +287,7 @@ func TestChatGet_EmptyPageIsAnArrayNotNull(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1", nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleOne(rec, req)
+	serveRouter(s, rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET = %d, want 200; body = %s", rec.Code, rec.Body.String())
 	}

@@ -56,7 +56,7 @@ func TestNamedResponseHelpers(t *testing.T) {
 			name:     "MethodNotAllowed",
 			call:     func(w http.ResponseWriter) { MethodNotAllowed(w, http.MethodPost) },
 			wantCode: http.StatusMethodNotAllowed,
-			wantBody: `{"error":"method not allowed"}`,
+			wantBody: `{"error":"method not allowed","code":"method_not_allowed"}`,
 		},
 		{
 			name:     "InternalError",

@@ -14,7 +14,6 @@ import (
 
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/go/textsafe"
-	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -51,10 +50,6 @@ type kasSessionRow struct {
 // handleSessionList serves GET /api/sessions, newest first. A failure still answers 200 with an empty list,
 // but says which list failed.
 func (rt *Runtime) handleSessionList(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
 	// Chats and runs are separate verbs, so each list gets its own verdict.
 	claimed := rt.claimedSessions(r.Context())
 	out := marotte.SessionListResponse{SessionsState: marotte.ReadReady, RunsState: marotte.ReadReady}

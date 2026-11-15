@@ -8,28 +8,37 @@ import (
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route"
 )
 
-// RegisterRoutes wires /api/push/vapid-key, /api/push/subscribe, and
-// /api/push/unsubscribe onto mux.
-func (s *Service) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/push/vapid-key", s.handleVAPIDKey)
-	mux.HandleFunc("/api/push/subscribe", s.handleSubscribe)
-	mux.HandleFunc("/api/push/unsubscribe", s.handleUnsubscribe)
+// routeMux is what a route registration needs: the server's registrar, or a test's mux. An alias, so
+// RegisterRoutes has the server's routeHandler signature.
+type routeMux = interface{ Bind(route.Binding) }
+
+// RegisterRoutes binds /api/push/vapid-key, /api/push/subscribe and /api/push/unsubscribe.
+func (s *Service) RegisterRoutes(m routeMux) {
+	m.Bind(route.Methods("/api/push/vapid-key", http.HandlerFunc(s.handleVAPIDKey), route.Typed[struct{}, VAPIDKey](http.MethodGet)))
+	m.Bind(route.Methods("/api/push/subscribe", http.HandlerFunc(s.handleSubscribe),
+		route.Typed[marotte.PushSubscription, httpreply.OKBody](http.MethodPost)))
+	m.Bind(route.Methods("/api/push/unsubscribe", http.HandlerFunc(s.handleUnsubscribe),
+		route.Typed[Unsubscribe, httpreply.OKBody](http.MethodPost)))
 }
 
-type vapidKeyResponse struct {
+// VAPIDKey is GET /api/push/vapid-key's body.
+type VAPIDKey struct {
 	PublicKey string `json:"publicKey"`
 }
 
+// Unsubscribe is POST /api/push/unsubscribe's body.
+type Unsubscribe struct {
+	Endpoint string `json:"endpoint"`
+}
+
 func (s *Service) handleVAPIDKey(w http.ResponseWriter, _ *http.Request) {
-	httpserver.WriteJSON(w, vapidKeyResponse{PublicKey: s.publicKey()})
+	httpserver.WriteJSON(w, VAPIDKey{PublicKey: s.publicKey()})
 }
 
 func (s *Service) handleSubscribe(w http.ResponseWriter, r *http.Request) {
-	if !httpreply.RequireMethod(w, r, http.MethodPost) {
-		return
-	}
 	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	var sub marotte.PushSubscription
 	if err := json.NewDecoder(r.Body).Decode(&sub); err != nil || sub.Endpoint == "" {
@@ -55,21 +64,16 @@ func (s *Service) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Subscribe(sub)
-	httpserver.OK(w)
+	httpreply.OK(w)
 }
 
 func (s *Service) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
-	if !httpreply.RequireMethod(w, r, http.MethodPost) {
-		return
-	}
 	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
-	var body struct {
-		Endpoint string `json:"endpoint"`
-	}
+	var body Unsubscribe
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Endpoint == "" {
 		httpreply.BadRequest(w, "invalid endpoint")
 		return
 	}
 	s.unsubscribe(body.Endpoint)
-	httpserver.OK(w)
+	httpreply.OK(w)
 }

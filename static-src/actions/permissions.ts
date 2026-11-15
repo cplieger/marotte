@@ -1,6 +1,11 @@
 // Actions for the native (Cedar) permission policy, the sole tool-call authorization surface.
 
-import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+import { apiAction, fromEndpoint, retryNetwork, RETRY_STANDARD } from "./index.js";
+import {
+  postPermissionsExplainEndpoint,
+  postPermissionsProfileEndpoint,
+  postPermissionsRulesEndpoint,
+} from "../wire/client.gen.js";
 import type { PolicyExplainResult } from "../types.js";
 
 // These write permissions.yaml, which KAS hot-reloads. No optimistic update: the view is a server
@@ -28,7 +33,7 @@ export const editNativeRule = apiAction<NativeRuleArgs, { ok?: boolean; error?: 
   retry: RETRY_STANDARD,
   idempotencyKey: true,
   scope: "permissions",
-  request: (a) => ({ method: "POST", path: "/api/permissions/rules", body: a }),
+  request: (a) => fromEndpoint(postPermissionsRulesEndpoint.request({ body: a })),
   error: "Could not update policy rule",
 });
 
@@ -40,7 +45,7 @@ export const explainPolicy = apiAction<
 >({
   name: "permissions.explain",
   scope: "permissions",
-  request: (a) => ({ method: "POST", path: "/api/permissions/explain", body: a }),
+  request: (a) => fromEndpoint(postPermissionsExplainEndpoint.request({ body: a })),
   error: false,
 });
 
@@ -54,6 +59,6 @@ export const setSecurityProfile = apiAction<
 >({
   name: "permissions.set_profile",
   scope: "permissions",
-  request: (a) => ({ method: "POST", path: "/api/permissions/profile", body: a }),
+  request: (a) => fromEndpoint(postPermissionsProfileEndpoint.request({ body: a })),
   error: false,
 });

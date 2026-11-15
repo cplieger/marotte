@@ -25,10 +25,10 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// allRepoStatus is gitStatusResp plus the repo name, so the dashboard can group.
-type allRepoStatus struct {
+// RepoStatus is Status plus the repo name, so the dashboard can group.
+type RepoStatus struct {
 	Repo string `json:"repo"`
-	gitStatusResp
+	Status
 }
 
 // Scan budgets. perRepoBudget keeps one wedged repo to a partial row rather than a
@@ -78,7 +78,7 @@ func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 		snap = h.awaitStatusAll(r, key, running, wait)
 		_, running = h.statusCache.read(key)
 	}
-	httpserver.WriteJSON(w, statusAllResp{
+	httpserver.WriteJSON(w, StatusAll{
 		Repos:    snap.rows(),
 		AgeMS:    snap.age().Milliseconds(),
 		Scanning: running != nil,
@@ -123,12 +123,12 @@ func (h *Handler) statusScope(r *http.Request, snap *statusSnapshot) (scoped boo
 	return true, only
 }
 
-// statusAllResp is the dashboard's answer: the newest completed scan, how old it is,
+// StatusAll is the dashboard's answer: the newest completed scan, how old it is,
 // and whether one is running behind it. The age is what lets the answer be immediate.
-type statusAllResp struct {
-	Repos    []allRepoStatus `json:"repos"`
-	AgeMS    int64           `json:"age_ms"`
-	Scanning bool            `json:"scanning"`
+type StatusAll struct {
+	Repos    []RepoStatus `json:"repos"`
+	AgeMS    int64        `json:"age_ms"`
+	Scanning bool         `json:"scanning"`
 }
 
 // coldWait is how long this read may wait for the scan in flight: nothing for an
@@ -194,7 +194,7 @@ func (h *Handler) awaitStatusAll(r *http.Request, key string, running chan struc
 // scanRepos collects the status of every cloned repo under workDir, bounded per repo. A
 // non-nil `only` narrows it, and the result is then a PARTIAL scan the caller must
 // merge rather than publish.
-func (h *Handler) scanRepos(ctx context.Context, doFetch bool, only map[string]struct{}) []allRepoStatus {
+func (h *Handler) scanRepos(ctx context.Context, doFetch bool, only map[string]struct{}) []RepoStatus {
 	repos := h.cachedDiscoverRepos(ctx)
 	if only != nil {
 		repos = slices.DeleteFunc(slices.Clone(repos), func(e repoEntry) bool {
@@ -202,7 +202,7 @@ func (h *Handler) scanRepos(ctx context.Context, doFetch bool, only map[string]s
 			return !want
 		})
 	}
-	results := make([]allRepoStatus, len(repos))
+	results := make([]RepoStatus, len(repos))
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(scanConcurrency)
 	for i, e := range repos {
@@ -210,7 +210,7 @@ func (h *Handler) scanRepos(ctx context.Context, doFetch bool, only map[string]s
 			rctx, rcancel := context.WithTimeout(gctx, perRepoBudget)
 			defer rcancel()
 			st := collectStatus(rctx, e.Dir, h.timeouts, &h.fetchFlight, doFetch)
-			results[i] = allRepoStatus{Repo: e.Name, gitStatusResp: st}
+			results[i] = RepoStatus{Repo: e.Name, Status: st}
 			return nil
 		})
 	}
@@ -224,7 +224,7 @@ func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
 	for i, d := range discovered {
 		repos[i] = d.Name
 	}
-	httpserver.WriteJSON(w, map[string]any{jsonKeyRepos: repos})
+	httpserver.WriteJSON(w, RepoNames{Repos: repos})
 }
 
 // handleShow serves a file's CONTENT at a git ref — the base side of the
@@ -335,7 +335,7 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 	out, err := gitCmd(ctx, dir, "log", ref, "--oneline", "-20", "--no-decorate")
 	if err != nil {
 		slog.Debug("git log failed", "repo", logsafe.Field(dir), "ref", ref, "error", logsafe.Field(err.Error()), "out", logField(out))
-		httpserver.WriteJSON(w, map[string]any{"entries": []string{}, "remote": "", "behind": 0, "commit_url_prefix": ""})
+		httpserver.WriteJSON(w, Log{Entries: []string{}})
 		return
 	}
 	// Not pinned to []string{} the way `branches` is: a successful git log means at
@@ -363,12 +363,7 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	httpserver.WriteJSON(w, map[string]any{
-		"entries":           lines,
-		"remote":            remote,
-		"behind":            behind,
-		"commit_url_prefix": commitURLPrefix(parsedRemote),
-	})
+	httpserver.WriteJSON(w, Log{Entries: lines, Remote: remote, Behind: behind, CommitURLPrefix: commitURLPrefix(parsedRemote)})
 }
 
 // maxBranchCommits caps the subjects GET /api/git/branch-commits returns: a wrong base can put a
@@ -399,7 +394,7 @@ func (h *Handler) handleBranchCommits(w http.ResponseWriter, r *http.Request) {
 	subjects := []string{}
 	if err != nil {
 		slog.Debug("git branch commits failed", "repo", logsafe.Field(dir), "range", logsafe.Field(rng), "error", logsafe.Field(err.Error()), "out", logField(out))
-		httpserver.WriteJSON(w, map[string]any{"subjects": subjects})
+		httpserver.WriteJSON(w, BranchCommits{Subjects: subjects})
 		return
 	}
 	for line := range strings.SplitSeq(out, "\n") {
@@ -408,7 +403,7 @@ func (h *Handler) handleBranchCommits(w http.ResponseWriter, r *http.Request) {
 			subjects = append(subjects, clientLine(line))
 		}
 	}
-	httpserver.WriteJSON(w, map[string]any{"subjects": subjects})
+	httpserver.WriteJSON(w, BranchCommits{Subjects: subjects})
 }
 
 // pullRequestRef is the commit a forge compares for ref: origin's copy when one exists, since the
@@ -429,14 +424,10 @@ func (h *Handler) handleBranches(w http.ResponseWriter, r *http.Request) {
 	dir := h.repoDir(repoFromQuery(r))
 	out, err := gitCmd(r.Context(), dir, "branch", "-a", "--format=%(refname:short)\t%(HEAD)")
 	if err != nil {
-		httpserver.WriteJSON(w, map[string]any{"branches": []any{}, "current": ""})
+		httpserver.WriteJSON(w, Branches{Branches: []Branch{}})
 		return
 	}
-	type branchEntry struct {
-		Name    string `json:"name"`
-		Current bool   `json:"current"`
-	}
-	branches := []branchEntry{}
+	branches := []Branch{}
 	var current string
 	for line := range strings.SplitSeq(out, "\n") {
 		if line == "" {
@@ -447,24 +438,16 @@ func (h *Handler) handleBranches(w http.ResponseWriter, r *http.Request) {
 		// refnames but not Unicode format characters such as bidi controls.
 		name := clientLine(parts[0])
 		isCurrent := len(parts) > 1 && strings.TrimSpace(parts[1]) == "*"
-		branches = append(branches, branchEntry{Name: name, Current: isCurrent})
+		branches = append(branches, Branch{Name: name, Current: isCurrent})
 		if isCurrent {
 			current = name
 		}
 	}
-	httpserver.WriteJSON(w, map[string]any{"branches": branches, "current": current})
+	httpserver.WriteJSON(w, Branches{Branches: branches, Current: current})
 }
 
 func (h *Handler) handleCheckout(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
-	var body struct {
-		repoBody
-
-		Branch string `json:"branch"`
-		Create bool   `json:"create"`
-	}
+	var body CheckoutRequest
 	if !decodePostBody(w, r, &body, "branch required") {
 		return
 	}
@@ -491,10 +474,7 @@ func (h *Handler) handleCheckout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleRemove(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
-	var body repoBody
+	var body RepoRequest
 	if !decodePostBody(w, r, &body, "repo name required (cannot remove workspace root)") {
 		return
 	}
@@ -516,11 +496,11 @@ func (h *Handler) handleRemove(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slog.Error("git remove: failed", "repo", body.Repo, "error", err)
-		httpserver.WriteJSON(w, httpreply.ErrorJSON("remove failed"))
+		httpserver.WriteJSON(w, ChangeResult{Error: "remove failed"})
 		return
 	}
 	slog.Info("git remove", "repo", body.Repo)
-	httpserver.OK(w)
+	httpserver.WriteJSON(w, ChangeResult{OK: true})
 }
 
 // removeRepoDir unlinks dir through a parent pinned inside a confined root on the workspace, never

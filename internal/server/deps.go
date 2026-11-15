@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"net/http"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -10,10 +9,10 @@ import (
 // The interfaces below are declared at their consumer, each naming only the methods this
 // package invokes. Unexported unless the composition root has to name one.
 
-// routeHandler is a component that wires its own routes under a sub-tree of /api/*. This
+// routeHandler is a component that binds its own routes under a sub-tree of /api/*. This
 // package, the router, is its only consumer.
 type routeHandler interface {
-	RegisterRoutes(mux *http.ServeMux)
+	RegisterRoutes(m routeMux)
 }
 
 type chatEngine interface {

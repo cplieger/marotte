@@ -135,7 +135,7 @@ func TestBlockedRuleKeepsPolling(t *testing.T) {
 		{
 			name: "blocked by the 24-hour clock",
 			setup: func(tc *testConfirmer, ruleID string) {
-				tc.setStatus(ruleID, func(st *launchrule.Status) { st.FailingSince = time.Now().Add(-failingBlockAfter) })
+				tc.setStatus(ruleID, func(st *launchrule.RuleStatus) { st.FailingSince = time.Now().Add(-failingBlockAfter) })
 			},
 			block:  func(n int, _ launchCall) (string, error) { return "", fmt.Errorf("fault %d", n) },
 			reason: "fault 1",

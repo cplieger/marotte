@@ -28,18 +28,15 @@ type docDeleter interface {
 
 var _ docDeleter = (*filebrowse.Handler)(nil)
 
-// kiroDocDeleteRequest is POST /api/workspace/kiro-docs/delete's body: a row's `path` verbatim.
-type kiroDocDeleteRequest struct {
+// KiroDocDeleteRequest is POST /api/workspace/kiro-docs/delete's body: a row's `path` verbatim.
+type KiroDocDeleteRequest struct {
 	Path string `json:"path"`
 }
 
 // handleKiroDocDelete removes everything one listed row was built from, so the next listing
 // has no such row.
 func (s *Server) handleKiroDocDelete(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
-	var req kiroDocDeleteRequest
+	var req KiroDocDeleteRequest
 	if !decodeBody(w, r, &req) {
 		return
 	}
@@ -68,7 +65,7 @@ func (s *Server) handleKiroDocDelete(w http.ResponseWriter, r *http.Request) {
 	slog.Info("kiro docs: deleted", "category", row.Category, "path", logsafe.Field(row.Path))
 	s.agent.Broadcast(durable.Context(r.Context()),
 		marotte.NewEvent(marotte.EventKiroDocsChanged, "", marotte.KiroDocsChangedPayload{}))
-	httpserver.OK(w)
+	httpreply.OK(w)
 }
 
 // findKiroDoc answers the listed row whose path is p, so only a row the page shows is deletable.

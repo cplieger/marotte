@@ -257,7 +257,7 @@ func (c *Confirmer) RecordEnding(ruleID, workflowID string, o launchrule.Outcome
 	c.update(ruleID, anyGeneration, func(es *eventState) bool { return setOutcome(&es.raw.Status, workflowID, o, true) })
 }
 
-func setOutcome(st *launchrule.Status, workflowID string, o launchrule.Outcome, ending bool) bool {
+func setOutcome(st *launchrule.RuleStatus, workflowID string, o launchrule.Outcome, ending bool) bool {
 	if st.LastRunID != workflowID || (ending && st.LastStatus != launchrule.StatusStarted) {
 		return false
 	}

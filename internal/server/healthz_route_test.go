@@ -22,7 +22,7 @@ func healthzStack(t *testing.T) http.Handler {
 	s.ready.Store(true)
 	idem := newIdempotencyCache(idempotencyTTL)
 	t.Cleanup(idem.stop)
-	return httpserver.Chain(s.routes(), s.middlewareStack(baseCSPPolicy, idem)...)
+	return httpserver.Chain(s.mux(), s.middlewareStack(baseCSPPolicy, idem)...)
 }
 
 func probe(h http.Handler, method, remote, host, path string) *httptest.ResponseRecorder {

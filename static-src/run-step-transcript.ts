@@ -2,7 +2,10 @@ import { batch, signal } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import { apiGetTypedOrError } from "./api-client.js";
 import { decodeRunStepCapture, decodeRunStepTranscript } from "./wire/decoders.gen.js";
-import { runStepCaptureURL, runStepURL } from "./actions/runs.js";
+import {
+  getRunsByIdStepsByPathCaptureEndpoint,
+  getRunsByIdStepsByPathEndpoint,
+} from "./wire/client.gen.js";
 import {
   mergeRunOpenEntries,
   appendRunEntry,
@@ -70,7 +73,10 @@ export function requestStepCapture(workflowID: string, nodePath: string): void {
     return;
   }
   captures.set(key, null);
-  void apiGetTypedOrError(runStepCaptureURL(workflowID, nodePath), decodeRunStepCapture)
+  void apiGetTypedOrError(
+    getRunsByIdStepsByPathCaptureEndpoint.request({ id: workflowID, path: nodePath }).path,
+    decodeRunStepCapture,
+  )
     .then((r) => {
       if (!captures.has(key)) {
         return;
@@ -141,7 +147,10 @@ async function fetchStep(key: string, workflowID: string, nodePath: string): Pro
   let data: RunStepTranscript | null = null;
   let verdict: StepRead;
   try {
-    const r = await apiGetTypedOrError(runStepURL(workflowID, nodePath), decodeRunStepTranscript);
+    const r = await apiGetTypedOrError(
+      getRunsByIdStepsByPathEndpoint.request({ id: workflowID, path: nodePath }).path,
+      decodeRunStepTranscript,
+    );
     data = r.ok ? r.data : null;
     verdict = data === null ? failedRead(r.status) : { state: data.state };
   } catch {

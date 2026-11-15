@@ -20,6 +20,12 @@ import type { MemoryEdit } from "./actions/memory.js";
 import { forceReflow } from "./dom.js";
 import { onSSE } from "./bus.js";
 import { engineRead, type EngineRead } from "./engine-read.js";
+import {
+  getMemoryByIdEndpoint,
+  getMemoryEndpoint,
+  getMemoryImportPromptEndpoint,
+  getMemorySyncEndpoint,
+} from "./wire/client.gen.js";
 import { createModal } from "./legacy-ui/modal.js";
 import { announce } from "./legacy-ui/announce.js";
 import { makeCopyButton } from "./code-blocks.js";
@@ -277,7 +283,7 @@ export function renderMemoriesPanel(panel: HTMLElement, filter = ""): void {
 async function refreshTransfer(): Promise<void> {
   const gen = ++transferGeneration;
   const settle = transferRead?.begin();
-  const res = await apiGetTypedOrError("/api/memory/import-prompt", decodeImportPrompt);
+  const res = await apiGetTypedOrError(getMemoryImportPromptEndpoint.path, decodeImportPrompt);
   if (gen !== transferGeneration) {
     return;
   }
@@ -290,7 +296,7 @@ async function refreshTransfer(): Promise<void> {
 async function refreshCloud(): Promise<void> {
   const gen = ++cloudGeneration;
   const settle = cloudRead?.begin();
-  const res = await apiGetTypedOrError("/api/memory/sync", decodeMemorySync);
+  const res = await apiGetTypedOrError(getMemorySyncEndpoint.path, decodeMemorySync);
   if (gen !== cloudGeneration) {
     return;
   }
@@ -322,7 +328,7 @@ function onMemoriesChanged(): void {
 async function refresh(): Promise<void> {
   const gen = ++generation;
   const settle = listRead?.begin();
-  const res = await apiGetTypedOrError("/api/memory", decodeMemoryList);
+  const res = await apiGetTypedOrError(getMemoryEndpoint.path, decodeMemoryList);
   if (gen !== generation) {
     return;
   }
@@ -865,7 +871,7 @@ function openDetail(id: string, edit: boolean): void {
 
 async function loadContent(id: string): Promise<void> {
   details.set(id, { kind: "loading" });
-  const res = await apiGetTypedOrError(`/api/memory/${encodeURIComponent(id)}`, decodeMemoryOne);
+  const res = await apiGetTypedOrError(getMemoryByIdEndpoint.request({ id }).path, decodeMemoryOne);
   if (details.get(id)?.kind !== "loading") {
     return; // Deleted or re-requested meanwhile.
   }

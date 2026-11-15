@@ -20,10 +20,6 @@ const textSignOutInDoubt = "marotte could not confirm the sign-out yet. Check th
 // handleLogout signs the backend out of the vault. The engine keeps a token it already holds until shortly before it
 // expires, so chats stop using the account within about four minutes; an engine restart stops it at once.
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
 	slog.Info("logout: request received",
 		"client_ip", httpserver.ClientIP(r, h.trusted...),
 		"user_agent", logsafe.Field(r.Header.Get("User-Agent")))
@@ -34,7 +30,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	err := h.vault.SignOut(h.backend)
 	switch {
 	case err == nil:
-		httpserver.WriteJSON(w, map[string]string{"output": "Signed out"})
+		httpserver.WriteJSON(w, LogoutResult{Output: "Signed out"})
 	case errors.Is(err, signin.ErrInDoubt):
 		slog.Error("logout: the sign-out was not confirmed in time", "error", err)
 		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(textSignOutInDoubt))

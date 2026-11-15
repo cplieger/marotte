@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/marotte/internal/route/routetest"
 	"github.com/cplieger/toolbelt/v3"
 )
 
@@ -35,10 +36,12 @@ func (s *switchableTools) bringUp(e *toolbelt.Engine) {
 	s.engine = e
 }
 
-func serveTools(t *testing.T, api http.Handler, path string) *httptest.ResponseRecorder {
+func serveTools(t *testing.T, api *toolsAPI, path string) *httptest.ResponseRecorder {
 	t.Helper()
+	mux := http.NewServeMux()
+	api.register(routetest.On(mux))
 	rec := httptest.NewRecorder()
-	api.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, http.NoBody))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, http.NoBody))
 	return rec
 }
 
@@ -101,7 +104,7 @@ func TestToolsAPI_AnErrorBodyServedThroughTheMiddlewareStackCarriesTheRequestID(
 	t.Cleanup(engine.Close)
 	mux := http.NewServeMux()
 	api := &toolsAPI{src: &switchableTools{engine: engine}}
-	mux.Handle(toolsAPIPrefix+"/", api)
+	api.register(routetest.On(mux))
 	idem := newIdempotencyCache(idempotencyTTL)
 	t.Cleanup(idem.stop)
 	h := httpserver.Chain(mux, (&Server{}).middlewareStack(baseCSPPolicy, idem)...)

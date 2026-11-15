@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/filebrowse"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 // newDenyFixture serves workDir with the deny list rooted at configDir, the
@@ -19,7 +20,7 @@ func newDenyFixture(t *testing.T, workDir, configDir string) *fixture {
 	now := time.Unix(1_700_000_000, 0)
 	h := New(workDir, filebrowse.NewSensitive(configDir), newTestSigner(t, now), slog.New(slog.DiscardHandler))
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	return &fixture{h: h, mux: mux, ws: workDir, now: now}
 }
 

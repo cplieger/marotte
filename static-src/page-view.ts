@@ -6,6 +6,7 @@ import { BUS_TAB_CHANGED, onBus, onSSE } from "./bus.js";
 import { onPresentedTag, presentedTag } from "./sse-adapter.js";
 import { getActiveTabId, openTabSubjects } from "./tabs.js";
 import type { NoticeOutcome, PageView, TabRef } from "./wire/types.gen.js";
+import { postEventsNoticeEndpoint, postEventsViewEndpoint } from "./wire/client.gen.js";
 
 /** liveness.Keepalive: the server reads a visible row silent past its alive window as hidden. */
 const VISIBLE_REPORT_MS = 15_000;
@@ -57,7 +58,7 @@ function post(path: string, body: unknown): void {
 
 /** Tell the server this page showed or declined notice `id`. */
 export function reportNotice(id: string, outcome: NoticeOutcome): void {
-  post("/api/events/notice", { id, outcome });
+  post(postEventsNoticeEndpoint.path, { id, outcome });
 }
 
 /** Start reporting this page's view; returns the teardown. */
@@ -70,7 +71,7 @@ export function installPageView(): () => void {
     scheduled = true;
     queueMicrotask(() => {
       scheduled = false;
-      post("/api/events/view", currentView());
+      post(postEventsViewEndpoint.path, currentView());
     });
   };
   const ac = new AbortController();
@@ -81,7 +82,7 @@ export function installPageView(): () => void {
   window.addEventListener(
     "pagehide",
     () => {
-      post("/api/events/view", { page, closed: true });
+      post(postEventsViewEndpoint.path, { page, closed: true });
     },
     { signal },
   );

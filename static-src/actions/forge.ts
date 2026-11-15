@@ -7,7 +7,20 @@ import {
   RETRY_STANDARD,
   ActionError,
   classifyFetchError,
+  fromEndpoint,
 } from "./index.js";
+import {
+  deleteForgesByIdEndpoint,
+  getForgesByIdReposEndpoint,
+  postForgesByIdProbeEndpoint,
+  postForgesDetectEndpoint,
+  postForgesLoginEndpoint,
+  postForgesOauthByNameCancelEndpoint,
+  postForgesOauthByNameStartEndpoint,
+  postGitCloneEndpoint,
+  postGitRemoveEndpoint,
+  putForgesByIdOwnersEndpoint,
+} from "../wire/client.gen.js";
 
 import {
   decodeDetection,
@@ -75,11 +88,13 @@ export const startDeviceFlow = apiAction<StartDeviceFlowArgs, DeviceFlowResponse
   name: "forge.start_device_flow",
   dedupe: true,
   retryable: retryNetwork,
-  request: ({ kind, host, clientId, options }) => ({
-    method: "POST",
-    path: `/api/forges/oauth/${kind}/start`,
-    body: { host, ...(clientId === "" ? {} : { client_id: clientId }), ...options },
-  }),
+  request: ({ kind, host, clientId, options }) =>
+    fromEndpoint(
+      postForgesOauthByNameStartEndpoint.request({
+        name: kind,
+        body: { host, ...(clientId === "" ? {} : { client_id: clientId }), ...options },
+      }),
+    ),
   error: false,
 });
 
@@ -89,11 +104,10 @@ export const startDeviceFlow = apiAction<StartDeviceFlowArgs, DeviceFlowResponse
 export const cancelDeviceFlow = apiAction<CancelDeviceFlowArgs, void>({
   name: "forge.cancel_device_flow",
   retryable: retryNetwork,
-  request: ({ kind, grantId }) => ({
-    method: "POST",
-    path: `/api/forges/oauth/${kind}/cancel`,
-    body: { grant_id: grantId },
-  }),
+  request: ({ kind, grantId }) =>
+    fromEndpoint(
+      postForgesOauthByNameCancelEndpoint.request({ name: kind, body: { grant_id: grantId } }),
+    ),
   error: false,
 });
 
@@ -105,10 +119,7 @@ export const signOut = apiAction<ConnectionArgs, void>({
   name: "forge.sign_out",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  request: ({ forgeId }) => ({
-    method: "DELETE",
-    path: `/api/forges/${encodeURIComponent(forgeId)}`,
-  }),
+  request: ({ forgeId }) => fromEndpoint(deleteForgesByIdEndpoint.request({ id: forgeId })),
   error: false,
 });
 
@@ -117,11 +128,7 @@ export const signOut = apiAction<ConnectionArgs, void>({
 export const probeForge = apiAction<ConnectionArgs, ProbeResult>({
   name: "forge.probe",
   retryable: retryNetwork,
-  request: ({ forgeId }) => ({
-    method: "POST",
-    path: `/api/forges/${encodeURIComponent(forgeId)}/probe`,
-    body: {},
-  }),
+  request: ({ forgeId }) => fromEndpoint(postForgesByIdProbeEndpoint.request({ id: forgeId })),
   decode: (data) => decodeProbeResult(data),
   error: false,
 });
@@ -137,10 +144,8 @@ export const listRepoPage = apiAction<RepoPageArgs, RepoList>({
   name: "forge.list_repo_page",
   dedupe: true,
   retryable: retryNetwork,
-  request: ({ forgeId, after }) => ({
-    method: "GET",
-    path: `/api/forges/${encodeURIComponent(forgeId)}/repos?${new URLSearchParams({ after }).toString()}`,
-  }),
+  request: ({ forgeId, after }) =>
+    fromEndpoint(getForgesByIdReposEndpoint.request({ id: forgeId, after })),
   decode: (data) => decodeRepoList(data),
   error: false,
 });
@@ -155,11 +160,10 @@ interface SetOwnersArgs {
 export const setOwners = apiAction<SetOwnersArgs, OwnerScopes>({
   name: "forge.set_owners",
   retryable: retryNetwork,
-  request: ({ forgeId, owners }) => ({
-    method: "PUT",
-    path: `/api/forges/${encodeURIComponent(forgeId)}/owners`,
-    body: { owners },
-  }),
+  request: ({ forgeId, owners }) =>
+    fromEndpoint(
+      putForgesByIdOwnersEndpoint.request({ id: forgeId, body: { owners: [...owners] } }),
+    ),
   decode: (data) => decodeOwnerScopes(data),
   error: false,
 });
@@ -199,11 +203,12 @@ export const cloneRepo = defineAction<CloneArgs, { output?: string; error?: stri
     };
     try {
       let r: Response;
+      const spec = postGitCloneEndpoint.request({ body: { url } });
       try {
-        r = await fetch("/api/git/clone", {
-          method: "POST",
+        r = await fetch(spec.path, {
+          method: spec.method,
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url }),
+          body: JSON.stringify(spec.body),
           signal: ctrl.signal,
         });
       } catch (e) {
@@ -275,11 +280,8 @@ export const cloneRepo = defineAction<CloneArgs, { output?: string; error?: stri
 /** Remove a locally-cloned repo from the workspace; callers toast. */
 export const deleteLocal = apiAction<DeleteLocalArgs, { status?: string; error?: string }>({
   name: "forge.delete_local",
-  request: ({ repoName }) => ({
-    method: "POST",
-    path: "/api/git/remove",
-    body: { repo: repoName },
-  }),
+  request: ({ repoName }) =>
+    fromEndpoint(postGitRemoveEndpoint.request({ body: { repo: repoName } })),
   error: false,
   // Not retryable: a timed-out delete may have succeeded server-side.
 });
@@ -298,11 +300,8 @@ export const connectPAT = apiAction<ConnectPATArgs, LoginResult>({
   idempotencyKey: true,
   retryable: (e) => retryNetwork(e) && e.code !== "sign_in_timed_out",
   retry: RETRY_STANDARD,
-  request: ({ kind, host, token, options }) => ({
-    method: "POST",
-    path: "/api/forges/login",
-    body: { kind, host, token, ...options },
-  }),
+  request: ({ kind, host, token, options }) =>
+    fromEndpoint(postForgesLoginEndpoint.request({ body: { kind, host, token, ...options } })),
   decode: (data) => decodeLoginResult(data),
   error: false,
 });
@@ -318,11 +317,12 @@ interface DetectArgs {
  *  refusal, and `family_undetected` is its own sentence there. */
 export const detectForge = apiAction<DetectArgs, Detection>({
   name: "forge.detect",
-  request: ({ host, token, options }) => ({
-    method: "POST",
-    path: "/api/forges/detect",
-    body: { token, ...options, web_base_url: options.web_base_url ?? `https://${host}` },
-  }),
+  request: ({ host, token, options }) =>
+    fromEndpoint(
+      postForgesDetectEndpoint.request({
+        body: { token, ...options, web_base_url: options.web_base_url ?? `https://${host}` },
+      }),
+    ),
   decode: (data) => decodeDetection(data),
   error: false,
 });

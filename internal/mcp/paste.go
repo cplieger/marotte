@@ -429,7 +429,7 @@ func editDistance(a, b string) int {
 // scalars and naming an object, array or null as a mistake. The count is bounded here: an env
 // object at the 1 MiB body cap decoded to 174,762 pairs and 39.4 MB before reaching the store's
 // limit (go1.27.0).
-func decodeOrderedPairs(field string, raw json.RawMessage) ([]keyPair, error) {
+func decodeOrderedPairs(field string, raw json.RawMessage) ([]KeyPair, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
@@ -442,7 +442,7 @@ func decodeOrderedPairs(field string, raw json.RawMessage) ([]keyPair, error) {
 	if tok != json.Delim('{') {
 		return nil, fmt.Errorf("%s must be a JSON object of name/value pairs", field)
 	}
-	var out []keyPair
+	var out []KeyPair
 	for dec.More() {
 		if len(out) >= maxImportBlockKeys {
 			return nil, fmt.Errorf("%s: more than %d entries", field, maxImportBlockKeys)
@@ -463,7 +463,7 @@ func decodeOrderedPairs(field string, raw json.RawMessage) ([]keyPair, error) {
 		if !ok {
 			return nil, fmt.Errorf("%s[%q]: value must be a string, number or boolean", field, key)
 		}
-		out = append(out, keyPair{Name: key, Value: text})
+		out = append(out, KeyPair{Name: key, Value: text})
 	}
 	return out, nil
 }

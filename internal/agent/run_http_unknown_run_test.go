@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 // unknownRunMux is the run routes over an engine that answers every per-run workflow method as KAS does for an id
@@ -25,7 +26,7 @@ func unknownRunMux(t *testing.T) *http.ServeMux {
 	}
 	br.setCallResult(methodKiroWorkflowList, kasRuns(t))
 	mux := http.NewServeMux()
-	(&runRoutes{runs: h.runs, epoch: testEpoch}).register(mux)
+	(&runRoutes{runs: h.runs, epoch: testEpoch}).register(routetest.On(mux))
 	return mux
 }
 

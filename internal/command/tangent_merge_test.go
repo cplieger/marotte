@@ -398,7 +398,7 @@ func TestMergeTangent_AnUnfinishedSummaryMergesNothing(t *testing.T) {
 
 func TestMergeTangent_RecordsTheOutcomeBeforeItsFrame(t *testing.T) {
 	f := newMergeFixture(t)
-	var atFrame mergeStatus
+	var atFrame TangentMergeStatus
 	f.host.onMergeEvt = func(marotte.ServerEvent) { atFrame = f.merges.status(t.Context(), tangentOp1) }
 	if _, err := f.merge(t, &fakeTangents{parent: "c-parent", reply: "Found it."}); err != nil {
 		t.Fatalf("CmdMergeTangent = %v, want accepted", err)
@@ -634,7 +634,7 @@ func TestMergeStatus_ResumesAMergeAnEndedProcessLeftRunning(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := orphanedMerge(t, tc)
 
-			want := mergeStatus{State: string(marotte.TangentMergeRunning), ParentChatID: "c-parent"}
+			want := TangentMergeStatus{State: string(marotte.TangentMergeRunning), ParentChatID: "c-parent"}
 			if got := f.merges.status(t.Context(), tangentOp1); got != want {
 				t.Errorf("status of the orphaned merge = %+v, want %+v until its resume settles", got, want)
 			}
@@ -667,7 +667,7 @@ func TestMergeTangent_ARunningMergeThisProcessOwnsStaysRunning(t *testing.T) {
 	}
 	f.merges.claim(tangentOp1)
 
-	want := mergeStatus{State: string(marotte.TangentMergeRunning), ParentChatID: "c-parent"}
+	want := TangentMergeStatus{State: string(marotte.TangentMergeRunning), ParentChatID: "c-parent"}
 	if got := f.merges.status(t.Context(), tangentOp1); got != want {
 		t.Errorf("status of a claimed running merge = %+v, want %+v", got, want)
 	}

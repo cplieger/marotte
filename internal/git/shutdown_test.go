@@ -80,7 +80,7 @@ func TestHandlerShutdown_CancelsAndWaitsForAScanInFlight(t *testing.T) {
 		t.Error("a refresh is still in flight after Shutdown returned")
 	}
 
-	seeded := []allRepoStatus{repoRow("seeded")}
+	seeded := []RepoStatus{repoRow("seeded")}
 	seedSnapshot(&h.statusCache, statusKeyFetch, seeded, time.Now())
 	forceRefreshAndLeave(t, h)
 	if err := h.Shutdown(ctx); err != nil {

@@ -127,7 +127,9 @@ func TestSweep_WaitsOnABusyEngineUntilTheNextSlot(t *testing.T) {
 func TestSweep_JudgesEachSlotByTheClockWhenItIsReached(t *testing.T) {
 	const launchTakes = 2 * time.Minute // the launch's own timeout, as a slow engine spends it
 	busy := fmt.Errorf("%w: %w", ErrEngineBusy, errors.New("workflow list call: context deadline exceeded"))
-	daily := func(h, m int) launchrule.Spec { return launchrule.Spec{Freq: launchrule.FreqDaily, Hour: h, Minute: m} }
+	daily := func(h, m int) launchrule.ClockSpec {
+		return launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: h, Minute: m}
+	}
 	yesterday := at(2026, time.August, 3, 12, 0)
 	due := at(2026, time.August, 4, 2, 0)
 
@@ -193,7 +195,7 @@ func TestSweep_JudgesEachSlotByTheClockWhenItIsReached(t *testing.T) {
 	})
 
 	t.Run("a next slot passed during an earlier launch skips the wait", func(t *testing.T) {
-		hourly := launchrule.Spec{Freq: launchrule.FreqHourly, Interval: 1, Minute: 0}
+		hourly := launchrule.ClockSpec{Freq: launchrule.FreqHourly, Interval: 1, Minute: 0}
 		st, l, r := sweepFixture(t, at(2026, time.August, 4, 2, 59), []clockSeed{
 			{Source: "bundled://a", Spec: daily(2, 0), Anchor: yesterday},
 			{Source: "bundled://b", Spec: hourly, Anchor: at(2026, time.August, 4, 1, 30)},
@@ -212,7 +214,7 @@ func TestSweep_JudgesEachSlotByTheClockWhenItIsReached(t *testing.T) {
 	// A wait its next slot overtakes late in a slow sweep hands that slot to the same sweep, so it cannot age past
 	// its grace behind the other schedules' launches.
 	t.Run("a next slot reached late in a slow sweep still fires", func(t *testing.T) {
-		hourly := launchrule.Spec{Freq: launchrule.FreqHourly, Interval: 1, Minute: 0}
+		hourly := launchrule.ClockSpec{Freq: launchrule.FreqHourly, Interval: 1, Minute: 0}
 		st, l, r := sweepFixture(t, at(2026, time.August, 4, 3, 0).Add(30*time.Second), []clockSeed{
 			{Source: "bundled://a", Spec: daily(2, 0), Anchor: yesterday},
 			{Source: "bundled://b", Spec: daily(2, 0), Anchor: yesterday},
@@ -274,7 +276,7 @@ func TestWaitSurvivesAReopen(t *testing.T) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	e := putClock(t, st, clockSeed{
-		Source: "bundled://demo", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2},
+		Source: "bundled://demo", Spec: launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2},
 		Anchor: at(2026, time.August, 3, 12, 0),
 	})
 	due := at(2026, time.August, 4, 2, 0)
@@ -324,8 +326,8 @@ func TestSweep_AScheduleChangedMidSweepDoesNotLaunch(t *testing.T) {
 		for _, tc := range changes {
 			t.Run(state.name+" "+tc.name, func(t *testing.T) {
 				st := mustStore(t)
-				a := putClock(t, st, clockSeed{Source: "bundled://a", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, Anchor: due})
-				b := putClock(t, st, clockSeed{Source: "bundled://b", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, Anchor: state.anchor})
+				a := putClock(t, st, clockSeed{Source: "bundled://a", Spec: launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2}, Anchor: due})
+				b := putClock(t, st, clockSeed{Source: "bundled://b", Spec: launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2}, Anchor: state.anchor})
 				state.arrange(t, st, &b)
 				l := &fakeLauncher{}
 				l.during = func(src string) {

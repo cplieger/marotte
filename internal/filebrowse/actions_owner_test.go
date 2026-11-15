@@ -14,7 +14,7 @@ const ownedRefusal = "tools.json is written through its editor; edit it instead"
 
 func postAction(t *testing.T, h *Handler, action, path, name string) (int, string) {
 	t.Helper()
-	body, err := json.Marshal(fileAction{Action: action, Path: path, Name: name})
+	body, err := json.Marshal(FileAction{Action: action, Path: path, Name: name})
 	if err != nil {
 		t.Fatal(err)
 	}

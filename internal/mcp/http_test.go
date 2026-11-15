@@ -13,17 +13,19 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 func newRoutedStore(t *testing.T) (*Store, *http.ServeMux) {
 	t.Helper()
 	s := newTestStore(t)
 	mux := http.NewServeMux()
-	s.RegisterRoutes(mux)
+	s.RegisterRoutes(routetest.On(mux))
 	return s, mux
 }
 
@@ -201,7 +203,7 @@ func TestHandleOne_GET_returnsMaskedSecrets(t *testing.T) {
 	s, mux := newRoutedStore(t)
 	orig, err := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx", Enabled: true,
-		Env: []keyPair{{Name: "TOKEN", Value: "secret-abc"}},
+		Env: []KeyPair{{Name: "TOKEN", Value: "secret-abc"}},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -377,7 +379,7 @@ func TestHandleOne_PUT_updatesAndRespectsMask(t *testing.T) {
 	s, mux := newRoutedStore(t)
 	orig, err := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx", Enabled: true,
-		Env: []keyPair{{Name: "TOKEN", Value: "secret-abc"}},
+		Env: []KeyPair{{Name: "TOKEN", Value: "secret-abc"}},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -386,7 +388,7 @@ func TestHandleOne_PUT_updatesAndRespectsMask(t *testing.T) {
 	// Send mask back; store must preserve the stored value.
 	rec := doJSON(t, mux, http.MethodPut, "/api/mcp/"+string(orig.ID), &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx", Enabled: true,
-		Env: []keyPair{{Name: "TOKEN", Value: secretMask}},
+		Env: []KeyPair{{Name: "TOKEN", Value: secretMask}},
 	})
 
 	if rec.Code != http.StatusOK {
@@ -417,6 +419,26 @@ func TestHandleOne_PATCH_togglesEnabled(t *testing.T) {
 	got := s.get(t.Context(), orig.ID)
 	if got == nil || got.Enabled {
 		t.Errorf("PATCH did not disable the server: %+v", got)
+	}
+}
+
+// HEAD on one server takes the GET arm, so a body that PUT or PATCH would apply changes nothing.
+func TestHandleOne_HEADLeavesTheStoreUnchanged(t *testing.T) {
+	s, mux := newRoutedStore(t)
+	orig, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "gh", Command: "npx", Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	before := s.get(t.Context(), orig.ID)
+
+	rec := doJSON(t, mux, http.MethodHead, "/api/mcp/"+string(orig.ID),
+		&Server{Transport: TransportStdio, Name: "renamed", Command: "bash", Enabled: false})
+
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" {
+		t.Errorf("HEAD = %d %q, want 200 application/json", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	if after := s.get(t.Context(), orig.ID); !reflect.DeepEqual(after, before) {
+		t.Errorf("HEAD changed the record from %+v to %+v", before, after)
 	}
 }
 
@@ -510,12 +532,12 @@ func TestHandleCollection_POST_persistFailure_is500(t *testing.T) {
 	}
 }
 
-func decodeValidation400(t *testing.T, rec *httptest.ResponseRecorder) validationErrorBody {
+func decodeValidation400(t *testing.T, rec *httptest.ResponseRecorder) validationRefusal {
 	t.Helper()
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (body %s)", rec.Code, rec.Body.String())
 	}
-	var got validationErrorBody
+	var got validationRefusal
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode 400 body %q: %v", rec.Body.String(), err)
 	}

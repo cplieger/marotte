@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 func readKAS(t *testing.T, path string) map[string]json.RawMessage {
@@ -82,7 +84,7 @@ func TestWriteKASConfig_StdioShape(t *testing.T) {
 	srv := &Server{
 		Transport: TransportStdio, Name: "gh", Enabled: true,
 		Command: "npx", Args: []string{"-y", "gh-mcp"},
-		Env: []keyPair{{Name: "TOKEN", Value: "t1"}, {Name: "MODE", Value: "ro"}},
+		Env: []KeyPair{{Name: "TOKEN", Value: "t1"}, {Name: "MODE", Value: "ro"}},
 	}
 	if _, err := s.Create(t.Context(), srv); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -329,7 +331,7 @@ func TestRenderKASServers_SkipsUnknownTransport(t *testing.T) {
 // store keeps ordered KeyPairs so the editor can round-trip duplicates, and
 // KAS's schema cannot represent them.
 func TestPairsRecord_LastDuplicateWins(t *testing.T) {
-	got := pairsRecord([]keyPair{{Name: "K", Value: "first"}, {Name: "K", Value: "second"}})
+	got := pairsRecord([]KeyPair{{Name: "K", Value: "first"}, {Name: "K", Value: "second"}})
 	if len(got) != 1 || got["K"] != "second" {
 		t.Errorf("pairsRecord = %v, want {K: second}", got)
 	}
@@ -634,7 +636,7 @@ func TestReadKASDoc_RefusedSaveAnswers409WithTheHint(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	mux := http.NewServeMux()
-	s.RegisterRoutes(mux)
+	s.RegisterRoutes(routetest.On(mux))
 	if err := os.WriteFile(kas, []byte("{garbage"), 0o600); err != nil {
 		t.Fatalf("seed: %v", err)
 	}

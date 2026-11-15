@@ -277,7 +277,7 @@ func TestCmdElicitationResponse_ContentTravelsOnlyOnAccept(t *testing.T) {
 			cmd := decisionCommand(t, marotte.CmdElicitationResponse, marotte.ElicitationResponseCommand{
 				RequestID: decisionRequestID,
 				Action:    tc.action,
-				Content:   filled,
+				Content:   map[string]json.RawMessage{"branch": json.RawMessage(`"main"`)},
 			})
 
 			if _, err := cmdElicitationResponse(t.Context(), deps, cmd); err != nil {
@@ -422,7 +422,7 @@ func TestCmdElicitationResponse_URLAcceptCarriesNoContent(t *testing.T) {
 		elicitation: &marotte.ElicitationNeededPayload{Mode: marotte.ElicitationModeURL, URL: "https://example.com/connect", RequestID: decisionRequestID},
 	}
 	cmd := decisionCommand(t, marotte.CmdElicitationResponse, marotte.ElicitationResponseCommand{
-		RequestID: decisionRequestID, Action: marotte.ElicitationActionAccept, Content: map[string]any{"x": 1.0},
+		RequestID: decisionRequestID, Action: marotte.ElicitationActionAccept, Content: map[string]json.RawMessage{"x": json.RawMessage(`1`)},
 	})
 
 	if _, err := cmdElicitationResponse(t.Context(), deps, cmd); err != nil {

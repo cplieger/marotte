@@ -314,7 +314,7 @@ func TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+	entry := putClockRule(t, st, "bundled://nightly", launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2}, true)
 	// The fire's grant: the row tracks wf_1, the only run whose outcome lands on it.
 	if err := st.RecordStart(t.Context(), launchrule.Run{ScheduleID: entry.ID, WorkflowID: "wf_1"}); err != nil {
 		t.Fatalf("RecordStart: %v", err)
@@ -437,7 +437,7 @@ func TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome(t 
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	entry := putClockRule(t, st, "bundled://publish", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+	entry := putClockRule(t, st, "bundled://publish", launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2}, true)
 	// The fire's grant: the row tracks wf_1, the only run whose outcome lands on it.
 	if err := st.RecordStart(t.Context(), launchrule.Run{ScheduleID: entry.ID, WorkflowID: "wf_1"}); err != nil {
 		t.Fatalf("RecordStart: %v", err)
@@ -502,7 +502,7 @@ func scheduleAfterAFailedSlot(t *testing.T, h *Runtime) (*launchrule.Store, stri
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	entry := putClockRule(t, st, "bundled://publish", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+	entry := putClockRule(t, st, "bundled://publish", launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2}, true)
 	prev := launchrule.Run{ScheduleID: entry.ID, WorkflowID: "wf_0"}
 	if err := st.RecordStart(t.Context(), prev); err != nil {
 		t.Fatalf("RecordStart(wf_0): %v", err)

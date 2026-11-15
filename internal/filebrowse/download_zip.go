@@ -21,13 +21,7 @@ const (
 )
 
 func (h *Handler) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
-	var req struct {
-		Paths []string `json:"paths"`
-	}
+	var req ZipRequest
 	if !httpreply.DecodeJSON(w, r, &req) {
 		return
 	}

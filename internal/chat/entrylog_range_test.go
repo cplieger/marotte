@@ -113,7 +113,7 @@ func getTurnRangeQuery(t *testing.T, s *Store, id marotte.ChatID, turn, query st
 	}
 	req := httptest.NewRequest(http.MethodGet, url, nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleOne(rec, req)
+	serveRouter(s, rec, req)
 	return rec
 }
 

@@ -5,7 +5,6 @@ import (
 
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/go/textsafe"
-	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/signin"
 )
 
@@ -48,11 +47,7 @@ type WhoamiResponse struct {
 const textAPIKeyAuth = "API key (KIRO_API_KEY)" //nolint:gosec // G101: a display label naming the variable, not a credential
 
 // handleWhoami answers from the vault's memory; always 200, all three states are answers.
-func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
+func (h *Handler) handleWhoami(w http.ResponseWriter, _ *http.Request) {
 	if h.apiKey {
 		httpserver.WriteJSON(w, WhoamiResponse{State: whoamiSignedIn, Auth: textAPIKeyAuth, APIKey: true})
 		return

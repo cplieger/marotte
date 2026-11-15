@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 // fakeBroadcaster captures broadcasts for assertions, guarded by mu against parallel Append
@@ -448,7 +449,7 @@ func TestHandleList_ReturnsHeaders(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleList(rec, req)
+	serveRouter(s, rec, req)
 
 	if rec.Code != 200 {
 		t.Fatalf("code = %d", rec.Code)
@@ -479,7 +480,7 @@ func TestHandleOne_NotFound(t *testing.T) {
 	s, _ := newTestStore(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/nope", nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleOne(rec, req)
+	serveRouter(s, rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("code = %d", rec.Code)
 	}
@@ -489,7 +490,7 @@ func TestHandleOne_RejectsUnknownSubResource(t *testing.T) {
 	s, _ := newTestStore(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/a/b", nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleOne(rec, req)
+	serveRouter(s, rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("code = %d, want 404", rec.Code)
 	}
@@ -540,7 +541,7 @@ func TestHandleList_EmptyStoreReturnsEmptyArrayNotNull(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleList(rec, req)
+	serveRouter(s, rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200", rec.Code)
@@ -559,28 +560,9 @@ func TestHandleList_RejectsNonGET(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
 		req := httptest.NewRequest(method, "/api/chats", nil)
 		rec := httptest.NewRecorder()
-		newRouter(s).handleList(rec, req)
+		serveRouter(s, rec, req)
 		if rec.Code != http.StatusMethodNotAllowed {
 			t.Errorf("handleList(%s) code = %d, want 405", method, rec.Code)
-		}
-	}
-}
-
-func TestHandleOne_RejectsEmptyOrLeadingSlashPath(t *testing.T) {
-	s, _ := newTestStore(t)
-	cases := []struct {
-		name string
-		path string
-	}{
-		{"empty_id", "/api/chats/"},
-		{"leading_slash", "/api/chats//c1"},
-	}
-	for _, tc := range cases {
-		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
-		rec := httptest.NewRecorder()
-		newRouter(s).handleOne(rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("handleOne(%s) code = %d, want 400", tc.name, rec.Code)
 		}
 	}
 }
@@ -591,7 +573,7 @@ func TestHandleOne_BaseRejectsNonGET(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
 		req := httptest.NewRequest(method, "/api/chats/c1", nil)
 		rec := httptest.NewRecorder()
-		newRouter(s).handleOne(rec, req)
+		serveRouter(s, rec, req)
 		if rec.Code != http.StatusMethodNotAllowed {
 			t.Errorf("handleOne(%s /api/chats/c1) code = %d, want 405", method, rec.Code)
 		}
@@ -615,7 +597,7 @@ func TestHandleOne_IgnoresInvalidQueryParams(t *testing.T) {
 	for _, tc := range cases {
 		req := httptest.NewRequest(http.MethodGet, "/api/chats/c1"+tc.query, nil)
 		rec := httptest.NewRecorder()
-		newRouter(s).handleOne(rec, req)
+		serveRouter(s, rec, req)
 		if rec.Code != http.StatusOK {
 			t.Errorf("handleOne(%s) code = %d, want 200 (invalid params should fall back)", tc.name, rec.Code)
 		}
@@ -630,7 +612,7 @@ func TestRegisterRoutes_WiresListAndOneHandlers(t *testing.T) {
 	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	mux := http.NewServeMux()
-	s.RegisterRoutes(mux)
+	s.RegisterRoutes(routetest.On(mux))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
 	rec := httptest.NewRecorder()
@@ -884,7 +866,7 @@ func TestHandleOne_RejectsInvalidChatID(t *testing.T) {
 	for _, bad := range []string{"bad.id", "with@sign", "plus+sign"} {
 		req := httptest.NewRequest(http.MethodGet, "/api/chats/"+bad, nil)
 		rec := httptest.NewRecorder()
-		newRouter(s).handleOne(rec, req)
+		serveRouter(s, rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("handleOne(%q) = %d, want 400", bad, rec.Code)
 		}
@@ -936,7 +918,7 @@ func TestHandleExport_JSONFormatReturnsChatJSON(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export?format=json", nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleOne(rec, req)
+	serveRouter(s, rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
@@ -956,7 +938,7 @@ func TestHandleExport_MarkdownIsDefaultFormat(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleOne(rec, req)
+	serveRouter(s, rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
@@ -980,7 +962,7 @@ func TestHandleExport_RejectsUnsupportedFormat(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export?format=xml", nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleOne(rec, req)
+	serveRouter(s, rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("code = %d, want 400 for unsupported format", rec.Code)
@@ -993,7 +975,7 @@ func TestHandleExport_FallsBackToChatIDWhenNameEmpty(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleOne(rec, req)
+	serveRouter(s, rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d", rec.Code)
@@ -1008,7 +990,7 @@ func TestHandleExport_NotFoundForMissingChat(t *testing.T) {
 	s, _ := newTestStore(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleOne(rec, req)
+	serveRouter(s, rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("code = %d, want 404", rec.Code)
 	}
@@ -1020,7 +1002,7 @@ func TestHandleExport_RejectsNonGET(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
 		req := httptest.NewRequest(method, "/api/chats/c1/export", nil)
 		rec := httptest.NewRecorder()
-		newRouter(s).handleOne(rec, req)
+		serveRouter(s, rec, req)
 		if rec.Code != http.StatusMethodNotAllowed {
 			t.Errorf("handleExport(%s) = %d, want 405", method, rec.Code)
 		}
@@ -1031,7 +1013,7 @@ func TestHandleExport_RejectsInvalidChatID(t *testing.T) {
 	s, _ := newTestStore(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/bad.id/export", nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleOne(rec, req)
+	serveRouter(s, rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("code = %d, want 400", rec.Code)
 	}
@@ -1046,7 +1028,7 @@ func TestHandleExport_SanitisesAdversarialChatName(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleOne(rec, req)
+	serveRouter(s, rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d", rec.Code)
@@ -1135,7 +1117,7 @@ func TestHandleExport_SuccessfulMarkdownWriteIsQuiet(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
 	rec := httptest.NewRecorder()
-	newRouter(s).handleOne(rec, req)
+	serveRouter(s, rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())

@@ -30,7 +30,7 @@ func postImport(t *testing.T, mux http.Handler, body string) *httptest.ResponseR
 }
 
 type importResponse struct {
-	Results []importResult `json:"results"`
+	Results []ImportResult `json:"results"`
 	Notes   []string       `json:"notes"`
 }
 
@@ -287,7 +287,7 @@ func TestImport_IdenticalReinstallPreservesEnvValues(t *testing.T) {
 		Name:      "github",
 		Command:   "npx",
 		Args:      []string{"-y", "@modelcontextprotocol/server-github"},
-		Env:       []keyPair{{Name: "GITHUB_PERSONAL_ACCESS_TOKEN", Value: "ghp_real"}},
+		Env:       []KeyPair{{Name: "GITHUB_PERSONAL_ACCESS_TOKEN", Value: "ghp_real"}},
 		Enabled:   true,
 		Prewarm:   true,
 	}); err != nil {

@@ -185,7 +185,7 @@ func TestHandlePowersList_MergesTheCatalogueWithWhatKASReports(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /api/powers = %d (%s)", rec.Code, rec.Body.String())
 	}
-	var body powersListResponse
+	var body PowersList
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestHandlePowersList_EachHalfFailsAlone(t *testing.T) {
 	br.setCallResult(methodKiroPowersList, json.RawMessage(kasPowersListReply))
 	rec := httptest.NewRecorder()
 	h.powers.handleList(rec, httptest.NewRequest(http.MethodGet, "/api/powers", nil))
-	var body powersListResponse
+	var body PowersList
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestHandlePowersList_EachHalfFailsAlone(t *testing.T) {
 	backend.catalog = []powers.Entry{{Name: "figma"}}
 	rec = httptest.NewRecorder()
 	h.powers.handleList(rec, httptest.NewRequest(http.MethodGet, "/api/powers", nil))
-	body = powersListResponse{}
+	body = PowersList{}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +257,7 @@ func TestHandlePowersList_AFailedPowerMakesTheInstalledHalfPartialAndCarriesKASR
 
 	rec := httptest.NewRecorder()
 	h.powers.handleList(rec, httptest.NewRequest(http.MethodGet, "/api/powers", nil))
-	var body powersListResponse
+	var body PowersList
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
@@ -469,7 +469,7 @@ func TestPowers_AnAdministratorLockRefusesInstallAndLeavesRemoval(t *testing.T) 
 	br.setCallResult(methodKiroPowersList, json.RawMessage(kasPowersListReply))
 	rec = httptest.NewRecorder()
 	h.powers.handleList(rec, httptest.NewRequest(http.MethodGet, "/api/powers", nil))
-	var body powersListResponse
+	var body PowersList
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
@@ -708,11 +708,11 @@ func TestHandlePowersList_APowerWhoseServersCouldNotBeConfiguredIsALoadError(t *
 
 	rec := httptest.NewRecorder()
 	h.powers.handleList(rec, httptest.NewRequest(http.MethodGet, "/api/powers", nil))
-	var body powersListResponse
+	var body PowersList
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	want := []powerLoadError{
+	want := []PowerLoadError{
 		{Name: "both", Message: "kas could not load it"},
 		{Name: "broken", Message: powerUnconfiguredText},
 	}

@@ -32,11 +32,11 @@ type State struct {
 	Launched   json.RawMessage   `json:"launched,omitempty"`
 	Superseded json.RawMessage   `json:"superseded,omitempty"`
 	Attempts   json.RawMessage   `json:"attempts,omitempty"`
-	Status     Status            `json:"status"`
+	Status     RuleStatus        `json:"status"`
 }
 
-// Status is a rule's row state.
-type Status struct {
+// RuleStatus is a rule's row state.
+type RuleStatus struct {
 	// Anchor is a clock rule's next-run origin: its creation, then its last fire or skip.
 	Anchor time.Time `json:"anchor,omitzero"`
 	// LastRunAt is a clock rule's last slot's due time, or its run's start (RecordStart) until the runner records

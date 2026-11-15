@@ -150,29 +150,29 @@ func trimmedScopes(scopes []string) []string {
 	return out
 }
 
-// importOutcome names what one entry of a pasted block did.
-type importOutcome string
+// ImportOutcome names what one entry of a pasted block did.
+type ImportOutcome string
 
-// importCreated and ImportUnchanged are the two outcomes of one import entry.
+// importCreated and importUnchanged are the two outcomes of one import entry.
 // There is no "updated": an entry naming a configured server either matches its
 // spec (unchanged) or conflicts with it (the whole paste fails), because
 // silently rewriting a server the user has since edited is not what pasting a
 // README asked for.
 const (
-	importCreated   importOutcome = "created"
-	importUnchanged importOutcome = "unchanged"
+	importCreated   ImportOutcome = "created"
+	importUnchanged ImportOutcome = "unchanged"
 )
 
-// importResult is one entry's outcome, in the order the block declared it.
-type importResult struct {
+// ImportResult is one entry's outcome, in the order the block declared it.
+type ImportResult struct {
 	Name    string        `json:"name"`
-	Outcome importOutcome `json:"outcome"`
+	Outcome ImportOutcome `json:"outcome"`
 }
 
 // importServers creates every server of one pasted block, or none: the block is one README's worth.
 // A name configured with the SAME spec is `unchanged`; with a DIFFERENT spec the paste fails rather
 // than silently overwriting.
-func (s *Store) importServers(ctx context.Context, in []*Server) ([]importResult, error) {
+func (s *Store) importServers(ctx context.Context, in []*Server) ([]ImportResult, error) {
 	// Before taking the lock: the check is pure, and a block that cannot land
 	// should not have made every other caller wait.
 	if err := validateImport(in); err != nil {
@@ -186,7 +186,7 @@ func (s *Store) importServers(ctx context.Context, in []*Server) ([]importResult
 	defer s.releaseWrite()
 	s.mu.Lock()
 	before := s.servers
-	results := make([]importResult, 0, len(in))
+	results := make([]ImportResult, 0, len(in))
 	created := 0
 	for _, sv := range in {
 		res, err := s.importOneLocked(sv, now)
@@ -243,18 +243,18 @@ func validateImport(in []*Server) error {
 
 // importOneLocked appends one entry, or reports that the stored record already
 // says the same thing. Caller must hold the write lock.
-func (s *Store) importOneLocked(sv *Server, now int64) (importResult, error) {
+func (s *Store) importOneLocked(sv *Server, now int64) (ImportResult, error) {
 	if existing := s.findByNameLocked(sv.Name); existing != nil {
 		if !sameSpec(existing, sv) {
-			return importResult{}, fmt.Errorf(
+			return ImportResult{}, fmt.Errorf(
 				"%w. %q is configured with a different command or url. Rename the entry or edit the existing integration",
 				errNameConflict, existing.Name,
 			)
 		}
-		return importResult{Name: existing.Name, Outcome: importUnchanged}, nil
+		return ImportResult{Name: existing.Name, Outcome: importUnchanged}, nil
 	}
 	if err := s.heldNameErr(sv.Name); err != nil {
-		return importResult{}, err
+		return ImportResult{}, err
 	}
 	rec := *sv
 	rec.ID = newID()
@@ -267,7 +267,7 @@ func (s *Store) importOneLocked(sv *Server, now int64) (importResult, error) {
 	rec.CreatedAt = now
 	rec.UpdatedAt = now
 	s.servers = append(s.servers, &rec)
-	return importResult{Name: rec.Name, Outcome: importCreated}, nil
+	return ImportResult{Name: rec.Name, Outcome: importCreated}, nil
 }
 
 // update replaces one server by id. Fields whose secret value equals

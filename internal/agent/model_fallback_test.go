@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 // modelFallbackCapture is one exchange of internal/translate/testdata/configuration_model_fallback.json, captured on
@@ -104,8 +105,10 @@ func TestModelFallbackPutRejectsABadRequest(t *testing.T) {
 	}
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
+	mux := http.NewServeMux()
+	h.RegisterRoutes(routetest.On(mux))
 	rec := httptest.NewRecorder()
-	h.config.handleModelFallback(rec, httptest.NewRequest(http.MethodGet, "/api/model-fallback", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/model-fallback", nil))
 	if rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Allow") != http.MethodPut {
 		t.Errorf("GET = %d Allow %q, want 405 Allow PUT", rec.Code, rec.Header().Get("Allow"))
 	}

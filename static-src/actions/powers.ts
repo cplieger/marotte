@@ -1,7 +1,8 @@
 // No auto-retry: a timed-out install keeps running on the server, and
 // powers_changed repaints the list when it lands.
 
-import { apiAction } from "./index.js";
+import { apiAction, fromEndpoint } from "./index.js";
+import { deletePowersByNameEndpoint, postPowersByNameInstallEndpoint } from "../wire/client.gen.js";
 import type { ActionErrorLike } from "./index.js";
 
 interface PowerArgs {
@@ -22,19 +23,13 @@ function failure(verb: string, name: string, err: ActionErrorLike): string {
 export const installPower = apiAction<PowerArgs>({
   name: "powers.install",
   dedupe: (args) => `powers.install:${args.name}`,
-  request: ({ name }) => ({
-    method: "POST",
-    path: `/api/powers/${encodeURIComponent(name)}/install`,
-  }),
+  request: ({ name }) => fromEndpoint(postPowersByNameInstallEndpoint.request({ name })),
   error: (args, err) => failure("install", args.name, err),
 });
 
 export const uninstallPower = apiAction<PowerArgs>({
   name: "powers.uninstall",
   dedupe: (args) => `powers.uninstall:${args.name}`,
-  request: ({ name }) => ({
-    method: "DELETE",
-    path: `/api/powers/${encodeURIComponent(name)}`,
-  }),
+  request: ({ name }) => fromEndpoint(deletePowersByNameEndpoint.request({ name })),
   error: (args, err) => failure("uninstall", args.name, err),
 });

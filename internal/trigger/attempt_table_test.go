@@ -43,7 +43,7 @@ func unconfirmed(tc *testConfirmer, r *launchrule.Rule) {
 
 // failing sets a counted bound abandon and a started 24-hour clock, so a success has something to reset.
 func failing(tc *testConfirmer, r *launchrule.Rule) {
-	tc.setStatus(r.ID, func(st *launchrule.Status) {
+	tc.setStatus(r.ID, func(st *launchrule.RuleStatus) {
 		st.BoundAbandons, st.FailingSince = 1, time.Now().Add(-time.Hour)
 	})
 }

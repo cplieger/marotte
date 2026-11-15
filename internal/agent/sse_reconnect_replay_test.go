@@ -13,6 +13,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 	"github.com/cplieger/marotte/internal/tabs"
 )
 
@@ -60,7 +61,7 @@ func newReplayGapRuntime(t *testing.T) (*Runtime, *http.ServeMux) {
 		WithTabs(ts), WithConfigDir(dir))
 	t.Cleanup(func() { shutdownHub(t, rt) })
 	mux := http.NewServeMux()
-	cs.RegisterRoutes(mux)
+	cs.RegisterRoutes(routetest.On(mux))
 	return rt, mux
 }
 

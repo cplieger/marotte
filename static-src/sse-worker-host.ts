@@ -17,6 +17,12 @@ import {
   createVersionMap,
   createWorkerHost,
 } from "@cplieger/sse";
+import {
+  getEventsEndpoint,
+  postEventsAliveEndpoint,
+  postEventsScopeEndpoint,
+  postSyncEndpoint,
+} from "./wire/client.gen.js";
 
 import { runContentOf, runTopic } from "./run-content-frame.js";
 
@@ -89,13 +95,13 @@ function deliverToTab(frame: Frame, scope: ReadonlySet<string>): boolean {
 /** Build the host over marotte's routes. */
 export function createSSEHost(): WorkerHost {
   const versions = createVersionMap();
-  const digest = createDigestClient({ url: "/api/sync", timeoutMs: DIGEST_TIMEOUT_MS });
+  const digest = createDigestClient({ url: postSyncEndpoint.path, timeoutMs: DIGEST_TIMEOUT_MS });
   const created: WorkerHost = createWorkerHost({
-    url: "/api/events",
+    url: getEventsEndpoint.path,
     // `SSE-Client` is filled by the host from the first attaching tab's tag, before the first
     // connect; an empty header would reach the server as an invalid tag.
-    alive: { url: "/api/events/alive" },
-    scopeUrl: "/api/events/scope",
+    alive: { url: postEventsAliveEndpoint.path },
+    scopeUrl: postEventsScopeEndpoint.path,
     deliver: deliverToTab,
     versions,
     revalidate: (ctx, tabs) => profileRevalidate(ctx, tabs, versions, digest, created.stream()),

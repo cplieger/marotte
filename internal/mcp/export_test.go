@@ -15,8 +15,8 @@ func TestMaskedCopy_ReplacesEnvAndHeaderValues(t *testing.T) {
 	s := &Server{
 		Name:      "s1",
 		Transport: TransportStdio,
-		Env:       []keyPair{{Name: "TOKEN", Value: "secret"}},
-		Headers:   []keyPair{{Name: "Auth", Value: "bearer"}},
+		Env:       []KeyPair{{Name: "TOKEN", Value: "secret"}},
+		Headers:   []KeyPair{{Name: "Auth", Value: "bearer"}},
 		Args:      []string{"--flag", "value"},
 	}
 	m := maskedCopy(s)
@@ -51,7 +51,7 @@ func TestRawCopy_NilSafe(t *testing.T) {
 func TestRawCopy_PreservesSecrets(t *testing.T) {
 	s := &Server{
 		Name: "s1",
-		Env:  []keyPair{{Name: "TOKEN", Value: "secret"}},
+		Env:  []KeyPair{{Name: "TOKEN", Value: "secret"}},
 	}
 	c := rawCopy(s)
 	if c.Env[0].Value != "secret" {
@@ -65,11 +65,11 @@ func TestRawCopy_PreservesSecrets(t *testing.T) {
 }
 
 func TestMergeSecrets_PreservesMaskedValues(t *testing.T) {
-	existing := []keyPair{
+	existing := []KeyPair{
 		{Name: "TOKEN", Value: "original"},
 		{Name: "URL", Value: "https://old"},
 	}
-	patch := []keyPair{
+	patch := []KeyPair{
 		{Name: "TOKEN", Value: secretMask},  // keep
 		{Name: "URL", Value: "https://new"}, // replace
 		{Name: "NEW", Value: "hello"},       // new field
@@ -90,7 +90,7 @@ func TestMergeSecrets_MaskedWithNoPriorValueBecomesEmpty(t *testing.T) {
 	// User wrote a mask for a key that doesn't exist in existing.
 	// Should resolve to empty string, not the literal mask.
 	merged := mergeSecrets(
-		[]keyPair{{Name: "ORPHAN", Value: secretMask}},
+		[]KeyPair{{Name: "ORPHAN", Value: secretMask}},
 		nil,
 	)
 	if merged[0].Value != "" {
@@ -136,11 +136,11 @@ func TestConfiguredNames_IncludesDisabled(t *testing.T) {
 
 // mergeSecrets round-trip + idempotency as table tests.
 func TestMergeSecrets_IdempotentAndNoMutation(t *testing.T) {
-	existing := []keyPair{
+	existing := []KeyPair{
 		{Name: "TOKEN", Value: "secret"},
 		{Name: "URL", Value: "https://old"},
 	}
-	cases := [][]keyPair{
+	cases := [][]KeyPair{
 		{}, // empty patch
 		{{Name: "TOKEN", Value: secretMask}},
 		{{Name: "TOKEN", Value: "new"}},
@@ -170,8 +170,8 @@ func FuzzMergeSecrets(f *testing.F) {
 	f.Add("", "", "", "")
 
 	f.Fuzz(func(t *testing.T, eName, eVal, pName, pVal string) {
-		existing := []keyPair{{Name: eName, Value: eVal}}
-		patch := []keyPair{{Name: pName, Value: pVal}}
+		existing := []KeyPair{{Name: eName, Value: eVal}}
+		patch := []KeyPair{{Name: pName, Value: pVal}}
 
 		// Snapshot existing to detect mutation.
 		origEVal := existing[0].Value
@@ -202,8 +202,8 @@ func FuzzMergeSecrets(f *testing.F) {
 //   - if patch[i].Value == secretMask AND name NOT in existing → output is ""
 //   - existing slice is never mutated
 func TestMergeSecrets_RapidRoundTrip(t *testing.T) {
-	genKeyPair := rapid.Custom(func(t *rapid.T) keyPair {
-		return keyPair{
+	genKeyPair := rapid.Custom(func(t *rapid.T) KeyPair {
+		return KeyPair{
 			Name:  rapid.StringMatching(`[a-zA-Z_][a-zA-Z0-9_]{0,15}`).Draw(t, "name"),
 			Value: rapid.StringN(0, 64, -1).Draw(t, "value"),
 		}
@@ -214,7 +214,7 @@ func TestMergeSecrets_RapidRoundTrip(t *testing.T) {
 		patchLen := rapid.IntRange(0, 10).Draw(t, "patchLen")
 
 		// Build patch: randomly choose secretMask or a real value for each entry.
-		patch := make([]keyPair, patchLen)
+		patch := make([]KeyPair, patchLen)
 		for i := range patch {
 			patch[i].Name = rapid.StringMatching(`[a-zA-Z_][a-zA-Z0-9_]{0,15}`).Draw(t, "patchName")
 			if rapid.Bool().Draw(t, "useMask") {
@@ -225,7 +225,7 @@ func TestMergeSecrets_RapidRoundTrip(t *testing.T) {
 		}
 
 		// Snapshot existing to detect mutation.
-		existingSnapshot := make([]keyPair, len(existing))
+		existingSnapshot := make([]KeyPair, len(existing))
 		copy(existingSnapshot, existing)
 
 		output := mergeSecrets(patch, existing)

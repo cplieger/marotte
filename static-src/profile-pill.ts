@@ -21,6 +21,7 @@ import {
   savedRulesStillApply,
 } from "./security-profiles.js";
 import { decodeSecurityProfileView } from "./wire/decoders.gen.js";
+import { getPermissionsProfileEndpoint } from "./wire/client.gen.js";
 import type { SecurityProfileView } from "./wire/types.gen.js";
 import type { Session } from "./types.js";
 
@@ -38,7 +39,7 @@ async function readView(): Promise<void> {
   const ctrl = new AbortController();
   reading = ctrl;
   const answer = await apiGetTyped(
-    "/api/permissions/profile",
+    getPermissionsProfileEndpoint.path,
     decodeSecurityProfileView,
     ctrl.signal,
   );

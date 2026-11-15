@@ -14,6 +14,7 @@ import {
 } from "./run-store.js";
 import { registerCleanup } from "./actions/index.js";
 import type { Entry, OpenEntry } from "./wire/types.gen.js";
+import { getRunsByIdTurnsByTurnEndpoint } from "./wire/client.gen.js";
 
 interface RunTurnRangeResponse {
   entries: Entry[];
@@ -73,8 +74,10 @@ export function requestRunTurnRange(workflowID: string, turnID: string, afterSeq
 }
 
 function rangeURL(workflowID: string, turnID: string, afterSeq?: number): string {
-  const params = afterSeq === undefined ? "" : `?after=${String(afterSeq)}`;
-  return `/api/runs/${encodeURIComponent(workflowID)}/turns/${encodeURIComponent(turnID)}${params}`;
+  const turn = { id: workflowID, turn: turnID };
+  return getRunsByIdTurnsByTurnEndpoint.request(
+    afterSeq === undefined ? turn : { ...turn, after: String(afterSeq) },
+  ).path;
 }
 
 async function runRange(workflowID: string, turnID: string, afterSeq?: number): Promise<void> {

@@ -20,9 +20,9 @@ const detectBudget = 30 * time.Second
 
 var errDetectWebBaseInvalid = errors.New("forges: web_base_url must be a scheme and host:port")
 
-// detectBody is an address and the token the connect after it will use: no
+// DetectRequest is an address and the token the connect after it will use: no
 // family constructor builds a client without a credential.
-type detectBody struct {
+type DetectRequest struct {
 	Token      string `json:"token"`
 	WebBaseURL string `json:"web_base_url"`
 	trustFields
@@ -30,7 +30,7 @@ type detectBody struct {
 
 // record is the connection b describes, refused unless its web base is an
 // origin the connect route could then take.
-func (b *detectBody) record() (connectionSpec, error) {
+func (b *DetectRequest) record() (connectionSpec, error) {
 	u, err := url.Parse(b.WebBaseURL)
 	if err != nil || !originOn(b.WebBaseURL, u.Host) {
 		return connectionSpec{}, errDetectWebBaseInvalid
@@ -43,11 +43,7 @@ func (b *detectBody) record() (connectionSpec, error) {
 // handleDetect serves POST /api/forges/detect: the kind of forge at an address
 // nobody has named a kind for. It stores nothing.
 func (h *HTTPHandler) handleDetect(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
-	var body detectBody
+	var body DetectRequest
 	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpreply.BadRequest(w, "invalid json")

@@ -110,8 +110,6 @@ vi.mock("./actions/runs.js", () => {
     messageRunStep: stub,
     removeRunStepSteer: stub,
     clearRunStepSteers: stub,
-    // Linked by the step transcript read; no case here reads a step.
-    runStepURL: undefined,
   };
 });
 

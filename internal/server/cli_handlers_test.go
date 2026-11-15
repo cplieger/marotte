@@ -158,23 +158,6 @@ func TestHandleDiagnostics_ExecError(t *testing.T) {
 	}
 }
 
-// TestHandleDiagnostics_MethodNotAllowed verifies non-POST is rejected
-// before the runner is invoked.
-func TestHandleDiagnostics_MethodNotAllowed(t *testing.T) {
-	f := &fakeCLIRunner{stdout: "x"}
-	s := &Server{cliRunner: f, cliTimeouts: defaultCLITimeouts()}
-	req := httptest.NewRequest(http.MethodGet, "/api/diagnostics", nil)
-	rec := httptest.NewRecorder()
-	s.handleDiagnostics(rec, req)
-
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want 405", rec.Code)
-	}
-	if f.cappedCalls != 0 {
-		t.Errorf("runner invoked on rejected method")
-	}
-}
-
 // TestExecCLIRunner_RunStdoutCapped_SeparatesStderr verifies the production
 // runner captures STDOUT only and does not merge stderr into the result.
 func TestExecCLIRunner_RunStdoutCapped_SeparatesStderr(t *testing.T) {
