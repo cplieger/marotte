@@ -42,6 +42,14 @@ When the engine's thread stops for longer than a command's time limit, and the c
 
 Reported as [kirodotdev/Kiro#12269](https://github.com/kirodotdev/Kiro/issues/12269), open. marotte has no workaround, because kiro-cli decides the timeout before it reads that the command finished. Running fewer chats and workflow steps at once makes the stops in the entry above less frequent.
 
+### A SessionEnd hook is cut off when kiro-cli is stopped with a signal
+
+When kiro-cli gets a stop signal, such as the SIGTERM that `docker stop` and `systemctl stop` send, it kills its agent engine about half a second later. The engine allows itself 4 seconds to shut down. A SessionEnd hook that takes longer than that half second is killed before it finishes, and each session's lease file is left behind in `~/.kiro/session-leases/`. While that file is there, kiro-cli can refuse changes to the session for up to 135 seconds.
+
+Reported as [kirodotdev/Kiro#12446](https://github.com/kirodotdev/Kiro/issues/12446), open. marotte stops kiro-cli by closing its input first, which lets the engine run its own shutdown, SessionEnd hooks included. kiro-cli gives the engine about 5.5 seconds to finish after its input closes, and marotte waits up to 6 seconds for kiro-cli to exit. Only a kiro-cli still running after that wait gets a stop signal, and one still running 2 seconds after the signal is killed. marotte's own restarts and stops therefore do not meet this.
+
+A `docker stop` of the container sends its stop signal to marotte, not to kiro-cli, so marotte stops kiro-cli in the same order. marotte limits its whole shutdown to 9 seconds, inside Docker's default stop timeout of 10 seconds. A shorter stop timeout can kill the container before the engine has shut down. The next time marotte starts, it removes the lease files its own engine left behind before it starts the engine.
+
 ## Chats
 
 ### A chat is named with a sentence that is not a title
