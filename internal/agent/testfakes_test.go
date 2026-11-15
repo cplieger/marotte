@@ -27,10 +27,11 @@ type fakeBridge struct {
 	callResults map[string]json.RawMessage
 	callErrs    map[string]error
 	// callRPCErrs is KAS refusing in band; callErrs is the transport failing.
-	callRPCErrs  map[string]*marotte.RPCError
-	notifyErrs   map[string]error
-	lastParams   map[string]map[string]any
-	callDeadline map[string]bool
+	callRPCErrs map[string]*marotte.RPCError
+	notifyErrs  map[string]error
+	lastParams  map[string]map[string]any
+	// callDeadline is the deadline each method's last Call carried, zero for none.
+	callDeadline map[string]time.Time
 	chunksOnCall map[string][]string
 	// notifsOnCall are whole frames delivered after a named Call, unstamped (a replay); chunksOnCall stamps its
 	// own id, which the own-session screen drops.
@@ -487,10 +488,10 @@ func (b *fakeBridge) callScript(
 		b.lastParams[method] = p
 	}
 	if b.callDeadline == nil {
-		b.callDeadline = map[string]bool{}
+		b.callDeadline = map[string]time.Time{}
 	}
-	_, hasDeadline := ctx.Deadline()
-	b.callDeadline[method] = hasDeadline
+	deadline, _ := ctx.Deadline()
+	b.callDeadline[method] = deadline
 	if err, ok := b.callErrs[method]; ok {
 		b.mu.Unlock()
 		return nil, err
@@ -780,6 +781,13 @@ func (b *fakeBridge) callLog() []string {
 	out := make([]string, len(b.calls))
 	copy(out, b.calls)
 	return out
+}
+
+// deadlineOf is the deadline method's last Call carried, zero for none.
+func (b *fakeBridge) deadlineOf(method string) time.Time {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.callDeadline[method]
 }
 
 // setCallResult re-arms one method's reply under the fake's mutex, for use after the bridge runs (openBridge's

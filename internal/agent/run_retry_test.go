@@ -282,24 +282,34 @@ func TestHandleRetry_AnEngineThatWillNotStartAnswersInsideTheClientsWindow(t *te
 	}
 }
 
-// A retry verb KAS read but did not answer by the retry's deadline may still run, so the reply says it is still applying
+// A retry verb KAS read but did not answer within retryTimeout may still run, so the reply says it is still applying
 // rather than that nothing was retried, and the run keeps the lease the retry minted for its deadline.
 func TestHandleRetry_AVerbLeftUnansweredKeepsItsLeaseAndIsStillApplying(t *testing.T) {
 	h, br := seedChatParentedRun(t, true, "final-verify")
 	br.setBlockOn(methodKiroWorkflowRetry, make(chan struct{}))
+	// KAS taking the verb ends the caller's context, which carries no deadline of its own, so the deadline the verb
+	// carried can only be retryTimeout's.
 	ctx, expire := expiringContext(t, t.Context())
-	go func() {
-		for !slices.Contains(br.callLog(), methodKiroWorkflowRetry) && ctx.Err() == nil {
-			time.Sleep(5 * time.Millisecond)
+	br.setOnCall(func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method == methodKiroWorkflowRetry {
+			expire()
 		}
-		expire()
-	}()
+		return nil, nil, false
+	})
 
+	asked := time.Now()
 	rec := httptest.NewRecorder()
 	h.runRoutes.handleRetry(rec, retryReq("wf_1").WithContext(ctx))
+	answered := time.Now()
 
 	if !slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
 		t.Fatalf("Setup: the verb never reached KAS; calls were %v", br.callLog())
+	}
+	if dl := br.deadlineOf(methodKiroWorkflowRetry); dl.IsZero() {
+		t.Errorf("the verb carried no deadline, want one retryTimeout (%s) after the retry began", retryTimeout)
+	} else if dl.Before(asked.Add(retryTimeout)) || dl.After(answered.Add(retryTimeout)) {
+		t.Errorf("the verb's deadline was %s after the retry was asked, want retryTimeout (%s) from within the retry's %s",
+			dl.Sub(asked), retryTimeout, answered.Sub(asked))
 	}
 	assertStillApplying(t, rec)
 	if body := rec.Body.String(); strings.Contains(body, "nothing was retried") {

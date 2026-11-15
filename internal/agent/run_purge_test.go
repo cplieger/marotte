@@ -189,7 +189,7 @@ const (
 	// retryFailsAgain re-drives the run, which fails again at once: KAS delivers its run_start and run_complete, then
 	// answers.
 	retryFailsAgain
-	// retryLost is a retry KAS takes and never answers or applies; the attempt's deadline passes once KAS took it.
+	// retryLost is a retry KAS takes and never answers or applies.
 	retryLost
 	// retryFailsBeforeItsStart answers, delivers the run's run_start and run_complete, and leaves the run failed with
 	// its old end: the run loop threw after emitting run_start and before recording the root's startedAt.
@@ -347,10 +347,13 @@ func retryDuringTheScan(t *testing.T, kas *purgedRun, retryErr *error) func(cont
 	}
 }
 
-// expiringCtx is a context whose deadline passes when its done closes.
+// expiringCtx is a context that ends with context.DeadlineExceeded once expired, or as its parent ends; Deadline is
+// still the parent's. Done is its own channel, never the parent's: a context derived from it then takes its Err
+// through Err, where one sharing a cancelCtx's channel would take that cancelCtx's context.Canceled.
 type expiringCtx struct {
 	context.Context
-	done chan struct{}
+	done    chan struct{}
+	expired atomic.Bool
 }
 
 func (c *expiringCtx) Done() <-chan struct{} { return c.done }
@@ -358,18 +361,28 @@ func (c *expiringCtx) Done() <-chan struct{} { return c.done }
 func (c *expiringCtx) Err() error {
 	select {
 	case <-c.done:
-		return context.DeadlineExceeded
 	default:
 		return nil
 	}
+	if c.expired.Load() {
+		return context.DeadlineExceeded
+	}
+	return c.Context.Err()
 }
 
-// expiringContext is parent with a deadline that passes when expire runs, at an instant the test chose: a shortened
-// retryTimeout would also bound the work before the verb, which a loaded host can outrun. The cleanup expires it.
+// expiringContext is parent with an end that comes when expire runs, an instant the test chooses; the cleanup expires
+// it.
 func expiringContext(t *testing.T, parent context.Context) (ctx context.Context, expire func()) {
 	t.Helper()
 	c := &expiringCtx{Context: parent, done: make(chan struct{})}
-	expire = sync.OnceFunc(func() { close(c.done) })
+	end := sync.OnceFunc(func() { close(c.done) })
+	stop := context.AfterFunc(parent, end)
+	expire = sync.OnceFunc(func() {
+		if stop() {
+			c.expired.Store(true)
+			end()
+		}
+	})
 	t.Cleanup(expire)
 	return c, expire
 }

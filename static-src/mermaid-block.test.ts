@@ -722,19 +722,25 @@ describe("the full-screen view", () => {
   it("closes on the first Escape even while zoomed with the drawing focused", async () => {
     const { button } = parts(render(fence(FLOW)));
     const expand = button("Expand") as HTMLButtonElement;
-    await userEvent.click(expand);
-    const svg = overlay()?.querySelector<SVGSVGElement>(".mermaid-stage > svg");
+    const svg = await openSettled(expand);
+    const fitted = svg.getAttribute("viewBox");
     await userEvent.click(
       overlay()?.querySelector('button[aria-label="Zoom in"]') as HTMLButtonElement,
     );
-    svg?.focus();
+    expect(svg.getAttribute("viewBox"), "Setup: zoomed in").not.toBe(fitted);
+    svg.focus();
     expect(document.activeElement).toBe(svg);
-    const zoomed = svg?.getAttribute("viewBox");
-    await userEvent.keyboard("{Escape}");
-    expect(svg?.getAttribute("viewBox"), "the key never reached pele's zoom reset").toBe(zoomed);
-    await vi.waitFor(() => {
-      expect(overlay()).toBeNull();
+    // The close resets the zoom as it destroys the view, so the viewBox cannot tell pele's Escape from the close;
+    // the key reaching the drawing at all can. The close ends by focusing the Expand button.
+    const reached = vi.fn();
+    svg.addEventListener("keydown", reached, { capture: true });
+    const closed = new Promise((resolve) => {
+      expand.addEventListener("focus", resolve, { once: true });
     });
+    await userEvent.keyboard("{Escape}");
+    await closed;
+    expect(reached, "the key reached pele's zoom reset").not.toHaveBeenCalled();
+    expect(overlay()).toBeNull();
     expect(document.activeElement).toBe(expand);
   });
 
