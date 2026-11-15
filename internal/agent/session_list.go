@@ -123,7 +123,7 @@ func withParentNames(runs []marotte.WorkflowRun, headers []marotte.ChatHeader) {
 // dropped: the list's own answer, or a sessionless frame, which fails every pending call.
 type sessionListOversizeError struct{ cause error }
 
-func (e sessionListOversizeError) Error() string {
+func (sessionListOversizeError) Error() string {
 	return "session list: a message from kiro-cli was over the engine's frame cap and was dropped, so the list was not read"
 }
 
