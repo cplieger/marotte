@@ -157,6 +157,11 @@ var abandonableWriteSites = []durableSite{{
 	calls:   []string{"Mutate"},
 	because: "the new session's id and facts — no conversational record; a record that did not take them fails the generation, which reaps the session, and the next open runs again",
 }, {
+	file:    "internal/agent/security_profile.go",
+	fn:      "moveProfile",
+	calls:   []string{"Mutate"},
+	because: "the header's pick on the request's context, as the command/* writes: a pick a shutdown cuts is refused, and the pill puts back the profile it showed",
+}, {
 	file:    "internal/agent/turn_open.go",
 	fn:      "openTurn",
 	calls:   []string{"OpenTurn", "WriteCounters"},
