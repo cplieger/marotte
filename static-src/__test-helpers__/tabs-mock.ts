@@ -31,6 +31,7 @@ export function tabsMock(): Record<string, unknown> {
     toggleDocsView: vi.fn(async () => {}),
     showHistoryView: vi.fn(),
     leaveHistoryView: vi.fn(),
+    focusHistoryEntry: vi.fn(() => false),
 
     adoptSubject: vi.fn(),
     // Resolves like the real door, whose promise settles once the activation half has run.

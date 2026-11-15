@@ -132,6 +132,7 @@ import { IDLE_RUN } from "./run-order.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import { bindTabsSync, settleTabs, tabServer } from "./__test-helpers__/tabs-server.js";
 import { configureApi } from "@cplieger/reactive/actions";
+import { showOnlyView } from "./view-swap.js";
 
 bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
 h.sentOpens = () => tabServer.sentOfType("open_tab").length;
@@ -1484,6 +1485,21 @@ describe("deleting a closed chat from the History section", () => {
     expect(document.activeElement).toBe(rowFor("Beta"));
   });
 
+  it("moves focus to the row before after a delete of the last row from the keyboard", async () => {
+    stubSessions([]);
+    tabServer.trackRecent({ "c-a": "Alpha", "c-b": "Beta" });
+    await tabServer.seed({ kind: "chat", ref: "c-a" }, { kind: "chat", ref: "c-b" });
+    tabServer.closeRemotely(tabServer.idFor("chat", "c-b"));
+    tabServer.closeRemotely(tabServer.idFor("chat", "c-a"));
+    await settle();
+    unfold();
+    deleteFor("Beta").focus();
+    await userEvent.keyboard("{Enter}");
+    await answer("Delete");
+    expect(rowNames()).toEqual(["Alpha"]);
+    expect(document.activeElement).toBe(rowFor("Alpha"));
+  });
+
   it("opens the confirm from the keyboard on its Delete", async () => {
     stubSessions([]);
     await listed(entry("c-a", "Alpha"));
@@ -1602,5 +1618,76 @@ describe("focus after a reopen", () => {
     await settle();
     expect(tabIdFor("chat", "c-a")).not.toBe("");
     expect(document.activeElement).toBe(more());
+  });
+});
+
+describe("focus when a frame from elsewhere takes what it was on", () => {
+  const pill = (): HTMLElement | null =>
+    el("history-view").querySelector<HTMLElement>('[data-history-tab][aria-selected="true"]');
+  /** The list as a frame from the server, at its next version, as an expiry or another device sends it. */
+  const framed = async (...recent: RecentClose[]): Promise<void> => {
+    tabServer.emitRecent(recent);
+    await settle();
+  };
+
+  it("lands on the shown History page's pill when the last close goes from under More", async () => {
+    await framed(entry("c-a", "Alpha"));
+    unfold();
+    more().click();
+    await settle();
+    try {
+      more().focus();
+      await framed();
+      expect(section().hidden).toBe(true);
+      expect(document.activeElement).not.toBe(document.body);
+      expect(document.activeElement).toBe(pill());
+    } finally {
+      // The chat view back, so the next case's composer can take focus.
+      showOnlyView(el("chat-view"));
+      await settle();
+    }
+  });
+
+  it("lands on the next row when the focused row goes, else the one before it", async () => {
+    await framed(entry("c-a", "Alpha"), entry("c-b", "Beta", 5), entry("c-c", "Gamma", 10));
+    unfold();
+    rowFor("Beta").focus();
+    await framed(entry("c-a", "Alpha"), entry("c-c", "Gamma", 10));
+    expect(document.activeElement).toBe(rowFor("Gamma"));
+    await framed(entry("c-a", "Alpha"));
+    expect(document.activeElement).toBe(rowFor("Alpha"));
+  });
+
+  it("lands on the next row when the focused row's Delete goes", async () => {
+    await framed(entry("c-a", "Alpha"), entry("c-b", "Beta", 5));
+    unfold();
+    deleteFor("Alpha").focus();
+    await framed(entry("c-b", "Beta", 5));
+    expect(document.activeElement).toBe(rowFor("Beta"));
+  });
+
+  it("lands on the composer when Days kept turns 0 under focus with History not shown", async () => {
+    await framed(entry("c-a", "Alpha"));
+    unfold();
+    rowFor("Alpha").focus();
+    adoptRetention(settingsPayload({ chat_retention_days: 0 }));
+    await settle();
+    expect(section().hidden).toBe(true);
+    expect(document.activeElement).toBe(prompt());
+  });
+
+  it("lands on the composer when the folded section's header goes", async () => {
+    await framed(entry("c-a", "Alpha"));
+    toggle().focus();
+    await framed();
+    expect(document.activeElement).toBe(prompt());
+  });
+
+  it("leaves focus outside the section where it is", async () => {
+    await framed(entry("c-a", "Alpha"));
+    unfold();
+    prompt().focus();
+    await framed();
+    expect(document.activeElement).toBe(prompt());
   });
 });

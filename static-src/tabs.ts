@@ -2739,16 +2739,15 @@ function syncHistoryRow(on: boolean): void {
   }
 }
 
-/** Focus More, else, when no closed chat draws it or its section is folded, the shown pane's pill,
- *  so focus never falls to `<body>`. */
-function focusHistoryEntry(): void {
-  if ($.historyMore.getClientRects().length > 0) {
-    $.historyMore.focus();
-    return;
-  }
-  queryEl<HTMLElement>(HISTORY_VIEW)
-    ?.querySelector<HTMLElement>('[data-history-tab][aria-selected="true"]')
-    ?.focus();
+/** Focus More, else, when no closed chat draws it or its section is folded, the shown History
+ *  page's pill. False when neither is in sight, so the caller lands focus elsewhere. */
+export function focusHistoryEntry(): boolean {
+  const pill = queryEl<HTMLElement>(HISTORY_VIEW)?.querySelector<HTMLElement>(
+    '[data-history-tab][aria-selected="true"]',
+  );
+  const to = [$.historyMore, pill].find((e) => e != null && e.getClientRects().length > 0);
+  to?.focus();
+  return to !== undefined;
 }
 
 /** History alone in the main area, with More selected and its route on the URL. */

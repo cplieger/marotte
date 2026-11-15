@@ -16,6 +16,7 @@ import { isRetentionEnabled, onRetentionChange } from "./retention.js";
 import { watchSession } from "./store.js";
 import { dragOwnsStrip } from "./tabs-drag.js";
 import {
+  focusHistoryEntry,
   focusTabRow,
   getActiveTabId,
   recentClosed,
@@ -110,24 +111,13 @@ export function initHistorySection(): void {
     }
     busy.add(ref);
     row.remove.setAttribute("aria-busy", "true");
-    const next = row.li.nextElementSibling;
-    const prev = row.li.previousElementSibling;
+    const land = focusLanding(row.remove);
     try {
       if (!(await deleteClosedChat(ref, row.label))) {
         return;
       }
       // History refreshes when it shows, so the chat leaves it too.
       refreshActiveView();
-      const land = (): void => {
-        const focus = document.activeElement;
-        if (focus !== null && focus !== document.body && focus !== row.remove) {
-          return;
-        }
-        const to = [next, prev]
-          .map((li) => li?.querySelector<HTMLButtonElement>(":scope > button"))
-          .find((b) => b?.isConnected === true && b.getClientRects().length > 0);
-        (to ?? $.promptInput).focus();
-      };
       // The confirm answers before its dialog has faded, and the page is inert until it closes.
       const modal = queryEl<HTMLDialogElement>("dialog:modal");
       if (modal === null) {
@@ -226,9 +216,50 @@ export function initHistorySection(): void {
     row.remove.dataset["tooltip"] = `Delete ${label}`;
   }
 
+  /** Where focus goes once `from` is taken or hidden: the nearest row after it, else before it,
+   *  else More, the header, History's entry, the composer or the active tab's row, so it never
+   *  falls to `<body>`. Read before the change, since the rows around `from` go with it. */
+  function focusLanding(from: Element): () => void {
+    const li = from.closest("#history-list > li");
+    const near: Element[] = [];
+    for (let n = li?.nextElementSibling; n != null; n = n.nextElementSibling) {
+      near.push(n);
+    }
+    for (let n = li?.previousElementSibling; n != null; n = n.previousElementSibling) {
+      near.push(n);
+    }
+    return () => {
+      const now = document.activeElement;
+      const moved = now !== null && now !== document.body && now !== from;
+      if (moved || (from.isConnected && from.getClientRects().length > 0)) {
+        return;
+      }
+      const to = [
+        ...near.map((n) => n.querySelector<HTMLElement>(":scope > button.history-row")),
+        $.historyMore,
+        toggle,
+      ].find((b) => b?.isConnected === true && b.getClientRects().length > 0);
+      if (to != null) {
+        to.focus();
+      } else if (!focusHistoryEntry()) {
+        $.promptInput.focus();
+        if (document.activeElement !== $.promptInput) {
+          focusTabRow(getActiveTabId());
+        }
+      }
+    };
+  }
+
   effect(() => {
     // A Clock change redraws each row's time through paintRow's drawn key.
     watchClock();
+    const focused = document.activeElement;
+    const held = focused !== null && section.contains(focused);
+    // A reopen in flight puts focus on its tab's row itself.
+    const reopening = [...rows.values()].some(
+      (r) => busy.has(r.entry.ref) && r.li.contains(focused),
+    );
+    const land = held && !reopening ? focusLanding(focused) : null;
     const entries = drawnEntries(recentClosed(), retentionOn.value);
     const keep = new Set(entries.map((e) => e.ref));
     for (const [ref, row] of rows) {
@@ -265,6 +296,7 @@ export function initHistorySection(): void {
     if (!isSliding(section)) {
       list.hidden = folded;
     }
+    land?.();
   });
 
   toggle.addEventListener("click", () => {
