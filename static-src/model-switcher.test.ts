@@ -1,18 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { userEvent } from "vitest/browser";
+import { settingsPayload } from "./__test-helpers__/settings.js";
+import type { EffectiveSettings } from "./persist.js";
 import type { ModelInfo } from "./types.js";
+import type { ModelFallback } from "./wire/types.gen.js";
 import type * as Strings from "./strings.js";
 
 let cachedModels: ModelInfo[] = [];
 
 let notice: { text: string; busy: boolean } | null = null;
 
-const { onExpand, onCollapse, effortDispatch, thinkingDispatch } = vi.hoisted(() => ({
-  onExpand: { fn: null as null | (() => void) },
-  onCollapse: { fn: null as null | (() => void) },
-  effortDispatch: vi.fn(),
-  thinkingDispatch: vi.fn(),
-}));
+const { onExpand, onCollapse, effortDispatch, thinkingDispatch, fallbackDispatch } = vi.hoisted(
+  () => ({
+    onExpand: { fn: null as null | (() => void) },
+    onCollapse: { fn: null as null | (() => void) },
+    effortDispatch: vi.fn(),
+    thinkingDispatch: vi.fn(),
+    fallbackDispatch: vi.fn(),
+  }),
+);
 
 /** Read-only as in production: the set_effort command writes the seed. */
 let lastEffortByModel: Record<string, string> = {};
@@ -61,6 +67,34 @@ vi.mock("./store.js", async () => {
   };
 });
 
+// A real signal, as persist.ts's: the Fallback row repaints from it while the card is open. A write's
+// answer is written into the shown settings once; persist.test.ts pins how long the real one holds.
+vi.mock("./persist.js", async () => {
+  const { signal } = (await vi.importActual("@cplieger/reactive")) as { signal: SignalFactory };
+  const shownSettingsSignal = signal<EffectiveSettings | null>(null);
+  return {
+    shownSettingsSignal,
+    settingsAsShown: () => shownSettingsSignal.value,
+    showFallbackAnswer: (row: ModelFallback) => {
+      const s = shownSettingsSignal.value;
+      if (s !== null) {
+        const rows = s.model_fallbacks.filter((f) => f.model !== row.model);
+        shownSettingsSignal.value = { ...s, model_fallbacks: [...rows, row] };
+      }
+    },
+  };
+});
+vi.mock("./settings.js", () => ({
+  currentIdentity: () => ({
+    state: "signed_in",
+    email: "",
+    method: "",
+    startUrl: "",
+    region: "",
+    apiKey: false,
+  }),
+}));
+
 vi.mock("./picker.js", () => ({
   getCachedModels: () => cachedModels,
   refreshPickerIfVisible: vi.fn(),
@@ -75,10 +109,14 @@ vi.mock("./actions/index.js", () => ({
   transportAction: (def: { name: string }) => ({
     dispatch: def.name === "chat.set_thinking" ? thinkingDispatch : effortDispatch,
   }),
+  apiAction: () => ({ dispatch: vi.fn() }),
   retryNetwork: vi.fn(),
   RETRY_STANDARD: {},
 }));
 vi.mock("./actions/chat.js", () => ({ switchModel: { dispatch: vi.fn() } }));
+vi.mock("./actions/model-fallback.js", () => ({
+  setModelFallback: { dispatch: fallbackDispatch },
+}));
 vi.mock("./reconcile.js", () => ({ reconcile: vi.fn() }));
 vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));
 vi.mock("./session-context.js", () => ({
@@ -99,6 +137,7 @@ vi.mock("./legacy-ui/roving-focus.js", () => ({
 }));
 
 import { activeSession } from "./store.js";
+import { shownSettingsSignal } from "./persist.js";
 import { initModelSwitcher } from "./model-switcher.js";
 
 function model(
@@ -577,5 +616,190 @@ describe("the effort slider's thinking Off stop", () => {
     closeCard();
 
     expect(effortDispatch).toHaveBeenCalledWith({ chatID: "c1", level: "low" });
+  });
+});
+
+describe("the Fallback row", () => {
+  beforeEach(() => {
+    document.body.replaceChildren();
+    const pill = document.createElement("button");
+    pill.id = "switch-model-btn";
+    const card = document.createElement("div");
+    card.id = "model-switch-list";
+    document.body.append(pill, card);
+    cachedModels = [model("model-a", "high"), model("model-b", "high")];
+    notice = null;
+    shownSettingsSignal.value = null;
+    initModelSwitcher();
+    setSession({ id: "c1", model: "model-a", effort: "", effort_levels: fiveTiers() });
+  });
+
+  function answered(configured: string, vendorDefault = ""): ModelFallback {
+    return { model: "model-a", configured, vendor_default: vendorDefault, read_only_reason: "" };
+  }
+
+  function shown(enabled: boolean, configured = "model-b", vendorDefault = ""): EffectiveSettings {
+    return settingsPayload({
+      model_fallback_enabled: enabled,
+      model_fallbacks: [answered(configured, vendorDefault)],
+    });
+  }
+
+  function fallbackSelect(): HTMLSelectElement | null {
+    return document.querySelector<HTMLSelectElement>(
+      '#model-switch-list select[aria-label="Fallback model"]',
+    );
+  }
+
+  it("sits under the effort slider for the chat's model, showing the account's choice", () => {
+    shownSettingsSignal.value = shown(true);
+    openCard();
+    const rows = [...document.querySelectorAll("#model-switch-list > .effort-row")];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.querySelector('[role="slider"]')).not.toBeNull();
+    expect(rows[1]?.contains(fallbackSelect())).toBe(true);
+    expect(fallbackSelect()?.value).toBe("model-b");
+  });
+
+  it("appears and disappears on a live flip while the picker is open", () => {
+    shownSettingsSignal.value = shown(false);
+    openCard();
+    expect(fallbackSelect()).toBeNull();
+    shownSettingsSignal.value = shown(true);
+    expect(fallbackSelect()?.value).toBe("model-b");
+    shownSettingsSignal.value = shown(false);
+    expect(fallbackSelect()).toBeNull();
+  });
+
+  /** Makes the next fallback write wait for its settle: answered with `answer`, or refused. */
+  function pendingWrite(): { answer: (row: ModelFallback) => void; refuse: () => void } {
+    const out: { answer: (row: ModelFallback) => void; refuse: () => void } = {
+      answer: () => undefined,
+      refuse: () => undefined,
+    };
+    fallbackDispatch.mockImplementationOnce(
+      (
+        _args: unknown,
+        opts: { onSuccess: (a: ModelFallback) => void; onError: (e: { code: string }) => void },
+      ) =>
+        new Promise<void>((resolve) => {
+          out.answer = (row) => {
+            opts.onSuccess(row);
+            resolve();
+          };
+          out.refuse = () => {
+            opts.onError({ code: "locked" });
+            resolve();
+          };
+        }),
+    );
+    return out;
+  }
+
+  async function pick(target: string): Promise<HTMLSelectElement> {
+    const s = fallbackSelect();
+    if (s === null) {
+      throw new Error("no Fallback select");
+    }
+    s.focus();
+    await userEvent.selectOptions(s, target);
+    return s;
+  }
+
+  async function settled(s: HTMLSelectElement): Promise<void> {
+    await vi.waitFor(() => {
+      expect(s.getAttribute("aria-busy")).toBeNull();
+    });
+  }
+
+  it("keeps the focused select and the answered target through the write's settings refetch", async () => {
+    cachedModels = [...cachedModels, model("model-c", "high")];
+    const write = pendingWrite();
+    shownSettingsSignal.value = shown(true);
+    openCard();
+    const s = await pick("model-c");
+    expect(fallbackDispatch).toHaveBeenCalledOnce();
+
+    // While the write is pending, a pushed view still holding the old target; then the write's
+    // settings_updated steps (announce, then the refetch's adopt) after the answer.
+    shownSettingsSignal.value = shown(true, "model-b", "model-b");
+    expect(s.value).toBe("model-c");
+    write.answer(answered("model-c"));
+    await settled(s);
+    expect(s.value).toBe("model-c");
+    shownSettingsSignal.value = shown(true, "model-c");
+
+    expect(fallbackSelect()).toBe(s);
+    expect(document.activeElement).toBe(s);
+    expect(s.value).toBe("model-c");
+  });
+
+  it("removes the row for a switch-off that came during a refused write", async () => {
+    cachedModels = [...cachedModels, model("model-c", "high")];
+    const write = pendingWrite();
+    shownSettingsSignal.value = shown(true);
+    openCard();
+    const s = await pick("model-c");
+    shownSettingsSignal.value = shown(false);
+    write.refuse();
+    await settled(s);
+    expect(fallbackSelect()).toBeNull();
+  });
+
+  it("removes the row for a switch-off that came during an answered write", async () => {
+    cachedModels = [...cachedModels, model("model-c", "high")];
+    const write = pendingWrite();
+    shownSettingsSignal.value = shown(true);
+    openCard();
+    const s = await pick("model-c");
+    shownSettingsSignal.value = shown(false);
+    write.answer(answered("model-c"));
+    await settled(s);
+    expect(fallbackSelect()).toBeNull();
+  });
+
+  it("shows another device's target that came during a refused write", async () => {
+    cachedModels = [...cachedModels, model("model-c", "high"), model("model-d", "high")];
+    const write = pendingWrite();
+    shownSettingsSignal.value = shown(true);
+    openCard();
+    const s = await pick("model-c");
+    shownSettingsSignal.value = shown(true, "model-d");
+    write.refuse();
+    await settled(s);
+    expect(fallbackSelect()).toBe(s);
+    expect(s.value).toBe("model-d");
+  });
+
+  it("paints another device's write-back of the old target before the refetch", async () => {
+    cachedModels = [...cachedModels, model("model-c", "high")];
+    const write = pendingWrite();
+    shownSettingsSignal.value = shown(true);
+    openCard();
+    const s = await pick("model-c");
+    write.answer(answered("model-c"));
+    await settled(s);
+    expect(s.value).toBe("model-c");
+    // The refetch adopts what KAS holds: another device wrote model-b back meanwhile.
+    shownSettingsSignal.value = shown(true, "model-b");
+    expect(s.value).toBe("model-b");
+  });
+
+  it("repaints in place when another device changes the choice", () => {
+    cachedModels = [...cachedModels, model("model-c", "high")];
+    shownSettingsSignal.value = shown(true);
+    openCard();
+    const s = fallbackSelect();
+    shownSettingsSignal.value = shown(true, "model-c");
+    expect(fallbackSelect()).toBe(s);
+    expect(s?.value).toBe("model-c");
+  });
+
+  it("leaves a closed card alone on a settings change", () => {
+    shownSettingsSignal.value = shown(false);
+    openCard();
+    closeCard();
+    shownSettingsSignal.value = shown(true);
+    expect(fallbackSelect()).toBeNull();
   });
 });

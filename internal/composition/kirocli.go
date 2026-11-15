@@ -175,7 +175,9 @@ func kiroInstallConfig(cfg *Config, root string) *pin.Config {
 		Root:       root,
 		LinkDir:    kiroLinkDir,
 		Assertions: kiroSettings(),
-		Purge:      kiroLegacyPurge(),
+		// The probe and the assertions run before app.disableAutoupdates is set, and under any HOME.
+		Env:   kirorelease.SpawnEnv(nil),
+		Purge: kiroLegacyPurge(),
 		// Untrusted stays unset: healBootModes has removed group and other write from this root before
 		// this runs, and pin's custody check judges the writers left, so Untrusted would only add
 		// a digest-verified reinstall at every start. TrustedUIDs is a fact about the volume's ACL,

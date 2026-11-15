@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"maps"
+	"slices"
 	"sync"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -24,9 +25,10 @@ var kiroDefaultKeys = map[string]kiroDefaultKey{
 }
 
 type kiroDefaultsCache struct {
-	stated map[string]marotte.KiroDefault
-	mu     sync.Mutex
-	known  bool
+	stated    map[string]marotte.KiroDefault
+	fallbacks []marotte.ModelFallback
+	mu        sync.Mutex
+	known     bool
 }
 
 func (st *Settings) cacheConfigurationState(raw json.RawMessage) {
@@ -34,13 +36,30 @@ func (st *Settings) cacheConfigurationState(raw json.RawMessage) {
 	if !ok {
 		return
 	}
-	before := st.KiroDefaults()
+	fallbacks, _ := translate.DecodeModelFallbacks(raw)
+	before, beforeFallbacks := st.KiroDefaults(), st.ModelFallbacks()
 	st.kiroDefaults.mu.Lock()
-	st.kiroDefaults.stated, st.kiroDefaults.known = stated, true
+	st.kiroDefaults.stated, st.kiroDefaults.fallbacks, st.kiroDefaults.known = stated, fallbacks, true
 	st.kiroDefaults.mu.Unlock()
-	if !maps.Equal(before, st.KiroDefaults()) && st.broadcast != nil && st.lifecycle != nil {
+	changed := !maps.Equal(before, st.KiroDefaults()) || !slices.Equal(beforeFallbacks, fallbacks)
+	if changed {
+		st.announceSettings()
+	}
+}
+
+// announceSettings tells every tab to refetch GET /api/settings.
+func (st *Settings) announceSettings() {
+	if st.broadcast != nil && st.lifecycle != nil {
 		settings.Announce(st.lifecycle.shutdownCtx, st.lifecycle.configDir, st.broadcast)
 	}
+}
+
+// ModelFallbacks answers kiro-cli's fallback for each model it serves, sorted by model; empty until the engine has
+// reported a view.
+func (st *Settings) ModelFallbacks() []marotte.ModelFallback {
+	st.kiroDefaults.mu.Lock()
+	defer st.kiroDefaults.mu.Unlock()
+	return append([]marotte.ModelFallback{}, st.kiroDefaults.fallbacks...)
 }
 
 // KiroDefaults answers what each kiroDefaultKeys setting resolves to in kiro-cli, keyed by the

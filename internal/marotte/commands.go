@@ -100,6 +100,8 @@ type PromptCommand struct {
 	// ForAgent marks a server-authored prompt whose answer an agent reads, so the user's output
 	// style is withheld from it. Server-only: no client payload can set it.
 	ForAgent bool `json:"-"`
+	// Automatic marks a prompt marotte sent on its own (EntryPrompt.Automatic). Server-only.
+	Automatic bool `json:"-"`
 }
 
 // Attachment is a file staged beside a prompt; its extension decides whether it

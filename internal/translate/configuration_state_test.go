@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -122,5 +123,143 @@ func TestDecodeCustomAgents_LaterLayerAndLaterRootWin(t *testing.T) {
 func TestDecodeCustomAgents_AnUndecodableFrameIsNotOK(t *testing.T) {
 	if got, ok := DecodeCustomAgents(json.RawMessage(`["not a configuration"]`)); ok || got != nil {
 		t.Errorf("DecodeCustomAgents(array) = %+v, %v; want nil, false", got, ok)
+	}
+}
+
+// modelFallbackFixture is internal/translate/testdata/configuration_model_fallback.json, captured by
+// internal/bridge TestCaptureModelFallbackView.
+func modelFallbackFixture(t *testing.T) map[string]json.RawMessage {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", "configuration_model_fallback.json"))
+	if err != nil {
+		t.Fatalf("read configuration_model_fallback.json: %v", err)
+	}
+	var fx map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fx); err != nil {
+		t.Fatalf("parse configuration_model_fallback.json: %v", err)
+	}
+	return fx
+}
+
+func fallbackOf(t *testing.T, rows []marotte.ModelFallback, model string) marotte.ModelFallback {
+	t.Helper()
+	for _, r := range rows {
+		if r.Model == model {
+			return r
+		}
+	}
+	t.Fatalf("no row for %s in %v", model, rows)
+	return marotte.ModelFallback{}
+}
+
+func TestDecodeModelFallbacks(t *testing.T) {
+	fx := modelFallbackFixture(t)
+	t.Run("vendor only", func(t *testing.T) {
+		rows, ok := DecodeModelFallbacks(fx["connection"])
+		if !ok {
+			t.Fatal("ok = false for a connection view")
+		}
+		if got, want := fallbackOf(t, rows, "model-a"), (marotte.ModelFallback{Model: "model-a", VendorDefault: "model-k"}); got != want {
+			t.Errorf("model-a = %+v, want %+v: the kiro-service layer is Kiro's default, not a choice", got, want)
+		}
+		if got, want := fallbackOf(t, rows, "model-c"), (marotte.ModelFallback{Model: "model-c"}); got != want {
+			t.Errorf("model-c = %+v, want %+v: Kiro states an empty chain", got, want)
+		}
+		if len(rows) != 24 {
+			t.Errorf("decoded %d rows, want the view's 24 modelFallback rows and no other setting", len(rows))
+		}
+	})
+	t.Run("account configured", func(t *testing.T) {
+		rows, _ := DecodeModelFallbacks(fx["connection_configured"])
+		want := marotte.ModelFallback{Model: "model-a", Configured: "model-b", VendorDefault: "model-k"}
+		if got := fallbackOf(t, rows, "model-a"); got != want {
+			t.Errorf("model-a = %+v, want %+v", got, want)
+		}
+	})
+	t.Run("locked", func(t *testing.T) {
+		raw := json.RawMessage(`{"view":{"observer":"connection"},"settings":[{"krn":"krn:::setting/modelFallback/model-a",
+			"value":["model-b"],"compose":"locked","contributions":[
+			{"layer":"kiro-service","stated":{"value":["model-k"],"used":false}},
+			{"layer":"organization","stated":{"value":["model-b"],"used":true}}]}]}`)
+		rows, _ := DecodeModelFallbacks(raw)
+		want := marotte.ModelFallback{Model: "model-a", Configured: "model-b", VendorDefault: "model-k", ReadOnlyReason: "locked"}
+		if got := fallbackOf(t, rows, "model-a"); got != want {
+			t.Errorf("model-a = %+v, want %+v", got, want)
+		}
+	})
+	t.Run("two targets", func(t *testing.T) {
+		raw := json.RawMessage(`{"view":{"observer":"connection"},"settings":[{"krn":"krn:::setting/modelFallback/model-a",
+			"value":["model-b","model-c"],"compose":"replace","contributions":[
+			{"layer":"kiro-service","stated":{"value":["model-k"],"used":false}},
+			{"layer":"machine","stated":{"value":["model-b","model-c"],"used":true}}]}]}`)
+		rows, _ := DecodeModelFallbacks(raw)
+		want := marotte.ModelFallback{Model: "model-a", Configured: "model-b", VendorDefault: "model-k", ReadOnlyReason: "multiple-targets"}
+		if got := fallbackOf(t, rows, "model-a"); got != want {
+			t.Errorf("model-a = %+v, want %+v", got, want)
+		}
+	})
+	t.Run("a vendor chain of two stays editable", func(t *testing.T) {
+		raw := json.RawMessage(`{"view":{"observer":"connection"},"settings":[{"krn":"krn:::setting/modelFallback/model-a",
+			"value":["model-k","model-j"],"compose":"replace","contributions":[
+			{"layer":"kiro-service","stated":{"value":["model-k","model-j"],"used":true}}]}]}`)
+		rows, _ := DecodeModelFallbacks(raw)
+		if got, want := fallbackOf(t, rows, "model-a"), (marotte.ModelFallback{Model: "model-a", VendorDefault: "model-k"}); got != want {
+			t.Errorf("model-a = %+v, want %+v", got, want)
+		}
+	})
+	t.Run("a chain holding an empty id is dropped", func(t *testing.T) {
+		raw := json.RawMessage(`{"view":{"observer":"connection"},"settings":[
+			{"krn":"krn:::setting/modelFallback/model-a","value":[""],"compose":"replace","contributions":[]},
+			{"krn":"krn:::setting/modelFallback/model-b","value":["model-k"],"compose":"replace","contributions":[
+				{"layer":"kiro-service","stated":{"value":["model-k",""],"used":false}},
+				{"layer":"user-synced","stated":{"value":["model-k"],"used":true}}]},
+			{"krn":"krn:::setting/modelFallback/model-c","value":["model-k"],"compose":"replace","contributions":[
+				{"layer":"kiro-service","stated":{"value":["model-k"],"used":true}}]}]}`)
+		rows, _ := DecodeModelFallbacks(raw)
+		if want := []marotte.ModelFallback{{Model: "model-c", VendorDefault: "model-k"}}; !slices.Equal(rows, want) {
+			t.Errorf("rows = %+v, want %+v: kiro-cli refuses a chain with an empty id", rows, want)
+		}
+	})
+	t.Run("treats the text", func(t *testing.T) {
+		raw := json.RawMessage(`{"view":{"observer":"connection"},"settings":[{"krn":"krn:::setting/modelFallback/model\u001b-a",
+			"value":["model\nb"],"compose":"replace","contributions":[{"layer":"user-synced","stated":{"value":["model\nb"],"used":true}}]}]}`)
+		rows, _ := DecodeModelFallbacks(raw)
+		if len(rows) != 1 || rows[0].Model != "model -a" || rows[0].Configured != "model b" {
+			t.Errorf("rows = %+v, want the control characters made spaces", rows)
+		}
+	})
+	t.Run("session view", func(t *testing.T) {
+		if got, ok := DecodeModelFallbacks(json.RawMessage(`{"view":{"observer":"session","sessionId":"s"},"settings":[]}`)); ok {
+			t.Errorf("DecodeModelFallbacks(session view) = %v, true; want false", got)
+		}
+	})
+	t.Run("undecodable", func(t *testing.T) {
+		if _, ok := DecodeModelFallbacks(json.RawMessage(`{"view":`)); ok {
+			t.Error("ok = true for an undecodable frame")
+		}
+	})
+}
+
+func TestDecodeModelFallbackSetting(t *testing.T) {
+	fx := modelFallbackFixture(t)
+	answer := func(name string) json.RawMessage {
+		var a struct {
+			Result struct {
+				Setting json.RawMessage `json:"setting"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(fx[name], &a); err != nil {
+			t.Fatal(err)
+		}
+		return a.Result.Setting
+	}
+	if got, ok := DecodeModelFallbackSetting(answer("set")); !ok || got != (marotte.ModelFallback{Model: "model-a", Configured: "model-b", VendorDefault: "model-k"}) {
+		t.Errorf("the set answer = %+v, %v; want model-a configured model-b over Kiro's model-k", got, ok)
+	}
+	if got, ok := DecodeModelFallbackSetting(answer("clear")); !ok || got != (marotte.ModelFallback{Model: "model-a", VendorDefault: "model-k"}) {
+		t.Errorf("the clear answer = %+v, %v; want model-a back on Kiro's model-k", got, ok)
+	}
+	if _, ok := DecodeModelFallbackSetting(json.RawMessage(`{"krn":"krn:::setting/memorySync","value":"on","contributions":[]}`)); ok {
+		t.Error("ok = true for a setting that is not a model fallback")
 	}
 }

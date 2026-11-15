@@ -5,9 +5,16 @@
  * Anything in a header row that owns its click, by kind: `summary` and `label` activate something else,
  * `[contenteditable]` places a caret.
  */
-const OWNS_ITS_CLICK =
+export const OWNS_ITS_CLICK =
   "a[href],area[href],button,input,select,textarea,summary,label," +
   "[role=button],[role=link],[role=checkbox],[role=menuitem],[contenteditable]";
+
+/** Whether `target` in `row` is or sits in a control nested in the row, which keeps its own click. */
+export function ownsItsClick(target: Element, row: Element): boolean {
+  const owner = target.closest(OWNS_ITS_CLICK);
+  // Bounded to the row: `closest` walks past it, and the row may itself be a control.
+  return owner !== null && owner !== row && row.contains(owner);
+}
 
 /** Make every part of `row` activate `control`, except a nested control and a click that ends a selection in the row. */
 export function wireRowToggle(row: HTMLElement, control: HTMLElement): void {
@@ -18,9 +25,7 @@ export function wireRowToggle(row: HTMLElement, control: HTMLElement): void {
     if (!(target instanceof Element)) {
       return;
     }
-    const owner = target.closest(OWNS_ITS_CLICK);
-    // Bounded to the row: `closest` walks past it, and the row may itself be a control.
-    if (owner !== null && owner !== row && row.contains(owner)) {
+    if (ownsItsClick(target, row)) {
       return;
     }
     if (hasSelectionIn(row)) {

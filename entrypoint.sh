@@ -125,6 +125,8 @@ emit_path_dropin() {
   # Single-quoted, so a tools dir with a space or a quote stays one word.
   local quoted=${PATH//\'/\'\\\'\'}
   printf "PATH='%s'\nexport PATH\n" "$quoted"
+  # The image ENV's self-update switch, for a login shell started from a cleared environment.
+  printf 'KIRO_NO_AUTO_UPDATE=1\nexport KIRO_NO_AUTO_UPDATE\n'
 }
 
 # $1 is the profile.d folder. Through a temp file so a login shell never sources a half-written

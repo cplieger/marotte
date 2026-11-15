@@ -202,32 +202,32 @@ export interface AccountUsage {
   /** BillingCycleReset is the YYYY-MM-DD reset date, or "" when unknown. */
   billing_cycle_reset?: string;
   /**
- * FetchedAt is the RFC3339 timestamp of the fetch that produced this
- * snapshot, so the client can show freshness.
- */
+   * FetchedAt is the RFC3339 timestamp of the fetch that produced this
+   * snapshot, so the client can show freshness.
+   */
   fetched_at?: string;
   /**
- * Note carries a human-readable status for degraded states (e.g. an
- * admin-managed plan that returns no breakdowns).
- */
+   * Note carries a human-readable status for degraded states (e.g. an
+   * admin-managed plan that returns no breakdowns).
+   */
   note?: string;
   /**
- * Breakdowns is the per-resource usage list (typically a single
- * CREDIT entry).
- */
+   * Breakdowns is the per-resource usage list (typically a single
+   * CREDIT entry).
+   */
   breakdowns: AccountUsageBreakdown[];
   /** IsEnterprise reports whether the plan is an enterprise/managed plan. */
   is_enterprise?: boolean;
   /**
- * OveragesEnabled reports whether overage billing is enabled. NEVER `omitempty`: the client
- * displays it, and an omitted false is indistinguishable from absent; without the tag wiregen
- * emits a required field.
- */
+   * OveragesEnabled reports whether overage billing is enabled. NEVER `omitempty`: the client
+   * displays it, and an omitted false is indistinguishable from absent; without the tag wiregen
+   * emits a required field.
+   */
   overages_enabled: boolean;
   /**
- * Stale is true when this snapshot was served from the last-known
- * cache because a fresh fetch failed (the engine not running, rate limit).
- */
+   * Stale is true when this snapshot was served from the last-known
+   * cache because a fresh fetch failed (the engine not running, rate limit).
+   */
   stale?: boolean;
 }
 
@@ -286,9 +286,9 @@ export interface AddRequest {
   version_args?: string[];
   pin?: boolean;
   /**
- * Disabled adds the entry as a template: recorded, not installed,
- * no job enqueued (Add then returns a nil Job).
- */
+   * Disabled adds the entry as a template: recorded, not installed,
+   * no job enqueued (Add then returns a nil Job).
+   */
   disabled?: boolean;
 }
 
@@ -331,9 +331,9 @@ export interface ApprovalFile {
   /** SnapshotURI addresses the pre-image, so a diff is a snapshot read. */
   snapshot_uri?: string;
   /**
- * ActionID is KAS's pending-action id and THE KEY the decision map must use. KAS
- * restores every id the response omits, so omission counts as a REJECT.
- */
+   * ActionID is KAS's pending-action id and THE KEY the decision map must use. KAS
+   * restores every id the response omits, so omission counts as a REJECT.
+   */
   action_id: string;
 }
 
@@ -434,46 +434,46 @@ export interface Capabilities {
  */
 export interface CatalogInfo {
   /**
- * Refs are the upstream registry refs the catalog was compiled
- * from; Generated its compile timestamp (RFC 3339 UTC). Both are
- * informational pass-throughs of the catalog document.
- */
+   * Refs are the upstream registry refs the catalog was compiled
+   * from; Generated its compile timestamp (RFC 3339 UTC). Both are
+   * informational pass-throughs of the catalog document.
+   */
   refs?: { [key: string]: string };
   generated?: string;
   /**
- * Source is where the live catalog came from: baked (the image
- * file), cached (the refresh cache, reloaded at boot), remote
- * (fetched this process lifetime), or none (degraded, no catalog).
- */
+   * Source is where the live catalog came from: baked (the image
+   * file), cached (the refresh cache, reloaded at boot), remote
+   * (fetched this process lifetime), or none (degraded, no catalog).
+   */
   source: string;
   /**
- * URL is the configured refresh source (empty when refresh is not
- * configured).
- */
+   * URL is the configured refresh source (empty when refresh is not
+   * configured).
+   */
   url?: string;
   /**
- * LastError is the most recent refresh failure ("" after a
- * successful refresh).
- */
+   * LastError is the most recent refresh failure ("" after a
+   * successful refresh).
+   */
   last_error?: string;
   entries: number;
   /**
- * Unavailable counts the entries the catalog knows about and cannot
- * install. Beside Entries it is the operator's read on whether a
- * registry bump changed what is reachable: a jump in this number with
- * Entries falling is upstream moving tools onto a backend the
- * compiler does not support.
- */
+   * Unavailable counts the entries the catalog knows about and cannot
+   * install. Beside Entries it is the operator's read on whether a
+   * registry bump changed what is reachable: a jump in this number with
+   * Entries falling is upstream moving tools onto a backend the
+   * compiler does not support.
+   */
   unavailable: number;
   /**
- * FetchedAt is the last successful refresh (Unix milliseconds; 0
- * before the first).
- */
+   * FetchedAt is the last successful refresh (Unix milliseconds; 0
+   * before the first).
+   */
   fetched_at?: number;
   /**
- * Scheduled reports whether the engine-owned background refresh
- * loop is running.
- */
+   * Scheduled reports whether the engine-owned background refresh
+   * loop is running.
+   */
   scheduled: boolean;
 }
 
@@ -500,9 +500,9 @@ export interface ChatHeader {
   acp_session_id?: string;
   current_mode_id?: string;
   /**
- * Effort mirrors Chat's: the header is the only projection reaching every chat,
- * and the effort control reads the ACTIVE chat's.
- */
+   * Effort mirrors Chat's: the header is the only projection reaching every chat,
+   * and the effort control reads the ACTIVE chat's.
+   */
   effort?: string;
   /** LastTurnOutcome mirrors Chat's for the tab dot; carrier turns are skipped. Never `running`. */
   last_turn_outcome?: TurnOutcome;
@@ -530,9 +530,9 @@ export interface ChatHeader {
   created_at: number;
   updated_at: number;
   /**
- * ReadPosition is wire-only: EntryLog.ReadPosition of the opened log, 0 when the log is not
- * open. chat.Store fills it; Chat.Header does not.
- */
+   * ReadPosition is wire-only: EntryLog.ReadPosition of the opened log, 0 when the log is not
+   * open. chat.Store fills it; Chat.Header does not.
+   */
   read_position?: number;
   turn_count: number;
   supervised_mode?: boolean;
@@ -637,22 +637,22 @@ export interface ClockSpec {
   /** Weekdays are the days FreqWeekly fires on, as time.Weekday (0=Sunday). */
   weekdays?: number[];
   /**
- * Interval is the step in its freq's unit: hours for FreqHourly (1-24), minutes for
- * FreqMinutely (minMinuteInterval..maxMinuteInterval). Anchored to local midnight, so a step
- * that does not divide the day has a short final gap (every 5 hours: 00,05,10,15,20, midnight).
- */
+   * Interval is the step in its freq's unit: hours for FreqHourly (1-24), minutes for
+   * FreqMinutely (minMinuteInterval..maxMinuteInterval). Anchored to local midnight, so a step
+   * that does not divide the day has a short final gap (every 5 hours: 00,05,10,15,20, midnight).
+   */
   interval?: number;
   /**
- * MonthDay is the day FreqMonthly fires on: 1-31, or LastDay. A value past
- * the end of a short month is CLAMPED to that month's last day rather than
- * skipping the month, so "day 31" still fires in February.
- */
+   * MonthDay is the day FreqMonthly fires on: 1-31, or LastDay. A value past
+   * the end of a short month is CLAMPED to that month's last day rather than
+   * skipping the month, so "day 31" still fires in February.
+   */
   month_day?: number;
   /**
- * Hour and Minute are the local time of day. FreqHourly ignores Hour and uses Minute as
- * the offset past each stepped hour; FreqMinutely uses Minute % Interval as the PHASE, so the
- * chosen minute is always a fire time.
- */
+   * Hour and Minute are the local time of day. FreqHourly ignores Hour and uses Minute as
+   * the offset past each stepped hour; FreqMinutely uses Minute % Interval as the PHASE, so the
+   * chosen minute is always a fire time.
+   */
   hour: number;
   minute: number;
 }
@@ -684,9 +684,9 @@ export interface CloseImpact {
  */
 export interface CloseTabCommand {
   /**
- * Impact is what the page's confirmation named; when present the close commits only if it covers what the
- * close stops, else it answers 409 close_impact_changed with the server's impact. Absent is unchecked.
- */
+   * Impact is what the page's confirmation named; when present the close commits only if it covers what the
+   * close stops, else it answers 409 close_impact_changed with the server's impact. Absent is unchecked.
+   */
   impact?: CloseImpact;
   id: string;
   op_id?: string;
@@ -781,21 +781,21 @@ export interface ConfigStandingResponse {
  */
 export interface ConfigTemplateResponse {
   /**
- * Subject is the `catalog` digest stamp with the hub epoch, read under the
- * catalog's lock beside the two lists it vouches for.
- */
+   * Subject is the `catalog` digest stamp with the hub epoch, read under the
+   * catalog's lock beside the two lists it vouches for.
+   */
   subject?: SubjectStamp;
   default_model?: string;
   /**
- * Catalog has NO omitempty, so wiregen emits a required TypeScript field the
- * retry policy can rely on.
- */
+   * Catalog has NO omitempty, so wiregen emits a required TypeScript field the
+   * retry policy can rely on.
+   */
   catalog: CatalogState;
   catalog_reason?: CatalogReason;
   /**
- * Every list is non-null on every path, so a generated decoder requiring an array
- * cannot fail on a failure body.
- */
+   * Every list is non-null on every path, so a generated decoder requiring an array
+   * cannot fail on a failure body.
+   */
   modes: SessionMode[];
   models: SessionModel[];
   output_styles: OutputStyle[];
@@ -813,15 +813,15 @@ export interface ConfiguredForge {
   username?: string;
   email?: string;
   /**
- * Account names the sign-in, so a reply read through an older one can be
- * told apart; a new sign-in as the same user changes it.
- */
+   * Account names the sign-in, so a reply read through an older one can be
+   * told apart; a new sign-in as the same user changes it.
+   */
   account: string;
   status: ForgeStatus;
   /**
- * OwnerScopes are the owners a present cycle reads beside the connection's
- * own pull requests.
- */
+   * OwnerScopes are the owners a present cycle reads beside the connection's
+   * own pull requests.
+   */
   owner_scopes?: string[];
   /** CheckedAt is the last check's end in Unix milliseconds, absent before one. */
   checked_at?: number;
@@ -834,54 +834,54 @@ export interface ConfiguredForge {
  */
 export interface ConnectedPayload {
   /**
- * Workspace is the absolute workspace root, needed from the first frame because the
- * client cannot derive it: ACP-supplied paths arrive workspace-RELATIVE while the
- * /api/file* surface is container-ABSOLUTE, and opening a changed file rejoins them.
- */
+   * Workspace is the absolute workspace root, needed from the first frame because the
+   * client cannot derive it: ACP-supplied paths arrive workspace-RELATIVE while the
+   * /api/file* surface is container-ABSOLUTE, and opening a changed file rejoins them.
+   */
   workspace?: string;
   /**
- * LiveRunsVersion is the `runs` version LiveRuns was read at, from the same lease-store
- * read, stated even when the list is withheld.
- */
+   * LiveRunsVersion is the `runs` version LiveRuns was read at, from the same lease-store
+   * read, stated even when the list is withheld.
+   */
   live_runs_version: string;
   /**
- * Floor and Head are the replay ring's bounds, present ONLY on a legacy connect
- * (a client that sent no SSE-Wire header): the v2 bundle reads them as numbers
- * to detect a gap, and a v3 client gets the same facts from the library's hello.
- */
+   * Floor and Head are the replay ring's bounds, present ONLY on a legacy connect
+   * (a client that sent no SSE-Wire header): the v2 bundle reads them as numbers
+   * to detect a gap, and a v3 client gets the same facts from the library's hello.
+   */
   floor?: number;
   head?: number;
   /**
- * BusyChats is every chat with a turn of its OWN in flight at connect (an open non-step turn,
- * or an admitted prompt not minted yet), and a NEGATIVE statement about every chat it omits:
- * nothing else tells a client a turn died with the previous process. Capped at maxBusyChats,
- * with overflow reported through BusyStated, never truncated.
- */
+   * BusyChats is every chat with a turn of its OWN in flight at connect (an open non-step turn,
+   * or an admitted prompt not minted yet), and a NEGATIVE statement about every chat it omits:
+   * nothing else tells a client a turn died with the previous process. Capped at maxBusyChats,
+   * with overflow reported through BusyStated, never truncated.
+   */
   busy_chats?: string[];
   /**
- * LiveRuns is every run marotte's lease registry says is in flight, the same
- * projection GET /api/runs/live serves. Here because every connect wants it and the
- * client's own fetch was three serialized round trips behind whoami; costs no KAS
- * call, because the projection is a lease-store read.
- * //
- * Emitted for a topic-filtered connect too: the inventory is workspace-global, so
- * there is nothing to scope. CAPPED at maxConnectLiveRuns — see LiveRunsStated.
- */
+   * LiveRuns is every run marotte's lease registry says is in flight, the same
+   * projection GET /api/runs/live serves. Here because every connect wants it and the
+   * client's own fetch was three serialized round trips behind whoami; costs no KAS
+   * call, because the projection is a lease-store read.
+   *
+   * Emitted for a topic-filtered connect too: the inventory is workspace-global, so
+   * there is nothing to scope. CAPPED at maxConnectLiveRuns — see LiveRunsStated.
+   */
   live_runs?: LiveRun[];
   /**
- * BusyStated says whether BusyChats is the COMPLETE set, and it is the ONE flag two
- * conditions clear: a topic-filtered connect (the list is scoped) and an over-cap
- * workspace (the list is withheld). No omitempty, so wiregen emits a REQUIRED field
- * and an absent marker can never read as "stated": a withheld list is withheld
- * WHOLE rather than truncated, so a reader has to be told which it holds.
- */
+   * BusyStated says whether BusyChats is the COMPLETE set, and it is the ONE flag two
+   * conditions clear: a topic-filtered connect (the list is scoped) and an over-cap
+   * workspace (the list is withheld). No omitempty, so wiregen emits a REQUIRED field
+   * and an absent marker can never read as "stated": a withheld list is withheld
+   * WHOLE rather than truncated, so a reader has to be told which it holds.
+   */
   busy_stated: boolean;
   /**
- * LiveRunsStated says whether LiveRuns is the COMPLETE inventory. False only when the
- * lease store holds more than maxConnectLiveRuns rows: the list is WITHHELD and the client
- * reads GET /api/runs/live. A truncated list would drop runs from a client that adopts it
- * whole, and an empty one reads as "no runs are live". No omitempty, for BusyStated's reason.
- */
+   * LiveRunsStated says whether LiveRuns is the COMPLETE inventory. False only when the
+   * lease store holds more than maxConnectLiveRuns rows: the list is WITHHELD and the client
+   * reads GET /api/runs/live. A truncated list would drop runs from a client that adopts it
+   * whole, and an empty one reads as "no runs are live". No omitempty, for BusyStated's reason.
+   */
   live_runs_stated: boolean;
 }
 
@@ -943,7 +943,7 @@ export interface ContextPart {
 
 /**
  * CreateChatCommand is the payload for type="create_chat".
- * //
+ *
  * Name is optional, capped at maxChatNameBytes, defaulting to "New
  * conversation". Model is optional (validIdent). Invalid input returns HTTP 400.
  */
@@ -951,10 +951,10 @@ export interface CreateChatCommand {
   name?: string;
   model?: string;
   /**
- * OpID correlates every attempt of one create gesture, so a repeat resolves
- * to the chat the first attempt made. Optional; unlike Idempotency-Key it
- * covers the fall-through past that cache's TTL (command/create_ledger.go).
- */
+   * OpID correlates every attempt of one create gesture, so a repeat resolves
+   * to the chat the first attempt made. Optional; unlike Idempotency-Key it
+   * covers the fall-through past that cache's TTL (command/create_ledger.go).
+   */
   op_id?: string;
 }
 
@@ -1062,199 +1062,202 @@ export interface DraftChangedPayload {
  */
 export interface EffectiveSettings {
   /**
- * LastEffortByModel maps a model id to the reasoning-effort level last picked
- * under it, so the seed applies to a chat running THAT model and to no other.
- * One level for the whole app cannot express that: a pick on any chat retracts
- * every other model's remembered level (settings.KeyLastEffortByModel).
- */
+   * LastEffortByModel maps a model id to the reasoning-effort level last picked
+   * under it, so the seed applies to a chat running THAT model and to no other.
+   * One level for the whole app cannot express that: a pick on any chat retracts
+   * every other model's remembered level (settings.KeyLastEffortByModel).
+   */
   last_effort_by_model: { [key: string]: string };
   /**
- * KiroDefaults is what an UNSET three-state setting resolves to in kiro-cli, keyed by the
- * marotte setting key; a key is absent while that is unknown, and never present for a key the
- * user has set.
- */
+   * KiroDefaults is what an UNSET three-state setting resolves to in kiro-cli, keyed by the
+   * marotte setting key; a key is absent while that is unknown, and never present for a key the
+   * user has set.
+   */
   kiro_defaults: { [key: string]: KiroDefault };
   /**
- * AdditionalDirectoriesRefused maps each AdditionalDirectories entry that
- * settings.AgentDirs.Assess refuses at this GET to its reason; it is never stored, and an
- * entry absent from it is granted.
- */
+   * AdditionalDirectoriesRefused maps each AdditionalDirectories entry that
+   * settings.AgentDirs.Assess refuses at this GET to its reason; it is never stored, and an
+   * entry absent from it is granted.
+   */
   additional_directories_refused: { [key: string]: string };
   /**
- * Theme is "", "dark", "light" or "system". The empty string is a REAL value
- * meaning nothing has been chosen, which the client resolves to the OS
- * preference; it is deliberately not normalised to "system" here, because the
- * client's one-time paint-cache carry-across is reachable only while the
- * server says nothing.
- */
+   * Theme is "", "dark", "light" or "system". The empty string is a REAL value
+   * meaning nothing has been chosen, which the client resolves to the OS
+   * preference; it is deliberately not normalised to "system" here, because the
+   * client's one-time paint-cache carry-across is reachable only while the
+   * server says nothing.
+   */
   theme: string;
   /**
- * LastModel and LastEffortByModel are what a NEW chat opens on. Both are pure
- * memory: the value in force for an existing chat lives on that chat's record.
- */
+   * LastModel and LastEffortByModel are what a NEW chat opens on. Both are pure
+   * memory: the value in force for an existing chat lives on that chat's record.
+   */
   last_model: string;
   /**
- * LastMergeMethod is the PR merge method picked last, in the forge's own
- * spelling, the merge dialog's default where the repository offers it. Empty
- * means nothing picked yet.
- */
+   * LastMergeMethod is the PR merge method picked last, in the forge's own
+   * spelling, the merge dialog's default where the repository offers it. Empty
+   * means nothing picked yet.
+   */
   last_merge_method: string;
   /**
- * MemoryMode is the Memory dropdown's value ("off" and its three
- * siblings); it defaults to settings.DefaultMemoryMode, kiro-cli's own.
- */
+   * MemoryMode is the Memory dropdown's value ("off" and its three
+   * siblings); it defaults to settings.DefaultMemoryMode, kiro-cli's own.
+   */
   memory_mode: string;
   /** InterruptMode is the composer's default beside a running turn, steer unless queue was chosen. */
   interrupt_mode: InterruptMode;
   /** SpecPlanning is "off", "quick" or "full"; default off, matching kiro-cli. */
   spec_planning: string;
   /**
- * WorkValidation, CloudFormationSafetyCheck, AutoRouting and AutoDelegation
- * are "", "on" or "off", and CloudFormationSafetyCheck also "enforce". The empty
- * string is a real value: marotte sends nothing and kiro-cli decides.
- */
+   * WorkValidation, CloudFormationSafetyCheck, AutoRouting and AutoDelegation
+   * are "", "on" or "off", and CloudFormationSafetyCheck also "enforce". The empty
+   * string is a real value: marotte sends nothing and kiro-cli decides.
+   */
   work_validation: string;
   cloudformation_safety_check: string;
   auto_routing: string;
   auto_delegation: string;
   /**
- * OutputStyle is a KAS output style id (GET /api/config-template output_styles);
- * "default" is never sent.
- */
+   * OutputStyle is a KAS output style id (GET /api/config-template output_styles);
+   * "default" is never sent.
+   */
   output_style: string;
   /**
- * WorkflowLaunch is "when-asked", "large-tasks" or "delegate-all", KAS's workflowLaunch
- * values; it applies only while WorkflowsEnabled is on.
- */
+   * WorkflowLaunch is "when-asked", "large-tasks" or "delegate-all", KAS's workflowLaunch
+   * values; it applies only while WorkflowsEnabled is on.
+   */
   workflow_launch: string;
   /**
- * WorkflowCreatorEffort is "" (KAS's creator agent decides) or a KAS effort level for the step that drafts a
- * workflow from a prose request; it applies only while WorkflowsEnabled is on.
- */
+   * WorkflowCreatorEffort is "" (KAS's creator agent decides) or a KAS effort level for the step that drafts a
+   * workflow from a prose request; it applies only while WorkflowsEnabled is on.
+   */
   workflow_creator_effort: string;
   /**
- * ChatAwarenessMode is "" (kiro-cli decides), "direct" or "consult"; it applies only while ChatAwareness is on and
- * to chats created after the change.
- */
+   * ChatAwarenessMode is "" (kiro-cli decides), "direct" or "consult"; it applies only while ChatAwareness is on and
+   * to chats created after the change.
+   */
   chat_awareness_mode: string;
   /**
- * KnowledgeIndexType is "" (kiro-cli's own, semantic unless its legacy knowledge.json says fast), "fast" or
- * "best": the index a knowledge base added from now on is built as.
- */
+   * KnowledgeIndexType is "" (kiro-cli's own, semantic unless its legacy knowledge.json says fast), "fast" or
+   * "best": the index a knowledge base added from now on is built as.
+   */
   knowledge_index_type: string;
   /**
- * KnowledgeIncludePatterns and KnowledgeExcludePatterns are glob lists matched against a file's path inside the
- * indexed folder; empty is kiro-cli's own (every file of a type it indexes, and no exclusion).
- */
+   * KnowledgeIncludePatterns and KnowledgeExcludePatterns are glob lists matched against a file's path inside the
+   * indexed folder; empty is kiro-cli's own (every file of a type it indexes, and no exclusion).
+   */
   knowledge_include_patterns: string[];
   knowledge_exclude_patterns: string[];
   /**
- * AgentIgnoreFiles is the ignore-FILE basename list marotte sends kiro-cli,
- * which is what enforces it; marotte runs no matcher of its own. The default is
- * EMPTY (settings.DefaultAgentIgnoreFiles), and an absent key must still not
- * read as the zero value: the panel row is authoritative on write, so a client
- * falling back to an empty list persists that emptiness on the next edit.
- */
+   * AgentIgnoreFiles is the ignore-FILE basename list marotte sends kiro-cli,
+   * which is what enforces it; marotte runs no matcher of its own. The default is
+   * EMPTY (settings.DefaultAgentIgnoreFiles), and an absent key must still not
+   * read as the zero value: the panel row is authoritative on write, so a client
+   * falling back to an empty list persists that emptiness on the next edit.
+   */
   agent_ignore_files: string[];
   /**
- * AdditionalDirectories is the stored list of directories beyond the workspace that agents
- * may read and write, default EMPTY. An entry that settings.AgentDirs.Assess refuses stays
- * listed, grants nothing, and is a key of AdditionalDirectoriesRefused.
- */
+   * AdditionalDirectories is the stored list of directories beyond the workspace that agents
+   * may read and write, default EMPTY. An entry that settings.AgentDirs.Assess refuses stays
+   * listed, grants nothing, and is a key of AdditionalDirectoriesRefused.
+   */
   additional_directories: string[];
   /** RejectedKeys are the stored keys whose value did not fit, each served as its default; never stored. */
   rejected_keys: string[];
+  /** ModelFallbacks is kiro-cli's fallback for each model it serves, empty until the engine reported a view. */
+  model_fallbacks: ModelFallback[];
   /**
- * ChatRetentionDays is -1 (keep forever), 0 (delete on close) or a day count.
- * Zero is the most destructive value in the document, so absent must never
- * resolve to it.
- */
+   * ChatRetentionDays is -1 (keep forever), 0 (delete on close) or a day count.
+   * Zero is the most destructive value in the document, so absent must never
+   * resolve to it.
+   */
   chat_retention_days: number;
   /**
- * AutoCompactPct is inside AutoCompactPctRange; a stored value outside it reads as
- * settings.DefaultAutoCompactPct and is listed in RejectedKeys.
- */
+   * AutoCompactPct is inside AutoCompactPctRange; a stored value outside it reads as
+   * settings.DefaultAutoCompactPct and is listed in RejectedKeys.
+   */
   auto_compact_pct: number;
   /** AutoCompactPctRange is settings.AutoCompactPctRange; never stored. */
   auto_compact_pct_range: PctRange;
   /**
- * TerminalCommandTimeoutMs is the shell tool's default timeout in ms; 0 is
- * unset (kiro-cli's 120 s).
- */
+   * TerminalCommandTimeoutMs is the shell tool's default timeout in ms; 0 is
+   * unset (kiro-cli's 120 s).
+   */
   terminal_command_timeout_ms: number;
   /** EngineHeapMiB is the agent engine's JavaScript heap limit in MiB; 0 is kiro-cli's default. */
   engine_heap_mib: number;
   /**
- * TriggerMaxLiveRuns and TriggerMaxLaunchesPerHour are the fleet caps on triggered runs, 1 to 100, default 3
- * and 6 (settings.TriggerCaps).
- */
+   * TriggerMaxLiveRuns and TriggerMaxLaunchesPerHour are the fleet caps on triggered runs, 1 to 100, default 3
+   * and 6 (settings.TriggerCaps).
+   */
   trigger_max_live_runs: number;
   trigger_max_launches_per_hour: number;
   /**
- * ChatMessageDeliveryLimit caps one agent-to-agent exchange between two chats, 1 to 500, default 50
- * (settings.DefaultChatMessageDeliveryLimit, kiro-cli's own).
- */
+   * ChatMessageDeliveryLimit caps one agent-to-agent exchange between two chats, 1 to 500, default 50
+   * (settings.DefaultChatMessageDeliveryLimit, kiro-cli's own).
+   */
   chat_message_delivery_limit: number;
   /**
- * KnowledgeMaxFiles caps the files one knowledge base indexes, default 10000, and KnowledgeChunking is its
- * passage shape, default 512 and 128 (settings.DefaultKnowledgeMaxFiles and its siblings, kiro-cli's own).
- */
+   * KnowledgeMaxFiles caps the files one knowledge base indexes, default 10000, and KnowledgeChunking is its
+   * passage shape, default 512 and 128 (settings.DefaultKnowledgeMaxFiles and its siblings, kiro-cli's own).
+   */
   knowledge_max_files: number;
   knowledge_chunking: KnowledgeChunking;
   /**
- * SettingsEpoch and SettingsRevision are config.json's version (settings.KeySettingsEpoch and
- * KeySettingsRevision), both 0 before the first write and compared epoch first. A config.json
- * written without these keys or restored with lower ones is rewritten at a later version by
- * the next outside-write check that reads it, and a removed one when two consecutive checks
- * find it absent.
- */
+   * SettingsEpoch and SettingsRevision are config.json's version (settings.KeySettingsEpoch and
+   * KeySettingsRevision), both 0 before the first write and compared epoch first. A config.json
+   * written without these keys or restored with lower ones is rewritten at a later version by
+   * the next outside-write check that reads it, and a removed one when two consecutive checks
+   * find it absent.
+   */
   settings_epoch: number;
   settings_revision: number;
   /**
- * AutoCompactionEnabled defaults TRUE: off means nothing compacts a chat
- * until the reader presses Compact.
- */
+   * AutoCompactionEnabled defaults TRUE: off means nothing compacts a chat
+   * until the reader presses Compact.
+   */
   auto_compaction_enabled: boolean;
   /**
- * KnowledgeEnabled defaults TRUE, so it is the other key whose zero value is
- * the wrong answer: the index, its REST surface and its UI all predate the
- * switch, so an absent key read as false takes the knowledge tool away from
- * every existing install.
- */
+   * KnowledgeEnabled defaults TRUE, so it is the other key whose zero value is
+   * the wrong answer: the index, its REST surface and its UI all predate the
+   * switch, so an absent key read as false takes the knowledge tool away from
+   * every existing install.
+   */
   knowledge_enabled: boolean;
   /**
- * ContentCollection is the stored content-collection choice, default off. An
- * organization's lock overrides what marotte sends, not this value.
- */
+   * ContentCollection is the stored content-collection choice, default on
+   * (settings.DefaultContentCollectionEnabled). An organization's lock
+   * overrides what marotte sends, not this value.
+   */
   content_collection_enabled: boolean;
   /**
- * GuardPayloadLinks defaults to settings.defaultGuardPayloadLinks; no server path
- * reads it.
- */
+   * GuardPayloadLinks defaults to settings.defaultGuardPayloadLinks; no server path
+   * reads it.
+   */
   guard_payload_links: boolean;
   /**
- * MCPWaitForReady renders waitForReady on every server in KAS's MCP file, so
- * a prompt waits for the servers to settle. Default off.
- */
+   * MCPWaitForReady renders waitForReady on every server in KAS's MCP file, so
+   * a prompt waits for the servers to settle. Default off.
+   */
   mcp_wait_for_ready: boolean;
   /**
- * NotificationsEnabled is the push master switch, default off. The three per-kind
- * switches below take their defaults from settings.Default*, and those are not
- * uniform either — pr_status is OFF where its two siblings are ON. So there are
- * three polarities across these four fields, and that asymmetry is exactly why
- * the client must not guess any of them.
- */
+   * NotificationsEnabled is the push master switch, default off. The three per-kind
+   * switches below take their defaults from settings.Default*, and those are not
+   * uniform either — pr_status is OFF where its two siblings are ON. So there are
+   * three polarities across these four fields, and that asymmetry is exactly why
+   * the client must not guess any of them.
+   */
   notifications_enabled: boolean;
   notify_agent_finished: boolean;
   notify_pr_status: boolean;
   notify_run_outcome: boolean;
   /**
- * SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
- * unattended run's permission ask at its deadline and is fail-closed by
- * decision. DebugLogs raises the log level. All three default off.
- * SpecPlanningAskFirst, SteeringReminders, ChatMessaging and ChatAwareness default off, matching kiro-cli.
- * WorkflowsEnabled defaults ON (user's choice, where the TUI's default is off).
- */
+   * SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
+   * unattended run's permission ask at its deadline and is fail-closed by
+   * decision. DebugLogs raises the log level. All three default off.
+   * SpecPlanningAskFirst, SteeringReminders, ChatMessaging and ChatAwareness default off, matching kiro-cli.
+   * WorkflowsEnabled defaults ON (user's choice, where the TUI's default is off).
+   */
   spec_planning_ask_first: boolean;
   steering_reminders_enabled: boolean;
   workflows_enabled: boolean;
@@ -1266,17 +1269,17 @@ export interface EffectiveSettings {
   /** HighThroughput starts the agent engine with the high throughput Node.js flags, default on. */
   high_throughput_optimizations: boolean;
   /**
- * ModelFallback defaults on, matching kiro-cli: on, KAS may retry a turn its model refused or
- * could not serve on the next model of its fallback chain, or record why it declined to, except a
- * refusal on Auto, which the withheld KIRO_FEATURE_MODEL_FALLBACK_AUTO_REFUSAL_ENABLED row leaves
- * to kiro-cli's experiment default.
- */
+   * ModelFallback defaults on, matching kiro-cli: on, KAS may retry a turn its model refused or
+   * could not serve on the next model of its fallback chain, or record why it declined to, except a
+   * refusal on Auto, which the withheld KIRO_FEATURE_MODEL_FALLBACK_AUTO_REFUSAL_ENABLED row leaves
+   * to kiro-cli's experiment default.
+   */
   model_fallback_enabled: boolean;
   /**
- * HookStatusShown is kiro-cli's hooks.showStatus as its settings file holds it, default on,
- * which the transcript applies when it draws hook cards. Read-only here: the Experimental
- * switch writes it through PUT /api/kiro-settings.
- */
+   * HookStatusShown is kiro-cli's hooks.showStatus as its settings file holds it, default on,
+   * which the transcript applies when it draws hook cards. Read-only here: the Experimental
+   * switch writes it through PUT /api/kiro-settings.
+   */
   hook_status_shown: boolean;
 }
 
@@ -1303,18 +1306,18 @@ export interface ElicitationItemsSchema {
 export interface ElicitationNeededPayload {
   requested_schema?: ElicitationRequestSchema;
   /**
- * MCPTool is the asking server and tool, read from the turn's tool call ToolCallID names;
- * nil when no open MCP call has that id.
- */
+   * MCPTool is the asking server and tool, read from the turn's tool call ToolCallID names;
+   * nil when no open MCP call has that id.
+   */
   mcp_tool?: MCPToolIdentity;
   mode?: string;
   message?: string;
   url?: string;
   tool_call_id?: string;
   /**
- * RunID/NodeID: as on PermissionNeededPayload — a workflow step's ask,
- * attributed to its run and node from the step-session registry.
- */
+   * RunID/NodeID: as on PermissionNeededPayload — a workflow step's ask,
+   * attributed to its run and node from the step-session registry.
+   */
   run_id?: string;
   node_id?: string;
   request_id: number;
@@ -1411,9 +1414,9 @@ export interface EngineRestart {
   reasons: string[];
   pending: boolean;
   /**
- * ConfigUnreadable: config.json could not be read at the last look, so no queued reason applies until it can;
- * Reasons stay queued.
- */
+   * ConfigUnreadable: config.json could not be read at the last look, so no queued reason applies until it can;
+   * Reasons stay queued.
+   */
   config_unreadable: boolean;
 }
 
@@ -1451,9 +1454,9 @@ export interface Entry {
   id: string;
   turn: string;
   /**
- * Lane is "" for the agent owning the log's turn (the chat's, or the step's in a
- * run log), else a delegate's uuid.
- */
+   * Lane is "" for the agent owning the log's turn (the chat's, or the step's in a
+   * run log), else a delegate's uuid.
+   */
   lane?: string;
   kind: EntryKind;
   /** Payload is the payload type Kind selects. */
@@ -1552,9 +1555,9 @@ export interface EntryModelSwitched {
   from: string;
   to: string;
   /**
- * Effort is the reasoning tier in force; a plain string, as Chat.Effort, so a
- * level another build wrote decodes rather than throws.
- */
+   * Effort is the reasoning tier in force; a plain string, as Chat.Effort, so a
+   * level another build wrote decodes rather than throws.
+   */
   effort?: string;
   /** Unoffered is the tier the chat wanted that To does not offer, so it runs at Effort instead. */
   unoffered?: string;
@@ -1566,7 +1569,7 @@ export interface EntryModelSwitched {
  * EntryOpenedPayload is the payload for type="entry_opened": a text or thinking
  * entry that just opened in its lane, with the text so far and the count of deltas
  * folded into it (1 when the first delta opened it).
- * //
+ *
  * It carries NO refusal: a refusal-tagged chunk opens no entry, it SEALS the
  * lane's open one, so the live carrier is that seal's own frame
  * (EntrySealedPayload.Refusal).
@@ -1663,9 +1666,9 @@ export interface EntrySteer {
   reason?: SteerReason;
   severity?: string;
   /**
- * KASID is the id the notify frame gave a workflow message (`notifyId`), the id a steering clear
- * names it by; empty when KAS failed to persist the message.
- */
+   * KASID is the id the notify frame gave a workflow message (`notifyId`), the id a steering clear
+   * names it by; empty when KAS failed to persist the message.
+   */
   kas_id?: string;
   /** ToSession is the KAS session a workflow message was sent to, on the receiver's row only. */
   to_session?: string;
@@ -1677,9 +1680,9 @@ export interface EntrySteer {
   produced_ts?: number;
   read_ts?: number;
   /**
- * Cleared marks a workflow message its receiver's buffer was emptied of with no proof it was read
- * or dropped; State stays absent, since which is not known.
- */
+   * Cleared marks a workflow message its receiver's buffer was emptied of with no proof it was read
+   * or dropped; State stays absent, since which is not known.
+   */
   cleared?: boolean;
 }
 
@@ -1728,9 +1731,9 @@ export interface EntryStepGraded {
   failure_reason?: string;
   failure_kind?: FailureKind;
   /**
- * EndedByHand marks a step KAS completed with no completion signal after something other than its own turn
- * ended it: Mark step done, or a parent's update_status.
- */
+   * EndedByHand marks a step KAS completed with no completion signal after something other than its own turn
+   * ended it: Mark step done, or a parent's update_status.
+   */
   ended_by_hand?: boolean;
 }
 
@@ -1793,17 +1796,17 @@ export interface EntryToolResult {
   /** Interaction is how the call's approval or question was answered. */
   interaction?: ToolInteraction;
   /**
- * Truncated is what the STORE dropped to bound this result on disk, nil when it
- * fit; OutputBytes and HasFull mark the served PREVIEW, as on EntryToolCall.
- */
+   * Truncated is what the STORE dropped to bound this result on disk, nil when it
+   * fit; OutputBytes and HasFull mark the served PREVIEW, as on EntryToolCall.
+   */
   truncated?: ToolTruncation;
   title?: string;
   kind?: ToolKind;
   /**
- * Status is a closed enum because every value is marotte's own (aborted, or a
- * normalised terminal status). The client validates it with reqOneOf, so a value
- * copied verbatim off the wire would fail the whole window.
- */
+   * Status is a closed enum because every value is marotte's own (aborted, or a
+   * normalised terminal status). The client validates it with reqOneOf, so a value
+   * copied verbatim off the wire would fail the whole window.
+   */
   status: ToolStatus;
   output?: string;
   terminal_id?: string;
@@ -1851,9 +1854,9 @@ export interface EntryTurnClose {
   model?: string;
   code_references?: CodeReference[];
   /**
- * EngineErrorClass is the engine's error class for a broken turn, set only
- * for a class rpcerr.KnownClass names: an unmapped error's class is minified.
- */
+   * EngineErrorClass is the engine's error class for a broken turn, set only
+   * for a class rpcerr.KnownClass names: an unmapped error's class is minified.
+   */
   engine_error_class?: string;
   /** FirstOutput is KAS's measure of the wait before the turn's first displayed output. */
   first_output?: TurnFirstOutput;
@@ -1867,19 +1870,19 @@ export interface EntryTurnClose {
   elapsed_ms?: number;
   truncated?: boolean;
   /**
- * Carrier marks the close of a turn the log minted to hold a record, which no agent ran. A turn's
- * source cannot say so: a replayed `event` turn can be one KAS ran.
- */
+   * Carrier marks the close of a turn the log minted to hold a record, which no agent ran. A turn's
+   * source cannot say so: a replayed `event` turn can be one KAS ran.
+   */
   carrier?: boolean;
   /**
- * Unanswered marks a workflow step's close that its own turn ended with no answer text and no
- * signal call after its last tool call; the run grades it against KAS's record of the step.
- */
+   * Unanswered marks a workflow step's close that its own turn ended with no answer text and no
+   * signal call after its last tool call; the run grades it against KAS's record of the step.
+   */
   unanswered?: boolean;
   /**
- * EndedOffTurn marks a workflow step's close that its own turn did not end: KAS had parked the node,
- * or its turn had not ended, when node_complete came.
- */
+   * EndedOffTurn marks a workflow step's close that its own turn did not end: KAS had parked the node,
+   * or its turn had not ended, when node_complete came.
+   */
   ended_off_turn?: boolean;
   /** StoppedToCompact marks a cancelled close of a turn marotte stopped to compact; FailureReason is then its notice. */
   stopped_to_compact?: boolean;
@@ -1910,10 +1913,10 @@ export interface EntryTurnOpen {
 export interface EntryTurnRevert {
   from: string;
   /**
- * Through is the NEWEST turn when the revert landed: the upper bound STATED, never
- * implied by this entry's offset. groupByTurn relocates this carrier-owned record
- * above the reverted turns, so an offset bound would un-revert them on the next open.
- */
+   * Through is the NEWEST turn when the revert landed: the upper bound STATED, never
+   * implied by this entry's offset. groupByTurn relocates this carrier-owned record
+   * above the reverted turns, so an offset bound would un-revert them on the next open.
+   */
   through: string;
   kas_message_id: string;
   cause: TurnRevertCause;
@@ -1947,13 +1950,13 @@ export interface ErrorPayload {
   /** OpID is the client-minted op_id of the command this failure ends, when it carried one. */
   op_id?: string;
   /**
- * TurnScoped reports that a turn's entry log now carries this failure's text durably, so the
- * reason is already in that turn's card; the turn need not have ended. A property of the EMISSION,
- * not of the Code: the recovery's reopen failure shares ErrCodeRecoveryFailed with
- * the retry turn's abandon and closes no turn, so no per-code answer fits. Absent
- * means NO, the safe direction — report the failure rather than trust an inline row
- * that may not exist.
- */
+   * TurnScoped reports that a turn's entry log now carries this failure's text durably, so the
+   * reason is already in that turn's card; the turn need not have ended. A property of the EMISSION,
+   * not of the Code: the recovery's reopen failure shares ErrCodeRecoveryFailed with
+   * the retry turn's abandon and closes no turn, so no per-code answer fits. Absent
+   * means NO, the safe direction — report the failure rather than trust an inline row
+   * that may not exist.
+   */
   turn_scoped?: boolean;
 }
 
@@ -1992,16 +1995,16 @@ export interface EventSpec {
  */
 export interface FieldFill {
   /**
- * Field is "checks", "check_counts" (the per-state counts and whether the
- * fold stopped short), "mergeable", "merge_blocked", "auto_merge_armed",
- * "head_sha", "source_branch" or "target_branch".
- */
+   * Field is "checks", "check_counts" (the per-state counts and whether the
+   * fold stopped short), "mergeable", "merge_blocked", "auto_merge_armed",
+   * "head_sha", "source_branch" or "target_branch".
+   */
   field: string;
   /**
- * Reason is "filled" (by a read of the row), "not_on_list" (no read yet),
- * "unread" (the last read failed) or "not_supplied" (not even a read
- * supplies it on this family).
- */
+   * Reason is "filled" (by a read of the row), "not_on_list" (no read yet),
+   * "unread" (the last read failed) or "not_supplied" (not even a read
+   * supplies it on this family).
+   */
   reason: string;
   /** AsOf is the filling read's unix ms, present when filled. */
   as_of?: number;
@@ -2057,9 +2060,9 @@ export interface FileList {
  */
 export interface FileMatch {
   /**
- * Path is the container-absolute path, the same namespace every other
- * /api/file* route speaks.
- */
+   * Path is the container-absolute path, the same namespace every other
+   * /api/file* route speaks.
+   */
   path: string;
   excerpt: string;
   kind: FileMatchKind;
@@ -2101,31 +2104,31 @@ export interface FileRefusal {
 export interface FileSearchResult {
   matches: FileMatch[];
   /**
- * Scanned is how many units the scan READ, whole or in part (or whose index entry stood in).
- * A unit read and found out of scope, or vanished mid-walk, is scanned; one it meant to read
- * and could not is not, and Truncated says so.
- */
+   * Scanned is how many units the scan READ, whole or in part (or whose index entry stood in).
+   * A unit read and found out of scope, or vanished mid-walk, is scanned; one it meant to read
+   * and could not is not, and Truncated says so.
+   */
   scanned: number;
   /**
- * Matched is how many rows Matches would hold had nothing cut it: the same
- * unit as Matches (hits, matching lines, chats). The list is cut iff
- * Matched > len(Matches). Truncated never means a cut.
- */
+   * Matched is how many rows Matches would hold had nothing cut it: the same
+   * unit as Matches (hits, matching lines, chats). The list is cut iff
+   * Matched > len(Matches). Truncated never means a cut.
+   */
   matched: number;
   /**
- * Truncated is true when the scan did not read everything it was asked to:
- * a cap on files or chats, a file read partially or not at all, a dead context.
- */
+   * Truncated is true when the scan did not read everything it was asked to:
+   * a cap on files or chats, a file read partially or not at all, a dead context.
+   */
   truncated: boolean;
   /**
- * RootIgnored says the ignore rules hide every root searched, so nothing was walked; a search
- * that includes ignored files never sets it.
- */
+   * RootIgnored says the ignore rules hide every root searched, so nothing was walked; a search
+   * that includes ignored files never sets it.
+   */
   root_ignored: boolean;
   /**
- * CanSearchDeeper says a budget or the deadline stopped the walk, so the same request with
- * deep=1 reads further. A deep search never sets it.
- */
+   * CanSearchDeeper says a budget or the deadline stopped the walk, so the same request with
+   * deep=1 reads further. A deep search never sets it.
+   */
   can_search_deeper: boolean;
 }
 
@@ -2147,9 +2150,9 @@ export interface FileStat {
 /** FileWrite is PUT /api/file's body. */
 export interface FileWrite {
   /**
- * FileID is the identity the client's buffer was read under. Absent (or null) writes
- * unconditionally, for non-editor writers and the editor's explicit Overwrite.
- */
+   * FileID is the identity the client's buffer was read under. Absent (or null) writes
+   * unconditionally, for non-editor writers and the editor's explicit Overwrite.
+   */
   file_id?: string;
   content: string;
 }
@@ -2205,9 +2208,9 @@ export interface ForgeError {
   code?: string;
   kind?: string;
   /**
- * RetryAt is when the forge's rate limit lets a request through again, in
- * Unix milliseconds; absent when the forge named no wait.
- */
+   * RetryAt is when the forge's rate limit lets a request through again, in
+   * Unix milliseconds; absent when the forge named no wait.
+   */
   retry_at?: number;
 }
 
@@ -2230,14 +2233,14 @@ export interface ForkChatCommand {
   parent_chat_id: string;
   title?: string;
   /**
- * MessageID, when set, is the user prompt whose turn the tangent ends after (Branch from
- * here); empty forks at the head.
- */
+   * MessageID, when set, is the user prompt whose turn the tangent ends after (Branch from
+   * here); empty forks at the head.
+   */
   message_id?: string;
   /**
- * OpID correlates every attempt of one fork; without it a retry would fork
- * again, producing a second session and chat. See CreateChatCommand.OpID.
- */
+   * OpID correlates every attempt of one fork; without it a retry would fork
+   * again, producing a second session and chat. See CreateChatCommand.OpID.
+   */
   op_id?: string;
 }
 
@@ -2263,10 +2266,10 @@ export interface Gap {
 /** GitHubRateLimit is the wire form of a [GitHubRateLimitError]. */
 export interface GitHubRateLimit {
   /**
- * ResetAt is when GitHub allows the next request, in Unix
- * milliseconds: a minute after the refusal for a secondary limit
- * that names no time, absent for a primary one that names none.
- */
+   * ResetAt is when GitHub allows the next request, in Unix
+   * milliseconds: a minute after the refusal for a secondary limit
+   * that names no time, absent for a primary one that names none.
+   */
   reset_at?: number;
   /** Limit is X-RateLimit-Limit, absent when GitHub did not send it. */
   limit?: number;
@@ -2285,28 +2288,28 @@ export interface GitHubRateLimit {
  */
 export interface GovernanceFeatures {
   /**
- * MCPEnabled reports whether the MCP subsystem is permitted; false means enterprise
- * governance suppressed MCP entirely, and KAS enforces it.
- */
+   * MCPEnabled reports whether the MCP subsystem is permitted; false means enterprise
+   * governance suppressed MCP entirely, and KAS enforces it.
+   */
   mcp_enabled: boolean;
   /**
- * WebToolsEnabled reports whether built-in web tools are permitted; KAS removes them
- * when false.
- */
+   * WebToolsEnabled reports whether built-in web tools are permitted; KAS removes them
+   * when false.
+   */
   web_tools_enabled: boolean;
   /**
- * UsageAnalytics reports whether usage analytics collection is enabled; KAS gates its
- * own agent telemetry on it for an enterprise identity.
- */
+   * UsageAnalytics reports whether usage analytics collection is enabled; KAS gates its
+   * own agent telemetry on it for an enterprise identity.
+   */
   usage_analytics: boolean;
   /** ContentCollection reports the org's content-collection choice; reported only. */
   content_collection: boolean;
   /** PromptLogging reports the org's prompt-logging choice; reported only. */
   prompt_logging: boolean;
   /**
- * CodeReferenceTracker governs whether KAS emits _kiro/code_references at all, so the
- * attribution chip is dormant unless this is true.
- */
+   * CodeReferenceTracker governs whether KAS emits _kiro/code_references at all, so the
+   * attribution chip is dormant unless this is true.
+   */
   code_reference_tracker: boolean;
   /** AutonomousAgents reports the org's autonomous-agents choice; reported only. */
   autonomous_agents: boolean;
@@ -2353,32 +2356,32 @@ export interface GovernanceRegistryServer {
  */
 export interface GovernanceStatePayload {
   /**
- * Locks is the settings an administrator pins, keyed by the Lock* constants. A
- * locked control renders read-only with the lock's value, and the server sends that
- * value whatever the stored setting says. Absent means nothing is locked.
- */
+   * Locks is the settings an administrator pins, keyed by the Lock* constants. A
+   * locked control renders read-only with the lock's value, and the server sends that
+   * value whatever the stored setting says. Absent means nothing is locked.
+   */
   locks?: { [key: string]: GovernanceLock };
   /** MCPRegistry is present only while the organization restricts MCP to its registry. */
   mcp_registry?: GovernanceMCPRegistry;
   /**
- * DisabledReason is KAS's token for why governance turned a feature off
- * (admin_disabled, api_failure, no_endpoint), worded by the client; empty on a
- * normal account.
- */
+   * DisabledReason is KAS's token for why governance turned a feature off
+   * (admin_disabled, api_failure, no_endpoint), worded by the client; empty on a
+   * normal account.
+   */
   disabled_reason?: string;
   /** Features is the resolved effective feature-flag set. */
   features: GovernanceFeatures;
   /**
- * Known is true once the real policy has been observed. Clients MUST only gate
- * affordances when it is true: the all-false zero value means "not yet known".
- */
+   * Known is true once the real policy has been observed. Clients MUST only gate
+   * affordances when it is true: the all-false zero value means "not yet known".
+   */
   known: boolean;
   /** IsEnterprise reports whether this is an enterprise/managed account. */
   is_enterprise?: boolean;
   /**
- * AdminRestricted reports that the machine's administrator file holds at least one
- * rule, so some tools ask or are refused whatever the security profile allows.
- */
+   * AdminRestricted reports that the machine's administrator file holds at least one
+   * rule, so some tools ask or are refused whatever the security profile allows.
+   */
   admin_restricted?: boolean;
 }
 
@@ -2419,17 +2422,17 @@ export interface Hit {
   /** EntryID is the item's anchor, its first member entry, which the client resolves the item's element by. */
   entry_id: string;
   /**
- * Lane is the item's lane: "" for the chat's own flow, a delegate's uuid inside its stream, so the client opens that
- * tab first.
- */
+   * Lane is the item's lane: "" for the chat's own flow, a delegate's uuid inside its stream, so the client opens that
+   * tab first.
+   */
   lane?: string;
   /** Kind is the item's kind, or "turn" for a spread hit. */
   kind: ItemKind;
   excerpt: string;
   /**
- * Segments are the distinct kinds of the item's segments holding a span, in rendered order; empty for a filter-only
- * hit.
- */
+   * Segments are the distinct kinds of the item's segments holding a span, in rendered order; empty for a filter-only
+   * hit.
+   */
   segments: SegmentKind[];
   /** Turn is the 1-based session-absolute ordinal (turn_open's n), for marking the rail beyond the window. */
   turn: number;
@@ -2464,9 +2467,9 @@ export interface HookInfo {
   prompt?: string;
   matcher?: string;
   /**
- * MatcherWarning is derived by marotte.ClassifyHookMatcher: `missing_tool_matcher` for a tool
- * trigger without matcher, `ineffective` for a matcher on a trigger with nothing to match.
- */
+   * MatcherWarning is derived by marotte.ClassifyHookMatcher: `missing_tool_matcher` for a tool
+   * trigger without matcher, `ineffective` for a matcher on a trigger with nothing to match.
+   */
   matcher_warning?: string;
   file_path?: string;
   disabled_reason?: string;
@@ -2528,12 +2531,12 @@ export interface Inventory {
   tools: ToolInfo[];
   system: SystemTool[];
   /**
- * AptPackages are installed Debian packages with no manifest row: the
- * ones a user or an agent installed themselves. Absent when apt is not
- * this host's package manager, or when the enumeration failed — an
- * inventory that cannot answer says nothing rather than reporting an
- * empty box as a fact.
- */
+   * AptPackages are installed Debian packages with no manifest row: the
+   * ones a user or an agent installed themselves. Absent when apt is not
+   * this host's package manager, or when the enumeration failed — an
+   * inventory that cannot answer says nothing rather than reporting an
+   * empty box as a fact.
+   */
   apt_packages?: AptPackage[];
 }
 
@@ -2553,21 +2556,21 @@ export interface InventoryEntry {
   error?: InventoryError;
   forge_id: string;
   /**
- * Account is the sign-in the entry was read through; a client drops an
- * entry whose account is not its row's.
- */
+   * Account is the sign-in the entry was read through; a client drops an
+   * entry whose account is not its row's.
+   */
   account: string;
   /** State is "loading", "ready", "partial" or "failed". */
   state: string;
   /**
- * CycleID is the decimal id of the cycle that produced the entry, "0" while
- * loading. Cycles count from 1.
- */
+   * CycleID is the decimal id of the cycle that produced the entry, "0" while
+   * loading. Cycles count from 1.
+   */
   cycle_id: string;
   /**
- * Credential is "unknown", "valid", "refresh_due", "refreshing" or
- * "reconnect_required".
- */
+   * Credential is "unknown", "valid", "refresh_due", "refreshing" or
+   * "reconnect_required".
+   */
   credential: string;
   scopes: InventoryScope[];
   clones: CloneRepo[];
@@ -2593,9 +2596,9 @@ export interface InventoryList {
   entries: InventoryEntry[];
   subject: SubjectStamp[];
   /**
- * Viewing is a client showing the pull-request view, which holds the cycle
- * at prPollInterval.
- */
+   * Viewing is a client showing the pull-request view, which holds the cycle
+   * at prPollInterval.
+   */
   viewing: boolean;
 }
 
@@ -2666,23 +2669,23 @@ export interface Job {
   state: string;
   error?: string;
   /**
- * ErrorCode classifies Error for a client; empty when the failure has
- * no code (ErrorCodeGitHubRateLimited is the one defined).
- */
+   * ErrorCode classifies Error for a client; empty when the failure has
+   * no code (ErrorCodeGitHubRateLimited is the one defined).
+   */
   error_code?: string;
   names?: string[];
   /**
- * CancelCause names who cancelled the job (State JobCancelled only).
- * Additive on the wire: omitted whenever the cause is unknown, so a
- * consumer that ignores the field sees exactly the payload it saw
- * before — JobCancelled keeps its meaning and value.
- */
+   * CancelCause names who cancelled the job (State JobCancelled only).
+   * Additive on the wire: omitted whenever the cause is unknown, so a
+   * consumer that ignores the field sees exactly the payload it saw
+   * before — JobCancelled keeps its meaning and value.
+   */
   cancel_cause?: string;
   /**
- * OutputTail carries the job's most recent output lines; populated
- * by Jobs() snapshots only (live output streams via the
- * Config.OnJobOutput callback).
- */
+   * OutputTail carries the job's most recent output lines; populated
+   * by Jobs() snapshots only (live output streams via the
+   * Config.OnJobOutput callback).
+   */
   output_tail?: string[];
   /** Timestamps are Unix milliseconds. */
   created_at: number;
@@ -2740,10 +2743,10 @@ export interface KiroDoc {
   name: string;
   path: string;
   /**
- * Group is the parent label for a nested category: a spec's feature
- * directory. Three files named requirements.md in a flat list identify
- * nothing.
- */
+   * Group is the parent label for a nested category: a spec's feature
+   * directory. Three files named requirements.md in a flat list identify
+   * nothing.
+   */
   group?: string;
   description?: string;
   inclusion?: string;
@@ -2755,14 +2758,14 @@ export interface KiroDoc {
   tools?: string[];
   steering_override?: boolean;
   /**
- * ReadOnly says this row is not writable, so it renders without edit or delete. omitempty, so
- * read-only is only ever asserted by the server, never produced by a field failing to arrive.
- */
+   * ReadOnly says this row is not writable, so it renders without edit or delete. omitempty, so
+   * read-only is only ever asserted by the server, never produced by a field failing to arrive.
+   */
   read_only?: boolean;
   /**
- * DeleteProtected says this row renders without DELETE but keeps its edit: set for an entry
- * reached through a symlink, where the delete route would unlink the link's TARGET.
- */
+   * DeleteProtected says this row renders without DELETE but keeps its edit: set for an entry
+   * reached through a symlink, where the delete route would unlink the link's TARGET.
+   */
   delete_protected?: boolean;
 }
 
@@ -2970,11 +2973,11 @@ export interface LiveRun {
   workflow_id: string;
   chat_id: string;
   /**
- * Executing reports whether THIS PROCESS holds a deadline for the run (runlease.Lease.Deadline),
- * not KAS's status, which would cost a `_kiro/workflow/list` call on every client connect. It can
- * read false while KAS says running (a lease read back from disk is parked; `set_step_status`
- * advances a step without re-arming) until marotte arms the run again.
- */
+   * Executing reports whether THIS PROCESS holds a deadline for the run (runlease.Lease.Deadline),
+   * not KAS's status, which would cost a `_kiro/workflow/list` call on every client connect. It can
+   * read false while KAS says running (a lease read back from disk is parked; `set_step_status`
+   * advances a step without re-arming) until marotte arms the run again.
+   */
   executing: boolean;
 }
 
@@ -2992,9 +2995,9 @@ export interface LiveRunPayload {
 /** LiveRunsResponse is GET /api/runs/live's reply. */
 export interface LiveRunsResponse {
   /**
- * Subject is the `runs` digest stamp with the hub epoch, paired with the set
- * under the lease store's lock.
- */
+   * Subject is the `runs` digest stamp with the hub epoch, paired with the set
+   * under the lease store's lock.
+   */
   subject?: SubjectStamp;
   runs: LiveRun[];
 }
@@ -3192,9 +3195,9 @@ export interface MCPToolIdentity {
 /** Match is one chat that matched, with the evidence for showing it. */
 export interface Match {
   /**
- * Best is the hit whose terms sit closest together (the tightest window, earliest on a tie), the row's line and
- * jump target; absent on a title-only match.
- */
+   * Best is the hit whose terms sit closest together (the tightest window, earliest on a tie), the row's line and
+   * jump target; absent on a title-only match.
+   */
   best?: Hit;
   name: string;
   id: string;
@@ -3365,6 +3368,27 @@ export interface MeteringItem {
   value: number;
 }
 
+/**
+ * ModelFallback is kiro-cli's fallback for one model, as KAS composes the account's choice over Kiro's own.
+ * Configured is the model the account chose ("" when it follows Kiro), VendorDefault Kiro's own first
+ * target ("" when Kiro states none), and ReadOnlyReason "locked", "multiple-targets" or "" when editable.
+ */
+export interface ModelFallback {
+  model: string;
+  configured: string;
+  vendor_default: string;
+  read_only_reason: string;
+}
+
+/**
+ * ModelFallbackUpdate is PUT /api/model-fallback's body: the model whose fallback changes and its new target, ""
+ * for Kiro's own.
+ */
+export interface ModelFallbackUpdate {
+  model: string;
+  target: string;
+}
+
 /** NameParams is the path of the routes under /{name}. */
 export interface NameParams {
   name: string;
@@ -3449,25 +3473,25 @@ export interface OpenTabCommand {
   /** Kind must be one of the nine (TabKind.Valid). */
   kind: TabKind;
   /**
- * Ref is required for every kind but a singleton, where it must be empty. A
- * chat ref is checked against the chat store, which is what makes an open
- * racing a delete a refusal rather than a tab pointing at nothing.
- */
+   * Ref is required for every kind but a singleton, where it must be empty. A
+   * chat ref is checked against the chat store, which is what makes an open
+   * racing a delete a refusal rather than a tab pointing at nothing.
+   */
   ref?: string;
   /**
- * Parent names an already-open tab to hang this one under; one that is not
- * open promotes the new tab to top level rather than refusing it.
- */
+   * Parent names an already-open tab to hang this one under; one that is not
+   * open promotes the new tab to top level rather than refusing it.
+   */
   parent?: string;
   /**
- * OpID correlates the frame this open produces with the dispatch that asked
- * for it. See CreateChatCommand.OpID.
- */
+   * OpID correlates the frame this open produces with the dispatch that asked
+   * for it. See CreateChatCommand.OpID.
+   */
   op_id?: string;
   /**
- * Owns means closing this tab tears down what it shows. The client decides,
- * because only the caller knows whether it launched the thing.
- */
+   * Owns means closing this tab tears down what it shows. The client decides,
+   * because only the caller knows whether it launched the thing.
+   */
   owns?: boolean;
 }
 
@@ -3500,19 +3524,19 @@ export interface PR {
   /** RepoID is the canonical repository id the row's routes take. */
   repo_id: string;
   /**
- * SourceRepoID is the canonical id of the repository the head branch lives
- * in: RepoID's for a branch inside it, the fork's for a fork, and absent
- * where the read does not name it (a deleted fork).
- */
+   * SourceRepoID is the canonical id of the repository the head branch lives
+   * in: RepoID's for a branch inside it, the fork's for a fork, and absent
+   * where the read does not name it (a deleted fork).
+   */
   source_repo_id?: string;
   /** Repo is the repository's display path. */
   repo: string;
   title: string;
   body?: string;
   /**
- * State is "open", "closed", "merged" or "unknown"; a draft says so in
- * Draft, never here.
- */
+   * State is "open", "closed", "merged" or "unknown"; a draft says so in
+   * Draft, never here.
+   */
   state: string;
   author?: string;
   source_branch: string;
@@ -3521,9 +3545,9 @@ export interface PR {
   /** HeadSHA is the commit a merge pins itself to. */
   head_sha?: string;
   /**
- * Fill is present on an inventory row of a family whose list lacks fields,
- * one entry per such field.
- */
+   * Fill is present on an inventory row of a family whose list lacks fields,
+   * one entry per such field.
+   */
   fill?: FieldFill[];
   action: PRAction;
   number: number;
@@ -3545,9 +3569,9 @@ export interface PRAction {
   auto_merge_armed: string;
   queue_state: string;
   /**
- * MergeBlocked is "unknown", "none", "draft", "conflicts",
- * "checks_failing", "checks_running", "behind" or "blocked".
- */
+   * MergeBlocked is "unknown", "none", "draft", "conflicts",
+   * "checks_failing", "checks_running", "behind" or "blocked".
+   */
   merge_blocked: string;
   checks_passing: number;
   checks_failing: number;
@@ -3654,21 +3678,21 @@ export interface PatchRequest {
   install?: string;
   uninstall?: string;
   /**
- * Python sets Tool.Python; "" clears it. A change on an enabled entry
- * reinstalls it.
- */
+   * Python sets Tool.Python; "" clears it. A change on an enabled entry
+   * reinstalls it.
+   */
   python?: string;
   /**
- * VersionArgs sets Tool.VersionArgs, taking effect at the next probe with
- * no job. An empty list clears them, so the probe only requires an answer
- * to --version (a source-less template takes the catalog's when hydrated).
- */
+   * VersionArgs sets Tool.VersionArgs, taking effect at the next probe with
+   * no job. An empty list clears them, so the probe only requires an answer
+   * to --version (a source-less template takes the catalog's when hydrated).
+   */
   version_args?: string[];
   /**
- * Force permits disabling a tool that enabled entries require,
- * cascading the disable to every enabled entry that needs it, directly
- * or through another (the set RemoveWithDependents takes).
- */
+   * Force permits disabling a tool that enabled entries require,
+   * cascading the disable to every enabled entry that needs it, directly
+   * or through another (the set RemoveWithDependents takes).
+   */
   force?: boolean;
 }
 
@@ -3723,66 +3747,66 @@ export interface PermissionConsent {
 export interface PermissionNeededPayload {
   mcp_tool?: MCPToolIdentity;
   /**
- * Watch marks an ask a workflow WATCH raised on the launching session, naming the
- * run and node it polls for; RunID and NodeID repeat it so the run's asks retire with it.
- */
+   * Watch marks an ask a workflow WATCH raised on the launching session, naming the
+   * run and node it polls for; RunID and NodeID repeat it so the run's asks retire with it.
+   */
   watch?: PermissionWatch;
   tool_call_id?: string;
   title?: string;
   /**
- * Kind forwards the ACP toolCall.kind so the client can style distinctive prompts
- * (switch_mode gets a different dialog from an execute_bash prompt).
- */
+   * Kind forwards the ACP toolCall.kind so the client can style distinctive prompts
+   * (switch_mode gets a different dialog from an execute_bash prompt).
+   */
   kind?: ToolKind;
   /**
- * RunID + NodeID attribute a WORKFLOW STEP's ask to its run, stamped from the
- * step-session registry whichever lane the ask arrived on, so a run tab can render
- * the ask of a run it is watching even though the ask is keyed to the launching chat.
- */
+   * RunID + NodeID attribute a WORKFLOW STEP's ask to its run, stamped from the
+   * step-session registry whichever lane the ask arrived on, so a run tab can render
+   * the ask of a run it is watching even though the ask is keyed to the launching chat.
+   */
   run_id?: string;
   node_id?: string;
   /**
- * Consent names what this ask is about, present when KAS sent it; an always answer
- * saves a rule for this capability.
- */
+   * Consent names what this ask is about, present when KAS sent it; an always answer
+   * saves a rule for this capability.
+   */
   consent?: PermissionConsent;
   /** Command is the command a shell, hook or watch ask would run, absent on any other ask. */
   command?: PermissionCommand;
   /**
- * AlwaysAllowBlocked names why the card must not offer to persist a rule for this
- * command. Empty means the offer stands.
- */
+   * AlwaysAllowBlocked names why the card must not offer to persist a rule for this
+   * command. Empty means the offer stands.
+   */
   always_allow_blocked?: AlwaysAllowBlock;
   /** RejectionNote names the note the card offers with reject_once; empty means none. */
   rejection_note?: RejectionNote;
   /**
- * ClassifierNote is _meta.kiro.trustClassifier's reason: Kiro's safety check did not clear the
- * call and handed it to a person. Unattended runs refuse such an ask.
- */
+   * ClassifierNote is _meta.kiro.trustClassifier's reason: Kiro's safety check did not clear the
+   * call and handed it to a person. Unattended runs refuse such an ask.
+   */
   classifier_note?: string;
   options: PermissionOption[];
   /** Locations are the workspace-relative paths the tool call touches. */
   locations?: string[];
   /**
- * Files is the turn's staged file list, present ONLY on a turn approval. Such an
- * approval arrives as an ordinary session/request_permission, so it rides this payload
- * rather than a second event; it expects per-file decisions back.
- */
+   * Files is the turn's staged file list, present ONLY on a turn approval. Such an
+   * approval arrives as an ordinary session/request_permission, so it rides this payload
+   * rather than a second event; it expects per-file decisions back.
+   */
   files?: ApprovalFile[];
   /**
- * ConsentRound counts the asks one tool call has raised, from 1; KAS can ask
- * again for the same toolCallId.
- */
+   * ConsentRound counts the asks one tool call has raised, from 1; KAS can ask
+   * again for the same toolCallId.
+   */
   consent_round?: number;
   /**
- * RequestID is marotte's id for this ask, unique in the process, which the answer echoes;
- * never the ACP request id, which KAS mints and may repeat after an engine restart. All three asks share it.
- */
+   * RequestID is marotte's id for this ask, unique in the process, which the answer echoes;
+   * never the ACP request id, which KAS mints and may repeat after an engine restart. All three asks share it.
+   */
   request_id: number;
   /**
- * AdminRequired marks an ask raised by the administrator's rules, which a
- * person must answer: the card says so, and unattended runs refuse it.
- */
+   * AdminRequired marks an ask raised by the administrator's rules, which a
+   * person must answer: the card says so, and unattended runs refuse it.
+   */
   admin_required?: boolean;
 }
 
@@ -3796,25 +3820,25 @@ export interface PermissionOption {
 /** PermissionResponseCommand is the payload for type="permission_response". */
 export interface PermissionResponseCommand {
   /**
- * FileDecisions answers a TURN APPROVAL: action id → accept. KAS treats an
- * OMITTED id as a reject, so the client sends a decision per offered file.
- */
+   * FileDecisions answers a TURN APPROVAL: action id → accept. KAS treats an
+   * OMITTED id as a reject, so the client sends a decision per offered file.
+   */
   file_decisions?: { [key: string]: boolean };
   option_id: string;
   /**
- * RejectionReason is the user's note on a deny, at most
- * MaxRejectionReasonRunes once trimmed. Never paired with FileDecisions.
- */
+   * RejectionReason is the user's note on a deny, at most
+   * MaxRejectionReasonRunes once trimmed. Never paired with FileDecisions.
+   */
   rejection_reason?: string;
   /**
- * AlwaysResource is the pattern an allow_always or reject_always answer saves as a
- * rule, required with those options and refused with any other.
- */
+   * AlwaysResource is the pattern an allow_always or reject_always answer saves as a
+   * rule, required with those options and refused with any other.
+   */
   always_resource?: string;
   /**
- * AlwaysScope is where that rule is kept: ConsentScopeUser when empty, or
- * ConsentScopeSession on an allow_always answer only. Refused with any other answer.
- */
+   * AlwaysScope is where that rule is kept: ConsentScopeUser when empty, or
+   * ConsentScopeSession on an allow_always answer only. Refused with any other answer.
+   */
   always_scope?: string;
   request_id: number;
 }
@@ -3908,9 +3932,9 @@ export interface PolicyRule {
   match?: string[];
   exclude?: string[];
   /**
- * Editable is stamped by GET /api/permissions from policyfile.Editable: the rule table's
- * controls can write this row. KAS never sends it.
- */
+   * Editable is stamped by GET /api/permissions from policyfile.Editable: the rule table's
+   * controls can write this row. KAS never sends it.
+   */
   editable: boolean;
 }
 
@@ -3951,30 +3975,30 @@ export interface PolicyRuleWrite {
  */
 export interface PolicyView {
   /**
- * Profile is the posture in force; Profiles below is the ladder it comes from.
- * Split apart here only because the two have different alignments — read them
- * together.
- */
+   * Profile is the posture in force; Profiles below is the ladder it comes from.
+   * Split apart here only because the two have different alignments — read them
+   * together.
+   */
   profile: string;
   rules: PolicyRule[];
   writable_scopes: string[];
   capabilities: string[];
   /**
- * Profiles is the security-posture ladder in picker order, loosest last, and
- * Profile above is the one in force. Both travel here rather than being derived
- * client-side: the ladder decides what one click grants, so policyfile owns it
- * and the client renders it.
- * //
- * Order is part of the payload. A client that sorted these would put the
- * loosest option somewhere in the middle of a list a reader scans from
- * cautious to permissive.
- */
+   * Profiles is the security-posture ladder in picker order, loosest last, and
+   * Profile above is the one in force. Both travel here rather than being derived
+   * client-side: the ladder decides what one click grants, so policyfile owns it
+   * and the client renders it.
+   *
+   * Order is part of the payload. A client that sorted these would put the
+   * loosest option somewhere in the middle of a list a reader scans from
+   * cautious to permissive.
+   */
   profiles: SecurityProfile[];
   /**
- * LoadErrors are the rules KAS skipped or failed to load at the reading pass's door
- * (session/new _meta.policyErrors); empty, never null, when it reported none or the view
- * fell back to the files.
- */
+   * LoadErrors are the rules KAS skipped or failed to load at the reading pass's door
+   * (session/new _meta.policyErrors); empty, never null, when it reported none or the view
+   * fell back to the files.
+   */
   load_errors: PolicyErrorItem[];
   available: boolean;
 }
@@ -4103,7 +4127,7 @@ export interface ProbeResult {
  * PromptCommand is the payload for type="prompt". Text or at least one attachment is required; Text
  * is capped at 512 KiB (413), Attachments at MaxAttachments (413) of MaxAttachmentPathBytes each
  * (400), each confined before it is read.
- * //
+ *
  * DisplayText labels a message marotte wrote on the user's behalf (a spec Run, a deferral, a
  * tangent merge): the transcript shows it with the text one click away, and KAS records it as the
  * message's label. A typed message never carries one.
@@ -4117,9 +4141,9 @@ export interface PromptCommand {
   interrupt_mode?: InterruptMode;
   attachments?: Attachment[];
   /**
- * PromptOnly marks text only a prompt carries (a catalog command, a context reference): it is never steered.
- * A queued row is sent as its own prompt, so it may queue.
- */
+   * PromptOnly marks text only a prompt carries (a catalog command, a context reference): it is never steered.
+   * A queued row is sent as its own prompt, so it may queue.
+   */
   prompt_only?: boolean;
 }
 
@@ -4184,9 +4208,9 @@ export interface QueuedPrompt {
 export interface RecentClose {
   ref: string;
   /**
- * Name is the chat's name at the close, "" when its record could not be read: the client
- * holds no header for a chat it just closed, so the row draws this.
- */
+   * Name is the chat's name at the close, "" when its record could not be read: the client
+   * holds no header for a chat it just closed, so the row draws this.
+   */
   name: string;
   closed_at: number;
   /** Pinned is the closed tab's flag; a top-level reopen restores it. */
@@ -4211,26 +4235,26 @@ export interface Recipe {
   name: string;
   description?: string;
   /**
- * ValidationError is KAS's reason the recipe cannot launch (a schema error, a shadowed name,
- * an include that fails to expand), verbatim; empty for a launchable recipe.
- */
+   * ValidationError is KAS's reason the recipe cannot launch (a schema error, a shadowed name,
+   * an include that fails to expand), verbatim; empty for a launchable recipe.
+   */
   validation_error?: string;
   /**
- * Source is the launch key: `bundled://<name>` or a workspace or home
- * `*.workflow.json` path. Echoed back verbatim in RunLaunchRequest.
- */
+   * Source is the launch key: `bundled://<name>` or a workspace or home
+   * `*.workflow.json` path. Echoed back verbatim in RunLaunchRequest.
+   */
   source: string;
   /**
- * DocKey is a file-backed recipe's file as the configuration standing keys it (translate.DocKeyFromAbs of Source),
- * so its row joins that item's standing; empty for a bundled recipe.
- */
+   * DocKey is a file-backed recipe's file as the configuration standing keys it (translate.DocKeyFromAbs of Source),
+   * so its row joins that item's standing; empty for a bundled recipe.
+   */
   doc_key?: string;
   /**
- * Plan is KAS's node plan, forwarded VERBATIM: what the recipe will do and on
- * which model, raw for the reason at the top of this file. Last of the
- * pointer-bearing fields on purpose — a slice's len/cap words end the GC scan
- * region where a trailing string would extend it.
- */
+   * Plan is KAS's node plan, forwarded VERBATIM: what the recipe will do and on
+   * which model, raw for the reason at the top of this file. Last of the
+   * pointer-bearing fields on purpose — a slice's len/cap words end the GC scan
+   * region where a trailing string would extend it.
+   */
   plan?: unknown;
   built_in?: boolean;
 }
@@ -4258,7 +4282,7 @@ export interface RefusalInfo {
 
 /**
  * RegistryEntry is the browser-facing shape of one search result.
- * //
+ *
  * Status carries the upstream lifecycle verdict, and only when it is NOT
  * "active": the badge is its one consumer and an absent status reads as active
  * anyway, so emitting the common case would put a constant on every row. See
@@ -4339,16 +4363,16 @@ export interface RegistrySearchQuery {
 export interface RegistrySearchResult {
   servers: RegistryEntry[];
   /**
- * Filtered counts the rows the install-capability filter dropped from the
- * ones the caller asked for, so an empty Servers beside Filtered > 0 means
- * "matched, but nothing here is installable", not "no such server".
- */
+   * Filtered counts the rows the install-capability filter dropped from the
+   * ones the caller asked for, so an empty Servers beside Filtered > 0 means
+   * "matched, but nothing here is installable", not "no such server".
+   */
   filtered: number;
   /**
- * Truncated means upstream held more matches than Servers shows. This
- * surface scans nothing, so it carries no scanned or matched count:
- * upstream reports no total.
- */
+   * Truncated means upstream held more matches than Servers shows. This
+   * surface scans nothing, so it carries no scanned or matched count:
+   * upstream reports no total.
+   */
   truncated: boolean;
 }
 
@@ -4430,9 +4454,9 @@ export interface Repo {
   /** RepoID is the canonical repository id the repository's routes take. */
   repo_id: string;
   /**
- * Owner is everything before the display path's last "/", a namespace
- * path on GitLab.
- */
+   * Owner is everything before the display path's last "/", a namespace
+   * path on GitLab.
+   */
   owner: string;
   name: string;
   /** FullName is the display path. */
@@ -4554,9 +4578,9 @@ export interface ResumableSession {
   /** ChatID names the marotte chat that already owns this session, if any. */
   chat_id?: string;
   /**
- * Model, CurrentModeID, TurnCount and Credits are the owning chat's header facts, so the History row states
- * them without the chat being open in a tab.
- */
+   * Model, CurrentModeID, TurnCount and Credits are the owning chat's header facts, so the History row states
+   * them without the chat being open in a tab.
+   */
   model?: string;
   current_mode_id?: string;
   credits?: number;
@@ -4589,10 +4613,10 @@ export interface ResumeSessionCommand {
 export interface RewindChatCommand {
   message_id: string;
   /**
- * Confirmed says the reader was told which live runs the cut would stop and
- * chose to go on. Without it a cut holding a live run's launch answers 409
- * naming the runs, and nothing is reverted.
- */
+   * Confirmed says the reader was told which live runs the cut would stop and
+   * chose to go on. Without it a cut holding a live run's launch answers 409
+   * naming the runs, and nothing is reverted.
+   */
   confirmed?: boolean;
 }
 
@@ -4601,14 +4625,14 @@ export interface RuleStatus {
   /** Anchor is a clock rule's next-run origin: its creation, then its last fire or skip. */
   anchor?: string;
   /**
- * LastRunAt is a clock rule's last slot's due time, or its run's start (RecordStart) until the runner records
- * that slot; an event rule's last confirmed launch.
- */
+   * LastRunAt is a clock rule's last slot's due time, or its run's start (RecordStart) until the runner records
+   * that slot; an event rule's last confirmed launch.
+   */
   last_run_at?: string;
   /**
- * WaitingFor is a clock rule's due slot whose launch is retried until the agent engine answers; zero when none.
- * It is persisted so a restart resumes the wait instead of skipping the slot as missed while offline.
- */
+   * WaitingFor is a clock rule's due slot whose launch is retried until the agent engine answers; zero when none.
+   * It is persisted so a restart resumes the wait instead of skipping the slot as missed while offline.
+   */
   waiting_for?: string;
   /** LastMinted is an event rule's last label-gain instant minted. */
   last_minted?: string;
@@ -4625,14 +4649,14 @@ export interface RuleStatus {
   /** LastEvent is the key of an event rule's last confirmed event, which its row names by number or run id. */
   last_event?: string;
   /**
- * CheckedAt is the start of an event rule's last applied poll; the trigger confirmer's View sets it and no write
- * persists it.
- */
+   * CheckedAt is the start of an event rule's last applied poll; the trigger confirmer's View sets it and no write
+   * persists it.
+   */
   checked_at?: string;
   /**
- * BaselineStop is where and why an event rule's last walk stopped short while no baseline is taken; the trigger
- * confirmer's View sets it and no write persists it.
- */
+   * BaselineStop is where and why an event rule's last walk stopped short while no baseline is taken; the trigger
+   * confirmer's View sets it and no write persists it.
+   */
   baseline_stop?: string;
   /** Paused is why an event rule's reads wait for a forge or trigger budget, and until when; empty while they run. */
   paused?: string;
@@ -4640,9 +4664,9 @@ export interface RuleStatus {
   gaps?: Gap[];
   bound_abandons?: number;
   /**
- * FailedSlots is a clock rule's count of consecutive slots that ended other than completed; a completed slot sets
- * it back to 0. A slot missed while marotte was down records no outcome, so it does not count.
- */
+   * FailedSlots is a clock rule's count of consecutive slots that ended other than completed; a completed slot sets
+   * it back to 0. A slot missed while marotte was down records no outcome, so it does not count.
+   */
   failed_slots?: number;
 }
 
@@ -4665,9 +4689,9 @@ export interface RunAsk {
   text: string;
   text_source: RunAskText;
   /**
- * Reason is kiro-cli's sentence for why a step that has no completion signal is waiting, such
- * as one whose signal it could not save; absent otherwise.
- */
+   * Reason is kiro-cli's sentence for why a step that has no completion signal is waiting, such
+   * as one whose signal it could not save; absent otherwise.
+   */
   reason?: string;
   blocked?: RunAskBlocker;
   asked_at?: string;
@@ -4700,20 +4724,20 @@ export interface RunAsksPayload {
  */
 export interface RunControlsResponse {
   /**
- * Refused maps a verb this run does not offer to the one sentence a reader
- * needs, and carries only a verb whose absence would otherwise be unexplained.
- */
+   * Refused maps a verb this run does not offer to the one sentence a reader
+   * needs, and carries only a verb whose absence would otherwise be unexplained.
+   */
   refused?: { [key: string]: string };
   /**
- * PauseNodeID is the repeat a maxIterations pause stopped at; the extend and
- * finish_loop verbs send it back. Empty for every other run.
- */
+   * PauseNodeID is the repeat a maxIterations pause stopped at; the extend and
+   * finish_loop verbs send it back. Empty for every other run.
+   */
   pause_node_id?: string;
   /**
- * Verbs are the offered controls, in row order. Strings rather than a
- * registered enum because the client's label table is the narrowing point: an
- * unlabelled verb is dropped, so a future one degrades to a missing button.
- */
+   * Verbs are the offered controls, in row order. Strings rather than a
+   * registered enum because the client's label table is the narrowing point: an
+   * unlabelled verb is dropped, so a future one degrades to a missing button.
+   */
   verbs: string[];
 }
 
@@ -4738,9 +4762,9 @@ export interface RunEntry {
   /** Admits, with Yields, is whether kiro-cli's state admits a take beside it now. */
   admits?: boolean;
   /**
- * StopPaused marks a paused row the reader's stop paused: the queue is paused until the reader sends, sends a row
- * now or resumes it.
- */
+   * StopPaused marks a paused row the reader's stop paused: the queue is paused until the reader sends, sends a row
+   * now or resumes it.
+   */
   stop_paused?: boolean;
 }
 
@@ -4767,17 +4791,17 @@ export interface RunEntryView {
   /** Admits, with Yields, is whether kiro-cli's state admits a take beside it now. */
   admits?: boolean;
   /**
- * StopPaused marks a paused row the reader's stop paused: the queue is paused until the reader sends, sends a row
- * now or resumes it.
- */
+   * StopPaused marks a paused row the reader's stop paused: the queue is paused until the reader sends, sends a row
+   * now or resumes it.
+   */
   stop_paused?: boolean;
   wait: RunWait;
   /** CarriesUnread marks the entry whose turn the awaits-prompt steers ride. */
   carries_unread?: boolean;
   /**
- * SteerInFlight marks a user row the running turn takes as a steer once the turn's prompt is written and the one
- * steer offered is answered: drawn as a steer being sent, never as a queue row.
- */
+   * SteerInFlight marks a user row the running turn takes as a steer once the turn's prompt is written and the one
+   * steer offered is answered: drawn as a steer being sent, never as a queue row.
+   */
   steer_in_flight?: boolean;
 }
 
@@ -4802,7 +4826,7 @@ export interface RunFinishLoopRequest {
  * RunFinishedPayload is the payload for type="run_finished": terminal. Status is
  * KAS's own run-level status, `paused` included — a policy pause at
  * `onMaxIterations` reports through here, because KAS emits `run_complete` for it.
- * //
+ *
  * There is deliberately no aborted_by_restart flag: a restart PAUSES a run and
  * KAS's read-path reconcile has no path to aborted, so nothing would fill it.
  * Name is here for RunStartedPayload's reason, and empty when KAS sends no state.
@@ -4815,7 +4839,7 @@ export interface RunFinishedPayload {
 
 /**
  * RunLaunchRequest is POST /api/runs's body: launch one recipe, PARENTLESS.
- * //
+ *
  * Source is `_kiro/workflow/listRecipes`' own value verbatim. The server
  * re-validates it against a fresh listRecipes call rather than trusting it, so the
  * endpoint cannot be steered at an arbitrary file even though the value looks like
@@ -4865,49 +4889,49 @@ export interface RunProgressPayload {
   workflow_id: string;
   node_id?: string;
   /**
- * Status is the node's status after this frame, in KAS's own NodeState
- * vocabulary so it drops straight onto the cached tree.
- */
+   * Status is the node's status after this frame, in KAS's own NodeState
+   * vocabulary so it drops straight onto the cached tree.
+   */
   status?: string;
   /**
- * StartedAt and EndedAt are RFC 3339, stamped by the SERVER at frame arrival:
- * KAS puts no timestamp on either lifecycle frame. A later refetch overwrites
- * both.
- */
+   * StartedAt and EndedAt are RFC 3339, stamped by the SERVER at frame arrival:
+   * KAS puts no timestamp on either lifecycle frame. A later refetch overwrites
+   * both.
+   */
   started_at?: string;
   ended_at?: string;
   /**
- * FailureReason is KAS's own explanation for a node that failed. Empty on
- * every other outcome.
- */
+   * FailureReason is KAS's own explanation for a node that failed. Empty on
+   * every other outcome.
+   */
   failure_reason?: string;
   /**
- * PauseReason is KAS's sentence for a node that paused; RetryReason is its sentence for a
- * node waiting out a transient failure, which stays running (`node_paused` with kind
- * `retry-wait`). Each is empty on every other frame.
- */
+   * PauseReason is KAS's sentence for a node that paused; RetryReason is its sentence for a
+   * node waiting out a transient failure, which stays running (`node_paused` with kind
+   * `retry-wait`). Each is empty on every other frame.
+   */
   pause_reason?: string;
   retry_reason?: string;
   /** Initiator and InitiatorReason are KAS's attribution on a run-level `paused`, verbatim. */
   initiator?: string;
   initiator_reason?: string;
   /**
- * SessionID is the step session a `node_start` announces (KAS sends it on
- * the second of a step's two), the execution identity a client shares with
- * the run read. Empty on every other frame.
- */
+   * SessionID is the step session a `node_start` announces (KAS sends it on
+   * the second of a step's two), the execution identity a client shares with
+   * the run read. Empty on every other frame.
+   */
   session_id?: string;
   kind: RunProgressKind;
   /**
- * NodePath addresses ONE execution of a node by its path segments, spelling
- * an iteration container `iter-<n>`. Empty on the run-level and
- * shape-changing kinds, which is what tells the client to refetch instead.
- */
+   * NodePath addresses ONE execution of a node by its path segments, spelling
+   * an iteration container `iter-<n>`. Empty on the run-level and
+   * shape-changing kinds, which is what tells the client to refetch instead.
+   */
   node_path?: string[];
   /**
- * Credits is the step session's whole credit-unit total KAS recorded at the step's end, on
- * node_complete only; zero when KAS recorded none.
- */
+   * Credits is the step session's whole credit-unit total KAS recorded at the step's end, on
+   * node_complete only; zero when KAS recorded none.
+   */
   credits?: number;
 }
 
@@ -4955,10 +4979,10 @@ export interface RunStanding {
 /**
  * RunStartedPayload is the payload for type="run_started": a run began on this chat. Name is its display label, for a
  * client that has never fetched the run.
- * //
+ *
  * Unattended is "scheduled" or "triggered" for a run that began with nobody looking, and empty otherwise. Only the
  * launch path knows it, since a manual launch is parentless too.
- * //
+ *
  * Initiator and InitiatorReason are KAS's attribution on the `run_start` a resume emits, verbatim; a launch carries
  * neither.
  */
@@ -4994,9 +5018,9 @@ export interface RunStepEnd {
   /** EndedByHand is the grade's EntryStepGraded.EndedByHand. */
   ended_by_hand?: boolean;
   /**
- * Resumed is set on an `interrupted` end the step moved past: the run's log holds a later turn on the step,
- * or KAS's record shows it completed.
- */
+   * Resumed is set on an `interrupted` end the step moved past: the run's log holds a later turn on the step,
+   * or KAS's record shows it completed.
+   */
   resumed?: boolean;
 }
 
@@ -5040,17 +5064,17 @@ export interface RunStepPath {
  */
 export interface RunStepStart {
   /**
- * Open is set on an attempt in flight whose turn's own lane is streaming an entry, as the entry stood when the
- * read was written: the id and delta count its next entry_delta follows, and the end of its text from the newest
- * finished line that prints, all the dock line reads of it.
- */
+   * Open is set on an attempt in flight whose turn's own lane is streaming an entry, as the entry stood when the
+   * read was written: the id and delta count its next entry_delta follows, and the end of its text from the newest
+   * finished line that prints, all the dock line reads of it.
+   */
   open?: OpenEntry;
   /** StartedAt is RFC 3339. */
   started_at: string;
   /**
- * Turn and Tail are set on an attempt in flight: its newest turn id and the newest line its own lane printed, the
- * seed of the run tab's dock line for a step whose transcript the page does not hold.
- */
+   * Turn and Tail are set on an attempt in flight: its newest turn id and the newest line its own lane printed, the
+   * seed of the run tab's dock line for a step whose transcript the page does not hold.
+   */
   turn?: string;
   tail?: string;
   ended: boolean;
@@ -5077,28 +5101,28 @@ export interface RunStepSteerRequest {
  */
 export interface RunStepTranscript {
   /**
- * WorkflowID and NodePath (the step's workflow.PathKey) echo the request, so a
- * client holding several reads in flight tells the answers apart without correlating.
- */
+   * WorkflowID and NodePath (the step's workflow.PathKey) echo the request, so a
+   * client holding several reads in flight tells the answers apart without correlating.
+   */
   workflow_id: string;
   node_path: string;
   state: RunStepTranscriptState;
   source: string;
   /**
- * Entries is the step's transcript. Empty on any state but ready, and
- * legitimately empty on ready.
- */
+   * Entries is the step's transcript. Empty on any state but ready, and
+   * legitimately empty on ready.
+   */
   entries: Entry[];
   /**
- * OpenEntries holds the in-memory tails of the path's open turns: empty on a
- * settled path and on the replay source.
- */
+   * OpenEntries holds the in-memory tails of the path's open turns: empty on a
+   * settled path and on the replay source.
+   */
   open_entries: OpenEntry[];
   /**
- * Subject is one run_turn stamp per open turn of the requested path, read under
- * the run store's lock with the entries it certifies; empty on a settled path and
- * on the replay source, which no subject versions.
- */
+   * Subject is one run_turn stamp per open turn of the requested path, read under
+   * the run store's lock with the entries it certifies; empty on a settled path and
+   * on the replay source, which no subject versions.
+   */
   subject: SubjectStamp[];
 }
 
@@ -5182,21 +5206,21 @@ export interface SafetyStatusPayload {
 export interface SearchAllResult {
   matches: Match[];
   /**
- * Scanned is how many units the scan READ, whole or in part (or whose index entry stood in).
- * A unit read and found out of scope, or vanished mid-walk, is scanned; one it meant to read
- * and could not is not, and Truncated says so.
- */
+   * Scanned is how many units the scan READ, whole or in part (or whose index entry stood in).
+   * A unit read and found out of scope, or vanished mid-walk, is scanned; one it meant to read
+   * and could not is not, and Truncated says so.
+   */
   scanned: number;
   /**
- * Matched is how many rows Matches would hold had nothing cut it: the same
- * unit as Matches (hits, matching lines, chats). The list is cut iff
- * Matched > len(Matches). Truncated never means a cut.
- */
+   * Matched is how many rows Matches would hold had nothing cut it: the same
+   * unit as Matches (hits, matching lines, chats). The list is cut iff
+   * Matched > len(Matches). Truncated never means a cut.
+   */
   matched: number;
   /**
- * Truncated is true when the scan did not read everything it was asked to:
- * a cap on files or chats, a file read partially or not at all, a dead context.
- */
+   * Truncated is true when the scan did not read everything it was asked to:
+   * a cap on files or chats, a file read partially or not at all, a dead context.
+   */
   truncated: boolean;
 }
 
@@ -5210,40 +5234,40 @@ export interface SearchHit {
   description?: string;
   source: string;
   /**
- * Version is the catalog's default pinned version, set only for
- * entries without an upstream version source (manual installs).
- */
+   * Version is the catalog's default pinned version, set only for
+   * entries without an upstream version source (manual installs).
+   */
   version?: string;
   /**
- * Reason names the registry backend that defeated the compiler, and
- * is set only alongside Unavailable.
- */
+   * Reason names the registry backend that defeated the compiler, and
+   * is set only alongside Unavailable.
+   */
   reason?: string;
   /**
- * Match names which field the query hit — see [toolbelt.MatchKind].
- * Empty for the featured set and for an unavailable hit. On the wire
- * because a client cannot derive it: aliases are not projected here,
- * so a hit on `rg` would look like a description match otherwise.
- */
+   * Match names which field the query hit — see [toolbelt.MatchKind].
+   * Empty for the featured set and for an unavailable hit. On the wire
+   * because a client cannot derive it: aliases are not projected here,
+   * so a hit on `rg` would look like a description match otherwise.
+   */
   match?: string;
   featured?: boolean;
   lsp?: boolean;
   /**
- * Unavailable marks a hit the catalog knows about and cannot
- * install, with Reason naming the registry backend that defeated the
- * compiler. Such a hit is informational: a client must not offer an
- * install for it, and the engine refuses one anyway.
- * //
- * Both fields are omitempty, so an installable hit serialises exactly
- * as it did before this pair existed.
- */
+   * Unavailable marks a hit the catalog knows about and cannot
+   * install, with Reason naming the registry backend that defeated the
+   * compiler. Such a hit is informational: a client must not offer an
+   * install for it, and the engine refuses one anyway.
+   *
+   * Both fields are omitempty, so an installable hit serialises exactly
+   * as it did before this pair existed.
+   */
   unavailable?: boolean;
   /**
- * Apt marks a Debian package rather than a catalog entry. Version
- * then carries the distro's candidate, which routinely differs from
- * the catalog's version for the same tool, and the row's install lands
- * in the container layer rather than on the persistent volume.
- */
+   * Apt marks a Debian package rather than a catalog entry. Version
+   * then carries the distro's candidate, which routinely differs from
+   * the catalog's version for the same tool, and the row's install lands
+   * in the container layer rather than on the persistent volume.
+   */
   apt?: boolean;
 }
 
@@ -5251,9 +5275,9 @@ export interface SearchHit {
 export interface SearchQuery {
   q?: string;
   /**
- * Unavailable opts into the uninstallable block: present and empty,
- * 1, true, yes or on.
- */
+   * Unavailable opts into the uninstallable block: present and empty,
+   * 1, true, yes or on.
+   */
   unavailable?: string;
 }
 
@@ -5264,7 +5288,7 @@ export interface SearchQuery {
  * every Debian one regardless of score), then the opt-in unavailable
  * block, kept separate and unranked since ranking a dead end above a
  * live option would be wrong.
- * //
+ *
  * AptAvailable distinguishes "no Debian package matched" from "the
  * package list could not be consulted" — identical in an empty result,
  * opposite in meaning. AptState says which of the two reasons the list
@@ -5273,30 +5297,30 @@ export interface SearchQuery {
  */
 export interface SearchResponse {
   /**
- * AptState names what the Debian corpus could say — see
- * [toolbelt.AptState] for the three values. Absent from an engine
- * predating the field, where AptAvailable is the whole answer.
- */
+   * AptState names what the Debian corpus could say — see
+   * [toolbelt.AptState] for the three values. Absent from an engine
+   * predating the field, where AptAvailable is the whole answer.
+   */
   apt_state?: string;
   results: SearchHit[];
   /**
- * Matched is how many rows the query matched across the blocks
- * Results holds, before each was cut to its cap. It is the
- * denominator Truncated has no room for, so a client can say "25 of
- * 61" instead of stating a cut it cannot size. Same population as
- * Truncated: an unavailable block the caller did not ask for is not
- * counted. Absent when the query matched nothing, and from an engine
- * predating the field.
- */
+   * Matched is how many rows the query matched across the blocks
+   * Results holds, before each was cut to its cap. It is the
+   * denominator Truncated has no room for, so a client can say "25 of
+   * 61" instead of stating a cut it cannot size. Same population as
+   * Truncated: an unavailable block the caller did not ask for is not
+   * counted. Absent when the query matched nothing, and from an engine
+   * predating the field.
+   */
   matched?: number;
   apt_available: boolean;
   /**
- * Truncated reports a CUT: some block in Results matched more rows than
- * the reply carries, so a client showing "N results" is showing fewer than
- * the query found. It is judged only over the blocks the reply holds, so
- * an unavailable block the caller did not ask for never sets it, and a
- * reply carrying every row the query matched is never flagged.
- */
+   * Truncated reports a CUT: some block in Results matched more rows than
+   * the reply carries, so a client showing "N results" is showing fewer than
+   * the query found. It is judged only over the blocks the reply holds, so
+   * an unavailable block the caller did not ask for never sets it, and a
+   * reply carrying every row the query matched is never flagged.
+   */
   truncated: boolean;
 }
 
@@ -5306,21 +5330,21 @@ export interface SearchResult {
   /** Spread is true when no item held every term and the hits are turns whose items hold them between them. */
   spread: boolean;
   /**
- * Scanned is how many units the scan READ, whole or in part (or whose index entry stood in).
- * A unit read and found out of scope, or vanished mid-walk, is scanned; one it meant to read
- * and could not is not, and Truncated says so.
- */
+   * Scanned is how many units the scan READ, whole or in part (or whose index entry stood in).
+   * A unit read and found out of scope, or vanished mid-walk, is scanned; one it meant to read
+   * and could not is not, and Truncated says so.
+   */
   scanned: number;
   /**
- * Matched is how many rows Matches would hold had nothing cut it: the same
- * unit as Matches (hits, matching lines, chats). The list is cut iff
- * Matched > len(Matches). Truncated never means a cut.
- */
+   * Matched is how many rows Matches would hold had nothing cut it: the same
+   * unit as Matches (hits, matching lines, chats). The list is cut iff
+   * Matched > len(Matches). Truncated never means a cut.
+   */
   matched: number;
   /**
- * Truncated is true when the scan did not read everything it was asked to:
- * a cap on files or chats, a file read partially or not at all, a dead context.
- */
+   * Truncated is true when the scan did not read everything it was asked to:
+   * a cap on files or chats, a file read partially or not at all, a dead context.
+   */
   truncated: boolean;
 }
 
@@ -5372,37 +5396,37 @@ export interface Server {
   command?: string;
   oauth_client_id?: string;
   /**
- * OAuthClientMetadataURL and OAuthRedirectURI are KAS's other two oauth
- * members (client-ID metadata document, pinned loopback redirect); not secrets.
- */
+   * OAuthClientMetadataURL and OAuthRedirectURI are KAS's other two oauth
+   * members (client-ID metadata document, pinned loopback redirect); not secrets.
+   */
   oauth_client_metadata_url?: string;
   oauth_redirect_uri?: string;
   id: string;
   transport: Transport;
   /**
- * VersionNegotiation empty leaves KAS's `auto`, which starts a stdio server once to send
- * server/discover and again for the real connection. `legacy` uses the initialize handshake
- * and starts it once, and fails a server that speaks only the 2026-07-28 protocol. Written
- * only by a paste or a raw-JSON edit.
- */
+   * VersionNegotiation empty leaves KAS's `auto`, which starts a stdio server once to send
+   * server/discover and again for the real connection. `legacy` uses the initialize handshake
+   * and starts it once, and fails a server that speaks only the 2026-07-28 protocol. Written
+   * only by a paste or a raw-JSON edit.
+   */
   version_negotiation?: string;
   args?: string[];
   env?: KeyPair[];
   headers?: KeyPair[];
   disabled_tools?: string[];
   /**
- * OAuthScopes is KAS's oauthScopes (remote only), sent space-joined as the registration scope and used for the
- * authorization request when the server names none itself.
- */
+   * OAuthScopes is KAS's oauthScopes (remote only), sent space-joined as the registration scope and used for the
+   * authorization request when the server names none itself.
+   */
   oauth_scopes?: string[];
   created_at: number;
   updated_at: number;
   /**
- * TimeoutMS is KAS's per-server connect timeout and MCP wait budget, in
- * milliseconds; 0 leaves KAS's own default (60 s). WaitForReady makes KAS hold
- * a prompt for this server even with the global wait setting off. Both are
- * written only by a paste or a raw-JSON edit.
- */
+   * TimeoutMS is KAS's per-server connect timeout and MCP wait budget, in
+   * milliseconds; 0 leaves KAS's own default (60 s). WaitForReady makes KAS hold
+   * a prompt for this server even with the global wait setting off. Both are
+   * written only by a paste or a raw-JSON edit.
+   */
   timeout_ms?: number;
   prewarm?: boolean;
   enabled: boolean;
@@ -5448,9 +5472,9 @@ export interface SessionMode {
   description?: string;
   source?: string;
   /**
- * Shadows is the Source of the mode this custom agent replaces under the same id, set only on
- * GET /api/config-template's catalog; empty when it replaces nothing.
- */
+   * Shadows is the Source of the mode this custom agent replaces under the same id, set only on
+   * GET /api/config-template's catalog; empty when it replaces nothing.
+   */
   shadows?: string;
 }
 
@@ -5465,15 +5489,15 @@ export interface SessionModel {
   /** DefaultEffortLevel is this MODEL's default level, the last rung of a chat's first level on it. */
   default_effort_level?: string;
   /**
- * EffortTiers are the model's tier ids, lowest first; empty when KAS named none. KAS
- * silently drops a level sent to a tierless model (`auto`), so the effort row hides.
- */
+   * EffortTiers are the model's tier ids, lowest first; empty when KAS named none. KAS
+   * silently drops a level sent to a tierless model (`auto`), so the effort row hides.
+   */
   effort_tiers?: string[];
   rate_multiplier?: number;
   /**
- * ThinkingToggleable reports whether thinking can be turned off for this model;
- * ThinkingDefaultOff, whether that is the model's default.
- */
+   * ThinkingToggleable reports whether thinking can be turned off for this model;
+   * ThinkingDefaultOff, whether that is the model's default.
+   */
   thinking_toggleable?: boolean;
   thinking_default_off?: boolean;
 }
@@ -5507,9 +5531,9 @@ export interface SetDraftCommand {
  */
 export interface SetEffortCommand {
   /**
- * Level is a tier id from the model's own catalog, shape-validated only:
- * KAS owns the vocabulary.
- */
+   * Level is a tier id from the model's own catalog, shape-validated only:
+   * KAS owns the vocabulary.
+   */
   level: string;
 }
 
@@ -5627,16 +5651,16 @@ export interface Spec {
   /** UpdatedAt is the newest mtime across the documents. */
   updated_at: string;
   /**
- * Approvals is the human sign-off per phase, keyed by SpecDocRole. Absent
- * for a phase nobody approved; a MAP rather than a slice because a phase is
- * a key and every reader looks one up by it — the ETag digests the entries
- * in a fixed order and the client indexes by the segment's role.
- */
+   * Approvals is the human sign-off per phase, keyed by SpecDocRole. Absent
+   * for a phase nobody approved; a MAP rather than a slice because a phase is
+   * a key and every reader looks one up by it — the ETag digests the entries
+   * in a fixed order and the client indexes by the segment's role.
+   */
   approvals?: { [key: string]: SpecApproval };
   /**
- * Dir is the workspace-relative directory, ".kiro/specs/<name>" or
- * "<repo>/.kiro/specs/<name>", and is the spec tab's Ref.
- */
+   * Dir is the workspace-relative directory, ".kiro/specs/<name>" or
+   * "<repo>/.kiro/specs/<name>", and is the spec tab's Ref.
+   */
   dir: string;
   /** Name is the directory's last segment. */
   name: string;
@@ -5647,7 +5671,7 @@ export interface Spec {
 /**
  * SpecApproval records that a human approved one phase of a spec, against the
  * exact text they approved.
- * //
+ *
  * It RECORDS, it does not ENFORCE. There is no phase-order gate, nothing refuses
  * to run tasks because design is unapproved, and no control is disabled by one:
  * the agent writes these documents through its own file tools, so this server
@@ -5660,18 +5684,18 @@ export interface SpecApproval {
   /** At is when the approval was recorded. */
   at: string;
   /**
- * User is who approved, and is EMPTY today: marotte is single-operator and
- * knows no identity to record. Recorded as the empty string rather than
- * invented, so a future identity does not have to be told apart from a
- * fabricated one.
- */
+   * User is who approved, and is EMPTY today: marotte is single-operator and
+   * knows no identity to record. Recorded as the empty string rather than
+   * invented, so a future identity does not have to be told apart from a
+   * fabricated one.
+   */
   user: string;
   /**
- * Stale reports that the document has MOVED since it was approved, derived
- * at read time against the doc's live hash and never stored. A phase whose
- * document has since disappeared is stale too — there is nothing left for
- * the approval to describe.
- */
+   * Stale reports that the document has MOVED since it was approved, derived
+   * at read time against the doc's live hash and never stored. A phase whose
+   * document has since disappeared is stale too — there is nothing left for
+   * the approval to describe.
+   */
   stale: boolean;
 }
 
@@ -5734,10 +5758,10 @@ export interface SpecProgress {
 /** SpecTaskNode is one task line of tasks.md as Kiro's own parser reads it. */
 export interface SpecTaskNode {
   /**
- * Wave is the parallel batch the tasks document's dependency graph puts
- * this task in, nil when it names none. A POINTER because 0 is a real
- * wave id: an absent wave must not read as the first one.
- */
+   * Wave is the parallel batch the tasks document's dependency graph puts
+   * this task in, nil when it names none. A POINTER because 0 is a real
+   * wave id: an absent wave must not read as the first one.
+   */
   wave?: number;
   /** Number is the dotted task number, empty when the line carries none. */
   number: string;
@@ -5858,29 +5882,29 @@ export interface SteerQueuedPayload {
   steer_id: string;
   text: string;
   /**
- * Origin is whose words these are, resolved server-side. NO omitempty: an absent field
- * lets the client invent a fallback, and the one it would pick is wrong for a
- * workflow's report.
- */
+   * Origin is whose words these are, resolved server-side. NO omitempty: an absent field
+   * lets the client invent a fallback, and the one it would pick is wrong for a
+   * workflow's report.
+   */
   origin: SteerOrigin;
   /** State is the row's dock state; a batch frame is always queued. */
   state: SteerRowState;
   /**
- * WorkflowID and NodePath are set on a RUN STEP's row (its frame carries no chat id): the run
- * tab's dock for that step holds it.
- */
+   * WorkflowID and NodePath are set on a RUN STEP's row (its frame carries no chat id): the run
+   * tab's dock for that step holds it.
+   */
   workflow_id?: string;
   node_path?: string;
   /**
- * Replaces is set on a BATCH frame: SteerID is an id KAS holds several rows (or one
- * re-sent row) under, and these are the rows' keys. A batch frame adds no row, so
- * a resubmit repaints nothing; a ROW frame (SteerID is the row's key) leaves it empty.
- */
+   * Replaces is set on a BATCH frame: SteerID is an id KAS holds several rows (or one
+   * re-sent row) under, and these are the rows' keys. A batch frame adds no row, so
+   * a resubmit repaints nothing; a ROW frame (SteerID is the row's key) leaves it empty.
+   */
   replaces?: string[];
   /**
- * AwaitsPrompt is set on an unsent row that no clean turn close sends as a prompt of its own: a
- * prompt that has opened carries it into its turn, or KAS may re-inject it after a load.
- */
+   * AwaitsPrompt is set on an unsent row that no clean turn close sends as a prompt of its own: a
+   * prompt that has opened carries it into its turn, or KAS may re-inject it after a load.
+   */
   awaits_prompt?: boolean;
 }
 
@@ -5962,13 +5986,13 @@ export interface SwitchModelCommand {
   /** Empty names the model in force; "auto" is KAS's Auto model. */
   model?: string;
   /**
- * Effort is the tier this pick sets: empty keeps a tier parked with Model, else the chat's
- * level; a level replaces it; SwitchEffortOff drops a parked one, turns no thinking on, and
- * turns the running session's thinking off at once. On the model in force a level is set in
- * place as set_effort sets it (refused when that model lacks it), and a level or
- * SwitchEffortOff there cancels a switch parked on another model, in the same request; empty
- * changes nothing.
- */
+   * Effort is the tier this pick sets: empty keeps a tier parked with Model, else the chat's
+   * level; a level replaces it; SwitchEffortOff drops a parked one, turns no thinking on, and
+   * turns the running session's thinking off at once. On the model in force a level is set in
+   * place as set_effort sets it (refused when that model lacks it), and a level or
+   * SwitchEffortOff there cancels a switch parked on another model, in the same request; empty
+   * changes nothing.
+   */
   effort?: string;
 }
 
@@ -5998,9 +6022,9 @@ export interface SystemTool {
  */
 export interface TabList {
   /**
- * Subject is the `tabs` digest stamp with the hub epoch: the same Version
- * as below, spelled the way the client's version map reads it.
- */
+   * Subject is the `tabs` digest stamp with the hub epoch: the same Version
+   * as below, spelled the way the client's version map reads it.
+   */
   subject?: SubjectStamp;
   tabs: TabSubject[];
   recent: RecentClose[];
@@ -6021,54 +6045,54 @@ export interface TabRef {
  */
 export interface TabSubject {
   /**
- * ID is opaque and server-minted (tabs.Store mints it at open): Kind and Ref name the
- * subject, so nothing may branch on the id. Opacity also keeps the API path unambiguous
- * under a reverse proxy that normalizes %2F.
- */
+   * ID is opaque and server-minted (tabs.Store mints it at open): Kind and Ref name the
+   * subject, so nothing may branch on the id. Opacity also keeps the API path unambiguous
+   * under a reverse proxy that normalizes %2F.
+   */
   id: string;
   /**
- * Kind and Ref are the subject's identity: at most one tab exists per
- * (Kind, Ref) pair, which is what makes an open idempotent.
- */
+   * Kind and Ref are the subject's identity: at most one tab exists per
+   * (Kind, Ref) pair, which is what makes an open idempotent.
+   */
   kind: TabKind;
   /**
- * Ref is a chat id, an absolute path, a run id, or a subagent's `<chatID>/<agentSubtaskID>`
- * pair; empty for a singleton. The store treats it as opaque: validity is the command
- * boundary's check (ids.ValidChatID, the file-browser roots).
- */
+   * Ref is a chat id, an absolute path, a run id, or a subagent's `<chatID>/<agentSubtaskID>`
+   * pair; empty for a singleton. The store treats it as opaque: validity is the command
+   * boundary's check (ids.ValidChatID, the file-browser roots).
+   */
   ref: string;
   /**
- * Parent is the tab this one hangs under, empty for a top-level tab. Only reparent_tab
- * reassigns it, and only to an open CHAT tab, so a chain cannot close on itself and no
- * cycle check is needed.
- */
+   * Parent is the tab this one hangs under, empty for a top-level tab. Only reparent_tab
+   * reassigns it, and only to an open CHAT tab, so a chain cannot close on itself and no
+   * cycle check is needed.
+   */
   parent: string;
   /**
- * LaunchChats names, on a run tab, the chats holding its run-tab keep fact, so its close knows whose facts it
- * releases without an engine read. It only grows.
- */
+   * LaunchChats names, on a run tab, the chats holding its run-tab keep fact, so its close knows whose facts it
+   * releases without an engine read. It only grows.
+   */
   launch_chats?: string[];
   /**
- * Seen is the read position the reader last acknowledged for a chat or run tab, 0 for none;
- * only ack_tab moves it, never backward.
- */
+   * Seen is the read position the reader last acknowledged for a chat or run tab, 0 for none;
+   * only ack_tab moves it, never backward.
+   */
   seen?: number;
   /**
- * Pinned seats a tab in the sidebar's Pinned section. The sections are drawn
- * by the client (applySectionOrder); the stored slice keeps the order it was
- * given.
- */
+   * Pinned seats a tab in the sidebar's Pinned section. The sections are drawn
+   * by the client (applySectionOrder); the stored slice keeps the order it was
+   * given.
+   */
   pinned: boolean;
   /**
- * Owns means closing this tab tears down what it shows: a run REVIEW from History and a
- * launcher-OWNED run share (Kind, Ref), and closing the owned one cancels the run. Set at
- * open, so the authority cannot change under a reader.
- */
+   * Owns means closing this tab tears down what it shows: a run REVIEW from History and a
+   * launcher-OWNED run share (Kind, Ref), and closing the owned one cancels the run. Set at
+   * open, so the authority cannot change under a reader.
+   */
   owns: boolean;
   /**
- * LaunchResolved is true on every run tab whose holders were resolved at open; false only on a tab that predates
- * LaunchChats, which the keep-state reconcile resolves.
- */
+   * LaunchResolved is true on every run tab whose holders were resolved at open; false only on a tab that predates
+   * LaunchChats, which the keep-state reconcile resolves.
+   */
   launch_resolved?: boolean;
   /** Bot marks a Bot's chat tab. Set once at open, never changed. */
   bot?: boolean;
@@ -6082,38 +6106,38 @@ export interface TabSubject {
  */
 export interface TabsChangedPayload {
   /**
- * Changed is the one tab this mutation added or altered, absent on a close and a
- * reorder. A pointer because "no tab changed" and "a zero-valued tab changed" are
- * different facts the client branches on.
- */
+   * Changed is the one tab this mutation added or altered, absent on a close and a
+   * reorder. A pointer because "no tab changed" and "a zero-valued tab changed" are
+   * different facts the client branches on.
+   */
   changed?: TabSubject;
   /**
- * Recent is the whole Recently closed list when this mutation changed it; absent means
- * unchanged, which is a different fact from an emptied list.
- */
+   * Recent is the whole Recently closed list when this mutation changed it; absent means
+   * unchanged, which is a different fact from an emptied list.
+   */
   recent?: RecentList;
   /**
- * OpID is the client-minted correlation id echoed back so a caller can match the frame
- * to its own dispatch; empty for a mutation no client asked for. Distinct from
- * Idempotency-Key: this has no TTL, no cache and no 409 branch.
- */
+   * OpID is the client-minted correlation id echoed back so a caller can match the frame
+   * to its own dispatch; empty for a mutation no client asked for. Distinct from
+   * Idempotency-Key: this has no TTL, no cache and no 409 branch.
+   */
   op_id?: string;
   /**
- * RemovedIDs names every tab this mutation closed, per id. Closing a parent with
- * children is one mutation, so this is where the children arrive.
- */
+   * RemovedIDs names every tab this mutation closed, per id. Closing a parent with
+   * children is one mutation, so this is where the children arrive.
+   */
   removed_ids?: string[];
   /**
- * Order is the EXPANDED list, children included, so a client never derives a position
- * from a delta.
- */
+   * Order is the EXPANDED list, children included, so a client never derives a position
+   * from a delta.
+   */
   order?: string[];
   /**
- * Version is the client's only watermark, with three exhaustive rules: at or below local
- * is ignored, exactly one past applies, more than one past means re-list. ONLY AN EVENT
- * MAY ADVANCE IT — adopting a response's v+2 would make another device's in-flight v+1
- * read as stale, so no gap could ever be detected.
- */
+   * Version is the client's only watermark, with three exhaustive rules: at or below local
+   * is ignored, exactly one past applies, more than one past means re-list. ONLY AN EVENT
+   * MAY ADVANCE IT — adopting a response's v+2 would make another device's in-flight v+1
+   * read as stale, so no gap could ever be detected.
+   */
   version: number;
 }
 
@@ -6172,23 +6196,23 @@ export interface TerminalOutputPayload {
  */
 export interface TextSpan {
   /**
- * Start is the inclusive offset in UTF-16 CODE UNITS, because the consumer indexes
- * JavaScript strings; a byte offset would point mid-character.
- */
+   * Start is the inclusive offset in UTF-16 CODE UNITS, because the consumer indexes
+   * JavaScript strings; a byte offset would point mid-character.
+   */
   start: number;
   /** End is the exclusive offset into the styled text, in UTF-16 code units. */
   end: number;
   /**
- * FG is the foreground colour: -1 default, 0-255 a palette index, or
- * 0x1000000|RGB for 24-bit.
- */
+   * FG is the foreground colour: -1 default, 0-255 a palette index, or
+   * 0x1000000|RGB for 24-bit.
+   */
   fg: number;
   /** BG is the background colour, encoded like FG. */
   bg: number;
   /**
- * Attrs is a bitfield: 1 bold, 2 italic, 4 underline, 8 inverse, 16 strike,
- * 32 dim, 64 hidden, 128 blink, 256 overline, 512 double-underline.
- */
+   * Attrs is a bitfield: 1 bold, 2 italic, 4 underline, 8 inverse, 16 strike,
+   * 32 dim, 64 hidden, 128 blink, 256 overline, 512 double-underline.
+   */
   attrs: number;
 }
 
@@ -6221,64 +6245,64 @@ export interface ToolCall {
   status: ToolStatus;
   output?: string;
   /**
- * ToolName is the built-in tool's id (`update_workflow`, `web_search`) when the translator
- * could name one the transcript distinguishes, else empty. Fixed at the create frame.
- */
+   * ToolName is the built-in tool's id (`update_workflow`, `web_search`) when the translator
+   * could name one the transcript distinguishes, else empty. Fixed at the create frame.
+   */
   tool_name?: string;
   /**
- * AgentSubtaskID is _meta.kiro.agentSubtaskId on a subagent's tool_call; it links
- * the card to its nested deltas, which carry the same id.
- */
+   * AgentSubtaskID is _meta.kiro.agentSubtaskId on a subagent's tool_call; it links
+   * the card to its nested deltas, which carry the same id.
+   */
   agent_subtask_id?: string;
   /**
- * WorkflowID names the run a `run_workflow` invocation started (rawOutput.workflowId).
- * The client keys the run card on it, and a step's blocks carry the same id in
- * `agent_subtask_id`.
- */
+   * WorkflowID names the run a `run_workflow` invocation started (rawOutput.workflowId).
+   * The client keys the run card on it, and a step's blocks carry the same id in
+   * `agent_subtask_id`.
+   */
   workflow_id?: string;
   /**
- * TerminalID links an execute call to its agent terminal (the ACP type:"terminal"
- * block), making the card the terminal's rendering surface.
- */
+   * TerminalID links an execute call to its agent terminal (the ACP type:"terminal"
+   * block), making the card the terminal's rendering surface.
+   */
   terminal_id?: string;
   /**
- * SourcePath is the workspace-relative file that DEFINES the call (a hook card's
- * hook file), which a click opens. Not in Locations, whose readers treat a path as
- * one the call touched.
- */
+   * SourcePath is the workspace-relative file that DEFINES the call (a hook card's
+   * hook file), which a click opens. Not in Locations, whose readers treat a path as
+   * one the call touched.
+   */
   source_path?: string;
   /**
- * ClassifierNote is _meta.kiro.trustClassifier's reason when the safety check handed the call
- * to a person; one-way.
- */
+   * ClassifierNote is _meta.kiro.trustClassifier's reason when the safety check handed the call
+   * to a person; one-way.
+   */
   classifier_note?: string;
   /**
- * DelegateStop is a sub-agent invocation's raw stop when its delegate did not end its turn
- * cleanly; DelegateStatus has already graded Status from it. A plain string: KAS's set is open.
- */
+   * DelegateStop is a sub-agent invocation's raw stop when its delegate did not end its turn
+   * cleanly; DelegateStatus has already graded Status from it. A plain string: KAS's set is open.
+   */
   delegate_stop?: string;
   /**
- * HookTrigger is a hook card's canonical trigger (CanonicalHookTrigger), empty when
- * the hook list did not name it.
- */
+   * HookTrigger is a hook card's canonical trigger (CanonicalHookTrigger), empty when
+   * the hook list did not name it.
+   */
   hook_trigger?: string;
   /**
- * Checkpoint is KAS's snapshot mapping (_meta.kiro.checkpoint) for a call that
- * wrote a file. Pointers sit ahead of the slices for govet fieldalignment.
- */
+   * Checkpoint is KAS's snapshot mapping (_meta.kiro.checkpoint) for a call that
+   * wrote a file. Pointers sit ahead of the slices for govet fieldalignment.
+   */
   checkpoint?: ToolCheckpoint;
   /** MCP is KAS's MCP server and tool for this call, nil for any other tool. */
   mcp?: MCPToolIdentity;
   /**
- * Disclosed names the skill or steering doc a `disclose_context` call loaded
- * (_meta.kiro.disclosedContext), the only signal that its body reached the model.
- */
+   * Disclosed names the skill or steering doc a `disclose_context` call loaded
+   * (_meta.kiro.disclosedContext), the only signal that its body reached the model.
+   */
   disclosed?: ToolDisclosed;
   /**
- * Denial is why Kiro's permission check refused the call: a rule's verdict
- * (_meta.kiro.policyDenial) or a recognised rule-less refusal, so a refusal reads as
- * one rather than as a tool failure.
- */
+   * Denial is why Kiro's permission check refused the call: a rule's verdict
+   * (_meta.kiro.policyDenial) or a recognised rule-less refusal, so a refusal reads as
+   * one rather than as a tool failure.
+   */
   denial?: ToolDenial;
   /** Offload is set once KAS offloaded the full output to a file; one-way. */
   offload?: ToolOffload;
@@ -6290,38 +6314,38 @@ export interface ToolCall {
   locations?: ToolLocation[];
   diffs?: ToolDiff[];
   /**
- * SteeringDocs are the document ids (a file URI for an on-disk doc) a steering card
- * announces, as KAS's steering_inclusion sent them.
- */
+   * SteeringDocs are the document ids (a file URI for an on-disk doc) a steering card
+   * announces, as KAS's steering_inclusion sent them.
+   */
   steering_docs?: string[];
   /**
- * OutputSpans styles ranges of Output, parsed server-side so Output stays plain
- * text and the client never builds HTML from agent-controlled bytes.
- */
+   * OutputSpans styles ranges of Output, parsed server-side so Output stays plain
+   * text and the client never builds HTML from agent-controlled bytes.
+   */
   output_spans?: TextSpan[];
   ts: number;
   duration_ms?: number;
   /**
- * OutputBytes is the PERSISTED output's length, set ONLY alongside HasFull; where
- * the store also cut the call, Truncated carries the size before that cut.
- */
+   * OutputBytes is the PERSISTED output's length, set ONLY alongside HasFull; where
+   * the store also cut the call, Truncated carries the size before that cut.
+   */
   output_bytes?: number;
   /**
- * HasFull says Input, Output and Diffs are a PREVIEW of GET
- * /api/chats/{id}/tools/{id}. Set by the transcript read path alone.
- */
+   * HasFull says Input, Output and Diffs are a PREVIEW of GET
+   * /api/chats/{id}/tools/{id}. Set by the transcript read path alone.
+   */
   has_full?: boolean;
   /**
- * Declined says the tool RAN CORRECTLY AND REFUSED, a card outcome distinct from
- * Status. A field rather than a ToolStatus member because the predicates asking
- * whether a call is over (`isToolDone`, the ToolFailed gates) must read it as over.
- * The reason is the tool's own Output.
- */
+   * Declined says the tool RAN CORRECTLY AND REFUSED, a card outcome distinct from
+   * Status. A field rather than a ToolStatus member because the predicates asking
+   * whether a call is over (`isToolDone`, the ToolFailed gates) must read it as over.
+   * The reason is the tool's own Output.
+   */
   declined?: boolean;
   /**
- * ClassifierApproved is _meta.kiro.trustClassifierApproved: Kiro's safety check let the call
- * run with no ask. One-way.
- */
+   * ClassifierApproved is _meta.kiro.trustClassifierApproved: Kiro's safety check let the call
+   * run with no ask. One-way.
+   */
   classifier_approved?: boolean;
 }
 
@@ -6414,46 +6438,46 @@ export interface ToolInfo {
   latest?: string;
   last_error?: string;
   /**
- * Checksum reports how the INSTALLED artifact's integrity was
- * established (copied from ToolStatus.Checksum): "verified" or
- * "unverified" per the definition's declared checksum source, empty
- * when the question does not apply (not installed, or a source with
- * no artifact to checksum). A "no checksum" badge reads THIS, not
- * the source kind — 252 of the catalog's aqua entries declare no
- * checksum while the other 402 do.
- */
+   * Checksum reports how the INSTALLED artifact's integrity was
+   * established (copied from ToolStatus.Checksum): "verified" or
+   * "unverified" per the definition's declared checksum source, empty
+   * when the question does not apply (not installed, or a source with
+   * no artifact to checksum). A "no checksum" badge reads THIS, not
+   * the source kind — 252 of the catalog's aqua entries declare no
+   * checksum while the other 402 do.
+   */
   checksum?: string;
   requires?: string[];
   /**
- * Commands names what an installed row puts on PATH, sorted: the bin
- * names the engine linked for it or, for an apt: row, the entries dpkg
- * records it placing directly in /usr/bin, /usr/sbin, /bin or /sbin.
- * Empty when the row is not installed or ships no command (a library).
- */
+   * Commands names what an installed row puts on PATH, sorted: the bin
+   * names the engine linked for it or, for an apt: row, the entries dpkg
+   * records it placing directly in /usr/bin, /usr/sbin, /bin or /sbin.
+   * Empty when the row is not installed or ships no command (a library).
+   */
   commands?: string[];
   /**
- * Dependents names the ENABLED entries that need this tool, directly
- * (Requires or the implied backend of their source kind) or through
- * another entry, disabled or not, or a catalog tool their install would
- * add: the set a 409 names and a forced disable or remove takes, for a
- * consumer to show BEFORE sending one. Advisory
- * only: the engine re-derives the set under the manifest lock, so a
- * stale inventory is still refused.
- */
+   * Dependents names the ENABLED entries that need this tool, directly
+   * (Requires or the implied backend of their source kind) or through
+   * another entry, disabled or not, or a catalog tool their install would
+   * add: the set a 409 names and a forced disable or remove takes, for a
+   * consumer to show BEFORE sending one. Advisory
+   * only: the engine re-derives the set under the manifest lock, so a
+   * stale inventory is still refused.
+   */
   dependents?: string[];
   pin?: boolean;
   disabled?: boolean;
   /**
- * Essential marks a tool this application NEEDS: the engine
- * refuses to remove it (ErrEssential), so a consumer renders it apart
- * from the tools a user chose and offers no delete control. Disable
- * remains available, which is the honest escape hatch.
- */
+   * Essential marks a tool this application NEEDS: the engine
+   * refuses to remove it (ErrEssential), so a consumer renders it apart
+   * from the tools a user chose and offers no delete control. Disable
+   * remains available, which is the honest escape hatch.
+   */
   essential?: boolean;
   /**
- * Lsp marks a language-server entry (catalog knowledge); consumers
- * use it for the no-LSP-enabled warning and UI badges.
- */
+   * Lsp marks a language-server entry (catalog knowledge); consumers
+   * use it for the no-LSP-enabled warning and UI badges.
+   */
   lsp?: boolean;
   installed: boolean;
   installing: boolean;
@@ -6552,46 +6576,46 @@ export interface ToolProgressPayload {
   kind?: ToolKind;
   status?: ToolStatus;
   /**
- * OutputDelta is normally the text to APPEND; when OutputReplace is set it is the
- * whole output instead. The replace case is load-bearing: at completion a terminal's
- * full stream wins over the ACP fragments already on the card.
- */
+   * OutputDelta is normally the text to APPEND; when OutputReplace is set it is the
+   * whole output instead. The replace case is load-bearing: at completion a terminal's
+   * full stream wins over the ACP fragments already on the card.
+   */
   output_delta?: string;
   /**
- * TerminalID, AgentSubtaskID and WorkflowID are late identity attachments, each
- * adopted once. AgentSubtaskID is informational: the card's lane is its
- * tool_call's, and a disagreeing value is logged rather than adopted.
- */
+   * TerminalID, AgentSubtaskID and WorkflowID are late identity attachments, each
+   * adopted once. AgentSubtaskID is informational: the card's lane is its
+   * tool_call's, and a disagreeing value is logged rather than adopted.
+   */
   terminal_id?: string;
   agent_subtask_id?: string;
   workflow_id?: string;
   classifier_note?: string;
   /**
- * OutputSpans style the WHOLE output at absolute offsets, so they are sent entire
- * whenever they change. Empty for output carrying no escape sequence.
- */
+   * OutputSpans style the WHOLE output at absolute offsets, so they are sent entire
+   * whenever they change. Empty for output carrying no escape sequence.
+   */
   output_spans?: TextSpan[];
   /**
- * DiffsAppended are the diffs this frame added; diffs only ever append, so there is
- * no replace case.
- */
+   * DiffsAppended are the diffs this frame added; diffs only ever append, so there is
+   * no replace case.
+   */
   diffs_appended?: ToolDiff[];
   /** Locations are REPLACED wholesale when present. */
   locations?: ToolLocation[];
   /** Input is the call's whole argument object, REPLACED when present. */
   input?: unknown;
   /**
- * The scalars last, so the GC scan region stops above them (govet fieldalignment).
- * OutputReplace's meaning is on OutputDelta.
- */
+   * The scalars last, so the GC scan region stops above them (govet fieldalignment).
+   * OutputReplace's meaning is on OutputDelta.
+   */
   duration_ms?: number;
   output_replace?: boolean;
   /**
- * Declined is a ONE-WAY latch, so absent means unchanged rather than false: the
- * mark is set on the frame that reports the refusal and no later frame carries a
- * verdict. That is what makes `omitempty` on a bool correct here — the only value
- * it ever sends is true.
- */
+   * Declined is a ONE-WAY latch, so absent means unchanged rather than false: the
+   * mark is set on the frame that reports the refusal and no later frame carries a
+   * verdict. That is what makes `omitempty` on a bool correct here — the only value
+   * it ever sends is true.
+   */
   declined?: boolean;
   /** ClassifierApproved is one-way like Declined; ClassifierNote is sent once, on the frame that sets it. */
   classifier_approved?: boolean;
@@ -6606,9 +6630,9 @@ export interface ToolTruncation {
   output_bytes?: number;
   input_bytes?: number;
   /**
- * DiffBytes and DiffCount are the original totals. Diffs are dropped WHOLE: a cut
- * before/after pair would describe an edit nobody made.
- */
+   * DiffBytes and DiffCount are the original totals. Diffs are dropped WHOLE: a cut
+   * before/after pair would describe an edit nobody made.
+   */
   diff_bytes?: number;
   diff_count?: number;
 }
@@ -6652,28 +6676,28 @@ export interface TurnOpenedPayload {
  */
 export interface TurnSummary {
   /**
- * ID is the turn's opening message id. The client joins on it, so the server
- * stays the single source of truth for what "turn 14" means.
- */
+   * ID is the turn's opening message id. The client joins on it, so the server
+   * stays the single source of truth for what "turn 14" means.
+   */
   id: string;
   /**
- * FirstLine is the request's first line, whitespace-collapsed and capped, for
- * the turn-map preview; an agent-initiated turn's is its turn_wake's line
- * (WakeLine), and empty when it recorded none.
- */
+   * FirstLine is the request's first line, whitespace-collapsed and capped, for
+   * the turn-map preview; an agent-initiated turn's is its turn_wake's line
+   * (WakeLine), and empty when it recorded none.
+   */
   first_line?: string;
   outcome: TurnOutcome;
   /** N is the 1-based, session-absolute turn ordinal. */
   n: number;
   /**
- * Ts is the turn's start: its trigger's timestamp, else its first body
- * message's.
- */
+   * Ts is the turn's start: its trigger's timestamp, else its first body
+   * message's.
+   */
   ts: number;
   /**
- * AgentInitiated marks a turn with no user trigger, so the map does not imply
- * the user asked for it.
- */
+   * AgentInitiated marks a turn with no user trigger, so the map does not imply
+   * the user asked for it.
+   */
   agent_initiated?: boolean;
   /** ElapsedMs is the turn_close's own duration; absent while the turn runs. */
   elapsed_ms?: number;
@@ -6715,9 +6739,9 @@ export interface Usage {
   last_turn_ms: number;
   has_real_data: boolean;
   /**
- * ContextCompacted: a compaction committed and no live reading has come since, so a figure KAS
- * publishes is the context before it and is not stored.
- */
+   * ContextCompacted: a compaction committed and no live reading has come since, so a figure KAS
+   * publishes is the context before it and is not stored.
+   */
   context_compacted?: boolean;
 }
 
@@ -6731,9 +6755,9 @@ export interface UserInputNeededPayload {
   question: string;
   tool_call_id?: string;
   /**
- * RunID/NodeID: as on PermissionNeededPayload — a workflow step's ask,
- * attributed to its run and node from the step-session registry.
- */
+   * RunID/NodeID: as on PermissionNeededPayload — a workflow step's ask,
+   * attributed to its run and node from the step-session registry.
+   */
   run_id?: string;
   node_id?: string;
   options?: UserInputOption[];
@@ -6842,24 +6866,24 @@ export interface WorkflowRun {
   /** Name is what to DISPLAY (RunDisplayName), not the recipe; "" when nothing names the run. */
   name: string;
   /**
- * WorkflowName is the RECIPE, the only field a per-recipe decision may read:
- * labels rewrite Name, so a rule keyed on it fails OPEN. "" for a prompt-built run.
- */
+   * WorkflowName is the RECIPE, the only field a per-recipe decision may read:
+   * labels rewrite Name, so a rule keyed on it fails OPEN. "" for a prompt-built run.
+   */
   workflow_name?: string;
   /** Status is run-level: paused / completed / failed. */
   status?: RunStatus;
   /** ParentChatID is the marotte chat that launched the run, via its session chain. */
   parent_chat_id?: string;
   /**
- * ParentChatName is that chat's name from its stored header, so the History row names it without the chat
- * being open in a tab.
- */
+   * ParentChatName is that chat's name from its stored header, so the History row names it without the chat
+   * being open in a tab.
+   */
   parent_chat_name?: string;
   /**
- * EndReason says which bound stopped the run ("overran", "stalled", "orphaned"):
- * KAS reports `cancelled` for a bound and a person alike. In-memory, so a run
- * stopped before a restart falls back to the plain status.
- */
+   * EndReason says which bound stopped the run ("overran", "stalled", "orphaned"):
+   * KAS reports `cancelled` for a bound and a person alike. In-memory, so a run
+   * stopped before a restart falls back to the plain status.
+   */
   end_reason?: string;
   updated_at: number;
   created_at?: number;

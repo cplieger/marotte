@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
@@ -14,6 +15,12 @@ import (
 // errRunHostStart marks a run whose launching session could not be loaded: a server fault, answered 500 without
 // echoing an internal path.
 var errRunHostStart = errors.New("the run's launching session could not be loaded")
+
+// errRunHostSlow is a person's run verb that gave up waiting, for its run's launching session or for another verb
+// holding the run, before anything was placed or sent. Answered 503.
+var errRunHostSlow = errors.New(
+	"the run's session is still loading, so nothing was sent to the run. Try again in a moment",
+)
 
 // Driving it from another session would drop the profile's presets from its steps. Answered 409.
 var errLaunchSessionUnavailable = errors.New("the run's launching session cannot be opened here")
@@ -76,6 +83,27 @@ func (rs *Runs) ensureResident(ctx context.Context, workflowID string) (host *dr
 		return nil, func() {}, err
 	}
 	return &drivenHost{sb: sb, chatID: runChatID(workflowID)}, func() {}, nil
+}
+
+// residentFn makes a run's launching session resident for a verb: residentUntil when a person waits on the answer,
+// ensureResident for marotte's own verbs.
+type residentFn func(ctx context.Context, workflowID string) (host *drivenHost, release func(), err error)
+
+// answerDeadline is when a person's verb starting now must have answered.
+func answerDeadline() time.Time { return time.Now().Add(clientAnswerBudget) }
+
+// residentUntil is ensureResident for a person's verb that must answer by answerBy. It answers errRunHostSlow once
+// answerBy passes first, or when the load ran out its own budget, so the browser reads a sentence rather than aborting.
+func (rs *Runs) residentUntil(answerBy time.Time) residentFn {
+	return func(ctx context.Context, workflowID string) (*drivenHost, func(), error) {
+		bctx, cancel := context.WithDeadline(ctx, answerBy)
+		defer cancel()
+		host, release, err := rs.ensureResident(bctx, workflowID)
+		if err != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+			return nil, release, errRunHostSlow
+		}
+		return host, release, err
+	}
 }
 
 // hostOnChat reaches a chat-parented run through the chat's own session, never a second one: that session must be

@@ -61,26 +61,26 @@ RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
 # fonts and icons the stylesheet names, with their notices, into static/vendor/ui/.
 # This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=@cplieger/ui
-ARG CPLIEGER_UI_VERSION=1.3.0-dev.31
+ARG CPLIEGER_UI_VERSION=1.3.0-dev.32
 RUN mkdir -p static-src/node_modules/@cplieger/ui && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/ui/-/ui-${CPLIEGER_UI_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/ui --strip-components=1
 
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.5.0-dev.9
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.6.0-dev.1
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1
 
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=9.0.0-dev.3
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=9.1.0-dev.1
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-ui && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-ui --strip-components=1
 
 # This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=@cplieger/keyenc
-ARG CPLIEGER_KEYENC_VERSION=1.2.0
+ARG CPLIEGER_KEYENC_VERSION=1.3.0
 RUN mkdir -p static-src/node_modules/@cplieger/keyenc && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/keyenc/-/keyenc-${CPLIEGER_KEYENC_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/keyenc --strip-components=1
@@ -252,6 +252,10 @@ ENV HOME="/config/home"
 ENV KIRO_HOME="/config/home/.kiro"
 # pin never rewrites a version directory, so kiro-cli's per-session binary copy protects nothing.
 ENV KIRO_SKIP_BINARY_PINNING=1
+# kiro-cli's self-updater rewrites the executable it ran from on exit, and app.disableAutoupdates
+# covers one HOME only, so any process here running the pinned binary under another HOME would
+# replace it. The server sets this on its own kiro-cli spawns too, for a parent that clears the env.
+ENV KIRO_NO_AUTO_UPDATE=1
 # kiro-cli unpacks node, the agent server and the terminal UI here and deletes every
 # other version's copy at each start, so a child running another kiro-cli version
 # unsets it.

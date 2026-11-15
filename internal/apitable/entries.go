@@ -237,6 +237,17 @@ func entries() []route.Entry {
 			Owners:   []route.CodeSet{agent.Codes},
 		},
 		{
+			Name:     "putModelFallback",
+			Method:   http.MethodPut,
+			Path:     "/api/model-fallback",
+			Kind:     route.KindJSON,
+			Request:  reflect.TypeFor[agent.ModelFallbackUpdate](),
+			Response: reflect.TypeFor[marotte.ModelFallback](),
+			Summary:  "Change one model's fallback model",
+			Access:   route.Access{Class: route.ClassSession, Transport: route.TransportAny},
+			Owners:   []route.CodeSet{agent.Codes},
+		},
+		{
 			Name:     "getMemoryImportPrompt",
 			Method:   http.MethodGet,
 			Path:     "/api/memory/import-prompt",

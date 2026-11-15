@@ -18,6 +18,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/kascap"
 	"github.com/cplieger/marotte/internal/kasnode"
+	"github.com/cplieger/marotte/internal/kirorelease"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/nodeopts"
 	"github.com/cplieger/marotte/internal/procgroup"
@@ -432,7 +433,7 @@ func (e *Engine) processEnv() []string {
 	env = append(env, toolkitTelemetryEnv(e.spawn.DisableTelemetry)...)
 	env = append(env, kasLogLevelEnv(e.debugLogs)...)
 	// After the screen and the door: os/exec keeps a key's last value.
-	env = append(env, localeEnv()...)
+	env = kirorelease.SpawnEnv(append(env, localeEnv()...))
 	env, e.nodeArgs = e.withKASNodeLauncher(env)
 	env, e.nodeArgs = heapLimitEnv(env, e.nodeArgs, e.heapMiB, e.generation)
 	if len(dropped) > 0 {

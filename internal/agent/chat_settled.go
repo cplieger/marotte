@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"slices"
+
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 )
@@ -25,4 +27,12 @@ func chatLiveRuns(leases []runlease.Lease, chatID marotte.ChatID) []string {
 		}
 	}
 	return ids
+}
+
+// sessionHoldsLiveRun is chatHoldsLiveRun for the runs chatID launched from acpSessionID. A lease that has not recorded
+// its launching session yet counts too: it may be this session's, and a new session would cut that run off.
+func sessionHoldsLiveRun(leases []runlease.Lease, chatID marotte.ChatID, acpSessionID string) bool {
+	return chatID != "" && slices.ContainsFunc(leases, func(l runlease.Lease) bool {
+		return marotte.ChatID(l.ChatID) == chatID && (l.ParentSessionID == "" || l.ParentSessionID == acpSessionID)
+	})
 }

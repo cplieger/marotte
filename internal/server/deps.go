@@ -41,10 +41,11 @@ type governanceLocks interface {
 }
 
 // kiroDefaultsReader answers what kiro-cli resolves each unset three-state setting to, keyed by
-// the marotte setting key, and its hooks.showStatus. *agent.Settings satisfies it.
+// the marotte setting key, its hooks.showStatus and its fallback per model. *agent.Settings satisfies it.
 type kiroDefaultsReader interface {
 	KiroDefaults() map[string]marotte.KiroDefault
 	HookStatusShown() bool
+	ModelFallbacks() []marotte.ModelFallback
 }
 
 // SteeringGenerator generates steering files for kiro-cli. *steering.Generator satisfies it.

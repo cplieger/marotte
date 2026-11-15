@@ -1,11 +1,13 @@
 // The UI audit walkers: one implementation, run against fixtures by vitest and injected into a
 // live page over CDP through `pageSource`, so a runner prints the number vitest pinned. Constraints:
 //  1. A walker is SELF-CONTAINED: serialised by `Function.prototype.toString()`, it may use only
-//     its own body, page globals and the HELPERS `pageSource` emits.
+//     its own body, page globals and the CONSTANTS and HELPERS `pageSource` emits.
 //  2. ONLY ERASABLE TYPE SYNTAX: node type-stripping blanks annotations, so an enum, decorator or
 //     parameter property reaches the page as a syntax error.
 //  3. EVERY RESULT IS JSON (`Runtime.evaluate` returns by value); findings are deduped with a count.
 //  4. NOTHING TOUCHES THE DOM AT MODULE LOAD: node imports this with no document.
+
+import { OWNS_ITS_CLICK, ownsItsClick } from "../disclosure-row.ts";
 
 /** A page-side audit. Takes its options by value and returns JSON. */
 type Walker = (opts: never) => unknown;
@@ -161,10 +163,20 @@ function bucket<T>(rows: readonly (readonly [string, T])[]): (T & { count: numbe
 }
 
 /** Whether the point resolves to this element or inside it: a `::before` expander answers as its
- *  own element, a glyph as the button's child. */
+ *  own element, a glyph as the button's child, and a `wireRowToggle` row's own ink as the
+ *  `aria-expanded` control the row forwards its press to. */
 function ownsPoint(el: Element, x: number, y: number): boolean {
   const hit = document.elementFromPoint(x, y);
-  return hit !== null && (hit === el || el.contains(hit));
+  if (hit === null) {
+    return false;
+  }
+  if (hit === el || el.contains(hit)) {
+    return true;
+  }
+  const row = hit.closest("[data-row-toggle]");
+  return (
+    row !== null && row.contains(el) && el.hasAttribute("aria-expanded") && !ownsItsClick(hit, row)
+  );
 }
 
 /** How far the element's TARGET reaches on one axis by hit test from its centre, capped at `cap`.
@@ -1090,9 +1102,13 @@ function contrast(opts: { inkToken?: string | null }): unknown {
 
 // --- the injection contract ------------------------------------------------
 
+// Values the helpers read, emitted as `const`s under the same names.
+const CONSTANTS = { OWNS_ITS_CLICK } as const;
+
 /** The helpers `pageSource` emits beside a walker. The KEY is the emitted name a walker calls; the
  *  binding is by string, so renaming a key means renaming its call sites. */
 const HELPERS = {
+  ownsItsClick,
   describeEl,
   lenPx,
   routeOf,
@@ -1131,8 +1147,9 @@ export function pageSource(name: string, opts: Readonly<Record<string, unknown>>
   if (fn === undefined) {
     throw new Error(`unknown walker "${name}" (known: ${Object.keys(WALKERS).join(", ")})`);
   }
-  const prelude = Object.entries(HELPERS)
-    .map(([alias, helper]) => `const ${alias} = ${helper.toString()};`)
-    .join("\n");
+  const prelude = [
+    ...Object.entries(CONSTANTS).map(([name, v]) => `const ${name} = ${JSON.stringify(v)};`),
+    ...Object.entries(HELPERS).map(([alias, helper]) => `const ${alias} = ${helper.toString()};`),
+  ].join("\n");
   return `(() => {\n${prelude}\nreturn (${fn.toString()})(${JSON.stringify(opts)});\n})()`;
 }

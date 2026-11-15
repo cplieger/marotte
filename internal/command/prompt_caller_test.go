@@ -45,11 +45,16 @@ func TestBuildPromptParams_NamesTheCommandCallerToTheEngine(t *testing.T) {
 	}
 }
 
-// The user's own prompt, and an API caller that gave no name, carry no callerLabel.
-func TestBuildPromptParams_NamesNoCallerWithoutALabel(t *testing.T) {
-	for name, from := range map[string]*marotte.Caller{"user": nil, "unnamed caller": {}} {
-		if got, ok := promptCallerLabel(callerPromptParams(t, from)); ok {
-			t.Errorf("%s: params[_meta].kiro.callerLabel = %q, want the key absent", name, got)
-		}
+// The user's own prompt carries no callerLabel.
+func TestBuildPromptParams_NamesNoCallerOnTheUsersPrompt(t *testing.T) {
+	if got, ok := promptCallerLabel(callerPromptParams(t, nil)); ok {
+		t.Errorf("params[_meta].kiro.callerLabel = %q, want the key absent", got)
+	}
+}
+
+// A caller with no name, such as the one SharedCaller gives a message joined from two programs, is still named.
+func TestBuildPromptParams_NamesAnUnnamedCallerAPI(t *testing.T) {
+	if got, ok := promptCallerLabel(callerPromptParams(t, &marotte.Caller{})); !ok || got != "api" {
+		t.Errorf("params[_meta].kiro.callerLabel = %q (present %v), want %q", got, ok, "api")
 	}
 }

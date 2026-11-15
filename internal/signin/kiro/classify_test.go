@@ -9,7 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/kirorelease"
 	"github.com/cplieger/marotte/internal/signin"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 func TestCanonicalStartURL(t *testing.T) {
@@ -87,7 +89,7 @@ func TestClassifier_MatchesKiroCLIOnThisAccount(t *testing.T) {
 	if bin == "" {
 		t.Skip("MAROTTE_LIVE_KIRO_CLI names no kiro-cli binary")
 	}
-	whoami, err := exec.CommandContext(t.Context(), bin, "whoami", "--format", "json").Output()
+	whoami, err := liveKiroCLIOutput(t, bin, "whoami", "--format", "json")
 	if err != nil {
 		t.Fatalf("kiro-cli whoami failed: %v", err)
 	}
@@ -102,7 +104,7 @@ func TestClassifier_MatchesKiroCLIOnThisAccount(t *testing.T) {
 	if startURL == "" {
 		startURL = who.StartURL2
 	}
-	tok, err := exec.CommandContext(t.Context(), bin, "chat", "_", "get-kas-token").Output()
+	tok, err := liveKiroCLIOutput(t, bin, "chat", "_", "get-kas-token")
 	if err != nil {
 		t.Fatal("kiro-cli chat _ get-kas-token failed")
 	}
@@ -124,5 +126,31 @@ func TestClassifier_MatchesKiroCLIOnThisAccount(t *testing.T) {
 	}
 	if string(got) != kas.Data.Provider {
 		t.Errorf("the start URL %q classifies as %s, kiro-cli says %s", startURL, got, kas.Data.Provider)
+	}
+}
+
+func liveKiroCLIOutput(t *testing.T, bin string, args ...string) ([]byte, error) {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), bin, args...) // #nosec G204 -- the operator's own binary
+	kirorelease.SetCommandEnv(cmd, os.Environ())
+	return cmd.Output()
+}
+
+// The live comparison's spawns carry KIRO_NO_AUTO_UPDATE=1 from kirorelease.SpawnEnv under an `env -i` parent and over a parent opt-out.
+func TestLiveKiroCLIOutput_RunsWithSelfUpdateOff(t *testing.T) {
+	for name, parent := range map[string]string{"an env -i parent": "", "a parent that opts back in": "0"} {
+		t.Run(name, func(t *testing.T) {
+			testsupport.EmptyEnv(t)
+			if parent != "" {
+				t.Setenv("KIRO_NO_AUTO_UPDATE", parent)
+			}
+			cli, seen := testsupport.EnvRecorder(t, "KIRO_NO_AUTO_UPDATE")
+			if _, err := liveKiroCLIOutput(t, cli, "whoami"); err != nil {
+				t.Fatalf("liveKiroCLIOutput: %v", err)
+			}
+			if got := seen(); got != "1" {
+				t.Errorf("kiro-cli saw KIRO_NO_AUTO_UPDATE %q, want 1", got)
+			}
+		})
 	}
 }

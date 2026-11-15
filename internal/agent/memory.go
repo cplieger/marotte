@@ -252,14 +252,16 @@ func memoryFailure(err error) engineReply {
 	return engineReply{err: err, write: func(w http.ResponseWriter) { writeMemoryErr(w, err) }}
 }
 
-// registerMemoryRoutes binds the Memories endpoints as plain paths, so the registrar answers a refused method
-// with 405 + Allow.
+// registerMemoryRoutes binds the Memories endpoints and the other account-synced setting write, model fallback, as
+// plain paths, so the registrar answers a refused method with 405 + Allow.
 func (st *Settings) registerMemoryRoutes(m routeMux) {
 	id := reflect.TypeFor[marotte.IDPath]()
 	m.Bind(route.Methods("/api/memory", http.HandlerFunc(st.handleMemoryCollection), route.Typed[struct{}, MemoryList](http.MethodGet)))
 	m.Bind(route.Methods("/api/memory/sync", http.HandlerFunc(st.handleMemorySync),
 		route.Typed[struct{}, MemorySync](http.MethodGet),
 		route.Typed[MemorySyncUpdate, MemorySyncChoice](http.MethodPut)))
+	m.Bind(route.Methods("/api/model-fallback", http.HandlerFunc(st.handleModelFallback),
+		route.Typed[ModelFallbackUpdate, marotte.ModelFallback](http.MethodPut)))
 	m.Bind(route.Methods("/api/memory/import-prompt", http.HandlerFunc(st.handleMemoryImportPrompt),
 		route.Typed[struct{}, MemoryImportPrompt](http.MethodGet)))
 	m.Bind(route.Methods("/api/memory/import", http.HandlerFunc(st.handleMemoryImport),

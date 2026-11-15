@@ -2889,6 +2889,15 @@
           "model_fallback_enabled": {
             "type": "boolean"
           },
+          "model_fallbacks": {
+            "items": {
+              "$ref": "#/components/schemas/ModelFallback"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "notifications_enabled": {
             "type": "boolean"
           },
@@ -2985,6 +2994,7 @@
           "agent_ignore_files",
           "additional_directories",
           "rejected_keys",
+          "model_fallbacks",
           "chat_retention_days",
           "auto_compact_pct",
           "auto_compact_pct_range",
@@ -7254,6 +7264,44 @@
           "agent"
         ],
         "type": "string"
+      },
+      "ModelFallback": {
+        "properties": {
+          "configured": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "read_only_reason": {
+            "type": "string"
+          },
+          "vendor_default": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "model",
+          "configured",
+          "vendor_default",
+          "read_only_reason"
+        ],
+        "type": "object"
+      },
+      "ModelFallbackUpdate": {
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "model",
+          "target"
+        ],
+        "type": "object"
       },
       "ModelSwitchReason": {
         "enum": [
@@ -31611,6 +31659,162 @@
           }
         ],
         "summary": "Edit one memory",
+        "x-marotte-access": {
+          "class": "session"
+        }
+      }
+    },
+    "/api/model-fallback": {
+      "put": {
+        "operationId": "putModelFallback",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelFallbackUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelFallback"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request: alive_invalid, event_report_invalid",
+            "x-error-codes": {
+              "alive_invalid": {},
+              "event_report_invalid": {}
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found: not_waiting",
+            "x-error-codes": {
+              "not_waiting": {}
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method Not Allowed: method_not_allowed",
+            "x-error-codes": {
+              "method_not_allowed": {}
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict: already_paused, already_running, ask_branch_running, ask_gone, ask_pending, ask_settling, ask_stale, ask_stopping, ask_unnamed, ask_unsettled, awaiting_answer, busy, coming_soon, finished, full, locked, not_enabled, not_started, run_answer_pending, run_paused, sign_in_required, step_not_paused, step_unnamed, unavailable, waits_on_run",
+            "x-error-codes": {
+              "already_paused": {},
+              "already_running": {},
+              "ask_branch_running": {},
+              "ask_gone": {},
+              "ask_pending": {},
+              "ask_settling": {},
+              "ask_stale": {},
+              "ask_stopping": {},
+              "ask_unnamed": {},
+              "ask_unsettled": {},
+              "awaiting_answer": {},
+              "busy": {},
+              "coming_soon": {},
+              "finished": {},
+              "full": {},
+              "locked": {},
+              "not_enabled": {},
+              "not_started": {},
+              "run_answer_pending": {},
+              "run_paused": {},
+              "sign_in_required": {},
+              "step_not_paused": {},
+              "step_unnamed": {},
+              "unavailable": {},
+              "waits_on_run": {}
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway: render_failed",
+            "x-error-codes": {
+              "render_failed": {}
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable: ask_unreadable, engine_slow, identity_provider_unreachable, model_list_unreadable, recipe_list_slow",
+            "x-error-codes": {
+              "ask_unreadable": {},
+              "engine_slow": {},
+              "identity_provider_unreachable": {},
+              "model_list_unreadable": {},
+              "recipe_list_slow": {}
+            }
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Gateway Timeout: still_applying",
+            "x-error-codes": {
+              "still_applying": {}
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Change one model's fallback model",
         "x-marotte-access": {
           "class": "session"
         }

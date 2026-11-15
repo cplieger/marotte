@@ -9,6 +9,7 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
 import type { ExecNode, ExecRun } from "./exec-view/model.js";
 import { buildExecSummary } from "./exec-view/summary.js";
+import { ownsItsClick } from "./disclosure-row.js";
 import { buildPermissionCard } from "./permission.js";
 import type { PermissionNeededPayload } from "./types.js";
 import {
@@ -252,10 +253,14 @@ describe("the run tab's layout", () => {
     // The open panel is what gives way to the ask; once the ask goes, it has room for rows again.
     const body = byId("run-exec-dock").querySelector(".ev-dock-body")!;
     expect(getComputedStyle(body).overflowY).toBe("auto");
+    const withAsk = body.getBoundingClientRect().height;
     ask.replaceChildren();
     ask.classList.add("hidden");
     inside(byId("run-composer"), vv, "composer without the ask");
-    expect(body.getBoundingClientRect().height, "the open panel's body").toBeGreaterThan(80);
+    const freed = body.getBoundingClientRect().height;
+    expect(freed, "the open panel's body grows back").toBeGreaterThan(withAsk);
+    // At least one 44px touch row.
+    expect(freed, "the open panel's body holds a row").toBeGreaterThanOrEqual(44);
   });
 });
 
@@ -415,12 +420,13 @@ describe("the run summary on a phone", () => {
     });
   }
 
-  it("toggles the panel from a tap anywhere on the head row at 360px, the chevron's narrowed box included", async () => {
+  it("toggles the panel from a tap anywhere on the head row at 360px but its verbs", async () => {
     await browser.viewport(360, 844);
     document.documentElement.setAttribute("data-pointer", "coarse");
     style = mountAppCSS();
     const { byId } = mountRunView(844);
-    mountPage(byId, verbs(false, ["Pause", "Cancel"])).render({
+    const row = verbs(false, ["Pause", "Cancel"]);
+    mountPage(byId, row).render({
       label: "nightly",
       state: "running",
       nodes: inLoop(sixSteps("running")),
@@ -429,28 +435,32 @@ describe("the run summary on a phone", () => {
     const dock = byId("run-exec-dock");
     const head = dock.querySelector<HTMLElement>(".ev-dock-head")!;
     const toggle = dock.querySelector<HTMLButtonElement>(".ev-box-toggle")!;
-    expect(toggle.getBoundingClientRect().width, "the chevron's box narrows").toBeLessThan(44);
     expect(
       head.getBoundingClientRect().height,
       "the row keeps the floor's height",
     ).toBeGreaterThanOrEqual(44);
     expect(toggle.tabIndex).toBe(0);
     expect(toggle.getAttribute("aria-label")).toBe("Run details");
-    // The chevron's centre, the head's own padding before it, and the gap after it that the
-    // floor's width used to cover. Read per tap: the head rises as the panel opens.
-    const points: [string, (b: DOMRect, r: DOMRect) => number][] = [
-      ["the chevron", (b) => b.left + b.width / 2],
-      ["the row's start", (_b, r) => r.left + 2],
-      ["past the chevron", (b) => b.right + 2],
+    const centre = (sel: string): number => {
+      const b = head.querySelector(sel)!.getBoundingClientRect();
+      return b.left + b.width / 2;
+    };
+    // Read per tap: the head rises as the panel opens.
+    const points: [string, (r: DOMRect) => number][] = [
+      ["the chevron", () => centre(".disclosure-chevron")],
+      ["the row's start", (r) => r.left + 2],
+      ["the state word", () => centre(".ev-sum-state")],
+      ["the clock", () => centre(".ev-sum-clock")],
     ];
     const region = dock.querySelector(".ev-dock-panel")!;
     for (const [what, at] of points) {
       for (const want of ["true", "false"]) {
         const r = head.getBoundingClientRect();
-        const x = at(toggle.getBoundingClientRect(), r);
+        const x = at(r);
         const y = r.top + r.height / 2;
         const hit = document.elementFromPoint(x, y);
         expect(hit !== null && head.contains(hit), `${what} is on the head`).toBe(true);
+        expect(hit !== null && row.contains(hit), `${what} is no verb`).toBe(false);
         await userEvent.click(head, { position: { x: x - r.left, y: y - r.top } });
         expect(toggle.getAttribute("aria-expanded"), `a tap on ${what}`).toBe(want);
         await Promise.all(region.getAnimations().map((a) => a.finished));
@@ -630,6 +640,7 @@ describe("the run dock head beside its verbs", () => {
         state: "waiting",
         nodes: lanes(true),
         live: true,
+        credits: 257.8,
         alert: { kind: "paused", text: LANES_PAUSE },
       });
       const dock = byId("run-exec-dock");
@@ -648,17 +659,33 @@ describe("the run dock head beside its verbs", () => {
         expect(line.top + line.height / 2).toBeCloseTo(state.top + state.height / 2, 0);
         expect(clock.right).toBeLessThanOrEqual(box(row).left + 0.5);
       } else {
-        // On a phone the verbs leave no room beside them: the head's second line with the clock,
-        // under the state word, most of the head's width.
+        // On a phone the pass-limit verbs leave the summary no room beside them: they take the
+        // head's second line at its end, under the state, clock and credits on the first, and the
+        // pause takes the third, under the state word, most of the head's width.
         const edge = head.getBoundingClientRect();
+        const credits = box(head.querySelector(".ev-sum-credits"));
+        for (const [name, part] of [
+          ["clock", clock],
+          ["credits", credits],
+        ] as const) {
+          expect(part.top + part.height / 2, `the ${name} level with the state`).toBeCloseTo(
+            state.top + state.height / 2,
+            0,
+          );
+          expect(box(row).top, `the verbs under the ${name}`).toBeGreaterThanOrEqual(
+            part.bottom - 0.5,
+          );
+        }
+        expect(box(row).right, "the verbs at the head's end").toBeCloseTo(
+          edge.right - parseFloat(getComputedStyle(head).paddingInlineEnd),
+          0,
+        );
         expect(line.top).toBeGreaterThanOrEqual(box(row).bottom - 0.5);
-        expect(clock.top).toBeGreaterThanOrEqual(box(row).bottom - 0.5);
         expect(
           line.left +
             parseFloat(getComputedStyle(head.querySelector(".ev-alert-line")!).paddingInlineStart),
         ).toBeCloseTo(state.left, 0);
-        expect(line.right).toBeLessThanOrEqual(clock.left + 0.5);
-        expect(clock.right).toBeLessThanOrEqual(edge.right + 0.5);
+        expect(line.right).toBeLessThanOrEqual(edge.right + 0.5);
         expect(line.width).toBeGreaterThan(0.6 * edge.width);
       }
       expect(text.scrollHeight, "one line").toBeLessThanOrEqual(text.clientHeight);
@@ -753,5 +780,300 @@ describe("the run dock's step rows", () => {
         row.getBoundingClientRect().right - parseFloat(getComputedStyle(row).paddingRight);
       expect(part(row, ".ev-dock-dur").right).toBeCloseTo(gutter, 0);
     });
+  }
+});
+
+describe("the run dock head's toggle", () => {
+  const WIDTHS = [
+    [1000, 800],
+    [700, 1000],
+    [390, 844],
+    [402, 874],
+    [360, 780],
+  ] as const;
+
+  /** Mount the run tab `h` tall with `names` as its verbs and render `run`; the head and its verbs. */
+  function mountHead(
+    h: number,
+    names: readonly string[] | "pass limit",
+    run: ExecRun,
+  ): { head: HTMLElement; row: HTMLElement } {
+    style = mountAppCSS();
+    const { byId } = mountRunView(h);
+    const row = names === "pass limit" ? verbs(true) : verbs(false, names);
+    mountPage(byId, row).render(run);
+    return { head: byId("run-exec-dock").querySelector<HTMLElement>(".ev-dock-head")!, row };
+  }
+
+  /** The hit floor: WCAG 2.5.8's 24px on a mouse, Apple HIG's 44px on touch. */
+  function hitFloor(): number {
+    return document.documentElement.getAttribute("data-pointer") === "coarse" ? 44 : 24;
+  }
+
+  interface Box {
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
+  }
+
+  function fmt(b: Box): string {
+    return `[${b.left.toFixed(1)}..${b.right.toFixed(1)} x ${b.top.toFixed(1)}..${b.bottom.toFixed(1)}]`;
+  }
+
+  function meets(a: Box, b: Box): boolean {
+    return (
+      Math.min(a.right, b.right) - Math.max(a.left, b.left) > 0.5 &&
+      Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 0.5
+    );
+  }
+
+  /** Where `c` answers a tap: a button's expander (61-mcp-tools.css) centres the floor on each
+   *  axis its box is smaller on; a field has none, so its box is its target. */
+  function targetOf(c: Element, floor: number): Box {
+    const r = c.getBoundingClientRect();
+    const grow = (size: number): number =>
+      c instanceof HTMLButtonElement ? Math.max(0, (floor - size) / 2) : 0;
+    return {
+      left: r.left - grow(r.width),
+      right: r.right + grow(r.width),
+      top: r.top - grow(r.height),
+      bottom: r.bottom + grow(r.height),
+    };
+  }
+
+  /** Every control in the head, the toggle included, answers over the floor on each axis inside
+   *  the dock's clip, and no other control's target or dock region meets that area. */
+  function ownsItsTarget(head: HTMLElement, what: string): void {
+    const floor = hitFloor();
+    const dock = head.closest<HTMLElement>(".ev-dock")!;
+    const d = dock.getBoundingClientRect();
+    const clip: Box = {
+      left: d.left + dock.clientLeft,
+      right: d.left + dock.clientLeft + dock.clientWidth,
+      top: d.top + dock.clientTop,
+      bottom: d.top + dock.clientTop + dock.clientHeight,
+    };
+    const shown = (e: Element): boolean => {
+      const r = e.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    };
+    const controls = [...head.querySelectorAll("button, input")].filter(shown);
+    const regions = [...dock.children].filter((e) => e !== head && shown(e));
+    const nameOf = (c: Element): string => c.getAttribute("aria-label") ?? c.tagName.toLowerCase();
+    const toggle = head.querySelector(".ev-box-toggle")!;
+    for (const c of controls) {
+      const name = nameOf(c);
+      const t = targetOf(c, floor);
+      expect(t.bottom - t.top, `${what}: ${name}'s target's height`).toBeGreaterThanOrEqual(
+        floor - 0.5,
+      );
+      expect(t.right - t.left, `${what}: ${name}'s target's width`).toBeGreaterThanOrEqual(
+        floor - 0.5,
+      );
+      expect(
+        t.left >= clip.left - 0.5 &&
+          t.right <= clip.right + 0.5 &&
+          t.top >= clip.top - 0.5 &&
+          t.bottom <= clip.bottom + 0.5,
+        `${what}: ${name}'s target ${fmt(t)} inside the dock's clip ${fmt(clip)}`,
+      ).toBe(true);
+      for (const o of controls) {
+        if (o !== c) {
+          const u = targetOf(o, floor);
+          expect(
+            meets(t, u),
+            `${what}: ${name}'s target ${fmt(t)} meets ${nameOf(o)}'s ${fmt(u)}`,
+          ).toBe(false);
+        }
+      }
+      for (const g of regions) {
+        const u = g.getBoundingClientRect();
+        expect(
+          meets(t, u),
+          `${what}: ${name}'s target ${fmt(t)} meets .${g.className.split(" ")[0] ?? ""} ${fmt(u)}`,
+        ).toBe(false);
+      }
+      const x = (t.left + t.right) / 2;
+      const y = (t.top + t.bottom) / 2;
+      const probes = [
+        ["top", x, t.top + 1],
+        ["bottom", x, t.bottom - 1],
+        ["start", t.left + 1, y],
+        ["end", t.right - 1, y],
+      ] as const;
+      for (const [edge, px, py] of probes) {
+        const hit = document.elementFromPoint(px, py);
+        // The head forwards a tap on its own ink to the toggle (`wireRowToggle`).
+        const answers =
+          hit !== null &&
+          (c.contains(hit) || (c === toggle && head.contains(hit) && !ownsItsClick(hit, head)));
+        expect(
+          answers,
+          `${what}: ${name} answers at its target's ${edge} edge, not ${hit?.className ?? "nothing"}`,
+        ).toBe(true);
+      }
+    }
+  }
+
+  /** The toggle's box holds each of `parts`. */
+  function holds(head: HTMLElement, parts: readonly string[], what: string): DOMRect {
+    const t = head.querySelector(".ev-box-toggle")!.getBoundingClientRect();
+    for (const sel of parts) {
+      const p = head.querySelector(sel)!.getBoundingClientRect();
+      expect(p.width, `${what}: ${sel} renders`).toBeGreaterThan(0);
+      expect(
+        t.left <= p.left + 0.5 &&
+          t.right >= p.right - 0.5 &&
+          t.top <= p.top + 0.5 &&
+          t.bottom >= p.bottom - 0.5,
+        `${what}: the toggle ${fmt(t)} holds ${sel} ${fmt(p)}`,
+      ).toBe(true);
+    }
+    return t;
+  }
+
+  /** The toggle's box holds each of `parts` and is as tall as each button and level with it. */
+  function coversAtVerbHeight(
+    head: HTMLElement,
+    row: HTMLElement,
+    parts: readonly string[],
+    what: string,
+  ): void {
+    const t = holds(head, parts, what);
+    const chevron = head.querySelector(".disclosure-chevron")!.getBoundingClientRect();
+    const credits = head.querySelector(".ev-sum-credits")!.getBoundingClientRect();
+    expect(
+      t.right - credits.right,
+      `${what}: the toggle's end inset past the credits`,
+    ).toBeGreaterThanOrEqual(chevron.left - t.left - 0.5);
+    for (const v of row.querySelectorAll("button")) {
+      const r = v.getBoundingClientRect();
+      const name = v.getAttribute("aria-label") ?? "";
+      expect(t.height, `${what}: the toggle's height beside ${name}`).toBeCloseTo(r.height, 0);
+      expect(t.top, `${what}: the toggle level with ${name}`).toBeCloseTo(r.top, 0);
+    }
+  }
+
+  /** The toggle's box holds each of `parts` on the head's first line, as tall as each button and
+   *  the head's width; the verbs are on a line of their own under it. */
+  function coversAboveVerbs(
+    head: HTMLElement,
+    row: HTMLElement,
+    parts: readonly string[],
+    what: string,
+  ): void {
+    const t = holds(head, parts, what);
+    const edge = head.getBoundingClientRect();
+    const end = edge.right - parseFloat(getComputedStyle(head).paddingInlineEnd);
+    expect(t.left, `${what}: the toggle from the head's start`).toBeCloseTo(edge.left, 0);
+    expect(t.right, `${what}: the toggle to the head's end`).toBeGreaterThanOrEqual(end - 3);
+    for (const v of row.querySelectorAll("button")) {
+      const r = v.getBoundingClientRect();
+      const name = v.getAttribute("aria-label") ?? "";
+      expect(r.top, `${what}: ${name} under the toggle`).toBeGreaterThanOrEqual(t.bottom - 0.5);
+      expect(t.height, `${what}: the toggle's height beside ${name}`).toBeCloseTo(r.height, 0);
+    }
+  }
+
+  const RUNNING: ExecRun = {
+    label: "nightly",
+    state: "running",
+    nodes: inLoop(sixSteps("running")),
+    live: true,
+    credits: 257.8,
+  };
+  const PAUSED: ExecRun = {
+    label: "subflux-build-lanes-relaunch",
+    state: "waiting",
+    nodes: lanes(true),
+    live: true,
+    credits: 257.8,
+    alert: { kind: "paused", text: LANES_PAUSE },
+  };
+  const RUNNING_PARTS = [
+    ".disclosure-chevron",
+    ".ev-sum-state",
+    ".ev-sum-compact",
+    ".ev-sum-clock",
+    ".ev-sum-credits",
+  ];
+  const PAUSED_PARTS = [".disclosure-chevron", ".ev-sum-state", ".ev-sum-clock", ".ev-sum-credits"];
+
+  // Beside the verbs while the summary fits, under them once it does not: a running run's
+  // summary with its credits and Pause and Stop fit a 390px head with a mouse but overrun it
+  // with a finger's wider gap between the verbs, and overrun a 360px head with either; the
+  // pass-limit verbs (a field and three buttons) overrun a 390px head with either.
+  const CASES = [
+    {
+      what: "a running run's",
+      names: ["Pause", "Stop"],
+      run: RUNNING,
+      parts: RUNNING_PARTS,
+      beside: { fine: [1000, 700, 390], coarse: [1000, 700, 402] },
+      under: { fine: [360], coarse: [390, 360] },
+    },
+    {
+      what: "a paused run's",
+      names: ["Resume", "Stop"],
+      run: PAUSED,
+      parts: PAUSED_PARTS,
+      beside: { fine: [1000, 700, 390, 360], coarse: [1000, 700, 390, 360] },
+      under: { fine: [], coarse: [] },
+    },
+    {
+      what: "a pass-limit pause's",
+      names: "pass limit",
+      run: PAUSED,
+      parts: PAUSED_PARTS,
+      beside: { fine: [1000, 700], coarse: [1000, 700] },
+      under: { fine: [390, 360], coarse: [390, 360] },
+    },
+  ] as const;
+
+  for (const pointer of ["fine", "coarse"] as const) {
+    it(`keeps a running run's band clear of the verbs under its summary, 360px ${pointer}`, async () => {
+      await browser.viewport(360, 780);
+      document.documentElement.setAttribute("data-pointer", pointer);
+      const { head, row } = mountHead(780, ["Pause", "Stop"], RUNNING);
+      const band = head.querySelector(".ev-mini")!.getBoundingClientRect();
+      const t = head.querySelector(".ev-box-toggle")!.getBoundingClientRect();
+      expect(band.height, "the band renders").toBeGreaterThan(0);
+      expect(band.top, "the band under the summary line").toBeGreaterThanOrEqual(t.bottom - 0.5);
+      expect(band.bottom, "the band above the verbs").toBeLessThanOrEqual(
+        row.getBoundingClientRect().top + 0.5,
+      );
+    });
+
+    for (const c of CASES) {
+      for (const [w, h] of WIDTHS) {
+        const at = `${String(w)}px ${pointer}`;
+        const beside = (c.beside[pointer] as readonly number[]).includes(w);
+        if (beside || (c.under[pointer] as readonly number[]).includes(w)) {
+          it(`keeps every target in ${c.what} head its own, ${at}`, async () => {
+            await browser.viewport(w, h);
+            document.documentElement.setAttribute("data-pointer", pointer);
+            const { head } = mountHead(h, c.names, c.run);
+            ownsItsTarget(head, at);
+          });
+        }
+        if (beside) {
+          it(`covers ${c.what} summary line beside its verbs at their height, ${at}`, async () => {
+            await browser.viewport(w, h);
+            document.documentElement.setAttribute("data-pointer", pointer);
+            const { head, row } = mountHead(h, c.names, c.run);
+            coversAtVerbHeight(head, row, c.parts, at);
+          });
+        }
+        if ((c.under[pointer] as readonly number[]).includes(w)) {
+          it(`covers ${c.what} summary line above its verbs at their height, ${at}`, async () => {
+            await browser.viewport(w, h);
+            document.documentElement.setAttribute("data-pointer", pointer);
+            const { head, row } = mountHead(h, c.names, c.run);
+            coversAboveVerbs(head, row, c.parts, at);
+          });
+        }
+      }
+    }
   }
 });

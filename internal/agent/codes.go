@@ -28,7 +28,7 @@ var Codes = route.CodeSet{
 	{Code: "finished", Status: http.StatusConflict},
 	{Code: "full", Status: http.StatusConflict},
 	{Code: "identity_provider_unreachable", Status: http.StatusServiceUnavailable},
-	{Code: codeSyncLocked, Status: http.StatusConflict},
+	{Code: codeSettingLocked, Status: http.StatusConflict},
 	{Code: "model_list_unreadable", Status: http.StatusServiceUnavailable},
 	{Code: "not_enabled", Status: http.StatusConflict},
 	{Code: "not_started", Status: http.StatusConflict},
@@ -41,6 +41,6 @@ var Codes = route.CodeSet{
 	{Code: "step_not_paused", Status: http.StatusConflict},
 	{Code: "step_unnamed", Status: http.StatusConflict},
 	{Code: "still_applying", Status: http.StatusGatewayTimeout},
-	{Code: codeSyncUnavailable, Status: http.StatusConflict},
+	{Code: codeSettingUnavailable, Status: http.StatusConflict},
 	{Code: "waits_on_run", Status: http.StatusConflict},
 }

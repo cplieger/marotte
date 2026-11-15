@@ -88,7 +88,7 @@ func restartPausedHub(t *testing.T) (*Runtime, *fakeBridge) {
 func steeredStepHub(t *testing.T) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h, br := runningStepHub(t)
-	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-7", "", nil); err != nil {
+	if _, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "check the logs", "m-7", "", nil); err != nil {
 		t.Fatalf("Setup: MessageStep = %v", err)
 	}
 	br.setCallResult(marotte.MethodSessionSteerClear, json.RawMessage(`{"messageIds":["steer-m-7"]}`))
@@ -162,7 +162,7 @@ var closedGateVerbs = []closedGateVerb{
 	{
 		name: "a running step's steer", route: "POST /api/runs/{id}/steps/{path}/message", want: gateRefuses,
 		call: func(ctx context.Context, _ *testing.T, h *Runtime) error {
-			_, err := h.runs.messageStep(ctx, "wf_1", reviewPath, "check the logs", "m-1", "", nil)
+			_, err := h.runs.messageStep(ctx, h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "check the logs", "m-1", "", nil)
 			return err
 		},
 	},
@@ -170,7 +170,7 @@ var closedGateVerbs = []closedGateVerb{
 		name: "a paused step's prompt", route: "POST /api/runs/{id}/steps/{path}/message", want: gateRefuses,
 		hub: pausedStepHub,
 		call: func(ctx context.Context, _ *testing.T, h *Runtime) error {
-			_, err := h.runs.messageStep(ctx, "wf_1", reviewPath, "carry on", "m-1", "", nil)
+			_, err := h.runs.messageStep(ctx, h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "carry on", "m-1", "", nil)
 			return err
 		},
 	},
@@ -178,7 +178,7 @@ var closedGateVerbs = []closedGateVerb{
 		name: "an asking step's answer", route: "POST /api/runs/{id}/steps/{path}/message", want: gateRefuses,
 		hub: askHub,
 		call: func(ctx context.Context, _ *testing.T, h *Runtime) error {
-			_, err := h.runs.messageStep(ctx, "wf_1", reviewPath, "the main branch", "m-1", "", nil)
+			_, err := h.runs.messageStep(ctx, h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "the main branch", "m-1", "", nil)
 			return err
 		},
 	},
@@ -316,7 +316,7 @@ func TestSignInGate_AStepSteerIsRefusedBeforeItsRowIsRouted(t *testing.T) {
 			h, br := runningStepHub(t)
 			gate := wireGate(h, tc.state)
 
-			_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-1", "", nil)
+			_, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "check the logs", "m-1", "", nil)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("MessageStep = %v, want %v", err, tc.want)
 			}
@@ -325,7 +325,7 @@ func TestSignInGate_AStepSteerIsRefusedBeforeItsRowIsRouted(t *testing.T) {
 			}
 
 			gate.set(h, signin.Answerable)
-			if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-1", "", nil); err != nil {
+			if _, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "check the logs", "m-1", "", nil); err != nil {
 				t.Fatalf("MessageStep once answerable = %v", err)
 			}
 			if n := countCalls(br, marotte.MethodSessionSteer); n != 1 {
@@ -498,7 +498,7 @@ func TestSignInGate_AStepSteerCrossingTheClosingEdgeSweepsAgain(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := h.runs.messageStep(context.Background(), "wf_1", reviewPath, "check the logs", "m-1", "", nil)
+		_, err := h.runs.messageStep(context.Background(), h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "check the logs", "m-1", "", nil)
 		done <- err
 	}()
 	waitUntil(t, "the steer to be written", func() bool { return slices.Contains(br.callLog(), marotte.MethodSessionSteer) })
