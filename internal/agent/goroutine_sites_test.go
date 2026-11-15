@@ -38,9 +38,6 @@ var unheldSites = map[string]struct {
 	"bridge_coord.go (bridgeCoordinator).Notify":        {"a push once draining, which push.Close in Shutdown owns", 1},
 	"engine_calls.go (engineOwner).observe":             {"drainSession only answers its pass's requests", 1},
 	"engine_owner.go (engineOwner).backoff":             {"it only waits", 1},
-	"engine_lane.go (Runtime).observerForward": {
-		"a frame pump ending with its pass's session; a request's work goes through answerUnlessDraining", 1,
-	},
 	"session_close_owner.go (turnRegistry).holdWake": {
 		"it ends a wake hold under the lifecycle's lock and starts nothing; the closer it lets run is held", 1,
 	},

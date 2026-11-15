@@ -180,7 +180,9 @@ func (t *Translator) HandleSteeringDocuments(ctx context.Context, _ marotte.Chat
 	if t.steeringIssues == nil {
 		return
 	}
-	t.steeringIssues.Seen()
+	// Last: the boot observer pass ends on Seen, and a frame still being applied after it would land on top of a
+	// later one.
+	defer t.steeringIssues.Seen()
 	issues, ok := readSteeringIssues(msg.Params)
 	if !ok {
 		// A failed read leaves the issues unknown, which the page would otherwise show as none.

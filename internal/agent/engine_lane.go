@@ -277,8 +277,8 @@ func (rt *Runtime) answerConnectionRequest(origin acpResponder, msg *marotte.RPC
 }
 
 // answerUnlessDraining runs answer, which answers msg, on inflight; once Shutdown has begun msg is answered at once
-// as an unknown session's. An observer pass's or a host relay's frame pump calls it unjoined by Shutdown, so an
-// ungated inflight.Go could race Shutdown's Wait.
+// as an unknown session's. A host relay's frame pump calls it unjoined by Shutdown, so an ungated inflight.Go could
+// race Shutdown's Wait.
 func (rt *Runtime) answerUnlessDraining(origin acpResponder, msg *marotte.RPCResponse, answer func()) {
 	if !rt.lifecycle.goUnlessDraining(answer) {
 		rt.answerUnknownSession(origin, msg)
@@ -442,9 +442,10 @@ func (rt *Runtime) answerDetached(h engineHandle, d bridge.DetachedSession) {
 
 // observerForward consumes an observer pass's frames: its requests as the engine lane answers an unknown session's
 // (it runs no tools), its workspace notifications through the one table, and its own command list as the slash
-// menu's seed.
+// menu's seed. The loop is on inflight until the pass's stream ends, past the pass's return, so a drain of inflight
+// covers every frame the pass's session delivered; once Shutdown has begun the pass is refused.
 func (rt *Runtime) observerForward(s engineSession) error {
-	go func() {
+	started := rt.lifecycle.goUnlessDraining(func() {
 		ctx, cancel := rt.lifecycle.derivedContext()
 		defer cancel()
 		for n := range s.NotifCh() {
@@ -460,7 +461,10 @@ func (rt *Runtime) observerForward(s engineSession) error {
 				rt.observerUpdate(msg)
 			}
 		}
-	}()
+	})
+	if !started {
+		return errRuntimeDraining
+	}
 	return nil
 }
 

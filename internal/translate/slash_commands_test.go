@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -129,5 +130,41 @@ func TestReadSteeringIssues_FailedFrameIsNotAnUpdate(t *testing.T) {
 		{"uri":"file:///workspace/.kiro/steering/a%20c.md","_meta":{"kiro":{}}}]}`))
 	if !ok || len(issues) != 1 || len(issues["workspace/.kiro/steering/a b.md"]) != 1 {
 		t.Errorf("ReadSteeringIssues = %+v (ok=%v), want one issue under the decoded path", issues, ok)
+	}
+}
+
+// steeringOrderDouble logs its calls beside the bus's events, in one order.
+type steeringOrderDouble struct{ log *[]string }
+
+func (s steeringOrderDouble) Set(map[string][]marotte.SteeringIssue) bool {
+	*s.log = append(*s.log, "Set")
+	return true
+}
+
+func (s steeringOrderDouble) Seen() { *s.log = append(*s.log, "Seen") }
+
+type loggingBus struct{ log *[]string }
+
+func (b loggingBus) Broadcast(_ context.Context, evt marotte.ServerEvent) {
+	*b.log = append(*b.log, string(evt.Type))
+}
+
+// The boot observer pass ends once Seen closes the seed, so Seen comes after the frame's map and event: a frame
+// still being applied when the pass ended would land after a later one and overwrite it.
+func TestHandleSteeringDocuments_SeenComesLast(t *testing.T) {
+	var log []string
+	tr := New(&Roles{Bus: loggingBus{&log}, SteeringIssues: steeringOrderDouble{&log}})
+	for _, tc := range []struct {
+		params string
+		want   []string
+	}{
+		{`{"status":"success","documents":[]}`, []string{"Set", string(marotte.EventSteeringIssuesChanged), "Seen"}},
+		{`{"status":"failed","error":"EACCES"}`, []string{"Seen"}},
+	} {
+		log = nil
+		tr.HandleSteeringDocuments(t.Context(), "c1", &marotte.RPCResponse{Params: json.RawMessage(tc.params)})
+		if !slices.Equal(log, tc.want) {
+			t.Errorf("%s: calls = %v, want %v", tc.params, log, tc.want)
+		}
 	}
 }
