@@ -651,7 +651,7 @@ func (l *runList) advance(f *orderFacts) {
 func (l *runList) pick(f *orderFacts) (*runEntry, marotte.Delivery) {
 	e := l.nextPending(f)
 	if e == nil || e.kind != marotte.RunKindRow {
-		return e, marotte.Delivery{}
+		return e, marotte.Delivery{Kind: marotte.DeliverNothing}
 	}
 	dl := marotte.Deliver(l.project(), l.headFacts())
 	if dl.Kind != marotte.DeliverPrompt {
