@@ -22,7 +22,8 @@ let dismissOpen: (() => void) | null = null;
 
 /** Show a menu at a viewport point, closing any menu already open; dismisses on outside click or Escape.
  *  Returns a dismiss function.
- *  `returnFocus` takes focus back when the menu closes with focus inside it (Escape, an item). */
+ *  `returnFocus`, the element the menu acts on, carries `data-menu-open` while the menu shows and takes
+ *  focus back when the menu closes with focus inside it (Escape, an item). */
 export function showContextMenu(
   items: ContextMenuItem[],
   position: ContextMenuPosition,
@@ -41,6 +42,7 @@ export function showContextMenu(
     ...(opts?.returnFocus === undefined ? {} : { returnFocus: opts.returnFocus }),
     onClose: () => {
       menu.remove();
+      opts?.returnFocus?.removeAttribute("data-menu-open");
       if (dismissOpen === dismiss) {
         dismissOpen = null;
       }
@@ -68,6 +70,7 @@ export function showContextMenu(
     pop.hide();
   };
   dismissOpen = dismiss;
+  opts?.returnFocus?.setAttribute("data-menu-open", "");
   pop.show();
 
   // The popover leaves focus to the caller.

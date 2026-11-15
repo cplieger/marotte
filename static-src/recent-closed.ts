@@ -8,6 +8,7 @@ import { sectionFolded, setSectionFolded } from "./device-view.js";
 import { isSliding, slideBox } from "./disclosure-row.js";
 import { $, maybeEl, setText } from "./dom.js";
 import { iconEl } from "./icon-el.js";
+import { bindContextPress } from "./context-hold.js";
 import { ICON_TAB_CHAT } from "./icons.js";
 import { formatClock, watchClock } from "./locale-time.js";
 import { isRetentionEnabled, onRetentionChange } from "./retention.js";
@@ -17,9 +18,6 @@ import { focusTabRow, getActiveTabId, recentClosed, tabIdFor } from "./tabs.js";
 import type { RecentClose } from "./wire/types.gen.js";
 
 const FOLD_KEY = "recent";
-const HOLD_MS = 500;
-/** How long a touch lift's click stays swallowed, as `tabs-drag.ts` expires its release suppression. */
-const LIFT_CLICK_MS = 80;
 
 let descSeq = 0;
 
@@ -94,76 +92,11 @@ export function initRecentClosed(): void {
   }
 
   function bindRow(row: Row): void {
-    const { button } = row;
-    // One press opens one menu, whichever of the hold timer and the platform's `contextmenu` comes first.
-    let press: { id: number; timer: number | null; opened: boolean } | null = null;
-    const endPress = (): void => {
-      if (press?.timer != null) {
-        clearTimeout(press.timer);
-      }
-      press = null;
-      window.removeEventListener("pointerup", onLift, true);
-      window.removeEventListener("pointercancel", onCancel, true);
-    };
-    const onCancel = (e: PointerEvent): void => {
-      if (e.pointerId === press?.id) {
-        endPress();
-      }
-    };
-    const onLift = (e: PointerEvent): void => {
-      if (e.pointerId !== press?.id) {
-        return;
-      }
-      const opened = press.opened;
-      endPress();
-      if (opened) {
-        swallowLiftClick();
-      }
-    };
-    const menuFromPress = (): boolean => {
-      if (press === null) {
-        return true;
-      }
-      if (press.opened) {
-        return false;
-      }
-      press.opened = true;
-      if (press.timer !== null) {
-        clearTimeout(press.timer);
-        press.timer = null;
-      }
-      return true;
-    };
-
-    button.addEventListener("click", () => {
+    row.button.addEventListener("click", () => {
       void reopen(row);
     });
-    button.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      if (!menuFromPress()) {
-        return;
-      }
-      // A keyboard-opened menu carries no point of its own.
-      const box = button.getBoundingClientRect();
-      const keyed = e.clientX === 0 && e.clientY === 0;
-      openMenu(row, keyed ? box.left : e.clientX, keyed ? box.bottom : e.clientY);
-    });
-    button.addEventListener("pointerdown", (e) => {
-      if (e.pointerType !== "touch") {
-        return;
-      }
-      endPress();
-      const p = { id: e.pointerId, timer: null as number | null, opened: false };
-      p.timer = window.setTimeout(() => {
-        p.timer = null;
-        if (press === p && menuFromPress()) {
-          const box = button.getBoundingClientRect();
-          openMenu(row, e.clientX || box.left, e.clientY || box.bottom);
-        }
-      }, HOLD_MS);
-      press = p;
-      window.addEventListener("pointerup", onLift, true);
-      window.addEventListener("pointercancel", onCancel, true);
+    bindContextPress(row.button, (x, y) => {
+      openMenu(row, x, y);
     });
   }
 
@@ -271,21 +204,4 @@ export function initRecentClosed(): void {
       closed,
     );
   });
-}
-
-/** Swallow the click a held touch sends when it lifts, so neither the row nor the menu's outside dismissal sees it. */
-function swallowLiftClick(): void {
-  const swallow = (e: MouseEvent): void => {
-    e.stopPropagation();
-    e.preventDefault();
-    done();
-  };
-  const timer = window.setTimeout(() => {
-    done();
-  }, LIFT_CLICK_MS);
-  function done(): void {
-    clearTimeout(timer);
-    window.removeEventListener("click", swallow, true);
-  }
-  window.addEventListener("click", swallow, true);
 }

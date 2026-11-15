@@ -23,9 +23,12 @@ import {
   REORDER_SHIFT_TRANS,
   REORDER_SETTLE_MS,
   REORDER_SLOT_FADE_MS,
+  yieldDragToMenu,
 } from "./tabs-drag.js";
 import { announce } from "./legacy-ui/announce.js";
+import { bindContextPress } from "./context-hold.js";
 import shellCss from "./css/10-shell-app.css?raw";
+import tabsCss from "./css/12-tabs.css?raw";
 
 vi.mock("./legacy-ui/announce.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Announce>()),
@@ -154,6 +157,15 @@ function addRow(into: HTMLElement, id: string, child = false): void {
   stubPointerCapture(row);
 }
 
+/** Put the strip in the sidebar's scroller, `#tab-sections`, as the app holds it. */
+function inSections(): HTMLElement {
+  const sections = document.createElement("div");
+  sections.id = "tab-sections";
+  list.replaceWith(sections);
+  sections.append(list);
+  return sections;
+}
+
 /** `renderDOM`'s re-seat: ascending, and a row already in place is not touched. */
 function harnessReproject(): void {
   committed.forEach((id, i) => {
@@ -240,6 +252,11 @@ afterEach(async () => {
 describe("what may start a drag", () => {
   it("isDragHandled() is false initially", () => {
     expect(isDragHandled()).toBe(false);
+  });
+
+  it("drags a mouse press that lands while the strip's scroller is scrolling", () => {
+    inSections().dispatchEvent(new Event("scroll"));
+    startRealDrag(rows["b"] as HTMLElement);
   });
 
   // The keyboard's blur closes the visual viewport offset, moving the row under a still mouse.
@@ -491,13 +508,37 @@ describe("the touch hold", () => {
     expect(unconsumed.defaultPrevented).toBe(false);
   });
 
-  // A press landing during a momentum scroll of the strip must not lift.
-  it("drops the hold when the strip scrolls under it", () => {
+  it.each(["touch", "pen"] as const)(
+    "lifts no row for a %s press that lands while the strip's scroller is scrolling",
+    (pointerType) => {
+      inSections().dispatchEvent(new Event("scroll"));
+      const row = rows["b"] as HTMLElement;
+      row.dispatchEvent(ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType }));
+      vi.advanceTimersByTime(TOUCH_HOLD);
+      expectStripQuiet(START);
+    },
+  );
+
+  it("lifts a row for a touch that lands after the strip's scroller came to rest", async () => {
+    inSections().dispatchEvent(new Event("scroll"));
+    vi.useRealTimers();
+    await new Promise((resolve) => {
+      setTimeout(resolve, 150);
+    });
+    vi.useFakeTimers();
     const row = rows["b"] as HTMLElement;
     row.dispatchEvent(ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType: "touch" }));
-    list.dispatchEvent(new Event("scroll"));
     vi.advanceTimersByTime(TOUCH_HOLD);
-    expect(ghost()).toBeNull();
+    expect(ghost()).not.toBeNull();
+  });
+
+  it("keeps the hold when the strip's scroller scrolls under a still finger", () => {
+    const sections = inSections();
+    const row = rows["b"] as HTMLElement;
+    row.dispatchEvent(ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType: "touch" }));
+    sections.dispatchEvent(new Event("scroll"));
+    vi.advanceTimersByTime(TOUCH_HOLD);
+    expect(ghost()).not.toBeNull();
   });
 
   it("lifts at the hold and not a millisecond before", () => {
@@ -631,6 +672,132 @@ describe("the touch hold", () => {
     expect(menu.defaultPrevented).toBe(true);
     expect(rowMenu).not.toHaveBeenCalled();
     expect(ghost(), "the drag carries on").not.toBeNull();
+  });
+
+  // iOS WebKit fires no `contextmenu` for a long press, so the row's own hold timer asks instead.
+  it("ends an unmoved lift for a menu the row's hold opens", () => {
+    const row = rows["b"] as HTMLElement;
+    row.dispatchEvent(ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType: "touch" }));
+    vi.advanceTimersByTime(TOUCH_HOLD);
+    expect(ghost(), "the hold lifted the row").not.toBeNull();
+
+    expect(yieldDragToMenu()).toBe(true);
+    expectStripQuiet(START);
+    expect(isDragHandled()).toBe(false);
+  });
+
+  it("refuses a held menu under a travelling row", () => {
+    const row = rows["b"] as HTMLElement;
+    row.dispatchEvent(ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType: "touch" }));
+    vi.advanceTimersByTime(TOUCH_HOLD);
+    row.dispatchEvent(
+      ptr("pointermove", { clientY: mid(row) + TOUCH_SLOP + 1, buttons: 1, pointerType: "touch" }),
+    );
+
+    expect(yieldDragToMenu()).toBe(false);
+    expect(ghost(), "the drag carries on").not.toBeNull();
+  });
+
+  it("lets a held menu open while no drag holds the strip", () => {
+    expect(yieldDragToMenu()).toBe(true);
+    expectStripQuiet(START);
+  });
+
+  // The lift folds `t` away, so a scroller at its end clamps and fires `scroll` under a still finger.
+  it("opens a held row's menu on a scrolled strip whose lift folds a sub-tab", async () => {
+    const style = document.createElement("style");
+    style.textContent = tabsCss;
+    const scroller = document.createElement("div");
+    scroller.style.cssText = `position:absolute;top:0;left:0;width:200px;height:${String(ROW_H * 2)}px;overflow-y:auto`;
+    const strip = document.createElement("div");
+    stubPointerCapture(strip);
+    for (const [id, child] of [
+      ["p", false],
+      ["q", false],
+      ["t", true],
+      ["u", false],
+      ["v", false],
+    ] as const) {
+      const row = document.createElement("div");
+      row.dataset["tabId"] = id;
+      row.className = child ? "tab tab-child" : "tab";
+      row.style.height = `${String(ROW_H)}px`;
+      strip.append(row);
+      attachDrag(row);
+    }
+    scroller.append(strip);
+    document.head.append(style);
+    document.body.append(scroller);
+    try {
+      scroller.scrollTop = scroller.scrollHeight;
+      await new Promise((resolve) => {
+        scroller.addEventListener("scroll", resolve, { once: true });
+      });
+      vi.useRealTimers();
+      await new Promise((resolve) => {
+        setTimeout(resolve, 150);
+      });
+      vi.useFakeTimers();
+      const held = strip.querySelector<HTMLElement>('[data-tab-id="u"]') as HTMLElement;
+      const open = vi.fn();
+      bindContextPress(held, open, yieldDragToMenu);
+      const clamped = new Promise((resolve) => {
+        scroller.addEventListener("scroll", resolve, { once: true });
+      });
+      const at = { clientY: mid(held), buttons: 1, pointerType: "touch" };
+      held.dispatchEvent(ptr("pointerdown", at));
+      vi.advanceTimersByTime(TOUCH_HOLD);
+      expect(
+        strip.querySelector("[data-drag-collapsed]"),
+        "the lift folded the sub-tab",
+      ).not.toBeNull();
+      await clamped;
+      vi.advanceTimersByTime(500 - TOUCH_HOLD);
+      expect(open).toHaveBeenCalledTimes(1);
+      held.dispatchEvent(ptr("pointerup", { ...at, buttons: 0 }));
+    } finally {
+      scroller.remove();
+      style.remove();
+    }
+  });
+
+  // The lift folds `s` above `b`, so the pen's long press lands its `contextmenu` on `c`.
+  it("opens a pen-held row's menu from a contextmenu that lands on the row the lift's fold moved under the pen", () => {
+    const style = document.createElement("style");
+    style.textContent = tabsCss;
+    document.head.append(style);
+    try {
+      // The strip's inline `display` would outrank the fold's `display: none`.
+      (rows["s"] as HTMLElement).style.removeProperty("display");
+      const b = rows["b"] as HTMLElement;
+      const c = rows["c"] as HTMLElement;
+      const openB = vi.fn();
+      const openC = vi.fn();
+      bindContextPress(b, openB, yieldDragToMenu);
+      bindContextPress(c, openC, yieldDragToMenu);
+      const at = { clientX: 20, clientY: mid(b), pointerType: "pen" };
+      b.dispatchEvent(ptr("pointerdown", { ...at, buttons: 1 }));
+      vi.advanceTimersByTime(TOUCH_HOLD);
+      const box = c.getBoundingClientRect();
+      expect(
+        box.top <= at.clientY && at.clientY < box.bottom,
+        "the fold moved c under the pen",
+      ).toBe(true);
+      c.dispatchEvent(
+        new PointerEvent("contextmenu", {
+          ...at,
+          pointerId: POINTER_ID,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      expect(openC).not.toHaveBeenCalled();
+      expect(openB).toHaveBeenCalledTimes(1);
+      expect(openB).toHaveBeenCalledWith(at.clientX, at.clientY);
+      b.dispatchEvent(ptr("pointerup", at));
+    } finally {
+      style.remove();
+    }
   });
 });
 
@@ -1419,24 +1586,24 @@ describe("a strip split into sections", () => {
   });
 
   describe("the press guards", () => {
-    it("drops a held press when #tab-sections scrolls, though the row's list never does", () => {
+    it("lifts nothing for a touch landing while #tab-sections scrolls, though the row's list never does", () => {
       build(true);
       const row = rows["b"] as HTMLElement;
+      sections.dispatchEvent(new Event("scroll"));
       row.dispatchEvent(
         ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType: "touch" }),
       );
-      sections.dispatchEvent(new Event("scroll"));
       vi.advanceTimersByTime(TOUCH_HOLD);
       expect(ghost()).toBeNull();
     });
 
-    it("keeps a held press through another scroller's scroll, so a streaming reply blocks no drag", () => {
+    it("lifts a touch landing while another scroller scrolls, so a streaming reply blocks no drag", () => {
       build(true);
       const row = rows["b"] as HTMLElement;
+      transcript.dispatchEvent(new Event("scroll"));
       row.dispatchEvent(
         ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType: "touch" }),
       );
-      transcript.dispatchEvent(new Event("scroll"));
       vi.advanceTimersByTime(TOUCH_HOLD);
       expect(ghost(), "the hold lifted").not.toBeNull();
     });

@@ -331,6 +331,11 @@ body.sidebar-resizing {
     }
   }
 
+  /* The row a context menu acts on keeps its hover look while the menu shows; a touch has no hover. */
+  &:not(.active)[data-menu-open] {
+    background: var(--c-hover-select);
+  }
+
   /* The press channel a touchscreen gets instead, and the reason it has to be
    * written HERE: 03-base.css's universal press floor is scoped to
    * `:where(button, summary, [role="button"])`, and a tab row is a div with
@@ -514,6 +519,13 @@ body.sidebar-resizing {
  * selection would follow it across the page. Paired: Safari through 27 parses only
  * the prefixed form. */
 .tab-dragging {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* A touch hold opens a chat row's menu, so the row selects no text. */
+.tab[data-kind="chat"] {
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;

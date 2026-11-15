@@ -46,6 +46,53 @@ describe("a disabled context-menu item", () => {
   });
 });
 
+describe("the element a context menu belongs to", () => {
+  let owners: HTMLElement[] = [];
+  afterEach(() => {
+    for (const o of owners) {
+      o.remove();
+    }
+    owners = [];
+  });
+  function owner(): HTMLButtonElement {
+    const b = document.createElement("button");
+    document.body.append(b);
+    owners.push(b);
+    return b;
+  }
+
+  it("carries data-menu-open while its menu shows and loses it on Escape", () => {
+    const row = owner();
+    dismiss = showContextMenu(
+      [{ label: "Reopen", action: vi.fn() }],
+      { x: 10, y: 10 },
+      { returnFocus: row },
+    );
+    expect(row.hasAttribute("data-menu-open")).toBe(true);
+    document.activeElement?.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+    expect(row.hasAttribute("data-menu-open")).toBe(false);
+  });
+
+  it("moves to the next menu's element when that menu replaces it", () => {
+    const first = owner();
+    const second = owner();
+    showContextMenu(
+      [{ label: "Rename", action: vi.fn() }],
+      { x: 10, y: 10 },
+      { returnFocus: first },
+    );
+    dismiss = showContextMenu(
+      [{ label: "Reopen", action: vi.fn() }],
+      { x: 40, y: 40 },
+      { returnFocus: second },
+    );
+    expect(first.hasAttribute("data-menu-open")).toBe(false);
+    expect(second.hasAttribute("data-menu-open")).toBe(true);
+  });
+});
+
 describe("a second context menu", () => {
   it("closes the open one, so one menu shows", () => {
     const first = vi.fn();
