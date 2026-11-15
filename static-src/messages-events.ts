@@ -126,34 +126,45 @@ const SWITCH_REASONS: Record<
   (p: { readonly from: string; readonly to: string }) => string
 > = {
   unavailable: (p) => `Switched from ${p.from} to ${p.to} · not available for this account`,
+  repinned: (p) => `Switched to ${p.to} · Kiro moved this chat off ${p.from}`,
 };
 
 /**
- * KAS's fallback notice: the cause from `trigger`, then a decline's reason (a non-empty `reason`, whatever `to`
- * holds) or the model the turn moved to, which a `session` scope keeps for the rest of the session; a retry on the
- * same model (KAS re-asking Auto) names no target. Model ids stay raw, as `switchedLabel` shows them.
+ * KAS's fallback notice. A move to another model reads as a model switch, with the cause from `trigger` and how long
+ * the new model stays (`scope`); a decline (a non-empty `reason`, whatever `to` holds) names the cause and why
+ * nothing moved; a retry on the same model (KAS re-asking Auto) names no target. Model ids stay raw, as
+ * `switchedLabel` shows them; the scope's repeat of `to` is chrome, so find counts each id once as the server does.
  */
 function fallbackLabel(p: EntryModelFallback): LabelPart[] {
-  const cause: LabelPart[] = [p.from, worded(` ${fallbackCause(p.trigger)}`)];
+  const cause = worded(` ${fallbackCause(p.trigger)}`);
   const reason = p.reason ?? "";
   if (reason !== "") {
     const why = DECLINE_REASONS.get(reason) ?? reason;
-    return [...cause, worded(`, no fallback model available \u00b7 ${why}`)];
+    return [p.from, cause, worded(`, no fallback model available \u00b7 ${why}`)];
   }
   const to = p.to ?? "";
   if (to === "") {
-    return cause;
+    return [p.from, cause];
   }
-  const retried: LabelPart[] =
-    to === p.from ? [...cause, worded(", retried")] : [...cause, worded(", retried on "), to];
-  return p.scope === "session" ? [...retried, worded(", which now serves this session")] : retried;
+  if (to === p.from) {
+    return [p.from, cause, worded(", retried")];
+  }
+  const moved: LabelPart[] = [worded("Switched to "), to, worded(": "), p.from, cause];
+  switch (p.scope) {
+    case "session":
+      return [...moved, worded(` \u00b7 this chat now stays on ${to}`)];
+    case "turn":
+      return [...moved, worded(" \u00b7 for this turn only")];
+    default:
+      return moved;
+  }
 }
 
 /** KAS's `trigger` is open: a value it adds later reads as an unknown cause. */
 function fallbackCause(trigger: string): string {
   switch (trigger) {
     case "refusal":
-      return "refused this request";
+      return "declined the request";
     case "availability":
       return "was unavailable";
     default:

@@ -373,6 +373,11 @@ func TestRenderChatMarkdown_SaysWhichModelSwitchedTriggerFired(t *testing.T) {
 			unwanted: []string{"(", "switched by KAS"},
 		},
 		{
+			name:    "repinned_by_kas_with_no_cause",
+			payload: marotte.EntryModelSwitched{From: "model-a-5", To: "model-b-5", Reason: marotte.ModelSwitchReasonRepinned},
+			want:    "**Event: model_switched** model-a-5 → model-b-5, switched by KAS: repinned",
+		},
+		{
 			name:    "repinned_by_kas",
 			payload: marotte.EntryModelSwitched{From: "model-a-5", To: "model-b-5", Reason: marotte.ModelSwitchReasonUnavailable},
 			want:    "**Event: model_switched** model-a-5 → model-b-5, switched by KAS: unavailable",
@@ -427,7 +432,7 @@ func TestRenderChatMarkdown_NamesAModelFallbacksDecision(t *testing.T) {
 		{
 			name:    "retried_for_the_turn",
 			payload: marotte.EntryModelFallback{From: "model-a-5", To: "model-b-5", Scope: "turn", Trigger: "availability"},
-			want:    "**Event: model_fallback** availability: model-a-5 → model-b-5\n",
+			want:    "**Event: model_fallback** availability: model-a-5 → model-b-5, this turn only\n",
 		},
 		{
 			name:    "retried_for_the_session",
@@ -447,6 +452,50 @@ func TestRenderChatMarkdown_NamesAModelFallbacksDecision(t *testing.T) {
 			md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Fallback"}, entries)
 			if !strings.Contains(md, tc.want) {
 				t.Errorf("renderChatMarkdown(%+v) missing %q\n---\n%s", tc.payload, tc.want, md)
+			}
+		})
+	}
+}
+
+// KAS's repin and the fallback notice that explains it are one move: the export writes the notice alone, whatever
+// cause the repin was recorded with, as the transcript draws it.
+func TestRenderChatMarkdown_WritesAFallbackAndTheRepinItExplainsAsOneLine(t *testing.T) {
+	for _, reason := range []marotte.ModelSwitchReason{marotte.ModelSwitchReasonUnavailable, marotte.ModelSwitchReasonRepinned} {
+		t.Run(string(reason), func(t *testing.T) {
+			entries, _ := chatOf(openTurn("t-1", 1, nil).
+				add("", "sw-1", marotte.EntryKindModelSwitched, marotte.EntryModelSwitched{
+					From: "claude-opus-5.5", To: "claude-opus-4.8", Reason: reason,
+				}).
+				add("", "fb-1", marotte.EntryKindModelFallback, marotte.EntryModelFallback{
+					From: "claude-opus-5.5", To: "claude-opus-4.8", Scope: "session", Trigger: "refusal",
+				}))
+			md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Fallback"}, entries)
+			if strings.Contains(md, "model_switched") {
+				t.Errorf("export writes the repin the fallback explains:\n%s", md)
+			}
+			if want := "**Event: model_fallback** refusal: claude-opus-5.5 → claude-opus-4.8, now serves the session\n"; !strings.Contains(md, want) {
+				t.Errorf("export missing %q:\n%s", want, md)
+			}
+		})
+	}
+}
+
+// A repin the next entry does not explain stays: the fallback moved elsewhere, or a sub-agent's moved nothing.
+func TestRenderChatMarkdown_KeepsARepinNoFallbackExplains(t *testing.T) {
+	cases := map[string]marotte.EntryModelFallback{
+		"another_target": {From: "model-a-5", To: "model-c-5", Scope: "session", Trigger: "refusal"},
+		"subagent":       {From: "model-a-5", To: "model-b-5", Scope: "session", Trigger: "refusal", Subagent: true},
+		"decline":        {From: "model-a-5", Trigger: "availability", Reason: "chainExhausted"},
+	}
+	for name, fb := range cases {
+		t.Run(name, func(t *testing.T) {
+			entries, _ := chatOf(openTurn("t-1", 1, nil).
+				add("", "sw-1", marotte.EntryKindModelSwitched, marotte.EntryModelSwitched{
+					From: "model-a-5", To: "model-b-5", Reason: marotte.ModelSwitchReasonRepinned,
+				}).
+				add("", "fb-1", marotte.EntryKindModelFallback, fb))
+			if md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Fallback"}, entries); !strings.Contains(md, "**Event: model_switched**") {
+				t.Errorf("export drops a repin no fallback explains:\n%s", md)
 			}
 		})
 	}

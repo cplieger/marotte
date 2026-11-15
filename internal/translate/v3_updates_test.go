@@ -1011,7 +1011,9 @@ func TestHandleConfigOptionUpdate_AdoptsTheRunningLevelWhenTheRecordHoldsNone(t 
 	}
 }
 
-func TestHandleConfigOptionUpdate_AMoveWhileTheOldModelIsOfferedIsStillARepin(t *testing.T) {
+// KAS repins on a refusal fallback too, before its notice names the cause, so a move off a model the catalog
+// still offers claims no cause.
+func TestHandleConfigOptionUpdate_AMoveWhileTheOldModelIsOfferedNamesNoCause(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 	_, _ = store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -1023,7 +1025,7 @@ func TestHandleConfigOptionUpdate_AMoveWhileTheOldModelIsOfferedIsStillARepin(t 
 	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelOffering(t, "model-d", "model-a", "model-d"), FrameAttribution{})
 
 	got := modelSwitchesOf(t, deps.between["c1"])
-	want := []marotte.EntryModelSwitched{{From: "model-a", To: "model-d", Reason: marotte.ModelSwitchReasonUnavailable}}
+	want := []marotte.EntryModelSwitched{{From: "model-a", To: "model-d", Reason: marotte.ModelSwitchReasonRepinned}}
 	if !slices.Equal(got, want) {
 		t.Errorf("model_switched entries = %+v, want %+v", got, want)
 	}

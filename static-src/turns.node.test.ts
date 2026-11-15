@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 import { toolResultID } from "./entry-ids.js";
 import { setHookStatusShown } from "./hook-fold.js";
 import { touchTurn } from "./turn-revision.js";
-import { turnFoldHides, turnLastMessage } from "./turn-face.js";
+import { turnFace, turnFoldHides } from "./turn-face.js";
 import {
   COMMAND_KINDS,
   closeOfBody,
@@ -27,6 +27,11 @@ import {
 } from "./turns.js";
 import type { OpenEntry, ToolInteraction, TurnState } from "./types.js";
 import type { Entry, EntryToolCall, EntryTurnClose } from "./wire/types.gen.js";
+
+/** The face's prose, the turn's last message. */
+function lastMessage(t: Turn): string[] {
+  return turnFace(t).flatMap((p) => (p.kind === "prose" ? [p.text] : []));
+}
 
 // --- Fixtures ---------------------------------------------------------------
 //
@@ -1113,11 +1118,11 @@ describe("a projected turn's body across passes", () => {
   it("is a new array after an entry changed in place", () => {
     const { source, st } = held();
     const before = bodyNow(source);
-    expect(turnLastMessage(projectTurns(source)[0]!)).toEqual(["answer"]);
+    expect(lastMessage(projectTurns(source)[0]!)).toEqual(["answer"]);
     st.entries[1] = textEntry("t1", 1, "rewritten");
     touchTurn(st);
 
     expect(bodyNow(source)).not.toBe(before);
-    expect(turnLastMessage(projectTurns(source)[0]!)).toEqual(["rewritten"]);
+    expect(lastMessage(projectTurns(source)[0]!)).toEqual(["rewritten"]);
   });
 });

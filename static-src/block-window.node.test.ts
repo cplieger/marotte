@@ -286,6 +286,14 @@ describe("turnFolds", () => {
       ]);
     });
 
+    it("hides a switch row KAS gave no cause for", () => {
+      const t = turn("t1", [
+        entry(1, "model_switched", { from: "model-a-5", to: "model-b-5", reason: "repinned" }),
+        fallback(2),
+      ]);
+      expect([...turnFolds(t, "").fellBack]).toEqual([1]);
+    });
+
     it.each([
       ["moved to another model", [repin(1), fallback(2, "model-c-5")]],
       ["was not the entry right before", [repin(1), text(2), fallback(3)]],

@@ -7,7 +7,7 @@ import { hookRenders, hookStatusShown } from "./hook-fold.js";
 import { isInternalToolTitle } from "./tool-schema.js";
 import { isWakingRow } from "./waking-rows.js";
 import type { Entry, EntryToolResult } from "./types.js";
-import { isSubagentFallback, payloadOf, type Turn } from "./turns.js";
+import { appliedFallback, isSubagentFallback, payloadOf, type Turn } from "./turns.js";
 
 /**
  * What one paint's WINDOW may mount. Two budgets (a tool card is a whole disclosure, a text
@@ -153,9 +153,9 @@ function hookCallRenders(e: Entry, folds: TurnFolds): boolean {
  *  same turn again replaces its "Rewound to here" row). `readDrop` holds the turn's dropped agent
  *  notes whose id the same turn read, as a read note or a take-up's `kas_id`: KAS's boundary clear
  *  names what the turn injected, and that is no loss to show. `fellBack` holds the `seq` of each
- *  `model_switched{reason: "unavailable"}` whose next entry in the lane is the chat's own (not a
- *  sub-agent's) `model_fallback` to the same model, per `fallsBackFrom`: KAS re-pins before it
- *  sends the notice, so the switch row's guessed cause is the notice's to state. */
+ *  KAS `model_switched` (a `reason`) that the next entry in the lane, an applied fallback to the
+ *  same model, explains (`fallsBackFrom`): KAS re-pins before it sends the notice, so the notice
+ *  states the cause. */
 export interface TurnFolds {
   readonly plan: number;
   readonly revert: number;
@@ -238,16 +238,16 @@ function hookResultsOf(entries: readonly Entry[]): ReadonlyMap<string, EntryTool
   return out ?? NO_RESULTS;
 }
 
-/** Whether `fallback` names the move `prev` recorded as an unexplained re-pin. A sub-agent's
- *  fallback never moves the chat's model, so it explains no chat re-pin. */
+/** Whether `fallback` names the move `prev` recorded as KAS's re-pin, whatever cause the re-pin guessed. A
+ *  sub-agent's fallback never moves the chat's model, and a decline moved nothing, so neither explains one.
+ *  internal/chat explainedRepins answers the same for the export. */
 function fallsBackFrom(prev: Entry, fallback: Entry): boolean {
   const switched = payloadOf(prev, "model_switched");
-  const to = payloadOf(fallback, "model_fallback")?.to ?? "";
   return (
-    switched?.reason === "unavailable" &&
+    switched?.reason !== undefined &&
     !isSubagentFallback(fallback) &&
-    to !== "" &&
-    switched.to === to
+    appliedFallback(fallback) &&
+    switched.to === payloadOf(fallback, "model_fallback")?.to
   );
 }
 

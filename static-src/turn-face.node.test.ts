@@ -2,9 +2,14 @@
 // `.node`.
 
 import { describe, it, expect } from "vitest";
-import { turnFoldHides, turnLastMessage } from "./turn-face.js";
+import { turnFace, turnFoldHides } from "./turn-face.js";
 import type { Turn } from "./turns.js";
 import type { Entry } from "./wire/types.gen.js";
+
+/** The face's prose, the turn's last message. */
+function lastMessage(t: Turn): string[] {
+  return turnFace(t).flatMap((p) => (p.kind === "prose" ? [p.text] : []));
+}
 
 /** A turn whose body is `body`, seqs stamped by position. */
 function oneTurn(body: readonly Entry[]): Turn {
@@ -60,7 +65,7 @@ describe("turnLastMessage", () => {
       sealed("tool_result", {}, { id: "c1:result" }),
       text("b-say", "the final answer"),
     ]);
-    expect(turnLastMessage(t)).toEqual(["the final answer"]);
+    expect(lastMessage(t)).toEqual(["the final answer"]);
   });
 
   it("takes EVERY message back to back at the end, one string each", () => {
@@ -72,7 +77,7 @@ describe("turnLastMessage", () => {
       sealed("steer_delivered", { steer_id: "w-1", read_ts: 1 }, { id: "w-1:delivered" }),
       text("b-say", "No change: still waiting."),
     ]);
-    expect(turnLastMessage(t)).toEqual([
+    expect(lastMessage(t)).toEqual([
       "Open behind this one: plus 2 other calls.",
       "No change: still waiting.",
     ]);
@@ -85,26 +90,26 @@ describe("turnLastMessage", () => {
       sealed("tool_result", {}, { id: "c1:result" }),
       text("a-say#2", "o** three"),
     ]);
-    expect(turnLastMessage(t)).toEqual(["one **two** three"]);
+    expect(lastMessage(t)).toEqual(["one **two** three"]);
   });
 
   it("stops at a steer note, which the body draws between the two", () => {
     const t = oneTurn([text("a-say", "before"), STEER, text("b-say", "after")]);
-    expect(turnLastMessage(t)).toEqual(["after"]);
+    expect(lastMessage(t)).toEqual(["after"]);
   });
 
   it("skips a delegate's prose — a delegate's report is not the turn's answer", () => {
     const t = oneTurn([text("a-say", "the parent's answer"), text("d-say", "report", "sub-A")]);
-    expect(turnLastMessage(t)).toEqual(["the parent's answer"]);
+    expect(lastMessage(t)).toEqual(["the parent's answer"]);
   });
 
   it("ends at the last NON-EMPTY text, dropping a whitespace-only message", () => {
     const t = oneTurn([text("a-say", "the answer"), call("c1"), text("b-say", "   ")]);
-    expect(turnLastMessage(t)).toEqual(["the answer"]);
+    expect(lastMessage(t)).toEqual(["the answer"]);
   });
 
   it("answers empty for a turn with no prose at all", () => {
-    expect(turnLastMessage(oneTurn([call("c1")]))).toEqual([]);
+    expect(lastMessage(oneTurn([call("c1")]))).toEqual([]);
   });
 
   it("reaches back over a steer_ack inside the message, which is its own block", () => {
@@ -116,7 +121,7 @@ describe("turnLastMessage", () => {
       text("x-say#2", "\n\nSTEERING s2: tail.]"),
       call("hook-1"),
     ]);
-    expect(turnLastMessage(t)).toEqual([
+    expect(lastMessage(t)).toEqual([
       "LONG ANSWER part one.\n\n[",
       "Folded in as the discovery check.",
       "STEERING s2: tail.]",
@@ -125,7 +130,7 @@ describe("turnLastMessage", () => {
 
   it("ends at a trailing steer_ack, the last words the agent wrote", () => {
     const t = oneTurn([call("c1"), text("a-say", "the answer"), ack("Noted.")]);
-    expect(turnLastMessage(t)).toEqual(["the answer", "Noted."]);
+    expect(lastMessage(t)).toEqual(["the answer", "Noted."]);
   });
 
   it("reaches back over a steer note inside ONE message", () => {
@@ -135,7 +140,7 @@ describe("turnLastMessage", () => {
       STEER,
       text("y-say#2", "Second half."),
     ]);
-    expect(turnLastMessage(t)).toEqual(["First half.", "Second half."]);
+    expect(lastMessage(t)).toEqual(["First half.", "Second half."]);
   });
 
   it("reaches back over a tool call inside ONE message", () => {
@@ -145,7 +150,7 @@ describe("turnLastMessage", () => {
       sealed("tool_result", {}, { id: "c1:result" }),
       text("a-say#2", "after"),
     ]);
-    expect(turnLastMessage(t)).toEqual(["before", "after"]);
+    expect(lastMessage(t)).toEqual(["before", "after"]);
   });
 
   it("reaches back over SEVERAL drawn entries inside one message, to its first segment", () => {
@@ -161,12 +166,12 @@ describe("turnLastMessage", () => {
       call("c3"),
       text("a-say#3", "three"),
     ]);
-    expect(turnLastMessage(t)).toEqual(["one", "two", "three"]);
+    expect(lastMessage(t)).toEqual(["one", "two", "three"]);
   });
 
   it("does not reach over a tool call to a text under a MINTED say, which names no message", () => {
     const t = oneTurn([text("t1:e1", "unknown"), call("c1"), text("a-say", "the answer")]);
-    expect(turnLastMessage(t)).toEqual(["the answer"]);
+    expect(lastMessage(t)).toEqual(["the answer"]);
   });
 
   it("reaches over a tool call and a delegate's prose to the same say", () => {
@@ -177,7 +182,7 @@ describe("turnLastMessage", () => {
       text("d-say", "report", "sub-A"),
       text("a-say#2", "tail"),
     ]);
-    expect(turnLastMessage(t)).toEqual(["head", "tail"]);
+    expect(lastMessage(t)).toEqual(["head", "tail"]);
   });
 
   const applied = sealed("model_fallback", {
@@ -195,7 +200,7 @@ describe("turnLastMessage", () => {
       applied,
       text("b-say", " and the second half."),
     ]);
-    expect(turnLastMessage(t)).toEqual(["Here is the first half", "and the second half."]);
+    expect(lastMessage(t)).toEqual(["Here is the first half", "and the second half."]);
   });
 
   it.each([
@@ -207,7 +212,7 @@ describe("turnLastMessage", () => {
     ],
   ])("stops at a declined fallback naming %s, after which nothing continues", (_, payload) => {
     const t = oneTurn([text("a-say", "a"), sealed("model_fallback", payload), text("b-say", "b")]);
-    expect(turnLastMessage(t)).toEqual(["b"]);
+    expect(lastMessage(t)).toEqual(["b"]);
   });
 
   it("reaches over a sub-agent's model_fallback, which the body does not draw", () => {
@@ -221,7 +226,7 @@ describe("turnLastMessage", () => {
       }),
       text("b-say", "after"),
     ]);
-    expect(turnLastMessage(t)).toEqual(["before", "after"]);
+    expect(lastMessage(t)).toEqual(["before", "after"]);
   });
 
   it("stops at the tool call when the refused attempt wrote no prose", () => {
@@ -232,7 +237,77 @@ describe("turnLastMessage", () => {
       applied,
       text("b-say", "b"),
     ]);
-    expect(turnLastMessage(t)).toEqual(["b"]);
+    expect(lastMessage(t)).toEqual(["b"]);
+  });
+});
+
+// --- The rows a face keeps -------------------------------------------------
+
+/** The face's parts as `row:<kind>` or the prose, in order. */
+function faceOf(t: Turn): string[] {
+  return turnFace(t).map((p) => (p.kind === "row" ? `row:${p.entry.kind}` : p.text));
+}
+
+const REPIN = sealed("model_switched", { from: "a", to: "b", reason: "unavailable" }, { id: "sw" });
+const FALLBACK = sealed(
+  "model_fallback",
+  { from: "a", to: "b", scope: "session", trigger: "refusal" },
+  { id: "fb" },
+);
+
+describe("turnFace", () => {
+  it("keeps a fallback's one line before the answer it was retried for, and drops the re-pin it explains", () => {
+    const t = oneTurn([
+      text("a-say", "working"),
+      STEER,
+      REPIN,
+      FALLBACK,
+      call("c1"),
+      text("b-say", "the answer"),
+    ]);
+    expect(faceOf(t)).toEqual(["row:model_fallback", "the answer"]);
+  });
+
+  it("keeps the line between the refused text and its continuation, where it happened", () => {
+    const t = oneTurn([text("a-say", "half an"), REPIN, FALLBACK, text("a-say#2", "answer")]);
+    expect(faceOf(t)).toEqual(["half an", "row:model_fallback", "answer"]);
+  });
+
+  it.each([
+    ["model_switched", { from: "a", to: "b", effort: "high" }],
+    ["model_switched", { from: "a", to: "a", effort: "high" }],
+    ["mode_switched", { from: "spec", to: "vibe", source: "agent" }],
+    ["context_reset", { cause: "load_failed" }],
+  ] as const)("keeps a %s line, a setting that outlives the turn", (kind, payload) => {
+    expect(faceOf(oneTurn([sealed(kind, payload), text("a-say", "done")]))).toEqual([
+      `row:${kind}`,
+      "done",
+    ]);
+  });
+
+  it.each([
+    [
+      "a sub-agent's fallback",
+      { from: "a", to: "b", scope: "session", trigger: "refusal", subagent: true },
+    ],
+    ["a decline", { from: "a", trigger: "availability", reason: "chainExhausted" }],
+    ["a same-model retry", { from: "auto", to: "auto", scope: "turn", trigger: "refusal" }],
+  ] as const)("leaves out %s, which moved no model", (_why, payload) => {
+    expect(faceOf(oneTurn([sealed("model_fallback", payload), text("a-say", "done")]))).toEqual([
+      "done",
+    ]);
+  });
+
+  it("leaves out a delegate's lines", () => {
+    const t = oneTurn([
+      sealed("model_switched", { from: "a", to: "b" }, { lane: "sub-A" }),
+      text("a-say", "done"),
+    ]);
+    expect(faceOf(t)).toEqual(["done"]);
+  });
+
+  it("keeps a line on a turn with no prose", () => {
+    expect(faceOf(oneTurn([call("c1"), FALLBACK]))).toEqual(["row:model_fallback"]);
   });
 });
 
@@ -259,12 +334,20 @@ describe("turnFoldHides", () => {
     ["compaction", {}],
     ["compaction_failed", {}],
     ["safety_blocked", {}],
-    ["model_switched", { from: "a", to: "b" }],
-    ["model_fallback", { from: "a", to: "b", trigger: "refusal" }],
-    ["mode_switched", { from: "spec", to: "vibe", source: "user" }],
+    ["model_routed", { message: "" }],
+    ["model_fallback", { from: "a", trigger: "availability", reason: "chainExhausted" }],
   ] as const)("hides a %s entry", (kind, payload) => {
     const t = oneTurn([sealed(kind, payload), text("a-say", "done")]);
     expect(turnFoldHides(t)).toBe(true);
+  });
+
+  it.each([
+    ["a model fallback", [REPIN, FALLBACK]],
+    ["a model switch", [sealed("model_switched", { from: "a", to: "b" })]],
+    ["a mode switch", [sealed("mode_switched", { from: "spec", to: "vibe", source: "user" })]],
+    ["a context reset", [sealed("context_reset", { cause: "session_missing" })]],
+  ] as const)("hides nothing behind %s, which the face shows", (_why, rows) => {
+    expect(turnFoldHides(oneTurn([...rows, text("a-say", "done")]))).toBe(false);
   });
 
   it("hides nothing behind a sub-agent's model_fallback, which the body does not draw", () => {
@@ -304,7 +387,7 @@ describe("turnFoldHides", () => {
 
   it("hides nothing behind a steer_ack, which the face shows as its own block", () => {
     const t = oneTurn([text("a-say", "the answer"), ack("Noted."), text("a-say#2", "more")]);
-    expect(turnLastMessage(t)).toEqual(["the answer", "Noted.", "more"]);
+    expect(lastMessage(t)).toEqual(["the answer", "Noted.", "more"]);
     expect(turnFoldHides(t)).toBe(false);
   });
 
@@ -315,7 +398,7 @@ describe("turnFoldHides", () => {
 
   it("hides the steer note inside ONE message, which the face reaches over", () => {
     const t = oneTurn([text("y-say", "First half."), STEER, text("y-say#2", "Second half.")]);
-    expect(turnLastMessage(t)).toEqual(["First half.", "Second half."]);
+    expect(lastMessage(t)).toEqual(["First half.", "Second half."]);
     expect(turnFoldHides(t)).toBe(true);
   });
 });

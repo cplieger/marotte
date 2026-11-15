@@ -44,7 +44,7 @@ export type MCPPrewarmState = "installing" | "done" | "failed";
 
 export type ModeSwitchSource = "user" | "agent";
 
-export type ModelSwitchReason = "unavailable";
+export type ModelSwitchReason = "unavailable" | "repinned";
 
 export type NoticeLevel = "info" | "warning" | "error";
 

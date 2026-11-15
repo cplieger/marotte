@@ -339,7 +339,8 @@ func entrySegments(e *marotte.Entry, t *searchTurn, names map[string]string) []s
 		marotte.EntryKindModelSwitched, marotte.EntryKindModeSwitched, marotte.EntryKindSteerDelivered,
 		marotte.EntryKindSteerCleared, marotte.EntryKindRunNamed, marotte.EntryKindContextReset,
 		marotte.EntryKindStepGraded:
-		// A compaction summary restates history searchable at its source; bind, switch and reset render no text.
+		// A compaction summary restates history searchable at its source; a switch or reset row draws only words
+		// marotte composes around ids, and a bind draws nothing.
 		return nil
 	}
 	return nil
@@ -361,18 +362,19 @@ func toolResultPayloadSegments(payload json.RawMessage) []segment {
 	return toolResultSegments(&res)
 }
 
-// modelFallbackSegments is the model ids the row draws (messages-events.ts fallbackLabel): the model that stopped,
-// then the one the turn moved to, which a decline or a retry on the same model does not name. The row words the rest.
+// modelFallbackSegments is the model ids the row draws (messages-events.ts fallbackLabel), in its order: the model
+// the turn moved to, then the one that stopped; a decline or a retry on the same model names only the one that
+// stopped. The row words the rest.
 func modelFallbackSegments(payload json.RawMessage) []segment {
 	var p marotte.EntryModelFallback
 	if json.Unmarshal(payload, &p) != nil {
 		return nil
 	}
-	segs := oneSegment(segmentContent, p.From)
-	if p.Reason == "" && p.To != p.From {
-		segs = append(segs, oneSegment(segmentContent, p.To)...)
+	from := oneSegment(segmentContent, p.From)
+	if p.Reason != "" || p.To == "" || p.To == p.From {
+		return from
 	}
-	return segs
+	return append(oneSegment(segmentContent, p.To), from...)
 }
 
 func planSegments(payload json.RawMessage) []segment {

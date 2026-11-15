@@ -114,6 +114,8 @@ type turnRender struct {
 	results  map[string]*marotte.EntryToolResult
 	calls    map[string]struct{}
 	readDrop map[string]struct{}
+	// fellBack is the ids of KAS's repins a following model_fallback explains (explainedRepins).
+	fellBack map[string]struct{}
 	woken    *wakeFacts
 	revert   string
 	plan     []marotte.PlanEntry
@@ -125,13 +127,44 @@ func newTurnRender(turn []marotte.Entry, woken *wakeFacts) turnRender {
 	if woken == nil {
 		woken = &wakeFacts{}
 	}
-	r := turnRender{results: results, calls: calls, plan: newestPlan(turn), readDrop: readDrops(turn), woken: woken}
+	r := turnRender{
+		results: results, calls: calls, plan: newestPlan(turn), readDrop: readDrops(turn), woken: woken,
+		fellBack: explainedRepins(turn),
+	}
 	for i := range turn {
 		if turn[i].Kind == marotte.EntryKindTurnRevert {
 			r.revert = turn[i].ID
 		}
 	}
 	return r
+}
+
+// explainedRepins is the ids of the model_switched entries KAS wrote that the next entry in their lane, a chat
+// model_fallback to the same model, explains: KAS repins before it sends the notice, and the two are one move
+// (block-window.ts fallsBackFrom draws the same one line).
+func explainedRepins(turn []marotte.Entry) map[string]struct{} {
+	var out map[string]struct{}
+	prev := map[string]*marotte.Entry{}
+	for i := range turn {
+		e := &turn[i]
+		p := prev[e.Lane]
+		prev[e.Lane] = e
+		if e.Kind != marotte.EntryKindModelFallback || p == nil || p.Kind != marotte.EntryKindModelSwitched {
+			continue
+		}
+		var sw marotte.EntryModelSwitched
+		var fb marotte.EntryModelFallback
+		if !decodePayload(p, &sw) || !decodePayload(e, &fb) {
+			continue
+		}
+		if sw.Reason != "" && !fb.Subagent && fb.Reason == "" && fb.To != "" && sw.To == fb.To {
+			if out == nil {
+				out = map[string]struct{}{}
+			}
+			out[p.ID] = struct{}{}
+		}
+	}
+	return out
 }
 
 // writeSteer renders a steer unless another entry speaks for it: a wake that names it, or its read twin.
@@ -230,7 +263,7 @@ func (r *turnRender) writeEntry(b *strings.Builder, e *marotte.Entry) {
 	case marotte.EntryKindCompaction, marotte.EntryKindCompactionFailed,
 		marotte.EntryKindSafetyBlocked, marotte.EntryKindModelSwitched, marotte.EntryKindModelRouted,
 		marotte.EntryKindModelFallback, marotte.EntryKindModeSwitched, marotte.EntryKindContextReset:
-		writeEventMarkdown(b, e)
+		r.writeEvent(b, e)
 	case marotte.EntryKindTurnClose:
 		writeTurnCloseEntry(b, e)
 	case marotte.EntryKindTurnBind, marotte.EntryKindReconciled, marotte.EntryKindSteerDelivered,
@@ -238,6 +271,13 @@ func (r *turnRender) writeEntry(b *strings.Builder, e *marotte.Entry) {
 		// None renders: turn_bind is bookkeeping, reconciled a fact about the record, steer_delivered a time on its
 		// message's row, steer_cleared an epoch's end, run_named a name its wakes show, and step_graded a run-log
 		// step's grade, which the run's step_ends shows.
+	}
+}
+
+// writeEvent writes an event entry unless it is a repin the fallback after it states (fellBack).
+func (r *turnRender) writeEvent(b *strings.Builder, e *marotte.Entry) {
+	if _, explained := r.fellBack[e.ID]; !explained {
+		writeEventMarkdown(b, e)
 	}
 }
 
@@ -388,8 +428,8 @@ func writeModelRoutedMarkdown(b *strings.Builder, e *marotte.Entry) {
 }
 
 // writeModelFallbackMarkdown names KAS's decision in its own codes, as the log stores them: the
-// transcript's wording is the client's. A retry whose model now serves the session says so; a
-// sub-agent's fallback is left out, as the transcript leaves it out.
+// transcript's wording is the client's. A retry says whether its model now serves the session or
+// this turn only; a sub-agent's fallback is left out, as the transcript leaves it out.
 func writeModelFallbackMarkdown(b *strings.Builder, e *marotte.Entry) {
 	var p marotte.EntryModelFallback
 	if !decodePayload(e, &p) || p.Subagent {
@@ -404,6 +444,8 @@ func writeModelFallbackMarkdown(b *strings.Builder, e *marotte.Entry) {
 		line += ", declined: " + oneLine(p.Reason)
 	case p.To != "" && p.Scope == marotte.ModelFallbackScopeSession:
 		line += ", now serves the session"
+	case p.To != "" && p.Scope == marotte.ModelFallbackScopeTurn:
+		line += ", this turn only"
 	}
 	fmt.Fprintf(b, "%s\n\n", line)
 }

@@ -91,7 +91,7 @@ import {
   turnFailureText,
   type Turn,
 } from "./turns.js";
-import { turnFoldHides, turnLastMessage } from "./turn-face.js";
+import { turnFace, turnFoldHides } from "./turn-face.js";
 import { severityOf } from "./turn-severity.js";
 import { ICON_REWIND } from "./icons.js";
 import { buildAssistantBubble } from "./fundamentals/text-bubble.js";
@@ -2172,16 +2172,16 @@ function setCardsFolded(items: readonly { card: HTMLElement; folded: boolean }[]
   slideTurnFolds(slides);
 }
 
-// A collapsed turn keeps the open layout: header, a face with the turn's last message (`turnLastMessage`) where the
-// body was, and the ledger. The face carries no run card; the composer's run bar is a live run's persistent surface.
+// A collapsed turn keeps the open layout: header, a face with the turn's last message and setting lines (`turnFace`)
+// where the body was, and the ledger. The face carries no run card; the composer's run bar is a live run's persistent surface.
 
 /** Per-card content key that detects when the face must be rebuilt; the face's tables are released when it goes. */
 const turnFaces = new WeakMap<HTMLElement, string>();
 
 function faceKey(t: Turn): string {
   // An outcome flip is when the last message can be superseded by text of the same length.
-  return `${t.outcome}|${turnLastMessage(t)
-    .map((m) => String(m.length))
+  return `${t.outcome}|${turnFace(t)
+    .map((p) => (p.kind === "row" ? `r${String(p.entry.seq)}` : String(p.text.length)))
     .join(",")}`;
 }
 
@@ -2209,8 +2209,12 @@ function syncTurnFace(card: HTMLElement, t: Turn): void {
   }
   disposeTurnFace(card);
   const face = el("div", { className: "turn-face" });
-  for (const prose of turnLastMessage(t)) {
-    const bubble = buildAssistantBubble(prose, false);
+  for (const part of turnFace(t)) {
+    if (part.kind === "row") {
+      face.appendChild(buildEvent(part.entry));
+      continue;
+    }
+    const bubble = buildAssistantBubble(part.text, false);
     bubble.root.classList.add("turn-face-prose");
     face.appendChild(bubble.root);
   }

@@ -111,14 +111,20 @@ describe("model_fallback", () => {
     labelOf(buildEvent(event("model_fallback", payload)));
 
   it.each([
-    ["refusal", "model-a-5 refused this request, retried on model-b-5"],
-    ["availability", "model-a-5 was unavailable, retried on model-b-5"],
-    ["latency", "model-a-5 stopped for an unknown reason, retried on model-b-5"],
-  ])("names the %s cause and the model the turn moved to", (trigger, want) => {
-    expect(label({ from: "model-a-5", to: "model-b-5", scope: "turn", trigger })).toBe(want);
-  });
+    ["refusal", "Switched to model-b-5: model-a-5 declined the request \u00b7 for this turn only"],
+    ["availability", "Switched to model-b-5: model-a-5 was unavailable \u00b7 for this turn only"],
+    [
+      "latency",
+      "Switched to model-b-5: model-a-5 stopped for an unknown reason \u00b7 for this turn only",
+    ],
+  ])(
+    "names the model a turn-scope %s fallback moved to, its cause, and this turn",
+    (trigger, want) => {
+      expect(label({ from: "model-a-5", to: "model-b-5", scope: "turn", trigger })).toBe(want);
+    },
+  );
 
-  it("says a session-wide fallback's model now serves the session, in the same row", () => {
+  it("says a session-wide fallback's model now serves the chat, in the same row", () => {
     const node = buildEvent(
       event("model_fallback", {
         from: "model-a-5",
@@ -129,13 +135,19 @@ describe("model_fallback", () => {
     );
     expect(node.className).toContain("boundary-switched");
     expect(labelOf(node)).toBe(
-      "model-a-5 refused this request, retried on model-b-5, which now serves this session",
+      "Switched to model-b-5: model-a-5 declined the request \u00b7 this chat now stays on model-b-5",
+    );
+  });
+
+  it("names no scope a notice does not state", () => {
+    expect(label({ from: "model-a-5", to: "model-b-5", trigger: "availability" })).toBe(
+      "Switched to model-b-5: model-a-5 was unavailable",
     );
   });
 
   it("words KAS's same-model retry as a retry, naming the model once", () => {
     expect(label({ from: "auto", to: "auto", scope: "turn", trigger: "refusal" })).toBe(
-      "auto refused this request, retried",
+      "auto declined the request, retried",
     );
   });
 
@@ -152,7 +164,7 @@ describe("model_fallback", () => {
 
   it("names a decline's cause from its trigger", () => {
     expect(label({ from: "model-a-5", trigger: "refusal", reason: "chainExhausted" })).toBe(
-      "model-a-5 refused this request, no fallback model available \u00b7 every fallback model was already tried",
+      "model-a-5 declined the request, no fallback model available \u00b7 every fallback model was already tried",
     );
   });
 
@@ -181,7 +193,7 @@ describe("model_fallback", () => {
   });
 
   it("names the cause alone with no target", () => {
-    expect(label({ from: "model-a-5", trigger: "refusal" })).toBe("model-a-5 refused this request");
+    expect(label({ from: "model-a-5", trigger: "refusal" })).toBe("model-a-5 declined the request");
   });
 });
 
@@ -213,6 +225,13 @@ describe("model_switched", () => {
     expect(labelOf(node)).toBe(
       "Switched from model-a-9 to model-b-5 · not available for this account",
     );
+  });
+
+  it("names the model KAS moved the chat to when it gave no cause", () => {
+    const node = buildEvent(
+      event("model_switched", { from: "model-a-9", to: "model-b-5", reason: "repinned" }),
+    );
+    expect(labelOf(node)).toBe("Switched to model-b-5 \u00b7 Kiro moved this chat off model-a-9");
   });
 
   it("says so when the new model does not offer the tier the chat wanted", () => {
