@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"sync/atomic"
 	"time"
 )
 
@@ -32,15 +33,15 @@ type stallWatch struct {
 	windowEnd time.Time
 	next      time.Time // the deadline to arm
 	cpu       func() (uint64, bool)
-	frame     func() int64 // when readLoop last read a frame
-	base      uint64       // the reading the window compares against, valid when haveBase
-	baseFrame int64        // frame() when base was read
+	frame     *atomic.Int64 // when readLoop last read a frame (Engine.lastFrame)
+	base      uint64        // the reading the window compares against, valid when haveBase
+	baseFrame int64         // frame when base was read
 	haveBase  bool
 	moved     bool // bytes moved in the current window
 }
 
-func newStallWatch(cpu func() (uint64, bool), frame func() int64, now time.Time) *stallWatch {
-	w := &stallWatch{cpu: cpu, frame: frame, lastMoved: now, windowEnd: now.Add(writeStall)}
+func newStallWatch(cpu func() (uint64, bool), frame *atomic.Int64, now time.Time) stallWatch {
+	w := stallWatch{cpu: cpu, frame: frame, lastMoved: now, windowEnd: now.Add(writeStall)}
 	w.next = earlier(now.Add(stallProbeAfter), w.windowEnd)
 	return w
 }
@@ -54,7 +55,7 @@ func (w *stallWatch) expired(now time.Time, n int) stallVerdict {
 	if !now.Before(ceiling) {
 		return stallLivelock
 	}
-	frame := w.frame()
+	frame := w.frame.Load()
 	cpu, ok := w.cpu()
 	if now.Before(w.windowEnd) {
 		// The baseline is taken lazily, at stallProbeAfter, so a write that finishes sooner never reads /proc.
@@ -87,7 +88,7 @@ func earlier(a, b time.Time) time.Time {
 // error comes back, already logged, only once the stallWatch reaps; every other error comes back as Write gave it.
 func (e *Engine) writeWatched(w io.Writer, dw deadlineWriter, data []byte, off int) (int, error) {
 	chunk := data[off:min(off+writeChunk, len(data))]
-	watch := newStallWatch(e.cpuTicks, e.lastFrame.Load, time.Now())
+	watch := newStallWatch(e.cpuTicks, &e.lastFrame, time.Now())
 	written := 0
 	for {
 		_ = dw.SetWriteDeadline(watch.next)

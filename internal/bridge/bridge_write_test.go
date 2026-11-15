@@ -468,3 +468,30 @@ func TestWriteStallCeiling_WaitsOutTheMeasuredStallAndNoLonger(t *testing.T) {
 		t.Errorf("writeStallCeiling = %v, want at most stallExtendCeiling %v", writeStallCeiling, stallExtendCeiling)
 	}
 }
+
+// writeFrame runs once per outbound frame, every Respond, Call and Notify included, so its stall watch lives on the
+// stack.
+func TestWriteFrame_AllocatesNothingPerFrame(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		_, _ = io.Copy(io.Discard, pr)
+	}()
+	t.Cleanup(func() { _ = pw.Close(); <-drained; _ = pr.Close() })
+	b := NewEngine("/nonexistent", "/work")
+	b.stdin.Store(&stdinPipe{w: pw})
+	frame := []byte(`{"jsonrpc":"2.0","id":42,"result":{}}` + "\n")
+
+	allocs := testing.AllocsPerRun(100, func() {
+		if err := b.writeFrame(frame); err != nil {
+			t.Fatalf("writeFrame: %v", err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("writeFrame allocates %.0f times per frame, want 0", allocs)
+	}
+}

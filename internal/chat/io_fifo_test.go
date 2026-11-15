@@ -126,7 +126,7 @@ func TestOpenChatFile_RefusesASymlink(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symlinks unsupported here: %v", err)
 	}
-	f, _, err := openChatFile(link, "chat link")
+	f, _, err := openChatFile(link)
 	if err == nil {
 		f.Close()
 		t.Error("openChatFile followed a symlink at a chat header name")

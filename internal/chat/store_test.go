@@ -99,6 +99,22 @@ func assertRejectsBadChatIDs(t *testing.T, fn func(id marotte.ChatID) error) {
 	}
 }
 
+// lock runs on every store read and write, so an id that already has its mutex allocates nothing.
+func TestLock_AnExistingChatAllocatesNothing(t *testing.T) {
+	s, _ := newTestStore(t)
+	id := marotte.ChatID("c1")
+	first := s.lock(id)
+
+	allocs := testing.AllocsPerRun(100, func() {
+		if s.lock(id) != first {
+			t.Fatal("lock returned a different mutex for the same chat")
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("lock allocates %.0f times for a chat that has its mutex, want 0", allocs)
+	}
+}
+
 func TestMutate_CreatesChatAndBroadcasts(t *testing.T) {
 	s, b := newTestStore(t)
 	_, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, exists bool) bool {
