@@ -268,8 +268,8 @@ describe("turnFolds", () => {
     expect(turnFolds(t, "sub-A").plan).toBe(1);
   });
 
-  // KAS re-pins the model before it sends the fallback notice, so the guessed "not available"
-  // switch row the re-pin wrote is the notice's to explain.
+  // KAS re-pins the model before it sends the fallback notice. A re-pin row (a `model_switched` with a
+  // `reason`) folds when the very next entry in its lane is an applied fallback to the same model.
   describe("a model fallback folds the re-pin row it explains", () => {
     const repin = (seq: number, to = "model-b-5"): Entry =>
       entry(seq, "model_switched", { from: "model-a-5", to, reason: "unavailable" });
@@ -284,6 +284,14 @@ describe("turnFolds", () => {
         "text",
         "model_fallback",
       ]);
+    });
+
+    it("hides a switch row KAS gave no cause for", () => {
+      const t = turn("t1", [
+        entry(1, "model_switched", { from: "model-a-5", to: "model-b-5", reason: "repinned" }),
+        fallback(2),
+      ]);
+      expect([...turnFolds(t, "").fellBack]).toEqual([1]);
     });
 
     it.each([

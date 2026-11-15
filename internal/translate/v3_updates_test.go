@@ -1011,7 +1011,9 @@ func TestHandleConfigOptionUpdate_AdoptsTheRunningLevelWhenTheRecordHoldsNone(t 
 	}
 }
 
-func TestHandleConfigOptionUpdate_AMoveWhileTheOldModelIsOfferedIsStillARepin(t *testing.T) {
+// KAS repins on a refusal fallback too, before its notice names the cause, so a move off a model the catalog
+// still offers claims no cause.
+func TestHandleConfigOptionUpdate_AMoveWhileTheOldModelIsOfferedNamesNoCause(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 	_, _ = store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -1023,7 +1025,7 @@ func TestHandleConfigOptionUpdate_AMoveWhileTheOldModelIsOfferedIsStillARepin(t 
 	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelOffering(t, "model-d", "model-a", "model-d"), FrameAttribution{})
 
 	got := modelSwitchesOf(t, deps.between["c1"])
-	want := []marotte.EntryModelSwitched{{From: "model-a", To: "model-d", Reason: marotte.ModelSwitchReasonUnavailable}}
+	want := []marotte.EntryModelSwitched{{From: "model-a", To: "model-d", Reason: marotte.ModelSwitchReasonRepinned}}
 	if !slices.Equal(got, want) {
 		t.Errorf("model_switched entries = %+v, want %+v", got, want)
 	}
@@ -1221,5 +1223,29 @@ func TestSessionInfoUpdate_SessionUsageIsCensusQuiet(t *testing.T) {
 				t.Errorf("credits = %v, want %v", got, tt.wantCredits)
 			}
 		})
+	}
+}
+
+// A frame that lists no models (only its effort option carries a list) says nothing about the old one, so the move
+// claims no cause.
+func TestHandleConfigOptionUpdate_AMoveInAFrameWithNoCatalogNamesNoCause(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	_, _ = store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Model = "model-a"
+		return true
+	})
+
+	raw := mustJSON(t, map[string]any{"configOptions": []map[string]any{
+		{"id": "model", "type": "select", "currentValue": "model-d", "options": []map[string]any{}},
+		{"id": "effortLevel", "type": "select", "currentValue": "medium", "options": []map[string]any{{"value": "medium", "name": "Medium"}}},
+	}})
+
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", raw, FrameAttribution{})
+
+	got := modelSwitchesOf(t, deps.between["c1"])
+	want := []marotte.EntryModelSwitched{{From: "model-a", To: "model-d", Reason: marotte.ModelSwitchReasonRepinned}}
+	if !slices.Equal(got, want) {
+		t.Errorf("model_switched entries = %+v, want %+v", got, want)
 	}
 }

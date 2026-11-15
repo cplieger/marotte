@@ -623,7 +623,7 @@ describe("the fold policy over residency", () => {
     // band's run bar is the persistent surface for one, so
     // the fold takes away nothing a reader is watching.
     expect(isFolded("u1")).toBe(true);
-    // The launcher turn carries no top-level prose, so `turnLastMessage` is empty and
+    // The launcher turn carries no top-level prose, so `turnFace` is empty and
     // `syncTurnFace` appends no face at all — stated explicitly, because the run
     // card was the only other thing that could have put one here.
     expect(card("u1").querySelector(":scope > .turn-face")).toBeNull();

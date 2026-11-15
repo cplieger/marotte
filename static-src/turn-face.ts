@@ -1,4 +1,5 @@
-// What a collapsed turn's face shows, and whether folding the turn hides anything. Pure and DOM-free.
+// What a collapsed turn's face shows (its last message and the fallback lines that moved its model), and whether
+// folding the turn hides anything. Pure and DOM-free.
 
 import {
   entryAt,
@@ -7,33 +8,66 @@ import {
   turnFolds,
   turnSpan,
   type EntryRange,
+  type TurnFolds,
 } from "./block-window.js";
 import { bodyMemo } from "./body-memo.js";
 import { namedSay } from "./entry-ids.js";
 import { hookStatusShown } from "./hook-fold.js";
-import { appliedFallback, isSubagentFallback, payloadOf, type Turn } from "./turns.js";
+import { appliedFallback, payloadOf, type Turn } from "./turns.js";
 import type { Entry } from "./types.js";
+import type { EventEntry } from "./messages-events.js";
+
+/** One part of a collapsed turn's face, in body order: a last-message bubble's prose, or a fallback line. */
+type FacePart =
+  | { readonly kind: "prose"; readonly text: string }
+  | { readonly kind: "row"; readonly entry: EventEntry };
 
 /**
- * The turn's LAST MESSAGE, which a collapsed turn's face renders whole: one trimmed string per bubble the body draws
- * for it, in order. It ends at the turn's last non-empty top-level prose (`text`, or a `steer_ack`, its own bubble) and
- * reaches back over all the prose before it, other says included. It reaches over a drawn non-prose entry (a tool
- * call, a reasoning trace, a steer note) only when the nearest earlier top-level text is the same named say. An entry
- * that draws nothing (`tool_result`, `steer_delivered`) never ends it, nor does an applied `model_fallback`: KAS
- * continues the refused text on the fallback model. Delegate prose is never in it.
+ * The face a collapsed turn draws: every line the body draws for a fallback that moved the turn's model
+ * (`fallbackRow`), wherever it sits, and the last message's bubbles (`lastMessageItems`), each trimmed, in body order.
  */
-export function turnLastMessage(t: Turn): readonly string[] {
+export function turnFace(t: Turn): readonly FacePart[] {
   // `entryRenders` reads `hookStatusShown`.
-  return lastMessages(t.body, String(hookStatusShown()), () =>
-    lastMessageItems(t)
-      .map((r) => itemText(t, r).trim())
-      .filter((s) => s !== ""),
-  );
+  return faces(t.body, String(hookStatusShown()), () => {
+    const folds = turnFolds(t, "");
+    const parts: { readonly seq: number; readonly part: FacePart }[] = [];
+    for (const e of t.body) {
+      if (fallbackRow(e, folds)) {
+        parts.push({ seq: e.seq, part: { kind: "row", entry: e as EventEntry } });
+      }
+    }
+    for (const r of lastMessageItems(t)) {
+      const text = itemText(t, r).trim();
+      if (text !== "") {
+        parts.push({ seq: r.from, part: { kind: "prose", text } });
+      }
+    }
+    return parts.sort((a, b) => a.seq - b.seq).map((p) => p.part);
+  });
 }
 
-const lastMessages = bodyMemo<readonly string[]>();
+const faces = bodyMemo<readonly FacePart[]>();
 
-/** The last message's bubbles as `seq` ranges, in order: prose runs, and one entry each for a `steer_ack`. */
+/**
+ * Whether the body draws `e` as the line of a fallback that moved the turn's model, which the face keeps so the fold
+ * never hides a model the reader did not pick. A decline or a same-model retry moved nothing, so it is not one.
+ */
+function fallbackRow(e: Entry, folds: TurnFolds): boolean {
+  if ((e.lane ?? "") !== "" || !entryRenders(e, "", folds) || !appliedFallback(e)) {
+    return false;
+  }
+  const p = payloadOf(e, "model_fallback");
+  return p !== undefined && p.to !== p.from;
+}
+
+/**
+ * The turn's LAST MESSAGE as `seq` ranges, one per bubble the body draws for it, in order: prose runs, and one entry
+ * each for a `steer_ack`. It ends at the turn's last non-empty top-level prose and reaches back over all the prose
+ * before it, other says included. It reaches over a drawn non-prose entry (a tool call, a reasoning trace, a steer
+ * note) only when the nearest earlier top-level text is the same named say. An entry that draws nothing
+ * (`tool_result`, `steer_delivered`) never ends it, nor does an applied `model_fallback`: KAS continues the refused
+ * text on the fallback model. Delegate prose is never in it.
+ */
 function lastMessageItems(t: Turn): EntryRange[] {
   const folds = turnFolds(t, "");
   const items: EntryRange[] = [];
@@ -111,9 +145,9 @@ function itemText(t: Turn, item: EntryRange): string {
   return out;
 }
 
-/** Whether folding this turn would HIDE anything. The face shows run cards, the last message
- *  and a failed turn's error row; a turn with nothing else folds to an identical face, so no
- *  fold is offered. A revert's boundary row is not counted, so it stays on screen. */
+/** Whether folding this turn would HIDE anything: an entry the face leaves out. A turn with only the last message and
+ *  its fallback lines folds to an identical face, so no fold is offered. A revert's boundary row is not counted, so it
+ *  stays on screen. */
 export function turnFoldHides(t: Turn): boolean {
   return foldHides(t.body, String(hookStatusShown()), () => deriveFoldHides(t));
 }
@@ -121,6 +155,7 @@ export function turnFoldHides(t: Turn): boolean {
 const foldHides = bodyMemo<boolean>();
 
 function deriveFoldHides(t: Turn): boolean {
+  const folds = turnFolds(t, "");
   for (const e of t.body) {
     if ((e.lane ?? "") !== "") {
       return true;
@@ -132,13 +167,14 @@ function deriveFoldHides(t: Turn): boolean {
       case "compaction":
       case "compaction_failed":
       case "safety_blocked":
-      case "model_switched":
       case "model_routed":
       case "mode_switched":
       case "context_reset":
         return true;
+      // A re-pin its fallback explains draws nothing, and the face keeps the fallback's line.
+      case "model_switched":
       case "model_fallback":
-        if (!isSubagentFallback(e)) {
+        if (entryRenders(e, "", folds) && !fallbackRow(e, folds)) {
           return true;
         }
         break;
@@ -166,7 +202,7 @@ function faceLeavesOut(t: Turn): boolean {
   const end = items.at(-1)?.to ?? first;
   for (let seq = first; seq < end; seq++) {
     const e = entryAt(t, seq);
-    const drawn = e !== undefined && entryRenders(e, "", folds);
+    const drawn = e !== undefined && entryRenders(e, "", folds) && !fallbackRow(e, folds);
     if (drawn && !items.some((r) => seq >= r.from && seq < r.to)) {
       return true;
     }

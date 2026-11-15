@@ -1399,6 +1399,28 @@ function dropEntry(st: TurnRender, seq: number): { runID: string; card: RunCardV
   return hosted;
 }
 
+/**
+ * How long a live KAS re-pin row stays hidden waiting for the fallback notice that explains it. KAS sends the re-pin
+ * frame first, a few ms before the notice; `syncFolds` drops the row when the notice lands, so it never shows.
+ */
+export const REPIN_HOLD_MS = 250;
+
+/** Whether `e` is a KAS re-pin (a `model_switched` with a `reason`) at the turn's tail, which a notice may explain. */
+function heldRepin(st: TurnRender, e: Entry): boolean {
+  return payloadOf(e, "model_switched")?.reason !== undefined && e.seq === turnSpan(st.turn) - 1;
+}
+
+/** Hide `row` for `REPIN_HOLD_MS`, then show it unless a later entry dropped it. */
+function holdRow(st: TurnRender, seq: number, row: HTMLElement): void {
+  row.classList.add("is-held");
+  const timer = setTimeout(() => {
+    row.classList.remove("is-held");
+  }, REPIN_HOLD_MS);
+  pushDisposer(st, seq, () => {
+    clearTimeout(timer);
+  });
+}
+
 /** Drop the delegate-card state for `el`; a stale entry would refuse the next card. */
 function forgetSubagentCard(st: TurnRender, el: HTMLElement): void {
   const subtask = el.dataset["subtask"] ?? "";
@@ -1981,6 +2003,9 @@ function placeEntry(st: TurnRender, e: Entry, live: boolean, idx: GroupIndex): v
       const row = cbs.makeEvent(u);
       stampEntry(st, row, seq);
       appendEntry(st, container, row);
+      if (live && heldRepin(st, e)) {
+        holdRow(st, seq, row);
+      }
       return;
     }
     case "tool_call": {

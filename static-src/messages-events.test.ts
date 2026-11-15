@@ -5,7 +5,14 @@ import { describe, it, expect, vi } from "vitest";
 import { buildEvent, type EventEntry } from "./messages-events.js";
 import type { EntryKind, KindedEntry } from "./types.js";
 import { glyphMarkup, registryMarkup } from "./__test-helpers__/glyph.js";
-import { ICON_ALERT, ICON_COMPACT, ICON_REWIND, ICON_SHIELD, ICON_TOOL_SWITCH } from "./icons.js";
+import {
+  ICON_ALERT,
+  ICON_COMPACT,
+  ICON_REFRESH,
+  ICON_REWIND,
+  ICON_SHIELD,
+  ICON_TOOL_SWITCH,
+} from "./icons.js";
 
 function event<K extends EntryKind & EventEntry["kind"]>(
   kind: K,
@@ -81,11 +88,14 @@ describe("the row a kind draws", () => {
       ],
       ["a failed compaction", event("compaction_failed", { reason: "" }), ICON_ALERT],
       ["a safety block", event("safety_blocked", { properties: [] }), ICON_SHIELD],
+      ["a context reset", event("context_reset", { cause: "load_failed" }), ICON_REFRESH],
     ];
     for (const [name, entry, glyph] of glyphs) {
       const icon = buildEvent(entry).querySelector(".boundary-icon, .compaction-icon");
       expect(icon?.getAttribute("aria-hidden"), name).toBe("true");
       expect(icon?.childElementCount, name).toBe(1);
+      // An icon string with no element root parses to an empty <svg>, which paints as a blank 300x150 box.
+      expect(icon?.firstElementChild?.childElementCount, name).toBeGreaterThan(0);
       expect(glyphMarkup(icon?.firstElementChild), name).toBe(registryMarkup(glyph));
     }
   });
@@ -111,14 +121,26 @@ describe("model_fallback", () => {
     labelOf(buildEvent(event("model_fallback", payload)));
 
   it.each([
-    ["refusal", "model-a-5 refused this request, retried on model-b-5"],
-    ["availability", "model-a-5 was unavailable, retried on model-b-5"],
-    ["latency", "model-a-5 stopped for an unknown reason, retried on model-b-5"],
-  ])("names the %s cause and the model the turn moved to", (trigger, want) => {
-    expect(label({ from: "model-a-5", to: "model-b-5", scope: "turn", trigger })).toBe(want);
-  });
+    [
+      "refusal",
+      "Switched to model-b-5: model-a-5 declined the request\u00a0\u00b7 for this turn only",
+    ],
+    [
+      "availability",
+      "Switched to model-b-5: model-a-5 was unavailable\u00a0\u00b7 for this turn only",
+    ],
+    [
+      "latency",
+      "Switched to model-b-5: model-a-5 stopped for an unknown reason\u00a0\u00b7 for this turn only",
+    ],
+  ])(
+    "names the model a turn-scope %s fallback moved to, its cause, and this turn",
+    (trigger, want) => {
+      expect(label({ from: "model-a-5", to: "model-b-5", scope: "turn", trigger })).toBe(want);
+    },
+  );
 
-  it("says a session-wide fallback's model now serves the session, in the same row", () => {
+  it("says a session-wide fallback's model stays on the chat, in the same row", () => {
     const node = buildEvent(
       event("model_fallback", {
         from: "model-a-5",
@@ -129,13 +151,19 @@ describe("model_fallback", () => {
     );
     expect(node.className).toContain("boundary-switched");
     expect(labelOf(node)).toBe(
-      "model-a-5 refused this request, retried on model-b-5, which now serves this session",
+      "Switched to model-b-5: model-a-5 declined the request\u00a0\u00b7 this chat stays on it from now on",
+    );
+  });
+
+  it("names no scope a notice does not state", () => {
+    expect(label({ from: "model-a-5", to: "model-b-5", trigger: "availability" })).toBe(
+      "Switched to model-b-5: model-a-5 was unavailable",
     );
   });
 
   it("words KAS's same-model retry as a retry, naming the model once", () => {
     expect(label({ from: "auto", to: "auto", scope: "turn", trigger: "refusal" })).toBe(
-      "auto refused this request, retried",
+      "auto declined the request, retried",
     );
   });
 
@@ -146,13 +174,13 @@ describe("model_fallback", () => {
     ["raceLost", "the model changed while Kiro was switching"],
   ])("words the %s decline", (reason, why) => {
     expect(label({ from: "model-a-5", trigger: "availability", reason })).toBe(
-      `model-a-5 was unavailable, no fallback model available \u00b7 ${why}`,
+      `model-a-5 was unavailable, no fallback model available\u00a0\u00b7 ${why}`,
     );
   });
 
   it("names a decline's cause from its trigger", () => {
     expect(label({ from: "model-a-5", trigger: "refusal", reason: "chainExhausted" })).toBe(
-      "model-a-5 refused this request, no fallback model available \u00b7 every fallback model was already tried",
+      "model-a-5 declined the request, no fallback model available\u00a0\u00b7 every fallback model was already tried",
     );
   });
 
@@ -167,21 +195,21 @@ describe("model_fallback", () => {
         reason: "raceLost",
       }),
     ).toBe(
-      "model-a-5 was unavailable, no fallback model available \u00b7 the model changed while Kiro was switching",
+      "model-a-5 was unavailable, no fallback model available\u00a0\u00b7 the model changed while Kiro was switching",
     );
   });
 
   it("shows a decline code it does not know as sent, and an inherited name as a code", () => {
     expect(label({ from: "model-a-5", trigger: "availability", reason: "quotaGone" })).toBe(
-      "model-a-5 was unavailable, no fallback model available \u00b7 quotaGone",
+      "model-a-5 was unavailable, no fallback model available\u00a0\u00b7 quotaGone",
     );
     expect(label({ from: "model-a-5", trigger: "availability", reason: "constructor" })).toBe(
-      "model-a-5 was unavailable, no fallback model available \u00b7 constructor",
+      "model-a-5 was unavailable, no fallback model available\u00a0\u00b7 constructor",
     );
   });
 
   it("names the cause alone with no target", () => {
-    expect(label({ from: "model-a-5", trigger: "refusal" })).toBe("model-a-5 refused this request");
+    expect(label({ from: "model-a-5", trigger: "refusal" })).toBe("model-a-5 declined the request");
   });
 });
 
@@ -211,7 +239,16 @@ describe("model_switched", () => {
       }),
     );
     expect(labelOf(node)).toBe(
-      "Switched from model-a-9 to model-b-5 · not available for this account",
+      "Switched from model-a-9 to model-b-5\u00a0\u00b7 not available for this account",
+    );
+  });
+
+  it("names the model KAS moved the chat to when it gave no cause", () => {
+    const node = buildEvent(
+      event("model_switched", { from: "model-a-9", to: "model-b-5", reason: "repinned" }),
+    );
+    expect(labelOf(node)).toBe(
+      "Switched to model-b-5\u00a0\u00b7 Kiro moved this chat off model-a-9",
     );
   });
 
@@ -309,7 +346,7 @@ describe("context_reset", () => {
     const labels = causes.map((cause) => {
       const node = buildEvent(event("context_reset", { cause }));
       expect(node.className, cause).toContain("boundary-reset");
-      expect(labelOf(node), cause).toMatch(/^Context reset · /);
+      expect(labelOf(node), cause).toMatch(/^Context reset\u00a0\u00b7 /);
       return labelOf(node);
     });
     expect(new Set(labels).size).toBe(causes.length);
@@ -317,7 +354,7 @@ describe("context_reset", () => {
 
   it("says the agent had lost the chat when its session record was gone", () => {
     expect(labelOf(buildEvent(event("context_reset", { cause: "session_missing" })))).toBe(
-      "Context reset · the agent had lost this chat's earlier turns, so a new session started",
+      "Context reset\u00a0\u00b7 the agent had lost this chat's earlier turns, so a new session started",
     );
   });
 });

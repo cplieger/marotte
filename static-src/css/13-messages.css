@@ -763,6 +763,12 @@
   }
 }
 
+/* A live re-pin row waiting for the fallback notice that replaces it (messages-blocks.ts
+   holdRow). `none` rather than `visibility`, so the entry animation runs once, when shown. */
+.boundary.is-held {
+  display: none;
+}
+
 .boundary-switched .boundary-icon {
   color: var(--c-yellow);
 }

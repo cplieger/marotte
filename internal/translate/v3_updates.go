@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"reflect"
+	"slices"
 	"time"
 
 	"github.com/cplieger/go/textsafe"
@@ -686,13 +687,18 @@ type configCatalog struct {
 // unsolicitedRepin reports the chat's model moving without a pick of the reader's: the
 // frame names another model while none is pending (PendingModel stays set through
 // marotte's own SetModel until persisted). An empty or auto model is a first pin. Every
-// such move counts as KAS's repin, even while the catalog still lists the old model.
+// such move counts as KAS's repin. Only a catalog that dropped the old model shows it
+// unavailable: KAS repins on a refusal fallback too, before its notice says so.
 func (cat *configCatalog) unsolicitedRepin(c *marotte.Chat) *marotte.EntryModelSwitched {
 	if cat.currentModel == "" || c.Model == "" || c.Model == marotte.ModelAuto ||
 		c.Model == cat.currentModel || c.PendingModel != "" {
 		return nil
 	}
-	return &marotte.EntryModelSwitched{From: c.Model, To: cat.currentModel, Reason: marotte.ModelSwitchReasonUnavailable}
+	reason := marotte.ModelSwitchReasonRepinned
+	if len(cat.models) > 0 && !slices.ContainsFunc(cat.models, func(m marotte.SessionModel) bool { return m.ID == c.Model }) {
+		reason = marotte.ModelSwitchReasonUnavailable
+	}
+	return &marotte.EntryModelSwitched{From: c.Model, To: cat.currentModel, Reason: reason}
 }
 
 func readConfigCatalog(opts []configOption) configCatalog {

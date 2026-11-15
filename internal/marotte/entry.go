@@ -401,16 +401,25 @@ type EntryModelFallback struct {
 	Subagent bool   `json:"subagent,omitempty"`
 }
 
-// ModelFallbackScopeSession is the EntryModelFallback.Scope of a fallback that now serves the session.
-const ModelFallbackScopeSession = "session"
+// The EntryModelFallback.Scope values KAS sends: a fallback that now serves the session, or one for
+// the turn it happened in. Scope stays an open string, since KAS may add a value.
+const (
+	ModelFallbackScopeSession = "session"
+	ModelFallbackScopeTurn    = "turn"
+)
 
 // ModelSwitchReason says why KAS moved a chat off its model. A closed enum
 // because the client words it, so the wording table must be total.
 type ModelSwitchReason string
 
-// ModelSwitchReasonUnavailable is KAS repinning a model the account cannot
-// use, seen as an unsolicited config_option_update moving the chat's model.
-const ModelSwitchReasonUnavailable ModelSwitchReason = "unavailable"
+const (
+	// ModelSwitchReasonUnavailable is KAS moving the chat off a model the account
+	// cannot use: the frame's catalog no longer offers it, or a held pick was not served.
+	ModelSwitchReasonUnavailable ModelSwitchReason = "unavailable"
+	// ModelSwitchReasonRepinned is KAS moving the chat off a model it still offers,
+	// which states no cause: a model_fallback notice that follows names it.
+	ModelSwitchReasonRepinned ModelSwitchReason = "repinned"
+)
 
 // ModeSwitchSource says who applied a mode switch; a closed enum because the renderer
 // branches on it.
