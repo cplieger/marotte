@@ -15,6 +15,7 @@ import math
 import pathlib
 import re
 import unittest
+from typing import ClassVar
 
 PERF = pathlib.Path(__file__).resolve().parent
 KEY_FIELDS = ('scenario', 'scale', 'engine', 'width', 'window', 'metric')
@@ -61,6 +62,68 @@ def longest_first(seconds: list[float], shards: int) -> list[float]:
     return load
 
 
+def exact_entry_problems(e: dict, files: dict, cells: dict) -> list[str]:
+    """Why exact entry e does not hold against the checked-in calibrations (files and cells by
+    run id), or [] when it holds.
+
+    Its source must be a file of the newest commit that measured the cell, newest by run id
+    (perf-calibrate's dispatch order), since an older commit measured other code. Every rep
+    of that commit's files must be the baseline: perf_gate.py --calibrate makes a count exact
+    only when every rep agrees, and one that moved holds its middle reps off on unchanged code.
+    """
+    m = SOURCE_RE.match(e.get('source', ''))
+    if m is None or m.group(1) not in files:
+        return [f'source {e.get("source")!r} is not a checked-in calibration']
+    measured = [run_id for run_id, cs in cells.items() if key(e) in cs]
+    if not measured:
+        return ['no checked-in calibration measured the cell']
+    newest = files[max(measured, key=int)]['commit']
+    if files[m.group(1)]['commit'] != newest:
+        return [f'source measured {files[m.group(1)]["commit"]}, not the newest commit {newest}']
+    out = []
+    for run_id in measured:
+        if files[run_id]['commit'] == newest:
+            reps = {r for run in cells[run_id][key(e)]['reps_by_run'] for r in run}
+            if reps - {e['baseline']}:
+                out.append(f'run {run_id} measured {sorted(reps)}, not only {e["baseline"]}')
+    return out
+
+
+class ExactEntryRule(unittest.TestCase):
+    """exact_entry_problems on two commits' files that measured one cell differently."""
+
+    CELL: ClassVar[dict] = dict(
+        zip(KEY_FIELDS, ('chat-long', 'x10', 'chromium', 'desktop', 'cold', 'dom'), strict=True)
+    )
+
+    def calibration(self, run_id: str, commit: str, reps: list[int]) -> dict:
+        cell = {**self.CELL, 'tier': 'exact', 'baseline': reps[0], 'reps_by_run': [reps] * 10}
+        return {'run_id': run_id, 'commit': commit, 'cells': [cell]}
+
+    def check(self, run_id: str, baseline: float) -> list[str]:
+        files = {
+            '100': self.calibration('100', 'old', [4384] * 3),
+            '200': self.calibration('200', 'new', [4400] * 3),
+        }
+        cells = {r: {key(c): c for c in d['cells']} for r, d in files.items()}
+        url = f'https://github.com/cplieger/ci/actions/runs/{run_id}'
+        return exact_entry_problems(
+            {**self.CELL, 'baseline': baseline, 'source': url}, files, cells
+        )
+
+    def test_an_entry_of_the_newest_commit_holds(self):
+        self.assertEqual(self.check('200', 4400.0), [])
+
+    def test_an_entry_re_sourced_to_an_older_commit_fails(self):
+        self.assertTrue(self.check('100', 4384.0))
+
+    def test_an_entry_off_its_commits_reps_fails(self):
+        self.assertTrue(self.check('200', 4384.0))
+
+    def test_an_unchecked_in_source_fails(self):
+        self.assertTrue(self.check('300', 4400.0))
+
+
 class Budgets(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -88,22 +151,11 @@ class Budgets(unittest.TestCase):
                     with self.subTest(set=set_name, unit=unit(c), window=w):
                         self.assertIn((*unit(c), w), windows)
 
-    def test_every_exact_entry_is_every_rep_its_calibrations_measured(self):
-        # perf_gate.py --calibrate makes a count exact only when every rep agrees. A count that
-        # moved in any calibration of its source's commit can hold its middle reps off on
-        # unchanged code, which fails the six-rep verdict. A calibration of another commit
-        # measured other code: a later `only` calibration re-measures what a change moved.
+    def test_every_exact_entry_is_every_rep_its_newest_commit_measured(self):
         for e in self.budgets['budgets']:
-            if e['tier'] != 'exact':
-                continue
-            commit = self.files[SOURCE_RE.match(e['source']).group(1)]['commit']
-            for run_id, cells in self.cells.items():
-                c = cells.get(key(e))
-                if c is None or self.files[run_id]['commit'] != commit:
-                    continue
-                with self.subTest(entry=key(e), run=run_id):
-                    reps = {r for run in c['reps_by_run'] for r in run}
-                    self.assertEqual(sorted(reps - {e['baseline']}), [])
+            if e['tier'] == 'exact':
+                with self.subTest(entry=key(e)):
+                    self.assertEqual(exact_entry_problems(e, self.files, self.cells), [])
 
     def test_no_entry_holds_an_answer_size_that_carries_a_clock(self):
         held = [key(e) for e in self.budgets['budgets'] if e['metric'] in CLOCK_SIZED]
