@@ -41,10 +41,9 @@ export const DRIVERS = {
   "run-steps": (x, s) => x.trigger({ op: "steps", workflowId: s.run, ...STEPS }),
   "run-starts": (x) => x.trigger({ op: "starts", count: 5, interval_ms: 2000 }),
   "forge-churn": (x) => x.forgeChurn({ every_ms: 3000, count: 3 }, 130000),
-  "shell-open": (x, s) => x.shell(`cd ${s.work} && ./emit.py ${s.shell_lines}`, s.shell_lines),
+  "shell-open": (x, s) => x.shell(`cd ${s.work} && ./emit.py ${s.shell_lines}`),
   // The command starts after the panel closed, so its output streams to a hidden terminal.
-  "shell-closed": (x, s) =>
-    x.shell(`sleep 3 && ./emit.py ${s.shell_lines}`, s.shell_lines, () => x.toggleShell()),
+  "shell-closed": (x, s) => x.shell(`sleep 3 && ./emit.py ${s.shell_lines}`, () => x.toggleShell()),
   "run-drive": (x, s) => x.trigger({ op: "steps", workflowId: s.run, ...DRIVE }),
 };
 

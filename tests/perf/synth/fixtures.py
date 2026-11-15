@@ -445,14 +445,16 @@ def write_docs(work, rg, steering, skills, hooks, specs, agents, prompts):
 
 
 EMIT = r'''#!/usr/bin/env python3
-"""Print N numbered lines at R lines per second (R 0: as fast as possible)."""
-import sys, time
+"""Print N numbered lines at R lines per second (R 0: as fast as possible), then
+`emit.py done <pid>`, the line that ends a shell driver (static-src/perf/shell-end.mjs)."""
+import os, sys, time
 n, rate = int(sys.argv[1]), float(sys.argv[2]) if len(sys.argv) > 2 else 0.0
 gap = 1.0 / rate if rate > 0 else 0.0
 for i in range(n):
     sys.stdout.write("\x1b[32m%06d\x1b[0m 2026-11-02T18:00:00 INFO worker=%02d request handled path=/api/x/%d bytes=%d\n" % (i, i % 16, i, i * 37 % 9973))
     if gap:
         sys.stdout.flush(); time.sleep(gap)
+sys.stdout.write("emit.py done %d\n" % os.getpid())
 sys.stdout.flush()
 '''
 

@@ -13,7 +13,8 @@ export function windowFailures(name, w) {
     out.push(`${name}: did not settle (${where(w.settle)})`);
   }
   if (w.drive && !w.drive.done) {
-    out.push(`${name}: the driver did not finish`);
+    const why = w.drive.error ? ` (${String(w.drive.error)})` : "";
+    out.push(`${name}: the driver did not finish${why}`);
   }
   return out;
 }

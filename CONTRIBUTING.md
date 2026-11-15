@@ -44,6 +44,8 @@ A second marotte you start by hand needs its own `KIRO_CONFIG_DIR`, `HOME` and `
 
 On a pull request, CI runs the `pr` set of `tests/perf/plan.json` on a hosted runner and compares each cell with `tests/perf/budgets.json`. A cell is one scenario at one fixture scale (`x1` or `x10`), browser engine and width. Its scenarios are listed under `scenarios` in `plan.json`.
 
+Each metric of a cell has one entry in `budgets.json`, in one of three tiers that a ten-run calibration on the hosted runner decided. An `exact` count, such as a route's reads, fails the job when it differs from its baseline in either direction. A `gated` time or size fails when its median over the reps is above its budget, which the calibration set from its baseline and a headroom for the runner's spread. A `reported` metric is shown and never fails. Every baseline comes from a calibration file under `tests/perf/calibrations/`, signed by cplieger/ci's `perf-calibrate` workflow, and CI refuses a baseline that no signed file holds. A change that moves an exact count or a gated cost therefore needs a new calibration of the scenarios it moves. The maintainer runs it on the pull request's branch and commits the new baselines with its signed file, so say in the pull request which scenarios you expect to move.
+
 To measure one cell on your machine, build the test binary once, write the cell to a file, and run it. The run generates a synthetic fixture, then starts each rep on a fresh instance with a fake kiro-cli and a fake forge. It never touches your own marotte, and `serve.sh` refuses a `PERF_PORT` that would bind 9847:
 
 ```sh
@@ -55,7 +57,7 @@ PERF_BUILD=/tmp/perf-build PERF_PORT=20151 PERF_REPS=1 tests/perf/run.sh /tmp/ce
 
 `/tmp/perf-out/results.json` holds every metric of every window, and `/tmp/perf-out/raw/` holds each rep's own record. Add `"profile": true` to the cell for one more rep that records a CPU profile, and `"windows": ["cold"]` to measure only the windows it lists. `run-drive` measures the server alone: use engine `server` and width `none`. A rep that does not settle exits 1 and names the window it waited for.
 
-To compare a result with the budgets as the pull request's `perf` job does, run `perf_gate.py` from a clone of `cplieger/ci`. It gates only results measured on the runner that `budgets.json` names, so the copy below takes that runner's name. An exact count, such as a route's reads or `git_fetch`, is the same on any machine; a time measured on yours is compared with budgets calibrated on CI's runner. `--base` names the head file, so no budget needs its signed calibration here:
+To compare a result with the budgets as the pull request's `perf` job does, run `perf_gate.py` from a clone of `cplieger/ci`. It gates only results measured on the runner that `budgets.json` names, so the copy below takes that runner's name. An exact count, such as a route's reads or `git_fetch`, is the same on any machine, except the `max_bytes` of the three routes named below; a time measured on yours is compared with budgets calibrated on CI's runner. `--base` names the head file, so no budget needs its signed calibration here:
 
 ```sh
 git clone --depth 1 https://github.com/cplieger/ci.git /tmp/cplieger-ci
@@ -73,5 +75,7 @@ python3 /tmp/cplieger-ci/scripts/perf_gate.py --budgets tests/perf/budgets.json 
 ```
 
 Two results concern the cell you measured. An exact count that differs from its budget is listed under "Failures" as one that "differs from its exact budget", with its reps, and the command exits 1. A timed cell over its budget shows `remeasure` in the "Status" column: CI measures it again on fresh runners before it fails the job.
+
+The `max_bytes` counts of `GET /api/settings`, `GET /api/tabs` and `GET /api/version` differ on your machine with no change of yours: those answers hold values of the machine the instance runs on, such as the instance's own directory, which lies under `RUNNER_TEMP` on the runner and under `TMPDIR` or `/tmp` on yours. Read a "differs" line for those three routes as the machine, and any other one as your change.
 
 `--only chat-long` keeps every `pr` cell of that scenario, so the plan also holds its WebKit cell, which measures only the `cold` window. Once `budgets.json` holds a gated or exact entry for a cell the plan holds and your run did not measure, "Failures" lists it as an entry "that no shard measured" and the command exits 1. That line names a cell CI measures, not a fault in the cell you measured.
