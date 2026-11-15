@@ -16,10 +16,12 @@ const STEPS = WORDLESS + 1;
 export const movedPills = signal<readonly MovablePill[]>([]);
 
 /** Keep `row` fitting as its width or its controls change. `closeCards` runs when a moved pill's card was open, since
- *  the card leaves with its slot. Returns the disconnect. */
+ *  the card leaves with its slot; `placeCards` runs after every fit, since a fit moves the slots an open card is
+ *  placed from. Returns the disconnect. */
 export function watchPillRow(
   row: HTMLElement,
   closeCards: () => void = () => undefined,
+  placeCards: () => void = () => undefined,
 ): () => void {
   const fit = (): void => {
     let n = 0;
@@ -29,6 +31,7 @@ export function watchPillRow(
       apply(row, n);
     }
     commit(row, ORDER.slice(0, n), closeCards);
+    placeCards();
   };
   const ro = new ResizeObserver(fit);
   ro.observe(row);

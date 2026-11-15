@@ -90,7 +90,7 @@ import {
   chatTabDot,
 } from "./chat.js";
 import { initModelSwitcher, pickModel } from "./model-switcher.js";
-import { collapseAll, makeExpandable } from "./pill-expand.js";
+import { collapseAll, makeExpandable, placeOpenCard } from "./pill-expand.js";
 import { initContextCard } from "./context-card.js";
 import { loadAccountUsage } from "./account-usage.js";
 import { initPromptInput, sendComposer } from "./prompt-input.js";
@@ -506,7 +506,7 @@ function setupInput(): void {
   initChatOptions();
   const pillRow = queryEl<HTMLElement>(".prompt-pills");
   if (pillRow !== null) {
-    watchPillRow(pillRow, collapseAll);
+    watchPillRow(pillRow, collapseAll, placeOpenCard);
   }
   initSelectionQuote();
   // The interaction dock takes its host as an argument so a future run tab's bottom bar

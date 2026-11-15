@@ -21,6 +21,7 @@ import {
 } from "./icons.js";
 import { setActive, setSessions } from "./store.js";
 import { watchPillRow } from "./pill-row-fit.js";
+import { collapseAll, makeExpandable, placeOpenCard } from "./pill-expand.js";
 import type { updateContextBar as updateContextBarFn } from "./status.js";
 import { makeSession } from "./__test-helpers__/model.js";
 import { BUTTON_REFERENCE, MENU_ROW } from "./__test-helpers__/button-reference.js";
@@ -218,7 +219,7 @@ async function mount(
   if (row === null) {
     throw new Error("index.html has no pill row");
   }
-  unwatch = watchPillRow(row);
+  unwatch = watchPillRow(row, collapseAll, placeOpenCard);
 }
 
 /** The run tab in place of the chat: its composer's Send and its resume button. */
@@ -790,6 +791,61 @@ describe("the model, profile and mode pills, by the room the row has", () => {
       }
       expect(wrong, `${String(viewport[0])} ${pointer}: the text follows the fit`).toEqual([]);
     }
+  });
+});
+
+describe("an open card on a row that re-fits", () => {
+  /** `--pill-viewport-margin`, `--sp-3` at the root's 16px. */
+  const MARGIN = 12;
+  let close: AbortController | undefined;
+
+  afterEach(() => {
+    close?.abort();
+    close = undefined;
+  });
+
+  /** Opens Chat options' card as app.ts wires it, beside the row's fit. */
+  function openChatOptions(): HTMLElement {
+    close = new AbortController();
+    makeExpandable(byId("chat-options-btn"), byId("chat-options-card"), { signal: close.signal });
+    byId("chat-options-btn").click();
+    return byId("chat-options-card");
+  }
+
+  /** Where the card's layout box starts against where it belongs: at its slot, moved in only as far as keeps it
+   *  `MARGIN` inside the screen. Layout offsets, because the enter animation scales the painted box. */
+  function placement(card: HTMLElement): { at: number; want: number } {
+    const slot = card.parentElement!.getBoundingClientRect().left;
+    const want = Math.min(Math.max(slot, MARGIN), window.innerWidth - MARGIN - card.offsetWidth);
+    return { at: slot + card.offsetLeft, want };
+  }
+
+  it("follows its slot when the turn ends and Security profile comes back before it", async () => {
+    await mount([390, 844], "coarse", "steer");
+    const card = openChatOptions();
+    expect(shown(byId("profile-pill")), "the turn's row moved the profile pill").toBe(false);
+    const open = placement(card);
+    expect(open.at, "placed at open").toBeCloseTo(open.want, 0);
+
+    byId("midturn-send").hidden = true;
+    byId("task-list-pill").classList.add("hidden");
+    byId("send-btn").replaceChildren(label("Send"), iconEl(ICON_SEND));
+    await nextFrame();
+    expect(shown(byId("profile-pill")), "the idle row took the profile pill back").toBe(true);
+    const after = placement(card);
+    expect(after.at, "placed after the row re-fit").toBeCloseTo(after.want, 0);
+  });
+
+  it("stays on screen when the screen turns and turns back", async () => {
+    await mount([360, 844], "coarse", "steer");
+    const card = openChatOptions();
+    await page.viewport(780, 360);
+    await nextFrame();
+    await page.viewport(360, 844);
+    await nextFrame();
+    await nextFrame();
+    const back = placement(card);
+    expect(back.at, "placed after the turn back").toBeCloseTo(back.want, 0);
   });
 });
 

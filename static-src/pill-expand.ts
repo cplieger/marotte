@@ -122,7 +122,11 @@ export function makeExpandable(
 function trackViewport(pill: HTMLElement, card: HTMLElement): () => void {
   let applied: ViewportBox = viewportBox();
   let frame = 0;
-  clampToViewport(pill, card);
+  const place = (): void => {
+    clampToViewport(pill, card);
+  };
+  place();
+  placeOpen = place;
 
   const release = onViewportChange(() => {
     if (frame !== 0 || !viewportMoved(viewportBox(), applied)) {
@@ -140,8 +144,20 @@ function trackViewport(pill: HTMLElement, card: HTMLElement): () => void {
       cancelAnimationFrame(frame);
       frame = 0;
     }
+    if (placeOpen === place) {
+      placeOpen = null;
+    }
     release();
   };
+}
+
+/** The open card's clamp, while one is open. */
+let placeOpen: (() => void) | null = null;
+
+/** Place the open card from where its slot is now. For a caller that moves slots without moving the viewport, such
+ *  as the pill row's fit; a no-op with no card open. */
+export function placeOpenCard(): void {
+  placeOpen?.();
 }
 
 /** Below this a card is unusable whatever it does, so the floor keeps one row plus its scroll
