@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type * as BannerStack from "./banner-stack.js";
 import type * as ApiClient from "./api-client.js";
 import type * as Modals from "./modals.js";
+import type * as Status from "./status.js";
 import type { SignInCause, SignInHealth, SignInState, WhoamiResponse } from "./wire/types.gen.js";
 import pauseReasonsRaw from "../internal/agent/testdata/pause_reasons.json?raw";
 
@@ -11,6 +12,11 @@ vi.mock("./banner-stack.js", async (importOriginal) => ({
   ...(await importOriginal<typeof BannerStack>()),
   showBanner: vi.fn(),
   clearBannerCodes: vi.fn(),
+}));
+// The account button's mark has its own test (status-signin.test.ts); this file mounts no button.
+vi.mock("./status.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Status>()),
+  setSignInMark: vi.fn(),
 }));
 const { mockLogin, mockGet } = vi.hoisted(() => ({
   mockLogin: vi.fn(),

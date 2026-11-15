@@ -28,7 +28,9 @@ import { apiGet } from "./api-client.js";
 import { loadVersions, getVersions } from "./versions.js";
 import { openConfigFile } from "./editor-openers.js";
 import { $, maybeEl } from "./dom.js";
-import { el } from "@cplieger/reactive";
+import { effect, el, touch } from "@cplieger/reactive";
+import { signInHealth } from "./signin-health.js";
+import type { SignInState } from "./wire/types.gen.js";
 import { initNotificationToggles } from "./settings-notifications.js";
 
 import { showSaving, showSaved, showError } from "./save-indicator.js";
@@ -563,7 +565,7 @@ export function initDiagnostics(): void {
   });
 }
 
-/** The card's auth line, and it is only ever an ERROR now. */
+/** The card's auth line, and it is only ever an ERROR now: a signed-in account's is HEALTH_LINE's. */
 const AUTH_LINE: Readonly<Record<IdentityVerdict["state"], string>> = {
   signed_in: "",
   signed_out: "not signed in",
@@ -572,6 +574,33 @@ const AUTH_LINE: Readonly<Record<IdentityVerdict["state"], string>> = {
 
 /** The verdict this module last rendered, held so the logout action can restore it on a refusal. */
 let lastVerdict: IdentityVerdict = { state: "unavailable", reason: "not resolved yet" };
+
+/** A signed-in account's auth row while the Kiro sign-in is not working. */
+const HEALTH_LINE: Readonly<Partial<Record<SignInState, string>>> = {
+  failing: "Kiro sign-in failing",
+  signed_out: "Kiro sign-in ended",
+};
+
+let healthBound = false;
+
+/** Repaint the auth row whenever the sign-in health moves; bound on the first render, which is when the card has
+ *  a verdict to word. */
+function bindHealthLine(): void {
+  if (healthBound) {
+    return;
+  }
+  healthBound = true;
+  effect(() => {
+    touch(signInHealth());
+    paintAuthLine();
+  });
+}
+
+function paintAuthLine(): void {
+  const state = signInHealth().peek()?.state ?? "none";
+  const unhealthy = lastVerdict.state === "signed_in" ? HEALTH_LINE[state] : undefined;
+  setAuthLine(unhealthy ?? AUTH_LINE[lastVerdict.state]);
+}
 
 const TEXT_SIGN_OUT = "Log out";
 const TEXT_SIGN_OUT_API_KEY =
@@ -586,7 +615,8 @@ export function renderIdentity(v: IdentityVerdict): void {
   lastVerdict = v;
   const account = v.state === "signed_in" ? v : null;
   $.userEmail.textContent = account?.email ?? "";
-  setAuthLine(AUTH_LINE[v.state]);
+  paintAuthLine();
+  bindHealthLine();
   setSignInRows(account === null ? [] : [account.method, account.startUrl, account.region]);
   // The server refuses a sign-out while the key signs the engine in.
   const keyed = account?.apiKey === true;

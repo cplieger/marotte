@@ -304,6 +304,21 @@ describe("banner-stack: severity carries a shape, not colour alone", () => {
     expect(container.querySelectorAll(".banner-glyph")).toHaveLength(1);
     expect(container.querySelector(".banner-msg")?.textContent).toBe("still boom");
   });
+
+  it("moves the level class and glyph when a repeat call changes the level", async () => {
+    const { container, mod } = await setup();
+
+    activeSig.value = { id: "A" };
+    mod.ensureBound();
+    mod.showBanner("A", "e", "trouble", "warning", false);
+    mod.showBanner("A", "e", "ended", "error", false);
+
+    const node = container.querySelector(".banner");
+    expect(container.querySelectorAll(".banner")).toHaveLength(1);
+    expect(node?.classList.contains("banner-error")).toBe(true);
+    expect(node?.classList.contains("banner-warning")).toBe(false);
+    expect(container.querySelector(".banner-glyph")?.textContent).toBe("\u2717");
+  });
 });
 
 describe("banner-stack: the CTA is the app's shared button, not a text-link skin", () => {
