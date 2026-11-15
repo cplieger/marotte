@@ -3,21 +3,28 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// compactCalls counts the hub's compaction calls and answers each accepted (refuse false) or refused; failures
+// compactCalls counts the hub's compaction calls and answers each accepted (refuse false), refused, or failed with
+// err; a call waits on gate when one is set. reading is the stored context reading onCompactor reports; failures
 // collects the toasts.
 type compactCalls struct {
+	err      error
+	gate     chan struct{}
+	failures []string
 	mu       sync.Mutex
 	calls    int
+	reading  float64
 	refuse   bool
-	failures []string
 }
 
 func (c *compactCalls) count() int {
@@ -32,19 +39,45 @@ func (c *compactCalls) toasts() []string {
 	return slices.Clone(c.failures)
 }
 
+func (c *compactCalls) setRefuse(refuse bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.refuse = refuse
+}
+
+func (c *compactCalls) setReading(pct float64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reading = pct
+}
+
 // onCompactor points the hub's compactor at a policy of pct, the reading at usage, and a counting compact call.
 func onCompactor(h *Runtime, pct int, enabled bool, usage float64) *compactCalls {
+	c := countCompactions(h, pct, enabled)
+	c.reading = usage
+	h.coord.autoCompact.usage = func(context.Context, marotte.ChatID) marotte.Usage {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return marotte.Usage{ContextPct: c.reading, HasRealData: c.reading > 0}
+	}
+	return c
+}
+
+// countCompactions points the hub's compactor at a policy of pct and a counting compact call, leaving the reading to
+// the chat's stored usage.
+func countCompactions(h *Runtime, pct int, enabled bool) *compactCalls {
 	c := &compactCalls{}
 	ac := h.coord.autoCompact
 	ac.policy = func(context.Context) (bool, int) { return enabled, pct }
-	ac.usage = func(context.Context, marotte.ChatID) marotte.Usage {
-		return marotte.Usage{ContextPct: usage, HasRealData: usage > 0}
-	}
 	ac.compact = func(context.Context, command.CompactBridge) (bool, uint64, error) {
 		c.mu.Lock()
-		defer c.mu.Unlock()
 		c.calls++
-		return !c.refuse, 0, nil
+		gate, refuse, err := c.gate, c.refuse, c.err
+		c.mu.Unlock()
+		if gate != nil {
+			<-gate
+		}
+		return !refuse && err == nil, 0, err
 	}
 	ac.toast = func(_ context.Context, _ marotte.ChatID, _ marotte.ErrorCode, detail string) {
 		c.mu.Lock()
@@ -115,8 +148,130 @@ func TestAutoCompact_AReadingDuringATurnListsOneCompactionRunAtItsEnd(t *testing
 	}
 }
 
-// The reader's cancel of a listed compaction takes it off, and the turn's end then compacts nothing unasked.
-func TestAutoCompact_ACancelHoldsForTheTurn(t *testing.T) {
+// A compaction that did not run at a turn end over the point is attempted again at the next turn's end.
+func TestAutoCompact_AFailedCompactionIsAttemptedAgainAtTheNextTurnEnd(t *testing.T) {
+	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+	calls := onCompactor(h, 90, true, 95)
+	calls.setRefuse(true)
+
+	runPrompt(t, h, cs, "c1", "m-2")
+	waitFor(t, func() bool { return calls.count() == 1 && compactionEntry(t, cs, "c1").ID == "" })
+	runPrompt(t, h, cs, "c1", "m-3")
+
+	waitFor(t, func() bool { return calls.count() == 2 })
+}
+
+// Every turn end over the point attempts a compaction until one succeeds; the reading a success leaves (0) then
+// compacts nothing.
+func TestAutoCompact_EveryTurnEndOverThePointAttemptsUntilOneSucceeds(t *testing.T) {
+	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+	calls := onCompactor(h, 90, true, 95)
+	calls.setRefuse(true)
+	for turn := 1; turn <= 3; turn++ {
+		runPrompt(t, h, cs, "c1", "m-fail-"+string(rune('0'+turn)))
+		waitFor(t, func() bool { return calls.count() == turn && len(calls.toasts()) == turn })
+	}
+	calls.setRefuse(false)
+	runPrompt(t, h, cs, "c1", "m-ok")
+	waitFor(t, func() bool { return calls.count() == 4 })
+	calls.setReading(0)
+
+	runPrompt(t, h, cs, "c1", "m-after")
+
+	staysFalse(t, 100*time.Millisecond, func() bool { return calls.count() != 4 }, "a turn end after the success compacted again")
+	if got := len(calls.toasts()); got != 3 {
+		t.Errorf("toasts = %d, want one per failed attempt (3)", got)
+	}
+}
+
+// Once the reading is back under the point, a turn end after a failure attempts nothing.
+func TestAutoCompact_UnderThePointAfterAFailureAttemptsNothing(t *testing.T) {
+	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+	calls := onCompactor(h, 90, true, 95)
+	calls.setRefuse(true)
+	runPrompt(t, h, cs, "c1", "m-2")
+	waitFor(t, func() bool { return calls.count() == 1 })
+	calls.setReading(40)
+
+	runPrompt(t, h, cs, "c1", "m-3")
+
+	staysFalse(t, 100*time.Millisecond, func() bool { return calls.count() != 1 }, "a turn end under the point compacted")
+}
+
+// A failure starts no attempt while the next turn runs; that turn's end does.
+func TestAutoCompact_NoAttemptStartsMidTurnAfterAFailure(t *testing.T) {
+	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+	calls := onCompactor(h, 90, true, 95)
+	calls.setRefuse(true)
+	runPrompt(t, h, cs, "c1", "m-2")
+	waitFor(t, func() bool { return calls.count() == 1 && compactionEntry(t, cs, "c1").ID == "" })
+	open := promptGates(t, br)
+	if code := postPrompt(t, h, "parked"); code != 200 {
+		t.Fatalf("Setup: prompt = %d", code)
+	}
+	waitFor(t, func() bool { return h.coord.turns.live("c1") })
+
+	staysFalse(t, 100*time.Millisecond, func() bool {
+		return calls.count() != 1 || compactionEntry(t, cs, "c1").ID != ""
+	}, "a compaction was listed or called while the turn ran")
+	open(0)
+
+	waitFor(t, func() bool { return calls.count() == 2 })
+}
+
+// After a failure an idle chat starts nothing, however long it stays idle: the next attempt waits for a turn end.
+func TestAutoCompact_AnIdleChatAfterAFailureStartsNothing(t *testing.T) {
+	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+	calls := onCompactor(h, 90, true, 95)
+	calls.setRefuse(true)
+	runPrompt(t, h, cs, "c1", "m-2")
+	waitFor(t, func() bool { return calls.count() == 1 && !listLive(h, "c1") })
+
+	staysFalse(t, 300*time.Millisecond, func() bool {
+		return calls.count() != 1 || compactionEntry(t, cs, "c1").ID != ""
+	}, "an idle chat listed or called a compaction after the failure")
+}
+
+// The retry needs no state of its own: a runtime restarted between the failure and the next turn end reads the
+// stored reading at that end and attempts.
+func TestAutoCompact_ARestartBetweenTheFailureAndTheNextTurnEndStillAttempts(t *testing.T) {
+	cs := newTestChatStore()
+	boot := func() *Runtime {
+		h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession {
+			br := newFakeBridge()
+			br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
+			return br
+		}, nil), cs)
+		cs.wire(h)
+		settleBoot(t, h)
+		return h
+	}
+	before := boot()
+	seedQueue(t, cs, "c1")
+	runPrompt(t, before, cs, "c1", "m-first")
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Usage.ContextPct, c.Usage.HasRealData = 95, true
+		return true
+	}); err != nil {
+		t.Fatalf("Setup: store the reading: %v", err)
+	}
+	first := countCompactions(before, 90, true)
+	first.setRefuse(true)
+	runPrompt(t, before, cs, "c1", "m-2")
+	waitFor(t, func() bool { return first.count() == 1 })
+	shutdownHub(t, before)
+
+	after := boot()
+	t.Cleanup(func() { shutdownHub(t, after) })
+	calls := countCompactions(after, 90, true)
+	runPrompt(t, after, cs, "c1", "m-3")
+
+	waitFor(t, func() bool { return calls.count() == 1 })
+}
+
+// The reader's cancel of a listed compaction takes it off and the turn's end compacts nothing unasked; the next
+// turn's end, still over the point, attempts again.
+func TestAutoCompact_ACancelEndsOnlyThatAttempt(t *testing.T) {
 	h, cs, _, tails := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, true, 95)
 	id, _ := h.stagePromptTurn(t, "c1")
@@ -139,6 +294,45 @@ func TestAutoCompact_ACancelHoldsForTheTurn(t *testing.T) {
 	if calls.count() != 0 {
 		t.Errorf("compact calls after the cancel = %d, want 0", calls.count())
 	}
+
+	runPrompt(t, h, cs, "c1", "m-next")
+
+	waitFor(t, func() bool { return calls.count() == 1 })
+}
+
+// The reader's cancel of a running compaction ends that call with no toast; the next turn's end, still over the
+// point, attempts again.
+func TestAutoCompact_ACancelledRunningCompactionIsAttemptedAgainAtTheNextTurnEnd(t *testing.T) {
+	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+	calls := onCompactor(h, 90, true, 95)
+	gate := make(chan struct{})
+	calls.gate, calls.refuse = gate, true
+	release := sync.OnceFunc(func() { close(gate) })
+	t.Cleanup(release)
+	pressed := make(chan struct{})
+	go func() {
+		defer close(pressed)
+		_, _ = h.RequestCompact(context.WithoutCancel(t.Context()), "c1")
+	}()
+	waitFor(t, func() bool { return calls.count() == 1 })
+	c := compactionEntry(t, cs, "c1")
+	rec := postCmd(t, h, marotte.ClientCommand{
+		Type: marotte.CmdCancelCompact, ChatID: "c1", Payload: json.RawMessage(`{"id":"` + c.ID + `"}`),
+	})
+	if rec.Code != 200 {
+		t.Fatalf("cancel_compact = %d %s", rec.Code, rec.Body.String())
+	}
+	calls.mu.Lock()
+	calls.gate = nil
+	calls.mu.Unlock()
+	release()
+	<-pressed
+	waitFor(t, func() bool { return compactionEntry(t, cs, "c1").ID == "" })
+	staysFalse(t, 100*time.Millisecond, func() bool { return len(calls.toasts()) != 0 }, "the cancelled call raised a toast")
+
+	runPrompt(t, h, cs, "c1", "m-next")
+
+	waitFor(t, func() bool { return calls.count() == 2 && len(calls.toasts()) == 1 })
 }
 
 // A compaction kiro-cli refuses with no turn beside it is dropped and reported once.
@@ -152,9 +346,58 @@ func TestAutoCompact_ARefusedTurnEndCompactionIsDroppedAndReported(t *testing.T)
 	if compactionEntry(t, cs, "c1").ID != "" {
 		t.Error("the refused compaction is still listed")
 	}
+	if got := calls.toasts(); !slices.Equal(got, []string{compactFailedRetrying}) {
+		t.Errorf("toasts = %v, want one %q", got, compactFailedRetrying)
+	}
+}
+
+// A queued press refused on a chat under the point says nothing of a retry: no turn end will try again.
+func TestAutoCompact_AFailedPressUnderThePointSaysNothingOfARetry(t *testing.T) {
+	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+	calls := onCompactor(h, 90, true, 30)
+	calls.setRefuse(true)
+	id, _ := h.stagePromptTurn(t, "c1")
+	if out, err := h.RequestCompact(t.Context(), "c1"); err != nil || out != command.CompactQueued {
+		t.Fatalf("Setup: press during the turn = (%v, %v), want queued", out, err)
+	}
+
+	endTurn(t, h, "c1", id)
+
+	waitFor(t, func() bool { return len(calls.toasts()) == 1 && compactionEntry(t, cs, "c1").ID == "" })
 	if got := calls.toasts(); !slices.Equal(got, []string{compactFailed}) {
 		t.Errorf("toasts = %v, want one %q", got, compactFailed)
 	}
+}
+
+// A press refused over the point answers that the next turn end tries again, and it does; under the point it
+// answers a plain refusal, and the next turn end attempts nothing.
+func TestCompactRequest_AFailedPressIsAttemptedAgainAtTheNextTurnEnd(t *testing.T) {
+	t.Run("over the point", func(t *testing.T) {
+		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+		calls := onCompactor(h, 90, true, 95)
+		calls.setRefuse(true)
+
+		out, err := h.RequestCompact(t.Context(), "c1")
+
+		if err != nil || out != command.CompactRefusedRetrying {
+			t.Errorf("press = (%v, %v), want refused, retrying", out, err)
+		}
+		runPrompt(t, h, cs, "c1", "m-2")
+		waitFor(t, func() bool { return calls.count() == 2 })
+	})
+	t.Run("under the point", func(t *testing.T) {
+		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+		calls := onCompactor(h, 90, true, 30)
+		calls.setRefuse(true)
+
+		out, err := h.RequestCompact(t.Context(), "c1")
+
+		if err != nil || out != command.CompactRefused {
+			t.Errorf("press = (%v, %v), want refused", out, err)
+		}
+		runPrompt(t, h, cs, "c1", "m-2")
+		staysFalse(t, 100*time.Millisecond, func() bool { return calls.count() != 1 }, "a turn end under the point compacted")
+	})
 }
 
 // The reader's press while a turn runs is listed for that turn's end and answers queued; one on an idle chat runs
@@ -217,4 +460,83 @@ func TestUnreadableConfig_MarottesCompactorKeepsTheLastReadablePolicy(t *testing
 	if on, pct := h.coord.autoCompact.policy(t.Context()); on || pct != 90 {
 		t.Errorf("compaction policy over an unreadable config.json = (%v, %d), want the last readable (false, 90)", on, pct)
 	}
+}
+
+// logRecords is the captured JSON log records whose msg is msg.
+func logRecords(t *testing.T, logs *logCapture, msg string) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for line := range strings.SplitSeq(strings.TrimSpace(logs.String()), "\n") {
+		var rec map[string]any
+		if json.Unmarshal([]byte(line), &rec) == nil && rec["msg"] == msg {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+// Each failed attempt logs one WARN with its reason and whether the next turn end tries again; a cancelled call logs
+// none.
+func TestCompaction_AFailedAttemptLogsWarnWithItsReason(t *testing.T) {
+	t.Run("a refusal", func(t *testing.T) {
+		logs := captureLogs(t)
+		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+		calls := onCompactor(h, 90, true, 95)
+		calls.setRefuse(true)
+
+		runPrompt(t, h, cs, "c1", "m-2")
+		waitFor(t, func() bool { return len(logRecords(t, logs, "compaction did not run")) == 1 })
+
+		rec := logRecords(t, logs, "compaction did not run")[0]
+		if rec["level"] != "WARN" {
+			t.Errorf("level = %v, want WARN", rec["level"])
+		}
+		if r, _ := rec["reason"].(string); !strings.HasPrefix(r, "refused") {
+			t.Errorf("reason = %q, want one starting refused", r)
+		}
+		if rec["retry_at_turn_end"] != true {
+			t.Errorf("retry_at_turn_end = %v, want true over the point", rec["retry_at_turn_end"])
+		}
+	})
+	t.Run("a transport error", func(t *testing.T) {
+		logs := captureLogs(t)
+		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+		calls := onCompactor(h, 90, true, 95)
+		calls.mu.Lock()
+		calls.err = errors.New("the pipe broke")
+		calls.mu.Unlock()
+
+		runPrompt(t, h, cs, "c1", "m-2")
+		waitFor(t, func() bool { return len(logRecords(t, logs, "compaction did not run")) == 1 })
+
+		rec := logRecords(t, logs, "compaction did not run")[0]
+		if rec["level"] != "WARN" || rec["reason"] != "the pipe broke" {
+			t.Errorf("record = %v, want WARN with reason %q", rec, "the pipe broke")
+		}
+	})
+	t.Run("a cancelled call", func(t *testing.T) {
+		logs := captureLogs(t)
+		h, _, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+		calls := onCompactor(h, 90, true, 95)
+		gate := make(chan struct{})
+		calls.gate, calls.refuse = gate, true
+		release := sync.OnceFunc(func() { close(gate) })
+		t.Cleanup(release)
+		pressed := make(chan struct{})
+		go func() {
+			defer close(pressed)
+			_, _ = h.RequestCompact(context.WithoutCancel(t.Context()), "c1")
+		}()
+		waitFor(t, func() bool { return calls.count() == 1 })
+		if err := h.coord.autoCompact.cancel(t.Context(), "c1", ""); err != nil {
+			t.Fatalf("cancel: %v", err)
+		}
+		release()
+		<-pressed
+		waitFor(t, func() bool { return len(logRecords(t, logs, "compaction cancelled while its call ran")) == 1 })
+
+		for _, rec := range logRecords(t, logs, "compaction did not run") {
+			t.Errorf("a cancelled call logged %v, want no WARN", rec)
+		}
+	})
 }

@@ -7,6 +7,7 @@ import { error as toastError, errorWithAction, type ToastRetry } from "./toast.j
 import { getActiveTabId, tabIdFor } from "./tabs.js";
 import { truncate } from "./strings.js";
 import { named, noticeSubject } from "./notice-subject.js";
+import type { ErrorCode } from "./wire/types.gen.js";
 
 /**
  * A failed prompt is reported twice by design (POST body and SSE `error` frame) milliseconds apart; 5s leaves room
@@ -27,12 +28,15 @@ const latched = new Map<string, { key: string; at: number }>();
  *  chat because two chats can fail independently and each owns its own notice. */
 const live = new Map<string, () => void>();
 
+/** The error code that raised each chat's `live` notice, so a retraction can name the failure it answers. */
+const liveCode = new Map<string, ErrorCode>();
+
 /** Remedy-bearing toasts, per failure: sticky, so only an identical repeat replaces one. */
 const remedies = new Map<string, () => void>();
 
 /**
  * Report a failure. `chatID` may be any chat; "" is workspace-global. `action` is the route's own remedy: it takes
- * the action slot and makes the toast sticky.
+ * the action slot and makes the toast sticky. `code` is the server's error code, when the failure came with one.
  */
 export function reportFailure(
   chatID: string,
@@ -40,6 +44,7 @@ export function reportFailure(
   action?: ToastRetry,
   turnScoped = false,
   chatName = "",
+  code?: ErrorCode,
 ): void {
   if (suppressedAsAlreadyOnScreen(chatID, action, turnScoped)) {
     return;
@@ -51,6 +56,13 @@ export function reportFailure(
   const last = latched.get(chatID);
   if (last?.key === key && now - last.at < DEDUPE_WINDOW_MS) {
     latched.set(chatID, { key, at: now });
+    return;
+  }
+  // One failed attempt reports twice: the compaction notice, which says whether the next turn end tries again, and the
+  // turn-scoped reason, which would erase that; the reason stays in the chat's "Compaction failed" row.
+  const twinOfCompactionNotice =
+    turnScoped && code === "compaction_failed" && liveCode.get(chatID) === "compaction_failed";
+  if (twinOfCompactionNotice && last !== undefined && now - last.at < DEDUPE_WINDOW_MS) {
     return;
   }
   // A sticky remedy is replaced by its own repeat and by nothing else; an ordinary
@@ -67,6 +79,9 @@ export function reportFailure(
     remedies.set(key, dismiss);
   } else {
     live.set(chatID, dismiss);
+    if (code !== undefined) {
+      liveCode.set(chatID, code);
+    }
   }
 }
 
@@ -100,9 +115,17 @@ export function clearFailure(chatID: string): void {
     return;
   }
   live.delete(chatID);
+  liveCode.delete(chatID);
   // The latch too, or the retracted text stays suppressed for the rest of the window.
   latched.delete(chatID);
   dismiss();
+}
+
+/** Retract this chat's notice only if a `compaction_failed` report raised it: the compaction it reported has now run. */
+export function clearCompactionFailure(chatID: string): void {
+  if (liveCode.get(chatID) === "compaction_failed") {
+    clearFailure(chatID);
+  }
 }
 
 /** Named for its chat (`noticeSubject`). A remedy takes the action slot, sticky; otherwise the slot is Open. */
@@ -125,5 +148,6 @@ function raise(
 export function _resetForTest(): void {
   latched.clear();
   live.clear();
+  liveCode.clear();
   remedies.clear();
 }

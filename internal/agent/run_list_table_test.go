@@ -364,6 +364,25 @@ func TestRunList_Table(t *testing.T) {
 			},
 			wantVerb: "compaction", wantOrder: "m-a:closing compact-1:pending m-q1:pending m-q0:paused",
 		},
+		{
+			name: "a compaction that did not run leaves nothing behind, and the next turn end over the point lists one ahead of the queued rows",
+			run: func(_ *testing.T, w *tableWorld) string {
+				end := clean
+				end.compact = marotte.RunFromTurnEnd
+				w.send("m-a", marotte.SendPlain, "")
+				w.running("m-a")
+				w.send("m-q1", marotte.SendPlain, marotte.InterruptQueue)
+				w.closed("m-a", end)
+				w.l.compactionStart("compact-1", w.facts())
+				w.l.compactionEnded("compact-1", false, nil)
+				w.advance()
+				w.running("m-q1")
+				w.send("m-q2", marotte.SendPlain, marotte.InterruptQueue)
+				w.closed("m-q1", end)
+				return ""
+			},
+			wantOrder: "compact-2:starting m-q2:pending",
+		},
 	}
 	for _, r := range rows {
 		t.Run(r.name, func(t *testing.T) {

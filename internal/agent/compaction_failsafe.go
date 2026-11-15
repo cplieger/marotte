@@ -23,6 +23,11 @@ const failsafeStopNotice = "The context was nearly full, so marotte stopped this
 const compactFailsafeFailed = "The compaction did not run (the agent was busy, or the summary failed or the chat " +
 	"changed before it finished), so marotte did not continue the stopped turn. Send a message to go on."
 
+// compactFailsafeFailedRetrying is compactFailsafeFailed on a chat whose next turn end tries the compaction again.
+const compactFailsafeFailedRetrying = "The compaction did not run (the agent was busy, or the summary failed or the " +
+	"chat changed before it finished), so marotte did not continue the stopped turn. Send a message to go on: " +
+	"marotte tries the compaction again at the end of the next turn."
+
 // resumeLimitNotice tells the reader a failsafe stop at compactionFailsafeResumes lists no resume.
 const resumeLimitNotice = "The context filled up again, so marotte stopped the turn to compact the context. It " +
 	"continues a stopped task on its own once per message you send, so send a message to go on."

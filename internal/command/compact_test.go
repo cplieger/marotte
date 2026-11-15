@@ -138,6 +138,35 @@ func TestCmdCompact_RefusalNamesEveryCause(t *testing.T) {
 	}
 }
 
+// A refusal the next turn end retries says so; a plain refusal keeps its own text.
+func TestCmdCompact_ARefusalThatRetriesSaysTheNextTurnEnd(t *testing.T) {
+	_, err := cmdCompact(t.Context(), &fakeCompactor{out: CompactRefusedRetrying}, compactReq("c1"))
+	if got := statusOf(err); got != 409 {
+		t.Errorf("status = %d, want 409", got)
+	}
+	if got, want := errText(err), errCompactRefusedRetrying.Error(); got != want {
+		t.Errorf("refusal = %q, want %q", got, want)
+	}
+	if !strings.HasSuffix(errText(err), "marotte tries again at the end of the next turn") {
+		t.Errorf("refusal %q does not say the next turn end tries again", errText(err))
+	}
+	_, err = cmdCompact(t.Context(), &fakeCompactor{out: CompactRefused}, compactReq("c1"))
+	if got, want := errText(err), errCompactRefused.Error(); got != want {
+		t.Errorf("plain refusal = %q, want %q", got, want)
+	}
+}
+
+// A call error the next turn end retries keeps its cause and says so.
+func TestCmdCompact_ACallErrorThatRetriesSaysTheNextTurnEnd(t *testing.T) {
+	_, err := cmdCompact(t.Context(), &fakeCompactor{out: CompactRefusedRetrying, err: errors.New("pipe closed")}, compactReq("c1"))
+	if got := statusOf(err); got != 502 {
+		t.Errorf("status = %d, want 502", got)
+	}
+	if got, want := errText(err), "pipe closed. marotte tries again at the end of the next turn"; got != want {
+		t.Errorf("error = %q, want %q", got, want)
+	}
+}
+
 func TestCmdCompact_ACallErrorIsBadGateway(t *testing.T) {
 	_, err := cmdCompact(t.Context(), &fakeCompactor{out: CompactRefused, err: errors.New("pipe closed")}, compactReq("c1"))
 	if got := statusOf(err); got != 502 {

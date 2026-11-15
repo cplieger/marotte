@@ -1367,8 +1367,8 @@ func TestRunOrder_ACompactionKiroCLIRefusesWithNoTurnBesideItRunsOnce(t *testing
 		}
 		// The toast is spawned after the next row's take (flushRunLocked).
 		waitFor(t, func() bool { return len(calls.toasts()) > 0 })
-		if got := calls.toasts(); !slices.Equal(got, []string{compactFailed}) {
-			t.Errorf("toasts = %v, want one %q", got, compactFailed)
+		if got := calls.toasts(); !slices.Equal(got, []string{compactFailedRetrying}) {
+			t.Errorf("toasts = %v, want one %q", got, compactFailedRetrying)
 		}
 		if compactionEntry(t, cs, "c1").ID != "" {
 			t.Error("the refused compaction is still listed")

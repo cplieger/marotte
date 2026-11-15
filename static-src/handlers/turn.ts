@@ -180,7 +180,7 @@ onSSE("error", (chatID, p) => {
     case "toast":
       // Not reported for the chat on screen when turn-scoped (its card carries the reason);
       // `failure-notice.ts` owns that. `turn_scoped` comes off the FRAME; absent means no.
-      reportFailure(chatID, msg, toastActionFor(route.action), p.turn_scoped ?? false);
+      reportFailure(chatID, msg, toastActionFor(route.action), p.turn_scoped ?? false, "", code);
       break;
     case "agent-down":
       // Active chat only: this DOES paint a shared control, so a background

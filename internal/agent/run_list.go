@@ -1137,12 +1137,27 @@ func (l *runList) kasReportedActive() {
 	}
 }
 
+// compactEnd is how compactionEnded settled a call.
+type compactEnd uint8
+
+const (
+	// compactEndStale: the id names no running compaction; nothing changed.
+	compactEndStale compactEnd = iota
+	compactEndCompacted
+	// compactEndCancelled: the reader cancelled the running call; nothing is requeued or toasted.
+	compactEndCancelled
+	// compactEndRequeued: a refusal while kiro-cli ran a turn beside the call, listed again at the front.
+	compactEndRequeued
+	// compactEndNotRun: removed (compactionNotRun); the next turn end over the point attempts again.
+	compactEndNotRun
+)
+
 // compactionEnded settles the compaction call with that id by the facts the list recorded, never by a refusal
 // reason (KAS answers every refusal as a bare {success: false}). A failure no /compact waits on is toasted (fx.toast).
-func (l *runList) compactionEnded(id string, accepted bool, err error) {
+func (l *runList) compactionEnded(id string, accepted bool, err error) (compactEnd, marotte.RunEntryOrigin) {
 	_, e := l.find(id)
 	if e == nil || e.kind != marotte.RunKindCompaction || e.state != marotte.RunRunning {
-		return
+		return compactEndStale, ""
 	}
 	failsafe := e.origin == marotte.RunFromFailsafe
 	switch {
@@ -1150,6 +1165,10 @@ func (l *runList) compactionEnded(id string, accepted bool, err error) {
 		e.done.finish(accepted, false, nil)
 		l.remove(e)
 		l.failsafeHeld = l.failsafeHeld || (failsafe && accepted && !e.cancelled)
+		if !accepted {
+			return compactEndCancelled, e.origin
+		}
+		return compactEndCompacted, e.origin
 	case err == nil && e.sawTurn:
 		e.sawTurn = false
 		if e.waiter {
@@ -1159,9 +1178,10 @@ func (l *runList) compactionEnded(id string, accepted bool, err error) {
 		l.remove(e)
 		e.state = marotte.RunPending
 		l.insert(l.frontOfPending(false), e)
-	default:
-		l.compactionNotRun(e, err, failsafe)
+		return compactEndRequeued, e.origin
 	}
+	l.compactionNotRun(e, err, failsafe)
+	return compactEndNotRun, e.origin
 }
 
 // compactionNotRun removes a compaction call that failed or was refused. A failsafe compaction's resume goes with it,

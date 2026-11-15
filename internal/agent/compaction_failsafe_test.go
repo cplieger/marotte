@@ -503,7 +503,7 @@ func TestFailsafe_OffWhenAutoCompactionIsOff(t *testing.T) {
 }
 
 // A failsafe compaction kiro-cli refuses continues nothing: no resume is sent, the rows stay paused, and the toast
-// says the stopped turn was not continued.
+// says the stopped turn was not continued and the next turn end tries again.
 func TestFailsafe_ARefusedCompactionsToastSaysTheTurnWasNotContinued(t *testing.T) {
 	fc := newFailsafeChat(t, true)
 	fc.br.setCallResult(marotte.MethodSessionCompact, json.RawMessage(`{"success":false}`))
@@ -517,7 +517,7 @@ func TestFailsafe_ARefusedCompactionsToastSaysTheTurnWasNotContinued(t *testing.
 	if !eventually(func() bool { return len(fc.toastsSoFar()) == 1 }) {
 		t.Fatalf("toasts = %v, want one", fc.toastsSoFar())
 	}
-	if got, want := fc.toastsSoFar(), []string{string(marotte.ErrCodeCompactionFailed) + ": " + compactFailsafeFailed}; !slices.Equal(got, want) {
+	if got, want := fc.toastsSoFar(), []string{string(marotte.ErrCodeCompactionFailed) + ": " + compactFailsafeFailedRetrying}; !slices.Equal(got, want) {
 		t.Errorf("toasts = %v, want %q", got, want)
 	}
 	staysFalse(t, 150*time.Millisecond, func() bool { return len(openedPrompts(t, fc.cs)) > 2 },
