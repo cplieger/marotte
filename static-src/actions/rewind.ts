@@ -1,7 +1,6 @@
 import { transportAction } from "./index.js";
 import { errorAbout } from "./subject.js";
 import { stillOr } from "./still-applying.js";
-import { loadMessages } from "../store-load.js";
 
 interface RewindArgs {
   chatID: string;
@@ -11,10 +10,10 @@ interface RewindArgs {
 }
 
 /** rewindChat reverts the chat to a past turn: KAS drops the addressed user message and its
- *  successors and rolls the files back. The reverted transcript does NOT arrive over SSE
- *  (`chat_updated` is header-only and `upsertHeader` merges the count as `Math.max`), so
- *  `onSuccess` refetches the page. `idempotencyKey`: a duplicate would revert a SECOND time from
- *  the truncated transcript; KAS's revert-in-progress guard is only the backstop. */
+ *  successors and rolls the files back. The window converges from the `turn_revert` record over SSE
+ *  (store.ts `applyRevert`), so success refetches nothing. `idempotencyKey`: a duplicate would
+ *  revert a SECOND time from the truncated transcript; KAS's revert-in-progress guard is only the
+ *  backstop. */
 export const rewindChat = transportAction<RewindArgs>({
   name: "rewind.revert",
   networkMode: "always",
@@ -25,9 +24,6 @@ export const rewindChat = transportAction<RewindArgs>({
     chat_id: chatID,
     payload: { message_id: messageID },
   }),
-  onSuccess: (_result, { chatID }) => {
-    void loadMessages(chatID);
-  },
   error: errorAbout(
     ({ chatID }: RewindArgs) => chatID,
     stillOr("rewinding the chat", "Could not rewind chat", "chat"),

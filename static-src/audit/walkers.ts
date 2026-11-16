@@ -49,9 +49,176 @@ function tokenPx(name: string): number {
   return px;
 }
 
-/** Hidden by a stylesheet (no boxes at all), not merely off-screen. */
-function hasNoBox(el: Element): boolean {
-  return el.getClientRects().length === 0;
+/** Whether `el` paints its contents, or `child`: a closed `<details>` skips all but its summary
+ *  through a `::details-content` a stylesheet may make visible. */
+function paintsContents(el: Element, child: Element | null = null): boolean {
+  if (getComputedStyle(el).contentVisibility === "hidden") {
+    return false;
+  }
+  if (
+    el.tagName !== "DETAILS" ||
+    (child !== null && child === el.querySelector(":scope > summary"))
+  ) {
+    return true;
+  }
+  return getComputedStyle(el, "::details-content").contentVisibility !== "hidden";
+}
+
+/** Whether a reader can see `el`, or scroll it into view. Not rendered: what Chromium's
+ *  `checkVisibility` skips (no box, a skipped subtree, a closed `<details>` as painted, `visibility`,
+ *  opacity 0), a clip to nothing, an `overflow` clip, a zero-size scroller, and a box no scroll on
+ *  its containing-block chain brings into the viewport. What `content-visibility: auto` skips off
+ *  screen counts, since scrolling to it paints it. Departs from axe-core 4.13 and 4.14
+ *  `isVisibleOnScreen`, each case pinned in walkers.test.ts: a scroller under a fixed ancestor still
+ *  reaches its overflow, a scroll moves only the boxes it contains, a painted `::details-content`
+ *  counts, a clip with one zero edge hides, and a scroller hides nothing that escapes it. */
+function rendered(el: Element): boolean {
+  const own = getComputedStyle(el);
+  if (own.display === "contents") {
+    const parent = el.parentElement;
+    return (
+      parent !== null &&
+      own.visibility === "visible" &&
+      rendered(parent) &&
+      paintsContents(parent, el)
+    );
+  }
+  if (!el.checkVisibility({ visibilityProperty: true, opacityProperty: true })) {
+    return false;
+  }
+  const zeroClip = (cs: CSSStyleDeclaration): boolean => {
+    const rect =
+      /rect\(\s*(-?[\d.]+)px,?\s*(-?[\d.]+)px,?\s*(-?[\d.]+)px,?\s*(-?[\d.]+)px\s*\)/u.exec(
+        cs.getPropertyValue("clip"),
+      );
+    if (rect !== null && (cs.position === "absolute" || cs.position === "fixed")) {
+      const [top = 0, right = 0, bottom = 0, left = 0] = rect.slice(1).map(Number);
+      if (bottom - top <= 0 || right - left <= 0) {
+        return true;
+      }
+    }
+    const inset = /^inset\(\s*([\d.]+)%/u.exec(cs.clipPath);
+    if (inset !== null && Number(inset[1]) >= 50) {
+      return true;
+    }
+    return /^circle\(\s*0(px)?[\s)]/u.test(cs.clipPath);
+  };
+  // CSS Position 3 and CSS Transforms 1: the containing block of fixed and absolute descendants,
+  // as layout containment is (`contain`, `container-type`, `content-visibility: auto`).
+  const holdsOutOfFlow = (cs: CSSStyleDeclaration): boolean =>
+    ["transform", "translate", "rotate", "scale", "perspective", "filter", "backdrop-filter"].some(
+      (p) => cs.getPropertyValue(p) !== "none",
+    ) ||
+    /paint|layout|strict|content/u.test(cs.contain) ||
+    /transform|perspective|filter/u.test(cs.willChange) ||
+    cs.containerType !== "normal" ||
+    cs.contentVisibility === "auto";
+  const escapeOf = (position: string): "no" | "abs" | "fixed" =>
+    position === "fixed" ? "fixed" : position === "absolute" ? "abs" : "no";
+  interface Axis {
+    now: number;
+    lo: number;
+    hi: number;
+  }
+  // A reversed axis scrolls from 0 down to -extent: Chromium's scroll origin for rtl and a reversed flex.
+  const axis = (now: number, extent: number, reversed: boolean): Axis => {
+    const span = Math.max(0, extent);
+    return reversed ? { now, lo: -span, hi: 0 } : { now, lo: 0, hi: span };
+  };
+  // Whether a scroll offset in [lo, hi] puts [start, end] inside [from, to); an empty box is a point.
+  const reaches = (start: number, end: number, a: Axis, from: number, to: number): boolean => {
+    const first = start + a.now - to;
+    const last = end + a.now - from;
+    return first < a.hi && (end === start ? last >= a.lo : last > a.lo);
+  };
+  const clips = (v: string): boolean => v === "hidden" || v === "clip";
+  const scrolls = (v: string): boolean => v === "auto" || v === "scroll";
+
+  let r = el.getBoundingClientRect();
+  // `el`'s own clip or scroller bounds the text a walker judges in it.
+  const shut = (v: string, size: number): boolean => (clips(v) || scrolls(v)) && size < 2;
+  if (zeroClip(own) || shut(own.overflowX, r.width) || shut(own.overflowY, r.height)) {
+    return false;
+  }
+  let escaping = escapeOf(own.position);
+  // The viewport's own scroller is the document's, judged after the loop.
+  for (
+    let cur = el.parentElement;
+    cur !== null && cur !== document.body && cur !== document.documentElement;
+    cur = cur.parentElement
+  ) {
+    const cs = getComputedStyle(cur);
+    if (zeroClip(cs)) {
+      return false;
+    }
+    // A clip or a scroll reaches `el` only through its containing blocks (CSS Position 3 §2.1).
+    const contains =
+      escaping === "no" || holdsOutOfFlow(cs) || (escaping === "abs" && cs.position !== "static");
+    if (!contains) {
+      continue;
+    }
+    escaping = escapeOf(cs.position);
+    const box = cur.getBoundingClientRect();
+    const port = new DOMRect(
+      box.left + cur.clientLeft,
+      box.top + cur.clientTop,
+      cur.clientWidth,
+      cur.clientHeight,
+    );
+    const overflowsX = scrolls(cs.overflowX) && cur.scrollWidth > cur.clientWidth;
+    const overflowsY = scrolls(cs.overflowY) && cur.scrollHeight > cur.clientHeight;
+    // axe-core 4.13 `scrollHidden`: a scroller with a computed height or width of 0 clips what it contains.
+    if (
+      (overflowsX || overflowsY) &&
+      (Number.parseInt(cs.height, 10) === 0 || Number.parseInt(cs.width, 10) === 0)
+    ) {
+      return false;
+    }
+    const flex = cs.display.endsWith("flex") ? cs.flexDirection : "";
+    let [left, right, top, bottom] = [r.left, r.right, r.top, r.bottom];
+    if (clips(cs.overflowY)) {
+      if (port.height < 2 || r.bottom <= port.top || r.top >= port.bottom) {
+        return false;
+      }
+      [top, bottom] = [Math.max(r.top, port.top), Math.min(r.bottom, port.bottom)];
+    } else if (scrolls(cs.overflowY)) {
+      const y = axis(cur.scrollTop, cur.scrollHeight - cur.clientHeight, flex === "column-reverse");
+      if (!reaches(r.top, r.bottom, y, port.top, port.bottom)) {
+        return false;
+      }
+      [top, bottom] = [port.top, port.bottom];
+    }
+    if (clips(cs.overflowX)) {
+      if (port.width < 2 || r.right <= port.left || r.left >= port.right) {
+        return false;
+      }
+      [left, right] = [Math.max(r.left, port.left), Math.min(r.right, port.right)];
+    } else if (scrolls(cs.overflowX)) {
+      const reversed = (cs.direction === "rtl") !== (flex === "row-reverse");
+      const x = axis(cur.scrollLeft, cur.scrollWidth - cur.clientWidth, reversed);
+      if (!reaches(r.left, r.right, x, port.left, port.right)) {
+        return false;
+      }
+      [left, right] = [port.left, port.right];
+    }
+    r = new DOMRect(left, top, right - left, bottom - top);
+  }
+  const doc = document.documentElement;
+  const [x, y] =
+    escaping === "fixed"
+      ? [axis(0, 0, false), axis(0, 0, false)]
+      : [
+          axis(
+            window.scrollX,
+            doc.scrollWidth - doc.clientWidth,
+            getComputedStyle(document.body).direction === "rtl",
+          ),
+          axis(window.scrollY, doc.scrollHeight - doc.clientHeight, false),
+        ];
+  return (
+    reaches(r.left, r.right, x, 0, window.innerWidth) &&
+    reaches(r.top, r.bottom, y, 0, window.innerHeight)
+  );
 }
 
 /** The nearest ancestor whose transform is not a pure TRANSLATION, or null. Under a rotation a
@@ -187,9 +354,8 @@ function targetExtent(el: Element, axis: "x" | "y", cap: number): number | null 
   const cx = r.left + r.width / 2;
   const cy = r.top + r.height / 2;
 
-  // NULL, never the painted box, when the element does not answer at its own centre: a control in a
-  // CLOSED `<details>` keeps a rect (Chromium's `content-visibility` on `::details-content`) while
-  // the `<summary>` is hit, and the box fallback would report it undersize.
+  // NULL, never the painted box, when the element does not answer at its own centre: an occluded
+  // control's box would report it undersize.
   if (!ownsPoint(el, cx, cy)) {
     return null;
   }
@@ -349,7 +515,7 @@ function controlHeight(opts: { tol: number; floor?: number }): unknown {
     node: Element;
   }
 
-  const viewportHidden: (readonly [string, { h: number; el: string }])[] = [];
+  const unrendered: (readonly [string, { el: string }])[] = [];
   const unmeasurable: (readonly [string, { why: string; el: string }])[] = [];
   const undersizeRows: (readonly [string, Omit<Member, "node">])[] = [];
   const expandedRows: (readonly [string, Omit<Member, "node">])[] = [];
@@ -365,8 +531,8 @@ function controlHeight(opts: { tol: number; floor?: number }): unknown {
     if (floorExempt) {
       inlineRows.push([describeEl(el), { el: describeEl(el) }]);
     }
-    if (hasNoBox(el)) {
-      viewportHidden.push([describeEl(el), { h: 0, el: describeEl(el) }]);
+    if (!rendered(el)) {
+      unrendered.push([describeEl(el), { el: describeEl(el) }]);
       continue;
     }
     const distorted = distortedUnder(el);
@@ -427,7 +593,7 @@ function controlHeight(opts: { tol: number; floor?: number }): unknown {
       unmeasurable.push([
         `${describeEl(el)}|occluded`,
         {
-          why: "something else answers at its centre — occluded, or inside a content-visibility:hidden subtree such as a closed <details>",
+          why: "something else answers at its centre, so it is occluded",
           el: describeEl(el),
         },
       ]);
@@ -527,7 +693,7 @@ function controlHeight(opts: { tol: number; floor?: number }): unknown {
     rows,
     mismatches: bucket(mismatchRows),
     undersize: bucket(undersizeRows),
-    viewportHidden: bucket(viewportHidden),
+    unrendered: bucket(unrendered),
     unmeasurable: bucket(unmeasurable),
     expanded: bucket(expandedRows),
     inlineExempt: bucket(inlineRows),
@@ -564,7 +730,7 @@ function radius(opts: { tol: number }): unknown {
 
   const rounded: Element[] = [];
   for (const el of [...document.body.querySelectorAll("*")]) {
-    if (hasNoBox(el)) {
+    if (!rendered(el)) {
       continue;
     }
     const cs = getComputedStyle(el);
@@ -824,13 +990,15 @@ function contrastRatio(
 }
 
 /** Every `opacity` from this element to the root, multiplied; applied to the text's alpha and to
- *  each background layer, so dimmed text is not measured against an undimmed surface. */
+ *  each background layer, so dimmed text is not measured against an undimmed surface. A
+ *  `display: contents` element has no box, so its opacity and background paint nothing. */
 function foldedOpacity(el: Element): number {
   let out = 1;
   let cur: Element | null = el;
   while (cur !== null) {
-    const o = Number.parseFloat(getComputedStyle(cur).opacity);
-    if (Number.isFinite(o)) {
+    const cs = getComputedStyle(cur);
+    const o = Number.parseFloat(cs.opacity);
+    if (Number.isFinite(o) && cs.display !== "contents") {
       out *= o;
     }
     cur = cur.parentElement;
@@ -842,8 +1010,9 @@ function dimmedBy(el: Element): string[] {
   const out: string[] = [];
   let cur: Element | null = el;
   while (cur !== null) {
-    const o = Number.parseFloat(getComputedStyle(cur).opacity);
-    if (Number.isFinite(o) && o < 1) {
+    const cs = getComputedStyle(cur);
+    const o = Number.parseFloat(cs.opacity);
+    if (Number.isFinite(o) && o < 1 && cs.display !== "contents") {
       out.push(`${describeEl(cur)}@${Math.round(o * 100) / 100}`);
     }
     cur = cur.parentElement;
@@ -862,11 +1031,12 @@ function surfaceUnder(el: Element): {
   let cur: Element | null = el;
   while (cur !== null) {
     const cs = getComputedStyle(cur);
-    if (cs.backgroundImage !== "none") {
+    const boxed = cs.display !== "contents";
+    if (boxed && cs.backgroundImage !== "none") {
       return { color: null, from: describeEl(cur), imageFrom: describeEl(cur) };
     }
     const c = parseColor(cs.backgroundColor);
-    if (c.a > 0) {
+    if (boxed && c.a > 0) {
       const dim = foldedOpacity(cur);
       layers.push({ c: { ...c, a: c.a * dim }, who: describeEl(cur) });
       if (c.a >= 1 && dim >= 1) {
@@ -947,7 +1117,7 @@ function contrast(opts: { inkToken?: string | null }): unknown {
 
   const leaves: Element[] = [];
   for (const el of [...document.body.querySelectorAll("*")]) {
-    if (el.children.length === 0 && !hasNoBox(el) && !SKIP.has(el.tagName)) {
+    if (el.children.length === 0 && !SKIP.has(el.tagName) && rendered(el)) {
       leaves.push(el);
       if (leaves.length >= 40) {
         break;
@@ -1011,31 +1181,16 @@ function contrast(opts: { inkToken?: string | null }): unknown {
         break;
       }
     }
-    if (!hasText || hasNoBox(el)) {
+    if (!hasText || !rendered(el) || !paintsContents(el)) {
       continue;
     }
     const cs = getComputedStyle(el);
-    // checkVisibility() is false inside a content-visibility:hidden ANCESTOR, whose subtree keeps its boxes unpainted.
-    if (cs.visibility !== "visible" || cs.contentVisibility === "hidden" || !el.checkVisibility()) {
-      continue;
-    }
-    // NOT PAINTED, so its contrast concerns nothing a reader sees (collapsed disclosures, unexpanded
-    // pill cards); `--reveal` audits those surfaces.
     const paintedAlpha = foldedOpacity(el);
-    if (paintedAlpha <= 0.001) {
-      continue;
-    }
     // WCAG 1.4.3 exempts an INACTIVE component's text; counted, since "really disabled" is a judgement.
     if (el.closest(":disabled, [aria-disabled='true']") !== null) {
       inactive.push([describeEl(el), { sel: describeEl(el) }]);
       continue;
     }
-    const r = el.getBoundingClientRect();
-    // A screen-reader-only string is clipped to about a pixel: painted, not readable.
-    if (r.width < 2 || r.height < 2) {
-      continue;
-    }
-
     const sel = describeEl(el);
     const surface = surfaceUnder(el);
     if (surface.color === null) {
@@ -1101,6 +1256,144 @@ function contrast(opts: { inkToken?: string | null }): unknown {
   };
 }
 
+// --- focus order -----------------------------------------------------------
+
+/** The tab walk's page-side state, kept on `window` between a runner's key presses. */
+interface FocusWalk {
+  seen: Set<Element>;
+  order: Element[];
+  candidates: Element[];
+}
+
+/** The walk `focus-setup` started; throws when none did, since every later step reads it. */
+function focusWalk(): FocusWalk {
+  const st = (window as unknown as { __browserQaFocus?: FocusWalk }).__browserQaFocus;
+  if (st === undefined) {
+    throw new Error("focus-setup has not run on this page");
+  }
+  return st;
+}
+
+/** Start a tab walk: record every focusable candidate, then focus `start` or reset focus to the
+ *  body. Returns the candidate count. */
+function focusSetup(opts: { start?: string | null }): number {
+  const FOCUSABLE =
+    'a[href], button, input, select, textarea, summary, [tabindex], [contenteditable=""], [contenteditable="true"]';
+  const candidates = [...document.querySelectorAll(FOCUSABLE)];
+  const walk: FocusWalk = { seen: new Set(), order: [], candidates };
+  (window as unknown as { __browserQaFocus?: FocusWalk }).__browserQaFocus = walk;
+  if (typeof opts.start === "string") {
+    document.querySelector<HTMLElement>(opts.start)?.focus();
+  } else {
+    (document.activeElement as HTMLElement | null)?.blur();
+    document.body.focus();
+  }
+  return candidates.length;
+}
+
+/** One stop of the walk, read after a Tab press: the focused element, its box, whether it is
+ *  rendered and matches `:focus-visible`, and whether it precedes the previous stop in DOM order or
+ *  repeats one. */
+function focusStop(): unknown {
+  const st = focusWalk();
+  const el = document.activeElement ?? document.body;
+  const body = el === document.body;
+  const name = el.getAttribute("aria-label") ?? el.textContent.trim().slice(0, 30);
+  const sig = body ? "body" : name === "" ? describeEl(el) : `${describeEl(el)} "${name}"`;
+  const r = el.getBoundingClientRect();
+  const prev = st.order.at(-1) ?? null;
+  const backwards =
+    prev !== null &&
+    prev !== el &&
+    (prev.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_PRECEDING) !== 0;
+  const repeat = st.seen.has(el);
+  st.seen.add(el);
+  st.order.push(el);
+  const round = (n: number): number => Math.round(n * 10) / 10;
+  return {
+    sig,
+    body,
+    painted: rendered(el),
+    focusVisible: el.matches(":focus-visible"),
+    inViewport:
+      r.bottom > 0 && r.right > 0 && r.top < window.innerHeight && r.left < window.innerWidth,
+    rect: { x: round(r.x), y: round(r.y), w: round(r.width), h: round(r.height) },
+    backwards,
+    repeat,
+  };
+}
+
+/** Every rendered, enabled, tabbable candidate the walk never stopped on; ends the walk. */
+function focusUnreached(): string[] {
+  const st = focusWalk();
+  const out: string[] = [];
+  for (const c of st.candidates) {
+    if (st.seen.has(c) || c.matches(":disabled") || c.closest("[inert]") !== null) {
+      continue;
+    }
+    if (((c instanceof HTMLElement || c instanceof SVGElement) && c.tabIndex < 0) || !rendered(c)) {
+      continue;
+    }
+    out.push(describeEl(c));
+  }
+  delete (window as unknown as { __browserQaFocus?: FocusWalk }).__browserQaFocus;
+  return out;
+}
+
+// --- height sweep ----------------------------------------------------------
+
+/** Per selector, the distinct rendered heights and how many elements sit at each, against the
+ *  page's `--hit-floor` (null when it declares none). More than one height is a `mismatch`, one
+ *  under the floor is `short`. */
+function heightSweep(opts: { selectors: readonly string[] }): unknown {
+  const declared = tokenPx("--hit-floor");
+  const floor = declared === 0 ? null : declared;
+  const out = opts.selectors.map((selector) => {
+    const heights = new Map<
+      number,
+      { h: number; count: number; declared: string; minH: string; pad: string }
+    >();
+    let hidden = 0;
+    for (const el of document.querySelectorAll(selector)) {
+      const r = el.getBoundingClientRect();
+      // A zero-size box is rendered when its content overflows, but has no height to compare.
+      if (!rendered(el) || r.width === 0 || r.height === 0) {
+        hidden += 1;
+        continue;
+      }
+      const h = Math.round(r.height * 10) / 10;
+      const row = heights.get(h);
+      if (row === undefined) {
+        const cs = getComputedStyle(el);
+        heights.set(h, {
+          h,
+          count: 1,
+          declared: cs.blockSize,
+          minH: cs.minBlockSize,
+          pad: cs.padding,
+        });
+      } else {
+        row.count += 1;
+      }
+    }
+    const rows = [...heights.values()].sort((a, b) => a.h - b.h);
+    return {
+      selector,
+      matches: rows.reduce((n, row) => n + row.count, 0),
+      hidden,
+      heights: rows,
+      mismatch: rows.length > 1,
+      short: floor !== null && rows.some((row) => row.h < floor - 0.51),
+    };
+  });
+  return {
+    url: location.href,
+    pointer: document.documentElement.dataset["pointer"] ?? null,
+    floor,
+    selectors: out,
+  };
+}
+
 // --- the injection contract ------------------------------------------------
 
 // Values the helpers read, emitted as `const`s under the same names.
@@ -1114,7 +1407,8 @@ const HELPERS = {
   lenPx,
   routeOf,
   tokenPx,
-  hasNoBox,
+  paintsContents,
+  rendered,
   distortedUnder,
   scrolledEdges,
   bucket,
@@ -1131,6 +1425,7 @@ const HELPERS = {
   dimmedBy,
   surfaceUnder,
   colorTokenAt,
+  focusWalk,
 } as const;
 
 /** Every walker a runner may ask for, by the name it passes. */
@@ -1139,6 +1434,10 @@ export const WALKERS: Readonly<Record<string, Walker>> = {
   "control-height": controlHeight,
   radius: radius,
   contrast: contrast,
+  "focus-setup": focusSetup,
+  "focus-stop": focusStop,
+  "focus-unreached": focusUnreached,
+  "height-sweep": heightSweep,
 };
 
 /** One page-side expression: the helpers, then the walker applied to its options. An IIFE because

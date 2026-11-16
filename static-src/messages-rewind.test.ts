@@ -238,6 +238,28 @@ describe("a confirmed rewind", () => {
   });
 });
 
+describe("a landed rewind", () => {
+  it("drops the cut turns from the turn_revert record alone, with no page refetch", async () => {
+    const storeLoad = await import("./store-load.js");
+    vi.mocked(storeLoad.loadMessages).mockClear();
+    const chatID = await paintChat(3);
+    await rewindFirstTurn();
+    await until(() => mockSend.mock.calls.length === 1, "the rewind command");
+    store.appendEntry(chatID, {
+      id: "t2:revert",
+      turn: "t1",
+      kind: "turn_revert",
+      seq: 3,
+      ts: 1000,
+      payload: { from: "t2", from_n: 2, through: "t3", kas_message_id: "t2-p", cause: "rewind" },
+    } as Entry);
+    await until(() => cards().length === 1, "the cut turns gone");
+
+    expect(store.get(chatID)?.turn_order).toEqual(["t1"]);
+    expect(vi.mocked(storeLoad.loadMessages)).not.toHaveBeenCalled();
+  });
+});
+
 describe("a rewind that does not happen prefills nothing", () => {
   it("when the confirm is cancelled", async () => {
     await paintChat(3);
@@ -335,5 +357,211 @@ describe("the rewind confirm", () => {
 
     const lines = mocks.confirm.mock.calls[0]?.[0].body?.split("\n") ?? [];
     expect(lines.find((l) => l.startsWith("Undoes"))).toBe(undoes);
+  });
+});
+
+describe("a rewind in flight", () => {
+  /** Hold the revert's answer open; the returned function answers it. */
+  function holdReply(): (r: { ok: boolean; status: number; error?: string }) => void {
+    let reply: (r: { ok: boolean; status: number; error?: string }) => void = () => undefined;
+    mockSend.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          reply = resolve;
+        }),
+    );
+    return (r) => {
+      reply(r);
+    };
+  }
+
+  function rewindButtons(): HTMLButtonElement[] {
+    return cards().flatMap((c) => {
+      const b = c.querySelector<HTMLButtonElement>(
+        ":scope > .turn-footer > .turn-actions-buttons > .turn-rewind",
+      );
+      return b === null ? [] : [b];
+    });
+  }
+
+  it("turns the clicked Rewind into a disabled, busy spinner in the same box, and disables the others", async () => {
+    await paintChat(4);
+    const before = rewindButtons();
+    expect(before).toHaveLength(3);
+    const answer = holdReply();
+    await rewindFirstTurn();
+    await until(() => mockSend.mock.calls.length === 1, "the rewind command");
+
+    const [clicked, ...others] = rewindButtons();
+    expect(clicked, "the same element, so the footer does not reflow").toBe(before[0]);
+    expect(clicked?.disabled).toBe(true);
+    expect(clicked?.getAttribute("aria-busy")).toBe("true");
+    expect(clicked?.getAttribute("data-tooltip")).toBe("Rewinding\u2026");
+    expect(clicked?.getAttribute("aria-label")).toBe("Rewinding\u2026");
+    expect(
+      [...(clicked?.children ?? [])].map((c) => c.getAttribute("class")),
+      "the shared spinner glyph in the icon's ic-ui box",
+    ).toEqual(["icon-spinner ic-ui"]);
+    for (const b of others) {
+      expect(b.disabled).toBe(true);
+      expect(b.hasAttribute("aria-busy"), "only the clicked one is busy").toBe(false);
+    }
+
+    answer({ ok: true, status: 200 });
+  });
+
+  it("survives a repaint while the revert is in flight", async () => {
+    const chatID = await paintChat(4);
+    const answer = holdReply();
+    await rewindFirstTurn();
+    await until(() => mockSend.mock.calls.length === 1, "the rewind command");
+    const before = rewindButtons();
+    // A new pointer tier is a card input every card shares, so this pass repaints each footer through `mountRewind`.
+    const root = document.documentElement;
+    const tier = root.getAttribute("data-pointer");
+    root.setAttribute("data-pointer", tier === "coarse" ? "fine" : "coarse");
+    try {
+      store.bumpMessages(chatID, "shape");
+      await new Promise((r) => setTimeout(r, 30));
+    } finally {
+      if (tier === null) {
+        root.removeAttribute("data-pointer");
+      } else {
+        root.setAttribute("data-pointer", tier);
+      }
+    }
+
+    const [clicked, ...others] = rewindButtons();
+    expect(clicked, "kept, not re-mounted").toBe(before[0]);
+    expect(clicked?.getAttribute("aria-busy")).toBe("true");
+    expect(clicked?.disabled).toBe(true);
+    expect([...(clicked?.children ?? [])].map((c) => c.getAttribute("class"))).toEqual([
+      "icon-spinner ic-ui",
+    ]);
+    expect(others.every((b) => b.disabled)).toBe(true);
+
+    answer({ ok: true, status: 200 });
+  });
+
+  it("refuses a second rewind from /rewind with a notice, before any confirm", async () => {
+    const toast = await import("./toast.js");
+    vi.mocked(toast.notice).mockClear();
+    const chatID = await paintChat(3);
+    const answer = holdReply();
+    await rewindFirstTurn();
+    await until(() => mockSend.mock.calls.length === 1, "the rewind command");
+
+    expect(await messages.rewindLatestTurn(chatID)).toBe(true);
+    expect(mocks.confirm, "no second confirm").toHaveBeenCalledTimes(1);
+    expect(mockSend, "no second command").toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toast.notice).mock.calls.map((c) => c[0])).toEqual([
+      expect.stringContaining("A rewind is already running."),
+    ]);
+
+    answer({ ok: true, status: 200 });
+  });
+
+  it("sends one command when /rewind's confirm replaces an open one", async () => {
+    const chatID = await paintChat(3);
+    let decideFirst: (v: boolean) => void = () => undefined;
+    mocks.confirm.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          decideFirst = resolve;
+        }),
+    );
+    // The dialog layer settles the outgoing question with its cancel value when a new one opens.
+    mocks.confirm.mockImplementationOnce(() => {
+      decideFirst(false);
+      return Promise.resolve(true);
+    });
+    const answer = holdReply();
+    await rewindFirstTurn();
+    void messages.rewindLatestTurn(chatID);
+    await until(() => mockSend.mock.calls.length === 1, "the second door's command");
+    expect(
+      rewindButtons().find((b) => b.getAttribute("aria-busy") === "true"),
+      "the newest turn's rewind runs",
+    ).toBe(rewindButtonOf(cards()[1]));
+    // Answered before counting: the action's scope queues a second dispatch behind a held first.
+    answer({ ok: true, status: 200 });
+    await until(() => rewindButtons().every((b) => !b.disabled), "the rewind settled");
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(mocks.confirm).toHaveBeenCalledTimes(2);
+    expect(mockSend, "the replaced confirm sends nothing").toHaveBeenCalledTimes(1);
+    expect(mockSend.mock.calls[0]?.[0]).toMatchObject({ payload: { message_id: "t3-p" } });
+  });
+
+  it("clears on success: the remaining buttons come back enabled with their Rewind face", async () => {
+    await paintChat(4);
+    const answer = holdReply();
+    await rewindFirstTurn();
+    await until(() => mockSend.mock.calls.length === 1, "the rewind command");
+    answer({ ok: true, status: 200 });
+    await until(() => rewindButtons().every((b) => !b.disabled), "the buttons re-enabled");
+
+    for (const b of rewindButtons()) {
+      expect(b.hasAttribute("aria-busy")).toBe(false);
+      expect(b.getAttribute("aria-label")).toBe("Rewind");
+      expect(b.getAttribute("data-tooltip")).toBe("Rewind");
+      expect([...b.children].map((c) => c.getAttribute("class"))).toEqual(["ic-ui"]);
+    }
+  });
+
+  it("clears on failure: the clicked button is back as it was and the error shows", async () => {
+    const toast = await import("./toast.js");
+    vi.mocked(toast.error).mockClear();
+    await paintChat(4);
+    const answer = holdReply();
+    await rewindFirstTurn();
+    await until(() => mockSend.mock.calls.length === 1, "the rewind command");
+    answer({ ok: false, status: 409, error: "busy" });
+    await until(() => vi.mocked(toast.error).mock.calls.length > 0, "the error toast");
+    await until(() => rewindButtons().every((b) => !b.disabled), "the buttons re-enabled");
+
+    const buttons = rewindButtons();
+    expect(buttons, "no turn went away").toHaveLength(3);
+    for (const b of buttons) {
+      expect(b.hasAttribute("aria-busy")).toBe(false);
+      expect(b.getAttribute("aria-label")).toBe("Rewind");
+      expect(b.getAttribute("data-tooltip")).toBe("Rewind");
+      expect([...b.children].map((c) => c.getAttribute("class"))).toEqual(["ic-ui"]);
+    }
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith("Could not rewind chat: busy", undefined);
+  });
+
+  it("hands focus back to the clicked button after a refusal", async () => {
+    await paintChat(3);
+    const answer = holdReply();
+    const btn = rewindButtonOf(cards()[0]);
+    btn.focus();
+    const blurred = new Promise((r) => {
+      btn.addEventListener("blur", r, { once: true });
+    });
+    await rewindFirstTurn();
+    await until(() => mockSend.mock.calls.length === 1, "the rewind command");
+    await blurred;
+    answer({ ok: false, status: 409, error: "busy" });
+    await until(() => !rewindButtonOf(cards()[0]).disabled, "the button re-enabled");
+
+    expect(document.activeElement).toBe(rewindButtonOf(cards()[0]));
+  });
+
+  it("does not mark anything before the confirm, nor after a cancelled one", async () => {
+    await paintChat(3);
+    let decide: (v: boolean) => void = () => undefined;
+    mocks.confirm.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          decide = resolve;
+        }),
+    );
+    rewindButtonOf(cards()[0]).click();
+    await until(() => mocks.confirm.mock.calls.length > 0, "the confirm");
+    expect(rewindButtons().some((b) => b.disabled || b.hasAttribute("aria-busy"))).toBe(false);
+    decide(false);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(rewindButtons().some((b) => b.disabled || b.hasAttribute("aria-busy"))).toBe(false);
   });
 });

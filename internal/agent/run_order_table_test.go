@@ -61,7 +61,7 @@ func heldCleanClose(t *testing.T) (h *Runtime, cs *testChatStore, br *fakeBridge
 // One row per head and event the design names: each states the answer, the order the header lists after it and the
 // session calls kiro-cli received.
 func TestRunOrder_Table(t *testing.T) {
-	t.Run("a prompt during a clean close's hold queues behind the turn end's compaction, unsteered", func(t *testing.T) {
+	inBubble(t, "a prompt during a clean close's hold queues behind the turn end's compaction, unsteered", func(t *testing.T) {
 		h, cs, br, turnID := heldCleanClose(t)
 
 		if got := ackAs(t, postCmd(t, h, promptCmd("m-p", "during the hold"))); got != "queued" {
@@ -86,7 +86,7 @@ func TestRunOrder_Table(t *testing.T) {
 		waitFor(t, func() bool { return len(br.notified(marotte.MethodCancel)) == 1 })
 	})
 
-	t.Run("a prompt while a revert holds the slot queues and goes once the slot is free", func(t *testing.T) {
+	inBubble(t, "a prompt while a revert holds the slot queues and goes once the slot is free", func(t *testing.T) {
 		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 		res, ok := h.coord.turns.tryReserve("c1", marotte.TurnSourceRevert, h.coord.LifeStamp())
 		if !ok {
@@ -101,7 +101,7 @@ func TestRunOrder_Table(t *testing.T) {
 		waitFor(t, func() bool { return slices.Contains(promptIDs(t, cs, "c1"), "m-p") })
 	})
 
-	t.Run("a prompt behind kiro-cli's run with no turn here queues behind the run entry", func(t *testing.T) {
+	inBubble(t, "a prompt behind kiro-cli's run with no turn here queues behind the run entry", func(t *testing.T) {
 		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 		h.coord.WireTurnActivity("c1", true)
 		waitFor(t, func() bool { return slices.Contains(runStates(t, cs, "c1"), "run running") })
@@ -118,7 +118,7 @@ func TestRunOrder_Table(t *testing.T) {
 		waitFor(t, func() bool { return slices.Contains(promptIDs(t, cs, "c1"), "m-p") })
 	})
 
-	t.Run("send-now under a running turn with a compaction pending stops it, then compacts, then sends", func(t *testing.T) {
+	inBubble(t, "send-now under a running turn with a compaction pending stops it, then compacts, then sends", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		open := promptGates(t, br)
 		atThePoint(t, h, cs)
@@ -154,7 +154,7 @@ func TestRunOrder_Table(t *testing.T) {
 		}
 	})
 
-	t.Run("send-now under a closing head with a compaction pending stops nothing and goes after it", func(t *testing.T) {
+	inBubble(t, "send-now under a closing head with a compaction pending stops nothing and goes after it", func(t *testing.T) {
 		h, cs, br, _ := heldCleanClose(t)
 		queueDuring(t, h, "m-q1", "m-q2")
 		if got := entryView(t, cs, "m-q2").SendNow; got != marotte.SendNowAfterCompaction {
@@ -168,7 +168,7 @@ func TestRunOrder_Table(t *testing.T) {
 		}
 	})
 
-	t.Run("cancel with no target stops the running turn and writes nothing under a compaction", func(t *testing.T) {
+	inBubble(t, "cancel with no target stops the running turn and writes nothing under a compaction", func(t *testing.T) {
 		h, _, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		open := promptGates(t, br)
 		if code := postPrompt(t, h, "a"); code != http.StatusOK {
@@ -188,7 +188,7 @@ func TestRunOrder_Table(t *testing.T) {
 		}
 	})
 
-	t.Run("a fold-opened turn on an idle list hands its place to a prompt", func(t *testing.T) {
+	inBubble(t, "a fold-opened turn on an idle list hands its place to a prompt", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		br.deliver(newChunkMsg("kiro-cli on its own"))
 		waitFor(t, func() bool { return slices.Contains(runStates(t, cs, "c1"), "wire running") })
@@ -211,7 +211,7 @@ func TestRunOrder_Table(t *testing.T) {
 		if mode == marotte.InterruptQueue {
 			name, want = "queue mode", "queued"
 		}
-		t.Run("a turn_start during a fold-opened turn opens a bracketed one, "+name, func(t *testing.T) {
+		inBubble(t, "a turn_start during a fold-opened turn opens a bracketed one, "+name, func(t *testing.T) {
 			h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 			br.setCallResult(marotte.MethodSessionSteer, json.RawMessage(`{"queued":true}`))
 			br.deliver(newChunkMsg("kiro-cli on its own"))
@@ -239,7 +239,7 @@ func TestRunOrder_Table(t *testing.T) {
 		})
 	}
 
-	t.Run("a fold-opened turn while kiro-cli reports a run admits nothing until it reports idle", func(t *testing.T) {
+	inBubble(t, "a fold-opened turn while kiro-cli reports a run admits nothing until it reports idle", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		br.deliver(newChunkMsg("kiro-cli on its own"))
 		waitFor(t, func() bool { return slices.Contains(runStates(t, cs, "c1"), "wire running") })
@@ -258,7 +258,7 @@ func TestRunOrder_Table(t *testing.T) {
 		waitFor(t, func() bool { return slices.Contains(promptIDs(t, cs, "c1"), "m-p") })
 	})
 
-	t.Run("kiro-cli's turn beside a compaction closing first leaves the compaction running", func(t *testing.T) {
+	inBubble(t, "kiro-cli's turn beside a compaction closing first leaves the compaction running", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		release := holdCall(t, br, marotte.MethodSessionCompact)
 		go func() { _, _ = h.RequestCompact(context.WithoutCancel(t.Context()), "c1") }()
@@ -276,7 +276,7 @@ func TestRunOrder_Table(t *testing.T) {
 		}
 	})
 
-	t.Run("a taken row beside kiro-cli's bracketed turn waits for its close and is never stopped", func(t *testing.T) {
+	inBubble(t, "a taken row beside kiro-cli's bracketed turn waits for its close and is never stopped", func(t *testing.T) {
 		h, cs, br, open, held, releaseOpen := takenRowHub(t)
 		open(0)
 		<-held
@@ -299,7 +299,7 @@ func TestRunOrder_Table(t *testing.T) {
 		waitFor(t, func() bool { return slices.Contains(promptIDs(t, cs, "c1"), "m-q1") })
 	})
 
-	t.Run("a prompt on an idle list with a paused row goes ahead of it", func(t *testing.T) {
+	inBubble(t, "a prompt on an idle list with a paused row goes ahead of it", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		seedQueue(t, cs, "c1", marotte.QueuedPrompt{ID: "m-q0", Text: "paused"})
 		open := promptGates(t, br)
@@ -312,7 +312,7 @@ func TestRunOrder_Table(t *testing.T) {
 		open(0)
 	})
 
-	t.Run("a prompt while a steer's end is pending answers queued at once", func(t *testing.T) {
+	inBubble(t, "a prompt while a steer's end is pending answers queued at once", func(t *testing.T) {
 		s, cs, br := steerOpsHub(t)
 		at := s.h.originOf("c1")
 		id, _ := s.h.stagePromptTurn(t, "c1")
@@ -333,7 +333,7 @@ func TestRunOrder_Table(t *testing.T) {
 		release()
 	})
 
-	t.Run("a stop that was not delivered restores the head and the rows", func(t *testing.T) {
+	inBubble(t, "a stop that was not delivered restores the head and the rows", func(t *testing.T) {
 		sess := newOrderedSession()
 		cs := newTestChatStore()
 		h := newRuntimeOn(context.Background(), "/tmp/work", fakeEngineOf(func() engineSession { return sess }, nil), cs)
@@ -372,7 +372,7 @@ func TestRunOrder_Table(t *testing.T) {
 		}
 	})
 
-	t.Run("a sent prompt reads running in the header, so a plain send steers", func(t *testing.T) {
+	inBubble(t, "a sent prompt reads running in the header, so a plain send steers", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		open := promptGates(t, br)
 		if code := postPrompt(t, h, "a"); code != http.StatusOK {
@@ -388,7 +388,7 @@ func TestRunOrder_Table(t *testing.T) {
 		open(0)
 	})
 
-	t.Run("a repeated id adds no entry", func(t *testing.T) {
+	inBubble(t, "a repeated id adds no entry", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		open := promptGates(t, br)
 		if code := postPrompt(t, h, "a"); code != http.StatusOK {
@@ -410,7 +410,7 @@ func TestRunOrder_Table(t *testing.T) {
 		open(1)
 	})
 
-	t.Run("a /compact requeued behind kiro-cli's turn answers queued, and its later failure is toasted", func(t *testing.T) {
+	inBubble(t, "a /compact requeued behind kiro-cli's turn answers queued, and its later failure is toasted", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		calls := onCompactor(h, 90, true, 10)
 		calls.refuse = true
@@ -438,7 +438,7 @@ func TestRunOrder_Table(t *testing.T) {
 		waitFor(t, func() bool { return calls.count() == 2 && len(calls.toasts()) == 1 })
 	})
 
-	t.Run("the composer settles at a queued answer behind a compaction, and later drafts stay", func(t *testing.T) {
+	inBubble(t, "the composer settles at a queued answer behind a compaction, and later drafts stay", func(t *testing.T) {
 		h, cs, _, release := compactingHubIn(t, "/tmp/work")
 		if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 			c.Name = marotte.DefaultChatName
@@ -462,7 +462,7 @@ func TestRunOrder_Table(t *testing.T) {
 		}
 	})
 
-	t.Run("the composer settles once, at the answer, when the take's open is held", func(t *testing.T) {
+	inBubble(t, "the composer settles once, at the answer, when the take's open is held", func(t *testing.T) {
 		shrinkAdmissionWait(t, 60*time.Millisecond)
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
@@ -493,7 +493,7 @@ func TestRunOrder_Table(t *testing.T) {
 		}
 	})
 
-	t.Run("a POST whose context ends while the take's open is held settles once", func(t *testing.T) {
+	inBubble(t, "a POST whose context ends while the take's open is held settles once", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
 		entered, releaseOpen := make(chan struct{}), make(chan struct{})
