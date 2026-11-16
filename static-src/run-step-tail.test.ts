@@ -193,7 +193,8 @@ describe("a tail cell moved by appended entries", () => {
     forgetStepTails(wf);
   });
 
-  // A page attached while the call was in flight never saw its tool_call frame.
+  // A page attached while the call was in flight, or after an interruption aborted it and before its
+  // late result, never saw its tool_call frame.
   it("takes a seeded call's card title as the call a result settles", () => {
     const wf = "wf_cell_seeded_call";
     const seeded: RunStepStart = {

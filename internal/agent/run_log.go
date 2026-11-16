@@ -1065,7 +1065,8 @@ func (r *runLog) closeLocked(ctx context.Context, rec *runRecord, t *runTurn, c 
 }
 
 // lateCalls is a closed turn's calls a late tool_result can still settle: the calls of every lane the close aborted,
-// by call id, which title the result's card, and the root lane's dock state, which settles its line.
+// by call id, which title the result's card, and the root lane's dock state, which settles its line and seeds an
+// interrupted attempt's row (stepStartLocked).
 type lateCalls struct {
 	cards map[string]*marotte.EntryToolCall
 	dock  stepCalls
@@ -1465,6 +1466,8 @@ func stepStartLocked(rec *runRecord, path string, a stepAttempt) marotte.RunStep
 		row.Turn, row.Tail = attemptTail(rec, path, a)
 		if t := rec.open[path]; t != nil {
 			row.Calls = t.openCalls()
+		} else if late := rec.late[path]; late != nil {
+			row.Calls = late.dock.titles()
 		}
 	}
 	return row

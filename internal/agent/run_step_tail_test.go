@@ -462,6 +462,41 @@ func TestRunLog_ABornSettledCardIsNotHeldForAResult(t *testing.T) {
 	})
 }
 
+// A page that attaches after an interruption aborted a step's call, before KAS sends the call's late result, is seeded
+// with that call, so the late result moves its dock line as it moves the server's.
+func TestRunLog_AnInterruptedStepsRowCarriesTheCallItsLateResultSettles(t *testing.T) {
+	step := workflow.PathKey([]string{"wf1", "build"})
+	r := newRunLog(t.TempDir())
+	turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook := &marotte.EntryToolCall{ID: "hook-1", Title: "Hook fired: lint", Kind: marotte.ToolKindHook, Status: marotte.ToolCompleted}
+	if _, err := turn.ToolCall(t.Context(), "", hook); err != nil {
+		t.Fatal(err)
+	}
+	call := &marotte.EntryToolCall{ID: "call-1", Title: "Run Command", Kind: marotte.ToolKindExecute, Input: json.RawMessage(`{}`)}
+	if _, err := turn.ToolCall(t.Context(), "", call); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.closeHost(t.Context(), "c-1", marotte.ConcludeStopReason(marotte.StopReasonInterrupted)); err != nil {
+		t.Fatal(err)
+	}
+	if got := startCalls(t, r, step); !maps.Equal(got, map[string]string{"call-1": "Run Command"}) {
+		t.Errorf("interrupted, calls = %v, want the aborted call by its card title", got)
+	}
+	late := &marotte.Entry{
+		Kind: marotte.EntryKindToolResult, ID: marotte.ToolResultID("call-1"),
+		Payload: json.RawMessage(`{"title":"Run Command","kind":"execute","status":"completed","input":{"command":"go vet ./..."}}`),
+	}
+	if err := (&Runs{log: r, bus: &frameLog{}}).RunAppendAfterClosed(t.Context(), "wf1", step, late); err != nil {
+		t.Fatal(err)
+	}
+	if got := startCalls(t, r, step); len(got) != 0 {
+		t.Errorf("settled by the late result, calls = %v, want none", got)
+	}
+}
+
 // startCalls is the calls a step's step_starts row carries, read off its wire form.
 func startCalls(t *testing.T, r *runLog, path string) map[string]string {
 	t.Helper()
