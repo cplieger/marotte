@@ -471,6 +471,15 @@ func eventually(cond func() bool) bool {
 	return true
 }
 
+// hookWaitFor is waitFor for a seam hook's body, which runs on a runtime goroutine: t.Fatal there would end that
+// goroutine mid-compaction, not the test (testing.T.FailNow), so a miss is a t.Errorf and the hook returns.
+func hookWaitFor(t *testing.T, cond func() bool, what string) {
+	t.Helper()
+	if !eventually(cond) {
+		t.Errorf("%s: not within 5s", what)
+	}
+}
+
 // A message sent during the compaction a stop's hold release runs goes behind the row queued under the hold.
 func TestRunOrder_ARowSentDuringTheHoldReleasesCompactionGoesBehindTheHoldsRow(t *testing.T) {
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")

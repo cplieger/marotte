@@ -717,11 +717,13 @@ func TestAutoCompact_AnAttemptTheChatsCloseEndedLeavesNoRowAndListsNothing(t *te
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, true, 95)
 	calls.err = marotte.ErrChatClosedDuringCall
+	wireLive := func() bool { return slices.Contains(runStates(t, cs, "c1"), "wire running") }
 	withCompactionReturnHook(t, h, func(marotte.ChatID) {
-		wireOpen(t, cs, br)
+		br.deliver(newTurnStartMsg())
+		hookWaitFor(t, wireLive, "the wire turn opening")
 		br.deliver(newChunkMsg("kiro-cli on its own"))
 		br.deliver(newTurnEndMsg("end_turn"))
-		waitFor(t, func() bool { return !slices.Contains(runStates(t, cs, "c1"), "wire running") })
+		hookWaitFor(t, func() bool { return !wireLive() }, "the wire turn closing")
 	})
 
 	runPrompt(t, h, cs, "c1", "m-2")
@@ -737,11 +739,13 @@ func TestAutoCompact_AnAttemptTheChatsCloseEndedLeavesNoRowAndListsNothing(t *te
 func TestAutoCompact_ASuccessBesideATurnEndListsNothing(t *testing.T) {
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, true, 95)
+	wireLive := func() bool { return slices.Contains(runStates(t, cs, "c1"), "wire running") }
 	withCompactionReturnHook(t, h, func(marotte.ChatID) {
-		wireOpen(t, cs, br)
+		br.deliver(newTurnStartMsg())
+		hookWaitFor(t, wireLive, "the wire turn opening")
 		br.deliver(newChunkMsg("kiro-cli on its own"))
 		br.deliver(newTurnEndMsg("end_turn"))
-		waitFor(t, func() bool { return !slices.Contains(runStates(t, cs, "c1"), "wire running") })
+		hookWaitFor(t, func() bool { return !wireLive() }, "the wire turn closing")
 	})
 
 	runPrompt(t, h, cs, "c1", "m-2")
@@ -939,13 +943,13 @@ func turnBesideAFailedAttempt(t *testing.T, callErr error, open, shut attemptSlo
 		}
 		if slot == open {
 			br.deliver(newTurnStartMsg())
-			waitFor(t, wireLive)
+			hookWaitFor(t, wireLive, "the wire turn opening")
 		}
 		if slot == shut {
 			// A wire turn that emitted nothing closes unclean, which would pause m-queued.
 			br.deliver(newChunkMsg("kiro-cli on its own"))
 			br.deliver(newTurnEndMsg("end_turn"))
-			waitFor(t, func() bool { return !wireLive() })
+			hookWaitFor(t, func() bool { return !wireLive() }, "the wire turn closing")
 		}
 	}
 	hooks := []*func(marotte.ChatID){

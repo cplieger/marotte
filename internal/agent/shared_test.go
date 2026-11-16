@@ -194,7 +194,7 @@ func shutdownHub(t *testing.T, h *Runtime) {
 }
 
 // inBubble runs f as a subtest inside a synctest bubble, so a CPU stall on a loaded host cannot use up a wait's
-// deadline: the bubble's clock moves only once every goroutine in it is blocked.
+// deadline: the bubble's clock moves only once every goroutine in it is durably blocked, which a mutex wait is not.
 func inBubble(t *testing.T, name string, f func(t *testing.T)) {
 	t.Helper()
 	t.Run(name, func(t *testing.T) { synctest.Test(t, f) })
