@@ -54,7 +54,7 @@ type execCLIRunner struct {
 
 func (r *execCLIRunner) command(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, r.cliPath(), args...) //nolint:gosec // G204: binary path from the install manager, never user input
-	procgroup.OwnGroup(cmd, cliWaitDelay)
+	procgroup.OwnSession(cmd, cliWaitDelay)
 	env := os.Environ()
 	if r.env != nil {
 		// The overlay lands after the inherited environment: os/exec keeps the last value for a repeated key.

@@ -376,8 +376,9 @@ func (e *Engine) startProcess() error {
 	// Stop owns teardown; lifecycleCtx (the runtime's shutdown context) is the backstop if Stop races or panics. Start
 	// refuses a nil Lifetime.
 	e.cmd = exec.CommandContext(e.lifecycleCtx, e.cliPath, args...) //nolint:gosec // G204: binary path from the install manager, never user input
-	// Own process group, so teardown reclaims the whole tree; closing stdin alone does not reclaim it (procgroup.Kill).
-	e.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Own session, so a hook or MCP server the engine runs reads an id that never names marotte's; its leader also
+	// leads its group, which teardown reclaims (procgroup.Kill), since closing stdin alone does not reclaim it.
+	e.cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	e.cmd.Env = e.processEnv()
 	// Backstop when lifecycleCtx ends before Stop: the same staged stop Stop runs, recorded as one marotte asked for.
 	// fail tears down on its own goroutine, so os/exec's watcher never blocks on it.

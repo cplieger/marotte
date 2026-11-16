@@ -408,11 +408,11 @@ func TestTerminalOutput_ReleaseAndAdoptWhileTheProcessIsStillWriting(t *testing.
 }
 
 // Not parallel-safe: it writes a package var.
-func withTerminalGroupGrace(t *testing.T, d time.Duration) {
+func withTerminalSessionGrace(t *testing.T, d time.Duration) {
 	t.Helper()
-	prev := terminalGroupGrace
-	terminalGroupGrace = d
-	t.Cleanup(func() { terminalGroupGrace = prev })
+	prev := terminalSessionGrace
+	terminalSessionGrace = d
+	t.Cleanup(func() { terminalSessionGrace = prev })
 }
 
 // Not parallel-safe: it writes a package var.
@@ -423,9 +423,9 @@ func withTerminalDrainGrace(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { terminalDrainGrace = prev })
 }
 
-func TestTerminalGroupGrace_IsTwoSeconds(t *testing.T) {
-	if terminalGroupGrace != 2*time.Second {
-		t.Errorf("terminalGroupGrace = %v, want 2s (the same bound as terminalDrainGrace)", terminalGroupGrace)
+func TestTerminalSessionGrace_IsTwoSeconds(t *testing.T) {
+	if terminalSessionGrace != 2*time.Second {
+		t.Errorf("terminalSessionGrace = %v, want 2s (the same bound as terminalDrainGrace)", terminalSessionGrace)
 	}
 	if terminalDrainGrace != 2*time.Second {
 		t.Errorf("terminalDrainGrace = %v, want 2s (cmd.WaitDelay's bound)", terminalDrainGrace)
@@ -437,7 +437,7 @@ func TestTerminalGroupGrace_IsTwoSeconds(t *testing.T) {
 func TestAwaitTerminalExit_ForceClosesTheReaderWhenAGrandchildHoldsThePipe(t *testing.T) {
 	logs := captureLogs(t) // not parallel: swaps the slog default
 	withTerminalDrainGrace(t, 500*time.Millisecond)
-	withTerminalGroupGrace(t, 500*time.Millisecond)
+	withTerminalSessionGrace(t, 500*time.Millisecond)
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	// The head prints and exits; `sleep` inherits the write end past the grace.
 	h.translateACPEvent("c1", h.originOf("c1"), termCreateMsgArgs(t, 1,
@@ -448,10 +448,10 @@ func TestAwaitTerminalExit_ForceClosesTheReaderWhenAGrandchildHoldsThePipe(t *te
 	waitClosed(t, term.done, "terminal exit")
 	elapsed := time.Since(start)
 
-	// Bounded by ONE grace: sequencing the group wait and the drain pays both.
-	if elapsed >= terminalDrainGrace+terminalGroupGrace {
+	// Bounded by ONE grace: sequencing the session wait and the drain pays both.
+	if elapsed >= terminalDrainGrace+terminalSessionGrace {
 		t.Errorf("exit took %v, want it bounded near ONE %v grace: either the reader was "+
-			"never force-closed, or the group wait and the drain were sequenced rather "+
+			"never force-closed, or the session wait and the drain were sequenced rather "+
 			"than overlapped and a backgrounded daemon now pays both", elapsed, terminalDrainGrace)
 	}
 	if !strings.Contains(logs.String(), "output still open after exit") {
@@ -463,16 +463,16 @@ func TestAwaitTerminalExit_ForceClosesTheReaderWhenAGrandchildHoldsThePipe(t *te
 	}
 }
 
-// The process group must be observed empty before the exit is reported. The grandchild
-// holds no descriptors, so only the group wait can delay the exit.
-func TestAwaitTerminalExit_WaitsForTheCommandsProcessGroupToEmpty(t *testing.T) {
+// The command's session must be observed empty before the exit is reported. The grandchild
+// holds no descriptors, so only the session wait can delay the exit.
+func TestAwaitTerminalExit_WaitsForTheCommandsSessionToEmpty(t *testing.T) {
 	logs := captureLogs(t) // not parallel: swaps the slog default
-	withTerminalGroupGrace(t, 300*time.Millisecond)
+	withTerminalSessionGrace(t, 300*time.Millisecond)
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	// Started before the spawn: the head can exit and the grace begin before the create returns,
 	// so a clock started after it reads short of the grace.
 	start := time.Now()
-	// `sleep` joins the head's group and outlives it, with its pipe ends closed.
+	// `sleep` stays in the head's session and outlives it, with its pipe ends closed.
 	h.translateACPEvent("c1", h.originOf("c1"), termCreateMsgArgs(t, 1,
 		`sleep 30 >/dev/null 2>&1 </dev/null & printf 'head done\n'`, nil))
 	term := singleTerm(t, h)
@@ -480,22 +480,22 @@ func TestAwaitTerminalExit_WaitsForTheCommandsProcessGroupToEmpty(t *testing.T) 
 	waitClosed(t, term.done, "terminal exit")
 	elapsed := time.Since(start)
 
-	if elapsed < terminalGroupGrace {
-		t.Errorf("exit took %v, want at least the %v group grace: awaitExit published "+
-			"terminal_exited while the command's group still had a live member, so the "+
-			"agent reads a file a grandchild is still writing", elapsed, terminalGroupGrace)
+	if elapsed < terminalSessionGrace {
+		t.Errorf("exit took %v, want at least the %v session grace: awaitExit published "+
+			"terminal_exited while the command's session still had a live member, so the "+
+			"agent reads a file a grandchild is still writing", elapsed, terminalSessionGrace)
 	}
 	// One grace, not two.
-	if elapsed > terminalGroupGrace+3*time.Second {
-		t.Errorf("exit took %v, want it bounded near ONE %v grace: the group wait and the "+
-			"drain were sequenced rather than overlapped", elapsed, terminalGroupGrace)
+	if elapsed > terminalSessionGrace+3*time.Second {
+		t.Errorf("exit took %v, want it bounded near ONE %v grace: the session wait and the "+
+			"drain were sequenced rather than overlapped", elapsed, terminalSessionGrace)
 	}
-	const msg = "the command exited but its process group did not empty"
+	const msg = "the command exited but its session did not empty"
 	if !strings.Contains(logs.String(), msg) {
-		t.Errorf("no line about the group still being alive\nlogs: %s", logs.String())
+		t.Errorf("no line about the session still being alive\nlogs: %s", logs.String())
 	}
 	if strings.Contains(logs.String(), `"level":"WARN","msg":"agent terminal: `+msg) {
-		t.Errorf("the group line is a WARN; a command that backgrounds a daemon on purpose "+
+		t.Errorf("the session line is a WARN; a command that backgrounds a daemon on purpose "+
 			"logs it on every exit and nobody acts on it\nlogs: %s", logs.String())
 	}
 }

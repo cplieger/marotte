@@ -62,24 +62,24 @@ func (e *RunEntry) awaitsDelivery() bool {
 // user entry waits ahead of it, and one prompt never joins two senders.
 func Deliver(entries []RunEntry, h HeadFacts) Delivery {
 	if h.EndsOwed {
-		return Delivery{}
+		return Delivery{Kind: DeliverNothing}
 	}
 	live := LivePrefix(entries)
 	switch {
 	case len(live) == 0:
 		return takeNext(entries, 0, h)
 	case len(live) > 1:
-		return Delivery{}
+		return Delivery{Kind: DeliverNothing}
 	}
 	head := &live[0]
 	if head.Kind == RunKindTurn && head.Origin == RunFromWire && head.Yields && head.State == RunRunning {
 		if head.Admits {
 			return takeNext(entries, 1, h)
 		}
-		return Delivery{}
+		return Delivery{Kind: DeliverNothing}
 	}
 	if !steerSlot(entries, head, h) {
-		return Delivery{}
+		return Delivery{Kind: DeliverNothing}
 	}
 	return steerNext(entries[1:], h)
 }
@@ -125,14 +125,14 @@ func steerNext(rest []RunEntry, h HeadFacts) Delivery {
 		userWaiting = userWaiting || e.awaitsDelivery()
 	}
 	if userWaiting || h.UserNext {
-		return Delivery{}
+		return Delivery{Kind: DeliverNothing}
 	}
 	for i := range rest {
 		if e := &rest[i]; !e.ByUser() && steerable(e) && !slices.Contains(h.SteerRefused, e.ID) {
 			return Delivery{Kind: DeliverSteer, IDs: []string{e.ID}}
 		}
 	}
-	return Delivery{}
+	return Delivery{Kind: DeliverNothing}
 }
 
 // takeNext is the pick of a new turn from entries[from:]: a send-now row ahead of any other pending entry first, else
@@ -153,7 +153,7 @@ func takeNext(entries []RunEntry, from int, h HeadFacts) Delivery {
 		at = firstTakeable(entries, from)
 	}
 	if at < 0 || otherPendingBefore(entries, from, at) {
-		return Delivery{}
+		return Delivery{Kind: DeliverNothing}
 	}
 	lead := &entries[at]
 	ids := []string{lead.ID}

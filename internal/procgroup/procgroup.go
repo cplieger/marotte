@@ -1,10 +1,11 @@
-// Package procgroup signals a spawned command's whole process group instead of
-// just its head.
+// Package procgroup signals a spawned command's whole process group or session
+// instead of just its head.
 //
-// Every consumer must pair Kill with SysProcAttr{Setpgid: true} on the command it
-// spawns (OwnGroup does both for a one-shot). Without that the child inherits
-// marotte's OWN process group, and Kill's leader guard is all that stands between
-// a teardown and marotte signalling itself.
+// Every consumer must spawn the command with SysProcAttr Setsid or Setpgid
+// (OwnSession does the former for a one-shot); a session leader also leads its
+// group. Without either the child inherits marotte's OWN group and session, and
+// the leader guards here are all that stand between a teardown and marotte
+// signalling itself.
 package procgroup
 
 import (
@@ -17,15 +18,29 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
-// OwnGroup makes an unstarted cmd lead its own process group, has its context's
-// cancel SIGKILL that group, and bounds Wait to waitDelay after the cancel. A
-// head-only kill leaves a child holding the output pipes, so Wait would outlive
-// the deadline by as long as that child runs.
-func OwnGroup(cmd *exec.Cmd, waitDelay time.Duration) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return Kill(cmd.Process, syscall.SIGKILL) }
+// OwnSession makes an unstarted cmd lead its own session, has its context's cancel SIGKILL every
+// group in that session (KillSession), and sets cmd.WaitDelay. The session keeps a group or session
+// id read inside the command from naming marotte's own. WaitDelay starts at the cancel or at the
+// command's exit, whichever comes first, and then closes the pipes a leftover child still holds;
+// after a clean exit with no cancel, Wait reports that as exec.ErrWaitDelay, which a caller whose
+// command may background a child (a git hook) treats as success.
+func OwnSession(cmd *exec.Cmd, waitDelay time.Duration) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.Cancel = func() error {
+		// os/exec can run Cancel after its reap, when the pid may name a stranger's session; Signal
+		// then answers os.ErrProcessDone, which os/exec takes as an exit it had not yet seen.
+		if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+			return err
+		}
+		if KillSession(cmd.Process.Pid, syscall.SIGKILL) == nil {
+			return nil
+		}
+		return cmd.Process.Signal(syscall.SIGKILL)
+	}
 	cmd.WaitDelay = waitDelay
 }
 
@@ -34,8 +49,8 @@ func OwnGroup(cmd *exec.Cmd, waitDelay time.Duration) {
 //
 // The head alone leaks the tree: an agent-chosen command need never read stdin,
 // and kiro-cli 2.18.0 leaves its node child reparented to init even with stdin
-// closed. The pgid == pid guard is load-bearing — without Setpgid the child
-// inherits marotte's own group, so Kill(-pgid, sig) would signal marotte itself.
+// closed. The pgid == pid guard is load-bearing — without Setsid or Setpgid the
+// child inherits marotte's own group, so Kill(-pgid, sig) would signal marotte itself.
 func Kill(p *os.Process, sig syscall.Signal) error {
 	pgid, err := syscall.Getpgid(p.Pid)
 	if err == nil && owns(p.Pid, pgid) {
@@ -73,9 +88,19 @@ const waitGonePoll = 20 * time.Millisecond
 // child stays a zombie until the caller's Wait, which runs after this wait, so
 // that probe would burn the budget on every teardown that WORKED.
 func WaitGone(pgid int, budget time.Duration) bool {
+	return waitEmpty(budget, func() bool { return !groupHasLiveMember(pgid) })
+}
+
+// WaitSessionGone is WaitGone for session sid, every group in it included. A sid at or below 1
+// answers true at once, as WaitGone does for such a pgid.
+func WaitSessionGone(sid int, budget time.Duration) bool {
+	return waitEmpty(budget, func() bool { return sessionLiveMembers(sid) == 0 })
+}
+
+func waitEmpty(budget time.Duration, empty func() bool) bool {
 	deadline := time.Now().Add(budget)
 	for {
-		if !groupHasLiveMember(pgid) {
+		if empty() {
 			return true
 		}
 		if !time.Now().Before(deadline) {
@@ -83,6 +108,61 @@ func WaitGone(pgid int, budget time.Duration) bool {
 		}
 		time.Sleep(waitGonePoll)
 	}
+}
+
+// SessionOf reports the session p leads, and false when it leads none. Read it before the
+// signal that empties the session, for the reason GroupOf gives.
+func SessionOf(p *os.Process) (sid int, ok bool) {
+	sid, err := unix.Getsid(p.Pid)
+	if err != nil || !owns(p.Pid, sid) {
+		return 0, false
+	}
+	return sid, true
+}
+
+// errSessionRefused is KillSession declining a session it must not or need not signal.
+var errSessionRefused = errors.New("procgroup: refusing to signal session")
+
+// KillSession signals every process group in session sid, which reaches a member that left
+// its parent's group (GNU timeout calls setpgid) but not one that called setsid itself. It
+// refuses ids at or below 1, the caller's own session (and so the caller's own group), and a
+// session with no live member. Once the leader is reaped and the session empties, sid can name
+// a later session: a caller that reaped the leader must not call it.
+func KillSession(sid int, sig syscall.Signal) error {
+	if self, err := unix.Getsid(0); sid <= 1 || err != nil || sid == self {
+		return fmt.Errorf("%w %d: init's or the caller's own", errSessionRefused, sid)
+	}
+	groups := map[int]bool{}
+	for _, st := range liveProcs() {
+		if st.session == sid && st.pgrp > 1 {
+			groups[st.pgrp] = true
+		}
+	}
+	if len(groups) == 0 {
+		return fmt.Errorf("%w %d: no live member", errSessionRefused, sid)
+	}
+	var first error
+	for g := range groups {
+		// ESRCH: the group emptied between the sweep and its signal.
+		if err := syscall.Kill(-g, sig); err != nil && !errors.Is(err, syscall.ESRCH) && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+// sessionLiveMembers counts sid's members in a state other than zombie, 0 for an id at or below 1.
+func sessionLiveMembers(sid int) int {
+	if sid <= 1 {
+		return 0
+	}
+	n := 0
+	for _, st := range liveProcs() {
+		if st.session == sid {
+			n++
+		}
+	}
+	return n
 }
 
 // groupHasLiveMember reports whether any process in pgid is in a state other than
@@ -205,17 +285,18 @@ func liveProcs() map[int]procStat {
 
 // procStat is the part of /proc/<pid>/stat this package reads.
 type procStat struct {
-	start      uint64
-	ppid, pgrp int
-	state      byte
+	start               uint64
+	ppid, pgrp, session int
+	state               byte
 }
 
 // statStartIndex is starttime's index after the last ')': stat field 22, counted from field 3.
 const statStartIndex = 22 - 3
 
-// readStat reads pid's state letter, parent, process group and start time out of /proc/<pid>/stat.
-// Fields are counted from the LAST ')' because field 2 is the executable name in parens and may
-// itself contain spaces and parens; after that bracket the fields are state, ppid, pgrp.
+// readStat reads pid's state letter, parent, process group, session and start time out of
+// /proc/<pid>/stat. Fields are counted from the LAST ')' because field 2 is the executable name in
+// parens and may itself contain spaces and parens; after that bracket the fields are state, ppid,
+// pgrp, session.
 func readStat(pid int) (procStat, bool) {
 	raw, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
 	if err != nil {
@@ -233,18 +314,18 @@ func readStat(pid int) (procStat, bool) {
 	}
 	ppid, perr := strconv.Atoi(f[1])
 	pgrp, gerr := strconv.Atoi(f[2])
+	session, sidErr := strconv.Atoi(f[3])
 	start, serr := strconv.ParseUint(f[statStartIndex], 10, 64)
-	if perr != nil || gerr != nil || serr != nil {
+	if perr != nil || gerr != nil || sidErr != nil || serr != nil {
 		return procStat{}, false
 	}
-	return procStat{start: start, ppid: ppid, pgrp: pgrp, state: f[0][0]}, true
+	return procStat{start: start, ppid: ppid, pgrp: pgrp, session: session, state: f[0][0]}, true
 }
 
-// owns reports whether pid leads pgid, i.e. whether Setpgid took and the group
-// holds only this command's tree. Pure and exported so the guard that keeps
-// Kill(-pgid, …) off marotte's own group can be tested without signalling a
-// non-leader, which would hit the test binary.
-func owns(pid, pgid int) bool { return pgid == pid }
+// owns reports whether pid leads id, a group or session, i.e. whether Setpgid or Setsid took
+// and id holds only this command's tree. Pure so the guard that keeps a signal off marotte's
+// own group can be tested without signalling a non-leader, which would hit the test binary.
+func owns(pid, id int) bool { return id == pid }
 
 // AlreadyGone reports whether err says the signal target had already been reaped,
 // which for a kill is success under another name. Two spellings, one condition: a

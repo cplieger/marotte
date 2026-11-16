@@ -17,6 +17,7 @@ import (
 
 	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/procgroup"
 	"github.com/cplieger/marotte/internal/sanitize"
 	"github.com/cplieger/marotte/internal/systembin"
 )
@@ -207,7 +208,8 @@ func firstSubcommand(args []string) string {
 // credential helpers live in ~/.gitconfig. A repo's own filter drivers and hooks
 // still run (status runs clean filters), so opening an untrusted repo can execute
 // its code. The first non-flag arg must be in allowedSubcommands, else the command
-// fails without launching git. Callers supply a context with a timeout.
+// fails without launching git. Callers supply a context with a timeout, and keep the
+// SysProcAttr, Cancel and WaitDelay procgroup.OwnSession sets.
 func gitExec(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	if _, ok := allowedSubcommand(args); !ok {
 		// /bin/false, no shell: an interpolatable argv would hand a taint path to the boundary this
@@ -252,7 +254,25 @@ func gitExec(ctx context.Context, dir string, args ...string) *exec.Cmd {
 		"GIT_CONFIG_COUNT=",
 		"GIT_CONFIG_PARAMETERS=",
 	)
+	// A repo's hooks and git-remote-https run as git's children: their own session keeps an id a
+	// hook reads off the server's, and a cancel kills them too, not git alone.
+	procgroup.OwnSession(cmd, gitWaitDelay)
 	return cmd
+}
+
+// gitWaitDelay bounds Wait after a cancel kills git's session or after git exits, whichever comes
+// first: os/exec then closes the pipes a leftover child still holds (one that escaped the session,
+// or a hook's backgrounded job), which ends a reader such as forwardProgress. A var for tests.
+var gitWaitDelay = 5 * time.Second
+
+// gitWaitErr maps exec.ErrWaitDelay to nil: os/exec returns it only after git exited 0 with no
+// cancel, while a child git left behind still held the output, so git itself succeeded. Every
+// Wait, Run or CombinedOutput on a gitExec command goes through it.
+func gitWaitErr(err error) error {
+	if errors.Is(err, exec.ErrWaitDelay) {
+		return nil
+	}
+	return err
 }
 
 // Shared by gitExec (which refuses to launch) and gitCmd (which reports WHY), so the two can never
@@ -286,7 +306,7 @@ func gitCmd(ctx context.Context, dir string, args ...string) (string, error) {
 		return "", errGitUnavailable
 	}
 	out, err := gitExec(ctx, dir, args...).CombinedOutput()
-	return strings.TrimSpace(string(out)), err
+	return strings.TrimSpace(string(out)), gitWaitErr(err)
 }
 
 // splitRemote extracts the host and repository path (no surrounding slash, no ".git") from an https

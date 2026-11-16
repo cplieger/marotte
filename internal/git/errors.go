@@ -91,7 +91,7 @@ func gitShowCmd(ctx context.Context, dir, ref, path string, maxBytes int64) (blo
 		_ = cmd.Wait()
 		return nil, "", errBlobTooLarge
 	}
-	waitErr := cmd.Wait()
+	waitErr := gitWaitErr(cmd.Wait())
 	errText := strings.TrimSpace(stderr.String())
 	if waitErr == nil {
 		return blob, errText, readErr

@@ -383,9 +383,9 @@ func TestGroup_StaleOnlyWhenTheLiveLeaderStartedAtAnotherTime(t *testing.T) {
 	}
 }
 
-// TestOwnGroup_DeadlineKillsTheGroupAndBoundsWait: the head forks a child that holds the stdout
+// TestOwnSession_DeadlineKillsTheSessionAndBoundsWait: the head forks a child that holds the stdout
 // pipe, so a head-only kill leaves Wait open for the child's whole sleep.
-func TestOwnGroup_DeadlineKillsTheGroupAndBoundsWait(t *testing.T) {
+func TestOwnSession_DeadlineKillsTheSessionAndBoundsWait(t *testing.T) {
 	const waitDelay = 2 * time.Second
 	run := func(t *testing.T, fork string) (elapsed time.Duration, child int) {
 		t.Helper()
@@ -397,7 +397,7 @@ echo $! > "`+pidFile+`"
 sleep 30`)
 		var out bytes.Buffer
 		cmd.Stdout = &out
-		OwnGroup(cmd, waitDelay)
+		OwnSession(cmd, waitDelay)
 		start := time.Now()
 		err := cmd.Run()
 		elapsed = time.Since(start)
@@ -415,23 +415,39 @@ sleep 30`)
 		}
 		return elapsed, child
 	}
-
-	t.Run("a group member dies with the head", func(t *testing.T) {
-		elapsed, child := run(t, "sleep 30")
-		if elapsed > waitDelay {
-			t.Errorf("Run returned after %s, want under the %s wait delay: the child held the pipe", elapsed, waitDelay)
-		}
+	awaitDead := func(t *testing.T, child int) {
+		t.Helper()
 		deadline := time.Now().Add(2 * time.Second)
 		for {
 			st, ok := readStat(child)
 			if !ok || st.state == 'Z' {
-				break
+				return
 			}
 			if !time.Now().Before(deadline) {
 				t.Fatalf("child %d outlived the deadline kill", child)
 			}
 			time.Sleep(20 * time.Millisecond)
 		}
+	}
+
+	t.Run("a group member dies with the head", func(t *testing.T) {
+		elapsed, child := run(t, "sleep 30")
+		if elapsed > waitDelay {
+			t.Errorf("Run returned after %s, want under the %s wait delay: the child held the pipe", elapsed, waitDelay)
+		}
+		awaitDead(t, child)
+	})
+
+	// GNU timeout calls setpgid, so only a session-wide kill reaches it.
+	t.Run("a member that left the group dies with the session", func(t *testing.T) {
+		if _, err := exec.LookPath("timeout"); err != nil {
+			t.Skip("timeout is not on PATH")
+		}
+		elapsed, child := run(t, "timeout 300 sleep 30")
+		if elapsed > waitDelay {
+			t.Errorf("Run returned after %s, want under the %s wait delay: the child held the pipe", elapsed, waitDelay)
+		}
+		awaitDead(t, child)
 	})
 
 	t.Run("an escaped child cannot hold Wait past the delay", func(t *testing.T) {

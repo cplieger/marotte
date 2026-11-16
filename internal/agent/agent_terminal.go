@@ -32,16 +32,16 @@ const keySignal = "signal"
 // grandchild holding the pipe). Matches cmd.WaitDelay. A var only for tests.
 var terminalDrainGrace = 2 * time.Second
 
-// terminalGroupGrace bounds a teardown's wait for the process group to empty. A var only for tests.
-var terminalGroupGrace = 2 * time.Second
+// terminalSessionGrace bounds a teardown's wait for the command's session to empty. A var only for tests.
+var terminalSessionGrace = 2 * time.Second
 
-// killTerminalGroup SIGKILLs term through signalGroup and, for a group, waits up to
-// terminalGroupGrace for it to empty. A return does not prove the tree is gone.
-func killTerminalGroup(term *agentTerminal, termID string) error {
-	pgid, err := term.signalGroup(syscall.SIGKILL)
-	if pgid > 0 && !procgroup.WaitGone(pgid, terminalGroupGrace) {
-		slog.Warn("agent terminal: process group still had a live member after the kill",
-			"term_id", termID, "pgid", pgid, "grace", terminalGroupGrace)
+// killTerminalSession SIGKILLs term through signalSession and, for a session, waits up to
+// terminalSessionGrace for it to empty. A return does not prove the tree is gone.
+func killTerminalSession(term *agentTerminal, termID string) error {
+	sid, err := term.signalSession(syscall.SIGKILL)
+	if sid > 0 && !procgroup.WaitSessionGone(sid, terminalSessionGrace) {
+		slog.Warn("agent terminal: session still had a live member after the kill",
+			"term_id", termID, "sid", sid, "grace", terminalSessionGrace)
 	}
 	return err
 }
@@ -61,25 +61,26 @@ type agentTerminal struct {
 	// turn is the spawning turn's id, so an interrupt kills only that turn's processes.
 	turn     string
 	exitCode int
-	// pgid is the group the command leads, read right after Start; 0 when none. Guarded by procMu.
-	pgid int
-	mu   sync.Mutex
+	// sid is the session the command leads, read right after Start; 0 when none. Guarded by procMu.
+	sid int
+	mu  sync.Mutex
 	// procMu orders every signal against the reap; separate from mu, which the pump holds per chunk.
 	procMu sync.Mutex
 	reaped bool
 }
 
-// Failing that, the head alone, returning 0. Once the head is reaped it returns (0,
-// os.ErrProcessDone): the group number may name a stranger's group.
-func (t *agentTerminal) signalGroup(sig syscall.Signal) (int, error) {
+// signalSession sends sig to every process group in the command's session and returns the
+// session id; failing that, to the head alone, returning 0. Once the head is reaped it returns
+// (0, os.ErrProcessDone): the session id may name a stranger's session.
+func (t *agentTerminal) signalSession(sig syscall.Signal) (int, error) {
 	t.procMu.Lock()
 	defer t.procMu.Unlock()
 	if t.reaped {
 		return 0, os.ErrProcessDone
 	}
-	if t.pgid > 1 {
-		if err := syscall.Kill(-t.pgid, sig); err == nil {
-			return t.pgid, nil
+	if t.sid > 1 {
+		if err := procgroup.KillSession(t.sid, sig); err == nil {
+			return t.sid, nil
 		}
 	}
 	return 0, t.cmd.Process.Signal(sig)
@@ -318,7 +319,7 @@ func (at *agentTerminals) KillForTurn(turn command.TurnRef) {
 	at.mu.Unlock()
 	for _, d := range doomed {
 		if d.term.cmd.Process != nil {
-			if err := killTerminalGroup(d.term, d.id); err != nil {
+			if err := killTerminalSession(d.term, d.id); err != nil {
 				slog.Debug("agent: turn terminal kill failed", "chat_id", chatID, "error", err)
 			}
 		}
@@ -344,10 +345,10 @@ func (at *agentTerminals) killForChat(chatID marotte.ChatID) {
 	at.dropRetired(chatID)
 	delete(at.closes, chatID)
 	at.mu.Unlock()
-	// Outside the lock: the kill waits for the group to empty.
+	// Outside the lock: the kill waits for the session to empty.
 	for _, d := range doomed {
 		if d.term.cmd.Process != nil {
-			if err := killTerminalGroup(d.term, d.id); err != nil {
+			if err := killTerminalSession(d.term, d.id); err != nil {
 				slog.Debug("agent: agent terminal kill failed", "id", d.id, "error", err)
 			}
 		}
@@ -401,7 +402,7 @@ func (at *agentTerminals) release(chatID marotte.ChatID, terminalID string) (*ag
 }
 
 // releaseForBridge releases every terminal origin created, as KAS's session dispose would if
-// the closed connection could still carry it: retired, unregistered, its group killed. Like
+// the closed connection could still carry it: retired, unregistered, its session killed. Like
 // terminal/release, a finished command's backgrounded child is left running. A run host session's
 // retired records go with it, since a run chat has no turn whose close would evict them.
 func (at *agentTerminals) releaseForBridge(chatID marotte.ChatID, origin acpResponder) {
@@ -445,7 +446,7 @@ const (
 
 // killReleased kills a terminal already unregistered; a lost race with its own exit is no failure.
 func killReleased(term *agentTerminal, termID string, cause releaseCause) {
-	err := killTerminalGroup(term, termID)
+	err := killTerminalSession(term, termID)
 	switch {
 	case err == nil:
 	case procgroup.AlreadyGone(err):
@@ -590,13 +591,14 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 	cmdCtx, cmdCancel := context.WithCancel(context.WithoutCancel(ctx))
 	stop := context.AfterFunc(at.lifecycle.shutdownCtx, cmdCancel)
 	cmd := agentCommand(cmdCtx, params.Command, params.Args, dir, params.Env)
-	// Own process group, so teardown can signal the whole tree (see procgroup.Kill).
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Own session, so a group or session id read inside the command names only its tree, never
+	// marotte's, and teardown signals the whole session. Headless, so no controlling tty to take.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.WaitDelay = 2 * time.Second
 
 	term := newAgentTerminal(cmd, chatID, limit)
 	cmd.Cancel = func() error {
-		_, err := term.signalGroup(syscall.SIGTERM)
+		_, err := term.signalSession(syscall.SIGTERM)
 		return err
 	}
 
@@ -612,12 +614,12 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 	cmd.Stdout = pw
 	cmd.Stderr = pw
 
-	// procMu spans Start so a cancel racing the spawn signals the group, not the head alone.
+	// procMu spans Start so a cancel racing the spawn signals the session, not the head alone.
 	term.procMu.Lock()
 	err = cmd.Start()
 	if err == nil {
-		if g, ok := procgroup.GroupOf(cmd.Process); ok {
-			term.pgid = g
+		if s, ok := procgroup.SessionOf(cmd.Process); ok {
+			term.sid = s
 		}
 	}
 	term.procMu.Unlock()
@@ -766,7 +768,7 @@ func (at *agentTerminals) awaitExit(
 	defer cancel()
 
 	term.procMu.Lock()
-	pgid := term.pgid
+	sid := term.sid
 	term.procMu.Unlock()
 
 	// Wait first, then drain: safe only because the pipe is caller-owned.
@@ -775,11 +777,11 @@ func (at *agentTerminals) awaitExit(
 	term.reaped = true
 	term.procMu.Unlock()
 
-	// The head is reaped but the group may not be empty, and the agent will read files a
+	// The head is reaped but the session may not be empty, and the agent will read files a
 	// backgrounded grandchild is still writing. Observe, not kill. Joined after the drain
 	// so the two graces overlap.
-	groupEmptied := make(chan bool, 1)
-	go func() { groupEmptied <- pgid == 0 || procgroup.WaitGone(pgid, terminalGroupGrace) }()
+	sessionEmptied := make(chan bool, 1)
+	go func() { sessionEmptied <- sid == 0 || procgroup.WaitSessionGone(sid, terminalSessionGrace) }()
 
 	// Bound the drain from exit: a grandchild can hold the pipe open forever. terminal_exited
 	// must not be observable before its output (measured: exit as event 365, output as 368).
@@ -793,9 +795,9 @@ func (at *agentTerminals) awaitExit(
 	}
 
 	// Debug: a deliberate background process reaches this on every exit.
-	if !<-groupEmptied {
-		slog.Debug("agent terminal: the command exited but its process group did not empty",
-			"chat_id", chatID, "term_id", termID, "pgid", pgid, "grace", terminalGroupGrace)
+	if !<-sessionEmptied {
+		slog.Debug("agent terminal: the command exited but its session did not empty",
+			"chat_id", chatID, "term_id", termID, "sid", sid, "grace", terminalSessionGrace)
 	}
 
 	stop()      // unregister the AfterFunc
@@ -857,7 +859,7 @@ func (at *agentTerminals) respondRelease(ctx context.Context, chatID marotte.Cha
 	}
 	term, ok := at.release(chatID, params.TerminalID)
 	if ok && term.cmd.Process != nil {
-		// A finished command's group is left running, matching KAS's own terminal.
+		// A finished command's backgrounded children are left running, matching KAS's own terminal.
 		killReleased(term, params.TerminalID, releaseOnRequest)
 	}
 	slog.Info("agent terminal released", "term_id", params.TerminalID)
@@ -911,7 +913,7 @@ func (at *agentTerminals) respondKill(ctx context.Context, chatID marotte.ChatID
 	}
 	if term.cmd.Process != nil {
 		// KAS sends terminal/kill on timeout and cancel, racing the command's own exit; losing that race is not a failure.
-		if err := killTerminalGroup(term, params.TerminalID); err != nil {
+		if err := killTerminalSession(term, params.TerminalID); err != nil {
 			if procgroup.AlreadyGone(err) {
 				slog.Debug("terminal kill was a no-op, the process was already reaped",
 					"term_id", params.TerminalID, "error", err)

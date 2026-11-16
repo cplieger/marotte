@@ -204,7 +204,7 @@ func diffOutput(ctx context.Context, repo *pinnedRepo, maxBytes int, extra ...st
 		cmd.Env = append(cmd.Env, "GIT_COMMON_DIR="+repo.commonDir)
 	}
 	cmd.Stdout = out
-	if err := cmd.Run(); err != nil {
+	if err := gitWaitErr(cmd.Run()); err != nil {
 		return "", fmt.Errorf("git diff: %w", err)
 	}
 	return string(out.buf), nil

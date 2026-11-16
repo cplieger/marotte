@@ -58,5 +58,5 @@ func gitCmdWithCreds(ctx context.Context, timeout time.Duration, dir, _ string, 
 	defer cancel()
 	cmd := gitExec(tctx, dir, args...)
 	out, err := cmd.CombinedOutput()
-	return strings.TrimSpace(string(out)), err
+	return strings.TrimSpace(string(out)), gitWaitErr(err)
 }
