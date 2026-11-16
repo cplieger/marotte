@@ -33,10 +33,10 @@ func TestEffectiveSettings_EveryFieldIsSettable(t *testing.T) {
 		settable[k] = struct{}{}
 	}
 	// Resolved per GET, never stored: from kiro-cli's own view (the server's fillKiroDefaults), from the
-	// filesystem (AgentDirs.Assess), from the stored document's misfits and from the range constants.
+	// filesystem (AgentDirs.Assess), from the stored document's misfits and from the range and choice constants.
 	resolved := map[string]struct{}{
 		"kiro_defaults": {}, "additional_directories_refused": {}, "hook_status_shown": {},
-		"rejected_keys": {}, "auto_compact_pct_range": {}, "model_fallbacks": {},
+		"rejected_keys": {}, "auto_compact_pct_range": {}, "model_fallbacks": {}, "history_window_choices": {},
 	}
 	rt := reflect.TypeFor[marotte.EffectiveSettings]()
 	for f := range rt.Fields() {

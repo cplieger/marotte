@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 )
 
@@ -90,7 +91,7 @@ func TestSessionChanges_AStalledEngineAnswersStillApplyingAndTheChangeLands(t *t
 // tangent beside an orphaned one.
 func TestForkChat_AStalledEngineAnswersStillApplyingAndTheTangentBindsTheFork(t *testing.T) {
 	answerBudgetOf(t, 50*time.Millisecond)
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("tabs.NewStore: %v", err)
 	}

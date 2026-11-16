@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 )
 
@@ -16,7 +17,7 @@ import (
 // cancelLocalTurn emits it.
 func clearCauseHub(t *testing.T, onCancel func(clear func())) (*Runtime, *testChatStore, marotte.TabSubject) {
 	t.Helper()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("Setup: tab store: %v", err)
 	}

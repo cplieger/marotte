@@ -95,7 +95,7 @@ func newKeepRig(t *testing.T, root string) *keepRig {
 	if err != nil {
 		t.Fatalf("Setup: chat store: %v", err)
 	}
-	tabStore := openTabStore(root)
+	tabStore := openTabStore(t.Context(), root)
 	leases := openRunLeaseStore(root)
 	h := agent.New(t.Context(), t.TempDir(), nil, chats, agent.WithTabs(tabStore), agent.WithRunLeases(leases))
 	runs := &fakeKASRuns{

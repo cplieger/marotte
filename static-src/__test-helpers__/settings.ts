@@ -9,6 +9,8 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     additional_directories: [],
     additional_directories_refused: {},
     chat_retention_days: 7,
+    history_window_hours: 24,
+    history_window_choices: [1, 6, 12, 24, 48, 72, 168],
     theme: "",
     last_model: "",
     last_effort_by_model: {},

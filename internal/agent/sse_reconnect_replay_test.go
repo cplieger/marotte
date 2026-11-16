@@ -13,6 +13,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 )
 
@@ -44,7 +45,7 @@ type transcriptPage struct {
 func newReplayGapRuntime(t *testing.T) (*Runtime, *http.ServeMux) {
 	t.Helper()
 	dir := t.TempDir()
-	ts, err := tabs.NewStore(dir)
+	ts, err := tabs.NewStore(dir, settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("tabs.NewStore(%q): %v", dir, err)
 	}

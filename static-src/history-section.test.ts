@@ -404,6 +404,16 @@ describe("closed rows", () => {
     await settle();
     expect(rowNames()).toEqual(["Alpha"]);
   });
+
+  it("draws again a row a wider window's frame brings back", async () => {
+    tabServer.emitRecent([entry("c-b", "Beta", 60)]);
+    await settle();
+    unfold();
+    expect(rowNames()).toEqual(["Beta"]);
+    tabServer.emitRecent([entry("c-b", "Beta", 60), entry("c-a", "Alpha", 30 * 60)]);
+    await settle();
+    expect(rowNames()).toEqual(["Beta", "Alpha"]);
+  });
 });
 
 // An open chat's row leads with its status dot; a closed row draws that same dot as an empty ring.

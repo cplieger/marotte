@@ -13,13 +13,14 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 )
 
 // startCloseHub is a runtime with a tab store and c1 a Bot draft in an open tab, its sessions on br.
 func startCloseHub(t *testing.T, br *fakeBridge) (*Runtime, *testChatStore, *tabs.Store, marotte.TabSubject) {
 	t.Helper()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("Setup: tabs.NewStore: %v", err)
 	}

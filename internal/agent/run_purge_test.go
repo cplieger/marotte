@@ -18,6 +18,7 @@ import (
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 )
 
@@ -52,7 +53,7 @@ func newEngineRig(
 	scan func(context.Context, chat.OwnerScan) chat.OwnerScan,
 ) (*Runtime, *deleteRig) {
 	t.Helper()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("Setup: tabs.NewStore: %v", err)
 	}
@@ -289,7 +290,7 @@ func newPurgedRunRig(
 	t *testing.T, kas *purgedRun, onCall func(string, map[string]any), during func(context.Context, *Runtime), at ownerScan,
 ) (h *Runtime, rig *deleteRig, arm func()) {
 	t.Helper()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("Setup: tabs.NewStore: %v", err)
 	}
@@ -1085,7 +1086,7 @@ func TestPurgeFinishedRuns_DeletesNothingWhileTheArrangementIsUnread(t *testing.
 	if err := os.WriteFile(filepath.Join(dir, "tabs.json"), []byte("{not json"), 0o600); err != nil {
 		t.Fatalf("Setup: write tabs.json: %v", err)
 	}
-	st, _ := tabs.NewStore(dir)
+	st, _ := tabs.NewStore(dir, settings.DefaultHistoryWindow)
 	old := time.Now().Add(-30 * 24 * time.Hour)
 	h, rig := newEngineRigOver(t, map[string]json.RawMessage{
 		methodKiroWorkflowList: purgeRuns(t, purgeRow("wf_parentless", "completed", "sess_host", old)),

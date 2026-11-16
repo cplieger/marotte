@@ -366,6 +366,56 @@ func editRecord(t *testing.T, root, id string, edit func(doc map[string]any)) {
 	}
 }
 
+// backdateRecent moves ref's Recently closed entry in tabs.json back by ago, as a close that long ago leaves it.
+func backdateRecent(t *testing.T, root, ref string, ago time.Duration) {
+	t.Helper()
+	path := filepath.Join(root, "tabs.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("Setup: read %s: %v", path, err)
+	}
+	var doc map[string]json.RawMessage
+	var recent []marotte.RecentClose
+	if err := json.Unmarshal(raw, &doc); err != nil || json.Unmarshal(doc["recent"], &recent) != nil {
+		t.Fatalf("Setup: parse %s: %v", path, err)
+	}
+	found := false
+	for i := range recent {
+		if recent[i].Ref == ref {
+			recent[i].ClosedAt -= ago.Milliseconds()
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Setup: %s holds no entry for %s: %s", path, ref, raw)
+	}
+	doc["recent"], _ = json.Marshal(recent)
+	out, _ := json.Marshal(doc)
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatalf("Setup: write %s: %v", path, err)
+	}
+}
+
+// heldRecent is the refs tabs.json holds in its Recently closed list, shown or not.
+func heldRecent(t *testing.T, root string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(root, "tabs.json"))
+	if err != nil {
+		t.Fatalf("read tabs.json: %v", err)
+	}
+	var doc struct {
+		Recent []marotte.RecentClose `json:"recent"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse tabs.json: %v", err)
+	}
+	refs := make([]string, 0, len(doc.Recent))
+	for _, e := range doc.Recent {
+		refs = append(refs, e.Ref)
+	}
+	return refs
+}
+
 const (
 	seamPassLine      = "chat purge scheduled"
 	seamChatPassLine  = "chat purge: pass complete"
@@ -433,7 +483,7 @@ func bootSeam(t *testing.T, root string, eng *seamEngine, logs *seamLogs, o seam
 	}
 	b.leases = openRunLeaseStore(root)
 	reaper := kirosession.New(b.sessionsDir, b.workDir)
-	b.tabs = openTabStore(root)
+	b.tabs = openTabStore(ctx, root)
 	var src agent.EngineSource = eng
 	if o.engine != nil {
 		src = o.engine
