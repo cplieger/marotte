@@ -3,8 +3,9 @@
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
 
-/** Folded, a holding-area list shows at most this many lines until the reader chooses: the run bar folds behind
- *  its header from `FOLD_AT` runs, the steer stack past `FOLD_AT` rows shows its first `FOLD_AT - 1` and a fold row. */
+/** Folded, a holding-area list shows this many lines until the reader chooses: the run bar folds behind its
+ *  header from `FOLD_AT` runs, the steer stack past `FOLD_AT` rows shows its first `FOLD_AT - 1` and a fold
+ *  row, further down only to keep the paused queue's head (`placeFold`, pending-steers.ts). */
 export const FOLD_AT = 3;
 
 /** The index the steer stack's fold row takes among `count` rows, or null when it needs none: a fold row

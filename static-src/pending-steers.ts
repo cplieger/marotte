@@ -40,7 +40,7 @@ import type { PendingSteer, QueuedPrompt, RunEntryView, RunView, RunWait } from 
 import type { Attachment, SendNowKind } from "./wire/types.gen.js";
 import { readQuoted, splitQuotes } from "./message-quote.js";
 import { drawParts } from "./quote-band.js";
-import { FOLD_AT, buildFoldRow, foldAt, paintFoldRow } from "./stack-fold.js";
+import { buildFoldRow, foldAt, paintFoldRow } from "./stack-fold.js";
 import { setStackOpen, stackOpen } from "./device-view.js";
 
 /** Where an unsent steer goes, from the run order: with an entry's wait, with the chat's next message
@@ -172,9 +172,9 @@ function render(
   const waiting = state.waiting;
   const rows = dockRows(steers, run);
   const open = stackOpen() === true;
-  const at = foldAt(rows.length);
-  if (at !== null) {
-    rows.splice(at, 0, { kind: "fold", hidden: rows.length - at, open });
+  const fold = placeFold(rows);
+  if (fold !== null) {
+    rows.splice(fold.at, 0, { kind: "fold", hidden: fold.hidden, open });
   }
 
   if (rows.length === 0) {
@@ -192,10 +192,11 @@ function render(
   stack.classList.remove("hidden");
   const focused = document.activeElement;
   const held = focused instanceof HTMLElement && stack.contains(focused) ? focused : null;
+  const foldWas = Array.from(stack.children).findIndex((c) => c.classList.contains("steer-fold"));
   // Arrival order, so the newest sits at the bottom nearest the box it was typed into and every
   // earlier one moves up.
   reconcile(stack, rows, rowSpec(state));
-  applyFold(stack, open, held);
+  applyFold(stack, open, held, foldWas);
 
   // Announce only on the same chat, and only the WAITING count — the number the user is waiting to
   // see fall. A pure chat switch is not news.
@@ -212,9 +213,29 @@ function render(
   announced.id = id;
 }
 
+/** Where the fold row goes among `rows` and how many messages it hides, or null for none. The paused
+ *  queue's head carries the queue's Resume, so the fold starts below it; a fold left hiding one row, or
+ *  no message, saves no line (`foldAt`). */
+function placeFold(rows: readonly DockRow[]): { at: number; hidden: number } | null {
+  const first = foldAt(rows.length);
+  if (first === null) {
+    return null;
+  }
+  const paused = rows.findIndex((r) => r.kind === "paused");
+  const at = paused >= first ? paused + 1 : first;
+  const hidden = rows.slice(at).filter((r) => r.kind === "steer" || r.kind === "queued").length;
+  return rows.length - at > 1 && hidden > 0 ? { at, hidden } : null;
+}
+
 /** Marks every row after the fold row while folded (`.steer-stack > [data-folded]`, 26-dock.css), and keeps
- *  focus a fold hid or a leaving fold row took off `<body>`: on the toggle, or on the row now in its place. */
-function applyFold(stack: HTMLUListElement, open: boolean, held: HTMLElement | null): void {
+ *  focus a fold hid or a leaving fold row took off `<body>`: on the toggle, or on the row now at `foldWas`,
+ *  the index the fold row held before this render. */
+function applyFold(
+  stack: HTMLUListElement,
+  open: boolean,
+  held: HTMLElement | null,
+  foldWas: number,
+): void {
   let after = false;
   let toggle: HTMLElement | null = null;
   for (const child of stack.children) {
@@ -232,7 +253,7 @@ function applyFold(stack: HTMLUListElement, open: boolean, held: HTMLElement | n
     return;
   }
   if (!held.isConnected && held.classList.contains("steer-fold-toggle")) {
-    stack.children[FOLD_AT - 1]?.querySelector<HTMLElement>(".steer-act")?.focus({
+    stack.children[foldWas]?.querySelector<HTMLElement>(".steer-act")?.focus({
       preventScroll: true,
     });
   }

@@ -1337,6 +1337,68 @@ describe("the steer stack", () => {
       expect(shownIn(chatStack())).toEqual(texts(2));
       expect(toggleIn(chatStack()).textContent).toBe("+16 more");
     });
+
+    /** `ahead` rows the stop did not pause, then the paused queue's head over `paused` rows it paused. */
+    function stoppedBehind(ahead: number, paused: number): RunEntryView[] {
+      const entry = (id: string, wait: RunWait, over: Partial<RunEntryView>): RunEntryView =>
+        rowEntry(id, wait, { row: { id, text: id }, send_now: "now", ...over });
+      return [
+        ...Array.from({ length: ahead }, (_, i) =>
+          entry(`m-a${String(i + 1)}`, { after: "next" }, {}),
+        ),
+        ...Array.from({ length: paused }, (_, i) =>
+          entry(`m-p${String(i + 1)}`, { after: "paused" }, { state: "paused", stop_paused: true }),
+        ),
+      ];
+    }
+
+    it("keeps a paused queue's head with its Resume out of the fold, folding the rows under it", () => {
+      withRun(stoppedBehind(2, 3), { send: "prompt" }, false);
+
+      expect(shownIn(chatStack())).toEqual([
+        "m-a1",
+        "m-a2",
+        "Stopped. The messages below wait for your next message or Resume",
+      ]);
+      expect(actions(rowAt(2))).toEqual(["Resume the queue"]);
+      const toggle = toggleIn(chatStack());
+      expect(toggle.textContent).toBe("+3 more");
+      expect(toggle.getAttribute("aria-label")).toBe("Show 3 more waiting messages");
+    });
+
+    it("draws no fold when keeping the paused queue's head leaves it a single row to hide", () => {
+      withRun(stoppedBehind(2, 1), { send: "prompt" }, false);
+
+      expect(foldIn(chatStack())).toBeNull();
+      expect(shownIn(chatStack())).toEqual([
+        "m-a1",
+        "m-a2",
+        "Stopped. The messages below wait for your next message or Resume",
+        "m-p1",
+      ]);
+    });
+
+    it("hands the toggle's focus to the row in its place when a fold below the paused head leaves", () => {
+      withRun(stoppedBehind(2, 3), { send: "prompt" }, false);
+      toggleIn(chatStack()).focus();
+
+      withRun(stoppedBehind(2, 1), { send: "prompt" }, false);
+
+      expect(document.activeElement).toBe(rowAt(3).querySelector(".steer-act"));
+    });
+
+    it("counts only the messages it hides, never a queued compaction", () => {
+      withRun([
+        ...behindTurn(prompts(2)),
+        compactionEntry("compact-1", { after: "turns", turns: 3 }),
+        ...behindTurn(prompts(4)).slice(2),
+      ]);
+
+      expect(shownIn(chatStack())).toEqual(texts(2));
+      const toggle = toggleIn(chatStack());
+      expect(toggle.textContent).toBe("+2 more");
+      expect(toggle.getAttribute("aria-label")).toBe("Show 2 more waiting messages");
+    });
   });
 
   // A follow-up's files lead its row as a paperclip and the first file's name, "+N" counting the rest, so a
