@@ -39,7 +39,7 @@ type porcelainStatus struct {
 // read off .git/HEAD.
 func readStatus(ctx context.Context, dir string) (porcelainStatus, error) {
 	raw, err := gitExec(ctx, dir, statusArgs...).CombinedOutput()
-	if err != nil {
+	if err = gitWaitErr(err); err != nil {
 		// Cancellation SIGKILLs the subprocess: an expected partial result, so WARN
 		// stays for genuine errors and a busy dashboard logs no kill noise.
 		if ctx.Err() != nil {

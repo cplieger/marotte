@@ -235,8 +235,8 @@ func (m *Manager) run(ctx context.Context, verb, name string) error {
 	cmd := exec.CommandContext(cctx, m.cliPath(), "powers", verb, name) //nolint:gosec // G204: binary path from the install manager; name passed ValidName
 	// The overlay lands after the inherited environment: os/exec keeps the last value for a repeated key.
 	kirorelease.SetCommandEnv(cmd, append(os.Environ(), m.env()...))
-	// kiro-cli runs a tree (tar among it), so a cancel kills the whole group.
-	procgroup.OwnGroup(cmd, 5*time.Second)
+	// kiro-cli runs a tree (tar among it), so a cancel kills the whole session.
+	procgroup.OwnSession(cmd, 5*time.Second)
 	var out cappedBuffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Run(); err != nil {

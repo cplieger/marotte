@@ -195,7 +195,7 @@ func awaitGone(t *testing.T, pidFile string) {
 	}
 }
 
-func TestText_DeadlineReturnsThePartialResultAndKillsTheGroup(t *testing.T) {
+func TestText_DeadlineReturnsThePartialResultAndKillsTheSession(t *testing.T) {
 	root := t.TempDir()
 	pidFile := filepath.Join(t.TempDir(), "pid")
 	bin := slowRG(t, matchLine("./a.go", "hit", 1), pidFile)
@@ -218,7 +218,7 @@ func TestText_DeadlineReturnsThePartialResultAndKillsTheGroup(t *testing.T) {
 	awaitGone(t, pidFile)
 }
 
-func TestFiles_CancelReturnsThePartialResultAndKillsTheGroup(t *testing.T) {
+func TestFiles_CancelReturnsThePartialResultAndKillsTheSession(t *testing.T) {
 	root := t.TempDir()
 	pidFile := filepath.Join(t.TempDir(), "pid")
 	bin := slowRG(t, "./a.go", pidFile)

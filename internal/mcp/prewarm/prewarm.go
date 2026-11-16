@@ -358,7 +358,7 @@ func (*Runner) install(ctx context.Context, npmBin, pkg string) marotte.MCPPrewa
 	cmd := exec.CommandContext(installCtx, npmBin,
 		"install", "--ignore-scripts", "--no-audit", "--no-fund", pkg)
 	// npm runs node children that hold the output pipe past a head-only kill.
-	procgroup.OwnGroup(cmd, installWaitDelay)
+	procgroup.OwnSession(cmd, installWaitDelay)
 	// The staging tree is the working directory AND carries a package.json, so npm
 	// resolves nothing from above it: --prefix alone leaves npm free to find an
 	// ancestor manifest and install against somebody else's tree.
@@ -374,7 +374,7 @@ func (*Runner) install(ctx context.Context, npmBin, pkg string) marotte.MCPPrewa
 	return marotte.MCPPrewarmDone
 }
 
-// installWaitDelay bounds an install's Wait after its cancel or timeout kills the group.
+// installWaitDelay bounds an install's Wait after its cancel or timeout kills the session.
 const installWaitDelay = 5 * time.Second
 
 // Private and unversioned, so nothing about it can be mistaken for a publishable package.
