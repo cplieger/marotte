@@ -444,6 +444,20 @@ describe("a rewind in flight", () => {
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith("Could not rewind chat: busy", undefined);
   });
 
+  it("hands focus back to the clicked button after a refusal", async () => {
+    await paintChat(3);
+    const answer = holdReply();
+    rewindButtonOf(cards()[0]).focus();
+    await rewindFirstTurn();
+    await until(() => mockSend.mock.calls.length === 1, "the rewind command");
+    // The HTML focus fixup blurs a focused control that becomes disabled; the test runner's page does not.
+    rewindButtonOf(cards()[0]).blur();
+    answer({ ok: false, status: 409, error: "busy" });
+    await until(() => !rewindButtonOf(cards()[0]).disabled, "the button re-enabled");
+
+    expect(document.activeElement).toBe(rewindButtonOf(cards()[0]));
+  });
+
   it("does not mark anything before the confirm, nor after a cancelled one", async () => {
     await paintChat(3);
     let decide: (v: boolean) => void = () => undefined;

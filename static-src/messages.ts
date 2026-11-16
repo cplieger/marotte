@@ -17,6 +17,7 @@ import {
   codeReferencesFor,
   liveRefusalFor,
   sessionBusy,
+  isBusy,
   isEmptyChat,
 } from "./store.js";
 import { clearTurnSigs } from "./store-signals.js";
@@ -93,7 +94,7 @@ import {
 } from "./turns.js";
 import { turnFace, turnFoldHides } from "./turn-face.js";
 import { severityOf } from "./turn-severity.js";
-import { ICON_REWIND } from "./icons.js";
+import { ICON_REWIND, ICON_SPINNER } from "./icons.js";
 import { buildAssistantBubble } from "./fundamentals/text-bubble.js";
 import { isTurnOpen, isTurnRevealed, setTurnOpen } from "./fold-state.js";
 import {
@@ -1644,10 +1645,22 @@ async function handleRewindClick(target: EntryPrompt): Promise<void> {
     return;
   }
   const proceed = await confirmDialog(rewindConfirmation(target, turns.slice(at)));
-  if (!proceed) {
+  if (!proceed || rewindInFlight.has(session.id)) {
     return;
   }
-  const outcome = await rewindChat.dispatch({ chatID: session.id, messageID: target.id }).outcome;
+  rewindInFlight.set(session.id, target.id);
+  paintRewinds(session.id);
+  let outcome: Awaited<ReturnType<typeof rewindChat.dispatch>["outcome"]>;
+  try {
+    outcome = await rewindChat.dispatch({ chatID: session.id, messageID: target.id }).outcome;
+  } finally {
+    rewindInFlight.delete(session.id);
+    const back = paintRewinds(session.id, target.id);
+    // Disabling the focused button dropped focus to <body>; a refusal hands it back.
+    if (back?.isConnected === true && document.activeElement === document.body) {
+      back.focus();
+    }
+  }
   if (outcome.status !== "success" || getPaintedId() !== session.id) {
     return;
   }
@@ -2839,14 +2852,63 @@ function mountRewind(card: HTMLElement, t: Turn): void {
       console.warn("[messages] rewind failed", e);
     });
   };
-  // Disabled mid-turn: KAS refuses a revert on a session with a live abortController.
-  const busy = passBusy;
-  btn.disabled = busy;
+  rewindTargets.set(btn, target.id);
+  paintRewind(btn, passSession?.id ?? "", passBusy);
+}
+
+/** Each chat's rewind in flight, chat id to its target prompt id, from the confirm until the revert answers. */
+const rewindInFlight = new Map<string, string>();
+/** A mounted Rewind button's target prompt id; `mountRewind` rewrites it every paint. */
+const rewindTargets = new WeakMap<HTMLButtonElement, string>();
+
+const REWINDING = "Rewinding\u2026";
+
+/** Paint one Rewind button from its chat's state: the spinner on the one whose rewind is in flight, every other one
+ *  disabled meanwhile, and mid-turn disabled because KAS refuses a revert on a session with a live abortController. */
+function paintRewind(btn: HTMLButtonElement, chatID: string, agentBusy: boolean): void {
+  const pending = rewindInFlight.get(chatID);
+  const mine = pending !== undefined && pending === rewindTargets.get(btn);
+  if (mine !== (btn.getAttribute("aria-busy") === "true")) {
+    btn.replaceChildren(svgTemplate(mine ? ICON_SPINNER : ICON_REWIND)());
+  }
+  if (mine) {
+    btn.setAttribute("aria-busy", "true");
+  } else {
+    btn.removeAttribute("aria-busy");
+  }
+  btn.disabled = pending !== undefined || agentBusy;
+  btn.setAttribute("aria-label", mine ? REWINDING : "Rewind");
   // `data-tooltip`, not `title`: only it reaches a disabled button.
   btn.setAttribute(
     "data-tooltip",
-    busy ? "Cannot rewind while the agent is running. Cancel the turn first" : "Rewind",
+    mine
+      ? REWINDING
+      : pending !== undefined
+        ? "Another rewind is running"
+        : agentBusy
+          ? "Cannot rewind while the agent is running. Cancel the turn first"
+          : "Rewind",
   );
+}
+
+/** Repaint every Rewind button in `chatID`'s resident view, outside a card pass (a skipped card keeps its DOM).
+ *  Returns the button targeting `targetID`, if one is mounted. */
+function paintRewinds(chatID: string, targetID?: string): HTMLButtonElement | undefined {
+  const view = transcriptViewFor(chatID);
+  if (view === null) {
+    return undefined;
+  }
+  const agentBusy = isBusy(chatID);
+  let found: HTMLButtonElement | undefined;
+  for (const btn of view.querySelectorAll<HTMLButtonElement>(
+    ".turn > .turn-footer > .turn-actions-buttons > .turn-rewind",
+  )) {
+    paintRewind(btn, chatID, agentBusy);
+    if (targetID !== undefined && rewindTargets.get(btn) === targetID) {
+      found = btn;
+    }
+  }
+  return found;
 }
 
 /** Mount or refresh the outcome ledger as the card's last child, turn-scoped: it sums every assistant message. */
