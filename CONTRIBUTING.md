@@ -57,19 +57,21 @@ PERF_BUILD=/tmp/perf-build PERF_PORT=20151 PERF_REPS=1 tests/perf/run.sh /tmp/ce
 
 `/tmp/perf-out/results.json` holds every metric of every window, and `/tmp/perf-out/raw/` holds each rep's own record. Add `"profile": true` to the cell for one more rep that records a CPU profile, and `"windows": ["cold"]` to measure only the windows it lists. `run-drive` measures the server alone: use engine `server` and width `none`. A rep that does not settle exits 1 and names the window it waited for.
 
-To compare a result with the budgets as the pull request's `perf` job does, run `perf_gate.py` from a clone of `cplieger/ci`. It gates only results measured on the runner that `budgets.json` names, so the copy below takes that runner's name. An exact count, such as a route's reads or `git_fetch`, is the same on any machine except for the answer sizes and the races named below; a time measured on yours is compared with budgets calibrated on CI's runner. `--base` names the head file, so no budget needs its signed calibration here:
+To compare a result with the budgets as the pull request's `perf` job does, run `perf_gate.py` from a clone of `cplieger/ci`. It gates only results measured on the runner that `budgets.json` names, so the copy below takes that runner's name. An exact count, such as a route's reads or `git_fetch`, is the same on any machine except for the answer sizes and the races named below; a time measured on yours is compared with budgets calibrated on CI's runner. `--base` names the head file, so no budget needs its signed calibration here. The gate reads results only from folders named as CI's artifacts, `perf-results-<prefix>-measure-shard-<i>-of-<n>-attempt-<k>`, so the copy goes into one such folder and `--prefix` names it:
 
 ```sh
 git clone --depth 1 https://github.com/cplieger/ci.git /tmp/cplieger-ci
-mkdir -p /tmp/perf-res
-python3 - tests/perf/budgets.json /tmp/perf-out/results.json /tmp/perf-res/results.json <<'EOF'
+shard=/tmp/perf-res/perf-results-cplieger-marotte-measure-shard-1-of-1-attempt-1
+mkdir -p "$shard"
+python3 - tests/perf/budgets.json /tmp/perf-out/results.json "$shard/results.json" <<'EOF'
 import json, sys
 budgets, results = (json.load(open(p)) for p in sys.argv[1:3])
 results['runner'] = budgets['runner']
 json.dump(results, open(sys.argv[3], 'w'))
 EOF
 python3 /tmp/cplieger-ci/scripts/perf_gate.py --budgets tests/perf/budgets.json \
-  --base tests/perf/budgets.json --results /tmp/perf-res --calibrations tests/perf/calibrations \
+  --base tests/perf/budgets.json --results /tmp/perf-res --prefix cplieger-marotte \
+  --calibrations tests/perf/calibrations \
   --repo cplieger/marotte --head "$(git rev-parse HEAD)" --plan-doc tests/perf/plan.json --set pr \
   --only chat-long --remeasure-out /tmp/perf-remeasure.json
 ```
