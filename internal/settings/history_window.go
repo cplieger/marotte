@@ -17,8 +17,8 @@ const (
 	DefaultHistoryWindow      = defaultHistoryWindowHours * time.Hour
 )
 
-// historyWindowChoices are whole days above a day, so every Days kept cap lands on a choice. The
-// longest must not pass tabs.RecentHold, or a widen would reach closes the tab store already dropped.
+// The longest choice must not pass tabs.RecentHold, or a widen would reach closes the tab store
+// already dropped.
 var historyWindowChoices = []int{1, 6, 12, 24, 48, 72, 168}
 
 func validHistoryWindowHours(h int) bool {
@@ -44,7 +44,8 @@ func HistoryWindow(ctx context.Context, configDir string) time.Duration {
 	return historyWindowFor(hours, days)
 }
 
-// historyWindowFor caps hours at days. At days 0 no close is listed, so there is nothing to cap.
+// historyWindowFor caps hours at days when days is above 0. Days 0 caps nothing: the client hides the
+// section there, and the held closes must come back when Days kept rises again.
 func historyWindowFor(hours, days int) time.Duration {
 	if days > 0 {
 		hours = min(hours, days*24)

@@ -911,6 +911,24 @@ func TestRecentExpiry_IsTheOldestShownCloseAndTheWindow(t *testing.T) {
 	}
 }
 
+// ClosedAt is wall-clock time, so a clock stepped back between two closes leaves an older close at the head.
+func TestRecentExpiry_IsTheOldestCloseWhereverItIsListed(t *testing.T) {
+	s, _ := newTestStore(t)
+	clock := withClock(s)
+	closedChat(t, s, "c-new")
+	olderAt := clock.at.Add(-2 * time.Hour)
+	if _, err := s.Relist(t.Context(), []marotte.RecentClose{{Ref: "c-older", Name: "Older", ClosedAt: olderAt.UnixMilli()}}); err != nil {
+		t.Fatalf("Relist: %v", err)
+	}
+	if got := recentRefs(s.Recent()); !slices.Equal(got, []string{"c-older", "c-new"}) {
+		t.Fatalf("Recent() = %v, want c-older at the head", got)
+	}
+
+	if at, ok := s.RecentExpiry(); !ok || !at.Equal(olderAt.Add(testWindow)) {
+		t.Errorf("RecentExpiry() = (%v, %v), want (%v, true): c-older's close plus the window", at, ok, olderAt.Add(testWindow))
+	}
+}
+
 func TestExpireRecent_HidesAnEntryAndKeepsItInTheFile(t *testing.T) {
 	s, dir := newTestStore(t)
 	clock := withClock(s)

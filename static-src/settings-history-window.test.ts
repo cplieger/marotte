@@ -107,6 +107,14 @@ describe("History in the sidebar", () => {
     expect(select().disabled).toBe(false);
   });
 
+  // The select's aria-describedby names the note, and a hidden node it names still reads out.
+  it.each([2, 0])("clears the note once Days kept goes from %i to 7", (days) => {
+    applyGeneralPanel(settingsPayload({ chat_retention_days: days }));
+    applyGeneralPanel(settingsPayload({ chat_retention_days: 7 }));
+    expect(note().hidden).toBe(true);
+    expect(note().textContent).toBe("");
+  });
+
   it("keeps a stored window past Days kept picked and says the sidebar stops at Days kept", () => {
     applyGeneralPanel(settingsPayload({ chat_retention_days: 1, history_window_hours: 168 }));
     expect(select().value).toBe("168");

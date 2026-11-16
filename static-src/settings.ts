@@ -247,6 +247,8 @@ function initInterruptModeControl(): void {
   });
 }
 
+const dayCount = (days: number): string => (days === 1 ? "1 day" : `${String(days)} days`);
+
 function historyWindowLabel(hours: number): string {
   if (hours < 24) {
     return hours === 1 ? "1 hour" : `${String(hours)} hours`;
@@ -257,11 +259,8 @@ function historyWindowLabel(hours: number): string {
   if (hours === 168) {
     return "1 week";
   }
-  const days = hours / 24;
-  return days === 1 ? "1 day" : `${String(days)} days`;
+  return dayCount(hours / 24);
 }
-
-const dayCount = (days: number): string => (days === 1 ? "1 day" : `${String(days)} days`);
 
 /** The server caps the window at Days kept where it uses it; the row reads Days kept from s so it
  *  follows a Days kept edit on this page before any settings_updated frame. */
@@ -296,6 +295,9 @@ function paintHistoryWindow(s: EffectiveSettings): void {
     );
   } else if (capped) {
     note.textContent = `Chat retention keeps closed chats ${dayCount(days)}, so the sidebar's History goes back ${dayCount(days)} at most.`;
+  } else {
+    // aria-describedby names this node, and a hidden node it names still feeds the description.
+    note.replaceChildren();
   }
   note.hidden = days !== 0 && !capped;
 }

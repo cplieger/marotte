@@ -155,7 +155,6 @@ func (s *Store) Relist(ctx context.Context, entries []marotte.RecentClose) (uint
 
 // ExpireRecent hides every shown entry whose window has ended by the store's clock, with a version
 // of its own, and bumps nothing when none has. tabs.json still holds a hidden entry until RecentHold.
-// It is the only change to the shown list that is not part of another change.
 func (s *Store) ExpireRecent(ctx context.Context) (uint64, error) {
 	return s.mutate(ctx, s.reshow)
 }
@@ -185,7 +184,8 @@ func (s *Store) RecentExpiry() (time.Time, bool) {
 	if len(s.shown) == 0 {
 		return time.Time{}, false
 	}
-	return time.UnixMilli(s.shown[len(s.shown)-1].ClosedAt + s.window.Milliseconds()), true
+	oldest := slices.MinFunc(s.shown, func(a, b marotte.RecentClose) int { return cmp.Compare(a.ClosedAt, b.ClosedAt) })
+	return time.UnixMilli(oldest.ClosedAt + s.window.Milliseconds()), true
 }
 
 // Recent returns a copy of the Recently closed list the sidebar shows, newest first.

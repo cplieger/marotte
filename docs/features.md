@@ -38,7 +38,7 @@ Right-click a chat tab, or press and hold it on a touch screen, to open its menu
 
 Pressing a header folds its section or opens it again, and each browser remembers its own folds. A folded section still shows the tab you are on. Its header shows a dot for the most urgent of the tabs it hides, such as one waiting for your answer or one still working, in the colour that tab's row uses.
 
-**History** lists the chats whose last tab you closed in the past 24 hours, newest first, up to 10, each with the time it closed. A closed chat's row starts with the same dot as an open chat's tab, drawn as an empty ring. The section starts folded, showing only its header and count, and opening it shows the chats and, under them, **More**. Closing a chat lists its tangents too, and closing any other tab, such as a file, Settings or a workflow run, lists nothing.
+**History** lists the chats whose last tab you closed in the past 24 hours, newest first, up to 10, each with the time it closed, or its date when it closed on an earlier day. A closed chat's row starts with the same dot as an open chat's tab, drawn as an empty ring. The section starts folded, showing only its header and count, and opening it shows the chats and, under them, **More**. Closing a chat lists its tangents too, and closing any other tab, such as a file, Settings or a workflow run, lists nothing.
 
 **History in the sidebar**, under **Chat retention** on the **General** tab in **Settings**, sets that window from 1 hour to 1 week, never past **Days kept**. A change shows on every device at once. A longer window brings back chats closed up to a week ago, unless they were reopened, deleted or pushed out by the 10 newest.
 

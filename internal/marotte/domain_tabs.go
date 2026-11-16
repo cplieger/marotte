@@ -133,8 +133,8 @@ type RunLaunch struct {
 	Chats []string `json:"chats,omitempty"`
 }
 
-// RecentClose is one chat whose last tab closed inside the History window, a row of the
-// sidebar's History section. Field order is fieldalignment's.
+// RecentClose is one closed chat the tab store holds until tabs.RecentHold; the sidebar's History
+// section shows the ones inside the History window. Field order is fieldalignment's.
 type RecentClose struct {
 	Ref string `json:"ref"`
 	// Name is the chat's name at the close, "" when its record could not be read: the client
