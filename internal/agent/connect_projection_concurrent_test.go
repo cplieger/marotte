@@ -46,8 +46,9 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// A connect drains nothing until its hook returns, and the hub evicts a client whose queue
-	// (replayBufSize deep) fills. Writers publishing at CPU speed fill it within one scheduler slice,
-	// a rate no real publisher reaches, so they hold off near half of it.
+	// (replayBufSize deep) fills. The lease writers publish two frames an iteration at CPU speed and
+	// fill it within one scheduler slice, a rate no real publisher reaches, so they hold off near half
+	// of it. The lifecycle writers publish almost nothing, so they keep mutating through the hook.
 	floodHeld := func() bool {
 		if rt.bus.fanout.QueuedFrames() < replayBufSize/2 {
 			return false
@@ -64,9 +65,6 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 				case <-stop:
 					return
 				default:
-				}
-				if floodHeld() {
-					continue
 				}
 				if rt.coord.tryReserveNow(id, marotte.TurnSourcePrompt) {
 					rt.coord.releaseHeld(id)
