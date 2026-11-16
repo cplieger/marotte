@@ -120,6 +120,40 @@ func TestRunLog_StepStartsCarryAnInFlightStepsTurnAndLine(t *testing.T) {
 			t.Errorf("tail read back from the log = %q, want the command the card draws", tail)
 		}
 	})
+	t.Run("a command keeps the marks markdown reads as block markers", func(t *testing.T) {
+		dir := t.TempDir()
+		r := newRunLog(dir)
+		turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		call := &marotte.EntryToolCall{
+			ID: "call-1", Title: "Run Command", Kind: marotte.ToolKindExecute, Input: json.RawMessage(`{"command":"> /tmp/out"}`),
+		}
+		if _, err := turn.ToolCall(t.Context(), "", call); err != nil {
+			t.Fatal(err)
+		}
+		if _, tail := startTail(t, r, step); tail != "> /tmp/out" {
+			t.Errorf("call tail = %q, want the command the card draws", tail)
+		}
+		later := &marotte.EntryToolCall{ID: "call-2", Title: "Run Command", Kind: marotte.ToolKindExecute, Input: json.RawMessage(`{}`)}
+		if _, err := turn.ToolCall(t.Context(), "", later); err != nil {
+			t.Fatal(err)
+		}
+		res := &marotte.EntryToolResult{
+			Title: "Run Command", Kind: marotte.ToolKindExecute, Status: marotte.ToolCompleted,
+			Input: json.RawMessage(`{"command":"# rebuild"}`),
+		}
+		if _, err := turn.ToolResult(t.Context(), "", "call-2", res); err != nil {
+			t.Fatal(err)
+		}
+		if _, tail := startTail(t, r, step); tail != "# rebuild" {
+			t.Errorf("live result tail = %q, want the command the card draws", tail)
+		}
+		if _, tail := startTail(t, newRunLog(dir), step); tail != "# rebuild" {
+			t.Errorf("result tail read back from the log = %q, want the command the card draws", tail)
+		}
+	})
 	t.Run("a result that changes nothing leaves a later line standing", func(t *testing.T) {
 		r := newRunLog(t.TempDir())
 		turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")

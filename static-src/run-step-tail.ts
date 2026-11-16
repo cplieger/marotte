@@ -67,13 +67,13 @@ function entryLine(e: Entry, callTitle: (callID: string) => string | undefined):
     return lastLine(field(e, "text") ?? "");
   }
   if (e.kind === "tool_call") {
-    return lastLine(field(e, "card_title") ?? field(e, "title") ?? "");
+    return titleLine(field(e, "card_title") ?? field(e, "title") ?? "");
   }
   if (e.kind === "tool_result") {
     const callID = callIDOfToolResult(e.id);
     const own = callID === null ? undefined : callTitle(callID);
     const title = field(e, "card_title") ?? "";
-    return own === undefined || own === title ? "" : lastLine(title);
+    return own === undefined || own === title ? "" : titleLine(title);
   }
   return "";
 }
@@ -113,6 +113,12 @@ function lastLine(text: string): string {
     }
   }
   return "";
+}
+
+/** A tool card title as the dock prints it: the card draws the title as given, a command's shell
+ *  marks included, so it is only trimmed and capped. */
+function titleLine(title: string): string {
+  return capped(title.trim());
 }
 
 /** `line` cut to `MAX_CHARS` code points, so the cut never splits a surrogate pair. */

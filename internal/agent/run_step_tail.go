@@ -47,7 +47,7 @@ func printedLine(e *marotte.Entry, calls stepCalls) string {
 		}
 		calls[stepCallKey{e.Turn, e.ID}] = &c
 		tc := marotte.ToolCallOfEntry(&c)
-		return lastProseLine(marotte.ToolCardTitle(&tc))
+		return titleLine(marotte.ToolCardTitle(&tc))
 	case marotte.EntryKindToolResult:
 		return calls.settle(e)
 	default:
@@ -75,7 +75,7 @@ func (c stepCalls) settle(e *marotte.Entry) string {
 	}
 	own, settled := marotte.ToolCallOfEntry(call), marotte.SettledToolCall(call, &res)
 	if title := marotte.ToolCardTitle(&settled); title != marotte.ToolCardTitle(&own) {
-		return lastProseLine(title)
+		return titleLine(title)
 	}
 	return ""
 }
@@ -102,14 +102,22 @@ func lastProseLine(text string) string {
 		if raw == "" || tailStructureOnly.MatchString(raw) {
 			continue
 		}
-		line := strings.TrimSpace(tailBlockMarkers.ReplaceAllString(raw, ""))
-		if line == "" {
-			continue
+		if line := strings.TrimSpace(tailBlockMarkers.ReplaceAllString(raw, "")); line != "" {
+			return capRunes(line)
 		}
-		if r := []rune(line); len(r) > tailMaxRunes {
-			return string(r[:tailMaxRunes])
-		}
-		return line
 	}
 	return ""
+}
+
+// titleLine is a tool card title as the dock prints it: the card draws the title as given, a command's shell marks
+// included, so it is only trimmed and cut to tailMaxRunes.
+func titleLine(title string) string {
+	return capRunes(strings.TrimSpace(title))
+}
+
+func capRunes(line string) string {
+	if r := []rune(line); len(r) > tailMaxRunes {
+		return string(r[:tailMaxRunes])
+	}
+	return line
 }

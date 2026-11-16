@@ -74,6 +74,15 @@ describe("lastPrintedLine", () => {
     expect(lineOf(turn([entry(2, "text", { text: "mine" }), settled]))).toBe("mine");
   });
 
+  // A description-less shell call's card title is its command, which markdown would read as markup.
+  it("keeps a card title whole where a text would lose its block markers", () => {
+    const call = { title: "Run Command", card_title: "> /tmp/out", id: "c1" };
+    expect(lineOf(turn([entry(1, "tool_call", call)]))).toBe("> /tmp/out");
+    const pending = { ...entry(1, "tool_call", shellCall), id: "c1" };
+    const settled = { ...entry(2, "tool_result", { card_title: "# rebuild" }), id: "c1:result" };
+    expect(lineOf(turn([pending, settled]))).toBe("# rebuild");
+  });
+
   it("skips a delegate's lane and an entry with nothing to say", () => {
     const t = turn([
       entry(1, "text", { text: "mine" }),
