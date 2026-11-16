@@ -4205,6 +4205,10 @@ export const decodeRunStepStart: Decoder<RunStepStart> = (v) => {
     if ($v !== undefined && $v !== null) out.open = decodeOpenEntry(own(o, "open"));
   }
   {
+    const $v = own(o, "calls");
+    if ($v !== undefined && $v !== null) out.calls = own(o, "calls") === null ? {} : decodeRecord(own(o, "calls"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.run_step_start.calls");
+  }
+  {
     const $v = own(o, "turn");
     if ($v !== undefined && $v !== null) out.turn = reqStr(o, "turn", "$.run_step_start");
   }

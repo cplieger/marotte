@@ -217,6 +217,12 @@ export function seedStepTails(
     const t = runTails(workflowID);
     t.paths.set(row.turn, path);
     const c = cellAt(t, path);
+    // A call the page never saw appended keeps its title for the result that settles it.
+    for (const [id, title] of Object.entries(row.calls ?? {})) {
+      if (!c.calls.has(id)) {
+        c.calls.set(id, title);
+      }
+    }
     const open = row.open?.turn === row.turn && (row.open.lane ?? "") === "" ? row.open : undefined;
     const held = open === undefined || c.open?.id !== open.id ? undefined : c.open;
     const ahead =

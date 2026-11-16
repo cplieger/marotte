@@ -2547,6 +2547,7 @@ const arbModel = fc.letrec<{
   RunStepStart: fc.record(
     {
       open: tie("OpenEntry"),
+      calls: fc.dictionary(fc.string(), fc.string(), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
       started_at: fc.string(),
       turn: fc.string(),
       tail: fc.string(),

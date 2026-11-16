@@ -169,6 +169,24 @@ describe("a tail cell moved by appended entries", () => {
     expect(stepTail(wf, "s")).toBe("go vet ./...");
     forgetStepTails(wf);
   });
+
+  // A page attached while the call was in flight never saw its tool_call frame.
+  it("takes a seeded call's card title as the call a result settles", () => {
+    const wf = "wf_cell_seeded_call";
+    const seeded: RunStepStart = {
+      started_at: "2026-11-10T10:00:00Z",
+      ended: false,
+      turn: "t1",
+      tail: "Run Command",
+      calls: { c1: "Run Command" },
+    };
+    seedStepTails(wf, [["s", seeded]]);
+    expect(stepTail(wf, "s")).toBe("Run Command");
+    const settled = { ...entry(2, "tool_result", { card_title: "go vet ./..." }), id: "c1:result" };
+    tailAppended(wf, settled);
+    expect(stepTail(wf, "s")).toBe("go vet ./...");
+    forgetStepTails(wf);
+  });
 });
 
 /** A run read's row for step `path`'s turn `t-<path>`, its root lane streaming `e-<path>` at `n`. */

@@ -62,6 +62,19 @@ type stepCalls map[stepCallKey]*marotte.EntryToolCall
 
 type stepCallKey struct{ turn, id string }
 
+// titles is the held calls' card titles by call id, nil when none: one turn's sink holds only that turn's calls.
+func (c stepCalls) titles() map[string]string {
+	var out map[string]string
+	for k, call := range c {
+		if out == nil {
+			out = make(map[string]string, len(c))
+		}
+		tc := marotte.ToolCallOfEntry(call)
+		out[k.id], _ = marotte.ToolCard(&tc)
+	}
+	return out
+}
+
 // settle answers the line a result prints, its card's settled title where that differs from the call's own (as when
 // the command arrived only on the result), else "", and releases the call. An aborted result keeps it: KAS can still
 // say how the call ended in a late result (appendAfterClosed).

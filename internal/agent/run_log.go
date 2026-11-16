@@ -51,6 +51,9 @@ type runTurn struct {
 	tail atomic.Pointer[string]
 	// calls is the sink's printedLine state, nil until the turn's first entry.
 	calls stepCalls
+	// callTitles is calls' card titles by call id as the sink last left them, which a read's row carries; never
+	// written after it is stored.
+	callTitles atomic.Pointer[map[string]string]
 	// lastError is the newest model error KAS displayed in the step's current KAS turn, zero when none.
 	lastError marotte.EngineError
 	// rawStop is the last turn_end's stop reason, carried by the close.
@@ -104,6 +107,18 @@ func (s runSink) Append(ctx context.Context, e *marotte.Entry) error {
 	}
 	if line := printedLine(e, s.turn.calls); line != "" {
 		s.turn.tail.Store(&line)
+	}
+	if e.Lane == "" && (e.Kind == marotte.EntryKindToolCall || e.Kind == marotte.EntryKindToolResult) {
+		titles := s.turn.calls.titles()
+		s.turn.callTitles.Store(&titles)
+	}
+	return nil
+}
+
+// openCalls is the turn's unsettled own-lane calls' card titles, nil when none.
+func (t *runTurn) openCalls() map[string]string {
+	if p := t.callTitles.Load(); p != nil {
+		return *p
 	}
 	return nil
 }
@@ -1448,6 +1463,9 @@ func stepStartLocked(rec *runRecord, path string, a stepAttempt) marotte.RunStep
 	}
 	if !row.Ended {
 		row.Turn, row.Tail = attemptTail(rec, path, a)
+		if t := rec.open[path]; t != nil {
+			row.Calls = t.openCalls()
+		}
 	}
 	return row
 }
@@ -1485,6 +1503,7 @@ func (r *runLog) liveRows(workflowID string, starts map[string]marotte.RunStepSt
 		if line := t.tail.Load(); line != nil {
 			row.Tail = *line
 		}
+		row.Calls = t.openCalls()
 		for _, o := range t.turn.OpenEntries() {
 			if o.Lane == "" {
 				o.Text = dockText(o.Text)

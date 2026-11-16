@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"maps"
 	"strconv"
 	"testing"
 
@@ -248,6 +249,55 @@ func TestRunLog_StepStartsCarryAnInFlightStepsTurnAndLine(t *testing.T) {
 			t.Errorf("ended row = %q %q, want neither", gotTurn, gotTail)
 		}
 	})
+}
+
+// A page that attaches while a step's call is in flight is seeded with the call's card title, so the result that
+// settles a different title moves its dock line.
+func TestRunLog_StepStartsCarryTheOpenTurnsUnsettledCalls(t *testing.T) {
+	step := workflow.PathKey([]string{"wf1", "build"})
+	r := newRunLog(t.TempDir())
+	turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := &marotte.EntryToolCall{ID: "call-1", Title: "Run Command", Kind: marotte.ToolKindExecute, Input: json.RawMessage(`{}`)}
+	if _, err := turn.ToolCall(t.Context(), "", call); err != nil {
+		t.Fatal(err)
+	}
+	delegate := &marotte.EntryToolCall{ID: "call-2", Title: "Read a.go", Kind: marotte.ToolKindRead}
+	if _, err := turn.ToolCall(t.Context(), "uuid-1", delegate); err != nil {
+		t.Fatal(err)
+	}
+	if got := startCalls(t, r, step); !maps.Equal(got, map[string]string{"call-1": "Run Command"}) {
+		t.Errorf("in flight, calls = %v, want the root lane's call by its card title", got)
+	}
+	res := &marotte.EntryToolResult{Title: "Run Command", Kind: marotte.ToolKindExecute, Status: marotte.ToolCompleted}
+	if _, err := turn.ToolResult(t.Context(), "", "call-1", res); err != nil {
+		t.Fatal(err)
+	}
+	if got := startCalls(t, r, step); len(got) != 0 {
+		t.Errorf("settled, calls = %v, want none", got)
+	}
+}
+
+// startCalls is the calls a step's step_starts row carries, read off its wire form.
+func startCalls(t *testing.T, r *runLog, path string) map[string]string {
+	t.Helper()
+	got, err := r.stepStarts(t.Context(), "wf1")
+	if err != nil {
+		t.Fatalf("StepStarts: %v", err)
+	}
+	raw, err := json.Marshal(got[path])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Calls map[string]string `json:"calls"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	return wire.Calls
 }
 
 // servedStart is a run read's step_starts row for path, with the streaming entry it carries.
