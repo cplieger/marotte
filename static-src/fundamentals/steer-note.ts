@@ -99,10 +99,7 @@ const REASONS: Record<SteerReason, string> = {
   boundary: "the turn ended first",
 };
 
-/** The second channel, never a hue (WCAG 1.4.1 would forbid one as the only
- *  channel anyway): the steer wheel for the reader's own message, the
- *  workflow tree for a run's result, and the tree's message badge for a workflow
- *  message in either direction, whose label says which way it went. */
+/** The second channel, never a hue (WCAG 1.4.1). A workflow message draws one badge in both directions; its label says which way it went. */
 const GLYPHS: Record<SteerOrigin, string> = {
   user: ICON_STEER,
   agent: ICON_TAB_RUN,
