@@ -82,8 +82,8 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		AutoCompactPctRange:   AutoCompactPctRange(),
 		RejectedKeys:          []string{},
 		ChatRetentionDays:     DefaultChatRetentionDays,
-		HistoryWindowHours:    DefaultHistoryWindowHours,
-		HistoryWindowChoices:  HistoryWindowChoices(),
+		HistoryWindowHours:    defaultHistoryWindowHours,
+		HistoryWindowChoices:  slices.Clone(historyWindowChoices),
 		GuardPayloadLinks:     defaultGuardPayloadLinks,
 		HighThroughput:        defaultHighThroughput,
 		// kiro-cli's own default for hooks.showStatus, until a reader says otherwise.
@@ -195,7 +195,7 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 		KeyAutoCompactPct:        func(r json.RawMessage) error { return decodeAutoCompactPct(&out.AutoCompactPct, r) },
 		KeyChatRetentionDays:     func(r json.RawMessage) error { return decodeInto(&out.ChatRetentionDays, r) },
 		KeyHistoryWindowHours: func(r json.RawMessage) error {
-			return decodeChecked(&out.HistoryWindowHours, r, KeyHistoryWindowHours, ValidHistoryWindowHours)
+			return decodeChecked(&out.HistoryWindowHours, r, KeyHistoryWindowHours, validHistoryWindowHours)
 		},
 		KeyTheme:             func(r json.RawMessage) error { return decodeInto(&out.Theme, r) },
 		KeyLastModel:         func(r json.RawMessage) error { return decodeInto(&out.LastModel, r) },

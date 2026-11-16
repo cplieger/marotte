@@ -10,24 +10,18 @@ import (
 	"time"
 )
 
-// DefaultHistoryWindowHours sits under every retention that keeps a chat (the least is one day), so
+// defaultHistoryWindowHours sits under every retention that keeps a chat (the least is one day), so
 // the default never needs the Days kept cap.
 const (
-	DefaultHistoryWindowHours = 24
-	DefaultHistoryWindow      = DefaultHistoryWindowHours * time.Hour
+	defaultHistoryWindowHours = 24
+	DefaultHistoryWindow      = defaultHistoryWindowHours * time.Hour
 )
 
 // historyWindowChoices are whole days above a day, so every Days kept cap lands on a choice. The
 // longest must not pass tabs.RecentHold, or a widen would reach closes the tab store already dropped.
 var historyWindowChoices = []int{1, 6, 12, 24, 48, 72, 168}
 
-// HistoryWindowChoices returns the hours history_window_hours accepts, ascending.
-func HistoryWindowChoices() []int {
-	return slices.Clone(historyWindowChoices)
-}
-
-// ValidHistoryWindowHours reports whether h is one of the choices.
-func ValidHistoryWindowHours(h int) bool {
+func validHistoryWindowHours(h int) bool {
 	return slices.Contains(historyWindowChoices, h)
 }
 
@@ -40,8 +34,8 @@ func HistoryWindow(ctx context.Context, configDir string) time.Duration {
 		return DefaultHistoryWindow
 	}
 	hours, found, err := Lookup[int](d, KeyHistoryWindowHours)
-	if err != nil || !found || !ValidHistoryWindowHours(hours) {
-		hours = DefaultHistoryWindowHours
+	if err != nil || !found || !validHistoryWindowHours(hours) {
+		hours = defaultHistoryWindowHours
 	}
 	days, found, err := Lookup[int](d, KeyChatRetentionDays)
 	if err != nil || !found {
@@ -66,7 +60,7 @@ func validateHistoryWindowPatch(patch map[string]json.RawMessage) error {
 		return nil
 	}
 	var h int
-	if decodeChecked(&h, raw, KeyHistoryWindowHours, ValidHistoryWindowHours) != nil {
+	if decodeChecked(&h, raw, KeyHistoryWindowHours, validHistoryWindowHours) != nil {
 		return errHistoryWindowChoice
 	}
 	return nil

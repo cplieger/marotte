@@ -18,7 +18,7 @@ const (
 	KeyChatRetentionDays = "chat_retention_days"
 
 	// KeyHistoryWindowHours is how many hours a closed chat stays in the sidebar's History, one of
-	// HistoryWindowChoices; HistoryWindow caps it at Days kept.
+	// historyWindowChoices; HistoryWindow caps it at Days kept.
 	KeyHistoryWindowHours = "history_window_hours"
 
 	KeyDebugLogs            = "debug_logs"
