@@ -87,9 +87,9 @@
             "turn_id": "t-1",
             "entry_id": "tc4",
             "kind": "tool",
-            "excerpt": "retry-budget",
+            "excerpt": "Loaded skill: retry-budget",
             "segments": [
-              "tool_disclosed"
+              "tool_title"
             ],
             "turn": 1
           },
@@ -202,7 +202,7 @@
             "excerpt": "The retry semantics differ per client.",
             "segments": [
               "reasoning",
-              "tool_disclosed",
+              "tool_title",
               "turn_failure"
             ],
             "turn": 1

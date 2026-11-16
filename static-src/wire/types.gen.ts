@@ -104,7 +104,7 @@ export type RunWant = "either" | "prompt";
 
 export type SafetyStatus = "idle" | "formalizing" | "evaluating" | "blocked" | "error";
 
-export type SegmentKind = "content" | "reasoning" | "tool_title" | "tool_disclosed" | "tool_diff" | "tool_denial" | "tool_input" | "tool_output" | "steer" | "prompt" | "plan" | "attachment" | "turn_failure" | "wake";
+export type SegmentKind = "content" | "reasoning" | "tool_title" | "tool_diff" | "tool_denial" | "tool_input" | "tool_output" | "steer" | "prompt" | "plan" | "attachment" | "turn_failure" | "wake";
 
 export type SendNowKind = "stop" | "stop_then_compaction" | "after_compaction" | "now";
 

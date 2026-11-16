@@ -19,7 +19,7 @@ type turnFixture struct {
 
 // segmentKinds is every SegmentKind the const block declares.
 var segmentKinds = []SegmentKind{
-	segmentContent, segmentReasoning, segmentToolTitle, segmentToolDisclosed,
+	segmentContent, segmentReasoning, segmentToolTitle,
 	segmentToolDiff, segmentToolDenial, segmentToolInput, segmentToolOutput,
 	segmentSteer, segmentPrompt, segmentPlan, segmentAttachment, segmentTurnFailure,
 	segmentWake,
@@ -901,8 +901,7 @@ func TestSearch_AttachmentNameIsSearchedAndPathIsNot(t *testing.T) {
 	}
 }
 
-// A `disclose_context` result's display name replaces the title on the card, so it is searched; URI and Type are
-// not.
+// A `disclose_context` result's display name is in the drawn title, so it is a title hit; the URI is not searched.
 func TestSearch_DisclosedDisplayNameIsSearched(t *testing.T) {
 	entries, drawn := oneTool(
 		marotte.EntryToolCall{ID: "tc1", Title: "Disclose Context"},
@@ -911,11 +910,95 @@ func TestSearch_DisclosedDisplayNameIsSearched(t *testing.T) {
 		}},
 	)
 	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{
-		{entry: "tc1", kind: itemTool, segs: []SegmentKind{segmentToolDisclosed}},
+		{entry: "tc1", kind: itemTool, segs: []SegmentKind{segmentToolTitle}},
 	})
 	if hits := searchHits(entries, drawn, "haystack"); len(hits) != 0 {
 		t.Errorf("the disclosed URI matched %d times, want 0: %+v", len(hits), hits)
 	}
+}
+
+// The card draws "Loaded skill: release-notes" for a disclose_context KAS titles "Disclose Context", so the find
+// bar finds it by those words.
+func TestSearch_FindsALoadCardByItsDrawnTitle(t *testing.T) {
+	entries, drawn := oneTool(
+		marotte.EntryToolCall{
+			ID: "tc1", Title: "Disclose Context", Kind: marotte.ToolKindOther, ToolName: "disclose_context",
+			Input: json.RawMessage(`{"name":"release-notes"}`),
+		},
+		&marotte.EntryToolResult{Status: marotte.ToolCompleted, Disclosed: &marotte.ToolDisclosed{
+			Type: "skill", DisplayName: "release-notes",
+		}},
+	)
+	assertHits(t, searchHits(entries, drawn, `"Loaded skill"`), []wantHit{
+		{entry: "tc1", kind: itemTool, segs: []SegmentKind{segmentToolTitle}},
+	})
+	if hits := searchHits(entries, drawn, `"Disclose Context"`); len(hits) != 0 {
+		t.Errorf("the undrawn wire title matched %d times, want 0: %+v", len(hits), hits)
+	}
+}
+
+// `tool:` reads the title the card draws, so two load cards KAS titles "Tool Load" and "Load Resource" both file
+// under "Loaded", and neither under the wire title's words.
+func TestSearch_ToolFilterGroupsByTheDrawnTitle(t *testing.T) {
+	entries, drawn := chatOf(openTurn("t-1", 1, nil).
+		tool(marotte.EntryToolCall{
+			ID: "tc1", Title: "Tool Load", Kind: marotte.ToolKindOther, ToolName: "tool_load",
+			Input: json.RawMessage(`{"id":"tool::inspect_workflow"}`),
+		}, &marotte.EntryToolResult{Status: marotte.ToolCompleted}).
+		tool(marotte.EntryToolCall{
+			ID: "tc2", Title: "Load Resource", Kind: marotte.ToolKindOther, ToolName: "load_resource",
+			Input: json.RawMessage(`{"id":"skill::land"}`),
+		}, &marotte.EntryToolResult{Status: marotte.ToolCompleted}))
+
+	t.Run("the drawn title groups both", func(t *testing.T) {
+		assertHits(t, searchHits(entries, drawn, "tool:loaded"), []wantHit{
+			{entry: "tc1", kind: itemTool}, {entry: "tc2", kind: itemTool},
+		})
+	})
+	t.Run("the drawn title names each", func(t *testing.T) {
+		assertHits(t, searchHits(entries, drawn, "tool:land"), []wantHit{{entry: "tc2", kind: itemTool}})
+	})
+	t.Run("the wire title groups neither", func(t *testing.T) {
+		if hits := searchHits(entries, drawn, "tool:resource"); len(hits) != 0 {
+			t.Errorf("tool:resource matched %d hits, want 0: %+v", len(hits), hits)
+		}
+	})
+	t.Run("the kind still matches", func(t *testing.T) {
+		assertHits(t, searchHits(entries, drawn, "tool:other"), []wantHit{
+			{entry: "tc1", kind: itemTool}, {entry: "tc2", kind: itemTool},
+		})
+	})
+}
+
+// A description-less shell call's card is titled by its command, so a word of the command is a title hit as well as
+// an input hit, and `tool:` finds it by the command.
+func TestSearch_FindsAShellCardByItsCommandTitle(t *testing.T) {
+	entries, drawn := oneTool(
+		marotte.EntryToolCall{
+			ID: "tc1", Title: "Run Command", Kind: marotte.ToolKindExecute,
+			Input: json.RawMessage(`{"command":"go test ./internal/needle/"}`),
+		},
+		&marotte.EntryToolResult{Status: marotte.ToolCompleted, Output: "ok"},
+	)
+	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{
+		{entry: "tc1", kind: itemTool, segs: []SegmentKind{segmentToolTitle, segmentToolInput}},
+	})
+	assertHits(t, searchHits(entries, drawn, "tool:needle"), []wantHit{{entry: "tc1", kind: itemTool}})
+}
+
+// An MCP card draws its tool name with spaces for underscores, so `tool:` and the free text find it by that name.
+func TestSearch_FindsAnMCPCardByItsToolName(t *testing.T) {
+	entries, drawn := oneTool(
+		marotte.EntryToolCall{
+			ID: "tc1", Title: "grelot", Kind: marotte.ToolKindOther,
+			MCP: &marotte.MCPToolIdentity{ServerName: "grelot", ToolName: "fetch_inbox"},
+		},
+		&marotte.EntryToolResult{Status: marotte.ToolCompleted},
+	)
+	assertHits(t, searchHits(entries, drawn, "tool:fetch"), []wantHit{{entry: "tc1", kind: itemTool}})
+	assertHits(t, searchHits(entries, drawn, `"fetch inbox"`), []wantHit{
+		{entry: "tc1", kind: itemTool, segs: []SegmentKind{segmentToolTitle}},
+	})
 }
 
 // The deliberately unsearched fields, each asserted where a needle would otherwise look like a gap.
@@ -1013,22 +1096,21 @@ func TestSearch_UnsearchedFieldsStayUnsearched(t *testing.T) {
 	}
 }
 
-// A tool card's segments follow the card: title and input on the tool_call, then disclosed, diff, denial and output
-// on the tool_result.
+// A tool card's segments follow the card: title and input on the tool_call, then diff, denial and output on the
+// tool_result.
 func TestSearch_SegmentOrderFollowsTheRenderedCard(t *testing.T) {
 	entries, drawn := oneTool(
 		marotte.EntryToolCall{ID: "tc1", Title: "grep needle", Input: json.RawMessage(`{"cmd":"a needle in the input"}`)},
 		&marotte.EntryToolResult{
-			Status:    marotte.ToolCompleted,
-			Output:    "found a needle here",
-			Disclosed: &marotte.ToolDisclosed{Type: "skill", DisplayName: "the needle skill"},
-			Denial:    &marotte.ToolDenial{Capability: "shell", Resource: "a needle to deny"},
-			Diffs:     []marotte.ToolDiff{{Path: "fetch.go", NewText: "a needle in the diff"}},
+			Status: marotte.ToolCompleted,
+			Output: "found a needle here",
+			Denial: &marotte.ToolDenial{Capability: "shell", Resource: "a needle to deny"},
+			Diffs:  []marotte.ToolDiff{{Path: "fetch.go", NewText: "a needle in the diff"}},
 		},
 	)
 	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{
 		{entry: "tc1", kind: itemTool, segs: []SegmentKind{
-			segmentToolTitle, segmentToolInput, segmentToolDisclosed, segmentToolDiff, segmentToolDenial, segmentToolOutput,
+			segmentToolTitle, segmentToolInput, segmentToolDiff, segmentToolDenial, segmentToolOutput,
 		}},
 	})
 }
