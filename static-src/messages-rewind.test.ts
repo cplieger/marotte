@@ -415,15 +415,76 @@ describe("a rewind in flight", () => {
     const answer = holdReply();
     await rewindFirstTurn();
     await until(() => mockSend.mock.calls.length === 1, "the rewind command");
-    // A frame for another turn lands mid-wait: the paint must not re-enable anything.
-    store.setPainted(chatID);
-    store.bumpMessages(chatID, "shape");
-    await new Promise((r) => setTimeout(r, 30));
+    const before = rewindButtons();
+    // A new pointer tier is a card input every card shares, so this pass repaints each footer through `mountRewind`.
+    const root = document.documentElement;
+    const tier = root.getAttribute("data-pointer");
+    root.setAttribute("data-pointer", tier === "coarse" ? "fine" : "coarse");
+    try {
+      store.bumpMessages(chatID, "shape");
+      await new Promise((r) => setTimeout(r, 30));
+    } finally {
+      if (tier === null) {
+        root.removeAttribute("data-pointer");
+      } else {
+        root.setAttribute("data-pointer", tier);
+      }
+    }
 
     const [clicked, ...others] = rewindButtons();
+    expect(clicked, "kept, not re-mounted").toBe(before[0]);
     expect(clicked?.getAttribute("aria-busy")).toBe("true");
     expect(clicked?.disabled).toBe(true);
+    expect([...(clicked?.children ?? [])].map((c) => c.getAttribute("class"))).toEqual([
+      "icon-spinner ic-ui",
+    ]);
     expect(others.every((b) => b.disabled)).toBe(true);
+
+    answer({ ok: true, status: 200 });
+  });
+
+  it("refuses a second rewind from /rewind with a notice, before any confirm", async () => {
+    const toast = await import("./toast.js");
+    vi.mocked(toast.notice).mockClear();
+    const chatID = await paintChat(3);
+    const answer = holdReply();
+    await rewindFirstTurn();
+    await until(() => mockSend.mock.calls.length === 1, "the rewind command");
+
+    expect(await messages.rewindLatestTurn(chatID)).toBe(true);
+    expect(mocks.confirm, "no second confirm").toHaveBeenCalledTimes(1);
+    expect(mockSend, "no second command").toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toast.notice).mock.calls.map((c) => c[0])).toEqual([
+      expect.stringContaining("A rewind is already running."),
+    ]);
+
+    answer({ ok: true, status: 200 });
+  });
+
+  it("refuses a confirm that resolves after another rewind of the chat began", async () => {
+    const toast = await import("./toast.js");
+    vi.mocked(toast.notice).mockClear();
+    const chatID = await paintChat(3);
+    let decideFirst: (v: boolean) => void = () => undefined;
+    mocks.confirm.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          decideFirst = resolve;
+        }),
+    );
+    const answer = holdReply();
+    await rewindFirstTurn();
+    void messages.rewindLatestTurn(chatID);
+    await until(() => mockSend.mock.calls.length === 1, "the second door's command");
+    decideFirst(true);
+    await until(() => vi.mocked(toast.notice).mock.calls.length > 0, "the notice");
+
+    expect(mockSend, "the late confirm sends nothing").toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toast.notice).mock.calls[0]?.[0]).toContain("A rewind is already running.");
+    expect(
+      rewindButtons().find((b) => b.getAttribute("aria-busy") === "true"),
+      "the running rewind keeps its spinner",
+    ).toBe(rewindButtonOf(cards()[1]));
 
     answer({ ok: true, status: 200 });
   });
@@ -469,11 +530,14 @@ describe("a rewind in flight", () => {
   it("hands focus back to the clicked button after a refusal", async () => {
     await paintChat(3);
     const answer = holdReply();
-    rewindButtonOf(cards()[0]).focus();
+    const btn = rewindButtonOf(cards()[0]);
+    btn.focus();
+    const blurred = new Promise((r) => {
+      btn.addEventListener("blur", r, { once: true });
+    });
     await rewindFirstTurn();
     await until(() => mockSend.mock.calls.length === 1, "the rewind command");
-    // The HTML focus fixup blurs a focused control that becomes disabled; the test runner's page does not.
-    rewindButtonOf(cards()[0]).blur();
+    await blurred;
     answer({ ok: false, status: 409, error: "busy" });
     await until(() => !rewindButtonOf(cards()[0]).disabled, "the button re-enabled");
 

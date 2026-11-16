@@ -151,6 +151,7 @@ import { compactChat } from "./actions/chat.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { confirm as confirmDialog, type Confirmation } from "./confirm.js";
 import { setComposerValue } from "./composer-value.js";
+import { chatNotice } from "./notice-subject.js";
 import { registerCleanup } from "./actions/index.js";
 import {
   disposeAllToolEffects,
@@ -1644,8 +1645,12 @@ async function handleRewindClick(target: EntryPrompt): Promise<void> {
   if (at < 0) {
     return;
   }
+  if (refuseSecondRewind(session.id)) {
+    return;
+  }
   const proceed = await confirmDialog(rewindConfirmation(target, turns.slice(at)));
-  if (!proceed || rewindInFlight.has(session.id)) {
+  // Checked again past the await: a second flight would take the map entry the first one's `finally` clears.
+  if (!proceed || refuseSecondRewind(session.id)) {
     return;
   }
   rewindInFlight.set(session.id, target.id);
@@ -1656,7 +1661,7 @@ async function handleRewindClick(target: EntryPrompt): Promise<void> {
   } finally {
     rewindInFlight.delete(session.id);
     const back = paintRewinds(session.id, target.id);
-    // Disabling the focused button dropped focus to <body>; a refusal hands it back.
+    // Disabling the focused button dropped focus to <body>; give it back while the button is still mounted.
     if (back?.isConnected === true && document.activeElement === document.body) {
       back.focus();
     }
@@ -1670,6 +1675,15 @@ async function handleRewindClick(target: EntryPrompt): Promise<void> {
   }
   setComposerValue(target.text);
   input.focus();
+}
+
+/** True, with a notice saying why, when `chatID` already has a rewind in flight. */
+function refuseSecondRewind(chatID: string): boolean {
+  if (!rewindInFlight.has(chatID)) {
+    return false;
+  }
+  chatNotice(chatID, "A rewind is already running.");
+  return true;
 }
 
 /**
