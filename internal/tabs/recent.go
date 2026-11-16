@@ -102,7 +102,7 @@ func sanitizeRecent(in []marotte.RecentClose, open []marotte.TabSubject, now int
 	return out[:min(len(out), maxRecent)]
 }
 
-// pruneRecent drops each entry whose chat exists reports missing, logging each, and reports
+// pruneRecent drops each entry for which exists returns false, logging each drop, and reports
 // whether it dropped one. A nil exists keeps every entry.
 func pruneRecent(recent []marotte.RecentClose, exists func(marotte.TabSubject) bool) ([]marotte.RecentClose, bool) {
 	if exists == nil {
