@@ -159,7 +159,7 @@ func TestDeleteChatAndCloseTabs_TearsDownADescendantChat(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h.log.awaitEvent(t, "end close "+string(d))
+	h.log.awaitEvent(t, "release "+string(d))
 	if !frameAfterCommit {
 		t.Errorf("the tabs_changed frame went out before D's hold committed; events %v", h.log.snapshot())
 	}

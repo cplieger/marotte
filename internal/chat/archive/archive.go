@@ -39,11 +39,13 @@ const (
 	KeptByUnreconciled = "unreconciled"
 	KeptByUnattributed = "unattributed"
 	KeptByWords        = "words"
+	// KeptByBot is a started Bot: retention never deletes one, whatever its age.
+	KeptByBot = "bot"
 )
 
 var keptByKinds = []string{
 	KeptByTab, KeptByRun, KeptByRunTab, KeptByTurn, KeptByStop, KeptByUnknown,
-	KeptByPending, KeptByUnreconciled, KeptByUnattributed, KeptByWords,
+	KeptByPending, KeptByUnreconciled, KeptByUnattributed, KeptByWords, KeptByBot,
 }
 
 // PurgeVerdict is PurgeIdle's answer for one chat.

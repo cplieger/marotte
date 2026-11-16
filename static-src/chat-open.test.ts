@@ -158,6 +158,21 @@ describe("openPreviousSession", () => {
     expect(h.loadMessages, "chat.ts loaded the chat a second time").not.toHaveBeenCalled();
   });
 
+  it("reopens a Bot listed by its record, with no stored session, through one chat-tab open", async () => {
+    blankB();
+    const botRow = {
+      session_id: "",
+      chat_id: "b",
+      title: "CI watcher",
+      bot: true,
+    } as unknown as ResumableSession;
+
+    await expect(chat.openPreviousSession(botRow)).resolves.toBe("opened");
+
+    expect(h.openTab).toHaveBeenCalledTimes(1);
+    expect(h.openTab).toHaveBeenCalledWith(expect.objectContaining({ kind: "chat", ref: "b" }));
+  });
+
   const row = { chat_id: "b", title: "b" } as unknown as ResumableSession;
   const composer = (): HTMLElement | null => document.getElementById("prompt-input");
 

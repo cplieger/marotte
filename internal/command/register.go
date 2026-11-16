@@ -3,6 +3,7 @@ package command
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 
 	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/marotte/internal/chat"
@@ -46,9 +47,10 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 
 	// The handlers take the narrower chatStore; only the coordinator writes keep facts.
 	var chats chatStore = r.Chats
+	d.records = chats
 	d.register(marotte.CmdCreateChat, bind1(mem, cmdCreateChat))
 	d.register(marotte.CmdResumeSession, bind2(mem, r.Conversations, cmdResumeSession))
-	d.RegisterChange(marotte.CmdCompact, bind1[compactRequester](r.Compactor, cmdCompact))
+	d.registerChange(marotte.CmdCompact, bind1[compactRequester](r.Compactor, cmdCompact))
 	d.register(marotte.CmdCancelCompact, bind1[compactRequester](r.Compactor, cmdCancelCompact))
 
 	d.register(marotte.CmdOpenTab, bind1(mem, cmdOpenTab))
@@ -67,14 +69,14 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.register(marotte.CmdPermissionResponse, bind1(r.Perms, cmdPermission))
 	d.register(marotte.CmdElicitationResponse, bind1(r.Perms, cmdElicitationResponse))
 	d.register(marotte.CmdUserInputResponse, bind1(r.Perms, cmdUserInputResponse))
-	d.RegisterChange(marotte.CmdRewindChat, bind6(r.Bridges, chats, r.Admission, r.Run, r.RunCutter, r.Bus, cmdRewindChat))
+	d.registerChange(marotte.CmdRewindChat, bind6(r.Bridges, chats, r.Admission, r.Run, r.RunCutter, r.Bus, cmdRewindChat))
 	configLocks := keylock.New(cmp.Compare[marotte.ChatID])
-	d.RegisterChange(marotte.CmdSetEffort, bind6(r.Bridges, chats, r.Bus, r.Workspace, r.Effort, configLocks, cmdSetEffort))
-	d.RegisterChange(marotte.CmdSetThinking, bind3(r.Bridges, chats, configLocks, cmdSetThinking))
-	d.RegisterChange(marotte.CmdSetMode,
+	d.RegisterBotWriteChange(marotte.CmdSetEffort, bind6(r.Bridges, chats, r.Bus, r.Workspace, r.Effort, configLocks, cmdSetEffort))
+	d.RegisterBotWriteChange(marotte.CmdSetThinking, bind3(r.Bridges, chats, configLocks, cmdSetThinking))
+	d.registerChange(marotte.CmdSetMode,
 		bind5(r.Bridges, chats, r.Bus, r.Modes, keylock.New(cmp.Compare[marotte.ChatID]), cmdSetMode))
-	d.RegisterChange(marotte.CmdSetSupervisedMode,
-		bind3(r.Bridges, chats, keylock.New(cmp.Compare[marotte.ChatID]), cmdSetSupervisedMode))
+	supervisedLocks := keylock.New(cmp.Compare[marotte.ChatID])
+	d.RegisterBotWriteChange(marotte.CmdSetSupervisedMode, bind3(r.Bridges, chats, supervisedLocks, cmdSetSupervisedMode))
 	d.register(marotte.CmdSetSecurityProfile, bind1(r.ProfileMoves, cmdSetSecurityProfile))
 
 	d.register(marotte.CmdCancel, bind6(r.Run, r.Bridges, r.Perms, r.Terminals, r.Stops, r.SteerQueue, cmdCancel))
@@ -82,10 +84,24 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		_, err := carryOutStop(ctx, r.Run, r.Bridges, r.Perms, r.Terminals, r.Stops, chatID, rs, func() {})
 		return err
 	}
-	d.RegisterChange(marotte.CmdForkChat, bind4(r.Bridges, chats, r.Workspace, mem, cmdForkChat))
+	d.registerChange(marotte.CmdForkChat, bind4(r.Bridges, chats, r.Workspace, mem, cmdForkChat))
 
-	d.register(marotte.CmdQueuePrompt, bind3(r.Run, r.Admission, chatReopener(mem), cmdQueuePrompt))
-	d.register(marotte.CmdRenameChat, bind2(chats, r.Renamer, cmdRenameChat))
+	d.register(marotte.CmdQueuePrompt, bind4(r.Run, r.Admission, messageDoor(mem), chats, cmdQueuePrompt))
+	d.register(marotte.CmdRenameChat, d.botWrite(bind3(chats, r.Renamer, r.BotReloads, cmdRenameChat)))
+	bots := &botRoles{
+		chats: chats, bridges: r.Bridges, renamer: r.Renamer, reload: r.BotReloads, models: r.Models,
+		kickoff: func(ctx context.Context, chatID marotte.ChatID, p *marotte.PromptCommand) error {
+			payload, err := json.Marshal(p)
+			if err != nil {
+				return err
+			}
+			return d.Run(ctx, &marotte.ClientCommand{Type: marotte.CmdPrompt, ChatID: chatID, Payload: payload})
+		},
+		supervisedLocks: supervisedLocks, writes: d.botWrites, paths: r.BotPaths,
+	}
+	d.registerChange(marotte.CmdBotSave, bind1(bots, cmdBotSave))
+	d.register(marotte.CmdBotSetPaused, bind1(bots, cmdBotSetPaused))
+	d.register(marotte.CmdBotClearMemory, bind1(bots, cmdBotClearMemory))
 
 	prompt := &promptRoles{
 		bridges:     r.Bridges,
@@ -102,7 +118,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		sendGate:    r.SendGate,
 		auth:        r.AuthReadiness,
 		signIn:      r.SignIn,
-		reopen:      mem,
+		door:        mem,
 	}
 	d.prompts = prompt
 	d.register(marotte.CmdPrompt, bind1(prompt, cmdPrompt))

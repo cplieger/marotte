@@ -311,8 +311,8 @@ const reasonStarting = "starting"
 // terminal outcome rather than the busy face.
 const reasonChatGone = "chat_not_found"
 
-// reasonChatClosed is the 409 refusal class for a close of the chat that committed after the prompt began, so the
-// close ended it. The client keeps the text as the chat's draft.
+// reasonChatClosed is the 409 refusal class for a closed chat: a close that committed after the prompt began, or a
+// Bot with no tab when its message began (Membership.BeginMessage). The client keeps the text as the chat's draft.
 const reasonChatClosed = "chat_closed"
 
 // reasonPromptOnly is the 409 refusal class for prompt-only text that would be steered. The client keeps the text
@@ -338,11 +338,16 @@ func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 	if vErr != nil {
 		return nil, StatusError(code, vErr)
 	}
+	if err := refuseBotDraft(ctx, roles.chats, cmd.ChatID); err != nil {
+		return nil, err
+	}
 	p.Caller = cmd.From
-	// The prompt's intent begins here: a close that commits after this stamp ends it wherever it waits.
-	stamp := roles.admission.LifeStamp()
-	// Before the submit: a prompt into an idle chat starts a turn, whose tab must exist first.
-	reopenForCaller(ctx, roles.reopen, cmd)
+	// Before the submit: a prompt into an idle chat starts a turn, whose tab must exist first. The prompt's intent
+	// begins at the stamp: a close that commits after it ends the prompt wherever it waits.
+	stamp, err := roles.door.BeginMessage(ctx, cmd.ChatID, cmd.From != nil, roles.admission.LifeStamp)
+	if err != nil {
+		return nil, err
+	}
 	s := Submission{
 		Row: marotte.QueuedPrompt{
 			ID: p.MessageID, Text: p.Text, Label: p.DisplayText, Attachments: p.Attachments, Caller: p.Caller,

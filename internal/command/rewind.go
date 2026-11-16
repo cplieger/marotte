@@ -312,7 +312,7 @@ func applyEffortPick(
 func persistEffortPick(
 	ctx context.Context, chats chatStore, chatID marotte.ChatID, level string, thinkingOff bool,
 ) (model string, changed bool, err error) {
-	_, err = chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
+	_, err = chats.Mutate(ctx, chatID, marotte.BotWriter(func(c *marotte.Chat, exists bool) bool {
 		model = c.Model
 		thinkingChanged := false
 		if thinkingOff && c.Thinking != marotte.ThinkingOn {
@@ -331,7 +331,7 @@ func persistEffortPick(
 		c.Effort = level
 		changed = true
 		return true
-	})
+	}))
 	return model, changed, err
 }
 

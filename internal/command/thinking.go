@@ -41,7 +41,7 @@ func cmdSetThinking(
 	if err := setThinking(ctx, bridges, cmd.ChatID, choice); err != nil {
 		return nil, err
 	}
-	if _, err := chats.Mutate(ctx, cmd.ChatID, func(c *marotte.Chat, exists bool) bool {
+	if _, err := chats.Mutate(ctx, cmd.ChatID, marotte.BotWriter(func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			c.Name = marotte.DefaultChatName
 		} else if c.Thinking == choice {
@@ -49,7 +49,7 @@ func cmdSetThinking(
 		}
 		c.Thinking = choice
 		return true
-	}); err != nil {
+	})); err != nil {
 		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 	slog.Info("thinking set", "chat", cmd.ChatID, "thinking", choice)

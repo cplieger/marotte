@@ -388,9 +388,19 @@ func promptRolesOf(d hostDouble) *promptRoles {
 		steers:      NewSteerLedger(),
 		queue:       stub,
 		jobs:        stub,
+		door:        nopDoor{},
 	}
 	roles.runq = &launchingRun{roles: roles}
 	return roles
+}
+
+// nopDoor reopens nothing and answers every message's stamp.
+type nopDoor struct{}
+
+func (nopDoor) ReopenForMessage(context.Context, marotte.ChatID) {}
+
+func (nopDoor) BeginMessage(_ context.Context, _ marotte.ChatID, _ bool, stamp func() uint64) (uint64, error) {
+	return stamp(), nil
 }
 
 func (r *benchDeps) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration, _ uint64, _ string) (AdmissionOutcome, Reservation) {
