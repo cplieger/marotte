@@ -149,7 +149,7 @@ type Dispatcher struct {
 	merges *tangentMerges
 	// carryStop is cmdCancel's carrying out of a stop, bound at registration like prompts.
 	carryStop func(ctx context.Context, chatID marotte.ChatID, rs RunStop) error
-	// botWrites holds one user command that writes a Bot's view per Bot, from its read until it answers, so a
+	// botWrites holds one user command that writes a Bot's view per Bot, from its read through its write, so a
 	// bot_save's base check stays true through its write: every other writer of the view bumps spec_version. A
 	// regular chat has no spec_version and never takes it (botWrite).
 	botWrites *keylock.Set[marotte.ChatID]

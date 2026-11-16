@@ -311,8 +311,8 @@ const reasonStarting = "starting"
 // terminal outcome rather than the busy face.
 const reasonChatGone = "chat_not_found"
 
-// reasonChatClosed is the 409 refusal class for a close of the chat that committed after the prompt began, so the
-// close ended it. The client keeps the text as the chat's draft.
+// reasonChatClosed is the 409 refusal class for a closed chat: a close that committed after the prompt began, or a
+// Bot with no tab when its message began (Membership.BeginMessage). The client keeps the text as the chat's draft.
 const reasonChatClosed = "chat_closed"
 
 // reasonPromptOnly is the 409 refusal class for prompt-only text that would be steered. The client keeps the text

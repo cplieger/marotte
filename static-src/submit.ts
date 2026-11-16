@@ -31,7 +31,7 @@ const STARTING_FACE = "The chat is busy right now. Send again to retry";
 /** The 409 reason:"chat_not_found" face: the chat was deleted underneath the send. */
 const GONE_FACE = "This chat no longer exists, so the message was not sent";
 
-/** The 409 reason:"chat_closed" face: the chat was closed after the send began. */
+/** The 409 reason:"chat_closed" face: the chat was closed, so the send did not run. */
 const CLOSED_FACE = "This chat was closed, so the message was not sent";
 
 /** The 409 reason:"full" face: the queue holds as many messages as it takes. */

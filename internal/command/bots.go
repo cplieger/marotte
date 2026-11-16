@@ -92,7 +92,7 @@ type botRoles struct {
 	kickoff func(ctx context.Context, chatID marotte.ChatID, p *marotte.PromptCommand) error
 	// supervisedLocks is set_supervised_mode's own lock set, so a save and the switch never interleave.
 	supervisedLocks *keylock.Set[marotte.ChatID]
-	// writes is the dispatcher's botWrites set, held from this save's read until it answers.
+	// writes is the dispatcher's botWrites set, held from this save's read through its write (lockedBotSave).
 	writes *keylock.Set[marotte.ChatID]
 	paths  bot.Paths
 }
@@ -116,8 +116,7 @@ type botSave struct {
 // the Bot's view, so the answered version is above every one published during the save. A stale base_version, or a
 // model pick the switch refuses, saves nothing. A supervised switch refused after a model pick that changed the
 // record answers bot_supervised naming the field and keeps that pick with spec_version bumped. bot_supervised,
-// whatever its status, leaves the base stale, and so does a refused model pick whose stop already landed; the page
-// reloads the setup after any refused save that is not 400 or 409 bot_changed.
+// whatever its status, leaves the base stale, and so does a refused model pick whose stop already landed.
 func cmdBotSave(ctx context.Context, roles *botRoles, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
@@ -130,53 +129,65 @@ func cmdBotSave(ctx context.Context, roles *botRoles, cmd *marotte.ClientCommand
 	if len(bad) > 0 {
 		return nil, statusErrorFields(http.StatusBadRequest, reasonBotInvalid, bad, errBotInvalid)
 	}
-	unlock, lockErr := lockSessionChange(ctx, roles.writes, cmd.ChatID)
-	if lockErr != nil {
-		return nil, lockErr
-	}
-	defer unlock()
-	cur, ok := roles.chats.Get(ctx, cmd.ChatID)
-	if !ok || cur.Bot == nil {
-		return nil, StatusErrorReason(http.StatusConflict, reasonBotNotFound, errBotNotFound)
-	}
-	if cur.Bot.SpecVersion != s.base {
-		return nil, StatusErrorReason(http.StatusConflict, reasonBotChanged, errBotChanged)
-	}
-	read := cur.BotView()
-	if err := pickBotModel(ctx, roles.models, cmd.ChatID, &read, &s); err != nil {
-		return nil, refusedChoice(ctx, roles.chats, cmd.ChatID, &read, err, false)
-	}
-	if s.supervised != nil && *s.supervised != read.Supervised {
-		if err := applySupervised(ctx, roles.bridges, roles.chats, roles.supervisedLocks, cmd.ChatID, *s.supervised); err != nil {
-			return nil, refusedChoice(ctx, roles.chats, cmd.ChatID, &read, err, true)
-		}
-	}
-	w, err := writeBotSave(ctx, roles.chats, cmd.ChatID, &read, &s)
+	w, err := lockedBotSave(ctx, roles, cmd.ChatID, &s)
 	if err != nil {
 		return nil, err
 	}
-	return responseWith(afterBotSave(ctx, roles, cmd.ChatID, &w)), nil
-}
-
-// afterBotSave applies what a save's write changed and answers the save's body.
-func afterBotSave(ctx context.Context, roles *botRoles, chatID marotte.ChatID, w *botWrite) map[string]any {
-	if len(w.changes) > 0 {
-		slog.Info("bots: Bot saved", "chat_id", chatID, "changed", w.changes, "spec_version", w.version)
-	}
-	startedNow := w.changes.has(fieldStarted)
-	if w.rec.Bot.StartedAt != 0 && w.changes.has(fieldName) {
-		renameSessions(ctx, roles.renamer, chatID, w.chain, w.rec.Name)
-	}
-	if w.rec.Bot.StartedAt != 0 && !startedNow && w.changes.has(fieldName, fieldGoal, fieldSteering, fieldMemory) {
-		roles.reload.MarkBotReload(chatID)
-	}
 	out := map[string]any{"chat": w.header, "spec_version": w.version}
-	if startedNow {
-		if msg := startBot(ctx, roles, chatID, w.rec); msg != "" {
+	if w.changes.has(fieldStarted) {
+		if msg := startBot(ctx, roles, cmd.ChatID, w.rec); msg != "" {
 			out["kickoff_error"] = msg
 		}
 	}
-	return out
+	return responseWith(out), nil
+}
+
+// lockedBotSave runs s from the base check through its write and the session renames under the Bot's botWrites
+// lock, and releases it before the start's kickoff, which waits on kiro-cli and writes nothing a save checks.
+func lockedBotSave(ctx context.Context, roles *botRoles, chatID marotte.ChatID, s *botSave) (botWrite, error) {
+	unlock, lockErr := lockSessionChange(ctx, roles.writes, chatID)
+	if lockErr != nil {
+		return botWrite{}, lockErr
+	}
+	defer unlock()
+	cur, ok := roles.chats.Get(ctx, chatID)
+	if !ok || cur.Bot == nil {
+		return botWrite{}, StatusErrorReason(http.StatusConflict, reasonBotNotFound, errBotNotFound)
+	}
+	if cur.Bot.SpecVersion != s.base {
+		return botWrite{}, StatusErrorReason(http.StatusConflict, reasonBotChanged, errBotChanged)
+	}
+	read := cur.BotView()
+	if err := pickBotModel(ctx, roles.models, chatID, &read, s); err != nil {
+		return botWrite{}, refusedChoice(ctx, roles.chats, chatID, &read, err, false)
+	}
+	if s.supervised != nil && *s.supervised != read.Supervised {
+		if err := applySupervised(ctx, roles.bridges, roles.chats, roles.supervisedLocks, chatID, *s.supervised); err != nil {
+			return botWrite{}, refusedChoice(ctx, roles.chats, chatID, &read, err, true)
+		}
+	}
+	w, err := writeBotSave(ctx, roles.chats, chatID, &read, s)
+	if err != nil {
+		return botWrite{}, err
+	}
+	applyBotSave(ctx, roles, chatID, &w)
+	return w, nil
+}
+
+// applyBotSave logs a save's changes, renames a renamed started Bot's sessions and marks an edited one for reload.
+func applyBotSave(ctx context.Context, roles *botRoles, chatID marotte.ChatID, w *botWrite) {
+	if len(w.changes) > 0 {
+		slog.Info("bots: Bot saved", "chat_id", chatID, "changed", w.changes, "spec_version", w.version)
+	}
+	if w.rec.Bot.StartedAt == 0 {
+		return
+	}
+	if w.changes.has(fieldName) {
+		renameSessions(ctx, roles.renamer, chatID, w.chain, w.rec.Name)
+	}
+	if !w.changes.has(fieldStarted) && w.changes.has(fieldName, fieldGoal, fieldSteering, fieldMemory) {
+		roles.reload.MarkBotReload(chatID)
+	}
 }
 
 // validBotSave trims and checks p, naming every field it refuses.

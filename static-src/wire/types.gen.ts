@@ -292,8 +292,8 @@ export interface Bot {
   /** ClosedAt is the unix ms the Bot's tab was closed; 0 while it is open. */
   closed_at?: number;
   /**
-   * SpecVersion is moved only by BotWriter, once per user command write that changes the Bot's view, so no two
-   * setups share a version; a save sends it back as its base_version.
+   * SpecVersion is moved only by BotWriter, once per user command write that changes the Bot's view, so no user
+   * write reuses a version an earlier one published; a save sends it back as its base_version.
    */
   spec_version: number;
   memory: boolean;

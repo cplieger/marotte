@@ -30,7 +30,9 @@ type botFakes struct {
 	switchErr  error
 	// land is what an accepted switch writes onto the record through BotWriter, as switch_model does; nil writes
 	// nothing, as a pick already in force does.
-	land     func(c *marotte.Chat, p marotte.SwitchModelCommand)
+	land func(c *marotte.Chat, p marotte.SwitchModelCommand)
+	// onRename runs before a KAS rename is recorded.
+	onRename func(title string)
 	reloads  []marotte.ChatID
 	renames  []string
 	switches []marotte.SwitchModelCommand
@@ -45,6 +47,12 @@ func (f *botFakes) MarkBotReload(id marotte.ChatID) {
 }
 
 func (f *botFakes) RenameSession(_ context.Context, sessionID, title string) error {
+	f.mu.Lock()
+	hook := f.onRename
+	f.mu.Unlock()
+	if hook != nil {
+		hook(title)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.renames = append(f.renames, sessionID+"="+title)
@@ -339,6 +347,113 @@ func TestCmdBotSave_ARenameArrivingDuringASaveWaitsAndLandsAfterIt(t *testing.T)
 	})
 }
 
+func TestCmdBotSave_AStartsHeldKickoffKeepsNoBotCommandWaiting(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store := testsupport.NewInMemoryChatStore()
+		seedBot(t, store, "c-bot", "Watcher", &marotte.Bot{SpecVersion: 1})
+		if _, err := store.Mutate(t.Context(), "c-bot", func(c *marotte.Chat, _ bool) bool { c.Model = "model-a"; return true }); err != nil {
+			t.Fatalf("Setup: the Bot's model: %v", err)
+		}
+		roles, f := newBotRoles(t, store)
+		d := New()
+		d.records = store
+		roles.writes = d.botWrites
+		host := newTestHost(t, store)
+		rename := d.botWrite(bind3(chatStore(store), SessionRenamer(f), BotReloader(f), cmdRenameChat))
+		effort := d.botWrite(bind6(bridgeAccess(host), chatStore(store), broadcaster(host), Workspace{}, effortRecorder(host),
+			keylock.New(cmp.Compare[marotte.ChatID]), cmdSetEffort))
+		kicked, release := make(chan struct{}), make(chan struct{})
+		roles.kickoff = func(context.Context, marotte.ChatID, *marotte.PromptCommand) error {
+			close(kicked)
+			<-release
+			return nil
+		}
+		go func() {
+			_, _ = cmdBotSave(t.Context(), roles, botSaveReq(t, "c-bot", &marotte.BotSaveCommand{
+				Name: "Watcher", Goal: "Keep CI green.", Start: true, BaseVersion: 1,
+			}))
+		}()
+		<-kicked
+		version := botOf(t, store, "c-bot").Bot.SpecVersion
+		answers := map[string]error{}
+		var mu sync.Mutex
+		run := func(name string, h Handler, cmd *marotte.ClientCommand) {
+			go func() {
+				_, err := h(t.Context(), cmd)
+				mu.Lock()
+				answers[name] = err
+				mu.Unlock()
+			}()
+		}
+
+		run("bot_save", func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) { return cmdBotSave(ctx, roles, cmd) },
+			botSaveReq(t, "c-bot", &marotte.BotSaveCommand{Name: "Watcher", Goal: "Keep main green.", BaseVersion: version}))
+		synctest.Wait()
+		run("rename_chat", rename, renameReq(t, "c-bot", "CI watcher"))
+		synctest.Wait()
+		run("set_effort", effort, effortReq(t, "c-bot", "high"))
+		synctest.Wait()
+
+		mu.Lock()
+		for _, name := range []string{"bot_save", "rename_chat", "set_effort"} {
+			switch err, ok := answers[name]; {
+			case !ok:
+				t.Errorf("%s waited on the start's held kickoff, want it answered at once", name)
+			case err != nil:
+				t.Errorf("%s = %d %v beside the start's held kickoff, want 200", name, statusOf(err), err)
+			}
+		}
+		mu.Unlock()
+		close(release)
+	})
+}
+
+func TestCmdBotSave_ARenameArrivingDuringTheSavesSessionRenamesTitlesTheSessionLast(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store := testsupport.NewInMemoryChatStore()
+		seedBot(t, store, "c-bot", "Watcher", &marotte.Bot{Goal: "Watch.", StartedAt: 1, SpecVersion: 3})
+		if _, err := store.Mutate(t.Context(), "c-bot", func(c *marotte.Chat, _ bool) bool {
+			c.RecordSession("sess-live")
+			return true
+		}); err != nil {
+			t.Fatalf("Setup: the Bot's session: %v", err)
+		}
+		roles, f := newBotRoles(t, store)
+		d := New()
+		d.records = store
+		roles.writes = d.botWrites
+		rename := d.botWrite(bind3(chatStore(store), SessionRenamer(f), BotReloader(f), cmdRenameChat))
+		var renameErr error
+		done := make(chan struct{})
+		var once sync.Once
+		f.onRename = func(title string) {
+			if title != "CI watcher" {
+				return
+			}
+			once.Do(func() {
+				go func() {
+					defer close(done)
+					_, renameErr = rename(t.Context(), renameReq(t, "c-bot", "Nightly watcher"))
+				}()
+				synctest.Wait()
+			})
+		}
+
+		saveBot(t, roles, "c-bot", &marotte.BotSaveCommand{Name: "CI watcher", Goal: "Watch.", BaseVersion: 3})
+		<-done
+
+		if renameErr != nil {
+			t.Fatalf("rename_chat = %v, want it applied after the save", renameErr)
+		}
+		if want := []string{"sess-live=CI watcher", "sess-live=Nightly watcher"}; !slices.Equal(f.renames, want) {
+			t.Errorf("KAS renames = %v, want %v: the later rename titles the session last", f.renames, want)
+		}
+		if c := botOf(t, store, "c-bot"); c.Name != "Nightly watcher" {
+			t.Errorf("name = %q, want the later rename's", c.Name)
+		}
+	})
+}
+
 func TestDispatcher_ABotWriteRunInProcessDoesNotWaitForTheLockItsCallerHolds(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedBot(t, store, "c-bot", "Watcher", &marotte.Bot{Goal: "Watch.", StartedAt: 1})
@@ -576,6 +691,9 @@ func TestCmdBotSave_StartStampsTheBotAndSendsTheKickoff(t *testing.T) {
 	}
 	if k.MessageID == "" {
 		t.Error("the kickoff carries no message id")
+	}
+	if len(f.reloads) != 0 {
+		t.Errorf("reload marks = %v, want none: the kickoff opens the Bot's first session on its role", f.reloads)
 	}
 	if _, ok := body["kickoff_error"]; ok {
 		t.Errorf("a sent kickoff answered kickoff_error %v", body["kickoff_error"])
