@@ -19,9 +19,9 @@ type Submission struct {
 	// Mode is what the send does beside a steerable turn; empty takes the interrupt_mode setting.
 	Mode marotte.InterruptMode
 	Row  marotte.QueuedPrompt
-	Kind marotte.SendKind
 	// AdmitWait is how long a held close of the chat is waited out before ErrSubmitStarting; zero is AdmissionWait.
 	AdmitWait time.Duration
+	Kind      marotte.SendKind
 	// NoSteer rules steering out: the send is only ever a turn of its own.
 	NoSteer bool
 	// PromptOnly is text only a prompt carries (PromptCommand.PromptOnly).

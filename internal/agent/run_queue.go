@@ -546,7 +546,7 @@ func (lc *chatLifecycle) doorSubmitLocked(stamp uint64, s *command.Submission, m
 	switch {
 	case place == doorTooBig:
 		return command.SubmitAnswer{}, nil, command.ErrSubmitTooBig
-	case place == doorWithKAS:
+	case place == doorWithKAS, a.steering:
 		return command.SubmitAnswer{As: command.SubmitSteered}, nil, nil
 	case place == doorReplaced:
 		return command.SubmitAnswer{As: command.SubmitQueued}, nil, nil
