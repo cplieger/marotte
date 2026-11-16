@@ -3909,6 +3909,10 @@ export const decodeRunEntry: Decoder<RunEntry> = (v) => {
     const $v = own(o, "stop_paused");
     if ($v !== undefined && $v !== null) out.stop_paused = reqBool(o, "stop_paused", "$.run_entry");
   }
+  {
+    const $v = own(o, "failed_launch");
+    if ($v !== undefined && $v !== null) out.failed_launch = reqBool(o, "failed_launch", "$.run_entry");
+  }
   return out;
 };
 
@@ -3960,6 +3964,10 @@ export const decodeRunEntryView: Decoder<RunEntryView> = (v) => {
   {
     const $v = own(o, "stop_paused");
     if ($v !== undefined && $v !== null) out.stop_paused = reqBool(o, "stop_paused", "$.run_entry_view");
+  }
+  {
+    const $v = own(o, "failed_launch");
+    if ($v !== undefined && $v !== null) out.failed_launch = reqBool(o, "failed_launch", "$.run_entry_view");
   }
   {
     const $v = own(o, "carries_unread");

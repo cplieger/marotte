@@ -702,6 +702,88 @@ func TestRunList_AnEntryWhoseLaunchFailsIsPausedNotTakenAgain(t *testing.T) {
 			t.Errorf("paused row's text = %q, want the next send's", got)
 		}
 	})
+	t.Run("a door entry a Stop took over and whose stop was undone is taken again on a resend", func(t *testing.T) {
+		w := newTableWorld()
+		w.door("d", "1 new")
+		w.l.takeEffects()
+		w.failLaunch(t, "d")
+		w.user("u", marotte.RunWantPrompt)
+		w.running("u")
+		w.l.readerStop("u", 7)
+		w.l.stopUndone(7, func(string) bool { return true })
+		w.wantOrder(t, "after the undone stop", "u:running d:paused")
+		w.door("d2", "2 new")
+		w.wantOrder(t, "the caller's next send", "u:running d:pending")
+	})
+	t.Run("a door entry the chat's close stored is taken again on a resend", func(t *testing.T) {
+		w := newTableWorld()
+		w.door("d", "1 new")
+		w.l.takeEffects()
+		w.failLaunch(t, "d")
+		next, _ := w.l.endLife()
+		w = newTableWorld()
+		w.l.load(next, nil, 0)
+		w.wantOrder(t, "the next life", "d:paused")
+		if at := w.door("d2", "2 new"); at != doorReplaced {
+			t.Errorf("the caller's next send placed %d, want doorReplaced", at)
+		}
+		w.wantOrder(t, "the caller's next send", "d:starting")
+		if got := w.entry(t, "d").row.Text; got != "2 new" {
+			t.Errorf("retaken row's text = %q, want the next send's", got)
+		}
+		if fx := w.l.takeEffects(); len(fx.launch) != 1 {
+			t.Errorf("the caller's next send launched %d entries, want the retaken row", len(fx.launch))
+		}
+	})
+	t.Run("a door entry a reader's send released stays paused on a resend in the next life", func(t *testing.T) {
+		w := newTableWorld()
+		w.mode = marotte.InterruptQueue
+		w.user("u", marotte.RunWantPrompt)
+		w.running("u")
+		w.door("d", "1 new")
+		w.l.readerStop("u", 7)
+		w.closed("u", listClose{})
+		w.user("v", marotte.RunWantPrompt)
+		w.wantOrder(t, "the reader's send", "v:starting d:paused")
+		next, _ := w.l.endLife()
+		w = newTableWorld()
+		w.l.load(next, nil, 0)
+		w.door("d2", "2 new")
+		if got := w.entry(t, "d").state; got != marotte.RunPaused {
+			t.Errorf("released row is %q after the resend, want paused until the next clean close", got)
+		}
+	})
+	// A resend while the compaction failsafe holds the queue joins it as a fresh wake does: paused until the resume's
+	// clean close, and still paused when the resume closes broken.
+	for _, retake := range []bool{false, true} {
+		name, waking := "a fresh wake during the compaction failsafe", "d2"
+		if retake {
+			name, waking = "a resend onto a failed launch during the compaction failsafe", "d"
+		}
+		t.Run(name, func(t *testing.T) {
+			w := newTableWorld()
+			if retake {
+				w.door("d", "1 new")
+				w.l.takeEffects()
+				w.failLaunch(t, "d")
+			}
+			w.send("m-a", marotte.SendPlain, "")
+			w.running("m-a")
+			w.fire("m-a", 1)
+			w.door("d2", "2 new")
+			if got := w.entry(t, waking).state; got != marotte.RunPaused {
+				t.Fatalf("%s after the send in the failsafe's window = %q, want paused; list %s", waking, got, w.order())
+			}
+			w.closed("m-a", listClose{})
+			w.l.compactionStart("compact-1", w.facts())
+			w.l.compactionEnded("compact-1", true, nil)
+			w.advance()
+			w.wantOrder(t, "the resume taken", "m-resume:starting "+waking+":paused")
+			w.running("m-resume")
+			w.closed("m-resume", listClose{})
+			w.wantOrder(t, "the resume's broken close", waking+":paused")
+		})
+	}
 	t.Run("a door steer a reader's send released stays paused on a resend", func(t *testing.T) {
 		w := newTableWorld()
 		w.head()

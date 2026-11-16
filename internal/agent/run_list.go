@@ -144,7 +144,8 @@ type runEntry struct {
 	// with pausedBy 0 and waits for the next clean close, never steered into that send's reply (returned).
 	afterSend bool
 	// failedLaunch: a failed launch paused this door entry after its caller was answered, so the caller's next send
-	// takes it again (doorSend); any other pause or unpause clears it.
+	// puts it back in order while no stop holds it (doorOnto). It is stored with the list (RunEntry.FailedLaunch) and
+	// kept under a stop's hold, so it outlives a close and the stop's undo; any other pause or an unpause clears it.
 	failedLaunch bool
 }
 
@@ -492,7 +493,7 @@ func (l *runList) holdReturns(by uint64, press bool) {
 	for _, e := range l.entries[l.liveLen():] {
 		switch {
 		case e.state == marotte.RunPaused && e.pausedBy == 0 && e.kind == marotte.RunKindRow:
-			e.pausedBy, e.pausedBefore, e.failedLaunch = by, true, false
+			e.pausedBy, e.pausedBefore = by, true
 			l.touch()
 		case press && e.byUser():
 		case e.inFlight():
@@ -829,9 +830,7 @@ func (l *runList) submit(e *runEntry, f *orderFacts, intentStamp uint64, waits b
 		l.releaseHold(true)
 		l.insertPending(e)
 	} else {
-		if by, paused := l.queuePaused(); paused {
-			e.state, e.pausedBy, e.want = marotte.RunPaused, by, marotte.RunWantPrompt
-		}
+		l.join(e)
 		l.insert(len(l.entries), e)
 	}
 	l.intent, l.intentStamp, l.intentRefused = e, intentStamp, takeGranted
@@ -849,6 +848,15 @@ func (l *runList) submit(e *runEntry, f *orderFacts, intentStamp uint64, waits b
 	}
 	answerQueued(e)
 	return submitAnswer{}
+}
+
+// join gives an outside caller's entry e the state it takes on joining the queue: paused, with the pausedBy
+// queuePaused names, while a stop pauses the queue, else pending.
+func (l *runList) join(e *runEntry) {
+	e.state = marotte.RunPending
+	if by, paused := l.queuePaused(); paused {
+		e.state, e.pausedBy, e.want = marotte.RunPaused, by, marotte.RunWantPrompt
+	}
 }
 
 // answerQueued is the one section that answers e's submitter queued: it ends the wait and claims the composer
@@ -876,9 +884,9 @@ const (
 // doorSend places a notify-door send: one waiting entry per caller, pending or paused, since a caller's later wake
 // supersedes its earlier one, and none beside one kiro-cli holds unread, which the agent reads anyway. A waiting entry
 // is persisted with the list, so one paused or behind a running turn keeps the draft cap a user's queued row has. A
-// send onto an entry a failed launch paused (failedLaunch) puts it back in the run order, so the caller's resend is the
-// retry. No submitter waits on a door entry. The string is the id of the entry that now holds the send's text, "" for
-// doorTooBig.
+// send onto an entry a failed launch paused (failedLaunch) puts it back in order as a new send would join (join), so
+// the caller's resend is the retry, paused while a stop pauses the queue. No submitter waits on a door entry. The
+// string is the id of the entry that now holds the send's text, "" for doorTooBig.
 func (l *runList) doorSend(e *runEntry, f *orderFacts, intentStamp uint64) (submitAnswer, doorPlace, string) {
 	big := len(e.row.Text) > marotte.MaxDraftBytes
 	for _, have := range l.entries[l.liveLen():] {
@@ -906,15 +914,20 @@ func (l *runList) doorSend(e *runEntry, f *orderFacts, intentStamp uint64) (subm
 // with kiro-cli.
 func (l *runList) doorOnto(have, e *runEntry, f *orderFacts, big bool) (doorPlace, bool) {
 	waiting := have.state == marotte.RunPending || have.state == marotte.RunPaused
-	retake := have.failedLaunch && have.state == marotte.RunPaused && have.pausedBy == 0 && !l.held()
+	retake := have.failedLaunch && have.pausedBy == 0
+	staysPaused := have.state == marotte.RunPaused
+	if retake {
+		_, staysPaused = l.queuePaused()
+	}
 	switch {
-	case waiting && big && ((have.state == marotte.RunPaused && !retake) || turnRuns(l.project())):
+	case waiting && big && (staysPaused || turnRuns(l.project())):
 		return doorTooBig, true
 	case waiting:
 		have.row.Text = e.row.Text
 		l.touch()
 		if retake {
-			have.state, have.failedLaunch = marotte.RunPending, false
+			have.failedLaunch = false
+			l.join(have)
 			l.advance(f)
 		}
 		return doorReplaced, true
@@ -1961,7 +1974,7 @@ func (l *runList) projectOne(e *runEntry) marotte.RunEntry {
 	return marotte.RunEntry{
 		Row: e.row, ID: e.id, Kind: e.kind, State: e.state, Origin: e.origin, Turn: e.turnID, Next: e.next,
 		Steerable: e.steerable, Yields: e.yields, Admits: e.admits, Want: e.want, Unread: e.unread,
-		StopPaused: l.stopPaused(e),
+		StopPaused: l.stopPaused(e), FailedLaunch: e.failedLaunch,
 	}
 }
 
@@ -1989,7 +2002,7 @@ func (l *runList) load(entries, stored []marotte.RunEntry, version uint64) {
 		re := entries[i]
 		e := &runEntry{
 			id: re.ID, kind: re.Kind, state: re.State, origin: re.Origin, row: re.Row, next: re.Next,
-			want: re.Want, unread: re.Unread,
+			want: re.Want, unread: re.Unread, failedLaunch: re.FailedLaunch,
 		}
 		if re.StopPaused && re.State == marotte.RunPaused {
 			e.pausedBy = loadedStop
