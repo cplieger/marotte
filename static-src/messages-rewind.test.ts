@@ -238,6 +238,28 @@ describe("a confirmed rewind", () => {
   });
 });
 
+describe("a landed rewind", () => {
+  it("drops the cut turns from the turn_revert record alone, with no page refetch", async () => {
+    const storeLoad = await import("./store-load.js");
+    vi.mocked(storeLoad.loadMessages).mockClear();
+    const chatID = await paintChat(3);
+    await rewindFirstTurn();
+    await until(() => mockSend.mock.calls.length === 1, "the rewind command");
+    store.appendEntry(chatID, {
+      id: "t2:revert",
+      turn: "t1",
+      kind: "turn_revert",
+      seq: 3,
+      ts: 1000,
+      payload: { from: "t2", from_n: 2, through: "t3", kas_message_id: "t2-p", cause: "rewind" },
+    } as Entry);
+    await until(() => cards().length === 1, "the cut turns gone");
+
+    expect(store.get(chatID)?.turn_order).toEqual(["t1"]);
+    expect(vi.mocked(storeLoad.loadMessages)).not.toHaveBeenCalled();
+  });
+});
+
 describe("a rewind that does not happen prefills nothing", () => {
   it("when the confirm is cancelled", async () => {
     await paintChat(3);
