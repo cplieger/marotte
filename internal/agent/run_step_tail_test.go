@@ -456,7 +456,7 @@ func TestRunLog_ABornSettledCardIsNotHeldForAResult(t *testing.T) {
 		if _, err := turn.ToolCall(t.Context(), "", hook); err != nil {
 			t.Fatal(err)
 		}
-		if got := scanStepFacts(runLogEntries(t, r, "wf1")).calls; len(got) != 0 {
+		if got := scanStepFacts(runLogEntries(t, r, "wf1")).calls[step]; len(got) != 0 {
 			t.Errorf("scan held %v, want nothing", got)
 		}
 	})

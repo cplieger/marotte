@@ -1346,7 +1346,7 @@ func scanStepFacts(all []marotte.Entry) *stepFactScan {
 		starts: make(map[string]stepAttempt),
 		turns:  make(map[string][]string),
 		paths:  make(map[string]string),
-		calls:  make(stepCalls),
+		calls:  make(map[string]stepCalls),
 	}
 	for i := range all {
 		sc.see(&all[i])
@@ -1354,13 +1354,14 @@ func scanStepFacts(all []marotte.Entry) *stepFactScan {
 	return sc
 }
 
-// stepFactScan is scanStepFacts' fold, with each turn's path as its turn_open named it.
+// stepFactScan is scanStepFacts' fold, with each turn's path as its turn_open named it and, by path, the dock state
+// of the path's newest turn.
 type stepFactScan struct {
 	closes map[string]stepClose
 	starts map[string]stepAttempt
 	turns  map[string][]string
 	paths  map[string]string
-	calls  stepCalls
+	calls  map[string]stepCalls
 }
 
 func (sc *stepFactScan) see(e *marotte.Entry) {
@@ -1369,7 +1370,7 @@ func (sc *stepFactScan) see(e *marotte.Entry) {
 		var to marotte.EntryTurnOpen
 		if json.Unmarshal(e.Payload, &to) == nil && to.NodePath != "" {
 			// Only the path's newest closed turn takes a late result (appendAfterClosed), so its earlier turns' calls go.
-			maps.DeleteFunc(sc.calls, func(k stepCallKey, _ *marotte.EntryToolCall) bool { return sc.paths[k.turn] == to.NodePath })
+			delete(sc.calls, to.NodePath)
 			sc.paths[e.Turn] = to.NodePath
 			sc.turns[to.NodePath] = append(sc.turns[to.NodePath], e.Turn)
 			noteAttemptOpen(sc.starts, to.NodePath, e.Ts)
@@ -1382,7 +1383,12 @@ func (sc *stepFactScan) see(e *marotte.Entry) {
 		}
 	case marotte.EntryKindText, marotte.EntryKindThinking, marotte.EntryKindToolCall, marotte.EntryKindToolResult:
 		if path, ok := sc.paths[e.Turn]; ok {
-			noteAttemptLine(sc.starts, path, printedLine(e, sc.calls))
+			calls := sc.calls[path]
+			if calls == nil {
+				calls = make(stepCalls)
+				sc.calls[path] = calls
+			}
+			noteAttemptLine(sc.starts, path, printedLine(e, calls))
 		}
 	case marotte.EntryKindStepGraded:
 		var g marotte.EntryStepGraded
