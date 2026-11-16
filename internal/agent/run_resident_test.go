@@ -989,27 +989,28 @@ func TestRunRequestVerbs_AnUnansweredLoadAnswersRunHostSlow(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			answerBudgetOf(t, 200*time.Millisecond)
-			h, host, release := gatedHostRun(t, tc.reply(t))
+			// The bubble's clock moves only while every goroutine waits, so the budget runs out on the held load
+			// and never on a stalled scheduler before the load starts.
+			synctest.Test(t, func(t *testing.T) {
+				answerBudgetOf(t, 200*time.Millisecond)
+				h, host, release := gatedHostRun(t, tc.reply(t))
 
-			err := answersWithin(t, func() error { return tc.call(t.Context(), h) })
-			if !errors.Is(err, errRunHostSlow) {
-				t.Fatalf("the verb under an unanswered load = %v, want errRunHostSlow", err)
-			}
-
-			release()
-			deadline := time.Now().Add(2 * time.Second)
-			for h.runs.residentRunHost("wf_1") == nil && time.Now().Before(deadline) {
-				time.Sleep(time.Millisecond)
-			}
-			if h.runs.residentRunHost("wf_1") == nil {
-				t.Error("the load the verb gave up on never became resident, so the next verb loads again")
-			}
-			for _, m := range []string{methodKiroWorkflowResume, methodKiroWorkflowUpdate, marotte.MethodPrompt} {
-				if slices.Contains(host.callLog(), m) {
-					t.Errorf("%s reached the host session after the verb answered that nothing was sent", m)
+				err := answersWithin(t, func() error { return tc.call(t.Context(), h) })
+				if !errors.Is(err, errRunHostSlow) {
+					t.Fatalf("the verb under an unanswered load = %v, want errRunHostSlow", err)
 				}
-			}
+
+				release()
+				synctest.Wait()
+				if h.runs.residentRunHost("wf_1") == nil {
+					t.Error("the load the verb gave up on never became resident, so the next verb loads again")
+				}
+				for _, m := range []string{methodKiroWorkflowResume, methodKiroWorkflowUpdate, marotte.MethodPrompt} {
+					if slices.Contains(host.callLog(), m) {
+						t.Errorf("%s reached the host session after the verb answered that nothing was sent", m)
+					}
+				}
+			})
 		})
 	}
 }
@@ -1179,22 +1180,26 @@ func answerDeadlineOf(t *testing.T, f func() time.Time) {
 func TestRunRequestVerbs_AnUnansweredInspectAnswersRunStateUnread(t *testing.T) {
 	for name, call := range personRunVerbs() {
 		t.Run(name, func(t *testing.T) {
-			answerBudgetOf(t, 200*time.Millisecond)
-			h, br := leasedNonResident(t, inspectPaused(t, "wf_1", ""))
-			gate := make(chan struct{})
-			br.setBlockOn(methodKiroWorkflowInspect, gate)
-			t.Cleanup(func() { close(gate) })
+			// The bubble's clock moves only while every goroutine waits, so the budget runs out on the held inspect
+			// and never on a stalled scheduler while the verb takes the run's lock.
+			synctest.Test(t, func(t *testing.T) {
+				answerBudgetOf(t, 200*time.Millisecond)
+				h, br := leasedNonResident(t, inspectPaused(t, "wf_1", ""))
+				gate := make(chan struct{})
+				br.setBlockOn(methodKiroWorkflowInspect, gate)
+				t.Cleanup(func() { close(gate) })
 
-			err := answersWithin(t, func() error { return call(t.Context(), h) })
+				err := answersWithin(t, func() error { return call(t.Context(), h) })
 
-			if !errors.Is(err, errRunStateUnread) {
-				t.Errorf("the verb under an unanswered inspect = %v, want errRunStateUnread", err)
-			}
-			for _, m := range []string{methodKiroWorkflowPause, methodKiroWorkflowResume, methodKiroWorkflowUpdate} {
-				if slices.Contains(br.callLog(), m) {
-					t.Errorf("%s was sent although the run's state was never read", m)
+				if !errors.Is(err, errRunStateUnread) {
+					t.Errorf("the verb under an unanswered inspect = %v, want errRunStateUnread", err)
 				}
-			}
+				for _, m := range []string{methodKiroWorkflowPause, methodKiroWorkflowResume, methodKiroWorkflowUpdate} {
+					if slices.Contains(br.callLog(), m) {
+						t.Errorf("%s was sent although the run's state was never read", m)
+					}
+				}
+			})
 		})
 	}
 }
