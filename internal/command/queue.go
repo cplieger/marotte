@@ -28,7 +28,7 @@ const reasonHeld = "held"
 // so the caller sends a prompt instead. An outside caller's row reopens the chat's tab only once the queue took it:
 // before the submit, a row the queue refuses would open a tab on every device.
 func cmdQueuePrompt(
-	ctx context.Context, runq runQueue, admission turnAdmission, reopen chatReopener, chats chatStore, cmd *marotte.ClientCommand,
+	ctx context.Context, runq runQueue, admission turnAdmission, door messageDoor, chats chatStore, cmd *marotte.ClientCommand,
 ) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
@@ -47,7 +47,7 @@ func cmdQueuePrompt(
 	if err != nil {
 		return nil, submitRefusal(err)
 	}
-	reopenForCaller(ctx, reopen, cmd)
+	reopenForCaller(ctx, door, cmd)
 	slog.Info("prompt queued", "chat", cmd.ChatID, "message_id", row.ID)
 	return responseWith(map[string]any{"message_id": row.ID, "as": ans.As, "run": ans.Run}), nil
 }

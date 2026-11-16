@@ -28,7 +28,8 @@ type botFakes struct {
 	store      chatStore
 	renameErr  error
 	switchErr  error
-	// land is what an accepted switch writes onto the record; nil writes nothing, as a pick already in force does.
+	// land is what an accepted switch writes onto the record through BotWriter, as switch_model does; nil writes
+	// nothing, as a pick already in force does.
 	land     func(c *marotte.Chat, p marotte.SwitchModelCommand)
 	reloads  []marotte.ChatID
 	renames  []string
@@ -58,10 +59,10 @@ func (f *botFakes) SwitchModel(ctx context.Context, chatID marotte.ChatID, p mar
 	if err != nil || land == nil {
 		return err
 	}
-	_, mErr := f.store.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool {
+	_, mErr := f.store.Mutate(ctx, chatID, marotte.BotWriter(func(c *marotte.Chat, _ bool) bool {
 		land(c, p)
 		return true
-	})
+	}))
 	return mErr
 }
 
@@ -312,7 +313,8 @@ func TestCmdBotSave_ARenameArrivingDuringASaveWaitsAndLandsAfterIt(t *testing.T)
 		racing := &saveAfterRead{chatStore: store}
 		roles, f := newBotRoles(t, racing)
 		d := New()
-		d.RegisterBotWriteChange(marotte.CmdRenameChat, bind3(chatStore(store), SessionRenamer(f), BotReloader(f), cmdRenameChat))
+		d.records = store
+		d.register(marotte.CmdRenameChat, d.botWrite(bind3(chatStore(store), SessionRenamer(f), BotReloader(f), cmdRenameChat)))
 		roles.writes = d.botWrites
 		rename, _ := d.handler(marotte.CmdRenameChat)
 		var renameErr error
@@ -338,7 +340,10 @@ func TestCmdBotSave_ARenameArrivingDuringASaveWaitsAndLandsAfterIt(t *testing.T)
 }
 
 func TestDispatcher_ABotWriteRunInProcessDoesNotWaitForTheLockItsCallerHolds(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedBot(t, store, "c-bot", "Watcher", &marotte.Bot{Goal: "Watch.", StartedAt: 1})
 	d := New()
+	d.records = store
 	ran := false
 	d.RegisterBotWriteChange(marotte.CmdRenameChat, func(context.Context, *marotte.ClientCommand) (any, error) {
 		ran = true
@@ -837,16 +842,17 @@ func TestCmdBotSave_ANoOpPickBesideARefusedSupervisedSwitchAnswersThePlainRefusa
 	}
 }
 
-// stopThenRefuse is switch_model whose Off stop lands on the live session and whose park then fails.
+// stopThenRefuse is switch_model whose Off stop lands on the live session through set_thinking's BotWriter and whose
+// park then fails.
 type stopThenRefuse struct{ store chatStore }
 
 var errParkFailed = StatusError(http.StatusInternalServerError, errors.New("write pending_model failed"))
 
 func (s stopThenRefuse) SwitchModel(ctx context.Context, chatID marotte.ChatID, _ marotte.SwitchModelCommand) error {
-	if _, err := s.store.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool {
+	if _, err := s.store.Mutate(ctx, chatID, marotte.BotWriter(func(c *marotte.Chat, _ bool) bool {
 		c.Thinking = marotte.ThinkingOff
 		return true
-	}); err != nil {
+	})); err != nil {
 		return err
 	}
 	return errParkFailed

@@ -47,6 +47,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 
 	// The handlers take the narrower chatStore; only the coordinator writes keep facts.
 	var chats chatStore = r.Chats
+	d.records = chats
 	d.register(marotte.CmdCreateChat, bind1(mem, cmdCreateChat))
 	d.register(marotte.CmdResumeSession, bind2(mem, r.Conversations, cmdResumeSession))
 	d.registerChange(marotte.CmdCompact, bind1[compactRequester](r.Compactor, cmdCompact))
@@ -85,8 +86,8 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	}
 	d.registerChange(marotte.CmdForkChat, bind4(r.Bridges, chats, r.Workspace, mem, cmdForkChat))
 
-	d.register(marotte.CmdQueuePrompt, bind4(r.Run, r.Admission, chatReopener(mem), chats, cmdQueuePrompt))
-	d.RegisterBotWriteChange(marotte.CmdRenameChat, bind3(chats, r.Renamer, r.BotReloads, cmdRenameChat))
+	d.register(marotte.CmdQueuePrompt, bind4(r.Run, r.Admission, messageDoor(mem), chats, cmdQueuePrompt))
+	d.register(marotte.CmdRenameChat, d.botWrite(bind3(chats, r.Renamer, r.BotReloads, cmdRenameChat)))
 	bots := &botRoles{
 		chats: chats, bridges: r.Bridges, renamer: r.Renamer, reload: r.BotReloads, models: r.Models,
 		kickoff: func(ctx context.Context, chatID marotte.ChatID, p *marotte.PromptCommand) error {
@@ -117,7 +118,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		sendGate:    r.SendGate,
 		auth:        r.AuthReadiness,
 		signIn:      r.SignIn,
-		reopen:      mem,
+		door:        mem,
 	}
 	d.prompts = prompt
 	d.register(marotte.CmdPrompt, bind1(prompt, cmdPrompt))

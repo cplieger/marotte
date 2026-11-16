@@ -149,9 +149,12 @@ type Dispatcher struct {
 	merges *tangentMerges
 	// carryStop is cmdCancel's carrying out of a stop, bound at registration like prompts.
 	carryStop func(ctx context.Context, chatID marotte.ChatID, rs RunStop) error
-	// botWrites holds one user command that writes a Bot's view per chat, from its read until it answers, so a
-	// bot_save's base check stays true through its write: every other writer of the view bumps spec_version.
+	// botWrites holds one user command that writes a Bot's view per Bot, from its read until it answers, so a
+	// bot_save's base check stays true through its write: every other writer of the view bumps spec_version. A
+	// regular chat has no spec_version and never takes it (botWrite).
 	botWrites *keylock.Set[marotte.ChatID]
+	// records answers whether a chat is a Bot, bound at registration like prompts.
+	records botRecords
 	// changes is bound at registration, like prompts.
 	changes detachedChange
 	mu      sync.RWMutex
@@ -176,19 +179,33 @@ func (d *Dispatcher) registerChange(t marotte.CommandType, h Handler) {
 	d.register(t, d.changes.wrap(t, h))
 }
 
-// RegisterBotWriteChange is registerChange for a command that writes a Bot's view: it runs under the chat's botWrites
-// lock, except in-process, where the command that applies it already holds that lock.
+// botRecords reads a chat's record, for botWrite's Bot check.
+type botRecords interface {
+	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
+}
+
+// RegisterBotWriteChange is registerChange for a command that writes a Bot's view, run through botWrite.
 func (d *Dispatcher) RegisterBotWriteChange(t marotte.CommandType, h Handler) {
-	d.registerChange(t, func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
-		if ctx.Value(inProcessKey{}) == nil {
-			unlock, err := lockSessionChange(ctx, d.botWrites, cmd.ChatID)
-			if err != nil {
-				return nil, err
-			}
-			defer unlock()
+	d.registerChange(t, d.botWrite(h))
+}
+
+// botWrite runs h under the chat's botWrites lock when the chat is a Bot, except in-process, where the command that
+// applies it already holds that lock. A chat is a Bot or not from its creation, so the read before the lock holds.
+func (d *Dispatcher) botWrite(h Handler) Handler {
+	return func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
+		if ctx.Value(inProcessKey{}) != nil {
+			return h(ctx, cmd)
 		}
+		if c, ok := d.records.Get(ctx, cmd.ChatID); !ok || c.Bot == nil {
+			return h(ctx, cmd)
+		}
+		unlock, err := lockSessionChange(ctx, d.botWrites, cmd.ChatID)
+		if err != nil {
+			return nil, err
+		}
+		defer unlock()
 		return h(ctx, cmd)
-	})
+	}
 }
 
 func (d *Dispatcher) handler(t marotte.CommandType) (Handler, bool) {

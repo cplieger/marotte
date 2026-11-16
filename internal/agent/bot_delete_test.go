@@ -12,7 +12,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-const warnBotDirLeft = "bots: a deleted Bot's directory could not be removed; the next start removes it"
+const warnBotDirLeft = "bots: a deleted Bot's directory could not be removed; marotte's next start removes it"
 
 // botDirOf writes chat id's memory file under the test HOME's KIRO_HOME and answers the Bot's directory.
 func botDirOf(t *testing.T, id string) string {

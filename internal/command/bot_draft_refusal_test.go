@@ -84,7 +84,6 @@ func TestDraftBot_ANotifyIsRefused(t *testing.T) {
 	roles, run, _ := draftRoles(t)
 	d := New()
 	d.prompts = roles
-	roles.reopen = nopReopener{}
 
 	_, err := d.Notify(t.Context(), "c-bot", "1 new message", &marotte.Caller{Label: "grelot"})
 
@@ -129,11 +128,6 @@ func TestDraftBot_APromptIntoAnUnreadableRecordIsRefusedAsUnavailable(t *testing
 		t.Errorf("%d submission(s) reached the run order, want none", got)
 	}
 }
-
-// nopReopener reopens nothing.
-type nopReopener struct{}
-
-func (nopReopener) ReopenForMessage(context.Context, marotte.ChatID) {}
 
 func TestDraftBot_AForkIsRefusedBeforeAnySession(t *testing.T) {
 	cases := []struct {

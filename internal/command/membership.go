@@ -528,6 +528,33 @@ func (m *Membership) ReopenForMessage(ctx context.Context, chatID marotte.ChatID
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.reopenUnderMu(ctx, chatID)
+}
+
+// BeginMessage answers stamp(), the life stamp a message into chatID presents to its submit, where its intent
+// begins: a close that commits after it ends the message. reopen first opens the chat's tab (ReopenForMessage), for
+// an outside caller's message, in the same hold of mu. A Bot is checked and stamped in one hold, so a Bot left with
+// no tab, by a close that committed first or a reopen that opened none, refuses with 409 chat_closed: no turn runs
+// in a closed Bot.
+func (m *Membership) BeginMessage(ctx context.Context, chatID marotte.ChatID, reopen bool, stamp func() uint64) (uint64, error) {
+	c, ok := m.chats.Get(ctx, chatID)
+	bot := ok && c.Bot != nil
+	if m.tabs == nil || (!reopen && !bot) {
+		return stamp(), nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if reopen {
+		m.reopenUnderMu(ctx, chatID)
+	}
+	if bot && m.tabForChat(chatID) == "" {
+		return 0, StatusErrorReason(http.StatusConflict, reasonChatClosed, errChatClosed)
+	}
+	return stamp(), nil
+}
+
+// reopenUnderMu is ReopenForMessage's body. Caller holds mu.
+func (m *Membership) reopenUnderMu(ctx context.Context, chatID marotte.ChatID) {
 	if m.tabForChat(chatID) != "" {
 		return
 	}

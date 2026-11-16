@@ -80,7 +80,7 @@ func (rt *Runtime) DeleteChatStateByChain(ctx context.Context, chatID marotte.Ch
 	rt.cleanupChatState(ctx, chatID)
 	rt.reapSessions(sessionChain)
 	if err := bot.RemoveDir(string(chatID), botPaths()); err != nil {
-		slog.Warn("bots: a deleted Bot's directory could not be removed; the next start removes it", "chat_id", chatID, "error", err)
+		slog.Warn("bots: a deleted Bot's directory could not be removed; marotte's next start removes it", "chat_id", chatID, "error", err)
 	}
 }
 

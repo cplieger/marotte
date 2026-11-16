@@ -914,20 +914,24 @@ type promptRoles struct {
 	sendGate    promptSendGate
 	auth        *AuthReadiness
 	signIn      signInReach
-	reopen      chatReopener
+	door        messageDoor
 	workspace   Workspace // last for fieldalignment, as in Roles
 }
 
-// chatReopener opens the tab of a chat an outside caller's message reaches, so the work it starts has a row.
-type chatReopener interface {
+// messageDoor is where a message into a chat begins.
+type messageDoor interface {
+	// ReopenForMessage opens the tab of a chat an outside caller's message reaches, so the work it starts has a row.
 	ReopenForMessage(ctx context.Context, chatID marotte.ChatID)
+	// BeginMessage answers stamp(), the life stamp the message presents to its submit, after reopening the chat's tab
+	// when reopen is set. A Bot left with no tab refuses with 409 chat_closed.
+	BeginMessage(ctx context.Context, chatID marotte.ChatID, reopen bool, stamp func() uint64) (uint64, error)
 }
 
-var _ chatReopener = (*Membership)(nil)
+var _ messageDoor = (*Membership)(nil)
 
 // reopenForCaller reopens cmd's chat for an outside caller's message; a page's own command (From nil) never does.
-func reopenForCaller(ctx context.Context, reopen chatReopener, cmd *marotte.ClientCommand) {
+func reopenForCaller(ctx context.Context, door messageDoor, cmd *marotte.ClientCommand) {
 	if cmd.From != nil {
-		reopen.ReopenForMessage(ctx, cmd.ChatID)
+		door.ReopenForMessage(ctx, cmd.ChatID)
 	}
 }

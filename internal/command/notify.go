@@ -40,13 +40,16 @@ func (d *Dispatcher) Notify(ctx context.Context, chatID marotte.ChatID, text str
 		return "", err
 	}
 	// Before the submit, as a prompt's: a message into an idle chat starts a turn, whose tab must exist first.
-	roles.reopen.ReopenForMessage(ctx, chatID)
+	stamp, err := roles.door.BeginMessage(ctx, chatID, true, roles.admission.LifeStamp)
+	if err != nil {
+		return "", err
+	}
 	s := Submission{
 		Row:    marotte.QueuedPrompt{ID: ids.NewMessageID(), Text: text, Caller: from},
 		Origin: marotte.RunFromNotify, Kind: marotte.SendPlain,
 		Wait: true, Retry: !kasClaimsPromptText(text),
 	}
-	ans, err := roles.runq.Submit(ctx, chatID, roles.admission.LifeStamp(), &s)
+	ans, err := roles.runq.Submit(ctx, chatID, stamp, &s)
 	if err != nil {
 		return "", submitRefusal(err)
 	}

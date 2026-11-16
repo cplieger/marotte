@@ -7,6 +7,10 @@ package agent
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -270,5 +274,85 @@ func TestSwitchModel_ABotsParkedPickBumpsOnceAndItsLandingBumpsNothing(t *testin
 
 	if got := specVersionOf(t, cs); got != 4 {
 		t.Errorf("spec_version after the parked pick landed = %d, want 4 kept", got)
+	}
+}
+
+// publishedDuring records c1's spec_version and goal after every record write while act runs, and answers them in
+// write order.
+func publishedDuring(t *testing.T, cs *testChatStore, act func()) (versions []int, goals []string) {
+	t.Helper()
+	var mu sync.Mutex
+	hook := func(id marotte.ChatID) {
+		c, ok := cs.Get(t.Context(), id)
+		if id != "c1" || !ok || c.Bot == nil {
+			return
+		}
+		mu.Lock()
+		versions, goals = append(versions, c.Bot.SpecVersion), append(goals, c.Bot.Goal)
+		mu.Unlock()
+	}
+	cs.mutated.Store(&hook)
+	act()
+	cs.mutated.Store(nil)
+	mu.Lock()
+	defer mu.Unlock()
+	return versions, goals
+}
+
+func TestBotSave_ASaveRunningSwitchesEndsAboveEveryVersionItsSwitchesPublished(t *testing.T) {
+	on := true
+	for _, tc := range []struct {
+		supervised *bool
+		name       string
+		switches   int
+	}{
+		{name: "a model switch", switches: 1},
+		{name: "a model switch and a supervised switch", supervised: &on, switches: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, cs := botRuntime(t)
+			seedSpecBot(t, cs)
+			save := marotte.BotSaveCommand{
+				Name: specBotName, Goal: "Watch CI closely.", Memory: true, Model: "m-new", Supervised: tc.supervised, BaseVersion: 3,
+			}
+			var rec *httptest.ResponseRecorder
+
+			versions, goals := publishedDuring(t, cs, func() { rec = postCmd(t, h, botSaveCmd(t, "c1", save)) })
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("bot_save = %d %s, want 200", rec.Code, rec.Body.String())
+			}
+			var mid []int
+			for i, v := range versions {
+				if goals[i] == specBotGoal && v > 3 && !slices.Contains(mid, v) {
+					mid = append(mid, v)
+				}
+			}
+			if len(mid) != tc.switches {
+				t.Fatalf("versions published with the old goal = %v, want one per switch (%d)", mid, tc.switches)
+			}
+			final := specVersionOf(t, cs)
+			for _, v := range mid {
+				if final <= v {
+					t.Errorf("final spec_version %d, want above %d, which the save's switch published with the old goal", final, v)
+				}
+			}
+			var body struct {
+				SpecVersion int `json:"spec_version"`
+			}
+			_ = json.Unmarshal(rec.Body.Bytes(), &body)
+			if body.SpecVersion != final {
+				t.Errorf("answered spec_version %d, stored %d, want the stored one", body.SpecVersion, final)
+			}
+			stale := postCmd(t, h, botSaveCmd(t, "c1", marotte.BotSaveCommand{
+				Name: specBotName, Goal: specBotGoal, Memory: true, Model: "m-new", Supervised: tc.supervised, BaseVersion: mid[len(mid)-1],
+			}))
+			if stale.Code != http.StatusConflict || !strings.Contains(stale.Body.String(), "bot_changed") {
+				t.Errorf("a save at the mid-save version %d = %d %s, want 409 bot_changed", mid[len(mid)-1], stale.Code, stale.Body.String())
+			}
+			if c, _ := cs.Get(t.Context(), "c1"); c.Bot.Goal != "Watch CI closely." {
+				t.Errorf("goal = %q, want the save's new goal kept", c.Bot.Goal)
+			}
+		})
 	}
 }
