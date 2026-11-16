@@ -20,6 +20,8 @@ type Submission struct {
 	Mode marotte.InterruptMode
 	Row  marotte.QueuedPrompt
 	Kind marotte.SendKind
+	// AdmitWait is how long a held close of the chat is waited out before ErrSubmitStarting; zero is AdmissionWait.
+	AdmitWait time.Duration
 	// NoSteer rules steering out: the send is only ever a turn of its own.
 	NoSteer bool
 	// PromptOnly is text only a prompt carries (PromptCommand.PromptOnly).
@@ -67,7 +69,7 @@ var (
 	ErrSubmitPromptOnly = errors.New("a steer cannot carry this message; send it once the turn ends, or queue it")
 	// errSubmitFull refuses a row past the queue's row count or encoded size.
 	errSubmitFull = errors.New("this chat already holds the most follow-ups it can queue; wait for one to send, then try again")
-	// ErrSubmitStarting refuses a submission whose life a held close kept from starting within AdmissionWait.
+	// ErrSubmitStarting refuses a submission whose life a held close kept from starting within its AdmitWait.
 	ErrSubmitStarting = errors.New("the chat is closing or starting; try again in a moment")
 	// ErrTakeWithdrawn refuses a launch's turn open: a stop withdrew the take before it opened.
 	ErrTakeWithdrawn = errors.New("the queued message was stopped before its turn opened")
@@ -127,7 +129,8 @@ type EntryLaunch struct {
 type runQueue interface {
 	// Submit places a sent message: steered into the running turn or taken now (a waiting caller is answered once
 	// kiro-cli holds the steer or the turn opens, up to AdmissionWait, then queued) or queued. A send bound for the
-	// running turn past kiro-cli's steer budget is refused ErrSteerFull. stamp is where the send's intent began.
+	// running turn past kiro-cli's steer budget is refused ErrSteerFull. A held close is waited out up to s.AdmitWait.
+	// stamp is where the send's intent began.
 	Submit(ctx context.Context, chatID marotte.ChatID, stamp uint64, s *Submission) (SubmitAnswer, error)
 	// TakeIdle takes the chat for a revert or a summary, which run now or not at all: IdleTurnOpen while a turn runs,
 	// IdleHeld past wait, IdleClosed after a close committed since stamp, IdleChatGone for a deleted chat.
@@ -280,6 +283,6 @@ func logLaunchRefused(chatID marotte.ChatID, messageID string, err error) {
 	case errors.Is(err, marotte.ErrChatClosedDuringCall):
 		slog.Debug("a queued send stood down: the chat closed", "chat_id", chatID, "message_id", messageID)
 	default:
-		slog.Warn("queued send could not open; it waits for the next turn end", "chat_id", chatID, "message_id", messageID, keyError, err)
+		slog.Warn("a queued send could not open its turn", "chat_id", chatID, "message_id", messageID, keyError, err)
 	}
 }

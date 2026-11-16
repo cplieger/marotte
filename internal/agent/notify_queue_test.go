@@ -19,28 +19,26 @@ import (
 const grelotWake = "1 new; run grelot inbox"
 
 // notifyWake delivers a grelot wake through the door's own deliver (Runtime.Notifier binds it), on its own goroutine.
-func notifyWake(t *testing.T, h *Runtime, chatID marotte.ChatID) <-chan command.NotifyDelivery {
+func notifyWake(t *testing.T, h *Runtime, chatID marotte.ChatID) <-chan error {
 	t.Helper()
-	got := make(chan command.NotifyDelivery, 1)
+	got := make(chan error, 1)
 	go func() {
-		verb, err := h.dispatcher.Notify(t.Context(), chatID, grelotWake, &marotte.Caller{Label: "grelot"})
-		if err != nil {
-			t.Errorf("Notify = %v, want accepted", err)
-		}
-		got <- verb
+		got <- h.dispatcher.Notify(t.Context(), chatID, grelotWake, &marotte.Caller{Label: "grelot"})
 	}()
 	return got
 }
 
-func awaitDelivery(t *testing.T, got <-chan command.NotifyDelivery) command.NotifyDelivery {
+// awaitDelivery fails t unless the wake got answers accepted within 10s.
+func awaitDelivery(t *testing.T, got <-chan error) {
 	t.Helper()
 	select {
-	case v := <-got:
-		return v
+	case err := <-got:
+		if err != nil {
+			t.Fatalf("Notify = %v, want accepted", err)
+		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the wake's delivery never answered")
 	}
-	return ""
 }
 
 // listOf is the chat's live run list as the header draws it.
@@ -57,15 +55,16 @@ func listOf(h *Runtime, chatID marotte.ChatID) []marotte.RunEntry {
 func fromGrelot(c *marotte.Caller) bool { return c != nil && c.Label == "grelot" }
 
 // A wake arriving while the user's row waits behind the running turn goes behind that row as its own row, labelled
-// with its caller, and answers queued: it is never steered into the running turn ahead of the user's message.
+// with its caller: it is never steered into the running turn ahead of the user's message.
 func TestNotify_AWakeQueuesBehindTheUsersWaitingRow(t *testing.T) {
 	s, _, br := steerOpsHub(t)
 	id, _ := s.h.stagePromptTurn(t, "c1")
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
 	queueTextDuring(t, s.h, "m-user", "then run the tests")
 
-	got := awaitDelivery(t, notifyWake(t, s.h, "c1"))
+	awaitDelivery(t, notifyWake(t, s.h, "c1"))
 
+	joinInflight(t, s.h)
 	if steers := slices.Collect(func(yield func(string) bool) {
 		for _, m := range br.callLog() {
 			if m == marotte.MethodSessionSteer && !yield(m) {
@@ -74,9 +73,6 @@ func TestNotify_AWakeQueuesBehindTheUsersWaitingRow(t *testing.T) {
 		}
 	}); len(steers) != 0 {
 		t.Errorf("the wake reached session/steer (%d calls) while the user's row waited", len(steers))
-	}
-	if got != "queued" {
-		t.Errorf("delivery = %q, want queued: held behind the user's row", got)
 	}
 	var rows []string
 	for _, e := range listOf(s.h, "c1") {
@@ -226,7 +222,7 @@ func placeWakeFrom(t *testing.T, h *Runtime, chatID marotte.ChatID, id, label st
 		row: &marotte.QueuedPrompt{ID: id, Text: grelotWake, Caller: &marotte.Caller{Label: label}},
 	}
 	f := lc.orderFactsLocked()
-	if a, _ := lc.run.doorSend(e, &f, lc.stamp, false); a.refused != takeGranted {
+	if a, _ := lc.run.doorSend(e, &f, lc.stamp); a.refused != takeGranted {
 		t.Fatalf("Setup: the wake was refused (%d)", a.refused)
 	}
 	lc.wakeLocked()
@@ -569,8 +565,8 @@ func TestNotify_ASteerCommandWithNothingRunningPlacesNothing(t *testing.T) {
 	}
 }
 
-// wakeWith delivers text from grelot through the door's own deliver and answers its outcome.
-func wakeWith(t *testing.T, h *Runtime, chatID marotte.ChatID, text string) (command.NotifyDelivery, error) {
+// wakeWith delivers text from grelot through the door's own deliver and answers its refusal, nil once accepted.
+func wakeWith(t *testing.T, h *Runtime, chatID marotte.ChatID, text string) error {
 	t.Helper()
 	return h.dispatcher.Notify(t.Context(), chatID, text, &marotte.Caller{Label: "grelot"})
 }
@@ -585,7 +581,7 @@ func grelotRows(h *Runtime, chatID marotte.ChatID) (ids, texts []string) {
 	return ids, texts
 }
 
-// A wake into an idle chat opens its turn under grelot's name and answers prompt; the draft cap, which holds what
+// A wake into an idle chat opens its turn under grelot's name; the draft cap, which holds what
 // waits on the list, does not apply to it.
 func TestNotify_AWakeIntoAnIdleChatOpensItsTurn(t *testing.T) {
 	for name, text := range map[string]string{
@@ -605,10 +601,8 @@ func TestNotify_AWakeIntoAnIdleChatOpensItsTurn(t *testing.T) {
 			br.blockOn = map[string]chan struct{}{marotte.MethodPrompt: wakeTurn}
 			br.mu.Unlock()
 
-			got, err := wakeWith(t, s.h, "c1", text)
-
-			if err != nil || got != command.NotifyPrompt {
-				t.Errorf("delivery = %q, %v; want prompt", got, err)
+			if err := wakeWith(t, s.h, "c1", text); err != nil {
+				t.Errorf("delivery = %v, want accepted", err)
 			}
 			if p := nextPrompt(t, cs, "c1", 1); p.Text != text || !fromGrelot(p.Caller) {
 				t.Errorf("the turn opened with %d bytes (caller %+v), want the wake from grelot", len(p.Text), p.Caller)
@@ -624,16 +618,15 @@ func TestNotify_ALaterWakeReplacesTheWaitingOnesTextInPlace(t *testing.T) {
 	id, _ := s.h.stagePromptTurn(t, "c1")
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
 	queueTextDuring(t, s.h, "m-user", "then run the tests")
-	if got, err := wakeWith(t, s.h, "c1", "1 new; run grelot inbox"); err != nil || got != command.NotifyQueued {
-		t.Fatalf("Setup: first wake = %q, %v; want queued", got, err)
+	if err := wakeWith(t, s.h, "c1", "1 new; run grelot inbox"); err != nil {
+		t.Fatalf("Setup: first wake = %v, want accepted", err)
 	}
 	first, _ := grelotRows(s.h, "c1")
 
-	got, err := wakeWith(t, s.h, "c1", "2 new; run grelot inbox")
-
-	if err != nil || got != command.NotifyQueued {
-		t.Errorf("second wake = %q, %v; want queued", got, err)
+	if err := wakeWith(t, s.h, "c1", "2 new; run grelot inbox"); err != nil {
+		t.Errorf("second wake = %v, want accepted", err)
 	}
+	joinInflight(t, s.h)
 	ids, texts := grelotRows(s.h, "c1")
 	if !slices.Equal(texts, []string{"2 new; run grelot inbox"}) || !slices.Equal(ids, first) {
 		t.Errorf("grelot rows = %v %q, want the one row %v carrying the later text", ids, texts, first)
@@ -652,21 +645,22 @@ func TestNotify_ALaterWakeReplacesTheWaitingOnesTextInPlace(t *testing.T) {
 	}
 }
 
-// A wake into a running turn with nothing of the user's waiting is steered and answers steer; a later wake while
-// kiro-cli still holds it unread adds nothing and answers steer, since the agent reads the earlier one anyway.
+// A wake into a running turn with nothing of the user's waiting is steered; a later wake while kiro-cli still holds it
+// unread is accepted and adds nothing, since the agent reads the earlier one anyway.
 func TestNotify_AWakeBesideOneTheAgentHoldsAddsNothing(t *testing.T) {
 	s, _, br := steerOpsHub(t)
 	k := kas320On(s.h, "c1", br)
 	id, _ := s.h.stagePromptTurn(t, "c1")
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
-	if got, err := wakeWith(t, s.h, "c1", "1 new; run grelot inbox"); err != nil || got != command.NotifySteer {
-		t.Fatalf("Setup: first wake = %q, %v; want steer", got, err)
+	if err := wakeWith(t, s.h, "c1", "1 new; run grelot inbox"); err != nil {
+		t.Fatalf("Setup: first wake = %v, want accepted", err)
+	}
+	if first, _ := entryFrom(s.h, "c1", "grelot"); !reachesState(s.h, "c1", first, marotte.RunInKAS) {
+		t.Fatalf("Setup: the first wake %q never stood in kiro-cli", first)
 	}
 
-	got, err := wakeWith(t, s.h, "c1", "2 new; run grelot inbox")
-
-	if err != nil || got != command.NotifySteer {
-		t.Errorf("second wake = %q, %v; want steer", got, err)
+	if err := wakeWith(t, s.h, "c1", "2 new; run grelot inbox"); err != nil {
+		t.Errorf("second wake = %v, want accepted", err)
 	}
 	joinInflight(t, s.h)
 	if got := k.steered(); !slices.Equal(got, []string{"1 new; run grelot inbox"}) {
@@ -693,7 +687,7 @@ func TestNotify_AWakePastTheDraftCapBehindARunningTurnIsRetriedLater(t *testing.
 	big := strings.Repeat("x", marotte.MaxDraftBytes+1)
 
 	t.Run("a new wake", func(t *testing.T) {
-		_, err := wakeWith(t, s.h, "c1", big)
+		err := wakeWith(t, s.h, "c1", big)
 		if got := command.ClassifyNotifyError(err); got != command.NotifyRetryLater {
 			t.Errorf("error = %v (class %v), want retry later", err, got)
 		}
@@ -702,10 +696,10 @@ func TestNotify_AWakePastTheDraftCapBehindARunningTurnIsRetriedLater(t *testing.
 		}
 	})
 	t.Run("a wake replacing a waiting one", func(t *testing.T) {
-		if got, err := wakeWith(t, s.h, "c1", grelotWake); err != nil || got != command.NotifyQueued {
-			t.Fatalf("Setup: wake = %q, %v; want queued", got, err)
+		if err := wakeWith(t, s.h, "c1", grelotWake); err != nil {
+			t.Fatalf("Setup: wake = %v, want accepted", err)
 		}
-		_, err := wakeWith(t, s.h, "c1", big)
+		err := wakeWith(t, s.h, "c1", big)
 		if got := command.ClassifyNotifyError(err); got != command.NotifyRetryLater {
 			t.Errorf("error = %v (class %v), want retry later", err, got)
 		}
@@ -723,11 +717,10 @@ func TestNotify_AWakePastTheDraftCapIsSteeredWhenNothingWaits(t *testing.T) {
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
 	big := strings.Repeat("x", marotte.MaxDraftBytes+1)
 
-	got, err := wakeWith(t, s.h, "c1", big)
-
-	if err != nil || got != command.NotifySteer {
-		t.Errorf("delivery = %q, %v; want steer", got, err)
+	if err := wakeWith(t, s.h, "c1", big); err != nil {
+		t.Errorf("delivery = %v, want accepted", err)
 	}
+	joinInflight(t, s.h)
 	if sent := k.steered(); len(sent) != 1 || sent[0] != big {
 		t.Errorf("steers sent = %d, want the wake once", len(sent))
 	}

@@ -120,7 +120,7 @@ func TestNotify_ABotItsReopenCannotOpenIsRefusedForALaterRetry(t *testing.T) {
 	d := New()
 	d.prompts = roles
 
-	_, err := d.Notify(t.Context(), "c-bot", "1 new message", &marotte.Caller{Label: "grelot"})
+	err := d.Notify(t.Context(), "c-bot", "1 new message", &marotte.Caller{Label: "grelot"})
 
 	if reasonOf(err) != reasonChatClosed || ClassifyNotifyError(err) != NotifyRetryLater {
 		t.Errorf("notify = %v reason %q, want 409 %s classed NotifyRetryLater", err, reasonOf(err), reasonChatClosed)

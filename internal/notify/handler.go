@@ -17,13 +17,9 @@ import (
 // Pattern is the route's ServeMux pattern; the method is checked in the handler, as on every marotte route.
 const Pattern = routePrefix + "{session}" + routeSuffix
 
-// What a delivery became: the chat's live turn holds it as a steer, it opened a turn as a prompt, or it waits on
-// the chat's run order and goes in order.
-const (
-	DeliveredSteer  = "steer"
-	DeliveredPrompt = "prompt"
-	DeliveredQueued = "queued"
-)
+// DeliveredAccepted is the delivered value of every answer that took the message: it is on the chat's run order,
+// which delivers it after the answer.
+const DeliveredAccepted = "accepted"
 
 var (
 	// ErrUnknownSession is a session id no chat holds; the route answers 404.
@@ -38,11 +34,11 @@ type TextRefusedError struct{ Reason string }
 
 func (e *TextRefusedError) Error() string { return "text: " + e.Reason }
 
-// Deliverer hands one message to the chat holding session, with source as the caller label. It answers
-// DeliveredSteer, DeliveredPrompt or DeliveredQueued, or ErrUnknownSession, ErrUnavailable, a *TextRefusedError or
-// another error.
+// Deliverer hands one message to the chat holding session, with source as the caller label. It returns once the
+// chat has accepted the message, never waiting on its delivery, or ErrUnknownSession, ErrUnavailable, a
+// *TextRefusedError or another error.
 type Deliverer interface {
-	Deliver(ctx context.Context, session, text, source string) (string, error)
+	Deliver(ctx context.Context, session, text, source string) error
 }
 
 // The body's bounds. A notification is a short wake-up, so text is capped well under a prompt's 512 KiB; the body
@@ -122,15 +118,14 @@ func (h *Handler) deliver(ctx context.Context, w http.ResponseWriter, k dedupeKe
 		return
 	case reserveFresh:
 	}
-	verb, err := h.deliv.Deliver(ctx, k.session, text, source)
-	if err != nil {
+	if err := h.deliv.Deliver(ctx, k.session, text, source); err != nil {
 		h.dedupe.release(k)
 		writeDeliveryError(w, k.session, source, err)
 		return
 	}
 	h.dedupe.commit(k, h.now())
-	slog.Info("notify delivered", "session_id", k.session, "source", source, "delivered", verb)
-	httpserver.WriteJSON(w, map[string]string{"delivered": verb})
+	slog.Info("notify accepted", "session_id", k.session, "source", source)
+	httpserver.WriteJSON(w, map[string]string{"delivered": DeliveredAccepted})
 }
 
 func writeDeliveryError(w http.ResponseWriter, session, source string, err error) {

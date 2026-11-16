@@ -158,7 +158,7 @@ func TestNotify_RefusedTextReopensNothing(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newCallerFixture(t)
-			_, err := f.d.Notify(t.Context(), "c1", text, grelotCaller)
+			err := f.d.Notify(t.Context(), "c1", text, grelotCaller)
 			if got := ClassifyNotifyError(err); got != NotifyBadText {
 				t.Errorf("class = %v, want NotifyBadText", got)
 			}
@@ -288,9 +288,7 @@ func TestNotify_IntoAClosedChatOpensItsTabThenPrompts(t *testing.T) {
 	m := newMessageFixture(t)
 	m.promptsAtFrame = nil
 
-	if got := notifyInto(t, m.callerFixture); got != NotifyPrompt {
-		t.Errorf("delivered as %q, want prompt", got)
-	}
+	notifyInto(t, m.callerFixture)
 	if _, ok := chatTabOf(m.st, "c1"); !ok {
 		t.Error("c1 has no tab after the notify, want it reopened")
 	}
@@ -305,7 +303,7 @@ func TestNotify_IntoAGoneChatIsUnknownAndOpensNothing(t *testing.T) {
 	m.opens.admitFirst = AdmissionChatGone
 	mark := len(m.bus.frames(t))
 
-	_, err := m.d.Notify(t.Context(), "c-gone", notifyText, grelotCaller)
+	err := m.d.Notify(t.Context(), "c-gone", notifyText, grelotCaller)
 
 	if got := ClassifyNotifyError(err); got != NotifyUnknownChat {
 		t.Errorf("class = %v (%v), want NotifyUnknownChat", got, err)

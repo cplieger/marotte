@@ -871,8 +871,9 @@ const (
 
 // doorSend places a notify-door send: one waiting entry per caller, pending or paused, since a caller's later wake
 // supersedes its earlier one, and none beside one kiro-cli holds unread, which the agent reads anyway. A waiting entry
-// is persisted with the list, so one paused or behind a running turn keeps the draft cap a user's queued row has.
-func (l *runList) doorSend(e *runEntry, f *orderFacts, intentStamp uint64, waits bool) (submitAnswer, doorPlace) {
+// is persisted with the list, so one paused or behind a running turn keeps the draft cap a user's queued row has. No
+// submitter waits on a door entry.
+func (l *runList) doorSend(e *runEntry, f *orderFacts, intentStamp uint64) (submitAnswer, doorPlace) {
 	big := len(e.row.Text) > marotte.MaxDraftBytes
 	for _, have := range l.entries[l.liveLen():] {
 		if !sameWakeCaller(have, e) {
@@ -897,7 +898,7 @@ func (l *runList) doorSend(e *runEntry, f *orderFacts, intentStamp uint64, waits
 	if big && (paused || l.waitsBehindTurn(e)) {
 		return submitAnswer{}, doorTooBig
 	}
-	return l.submit(e, f, intentStamp, waits), doorPlaced
+	return l.submit(e, f, intentStamp, false), doorPlaced
 }
 
 // waitsBehindTurn reports a door entry e that, appended now, would wait behind a running turn rather than be steered

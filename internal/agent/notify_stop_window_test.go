@@ -8,10 +8,8 @@ import (
 	"context"
 	"net/http"
 	"slices"
-	"sync"
 	"testing"
 	"testing/synctest"
-	"time"
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -51,9 +49,7 @@ func TestRunList_StopWindows(t *testing.T) {
 			<-parked
 			plainStop(t, s.h)
 			close(release)
-			if got := awaitDelivery(t, wake); got != command.NotifyQueued {
-				t.Errorf("wake answered %q, want queued: the Stop withdrew its take", got)
-			}
+			awaitDelivery(t, wake)
 			joinInflight(t, s.h)
 			synctest.Wait()
 
@@ -77,9 +73,7 @@ func TestRunList_StopWindows(t *testing.T) {
 			id, _ := s.h.stagePromptTurn(t, "c1")
 			s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
 			plainStop(t, s.h)
-			if got := awaitDelivery(t, notifyWake(t, s.h, "c1")); got != command.NotifyQueued {
-				t.Errorf("wake answered %q, want queued: the turn is stopping", got)
-			}
+			awaitDelivery(t, notifyWake(t, s.h, "c1"))
 			s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnEndMsg("cancelled"))
 			s.h.coord.releaseTurn("c1", id)
 			idleAfter(t, s.h, "c1", id)
@@ -106,9 +100,7 @@ func TestRunList_StopWindows(t *testing.T) {
 			s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
 			plainStop(t, s.h)
 			resumeQueue(t, s.h)
-			if got := awaitDelivery(t, notifyWake(t, s.h, "c1")); got != command.NotifyQueued {
-				t.Errorf("wake answered %q, want queued behind the stopping turn", got)
-			}
+			awaitDelivery(t, notifyWake(t, s.h, "c1"))
 			if got, want := listedRows(s.h, "c1"), []string{"grelot:pending"}; !slices.Equal(got, want) {
 				t.Errorf("waiting rows before the close = %v, want %v: Resume lifted the pause", got, want)
 			}
@@ -119,55 +111,5 @@ func TestRunList_StopWindows(t *testing.T) {
 				t.Errorf("turn after the close = %q (caller %+v), want the wake from grelot", next.Text, next.Caller)
 			}
 		})
-	})
-}
-
-// A Stop that puts the wake's entry back after Submit placed it and before Submit waits answers the wake at once:
-// Submit waits on the launch the Stop answered, not on the fresh one the Stop swapped in.
-func TestRunList_AStopBetweenASubmitsPlacingAndItsWaitAnswersAtOnce(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		s, _, _ := steerOpsHub(t)
-		id, _ := s.h.stagePromptTurn(t, "c1")
-		s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
-		s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnEndMsg("end_turn"))
-		s.h.coord.releaseTurn("c1", id)
-		idleAfter(t, s.h, "c1", id)
-		parked, release := make(chan struct{}), make(chan struct{})
-		launch := s.h.coord.launchEntry
-		var parkOnce sync.Once
-		s.h.coord.launchEntry = func(ctx context.Context, chatID marotte.ChatID, l *command.EntryLaunch) (string, error) {
-			parkOnce.Do(func() {
-				close(parked)
-				<-release
-			})
-			return launch(ctx, chatID, l)
-		}
-		placed, stopped := make(chan struct{}), make(chan struct{})
-		var placeOnce sync.Once
-		prev := testHookSubmitPlaced
-		testHookSubmitPlaced = func(marotte.ChatID) {
-			placeOnce.Do(func() {
-				close(placed)
-				<-stopped
-			})
-		}
-		t.Cleanup(func() { testHookSubmitPlaced = prev })
-
-		wake := notifyWake(t, s.h, "c1")
-		<-placed
-		<-parked
-		plainStop(t, s.h)
-		close(stopped)
-		close(release)
-		select {
-		case got := <-wake:
-			if got != command.NotifyQueued {
-				t.Errorf("wake answered %q, want queued: the Stop withdrew its take", got)
-			}
-		case <-time.After(time.Second):
-			t.Fatalf("the wake had no answer 1s after the Stop; the admission wait is %v", command.AdmissionWait)
-		}
-		joinInflight(t, s.h)
-		synctest.Wait()
 	})
 }

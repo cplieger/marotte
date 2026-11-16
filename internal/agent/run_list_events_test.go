@@ -26,7 +26,7 @@ func (w *tableWorld) door(id, text string) doorPlace {
 	if w.mode == marotte.InterruptQueue {
 		e.want = marotte.RunWantPrompt
 	}
-	_, at := w.l.doorSend(e, w.facts(), 0, false)
+	_, at := w.l.doorSend(e, w.facts(), 0)
 	return at
 }
 

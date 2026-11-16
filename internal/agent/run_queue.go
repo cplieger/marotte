@@ -5,6 +5,7 @@ package agent
 // the effects the list recorded: a take's launch on its own goroutine, a compaction's start, a failure toast.
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
@@ -434,10 +435,10 @@ func (bc *bridgeCoordinator) dropRefusedRow(ended *chatLifecycle, id string) {
 }
 
 // runLife is the chat's lifecycle for a request whose intent began at stamp: it waits out a held close up to
-// command.AdmissionWait, then answers command.ErrSubmitStarting; a close committed since stamp answers
+// admit, then answers command.ErrSubmitStarting; a close committed since stamp answers
 // marotte.ErrChatClosedDuringCall.
-func (bc *bridgeCoordinator) runLife(ctx context.Context, chatID marotte.ChatID, stamp uint64) (*chatLifecycle, error) {
-	wait, cancel := context.WithTimeout(ctx, command.AdmissionWait)
+func (bc *bridgeCoordinator) runLife(ctx context.Context, chatID marotte.ChatID, stamp uint64, admit time.Duration) (*chatLifecycle, error) {
+	wait, cancel := context.WithTimeout(ctx, admit)
 	defer cancel()
 	lc, err := bc.turns.lifecycleAt(wait, chatID, stamp)
 	switch {
@@ -461,7 +462,7 @@ func (bc *bridgeCoordinator) sendMode(ctx context.Context, s *command.Submission
 
 // Submit places a sent message on the chat's run list (command.runQueue.Submit).
 func (bc *bridgeCoordinator) Submit(ctx context.Context, chatID marotte.ChatID, stamp uint64, s *command.Submission) (command.SubmitAnswer, error) {
-	lc, err := bc.runLife(ctx, chatID, stamp)
+	lc, err := bc.runLife(ctx, chatID, stamp, cmp.Or(s.AdmitWait, command.AdmissionWait))
 	if err != nil {
 		return command.SubmitAnswer{}, err
 	}
@@ -532,8 +533,8 @@ func (lc *chatLifecycle) submitLocked(stamp uint64, s *command.Submission, mode 
 	return command.SubmitAnswer{As: command.SubmitQueued, Settle: s.Composer}, nil, nil
 }
 
-// doorSubmitLocked places a notify-door send (runList.doorSend). A send the caller's earlier entry takes answers at
-// once: queued while that entry waits, steered while kiro-cli holds it. Caller holds mu.
+// doorSubmitLocked places a notify-door send (runList.doorSend) and answers at once, never with an entry to wait on:
+// its caller is answered on placement, and the delivery runs after. Caller holds mu.
 func (lc *chatLifecycle) doorSubmitLocked(stamp uint64, s *command.Submission, mode marotte.InterruptMode) (command.SubmitAnswer, *runEntry, error) {
 	row := s.Row
 	e := &runEntry{id: row.ID, kind: marotte.RunKindRow, origin: s.Origin, row: &row, retry: s.Retry}
@@ -541,7 +542,7 @@ func (lc *chatLifecycle) doorSubmitLocked(stamp uint64, s *command.Submission, m
 		e.want = marotte.RunWantPrompt
 	}
 	f := lc.orderFactsLocked()
-	a, place := lc.run.doorSend(e, &f, stamp, s.Wait)
+	a, place := lc.run.doorSend(e, &f, stamp)
 	switch {
 	case place == doorTooBig:
 		return command.SubmitAnswer{}, nil, command.ErrSubmitTooBig
@@ -553,8 +554,8 @@ func (lc *chatLifecycle) doorSubmitLocked(stamp uint64, s *command.Submission, m
 		return command.SubmitAnswer{}, nil, marotte.ErrChatClosedDuringCall
 	case a.refused == takeGone:
 		return command.SubmitAnswer{}, nil, command.ErrChatNotFound
-	case a.taken && s.Wait, a.steering:
-		return command.SubmitAnswer{}, e, nil
+	case a.taken:
+		return command.SubmitAnswer{As: command.SubmitStarted}, nil, nil
 	}
 	return command.SubmitAnswer{As: command.SubmitQueued}, nil, nil
 }
@@ -778,7 +779,7 @@ func (bc *bridgeCoordinator) SummaryLaunched(chatID marotte.ChatID, entryID stri
 
 // SendNow moves a row to the front and stops the turn the press was drawn against (command.runQueue.SendNow).
 func (bc *bridgeCoordinator) SendNow(ctx context.Context, chatID marotte.ChatID, id, stop string, hasStop bool) (command.RunStop, error) {
-	lc, err := bc.runLife(ctx, chatID, bc.LifeStamp())
+	lc, err := bc.runLife(ctx, chatID, bc.LifeStamp(), command.AdmissionWait)
 	if err != nil {
 		return command.RunStop{}, err
 	}
@@ -830,7 +831,7 @@ func (bc *bridgeCoordinator) leadSteer(chatID marotte.ChatID, id string) bool {
 
 // Unqueue removes a waiting row; an unknown id is success.
 func (bc *bridgeCoordinator) Unqueue(ctx context.Context, chatID marotte.ChatID, id string) error {
-	lc, err := bc.runLife(ctx, chatID, bc.LifeStamp())
+	lc, err := bc.runLife(ctx, chatID, bc.LifeStamp(), command.AdmissionWait)
 	if err != nil {
 		return err
 	}
@@ -849,7 +850,7 @@ func (bc *bridgeCoordinator) Unqueue(ctx context.Context, chatID marotte.ChatID,
 
 // Resume lets the rows a stop paused go in order (command.runQueue.Resume).
 func (bc *bridgeCoordinator) Resume(ctx context.Context, chatID marotte.ChatID) error {
-	lc, err := bc.runLife(ctx, chatID, bc.LifeStamp())
+	lc, err := bc.runLife(ctx, chatID, bc.LifeStamp(), command.AdmissionWait)
 	if err != nil {
 		return err
 	}

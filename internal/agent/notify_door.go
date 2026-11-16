@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"slices"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -15,7 +14,7 @@ type notifyDoor struct {
 	enter       func() (release func(), ok bool)
 	engineReady func() bool
 	chats       func(ctx context.Context) []marotte.ChatHeader
-	deliver     func(ctx context.Context, chatID marotte.ChatID, text string, from *marotte.Caller) (command.NotifyDelivery, error)
+	deliver     func(ctx context.Context, chatID marotte.ChatID, text string, from *marotte.Caller) error
 }
 
 var _ notify.Deliverer = notifyDoor{}
@@ -30,33 +29,25 @@ func (rt *Runtime) Notifier() notify.Deliverer {
 	}
 }
 
-// Deliver holds the drain gate for the whole delivery, so a shutdown waits for it rather than cutting it.
-func (d notifyDoor) Deliver(ctx context.Context, session, text, source string) (string, error) {
+// Deliver holds the drain gate until the message is placed, so a shutdown waits for the placement rather than cutting
+// it.
+func (d notifyDoor) Deliver(ctx context.Context, session, text, source string) error {
 	release, ok := d.enter()
 	if !ok {
-		return "", notify.ErrUnavailable
+		return notify.ErrUnavailable
 	}
 	defer release()
 	if !d.engineReady() {
-		return "", notify.ErrUnavailable
+		return notify.ErrUnavailable
 	}
 	chatID, ok := chatForSession(d.chats(ctx), session)
 	if !ok {
-		return "", notify.ErrUnknownSession
+		return notify.ErrUnknownSession
 	}
-	got, err := d.deliver(ctx, chatID, text, &marotte.Caller{Label: source})
-	if err != nil {
-		return "", notifyError(err)
+	if err := d.deliver(ctx, chatID, text, &marotte.Caller{Label: source}); err != nil {
+		return notifyError(err)
 	}
-	switch got {
-	case command.NotifySteer:
-		return notify.DeliveredSteer, nil
-	case command.NotifyPrompt:
-		return notify.DeliveredPrompt, nil
-	case command.NotifyQueued:
-		return notify.DeliveredQueued, nil
-	}
-	return "", fmt.Errorf("notify: unknown delivery %q", got)
+	return nil
 }
 
 // chatForSession answers the chat whose current session is session, else the one chat whose earlier sessions hold

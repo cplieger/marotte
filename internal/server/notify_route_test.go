@@ -11,11 +11,11 @@ import (
 	"github.com/cplieger/marotte/internal/notify"
 )
 
-type steeringDeliverer struct{ sessions []string }
+type acceptingDeliverer struct{ sessions []string }
 
-func (d *steeringDeliverer) Deliver(_ context.Context, session, _, _ string) (string, error) {
+func (d *acceptingDeliverer) Deliver(_ context.Context, session, _, _ string) error {
 	d.sessions = append(d.sessions, session)
-	return notify.DeliveredSteer, nil
+	return nil
 }
 
 // servedNotify posts a notification through the server's own route table and middleware.
@@ -41,17 +41,17 @@ func TestNotifyRoute_IsMounted(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Run("the token delivers", func(t *testing.T) {
-		deliv := &steeringDeliverer{}
+		deliv := &acceptingDeliverer{}
 		w := servedNotify(t, gate, deliv, "Bearer "+confineTestToken)
-		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"delivered":"steer"`) {
-			t.Fatalf("answer = %d %s, want 200 delivered steer", w.Code, w.Body.String())
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"delivered":"accepted"`) {
+			t.Fatalf("answer = %d %s, want 200 delivered accepted", w.Code, w.Body.String())
 		}
 		if len(deliv.sessions) != 1 || deliv.sessions[0] != "s1" {
 			t.Errorf("delivered to %v, want s1", deliv.sessions)
 		}
 	})
 	t.Run("the door off is 401, not the API fallback", func(t *testing.T) {
-		w := servedNotify(t, notify.Gate{}, &steeringDeliverer{}, "Bearer "+confineTestToken)
+		w := servedNotify(t, notify.Gate{}, &acceptingDeliverer{}, "Bearer "+confineTestToken)
 		if w.Code != http.StatusUnauthorized {
 			t.Errorf("status = %d, want 401 (%s)", w.Code, w.Body.String())
 		}

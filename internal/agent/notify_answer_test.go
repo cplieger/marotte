@@ -6,6 +6,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -112,6 +113,19 @@ func idleChat(t *testing.T, s *steerHarness) {
 	idleAfter(t, s.h, "c1", id)
 }
 
+// sentAfterTurn reports whether text reached kiro-cli after chatID's turn open n: steered (k saw it) or as the prompt
+// of a later turn. Which of the two the run order picks depends on whether turn n still runs.
+func sentAfterTurn(t *testing.T, k *kas320Steering, cs *testChatStore, chatID marotte.ChatID, n int, text string) bool {
+	t.Helper()
+	if slices.Contains(k.steered(), text) {
+		return true
+	}
+	opens := opensOf(t, logOf(t, cs, chatID))
+	return len(opens) > n+1 && slices.ContainsFunc(opens[n+1:], func(o marotte.EntryTurnOpen) bool {
+		return o.Prompt != nil && o.Prompt.Text == text
+	})
+}
+
 // holdFirstLaunch parks c1's first take before its turn opens; parked closes once it is parked, and release (also
 // run at cleanup) lets it go on.
 func holdFirstLaunch(t *testing.T, h *Runtime) (parked <-chan struct{}, release func()) {
@@ -191,7 +205,8 @@ func TestNotify_AnswerComesWhileTheDeliveryIsHeld(t *testing.T) {
 
 func TestNotify_BackToBackWakesAnswerInOrderWhileTheFirstDeliveryIsHeld(t *testing.T) {
 	t.Run("two sources each answer and go in POST order", func(t *testing.T) {
-		s, cs, _ := steerOpsHub(t)
+		s, cs, br := steerOpsHub(t)
+		k := kas320On(s.h, "c1", br)
 		idleChat(t, s)
 		route := notifyRoute(t, s.h, cs)
 		parked, release := holdFirstLaunch(t, s.h)
@@ -210,13 +225,12 @@ func TestNotify_BackToBackWakesAnswerInOrderWhileTheFirstDeliveryIsHeld(t *testi
 		if next := nextPrompt(t, cs, "c1", 1); next.Text != grelotWake || !fromGrelot(next.Caller) {
 			t.Fatalf("turn after the release = %q (caller %+v), want wake A from grelot", next.Text, next.Caller)
 		}
-		if next := nextPrompt(t, cs, "c1", 2); next.Text != "new mail" || next.Caller == nil || next.Caller.Label != "mail" {
-			t.Errorf("turn after A's = %q (caller %+v), want wake B from mail", next.Text, next.Caller)
-		}
+		waitFor(t, func() bool { return sentAfterTurn(t, k, cs, "c1", 1, "new mail") })
 	})
 
 	t.Run("later wakes from the same source behind a held take keep one waiting entry", func(t *testing.T) {
-		s, cs, _ := steerOpsHub(t)
+		s, cs, br := steerOpsHub(t)
+		k := kas320On(s.h, "c1", br)
 		idleChat(t, s)
 		route := notifyRoute(t, s.h, cs)
 		parked, release := holdFirstLaunch(t, s.h)
@@ -231,8 +245,51 @@ func TestNotify_BackToBackWakesAnswerInOrderWhileTheFirstDeliveryIsHeld(t *testi
 			t.Fatalf("grelot rows = %q, want %q: the held take, then one waiting entry holding the latest text", got, want)
 		}
 		release()
-		if next := nextPrompt(t, cs, "c1", 2); next.Text != "wake 3" || !fromGrelot(next.Caller) {
-			t.Errorf("turn after the held take's = %q (caller %+v), want the latest wake", next.Text, next.Caller)
+		if next := nextPrompt(t, cs, "c1", 1); next.Text != "wake 1" || !fromGrelot(next.Caller) {
+			t.Fatalf("turn after the release = %q (caller %+v), want wake 1 from grelot", next.Text, next.Caller)
+		}
+		waitFor(t, func() bool { return sentAfterTurn(t, k, cs, "c1", 1, "wake 3") })
+		joinInflight(t, s.h)
+		if sentAfterTurn(t, k, cs, "c1", 0, "wake 2") {
+			t.Errorf("wake 2 reached kiro-cli, want its text replaced by wake 3")
 		}
 	})
+}
+
+// A wake taken at once whose turn then fails to open was already answered accepted, so it follows every queued
+// wake's rule: it waits paused for the next clean close, never lost, and the caller's next send replaces its text.
+func TestNotify_AWakeWhoseLaunchFailsAfterItsAnswerWaitsPaused(t *testing.T) {
+	s, cs, _ := steerOpsHub(t)
+	idleChat(t, s)
+	route := notifyRoute(t, s.h, cs)
+	launch := s.h.coord.launchEntry
+	var first sync.Once
+	s.h.coord.launchEntry = func(ctx context.Context, chatID marotte.ChatID, l *command.EntryLaunch) (string, error) {
+		refused := false
+		first.Do(func() { refused = true })
+		if refused {
+			s.h.coord.ReleaseTurnReservation(l.Res)
+			return "", errors.New("kiro-cli refused the turn")
+		}
+		return launch(ctx, chatID, l)
+	}
+
+	requireAccepted(t, routeAnswerWithin(t, postWake(route, "grelot", "k1", "wake 1"), "wake 1"), "wake 1")
+	joinInflight(t, s.h)
+	wake, state := entryFrom(s.h, "c1", "grelot")
+	if state != marotte.RunPaused {
+		t.Fatalf("wake entry %q is %q after its failed launch, want paused", wake, state)
+	}
+
+	requireAccepted(t, routeAnswerWithin(t, postWake(route, "grelot", "k2", "wake 2"), "wake 2"), "wake 2")
+	joinInflight(t, s.h)
+	if got := rowsFrom(s.h, "c1", "grelot"); !slices.Equal(got, []string{"wake 2"}) {
+		t.Errorf("grelot rows = %q, want the paused entry carrying the later text", got)
+	}
+	if again, state := entryFrom(s.h, "c1", "grelot"); again != wake || state != marotte.RunPaused {
+		t.Errorf("grelot entry = %q %q, want %q still paused: a failed launch is never retried in a loop", again, state, wake)
+	}
+	if n := len(opensOf(t, logOf(t, cs, "c1"))); n != 1 {
+		t.Errorf("turns opened = %d after the failed launch, want none", n-1)
+	}
 }
