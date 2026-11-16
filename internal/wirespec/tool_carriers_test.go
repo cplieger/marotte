@@ -14,12 +14,12 @@ import (
 	"github.com/cplieger/go/wiregen/v2"
 )
 
-// A tool card's title and loaded list are served at read time by marotte.ToolCard, never stored, so
-// every frame and typed reply that can carry a tool entry must be built through it. The scan finds each
-// registered event payload or type whose fields reach one of toolShapes (an event whose payload is a
-// shape counts too); toolCarriers names how each is stamped. A new carrier fails here until it is
-// routed through marotte.StampToolEntry or marotte.ToolCard and listed. The chat page, both turn ranges
-// and the export are untyped replies the registry cannot see, pinned by TestHandleChatPage_ServesTheCardTitle,
+// A tool card's title and loaded list are served at read time by marotte.ToolCard, never stored, so every
+// frame and typed reply that can carry a tool entry must be built through it. The scan finds each registered
+// event payload or type whose fields reach one of toolShapes (an event whose payload is a shape counts too).
+// A new carrier fails here until toolCarriers lists it with the site that stamps it and the tests that pin
+// the stamp, which carry the stamping assertion. The chat page, both turn ranges and the export are untyped
+// replies the registry cannot see, pinned by TestHandleChatPage_ServesTheCardTitle,
 // TestHandleTurnRange_StampsAResultWhoseCallPrecedesAfter, TestRunTurnRange_StampsAResultWhoseCallPrecedesAfter
 // and TestHandleExport_JSONCarriesTheCardTitle.
 
