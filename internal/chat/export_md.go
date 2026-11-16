@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html"
 	"slices"
 	"strings"
 	"time"
@@ -676,7 +677,8 @@ func writeToolCallMarkdown(b *strings.Builder, call *marotte.EntryToolCall, res 
 			locations = res.Locations
 		}
 	}
-	fmt.Fprintf(b, "<details>\n<summary>Tool: %s — %s</summary>\n\n", title, toolStatusWord(status, declined))
+	// Escaped: a <summary> is raw HTML, and a command title's `<` redirection would open a tag.
+	fmt.Fprintf(b, "<details>\n<summary>Tool: %s — %s</summary>\n\n", html.EscapeString(title), html.EscapeString(toolStatusWord(status, declined)))
 	if durationMs > 0 {
 		fmt.Fprintf(b, "Duration: %dms\n\n", durationMs)
 	}
@@ -699,7 +701,7 @@ func writeToolResultMarkdown(b *strings.Builder, res *marotte.EntryToolResult) {
 	if title == "" {
 		title = untitledTool
 	}
-	fmt.Fprintf(b, "<details>\n<summary>Tool result: %s — %s</summary>\n\n", title, toolStatusWord(res.Status, res.Declined))
+	fmt.Fprintf(b, "<details>\n<summary>Tool result: %s — %s</summary>\n\n", html.EscapeString(title), html.EscapeString(toolStatusWord(res.Status, res.Declined)))
 	if res.DurationMs > 0 {
 		fmt.Fprintf(b, "Duration: %dms\n\n", res.DurationMs)
 	}

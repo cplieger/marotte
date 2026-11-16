@@ -207,6 +207,31 @@ func TestRenderChatMarkdown_OrphanResultTitlesFromItself(t *testing.T) {
 	}
 }
 
+// A command title holds `<` from a redirection; the summary escapes it so the block stays one element.
+func TestRenderChatMarkdown_EscapesAToolTitleInTheSummary(t *testing.T) {
+	tf := openTurn("t-1", 1, nil).
+		tool(marotte.EntryToolCall{
+			ID: "tc1", Title: "Run Command", Kind: marotte.ToolKindExecute, Status: marotte.ToolPending,
+			Input: json.RawMessage(`{"command":"wc -l </dev/null && echo a&b"}`),
+		}, &marotte.EntryToolResult{Status: marotte.ToolCompleted})
+	tf.add("", "tc9:result", marotte.EntryKindToolResult, marotte.EntryToolResult{
+		Title: "Run Command", Kind: marotte.ToolKindExecute, Status: marotte.ToolCompleted,
+		Input: json.RawMessage(`{"command":"sort <in.txt"}`),
+	})
+	entries, _ := chatOf(tf)
+
+	md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Escaped"}, entries)
+
+	for _, want := range []string{
+		"<summary>Tool: wc -l &lt;/dev/null &amp;&amp; echo a&amp;b — completed</summary>",
+		"<summary>Tool result: sort &lt;in.txt — completed</summary>",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("markdown missing %q\n---\n%s", want, md)
+		}
+	}
+}
+
 func TestHandleExport_JSONCarriesTheCardTitle(t *testing.T) {
 	s := storeWith(t, loadSkillCall("tc1"), &marotte.EntryToolResult{Status: marotte.ToolCompleted})
 
