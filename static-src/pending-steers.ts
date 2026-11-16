@@ -22,6 +22,7 @@ import {
   ICON_ARROW_UP,
   ICON_COMPACT,
   ICON_EDIT,
+  ICON_PAPERCLIP,
   ICON_PAUSE,
   ICON_QUEUE,
   ICON_QUEUE_UI,
@@ -36,7 +37,7 @@ import { dockEntries, entryLive, rowIsSteer, waitWords } from "./run-order.js";
 import { pendingSteerRow, steerIDFor } from "./steer-rows.js";
 import { truncate } from "./strings.js";
 import type { PendingSteer, QueuedPrompt, RunEntryView, RunView, RunWait } from "./types.js";
-import type { SendNowKind } from "./wire/types.gen.js";
+import type { Attachment, SendNowKind } from "./wire/types.gen.js";
 import { readQuoted, splitQuotes } from "./message-quote.js";
 import { drawParts } from "./quote-band.js";
 import { FOLD_AT, buildFoldRow, foldAt, paintFoldRow } from "./stack-fold.js";
@@ -433,14 +434,29 @@ function syncText(row: HTMLElement, text: string): void {
 
 const shownText = new WeakMap<HTMLElement, string>();
 
-/** Each quote as the band a sent prompt draws, each text between on one line; rebuilt only when the
- *  text changes, so a focused path link in a band survives a repaint. */
-function fillText(textEl: HTMLElement, text: string): void {
-  if (shownText.get(textEl) === text) {
+/** The files first (see `attachLabel`), then each quote as the band a sent prompt draws, each text
+ *  between on one line; rebuilt only when either changes, so a focused path link in a band survives a
+ *  repaint. */
+function fillText(textEl: HTMLElement, text: string, files: readonly Attachment[] = []): void {
+  const key = join(text, ...files.map((f) => f.name));
+  if (shownText.get(textEl) === key) {
     return;
   }
-  shownText.set(textEl, text);
-  textEl.replaceChildren(...drawParts(splitQuotes(text), oneLine));
+  shownText.set(textEl, key);
+  const label = files.length > 0 ? [attachLabel(files)] : [];
+  textEl.replaceChildren(...label, ...drawParts(splitQuotes(text), oneLine));
+}
+
+/** The first file's name, ellipsised by CSS, and "+N" for the rest: every name is in the tooltip. */
+function attachLabel(files: readonly Attachment[]): HTMLElement {
+  const more = files.length - 1;
+  return el(
+    "span",
+    { className: "steer-attach" },
+    el("span", { className: "steer-attach-icon", "aria-hidden": "true" }, iconEl(ICON_PAPERCLIP)),
+    el("span", { className: "steer-attach-name" }, files[0]?.name ?? ""),
+    ...(more > 0 ? [el("span", { className: "steer-attach-more" }, `+${String(more)}`)] : []),
+  );
 }
 
 const actionSig = new WeakMap<HTMLElement, string>();
@@ -1014,7 +1030,28 @@ function queuedName(entry: RunEntryView, row: QueuedPrompt): string {
 }
 
 function queuedShown(row: QueuedPrompt): string {
-  return oneLine(row.label ?? readQuoted(row.text));
+  const text = oneLine(row.label ?? readQuoted(row.text));
+  const files = row.attachments ?? [];
+  const first = files[0];
+  if (first === undefined) {
+    return text;
+  }
+  const attached =
+    files.length > 1
+      ? `Attached ${first.name} and ${String(files.length - 1)} more`
+      : `Attached ${first.name}`;
+  return text === "" ? attached : `${attached}, ${text}`;
+}
+
+/** The whole text, under a line naming every attached file. */
+function queuedTooltip(row: QueuedPrompt): string {
+  const text = readQuoted(row.text);
+  const files = row.attachments ?? [];
+  if (files.length === 0) {
+    return text;
+  }
+  const attached = `Attached: ${files.map((f) => f.name).join(", ")}`;
+  return text === "" ? attached : `${attached}\n${text}`;
 }
 
 /** What Discard does to this row, which differs by kind: a carried row was already sent once as
@@ -1091,7 +1128,7 @@ function buildQueuedRow(entry: RunEntryView, stop: string | undefined): HTMLElem
 function updateQueuedRow(li: HTMLElement, entry: RunEntryView, stop: string | undefined): void {
   const row = entry.row ?? { id: entry.id, text: "" };
   queuedRowOf.set(li, { row, entry, stop });
-  li.dataset["tooltip"] = readQuoted(row.text);
+  li.dataset["tooltip"] = queuedTooltip(row);
   li.setAttribute("aria-label", queuedName(entry, row));
   if (entry.state === "held") {
     li.dataset["held"] = "";
@@ -1104,7 +1141,7 @@ function updateQueuedRow(li: HTMLElement, entry: RunEntryView, stop: string | un
   }
   const text = li.querySelector<HTMLElement>(".steer-text");
   if (text !== null) {
-    fillText(text, row.label ?? row.text);
+    fillText(text, row.label ?? row.text, row.attachments ?? []);
   }
   syncQueuedArrow(li, entry);
 }

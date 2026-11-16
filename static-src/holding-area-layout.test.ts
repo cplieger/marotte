@@ -128,6 +128,11 @@ function stackSource(queued: number, steers: number): SteerStackSource {
         }
       : { id: `m-q${String(i)}`, text: `follow-up number ${String(i + 1)}, check the logs again` },
   );
+  return sourceOf(prompts, steers);
+}
+
+/** `prompts` queued behind a running turn and `steers` unread steers. */
+function sourceOf(prompts: readonly QueuedPrompt[], steers: number): SteerStackSource {
   const entries: RunEntryView[] = prompts.map((row, i) =>
     rowEntry(
       row.id,
@@ -254,6 +259,35 @@ describe("the holding area", () => {
       }
     });
   }
+
+  it("ellipsises a long file name inside its row at phone width, the actions column in the row", async () => {
+    await browser.viewport(390, 844);
+    style = mountAppCSS();
+    const root = mountView(844, '<div id="chat-view"', '<div id="settings-view"');
+    const name = `${"a".repeat(116)}.png`;
+    mountSteerStack(
+      root.querySelector<HTMLUListElement>("#steer-stack")!,
+      sourceOf([{ id: "m-q0", text: "", attachments: [{ path: `/uploads/${name}`, name }] }], 0),
+    );
+    mountHoldingArea(root.querySelector<HTMLElement>("#holding-area")!);
+    await settle();
+    const row = root.querySelector<HTMLElement>("#steer-stack > .steer-row")!;
+    const shown = row.querySelector<HTMLElement>(".steer-attach-name")!;
+    const box = row.getBoundingClientRect();
+
+    expect(shown.textContent).toBe(name);
+    expect(getComputedStyle(shown).textOverflow).toBe("ellipsis");
+    expect(shown.scrollWidth, "the name is cut").toBeGreaterThan(shown.clientWidth);
+    const text = row.querySelector(".steer-text")!.getBoundingClientRect();
+    expect(
+      shown.getBoundingClientRect().right,
+      "the name ends inside its column",
+    ).toBeLessThanOrEqual(text.right + 0.5);
+    const actions = row.querySelector(".steer-actions")!.getBoundingClientRect();
+    expect(actions.left, "the actions start inside the row").toBeGreaterThanOrEqual(box.left);
+    expect(actions.right, "the actions end inside the row").toBeLessThanOrEqual(box.right + 0.5);
+    expect(actions.left, "the actions follow the message").toBeGreaterThanOrEqual(text.right);
+  });
 
   it("caps the area against the visual viewport when a keyboard is up", async () => {
     const vv = 464;

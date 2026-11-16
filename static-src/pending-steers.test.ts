@@ -117,7 +117,7 @@ const {
 import { setSessions, setActive, recordSteerQueued, openTurn, appendEntry, get } from "./store.js";
 import { initPendingSteers, mountSteerStack, type SteerStackSource } from "./pending-steers.js";
 import { signal } from "@cplieger/reactive";
-import { ICON_QUEUE_UI, ICON_STEER } from "./icons.js";
+import { ICON_PAPERCLIP, ICON_QUEUE_UI, ICON_STEER } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 // `vitest/browser` is the Vitest 5 spelling; `@vitest/browser/context` throws.
 import { page } from "vitest/browser";
@@ -1336,6 +1336,120 @@ describe("the steer stack", () => {
 
       expect(shownIn(chatStack())).toEqual(texts(2));
       expect(toggleIn(chatStack()).textContent).toBe("+16 more");
+    });
+  });
+
+  // A follow-up's files lead its row as a paperclip and the first file's name, "+N" counting the rest, so a
+  // row whose message is only an attachment never reads as empty.
+  describe("a follow-up's attachments", () => {
+    let styleEl: HTMLStyleElement | null = null;
+    const SHOT = "pasted-2026-11-16T10-00-41.png";
+
+    beforeAll(() => {
+      styleEl = mountAppCSS();
+    });
+
+    beforeEach(() => {
+      localStorage.removeItem(LS_UI_STATE_KEY);
+    });
+
+    afterAll(() => {
+      styleEl?.remove();
+      localStorage.removeItem(LS_UI_STATE_KEY);
+    });
+
+    function files(...names: string[]): NonNullable<QueuedPrompt["attachments"]> {
+      return names.map((name) => ({ path: `/uploads/${name}`, name }));
+    }
+
+    function attachOf(row: HTMLElement): HTMLElement | null {
+      return row.querySelector<HTMLElement>(".steer-text > .steer-attach");
+    }
+
+    function nameOf(row: HTMLElement): string {
+      return attachOf(row)?.querySelector(".steer-attach-name")?.textContent ?? "";
+    }
+
+    function moreOf(row: HTMLElement): string | null {
+      return attachOf(row)?.querySelector(".steer-attach-more")?.textContent ?? null;
+    }
+
+    it("leads an attachment-only follow-up with a paperclip and the file's name", () => {
+      withRun(behindTurn([{ id: "m-q1", text: "", attachments: files(SHOT) }]));
+      const row = firstRow();
+
+      expect(attachOf(row)?.querySelector(".steer-attach-icon svg")).toBeInstanceOf(SVGElement);
+      expect(attachOf(row)?.querySelector(".steer-attach-icon svg")?.outerHTML).toBe(
+        glyph(ICON_PAPERCLIP),
+      );
+      expect(nameOf(row)).toBe(SHOT);
+      expect(moreOf(row)).toBeNull();
+      expect(attachOf(row)?.checkVisibility()).toBe(true);
+      expect(row.getAttribute("aria-label")).toBe(`After this turn: Attached ${SHOT}`);
+      expect(row.dataset["tooltip"]).toBe(`Attached: ${SHOT}`);
+    });
+
+    it("names the first of two attachments and counts the other", () => {
+      withRun(behindTurn([{ id: "m-q1", text: "", attachments: files("a.png", "b.png") }]));
+      const row = firstRow();
+
+      expect(nameOf(row)).toBe("a.png");
+      expect(moreOf(row)).toBe("+1");
+      expect(row.getAttribute("aria-label")).toBe("After this turn: Attached a.png and 1 more");
+    });
+
+    it("puts the attachment before the text, on the text's first line", () => {
+      withRun(behindTurn([{ id: "m-q1", text: "look at this", attachments: files("a.ts") }]));
+      const row = firstRow();
+      const text = row.querySelector<HTMLElement>(".steer-text")!;
+
+      expect(text.firstElementChild).toBe(attachOf(row));
+      expect(text.lastChild?.textContent).toBe("look at this");
+      const words = document.createRange();
+      words.selectNodeContents(text.lastChild!);
+      const icon = attachOf(row)!.getBoundingClientRect();
+      const line = words.getClientRects()[0]!;
+      expect(line.top, "the text starts on the label's line").toBeLessThan(icon.bottom);
+      expect(line.left, "the text follows the label").toBeGreaterThanOrEqual(icon.right);
+      expect(row.getAttribute("aria-label")).toBe("After this turn: Attached a.ts, look at this");
+    });
+
+    it("names every file in the tooltip, above the message", () => {
+      withRun(
+        behindTurn([
+          { id: "m-q1", text: "compare these", attachments: files("a.png", "b.png", "c.png") },
+        ]),
+      );
+
+      expect(firstRow().dataset["tooltip"]).toBe("Attached: a.png, b.png, c.png\ncompare these");
+      expect(moreOf(firstRow())).toBe("+2");
+    });
+
+    it("draws the label again when a row's files change under the same text", () => {
+      withRun(behindTurn([{ id: "m-q1", text: "look", attachments: files("a.png") }]));
+      const row = firstRow();
+
+      withRun(behindTurn([{ id: "m-q1", text: "look", attachments: files("b.png") }]));
+
+      expect(firstRow()).toBe(row);
+      expect(nameOf(row)).toBe("b.png");
+    });
+
+    it("shows the label on an attachment-only row among a folded stack's first two", () => {
+      withRun(
+        behindTurn([
+          { id: "m-q1", text: "first" },
+          { id: "m-q2", text: "", attachments: files(SHOT) },
+          { id: "m-q3", text: "third" },
+          { id: "m-q4", text: "fourth" },
+        ]),
+      );
+      const row = rowAt(1);
+
+      expect(document.querySelector("#steer-stack > .steer-fold")).not.toBeNull();
+      expect(row.checkVisibility()).toBe(true);
+      expect(attachOf(row)?.checkVisibility()).toBe(true);
+      expect(nameOf(row)).toBe(SHOT);
     });
   });
 

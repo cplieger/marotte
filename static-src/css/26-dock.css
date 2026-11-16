@@ -1133,6 +1133,40 @@
   transition: color var(--dur-micro) var(--ease-standard);
 }
 
+/* A row's attached files, leading its text: `max-inline-size` keeps a long name to the
+   column, where it ellipsises; the tooltip names every file. */
+.steer-attach {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-inline-size: 100%;
+  margin-inline-end: var(--sp-1);
+  vertical-align: bottom;
+  color: var(--c-text-secondary);
+
+  & svg {
+    width: 0.85rem;
+    height: 0.85rem;
+  }
+}
+
+.steer-attach-icon {
+  display: inline-flex;
+  flex: none;
+}
+
+.steer-attach-name {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--c-text-primary);
+}
+
+.steer-attach-more {
+  flex: none;
+}
+
 /* --- Actions column ----------------------------------------------------- */
 
 /* PRESENT IN BOTH STATES, AND EMPTY WHILE SENDING, because this column sets the

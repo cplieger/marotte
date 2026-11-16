@@ -252,6 +252,11 @@ export const ICON_ARROW_UP = svg("ui", '<path d="M12 19V5M5 12l7-7 7 7"/>');
 // The dock's Queue instead, which moves a steer after the turn; the composer's Queue half draws the `_UI` size.
 export const ICON_QUEUE = svg("inline", PATH_LIST_END);
 export const ICON_QUEUE_UI = svg("ui", PATH_LIST_END);
+// Lucide `paperclip`: a waiting row's attached files.
+export const ICON_PAPERCLIP = svg(
+  "ui",
+  '<path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"/>',
+);
 /** Lucide `ship-wheel`: a message that changes the running turn's course. One `<path>`, so it adds the one DOM node the send arrow did (perf budgets count DOM nodes). */
 export const ICON_STEER = svg(
   "ui",
