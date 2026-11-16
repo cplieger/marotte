@@ -145,7 +145,8 @@ type runEntry struct {
 	afterSend bool
 	// failedLaunch: a failed launch paused this door entry after its caller was answered, so the caller's next send
 	// puts it back in order while no stop holds it (doorOnto). It is stored with the list (RunEntry.FailedLaunch) and
-	// kept under a stop's hold, so it outlives a close and the stop's undo; any other pause or an unpause clears it.
+	// kept under a stop's hold, so it outlives a close and the stop's undo; a reader's send that lifts a hold, any
+	// other pause or an unpause clears it.
 	failedLaunch bool
 }
 
@@ -545,9 +546,13 @@ func (l *runList) mayLaunch(e *runEntry) bool {
 // (pausedBy 0), and a row an outside caller sends while the stopped turn still closes joins the queue pending
 // (queuePaused). A steer kiro-cli holds that a stop stamped comes back pending after a Resume, and after a send comes
 // back paused like the released rows (afterSend), so it waits for the next clean close and is never steered into the
-// send's reply.
+// send's reply. A send that lifts a hold also ends a failed launch's retry (failedLaunch) for the rows it releases.
 func (l *runList) releaseHold(send bool) {
+	held := send && (l.pausing != 0 || l.held())
 	for _, e := range l.entries {
+		if held && e.state == marotte.RunPaused {
+			e.failedLaunch = false
+		}
 		switch {
 		case l.stopPaused(e):
 			e.pausedBy, e.pausedBefore = 0, false

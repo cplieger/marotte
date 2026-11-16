@@ -715,6 +715,53 @@ func TestRunList_AnEntryWhoseLaunchFailsIsPausedNotTakenAgain(t *testing.T) {
 		w.door("d2", "2 new")
 		w.wantOrder(t, "the caller's next send", "u:running d:pending")
 	})
+	t.Run("a door entry a Stop took over stays paused on a resend during the reply to the reader's send", func(t *testing.T) {
+		w := newTableWorld()
+		w.door("d", "1 new")
+		w.l.takeEffects()
+		w.failLaunch(t, "d")
+		w.user("u", marotte.RunWantPrompt)
+		w.running("u")
+		w.l.readerStop("u", 7)
+		w.closed("u", listClose{})
+		w.user("v", marotte.RunWantPrompt)
+		w.running("v")
+		w.prompted("v")
+		w.l.takeEffects()
+		w.door("d2", "2 new")
+		w.wantOrder(t, "the caller's next send during the reader's reply", "v:running d:paused")
+		if got := w.steered(); got != "" {
+			t.Errorf("the resend steered %q into the reader's reply, want nothing", got)
+		}
+		w.closed("v", listClose{clean: true})
+		w.wantOrder(t, "after the reader's clean close", "d:starting")
+	})
+	t.Run("a door entry a Stop took over stays paused on a resend during the reply to a row sent ahead", func(t *testing.T) {
+		w := newTableWorld()
+		w.door("d", "1 new")
+		w.l.takeEffects()
+		w.failLaunch(t, "d")
+		w.user("u", marotte.RunWantPrompt)
+		w.running("u")
+		w.prompted("u")
+		w.send("q", marotte.SendPlain, marotte.InterruptQueue)
+		h, err := w.l.sendNow("q", "", false)
+		if err != nil {
+			t.Fatalf("sendNow: %v", err)
+		}
+		if h == nil {
+			t.Fatal("sendNow stopped no turn, want the running one")
+		}
+		w.l.readerStop(h.id, 8)
+		w.closed("u", listClose{})
+		w.running("q")
+		w.prompted("q")
+		w.l.takeEffects()
+		w.door("d2", "2 new")
+		w.wantOrder(t, "the caller's next send during the sent-ahead reply", "q:running d:paused")
+		w.closed("q", listClose{clean: true})
+		w.wantOrder(t, "after the sent-ahead row's clean close", "d:starting")
+	})
 	t.Run("a door entry the chat's close stored is taken again on a resend", func(t *testing.T) {
 		w := newTableWorld()
 		w.door("d", "1 new")
