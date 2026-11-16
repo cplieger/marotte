@@ -252,10 +252,10 @@ export const ICON_ARROW_UP = svg("ui", '<path d="M12 19V5M5 12l7-7 7 7"/>');
 // The dock's Queue instead, which moves a steer after the turn; the composer's Queue half draws the `_UI` size.
 export const ICON_QUEUE = svg("inline", PATH_LIST_END);
 export const ICON_QUEUE_UI = svg("ui", PATH_LIST_END);
-/** Lucide `corner-up-right`: a turn arrow, for a message that changes the running turn's course. */
+/** Lucide `ship-wheel`: a message that changes the running turn's course. */
 export const ICON_STEER = svg(
   "ui",
-  '<path d="m15 14 5-5-5-5"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/>',
+  '<circle cx="12" cy="12" r="8"/><path d="M12 2v7.5"/><path d="m19 5-5.23 5.23"/><path d="M22 12h-7.5"/><path d="m19 19-5.23-5.23"/><path d="M12 14.5V22"/><path d="M10.23 13.77 5 19"/><path d="M9.5 12H2"/><path d="M10.23 10.23 5 5"/><circle cx="12" cy="12" r="2.5"/>',
 );
 // Lucide `arrow-right`: the turn panel's "Review all changes", which leaves the panel for the git view.
 export const ICON_ARROW_RIGHT = svg("ui", '<path d="M5 12h14M13 6l6 6-6 6"/>');
