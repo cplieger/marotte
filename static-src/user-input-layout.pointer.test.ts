@@ -1130,6 +1130,26 @@ describe("a waiting question and the composer", () => {
     within(firstSteer(area), s.top, s.bottom, "the first queued steer whole");
   });
 
+  it("chat: moves the holding area's floor with the run bar opening and folding under a question", async () => {
+    await mountDocked("chat", 390, 844);
+    const area = queueSteers("chat", 2);
+    const card = await pushQuestion("chat");
+    await traySettled(card.parentElement!);
+    const floor = (): number => Number.parseFloat(getComputedStyle(area).minBlockSize);
+    const runBar = frame!.querySelector<HTMLElement>("#run-bar")!;
+    for (const folded of [false, true]) {
+      runBar.toggleAttribute("data-folded", folded);
+      await settle();
+      const what = folded ? "folded again" : "opened";
+      expect(
+        Math.abs(floor() - toFirstSteer(area)),
+        `${what}: the floor at the first steer`,
+      ).toBeLessThanOrEqual(1);
+      const s = area.getBoundingClientRect();
+      within(firstSteer(area), s.top, s.bottom, `${what}: the first queued steer whole`);
+    }
+  });
+
   it("the band check fails a card whose buttons sit below the band", async () => {
     const draft = await mountDocked("chat", 320, 568);
     draft.focus();

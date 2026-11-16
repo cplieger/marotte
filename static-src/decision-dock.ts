@@ -231,6 +231,14 @@ function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
     subtree: true,
     attributeFilter: ["class", TYPING_ATTR],
   });
+  // Its holding area's floor follows its rows' boxes, which a slide (the run bar folding) moves with no mutation.
+  const rows = new ResizeObserver(() => {
+    paintFloor(h);
+  });
+  const area = hostEl.parentElement?.querySelector(":scope > .holding-area");
+  for (const child of area?.children ?? []) {
+    rows.observe(child);
+  }
   const stopTyping = followTyping(hostEl);
   const stopRender = effect(() => {
     touch(activeSession, queueVersion);
@@ -239,6 +247,7 @@ function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
   h.stop = () => {
     stopRender();
     content.disconnect();
+    rows.disconnect();
     stopTyping();
   };
 }
