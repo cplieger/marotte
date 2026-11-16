@@ -221,35 +221,35 @@
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 175
+          "seconds": 176
         },
         {
           "scenario": "tabs",
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 172
+          "seconds": 175
         },
         {
           "scenario": "run-dock",
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 142
+          "seconds": 150
         },
         {
           "scenario": "run-page",
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 149
+          "seconds": 151
         },
         {
           "scenario": "files",
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 176
+          "seconds": 178
         },
         {
           "scenario": "git-changes",
@@ -263,42 +263,42 @@
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 897
+          "seconds": 895
         },
         {
           "scenario": "settings",
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 168
+          "seconds": 177
         },
         {
           "scenario": "settings-tools",
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 174
+          "seconds": 175
         },
         {
           "scenario": "docs",
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 248
+          "seconds": 247
         },
         {
           "scenario": "docs-workflows",
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 179
+          "seconds": 176
         },
         {
           "scenario": "shell",
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 172
+          "seconds": 185
         },
         {
           "scenario": "history",
@@ -312,7 +312,7 @@
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 180
+          "seconds": 178
         },
         {
           "scenario": "chat-long",
@@ -322,7 +322,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 32
+          "seconds": 33
         },
         {
           "scenario": "chat-stream",
@@ -332,7 +332,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 32
+          "seconds": 27
         },
         {
           "scenario": "tabs",
@@ -342,7 +342,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 29
+          "seconds": 26
         },
         {
           "scenario": "run-dock",
@@ -352,7 +352,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 33
+          "seconds": 26
         },
         {
           "scenario": "run-page",
@@ -372,7 +372,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 35
+          "seconds": 38
         },
         {
           "scenario": "git-changes",
@@ -382,7 +382,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 32
+          "seconds": 29
         },
         {
           "scenario": "git-prs",
@@ -392,7 +392,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 22
+          "seconds": 26
         },
         {
           "scenario": "settings",
@@ -402,7 +402,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 26
+          "seconds": 27
         },
         {
           "scenario": "settings-tools",
@@ -412,7 +412,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 26
+          "seconds": 27
         },
         {
           "scenario": "docs",
@@ -422,7 +422,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 31
+          "seconds": 36
         },
         {
           "scenario": "docs-workflows",
@@ -442,7 +442,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 21
+          "seconds": 27
         },
         {
           "scenario": "history",
@@ -452,7 +452,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 27
+          "seconds": 26
         },
         {
           "scenario": "history-runs",
@@ -462,7 +462,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 27
+          "seconds": 29
         },
         {
           "scenario": "run-drive",
