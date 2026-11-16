@@ -118,12 +118,12 @@ type Store struct {
 	refuseWrites bool
 }
 
-// NewStore opens (or starts) the store at <dir>/tabs.json, showing the held closes inside window
-// (capped at RecentHold). It ALWAYS returns a store; the error is diagnostic (warn and continue,
-// invariant 6). An arrangement it cannot read is moved aside and the store starts empty with Unread
-// set; see Unread for when writes are then refused.
+// NewStore opens (or starts) the store at <dir>/tabs.json, showing the held closes inside window.
+// It ALWAYS returns a store; the error is diagnostic (warn and continue, invariant 6). An
+// arrangement it cannot read is moved aside and the store starts empty with Unread set; see Unread
+// for when writes are then refused.
 func NewStore(dir string, window time.Duration) (*Store, error) {
-	s := &Store{path: filepath.Join(dir, fileName), now: time.Now, window: min(window, RecentHold)}
+	s := &Store{path: filepath.Join(dir, fileName), now: time.Now, window: window}
 	if err := s.load(); err != nil {
 		err = s.keepAside(err)
 		return s, err

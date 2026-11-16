@@ -25,12 +25,11 @@ type RecentFacts struct {
 	Bot  bool
 }
 
-// pastWindow reports whether e's window d has ended at now (Unix ms).
+// now and ClosedAt are Unix milliseconds.
 func pastWindow(e *marotte.RecentClose, now int64, d time.Duration) bool {
 	return e.ClosedAt+d.Milliseconds() <= now
 }
 
-// dropPastHold removes every entry held for RecentHold at now.
 func dropPastHold(recent []marotte.RecentClose, now int64) []marotte.RecentClose {
 	return slices.DeleteFunc(recent, func(e marotte.RecentClose) bool { return pastWindow(&e, now, RecentHold) })
 }
@@ -159,14 +158,14 @@ func (s *Store) ExpireRecent(ctx context.Context) (uint64, error) {
 	return s.mutate(ctx, s.reshow)
 }
 
-// SetRecentWindow makes window the store's History window, capped at RecentHold, and shows the held
-// entries inside it with a version of its own. A shown list it leaves unchanged bumps nothing, but
-// the window still moves RecentExpiry. On error the window is set and the shown list is not.
+// SetRecentWindow makes window the store's History window and shows the held entries inside it with
+// a version of its own. A shown list it leaves unchanged bumps nothing, but the window still moves
+// RecentExpiry. On error the window is set and the shown list is not.
 func (s *Store) SetRecentWindow(ctx context.Context, window time.Duration) (uint64, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	s.stateMu.Lock()
-	s.window = min(window, RecentHold)
+	s.window = window
 	s.stateMu.Unlock()
 	return s.mutateLocked(ctx, s.reshow)
 }

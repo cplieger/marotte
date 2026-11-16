@@ -44,8 +44,8 @@ func HistoryWindow(ctx context.Context, configDir string) time.Duration {
 	return historyWindowFor(hours, days)
 }
 
-// historyWindowFor caps hours at days when days is above 0. Days 0 caps nothing: the client hides the
-// section there, and the held closes must come back when Days kept rises again.
+// historyWindowFor caps hours at days when days is above 0. Days 0 caps nothing, since the client
+// hides the section there.
 func historyWindowFor(hours, days int) time.Duration {
 	if days > 0 {
 		hours = min(hours, days*24)
