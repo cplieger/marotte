@@ -47,6 +47,8 @@ func TestCloseImpact_NamesEachTurnByItsIds(t *testing.T) {
 	})
 	t.Run("a page's prompt taken with no turn yet names its prompt and admission", func(t *testing.T) {
 		rt, cs, _ := newTestHub()
+		// The turn's close tail reads AdmissionWait, which the next subtest writes: shutdown joins it first.
+		t.Cleanup(func() { _ = rt.Shutdown(context.Background()) })
 		seedChat(t, cs, "c1")
 		release := holdOpens(rt)
 		defer release()
