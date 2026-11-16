@@ -20,9 +20,8 @@ var tailStructureOnly = regexp.MustCompile("^(?:(?:`{3,}|~{3,})[^`]*|\\|?(?:\\s*
 var tailBlockMarkers = regexp.MustCompile(`^(?:#{1,6}\s+|>\s?|[-*+]\s+|\d{1,9}[.)]\s+)+`)
 
 // printedLine is the line a step's dock row shows for one sealed entry of its own lane, "" when the entry prints
-// nothing there. calls holds the lane's tool_calls a result can still settle: a call appended unsettled joins it,
-// its result settles it. The client's twin, which also reads a streaming entry, is run-step-tail.ts lastPrintedLine: both must cut a line the
-// same way.
+// nothing there. A tool_call appended unsettled joins calls and its result settles it. The client's twin, which also
+// reads a streaming entry, is run-step-tail.ts lastPrintedLine: both must cut a line the same way.
 func printedLine(e *marotte.Entry, calls stepCalls) string {
 	if e.Lane != "" {
 		return ""
