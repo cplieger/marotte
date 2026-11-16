@@ -428,6 +428,29 @@ func TestChatFilter_HoldsATitleOnlyTheResultSettles(t *testing.T) {
 		if !f.holdsAll(want) {
 			t.Errorf("filter built over %d entries and extended with the rest rejects \"Loaded skill\"", over)
 		}
+		if held := f.turns["t-1"]; held != nil && held.calls["tc1"] != nil {
+			t.Errorf("filter built over %d entries and extended with the rest still holds the settled call", over)
+		}
+	}
+}
+
+// A tool entry filed after its turn's close, which turnlog refuses to write, still builds and is indexed.
+func TestChatFilter_BuildsAToolEntryAfterItsTurnsClose(t *testing.T) {
+	entries, _ := chatOf(openTurn("t-1", 1, nil).
+		close(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted}).
+		tool(marotte.EntryToolCall{
+			ID: "tc1", Title: "Disclose Context", Kind: marotte.ToolKindOther, Status: marotte.ToolPending,
+			ToolName: "disclose_context",
+		}, &marotte.EntryToolResult{
+			Title: "Disclose Context", Status: marotte.ToolCompleted,
+			Disclosed: &marotte.ToolDisclosed{Type: "skill", DisplayName: "release-notes"},
+		}))
+	f := buildChatFilter("", entries)
+	if !f.holdsAll(trigramsOf(`"Loaded skill"`)) {
+		t.Error("filter over a result after its turn's close rejects its title \"Loaded skill\"")
+	}
+	if f.turns != nil {
+		t.Errorf("filter holds %d turns for a closed turn, want none", len(f.turns))
 	}
 }
 
