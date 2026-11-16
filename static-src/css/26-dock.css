@@ -925,6 +925,57 @@
   list-style: none;
 }
 
+/* Folded rows leave the layout (`pending-steers.ts` `applyFold`). A row leaving `display: none` replays
+   its `@starting-style` rise, which is the reveal when the stack opens. */
+.steer-stack > [data-folded] {
+  display: none;
+}
+
+/* The fold row (`stack-fold.ts`): `.steer-row`'s card around one full-row button, as tall as a row with
+   controls, so the stack keeps one card shape and one rhythm. */
+.steer-fold {
+  border: 1px solid var(--c-border);
+  border-radius: var(--stack-r);
+  background: var(--c-bg-secondary);
+  font-size: var(--fs-sm);
+}
+
+.steer-fold-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  inline-size: 100%;
+  min-block-size: calc(var(--row-tap-sm) + 2 * var(--sp-2));
+  padding: var(--sp-2) var(--sp-3);
+  border: 0;
+  border-radius: calc(var(--stack-r) - 1px);
+  background: transparent;
+  color: var(--c-text-control);
+  font-size: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+
+  @media (any-hover: hover) {
+    &:hover {
+      background: var(--c-hover);
+      color: var(--c-text-primary);
+    }
+  }
+
+  &:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset-inset);
+  }
+
+  &[aria-expanded="true"] > .disclosure-chevron {
+    --chev-turn: 0deg;
+  }
+}
+
 .steer-row {
   /* ONE owner of the control's size, read by the button that takes it and by the
      column that reserves room for it. The button paints at 24px on every tier and

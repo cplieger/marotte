@@ -12,6 +12,7 @@ import { mountHoldingArea } from "./holding-area.js";
 import { mountSteerStack, type SteerStackSource } from "./pending-steers.js";
 import type { ExecRun } from "./exec-view/model.js";
 import type { PendingSteer, QueuedPrompt, RunEntryView } from "./types.js";
+import { LS_UI_STATE_KEY } from "./ls-keys.js";
 
 /** The app's title bar and tab strip above a tab's view. */
 const CHROME_PX = 52;
@@ -38,6 +39,7 @@ afterEach(async () => {
   style?.remove();
   style = null;
   vi.unstubAllGlobals();
+  localStorage.removeItem(LS_UI_STATE_KEY);
   document.documentElement.removeAttribute("data-pointer");
   document.documentElement.style.removeProperty("--dock-viewport-h");
   await browser.viewport(1280, 720);
@@ -196,6 +198,11 @@ async function mountChat(
   return { pane: root.querySelector<HTMLElement>("#chat-view")!, area };
 }
 
+/** The reader's stored fold choice for every steer stack mounted after it. */
+function openStack(open: boolean): void {
+  localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ stack_open: open }));
+}
+
 /** The composer whole inside the pane, three transcript lines visible, the area under its cap, and the
  *  area's end reachable in order by scrolling it. */
 function holds(chat: Chat, visibleH: number): void {
@@ -235,11 +242,14 @@ describe("the holding area", () => {
       ] as const) {
         for (const runsOpen of runs === 0 ? [false] : [true, false]) {
           const bar = runs === 0 ? "" : runsOpen ? ", the run bar open" : ", the run bar folded";
-          it(`keeps the composer on screen beside ${what}${bar}, every message shown`, async () => {
-            const chat = await mountChat(w, h, runs, runsOpen, queued, steers);
-            holds(chat, h - CHROME_PX);
-          });
-          it.todo(`keeps the composer on screen beside ${what}${bar}, the stack folded`);
+          for (const stackOpen of [true, false]) {
+            const stack = stackOpen ? "every message shown" : "the stack folded";
+            it(`keeps the composer on screen beside ${what}${bar}, ${stack}`, async () => {
+              openStack(stackOpen);
+              const chat = await mountChat(w, h, runs, runsOpen, queued, steers);
+              holds(chat, h - CHROME_PX);
+            });
+          }
         }
       }
     });
@@ -256,6 +266,7 @@ describe("the holding area", () => {
       addEventListener: () => undefined,
       removeEventListener: () => undefined,
     });
+    openStack(true);
     const chat = await mountChat(390, 844, 5, true, 17, 0);
     expect(chat.area.getBoundingClientRect().height).toBeLessThanOrEqual(
       SHARE * (vv - CHROME_PX) + 0.5,
@@ -264,6 +275,7 @@ describe("the holding area", () => {
 
   it("keeps the run tab's composer on screen beside 17 messages to a step", async () => {
     await browser.viewport(390, 844);
+    openStack(true);
     style = mountAppCSS();
     const root = mountView(844, '<div id="run-view"', "<!-- One Kiro spec");
     const runView = root.querySelector<HTMLElement>("#run-view")!;

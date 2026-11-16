@@ -1,4 +1,4 @@
-import { el, computed, effect, touch, untracked } from "@cplieger/reactive";
+import { el, computed, effect, signal, touch, untracked } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import { announce } from "./legacy-ui/announce.js";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
@@ -39,19 +39,22 @@ import type { PendingSteer, QueuedPrompt, RunEntryView, RunView, RunWait } from 
 import type { SendNowKind } from "./wire/types.gen.js";
 import { readQuoted, splitQuotes } from "./message-quote.js";
 import { drawParts } from "./quote-band.js";
+import { FOLD_AT, buildFoldRow, foldAt, paintFoldRow } from "./stack-fold.js";
+import { setStackOpen, stackOpen } from "./device-view.js";
 
 /** Where an unsent steer goes, from the run order: with an entry's wait, with the chat's next message
  *  (none carries it yet), or, for a dock with no run order (a run step's), as the next prompt. */
 type SteerPlace = RunWait | "next_message" | undefined;
 
 /** One dock row: a steer the agent has not read, a compaction entry, the failsafe's resume, a
- *  message the server holds, or the head of the rows the reader's stop paused. */
+ *  message the server holds, the head of the rows the reader's stop paused, or the fold row. */
 type DockRow =
   | { kind: "steer"; steer: PendingSteer; place: SteerPlace }
   | { kind: "compact"; entry: RunEntryView }
   | { kind: "resume"; entry: RunEntryView }
   | { kind: "queued"; entry: RunEntryView; stop: string | undefined }
-  | { kind: "paused" };
+  | { kind: "paused" }
+  | { kind: "fold"; hidden: number; open: boolean };
 
 export interface SteerStackSource {
   /** What the dock is about (a chat id, or a run step's key), its steers and, for a chat, its run
@@ -95,6 +98,15 @@ interface StackState {
 
 const mountedStacks = new WeakSet<HTMLUListElement>();
 
+/** Bumped by a fold toggle: the choice lives in device storage, which no signal tracks, and every
+ *  mounted stack follows it. */
+const foldChoice = signal(0);
+
+function toggleFold(): void {
+  setStackOpen(stackOpen() !== true);
+  foldChoice.value += 1;
+}
+
 /** Called once from app.ts. */
 export function initPendingSteers(): void {
   mountSteerStack($.steerStack, chatSource);
@@ -112,6 +124,7 @@ export function mountSteerStack(stack: HTMLUListElement, src: SteerStackSource):
       s.id,
       join(...s.steers.map(steerSig)),
       s.run === undefined ? "" : wireSignature(s.run),
+      String(foldChoice.value),
     );
   });
   effect(() => {
@@ -157,6 +170,11 @@ function render(
   };
   const waiting = state.waiting;
   const rows = dockRows(steers, run);
+  const open = stackOpen() === true;
+  const at = foldAt(rows.length);
+  if (at !== null) {
+    rows.splice(at, 0, { kind: "fold", hidden: rows.length - at, open });
+  }
 
   if (rows.length === 0) {
     reconcile(stack, [], rowSpec(state));
@@ -171,9 +189,12 @@ function render(
   // into a subtree with no box has its first style resolution there — which is the one the entry
   // transition below reads.
   stack.classList.remove("hidden");
+  const focused = document.activeElement;
+  const held = focused instanceof HTMLElement && stack.contains(focused) ? focused : null;
   // Arrival order, so the newest sits at the bottom nearest the box it was typed into and every
   // earlier one moves up.
   reconcile(stack, rows, rowSpec(state));
+  applyFold(stack, open, held);
 
   // Announce only on the same chat, and only the WAITING count — the number the user is waiting to
   // see fall. A pure chat switch is not news.
@@ -188,6 +209,32 @@ function render(
   }
   announced.waiting = waiting;
   announced.id = id;
+}
+
+/** Marks every row after the fold row while folded (`.steer-stack > [data-folded]`, 26-dock.css), and keeps
+ *  focus a fold hid or a leaving fold row took off `<body>`: on the toggle, or on the row now in its place. */
+function applyFold(stack: HTMLUListElement, open: boolean, held: HTMLElement | null): void {
+  let after = false;
+  let toggle: HTMLElement | null = null;
+  for (const child of stack.children) {
+    child.toggleAttribute("data-folded", after && !open);
+    if (child.classList.contains("steer-fold")) {
+      after = true;
+      toggle = child.querySelector<HTMLElement>(".steer-fold-toggle");
+    }
+  }
+  if (held === null) {
+    return;
+  }
+  if (held.isConnected && held.closest("[data-folded]") !== null) {
+    toggle?.focus({ preventScroll: true });
+    return;
+  }
+  if (!held.isConnected && held.classList.contains("steer-fold-toggle")) {
+    stack.children[FOLD_AT - 1]?.querySelector<HTMLElement>(".steer-act")?.focus({
+      preventScroll: true,
+    });
+  }
 }
 
 /** `run.cancel` when the entry it names is a running turn: what a steer's send-now stops. */
@@ -295,6 +342,8 @@ function rowSpec(state: StackState): ReconcileSpec<DockRow> {
           return `q:${r.entry.id}`;
         case "paused":
           return "p";
+        case "fold":
+          return "f";
       }
     },
     mount: (r) => {
@@ -309,6 +358,11 @@ function rowSpec(state: StackState): ReconcileSpec<DockRow> {
           return buildQueuedRow(r.entry, r.stop);
         case "paused":
           return buildPausedRow();
+        case "fold": {
+          const li = buildFoldRow(toggleFold);
+          paintFoldRow(li, r.hidden, r.open);
+          return li;
+        }
       }
     },
     update: (el, r) => {
@@ -326,6 +380,9 @@ function rowSpec(state: StackState): ReconcileSpec<DockRow> {
           updateQueuedRow(el, r.entry, r.stop);
           return;
         case "paused":
+          return;
+        case "fold":
+          paintFoldRow(el, r.hidden, r.open);
           return;
       }
     },
