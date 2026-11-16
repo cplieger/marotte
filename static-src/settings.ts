@@ -215,6 +215,7 @@ export function applyGeneralPanel(s: EffectiveSettings, shown: EffectiveSettings
   applyPanelSwitches(shown);
   applyEngineHeap(shown);
   paintInterruptMode(shown);
+  paintHistoryWindow(shown);
 }
 
 /** Register the General panel's `change` listeners. Once per page, from `initUI`: every one of
@@ -225,6 +226,7 @@ export function initGeneralPanelControls(): void {
   initPanelSwitchControls();
   initEngineHeapControl();
   initInterruptModeControl();
+  initHistoryWindowControl();
   maybeEl("settings-open-config")?.addEventListener("click", () => {
     void openConfigFile("config.json");
   });
@@ -242,6 +244,66 @@ function initInterruptModeControl(): void {
   select?.addEventListener("change", () => {
     const mode = select.value === "queue" ? "queue" : "steer";
     saveControl(select, { interrupt_mode: mode }, paintInterruptMode);
+  });
+}
+
+function historyWindowLabel(hours: number): string {
+  if (hours < 24) {
+    return hours === 1 ? "1 hour" : `${String(hours)} hours`;
+  }
+  if (hours === 24) {
+    return "24 hours";
+  }
+  if (hours === 168) {
+    return "1 week";
+  }
+  const days = hours / 24;
+  return days === 1 ? "1 day" : `${String(days)} days`;
+}
+
+const dayCount = (days: number): string => (days === 1 ? "1 day" : `${String(days)} days`);
+
+/** The server caps the window at Days kept where it uses it; the row reads Days kept from s so it
+ *  follows a Days kept edit on this page before any settings_updated frame. */
+function paintHistoryWindow(s: EffectiveSettings): void {
+  const select = maybeEl<HTMLSelectElement>("history-window-hours");
+  const note = maybeEl("history-window-hours-cap");
+  if (select === null || note === null) {
+    return;
+  }
+  const choices = s.history_window_choices.map(String);
+  if ([...select.options].map((o) => o.value).join() !== choices.join()) {
+    select.replaceChildren(
+      ...s.history_window_choices.map((h) =>
+        el("option", { value: String(h) }, historyWindowLabel(h)),
+      ),
+    );
+  }
+  select.value = String(s.history_window_hours);
+  const days = s.chat_retention_days;
+  const capHours = days > 0 ? days * 24 : Infinity;
+  let capped = false;
+  for (const option of select.options) {
+    option.disabled = Number(option.value) > capHours;
+    capped ||= option.disabled;
+  }
+  select.disabled = days === 0;
+  if (days === 0) {
+    note.replaceChildren(
+      "Off while ",
+      el("strong", {}, "Days kept"),
+      " is 0, because a chat is deleted as soon as you close it.",
+    );
+  } else if (capped) {
+    note.textContent = `Chat retention keeps closed chats ${dayCount(days)}, so the sidebar's History goes back ${dayCount(days)} at most.`;
+  }
+  note.hidden = days !== 0 && !capped;
+}
+
+function initHistoryWindowControl(): void {
+  const select = maybeEl<HTMLSelectElement>("history-window-hours");
+  select?.addEventListener("change", () => {
+    saveControl(select, { history_window_hours: Number(select.value) }, paintHistoryWindow);
   });
 }
 
@@ -294,6 +356,10 @@ function initChatRetentionControls(): void {
     void patchSettings({ chat_retention_days: value }, ...boxes).then(() => {
       // The settled write may have repainted the forever box.
       daysRow?.classList.toggle("hidden", foreverInput.checked);
+      const shown = settingsAsShown();
+      if (shown !== null) {
+        paintHistoryWindow(shown);
+      }
     });
   };
 
@@ -306,6 +372,7 @@ function initChatRetentionControls(): void {
       if (shown.chat_retention_days >= 0) {
         daysInput.value = String(shown.chat_retention_days);
       }
+      paintHistoryWindow(shown);
     });
   });
   foreverInput.addEventListener("change", () => {

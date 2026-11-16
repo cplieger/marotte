@@ -56,7 +56,8 @@ const disabledChoices = (): string[] =>
   [...select().options].filter((o) => o.disabled).map((o) => o.value);
 
 /** The note as a reader meets it: nothing while hidden. */
-const noteText = (): string => (note().hidden ? "" : note().textContent.replace(/\s+/g, " ").trim());
+const noteText = (): string =>
+  note().hidden ? "" : note().textContent.replace(/\s+/g, " ").trim();
 
 describe("History in the sidebar", () => {
   it("sits in the Chat retention section, under Days kept", () => {
