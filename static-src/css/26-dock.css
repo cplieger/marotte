@@ -1270,10 +1270,9 @@
 
   /* The narrow layout's distance from a pill edge to its ink: above and below the fold text, and
      below a row's bar. Equal on those lines, so the box's top and bottom gaps and the fold-to-row
-     and row-to-row gaps match. A row's title keeps the `--sp-1` it always had above its cap, so
-     seven rows still fit under the phone cap; only a first row with no fold row above it takes
-     the air. The -1.5px and -0.5px below are the line box's
-     leading above a cap and below a descender. */
+     and row-to-row gaps match. A row's title keeps the `--sp-1` it always had above its cap; only
+     a first row with no fold row above it takes the air. The -1.5px and -0.5px below are the
+     line box's leading above a cap and below a descender. */
   --run-air: 0.5rem;
 
   /* The gap between runs, and under an open fold row. */
