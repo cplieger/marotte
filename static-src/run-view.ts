@@ -16,6 +16,7 @@ import {
   takeIntoRunComposer,
 } from "./run-composer.js";
 import { DEFINITE_REFUSALS, mountSteerStack, type SteerStackSource } from "./pending-steers.js";
+import { mountHoldingArea } from "./holding-area.js";
 import { stepSteers } from "./run-step-steers.js";
 import { confirm } from "./confirm.js";
 import { noticeAbout } from "./actions/subject.js";
@@ -383,17 +384,20 @@ function mountBottomBar(): void {
   const input = maybeEl("run-composer-input");
   const send = maybeEl("run-send-btn");
   const stack = maybeEl("run-steer-stack");
+  const area = maybeEl("run-holding-area");
   if (
     !(form instanceof HTMLFormElement) ||
     !(input instanceof HTMLTextAreaElement) ||
     !(send instanceof HTMLButtonElement) ||
-    !(stack instanceof HTMLUListElement)
+    !(stack instanceof HTMLUListElement) ||
+    area === null
   ) {
     return;
   }
   barMounted = true;
   mountRunComposer(form, input, send);
   mountSteerStack(stack, stepStackSource);
+  mountHoldingArea(area);
 }
 
 function mountFollower(): void {

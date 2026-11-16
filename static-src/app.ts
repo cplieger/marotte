@@ -100,6 +100,7 @@ import { initSlashMenu } from "./slash-menu.js";
 import { stagedAttachment } from "./attachments.js";
 import { initPendingSteers } from "./pending-steers.js";
 import { initRunBar } from "./run-bar.js";
+import { mountHoldingArea } from "./holding-area.js";
 import { initChatOptions } from "./chat-options.js";
 import { watchPillRow } from "./pill-row-fit.js";
 import { initSelectionQuote } from "./selection-quote.js";
@@ -501,6 +502,7 @@ function setupInput(): void {
   initPendingSteers();
   // The composer band's live-run rows; a pure projection of the run store.
   initRunBar();
+  mountHoldingArea($.holdingArea);
   initChatOptions();
   const pillRow = queryEl<HTMLElement>(".prompt-pills");
   if (pillRow !== null) {

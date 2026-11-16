@@ -1094,6 +1094,11 @@ label.toggle-inline:has(> .toggle) {
     flex: none;
   }
 
+  /* The holding area's own shrink (26-dock.css), at `> *`'s weight so a question's allocation still wins. */
+  & > :where(.holding-area) {
+    flex: 0 1 auto;
+  }
+
   /* The stack's one gap is each member's own block-end margin, as in the chat's bar. */
   & > .ev-dock-host {
     flex: 0 1 auto;

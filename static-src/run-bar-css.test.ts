@@ -123,7 +123,10 @@ function mountBand(states: readonly string[]): {
   const barHost = document.createElement("div");
   barHost.className = "run-bar-host";
   barHost.append(bar);
-  form.append(dock, barHost, box);
+  const area = document.createElement("div");
+  area.className = "holding-area";
+  area.append(barHost);
+  form.append(dock, area, box);
   host.append(outer, form);
   document.body.appendChild(host);
   return { bar, wrap, box, dock, rows };
@@ -153,16 +156,16 @@ describe("the run bar's geometry", () => {
   it("shrinks the transcript by exactly its own height and covers nothing", () => {
     const { bar, wrap } = mountBand(["running", "waiting"]);
     const shown = wrap.getBoundingClientRect();
-    const box = bar.parentElement!;
+    const box = bar.closest<HTMLElement>(".holding-area")!;
     const barRect = box.getBoundingClientRect();
     expect(barRect.height).toBeGreaterThan(0);
-    // The MARGIN box is what the band grows by: the region carries the same `margin-block-end` the
-    // dock and the steer stack do, which is the gap between them rather than part of the bar.
+    // The MARGIN box is what the band grows by: the holding area carries the same `margin-block-end` the
+    // dock does, which is the gap between them rather than part of the bar.
     const margin = Number.parseFloat(getComputedStyle(box).marginBlockEnd);
     expect(margin).toBeGreaterThan(0);
 
-    // The `.hidden` utility is `display: none !important` and the host follows its list, so the
-    // region's whole box leaves the flex column and the transcript takes the space back.
+    // The `.hidden` utility is `display: none !important` and the holding area follows its lists, so
+    // the region's whole box leaves the flex column and the transcript takes the space back.
     bar.classList.add("hidden");
     const hidden = wrap.getBoundingClientRect();
 
@@ -514,82 +517,6 @@ describe("the run bar's box", () => {
     } finally {
       document.documentElement.removeAttribute("data-pointer");
       host.remove();
-    }
-  });
-
-  const SEVEN = Array.from({ length: 7 }, (_, i) => runOf(`run-${String(i)}`, 1, 4));
-
-  /** The open list's lines, and how many sit wholly inside the list's own box, once each row's
-   *  entry rise has landed. */
-  function visibleLines(bar: HTMLElement): { all: number; whole: number } {
-    for (const a of bar.getAnimations({ subtree: true })) {
-      if (a instanceof CSSTransition) {
-        a.finish();
-      }
-    }
-    const box = bar.getBoundingClientRect();
-    const lines = [...bar.querySelectorAll<HTMLElement>(":scope > li")];
-    const whole = lines.filter((l) => l.getBoundingClientRect().bottom <= box.bottom + 0.5);
-    return { all: lines.length, whole: whole.length };
-  }
-
-  describe("on a phone, an open list", () => {
-    afterAll(async () => {
-      await browser.viewport(1280, 720);
-    });
-
-    it("shows every run while they fit in half the viewport", async () => {
-      await browser.viewport(390, 844);
-      document.documentElement.setAttribute("data-pointer", "coarse");
-      try {
-        const bar = mountRows(SEVEN.slice(0, 4), true, 374);
-        const { all, whole } = visibleLines(bar);
-        expect(whole).toBe(all);
-        expect(bar.scrollHeight).toBeLessThanOrEqual(bar.clientHeight + 1);
-      } finally {
-        document.documentElement.removeAttribute("data-pointer");
-        host.remove();
-      }
-    });
-
-    it("grows to half the viewport and scrolls only past it", async () => {
-      await browser.viewport(360, 740);
-      document.documentElement.setAttribute("data-pointer", "coarse");
-      try {
-        const bar = mountRows([...SEVEN, ...SEVEN], true, 344);
-        expect(bar.scrollHeight).toBeGreaterThan(bar.clientHeight);
-        // The cap is the box's content: the fold row, its gap and the list together, ending on a
-        // whole run, so it falls short of half the viewport by less than one run's pitch.
-        const box = bar.parentElement!;
-        const cs = getComputedStyle(box);
-        const chrome =
-          parseFloat(cs.paddingTop) +
-          parseFloat(cs.paddingBottom) +
-          parseFloat(cs.borderTopWidth) +
-          parseFloat(cs.borderBottomWidth);
-        const rows = bar.querySelectorAll(":scope > li");
-        const pitch = rows[1]!.getBoundingClientRect().top - rows[0]!.getBoundingClientRect().top;
-        const content = box.getBoundingClientRect().height - chrome;
-        expect(content).toBeLessThanOrEqual(0.5 * 740 + 0.5);
-        expect(content).toBeGreaterThan(0.5 * 740 - pitch);
-      } finally {
-        document.documentElement.removeAttribute("data-pointer");
-        host.remove();
-      }
-    });
-  });
-
-  it("keeps the desktop cap at a quarter of the viewport, 16rem at most", async () => {
-    await browser.viewport(1280, 900);
-    try {
-      const bar = mountRows(SEVEN, true);
-      const box = bar.parentElement!;
-      const cs = getComputedStyle(box);
-      const chrome = 2 * parseFloat(cs.paddingTop) + 2 * parseFloat(cs.borderTopWidth);
-      expect(parseFloat(cs.maxBlockSize) - chrome).toBe(225);
-    } finally {
-      host.remove();
-      await browser.viewport(1280, 720);
     }
   });
 

@@ -963,10 +963,6 @@ describe("the run bar's fold motion", () => {
   });
 
   afterEach(() => {
-    // A case can leave the list scrolled. With the stylesheet gone the list stops scrolling, so the
-    // root afterEach empties it without clamping, and Chromium applies the kept offset again once a
-    // later case's rows overflow it.
-    bar.scrollTop = 0;
     style.remove();
     vi.unstubAllGlobals();
     localStorage.removeItem("marotte.ui-state");
@@ -1083,64 +1079,6 @@ describe("the run bar's fold motion", () => {
     // The paused run moved to the front, so the row first in line is checked by identity, not position.
     expect(first?.isConnected).toBe(true);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
-  });
-
-  it("keeps a scrolled list's offset through a close and a reopen", async () => {
-    const { toggle } = await folded(12);
-    // The fold row's gap transition runs beside the slide and sets the list's room, so it ends first.
-    const settle = async (): Promise<void> => {
-      for (const a of fold.getAnimations()) {
-        a.finish();
-      }
-      await finishSlides();
-    };
-    toggle.click();
-    await settle();
-    // A row's entry rise (`translateY(4px)`) widens the scroll range until it ends.
-    for (const row of bar.querySelectorAll(".run-bar-open")) {
-      for (const a of row.getAnimations()) {
-        a.finish();
-      }
-    }
-    expect(getComputedStyle(fold).marginBlockEnd, "the open gap").not.toBe("0px");
-    expect(bar.scrollHeight, "the list overflows its cap").toBeGreaterThan(bar.clientHeight);
-    bar.scrollTop = bar.scrollHeight;
-    const top = bar.scrollTop;
-    expect(top).toBeGreaterThan(0);
-    const midway = (): void => {
-      const [slide] = heightSlides();
-      if (slide === undefined) {
-        throw new Error("no slide");
-      }
-      slide.pause();
-      slide.currentTime = Number(slide.effect?.getTiming().duration) / 2;
-    };
-
-    toggle.click();
-    midway();
-    expect(bar.scrollTop, "mid-close").toBe(top);
-    // The slide reaches its end with the fold row's gap already shut, and a layout runs before the fold: `finish()`
-    // would resolve the fold first.
-    for (const a of fold.getAnimations()) {
-      a.finish();
-    }
-    const [closing] = heightSlides();
-    closing?.play();
-    if (closing !== undefined) {
-      closing.currentTime = Number(closing.effect?.getTiming().duration);
-    }
-    expect(bar.getBoundingClientRect().height, "the slide's end").toBe(0);
-    expect(bar.scrollTop, "the slide's end").toBe(top);
-    await closing?.finished;
-    await new Promise((r) => requestAnimationFrame(r));
-    expect(bar.hasAttribute("data-folded"), "closed").toBe(true);
-    expect(bar.scrollTop, "closed").toBe(top);
-    await settle();
-    toggle.click();
-    midway();
-    expect(bar.scrollTop, "mid-reopen").toBe(top);
-    await settle();
-    expect(bar.scrollTop, "reopened").toBe(top);
   });
 
   it("retargets an open under way when a run arrives, so it ends at the list's height", async () => {

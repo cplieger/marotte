@@ -20,7 +20,7 @@ function probe(el: HTMLElement, name: string): HTMLElement {
   return el;
 }
 
-/** The chat's bar: a permission card, the run bar, two queued steers, the open slash menu, the
+/** The chat's bar: a permission card, the holding area's run bar and two queued steers, the open slash menu, the
  *  composer holding an upload chip over its pill row. */
 function chatBar(): HTMLElement {
   const form = document.createElement("form");
@@ -29,9 +29,10 @@ function chatBar(): HTMLElement {
   form.className = "bottom-bar";
   const dock = box("div", "decision-dock", form, "");
   probe(box("div", "dock-card dock-permission", dock, "Allow git push?"), "permission card");
-  const runHost = probe(box("div", "run-bar-host", form, ""), "run bar");
+  const area = box("div", "holding-area", form, "");
+  const runHost = probe(box("div", "run-bar-host", area, ""), "run bar");
   box("li", "run-bar-row", box("ul", "run-bar", runHost, ""), "");
-  const steers = box("ul", "steer-stack", form, "");
+  const steers = box("ul", "steer-stack", area, "");
   for (const n of [1, 2]) {
     const row = probe(box("li", "steer-row", steers, `queued ${String(n)}`), `steer ${String(n)}`);
     row.dataset["state"] = "sent";
@@ -49,14 +50,14 @@ function chatBar(): HTMLElement {
   return form;
 }
 
-/** The run tab's bar: the run dock, a permission card, two queued steers, the composer. */
+/** The run tab's bar: the run dock, a permission card, two queued steers in the holding area, the composer. */
 function runTabBar(): HTMLElement {
   const bar = document.createElement("div");
   bar.className = "run-bottom-bar bottom-bar";
   probe(box("div", "ev-dock", box("div", "ev-dock-host", bar, ""), ""), "run dock");
   const dock = box("div", "decision-dock", bar, "");
   probe(box("div", "dock-card dock-permission", dock, "Allow git push?"), "permission card");
-  const steers = box("ul", "steer-stack", bar, "");
+  const steers = box("ul", "steer-stack", box("div", "holding-area", bar, ""), "");
   for (const n of [1, 2]) {
     const row = probe(box("li", "steer-row", steers, `queued ${String(n)}`), `steer ${String(n)}`);
     row.dataset["state"] = "sent";
