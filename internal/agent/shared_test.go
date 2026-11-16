@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/go/slogx/capture"
@@ -190,6 +191,27 @@ func shutdownHub(t *testing.T, h *Runtime) {
 	if err := h.Shutdown(ctx); err != nil {
 		t.Errorf("runtime shutdown: %v", err)
 	}
+}
+
+// inBubble runs f as a subtest inside a synctest bubble, so a CPU stall on a loaded host cannot use up a wait's
+// deadline: the bubble's clock moves only once every goroutine in it is blocked.
+func inBubble(t *testing.T, name string, f func(t *testing.T)) {
+	t.Helper()
+	t.Run(name, func(t *testing.T) { synctest.Test(t, f) })
+}
+
+// swapSeam sets the package-var seam to fn until the test ends. Its cleanup shuts h down before restoring the seam:
+// cleanups run last-first, so h's own shutdown, registered when h was built, would otherwise come after the restore
+// and race a goroutine h still runs that reads the seam. Call it before a helper whose cleanup releases a call h
+// still waits on (promptGates): that release must run before this shutdown, which would otherwise wait it out.
+func swapSeam[T any](t *testing.T, h *Runtime, seam *T, fn T) {
+	t.Helper()
+	prev := *seam
+	*seam = fn
+	t.Cleanup(func() {
+		shutdownHub(t, h)
+		*seam = prev
+	})
 }
 
 func (rt *Runtime) handleCommand(w http.ResponseWriter, r *http.Request) {

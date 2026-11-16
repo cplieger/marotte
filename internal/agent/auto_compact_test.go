@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -716,17 +717,12 @@ func TestAutoCompact_AnAttemptTheChatsCloseEndedLeavesNoRowAndListsNothing(t *te
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, true, 95)
 	calls.err = marotte.ErrChatClosedDuringCall
-	var once sync.Once
-	prev := testHookAfterCompactionReturn
-	t.Cleanup(func() { testHookAfterCompactionReturn = prev })
-	testHookAfterCompactionReturn = func(marotte.ChatID) {
-		once.Do(func() {
-			wireOpen(t, cs, br)
-			br.deliver(newChunkMsg("kiro-cli on its own"))
-			br.deliver(newTurnEndMsg("end_turn"))
-			waitFor(t, func() bool { return !slices.Contains(runStates(t, cs, "c1"), "wire running") })
-		})
-	}
+	withCompactionReturnHook(t, h, func(marotte.ChatID) {
+		wireOpen(t, cs, br)
+		br.deliver(newChunkMsg("kiro-cli on its own"))
+		br.deliver(newTurnEndMsg("end_turn"))
+		waitFor(t, func() bool { return !slices.Contains(runStates(t, cs, "c1"), "wire running") })
+	})
 
 	runPrompt(t, h, cs, "c1", "m-2")
 
@@ -741,17 +737,12 @@ func TestAutoCompact_AnAttemptTheChatsCloseEndedLeavesNoRowAndListsNothing(t *te
 func TestAutoCompact_ASuccessBesideATurnEndListsNothing(t *testing.T) {
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, true, 95)
-	var once sync.Once
-	prev := testHookAfterCompactionReturn
-	t.Cleanup(func() { testHookAfterCompactionReturn = prev })
-	testHookAfterCompactionReturn = func(marotte.ChatID) {
-		once.Do(func() {
-			wireOpen(t, cs, br)
-			br.deliver(newChunkMsg("kiro-cli on its own"))
-			br.deliver(newTurnEndMsg("end_turn"))
-			waitFor(t, func() bool { return !slices.Contains(runStates(t, cs, "c1"), "wire running") })
-		})
-	}
+	withCompactionReturnHook(t, h, func(marotte.ChatID) {
+		wireOpen(t, cs, br)
+		br.deliver(newChunkMsg("kiro-cli on its own"))
+		br.deliver(newTurnEndMsg("end_turn"))
+		waitFor(t, func() bool { return !slices.Contains(runStates(t, cs, "c1"), "wire running") })
+	})
 
 	runPrompt(t, h, cs, "c1", "m-2")
 
@@ -805,13 +796,11 @@ func TestAutoCompact_ARequeuedAttemptAfterAReportedFailureLeavesItsOwnRow(t *tes
 	}
 }
 
-// withCompactionRowHook runs fn once, the first time a failed compaction's row is about to be written.
-func withCompactionRowHook(t *testing.T, fn func(marotte.ChatID)) {
+// withCompactionRowHook runs fn once, the first time h's failed compaction's row is about to be written.
+func withCompactionRowHook(t *testing.T, h *Runtime, fn func(marotte.ChatID)) {
 	t.Helper()
 	var once sync.Once
-	prev := testHookBeforeCompactionRow
-	testHookBeforeCompactionRow = func(chatID marotte.ChatID) { once.Do(func() { fn(chatID) }) }
-	t.Cleanup(func() { testHookBeforeCompactionRow = prev })
+	swapSeam(t, h, &testHookBeforeCompactionRow, func(chatID marotte.ChatID) { once.Do(func() { fn(chatID) }) })
 }
 
 // A message sent as a refused compaction ends goes behind that compaction's row: the attempt's "Compaction failed"
@@ -820,7 +809,7 @@ func TestAutoCompact_AFailedRowLandsAheadOfTheTurnQueuedBehindIt(t *testing.T) {
 	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, true, 95)
 	calls.setRefuse(true)
-	withCompactionRowHook(t, func(chatID marotte.ChatID) {
+	withCompactionRowHook(t, h, func(chatID marotte.ChatID) {
 		rec := postCmd(t, h, marotte.ClientCommand{
 			Type: marotte.CmdPrompt, ChatID: chatID, Payload: json.RawMessage(`{"text":"sent as it ends","message_id":"m-behind"}`),
 		})
@@ -904,7 +893,7 @@ func TestAutoCompact_EveryOrderOfATurnBesideAFailedAttemptKeepsItsTurnEndAttempt
 					continue
 				}
 				name := oc.name + "_open_" + attemptSlotNames[open] + "_close_" + attemptSlotNames[shut]
-				t.Run(name, func(t *testing.T) { turnBesideAFailedAttempt(t, oc.err, open, shut) })
+				inBubble(t, name, func(t *testing.T) { turnBesideAFailedAttempt(t, oc.err, open, shut) })
 			}
 		}
 	}
@@ -964,10 +953,18 @@ func turnBesideAFailedAttempt(t *testing.T, callErr error, open, shut attemptSlo
 		&testHookBeforeCompactionRow, &testHookAfterCompactionRow,
 	}
 	for i, hook := range hooks {
-		var once sync.Once
-		prev := *hook
-		*hook = func(marotte.ChatID) { once.Do(func() { act(attemptSlot(i)) }) }
-		t.Cleanup(func() { *hook = prev })
+		// Not a sync.Once: a re-taken attempt reaches the hook while the first call is still in act, and a goroutine
+		// parked on a mutex is not durably blocked, so the bubble's clock would never move again.
+		var fired atomic.Bool
+		acted := make(chan struct{})
+		swapSeam(t, h, hook, func(marotte.ChatID) {
+			if !fired.CompareAndSwap(false, true) {
+				<-acted
+				return
+			}
+			defer close(acted)
+			act(attemptSlot(i))
+		})
 	}
 
 	_, _ = h.RequestCompact(t.Context(), "c1")

@@ -144,14 +144,12 @@ func TestRunList_AStopBetweenASubmitsPlacingAndItsWaitAnswersAtOnce(t *testing.T
 		}
 		placed, stopped := make(chan struct{}), make(chan struct{})
 		var placeOnce sync.Once
-		prev := testHookSubmitPlaced
-		testHookSubmitPlaced = func(marotte.ChatID) {
+		swapSeam(t, s.h, &testHookSubmitPlaced, func(marotte.ChatID) {
 			placeOnce.Do(func() {
 				close(placed)
 				<-stopped
 			})
-		}
-		t.Cleanup(func() { testHookSubmitPlaced = prev })
+		})
 
 		wake := notifyWake(t, s.h, "c1")
 		<-placed
