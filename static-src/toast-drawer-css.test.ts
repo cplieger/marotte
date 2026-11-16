@@ -61,9 +61,10 @@ function mount(open: boolean, count: number, banners: number): Mounted {
   sidebar.classList.toggle("open", open);
   const list = sidebar.querySelector<HTMLElement>("#tab-list");
   const scroller = sidebar.querySelector<HTMLElement>("#tab-sections");
-  const history = sidebar.querySelector<HTMLElement>("#history-btn");
-  if (list === null || scroller === null || history === null) {
-    throw new Error("#tab-list, #tab-sections or #history-btn missing");
+  const history = sidebar.querySelector<HTMLElement>("#history-section");
+  const more = sidebar.querySelector<HTMLElement>("#history-more");
+  if (list === null || scroller === null || history === null || more === null) {
+    throw new Error("#tab-list, #tab-sections, #history-section or #history-more missing");
   }
   const rows = Array.from({ length: count }, (_, i) => {
     const row = document.createElement("div");
@@ -114,7 +115,10 @@ function mount(open: boolean, count: number, banners: number): Mounted {
   stack.appendChild(toast);
 
   document.body.replaceChildren(sidebar, area, stack);
-  return { rows: [...rows, history], scroller, toast };
+  // The History section shown unfolded, as a recent close and an unfold draw it, so More is the last row.
+  history.hidden = false;
+  more.closest("ul")?.removeAttribute("hidden");
+  return { rows: [...rows, more], scroller, toast };
 }
 
 function overlaps(a: DOMRect, b: DOMRect): boolean {

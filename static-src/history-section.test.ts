@@ -1,10 +1,10 @@
-// The sidebar's Recently closed section over the shipped markup: its rows drawn from the server's
-// list, when it shows, its fold, and the History row under it.
+// The sidebar's History section over the shipped markup: its rows drawn from the server's list of
+// recent closes, when it shows, its fold, and the More row that ends it.
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { page as browser, userEvent } from "vitest/browser";
 
 import indexHtml from "../static/index.html?raw";
-import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
+import { loadCSS, manifestSheets, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 import { settingsPayload } from "./__test-helpers__/settings.js";
 import { makeSession } from "./__test-helpers__/model.js";
 import type { Signal } from "@cplieger/reactive";
@@ -108,11 +108,10 @@ vi.mock("./api-client.js", async (importOriginal) => {
   };
 });
 
-import { initSidebarHistory } from "./sidebar-history.js";
 import { adoptRetention } from "./retention.js";
 import { formatClock, setClock } from "./locale-time.js";
 import { iconEl } from "./icon-el.js";
-import { ICON_TAB_CHAT } from "./icons.js";
+import { ICON_TAB_CHAT, ICON_TRASH } from "./icons.js";
 import { TOUCH_SLOP_PX } from "./context-hold.js";
 import { LS_UI_STATE_KEY } from "./ls-keys.js";
 import {
@@ -120,6 +119,7 @@ import {
   getActiveTabId,
   historyPaneTab,
   openTab,
+  setTabStatus,
   tabIdFor,
   _resetForTest,
 } from "./tabs.js";
@@ -131,6 +131,8 @@ import { error as toastError } from "./toast.js";
 import { IDLE_RUN } from "./run-order.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import { bindTabsSync, settleTabs, tabServer } from "./__test-helpers__/tabs-server.js";
+import { configureApi } from "@cplieger/reactive/actions";
+import { showOnlyView } from "./view-swap.js";
 
 bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
 h.sentOpens = () => tabServer.sentOfType("open_tab").length;
@@ -148,14 +150,13 @@ const shell = document.createElement("div");
   shell.querySelector("#tab-strip-skeleton")?.remove();
   document.body.appendChild(shell);
 }
-const { initRecentClosed } = await import("./recent-closed.js");
+const { initHistorySection } = await import("./history-section.js");
 
 let style: HTMLStyleElement;
 
 beforeAll(async () => {
   style = mountAppCSS();
-  initSidebarHistory();
-  initRecentClosed();
+  initHistorySection();
   // Showing History imports this lazily and unawaited; loaded here, once the shell exists.
   await import("./history.js");
 });
@@ -216,7 +217,7 @@ afterEach(async () => {
     r.remove();
   }
   await Promise.all(
-    el("recent-section")
+    el("history-section")
       .getAnimations()
       .map((a) => a.finished),
   );
@@ -262,25 +263,25 @@ function holdHeader(id: string, name: string): void {
   h.headers.value = next;
 }
 
-const section = (): HTMLElement => el("recent-section");
-const list = (): HTMLElement => el("recent-list");
-const historyBtn = (): HTMLButtonElement => el<HTMLButtonElement>("history-btn");
+const section = (): HTMLElement => el("history-section");
+const list = (): HTMLElement => el("history-list");
+const more = (): HTMLButtonElement => el<HTMLButtonElement>("history-more");
 const header = (): HTMLElement => {
   const e = section().querySelector<HTMLElement>(":scope > h2.side-section-h");
   if (e === null) {
-    throw new Error("no header in #recent-section");
+    throw new Error("no header in #history-section");
   }
   return e;
 };
 const toggle = (): HTMLButtonElement => {
   const b = header().querySelector<HTMLButtonElement>("button.side-section-toggle");
   if (b === null) {
-    throw new Error("no toggle in #recent-section");
+    throw new Error("no toggle in #history-section");
   }
   return b;
 };
 const rows = (): HTMLButtonElement[] => [
-  ...list().querySelectorAll<HTMLButtonElement>(":scope > li > button.recent-row"),
+  ...list().querySelectorAll<HTMLButtonElement>(":scope > li > button.history-row"),
 ];
 const rowNames = (): string[] => rows().map((r) => r.querySelector("bdi")?.textContent ?? "");
 /** The words a reader hears after the name: the elements `aria-describedby` names. */
@@ -290,7 +291,6 @@ const description = (b: HTMLElement): string =>
     .filter((id) => id !== "")
     .map((id) => document.getElementById(id)?.textContent.trim() ?? "")
     .join(" ");
-const historyLabel = (): string => historyBtn().textContent.trim();
 const shown = (e: HTMLElement): boolean => e.getBoundingClientRect().height > 0;
 
 /** Unfold through the header at reduced motion, so the open state is there at the press. */
@@ -319,7 +319,7 @@ function stubReducedMotion(): void {
   );
 }
 
-describe("Recently closed rows", () => {
+describe("closed rows", () => {
   it("draws the server's list in its order, newest first, each row from its own entry", async () => {
     await listed(entry("c-b", "Beta", 1), entry("c-a", "Alpha", 30), entry("c-c", "Gamma", 90));
     unfold();
@@ -330,14 +330,23 @@ describe("Recently closed rows", () => {
     }
     expect(first.parentElement?.tagName).toBe("LI");
     expect(first.type).toBe("button");
-    const glyph = first.querySelector("svg");
-    expect(glyph?.getAttribute("aria-hidden")).toBe("true");
-    const want = iconEl(ICON_TAB_CHAT);
-    want.setAttribute("aria-hidden", "true");
-    expect(glyph?.outerHTML, "the chat glyph").toBe(want.outerHTML);
+    const dot = first.firstElementChild;
+    expect(dot?.matches('span.tab-status-dot[data-status="closed"][aria-hidden="true"]')).toBe(
+      true,
+    );
     const time = first.querySelector("time");
     expect(time?.textContent).toBe(formatClock(T0 - 60_000));
     expect(time?.dateTime).toBe(new Date(T0 - 60_000).toISOString());
+  });
+
+  it("draws a full list of 10 closes, newest first, the server's cap and order", async () => {
+    const ten = Array.from({ length: 10 }, (_, i) =>
+      entry(`c-${String(i)}`, `Chat ${String(i)}`, i * 30),
+    );
+    await listed(...ten);
+    unfold();
+    expect(rowNames()).toEqual(ten.map((e) => e.name));
+    expect(toggle().querySelector(".side-section-count")?.textContent).toBe("10");
   });
 
   it("names an entry with an empty name Untitled chat", async () => {
@@ -397,7 +406,72 @@ describe("Recently closed rows", () => {
   });
 });
 
-describe("when Recently closed shows", () => {
+// An open chat's row leads with its status dot; a closed row draws that same dot as an empty ring.
+describe("a closed row's leading mark", () => {
+  const leading = (box: Element): HTMLElement => {
+    const d = box.querySelector<HTMLElement>(".tab-status-dot");
+    if (d === null) {
+      throw new Error("no status dot");
+    }
+    return d;
+  };
+
+  it("draws no chat glyph, only the open row's dot", async () => {
+    await listed(entry("c-a", "Alpha", 1));
+    unfold();
+    const [row] = rows();
+    if (row === undefined) {
+      throw new Error("no row");
+    }
+    const chat = iconEl(ICON_TAB_CHAT).innerHTML;
+    for (const svg of row.querySelectorAll("svg")) {
+      expect(svg.innerHTML, "the chat glyph").not.toBe(chat);
+    }
+    expect(row.querySelectorAll(".tab-status-dot")).toHaveLength(1);
+    expect(row.firstElementChild).toBe(leading(row));
+  });
+
+  it("matches an open chat row's dot in size and place, hollow where an open one is filled", async () => {
+    tabServer.trackRecent({ "c-a": "Alpha", "c-b": "Beta" });
+    await tabServer.seed({ kind: "chat", ref: "c-a" }, { kind: "chat", ref: "c-b" });
+    tabServer.closeRemotely(tabServer.idFor("chat", "c-a"));
+    await settle();
+    unfold();
+    const open = tabRow("c-b");
+    const [row] = rows();
+    if (open === null || row === undefined) {
+      throw new Error("no rows");
+    }
+    setTabStatus(tabIdFor("chat", "c-b"), "done");
+    const openDot = leading(open).getBoundingClientRect();
+    const closedDot = leading(row).getBoundingClientRect();
+    expect(closedDot.width).toBeGreaterThan(0);
+    expect(closedDot.width).toBeCloseTo(openDot.width, 2);
+    expect(closedDot.height).toBeCloseTo(openDot.height, 2);
+    expect(closedDot.left - row.getBoundingClientRect().left, "the same inset").toBeCloseTo(
+      openDot.left - open.getBoundingClientRect().left,
+      2,
+    );
+    const filled = getComputedStyle(leading(open));
+    const ring = getComputedStyle(leading(row));
+    expect(filled.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+    expect(ring.backgroundColor, "hollow").toBe("rgba(0, 0, 0, 0)");
+    expect(ring.borderTopStyle).toBe("solid");
+    expect(Number.parseFloat(ring.borderTopWidth)).toBeGreaterThan(0);
+  });
+
+  it("says closed in words, not by the ring alone", async () => {
+    await listed(entry("c-a", "Alpha", 5));
+    unfold();
+    const [row] = rows();
+    if (row === undefined) {
+      throw new Error("no row");
+    }
+    expect(description(row)).toMatch(/^Closed at /);
+  });
+});
+
+describe("when the History section shows", () => {
   it("is hidden with no row drawn and shown with one", async () => {
     await listed();
     expect(section().hidden).toBe(true);
@@ -417,13 +491,13 @@ describe("when Recently closed shows", () => {
     expect(description(toggle())).toBe("1 chat");
   });
 
-  it("is named Recently closed by its header alone", async () => {
+  it("is named History by its header alone", async () => {
     await listed(entry("c-a", "A"));
     const named = (toggle().getAttribute("aria-labelledby") ?? "")
       .split(/\s+/)
       .map((id) => document.getElementById(id)?.textContent.trim() ?? "")
       .join(" ");
-    expect(named).toBe("Recently closed");
+    expect(named).toBe("History");
   });
 
   it("hides while retention is off with entries held, and shows again when it is back on", async () => {
@@ -439,7 +513,7 @@ describe("when Recently closed shows", () => {
   });
 });
 
-describe("folding Recently closed", () => {
+describe("folding the History section", () => {
   const slideEnd = async (box: HTMLElement): Promise<void> => {
     await Promise.all(box.getAnimations().map((a) => a.finished));
     await settle();
@@ -452,7 +526,7 @@ describe("folding Recently closed", () => {
     expect(shown(header())).toBe(true);
   });
 
-  it("stores its fold under the recent key of sidebar_folds, keeping the other keys", async () => {
+  it("stores its fold under the history key of sidebar_folds, keeping the other keys", async () => {
     localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ sidebar_folds: { pinned: true } }));
     await listed(entry("c-a", "Alpha"));
     stubReducedMotion();
@@ -461,15 +535,15 @@ describe("folding Recently closed", () => {
       (JSON.parse(localStorage.getItem(LS_UI_STATE_KEY) ?? "{}") as Record<string, unknown>)[
         "sidebar_folds"
       ];
-    expect(stored()).toEqual({ pinned: true, recent: false });
+    expect(stored()).toEqual({ pinned: true, history: false });
     expect(list().hidden).toBe(false);
     toggle().click();
-    expect(stored()).toEqual({ pinned: true, recent: true });
+    expect(stored()).toEqual({ pinned: true, history: true });
     expect(list().hidden).toBe(true);
   });
 
   it("draws the stored unfold when its rows arrive", async () => {
-    localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ sidebar_folds: { recent: false } }));
+    localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ sidebar_folds: { history: false } }));
     await listed(entry("c-a", "Alpha"));
     expect(toggle().getAttribute("aria-expanded")).toBe("true");
     expect(list().hidden).toBe(false);
@@ -517,75 +591,95 @@ describe("folding Recently closed", () => {
   });
 });
 
-describe("the History row under Recently closed", () => {
-  it("reads More history, its name too, and sits after the closed rows while the section shows", async () => {
+describe("the More row that ends the History section", () => {
+  it("is the list's last row, after the closed rows, named More history and reading More", async () => {
     await listed(entry("c-a", "Alpha"), entry("c-b", "Beta"));
     unfold();
-    expect(historyLabel()).toBe("More history");
-    expect(historyBtn().hasAttribute("aria-label")).toBe(false);
-    expect(historyBtn().previousElementSibling).toBe(section());
+    expect(more().textContent.trim()).toBe("More");
+    const named = browser.getByRole("button", { name: "More history", exact: true }).element();
+    expect(named).toBe(more());
+    expect(more().closest("ul")).toBe(list());
+    expect(list().lastElementChild?.contains(more())).toBe(true);
     const last = rows().at(-1);
     expect(last).toBeDefined();
-    expect(historyBtn().getBoundingClientRect().top).toBeGreaterThanOrEqual(
+    expect(more().getBoundingClientRect().top).toBeGreaterThanOrEqual(
       last?.getBoundingClientRect().bottom ?? Infinity,
     );
   });
 
-  it("stays shown and focusable with the header while the section is folded", async () => {
+  it("is hidden with the rows while the section is folded, leaving the header", async () => {
     await listed(entry("c-a", "Alpha"));
     expect(list().hidden).toBe(true);
-    expect(historyLabel()).toBe("More history");
-    for (const b of [toggle(), historyBtn()]) {
-      expect(shown(b)).toBe(true);
-      b.focus();
-      expect(document.activeElement).toBe(b);
-    }
+    expect(shown(more())).toBe(false);
+    expect(shown(toggle())).toBe(true);
+    unfold();
+    expect(shown(more())).toBe(true);
   });
 
-  it("reads History with no row drawn, and with retention off while entries are held", async () => {
-    await listed();
-    expect(historyLabel()).toBe("History");
+  it("shows History with no tab when pressed, and draws as the selected entry", async () => {
     await listed(entry("c-a", "Alpha"));
-    expect(historyLabel()).toBe("More history");
-    adoptRetention(settingsPayload({ chat_retention_days: 0 }));
-    await settle();
-    expect(historyLabel()).toBe("History");
-    adoptRetention(settingsPayload({ chat_retention_days: 7 }));
-    await settle();
-    expect(historyLabel()).toBe("More history");
-  });
-
-  it.each([
-    { state: "with no row", arrange: () => listed() },
-    { state: "folded", arrange: () => listed(entry("c-a", "Alpha")) },
-    {
-      state: "unfolded",
-      arrange: async () => {
-        await listed(entry("c-a", "Alpha"));
-        unfold();
-      },
-    },
-    {
-      state: "with retention off",
-      arrange: async () => {
-        await listed(entry("c-a", "Alpha"));
-        adoptRetention(settingsPayload({ chat_retention_days: 0 }));
-        await settle();
-      },
-    },
-  ])("shows History, with no tab, when pressed $state", async ({ arrange }) => {
-    await arrange();
+    unfold();
     const opens = h.sentOpens();
-    historyBtn().click();
+    el("sidebar").classList.add("open");
+    more().click();
+    expect(el("sidebar").classList.contains("open"), "the phone drawer closes").toBe(false);
     await settle();
     await settleTabs();
     expect(historyPaneTab()).toBe("chats");
     expect(getActiveTabId()).toBe("");
     expect(h.sentOpens(), "History opens no tab").toBe(opens);
+    expect(more().classList.contains("active")).toBe(true);
+    expect(more().getAttribute("aria-current")).toBe("page");
+    expect(more().hasAttribute("aria-pressed"), "a destination, not a toggle").toBe(false);
+  });
+
+  it("keeps History on a second press", async () => {
+    await listed(entry("c-a", "Alpha"));
+    unfold();
+    more().click();
+    await settle();
+    more().click();
+    await settle();
+    expect(historyPaneTab()).toBe("chats");
+    expect(more().getAttribute("aria-current")).toBe("page");
   });
 });
 
-describe("a Recently closed row's box", () => {
+describe("no way to History when nothing was closed", () => {
+  /** Every sidebar control a reader could take for History. */
+  const historyEntries = (): Element[] =>
+    [...el("sidebar").querySelectorAll("button, a")].filter((b) => {
+      const name = (b.getAttribute("aria-label") ?? b.textContent).trim();
+      return /history/i.test(name) && shown(b as HTMLElement);
+    });
+
+  it("draws no section and no History entry with no closed chat", async () => {
+    await listed();
+    expect(section().hidden).toBe(true);
+    expect(shown(section())).toBe(false);
+    expect(historyEntries()).toEqual([]);
+  });
+
+  it("draws no section at Days kept 0 though the server lists closed chats", async () => {
+    adoptRetention(settingsPayload({ chat_retention_days: 0 }));
+    await listed(entry("c-a", "Alpha"), entry("c-b", "Beta"));
+    expect(tabsModule.recentClosed(), "the entries are held").toHaveLength(2);
+    expect(section().hidden).toBe(true);
+    expect(historyEntries()).toEqual([]);
+  });
+
+  it("ships no standalone History button, in the markup or the styles", () => {
+    expect(shell.querySelector("#history-btn")).toBeNull();
+    expect(shell.querySelector(".side-history-row, .side-history-label")).toBeNull();
+    expect(el("tab-sections").lastElementChild).toBe(section());
+    const stale = manifestSheets().filter((sh) =>
+      /side(bar)?-history|recent-(row|list)/.test(sh.css),
+    );
+    expect(stale.map((sh) => sh.name)).toEqual([]);
+  });
+});
+
+describe("a closed row's box", () => {
   afterEach(() => {
     delete document.documentElement.dataset["pointer"];
   });
@@ -619,7 +713,7 @@ describe("a Recently closed row's box", () => {
   });
 
   it.each(["fine", "coarse"])(
-    "draws its rows and the History row at a tab row's height on a %s pointer",
+    "draws its rows and More at a tab row's height on a %s pointer",
     async (tier) => {
       document.documentElement.dataset["pointer"] = tier;
       const tabH = await tabRowHeight();
@@ -629,7 +723,7 @@ describe("a Recently closed row's box", () => {
       for (const r of rows()) {
         expect(r.getBoundingClientRect().height, rowNames().join()).toBe(tabH);
       }
-      expect(historyBtn().getBoundingClientRect().height, "More history").toBe(tabH);
+      expect(more().getBoundingClientRect().height, "More").toBe(tabH);
     },
   );
 });
@@ -652,7 +746,7 @@ function chatHeader(id: string, name: string): ChatHeader {
   };
 }
 
-/** Each chat open then closed by another device: listed in Recently closed, its Session gone from
+/** Each chat open then closed by another device: listed in the History section, its Session gone from
  *  this page, and named by the chat list's read. `pinned` names the chats closed while pinned. */
 async function closedElsewhere(
   names: Readonly<Record<string, string>>,
@@ -673,7 +767,7 @@ async function closedElsewhere(
 const rowFor = (name: string): HTMLButtonElement => {
   const r = rows().find((b) => b.querySelector("bdi")?.textContent === name);
   if (r === undefined) {
-    throw new Error(`no Recently closed row for ${name}`);
+    throw new Error(`no closed row for ${name}`);
   }
   return r;
 };
@@ -687,6 +781,15 @@ const menuItems = (): string[] =>
 const opens = (): readonly { payload: Record<string, unknown> }[] =>
   tabServer.sentOfType("open_tab");
 const prompt = (): HTMLTextAreaElement => el<HTMLTextAreaElement>("prompt-input");
+const deleteFor = (name: string): HTMLButtonElement => {
+  const b = rowFor(name).parentElement?.querySelector<HTMLButtonElement>(
+    ":scope > button.history-row-delete",
+  );
+  if (b === null || b === undefined) {
+    throw new Error(`no Delete beside the closed row for ${name}`);
+  }
+  return b;
+};
 const sleep = (ms: number): Promise<void> =>
   new Promise((r) => {
     setTimeout(r, ms);
@@ -714,7 +817,7 @@ function clickOn(target: Element): void {
   target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
 }
 
-describe("reopening a Recently closed row", () => {
+describe("reopening a closed row", () => {
   it("dispatches one open_tab that owns the chat with no parent, busy until it lands, and activates it", async () => {
     await closedElsewhere({ "c-a": "Alpha" });
     unfold();
@@ -822,7 +925,7 @@ describe("reopening a Recently closed row", () => {
   });
 });
 
-describe("a Recently closed row to a screen reader and the keyboard", () => {
+describe("a closed row to a screen reader and the keyboard", () => {
   it("is named Reopen <name> and described by its close time", async () => {
     await listed(entry("c-a", "Alpha", 5));
     unfold();
@@ -856,28 +959,35 @@ describe("a Recently closed row to a screen reader and the keyboard", () => {
     }
   });
 
-  it("makes each shown row one Tab stop, then the History row", async () => {
+  it("makes each shown row and its Delete one Tab stop each, then More", async () => {
     await listed(entry("c-a", "Alpha"), entry("c-b", "Beta"));
     unfold();
     toggle().focus();
     const seen: Element[] = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 5; i++) {
       await userEvent.keyboard("{Tab}");
       seen.push(document.activeElement ?? document.body);
     }
-    expect(seen).toEqual([rowFor("Alpha"), rowFor("Beta"), historyBtn()]);
+    expect(seen).toEqual([
+      rowFor("Alpha"),
+      deleteFor("Alpha"),
+      rowFor("Beta"),
+      deleteFor("Beta"),
+      more(),
+    ]);
   });
 
-  it("makes no row a Tab stop while folded: Tab goes from the header to the History row", async () => {
+  it("makes no row and not More a Tab stop while folded: Tab leaves the section from its header", async () => {
     await listed(entry("c-a", "Alpha"), entry("c-b", "Beta"));
     expect(list().hidden).toBe(true);
     toggle().focus();
     await userEvent.keyboard("{Tab}");
-    expect(document.activeElement).toBe(historyBtn());
+    expect(section().contains(document.activeElement)).toBe(false);
+    expect(document.activeElement).not.toBe(document.body);
   });
 });
 
-describe("the Recently closed row menu", () => {
+describe("the closed row menu", () => {
   it.each([
     {
       how: "a right-click",
@@ -904,13 +1014,13 @@ describe("the Recently closed row menu", () => {
         await sleep(HOLD);
       },
     },
-  ])("opens on $how with Reopen its only item", async ({ open }) => {
+  ])("opens on $how with Reopen and Delete", async ({ open }) => {
     await listed(entry("c-a", "Alpha"));
     unfold();
     await open(rowFor("Alpha"));
     await settle();
     expect(menus()).toHaveLength(1);
-    expect(menuItems()).toEqual(["Reopen"]);
+    expect(menuItems()).toEqual(["Reopen", "Delete"]);
     expect(opens(), "opening the menu reopens nothing").toHaveLength(0);
   });
 
@@ -944,15 +1054,17 @@ describe("the Recently closed row menu", () => {
     const row = rowFor("Alpha");
     row.focus();
     await userEvent.keyboard("{Shift>}{F10}{/Shift}");
-    for (const a of row.getAnimations()) {
-      a.finish();
-    }
+    const box = row.closest("li");
+    expect(box, "the row's box is its item").not.toBeNull();
     const probe = document.createElement("div");
     probe.style.background = "var(--c-hover)";
     document.body.append(probe);
     const wash = getComputedStyle(probe).backgroundColor;
     probe.remove();
-    expect(getComputedStyle(row).backgroundColor).toBe(wash);
+    for (const a of (box as HTMLElement).getAnimations()) {
+      a.finish();
+    }
+    expect(getComputedStyle(box as HTMLElement).backgroundColor).toBe(wash);
     await userEvent.keyboard("{Escape}");
     expect(row.hasAttribute("data-menu-open")).toBe(false);
   });
@@ -994,13 +1106,13 @@ describe("the Recently closed row menu", () => {
   });
 });
 
-describe("the touch hold on a Recently closed row", () => {
+describe("the touch hold on a closed row", () => {
   it("selects no text", async () => {
     await listed(entry("c-a", "Alpha"));
     unfold();
     expect(getComputedStyle(rowFor("Alpha")).userSelect).toBe("none");
     // WebKit's callout is iOS-only: Chromium computes no such property, so the declaration is read.
-    expect(ruleBody(loadCSS("12-tabs.css"), ".recent-row")).toMatch(
+    expect(ruleBody(loadCSS("12-tabs.css"), ".history-row")).toMatch(
       /(?:^|[;{\s])-webkit-touch-callout:\s*none;/,
     );
   });
@@ -1044,6 +1156,8 @@ describe("the touch hold on a Recently closed row", () => {
     await listed(entry("c-a", "Alpha"));
     unfold();
     const row = rowFor("Alpha");
+    // Laid out first, so the press's own box read cannot push it past the fling window after the scroll.
+    row.getBoundingClientRect();
     el("tab-sections").dispatchEvent(new Event("scroll"));
     touch("pointerdown", row);
     await sleep(HOLD);
@@ -1188,6 +1302,254 @@ describe("the touch hold on a Recently closed row", () => {
   });
 });
 
+/** What `/api/sessions` answers, at the network seam: the runs each chat launched, which its
+ *  delete deletes too; null answers 503. */
+function stubSessions(runs: { chat: string; id: string }[] | null): void {
+  configureApi({
+    fetchFn: (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (!url.includes("/api/sessions") || runs === null) {
+        return Promise.resolve(new Response("{}", { status: 503 }));
+      }
+      const body = {
+        sessions_state: "ready",
+        runs_state: "ready",
+        sessions: [],
+        runs: runs.map((r) => ({
+          workflow_id: r.id,
+          name: r.id,
+          parent_chat_id: r.chat,
+          updated_at: 1,
+        })),
+      };
+      return Promise.resolve(
+        new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } }),
+      );
+    },
+  });
+}
+
+const ask = (): HTMLDialogElement | null =>
+  document.querySelector<HTMLDialogElement>("dialog.uip-ask[open]");
+async function askShown(): Promise<HTMLDialogElement> {
+  for (let i = 0; i < 40 && ask() === null; i++) {
+    await settle();
+  }
+  const d = ask();
+  if (d === null) {
+    throw new Error("no confirm opened");
+  }
+  return d;
+}
+async function answer(button: "Delete" | "Cancel"): Promise<void> {
+  const d = await askShown();
+  const b = [...d.querySelectorAll<HTMLButtonElement>("button")].find(
+    (x) => x.textContent.trim() === button,
+  );
+  if (b === undefined) {
+    throw new Error(`no ${button} in the confirm`);
+  }
+  b.click();
+  // The dialog stays open, and the page inert, until its close animation ends.
+  for (let i = 0; i < 100 && d.open; i++) {
+    await settle();
+  }
+  expect(d.open, "the confirm closed").toBe(false);
+  await settle();
+  await settleTabs();
+}
+const deletes = (): readonly { payload: Record<string, unknown> }[] =>
+  tabServer.sentOfType("delete_chat");
+
+describe("deleting a closed chat from the History section", () => {
+  it("draws a trailing trash button named and titled Delete <name> on each row", async () => {
+    await listed(entry("c-a", "Alpha"), entry("c-b", "Beta"));
+    unfold();
+    for (const name of ["Alpha", "Beta"]) {
+      const del = deleteFor(name);
+      expect(del.type).toBe("button");
+      const named = browser.getByRole("button", { name: `Delete ${name}`, exact: true }).element();
+      expect(named).toBe(del);
+      expect(del.dataset["tooltip"]).toBe(`Delete ${name}`);
+      const glyph = del.querySelector("svg");
+      const want = iconEl(ICON_TRASH);
+      want.setAttribute("aria-hidden", "true");
+      expect(glyph?.outerHTML, "the trash glyph").toBe(want.outerHTML);
+      const item = rowFor(name).closest("li");
+      expect(item, "the row's box is its item").not.toBeNull();
+      const row = (item as HTMLElement).getBoundingClientRect();
+      const box = del.getBoundingClientRect();
+      expect(box.right, "trailing, inside the row").toBeLessThanOrEqual(row.right);
+      expect(box.left).toBeGreaterThan(row.left + row.width / 2);
+      expect(box.left, "beside the reopen target, not over it").toBeGreaterThanOrEqual(
+        rowFor(name).getBoundingClientRect().right,
+      );
+    }
+  });
+
+  it("asks with the History page's words, then deletes the chat for good and drops the row", async () => {
+    stubSessions([
+      { chat: "c-a", id: "w-1" },
+      { chat: "c-a", id: "w-2" },
+      { chat: "c-x", id: "w-3" },
+    ]);
+    tabServer.trackRecent({ "c-a": "Alpha", "c-b": "Beta" });
+    await tabServer.seed({ kind: "chat", ref: "c-a" }, { kind: "chat", ref: "c-b" });
+    tabServer.closeRemotely(tabServer.idFor("chat", "c-b"));
+    tabServer.closeRemotely(tabServer.idFor("chat", "c-a"));
+    await settle();
+    unfold();
+    deleteFor("Alpha").click();
+    const d = await askShown();
+    expect(d.getAttribute("role")).toBe("alertdialog");
+    expect(d.querySelector(".uip-ask-title")?.textContent).toBe("Delete this conversation?");
+    expect(d.querySelector(".uip-ask-msg")?.textContent).toBe(
+      '"Alpha" and its stored history are removed for good. It also deletes the 2 workflow runs it started.',
+    );
+    expect(opens(), "the press reopens nothing").toHaveLength(0);
+    await answer("Delete");
+    expect(deletes().map((c) => c.payload)).toEqual([{ impact: { chats: [] } }]);
+    expect(rowNames()).toEqual(["Beta"]);
+    expect(section().hidden).toBe(false);
+  });
+
+  it("deletes nothing when the confirm is cancelled", async () => {
+    stubSessions([]);
+    tabServer.trackRecent({ "c-a": "Alpha" });
+    await tabServer.seed({ kind: "chat", ref: "c-a" });
+    tabServer.closeRemotely(tabServer.idFor("chat", "c-a"));
+    await settle();
+    unfold();
+    deleteFor("Alpha").click();
+    await answer("Cancel");
+    expect(deletes()).toHaveLength(0);
+    expect(rowNames()).toEqual(["Alpha"]);
+    expect(opens()).toHaveLength(0);
+  });
+
+  it("asks nothing and deletes nothing when the run list cannot be read", async () => {
+    stubSessions(null);
+    await listed(entry("c-a", "Alpha"));
+    unfold();
+    deleteFor("Alpha").click();
+    for (let i = 0; i < 10; i++) {
+      await settle();
+    }
+    expect(ask()).toBeNull();
+    expect(deletes()).toHaveLength(0);
+    expect(rowNames()).toEqual(["Alpha"]);
+  });
+
+  it("hides the section once its last row is deleted", async () => {
+    stubSessions([]);
+    tabServer.trackRecent({ "c-a": "Alpha" });
+    await tabServer.seed({ kind: "chat", ref: "c-a" });
+    tabServer.closeRemotely(tabServer.idFor("chat", "c-a"));
+    await settle();
+    unfold();
+    deleteFor("Alpha").click();
+    await answer("Delete");
+    expect(deletes()).toHaveLength(1);
+    expect(section().hidden).toBe(true);
+  });
+
+  it("deletes from Delete in the row menu", async () => {
+    stubSessions([]);
+    tabServer.trackRecent({ "c-a": "Alpha", "c-b": "Beta" });
+    await tabServer.seed({ kind: "chat", ref: "c-a" }, { kind: "chat", ref: "c-b" });
+    tabServer.closeRemotely(tabServer.idFor("chat", "c-b"));
+    tabServer.closeRemotely(tabServer.idFor("chat", "c-a"));
+    await settle();
+    unfold();
+    rowFor("Alpha").focus();
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    await userEvent.keyboard("{ArrowDown}");
+    expect(document.activeElement?.textContent.trim()).toBe("Delete");
+    await userEvent.keyboard("{Enter}");
+    await answer("Delete");
+    expect(deletes()).toHaveLength(1);
+    expect(rowNames()).toEqual(["Beta"]);
+    expect(opens()).toHaveLength(0);
+  });
+
+  it("moves focus to the next row after a delete from the keyboard", async () => {
+    stubSessions([]);
+    tabServer.trackRecent({ "c-a": "Alpha", "c-b": "Beta" });
+    await tabServer.seed({ kind: "chat", ref: "c-a" }, { kind: "chat", ref: "c-b" });
+    tabServer.closeRemotely(tabServer.idFor("chat", "c-b"));
+    tabServer.closeRemotely(tabServer.idFor("chat", "c-a"));
+    await settle();
+    unfold();
+    deleteFor("Alpha").focus();
+    await userEvent.keyboard("{Enter}");
+    await answer("Delete");
+    expect(rowNames()).toEqual(["Beta"]);
+    expect(document.activeElement).toBe(rowFor("Beta"));
+  });
+
+  it("moves focus to the row before after a delete of the last row from the keyboard", async () => {
+    stubSessions([]);
+    tabServer.trackRecent({ "c-a": "Alpha", "c-b": "Beta" });
+    await tabServer.seed({ kind: "chat", ref: "c-a" }, { kind: "chat", ref: "c-b" });
+    tabServer.closeRemotely(tabServer.idFor("chat", "c-b"));
+    tabServer.closeRemotely(tabServer.idFor("chat", "c-a"));
+    await settle();
+    unfold();
+    deleteFor("Beta").focus();
+    await userEvent.keyboard("{Enter}");
+    await answer("Delete");
+    expect(rowNames()).toEqual(["Alpha"]);
+    expect(document.activeElement).toBe(rowFor("Alpha"));
+  });
+
+  it("opens the confirm from the keyboard on its Delete", async () => {
+    stubSessions([]);
+    await listed(entry("c-a", "Alpha"));
+    unfold();
+    rowFor("Alpha").focus();
+    await userEvent.keyboard("{Tab}");
+    expect(document.activeElement).toBe(deleteFor("Alpha"));
+    await userEvent.keyboard("{Enter}");
+    await answer("Cancel");
+    expect(opens(), "Enter on Delete reopens nothing").toHaveLength(0);
+  });
+
+  it("takes a 44px target under a finger and leaves the rest of the row to the reopen", async () => {
+    document.documentElement.dataset["pointer"] = "coarse";
+    try {
+      await listed(entry("c-a", "Alpha"));
+      unfold();
+      const del = deleteFor("Alpha").getBoundingClientRect();
+      const cx = del.left + del.width / 2;
+      const cy = del.top + del.height / 2;
+      for (const dx of [-21, 21]) {
+        expect(document.elementFromPoint(cx + dx, cy)?.closest("button"), `dx ${String(dx)}`).toBe(
+          deleteFor("Alpha"),
+        );
+      }
+      for (const dy of [-21, 21]) {
+        expect(document.elementFromPoint(cx, cy + dy)?.closest("button"), `dy ${String(dy)}`).toBe(
+          deleteFor("Alpha"),
+        );
+      }
+      expect(document.elementFromPoint(cx - 30, cy)?.closest("button")).toBe(rowFor("Alpha"));
+    } finally {
+      delete document.documentElement.dataset["pointer"];
+    }
+  });
+
+  it("opens no menu and reopens nothing from a touch hold on its Delete", async () => {
+    await listed(entry("c-a", "Alpha"));
+    unfold();
+    touch("pointerdown", deleteFor("Alpha"));
+    await sleep(HOLD);
+    touch("pointerup", deleteFor("Alpha"));
+    await settle();
+    expect(menus()).toHaveLength(0);
+    expect(opens()).toHaveLength(0);
+  });
+});
+
 describe("focus after a reopen", () => {
   it.each(["event-first", "response-first"] as const)(
     "lands on the reopened tab's row in its section, the frame %s",
@@ -1247,16 +1609,245 @@ describe("focus after a reopen", () => {
   });
 
   it("leaves focus where the person moved it while the reopen ran", async () => {
-    await closedElsewhere({ "c-a": "Alpha" });
+    await closedElsewhere({ "c-a": "Alpha", "c-b": "Beta" });
     unfold();
     tabServer.holdResponses();
     rowFor("Alpha").focus();
     await userEvent.keyboard("{Enter}");
     await settle();
-    historyBtn().focus();
+    more().focus();
     tabServer.releaseResponses();
     await settle();
     expect(tabIdFor("chat", "c-a")).not.toBe("");
-    expect(document.activeElement).toBe(historyBtn());
+    expect(document.activeElement).toBe(more());
   });
+});
+
+describe("focus when a frame from elsewhere takes what it was on", () => {
+  const pill = (): HTMLElement | null =>
+    el("history-view").querySelector<HTMLElement>('[data-history-tab][aria-selected="true"]');
+  /** The list as a frame from the server, at its next version, as an expiry or another device sends it. */
+  const framed = async (...recent: RecentClose[]): Promise<void> => {
+    tabServer.emitRecent(recent);
+    await settle();
+  };
+
+  it("lands on the shown History page's pill when the last close goes from under More", async () => {
+    await framed(entry("c-a", "Alpha"));
+    unfold();
+    more().click();
+    await settle();
+    try {
+      more().focus();
+      await framed();
+      expect(section().hidden).toBe(true);
+      expect(document.activeElement).not.toBe(document.body);
+      expect(document.activeElement).toBe(pill());
+    } finally {
+      // The chat view back, so the next case's composer can take focus.
+      showOnlyView(el("chat-view"));
+      await settle();
+    }
+  });
+
+  it("lands on the next row when the focused row goes, else the one before it", async () => {
+    await framed(entry("c-a", "Alpha"), entry("c-b", "Beta", 5), entry("c-c", "Gamma", 10));
+    unfold();
+    rowFor("Beta").focus();
+    await framed(entry("c-a", "Alpha"), entry("c-c", "Gamma", 10));
+    expect(document.activeElement).toBe(rowFor("Gamma"));
+    await framed(entry("c-a", "Alpha"));
+    expect(document.activeElement).toBe(rowFor("Alpha"));
+  });
+
+  it("lands on the next row when the focused row's Delete goes", async () => {
+    await framed(entry("c-a", "Alpha"), entry("c-b", "Beta", 5));
+    unfold();
+    deleteFor("Alpha").focus();
+    await framed(entry("c-b", "Beta", 5));
+    expect(document.activeElement).toBe(rowFor("Beta"));
+  });
+
+  it("lands on the composer when Days kept turns 0 under focus with History not shown", async () => {
+    await framed(entry("c-a", "Alpha"));
+    unfold();
+    rowFor("Alpha").focus();
+    adoptRetention(settingsPayload({ chat_retention_days: 0 }));
+    await settle();
+    expect(section().hidden).toBe(true);
+    expect(document.activeElement).toBe(prompt());
+  });
+
+  it("lands on the composer when the folded section's header goes", async () => {
+    await framed(entry("c-a", "Alpha"));
+    toggle().focus();
+    await framed();
+    expect(document.activeElement).toBe(prompt());
+  });
+
+  it("leaves focus outside the section where it is", async () => {
+    await framed(entry("c-a", "Alpha"));
+    unfold();
+    prompt().focus();
+    await framed();
+    expect(document.activeElement).toBe(prompt());
+  });
+});
+
+describe("focus when the History section changes under it", () => {
+  const A = entry("c-a", "Alpha");
+  const B = entry("c-b", "Beta", 5);
+  const C = entry("c-c", "Gamma", 10);
+  type On = "row" | "delete" | "more";
+  const focusOn = (on: On): void => {
+    ({ row: () => rowFor("Beta"), delete: () => deleteFor("Beta"), more })[on]().focus();
+  };
+  const framed = async (...recent: RecentClose[]): Promise<void> => {
+    tabServer.emitRecent(recent);
+    await settle();
+  };
+  /** The Open section's one row, the landing once the section hides. Its chat is new to each case, since a
+   *  case at Days kept 0 closes it as a delete that may land in the next case. */
+  let openRef = "";
+  let opened = 0;
+  const openRow = (): HTMLElement | null => tabRow(openRef);
+  /** `/api/sessions` held until `answer()` replies 503, so a frame can land while the delete reads it. */
+  const holdSessions = (): { answer: () => void } => {
+    let reply = (): void => undefined;
+    configureApi({
+      fetchFn: () =>
+        new Promise<Response>((resolve) => {
+          reply = () => {
+            resolve(new Response("{}", { status: 503 }));
+          };
+        }),
+    });
+    return {
+      answer: () => {
+        reply();
+      },
+    };
+  };
+
+  const causes: {
+    cause: string;
+    on: On;
+    run: () => Promise<void>;
+    want: () => Element | null;
+  }[] = [
+    ...(["row", "delete"] as const).map((on) => ({
+      cause: "a frame drops its row",
+      on,
+      run: () => framed(A, C),
+      want: () => rowFor("Gamma"),
+    })),
+    {
+      cause: "a frame drops another row",
+      on: "more",
+      run: () => framed(A, C),
+      want: more,
+    },
+    ...(["row", "delete", "more"] as const).map((on) => ({
+      cause: "a frame moves its row first",
+      on,
+      run: () => framed(entry("c-b", "Beta", -1), A, C),
+      want: () => ({ row: () => rowFor("Beta"), delete: () => deleteFor("Beta"), more })[on](),
+    })),
+    ...(["row", "delete", "more"] as const).map((on) => ({
+      cause: "a frame empties the list",
+      on,
+      run: () => framed(),
+      want: openRow,
+    })),
+    ...(["row", "delete", "more"] as const).map((on) => ({
+      cause: "Days kept turns 0",
+      on,
+      run: async () => {
+        adoptRetention(settingsPayload({ chat_retention_days: 0 }));
+        await settle();
+      },
+      want: openRow,
+    })),
+    ...(["row", "delete", "more"] as const).map((on) => ({
+      cause: "a fold by a click that moves no focus",
+      on,
+      run: async () => {
+        stubReducedMotion();
+        clickOn(toggle());
+        vi.unstubAllGlobals();
+        await settle();
+      },
+      want: toggle,
+    })),
+    {
+      cause: "its delete",
+      on: "delete",
+      run: async () => {
+        await userEvent.keyboard("{Enter}");
+        await answer("Delete");
+      },
+      want: () => rowFor("Gamma"),
+    },
+    {
+      cause: "a delete cancelled after a frame dropped its chat",
+      on: "delete",
+      run: async () => {
+        await userEvent.keyboard("{Enter}");
+        await askShown();
+        await framed(A, C);
+        await answer("Cancel");
+      },
+      want: () => rowFor("Gamma"),
+    },
+    {
+      cause: "a delete the server refuses after a frame dropped its chat",
+      on: "delete",
+      run: async () => {
+        tabServer.failNext("delete_chat", 500);
+        await userEvent.keyboard("{Enter}");
+        await askShown();
+        await framed(A, C);
+        await answer("Delete");
+      },
+      want: () => rowFor("Gamma"),
+    },
+    {
+      cause: "a frame dropping its chat while the delete reads the run list",
+      on: "delete",
+      run: async () => {
+        const sessions = holdSessions();
+        await userEvent.keyboard("{Enter}");
+        await framed(A, C);
+        sessions.answer();
+        for (let i = 0; i < 10; i++) {
+          await settle();
+        }
+      },
+      want: () => rowFor("Gamma"),
+    },
+  ];
+
+  it.each(causes)(
+    "lands as the rule says after $cause, from its $on",
+    async ({ on, run, want }) => {
+      stubSessions([]);
+      openRef = `c-o${String(++opened)}`;
+      await tabServer.seed({ kind: "chat", ref: openRef });
+      // The strip paints on an animation frame, which a loaded runner can hold past `settle()`.
+      for (let i = 0; i < 40 && openRow() === null; i++) {
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      await framed(A, B, C);
+      unfold();
+      focusOn(on);
+      const target = want();
+      expect(target, "the landing is drawn before the change").not.toBeNull();
+      expect(section().contains(document.activeElement), "focus starts inside the section").toBe(
+        true,
+      );
+      await run();
+      expect(document.activeElement, "never <body>").not.toBe(document.body);
+      expect(document.activeElement).toBe(target);
+    },
+  );
 });

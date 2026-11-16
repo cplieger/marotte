@@ -132,8 +132,9 @@ func TestTabSubject_ZeroValueEncodesEveryField(t *testing.T) {
 	}
 }
 
-// TestRecentClose_WireKeys pins the Recently closed row's keys: the client draws the name and
-// sorts by closed_at, and a pinned entry is the one a reopen returns to the Pinned section.
+// TestRecentClose_WireKeys pins the History section row's keys: the server sends the list newest
+// first by closed_at and the client draws that order and the name, and a pinned entry is the one a
+// reopen returns to the Pinned section.
 func TestRecentClose_WireKeys(t *testing.T) {
 	cases := []struct {
 		desc  string

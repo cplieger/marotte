@@ -69,7 +69,7 @@ document.body.innerHTML =
   TAB_SECTIONS_HTML +
   "</aside>" +
   '<button id="settings-btn"></button><button id="git-btn"></button>' +
-  '<button id="files-btn"></button><button id="history-btn"></button>' +
+  '<button id="files-btn"></button><button id="history-more"></button>' +
   '<button id="docs-btn"></button>' +
   '<div id="chat-view"><div id="messages-wrap-outer"><div id="messages-wrap">' +
   '<div id="messages"></div></div></div><div id="scroll-bottom"><span></span></div></div>' +

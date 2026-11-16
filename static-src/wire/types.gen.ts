@@ -2927,7 +2927,7 @@ export interface QueuedPrompt {
 
 /**
  * RecentClose is one chat whose last tab closed in the last tabs.RecentWindow, a row of the
- * sidebar's Recently closed list. Field order is fieldalignment's.
+ * sidebar's History section. Field order is fieldalignment's.
  */
 export interface RecentClose {
   ref: string;
