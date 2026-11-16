@@ -49,6 +49,8 @@ type runTurn struct {
 	endWait chan struct{}
 	// tail is the newest line the turn's own lane printed (printedLine), nil until it prints; written by the sink.
 	tail atomic.Pointer[string]
+	// calls is the sink's printedLine state, nil until the turn's first entry.
+	calls stepCalls
 	// lastError is the newest model error KAS displayed in the step's current KAS turn, zero when none.
 	lastError marotte.EngineError
 	// rawStop is the last turn_end's stop reason, carried by the close.
@@ -97,7 +99,10 @@ func (s runSink) Append(ctx context.Context, e *marotte.Entry) error {
 	}
 	s.turn.seq.Store(e.Seq)
 	s.turn.answer.see(e)
-	if line := printedLine(e); line != "" {
+	if s.turn.calls == nil {
+		s.turn.calls = make(stepCalls)
+	}
+	if line := printedLine(e, s.turn.calls); line != "" {
 		s.turn.tail.Store(&line)
 	}
 	return nil
@@ -1278,6 +1283,7 @@ func scanStepFacts(all []marotte.Entry) *stepFactScan {
 		starts: make(map[string]stepAttempt),
 		turns:  make(map[string][]string),
 		paths:  make(map[string]string),
+		calls:  make(stepCalls),
 	}
 	for i := range all {
 		sc.see(&all[i])
@@ -1291,6 +1297,7 @@ type stepFactScan struct {
 	starts map[string]stepAttempt
 	turns  map[string][]string
 	paths  map[string]string
+	calls  stepCalls
 }
 
 func (sc *stepFactScan) see(e *marotte.Entry) {
@@ -1308,9 +1315,11 @@ func (sc *stepFactScan) see(e *marotte.Entry) {
 			sc.closes[path] = stepCloseOf(&tc, e.Turn)
 			noteAttemptClose(sc.starts, path, tc.Outcome)
 		}
-	case marotte.EntryKindText, marotte.EntryKindThinking, marotte.EntryKindToolCall:
+		// A call its turn never settled is never released by a result.
+		maps.DeleteFunc(sc.calls, func(k stepCallKey, _ *marotte.EntryToolCall) bool { return k.turn == e.Turn })
+	case marotte.EntryKindText, marotte.EntryKindThinking, marotte.EntryKindToolCall, marotte.EntryKindToolResult:
 		if path, ok := sc.paths[e.Turn]; ok {
-			noteAttemptLine(sc.starts, path, printedLine(e))
+			noteAttemptLine(sc.starts, path, printedLine(e, sc.calls))
 		}
 	case marotte.EntryKindStepGraded:
 		var g marotte.EntryStepGraded

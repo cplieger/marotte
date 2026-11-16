@@ -5,6 +5,7 @@
 import { signal, type Signal } from "@cplieger/reactive";
 import type { Entry, OpenEntry, TurnState } from "./types.js";
 import type { RunStepStart } from "./wire/types.gen.js";
+import { callIDOfToolResult } from "./entry-ids.js";
 
 /** Longer than any dock row shows; the CSS ellipsizes the rest. */
 const MAX_CHARS = 200;
@@ -23,7 +24,7 @@ export function lastPrintedLine(turns: readonly TurnState[]): string {
 }
 
 /** The newest thing the step's own lane printed in `turn`: its streaming text or thinking, else
- *  its newest sealed text, thinking or tool call (by title). */
+ *  its newest sealed text, thinking, tool call or tool result that prints (`entryLine`). */
 function turnLine(turn: TurnState): string {
   const open = turn.openEntries.get("");
   if (open !== undefined) {
@@ -34,7 +35,7 @@ function turnLine(turn: TurnState): string {
   }
   for (let i = turn.entries.length - 1; i >= 0; i--) {
     const e = turn.entries[i];
-    const line = e === undefined ? "" : entryLine(e);
+    const line = e === undefined ? "" : entryLine(e, (id) => heldCallTitle(turn.entries, i, id));
     if (line !== "") {
       return line;
     }
@@ -42,25 +43,49 @@ function turnLine(turn: TurnState): string {
   return "";
 }
 
+/** The card title of the root-lane `tool_call` `id` among `entries` before `at`, undefined when
+ *  none is held. */
+function heldCallTitle(entries: readonly Entry[], at: number, id: string): string | undefined {
+  for (let i = at - 1; i >= 0; i--) {
+    const e = entries[i];
+    if (e?.kind === "tool_call" && e.id === id && (e.lane ?? "") === "") {
+      return field(e, "card_title") ?? "";
+    }
+  }
+  return undefined;
+}
+
 /** What one sealed entry of the step's own lane prints: a text's or thinking's last line, the title
- *  a tool call's card draws. The server's twin, which seeds a tail cell, is `internal/agent`
- *  `printedLine`. */
-function entryLine(e: Entry): string {
+ *  a tool call's card draws, and a tool result's card title where it differs from its call's
+ *  (`callTitle`), as when the command arrived only on the result. The server's twin, which seeds a
+ *  tail cell, is `internal/agent` `printedLine`. */
+function entryLine(e: Entry, callTitle: (callID: string) => string | undefined): string {
   if ((e.lane ?? "") !== "") {
     return "";
   }
-  const fields =
-    e.kind === "text" || e.kind === "thinking"
-      ? ["text"]
-      : e.kind === "tool_call"
-        ? ["card_title", "title"]
-        : [];
+  if (e.kind === "text" || e.kind === "thinking") {
+    return lastLine(field(e, "text") ?? "");
+  }
+  if (e.kind === "tool_call") {
+    return lastLine(field(e, "card_title") ?? field(e, "title") ?? "");
+  }
+  if (e.kind === "tool_result") {
+    const callID = callIDOfToolResult(e.id);
+    const own = callID === null ? undefined : callTitle(callID);
+    const title = field(e, "card_title") ?? "";
+    return own === undefined || own === title ? "" : lastLine(title);
+  }
+  return "";
+}
+
+/** A string member of the entry's payload, undefined when absent or not a string. */
+function field(e: Entry, name: string): string | undefined {
   const p = e.payload;
   if (p === null || typeof p !== "object") {
-    return "";
+    return undefined;
   }
-  const value = fields.map((f) => (p as Record<string, unknown>)[f]).find((v) => v !== undefined);
-  return typeof value === "string" ? lastLine(value) : "";
+  const v = (p as Record<string, unknown>)[name];
+  return typeof v === "string" ? v : undefined;
 }
 
 /** Markdown structure that says nothing on its own line: a code fence, a table's rule, a thematic
@@ -106,6 +131,9 @@ interface TailCell {
   /** The line was moved by a frame since the run entered this page's scope, so a read's older
    *  seed does not overwrite it. */
   live: boolean;
+  /** The card titles of the root-lane tool calls appended to the cell's turn, by call id, until
+   *  their results arrive. */
+  readonly calls: Map<string, string>;
 }
 
 /** Root-lane deltas of an entry a turn's cell has not seen open, or past a gap in the one it holds,
@@ -142,7 +170,7 @@ function runTails(workflowID: string): RunTails {
 function cellAt(t: RunTails, path: string): TailCell {
   let c = t.cells.get(path);
   if (c === undefined) {
-    c = { line: signal(""), open: undefined, live: false };
+    c = { line: signal(""), open: undefined, live: false, calls: new Map() };
     t.cells.set(path, c);
   }
   return c;
@@ -164,7 +192,9 @@ export function stepTurnPath(workflowID: string, turnID: string): string | undef
 export function noteStepTurn(workflowID: string, turnID: string, path: string): void {
   const t = runTails(workflowID);
   t.paths.set(turnID, path);
-  cellAt(t, path).open = undefined;
+  const c = cellAt(t, path);
+  c.open = undefined;
+  c.calls.clear();
 }
 
 /** Seed each in-flight step's cell from a run read's rows: a cell no frame has moved since the run
@@ -308,8 +338,18 @@ export function tailSealed(workflowID: string, turnID: string, entryID: string, 
 /** A sealed entry appended to such a turn. */
 export function tailAppended(workflowID: string, entry: Entry): void {
   const c = cellOf(workflowID, entry.turn);
-  const line = entryLine(entry);
-  if (c === undefined || line === "") {
+  if (c === undefined) {
+    return;
+  }
+  if (entry.kind === "tool_call" && (entry.lane ?? "") === "") {
+    c.calls.set(entry.id, field(entry, "card_title") ?? "");
+  }
+  const line = entryLine(entry, (id) => {
+    const title = c.calls.get(id);
+    c.calls.delete(id);
+    return title;
+  });
+  if (line === "") {
     return;
   }
   c.live = true;
@@ -338,6 +378,7 @@ export function leaveStepTails(workflowID: string): void {
   for (const c of t?.cells.values() ?? []) {
     c.open = undefined;
     c.live = false;
+    c.calls.clear();
   }
 }
 

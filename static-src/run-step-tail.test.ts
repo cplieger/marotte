@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   forgetStepTails,
   lastPrintedLine,
+  noteStepTurn,
   seedStepTails,
   stepTail,
+  tailAppended,
   tailDelta,
 } from "./run-step-tail.js";
 import type { Entry, OpenEntry, RunStepStart } from "./wire/types.gen.js";
@@ -60,6 +62,18 @@ describe("lastPrintedLine", () => {
     );
   });
 
+  // KAS can send a shell call's command only on its update, which the result stores.
+  it("is a result's card title where it differs from its call's", () => {
+    const call = { ...entry(1, "tool_call", shellCall), id: "c1" };
+    const settled = { ...entry(2, "tool_result", { card_title: "go vet ./..." }), id: "c1:result" };
+    expect(lineOf(turn([call, settled]))).toBe("go vet ./...");
+    const same = { ...entry(3, "tool_result", { card_title: "Run Command" }), id: "c1:result" };
+    expect(lineOf(turn([call, entry(2, "text", { text: "Reading the hits" }), same]))).toBe(
+      "Reading the hits",
+    );
+    expect(lineOf(turn([entry(2, "text", { text: "mine" }), settled]))).toBe("mine");
+  });
+
   it("skips a delegate's lane and an entry with nothing to say", () => {
     const t = turn([
       entry(1, "text", { text: "mine" }),
@@ -106,6 +120,30 @@ describe("lastPrintedLine", () => {
     for (const [text, line] of cases) {
       expect(lineOf(turn([entry(1, "text", { text })])), text).toBe(line);
     }
+  });
+});
+
+const shellCall = { title: "Run Command", card_title: "Run Command", id: "c1" };
+
+describe("a tail cell moved by appended entries", () => {
+  it("takes a result's card title where it differs from its call's", () => {
+    const wf = "wf_cell_result";
+    noteStepTurn(wf, "t1", "s");
+    tailAppended(wf, { ...entry(1, "tool_call", shellCall), id: "c1" });
+    expect(stepTail(wf, "s")).toBe("Run Command");
+    tailAppended(wf, {
+      ...entry(2, "tool_result", { card_title: "go vet ./..." }),
+      id: "c1:result",
+    });
+    expect(stepTail(wf, "s")).toBe("go vet ./...");
+    tailAppended(wf, { ...entry(3, "tool_call", { ...shellCall, id: "c2" }), id: "c2" });
+    tailAppended(wf, entry(4, "text", { text: "Reading the hits" }));
+    tailAppended(wf, {
+      ...entry(5, "tool_result", { card_title: "Run Command" }),
+      id: "c2:result",
+    });
+    expect(stepTail(wf, "s")).toBe("Reading the hits");
+    forgetStepTails(wf);
   });
 });
 

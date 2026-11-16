@@ -92,6 +92,57 @@ func TestRunLog_StepStartsCarryAnInFlightStepsTurnAndLine(t *testing.T) {
 			t.Errorf("tail = %q, want %q", tail, "go test ./...")
 		}
 	})
+	t.Run("a command only the result carries moves the line to it", func(t *testing.T) {
+		dir := t.TempDir()
+		r := newRunLog(dir)
+		turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		call := &marotte.EntryToolCall{ID: "call-1", Title: "Run Command", Kind: marotte.ToolKindExecute, Input: json.RawMessage(`{}`)}
+		if _, err := turn.ToolCall(t.Context(), "", call); err != nil {
+			t.Fatal(err)
+		}
+		if _, tail := startTail(t, r, step); tail != "Run Command" {
+			t.Fatalf("Setup: before the result, tail = %q, want %q", tail, "Run Command")
+		}
+		res := &marotte.EntryToolResult{
+			Title: "Run Command", Kind: marotte.ToolKindExecute, Status: marotte.ToolCompleted,
+			Input: json.RawMessage(`{"command":"go vet ./..."}`),
+		}
+		if _, err := turn.ToolResult(t.Context(), "", "call-1", res); err != nil {
+			t.Fatal(err)
+		}
+		if _, tail := startTail(t, r, step); tail != "go vet ./..." {
+			t.Errorf("live tail = %q, want the command the card draws", tail)
+		}
+		if _, tail := startTail(t, newRunLog(dir), step); tail != "go vet ./..." {
+			t.Errorf("tail read back from the log = %q, want the command the card draws", tail)
+		}
+	})
+	t.Run("a result that changes nothing leaves a later line standing", func(t *testing.T) {
+		r := newRunLog(t.TempDir())
+		turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := turn.ToolCall(t.Context(), "", &marotte.EntryToolCall{ID: "call-1", Title: "rg heavyRun", Kind: marotte.ToolKindOther}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := turn.TextDelta(t.Context(), "", "say-1", "Reading the hits"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := turn.SealOpen(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		res := &marotte.EntryToolResult{Title: "rg heavyRun", Kind: marotte.ToolKindOther, Status: marotte.ToolCompleted}
+		if _, err := turn.ToolResult(t.Context(), "", "call-1", res); err != nil {
+			t.Fatal(err)
+		}
+		if _, tail := startTail(t, r, step); tail != "Reading the hits" {
+			t.Errorf("tail = %q, want the text line standing", tail)
+		}
+	})
 	t.Run("the turn after an interruption keeps the line until it prints", func(t *testing.T) {
 		r := newRunLog(t.TempDir())
 		turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")

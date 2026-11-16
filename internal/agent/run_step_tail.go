@@ -20,9 +20,10 @@ var tailStructureOnly = regexp.MustCompile("^(?:(?:`{3,}|~{3,})[^`]*|\\|?(?:\\s*
 var tailBlockMarkers = regexp.MustCompile(`^(?:#{1,6}\s+|>\s?|[-*+]\s+|\d{1,9}[.)]\s+)+`)
 
 // printedLine is the line a step's dock row shows for one sealed entry of its own lane, "" when the entry prints
-// nothing there. The client's twin, which also reads a streaming entry, is run-step-tail.ts lastPrintedLine: both
-// must cut a line the same way.
-func printedLine(e *marotte.Entry) string {
+// nothing there. calls holds the lane's tool_calls until their results: a call joins it, its result leaves it. The
+// client's twin, which also reads a streaming entry, is run-step-tail.ts lastPrintedLine: both must cut a line the
+// same way.
+func printedLine(e *marotte.Entry, calls stepCalls) string {
 	if e.Lane != "" {
 		return ""
 	}
@@ -44,11 +45,39 @@ func printedLine(e *marotte.Entry) string {
 		if json.Unmarshal(e.Payload, &c) != nil {
 			return ""
 		}
+		calls[stepCallKey{e.Turn, e.ID}] = &c
 		tc := marotte.ToolCallOfEntry(&c)
 		return lastProseLine(marotte.ToolCardTitle(&tc))
+	case marotte.EntryKindToolResult:
+		return calls.settle(e)
 	default:
 		return ""
 	}
+}
+
+// stepCalls is a step's root-lane tool_calls awaiting their results, by turn and call id.
+type stepCalls map[stepCallKey]*marotte.EntryToolCall
+
+type stepCallKey struct{ turn, id string }
+
+// settle releases the result's call and answers the line the result prints: its card's settled title where that
+// differs from the call's own, as when the command arrived only on the result, else "".
+func (c stepCalls) settle(e *marotte.Entry) string {
+	k := stepCallKey{e.Turn, marotte.ToolCallIDOfResult(e.ID)}
+	call, ok := c[k]
+	if !ok {
+		return ""
+	}
+	delete(c, k)
+	var res marotte.EntryToolResult
+	if json.Unmarshal(e.Payload, &res) != nil {
+		return ""
+	}
+	own, settled := marotte.ToolCallOfEntry(call), marotte.SettledToolCall(call, &res)
+	if title := marotte.ToolCardTitle(&settled); title != marotte.ToolCardTitle(&own) {
+		return lastProseLine(title)
+	}
+	return ""
 }
 
 // dockText is the end of a streaming text that lastProseLine reads the same as the whole, whatever is appended to it:
