@@ -28,7 +28,9 @@ Ops (a trigger file's JSON):
    chunks and one tool call, X answer chunks; with edit_paths each call is an edit that appends
    a line to the next path before it settles
 A `session/prompt` streams one turn shaped by TRIGGER_DIR/prompt-shape.json (the chat op's
-fields). Frame shapes follow marotte's internal/agent and internal/translate readers.
+fields). A `_session/steer` is held as KAS holds one mid-turn: a `steering_queued` update, then
+`{"queued": true}`; nothing reads it. Frame shapes follow marotte's internal/agent and
+internal/translate readers.
 """
 
 import copy
@@ -767,6 +769,26 @@ def main():
                 args=(rid, params.get('sessionId'), find_key(params, 'userMessageTag')),
                 daemon=True,
             ).start()
+        elif method == '_session/steer':
+            sid = params.get('sessionId')
+            notify(
+                'session/update',
+                {
+                    'sessionId': sid,
+                    'update': {
+                        'sessionUpdate': 'session_info_update',
+                        '_meta': {
+                            'kiro': {
+                                'kind': 'steering_queued',
+                                'messageId': 'steer-' + str(params.get('messageId')),
+                                'content': params.get('message', ''),
+                                'timestamp': now_iso(),
+                            }
+                        },
+                    },
+                },
+            )
+            result(rid, {'queued': True})
         elif method == 'session/list':
             result(rid, {'sessions': load_sessions()})
         elif method == '_kiro/workflow/listRecipes':
