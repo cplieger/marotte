@@ -124,6 +124,60 @@ func TestHandleTurnRange_StampsAResultWhoseCallPrecedesAfter(t *testing.T) {
 	}
 }
 
+// A call id can repeat across turns; the page serves each turn's call and result from that turn alone.
+func TestHandleChatPage_TurnsSharingACallIDStayApart(t *testing.T) {
+	s, _ := newTestStore(t)
+	appendTool := func(turn string, call marotte.EntryToolCall) {
+		t.Helper()
+		if err := s.Append(t.Context(), "c1", entryOf(turn, "", call.ID, marotte.EntryKindToolCall, call)); err != nil {
+			t.Fatalf("Setup: append tool_call: %v", err)
+		}
+		res := marotte.EntryToolResult{Status: marotte.ToolCompleted}
+		if err := s.Append(t.Context(), "c1", entryOf(turn, "", marotte.ToolResultID(call.ID), marotte.EntryKindToolResult, res)); err != nil {
+			t.Fatalf("Setup: append tool_result: %v", err)
+		}
+	}
+	first := openPromptTurn(t, s, "c1", "m-1")
+	appendTool(first, loadSkillCall("tc1"))
+	closeTurn(t, s, "c1", first, marotte.TurnOutcomeCompleted)
+	second := openPromptTurn(t, s, "c1", "m-2")
+	appendTool(second, marotte.EntryToolCall{
+		ID: "tc1", Title: "Run Command", Kind: marotte.ToolKindExecute, Status: marotte.ToolPending,
+		Input: json.RawMessage(`{"command":"make lint"}`),
+	})
+
+	page := getPage(t, s, "c1", "")
+
+	want := map[string]string{first: "Loaded skill: land", second: "make lint"}
+	wire := map[string]string{first: "Tool Load", second: "Run Command"}
+	seen := 0
+	for _, e := range page.Entries {
+		switch e.Kind {
+		case marotte.EntryKindToolCall:
+			var c marotte.EntryToolCall
+			if err := json.Unmarshal(e.Payload, &c); err != nil {
+				t.Fatalf("decode call: %v", err)
+			}
+			seen++
+			if c.Title != wire[e.Turn] || c.CardTitle != want[e.Turn] {
+				t.Errorf("turn %s call served title %q card %q, want %q and %q", e.Turn, c.Title, c.CardTitle, wire[e.Turn], want[e.Turn])
+			}
+		case marotte.EntryKindToolResult:
+			var r marotte.EntryToolResult
+			if err := json.Unmarshal(e.Payload, &r); err != nil {
+				t.Fatalf("decode result: %v", err)
+			}
+			seen++
+			if r.CardTitle != want[e.Turn] {
+				t.Errorf("turn %s result served %q, want its own turn's join %q", e.Turn, r.CardTitle, want[e.Turn])
+			}
+		}
+	}
+	if seen != 4 {
+		t.Fatalf("the page serves %d tool entries, want 4", seen)
+	}
+}
+
 func TestRenderChatMarkdown_TitlesAToolByItsCardTitle(t *testing.T) {
 	entries, _ := chatOf(openTurn("t-1", 1, nil).
 		tool(marotte.EntryToolCall{

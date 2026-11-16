@@ -90,19 +90,18 @@ func persistBoundEntry(e *marotte.Entry) {
 // previewEntry stamps a tool_call or tool_result payload with its card title and bounds
 // it to previewBudget in place, marking HasFull when anything was cut, and leaves every
 // other entry alone: the shape the transcript GET serves, where the whole is one bulk
-// fetch away. calls holds the decoded tool_calls by id, a result's join included. The
-// stamp reads the unbounded input, since the cut can drop the command a title is made of.
-func previewEntry(e *marotte.Entry, calls map[string]*marotte.EntryToolCall) {
+// fetch away. calls holds the call a result joins. The stamp reads the unbounded input,
+// since the cut can drop the command a title is made of.
+func previewEntry(e *marotte.Entry, calls marotte.ToolCalls) {
 	switch e.Kind {
 	case marotte.EntryKindToolCall:
-		call, ok := calls[e.ID]
-		if !ok {
+		var call marotte.EntryToolCall
+		if json.Unmarshal(e.Payload, &call) != nil {
 			return
 		}
-		stamped := *call
-		marotte.StampToolCall(&stamped)
-		out, cut := boundToolCall(&stamped, previewBudget)
-		if cut == (marotte.ToolTruncation{}) && stamped.CardTitle == "" && stamped.Loaded == nil {
+		marotte.StampToolCall(&call)
+		out, cut := boundToolCall(&call, previewBudget)
+		if cut == (marotte.ToolTruncation{}) && call.CardTitle == "" && call.Loaded == nil {
 			return
 		}
 		if cut != (marotte.ToolTruncation{}) {
@@ -114,7 +113,7 @@ func previewEntry(e *marotte.Entry, calls map[string]*marotte.EntryToolCall) {
 		if json.Unmarshal(e.Payload, &res) != nil {
 			return
 		}
-		marotte.StampToolResult(&res, calls[marotte.ToolCallIDOfResult(e.ID)])
+		marotte.StampToolResult(&res, calls.Of(e))
 		out, cut := boundToolResult(&res, previewBudget)
 		if cut == (marotte.ToolTruncation{}) && res.CardTitle == "" && res.Loaded == nil {
 			return
@@ -130,7 +129,7 @@ func previewEntry(e *marotte.Entry, calls map[string]*marotte.EntryToolCall) {
 // previewEntries serves entries through previewEntry; context holds tool_calls outside
 // entries that a result in entries may settle.
 func previewEntries(entries, context []marotte.Entry) []marotte.Entry {
-	calls := marotte.ToolCallsByID(context, entries)
+	calls := marotte.IndexToolCalls(context, entries)
 	for i := range entries {
 		previewEntry(&entries[i], calls)
 	}

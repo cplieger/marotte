@@ -279,32 +279,39 @@ func StampToolResult(r *EntryToolResult, call *EntryToolCall) {
 }
 
 // ServeToolEntries stamps every tool_call and tool_result in entries, rewriting their payloads
-// in place, so entries must be the caller's own copy. A result's call is looked up in entries,
-// then in context; an entry that does not decode, or derives nothing, is left as stored.
+// in place, so entries must be the caller's own copy. A result joins its own turn's call in
+// entries, else in context; an entry that does not decode, or derives nothing, is left as stored.
 func ServeToolEntries(entries, context []Entry) {
-	calls := ToolCallsByID(context, entries)
+	calls := IndexToolCalls(context, entries)
 	for i := range entries {
 		e := &entries[i]
 		switch e.Kind {
 		case EntryKindToolCall:
-			if c, ok := calls[e.ID]; ok {
-				stamped := *c
-				StampToolCall(&stamped)
-				reencode(e, &stamped, stamped.CardTitle, stamped.Loaded)
+			var c EntryToolCall
+			if json.Unmarshal(e.Payload, &c) == nil {
+				StampToolCall(&c)
+				reencode(e, &c, c.CardTitle, c.Loaded)
 			}
 		case EntryKindToolResult:
 			var r EntryToolResult
 			if json.Unmarshal(e.Payload, &r) == nil {
-				StampToolResult(&r, calls[ToolCallIDOfResult(e.ID)])
+				StampToolResult(&r, calls.Of(e))
 				reencode(e, &r, r.CardTitle, r.Loaded)
 			}
 		}
 	}
 }
 
-// ToolCallsByID decodes every tool_call in the lists by entry id, a later list's call replacing an earlier's.
-func ToolCallsByID(lists ...[]Entry) map[string]*EntryToolCall {
-	calls := make(map[string]*EntryToolCall)
+// toolCallKey is a call's turn and entry id: a call id is unique only within its turn.
+type toolCallKey struct{ turn, id string }
+
+// ToolCalls holds decoded tool_calls for joining their results.
+type ToolCalls map[toolCallKey]*EntryToolCall
+
+// IndexToolCalls decodes every tool_call in the lists, a later list's call replacing an
+// earlier's with the same turn and id.
+func IndexToolCalls(lists ...[]Entry) ToolCalls {
+	calls := make(ToolCalls)
 	for _, src := range lists {
 		for i := range src {
 			if src[i].Kind != EntryKindToolCall {
@@ -312,11 +319,16 @@ func ToolCallsByID(lists ...[]Entry) map[string]*EntryToolCall {
 			}
 			var c EntryToolCall
 			if json.Unmarshal(src[i].Payload, &c) == nil {
-				calls[src[i].ID] = &c
+				calls[toolCallKey{src[i].Turn, src[i].ID}] = &c
 			}
 		}
 	}
 	return calls
+}
+
+// Of is the call the tool_result entry res joins, nil when it is not held.
+func (c ToolCalls) Of(res *Entry) *EntryToolCall {
+	return c[toolCallKey{res.Turn, ToolCallIDOfResult(res.ID)}]
 }
 
 func reencode(e *Entry, payload any, title string, loaded []LoadedResource) {

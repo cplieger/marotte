@@ -428,6 +428,38 @@ func TestServeToolEntries_ContextSuppliesTheCall(t *testing.T) {
 	}
 }
 
+// A call id can repeat across turns; each entry keeps its own payload and a result joins only
+// its own turn's call.
+func TestServeToolEntries_TurnsSharingACallIDStayApart(t *testing.T) {
+	inTurn := func(e Entry, turn string) Entry { e.Turn = turn; return e }
+	entries := []Entry{
+		inTurn(toolEntry(t, "tc-1", EntryKindToolCall, EntryToolCall{
+			ID: "tc-1", Title: "Tool Load", Kind: ToolKindOther, Status: ToolPending,
+			ToolName: "tool_load", Input: json.RawMessage(`{"id":"skill::land"}`),
+		}), "t1"),
+		inTurn(toolEntry(t, "tc-1:result", EntryKindToolResult, EntryToolResult{Status: ToolCompleted}), "t1"),
+		inTurn(toolEntry(t, "tc-1", EntryKindToolCall, EntryToolCall{
+			ID: "tc-1", Title: "Run Command", Kind: ToolKindExecute, Status: ToolPending,
+			Input: json.RawMessage(`{"command":"make lint"}`),
+		}), "t2"),
+		inTurn(toolEntry(t, "tc-1:result", EntryKindToolResult, EntryToolResult{Status: ToolCompleted}), "t2"),
+	}
+	ServeToolEntries(entries, nil)
+
+	if c := servedCall(t, entries[0]); c.Title != "Tool Load" || c.CardTitle != "Loaded skill: land" {
+		t.Errorf("t1 call served title %q card %q, want its own %q and %q", c.Title, c.CardTitle, "Tool Load", "Loaded skill: land")
+	}
+	if r := servedResult(t, entries[1]); r.CardTitle != "Loaded skill: land" {
+		t.Errorf("t1 result served %q, want its own turn's join %q", r.CardTitle, "Loaded skill: land")
+	}
+	if c := servedCall(t, entries[2]); c.Title != "Run Command" || c.CardTitle != "make lint" {
+		t.Errorf("t2 call served title %q card %q, want %q and %q", c.Title, c.CardTitle, "Run Command", "make lint")
+	}
+	if r := servedResult(t, entries[3]); r.CardTitle != "make lint" {
+		t.Errorf("t2 result served %q, want %q", r.CardTitle, "make lint")
+	}
+}
+
 func TestServeToolEntries_LeavesOtherKindsByteEqual(t *testing.T) {
 	text := toolEntry(t, "x-1", EntryKindText, EntryText{Text: "Run Command"})
 	broken := Entry{ID: "tc-2", Turn: "t1", Kind: EntryKindToolCall, Payload: json.RawMessage(`{"id":`)}
