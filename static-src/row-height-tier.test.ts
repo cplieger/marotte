@@ -8,9 +8,8 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 const LIST_ROWS = [
   ["mcp-row", ["mcp-row-name"]],
   ["git-file-row", ["git-file-path"]],
-  // The page-list row (History, and the configuration browser): its height is the `--row-h` tier
-  // outright rather than a floor, so it moves with the pointer for the same reason and by a larger
-  // step.
+  // The page-list row (History, and the configuration browser): its lines inside a block padding,
+  // floored at `--row-tap`.
   ["entry", ["entry-body", "entry-line", "entry-name", "entry-title"]],
   ["pill-model-item", []],
   ["pill-role-item", []],

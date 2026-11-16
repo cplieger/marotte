@@ -272,6 +272,7 @@ type Runtime struct {
 	catalog *catalog
 	// slash is the workspace slash menu, steeringIssues KAS's steering issues; both re-sent by KAS every session.
 	slash          *slashCatalog
+	slashRefresh   *slashRefresher
 	steeringIssues *steeringIssues
 	mcpRegistry    *mcpRegistry
 	shellMgr       *shellManager
@@ -487,6 +488,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		chatStore:      chatStore,
 		catalog:        &catalog{},
 		slash:          newSlashCatalog(),
+		slashRefresh:   &slashRefresher{},
 		steeringIssues: newSteeringIssues(),
 		versions:       &subject.Versions{},
 		digestSlots:    newDigestSemaphore(digestConcurrency),

@@ -161,7 +161,7 @@ beforeEach(async () => {
       close: vi.fn(),
       dot: () => "",
     },
-    editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn() },
+    editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn(), move: vi.fn() },
     // The composition root's run half (app.ts).
     run: {
       show: (workflowID) => {

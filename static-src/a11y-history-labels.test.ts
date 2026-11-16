@@ -52,7 +52,7 @@ vi.mock("./tabs.js", () => ({
   setHistoryPane: noop,
   tabSetVersion: () => 0,
 }));
-vi.mock("./router.js", () => ({ pushRoute: noop }));
+vi.mock("./router.js", () => ({ pushRoute: noop, replaceRoute: vi.fn() }));
 vi.mock("./legacy-ui/skeleton.js", () => ({
   skeletonTiming: () => ({ cancel: noop }),
 }));

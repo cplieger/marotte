@@ -113,6 +113,7 @@ function openForEdit(raw: string, path = PATH): ReturnType<typeof freshState> {
     utf8: true,
     conflict: false,
     readOnly: false,
+    renamable: true,
     size: raw.length,
   };
   fileStates.set(path, state);
@@ -286,6 +287,7 @@ describe("a save whose file's owner wrote other bytes than were sent", () => {
     size: bytesOf(content),
     utf8: true,
     read_only: false,
+    renamable: true,
   });
 
   /** Open config.json as READ, replace the buffer with SENT, and press Save. */

@@ -34,6 +34,14 @@ const h = vi.hoisted(() => {
     openFile: vi.fn(),
     openFileInBackground: vi.fn(),
     toastError: vi.fn((_message: string) => () => undefined),
+    /** Every SSE handler the browser subscribed, by type. */
+    sse: new Map<string, ((chatID: string, payload: unknown) => void)[]>(),
+    /** Every bus handler the browser subscribed, by event. */
+    bus: new Map<string, ((payload: unknown) => void)[]>(),
+    activateTab: vi.fn((_id: string) => Promise.resolve()),
+    /** The browser a files route would re-point, "" ids when none is open. */
+    filesTabForRoute: vi.fn((_path: string) => ({ id: "", ref: "" })),
+    activeKind: "files",
     /** Paint the rows placeholder at once instead of never, for the cases that read the loading cue. */
     paintSkeleton: false,
   };
@@ -53,14 +61,22 @@ vi.mock("./dom.js", () => ({
   },
 }));
 vi.mock("./bus.js", () => ({
-  onSSE: undefined,
-  onBus: vi.fn(),
+  onSSE: (type: string, fn: (chatID: string, payload: unknown) => void) => {
+    h.sse.set(type, [...(h.sse.get(type) ?? []), fn]);
+    return () => undefined;
+  },
+  onBus: (event: string, fn: (payload: unknown) => void) => {
+    h.bus.set(event, [...(h.bus.get(event) ?? []), fn]);
+    return () => undefined;
+  },
   BUS_KEYS_ESCAPE: "escape",
+  BUS_FILES_REVEAL: "files:reveal",
 }));
 
 vi.mock("./tabs.js", () => ({
   // navigate.js's `openSpec` imports these; one missing name fails this file's import.
-  activateTab: undefined,
+  activateTab: h.activateTab,
+  filesTabForRoute: h.filesTabForRoute,
   parentChatRef: undefined,
   setTabParent: undefined,
   tabIdFor: undefined,
@@ -68,7 +84,7 @@ vi.mock("./tabs.js", () => ({
   openGitView: undefined,
   toggleFilesView: vi.fn(() => Promise.resolve()),
   openFilesView: vi.fn(() => Promise.resolve()),
-  getActiveTabKind: vi.fn(() => "files"),
+  getActiveTabKind: vi.fn(() => h.activeKind),
   setFilesRoute: h.setFilesRoute,
   renameTab: h.renameTab,
   filesTabIdFor: vi.fn(() => "t-files"),
@@ -226,8 +242,12 @@ beforeEach(() => {
   releaseFilesTab("/b");
   releaseFilesTab("/w");
   h.els.clear();
+  h.sse.clear();
+  h.bus.clear();
+  h.activeKind = "files";
   h.paintSkeleton = false;
   vi.clearAllMocks();
+  h.filesTabForRoute.mockImplementation(() => ({ id: "", ref: "" }));
   answers.clear();
   vi.mocked(apiGetOrError).mockImplementation((url: string) =>
     Promise.resolve(answerFor(url) as never),
@@ -992,6 +1012,99 @@ describe("New file and New folder beside entries holding the default name", () =
     });
     expect(sent).toEqual([{ action: "touch", path: "/w/new file" }]);
   });
+
+  // The create's own reload and a files_changed re-list share one request slot: the later one
+  // aborts the earlier, which answers stale at once, before the later one lands.
+  function filesChanged(): void {
+    for (const fn of h.sse.get("files_changed") ?? []) {
+      fn("", { dirs: ["/w"] });
+    }
+  }
+  function loadsOfW(): number {
+    return vi.mocked(apiGetOrError).mock.calls.filter((c) => String(c[0]).endsWith("path=%2Fw"))
+      .length;
+  }
+
+  it("opens the name field when files_changed re-lists the folder before the create's reload answers", async () => {
+    const reload = held();
+    const relist = held();
+    answers.set("/w", [okAnswer({ files: [], writable: true }), reload.answer, relist.answer]);
+    initFileBrowser();
+    await show("/w");
+    $.fbNewFile.click();
+    await vi.waitFor(() => {
+      expect(loadsOfW(), "the reload after the create was asked for").toBe(2);
+    });
+    filesChanged();
+    reload.release(okAnswer({ files: [], writable: true }));
+    await settleTasks();
+    relist.release(okAnswer({ files: [{ name: "new file", isDir: false }], writable: true }));
+    await vi.waitFor(() => {
+      expect(rowFor("new file").querySelector(".fb-name-edit"), "the rename opened").not.toBeNull();
+    });
+  });
+
+  it("retries with another name when files_changed supersedes the reload after a taken create", async () => {
+    statuses.push(TAKEN);
+    const reload = held();
+    const relist = held();
+    const other = { name: "new file", isDir: false };
+    answers.set("/w", [
+      okAnswer({ files: [], writable: true }),
+      reload.answer,
+      relist.answer,
+      okAnswer({ files: [other, { name: "new file 2", isDir: false }], writable: true }),
+    ]);
+    initFileBrowser();
+    await show("/w");
+    $.fbNewFile.click();
+    await vi.waitFor(() => {
+      expect(loadsOfW(), "the reload after the taken create was asked for").toBe(2);
+    });
+    filesChanged();
+    reload.release(okAnswer({ files: [], writable: true }));
+    await settleTasks();
+    expect(sent, "no retry before a listing shows which names are taken").toHaveLength(1);
+    relist.release(okAnswer({ files: [other], writable: true }));
+    await vi.waitFor(() => {
+      expect(sent).toEqual([
+        { action: "touch", path: "/w/new file" },
+        { action: "touch", path: "/w/new file 2" },
+      ]);
+    });
+    await vi.waitFor(() => {
+      expect(
+        rowFor("new file 2").querySelector(".fb-name-edit"),
+        "the rename opened",
+      ).not.toBeNull();
+    });
+  });
+
+  it("opens no name field when the reader comes back to the folder after leaving it mid-create", async () => {
+    const reload = held();
+    const there = { name: "new file", isDir: false };
+    answers.set("/w", [
+      okAnswer({ files: [], writable: true }),
+      reload.answer,
+      okAnswer({ files: [there], writable: true }),
+    ]);
+    answers.set("/b", [okAnswer({ files: [], writable: true })]);
+    initFileBrowser();
+    await show("/w");
+    $.fbNewFile.click();
+    await vi.waitFor(() => {
+      expect(loadsOfW(), "the reload after the create was asked for").toBe(2);
+    });
+    await show("/b");
+    reload.release(okAnswer({ files: [there], writable: true }));
+    await settleTasks();
+    await show("/w");
+    await vi.waitFor(() => {
+      expect(rowFor("new file")).toBeDefined();
+    });
+    await settleTasks();
+    expect($.fbList.querySelector(".fb-name-edit")).toBeNull();
+  });
 });
 
 describe("renaming an entry", () => {
@@ -1091,5 +1204,220 @@ describe("renaming an entry", () => {
     });
     must(rowFor("a.txt").querySelector<HTMLElement>(`.${FB_NAME}`)).click();
     expect(h.openFile.mock.calls.map((c) => c[0])).toEqual(["/w/a.txt"]);
+  });
+
+  // A focused chat tab row takes F2 for the chat's own rename (tabs.ts) and prevents its default.
+  it("F2 on a focused chat tab row renames the chat, not the selected file", async () => {
+    answers.set("/w", [okAnswer({ files: [{ name: "a.txt", isDir: false }], writable: true })]);
+    initFileBrowser();
+    await show("/w");
+    const check = must(rowFor("a.txt").querySelector<HTMLInputElement>(`.${FB_CHECK}`));
+    check.checked = true;
+    check.dispatchEvent(new Event("change"));
+    const tabRow = document.createElement("div");
+    tabRow.addEventListener("keydown", (e) => {
+      e.preventDefault();
+    });
+    document.body.append(tabRow);
+    try {
+      tabRow.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "F2", bubbles: true, cancelable: true }),
+      );
+    } finally {
+      tabRow.remove();
+    }
+    expect(rowFor("a.txt").querySelector(".fb-name-edit")).toBeNull();
+    document.body.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "F2", bubbles: true, cancelable: true }),
+    );
+    expect(rowFor("a.txt").querySelector(".fb-name-edit")).not.toBeNull();
+  });
+});
+
+describe("a file changed through another door", () => {
+  function filesChanged(dirs: string[]): void {
+    for (const fn of h.sse.get("files_changed") ?? []) {
+      fn("", { dirs });
+    }
+  }
+  const renamed = okAnswer({ files: [{ name: "Recall.md", isDir: false }], writable: true });
+
+  it("files_changed naming the shown folder re-lists it, and another folder's does nothing", async () => {
+    initFileBrowser();
+    await show("/w");
+    const before = vi.mocked(apiGetOrError).mock.calls.length;
+    filesChanged(["/elsewhere"]);
+    await settleTasks();
+    expect(vi.mocked(apiGetOrError).mock.calls.length, "another folder lists nothing").toBe(before);
+
+    answers.set("/w", [renamed]);
+    filesChanged(["/w/"]);
+    await settleTasks();
+    expect(rowFor("Recall.md").dataset["name"]).toBe("Recall.md");
+  });
+
+  it("an off-screen browser lists nothing on files_changed, and re-lists when shown", async () => {
+    initFileBrowser();
+    await show("/w");
+    h.activeKind = "editor";
+    const before = vi.mocked(apiGetOrError).mock.calls.length;
+    answers.set("/w", [renamed]);
+    filesChanged(["/w"]);
+    await settleTasks();
+    expect(vi.mocked(apiGetOrError).mock.calls.length, "nothing listed off screen").toBe(before);
+
+    h.activeKind = "files";
+    await show("/w");
+    expect(rowFor("Recall.md").dataset["name"]).toBe("Recall.md");
+  });
+});
+
+// The editor's Show in file browser: the browser opens or re-points at the file's folder, and the
+// listing's answer selects the file.
+describe("showing a file in the browser", () => {
+  const PROMPTS = "/workspace/.kiro/prompts";
+  const FILE = `${PROMPTS}/Recall.md`;
+  const prompts = okAnswer({
+    files: [
+      { name: "Recall.md", isDir: false },
+      { name: "Remember.md", isDir: false },
+    ],
+    writable: true,
+  });
+
+  function reveal(path: string): void {
+    for (const fn of h.bus.get("files:reveal") ?? []) {
+      fn({ path });
+    }
+  }
+
+  function selectedNames(): string[] {
+    return [...$.fbList.children]
+      .filter((r) => r.classList.contains("fb-row-selected"))
+      .map((r) => (r as HTMLElement).dataset["name"] ?? "");
+  }
+
+  function checkOf(name: string): HTMLInputElement {
+    return must(rowFor(name).querySelector<HTMLInputElement>(`.${FB_CHECK}`));
+  }
+
+  /** Focus needs the list in the document. */
+  function attachList(): () => void {
+    const wrap = document.createElement("div");
+    wrap.append($.fbList);
+    document.body.append(wrap);
+    return () => {
+      wrap.remove();
+    };
+  }
+
+  it("with no browser open it opens one at the file's folder and selects the file", async () => {
+    const detach = attachList();
+    initFileBrowser();
+    answers.set(PROMPTS, [prompts]);
+    reveal(FILE);
+    expect(h.openTab).toHaveBeenCalledWith({ kind: "files", ref: PROMPTS });
+    expect(h.activateTab).not.toHaveBeenCalled();
+    // The materialized tab's activation.
+    await show(PROMPTS);
+    expect(selectedNames()).toEqual(["Recall.md"]);
+    expect(checkOf("Recall.md").checked).toBe(true);
+    expect(checkOf("Remember.md").checked).toBe(false);
+    expect($.fbRename.disabled, "Rename acts on the shown file").toBe(false);
+    expect(document.activeElement).toBe(checkOf("Recall.md"));
+    detach();
+    releaseFilesTab(PROMPTS);
+  });
+
+  it("re-points the open browser at the folder and selects the file", async () => {
+    initFileBrowser();
+    await show("/w");
+    rowFor("note.txt").querySelector<HTMLInputElement>(`.${FB_CHECK}`)?.click();
+    h.filesTabForRoute.mockImplementation(() => ({ id: "t-files", ref: "/w" }));
+    answers.set(PROMPTS, [prompts]);
+    reveal(FILE);
+    expect(h.filesTabForRoute).toHaveBeenCalledWith(PROMPTS);
+    expect(h.openTab).not.toHaveBeenCalled();
+    expect(h.setFilesRoute).toHaveBeenLastCalledWith("/w", PROMPTS);
+    expect(h.activateTab).toHaveBeenCalledWith("t-files");
+    await settleTasks();
+    expect(selectedNames()).toEqual(["Recall.md"]);
+  });
+
+  it("selects only the file when the browser already shows its folder", async () => {
+    initFileBrowser();
+    answers.set(PROMPTS, [prompts]);
+    await show(PROMPTS);
+    rowFor("Remember.md").querySelector<HTMLInputElement>(`.${FB_CHECK}`)?.click();
+    h.filesTabForRoute.mockImplementation(() => ({ id: "t-files", ref: PROMPTS }));
+    reveal(FILE);
+    await settleTasks();
+    expect(selectedNames()).toEqual(["Recall.md"]);
+    releaseFilesTab(PROMPTS);
+  });
+
+  it("a refused open leaves nothing to select when the folder is opened later", async () => {
+    initFileBrowser();
+    h.openTab.mockResolvedValueOnce("failed");
+    answers.set(PROMPTS, [prompts]);
+    reveal(FILE);
+    await settleTasks();
+    await show(PROMPTS);
+    expect(rowFor("Recall.md").dataset["name"]).toBe("Recall.md");
+    expect(selectedNames()).toEqual([]);
+    releaseFilesTab(PROMPTS);
+  });
+
+  it("a relative docs spelling lands on the absolute folder", () => {
+    initFileBrowser();
+    reveal("workspace/.kiro/prompts/Recall.md");
+    expect(h.openTab).toHaveBeenCalledWith({ kind: "files", ref: PROMPTS });
+  });
+
+  it("a name missing from the listing selects nothing, and a later listing does not select it", async () => {
+    initFileBrowser();
+    const other = okAnswer({ files: [{ name: "Other.md", isDir: false }], writable: true });
+    answers.set(PROMPTS, [other, prompts]);
+    reveal(FILE);
+    await show(PROMPTS);
+    expect(selectedNames()).toEqual([]);
+    await show(PROMPTS);
+    expect(rowFor("Recall.md").dataset["name"]).toBe("Recall.md");
+    expect(selectedNames()).toEqual([]);
+    releaseFilesTab(PROMPTS);
+  });
+
+  it("a failed listing selects nothing, and the retry does not select it", async () => {
+    initFileBrowser();
+    const failed = { ok: false, status: 500, data: null, error: "boom" };
+    const other = okAnswer({ files: [{ name: "Other.md", isDir: false }], writable: true });
+    // Listed once first, so the failure is not the origin's, which would heal to the root.
+    answers.set(PROMPTS, [other, failed, prompts]);
+    await show(PROMPTS);
+    h.filesTabForRoute.mockImplementation(() => ({ id: "t-files", ref: PROMPTS }));
+    reveal(FILE);
+    await settleTasks();
+    expect(selectedNames()).toEqual([]);
+    await show(PROMPTS);
+    expect(rowFor("Recall.md").dataset["name"]).toBe("Recall.md");
+    expect(selectedNames()).toEqual([]);
+    releaseFilesTab(PROMPTS);
+  });
+
+  it("a reader's move before the answer drops the selection", async () => {
+    initFileBrowser();
+    await show("/w");
+    h.filesTabForRoute.mockImplementation(() => ({ id: "t-files", ref: "/w" }));
+    const late = held();
+    answers.set(PROMPTS, [late.answer, prompts]);
+    reveal(FILE);
+    $.fbBack.click();
+    late.release(prompts);
+    await settleTasks();
+    $.fbForward.click();
+    await settleTasks();
+    expect($.fbPath.value).toBe(PROMPTS);
+    expect(rowFor("Recall.md").dataset["name"]).toBe("Recall.md");
+    expect(selectedNames()).toEqual([]);
   });
 });

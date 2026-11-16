@@ -57,6 +57,7 @@ function seed(path: string, content: string, mode: FileMode = { kind: "text", ed
     utf8: true,
     conflict: false,
     readOnly: false,
+    renamable: true,
     size: content.length,
   };
   state.mode.value = mode;

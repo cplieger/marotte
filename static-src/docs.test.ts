@@ -309,7 +309,7 @@ describe("row rendering", () => {
     expect(door?.getAttribute("aria-label")).toBe("Open actions");
   });
 
-  it("opens the file from the body and from the Edit button alike", async () => {
+  it("the pencil and the body open the absolute path", async () => {
     const { openFile } = await import("./editor-openers.js");
     vi.mocked(openFile).mockClear();
     const row = _renderRowForTest({
@@ -319,14 +319,15 @@ describe("row rendering", () => {
     });
     row.querySelector<HTMLButtonElement>("button.entry-open")?.click();
     row.querySelector<HTMLButtonElement>(".docs-edit")?.click();
+    // The absolute spelling the file browser opens it by, so both doors share one editor tab.
     expect(vi.mocked(openFile).mock.calls).toEqual([
-      ["workspace/.kiro/steering/actions.md"],
-      ["workspace/.kiro/steering/actions.md"],
+      ["/workspace/.kiro/steering/actions.md"],
+      ["/workspace/.kiro/steering/actions.md"],
     ]);
     expect(row.querySelector(".docs-edit")?.getAttribute("aria-label")).toBe("Edit actions");
   });
 
-  it("renders a spec's path and its group as the two lines under the title", () => {
+  it("renders a feature spec's path and its group as the two lines under the title", () => {
     const row = _renderRowForTest({
       category: "spec",
       name: "Design",
@@ -341,7 +342,50 @@ describe("row rendering", () => {
     expect(lines[0]?.classList.contains("entry-sub-mono")).toBe(true);
   });
 
-  it("clamps a description to the two-line region", () => {
+  it("a loose spec shows its path alone", () => {
+    // The server sends no group for a document loose in specs/.
+    const row = _renderRowForTest({
+      category: "spec",
+      name: "Loose",
+      path: "workspace/.kiro/specs/loose.md",
+    });
+    expect([...row.querySelectorAll(".entry-sub")].map((l) => l.textContent)).toEqual([
+      "workspace/.kiro/specs/loose.md",
+    ]);
+  });
+
+  it("draws no empty subtitle line on any tab", () => {
+    _setHooksForTest([
+      wsHook({ id: "id-bare", name: "bare" }),
+      wsHook({ id: "id-matched", name: "matched", trigger: "PreToolUse", matcher: "fsWrite" }),
+    ]);
+    const rows = [
+      _renderRowForTest({
+        category: "prompt",
+        name: "Remember",
+        path: "workspace/.kiro/prompts/Remember.md",
+      }),
+      _renderRowForTest({ category: "steering", name: "s", path: "workspace/.kiro/steering/s.md" }),
+      _renderRowForTest({
+        category: "skill",
+        name: "k",
+        path: "workspace/.kiro/skills/k/SKILL.md",
+      }),
+      _renderRowForTest({ category: "agent", name: "a", path: "workspace/.kiro/agents/a.md" }),
+      _renderRowForTest(wsHookDoc({ name: "bare" })),
+      _renderRowForTest(wsHookDoc({ name: "matched", trigger: "PreToolUse" })),
+      _renderRowForTest({ category: "spec", name: "L", path: "workspace/.kiro/specs/l.md" }),
+    ];
+    for (const row of rows) {
+      for (const line of row.querySelectorAll(".entry-sub")) {
+        expect(line.textContent, row.dataset["key"]).not.toBe("");
+      }
+    }
+    expect(rows[0]?.querySelector(".entry-sub")).toBeNull();
+    expect(rows[0]?.querySelector(".entry-lines")).toBeNull();
+  });
+
+  it("clamps a description to two lines", () => {
     const row = _renderRowForTest({
       category: "agent",
       name: "a",
@@ -568,6 +612,14 @@ describe("the Hooks tab: joining state onto a scanned row", () => {
     expect(lines.map((l) => l.textContent)).toEqual(["fsWrite", "echo hello"]);
     // Mono on both: a regex and a command are read character by character.
     expect(lines.every((l) => l.classList.contains("entry-sub-mono"))).toBe(true);
+  });
+
+  it("a hook with no matcher shows its action as its one line", () => {
+    _setHooksForTest([wsHook()]);
+    const row = _renderRowForTest(wsHookDoc());
+    const lines = [...row.querySelectorAll(".entry-sub")];
+    expect(lines.map((l) => l.textContent)).toEqual(["echo hello"]);
+    expect(lines[0]?.classList.contains("entry-sub-mono")).toBe(true);
   });
 
   it("keeps the trigger and drops the tail when a row has more than two badges", () => {
@@ -1079,6 +1131,41 @@ describe("the Hooks tab: staying current", () => {
     );
   });
 
+  it("after a rename the Prompts list shows the new name", async () => {
+    const { apiGetTyped } = await import("./api-client.js");
+    const prompt = (name: string): unknown => ({
+      category: "prompt",
+      name,
+      path: `workspace/.kiro/prompts/${name}.md`,
+      description: "Remember this.",
+    });
+    vi.mocked(apiGetTyped)
+      .mockClear()
+      .mockImplementation(serveDocsPage({ docs: [prompt("Remember")], truncated: false }));
+    document
+      .getElementById("docs-view")
+      ?.insertAdjacentHTML("beforeend", '<div data-docs-panel="prompts" class="docs-panel"></div>');
+    const { refreshDocsView } = await import("./docs.js");
+    docsRoute.value = "prompts";
+    refreshDocsView();
+    const panel = document.querySelector('[data-docs-panel="prompts"]');
+    const titles = (): string[] =>
+      [...(panel?.querySelectorAll(".entry-name") ?? [])].map((t) => t.textContent);
+    await vi.waitFor(() => {
+      expect(titles()).toEqual(["Remember"]);
+    });
+
+    vi.mocked(apiGetTyped).mockImplementation(
+      serveDocsPage({ docs: [prompt("Recall")], truncated: false }),
+    );
+    sseHandlers.get("kiro_docs_changed")?.();
+    await vi.waitFor(() => {
+      expect(titles()).toEqual(["Recall"]);
+    });
+    panel?.remove();
+    docsRoute.value = "hooks";
+  });
+
   it("subscribes to hooks_changed, not only to settings_updated", () => {
     expect([...sseHandlers.keys()]).toContain("hooks_changed");
     expect([...sseHandlers.keys()]).toContain("settings_updated");
@@ -1314,12 +1401,12 @@ describe("grouped tabs render one section per group", () => {
   });
 
   it("keeps a root-level spec out of the feature above it", async () => {
-    // "." marks a document in the category root; two unlabelled runs are two sections.
+    // A spec loose in specs/ has no group; two unlabelled runs are two sections.
     const { _setDocsForTest, _renderActiveForTest } = await import("./docs.js");
     _setDocsForTest([
-      { category: "spec", name: "Loose", path: "workspace/.kiro/specs/loose.md", group: "." },
+      { category: "spec", name: "Loose", path: "workspace/.kiro/specs/loose.md" },
       { category: "spec", name: "Design", path: "workspace/.kiro/specs/f/design.md", group: "f" },
-      { category: "spec", name: "Notes", path: "workspace/.kiro/specs/notes.md", group: "." },
+      { category: "spec", name: "Notes", path: "workspace/.kiro/specs/notes.md" },
     ]);
     docsRoute.value = "specs";
     _renderActiveForTest();

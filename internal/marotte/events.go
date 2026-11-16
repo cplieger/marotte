@@ -212,6 +212,9 @@ const (
 	// EventSpecChanged says a spec directory's files changed on disk. One frame
 	// per coalescing window, workspace-global, payload names the directory.
 	EventSpecChanged EventType = "spec_changed"
+	// EventFilesChanged says the file browser, the editor or the docs page changed files on disk: workspace-global,
+	// the payload names the folders whose listings moved.
+	EventFilesChanged EventType = "files_changed"
 	// EventSpecApproved says a human approved one phase of a spec: pure invalidation,
 	// workspace-global, payload names the directory. Not EventSpecChanged, which means the FILES
 	// moved and is coalesced by the watcher; reusing it would make an approval look like an edit.

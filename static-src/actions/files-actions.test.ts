@@ -141,6 +141,27 @@ describe("files.rename", () => {
     await renameFile.dispatch({ dir: "/", original: "my-file.ts", newName: "x" });
     expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("my-file.ts"), undefined);
   });
+
+  it("a refused rename's toast carries the server's sentence", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "b.txt already exists", code: "name_taken" }), {
+        status: 409,
+      }),
+    );
+    const { renameFile } = await import("./files.js");
+    await renameFile.dispatch({ dir: "/src", original: "a.txt", newName: "b.txt" });
+    expect(toast.error).toHaveBeenCalledWith(
+      'Could not rename "a.txt": b.txt already exists',
+      undefined,
+    );
+  });
+
+  it("falls back to the plain sentence with none", async () => {
+    mockFetch.mockResolvedValue(new Response("", { status: 500 }));
+    const { renameFile } = await import("./files.js");
+    await renameFile.dispatch({ dir: "/src", original: "a.txt", newName: "b.txt" });
+    expect(toast.error).toHaveBeenCalledWith('Could not rename "a.txt"', undefined);
+  });
 });
 
 describe("files.delete (batch)", () => {

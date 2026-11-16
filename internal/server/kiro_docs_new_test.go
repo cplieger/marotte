@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -230,6 +232,17 @@ func TestHandleKiroDocNew_PathMatchesTheInventoryRow(t *testing.T) {
 	}
 	if docs[0].Inclusion != "always" {
 		t.Errorf("row inclusion = %q, want always", docs[0].Inclusion)
+	}
+}
+
+// The created file reaches the file-change function in its absolute spelling, before the answer.
+func TestKiroDocNew_ReportsTheCreatedFile(t *testing.T) {
+	dir := t.TempDir()
+	var got []filebrowse.Change
+	srv := docServer(dir, WithFileChanges(func(_ context.Context, ch filebrowse.Change) { got = append(got, ch) }))
+	created := createdPath(t, postKiroDocNew(t, srv, `{"category":"prompt","name":"recall"}`))
+	if len(got) != 1 || !slices.Equal(got[0].Paths, []string{"/" + created}) {
+		t.Errorf("file changes = %+v, want one naming /%s", got, created)
 	}
 }
 

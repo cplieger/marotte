@@ -252,6 +252,7 @@ describe("the dot derives working from an OPEN TURN rather than from a latch", (
 
 vi.mock("./router.js", () => ({
   pushRoute: vi.fn(),
+  replaceRoute: vi.fn(),
   buildPath: vi.fn(() => "/"),
   parseRoute: vi.fn(),
 }));
@@ -432,7 +433,7 @@ async function resetProjection(): Promise<void> {
       close: vi.fn(),
       dot: (chatID: string) => seededDots.get(chatID) ?? "",
     },
-    editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn() },
+    editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn(), move: vi.fn() },
     run: { show: vi.fn(), refresh: vi.fn() },
     subagent: { show: vi.fn(), refresh: vi.fn() },
     // `TabOpeners` is total over `TabKind`, which is a REGISTERED WIRE ENUM, so a

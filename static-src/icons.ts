@@ -49,6 +49,11 @@ const PATH_EYE =
 // A tier pair is suffixed `_UI`, never a pixel count: 01-tokens.css owns `--icon-ui`'s size, so a number would go stale.
 export const ICON_EDIT = svg("inline", PATH_PENCIL);
 export const ICON_EDIT_UI = svg("ui", PATH_PENCIL);
+/** A pencil over a baseline: a name edited in place, the file browser's and the editor's Rename. */
+export const ICON_RENAME_UI = svg(
+  "ui",
+  '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z"/>',
+);
 export const ICON_CLOSE = svg("inline", PATH_X);
 export const ICON_CLOSE_UI = svg("ui", PATH_X);
 export const ICON_EYE_UI = svg("ui", PATH_EYE);

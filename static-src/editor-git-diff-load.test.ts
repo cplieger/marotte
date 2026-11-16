@@ -111,6 +111,7 @@ function readOf(content: string, over: Partial<FileRead> = {}): FileRead {
     size: new TextEncoder().encode(content).length,
     utf8: true,
     read_only: false,
+    renamable: true,
     ...over,
   };
 }
@@ -229,6 +230,7 @@ describe("a live refresh of a git diff", () => {
     binary: false,
     utf8: true,
     read_only: false,
+    renamable: true,
   });
 
   it("asks git for the ref the diff was opened against, not the caption it found", async () => {

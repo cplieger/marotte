@@ -464,6 +464,77 @@ func TestReparent_IsIdempotentAndRefusesWhatItCannotDo(t *testing.T) {
 	}
 }
 
+// TestRetarget_MovesTheRefAndKeepsTheRow pins that a retarget changes the ref alone: the id,
+// position, pin and parent stay, one version is bumped, and the file carries the new ref.
+func TestRetarget_MovesTheRefAndKeepsTheRow(t *testing.T) {
+	s, dir := newTestStore(t)
+	parent := mustOpen(t, s, chatSpec("c-parent"))
+	editor := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindEditor, Ref: "/w/a.md", Parent: parent.ID})
+	other := mustOpen(t, s, chatSpec("c-other"))
+	if _, err := s.SetPinned(t.Context(), editor.ID, true); err != nil {
+		t.Fatalf("Setup: SetPinned = %v", err)
+	}
+	_, before := s.List()
+
+	version, err := s.Retarget(t.Context(), editor.ID, "/w/b.md")
+	if err != nil {
+		t.Fatalf("Retarget = %v", err)
+	}
+	if version != before+1 {
+		t.Errorf("Retarget = version %d, want %d: one mutation, one bump", version, before+1)
+	}
+	tabs, _ := s.List()
+	if got := idsOf(tabs); !slices.Equal(got, []string{parent.ID, editor.ID, other.ID}) {
+		t.Errorf("List() order = %v, want the row where it was", got)
+	}
+	moved := tabs[1]
+	if moved.Ref != "/w/b.md" || moved.Kind != marotte.TabKindEditor || moved.Parent != parent.ID || !moved.Pinned {
+		t.Errorf("List()[1] = %+v, want the editor tab at /w/b.md, pinned, under %q", moved, parent.ID)
+	}
+	doc := onDisk(t, dir)
+	if doc.Version != version || len(doc.Tabs) != 3 || doc.Tabs[1].Ref != "/w/b.md" {
+		t.Errorf("tabs.json = %+v at v%d, want the new ref at v%d", doc.Tabs, doc.Version, version)
+	}
+}
+
+// TestRetarget_RefusesARefAnotherTabHolds keeps (kind, ref) unique: the caller closes the holder first.
+func TestRetarget_RefusesARefAnotherTabHolds(t *testing.T) {
+	s, _ := newTestStore(t)
+	a := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindEditor, Ref: "/w/a.md"})
+	mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindEditor, Ref: "/w/b.md"})
+	mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindWeb, Ref: "/w/c.md"})
+	_, before := s.List()
+
+	if _, err := s.Retarget(t.Context(), a.ID, "/w/b.md"); !errors.Is(err, ErrRefTaken) {
+		t.Errorf("Retarget onto another editor's ref = %v, want ErrRefTaken", err)
+	}
+	if _, err := s.Retarget(t.Context(), a.ID, ""); !errors.Is(err, ErrBadRef) {
+		t.Errorf("Retarget to an empty ref = %v, want ErrBadRef", err)
+	}
+	if _, err := s.Retarget(t.Context(), a.ID, "/w/c.md"); err != nil {
+		t.Errorf("Retarget onto a web tab's ref = %v, want nil: the key is (kind, ref)", err)
+	}
+	if _, after := s.List(); after != before+1 {
+		t.Errorf("version went %d -> %d, want one bump for the one retarget that applied", before, after)
+	}
+}
+
+// TestRetarget_IsSilentOnTheSameRefOrAnUnknownId mirrors SetPinned: a retarget racing a close is not a failure.
+func TestRetarget_IsSilentOnTheSameRefOrAnUnknownId(t *testing.T) {
+	s, _ := newTestStore(t)
+	a := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindEditor, Ref: "/w/a.md"})
+	_, before := s.List()
+
+	same, err := s.Retarget(t.Context(), a.ID, "/w/a.md")
+	if err != nil || same != before {
+		t.Errorf("Retarget to the same ref = (v%d, %v), want (v%d, nil)", same, err, before)
+	}
+	gone, err := s.Retarget(t.Context(), "not-open", "/w/b.md")
+	if err != nil || gone != before {
+		t.Errorf("Retarget of an id not open = (v%d, %v), want (v%d, nil)", gone, err, before)
+	}
+}
+
 func TestList_ReturnsACopy(t *testing.T) {
 	s, _ := newTestStore(t)
 	a := mustOpen(t, s, chatSpec("c-a"))

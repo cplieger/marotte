@@ -4,14 +4,15 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { entryRow, entryList, entrySkeleton } from "./entry-row.js";
 import type { EntryRowSpec } from "./entry-row.js";
 
-// One row height per list, over rows whose content disagrees, built by the real builder on the shipped stylesheet.
+// A row is its title plus the lines it carries inside a fixed block padding, floored at the tap height; built by the
+// real builder on the shipped stylesheet.
 
-/** Hardcoded design numbers (3.5rem and 4.5rem at a 16px root), so a retune moves this table deliberately. Touch keeps
- * both: they already clear the 44px floor, and touch grows targets, never a row past one. */
-const FINE_2 = 56;
-const FINE_3 = 72;
-const COARSE_2 = 56;
-const COARSE_3 = 72;
+/** Hardcoded design numbers: a 13px title and 12px lines at a 1.3 line height, a 2px gap and 12px block padding.
+ * A retune moves this table deliberately. Touch floors the title-only row at 44px and leaves the taller ones. */
+const TITLE_ONLY_FINE = 40.9;
+const TITLE_ONLY_COARSE = 44;
+const ONE_LINE = 58.5;
+const TWO_LINES = 74.1;
 
 /** Runs past four lines, so the clamp is engaged. */
 const LONG =
@@ -99,78 +100,59 @@ afterEach(() => {
 });
 
 /** Skeleton rows are measured too: the swap to real rows must move nothing. */
-function mountList(tier: "--row-h-2" | "--row-h-3", pointer: "fine" | "coarse"): number[] {
+function mountList(pointer: "fine" | "coarse"): Map<string, number> {
   document.documentElement.setAttribute("data-pointer", pointer);
   const list = entryList();
-  list.style.setProperty("--row-h", `var(${tier})`);
   list.append(...SPECS.map((s) => entryRow(s)), ...entrySkeleton(2));
   host.appendChild(list);
-  return [...list.children].map((r) => r.getBoundingClientRect().height);
+  return new Map(
+    [...list.children].map((r, i) => [
+      (r as HTMLElement).dataset["key"] ?? `skel${String(i - SPECS.length)}`,
+      r.getBoundingClientRect().height,
+    ]),
+  );
 }
 
-describe("a two-line list", () => {
-  it("gives every row --row-h-2 on a fine pointer", () => {
-    expect(mountList("--row-h-2", "fine")).toEqual([
-      FINE_2,
-      FINE_2,
-      FINE_2,
-      FINE_2,
-      FINE_2,
-      FINE_2,
-      FINE_2,
-      FINE_2,
-      FINE_2,
-    ]);
+function expectHeights(got: Map<string, number>, want: Record<string, number>): void {
+  expect([...got.keys()]).toEqual(Object.keys(want));
+  for (const [key, h] of Object.entries(want)) {
+    expect(got.get(key), key).toBeCloseTo(h, 0);
+  }
+}
+
+describe("a row fits what it carries", () => {
+  it("on a fine pointer", () => {
+    expectHeights(mountList("fine"), {
+      a: TITLE_ONLY_FINE,
+      b: ONE_LINE,
+      c: TWO_LINES,
+      d: TWO_LINES,
+      e: TITLE_ONLY_FINE,
+      f: TWO_LINES,
+      g: ONE_LINE,
+      skel0: ONE_LINE,
+      skel1: ONE_LINE,
+    });
   });
 
-  it("gives every row --row-h-2 on a coarse pointer", () => {
-    expect(mountList("--row-h-2", "coarse")).toEqual([
-      COARSE_2,
-      COARSE_2,
-      COARSE_2,
-      COARSE_2,
-      COARSE_2,
-      COARSE_2,
-      COARSE_2,
-      COARSE_2,
-      COARSE_2,
-    ]);
-  });
-});
-
-describe("a three-line list", () => {
-  it("gives every row --row-h-3 on a fine pointer", () => {
-    expect(mountList("--row-h-3", "fine")).toEqual([
-      FINE_3,
-      FINE_3,
-      FINE_3,
-      FINE_3,
-      FINE_3,
-      FINE_3,
-      FINE_3,
-      FINE_3,
-      FINE_3,
-    ]);
-  });
-
-  it("gives every row --row-h-3 on a coarse pointer", () => {
-    expect(mountList("--row-h-3", "coarse")).toEqual([
-      COARSE_3,
-      COARSE_3,
-      COARSE_3,
-      COARSE_3,
-      COARSE_3,
-      COARSE_3,
-      COARSE_3,
-      COARSE_3,
-      COARSE_3,
-    ]);
+  it("on a coarse pointer, where a title-only row takes the tap floor", () => {
+    expectHeights(mountList("coarse"), {
+      a: TITLE_ONLY_COARSE,
+      b: ONE_LINE,
+      c: TWO_LINES,
+      d: TWO_LINES,
+      e: TITLE_ONLY_COARSE,
+      f: TWO_LINES,
+      g: ONE_LINE,
+      skel0: ONE_LINE,
+      skel1: ONE_LINE,
+    });
   });
 });
 
 describe("the row's own inset and control heights", () => {
   it("insets every row by --sp-4 and keeps its actions at the dense tier", () => {
-    mountList("--row-h-2", "fine");
+    mountList("fine");
     const row = host.querySelector<HTMLElement>('[data-key="f"]');
     const btn = row?.querySelector<HTMLElement>(".entry-delete");
     expect(getComputedStyle(row as HTMLElement).paddingInlineStart).toBe("16px");
@@ -179,7 +161,7 @@ describe("the row's own inset and control heights", () => {
 
   it("paints those controls at the dense token on coarse too, with a 44px target", () => {
     host.style.top = "0";
-    mountList("--row-h-2", "coarse");
+    mountList("coarse");
     const btn = host.querySelector<HTMLElement>('[data-key="f"] .entry-delete') as HTMLElement;
     const r = btn.getBoundingClientRect();
     expect(r.height).toBe(32);
@@ -201,7 +183,7 @@ describe("the row's own inset and control heights", () => {
 
   it("holds a text action to the same tier as the icon beside it", () => {
     // `.btn-small` rests at 36px and comes later in the cascade, so the slot's selector leads with `.entry`.
-    mountList("--row-h-2", "fine");
+    mountList("fine");
     const text = host.querySelector<HTMLElement>('[data-key="f"] .btn-small');
     const icon = host.querySelector<HTMLElement>('[data-key="f"] .entry-delete');
     expect(text?.getBoundingClientRect().height).toBe(32);
@@ -210,7 +192,7 @@ describe("the row's own inset and control heights", () => {
 
   it("shows a long description as exactly two lines", () => {
     // The body is a flex column, so a clamp admitting four lines is shrunk and clipped while the row still measures right.
-    mountList("--row-h-3", "coarse");
+    mountList("coarse");
     const clamp = host.querySelector<HTMLElement>('[data-key="c"] .entry-sub-clamp');
     expect(clamp, "the fixture must render a clamped description").not.toBeNull();
     const line = Number.parseFloat(getComputedStyle(clamp as HTMLElement).lineHeight);
@@ -218,7 +200,7 @@ describe("the row's own inset and control heights", () => {
   });
 
   it("takes the title's size from the item tier", () => {
-    mountList("--row-h-2", "fine");
+    mountList("fine");
     const title = host.querySelector<HTMLElement>('[data-key="a"] .entry-title');
     expect(getComputedStyle(title as HTMLElement).fontSize).toBe("13px");
   });
@@ -231,18 +213,12 @@ function titleTop(key: string): number {
 }
 
 describe("the title column", () => {
-  it("sits at one offset whether or not the row has a subtitle", () => {
-    // The subtitle region reserves its line, or a lone title would centre lower than its neighbours.
-    mountList("--row-h-2", "fine");
-    expect(titleTop("a")).toBeCloseTo(titleTop("b"), 1);
-    expect(titleTop("a")).toBeCloseTo(titleTop("e"), 1);
-  });
-
-  it("sits at one offset on a three-line list whatever fills the two-line region", () => {
-    // The region is two lines whatever fills it, so the fact pair may carry no gap of its own.
-    mountList("--row-h-3", "coarse");
-    expect(titleTop("g")).toBeCloseTo(titleTop("c"), 1);
-    expect(titleTop("d")).toBeCloseTo(titleTop("c"), 1);
+  it("sits one block padding below the row's top whatever the row carries", () => {
+    // The padding is the body's, so every title shares one offset however many lines follow it.
+    mountList("fine");
+    for (const key of ["a", "b", "c", "d", "e", "f", "g"]) {
+      expect(titleTop(key), key).toBeCloseTo(12, 1);
+    }
   });
 });
 
@@ -255,8 +231,7 @@ function subTop(key: string): number {
 describe("the subtitle column", () => {
   it("sits at one offset whether or not the title line carries a badge", () => {
     // A badge is taller than the title's line box; a line that grew to hold it pushed the subtitle down.
-    mountList("--row-h-3", "fine");
-    expect(subTop("e")).toBeCloseTo(subTop("b"), 1);
+    mountList("fine");
     expect(subTop("f")).toBeCloseTo(subTop("c"), 1);
   });
 });
@@ -281,7 +256,6 @@ describe("the name group", () => {
   function mountMarked(title: string): HTMLElement {
     document.documentElement.setAttribute("data-pointer", "fine");
     const list = entryList();
-    list.style.setProperty("--row-h", "var(--row-h-3)");
     list.appendChild(
       entryRow({
         key: "m",
@@ -349,7 +323,6 @@ describe("a switch in the actions slot", () => {
     host.style.top = "0";
     document.documentElement.setAttribute("data-pointer", "coarse");
     const list = entryList();
-    list.style.setProperty("--row-h", "var(--row-h-3)");
     list.appendChild(
       entryRow({
         key: "t",

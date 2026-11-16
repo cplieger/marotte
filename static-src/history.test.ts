@@ -135,7 +135,7 @@ vi.mock("./tabs.js", () => ({
   tabSetVersion: () => tabsVersion.value,
 }));
 // The strip pushes the URL, never the page: a spy, so a push from this graph fails the switch cases.
-vi.mock("./router.js", () => ({ pushRoute }));
+vi.mock("./router.js", () => ({ pushRoute, replaceRoute: vi.fn() }));
 vi.mock("./legacy-ui/skeleton.js", () => ({
   // A spy: whether the arm fires is what the settled-empty case pins.
   skeletonTiming: skeletonTimingMock,
@@ -1033,7 +1033,7 @@ describe("history: an overrun reads differently from a cancel", () => {
     await render({ sessions: [], runs: [runAt("aborted")] });
     const row = rowOf("r:wf_1");
     expect(row.textContent).not.toContain("ran past");
-    expect(row.querySelector(".entry-sub")?.textContent).toBe("");
+    expect(row.querySelector(".entry-sub")).toBeNull();
   });
 
   it("settles a run the terminal frame has not caught up with yet", async () => {
@@ -1977,10 +1977,10 @@ describe("history: the row's subtitle and time", () => {
     expect(sub("s:sess_owned")).toBe("reading files");
   });
 
-  it("renders an EMPTY subtitle for a chat with no description and no facts", async () => {
-    // Placeholders would read as fact; the line stays so the title keeps its offset.
+  it("draws no subtitle for a chat with no description and no facts", async () => {
+    // Placeholders would read as fact.
     await render({ sessions: [ownedRow], runs: [] });
-    expect(sub("s:sess_owned")).toBe("");
+    expect(sub("s:sess_owned")).toBeUndefined();
   });
 
   it("keeps the facts of a chat opened from History and closed again with no prompt", async () => {
@@ -2013,7 +2013,7 @@ describe("history: the row's subtitle and time", () => {
       ],
     });
     expect(sub("r:wf_timed")).toBe("15m");
-    expect(sub("r:wf_untimed")).toBe("");
+    expect(sub("r:wf_untimed")).toBeUndefined();
   });
 
   it("times a resumed run from its creation, because a resume restamps its start", async () => {
@@ -2047,7 +2047,7 @@ describe("history: the row's subtitle and time", () => {
       ],
     });
     expect(sub("r:wf_labelled")).toBe("code-review");
-    expect(sub("r:wf_bare")).toBe("");
+    expect(sub("r:wf_bare")).toBeUndefined();
   });
 
   it("names the launching conversation from the run row", async () => {
@@ -2065,7 +2065,7 @@ describe("history: the row's subtitle and time", () => {
       ],
     });
     expect(sub("r:wf_1")).toBe("1m · from Rebuild the rail");
-    expect(sub("r:wf_orphan")).toBe("");
+    expect(sub("r:wf_orphan")).toBeUndefined();
   });
 
   it("states where a live run stands, and nothing once it ended", async () => {
@@ -2085,7 +2085,7 @@ describe("history: the row's subtitle and time", () => {
     expect(sub("r:wf_step")).toBe("at build");
     expect(sub("r:wf_watch")).toBe("waiting on ci");
     expect(sub("r:wf_cap")).toBe("review reached its pass limit");
-    expect(sub("r:wf_done")).toBe("");
+    expect(sub("r:wf_done")).toBeUndefined();
   });
 
   it("puts a live run's position after the recipe and before the launching chat", async () => {
@@ -2125,8 +2125,8 @@ describe("history: the row's subtitle and time", () => {
         },
       ],
     });
-    expect(sub("r:wf_live")).toBe("");
-    expect(sub("r:wf_held")).toBe("");
+    expect(sub("r:wf_live")).toBeUndefined();
+    expect(sub("r:wf_held")).toBeUndefined();
   });
 
   it("shows the time relative at a glance and absolute on demand", async () => {

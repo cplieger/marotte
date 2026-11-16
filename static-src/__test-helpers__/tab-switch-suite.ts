@@ -42,7 +42,7 @@ export function installSwitchSuite(): void {
     // half, `refresh` takes the activation's signal and answers when the view has content.
     registerTabOpeners({
       chat: fx.chat,
-      editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn() },
+      editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn(), move: vi.fn() },
       run: { show: vi.fn(), refresh: vi.fn() },
       subagent: { show: vi.fn(), refresh: vi.fn() },
       spec: { show: vi.fn(), refresh: vi.fn() },

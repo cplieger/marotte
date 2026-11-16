@@ -1723,6 +1723,7 @@ export interface FileRead {
   size: number;
   utf8: boolean;
   read_only: boolean;
+  renamable: boolean;
 }
 
 /** FileRefusal is the error body of the viewer routes that a client branches on. */
@@ -1784,6 +1785,8 @@ export interface FileStat {
   /** UTF8 is false for a large file, which is not read. */
   utf8: boolean;
   read_only: boolean;
+  /** Renamable is false for a file the file browser's rename always refuses. */
+  renamable: boolean;
 }
 
 /**
@@ -1796,6 +1799,11 @@ export interface FileWriteResult {
   file_id: string;
   size: number;
   ok: boolean;
+}
+
+/** FilesChangedPayload is the payload for type="files_changed": the absolute folders whose entries changed. */
+export interface FilesChangedPayload {
+  dirs: string[];
 }
 
 /**

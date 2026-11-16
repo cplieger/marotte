@@ -27,6 +27,8 @@ const { surfaces, routes, tabs } = vi.hoisted(() => {
     editorCancelBtn: document.createElement("button"),
     editorDiffBtn: document.createElement("button"),
     editorDownloadBtn: document.createElement("button"),
+    editorRenameBtn: document.createElement("button"),
+    editorRevealBtn: document.createElement("button"),
     editorGotoBtn: document.createElement("button"),
     editorGoto: document.createElement("form"),
     editorReadonlyLabel: document.createElement("span"),
@@ -139,6 +141,7 @@ function stageRead(): void {
       size: bytes.length,
       utf8: true,
       read_only: false,
+      renamable: true,
     },
   });
 }

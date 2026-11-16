@@ -26,6 +26,8 @@ const { surfaces, routes, hits, tabs } = vi.hoisted(() => {
     editorCancelBtn: document.createElement("button"),
     editorDiffBtn: document.createElement("button"),
     editorDownloadBtn: document.createElement("button"),
+    editorRenameBtn: document.createElement("button"),
+    editorRevealBtn: document.createElement("button"),
     editorGotoBtn: document.createElement("button"),
     editorGoto: document.createElement("form"),
     editorReadonlyLabel: document.createElement("span"),
@@ -130,6 +132,7 @@ function stageStat(fileId: string): void {
       binary: false,
       utf8: true,
       read_only: false,
+      renamable: true,
     },
   });
 }
@@ -172,6 +175,7 @@ beforeEach(() => {
       size: WORK.length,
       utf8: true,
       read_only: false,
+      renamable: true,
     },
   });
   routes.set("/api/git/show", { status: 200, body: { content: "base\n" } });

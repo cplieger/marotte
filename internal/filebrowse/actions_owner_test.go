@@ -91,3 +91,32 @@ func TestFileActions_OnOtherPathsBesideAnOwnedFileStillRun(t *testing.T) {
 		t.Errorf("owned file = %q, want it untouched", got)
 	}
 }
+
+// An owned path that is a link is owned at both ends: removing or renaming the link, or renaming
+// the file it points at, takes the file from its owner.
+func TestFileActions_RefuseBothEndsOfAnOwnedLink(t *testing.T) {
+	for _, tc := range []struct{ name, action, path, rename string }{
+		{name: "delete_the_owned_link", action: "delete", path: "tools.json"},
+		{name: "rename_the_owned_link", action: "rename", path: "tools.json", rename: "old.json"},
+		{name: "rename_the_file_it_points_at", action: "rename", path: "real.json", rename: "moved.json"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeTestFile(t, filepath.Join(dir, "real.json"), "owned")
+			owned := filepath.Join(dir, "tools.json")
+			if err := os.Symlink("real.json", owned); err != nil {
+				t.Fatal(err)
+			}
+			h := newOwned(t, dir, WithOwner(owned, &fakeOwner{path: owned}))
+
+			code, _ := postAction(t, h, tc.action, filepath.Join(dir, tc.path), tc.rename)
+
+			if code != http.StatusForbidden {
+				t.Errorf("%s %s = %d, want 403", tc.action, tc.path, code)
+			}
+			if got := readTestFile(t, owned); got != "owned" {
+				t.Errorf("owned file through its link = %q, want %q", got, "owned")
+			}
+		})
+	}
+}

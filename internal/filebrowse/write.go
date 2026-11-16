@@ -33,8 +33,9 @@ type writeBody struct {
 	Content string  `json:"content"`
 }
 
-// writeFile writes the body to l, through owner when l is an owned file (owner nil otherwise).
-func writeFile(w http.ResponseWriter, r *http.Request, l loc, owner Owner) {
+// writeFile writes the body to l, through owner when l is an owned file (owner nil otherwise), and runs onWritten, when
+// not nil, once the bytes are on disk and before the answer.
+func writeFile(w http.ResponseWriter, r *http.Request, l loc, owner Owner, onWritten func()) {
 	body, ok := decodeWriteBody(w, r, l)
 	if !ok {
 		return
@@ -58,7 +59,7 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc, owner Owner) {
 		return
 	}
 	if owner != nil {
-		writeOwned(w, r, l, owner, body)
+		writeOwned(w, r, l, owner, body, onWritten)
 		return
 	}
 	if body.FileID != nil && !staleWriteAllowed(w, r, l, parent, base, *body.FileID) {
@@ -85,7 +86,14 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc, owner Owner) {
 		}
 	}
 	slog.Info("filebrowse: file written", "path", logsafe.Field(l.abs), "bytes", len(data))
+	runWritten(onWritten)
 	httpserver.WriteJSON(w, FileWriteResult{OK: true, FileID: fileIDOf(data), Size: int64(len(data))})
+}
+
+func runWritten(onWritten func()) {
+	if onWritten != nil {
+		onWritten()
+	}
 }
 
 // decodeWriteBody reads and validates the PUT body before anything on disk is opened.
@@ -126,7 +134,7 @@ func (*staleError) Error() string { return errStaleWrite }
 
 // writeOwned hands the save to l's owner, which reads, checks and writes under its own lock. The
 // answer carries the written bytes when the owner wrote other bytes than were sent.
-func writeOwned(w http.ResponseWriter, r *http.Request, l loc, owner Owner, body writeBody) {
+func writeOwned(w http.ResponseWriter, r *http.Request, l loc, owner Owner, body writeBody, onWritten func()) {
 	var check func([]byte) error
 	if body.FileID != nil {
 		want := *body.FileID
@@ -154,6 +162,7 @@ func writeOwned(w http.ResponseWriter, r *http.Request, l loc, owner Owner, body
 		return
 	}
 	slog.Info("filebrowse: file written", "path", logsafe.Field(l.abs), "bytes", len(written))
+	runWritten(onWritten)
 	out := FileWriteResult{OK: true, FileID: fileIDOf(written), Size: int64(len(written))}
 	if !bytes.Equal(written, content) {
 		text := string(written)

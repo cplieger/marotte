@@ -204,14 +204,15 @@
 
 /* --- The row ------------------------------------------------------------- */
 
-/* A ROW'S HEIGHT IS A TOKEN, NEVER THE SUM OF ITS CONTENT: what does not fit
-   truncates on its own line, so every title in a list sits at one offset, and
-   the only thing that may grow is `.entry-detail`, a SIBLING below. The tier is
-   `--row-h` (01-tokens.css), set once on the LIST. FLEX rather than grid for the
-   three slots: a grid charges its `column-gap` between TRACKS, so an absent lead
-   would leave 12px of dead inset on every row of a list that carries none. */
+/* A ROW IS ITS TITLE PLUS THE LINES IT HAS, inside the body's block padding and
+   floored at the tap height: an absent subtitle is not drawn and reserves
+   nothing, and above the floor every title sits one padding below its row's top.
+   A line that does not fit truncates; what grows below a row is `.entry-detail`,
+   a SIBLING. FLEX
+   rather than grid for the three slots: a grid charges its `column-gap` between
+   TRACKS, so an absent lead would leave 12px of dead inset on every row. */
 .entry {
-  block-size: var(--row-h);
+  min-block-size: var(--row-tap);
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -233,8 +234,9 @@
 
 /* A ROW WITH ONE DESTINATION PUTS THE BOX INSIDE THE CONTROL: the
    body IS the open target, and `align-self: stretch` is what makes that target the
-   row's height rather than its text's. A row that opens nothing is the same box as
-   a `div`, so only the button form needs the appearance reset. */
+   row's height rather than its text's. The block padding is the body's, not the
+   row's, for the same reason. A row that opens nothing is the same box as a `div`,
+   so only the button form needs the appearance reset. */
 button.entry-open,
 .entry-body {
   flex: 1;
@@ -244,6 +246,7 @@ button.entry-open,
   flex-direction: column;
   justify-content: center;
   gap: var(--sp-05);
+  padding-block: var(--sp-3);
 }
 
 button.entry-open {
@@ -253,7 +256,7 @@ button.entry-open {
   color: inherit;
   font: inherit;
   text-align: start;
-  padding: 0;
+  padding-inline: 0;
   cursor: pointer;
 
   /* Inset, or the container's clip cuts the ring off. */
@@ -317,20 +320,15 @@ button.entry-open {
   flex-shrink: 0;
 }
 
-/* THE SUBTITLE REGION KEEPS ITS LINES WHEN THE TEXT IS SHORT OR ABSENT: the body
-   centres in the row, so a region that shrank to its content would lift that row's
-   title 8.7px off the offset its neighbours share (measured, a chat with no
-   description). `lh` is the element's own line, so the floor holds at every tier. */
 .entry-sub {
   font-size: var(--fs-item-meta);
   color: var(--c-text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-block-size: 1lh;
 }
 
-/* The description region of a three-line row: two lines, then an ellipsis. */
+/* A description: up to two lines, then an ellipsis. */
 .entry-sub-clamp {
   white-space: normal;
   display: -webkit-box;
@@ -338,11 +336,10 @@ button.entry-open {
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  min-block-size: 2lh;
 }
 
-/* Two single lines where a kind has two facts instead of a description. NO gap: the
-   pair has to measure exactly the two-line clamp's 2lh, or its title sits 1px high. */
+/* Up to two single lines where a kind has facts instead of a description. No gap,
+   so a pair measures what a two-line description does. */
 .entry-lines {
   display: flex;
   flex-direction: column;
@@ -443,7 +440,8 @@ button.entry-open {
   height: auto;
 }
 
-/* Placeholder rows at the list's own tier, so the swap to real rows moves nothing. */
+/* Placeholder rows shaped as a title plus one line: each bar is centred in the
+   line box it stands for, so a placeholder measures the row it stands in for. */
 .entry-skel {
   pointer-events: none;
 }
@@ -451,11 +449,14 @@ button.entry-open {
 .entry-skel-title {
   block-size: 0.875rem;
   inline-size: 45%;
+  margin-block: calc((1lh - 0.875rem) / 2);
 }
 
 .entry-skel-sub {
+  font-size: var(--fs-item-meta);
   block-size: 0.75rem;
   inline-size: 70%;
+  margin-block: calc((1lh - 0.75rem) / 2);
 }
 
 /* A GROUP IS A SECTION, NOT A ROW: the label sits on the PAGE rung above its own

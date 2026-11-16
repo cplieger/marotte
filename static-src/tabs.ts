@@ -6,7 +6,7 @@
 // Local by design: the ACTIVE tab (device-view.ts), the live DOT, the NAME override, the
 // SECTION partition, and the DOM.
 
-import { pushRoute } from "./router.js";
+import { pushRoute, replaceRoute } from "./router.js";
 import { parseRoute } from "./route-path.js";
 import type {
   Route,
@@ -587,7 +587,7 @@ function reset(subjects: readonly TabSubject[], recent: readonly RecentClose[]):
       continue;
     }
     before.delete(subject.id);
-    existing.subject = subject;
+    replaceRowSubject(existing, subject);
     next.push(existing);
   }
   state.tabs = next;
@@ -681,20 +681,42 @@ function apply(delta: TabsChangedPayload, local: boolean): void {
 }
 
 /** Upsert one subject: the frame-apply path for `changed` and adoptSubject's paint. One code path,
- *  so the echo of an adopted open changes nothing.
- *
- *  An existing row's SUBJECT is replaced wholesale while the spec, name override and dot stay.
- *  Nothing here may re-materialize: `owns` is immutable after open and every reader of the parent
- *  takes it from the subject, so the spec cannot go stale. */
+ *  so the echo of an adopted open changes nothing. */
 function upsertSubject(subject: TabSubject): void {
   const existing = rowOfID(subject.id);
   if (existing === undefined) {
     insertRow(buildRow(subject));
     return;
   }
-  existing.subject = subject;
-  existing.name = nameFor(subject, existing.spec);
+  replaceRowSubject(existing, subject);
   applySectionOrder();
+}
+
+/** Replace a kept row's SUBJECT wholesale. The spec, name override and dot stay, because `owns` is
+ *  immutable after open and every reader of the parent takes it from the subject; the one
+ *  re-materialization is a new ref (the server's rename follow). The old spec then hands its state
+ *  over (`onRetarget`) or is torn down, and an active row writes its new address in place, so Back
+ *  does not return to the old path, and shows the new ref. */
+function replaceRowSubject(row: TabRow, subject: TabSubject): void {
+  const was = row.subject;
+  row.subject = subject;
+  if (subject.ref === was.ref) {
+    row.name = nameFor(subject, row.spec);
+    return;
+  }
+  if (row.spec.onRetarget === undefined) {
+    tearDown(row);
+  } else {
+    row.spec.onRetarget(subject.ref);
+  }
+  nameOverrides.delete(subjectKey(was.kind, was.ref));
+  row.spec = materializeTab(subject);
+  row.name = nameFor(subject, row.spec);
+  if (state.active === subject.id && !activationPending()) {
+    replaceRoute(row.spec.route);
+    row.spec.onShow?.();
+    refreshActiveView();
+  }
 }
 
 /** `owns: false` tears down nothing: dismissing a view must not kill the work it watched. The

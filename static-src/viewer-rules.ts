@@ -11,16 +11,23 @@ export function rendersMarkdown(path: string): boolean {
   return lower.endsWith(".md") || lower.endsWith(".markdown");
 }
 
-/** What the server has said about a file. Total: no fact is unknown or defaulted. */
+/** What the server has said about a file. Total: no fact is unknown or defaulted. `renamable` is
+ *  the server's verdict on whether the file browser's rename can move it. */
 export type FileFacts =
   /** Over the viewer's cap: no viewer at all. */
-  | { readonly kind: "large"; readonly size: number }
+  | {
+      readonly kind: "large";
+      readonly readOnly: boolean;
+      readonly renamable: boolean;
+      readonly size: number;
+    }
   /** Stat answered; the bytes are not read yet. */
   | {
       readonly kind: "unread";
       readonly binary: boolean;
       readonly utf8: boolean;
       readonly readOnly: boolean;
+      readonly renamable: boolean;
       readonly size: number;
     }
   /** The whole file is read and adopted. */
@@ -30,6 +37,7 @@ export type FileFacts =
       readonly utf8: boolean;
       readonly conflict: boolean;
       readonly readOnly: boolean;
+      readonly renamable: boolean;
       readonly size: number;
     };
 
@@ -59,6 +67,10 @@ export interface Rules {
   readonly live: boolean;
   /** Offer Download; the large view's Download takes the Edit button's place. */
   readonly download: boolean;
+  /** Draw Rename: the server said renamable. */
+  readonly rename: boolean;
+  /** Draw Show in file browser: every file but a KAS tool output, which the browser cannot show. */
+  readonly reveal: boolean;
   /** The header label saying why the file cannot be edited, or null. */
   readonly readOnlyReason: string | null;
 }
@@ -68,7 +80,7 @@ export const LABEL_NOT_UTF8 = "Not UTF-8 text";
 export const LABEL_GIT_REVISION = "Git revision";
 
 /** The rules before any stat has answered: nothing is offered. */
-const UNKNOWN: Rules = {
+const UNKNOWN: ViewRules = {
   view: "text",
   edit: false,
   highlight: false,
@@ -77,13 +89,16 @@ const UNKNOWN: Rules = {
   readOnlyReason: null,
 };
 
+/** The rules every view decides; Rename and Show in file browser follow the facts alone. */
+type ViewRules = Omit<Rules, "rename" | "reveal">;
+
 function isEditable(facts: FileFacts): facts is Extract<FileFacts, { kind: "small" }> {
   return facts.kind === "small" && facts.utf8 && !facts.readOnly;
 }
 
 /** A diff git refused a text base for. The binary notice offers the working copy's Download, so
  *  it needs a working copy the server has described; without one the diff gets the sentence. */
-function refusedDiff(base: "binary" | "not_utf8", facts: FileFacts | null): Rules {
+function refusedDiff(base: "binary" | "not_utf8", facts: FileFacts | null): ViewRules {
   const view = base === "binary" && facts !== null ? "binary" : "undiffable";
   return {
     view,
@@ -103,6 +118,19 @@ export function rulesFor(
   requested: Requested,
   gitBase: DiffBase | null = null,
 ): Rules {
+  return {
+    ...viewRules(facts, path, requested, gitBase),
+    rename: facts?.renamable === true,
+    reveal: facts?.readOnly !== true,
+  };
+}
+
+function viewRules(
+  facts: FileFacts | null,
+  path: string,
+  requested: Requested,
+  gitBase: DiffBase | null,
+): ViewRules {
   if (facts?.kind === "large") {
     return {
       view: "large",

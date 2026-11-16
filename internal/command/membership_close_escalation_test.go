@@ -226,6 +226,8 @@ func (*fixedTabs) Reorder(context.Context, []string) (uint64, error) { return 0,
 func (*fixedTabs) SetPinned(context.Context, string, bool) (uint64, error) { return 0, nil }
 func (*fixedTabs) SetSeen(context.Context, string, uint64) (uint64, error) { return 0, nil }
 
+func (*fixedTabs) Retarget(context.Context, string, string) (uint64, error) { return 0, nil }
+
 func (*fixedTabs) Reparent(context.Context, string, string) (uint64, error) { return 0, nil }
 
 func (f *fixedTabs) List() ([]marotte.TabSubject, uint64) { return f.open, 2 }

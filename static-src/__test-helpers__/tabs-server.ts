@@ -274,6 +274,28 @@ export const tabServer = {
     commitClose(descendants(id));
   },
 
+  /** Move a tab to another ref the way the server's rename follow does, and withhold its frame, so only a re-list
+   *  carries the move. */
+  retargetElsewhere(id: string, ref: string): TabSubject | null {
+    const at = state.subjects.findIndex((s) => s.id === id);
+    const was = state.subjects[at];
+    if (was === undefined) {
+      return null;
+    }
+    const moved = { ...was, ref };
+    state.subjects[at] = moved;
+    state.version++;
+    return moved;
+  },
+
+  /** Move a tab to another ref the way the server's rename follow does: one frame carrying the subject, no `op_id`. */
+  retargetRemotely(id: string, ref: string): void {
+    const moved = tabServer.retargetElsewhere(id, ref);
+    if (moved !== null) {
+      ingest({ changed: moved, version: state.version });
+    }
+  },
+
   /** Close a tab the way ANOTHER device does: commit it and emit a frame with no
    *  `op_id`, so the projection runs its local cleanup and dispatches nothing. */
   closeRemotely(id: string): void {

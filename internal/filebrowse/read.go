@@ -58,14 +58,26 @@ func (h *Handler) handleRead(w http.ResponseWriter, r *http.Request, reqPath str
 		return
 	}
 	httpserver.WriteJSON(w, FileRead{
-		Path:     reqPath,
-		FileID:   fileIDOf(data),
-		Modified: modifiedOf(info),
-		Content:  string(data),
-		Size:     info.Size(),
-		UTF8:     utf8.Valid(data),
-		ReadOnly: rd.readOnly,
+		Path:      reqPath,
+		FileID:    fileIDOf(data),
+		Modified:  modifiedOf(info),
+		Content:   string(data),
+		Size:      info.Size(),
+		UTF8:      utf8.Valid(data),
+		ReadOnly:  rd.readOnly,
+		Renamable: h.renamable(reqPath, rd),
 	})
+}
+
+// renamable reports whether the file browser's rename can move the entry reqPath names, which is
+// a link itself where rd is the file it resolves to: a tool output and an owned entry are always
+// refused.
+func (h *Handler) renamable(reqPath string, rd readable) bool {
+	if rd.readOnly {
+		return false
+	}
+	e, err := h.resolveEntry(reqPath)
+	return err == nil && !h.ownsEntry(e.abs)
 }
 
 // writeStableError answers a readStable failure: too large is the viewer's refusal, and a
@@ -97,7 +109,7 @@ func (h *Handler) handleStat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rd.f.Close()
-	out := FileStat{Path: reqPath, ReadOnly: rd.readOnly}
+	out := FileStat{Path: reqPath, ReadOnly: rd.readOnly, Renamable: h.renamable(reqPath, rd)}
 	if rd.info.Size() > WholeFileMax {
 		binary, err := sniffBinary(rd.f)
 		if err != nil {

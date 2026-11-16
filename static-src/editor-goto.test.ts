@@ -56,6 +56,7 @@ function activeText(path: string): ReturnType<typeof freshState> {
     utf8: true,
     conflict: false,
     readOnly: false,
+    renamable: true,
     size: 5,
   };
   fileStates.set(path, state);
@@ -142,7 +143,7 @@ describe("the Go to line control", () => {
     showRead("a\nb\nc");
     ctrlG();
     expect(panelOpen()).toBe(true);
-    state.facts.value = { kind: "large", size: 3 << 20 };
+    state.facts.value = { kind: "large", readOnly: false, renamable: true, size: 3 << 20 };
     state.mode.value = { kind: "large" };
     paintCommonControls(state);
     expect(panelOpen()).toBe(false);

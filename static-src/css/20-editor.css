@@ -41,6 +41,35 @@
   white-space: nowrap;
 }
 
+/* Renaming, the path box is the field: the folder clips at its start as the path does, and the
+   name takes the rest of the box. */
+.editor-filename.is-renaming {
+  display: flex;
+  align-items: center;
+  direction: ltr;
+  overflow: hidden;
+  border-color: var(--c-accent);
+}
+
+.editor-rename-dir {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  direction: rtl;
+  color: var(--c-text-secondary);
+}
+
+.editor-rename-input {
+  flex: 1 1 auto;
+  min-width: 4rem;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
 .editor-error {
   padding: var(--sp-3) var(--sp-4);
   padding-inline-start: max(var(--sp-4), var(--sidebar-reach));
