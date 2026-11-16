@@ -858,6 +858,11 @@
   overscroll-behavior: contain;
   scrollbar-width: thin;
 
+  /* The scrollbar sits in the bar's inline padding (at least `--sp-4`), so the rows keep the
+     composer's edges whether or not the area scrolls. */
+  scrollbar-gutter: stable;
+  margin-inline-end: calc(-1 * var(--hold-gutter, 0px));
+
   & > * {
     flex: none;
   }

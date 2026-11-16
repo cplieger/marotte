@@ -6,6 +6,7 @@ import { page as browser } from "vitest/browser";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { buildExecSummary, type ExecSummaryView } from "./exec-view/summary.js";
+import { mountHoldingArea } from "./holding-area.js";
 import type { ExecNode, ExecRun } from "./exec-view/model.js";
 
 /** A token's rendered length, read off a real element rather than restated. */
@@ -129,6 +130,7 @@ function mountBand(states: readonly string[]): {
   form.append(dock, area, box);
   host.append(outer, form);
   document.body.appendChild(host);
+  mountHoldingArea(area);
   return { bar, wrap, box, dock, rows };
 }
 

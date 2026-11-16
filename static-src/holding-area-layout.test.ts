@@ -260,6 +260,20 @@ describe("the holding area", () => {
     });
   }
 
+  for (const [w, h] of VIEWPORTS) {
+    it(`lines a scrolling area's rows up with the composer at ${String(w)}x${String(h)}`, async () => {
+      openStack(true);
+      const chat = await mountChat(w, h, 5, true, 17, 0);
+      expect(chat.area.scrollHeight, "the area scrolls").toBeGreaterThan(chat.area.clientHeight);
+      const box = document.querySelector("#prompt-box")!.getBoundingClientRect();
+      for (const sel of [".run-bar-host", ".steer-stack > li"]) {
+        const r = chat.area.querySelector(sel)!.getBoundingClientRect();
+        expect(r.left, `${sel} start`).toBeCloseTo(box.left, 0);
+        expect(r.right, `${sel} end`).toBeCloseTo(box.right, 0);
+      }
+    });
+  }
+
   it("ellipsises a long file name inside its row at phone width, the actions column in the row", async () => {
     await browser.viewport(390, 844);
     style = mountAppCSS();
