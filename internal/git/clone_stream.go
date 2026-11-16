@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/marotte/internal/procgroup"
 )
 
 // cloneCeiling bounds the whole clone, stall detection included, against a remote that drips
@@ -32,10 +31,6 @@ var cloneStallTimeout = 90 * time.Second
 
 var errCloneStalled = errors.New("transfer stalled")
 
-// transferWaitDelay bounds the transfer after a stall or ceiling kill: os/exec then closes the pipes
-// a child that escaped the group still holds, which ends forwardProgress's read.
-const transferWaitDelay = 5 * time.Second
-
 // On an ordinary failure the output carries git's own message; on a stall or ceiling kill it is
 // EMPTY and the error names the reason, since the tail would be a progress line.
 func runTransfer(ctx context.Context, dir string, onProgress func(string), args ...string) (string, error) {
@@ -45,9 +40,6 @@ func runTransfer(ctx context.Context, dir string, onProgress func(string), args 
 	tctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	cmd := gitExec(tctx, dir, args...)
-	// A head-only kill leaves git-remote-https holding the stderr pipe, blocking the read loop past
-	// the stall.
-	procgroup.OwnGroup(cmd, transferWaitDelay)
 	stdout := &cappedBuffer{cap: 64 * 1024}
 	cmd.Stdout = stdout
 	stderr, err := cmd.StderrPipe()
@@ -67,7 +59,7 @@ func runTransfer(ctx context.Context, dir string, onProgress func(string), args 
 	go stallWatchdog(cloneStallTimeout, activity, watchdogDone, cancel)
 
 	tail, readErr := forwardProgress(stderr, activity, onProgress)
-	waitErr := cmd.Wait()
+	waitErr := gitWaitErr(cmd.Wait())
 	if waitErr != nil {
 		if killErr := transferKillReason(tctx); killErr != nil {
 			return "", killErr

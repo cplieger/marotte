@@ -326,7 +326,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	// `--`: a prior malicious clone could have stored a `-flag` origin.
 	cmd := gitExec(r.Context(), h.workDir, "clone", "--", remote, filepath.Base(dir))
 	out, cErr := cmd.CombinedOutput()
-	if cErr != nil {
+	if cErr = gitWaitErr(cErr); cErr != nil {
 		slog.Error("git reclone: clone failed", "repo", body.Repo, "error", cErr, "out", logField(strings.TrimSpace(string(out))))
 	} else {
 		slog.Info("git reclone completed", "repo", body.Repo)

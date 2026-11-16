@@ -460,46 +460,10 @@ func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 	})
 }
 
-// TestKillGroup_ReapsTheWholeTree pins a group kill: agent commands are trees with no stdin-EOF
-// reclaim, and the assertion is on the grandchild a head-only kill stranded.
-func TestKillGroup_ReapsTheWholeTree(t *testing.T) {
-	dir := t.TempDir()
-	pidFile := filepath.Join(dir, "child.pid")
-	// Killing the group must take the child; killing the head alone leaves it running.
-	script := "sleep 300 & echo $! > " + pidFile + "; wait"
-	cmd := exec.Command("sh", "-c", script) // #nosec G204 -- fixed test script
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start bait: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = procgroup.Kill(cmd.Process, syscall.SIGKILL)
-		_, _ = cmd.Process.Wait()
-	})
-
-	childPID := waitForPIDFile(t, pidFile)
-	if !processAlive(childPID) {
-		t.Fatalf("bait child %d not alive before the kill; the test proves nothing", childPID)
-	}
-
-	if err := procgroup.Kill(cmd.Process, syscall.SIGKILL); err != nil {
-		t.Fatalf("killGroup: %v", err)
-	}
-	_, _ = cmd.Process.Wait() // reap the head; the poll below is on the child
-
-	deadline := time.Now().Add(3 * time.Second)
-	for processAlive(childPID) {
-		if time.Now().After(deadline) {
-			t.Fatalf("grandchild %d survived killGroup; the group form is not reaching the tree", childPID)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-}
-
-// Once the head is reaped its pid may lead a stranger's group; the fixture stands one in with a Setpgid sleep.
-func TestKillTerminalGroup_AfterReapSignalsNothing(t *testing.T) {
+// Once the head is reaped its pid may lead a stranger's session; the fixture stands one in with a Setsid sleep.
+func TestKillTerminalSession_AfterReapSignalsNothing(t *testing.T) {
 	stranger := exec.Command("sleep", "30") // #nosec G204 -- fixed test command
-	stranger.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	stranger.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := stranger.Start(); err != nil {
 		t.Fatalf("Setup: start stranger: %v", err)
 	}
@@ -509,16 +473,16 @@ func TestKillTerminalGroup_AfterReapSignalsNothing(t *testing.T) {
 	})
 
 	term := newAgentTerminal(stranger, "c1", 64)
-	term.pgid = stranger.Process.Pid
+	term.sid = stranger.Process.Pid
 	term.reaped = true
 	// done stays open: the reaped flag, not done, is the gate.
 
-	err := killTerminalGroup(term, "t-reaped")
+	err := killTerminalSession(term, "t-reaped")
 	if !procgroup.AlreadyGone(err) {
-		t.Errorf("killTerminalGroup(reaped terminal) = %v, want an already-gone error", err)
+		t.Errorf("killTerminalSession(reaped terminal) = %v, want an already-gone error", err)
 	}
 	if !processAlive(stranger.Process.Pid) {
-		t.Error("killTerminalGroup on a reaped terminal killed the process now holding its pid")
+		t.Error("killTerminalSession on a reaped terminal killed the process now holding its pid")
 	}
 }
 
@@ -542,8 +506,8 @@ func termIDMsg(t *testing.T, id int64, method, termID string) *marotte.RPCRespon
 	return &marotte.RPCResponse{ID: &id, Method: method, Params: mustJSON(t, map[string]string{"terminalId": termID})}
 }
 
-// A running command's whole tree goes with terminal/kill, via the group captured at spawn.
-func TestKillTerminalGroup_LiveHeadTakesTheTree(t *testing.T) {
+// A running command's whole tree goes with terminal/kill, via the session captured at spawn.
+func TestKillTerminalSession_LiveHeadTakesTheTree(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "child.pid")
 	h, termID, childPID := startBaitTerminal(t, "sleep 300 & echo $! > "+pidFile+"; wait", pidFile)
 	t.Cleanup(func() { _ = syscall.Kill(childPID, syscall.SIGKILL) })
@@ -556,7 +520,7 @@ func TestKillTerminalGroup_LiveHeadTakesTheTree(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	for processAlive(childPID) {
 		if time.Now().After(deadline) {
-			t.Fatalf("grandchild %d survived terminal/kill; the group captured at spawn was not signalled", childPID)
+			t.Fatalf("grandchild %d survived terminal/kill; the session captured at spawn was not signalled", childPID)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -564,7 +528,7 @@ func TestKillTerminalGroup_LiveHeadTakesTheTree(t *testing.T) {
 
 // A finished command's backgrounded child is left running, as KAS's own terminal does (characterization pin).
 func TestTerminalRelease_LeavesAFinishedCommandsBackgroundedChild(t *testing.T) {
-	withTerminalGroupGrace(t, 100*time.Millisecond)
+	withTerminalSessionGrace(t, 100*time.Millisecond)
 	pidFile := filepath.Join(t.TempDir(), "child.pid")
 	h, termID, childPID := startBaitTerminal(t,
 		"sleep 30 >/dev/null 2>&1 </dev/null & echo $! > "+pidFile, pidFile)
@@ -601,7 +565,7 @@ func waitForPIDFile(t *testing.T, path string) int {
 
 // processAlive reports whether pid is a live, non-zombie process, from /proc/<pid>/stat. Not
 // kill(pid, 0): that answers alive for a zombie, so it would measure the ambient reaper rather than
-// killGroup. The state follows the last ')' because comm may hold parens.
+// the kill under test. The state follows the last ')' because comm may hold parens.
 func processAlive(pid int) bool {
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)) // #nosec G304 -- pid from the test's own child
 	if err != nil {

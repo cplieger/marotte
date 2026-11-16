@@ -48,7 +48,7 @@ const (
 	// line, so --max-filesize does not bound it; a longer line is skipped.
 	maxLineBytes   = 4 << 20
 	maxStderrBytes = 64 << 10
-	// killWait bounds Wait after the group's SIGKILL, for a child still holding the pipes.
+	// killWait bounds Wait after the session's SIGKILL, for a child still holding the pipes.
 	killWait = 2 * time.Second
 	// defaultMaxFiles applies when find_files names no maxResults; KAS 3.0.0 always sends 11.
 	defaultMaxFiles = 100
@@ -289,7 +289,7 @@ func (s Searcher) filesRoot(ctx context.Context, root string, args []string, lim
 }
 
 // run streams rg's stdout lines, under root, to line until it returns false, ctx ends, or the
-// output passes maxOutputBytes, then kills rg's process group. It returns rg's stderr when rg
+// output passes maxOutputBytes, then kills rg's session. It returns rg's stderr when rg
 // exited 2 having written no line; every other failure is logged here. The lines already read
 // stay with the caller.
 func (s Searcher) run(ctx context.Context, root string, args []string, line func([]byte) bool) (refusal string) {
@@ -300,7 +300,7 @@ func (s Searcher) run(ctx context.Context, root string, args []string, line func
 	// An empty environment keeps RIPGREP_CONFIG_PATH, which an agent can set, from adding --follow
 	// or other flags to the search.
 	cmd.Env = []string{}
-	procgroup.OwnGroup(cmd, killWait)
+	procgroup.OwnSession(cmd, killWait)
 	stderr := procout.NewBuffer(maxStderrBytes)
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
@@ -319,7 +319,7 @@ func (s Searcher) run(ctx context.Context, root string, args []string, line func
 	read := readLines(out, line)
 	read.capped = out.N <= 0
 	if read.stopped || read.err != nil || read.capped {
-		// A full pipe would block rg forever once the reads stop, so the group is killed before Wait.
+		// A full pipe would block rg forever once the reads stop, so the session is killed before Wait.
 		// After a natural EOF rg is exiting, and a kill then would turn a clean exit into a failure.
 		stop()
 	}
