@@ -14,32 +14,32 @@ export function foldAt(count: number): number | null {
   return count > FOLD_AT ? FOLD_AT - 1 : null;
 }
 
+export interface FoldRow {
+  readonly li: HTMLElement;
+  readonly btn: HTMLElement;
+  readonly count: HTMLElement;
+}
+
 /** The fold row, painted closed; `paintFoldRow` gives it its count. */
-export function buildFoldRow(onToggle: () => void): HTMLElement {
+export function buildFoldRow(onToggle: () => void): FoldRow {
+  const count = el("span", { className: "steer-fold-count" });
   const btn = el(
     "button",
     { type: "button", className: "steer-fold-toggle", "aria-expanded": "false" },
     chevronEl(),
-    el("span", { className: "steer-fold-count" }),
+    count,
   );
   btn.addEventListener("click", onToggle);
-  return el("li", { className: "steer-fold" }, btn);
+  return { li: el("li", { className: "steer-fold" }, btn), btn, count };
 }
 
 /** The accessible name holds the visible words (WCAG 2.5.3 label in name), so a voice command saying them
  *  reaches the button. */
-export function paintFoldRow(li: HTMLElement, hidden: number, open: boolean): void {
-  const btn = li.querySelector<HTMLElement>(".steer-fold-toggle");
-  if (btn === null) {
-    return;
-  }
-  btn.setAttribute("aria-expanded", String(open));
-  btn.setAttribute(
+export function paintFoldRow(row: FoldRow, hidden: number, open: boolean): void {
+  row.btn.setAttribute("aria-expanded", String(open));
+  row.btn.setAttribute(
     "aria-label",
     open ? "Show fewer waiting messages" : `Show ${String(hidden)} more waiting messages`,
   );
-  const count = btn.querySelector(".steer-fold-count");
-  if (count !== null) {
-    count.textContent = open ? "Show fewer" : `+${String(hidden)} more`;
-  }
+  row.count.textContent = open ? "Show fewer" : `+${String(hidden)} more`;
 }

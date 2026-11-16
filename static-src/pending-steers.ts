@@ -40,7 +40,7 @@ import type { PendingSteer, QueuedPrompt, RunEntryView, RunView, RunWait } from 
 import type { Attachment, SendNowKind } from "./wire/types.gen.js";
 import { readQuoted, splitQuotes } from "./message-quote.js";
 import { drawParts } from "./quote-band.js";
-import { buildFoldRow, foldAt, paintFoldRow } from "./stack-fold.js";
+import { buildFoldRow, foldAt, paintFoldRow, type FoldRow } from "./stack-fold.js";
 import { setStackOpen, stackOpen } from "./device-view.js";
 
 /** Where an unsent steer goes, from the run order: with an entry's wait, with the chat's next message
@@ -95,6 +95,8 @@ interface StackState {
   canStop: boolean;
   stopTarget: string | undefined;
   src: SteerStackSource;
+  /** The stack's one fold row, built at mount: key `f` seats and drops this node. */
+  fold: FoldRow;
 }
 
 const mountedStacks = new WeakSet<HTMLUListElement>();
@@ -119,6 +121,7 @@ export function mountSteerStack(stack: HTMLUListElement, src: SteerStackSource):
   }
   mountedStacks.add(stack);
   const announced = { waiting: 0, id: "" };
+  const fold = buildFoldRow(toggleFold);
   const sig = computed(() => {
     const s = src.read();
     return join(
@@ -130,7 +133,7 @@ export function mountSteerStack(stack: HTMLUListElement, src: SteerStackSource):
   });
   effect(() => {
     touch(sig);
-    render(stack, src, announced);
+    render(stack, src, announced, fold);
   });
 }
 
@@ -156,6 +159,7 @@ function render(
   stack: HTMLUListElement,
   src: SteerStackSource,
   announced: { waiting: number; id: string },
+  fold: FoldRow,
 ): void {
   const { id, steers, run } = untracked(() => src.read());
   const stopTarget = run === undefined ? undefined : runningTarget(run);
@@ -168,13 +172,14 @@ function render(
     canStop: run === undefined || stopTarget !== undefined,
     stopTarget,
     src,
+    fold,
   };
   const waiting = state.waiting;
   const rows = dockRows(steers, run);
   const open = stackOpen() === true;
-  const fold = placeFold(rows);
-  if (fold !== null) {
-    rows.splice(fold.at, 0, { kind: "fold", hidden: fold.hidden, open });
+  const place = placeFold(rows);
+  if (place !== null) {
+    rows.splice(place.at, 0, { kind: "fold", hidden: place.hidden, open });
   }
 
   if (rows.length === 0) {
@@ -192,11 +197,11 @@ function render(
   stack.classList.remove("hidden");
   const focused = document.activeElement;
   const held = focused instanceof HTMLElement && stack.contains(focused) ? focused : null;
-  const foldWas = Array.from(stack.children).findIndex((c) => c.classList.contains("steer-fold"));
+  const foldWas = Array.from(stack.children).indexOf(fold.li);
   // Arrival order, so the newest sits at the bottom nearest the box it was typed into and every
   // earlier one moves up.
   reconcile(stack, rows, rowSpec(state));
-  applyFold(stack, open, held, foldWas);
+  applyFold(stack, fold, open, held, foldWas);
 
   // Announce only on the same chat, and only the WAITING count — the number the user is waiting to
   // see fall. A pure chat switch is not news.
@@ -232,27 +237,26 @@ function placeFold(rows: readonly DockRow[]): { at: number; hidden: number } | n
  *  the index the fold row held before this render. */
 function applyFold(
   stack: HTMLUListElement,
+  fold: FoldRow,
   open: boolean,
   held: HTMLElement | null,
   foldWas: number,
 ): void {
   let after = false;
-  let toggle: HTMLElement | null = null;
   for (const child of stack.children) {
     child.toggleAttribute("data-folded", after && !open);
-    if (child.classList.contains("steer-fold")) {
+    if (child === fold.li) {
       after = true;
-      toggle = child.querySelector<HTMLElement>(".steer-fold-toggle");
     }
   }
   if (held === null) {
     return;
   }
   if (held.isConnected && held.closest("[data-folded]") !== null) {
-    toggle?.focus({ preventScroll: true });
+    fold.btn.focus({ preventScroll: true });
     return;
   }
-  if (!held.isConnected && held.classList.contains("steer-fold-toggle")) {
+  if (held === fold.btn && !held.isConnected) {
     stack.children[foldWas]?.querySelector<HTMLElement>(".steer-act")?.focus({
       preventScroll: true,
     });
@@ -380,11 +384,9 @@ function rowSpec(state: StackState): ReconcileSpec<DockRow> {
           return buildQueuedRow(r.entry, r.stop);
         case "paused":
           return buildPausedRow();
-        case "fold": {
-          const li = buildFoldRow(toggleFold);
-          paintFoldRow(li, r.hidden, r.open);
-          return li;
-        }
+        case "fold":
+          paintFoldRow(state.fold, r.hidden, r.open);
+          return state.fold.li;
       }
     },
     update: (el, r) => {
@@ -404,7 +406,7 @@ function rowSpec(state: StackState): ReconcileSpec<DockRow> {
         case "paused":
           return;
         case "fold":
-          paintFoldRow(el, r.hidden, r.open);
+          paintFoldRow(state.fold, r.hidden, r.open);
           return;
       }
     },
