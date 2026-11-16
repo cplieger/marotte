@@ -244,8 +244,8 @@ func TestSignInHealth_ABlipUnderTheGraceShowsNothing(t *testing.T) {
 	}
 }
 
-// A definite refusal reads signed_out at once, with no grace; a sign-out the person asked for reads none, and an
-// engine refusal during an outage is the outage.
+// A definite refusal reads signed_out at once, with no grace; a sign-out the person asked for reads none, and a turn
+// the engine failed for the outage is the outage.
 func TestSignInHealth_ADefiniteRefusalGivesSignedOut(t *testing.T) {
 	t.Run("the identity provider rejects the renewal", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
@@ -272,7 +272,7 @@ func TestSignInHealth_ADefiniteRefusalGivesSignedOut(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			s := newHealthHub(t)
 			s.signIn(t)
-			s.h.NoteEngineRefusal()
+			s.h.NoteEngineRefusal(marotte.FailureKindSignIn)
 			synctest.Wait()
 			if got := s.h.SignInHealth(); got.State != marotte.SignInSignedOut || got.Cause != marotte.SignInCauseRefused {
 				t.Errorf("health after an engine refusal = %s/%s, want signed_out/refused", got.State, got.Cause)
@@ -306,37 +306,23 @@ func TestSignInHealth_ADefiniteRefusalGivesSignedOut(t *testing.T) {
 			}
 		})
 	})
-	t.Run("an engine refusal graded after the provider recovered", func(t *testing.T) {
+	t.Run("a refusal whose close names no sign-in cause", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			s := newHealthHub(t)
 			s.signIn(t)
-			s.failPastTheGrace(t)
-			s.b.set(false, false, nil)
-			if a := s.vault.Reprobe(t.Context(), gateBackendID); a != signin.Answerable {
-				t.Fatalf("Setup: answerability after the reprobe = %v, want answerable", a)
-			}
+			s.h.NoteEngineRefusal("")
 			synctest.Wait()
-			if got := s.h.SignInHealth().State; got != marotte.SignInOK {
-				t.Fatalf("Setup: state after the recovery = %q, want ok", got)
-			}
-
-			s.h.NoteEngineRefusal()
-			synctest.Wait()
-
 			if got := s.h.SignInHealth().State; got != marotte.SignInOK || s.h.SignInRefused() {
-				t.Errorf("state = %q (refused %v), want ok: the engine's ask was refused for the outage", got, s.h.SignInRefused())
-			}
-			if n := len(s.push.signInPushes()); n != 1 {
-				t.Errorf("sign-in pushes = %d, want only the failing one", n)
+				t.Errorf("state = %q (refused %v), want ok: nothing says whose refusal it was", got, s.h.SignInRefused())
 			}
 		})
 	})
-	t.Run("an engine refusal while the provider is down", func(t *testing.T) {
+	t.Run("a turn failed for the outage while the provider is down", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			s := newHealthHub(t)
 			s.signIn(t)
 			s.failPastTheGrace(t)
-			s.h.NoteEngineRefusal()
+			s.h.NoteEngineRefusal(marotte.FailureKindSignInUnreachable)
 			synctest.Wait()
 			if got := s.h.SignInHealth(); got.State != marotte.SignInFailing || got.Cause != marotte.SignInCauseProviderUnreachable {
 				t.Errorf("health = %s/%s, want failing/provider_unreachable: the refusal is the outage's", got.State, got.Cause)
@@ -407,7 +393,7 @@ func TestSignInHealth_APIKeyReadsOnlyEngineRefusals(t *testing.T) {
 		}
 		waitUntil(t, "the sign-in to commit", func() bool { return s.vault.Answerability(gateBackendID) == signin.Answerable })
 		s.b.set(false, false, func() error { return signin.ErrRejected })
-		if _, rerr := s.vault.Answer(t.Context(), gateBackendID); rerr == nil {
+		if s.vault.Answer(t.Context(), gateBackendID).Err == nil {
 			t.Fatal("a rejected renewal was answered")
 		}
 		synctest.Wait()
@@ -415,7 +401,7 @@ func TestSignInHealth_APIKeyReadsOnlyEngineRefusals(t *testing.T) {
 			t.Errorf("state after the vault's record lapsed = %q, want ok: the API key signs the engine in", got)
 		}
 
-		s.h.NoteEngineRefusal()
+		s.h.NoteEngineRefusal(marotte.FailureKindAPIKeyRefused)
 		synctest.Wait()
 		if got := s.h.SignInHealth(); got.State != marotte.SignInSignedOut || got.Cause != marotte.SignInCauseAPIKeyRefused {
 			t.Errorf("health after an engine refusal = %s/%s, want signed_out/api_key_refused", got.State, got.Cause)
@@ -439,7 +425,7 @@ func TestSignInHealth_TheGaugeFollowsTheLastMove_Concurrent(t *testing.T) {
 		for i := range 16 {
 			wg.Go(func() {
 				if (i+round)%2 == 0 {
-					s.h.NoteEngineRefusal()
+					s.h.NoteEngineRefusal(marotte.FailureKindAPIKeyRefused)
 				} else {
 					s.h.NoteEngineAccepted()
 				}

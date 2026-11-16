@@ -148,7 +148,7 @@ import { wakeLine } from "./turn-wake.js";
 import { rewindChat } from "./actions/rewind.js";
 import { compactChat } from "./actions/chat.js";
 import { showLoginModal } from "./modals.js";
-import { signInHealth, signInMends } from "./signin-health.js";
+import { signInMendsFailure } from "./signin-health.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { confirm as confirmDialog, type Confirmation } from "./confirm.js";
 import { setComposerValue } from "./composer-value.js";
@@ -2271,16 +2271,12 @@ function offersCompact(t: Turn): boolean {
 type NoticeAction = "compact" | "sign-in";
 
 /** The notice's action: Compact for an overflow, Sign in again for the newest turn's sign-in failure that a sign-in
- *  can mend. */
+ *  can mend, read from its close alone. */
 function noticeActionOf(t: Turn): NoticeAction | null {
   if (offersCompact(t)) {
     return "compact";
   }
-  if (
-    closeOfBody(t.body)?.failure_kind === "sign_in" &&
-    isNewestTurn(t) &&
-    signInMends(signInHealth().peek())
-  ) {
+  if (signInMendsFailure(closeOfBody(t.body)?.failure_kind) && isNewestTurn(t)) {
     return "sign-in";
   }
   return null;

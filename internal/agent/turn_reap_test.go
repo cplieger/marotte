@@ -117,7 +117,7 @@ func TestCompactionReap_KeepsAToolThatStartedInsideTheBudgetAlive(t *testing.T) 
 		if !ok {
 			t.Fatal("normal closer could not claim the tool-running turn")
 		}
-		h.coord.turns.finish(turn, marotte.TurnResult{})
+		h.coord.turns.finish(turn, &marotte.TurnResult{})
 	})
 }
 
@@ -152,7 +152,7 @@ func TestCompactionReap_StoppedWhenTheTurnClosesNormally(t *testing.T) {
 	if turn.reapTimer != nil {
 		t.Error("claimed turn kept its compaction reap timer")
 	}
-	h.coord.turns.finish(turn, marotte.TurnResult{})
+	h.coord.turns.finish(turn, &marotte.TurnResult{})
 }
 
 // stallEngine makes every engine of h answer Stalled from answers, one per call; the last answer repeats.

@@ -139,10 +139,10 @@ func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 	result, outcome := bc.closeTurn(ctx, t, stop, reason, kind, tc.Closer)
 	cf := bc.closeFactsOf(t, tc.Closer, outcome)
 	cf.answerWait = answerWait
-	t.closeFacts = bc.listCloseOf(ctx, t, tc.Closer, &cf, result, kind == marotte.FailureKindContextLimit)
+	t.closeFacts = bc.listCloseOf(ctx, t, tc.Closer, &cf, &result, kind == marotte.FailureKindContextLimit)
 	// Before finish, whose idle edge asks the release: the tail's hold must already stand there.
 	lifeCtx, done, ok := bc.turns.beginTail(t.lc)
-	bc.turns.finish(t, result)
+	bc.turns.finish(t, &result)
 	bc.publishClose(lifeCtx, t, &cf, done, ok)
 	return true
 }
@@ -151,7 +151,7 @@ func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 // closer's account, else the engine's latched one.
 func (bc *bridgeCoordinator) unclaimedAccount(t *activeTurn, stop marotte.StopReason, reason string, kind marotte.FailureKind) (string, marotte.FailureKind) {
 	if signedOutTurn(t, stop, kind) {
-		return bc.signInAccount(), marotte.FailureKindSignIn
+		return bc.signInAccount(t, reason, kind)
 	}
 	if reason == "" && kind == "" {
 		return engineAccount(t, stop)
@@ -174,7 +174,7 @@ func (bc *bridgeCoordinator) closeFactsOf(t *activeTurn, closer turnCloser, outc
 // compaction the policy asks for, and whether the turn ended clean on the wire with nothing emitted, which re-sends
 // a retry-marked prompt once.
 func (bc *bridgeCoordinator) listCloseOf(
-	ctx context.Context, t *activeTurn, closer turnCloser, cf *closeFacts, result marotte.TurnResult, contextLimit bool,
+	ctx context.Context, t *activeTurn, closer turnCloser, cf *closeFacts, result *marotte.TurnResult, contextLimit bool,
 ) *listClose {
 	return &listClose{
 		clean:      command.CloseFacts{Outcome: cf.outcome, Unattended: cf.unattended}.Clean(),
@@ -239,7 +239,7 @@ func engineAccount(t *activeTurn, stop marotte.StopReason) (string, marotte.Fail
 // signedOutTurn reports a broken turn that failed on the Kiro sign-in: the command layer classified it so (kind), or
 // the engine latched a refused-credential class on it, which beats the closer's own account of the reply.
 func signedOutTurn(t *activeTurn, stop marotte.StopReason, kind marotte.FailureKind) bool {
-	if kind == marotte.FailureKindSignIn {
+	if kind.SignIn() {
 		return true
 	}
 	e := t.Log.EngineError()
@@ -248,12 +248,13 @@ func signedOutTurn(t *activeTurn, stop marotte.StopReason, kind marotte.FailureK
 		c.FailureKind == "" && marotte.SeverityOf(c.Outcome) == marotte.TurnSeverityBroken
 }
 
-// signInAccount is a sign-in failure's sentence, worded from the sign-in's standing when one is wired.
-func (bc *bridgeCoordinator) signInAccount() string {
-	if bc.signInReason == nil {
-		return marotte.SignInFailedReason
+// signInAccount is a sign-in failure's sentence and kind, drawn from the asks t depended on unless the command layer
+// already knew the provider was down (the outage gate).
+func (bc *bridgeCoordinator) signInAccount(t *activeTurn, reason string, kind marotte.FailureKind) (string, marotte.FailureKind) {
+	if kind == marotte.FailureKindSignInUnreachable {
+		return reason, kind
 	}
-	return bc.signInReason()
+	return bc.signin.turnFailure(t.askMark)
 }
 
 // closeFacts is what a won close hands its pipeline: the outcome, the closed turn's id and the fence naming it, a
@@ -478,6 +479,7 @@ func (bc *bridgeCoordinator) closeTurn(ctx context.Context, t *activeTurn, stop 
 	return marotte.TurnResult{
 		Stop:            stop,
 		Reason:          c.Reason,
+		FailureKind:     c.FailureKind,
 		EmittedNothing:  !t.Log.Emitted(),
 		WireEnded:       closer == closerWireEnd,
 		EngineErrorType: engineClass,

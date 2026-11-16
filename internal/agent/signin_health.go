@@ -31,8 +31,8 @@ type signInHealth struct {
 	// episode counts failing or signed_out episodes, so a push decided for one that ended since is dropped.
 	episode uint64
 	mu      sync.Mutex
-	// refused latches an engine refusal that is not the outage's (outageRefusal), until a turn is accepted or the
-	// account changes.
+	// refused latches a turn the engine failed on the account's refusal (noteRefusal), until a turn is accepted or
+	// the account changes.
 	refused bool
 	// pushed: this episode's push went; ok or none re-arms it.
 	pushed bool
@@ -70,9 +70,10 @@ func (h *signInHealth) refusedNow() bool {
 	return h.refused
 }
 
-// noteRefusal latches an engine refusal unless it is the outage's (outageRefusal).
-func (h *signInHealth) noteRefusal() {
-	if st, ok := h.standing(); ok && outageRefusal(st) {
+// noteRefusal latches a turn the engine failed on the account's own refusal (kind, its close's), never on the
+// outage's or on a close that names no sign-in cause.
+func (h *signInHealth) noteRefusal(kind marotte.FailureKind) {
+	if kind != marotte.FailureKindSignIn && kind != marotte.FailureKindAPIKeyRefused {
 		return
 	}
 	h.mu.Lock()
@@ -97,26 +98,6 @@ func (h *signInHealth) accountChanged() {
 	h.refused = false
 	h.mu.Unlock()
 	h.recompute()
-}
-
-// outageRefusal reports whether an engine refusal graded now is the identity provider's outage, not the account's:
-// the vault refused the engine's last ask for it, or the provider is down now. KAS grades every refused ask
-// unauthenticated, and a turn is graded after its ask, so the provider may have come back in between.
-func outageRefusal(st signin.Standing) bool {
-	return st.LastRefusal == signin.RefusedUnreachable || st.Answerability == signin.ProviderUnreachable
-}
-
-// refusalReason is the failure row of a turn the engine failed on its credential.
-func (h *signInHealth) refusalReason() string {
-	st, vaulted := h.standing()
-	switch {
-	case h.link.apiKey:
-		return marotte.SignInFailedAPIKeyReason
-	case vaulted && outageRefusal(st):
-		return marotte.SignInFailedUnreachableReason
-	default:
-		return marotte.SignInFailedRefusedReason
-	}
 }
 
 // standing reads the vault, ok false when the vault answers no ask (none wired, or the API key signs the engine in).
@@ -285,9 +266,9 @@ func (rt *Runtime) SignInHealth() marotte.SignInHealth { return rt.signInHealth.
 // SignInRefused reports whether Kiro refused a credential marotte served and no turn has been accepted since.
 func (rt *Runtime) SignInRefused() bool { return rt.signInHealth.refusedNow() }
 
-// NoteEngineRefusal records a turn the engine failed on a refused credential; one that is the identity provider's
-// outage changes nothing.
-func (rt *Runtime) NoteEngineRefusal() { rt.signInHealth.noteRefusal() }
+// NoteEngineRefusal records a turn the engine failed on its credential, with the failure kind its close carries; one
+// that is the identity provider's outage changes nothing.
+func (rt *Runtime) NoteEngineRefusal(kind marotte.FailureKind) { rt.signInHealth.noteRefusal(kind) }
 
 // NoteEngineAccepted records a turn the engine accepted.
 func (rt *Runtime) NoteEngineAccepted() { rt.signInHealth.noteAccepted() }

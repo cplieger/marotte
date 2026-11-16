@@ -37,6 +37,8 @@ type surfaceDeps struct {
 	closedReason string
 	// closedEngineErrorType, when set, is the class of the display_error AwaitTurn reports latched on the turn.
 	closedEngineErrorType string
+	// closedKind is the failure kind AwaitTurn reports the turn closed with.
+	closedKind marotte.FailureKind
 	// startRefused makes StartTurn answer false, the cancelled-during-open path.
 	startRefused bool
 	// callErr, when set, fails the prompt Call itself.
@@ -75,7 +77,7 @@ func (d *surfaceDeps) AbandonInFlightTurn(_ context.Context, _ marotte.ChatID, t
 
 func (d *surfaceDeps) AwaitTurn(ctx context.Context, chatID marotte.ChatID, turnID string) (marotte.TurnResult, error) {
 	if d.closedReason != "" || d.closedEngineErrorType != "" {
-		return marotte.TurnResult{Turn: turnID, Reason: d.closedReason, EngineErrorType: d.closedEngineErrorType}, nil
+		return marotte.TurnResult{Turn: turnID, Reason: d.closedReason, FailureKind: d.closedKind, EngineErrorType: d.closedEngineErrorType}, nil
 	}
 	if d.startRefused {
 		// A live turn StartTurn refuses was taken by another closer, which the registry retains.
@@ -213,6 +215,9 @@ func TestReportPromptFailure_AnEngineNamedAuthClassRoutesToSignIn(t *testing.T) 
 
 // reachRecorder counts what the command layer notes for the sign-in's health.
 type reachRecorder struct {
+	// kinds are the failure kinds each refusal was noted with, in order.
+	kinds    []marotte.FailureKind
+	mu       sync.Mutex
 	refusals atomic.Int64
 	accepts  atomic.Int64
 	gates    atomic.Int64
@@ -224,7 +229,14 @@ func (r *reachRecorder) TurnBlocked(context.Context) bool {
 	r.gates.Add(1)
 	return r.blocked
 }
-func (r *reachRecorder) NoteEngineRefusal()  { r.refusals.Add(1) }
+
+func (r *reachRecorder) NoteEngineRefusal(kind marotte.FailureKind) {
+	r.mu.Lock()
+	r.kinds = append(r.kinds, kind)
+	r.mu.Unlock()
+	r.refusals.Add(1)
+}
+
 func (r *reachRecorder) NoteEngineAccepted() { r.accepts.Add(1) }
 
 // The unreachable refusal internal/signin/kiro words for KAS, which KAS still grades unauthenticated.
@@ -277,6 +289,12 @@ func checkSignInFrame(t *testing.T, got marotte.ErrorPayload, tc unreachableCase
 		t.Errorf("refusal noted = %v (%d), want %v: every auth failure reaches the sign-in's health",
 			noted, reach.refusals.Load(), tc.wantNoted)
 	}
+	reach.mu.Lock()
+	kinds := slices.Clone(reach.kinds)
+	reach.mu.Unlock()
+	if tc.wantNoted && !slices.Equal(kinds, []marotte.FailureKind{marotte.FailureKindSignInUnreachable}) {
+		t.Errorf("refusal noted with kinds %q, want the close's own %q", kinds, marotte.FailureKindSignInUnreachable)
+	}
 }
 
 // A credential ask the vault refused while the provider is down is still a sign-in failure the person is told
@@ -286,6 +304,7 @@ func TestReportPromptFailure_AnUnreachableProviderIsASignInFailureOnTheTurn(t *t
 		t.Run(name, func(t *testing.T) {
 			deps := newSurfaceDeps()
 			deps.closedReason = signInCard
+			deps.closedKind = marotte.FailureKindSignInUnreachable
 			deps.closedEngineErrorType = tc.engineClass
 			reach := &reachRecorder{}
 			roles := promptRolesOf(deps)
@@ -305,6 +324,7 @@ func TestRetryEmptyTurnPrompt_AnUnreachableProviderIsASignInFailureOnTheTurn(t *
 			deps := newSurfaceDeps()
 			deps.callErr = tc.callErr
 			deps.closedReason = signInCard
+			deps.closedKind = marotte.FailureKindSignInUnreachable
 			deps.closedEngineErrorType = tc.engineClass
 			reach := &reachRecorder{}
 			roles := promptRolesOf(deps)

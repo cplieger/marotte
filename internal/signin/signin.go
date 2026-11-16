@@ -152,8 +152,6 @@ type Standing struct {
 	// renewal was usable or the record was replaced since.
 	FailingSince  time.Time
 	Answerability Answerability
-	// LastRefusal is what the vault refused the engine's last credential ask with, zero when it served that ask.
-	LastRefusal Refusal
 	// Lapsed: the identity provider rejected the record's renewal.
 	Lapsed bool
 }
@@ -165,6 +163,14 @@ type Credential struct {
 
 // Refusal is why a host callback is refused.
 type Refusal int
+
+// Reply is the vault's answer to one host callback: Result when it served the ask, else Err, the backend's wording
+// of Refusal.
+type Reply struct {
+	Err     *marotte.RPCError
+	Result  json.RawMessage
+	Refusal Refusal
+}
 
 // The refusals a backend words for its host callback.
 const (

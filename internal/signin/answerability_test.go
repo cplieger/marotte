@@ -116,7 +116,7 @@ func TestAnswer_ACancelledAskerMarksNothing(t *testing.T) {
 	fb.setRefresh(func(context.Context, fakeCred) (fakeCred, error) { return fakeCred{}, errNetworkDown })
 	ctx, cancel := context.WithCancel(t.Context())
 	time.AfterFunc(20*time.Millisecond, cancel)
-	if _, rerr := h.v.Answer(ctx, "cb"); rerr == nil {
+	if rep := h.v.Answer(ctx, "cb"); rep.Err == nil {
 		t.Fatal("answered with every renewal failing")
 	}
 	if a := h.v.Answerability("cb"); a != Answerable {
@@ -133,7 +133,7 @@ func TestAnswer_AnAskerDeadlineShorterThanTheWindowMarksNothing(t *testing.T) {
 	fb.setRefresh(func(context.Context, fakeCred) (fakeCred, error) { return fakeCred{}, errNetworkDown })
 	ctx, cancel := context.WithTimeout(t.Context(), h.answerWindow/10)
 	defer cancel()
-	if _, rerr := h.v.Answer(ctx, "cb"); rerr == nil {
+	if rep := h.v.Answer(ctx, "cb"); rep.Err == nil {
 		t.Fatal("answered with every renewal failing")
 	}
 	if a := h.v.Answerability("cb"); a != Answerable {
@@ -247,7 +247,7 @@ func TestAnswerability_AShortLeaseIsUnreachableUntilAUsableRenewal(t *testing.T)
 }
 
 // Standing's FailingSince is the episode's first failed renewal: later failures keep it, a usable renewal or a new
-// account clears it, and a rejected renewal reads lapsed. LastRefusal is what the last ask got.
+// account clears it, and a rejected renewal reads lapsed. Each reply names the refusal its ask got.
 func TestStanding_FailingSinceIsTheFirstFailureSinceTheLastUsableRenewal(t *testing.T) {
 	fb := newFake(nil, "cb", "_test/auth/token")
 	h := newHarness(t, fb)
@@ -279,19 +279,21 @@ func TestStanding_FailingSinceIsTheFirstFailureSinceTheLastUsableRenewal(t *test
 		t.Fatal("answered while the provider is down")
 	}
 	h.clk.advance(time.Minute)
-	if _, rerr := h.answer("cb"); rerr == nil {
-		t.Fatal("answered while the provider is down")
+	if rep := h.v.Answer(t.Context(), "cb"); rep.Err == nil || rep.Refusal != RefusedUnreachable {
+		t.Fatalf("a second ask while the provider is down = %+v, want refused unreachable", rep)
 	}
-	if s := h.v.Standing("cb"); s.Answerability != ProviderUnreachable || !s.FailingSince.Equal(first) || s.LastRefusal != RefusedUnreachable {
-		t.Errorf("Standing after two failed asks = %+v, want provider_unreachable failing since %v, last ask refused unreachable", s, first)
+	if s := h.v.Standing("cb"); s.Answerability != ProviderUnreachable || !s.FailingSince.Equal(first) {
+		t.Errorf("Standing after two failed asks = %+v, want provider_unreachable failing since %v", s, first)
 	}
 
 	mu.Lock()
 	down = false
 	mu.Unlock()
-	h.mustAnswer("cb")
-	if s := h.v.Standing("cb"); s.Answerability != Answerable || !s.FailingSince.IsZero() || s.LastRefusal != 0 {
-		t.Errorf("Standing after a usable renewal = %+v, want answerable, not failing, last ask served", s)
+	if rep := h.v.Answer(t.Context(), "cb"); rep.Err != nil || rep.Refusal != 0 || len(rep.Result) == 0 {
+		t.Fatalf("an ask after the provider came back = %+v, want served", rep)
+	}
+	if s := h.v.Standing("cb"); s.Answerability != Answerable || !s.FailingSince.IsZero() {
+		t.Errorf("Standing after a usable renewal = %+v, want answerable, not failing", s)
 	}
 
 	h.clk.advance(2 * time.Hour)
@@ -311,10 +313,10 @@ func TestStanding_FailingSinceIsTheFirstFailureSinceTheLastUsableRenewal(t *test
 
 	h.clk.advance(2 * time.Hour)
 	fb.setRefresh(func(context.Context, fakeCred) (fakeCred, error) { return fakeCred{}, ErrRejected })
-	if _, rerr := h.answer("cb"); rerr == nil {
-		t.Fatal("a rejected renewal was answered")
+	if rep := h.v.Answer(t.Context(), "cb"); rep.Err == nil || rep.Refusal != RefusedRejected {
+		t.Fatalf("an ask on a rejected renewal = %+v, want refused rejected", rep)
 	}
-	if s := h.v.Standing("cb"); s.Answerability != NeedsSignIn || !s.Lapsed || !s.FailingSince.IsZero() || s.LastRefusal != RefusedRejected {
-		t.Errorf("Standing after a rejected renewal = %+v, want needs_sign_in, lapsed, not failing, last ask refused rejected", s)
+	if s := h.v.Standing("cb"); s.Answerability != NeedsSignIn || !s.Lapsed || !s.FailingSince.IsZero() {
+		t.Errorf("Standing after a rejected renewal = %+v, want needs_sign_in, lapsed, not failing", s)
 	}
 }

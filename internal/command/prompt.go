@@ -469,11 +469,11 @@ func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *prompt
 }
 
 // refuseDuringSignInOutage closes a turn that met a known sign-in outage before any engine call: every credential
-// ask would wait out the vault's answer window and fail. It is a sign-in failure the closer words from the standing;
-// the client hands the unsent prompt back (its turn has no turn_bind).
+// ask would wait out the vault's answer window and fail. The client hands the unsent prompt back (its turn has no
+// turn_bind).
 func refuseDuringSignInOutage(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, turnID string) {
 	reason := marotte.SignInFailedUnreachableReason
-	roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, turnID, marotte.StopReasonInterrupted, reason, marotte.FailureKindSignIn, 0)
+	roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, turnID, marotte.StopReasonInterrupted, reason, marotte.FailureKindSignInUnreachable, 0)
 	if result, err := roles.turnOutcome.AwaitTurn(ctx, chatID, turnID); err == nil && result.Reason != "" {
 		reason = result.Reason
 	}
@@ -664,7 +664,7 @@ type failedTurnGrade struct {
 
 // gradeFailedTurn reads the close of turnID, already abandoned for err, and grades it: reason is what its turn_close
 // carries (fallback when it carries none), so a toast says what the card says. A refused credential is noted to the
-// sign-in's health, which decides whether it is the account's.
+// sign-in's health with the kind the close carries, which the closer drew from the asks the turn depended on.
 func gradeFailedTurn(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, turnID string, err error, fallback string) failedTurnGrade {
 	g := failedTurnGrade{reason: fallback, class: classifyPromptFailure(err), onCard: true}
 	result, aErr := roles.turnOutcome.AwaitTurn(ctx, chatID, turnID)
@@ -676,7 +676,7 @@ func gradeFailedTurn(ctx context.Context, roles *promptRoles, chatID marotte.Cha
 	}
 	g.class, g.auth = classAuth, true
 	if roles.signIn != nil {
-		roles.signIn.NoteEngineRefusal()
+		roles.signIn.NoteEngineRefusal(result.FailureKind)
 	}
 	return g
 }
@@ -907,7 +907,7 @@ func promptFailureAccount(ctx context.Context, err error, inlinedImage bool) (st
 		}
 		return marotte.StopReasonInterrupted, "The turn was cancelled before the agent answered.", ""
 	}
-	// The agent's closer words a sign-in failure from the sign-in's standing; this reason is the fallback.
+	// The agent's closer words a sign-in failure from the asks the turn depended on; this reason is the fallback.
 	if classifyPromptFailure(err) == classAuth {
 		return marotte.StopReasonInterrupted, marotte.SignInFailedReason, marotte.FailureKindSignIn
 	}

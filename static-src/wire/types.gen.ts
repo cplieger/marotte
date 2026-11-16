@@ -22,7 +22,7 @@ export type EntryKind = "turn_open" | "turn_bind" | "turn_wake" | "run_named" | 
 
 export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "memory_not_loaded" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed" | "resume_not_sent";
 
-export type FailureKind = "context_limit" | "model_call_limit" | "empty_answer" | "sign_in";
+export type FailureKind = "context_limit" | "model_call_limit" | "empty_answer" | "sign_in" | "sign_in_unreachable" | "api_key_refused";
 
 export type FileMatchKind = "content" | "name" | "dir";
 

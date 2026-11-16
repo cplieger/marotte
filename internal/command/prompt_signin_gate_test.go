@@ -54,8 +54,8 @@ func TestPrompt_AKnownOutageFailsTheTurnBeforeAnyEngineCall(t *testing.T) {
 		t.Fatalf("closed turns = %+v, want the prompt's one turn", deps.abandoned)
 	}
 	got := deps.abandoned[0]
-	if got.kind != marotte.FailureKindSignIn || got.stop != marotte.StopReasonInterrupted {
-		t.Errorf("close = %+v, want an interrupted sign_in failure", got)
+	if got.kind != marotte.FailureKindSignInUnreachable || got.stop != marotte.StopReasonInterrupted {
+		t.Errorf("close = %+v, want an interrupted sign_in_unreachable failure", got)
 	}
 	if got.reason != marotte.SignInFailedUnreachableReason {
 		t.Errorf("close reason = %q, want %q", got.reason, marotte.SignInFailedUnreachableReason)
@@ -82,7 +82,7 @@ func TestPrompt_AnAnsweringProviderRunsThePrompt(t *testing.T) {
 		t.Errorf("bridges opened = %d, want the prompt's session opened", n)
 	}
 	for _, a := range deps.abandoned {
-		if a.kind == marotte.FailureKindSignIn {
+		if a.kind.SignIn() {
 			t.Errorf("turn closed %+v, want no sign-in failure", a)
 		}
 	}

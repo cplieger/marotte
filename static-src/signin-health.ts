@@ -7,7 +7,7 @@ import { BUS_RECONCILE, onBus, onSSE } from "./bus.js";
 import { showLoginModal } from "./modals.js";
 import { setSignInMark } from "./status.js";
 import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
-import type { SignInHealth } from "./wire/types.gen.js";
+import type { FailureKind, SignInHealth } from "./wire/types.gen.js";
 
 const CODE = "signin_health";
 
@@ -51,10 +51,16 @@ export function adoptSignInHealth(h: SignInHealth): void {
   paint(h);
 }
 
-/** Whether a sign-in can mend the sign-in's state: not once Kiro refused the API key, which the server keeps
- *  refusing sign-ins for. */
-export function signInMends(h: SignInHealth | null): boolean {
-  return h?.cause !== "api_key_refused";
+/** Whether a turn_close's failure kind is a Kiro sign-in failure, whatever its cause. */
+export function isSignInFailure(kind: FailureKind | undefined): boolean {
+  return kind === "sign_in" || kind === "sign_in_unreachable" || kind === "api_key_refused";
+}
+
+/** Whether signing in again can mend a turn that failed with `kind`: not once Kiro refused the API key, which the
+ *  server keeps refusing sign-ins for. The close alone decides, since it reaches the client before the health its
+ *  grade moves. */
+export function signInMendsFailure(kind: FailureKind | undefined): boolean {
+  return kind === "sign_in" || kind === "sign_in_unreachable";
 }
 
 function paint(h: SignInHealth): void {
@@ -65,10 +71,10 @@ function paint(h: SignInHealth): void {
       showBanner(GLOBAL_BANNER, CODE, FAILING_TEXT, "warning", false, link);
       return;
     case "signed_out":
-      if (signInMends(h)) {
-        showBanner(GLOBAL_BANNER, CODE, SIGNED_OUT_TEXT, "error", false, link);
-      } else {
+      if (h.cause === "api_key_refused") {
         showBanner(GLOBAL_BANNER, CODE, API_KEY_TEXT, "error", false);
+      } else {
+        showBanner(GLOBAL_BANNER, CODE, SIGNED_OUT_TEXT, "error", false, link);
       }
       return;
     case "ok":

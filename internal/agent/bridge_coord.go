@@ -114,9 +114,6 @@ type bridgeCoordinator struct {
 	steerKASSettled  func(marotte.ChatID)                       `wiring:"optional"`
 	// chatHasLiveRun reports whether the chat launched a run still live. Nil means none.
 	chatHasLiveRun func(marotte.ChatID) bool `wiring:"optional"`
-	// signInReason words a turn that failed on the Kiro sign-in from the sign-in's standing. Nil gives
-	// marotte.SignInFailedReason.
-	signInReason func() string `wiring:"optional"`
 	// sessionHasLiveRun reports whether a live run of the chat keeps the session (sessionHoldsLiveRun). Nil means none.
 	sessionHasLiveRun func(chatID marotte.ChatID, acpSessionID string) bool `wiring:"optional"`
 	// chatHasTab reports an open tab on the chat; it answers true when no tab set is wired, so nothing is released.
@@ -132,6 +129,8 @@ type bridgeCoordinator struct {
 	runLabel func(workflowID string) string `wiring:"optional"`
 	// unknownStops records stop reasons already warned about: one line per unmapped value.
 	unknownStops sync.Map
+	// signin words a turn that failed on the Kiro sign-in from the asks it depended on.
+	signin signinLink
 	// finishMu guards finishes.
 	finishMu sync.Mutex
 	// noSubscribers latches the no-subscriber report once per episode (reportNoSubscribers).
@@ -174,8 +173,7 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		chatHasLiveRun: func(chatID marotte.ChatID) bool {
 			return chatHoldsLiveRun(h.runs.leaseStore().List(), chatID)
 		},
-		// Read per call: signInHealth is built after the coordinator.
-		signInReason: func() string { return h.signInHealth.refusalReason() },
+		signin: h.signin,
 		sessionHasLiveRun: func(chatID marotte.ChatID, acpSessionID string) bool {
 			return sessionHoldsLiveRun(h.runs.leaseStore().List(), chatID, acpSessionID)
 		},

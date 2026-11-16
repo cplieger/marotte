@@ -127,8 +127,8 @@ func startQASignIn(ctx context.Context, vault *signin.Vault, id signin.BackendID
 			case <-tick.C:
 			}
 			if vault.Status(id).Kind == signin.StatusSignedIn {
-				_, rerr := vault.Answer(ctx, id)
-				slog.Info("qa: scripted credential ask", "refused", rerr != nil)
+				rep := vault.Answer(ctx, id)
+				slog.Info("qa: scripted credential ask", "refused", rep.Err != nil)
 			}
 		}
 	}()

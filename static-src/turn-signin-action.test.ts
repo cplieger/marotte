@@ -58,9 +58,13 @@ const { setSessions, setActive, setPainted, bumpMessages } = await import("./sto
 
 mountChatView();
 
-/** marotte's own sentence for a turn refused on its credential during an outage (internal/marotte). */
+/** marotte's own sentences for a turn the engine failed on its credential (internal/marotte). */
 const SIGN_IN =
   "Kiro sign-in failed: the Kiro sign-in service is unreachable. marotte keeps trying, so send the message again once it answers.";
+const REFUSED =
+  "Kiro sign-in failed: Kiro refused the sign-in. Sign in again, then send the message again.";
+const API_KEY =
+  "Kiro sign-in failed: Kiro refused the KIRO_API_KEY marotte signs in with. Replace the key in marotte's environment, then restart marotte.";
 
 function sealed(turnID: string, seq: number, kind: Entry["kind"], payload: unknown): Entry {
   return {
@@ -89,7 +93,28 @@ function turnEntries(
   return rows;
 }
 
-const signInFailure = { outcome: "failed", failure_reason: SIGN_IN, failure_kind: "sign_in" };
+const signInFailure = {
+  outcome: "failed",
+  failure_reason: SIGN_IN,
+  failure_kind: "sign_in_unreachable",
+};
+const refusedFailure = { outcome: "failed", failure_reason: REFUSED, failure_kind: "sign_in" };
+const apiKeyFailure = {
+  outcome: "failed",
+  failure_reason: API_KEY,
+  failure_kind: "api_key_refused",
+};
+
+/** Adopts a health newer than any adopted before, as the server's versions only grow. */
+let seq = 0;
+function adopt(state: "ok" | "signed_out", cause?: "api_key_refused"): void {
+  seq += 1;
+  adoptSignInHealth({
+    state,
+    ...(cause === undefined ? {} : { cause }),
+    version: { boot_ms: 1_760_000_000_000, seq },
+  });
+}
 const otherFailure = { outcome: "failed", failure_reason: "ACP bridge exited" };
 
 function cards(): HTMLElement[] {
@@ -164,14 +189,33 @@ describe("the sign-in failure row", () => {
     expect(button(card)).toBeNull();
   });
 
-  it("is not offered once Kiro refused the API key, which no sign-in replaces", async () => {
-    adoptSignInHealth({
-      state: "signed_out",
-      cause: "api_key_refused",
-      version: { boot_ms: 1_760_000_000_000, seq: 1 },
-    });
-    const [card] = await mount("c-signin-key", [turnEntries("t1", 1, signInFailure)]);
-    expect(card?.querySelector(":scope > .turn-notice")).not.toBeNull();
+  it("offers Sign in again when Kiro refused the sign-in", async () => {
+    const [card] = await mount("c-signin-refused", [turnEntries("t1", 1, refusedFailure)]);
+    expect(notice(card)).toBe(REFUSED);
+    expect(button(card)?.textContent).toBe("Sign in again");
+  });
+
+  // The server sends the turn's close before the health its grade moves, so the row decides from the close alone.
+  it("is not offered for a refused API key when the health moves after the row painted", async () => {
+    adopt("ok");
+    const [card] = await mount("c-signin-key-live", [turnEntries("t1", 1, apiKeyFailure)]);
+    expect(notice(card)).toBe(API_KEY);
     expect(button(card)).toBeNull();
+    adopt("signed_out", "api_key_refused");
+    await new Promise((r) => setTimeout(r, 16));
+    expect(button(cards()[0])).toBeNull();
+  });
+
+  it("is not offered for a refused API key when the health moved first", async () => {
+    adopt("signed_out", "api_key_refused");
+    const [card] = await mount("c-signin-key-first", [turnEntries("t1", 1, apiKeyFailure)]);
+    expect(notice(card)).toBe(API_KEY);
+    expect(button(card)).toBeNull();
+  });
+
+  it("follows the close, not the health shown, for a sign-in a sign-in mends", async () => {
+    adopt("signed_out", "api_key_refused");
+    const [card] = await mount("c-signin-close-wins", [turnEntries("t1", 1, signInFailure)]);
+    expect(button(card)?.textContent).toBe("Sign in again");
   });
 });

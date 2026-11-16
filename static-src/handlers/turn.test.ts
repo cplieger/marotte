@@ -885,18 +885,21 @@ describe("turn_closed for a prompt failed on the sign-in", () => {
   }
   const signInClose = {
     outcome: "interrupted",
-    failure_kind: "sign_in",
+    failure_kind: "sign_in_unreachable",
   } as Partial<EntryTurnClose>;
 
   beforeEach(() => {
     dropComposerState("give-back");
   });
 
-  it("hands an unsent typed prompt back to its composer", () => {
-    setSessions([makeSession("give-back")]);
-    openPromptOn("give-back", { text: "do the thing" });
-    fireClose("give-back", { payload: signInClose });
-    expect(composerDraft("give-back")).toBe("do the thing");
+  it("hands an unsent typed prompt back to its composer, whatever the sign-in's cause", () => {
+    for (const kind of ["sign_in_unreachable", "sign_in", "api_key_refused"] as const) {
+      dropComposerState("give-back");
+      setSessions([makeSession("give-back")]);
+      openPromptOn("give-back", { text: "do the thing" });
+      fireClose("give-back", { payload: { ...signInClose, failure_kind: kind } });
+      expect(composerDraft("give-back"), kind).toBe("do the thing");
+    }
   });
 
   it("keeps a prompt the engine took, an automatic one and an API caller's out of the composer", () => {

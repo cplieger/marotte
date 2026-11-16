@@ -5,6 +5,7 @@ import { onSSE } from "../bus.js";
 import { appendEntry, setWorkingLabel, get, getActiveId, setTurnOpen } from "../store.js";
 import { payloadOf, turnOpenOf } from "../turns.js";
 import { restoreFailedSend } from "../composer-state.js";
+import { isSignInFailure } from "../signin-health.js";
 import type { EntryTurnClose } from "../wire/types.gen.js";
 import { closeNotificationsFor } from "../notify.js";
 import { askTarget } from "../push-subject.js";
@@ -51,7 +52,7 @@ function giveBackUnsentPrompt(
   turnID: string,
   close: EntryTurnClose | undefined,
 ): void {
-  if (close?.failure_kind !== "sign_in") {
+  if (!isSignInFailure(close?.failure_kind)) {
     return;
   }
   const state = get(chatID)?.turns.get(turnID);

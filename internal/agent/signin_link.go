@@ -13,7 +13,9 @@ import (
 // signinLink is the engine's view of the sign-in vault: the backend the engine runs, its declared spawn arguments and
 // host callback, and the account the running engine answers from. A zero link (no vault) declares nothing.
 type signinLink struct {
-	vault   *signin.Vault
+	vault *signin.Vault
+	// asks books every answer the vault gave the engine; nil with no vault.
+	asks    *signInAsks
 	backend signin.BackendID
 	// apiKey: the engine authenticates with an allowlisted API key, which KAS prefers over the host callback, so a
 	// vault change is never pending against the engine.
@@ -22,7 +24,7 @@ type signinLink struct {
 
 // WithSignIn wires the sign-in vault and the backend the agent engine runs.
 func WithSignIn(v *signin.Vault, backend signin.BackendID) Option {
-	return func(h *Runtime) { h.signin.vault, h.signin.backend = v, backend }
+	return func(h *Runtime) { h.signin.vault, h.signin.backend, h.signin.asks = v, backend, &signInAsks{} }
 }
 
 // WithAPIKey records that an API key reaches the agent engine: a sign-in or a switch then marks no restart pending
@@ -63,7 +65,8 @@ func (l signinLink) engineSpawned() {
 	}
 }
 
-// hostCallback reports whether method is a backend's declared host callback, and answers it.
+// hostCallback reports whether method is a backend's declared host callback, and answers it. Each answer is booked
+// before it is returned, so the turn KAS fails on a refusal is closed after the refusal is booked.
 func (l signinLink) hostCallback(method string) (answer func(context.Context) (json.RawMessage, *marotte.RPCError), ok bool) {
 	if l.vault == nil || method == "" {
 		return nil, false
@@ -72,7 +75,11 @@ func (l signinLink) hostCallback(method string) (answer func(context.Context) (j
 	if !ok {
 		return nil, false
 	}
-	return func(ctx context.Context) (json.RawMessage, *marotte.RPCError) { return l.vault.Answer(ctx, id) }, true
+	return func(ctx context.Context) (json.RawMessage, *marotte.RPCError) {
+		rep := l.vault.Answer(ctx, id)
+		l.asks.answered(rep.Refusal)
+		return rep.Result, rep.Err
+	}, true
 }
 
 // answerability reads whether the engine's credential ask can be answered, nil when the vault answers no ask: none is
@@ -82,6 +89,18 @@ func (l signinLink) answerability() func() signin.Answerability {
 		return nil
 	}
 	return func() signin.Answerability { return l.vault.Answerability(l.backend) }
+}
+
+// turnFailure is the failure row and kind of a turn opened at mark that the engine failed on its credential.
+func (l signinLink) turnFailure(mark uint64) (reason string, kind marotte.FailureKind) {
+	switch {
+	case l.apiKey:
+		return marotte.SignInFailedAPIKeyReason, marotte.FailureKindAPIKeyRefused
+	case l.asks.refusalFor(mark) == signin.RefusedUnreachable:
+		return marotte.SignInFailedUnreachableReason, marotte.FailureKindSignInUnreachable
+	default:
+		return marotte.SignInFailedRefusedReason, marotte.FailureKindSignIn
+	}
 }
 
 // turnReprobeWait bounds the reprobe a prompt that meets a known outage waits for.

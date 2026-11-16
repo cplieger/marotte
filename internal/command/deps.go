@@ -572,9 +572,9 @@ type signInReach interface {
 	// TurnBlocked reports whether a turn can only fail on the sign-in: the identity provider is known down and one
 	// reprobe, shared with concurrent callers and bounded by a short deadline under ctx, did not bring it back.
 	TurnBlocked(ctx context.Context) bool
-	// NoteEngineRefusal reports every turn the engine failed on a refused credential, NoteEngineAccepted a turn it
-	// accepted. They feed the sign-in's health, which tells an outage's refusal from the account's.
-	NoteEngineRefusal()
+	// NoteEngineRefusal reports a turn the engine failed on its credential, with the failure kind its turn_close
+	// carries, which names whose refusal it was; NoteEngineAccepted a turn it accepted. They feed the sign-in's health.
+	NoteEngineRefusal(kind marotte.FailureKind)
 	NoteEngineAccepted()
 }
 
