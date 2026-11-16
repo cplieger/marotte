@@ -27,6 +27,19 @@ const API_KEY_TEXT =
   "Kiro refused the KIRO_API_KEY marotte signs in with, so chats and workflows fail. " +
   "Replace the key in marotte's environment, then restart marotte.";
 
+/** Whether KIRO_API_KEY signs the engine in (whoami's `apiKey`, fixed for the server process): the server then
+ *  refuses every sign-in, so nothing offers one. */
+const apiKeySignIn = signal(false);
+
+export function adoptAPIKeySignIn(on: boolean): void {
+  apiKeySignIn.value = on;
+}
+
+/** Whether the API key signs the engine in, for readers that repaint with it (the failed turn's row). */
+export function apiKeySignsIn(): ReadonlySignal<boolean> {
+  return apiKeySignIn;
+}
+
 /** The health shown, for readers that repaint with it (the status card's auth row). */
 export function signInHealth(): ReadonlySignal<SignInHealth | null> {
   return health;

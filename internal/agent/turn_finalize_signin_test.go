@@ -35,7 +35,8 @@ func (s *healthHub) providerBack(t *testing.T) {
 
 // A turn the engine failed on its credential closes with the sign-in's cause as its kind and in marotte's words,
 // whichever closer wins: the outage when the newest ask the engine was answered was refused for it, the API key when
-// one signs the engine in, else Kiro's refusal.
+// one signs the engine in, else Kiro's refusal. The awaited result carries the close's kind, which latches the
+// sign-out only for a refusal a sign-in or a new key mends.
 func TestCloseTurn_AnAuthClassClosesWithTheSignInCause(t *testing.T) {
 	closers := map[string]func(h *Runtime, id string){
 		"wire turn_end": func(h *Runtime, _ string) {
@@ -51,6 +52,7 @@ func TestCloseTurn_AnAuthClassClosesWithTheSignInCause(t *testing.T) {
 		want     string
 		wantKind marotte.FailureKind
 		opts     []Option
+		latches  bool
 	}{
 		"the provider is down": {
 			arrange: (*healthHub).providerDown, want: marotte.SignInFailedUnreachableReason, wantKind: marotte.FailureKindSignInUnreachable,
@@ -58,9 +60,19 @@ func TestCloseTurn_AnAuthClassClosesWithTheSignInCause(t *testing.T) {
 		"the provider came back after the refusal": {
 			arrange: (*healthHub).providerBack, want: marotte.SignInFailedUnreachableReason, wantKind: marotte.FailureKindSignInUnreachable,
 		},
-		"the provider answers": {arrange: none, want: marotte.SignInFailedRefusedReason, wantKind: marotte.FailureKindSignIn},
+		"the provider came back and served an ask before the turn": {
+			arrange: func(s *healthHub, t *testing.T) {
+				s.providerBack(t)
+				if rerr := s.ask(t); rerr != nil {
+					t.Fatalf("Setup: an ask after the recovery = %v, want served", rerr)
+				}
+			},
+			want: marotte.SignInFailedRefusedReason, wantKind: marotte.FailureKindSignIn, latches: true,
+		},
+		"the provider answers": {arrange: none, want: marotte.SignInFailedRefusedReason, wantKind: marotte.FailureKindSignIn, latches: true},
 		"an API key signs the engine in": {
 			arrange: none, want: marotte.SignInFailedAPIKeyReason, wantKind: marotte.FailureKindAPIKeyRefused, opts: []Option{WithAPIKey(true)},
+			latches: true,
 		},
 	}
 	for closerName, closeIt := range closers {
@@ -81,6 +93,20 @@ func TestCloseTurn_AnAuthClassClosesWithTheSignInCause(t *testing.T) {
 				if closes[0].FailureKind != reach.wantKind || closes[0].FailureReason != reach.want {
 					t.Errorf("turn_close = {%q %q}, want {%q %q}", closes[0].FailureKind, closes[0].FailureReason,
 						reach.wantKind, reach.want)
+				}
+				res, err := s.h.AwaitTurn(t.Context(), "c1", id)
+				if err != nil {
+					t.Fatalf("AwaitTurn = %v, want the closed turn's result", err)
+				}
+				if res.FailureKind != closes[0].FailureKind {
+					t.Errorf("awaited FailureKind = %q, want the close's %q", res.FailureKind, closes[0].FailureKind)
+				}
+				s.h.NoteEngineRefusal(res.FailureKind)
+				if got := s.h.SignInRefused(); got != reach.latches {
+					t.Errorf("refused after the grade = %v, want %v", got, reach.latches)
+				}
+				if got := s.h.SignInHealth().State; reach.latches && got != marotte.SignInSignedOut {
+					t.Errorf("state after the grade = %q, want signed_out", got)
 				}
 			})
 		}
@@ -108,7 +134,7 @@ func TestCloseTurn_AThrottleKeepsItsOwnAccountDuringAnOutage(t *testing.T) {
 
 // A prompt the command layer graded a sign-in failure, with no class latched on the turn, is worded from the asks the
 // engine was answered as the latched case is.
-func TestCloseTurn_ASignInKindFromThePromptIsWordedFromTheStanding(t *testing.T) {
+func TestCloseTurn_ASignInKindFromThePromptIsWordedFromTheAsks(t *testing.T) {
 	s := newHealthHub(t)
 	s.signIn(t)
 	s.providerDown(t)
@@ -154,7 +180,14 @@ func TestCloseTurn_AnAskServedAfterTheTurnsRefusalLeavesItTheOutage(t *testing.T
 		if len(closes) != 1 {
 			t.Fatalf("turn_close entries = %d, want exactly one", len(closes))
 		}
-		s.h.NoteEngineRefusal(closes[0].FailureKind)
+		res, err := s.h.AwaitTurn(t.Context(), "c1", id)
+		if err != nil {
+			t.Fatalf("AwaitTurn = %v, want the closed turn's result", err)
+		}
+		if res.FailureKind != closes[0].FailureKind {
+			t.Errorf("awaited FailureKind = %q, want the close's %q", res.FailureKind, closes[0].FailureKind)
+		}
+		s.h.NoteEngineRefusal(res.FailureKind)
 		synctest.Wait()
 
 		if closes[0].FailureKind != marotte.FailureKindSignInUnreachable || closes[0].FailureReason != marotte.SignInFailedUnreachableReason {

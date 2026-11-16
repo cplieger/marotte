@@ -67,7 +67,7 @@ const mockFetch = vi.fn();
 
 const { renderIdentity, currentIdentity } = await import("./settings.js");
 const { logout } = await import("./actions/settings.js");
-const { adoptSignInHealth } = await import("./signin-health.js");
+const { adoptSignInHealth, apiKeySignsIn } = await import("./signin-health.js");
 
 /**
  * The card's three rows as `static/index.html` authors them, including `#st-auth-sep`,
@@ -177,6 +177,7 @@ describe("the sign-in rows and Sign out", () => {
     expect(shown("st-signin-region")).toBeNull();
     expect(logoutBtn().disabled, "the server refuses a sign-out here").toBe(true);
     expect(logoutBtn().getAttribute("data-tooltip")).toContain("KIRO_API_KEY");
+    expect(apiKeySignsIn().peek(), "the server refuses a sign-in here too").toBe(true);
   });
 
   it("hides every sign-in row and offers Sign out again for the arms that name nobody", () => {
@@ -186,6 +187,7 @@ describe("the sign-in rows and Sign out", () => {
       expect(shown(id), id).toBeNull();
     }
     expect(logoutBtn().disabled).toBe(false);
+    expect(apiKeySignsIn().peek()).toBe(false);
   });
 });
 

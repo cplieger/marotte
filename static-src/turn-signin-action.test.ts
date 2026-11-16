@@ -1,6 +1,6 @@
 // A turn the engine failed on its credential says the sign-in cause in its own row and offers "Sign in again" on the
 // newest turn only. Through the real paint, as the Compact action's test does.
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 import type { TurnState } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
@@ -53,7 +53,7 @@ vi.mock("./status.js", async (importOriginal) => ({
 }));
 
 const { mountChatView, activeTranscriptView } = await import("./messages.js");
-const { adoptSignInHealth } = await import("./signin-health.js");
+const { adoptAPIKeySignIn, adoptSignInHealth } = await import("./signin-health.js");
 const { setSessions, setActive, setPainted, bumpMessages } = await import("./store.js");
 
 mountChatView();
@@ -217,5 +217,27 @@ describe("the sign-in failure row", () => {
     adopt("signed_out", "api_key_refused");
     const [card] = await mount("c-signin-close-wins", [turnEntries("t1", 1, signInFailure)]);
     expect(button(card)?.textContent).toBe("Sign in again");
+  });
+});
+
+// The server refuses every sign-in while KIRO_API_KEY signs the engine in, whatever kind a replayed close carries.
+describe("the sign-in failure row under an API key", () => {
+  afterEach(() => {
+    adoptAPIKeySignIn(false);
+  });
+
+  it("offers no Sign in again for a sign-in close", async () => {
+    adoptAPIKeySignIn(true);
+    const [card] = await mount("c-signin-keyed", [turnEntries("t1", 1, refusedFailure)]);
+    expect(notice(card)).toBe(REFUSED);
+    expect(button(card)).toBeNull();
+  });
+
+  it("withdraws Sign in again once whoami names the key after the row painted", async () => {
+    const [card] = await mount("c-signin-keyed-late", [turnEntries("t1", 1, refusedFailure)]);
+    expect(button(card)?.textContent).toBe("Sign in again");
+    adoptAPIKeySignIn(true);
+    await new Promise((r) => setTimeout(r, 16));
+    expect(button(cards()[0])).toBeNull();
   });
 });

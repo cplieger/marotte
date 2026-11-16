@@ -148,7 +148,7 @@ import { wakeLine } from "./turn-wake.js";
 import { rewindChat } from "./actions/rewind.js";
 import { compactChat } from "./actions/chat.js";
 import { showLoginModal } from "./modals.js";
-import { signInMendsFailure } from "./signin-health.js";
+import { apiKeySignsIn, signInMendsFailure } from "./signin-health.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { confirm as confirmDialog, type Confirmation } from "./confirm.js";
 import { setComposerValue } from "./composer-value.js";
@@ -663,6 +663,16 @@ export function mountChatView(): void {
     if (id !== "") {
       bumpMessages(id, "shape");
     }
+  });
+  // whoami can name the API key after the transcript painted, and the newest row's Sign in again follows it.
+  effect(() => {
+    touch(apiKeySignsIn());
+    untracked(() => {
+      const id = getPaintedId();
+      if (id !== "") {
+        bumpMessages(id, "shape");
+      }
+    });
   });
   // The tool layer sits below this module, so the multiplexer injects whether a view is parked and that a resident
   // view's chat must not have its messages evicted.
@@ -1774,6 +1784,7 @@ function cardInputsOf(card: HTMLElement, t: Turn): readonly unknown[] {
     hasTurnBody(card),
     liveRefusalFor(chatID, t.id),
     codeReferencesFor(chatID, t.id),
+    apiKeySignsIn().peek(),
   ];
 }
 
@@ -2271,12 +2282,17 @@ function offersCompact(t: Turn): boolean {
 type NoticeAction = "compact" | "sign-in";
 
 /** The notice's action: Compact for an overflow, Sign in again for the newest turn's sign-in failure that a sign-in
- *  can mend, read from its close alone. */
+ *  can mend, read from its close and never while the API key signs the engine in: a replayed close with no stored
+ *  reason reads `sign_in` whatever signed the engine in. */
 function noticeActionOf(t: Turn): NoticeAction | null {
   if (offersCompact(t)) {
     return "compact";
   }
-  if (signInMendsFailure(closeOfBody(t.body)?.failure_kind) && isNewestTurn(t)) {
+  if (
+    signInMendsFailure(closeOfBody(t.body)?.failure_kind) &&
+    !apiKeySignsIn().peek() &&
+    isNewestTurn(t)
+  ) {
     return "sign-in";
   }
   return null;

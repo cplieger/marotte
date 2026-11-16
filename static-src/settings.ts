@@ -29,7 +29,7 @@ import { loadVersions, getVersions } from "./versions.js";
 import { openConfigFile } from "./editor-openers.js";
 import { $, maybeEl } from "./dom.js";
 import { effect, el, touch } from "@cplieger/reactive";
-import { signInHealth } from "./signin-health.js";
+import { adoptAPIKeySignIn, signInHealth } from "./signin-health.js";
 import type { SignInState } from "./wire/types.gen.js";
 import { initNotificationToggles } from "./settings-notifications.js";
 
@@ -620,6 +620,7 @@ export function renderIdentity(v: IdentityVerdict): void {
   setSignInRows(account === null ? [] : [account.method, account.startUrl, account.region]);
   // The server refuses a sign-out while the key signs the engine in.
   const keyed = account?.apiKey === true;
+  adoptAPIKeySignIn(keyed);
   $.logoutBtn.disabled = keyed;
   $.logoutBtn.setAttribute("data-tooltip", keyed ? TEXT_SIGN_OUT_API_KEY : TEXT_SIGN_OUT);
 }
