@@ -82,7 +82,7 @@ type ToolCall struct {
 	Kind   ToolKind   `json:"kind"`
 	Status ToolStatus `json:"status"`
 	Output string     `json:"output,omitempty"`
-	// CardTitle and Loaded are ToolCardTitle's and ToolLoaded's, set on a served copy only.
+	// CardTitle and Loaded are never set on a ToolCall in Go: the client folds them in from served entries and frames.
 	CardTitle string `json:"card_title,omitempty"`
 	// ToolName is the built-in tool's id (`update_workflow`, `web_search`) when the translator
 	// could name one the transcript distinguishes, else empty. Fixed at the create frame.

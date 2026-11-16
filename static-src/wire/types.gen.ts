@@ -4461,7 +4461,7 @@ export interface ToolCall {
   kind: ToolKind;
   status: ToolStatus;
   output?: string;
-  /** CardTitle and Loaded are ToolCardTitle's and ToolLoaded's, set on a served copy only. */
+  /** CardTitle and Loaded are never set on a ToolCall in Go: the client folds them in from served entries and frames. */
   card_title?: string;
   /**
    * ToolName is the built-in tool's id (`update_workflow`, `web_search`) when the translator
