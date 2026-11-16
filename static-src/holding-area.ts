@@ -36,15 +36,26 @@ export function mountHoldingArea(area: HTMLElement): void {
     ro.observe(pane);
     publishViewportHeight();
     followBand(paint);
+    // A pan moves `offsetTop` with no resize, so `publishViewportHeight`'s listener never sees it.
+    let frame = 0;
+    window.visualViewport?.addEventListener("scroll", () => {
+      if (frame === 0) {
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          paint();
+        });
+      }
+    });
   }
   paint();
 }
 
-/** A raised soft keyboard shrinks only the visual viewport (no `interactive-widget` in the meta), so the pane's
- *  bottom is clipped to it. */
+/** A raised soft keyboard shrinks only the visual viewport (no `interactive-widget` in the meta), and iOS pans it to
+ *  the focused field, so the pane is clipped to it at both edges. */
 function visibleHeight(pane: HTMLElement): number {
   const r = pane.getBoundingClientRect();
   const vv = window.visualViewport;
-  const bottom = vv == null ? window.innerHeight : vv.offsetTop + vv.height;
-  return Math.max(0, Math.min(r.bottom, bottom) - r.top);
+  const top = vv == null ? 0 : vv.offsetTop;
+  const bottom = vv == null ? window.innerHeight : top + vv.height;
+  return Math.max(0, Math.min(r.bottom, bottom) - Math.max(r.top, top));
 }

@@ -321,6 +321,42 @@ describe("the holding area", () => {
     );
   });
 
+  it("caps the area against the visual viewport iOS panned past the pane's top", async () => {
+    const band = { height: 464, offsetTop: 380 };
+    const listeners: Record<string, (() => void)[]> = {};
+    vi.stubGlobal("visualViewport", {
+      get height() {
+        return band.height;
+      },
+      get offsetTop() {
+        return band.offsetTop;
+      },
+      width: 390,
+      offsetLeft: 0,
+      scale: 1,
+      addEventListener: (type: string, fn: () => void) => {
+        (listeners[type] ??= []).push(fn);
+      },
+      removeEventListener: () => undefined,
+    });
+    openStack(true);
+    const chat = await mountChat(390, 844, 5, true, 17, 0);
+    const panned = chat.area.getBoundingClientRect().height;
+    expect(panned, "0.4 of the pane's visible 464px").toBeLessThanOrEqual(SHARE * 464 + 0.5);
+    expect(panned).toBeGreaterThanOrEqual(SHARE * 464 - 1);
+
+    band.offsetTop = 0;
+    for (const fn of listeners["scroll"] ?? []) {
+      fn();
+    }
+    await settle();
+    const top = chat.area.getBoundingClientRect().height;
+    expect(top, "a pan with no resize repaints the cap").toBeLessThanOrEqual(
+      SHARE * (464 - CHROME_PX) + 0.5,
+    );
+    expect(top).toBeGreaterThanOrEqual(SHARE * (464 - CHROME_PX) - 1);
+  });
+
   it("keeps the run tab's composer on screen beside 17 messages to a step", async () => {
     await browser.viewport(390, 844);
     openStack(true);
