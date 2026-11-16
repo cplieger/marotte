@@ -1627,7 +1627,7 @@ describe("a card's title", () => {
     ];
   }
 
-  // The server derives the title (`internal/marotte` ToolCardTitle); the card draws it as sent.
+  // The server derives the title (`internal/marotte` ToolCard); the card draws it as sent.
   it("draws the server's title verbatim on every channel", () => {
     const card = buildToolCard({
       id: "title-verbatim",

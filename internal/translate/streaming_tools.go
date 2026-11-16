@@ -68,8 +68,9 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID marotte.ChatID, 
 		t.trackFileChanges(turn, content.diffs, isNew)
 		t.lines.RecordFromDiffs(chatID, content.diffs, recency(), string(tc.Kind))
 	}
+	title, _ := marotte.ToolCard(&call)
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventWorkingLabel, chatID,
-		marotte.WorkingLabelPayload{Label: marotte.WorkingLabelForKind(tc.Kind, marotte.ToolCardTitle(&call))}))
+		marotte.WorkingLabelPayload{Label: marotte.WorkingLabelForKind(tc.Kind, title)}))
 }
 
 func (*Translator) trackFileChanges(turn *turnlog.Turn, diffs []marotte.ToolDiff, isNew bool) {
@@ -158,35 +159,14 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID marotte.Ch
 		return
 	}
 	res := marotte.EntryToolResultOf(&tc)
-	if !bytes.Equal(tc.Input, open.CreatedInput) {
+	if !bytes.Equal(tc.Input, open.Created.Input) {
 		res.Input = tc.Input
 	}
 	sealed, err := turn.ToolResult(ctx, tu.Meta.Kiro.AgentSubtaskID, tu.ToolCallID, &res)
-	t.publishSealed(ctx, sc, stampSettled(sealed, marotte.ToolResultID(tu.ToolCallID), &tc))
+	t.publishSealed(ctx, sc, sealed)
 	if err != nil {
 		appendFailed(sc, "tool_result", err)
 	}
-}
-
-// stampSettled is sealed with result id's entry swapped for a copy titled from the folded call,
-// whose tool name the result line does not hold; the entry the log wrote is left as written.
-func stampSettled(sealed []turnlog.Sealed, id string, tc *marotte.ToolCall) []turnlog.Sealed {
-	out := slices.Clone(sealed)
-	for i := range out {
-		e := out[i].Entry
-		if e == nil || e.Kind != marotte.EntryKindToolResult || e.ID != id {
-			continue
-		}
-		var r marotte.EntryToolResult
-		if json.Unmarshal(e.Payload, &r) != nil {
-			continue
-		}
-		r.CardTitle, r.Loaded = marotte.ToolCardTitle(tc), marotte.ToolLoaded(tc)
-		stamped := *e
-		setPayload(&stamped, r)
-		out[i].Entry = &stamped
-	}
-	return out
 }
 
 // updateTarget is the turn an update folds into: the run's turn for the step path,
@@ -222,9 +202,7 @@ func (t *Translator) lateStepResult(ctx context.Context, chatID marotte.ChatID, 
 	setPayload(&e, res)
 	if err := t.runs.RunAppendAfterClosed(ctx, attr.RunID, attr.NodePath, &e); err != nil {
 		appendFailed(runScope(attr.RunID), "late tool_result", err)
-		return
 	}
-	t.publishAppended(ctx, runScope(attr.RunID), &e)
 }
 
 // Every omitted field means "unchanged", so applying it to `before` reconstructs `after` exactly;
@@ -253,10 +231,12 @@ func toolProgress(turn string, before, after *marotte.ToolCall) marotte.ToolProg
 
 // deltaCard sends the card title and loaded list when the frame changed them.
 func deltaCard(d *marotte.ToolProgressPayload, before, after *marotte.ToolCall) {
-	if title := marotte.ToolCardTitle(after); title != marotte.ToolCardTitle(before) {
+	title, loaded := marotte.ToolCard(after)
+	was, wasLoaded := marotte.ToolCard(before)
+	if title != was {
 		d.CardTitle = title
 	}
-	if loaded := marotte.ToolLoaded(after); !slices.Equal(loaded, marotte.ToolLoaded(before)) {
+	if !slices.Equal(loaded, wasLoaded) {
 		d.Loaded = loaded
 	}
 }

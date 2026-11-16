@@ -65,7 +65,8 @@ type RunAppender interface {
 	// must never start a turn.
 	RunOpenTurn(runID, nodePath string) (*turnlog.Turn, bool)
 	// RunAppendAfterClosed files an entry after the turn_close of the path's newest
-	// closed turn, the run log's between-turns rule.
+	// closed turn, the run log's between-turns rule, and announces it: a tool_result
+	// titled from the call it joins in that turn.
 	RunAppendAfterClosed(ctx context.Context, runID, nodePath string, e *marotte.Entry) error
 	// RunMeter folds a step's turn_completion into its open turn's aggregate; false
 	// when the path has no open turn, which the caller logs at Debug.

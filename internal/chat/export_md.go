@@ -661,7 +661,8 @@ const untitledTool = "tool"
 // input and output in fences. A held result supplies the settled status, output and locations.
 func writeToolCallMarkdown(b *strings.Builder, call *marotte.EntryToolCall, res *marotte.EntryToolResult) {
 	settled := marotte.SettledToolCall(call, res)
-	title := oneLine(marotte.ToolCardTitle(&settled))
+	drawn, _ := marotte.ToolCard(&settled)
+	title := oneLine(drawn)
 	if title == "" {
 		title = oneLine(string(settled.Kind))
 	}
@@ -697,7 +698,8 @@ func writeToolCallMarkdown(b *strings.Builder, call *marotte.EntryToolCall, res 
 // writeToolResultMarkdown renders a result whose call the turn no longer holds.
 func writeToolResultMarkdown(b *strings.Builder, res *marotte.EntryToolResult) {
 	settled := marotte.SettledToolCall(nil, res)
-	title := oneLine(marotte.ToolCardTitle(&settled))
+	drawn, _ := marotte.ToolCard(&settled)
+	title := oneLine(drawn)
 	if title == "" {
 		title = untitledTool
 	}

@@ -45,9 +45,9 @@
       "sites": [
         "internal/chat/entrylog.go:1135",
         "internal/translate/projection_entries.go:726",
-        "internal/translate/streaming_tools.go:520",
+        "internal/translate/streaming_tools.go:500",
         "internal/translate/wire_enums.go:36",
-        "internal/turnlog/turnlog.go:691"
+        "internal/turnlog/turnlog.go:910"
       ]
     },
     {
@@ -189,42 +189,42 @@
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:391",
+      "site": "internal/translate/streaming_tools.go:371",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:495",
+      "site": "internal/translate/streaming_tools.go:475",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:519",
+      "site": "internal/translate/streaming_tools.go:499",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:520",
+      "site": "internal/translate/streaming_tools.go:500",
       "form": "status_assign",
       "status": "aborted"
     },
     {
-      "site": "internal/translate/streaming_tools.go:542",
+      "site": "internal/translate/streaming_tools.go:522",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:556",
+      "site": "internal/translate/streaming_tools.go:536",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:556",
+      "site": "internal/translate/streaming_tools.go:536",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:578",
+      "site": "internal/translate/streaming_tools.go:558",
       "form": "compare",
       "status": "completed"
     },
@@ -269,7 +269,7 @@
       "status": "pending"
     },
     {
-      "site": "internal/turnlog/turnlog.go:691",
+      "site": "internal/turnlog/turnlog.go:910",
       "form": "status_field",
       "status": "aborted"
     }

@@ -179,10 +179,11 @@ func drawnCard(t *testing.T, tc marotte.ToolCall) marotte.ToolCall {
 	t.Helper()
 	title, loaded := tc.CardTitle, tc.Loaded
 	tc.CardTitle, tc.Loaded = "", nil
-	if want := marotte.ToolCardTitle(&tc); title != want {
-		t.Errorf("the stream draws card_title %q, but the folded call titles %q", title, want)
+	wantTitle, wantLoaded := marotte.ToolCard(&tc)
+	if title != wantTitle {
+		t.Errorf("the stream draws card_title %q, but the folded call titles %q", title, wantTitle)
 	}
-	if want := marotte.ToolLoaded(&tc); !reflect.DeepEqual(loaded, want) {
+	if want := wantLoaded; !reflect.DeepEqual(loaded, want) {
 		t.Errorf("the stream draws loaded %+v, but the folded call loaded %+v", loaded, want)
 	}
 	return tc

@@ -145,12 +145,13 @@ type searchCall struct {
 	titled bool
 }
 
-// title is the title the card draws, marotte.ToolCardTitle of the settled call, the result's alone when no call
+// title is the title the card draws, marotte.ToolCard of the settled call, the result's alone when no call
 // decoded.
 func (c *searchCall) title() string {
 	if !c.titled {
 		tc := marotte.SettledToolCall(c.call, c.result)
-		c.drawn, c.titled = marotte.ToolCardTitle(&tc), true
+		c.drawn, _ = marotte.ToolCard(&tc)
+		c.titled = true
 	}
 	return c.drawn
 }

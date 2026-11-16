@@ -47,7 +47,8 @@ func printedLine(e *marotte.Entry, calls stepCalls) string {
 		}
 		calls[stepCallKey{e.Turn, e.ID}] = &c
 		tc := marotte.ToolCallOfEntry(&c)
-		return titleLine(marotte.ToolCardTitle(&tc))
+		title, _ := marotte.ToolCard(&tc)
+		return titleLine(title)
 	case marotte.EntryKindToolResult:
 		return calls.settle(e)
 	default:
@@ -74,7 +75,8 @@ func (c stepCalls) settle(e *marotte.Entry) string {
 		return ""
 	}
 	own, settled := marotte.ToolCallOfEntry(call), marotte.SettledToolCall(call, &res)
-	if title := marotte.ToolCardTitle(&settled); title != marotte.ToolCardTitle(&own) {
+	title, _ := marotte.ToolCard(&settled)
+	if was, _ := marotte.ToolCard(&own); title != was {
 		return titleLine(title)
 	}
 	return ""

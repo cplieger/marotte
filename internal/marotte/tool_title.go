@@ -6,17 +6,23 @@ import (
 	"unicode/utf16"
 )
 
-// ToolCardTitle is the title a tool card draws, the find index files and the export prints.
-// It is derived from the call's stored fields whenever the call is served and is never stored,
-// so a rule change reaches every existing chat.
-func ToolCardTitle(tc *ToolCall) string {
+// ToolCard is the title a tool card draws, which the find index files and the export prints, and
+// what a load call loaded (nil for a call that is not a load or names nothing yet). tc is a call as
+// SettledToolCall or a live fold builds it. Every carrier of a tool entry or frame takes both from
+// here at read time and none stores them, so a rule change reaches every existing chat.
+func ToolCard(tc *ToolCall) (title string, loaded []LoadedResource) {
+	loaded = toolLoaded(tc)
+	return cardTitle(tc, loaded), loaded
+}
+
+func cardTitle(tc *ToolCall, loaded []LoadedResource) string {
 	if d := tc.Disclosed; d != nil {
 		if d.Type == string(LoadedSteering) {
 			return "Loaded steering: " + d.DisplayName
 		}
 		return "Loaded skill: " + d.DisplayName
 	}
-	if loaded := ToolLoaded(tc); loaded != nil {
+	if loaded != nil {
 		return loadedTitle(loaded)
 	}
 	if tc.MCP != nil {
@@ -54,9 +60,7 @@ type LoadedResource struct {
 	Server string `json:"server"`
 }
 
-// ToolLoaded is what a load call loaded, derived alongside ToolCardTitle; nil for a call that
-// is not a load or names nothing yet.
-func ToolLoaded(tc *ToolCall) []LoadedResource {
+func toolLoaded(tc *ToolCall) []LoadedResource {
 	if loaded := loadedIDs(tc); loaded != nil {
 		return loaded
 	}
@@ -240,7 +244,7 @@ func unitLen(s string) int {
 }
 
 // SettledToolCall is a call as its card draws it: the call's stored fields with its result's
-// title, kind, input and disclosed over them, the fields ToolCardTitle reads. A nil call is a
+// title, kind, input and disclosed over them, the fields ToolCard reads. A nil call is a
 // result whose call is not at hand.
 func SettledToolCall(call *EntryToolCall, res *EntryToolResult) ToolCall {
 	var tc ToolCall
@@ -268,37 +272,43 @@ func SettledToolCall(call *EntryToolCall, res *EntryToolResult) ToolCall {
 // StampToolCall sets a served call's CardTitle and Loaded.
 func StampToolCall(c *EntryToolCall) {
 	tc := ToolCallOfEntry(c)
-	c.CardTitle, c.Loaded = ToolCardTitle(&tc), ToolLoaded(&tc)
+	c.CardTitle, c.Loaded = ToolCard(&tc)
 }
 
 // StampToolResult sets a served result's CardTitle and Loaded from its join with call, which
 // is nil when the call is not at hand.
 func StampToolResult(r *EntryToolResult, call *EntryToolCall) {
 	tc := SettledToolCall(call, r)
-	r.CardTitle, r.Loaded = ToolCardTitle(&tc), ToolLoaded(&tc)
+	r.CardTitle, r.Loaded = ToolCard(&tc)
 }
 
-// ServeToolEntries stamps every tool_call and tool_result in entries, rewriting their payloads
-// in place, so entries must be the caller's own copy. A result joins its own turn's call in
-// entries, else in context; an entry that does not decode, or derives nothing, is left as stored.
+// StampToolEntry stamps a tool_call entry from itself and a tool_result from its join with call
+// (nil when the call is not at hand), rewriting the payload in place, so e must be the caller's
+// own copy. An entry of another kind, one that does not decode, or one that derives nothing is
+// left as stored.
+func StampToolEntry(e *Entry, call *EntryToolCall) {
+	switch e.Kind {
+	case EntryKindToolCall:
+		var c EntryToolCall
+		if json.Unmarshal(e.Payload, &c) == nil {
+			StampToolCall(&c)
+			reencode(e, &c, c.CardTitle, c.Loaded)
+		}
+	case EntryKindToolResult:
+		var r EntryToolResult
+		if json.Unmarshal(e.Payload, &r) == nil {
+			StampToolResult(&r, call)
+			reencode(e, &r, r.CardTitle, r.Loaded)
+		}
+	}
+}
+
+// ServeToolEntries stamps every tool_call and tool_result in entries (StampToolEntry), so entries
+// must be the caller's own copy. A result joins its own turn's call in entries, else in context.
 func ServeToolEntries(entries, context []Entry) {
 	calls := IndexToolCalls(context, entries)
 	for i := range entries {
-		e := &entries[i]
-		switch e.Kind {
-		case EntryKindToolCall:
-			var c EntryToolCall
-			if json.Unmarshal(e.Payload, &c) == nil {
-				StampToolCall(&c)
-				reencode(e, &c, c.CardTitle, c.Loaded)
-			}
-		case EntryKindToolResult:
-			var r EntryToolResult
-			if json.Unmarshal(e.Payload, &r) == nil {
-				StampToolResult(&r, calls.Of(e))
-				reencode(e, &r, r.CardTitle, r.Loaded)
-			}
-		}
+		StampToolEntry(&entries[i], calls.Of(&entries[i]))
 	}
 }
 

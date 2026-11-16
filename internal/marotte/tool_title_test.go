@@ -9,14 +9,14 @@ import (
 
 func assertCardTitle(t *testing.T, tc *ToolCall, want string) {
 	t.Helper()
-	if got := ToolCardTitle(tc); got != want {
-		t.Errorf("ToolCardTitle(title %q, kind %q) = %q, want %q", tc.Title, tc.Kind, got, want)
+	if got, _ := ToolCard(tc); got != want {
+		t.Errorf("ToolCard(title %q, kind %q) title = %q, want %q", tc.Title, tc.Kind, got, want)
 	}
 }
 
 // KAS titles a described shell call with the model's own sentence, full of paths and flags,
 // so only a bare tool id is humanized.
-func TestToolCardTitle_TitleText(t *testing.T) {
+func TestToolCard_TitleText(t *testing.T) {
 	cases := []struct{ name, title, want string }{
 		{"snake id", "web_search", "web search"},
 		{"longer snake id", "remote_web_search", "remote web search"},
@@ -63,7 +63,7 @@ func TestCutUnits(t *testing.T) {
 
 // KAS sends the static "Run Command" whenever the model wrote no description, which told a
 // reader nothing, so such a card is titled by its command.
-func TestToolCardTitle_Command(t *testing.T) {
+func TestToolCard_Command(t *testing.T) {
 	heredoc := `{"command":"cat <<'EOF' > out.txt\n` + strings.Repeat("x", 300) + `\nEOF\n"}`
 	cases := []struct {
 		name, title string
@@ -98,7 +98,7 @@ func TestToolCardTitle_Command(t *testing.T) {
 }
 
 // An MCP card is titled by the tool's own name, whatever title KAS sent.
-func TestToolCardTitle_MCP(t *testing.T) {
+func TestToolCard_MCP(t *testing.T) {
 	cases := []struct{ tool, want string }{
 		{"create_issue", "create issue"},
 		{"list_buckets", "list buckets"},
@@ -131,14 +131,14 @@ func loadCall(toolName, input string) *ToolCall {
 
 func assertLoaded(t *testing.T, tc *ToolCall, want []LoadedResource) {
 	t.Helper()
-	got := ToolLoaded(tc)
+	_, got := ToolCard(tc)
 	if !slices.Equal(got, want) {
-		t.Errorf("ToolLoaded(%s %s) = %+v, want %+v", tc.ToolName, tc.Input, got, want)
+		t.Errorf("ToolCard(%s %s) loaded = %+v, want %+v", tc.ToolName, tc.Input, got, want)
 	}
 }
 
 // KAS's resource-id grammar, one case per prefix the load tools accept, plus ids outside it.
-func TestToolLoaded_ResourceID(t *testing.T) {
+func TestToolCard_LoadedResourceID(t *testing.T) {
 	cases := []struct {
 		id        string
 		typ       LoadedType
@@ -179,7 +179,7 @@ func TestToolLoaded_ResourceID(t *testing.T) {
 	}
 }
 
-func TestToolLoaded_Calls(t *testing.T) {
+func TestToolCard_LoadedCalls(t *testing.T) {
 	skill := func(id, name string) LoadedResource {
 		return LoadedResource{ID: id, Type: LoadedSkill, Name: name}
 	}
@@ -232,7 +232,7 @@ func TestToolLoaded_Calls(t *testing.T) {
 
 // An older disclose_context sends `{name}`; the document's kind arrives only with KAS's
 // disclosedContext.
-func TestToolLoaded_Disclosed(t *testing.T) {
+func TestToolCard_LoadedDisclosed(t *testing.T) {
 	disclosed := func(typ, name string) *ToolDisclosed {
 		return &ToolDisclosed{Type: typ, DisplayName: name, URI: "file:///x/" + name}
 	}
@@ -259,7 +259,7 @@ func TestToolLoaded_Disclosed(t *testing.T) {
 }
 
 // A load card is titled by what it loaded, not the tool that loaded it.
-func TestToolCardTitle_LoadClaim(t *testing.T) {
+func TestToolCard_LoadClaim(t *testing.T) {
 	cases := []struct{ id, want string }{
 		{"tool::agent-mail::fetch_inbox", "Loaded agent-mail fetch_inbox"},
 		{"tool::inspect_workflow", "Loaded tool: inspect_workflow"},
@@ -297,7 +297,7 @@ func TestToolCardTitle_LoadClaim(t *testing.T) {
 
 // A disclose_context card names the document KAS disclosed, by its display name, whatever id
 // the call sent.
-func TestToolCardTitle_Disclosed(t *testing.T) {
+func TestToolCard_Disclosed(t *testing.T) {
 	cases := []struct{ name, typ, display, want string }{
 		{"skill", "skill", "Land", "Loaded skill: Land"},
 		{"steering", "steering", "Git commits", "Loaded steering: Git commits"},
@@ -313,7 +313,7 @@ func TestToolCardTitle_Disclosed(t *testing.T) {
 	}
 }
 
-func TestToolCardTitle_ArmOrder(t *testing.T) {
+func TestToolCard_ArmOrder(t *testing.T) {
 	shell := `{"command":"go test ./..."}`
 	t.Run("disclosed beats loaded", func(t *testing.T) {
 		tc := loadCall("load_resource", `{"id":"tool::inspect_workflow"}`)
