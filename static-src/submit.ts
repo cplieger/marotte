@@ -247,7 +247,7 @@ async function post(send: Send): Promise<SubmitResult> {
       reportSendRefused(GONE_FACE);
       return "failed";
     case "closed":
-      // A close of the chat committed after this send began, so the reopened chat never runs it.
+      // The send did not run, so the text goes back.
       recordFailure(send);
       reportSendRefused(CLOSED_FACE);
       return "failed";
