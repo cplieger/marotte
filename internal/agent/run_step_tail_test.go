@@ -154,6 +154,37 @@ func TestRunLog_StepStartsCarryAnInFlightStepsTurnAndLine(t *testing.T) {
 			t.Errorf("result tail read back from the log = %q, want the command the card draws", tail)
 		}
 	})
+	t.Run("a late result after an interruption moves the line to its command", func(t *testing.T) {
+		dir := t.TempDir()
+		r := newRunLog(dir)
+		turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		call := &marotte.EntryToolCall{ID: "call-1", Title: "Run Command", Kind: marotte.ToolKindExecute, Input: json.RawMessage(`{}`)}
+		if _, err := turn.ToolCall(t.Context(), "", call); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.closeHost(t.Context(), "c-1", marotte.ConcludeStopReason(marotte.StopReasonInterrupted)); err != nil {
+			t.Fatal(err)
+		}
+		if _, tail := startTail(t, r, step); tail != "Run Command" {
+			t.Fatalf("Setup: after the close, tail = %q, want %q", tail, "Run Command")
+		}
+		late := &marotte.Entry{
+			Kind: marotte.EntryKindToolResult, ID: marotte.ToolResultID("call-1"),
+			Payload: json.RawMessage(`{"title":"Run Command","kind":"execute","status":"completed","input":{"command":"go vet ./..."}}`),
+		}
+		if err := (&Runs{log: r, bus: &frameLog{}}).RunAppendAfterClosed(t.Context(), "wf1", step, late); err != nil {
+			t.Fatal(err)
+		}
+		if _, tail := startTail(t, r, step); tail != "go vet ./..." {
+			t.Errorf("live tail = %q, want the command the card draws", tail)
+		}
+		if _, tail := startTail(t, newRunLog(dir), step); tail != "go vet ./..." {
+			t.Errorf("tail read back from the log = %q, want the command the card draws", tail)
+		}
+	})
 	t.Run("a result that changes nothing leaves a later line standing", func(t *testing.T) {
 		r := newRunLog(t.TempDir())
 		turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")

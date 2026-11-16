@@ -138,7 +138,7 @@ interface TailCell {
    *  seed does not overwrite it. */
   live: boolean;
   /** The card titles of the root-lane tool calls appended to the cell's turn, by call id, until
-   *  their results arrive. */
+   *  a result that is not an abort arrives or the step's next turn opens. */
   readonly calls: Map<string, string>;
 }
 
@@ -352,7 +352,10 @@ export function tailAppended(workflowID: string, entry: Entry): void {
   }
   const line = entryLine(entry, (id) => {
     const title = c.calls.get(id);
-    c.calls.delete(id);
+    // An aborted result keeps its call: KAS can still say how the call ended in a late result.
+    if (field(entry, "status") !== "aborted") {
+      c.calls.delete(id);
+    }
     return title;
   });
   if (line === "") {

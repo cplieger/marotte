@@ -154,6 +154,21 @@ describe("a tail cell moved by appended entries", () => {
     expect(stepTail(wf, "s")).toBe("Reading the hits");
     forgetStepTails(wf);
   });
+
+  // A close aborts a call still in flight, and KAS can then say how it ended in a late result.
+  it("keeps an aborted call for the late result that settles it", () => {
+    const wf = "wf_cell_late";
+    noteStepTurn(wf, "t1", "s");
+    tailAppended(wf, { ...entry(1, "tool_call", shellCall), id: "c1" });
+    const aborted = { status: "aborted", card_title: "Run Command" };
+    tailAppended(wf, { ...entry(2, "tool_result", aborted), id: "c1:result" });
+    tailAppended(wf, entry(3, "turn_close", {}));
+    expect(stepTail(wf, "s")).toBe("Run Command");
+    const late = { status: "completed", card_title: "go vet ./..." };
+    tailAppended(wf, { ...entry(4, "tool_result", late), id: "c1:result" });
+    expect(stepTail(wf, "s")).toBe("go vet ./...");
+    forgetStepTails(wf);
+  });
 });
 
 /** A run read's row for step `path`'s turn `t-<path>`, its root lane streaming `e-<path>` at `n`. */

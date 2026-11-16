@@ -20,7 +20,7 @@ var tailStructureOnly = regexp.MustCompile("^(?:(?:`{3,}|~{3,})[^`]*|\\|?(?:\\s*
 var tailBlockMarkers = regexp.MustCompile(`^(?:#{1,6}\s+|>\s?|[-*+]\s+|\d{1,9}[.)]\s+)+`)
 
 // printedLine is the line a step's dock row shows for one sealed entry of its own lane, "" when the entry prints
-// nothing there. calls holds the lane's tool_calls until their results: a call joins it, its result leaves it. The
+// nothing there. calls holds the lane's tool_calls until their results: a call joins it, its result settles it. The
 // client's twin, which also reads a streaming entry, is run-step-tail.ts lastPrintedLine: both must cut a line the
 // same way.
 func printedLine(e *marotte.Entry, calls stepCalls) string {
@@ -56,23 +56,28 @@ func printedLine(e *marotte.Entry, calls stepCalls) string {
 	}
 }
 
-// stepCalls is a step's root-lane tool_calls awaiting their results, by turn and call id.
+// stepCalls is a step's root-lane tool_calls awaiting their results, or a late one after an abort, by turn and call
+// id.
 type stepCalls map[stepCallKey]*marotte.EntryToolCall
 
 type stepCallKey struct{ turn, id string }
 
-// settle releases the result's call and answers the line the result prints: its card's settled title where that
-// differs from the call's own, as when the command arrived only on the result, else "".
+// settle answers the line a result prints, its card's settled title where that differs from the call's own (as when
+// the command arrived only on the result), else "", and releases the call. An aborted result keeps it: KAS can still
+// say how the call ended in a late result (appendAfterClosed).
 func (c stepCalls) settle(e *marotte.Entry) string {
 	k := stepCallKey{e.Turn, marotte.ToolCallIDOfResult(e.ID)}
 	call, ok := c[k]
 	if !ok {
 		return ""
 	}
-	delete(c, k)
 	var res marotte.EntryToolResult
 	if json.Unmarshal(e.Payload, &res) != nil {
+		delete(c, k)
 		return ""
+	}
+	if res.Status != marotte.ToolAborted {
+		delete(c, k)
 	}
 	own, settled := marotte.ToolCallOfEntry(call), marotte.SettledToolCall(call, &res)
 	title, _ := marotte.ToolCard(&settled)
