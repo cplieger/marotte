@@ -106,8 +106,18 @@ func PublishAppended(ctx context.Context, bus Broadcaster, chatID marotte.ChatID
 	case marotte.EntryKindTurnClose:
 		bus.Broadcast(ctx, sc.event(marotte.EventTurnClosed, marotte.TurnClosedPayload{Entry: *e, WorkflowID: sc.runID}))
 	default:
-		bus.Broadcast(ctx, sc.event(marotte.EventEntryAppended, marotte.EntryAppendedPayload{Entry: *e, WorkflowID: sc.runID}))
+		bus.Broadcast(ctx, sc.event(marotte.EventEntryAppended, marotte.EntryAppendedPayload{Entry: appendedEntry(e), WorkflowID: sc.runID}))
 	}
+}
+
+// appendedEntry is e as its frame carries it: a tool_call copy stamped with its card title. A
+// tool_result goes as sealed, since alone it cannot know its call's tool name (stampSettled).
+func appendedEntry(e *marotte.Entry) marotte.Entry {
+	out := []marotte.Entry{*e}
+	if e.Kind == marotte.EntryKindToolCall {
+		marotte.ServeToolEntries(out, nil)
+	}
+	return out[0]
 }
 
 // publishOpen announces a delta that reached lane key's open entry: entry_opened when it

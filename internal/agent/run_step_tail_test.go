@@ -75,6 +75,23 @@ func TestRunLog_StepStartsCarryAnInFlightStepsTurnAndLine(t *testing.T) {
 			t.Errorf("tail = %q, want %q", tail, "rg heavyRun")
 		}
 	})
+	t.Run("a description-less shell call reads as its command", func(t *testing.T) {
+		r := newRunLog(t.TempDir())
+		turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		call := &marotte.EntryToolCall{
+			ID: "call-1", Title: "Run Command", Kind: marotte.ToolKindExecute,
+			Input: json.RawMessage(`{"command":"go test ./..."}`),
+		}
+		if _, err := turn.ToolCall(t.Context(), "", call); err != nil {
+			t.Fatal(err)
+		}
+		if _, tail := startTail(t, r, step); tail != "go test ./..." {
+			t.Errorf("tail = %q, want %q", tail, "go test ./...")
+		}
+	})
 	t.Run("the turn after an interruption keeps the line until it prints", func(t *testing.T) {
 		r := newRunLog(t.TempDir())
 		turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")

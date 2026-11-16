@@ -208,6 +208,7 @@
         "message_id": "m1",
         "tool_call_id": "c1",
         "title": "Reading file",
+        "card_title": "Reading file",
         "kind": "read"
       },
       "after": {

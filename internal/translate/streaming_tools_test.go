@@ -112,6 +112,7 @@ func lastToolCallUpdate(t *testing.T, deps *lineDeps, events *[]marotte.ServerEv
 	if !ok {
 		return marotte.ToolCall{}, false
 	}
+	folded = drawnCard(t, folded)
 	turn := deps.turns.chats["c1"]
 	if turn == nil {
 		t.Fatalf("chat c1 has no turn, so the tool call %q cannot be checked", folded.ID)
@@ -146,16 +147,45 @@ func foldToolCallUpdates(t *testing.T, seed marotte.ToolCall, events *[]marotte.
 			case marotte.EntryKindToolCall:
 				call := decodePayload[marotte.EntryToolCall](t, &p.Entry)
 				out = marotte.ToolCallOfEntry(&call)
+				out.CardTitle, out.Loaded = call.CardTitle, call.Loaded
 			case marotte.EntryKindToolResult:
 				sawUpdate = true
-				applyToolResult(&out, decodePayload[marotte.EntryToolResult](t, &p.Entry))
+				r := decodePayload[marotte.EntryToolResult](t, &p.Entry)
+				applyToolResult(&out, r)
+				foldCard(&out, r.CardTitle, r.Loaded)
 			}
 		case marotte.ToolProgressPayload:
 			sawUpdate = true
 			applyToolCallDelta(&out, p)
+			foldCard(&out, p.CardTitle, p.Loaded)
 		}
 	}
 	return out, sawUpdate
+}
+
+// foldCard is the client's fold of the served card fields: an absent one keeps the card's.
+func foldCard(tc *marotte.ToolCall, title string, loaded []marotte.LoadedResource) {
+	if title != "" {
+		tc.CardTitle = title
+	}
+	if loaded != nil {
+		tc.Loaded = loaded
+	}
+}
+
+// drawnCard checks that the card title and loaded list the stream delivered are the folded
+// call's own, then clears them, since the turn's in-flight value never holds them.
+func drawnCard(t *testing.T, tc marotte.ToolCall) marotte.ToolCall {
+	t.Helper()
+	title, loaded := tc.CardTitle, tc.Loaded
+	tc.CardTitle, tc.Loaded = "", nil
+	if want := marotte.ToolCardTitle(&tc); title != want {
+		t.Errorf("the stream draws card_title %q, but the folded call titles %q", title, want)
+	}
+	if want := marotte.ToolLoaded(&tc); !reflect.DeepEqual(loaded, want) {
+		t.Errorf("the stream draws loaded %+v, but the folded call loaded %+v", loaded, want)
+	}
+	return tc
 }
 
 func decodePayload[T any](t *testing.T, e *marotte.Entry) T {
@@ -1833,7 +1863,7 @@ func createdCall(t *testing.T, frame map[string]any) marotte.ToolCall {
 	if got.ID == "" {
 		t.Fatal("the create frame sealed no tool_call entry")
 	}
-	return got
+	return drawnCard(t, got)
 }
 
 func TestHandleToolCall_MCPIdentityFromServerName(t *testing.T) {

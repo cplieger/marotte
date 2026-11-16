@@ -69,7 +69,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID marotte.ChatID, 
 		t.lines.RecordFromDiffs(chatID, content.diffs, recency(), string(tc.Kind))
 	}
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventWorkingLabel, chatID,
-		marotte.WorkingLabelPayload{Label: marotte.WorkingLabelForKind(tc.Kind, tc.Title)}))
+		marotte.WorkingLabelPayload{Label: marotte.WorkingLabelForKind(tc.Kind, marotte.ToolCardTitle(&call))}))
 }
 
 func (*Translator) trackFileChanges(turn *turnlog.Turn, diffs []marotte.ToolDiff, isNew bool) {
@@ -162,10 +162,31 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID marotte.Ch
 		res.Input = tc.Input
 	}
 	sealed, err := turn.ToolResult(ctx, tu.Meta.Kiro.AgentSubtaskID, tu.ToolCallID, &res)
-	t.publishSealed(ctx, sc, sealed)
+	t.publishSealed(ctx, sc, stampSettled(sealed, marotte.ToolResultID(tu.ToolCallID), &tc))
 	if err != nil {
 		appendFailed(sc, "tool_result", err)
 	}
+}
+
+// stampSettled is sealed with result id's entry swapped for a copy titled from the folded call,
+// whose tool name the result line does not hold; the entry the log wrote is left as written.
+func stampSettled(sealed []turnlog.Sealed, id string, tc *marotte.ToolCall) []turnlog.Sealed {
+	out := slices.Clone(sealed)
+	for i := range out {
+		e := out[i].Entry
+		if e == nil || e.Kind != marotte.EntryKindToolResult || e.ID != id {
+			continue
+		}
+		var r marotte.EntryToolResult
+		if json.Unmarshal(e.Payload, &r) != nil {
+			continue
+		}
+		r.CardTitle, r.Loaded = marotte.ToolCardTitle(tc), marotte.ToolLoaded(tc)
+		stamped := *e
+		setPayload(&stamped, r)
+		out[i].Entry = &stamped
+	}
+	return out
 }
 
 // updateTarget is the turn an update folds into: the run's turn for the step path,
@@ -226,7 +247,18 @@ func toolProgress(turn string, before, after *marotte.ToolCall) marotte.ToolProg
 	deltaContent(&d, before, after)
 	deltaAttachments(&d, before, after)
 	deltaMarks(&d, before, after)
+	deltaCard(&d, before, after)
 	return d
+}
+
+// deltaCard sends the card title and loaded list when the frame changed them.
+func deltaCard(d *marotte.ToolProgressPayload, before, after *marotte.ToolCall) {
+	if title := marotte.ToolCardTitle(after); title != marotte.ToolCardTitle(before) {
+		d.CardTitle = title
+	}
+	if loaded := marotte.ToolLoaded(after); !slices.Equal(loaded, marotte.ToolLoaded(before)) {
+		d.Loaded = loaded
+	}
 }
 
 // Only Diffs accumulates; the others are absolute and go entire whenever they change.

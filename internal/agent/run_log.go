@@ -343,14 +343,26 @@ func (r *runLog) turnRange(ctx context.Context, workflowID, turn string, from ui
 			}
 		}
 	}
-	read, err := l.SnapshotTurns([]string{turn}, from)
+	// Read from 0: a result in the tail is titled from its call, which may precede from.
+	read, err := l.SnapshotTurns([]string{turn}, 0)
 	r.mu.Unlock()
 	if err != nil || read == nil {
 		return nil, nil, nil, false, err
 	}
-	if entries, err = decodeTurns(read); err != nil {
+	whole, err := decodeTurns(read)
+	if err != nil {
 		return nil, nil, nil, false, err
 	}
+	var calls []marotte.Entry
+	for _, e := range whole {
+		switch {
+		case e.Seq >= from:
+			entries = append(entries, e)
+		case e.Kind == marotte.EntryKindToolCall:
+			calls = append(calls, e)
+		}
+	}
+	marotte.ServeToolEntries(entries, calls)
 	// The page speaks for its newest entry, or for the seq before from when empty.
 	newest := from - 1
 	if n := len(entries); n > 0 {

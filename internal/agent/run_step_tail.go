@@ -44,7 +44,8 @@ func printedLine(e *marotte.Entry) string {
 		if json.Unmarshal(e.Payload, &c) != nil {
 			return ""
 		}
-		return lastProseLine(c.Title)
+		tc := marotte.ToolCallOfEntry(&c)
+		return lastProseLine(marotte.ToolCardTitle(&tc))
 	default:
 		return ""
 	}
